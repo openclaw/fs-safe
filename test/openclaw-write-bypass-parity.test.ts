@@ -26,6 +26,9 @@ const LITERAL_SUSPICIOUS_WRITE_PAYLOADS = [
   "%2e%2e/pwned.txt",
   "%2e%2e%2fpwned.txt",
   "%252e%252e%252fpwned.txt",
+] as const;
+
+const POSIX_LITERAL_SUSPICIOUS_WRITE_PAYLOADS = [
   "nested\\..\\..\\pwned.txt",
   "C:\\Windows\\win.ini",
   "\\\\server\\share\\pwned.txt",
@@ -47,8 +50,9 @@ const ESCAPING_DIRECTORY_PAYLOADS = [
 
 const LITERAL_SUSPICIOUS_DIRECTORY_PAYLOADS = ["%2e%2e", "%2e%2e%2f"] as const;
 
-const MAYBE_REJECTED_SUSPICIOUS_DIRECTORY_PAYLOADS = [
-  "..\\",
+const SAFE_REJECTED_SUSPICIOUS_DIRECTORY_PAYLOADS = ["..\\"] as const;
+
+const WINDOWS_REJECTED_SUSPICIOUS_DIRECTORY_PAYLOADS = [
   "C:\\Windows",
   "\\\\server\\share",
 ] as const;
@@ -115,7 +119,7 @@ describe("OpenClaw write/move/delete bypass parity", () => {
     await expect(safeRoot.create(layout.outsideFile, "pwned")).rejects.toBeTruthy();
     await expect(safeRoot.append(layout.outsideFile, "pwned")).rejects.toBeTruthy();
     await expect(safeRoot.openWritable(layout.outsideFile)).rejects.toBeTruthy();
-    await expect(safeRoot.copyFrom(source, layout.outsideFile)).rejects.toBeTruthy();
+    await expect(safeRoot.copyIn(layout.outsideFile, source)).rejects.toBeTruthy();
     await expectNoOutsideWrite(layout);
   });
 
@@ -131,7 +135,7 @@ describe("OpenClaw write/move/delete bypass parity", () => {
       () => safeRoot.create("link/secret.txt", "pwned"),
       () => safeRoot.append("link/secret.txt", "pwned"),
       () => safeRoot.openWritable("link/secret.txt"),
-      () => safeRoot.copyFrom(source, "link/secret.txt"),
+      () => safeRoot.copyIn("link/secret.txt", source),
       () => safeRoot.mkdir("link/nested"),
       () => safeRoot.remove("link/secret.txt"),
     ]) {
@@ -151,7 +155,7 @@ describe("OpenClaw write/move/delete bypass parity", () => {
       () => safeRoot.write("link.txt", "pwned"),
       () => safeRoot.append("link.txt", "pwned"),
       () => safeRoot.openWritable("link.txt"),
-      () => safeRoot.copyFrom(source, "link.txt"),
+      () => safeRoot.copyIn("link.txt", source),
     ]) {
       await expect(action()).rejects.toBeTruthy();
     }
@@ -218,18 +222,34 @@ describe("OpenClaw write/move/delete bypass parity", () => {
     const layout = await makeTempLayout("fs-safe-write-encoded-literal");
     const safeRoot = await openRoot(layout.root);
 
-    for (const payload of LITERAL_SUSPICIOUS_WRITE_PAYLOADS) {
+    const literalWritePayloads = process.platform === "win32"
+      ? LITERAL_SUSPICIOUS_WRITE_PAYLOADS
+      : [...LITERAL_SUSPICIOUS_WRITE_PAYLOADS, ...POSIX_LITERAL_SUSPICIOUS_WRITE_PAYLOADS];
+    for (const payload of literalWritePayloads) {
       await safeRoot.write(payload, "literal");
       await expect(safeRoot.readText(payload), `read literal ${payload}`).resolves.toBe("literal");
+    }
+    if (process.platform === "win32") {
+      for (const payload of POSIX_LITERAL_SUSPICIOUS_WRITE_PAYLOADS) {
+        await expect(safeRoot.write(payload, "rejected"), `write safely rejects ${payload}`).rejects.toBeTruthy();
+      }
     }
     for (const payload of SAFE_REJECTED_SUSPICIOUS_WRITE_PAYLOADS) {
       await expect(safeRoot.write(payload, "rejected"), `write safely rejects ${payload}`).rejects.toBeTruthy();
     }
-    for (const payload of MAYBE_REJECTED_SUSPICIOUS_DIRECTORY_PAYLOADS) {
-      try {
+    for (const payload of SAFE_REJECTED_SUSPICIOUS_DIRECTORY_PAYLOADS) {
+      await expect(safeRoot.mkdir(payload), `mkdir safely rejects ${payload}`).rejects.toBeTruthy();
+    }
+    if (process.platform === "win32") {
+      for (const payload of WINDOWS_REJECTED_SUSPICIOUS_DIRECTORY_PAYLOADS) {
+        await expect(safeRoot.mkdir(payload), `mkdir safely rejects ${payload}`).rejects.toBeTruthy();
+      }
+    } else {
+      for (const payload of WINDOWS_REJECTED_SUSPICIOUS_DIRECTORY_PAYLOADS) {
         await safeRoot.mkdir(payload);
-      } catch (error) {
-        expect(error).toBeInstanceOf(FsSafeError);
+        await expect(fsp.stat(path.join(layout.root, payload)), `created literal ${payload}`).resolves.toSatisfy((stat) =>
+          stat.isDirectory()
+        );
       }
     }
     for (const payload of LITERAL_SUSPICIOUS_DIRECTORY_PAYLOADS) {
