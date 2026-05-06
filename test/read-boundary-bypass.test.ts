@@ -76,7 +76,7 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => fsp.rm(dir, { force: true, recursive: true })));
 });
 
-describe("OpenClaw read bypass parity", () => {
+describe("read boundary bypass attempts", () => {
   it("rejects a payload corpus of traversal, encoded, NUL, Windows, and UNC read attempts", async () => {
     const layout = await makeTempLayout("fs-safe-read-payloads");
     await fsp.mkdir(path.join(layout.root, "nested"), { recursive: true });

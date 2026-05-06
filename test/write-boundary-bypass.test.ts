@@ -79,7 +79,7 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => fsp.rm(dir, { force: true, recursive: true })));
 });
 
-describe("OpenClaw write/move/delete bypass parity", () => {
+describe("write, move, and delete boundary bypass attempts", () => {
   it("rejects payload corpus write/create/append/openWritable attempts without touching outside files", async () => {
     const layout = await makeTempLayout("fs-safe-write-payloads");
     await fsp.mkdir(path.join(layout.root, "nested"), { recursive: true });
