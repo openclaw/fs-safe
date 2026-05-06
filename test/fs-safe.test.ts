@@ -1,5 +1,5 @@
 import { appendFileSync } from "node:fs";
-import { mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -243,11 +243,14 @@ describe("@openclaw/fs-safe", () => {
     const rootPath = await tempRoot("fs-safe-copy-source-swap-root-");
     const sourceRoot = await tempRoot("fs-safe-copy-source-swap-source-");
     const sourcePath = path.join(sourceRoot, "source.txt");
+    const replacementPath = path.join(sourceRoot, "replacement.txt");
     await writeFile(sourcePath, "original");
+    await writeFile(replacementPath, "replacement");
     const sourceIdentity = await stat(sourcePath);
     await rm(sourcePath);
-    await writeFile(sourcePath, "replacement");
+    await rename(replacementPath, sourcePath);
 
+    configureFsSafePython({ mode: "require" });
     try {
       await runPinnedCopyHelper({
         rootPath,
