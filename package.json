@@ -1,3 +1,4 @@
+
 {
   "name": "@openclaw/fs-safe",
   "version": "0.2.2",
@@ -105,7 +106,7 @@
     "prepack": "node scripts/prepack-build.mjs",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "test:security": "vitest run test/fs-safe.test.ts test/openclaw-read-bypass-parity.test.ts test/openclaw-write-bypass-parity.test.ts test/additional-bypass-parity.test.ts test/adversarial-boundary-payloads.test.ts",
+    "test:security": "vitest run test/fs-safe.test.ts test/read-boundary-bypass.test.ts test/write-boundary-bypass.test.ts test/additional-boundary-bypass.test.ts test/adversarial-boundary-payloads.test.ts",
     "check": "pnpm lint:file-size && pnpm lint:fs-boundary && pnpm build && pnpm test",
     "docs:site": "node scripts/build-docs-site.mjs"
   },
