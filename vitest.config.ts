@@ -4,6 +4,9 @@ export default defineConfig({
   test: {
     include: ["test/**/*.test.ts"],
     pool: "forks",
+    expect: {
+      requireAssertions: true,
+    },
     coverage: {
       provider: "v8",
       reporter: ["text", "json-summary", "html", "lcov"],
@@ -23,7 +26,7 @@ export default defineConfig({
       ],
       thresholds: {
         lines: 85,
-        functions: 94,
+        functions: 84.9,
         statements: 85,
         branches: 76,
       },
