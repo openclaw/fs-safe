@@ -3,6 +3,7 @@ import fsSync from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { isNotFoundPathError } from "./path.js";
 import { assertNoSymlinkParents, assertNoSymlinkParentsSync } from "./symlink-parents.js";
@@ -175,7 +176,7 @@ function verifyStableReadTarget(params: {
     !sameFileIdentity(params.preOpenStat, params.postOpenStat) ||
     !sameFileIdentity(params.pathStat, params.postOpenStat)
   ) {
-    throw new Error(`File changed during read: ${params.filePath}`);
+    throw new FsSafeError("path-mismatch", `File changed during read: ${params.filePath}`);
   }
 }
 

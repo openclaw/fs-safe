@@ -1,10 +1,38 @@
 import { randomUUID } from "node:crypto";
 import fsSync from "node:fs";
 import path from "node:path";
+import { FsSafeError } from "./errors.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
 import { readRegularFile, readRegularFileSync } from "./regular-file.js";
 import { openRootFileSync, type RootFileOpenFailure } from "./root-file.js";
 import { writeTextAtomic, type WriteTextAtomicOptions } from "./text-atomic.js";
+
+const READ_RETRY_MAX_ATTEMPTS = 3;
+const READ_RETRY_BASE_DELAY_MS = 50;
+
+function isReadRaceError(err: unknown): boolean {
+  return err instanceof FsSafeError && err.code === "path-mismatch";
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function readRegularFileWithRetry(filePath: string): Promise<Buffer> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < READ_RETRY_MAX_ATTEMPTS; attempt++) {
+    try {
+      return (await readRegularFile({ filePath })).buffer;
+    } catch (err) {
+      lastErr = err;
+      if (!isReadRaceError(err) || attempt === READ_RETRY_MAX_ATTEMPTS - 1) {
+        throw err;
+      }
+      await sleep(READ_RETRY_BASE_DELAY_MS * Math.pow(2, attempt));
+    }
+  }
+  throw lastErr;
+}
 
 const JSON_FILE_MODE = 0o600;
 const JSON_DIR_MODE = 0o700;
@@ -238,7 +266,7 @@ export function readRootJsonObjectSync(
 
 export async function tryReadJson<T>(filePath: string): Promise<T | null> {
   try {
-    const raw = (await readRegularFile({ filePath })).buffer.toString("utf8");
+    const raw = (await readRegularFileWithRetry(filePath)).toString("utf8");
     return JSON.parse(raw) as T;
   } catch {
     return null;
@@ -248,7 +276,7 @@ export async function tryReadJson<T>(filePath: string): Promise<T | null> {
 export async function readJson<T>(filePath: string): Promise<T> {
   let raw: string;
   try {
-    raw = (await readRegularFile({ filePath })).buffer.toString("utf8");
+    raw = (await readRegularFileWithRetry(filePath)).toString("utf8");
   } catch (err) {
     throw new JsonFileReadError(filePath, "read", err);
   }
@@ -262,7 +290,7 @@ export async function readJson<T>(filePath: string): Promise<T> {
 export async function readJsonIfExists<T>(filePath: string): Promise<T | null> {
   let raw: string;
   try {
-    raw = (await readRegularFile({ filePath })).buffer.toString("utf8");
+    raw = (await readRegularFileWithRetry(filePath)).toString("utf8");
   } catch (err) {
     if (getErrorCode(err) === "ENOENT") {
       return null;

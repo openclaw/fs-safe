@@ -267,4 +267,76 @@ describe("json file helpers", () => {
 
     expect(result).toMatchObject({ ok: true, value: { name: "demo" } });
   });
+
+  it("recovers readJson from a concurrent real atomic rewrite", async () => {
+    const root = await tempRoot("fs-safe-json-retry-real-");
+    const filePath = path.join(root, "paired.json");
+    await writeTextAtomic(filePath, "{\"v\":0}");
+
+    const stop = { value: false };
+    let writes = 0;
+    const writer = (async () => {
+      while (!stop.value) {
+        writes += 1;
+        await writeTextAtomic(filePath, `{"v":${writes}}`);
+      }
+    })();
+
+    let raceErrors = 0;
+    let okReads = 0;
+    try {
+      const deadline = Date.now() + 1000;
+      while (Date.now() < deadline) {
+        try {
+          const value = await readJson<{ v: number }>(filePath);
+          expect(typeof value.v).toBe("number");
+          okReads += 1;
+        } catch (err) {
+          if (
+            err instanceof JsonFileReadError &&
+            err.reason === "read" &&
+            err.cause instanceof Error &&
+            err.cause.message.includes("File changed during read")
+          ) {
+            raceErrors += 1;
+          } else {
+            throw err;
+          }
+        }
+      }
+    } finally {
+      stop.value = true;
+      await writer;
+    }
+
+    expect(writes).toBeGreaterThan(10);
+    expect(okReads).toBeGreaterThan(10);
+    expect(raceErrors).toBe(0);
+  }, 5000);
+
+  it("surfaces JsonFileReadError when read races exceed retry budget", async () => {
+    const root = await tempRoot("fs-safe-json-retry-exhaust-");
+    const filePath = path.join(root, "paired.json");
+    await writeTextAtomic(filePath, "{\"v\":0}");
+
+    let racesInjected = 0;
+    const originalOpen = fs.open.bind(fs);
+    const openSpy = vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+      if (args[0] === filePath) {
+        racesInjected += 1;
+        await writeTextAtomic(filePath, `{"v":${racesInjected}}`);
+      }
+      return originalOpen(...args);
+    });
+
+    try {
+      await expect(readJson(filePath)).rejects.toMatchObject({
+        name: "JsonFileReadError",
+        reason: "read",
+      } satisfies Partial<JsonFileReadError>);
+      expect(racesInjected).toBeGreaterThanOrEqual(3);
+    } finally {
+      openSpy.mockRestore();
+    }
+  });
 });
