@@ -3,35 +3,56 @@ import fsSync from "node:fs";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
-import { readRegularFile, readRegularFileSync } from "./regular-file.js";
+import { readRegularFile, readRegularFileSync, statRegularFile } from "./regular-file.js";
 import { openRootFileSync, type RootFileOpenFailure } from "./root-file.js";
 import { writeTextAtomic, type WriteTextAtomicOptions } from "./text-atomic.js";
 
 const READ_RETRY_MAX_ATTEMPTS = 5;
 const READ_RETRY_BASE_DELAY_MS = 50;
 
-function isRetryableReadError(err: unknown): boolean {
-  return err instanceof FsSafeError && err.code === "path-mismatch";
+function isRetryableReadError(
+  err: unknown,
+  options: { retryOpenRaceErrors?: boolean },
+): boolean {
+  if (err instanceof FsSafeError && err.code === "path-mismatch") {
+    return true;
+  }
+  if (options.retryOpenRaceErrors !== true) {
+    return false;
+  }
+  const code = getErrorCode(err);
+  return code === "ENOENT" || code === "EPERM";
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function readRegularFileWithRetry(filePath: string): Promise<Buffer> {
+async function readRegularFileWithRetry(
+  filePath: string,
+  options: { retryOpenRaceErrors?: boolean } = {},
+): Promise<Buffer> {
   let lastErr: unknown;
   for (let attempt = 0; attempt < READ_RETRY_MAX_ATTEMPTS; attempt++) {
     try {
       return (await readRegularFile({ filePath })).buffer;
     } catch (err) {
       lastErr = err;
-      if (!isRetryableReadError(err) || attempt === READ_RETRY_MAX_ATTEMPTS - 1) {
+      if (!isRetryableReadError(err, options) || attempt === READ_RETRY_MAX_ATTEMPTS - 1) {
         throw err;
       }
       await sleep(READ_RETRY_BASE_DELAY_MS * Math.pow(2, attempt));
     }
   }
   throw lastErr;
+}
+
+async function readRegularFileIfExistsWithRetry(filePath: string): Promise<Buffer | null> {
+  const initial = await statRegularFile(filePath);
+  if (initial.missing) {
+    return null;
+  }
+  return await readRegularFileWithRetry(filePath, { retryOpenRaceErrors: true });
 }
 
 const JSON_FILE_MODE = 0o600;
@@ -266,7 +287,11 @@ export function readRootJsonObjectSync(
 
 export async function tryReadJson<T>(filePath: string): Promise<T | null> {
   try {
-    const raw = (await readRegularFileWithRetry(filePath)).toString("utf8");
+    const buffer = await readRegularFileIfExistsWithRetry(filePath);
+    if (buffer === null) {
+      return null;
+    }
+    const raw = buffer.toString("utf8");
     return JSON.parse(raw) as T;
   } catch {
     return null;
@@ -276,7 +301,9 @@ export async function tryReadJson<T>(filePath: string): Promise<T | null> {
 export async function readJson<T>(filePath: string): Promise<T> {
   let raw: string;
   try {
-    raw = (await readRegularFileWithRetry(filePath)).toString("utf8");
+    raw = (await readRegularFileWithRetry(filePath, { retryOpenRaceErrors: true })).toString(
+      "utf8",
+    );
   } catch (err) {
     throw new JsonFileReadError(filePath, "read", err);
   }
@@ -290,7 +317,11 @@ export async function readJson<T>(filePath: string): Promise<T> {
 export async function readJsonIfExists<T>(filePath: string): Promise<T | null> {
   let raw: string;
   try {
-    raw = (await readRegularFileWithRetry(filePath)).toString("utf8");
+    const buffer = await readRegularFileIfExistsWithRetry(filePath);
+    if (buffer === null) {
+      return null;
+    }
+    raw = buffer.toString("utf8");
   } catch (err) {
     if (getErrorCode(err) === "ENOENT") {
       return null;
