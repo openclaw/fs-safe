@@ -141,6 +141,20 @@ describe("json file helpers", () => {
     expect(() => readJsonSync(invalid)).toThrow(JsonFileReadError);
   });
 
+  it("does not retry initially missing nullable JSON reads", async () => {
+    const root = await tempRoot("fs-safe-json-missing-");
+    const missing = path.join(root, "missing.json");
+    const lstatSpy = vi.spyOn(fs, "lstat");
+
+    try {
+      await expect(readJsonIfExists(missing)).resolves.toBeNull();
+      await expect(tryReadJson(missing)).resolves.toBeNull();
+      expect(lstatSpy.mock.calls.filter(([candidate]) => candidate === missing)).toHaveLength(2);
+    } finally {
+      lstatSpy.mockRestore();
+    }
+  });
+
   it("does not follow symlink swaps while reading", async () => {
     const root = await tempRoot("fs-safe-json-swap-");
     const filePath = path.join(root, "state.json");
@@ -334,7 +348,7 @@ describe("json file helpers", () => {
         name: "JsonFileReadError",
         reason: "read",
       } satisfies Partial<JsonFileReadError>);
-      expect(racesInjected).toBeGreaterThanOrEqual(3);
+      expect(racesInjected).toBeGreaterThanOrEqual(5);
     } finally {
       openSpy.mockRestore();
     }

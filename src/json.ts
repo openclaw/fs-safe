@@ -7,10 +7,10 @@ import { readRegularFile, readRegularFileSync } from "./regular-file.js";
 import { openRootFileSync, type RootFileOpenFailure } from "./root-file.js";
 import { writeTextAtomic, type WriteTextAtomicOptions } from "./text-atomic.js";
 
-const READ_RETRY_MAX_ATTEMPTS = 3;
+const READ_RETRY_MAX_ATTEMPTS = 5;
 const READ_RETRY_BASE_DELAY_MS = 50;
 
-function isReadRaceError(err: unknown): boolean {
+function isRetryableReadError(err: unknown): boolean {
   return err instanceof FsSafeError && err.code === "path-mismatch";
 }
 
@@ -25,7 +25,7 @@ async function readRegularFileWithRetry(filePath: string): Promise<Buffer> {
       return (await readRegularFile({ filePath })).buffer;
     } catch (err) {
       lastErr = err;
-      if (!isReadRaceError(err) || attempt === READ_RETRY_MAX_ATTEMPTS - 1) {
+      if (!isRetryableReadError(err) || attempt === READ_RETRY_MAX_ATTEMPTS - 1) {
         throw err;
       }
       await sleep(READ_RETRY_BASE_DELAY_MS * Math.pow(2, attempt));

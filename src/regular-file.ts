@@ -138,12 +138,29 @@ export async function readRegularFile(params: {
     throw new Error(`File exceeds ${params.maxBytes} bytes: ${params.filePath}`);
   }
 
-  const handle = await fs.open(params.filePath, resolveRegularFileReadFlags());
+  let handle: FileHandle;
+  try {
+    handle = await fs.open(params.filePath, resolveRegularFileReadFlags());
+  } catch (err) {
+    if (isNotFoundPathError(err)) {
+      throw new FsSafeError("path-mismatch", `File changed during read: ${params.filePath}`);
+    }
+    throw err;
+  }
   try {
     const stat = await handle.stat();
+    let pathStat: Stats;
+    try {
+      pathStat = await fs.lstat(params.filePath);
+    } catch (err) {
+      if (isNotFoundPathError(err)) {
+        throw new FsSafeError("path-mismatch", `File changed during read: ${params.filePath}`);
+      }
+      throw err;
+    }
     verifyStableReadTarget({
       filePath: params.filePath,
-      pathStat: await fs.lstat(params.filePath),
+      pathStat,
       postOpenStat: stat,
       preOpenStat: result.stat,
     });

@@ -4,7 +4,7 @@
 
 ### Security and Correctness
 
-- Retry async JSON reads (`readJson`, `readJsonIfExists`, `tryReadJson`) up to three times with 50ms exponential backoff when the file is rotated mid-read by an atomic rename, and tag the underlying race as `FsSafeError("path-mismatch")` so callers can distinguish transient swaps from corruption. (#19; thanks @yetval)
+- Retry async JSON reads (`readJson`, `readJsonIfExists`, `tryReadJson`) up to five attempts with 50ms exponential backoff when the file is rotated mid-read by an atomic rename, and tag the underlying race as `FsSafeError("path-mismatch")` so callers can distinguish transient swaps from corruption. (#19; thanks @yetval)
 
 ## 0.2.7 - 2026-05-20
 
