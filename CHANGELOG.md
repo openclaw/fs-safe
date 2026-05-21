@@ -2,13 +2,16 @@
 
 ## Unreleased
 
+### Security and Correctness
+
+- Retry async JSON reads (`readJson`, `readJsonIfExists`, `tryReadJson`) up to three times with 50ms exponential backoff when the file is rotated mid-read by an atomic rename, and tag the underlying race as `FsSafeError("path-mismatch")` so callers can distinguish transient swaps from corruption.
+
 ## 0.2.7 - 2026-05-20
 
 ### Security and Correctness
 
 - Restore best-effort Node write fallbacks when the Python helper is disabled or unavailable, preserving the `mode: "off"` contract while documenting the weaker POSIX same-UID race resistance compared with fd-relative helper commits.
 - Harden DeepSec-reported archive staging and input pinning, secret and queue hardlink rejection, absolute output file validation, sidecar lock read failures, ClawSweeper dispatch trust checks, and scoped path defaults.
-- Retry async JSON reads (`readJson`, `readJsonIfExists`, `tryReadJson`) up to three times with 50ms exponential backoff when the file is rotated mid-read by an atomic rename, and tag the underlying race as `FsSafeError("path-mismatch")` so callers can distinguish transient swaps from corruption.
 
 ## 0.2.6 - 2026-05-17
 
