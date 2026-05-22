@@ -107,7 +107,13 @@
     "test:coverage": "vitest run --coverage",
     "test:security": "vitest run test/fs-safe.test.ts test/read-boundary-bypass.test.ts test/write-boundary-bypass.test.ts test/additional-boundary-bypass.test.ts test/adversarial-boundary-payloads.test.ts",
     "check": "pnpm lint:file-size && pnpm lint:fs-boundary && pnpm build && pnpm test",
-    "docs:site": "node scripts/build-docs-site.mjs"
+    "docs:site": "node scripts/build-docs-site.mjs",
+    "check:changed": "pnpm run check",
+    "test:changed": "pnpm run test",
+    "crabbox:hydrate": "crabbox actions hydrate",
+    "crabbox:run": "crabbox run",
+    "crabbox:stop": "crabbox stop",
+    "crabbox:warmup": "crabbox warmup"
   },
   "optionalDependencies": {
     "jszip": "^3.10.1",
