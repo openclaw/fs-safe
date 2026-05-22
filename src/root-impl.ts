@@ -23,6 +23,7 @@ import { canFallbackFromPythonError, getFsSafePythonConfig } from "./pinned-pyth
 import { assertNoPathAliasEscape, PATH_ALIAS_POLICIES } from "./path-policy.js";
 import {
   assertNoNulPathInput,
+  assertNoUnsafeDeviceReadPath,
   hasNodeErrorCode,
   isNotFoundPathError,
   isPathInside,
@@ -157,10 +158,6 @@ const OPEN_APPEND_CREATE_FLAGS =
 
 export const DEFAULT_ROOT_MAX_BYTES = 16 * 1024 * 1024;
 
-function closeHandleForDispose(handle: FileHandle): Promise<void> {
-  return handle.close().catch(() => undefined);
-}
-
 function openResult(params: {
   handle: FileHandle;
   realPath: string;
@@ -170,9 +167,7 @@ function openResult(params: {
     handle: params.handle,
     realPath: params.realPath,
     stat: params.stat,
-    [Symbol.asyncDispose]: async () => {
-      await closeHandleForDispose(params.handle);
-    },
+    [Symbol.asyncDispose]: () => params.handle.close().catch(() => undefined),
   };
 }
 
@@ -184,6 +179,7 @@ async function openVerifiedLocalFile(
     symlinks?: SymlinkPolicy;
   },
 ): Promise<OpenResult> {
+  assertNoUnsafeDeviceReadPath(filePath);
   const fsSafeTestHooks = getFsSafeTestHooks();
   // Reject directories before opening so we never surface EISDIR to callers (e.g. tool
   // results that get sent to messaging channels). See openclaw/openclaw#31186.
@@ -922,9 +918,7 @@ async function openWritableFileInRoot(
       createdForWrite,
       realPath,
       stat,
-      [Symbol.asyncDispose]: async () => {
-        await closeHandleForDispose(handle);
-      },
+      [Symbol.asyncDispose]: () => handle.close().catch(() => undefined),
     };
   } catch (err) {
     const cleanupCreatedPath = createdForWrite && err instanceof FsSafeError;

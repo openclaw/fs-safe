@@ -4,6 +4,15 @@ import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { normalizeLowercaseStringOrEmpty } from "./string-coerce.js";
 
+export {
+  assertNoUnsafeDeviceReadPath,
+  isUnsafeDeviceReadPath,
+  matchUnsafeDeviceReadPath,
+  type UnsafeDeviceReadPathMatch,
+  type UnsafeDeviceReadPathOptions,
+  type UnsafeDeviceReadPathReason,
+} from "./device-path.js";
+
 const NOT_FOUND_CODES = new Set(["ENOENT", "ENOTDIR"]);
 const SYMLINK_OPEN_CODES = new Set(["ELOOP", "EINVAL", "ENOTSUP"]);
 const POSIX_SEPARATOR_CHAR_CODE = 0x2f;

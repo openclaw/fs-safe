@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Security and Correctness
+
+- Reject known unsafe device and process-fd read paths before opening files, including `/dev/zero`, `/dev/random`, `/dev/fd/*`, `/proc/*/fd/*`, and Windows reserved device names.
+
 ## 0.3.0 - 2026-05-21
 
 ### Features

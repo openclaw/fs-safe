@@ -3,6 +3,14 @@
 // higher-level primitive.
 export { createAsyncLock } from "./async-lock.js";
 export {
+  assertNoUnsafeDeviceReadPath,
+  isUnsafeDeviceReadPath,
+  matchUnsafeDeviceReadPath,
+  type UnsafeDeviceReadPathMatch,
+  type UnsafeDeviceReadPathOptions,
+  type UnsafeDeviceReadPathReason,
+} from "./device-path.js";
+export {
   assertAbsolutePathInput,
   canonicalPathFromExistingAncestor,
   ensureAbsoluteDirectory,

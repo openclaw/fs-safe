@@ -11,6 +11,8 @@ import {
   safeRealpathSync,
   safeStatSync,
   assertNoNulPathInput,
+  assertNoUnsafeDeviceReadPath,
+  isUnsafeDeviceReadPath,
   isNotFoundPathError,
   isSymlinkOpenError,
   hasNodeErrorCode,
@@ -88,6 +90,17 @@ if (!stat?.isFile()) return notFound();
 ### `assertNoNulPathInput(filePath, message?)`
 
 Throws `FsSafeError` with code `invalid-path` when a path string contains an embedded NUL byte. Use it before calling Node `fs` APIs directly; Node's native error can include raw path text in the message.
+
+### `assertNoUnsafeDeviceReadPath(filePath, options?)`
+
+Throws `FsSafeError` with code `device-path` when a read target is a known unsafe device or process-fd path. The built-in read/open helpers call this automatically before opening files; use it only when you are building your own read primitive.
+
+```ts
+assertNoUnsafeDeviceReadPath("/dev/zero"); // throws on POSIX
+isUnsafeDeviceReadPath("/dev/fd/0");       // true on POSIX
+```
+
+The check is intentionally not a normal consumer policy knob. Safe read APIs reject these targets by default because they can block forever, stream indefinitely, or alias process file descriptors.
 
 ## Error inspection
 

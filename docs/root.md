@@ -139,6 +139,7 @@ Every method throws `FsSafeError` with a `code`. Branch on `err.code`, not messa
 | `outside-workspace` | The input resolves outside the root, or contains a `..` segment that would escape it. |
 | `not-found` | The target does not exist (or its parent does not, with `mkdir: false`). |
 | `not-file` | A read or copy targeted a non-regular file (directory, FIFO, socket, …). |
+| `device-path` | A read/open target is a known unsafe device or process-fd path. |
 | `already-exists` | `create()` or `move()` without `overwrite` hit an existing target. |
 | `denied-path` | A mutation target matched `denyMutations.paths` or `denyMutations.prefixes`. |
 | `symlink` | A path component is a symlink, and the call's `symlinks` policy is `reject`. |

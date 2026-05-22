@@ -31,6 +31,7 @@ class FsSafeError extends Error {
 type FsSafeErrorCode =
   | "already-exists"
   | "denied-path"
+  | "device-path"
   | "hardlink"
   | "helper-failed"
   | "helper-unavailable"
@@ -57,6 +58,7 @@ type FsSafeErrorCode =
 |---|---|---|
 | `already-exists` | `create()`, `createJson()`, `move({ overwrite: false })`. | Target file or directory already at the destination. |
 | `denied-path` | A root mutation matched `denyMutations.paths` or `denyMutations.prefixes`. | Caller configured application-sensitive paths that must not be written, removed, moved, or created. |
+| `device-path` | A read/open target is a known unsafe device or process-fd path. | `/dev/zero`, `/dev/random`, `/dev/stdin`, `/dev/fd/*`, `/proc/*/fd/*`, or a Windows reserved device name. |
 | `hardlink` | Read or copy with `hardlinks: "reject"` saw `nlink > 1`. | File is hardlinked — possibly an alias of an out-of-tree inode. |
 | `helper-failed` | Internal POSIX helper failed after startup. | Inspect `cause`; retrying may be unsafe if the operation may have partially completed. |
 | `helper-unavailable` | Persistent Python helper was disabled or could not be spawned. | `FS_SAFE_PYTHON_MODE=off`, Python missing in PATH, restricted sandbox. `auto` falls back where possible; `require` fails closed. |
@@ -95,6 +97,7 @@ try {
     case "not-found":
       return reply(404, "missing");
     case "symlink":
+    case "device-path":
     case "hardlink":
     case "path-mismatch":
     case "path-alias":

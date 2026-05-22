@@ -439,12 +439,12 @@ if (err instanceof FsSafeError) {
 }
 ```
 
-Current `FsSafeErrorCode` values are `already-exists`, `hardlink`, `helper-failed`, `helper-unavailable`, `invalid-path`, `insecure-permissions`, `not-empty`, `not-file`, `not-found`, `not-owned`, `not-removable`, `outside-workspace`, `path-alias`, `path-mismatch`, `permission-unverified`, `symlink`, `timeout`, `too-large`, and `unsupported-platform`.
+Current `FsSafeErrorCode` values are `already-exists`, `denied-path`, `device-path`, `hardlink`, `helper-failed`, `helper-unavailable`, `invalid-path`, `insecure-permissions`, `not-empty`, `not-file`, `not-found`, `not-owned`, `not-removable`, `outside-workspace`, `path-alias`, `path-mismatch`, `permission-unverified`, `symlink`, `timeout`, `too-large`, and `unsupported-platform`.
 
 ## Safety model
 
 - root-bounded APIs resolve paths against a configured root and reject canonical escapes
-- reads open with `O_NOFOLLOW` where available, then verify fd identity matches the path identity before returning the buffer or handle
+- reads reject known unsafe device paths, open with `O_NOFOLLOW` where available, then verify fd identity matches the path identity before returning the buffer or handle
 - writes use pinned parent-directory helpers and atomic replacement on POSIX, with verified post-write identity
 - `remove`, `mkdir`, `move`, `stat`, `list`, and parent-fd writes use one persistent fd-relative Python helper on POSIX, with Node fallbacks when the helper is disabled or unavailable
 - archive extraction stages into a private directory and merges through the same boundary checks used by direct writes

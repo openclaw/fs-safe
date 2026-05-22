@@ -17,10 +17,11 @@ Regardless of shape, every read goes through the same boundary checks:
 1. Resolve the relative path against the canonical real root.
 2. Reject anything that escapes the root (`outside-workspace`).
 3. Reject `..` segments and absolute inputs (unless via `readAbsolute` with an in-root absolute path).
-4. Open with `O_NOFOLLOW` where available. A symlink in the path triggers `symlink` unless the call's `symlinks` policy is `follow-within-root`.
-5. Stat the open fd and compare to the resolved path's identity (`sameFileIdentity`). A swap mid-call triggers `path-mismatch`.
-6. If `hardlinks: "reject"`, refuse files with `nlink > 1` (`hardlink`).
-7. If `maxBytes` is set, refuse reads larger than the cap (`too-large`).
+4. Reject known unsafe device and process-fd paths before opening (`device-path`).
+5. Open with `O_NOFOLLOW` where available. A symlink in the path triggers `symlink` unless the call's `symlinks` policy is `follow-within-root`.
+6. Stat the open fd and compare to the resolved path's identity (`sameFileIdentity`). A swap mid-call triggers `path-mismatch`.
+7. If `hardlinks: "reject"`, refuse files with `nlink > 1` (`hardlink`).
+8. If `maxBytes` is set, refuse reads larger than the cap (`too-large`).
 
 ## Read shapes
 
@@ -160,6 +161,7 @@ try {
 - **`outside-workspace`** — relative path escaped the root, or `readAbsolute` got an absolute path outside.
 - **`not-found`** — the file is gone.
 - **`not-file`** — you read a directory or a non-regular file (FIFO, socket, …).
+- **`device-path`** — the path targets a known unsafe device or process fd path.
 - **`symlink`** — a path component is a symlink and the policy is `reject`.
 - **`path-mismatch`** — opened fd identity did not match the resolved path. Almost always a TOCTOU swap by something else.
 - **`hardlink`** — `hardlinks: "reject"` saw `nlink > 1`.

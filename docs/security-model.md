@@ -13,6 +13,7 @@ You hand a `root()` boundary to a piece of code that takes caller-controlled rel
 - replaces a path component with a symlink between check and use (TOCTOU)
 - replaces the destination directory with a symlink right before a write
 - creates a hardlink that aliases an out-of-tree inode and asks you to read or replace it
+- asks a read/open primitive to target a known unsafe device or process-fd path
 - triggers a partial write that leaves a half-written file at the destination
 - ships an archive with `..` paths, absolute paths, or symlinks pointing outside the destination
 
@@ -20,7 +21,7 @@ It does **not** defend against:
 
 - a process running with permissions to write anywhere on the filesystem and choosing to ignore the library
 - another process with the same UID racing to mutate the same directory between two separate `fs-safe` calls — the boundary is per-call, not per-session
-- traversal across filesystem boundaries, bind mounts, device files, `/proc`-style virtual filesystems, or any other path your process can normally access from inside the root
+- arbitrary traversal across filesystem boundaries, bind mounts, or virtual filesystems beyond the known unsafe read device paths
 - container escape, TOCTOU between fork and exec of helpers, or kernel-level vulnerabilities
 - semantic content checks: file types, archive payload schemas, signature verification
 
@@ -83,7 +84,7 @@ The library does not advertise different security guarantees per platform — it
 |---|---|
 | Not ambient authority removal | Code that can import `node:fs` can still bypass the handle. Keep caller-controlled path operations behind `root()` by convention, review, and tests. |
 | Absolute paths are escape hatches | APIs that accept or return absolute paths exist for audit, ingest, and advanced composition. Prefer root-relative names in normal application flow. |
-| Not a mount/device boundary | `root()` keeps path traversal inside the directory tree; it does not make device files, bind mounts, or virtual filesystems safe to expose. |
+| Not a mount boundary | `root()` keeps path traversal inside the directory tree and blocks known unsafe read device paths, but it does not make bind mounts or virtual filesystems safe to expose wholesale. |
 | Per-call, not per-session | Another process with the same privileges can still mutate the tree between two separate calls. Use one verb method for the operation you need to make race-resistant. |
 | Hardlink rejection is best-effort | Link-count checks depend on platform metadata. Treat `hardlinks: "reject"` as a tripwire, not an authorization primitive. |
 | Mode bits are not a full policy engine | `replaceFileAtomic` and secret-file helpers set requested modes, but you should still set umask and inspect modes when policy requires it. |

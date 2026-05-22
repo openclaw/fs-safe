@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { isUnsafeDeviceReadPath } from "./device-path.js";
 import { sameFileIdentity as hasSameFileIdentity } from "./file-identity.js";
 
 export type PinnedOpenSyncFailureReason = "path" | "validation" | "io";
@@ -40,6 +41,9 @@ export function openPinnedFileSync(params: {
     (typeof ioFs.constants.O_NOFOLLOW === "number" ? ioFs.constants.O_NOFOLLOW : 0);
   let fd: number | null = null;
   try {
+    if (isUnsafeDeviceReadPath(params.filePath)) {
+      return { ok: false, reason: "validation" };
+    }
     if (params.rejectPathSymlink) {
       const candidateStat = ioFs.lstatSync(params.filePath);
       if (candidateStat.isSymbolicLink()) {
@@ -48,6 +52,9 @@ export function openPinnedFileSync(params: {
     }
 
     const realPath = params.resolvedPath ?? ioFs.realpathSync(params.filePath);
+    if (isUnsafeDeviceReadPath(realPath)) {
+      return { ok: false, reason: "validation" };
+    }
     const preOpenStat = ioFs.lstatSync(realPath);
     if (!isAllowedType(preOpenStat, allowedType)) {
       return { ok: false, reason: "validation" };

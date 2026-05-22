@@ -4,6 +4,7 @@ import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import { assertNoUnsafeDeviceReadPath } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { isWindowsDriveLetterPath, isWindowsNetworkPath } from "./local-file-access.js";
@@ -73,6 +74,7 @@ async function openSecureHandle(options: SecureFileReadOptions): Promise<{
   pathStat: Stats;
   realPath: string;
 }> {
+  assertNoUnsafeDeviceReadPath(options.filePath);
   if (isWindowsNetworkPath(options.filePath, "win32") && !options.trust?.allowNetworkPath) {
     throw new FsSafeError("invalid-path", `${label(options)} must be a local absolute path.`);
   }

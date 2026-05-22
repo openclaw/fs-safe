@@ -148,7 +148,8 @@ The two policy unions you'll see throughout. `"reject"` is conservative; `"follo
 
 ```ts
 type FsSafeErrorCode =
-  | "already-exists" | "denied-path" | "hardlink" | "helper-failed"
+  | "already-exists" | "denied-path" | "device-path" | "hardlink"
+  | "helper-failed"
   | "helper-unavailable" | "insecure-permissions" | "invalid-path"
   | "not-empty" | "not-file" | "not-found" | "not-owned"
   | "not-removable" | "outside-workspace" | "path-alias"

@@ -3,6 +3,7 @@ import fsSync from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { assertNoUnsafeDeviceReadPath } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { isNotFoundPathError } from "./path.js";
@@ -130,6 +131,7 @@ export async function readRegularFile(params: {
   filePath: string;
   maxBytes?: number;
 }): Promise<{ buffer: Buffer; stat: Stats }> {
+  assertNoUnsafeDeviceReadPath(params.filePath);
   const result = await statRegularFile(params.filePath);
   if (result.missing) {
     throw Object.assign(new Error(`File not found: ${params.filePath}`), { code: "ENOENT" });
@@ -227,6 +229,7 @@ export function readRegularFileSync(params: { filePath: string; maxBytes?: numbe
   buffer: Buffer;
   stat: Stats;
 } {
+  assertNoUnsafeDeviceReadPath(params.filePath);
   const result = statRegularFileSync(params.filePath);
   if (result.missing) {
     throw Object.assign(new Error(`File not found: ${params.filePath}`), { code: "ENOENT" });
