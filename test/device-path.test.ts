@@ -49,6 +49,8 @@ describe("unsafe device read paths", () => {
       "NUL",
       "C:\\tmp\\NUL.txt",
       "C:\\tmp\\con",
+      "C:\\tmp\\COM¹.txt",
+      "C:\\tmp\\LPT³",
       "logs\\COM1",
       "\\\\.\\NUL",
       "\\\\?\\GLOBALROOT\\Device\\HarddiskVolumeShadowCopy1",

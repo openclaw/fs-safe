@@ -46,6 +46,9 @@ const WINDOWS_RESERVED_DEVICE_NAMES = new Set([
   "COM7",
   "COM8",
   "COM9",
+  "COM¹",
+  "COM²",
+  "COM³",
   "LPT1",
   "LPT2",
   "LPT3",
@@ -55,6 +58,9 @@ const WINDOWS_RESERVED_DEVICE_NAMES = new Set([
   "LPT7",
   "LPT8",
   "LPT9",
+  "LPT¹",
+  "LPT²",
+  "LPT³",
 ]);
 
 function candidateReadPaths(filePath: string): string[] {
