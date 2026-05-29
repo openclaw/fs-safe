@@ -261,7 +261,8 @@ export async function movePathWithCopyFallback(
     await guardedRename({ from: options.from, to: options.to });
     return;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException | null)?.code !== "EXDEV") {
+    const code = (error as NodeJS.ErrnoException | null)?.code;
+    if (code !== "EXDEV" && code !== "EPERM") {
       throw error;
     }
   }
