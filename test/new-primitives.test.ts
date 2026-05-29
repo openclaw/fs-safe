@@ -845,6 +845,7 @@ describe("atomic file replacement", () => {
   it("preserves an existing destination mode when requested", async () => {
     const filePath = path.join(root, "preserve-mode.txt");
     await fs.writeFile(filePath, "old", { mode: 0o640 });
+    await fs.chmod(filePath, 0o640);
 
     await replaceFileAtomic({
       filePath,

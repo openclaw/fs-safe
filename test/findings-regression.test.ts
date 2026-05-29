@@ -355,23 +355,19 @@ describe("security finding regressions", () => {
     expect((await fsp.readFile(dest)).byteLength).toBe(1024 * 1024);
   });
 
-  it.runIf(process.platform !== "win32")("preserves public directory modes for zip staging parents", async () => {
-    const oldUmask = process.umask(0o022);
-    try {
-      const base = await tempRoot("fs-safe-zip-dir-mode-");
-      const archivePath = path.join(base, "pkg.zip");
-      const destDir = path.join(base, "dest");
-      await fsp.mkdir(destDir);
-      const zip = new JSZip();
-      zip.file("assets/app.js", "console.log('ok');");
-      await fsp.writeFile(archivePath, await zip.generateAsync({ type: "nodebuffer" }));
+  it.runIf(process.platform !== "win32")("preserves default directory modes for zip staging parents", async () => {
+    const expectedDirectoryMode = 0o777 & ~process.umask();
+    const base = await tempRoot("fs-safe-zip-dir-mode-");
+    const archivePath = path.join(base, "pkg.zip");
+    const destDir = path.join(base, "dest");
+    await fsp.mkdir(destDir);
+    const zip = new JSZip();
+    zip.file("assets/app.js", "console.log('ok');");
+    await fsp.writeFile(archivePath, await zip.generateAsync({ type: "nodebuffer" }));
 
-      await extractArchive({ archivePath, destDir, kind: "zip", timeoutMs: 15_000 });
+    await extractArchive({ archivePath, destDir, kind: "zip", timeoutMs: 15_000 });
 
-      expect((await fsp.stat(path.join(destDir, "assets"))).mode & 0o777).toBe(0o755);
-    } finally {
-      process.umask(oldUmask);
-    }
+    expect((await fsp.stat(path.join(destDir, "assets"))).mode & 0o777).toBe(expectedDirectoryMode);
   });
 
   it("rejects durable queue ids that are not safe path segments", async () => {
