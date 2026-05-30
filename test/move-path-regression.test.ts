@@ -2,7 +2,10 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { movePathWithCopyFallback } from "../src/move-path.js";
+import {
+  movePathWithCopyFallback,
+  shouldUseMoveCopyFallbackForRenameError,
+} from "../src/move-path.js";
 
 const tempDirs: string[] = [];
 
@@ -18,6 +21,27 @@ afterEach(async () => {
 });
 
 describe("movePathWithCopyFallback regressions", () => {
+  it("classifies only EXDEV and Windows EPERM as move copy fallbacks", () => {
+    expect(
+      shouldUseMoveCopyFallbackForRenameError(
+        Object.assign(new Error("cross-device"), { code: "EXDEV" }),
+        "darwin",
+      ),
+    ).toBe(true);
+    expect(
+      shouldUseMoveCopyFallbackForRenameError(
+        Object.assign(new Error("windows rename denied"), { code: "EPERM" }),
+        "win32",
+      ),
+    ).toBe(true);
+    expect(
+      shouldUseMoveCopyFallbackForRenameError(
+        Object.assign(new Error("posix permission denied"), { code: "EPERM" }),
+        "darwin",
+      ),
+    ).toBe(false);
+  });
+
   it.runIf(process.platform !== "win32")(
     "does not delete source entries replaced after an EXDEV copy",
     async () => {
@@ -77,7 +101,7 @@ describe("movePathWithCopyFallback regressions", () => {
     },
   );
 
-  it("falls back to copy/remove when rename is denied with EPERM", async () => {
+  it.runIf(process.platform === "win32")("falls back to copy/remove when rename is denied with EPERM", async () => {
     const base = await tempRoot("fs-safe-move-eperm-");
     const source = path.join(base, "source.txt");
     const dest = path.join(base, "dest.txt");

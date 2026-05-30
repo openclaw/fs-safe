@@ -11,6 +11,14 @@ export type MovePathWithCopyFallbackOptions = {
   to: string;
 };
 
+export function shouldUseMoveCopyFallbackForRenameError(
+  error: unknown,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return code === "EXDEV" || (code === "EPERM" && platform === "win32");
+}
+
 type EntryIdentity = {
   ctimeMs: number;
   dev: number;
@@ -261,8 +269,7 @@ export async function movePathWithCopyFallback(
     await guardedRename({ from: options.from, to: options.to });
     return;
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException | null)?.code;
-    if (code !== "EXDEV" && code !== "EPERM") {
+    if (!shouldUseMoveCopyFallbackForRenameError(error)) {
       throw error;
     }
   }
