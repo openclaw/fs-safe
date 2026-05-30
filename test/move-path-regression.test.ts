@@ -17,13 +17,14 @@ async function tempRoot(prefix: string): Promise<string> {
 
 async function withProcessPlatform(platform: NodeJS.Platform, body: () => Promise<void>): Promise<void> {
   const descriptor = Object.getOwnPropertyDescriptor(process, "platform");
-  Object.defineProperty(process, "platform", { value: platform });
+  if (!descriptor) {
+    throw new Error("process.platform descriptor missing");
+  }
+  Object.defineProperty(process, "platform", { ...descriptor, value: platform });
   try {
     await body();
   } finally {
-    if (descriptor) {
-      Object.defineProperty(process, "platform", descriptor);
-    }
+    Object.defineProperty(process, "platform", descriptor);
   }
 }
 
