@@ -285,6 +285,7 @@ export async function movePathWithCopyFallback(
   }
   const targetDir = path.dirname(path.resolve(options.to));
   const staged = path.join(targetDir, `.fs-safe-move-${process.pid}-${randomUUID()}.tmp`);
+  let removeStaged = true;
   try {
     const manifest = await copyEntryWithManifest(options.from, staged, {
       sourceHardlinks: options.sourceHardlinks ?? "allow",
@@ -294,7 +295,16 @@ export async function movePathWithCopyFallback(
       if (cleanupResult === "stale") {
         throw sourceChangedError(options.from);
       }
-      await guardedRename({ from: staged, to: options.to });
+      try {
+        await guardedRename({ from: staged, to: options.to });
+      } catch (error) {
+        try {
+          await guardedRename({ from: staged, to: options.from });
+        } catch {
+          removeStaged = false;
+        }
+        throw error;
+      }
       return;
     }
     await guardedRename({ from: staged, to: options.to });
@@ -303,6 +313,8 @@ export async function movePathWithCopyFallback(
       throw sourceChangedError(options.from);
     }
   } finally {
-    await fs.rm(staged, { recursive: true, force: true }).catch(() => undefined);
+    if (removeStaged) {
+      await fs.rm(staged, { recursive: true, force: true }).catch(() => undefined);
+    }
   }
 }

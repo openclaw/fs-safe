@@ -15,6 +15,18 @@ async function tempRoot(prefix: string): Promise<string> {
   return dir;
 }
 
+async function withProcessPlatform(platform: NodeJS.Platform, body: () => Promise<void>): Promise<void> {
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform");
+  Object.defineProperty(process, "platform", { value: platform });
+  try {
+    await body();
+  } finally {
+    if (descriptor) {
+      Object.defineProperty(process, "platform", descriptor);
+    }
+  }
+}
+
 afterEach(async () => {
   vi.restoreAllMocks();
   await Promise.all(tempDirs.splice(0).map((dir) => fsp.rm(dir, { recursive: true, force: true })));
@@ -120,6 +132,37 @@ describe("movePathWithCopyFallback regressions", () => {
     await expect(fsp.readFile(dest, "utf8")).resolves.toBe("windows lock fallback");
     await expect(fsp.stat(source)).rejects.toMatchObject({ code: "ENOENT" });
   });
+
+  it.runIf(process.platform !== "win32")(
+    "restores the source when a Windows EPERM fallback cannot commit the staged copy",
+    async () => {
+      const base = await tempRoot("fs-safe-move-eperm-dest-denied-");
+      const source = path.join(base, "source.txt");
+      const dest = path.join(base, "dest.txt");
+      await fsp.writeFile(source, "source");
+
+      const realRename = fsp.rename;
+      vi.spyOn(fsp, "rename").mockImplementation(async (from, to) => {
+        if (from === source && to === dest) {
+          throw Object.assign(new Error("initial rename denied"), { code: "EPERM" });
+        }
+        if (String(from).includes(".fs-safe-move-") && to === dest) {
+          throw Object.assign(new Error("destination denied"), { code: "EPERM" });
+        }
+        return await realRename(from, to);
+      });
+
+      await withProcessPlatform("win32", async () => {
+        await expect(movePathWithCopyFallback({ from: source, to: dest })).rejects.toMatchObject({
+          code: "EPERM",
+        });
+      });
+
+      await expect(fsp.readFile(source, "utf8")).resolves.toBe("source");
+      await expect(fsp.stat(dest)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(fsp.readdir(base)).resolves.toEqual(["source.txt"]);
+    },
+  );
 
   it.runIf(process.platform !== "win32")(
     "preserves directory modes during EXDEV move fallback",
