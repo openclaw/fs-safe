@@ -4,6 +4,7 @@
 
 ### Security and Correctness
 
+- Fall back to the existing copy/remove move path when Windows denies directory renames with `EPERM`, preserving skill updates while watched files are locked. (#27; thanks @liuxingwei0601)
 - Sync `root.append` file handles before close and sync the parent directory when append creates a file, preserving append-mode concurrency while improving durability. (#21; thanks @KumarAnandSingh)
 - Reject known unsafe device and process-fd read paths before opening files, including `/dev/zero`, `/dev/random`, `/dev/fd/*`, `/proc/*/fd/*`, and Windows reserved device names.
 

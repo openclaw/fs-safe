@@ -77,6 +77,26 @@ describe("movePathWithCopyFallback regressions", () => {
     },
   );
 
+  it("falls back to copy/remove when rename is denied with EPERM", async () => {
+    const base = await tempRoot("fs-safe-move-eperm-");
+    const source = path.join(base, "source.txt");
+    const dest = path.join(base, "dest.txt");
+    await fsp.writeFile(source, "windows lock fallback");
+
+    const realRename = fsp.rename;
+    vi.spyOn(fsp, "rename").mockImplementation(async (from, to) => {
+      if (from === source && to === dest) {
+        throw Object.assign(new Error("rename denied"), { code: "EPERM" });
+      }
+      return await realRename(from, to);
+    });
+
+    await movePathWithCopyFallback({ from: source, to: dest });
+
+    await expect(fsp.readFile(dest, "utf8")).resolves.toBe("windows lock fallback");
+    await expect(fsp.stat(source)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it.runIf(process.platform !== "win32")(
     "preserves directory modes during EXDEV move fallback",
     async () => {
