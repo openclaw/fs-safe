@@ -78,6 +78,16 @@ function sameDirectoryNode(a: EntryIdentity, b: EntryIdentity): boolean {
   return a.dev === b.dev && a.ino === b.ino;
 }
 
+function sameMovedLeafIdentity(a: EntryIdentity, b: EntryIdentity): boolean {
+  return (
+    a.dev === b.dev &&
+    a.ino === b.ino &&
+    a.mode === b.mode &&
+    a.size === b.size &&
+    a.mtimeMs === b.mtimeMs
+  );
+}
+
 function modeBits(mode: number): number {
   return mode & 0o777;
 }
@@ -304,6 +314,52 @@ async function assertSourceTreeStillMatches(
   }
 }
 
+async function manifestForMovedSourceBackup(
+  sourceBackup: string,
+  manifest: CopiedEntryManifest,
+): Promise<CopiedEntryManifest> {
+  if (manifest.kind === "directory") {
+    return manifest;
+  }
+
+  const movedIdentity = entryIdentity(await fs.lstat(sourceBackup));
+  if (!sameMovedLeafIdentity(manifest, movedIdentity)) {
+    throw sourceChangedError(sourceBackup);
+  }
+  return { ...manifest, ctimeMs: movedIdentity.ctimeMs };
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | null)?.code === "ENOENT";
+}
+
+async function surfaceSourceBackup(sourceBackup: string, originalPath: string): Promise<void> {
+  const surfacedPath = path.join(
+    path.dirname(path.resolve(originalPath)),
+    `${path.basename(originalPath)}.fs-safe-preserved-${process.pid}-${randomUUID()}`,
+  );
+  await guardedRename({ from: sourceBackup, to: surfacedPath }).catch(() => undefined);
+}
+
+async function restoreSourceBackup(sourceBackup: string, originalPath: string): Promise<void> {
+  try {
+    await fs.lstat(originalPath);
+    await surfaceSourceBackup(sourceBackup, originalPath);
+    throw sourceChangedError(originalPath);
+  } catch (error) {
+    if (!isNotFoundError(error)) {
+      throw error;
+    }
+  }
+
+  try {
+    await guardedRename({ from: sourceBackup, to: originalPath });
+  } catch (error) {
+    await surfaceSourceBackup(sourceBackup, originalPath);
+    throw error;
+  }
+}
+
 export async function movePathWithCopyFallback(
   options: MovePathWithCopyFallbackOptions,
 ): Promise<void> {
@@ -330,25 +386,22 @@ export async function movePathWithCopyFallback(
     if (fallbackReason === "windows-rename-denied") {
       await assertSourceTreeStillMatches(options.from, manifest);
       await guardedRename({ from: options.from, to: sourceBackup });
+      const backupManifest = await manifestForMovedSourceBackup(sourceBackup, manifest);
       try {
         await guardedRename({ from: staged, to: options.to });
       } catch (error) {
-        try {
-          await guardedRename({ from: sourceBackup, to: options.from });
-        } catch {
-          // Keep the source backup in place rather than discarding data when
-          // destination-side rename failures race with restore.
-        }
+        await restoreSourceBackup(sourceBackup, options.from).catch(() => undefined);
         throw error;
       }
-      const cleanupResult = await cleanupCopiedEntry(sourceBackup, manifest);
+      let cleanupResult: CleanupCopiedEntryResult;
+      try {
+        cleanupResult = await cleanupCopiedEntry(sourceBackup, backupManifest);
+      } catch (error) {
+        await restoreSourceBackup(sourceBackup, options.from).catch(() => undefined);
+        throw error;
+      }
       if (cleanupResult === "stale") {
-        try {
-          await guardedRename({ from: sourceBackup, to: options.from });
-        } catch {
-          // Preserve the backup; the caller gets ESTALE and no copied data is
-          // deleted without either the destination or backup retaining it.
-        }
+        await restoreSourceBackup(sourceBackup, options.from).catch(() => undefined);
         throw sourceChangedError(options.from);
       }
       return;

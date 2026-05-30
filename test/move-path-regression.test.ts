@@ -165,6 +165,76 @@ describe("movePathWithCopyFallback regressions", () => {
   );
 
   it.runIf(process.platform !== "win32")(
+    "does not clobber a source recreated before Windows EPERM restore",
+    async () => {
+      const base = await tempRoot("fs-safe-move-eperm-recreated-source-");
+      const source = path.join(base, "source.txt");
+      const dest = path.join(base, "dest.txt");
+      await fsp.writeFile(source, "original");
+
+      const realRename = fsp.rename;
+      vi.spyOn(fsp, "rename").mockImplementation(async (from, to) => {
+        if (from === source && to === dest) {
+          throw Object.assign(new Error("initial rename denied"), { code: "EPERM" });
+        }
+        if (String(from).includes(".fs-safe-move-") && to === dest) {
+          await fsp.writeFile(source, "new source");
+          throw Object.assign(new Error("destination denied"), { code: "EPERM" });
+        }
+        return await realRename(from, to);
+      });
+
+      await withProcessPlatform("win32", async () => {
+        await expect(movePathWithCopyFallback({ from: source, to: dest })).rejects.toMatchObject({
+          code: "EPERM",
+        });
+      });
+
+      await expect(fsp.readFile(source, "utf8")).resolves.toBe("new source");
+      await expect(fsp.stat(dest)).rejects.toMatchObject({ code: "ENOENT" });
+      const preserved = (await fsp.readdir(base)).filter((name) =>
+        name.startsWith("source.txt.fs-safe-preserved-"),
+      );
+      expect(preserved).toHaveLength(1);
+      await expect(fsp.readFile(path.join(base, preserved[0]), "utf8")).resolves.toBe("original");
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "restores the source when Windows EPERM backup cleanup fails",
+    async () => {
+      const base = await tempRoot("fs-safe-move-eperm-cleanup-denied-");
+      const source = path.join(base, "source.txt");
+      const dest = path.join(base, "dest.txt");
+      await fsp.writeFile(source, "source");
+
+      const realRename = fsp.rename;
+      vi.spyOn(fsp, "rename").mockImplementation(async (from, to) => {
+        if (from === source && to === dest) {
+          throw Object.assign(new Error("initial rename denied"), { code: "EPERM" });
+        }
+        return await realRename(from, to);
+      });
+      const realUnlink = fsp.unlink;
+      vi.spyOn(fsp, "unlink").mockImplementation(async (target) => {
+        if (String(target).includes(".fs-safe-move-source-")) {
+          throw Object.assign(new Error("cleanup denied"), { code: "EBUSY" });
+        }
+        return await realUnlink(target);
+      });
+
+      await withProcessPlatform("win32", async () => {
+        await expect(movePathWithCopyFallback({ from: source, to: dest })).rejects.toMatchObject({
+          code: "EBUSY",
+        });
+      });
+
+      await expect(fsp.readFile(source, "utf8")).resolves.toBe("source");
+      await expect(fsp.readFile(dest, "utf8")).resolves.toBe("source");
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
     "preserves late source children during Windows EPERM fallback cleanup",
     async () => {
       const base = await tempRoot("fs-safe-move-eperm-late-child-");
