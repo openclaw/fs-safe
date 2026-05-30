@@ -11,12 +11,20 @@ export type MovePathWithCopyFallbackOptions = {
   to: string;
 };
 
-export function shouldUseMoveCopyFallbackForRenameError(
+type MoveCopyFallbackReason = "cross-device" | "windows-rename-denied";
+
+export function moveCopyFallbackReasonForRenameError(
   error: unknown,
   platform: NodeJS.Platform = process.platform,
-): boolean {
+): MoveCopyFallbackReason | undefined {
   const code = (error as NodeJS.ErrnoException | null)?.code;
-  return code === "EXDEV" || (code === "EPERM" && platform === "win32");
+  if (code === "EXDEV") {
+    return "cross-device";
+  }
+  if (code === "EPERM" && platform === "win32") {
+    return "windows-rename-denied";
+  }
+  return undefined;
 }
 
 type EntryIdentity = {
@@ -265,11 +273,13 @@ async function cleanupCopiedEntry(
 export async function movePathWithCopyFallback(
   options: MovePathWithCopyFallbackOptions,
 ): Promise<void> {
+  let fallbackReason: MoveCopyFallbackReason | undefined;
   try {
     await guardedRename({ from: options.from, to: options.to });
     return;
   } catch (error) {
-    if (!shouldUseMoveCopyFallbackForRenameError(error)) {
+    fallbackReason = moveCopyFallbackReasonForRenameError(error);
+    if (!fallbackReason) {
       throw error;
     }
   }
@@ -279,6 +289,14 @@ export async function movePathWithCopyFallback(
     const manifest = await copyEntryWithManifest(options.from, staged, {
       sourceHardlinks: options.sourceHardlinks ?? "allow",
     });
+    if (fallbackReason === "windows-rename-denied") {
+      const cleanupResult = await cleanupCopiedEntry(options.from, manifest);
+      if (cleanupResult === "stale") {
+        throw sourceChangedError(options.from);
+      }
+      await guardedRename({ from: staged, to: options.to });
+      return;
+    }
     await guardedRename({ from: staged, to: options.to });
     const cleanupResult = await cleanupCopiedEntry(options.from, manifest);
     if (cleanupResult === "stale") {

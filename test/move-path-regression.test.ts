@@ -3,8 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  moveCopyFallbackReasonForRenameError,
   movePathWithCopyFallback,
-  shouldUseMoveCopyFallbackForRenameError,
 } from "../src/move-path.js";
 
 const tempDirs: string[] = [];
@@ -23,23 +23,23 @@ afterEach(async () => {
 describe("movePathWithCopyFallback regressions", () => {
   it("classifies only EXDEV and Windows EPERM as move copy fallbacks", () => {
     expect(
-      shouldUseMoveCopyFallbackForRenameError(
+      moveCopyFallbackReasonForRenameError(
         Object.assign(new Error("cross-device"), { code: "EXDEV" }),
         "darwin",
       ),
-    ).toBe(true);
+    ).toBe("cross-device");
     expect(
-      shouldUseMoveCopyFallbackForRenameError(
+      moveCopyFallbackReasonForRenameError(
         Object.assign(new Error("windows rename denied"), { code: "EPERM" }),
         "win32",
       ),
-    ).toBe(true);
+    ).toBe("windows-rename-denied");
     expect(
-      shouldUseMoveCopyFallbackForRenameError(
+      moveCopyFallbackReasonForRenameError(
         Object.assign(new Error("posix permission denied"), { code: "EPERM" }),
         "darwin",
       ),
-    ).toBe(false);
+    ).toBeUndefined();
   });
 
   it.runIf(process.platform !== "win32")(
