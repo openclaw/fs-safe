@@ -165,6 +165,40 @@ describe("movePathWithCopyFallback regressions", () => {
   );
 
   it.runIf(process.platform !== "win32")(
+    "preserves late source children during Windows EPERM fallback cleanup",
+    async () => {
+      const base = await tempRoot("fs-safe-move-eperm-late-child-");
+      const source = path.join(base, "source-dir");
+      const dest = path.join(base, "dest-dir");
+      await fsp.mkdir(source);
+      await fsp.writeFile(path.join(source, "copied.txt"), "copied");
+
+      const realRename = fsp.rename;
+      vi.spyOn(fsp, "rename").mockImplementation(async (from, to) => {
+        if (from === source && to === dest) {
+          throw Object.assign(new Error("initial rename denied"), { code: "EPERM" });
+        }
+        if (from === source && String(to).includes(".fs-safe-move-source-")) {
+          await fsp.writeFile(path.join(source, "late.txt"), "late");
+        }
+        return await realRename(from, to);
+      });
+
+      await withProcessPlatform("win32", async () => {
+        await expect(movePathWithCopyFallback({ from: source, to: dest })).rejects.toMatchObject({
+          code: "ESTALE",
+        });
+      });
+
+      await expect(fsp.readFile(path.join(dest, "copied.txt"), "utf8")).resolves.toBe("copied");
+      await expect(fsp.stat(path.join(source, "copied.txt"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(fsp.readFile(path.join(source, "late.txt"), "utf8")).resolves.toBe("late");
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
     "preserves directory modes during EXDEV move fallback",
     async () => {
       const base = await tempRoot("fs-safe-move-exdev-dir-mode-");

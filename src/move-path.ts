@@ -270,6 +270,40 @@ async function cleanupCopiedEntry(
   return "removed";
 }
 
+async function assertSourceTreeStillMatches(
+  sourcePath: string,
+  manifest: CopiedEntryManifest,
+): Promise<void> {
+  let currentStat: Awaited<ReturnType<typeof fs.lstat>>;
+  try {
+    currentStat = await fs.lstat(sourcePath);
+  } catch {
+    throw sourceChangedError(sourcePath);
+  }
+
+  if (manifest.kind === "directory") {
+    if (!currentStat.isDirectory() || !sameDirectoryNode(manifest, entryIdentity(currentStat))) {
+      throw sourceChangedError(sourcePath);
+    }
+    const expectedNames = new Set(manifest.children.map((child) => child.name));
+    const actualNames = await fs.readdir(sourcePath);
+    if (
+      actualNames.length !== expectedNames.size ||
+      actualNames.some((name) => !expectedNames.has(name))
+    ) {
+      throw sourceChangedError(sourcePath);
+    }
+    for (const child of manifest.children) {
+      await assertSourceTreeStillMatches(path.join(sourcePath, child.name), child.manifest);
+    }
+    return;
+  }
+
+  if (!sameIdentity(manifest, entryIdentity(currentStat))) {
+    throw sourceChangedError(sourcePath);
+  }
+}
+
 export async function movePathWithCopyFallback(
   options: MovePathWithCopyFallbackOptions,
 ): Promise<void> {
@@ -285,25 +319,37 @@ export async function movePathWithCopyFallback(
   }
   const targetDir = path.dirname(path.resolve(options.to));
   const staged = path.join(targetDir, `.fs-safe-move-${process.pid}-${randomUUID()}.tmp`);
-  let removeStaged = true;
+  const sourceBackup = path.join(
+    path.dirname(path.resolve(options.from)),
+    `.fs-safe-move-source-${process.pid}-${randomUUID()}.tmp`,
+  );
   try {
     const manifest = await copyEntryWithManifest(options.from, staged, {
       sourceHardlinks: options.sourceHardlinks ?? "allow",
     });
     if (fallbackReason === "windows-rename-denied") {
-      const cleanupResult = await cleanupCopiedEntry(options.from, manifest);
-      if (cleanupResult === "stale") {
-        throw sourceChangedError(options.from);
-      }
+      await assertSourceTreeStillMatches(options.from, manifest);
+      await guardedRename({ from: options.from, to: sourceBackup });
       try {
         await guardedRename({ from: staged, to: options.to });
       } catch (error) {
         try {
-          await guardedRename({ from: staged, to: options.from });
+          await guardedRename({ from: sourceBackup, to: options.from });
         } catch {
-          removeStaged = false;
+          // Keep the source backup in place rather than discarding data when
+          // destination-side rename failures race with restore.
         }
         throw error;
+      }
+      const cleanupResult = await cleanupCopiedEntry(sourceBackup, manifest);
+      if (cleanupResult === "stale") {
+        try {
+          await guardedRename({ from: sourceBackup, to: options.from });
+        } catch {
+          // Preserve the backup; the caller gets ESTALE and no copied data is
+          // deleted without either the destination or backup retaining it.
+        }
+        throw sourceChangedError(options.from);
       }
       return;
     }
@@ -313,8 +359,6 @@ export async function movePathWithCopyFallback(
       throw sourceChangedError(options.from);
     }
   } finally {
-    if (removeStaged) {
-      await fs.rm(staged, { recursive: true, force: true }).catch(() => undefined);
-    }
+    await fs.rm(staged, { recursive: true, force: true }).catch(() => undefined);
   }
 }
