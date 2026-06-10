@@ -261,7 +261,11 @@ export async function movePathWithCopyFallback(
     await guardedRename({ from: options.from, to: options.to });
     return;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException | null)?.code !== "EXDEV") {
+    const code = (error as NodeJS.ErrnoException | null)?.code;
+    // EXDEV = cross-device move (same filesystem copy fallback)
+    // EPERM/EEXIST = permission denied or file locked (Windows common)
+    // All three should trigger copy fallback instead of failing.
+    if (code !== "EXDEV" && code !== "EPERM" && code !== "EEXIST") {
       throw error;
     }
   }

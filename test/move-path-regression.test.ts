@@ -176,4 +176,48 @@ describe("movePathWithCopyFallback regressions", () => {
       await expect(fsp.stat(dest)).rejects.toMatchObject({ code: "ENOENT" });
     },
   );
+
+  it(
+    "falls back to copy on EPERM (Windows file lock)",
+    async () => {
+      const base = await tempRoot("fs-safe-move-eperm-");
+      const source = path.join(base, "source.txt");
+      const dest = path.join(base, "dest.txt");
+      await fsp.writeFile(source, "hello eperm");
+      const realRename = fsp.rename;
+      vi.spyOn(fsp, "rename").mockImplementation(async (from, to) => {
+        if (from === source && to === dest) {
+          throw Object.assign(new Error("EPERM: operation not permitted"), { code: "EPERM" });
+        }
+        return await realRename(from, to);
+      });
+
+      await movePathWithCopyFallback({ from: source, to: dest });
+
+      await expect(fsp.readFile(dest, "utf8")).resolves.toBe("hello eperm");
+      // Source is cleaned up after successful copy fallback
+      await expect(fsp.stat(source)).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
+
+  it(
+    "falls back to copy on EEXIST (destination locked)",
+    async () => {
+      const base = await tempRoot("fs-safe-move-eexist-");
+      const source = path.join(base, "source.txt");
+      const dest = path.join(base, "dest.txt");
+      await fsp.writeFile(source, "hello eexist");
+      const realRename = fsp.rename;
+      vi.spyOn(fsp, "rename").mockImplementation(async (from, to) => {
+        if (from === source && to === dest) {
+          throw Object.assign(new Error("EEXIST: file already exists"), { code: "EEXIST" });
+        }
+        return await realRename(from, to);
+      });
+
+      await movePathWithCopyFallback({ from: source, to: dest });
+
+      await expect(fsp.readFile(dest, "utf8")).resolves.toBe("hello eexist");
+    },
+  );
 });
