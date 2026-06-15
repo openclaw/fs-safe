@@ -25,6 +25,7 @@ type WalkDirectoryResult = {
   entries: WalkDirectoryEntry[];
   scannedEntryCount: number;
   truncated: boolean;
+  failedDirs: WalkDirectoryFailure[];
 };
 
 type WalkDirectoryEntry = {
@@ -35,9 +36,18 @@ type WalkDirectoryEntry = {
   kind: "file" | "directory" | "symlink" | "other";
   dirent: import("node:fs").Dirent;
 };
+
+type WalkDirectoryFailure = {
+  path: string;
+  relativePath: string;
+  depth: number;
+  error: unknown;
+};
 ```
 
 `depth` starts at `1` for direct children of `rootDir`. `relativePath` is always relative to the supplied root. `scannedEntryCount` counts directory entries examined, including entries filtered out by `include`.
+
+`failedDirs` lists every directory whose `realpath`/`readdir` threw, so its contents are absent from `entries`. `error` is the thrown value (a `NodeJS.ErrnoException` at runtime), so callers can distinguish a benign missing-directory race (`ENOENT`) from a real read failure (`EACCES`, `EIO`, `ESTALE`, …). The walk-root entry has an empty `relativePath`. Failures resolving a symlink's target kind are not reported here.
 
 ## Options
 
@@ -55,7 +65,7 @@ type WalkDirectoryOptions = {
 
 `include` controls which entries are returned. `descend` controls which directory entries are traversed. A skipped directory can still be returned if `include` accepts it.
 
-Unreadable directories are skipped. This makes the helper suitable for best-effort inventories and pruning jobs; use a stricter root-bounded operation when every entry must be accounted for.
+Unreadable directories are skipped rather than throwing, but every skipped directory is recorded in `failedDirs`. This keeps the helper suitable for best-effort inventories while letting pruning jobs tell an incomplete scan from an empty one: a destructive reconcile that deletes state for paths missing from `entries` must first confirm `failedDirs` holds no real read failures, or a transient `EIO`/`EACCES` blip would be mistaken for mass deletion. Use a stricter root-bounded operation when every entry must be accounted for.
 
 ## See also
 

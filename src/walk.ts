@@ -22,10 +22,25 @@ export type WalkDirectoryOptions = {
   descend?: (entry: WalkDirectoryEntry) => boolean;
 };
 
+export type WalkDirectoryFailure = {
+  path: string;
+  relativePath: string;
+  depth: number;
+  error: unknown;
+};
+
 export type WalkDirectoryResult = {
   entries: WalkDirectoryEntry[];
   scannedEntryCount: number;
   truncated: boolean;
+  // Directories the walk could not enumerate because realpath/readdir threw,
+  // so their contents are absent from `entries`. `error` is the thrown value
+  // (a NodeJS.ErrnoException at runtime). A non-empty failedDirs means the
+  // listing is incomplete, not authoritative: callers reconciling destructive
+  // state from `entries` must skip (after filtering benign missing-dir races
+  // via the error code) rather than treat unseen paths as deleted. Failures
+  // resolving a symlink's target kind are not recorded here.
+  failedDirs: WalkDirectoryFailure[];
 };
 
 function kindForDirent(dirent: fsSync.Dirent): WalkEntryKind {
@@ -56,6 +71,16 @@ function buildEntry(params: {
     kind: params.kind ?? kindForDirent(params.dirent),
     dirent: params.dirent,
   };
+}
+
+function recordFailedDir(
+  result: WalkDirectoryResult,
+  root: string,
+  dir: string,
+  depth: number,
+  error: unknown,
+): void {
+  result.failedDirs.push({ path: dir, relativePath: path.relative(root, dir), depth, error });
 }
 
 function resolveSyncKind(fullPath: string, dirent: fsSync.Dirent, symlinks: WalkSymlinkPolicy): WalkEntryKind | null {
@@ -94,7 +119,12 @@ export function walkDirectorySync(
 ): WalkDirectoryResult {
   const root = path.resolve(rootDir);
   const symlinks = options.symlinks ?? "skip";
-  const result: WalkDirectoryResult = { entries: [], scannedEntryCount: 0, truncated: false };
+  const result: WalkDirectoryResult = {
+    entries: [],
+    scannedEntryCount: 0,
+    truncated: false,
+    failedDirs: [],
+  };
   const visitedDirs = new Set<string>();
 
   function visit(dir: string, depth: number): void {
@@ -102,7 +132,8 @@ export function walkDirectorySync(
     let realDir: string;
     try {
       realDir = fsSync.realpathSync(dir);
-    } catch {
+    } catch (error) {
+      recordFailedDir(result, root, dir, depth, error);
       return;
     }
     if (visitedDirs.has(realDir)) return;
@@ -111,7 +142,8 @@ export function walkDirectorySync(
     let entries: fsSync.Dirent[];
     try {
       entries = fsSync.readdirSync(dir, { withFileTypes: true });
-    } catch {
+    } catch (error) {
+      recordFailedDir(result, root, dir, depth, error);
       return;
     }
     for (const dirent of entries) {
@@ -148,7 +180,12 @@ export async function walkDirectory(
 ): Promise<WalkDirectoryResult> {
   const root = path.resolve(rootDir);
   const symlinks = options.symlinks ?? "skip";
-  const result: WalkDirectoryResult = { entries: [], scannedEntryCount: 0, truncated: false };
+  const result: WalkDirectoryResult = {
+    entries: [],
+    scannedEntryCount: 0,
+    truncated: false,
+    failedDirs: [],
+  };
   const visitedDirs = new Set<string>();
 
   async function visit(dir: string, depth: number): Promise<void> {
@@ -156,7 +193,8 @@ export async function walkDirectory(
     let realDir: string;
     try {
       realDir = await fs.realpath(dir);
-    } catch {
+    } catch (error) {
+      recordFailedDir(result, root, dir, depth, error);
       return;
     }
     if (visitedDirs.has(realDir)) return;
@@ -165,7 +203,8 @@ export async function walkDirectory(
     let entries: fsSync.Dirent[];
     try {
       entries = await fs.readdir(dir, { withFileTypes: true });
-    } catch {
+    } catch (error) {
+      recordFailedDir(result, root, dir, depth, error);
       return;
     }
     for (const dirent of entries) {

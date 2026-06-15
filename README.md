@@ -371,7 +371,7 @@ for (const file of scan.entries) {
 }
 ```
 
-Check `scan.truncated` before treating the result as complete.
+Check `scan.truncated` before treating the result as complete, and `scan.failedDirs` to tell an incomplete scan (a directory that could not be read) from an empty one before pruning state from the listing.
 
 ## Archive extraction
 
