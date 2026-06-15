@@ -47,7 +47,7 @@ type WalkDirectoryFailure = {
 
 `depth` starts at `1` for direct children of `rootDir`. `relativePath` is always relative to the supplied root. `scannedEntryCount` counts directory entries examined, including entries filtered out by `include`.
 
-`failedDirs` lists every directory whose `realpath`/`readdir` threw, so its contents are absent from `entries`. `error` is the thrown value (a `NodeJS.ErrnoException` at runtime), so callers can distinguish a benign missing-directory race (`ENOENT`) from a real read failure (`EACCES`, `EIO`, `ESTALE`, …). The walk-root entry has an empty `relativePath`. Failures resolving a symlink's target kind are not reported here.
+`failedDirs` lists every directory whose `realpath`/`readdir` threw, so its contents are absent from `entries`. `error` is the thrown value (a `NodeJS.ErrnoException` at runtime), so callers can distinguish a benign missing-directory race (`ENOENT`) from a real read failure (`EACCES`, `EIO`, `ESTALE`, …). The walk-root failure has an empty `relativePath` and `depth: 0`. Failures resolving a symlink's target kind are not reported here.
 
 ## Options
 

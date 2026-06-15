@@ -80,7 +80,13 @@ function recordFailedDir(
   depth: number,
   error: unknown,
 ): void {
-  result.failedDirs.push({ path: dir, relativePath: path.relative(root, dir), depth, error });
+  const relativePath = path.relative(root, dir);
+  result.failedDirs.push({
+    path: dir,
+    relativePath,
+    depth: relativePath === "" ? 0 : depth - 1,
+    error,
+  });
 }
 
 function resolveSyncKind(fullPath: string, dirent: fsSync.Dirent, symlinks: WalkSymlinkPolicy): WalkEntryKind | null {

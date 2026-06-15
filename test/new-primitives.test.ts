@@ -555,6 +555,7 @@ describe("directory walking", () => {
         );
         // ...but the failure is reported, not silently swallowed.
         expect(scan.failedDirs.map((failure) => failure.relativePath)).toEqual(["blocked"]);
+        expect(scan.failedDirs[0]).toMatchObject({ path: blocked, depth: 1 });
         expect((scan.failedDirs[0]?.error as NodeJS.ErrnoException).code).toBe("EACCES");
       } finally {
         await fs.chmod(blocked, 0o755);
@@ -574,6 +575,7 @@ describe("directory walking", () => {
 
         expect(scan.entries).toEqual([]);
         expect(scan.failedDirs.map((failure) => failure.relativePath)).toEqual([""]);
+        expect(scan.failedDirs[0]).toMatchObject({ path: scanRoot, depth: 0 });
         expect((scan.failedDirs[0]?.error as NodeJS.ErrnoException).code).toBe("EACCES");
       } finally {
         await fs.chmod(scanRoot, 0o755);
@@ -596,6 +598,29 @@ describe("directory walking", () => {
           path.join("readable", "ok.txt"),
         );
         expect(scan.failedDirs.map((failure) => failure.relativePath)).toEqual(["blocked"]);
+        expect(scan.failedDirs[0]).toMatchObject({ path: blocked, depth: 1 });
+        expect((scan.failedDirs[0]?.error as NodeJS.ErrnoException).code).toBe("EACCES");
+      } finally {
+        await fs.chmod(blocked, 0o755);
+      }
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "reports nested failed directory depth relative to the walk root",
+    async () => {
+      const parent = path.join(root, "parent");
+      const blocked = path.join(parent, "blocked");
+      await fs.mkdir(blocked, { recursive: true });
+      await fs.writeFile(path.join(blocked, "hidden.txt"), "secret");
+      await fs.chmod(blocked, 0o000);
+      try {
+        const scan = await walkDirectory(root);
+
+        expect(scan.failedDirs.map((failure) => failure.relativePath)).toEqual([
+          path.join("parent", "blocked"),
+        ]);
+        expect(scan.failedDirs[0]).toMatchObject({ path: blocked, depth: 2 });
         expect((scan.failedDirs[0]?.error as NodeJS.ErrnoException).code).toBe("EACCES");
       } finally {
         await fs.chmod(blocked, 0o755);
