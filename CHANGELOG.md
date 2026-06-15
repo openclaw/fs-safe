@@ -2,10 +2,6 @@
 
 ## Unreleased
 
-### Features
-
-- Add `WalkDirectoryResult.failedDirs` to `walkDirectory`/`walkDirectorySync`, recording every directory whose `realpath`/`readdir` threw so destructive callers can tell an incomplete scan from an empty directory instead of treating a transient `readdir` failure as mass deletion. (#29; thanks @amknight)
-
 ### Compatibility
 
 - Require Node.js 22 or newer for the npm package and docs, matching the maintained CI matrix.

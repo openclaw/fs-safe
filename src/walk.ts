@@ -33,13 +33,12 @@ export type WalkDirectoryResult = {
   entries: WalkDirectoryEntry[];
   scannedEntryCount: number;
   truncated: boolean;
-  // Directories the walk could not enumerate because realpath/readdir threw,
-  // so their contents are absent from `entries`. `error` is the thrown value
-  // (a NodeJS.ErrnoException at runtime). A non-empty failedDirs means the
-  // listing is incomplete, not authoritative: callers reconciling destructive
-  // state from `entries` must skip (after filtering benign missing-dir races
-  // via the error code) rather than treat unseen paths as deleted. Failures
-  // resolving a symlink's target kind are not recorded here.
+  // Always present on values returned by the walkers. Optional so existing
+  // callers can continue constructing the legacy result shape.
+  failedDirs?: WalkDirectoryFailure[];
+};
+
+type WalkDirectoryResultWithFailures = WalkDirectoryResult & {
   failedDirs: WalkDirectoryFailure[];
 };
 
@@ -74,7 +73,7 @@ function buildEntry(params: {
 }
 
 function recordFailedDir(
-  result: WalkDirectoryResult,
+  result: WalkDirectoryResultWithFailures,
   root: string,
   dir: string,
   depth: number,
@@ -122,10 +121,10 @@ async function resolveAsyncKind(fullPath: string, dirent: fsSync.Dirent, symlink
 export function walkDirectorySync(
   rootDir: string,
   options: WalkDirectoryOptions = {},
-): WalkDirectoryResult {
+): WalkDirectoryResultWithFailures {
   const root = path.resolve(rootDir);
   const symlinks = options.symlinks ?? "skip";
-  const result: WalkDirectoryResult = {
+  const result: WalkDirectoryResultWithFailures = {
     entries: [],
     scannedEntryCount: 0,
     truncated: false,
@@ -183,10 +182,10 @@ export function walkDirectorySync(
 export async function walkDirectory(
   rootDir: string,
   options: WalkDirectoryOptions = {},
-): Promise<WalkDirectoryResult> {
+): Promise<WalkDirectoryResultWithFailures> {
   const root = path.resolve(rootDir);
   const symlinks = options.symlinks ?? "skip";
-  const result: WalkDirectoryResult = {
+  const result: WalkDirectoryResultWithFailures = {
     entries: [],
     scannedEntryCount: 0,
     truncated: false,

@@ -42,7 +42,11 @@ import {
   summarizeWindowsAcl,
 } from "../src/permissions.js";
 import { readSecureFile } from "../src/secure-file.js";
-import { walkDirectory, walkDirectorySync } from "../src/walk.js";
+import {
+  walkDirectory,
+  walkDirectorySync,
+  type WalkDirectoryResult,
+} from "../src/walk.js";
 
 let root: string;
 
@@ -490,6 +494,16 @@ describe("secure file reads", () => {
 });
 
 describe("directory walking", () => {
+  it("keeps the legacy result shape source-compatible", () => {
+    const result: WalkDirectoryResult = {
+      entries: [],
+      scannedEntryCount: 0,
+      truncated: false,
+    };
+
+    expect(result.failedDirs).toBeUndefined();
+  });
+
   it("walks bounded trees and reports truncation", async () => {
     await fs.mkdir(path.join(root, "a", "b"), { recursive: true });
     await fs.writeFile(path.join(root, "a", "one.txt"), "1");
