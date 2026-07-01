@@ -192,7 +192,7 @@ await fs.write("data/blob.bin", buffer, { mkdir: false }); // override
 | `not-found` | Parent does not exist and `mkdir` is false. |
 | `not-empty` | `remove()` on a non-empty directory. |
 | `not-removable` | `remove()` could not unlink/rmdir (typically permissions or device busy). |
-| `path-mismatch` | Post-write fd identity check did not match. Almost always a parallel writer. |
+| `path-mismatch` | Post-write fd identity check did not match. Almost always a parallel writer, or a FUSE mount with unstable inode numbers — see `renameIdentity` below. |
 | `too-large` | `copyIn()` source exceeded `maxBytes`. |
 | `symlink` | A path component is a symlink and policy is `reject`. |
 | `hardlink` | `sourceHardlinks: "reject"` saw `nlink > 1`. |
@@ -231,6 +231,24 @@ try {
 }
 await fs.append(today, line);
 ```
+
+## FUSE mounts and unstable inode numbers
+
+Some FUSE mounts — rclone is a confirmed example — assign a fresh inode number to a path on every lookup that follows a rename, even within a single process with zero concurrency. This makes the default post-rename `(dev, ino)` identity check always fail with `path-mismatch`, regardless of whether a race actually occurred.
+
+Set `renameIdentity: "verify-content-with-lock"` on the root (or per call) to use a SHA-256 content comparison under a cooperative sidecar lock instead:
+
+```ts
+const fs = await root("/mnt/rclone-workspace", {
+  renameIdentity: "verify-content-with-lock",
+});
+
+await fs.write("state.json", body); // succeeds on rclone FUSE
+```
+
+**How it works.** A write first runs with the default strict check. If that check detects a `path-mismatch` (genuine race or FUSE inode churn), it acquires an exclusive sidecar lock at `{targetPath}.lock` and retries the full write under that lock. The retry accepts the destination if the SHA-256 of the re-read bytes matches the SHA-256 of the bytes written. The lock is always released before the call returns.
+
+**Security note.** `verify-content-with-lock` provides two guarantees: (1) the bytes that reached the destination match the bytes the caller asked to write, and (2) no *cooperating* writer interleaved during the locked retry. It does **not** prove that the process that called `write()` is the exclusive owner of the resulting file object on disk. A same-UID process that deliberately bypasses the sidecar lock can still interleave — this is the same residual risk as any advisory lock and is explicitly outside fs-safe's documented threat model. Do not use this option on directories that are writable by untrusted same-UID processes.
 
 ## See also
 

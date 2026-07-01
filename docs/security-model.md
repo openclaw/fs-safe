@@ -90,6 +90,7 @@ The library does not advertise different security guarantees per platform — it
 | Mode bits are not a full policy engine | `replaceFileAtomic` and secret-file helpers set requested modes, but you should still set umask and inspect modes when policy requires it. |
 | Archive extraction is path safety, not content safety | Unsafe entry paths and links are rejected; malicious payload contents remain your application layer's problem. |
 | Helper failures degrade fd-relative hardening | `helper-unavailable` falls back in `auto` mode and fails closed in `require` mode. Atomicity and identity checks remain, but parent-directory swaps between validation and mutation are less tightly pinned without the helper. |
+| FUSE mounts with unstable inode numbers | Some FUSE mounts (rclone is a confirmed example) assign a fresh inode number to a path on every lookup after a rename, making the post-rename `(dev, ino)` identity check always fail. Set `renameIdentity: "verify-content-with-lock"` on the root to use a SHA-256 content comparison under a cooperative sidecar lock instead. This verifies that the correct bytes reached the destination and that no cooperating writer interleaved, but it does not prove that the process owns the resulting file object — a same-UID process that ignores the lock could still interleave. See [Writing](writing.md) for details. |
 
 ## Recommended deployment shape
 

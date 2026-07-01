@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 export type FileIdentityStat = {
   dev: number | bigint;
   ino: number | bigint;
@@ -9,6 +11,11 @@ function isZero(value: number | bigint): boolean {
 
 function sameStatValue(left: number | bigint, right: number | bigint): boolean {
   return typeof left === typeof right ? left === right : BigInt(left) === BigInt(right);
+}
+
+export function sha256Hex(data: string | Buffer, encoding?: BufferEncoding): string {
+  const buffer = typeof data === "string" ? Buffer.from(data, encoding ?? "utf8") : data;
+  return createHash("sha256").update(buffer).digest("hex");
 }
 
 export function sameFileIdentity(

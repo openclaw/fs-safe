@@ -8,7 +8,7 @@ import { createAsyncDirectoryGuard, createNearestExistingDirectoryGuard } from "
 import { FsSafeError } from "./errors.js";
 import { syncDirectoryBestEffort } from "./fsync.js";
 import type { FileIdentityStat } from "./file-identity.js";
-import { sameFileIdentity } from "./file-identity.js";
+import { sameFileIdentity, sha256Hex } from "./file-identity.js";
 import { withAsyncDirectoryGuards } from "./guarded-mutation.js";
 import { mkdirPathComponentsWithGuards } from "./guarded-mkdir.js";
 import { canFallbackFromPythonError, getFsSafePythonConfig } from "./pinned-python-config.js";
@@ -97,6 +97,8 @@ async function inputToBase64(
   return Buffer.concat(chunks, bytes).toString("base64");
 }
 
+type RenameIdentityMismatchPolicy = "throw" | "verify-content";
+
 export async function runPinnedWriteHelper(params: {
   rootPath: string;
   relativeParentPath: string;
@@ -107,6 +109,7 @@ export async function runPinnedWriteHelper(params: {
   maxBytes?: number;
   input: PinnedWriteInput;
   rootIdentity?: FileIdentityStat;
+  onRenameIdentityMismatch?: RenameIdentityMismatchPolicy;
 }): Promise<FileIdentityStat> {
   assertSafeBasename(params.basename);
   validatePinnedOperationPayload({
@@ -196,6 +199,7 @@ async function runPinnedWriteFallback(params: {
   overwrite?: boolean;
   maxBytes?: number;
   input: PinnedWriteInput;
+  onRenameIdentityMismatch?: RenameIdentityMismatchPolicy;
 }): Promise<FileIdentityStat> {
   const parentPath = params.relativeParentPath
     ? path.join(params.rootPath, ...params.relativeParentPath.split("/"))
@@ -294,8 +298,46 @@ async function runPinnedWriteFallback(params: {
       renamed = true;
       await syncDirectoryBestEffort(parentPath);
       targetStat = await fs.lstat(targetPath);
-      if (targetStat.isSymbolicLink() || !sameFileIdentity(targetStat, expectedTempStat)) {
+      if (targetStat.isSymbolicLink()) {
         throw new FsSafeError("path-mismatch", "fallback target changed during write");
+      }
+      if (!sameFileIdentity(targetStat, expectedTempStat)) {
+        // On filesystems like rclone FUSE where rename(2) causes every subsequent
+        // path-based lookup to mint a fresh inode, the (dev,ino) check always fails
+        // even with zero concurrency. The caller is responsible for ensuring mutual
+        // exclusion before passing "verify-content"; fall back to a content-hash
+        // comparison. A hash mismatch still throws.
+        if (params.onRenameIdentityMismatch !== "verify-content") {
+          throw new FsSafeError("path-mismatch", "fallback target changed during write");
+        }
+        if (params.input.kind !== "buffer") {
+          throw new FsSafeError("path-mismatch", "fallback target changed during write");
+        }
+        const expectedHash = sha256Hex(params.input.data, params.input.encoding);
+        const readFlags =
+          fsSync.constants.O_RDONLY |
+          (process.platform !== "win32" && "O_NOFOLLOW" in fsSync.constants
+            ? fsSync.constants.O_NOFOLLOW
+            : 0);
+        const readHandle = await fs.open(targetPath, readFlags);
+        let actualHash: string;
+        let readHandleStat: Awaited<ReturnType<typeof readHandle.stat>>;
+        try {
+          // Capture fd-based identity before reading — this is stable across all
+          // subsequent lookups (on FUSE and locally), unlike the lstat-based
+          // targetStat that triggered this fallback.
+          readHandleStat = await readHandle.stat();
+          actualHash = sha256Hex(await readHandle.readFile());
+        } finally {
+          await readHandle.close().catch(() => undefined);
+        }
+        if (actualHash !== expectedHash) {
+          throw new FsSafeError("path-mismatch", "fallback target changed during write");
+        }
+        // Replace the unreliable lstat-based targetStat with the fd-based stat so
+        // the returned identity is consistent with what subsequent verifications
+        // (e.g. verifyAtomicWriteResult) will obtain by opening the same file.
+        targetStat = readHandleStat;
       }
     });
   } catch (error) {
