@@ -14,6 +14,7 @@ export type FsSafeTestHooks = {
     operation: "mkdir" | "move" | "remove",
     targetPath: string,
   ) => Promise<void> | void;
+  afterPinnedWriteFallbackRename?: (targetPath: string) => Promise<void> | void;
   beforeSiblingTempWrite?: (tempPath: string) => Promise<void> | void;
   beforeTrashMove?: (targetPath: string, destPath: string) => void;
 };

@@ -246,9 +246,11 @@ const fs = await root("/mnt/rclone-workspace", {
 await fs.write("state.json", body); // succeeds on rclone FUSE
 ```
 
-**How it works.** A write first runs with the default strict check. If that check detects a `path-mismatch` (genuine race or FUSE inode churn), it acquires an exclusive sidecar lock at `{targetPath}.lock` and retries the full write under that lock. The retry accepts the destination if the SHA-256 of the re-read bytes matches the SHA-256 of the bytes written. The lock is always released before the call returns.
+**How it works.** The full write runs under an exclusive sidecar lock at `{targetPath}.lock`. The guarded Node fallback accepts a post-rename inode mismatch only when the SHA-256 of the re-read bytes matches the SHA-256 of the bytes written. This mode deliberately bypasses the stricter fd-relative Python helper because that helper requires stable post-rename inode identity. The lock is released before the call returns.
 
-**Security note.** `verify-content-with-lock` provides two guarantees: (1) the bytes that reached the destination match the bytes the caller asked to write, and (2) no *cooperating* writer interleaved during the locked retry. It does **not** prove that the process that called `write()` is the exclusive owner of the resulting file object on disk. A same-UID process that deliberately bypasses the sidecar lock can still interleave — this is the same residual risk as any advisory lock and is explicitly outside fs-safe's documented threat model. Do not use this option on directories that are writable by untrusted same-UID processes.
+**Security note.** `verify-content-with-lock` proves that the bytes observed after rename match the requested write and prevents *cooperating* writers from interleaving. It does **not** prove that the destination still names the temp-file object, retain the Python helper's fd-relative parent pinning, or stop a same-UID process that ignores the advisory lock. Do not use this option on directories writable by untrusted same-UID processes. Strict identity verification remains the default.
+
+Lock recovery is fail-closed. If a process crashes and leaves `{targetPath}.lock`, a later write reports the stale lock instead of deleting it based on a host-local PID. Remove a stale sidecar only after proving that its holder can no longer write, using the application-owned recovery guidance in [File lock](sidecar-lock.md#stale-recovery-remove-if-unchanged).
 
 ## See also
 

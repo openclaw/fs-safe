@@ -19,7 +19,11 @@ import {
 } from "./deny-mutations.js";
 import { resolveOpenedFileRealPathForHandle } from "./opened-realpath.js";
 import { isPinnedPathHelperSpawnError, runPinnedPathHelper } from "./pinned-path.js";
-import { runPinnedCopyHelper, runPinnedWriteHelper } from "./pinned-write.js";
+import {
+  type RenameIdentityPolicy,
+  runPinnedCopyHelper,
+  runPinnedWriteWithRenamePolicy,
+} from "./pinned-write.js";
 import { canFallbackFromPythonError, getFsSafePythonConfig } from "./pinned-python-config.js";
 import { assertNoPathAliasEscape, PATH_ALIAS_POLICIES } from "./path-policy.js";
 import {
@@ -55,10 +59,10 @@ import { getFsSafeTestHooks } from "./test-hooks.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
 import type { DirEntry, PathStat } from "./types.js";
 import { registerTempPathForExit } from "./temp-cleanup.js";
-import { withSidecarLock } from "./sidecar-lock.js";
 import { serializePathWrite } from "./write-queue.js";
 
 export type { DenyMutationPolicy } from "./deny-mutations.js";
+export type { RenameIdentityPolicy } from "./pinned-write.js";
 export { resolveOpenedFileRealPathForHandle } from "./opened-realpath.js";
 export type { ReadResult } from "./read-opened-file.js";
 
@@ -77,8 +81,6 @@ export type RootOptions = {
 export type SymlinkPolicy = "reject" | "follow-within-root";
 export type HardlinkPolicy = "reject" | "allow";
 export type WritableOpenMode = "replace" | "append" | "update";
-
-export type RenameIdentityPolicy = "strict" | "verify-content-with-lock";
 
 export type RootDefaults = {
   hardlinks?: HardlinkPolicy;
@@ -1045,16 +1047,7 @@ async function mkdirPathInRoot(
 
 async function writeFileInRoot(
   root: RootContext,
-  params: {
-    relativePath: string;
-    data: string | Buffer;
-    encoding?: BufferEncoding;
-    mkdir?: boolean;
-    mode?: number;
-    denyMutations?: DenyMutationPolicy;
-    overwrite?: boolean;
-    renameIdentity?: RenameIdentityPolicy;
-  },
+  params: RootWriteOptions & { relativePath: string; data: string | Buffer },
 ): Promise<void> {
   if (process.platform === "win32") {
     await serializePathWrite(rootWriteQueueKey(root, params.relativePath), async () => {
@@ -1075,93 +1068,42 @@ async function writeFileInRoot(
   });
 }
 
-function lockHolderIsAlive(payload: Record<string, unknown> | null): boolean {
-  const pid = Number(payload?.pid);
-  if (!Number.isFinite(pid) || pid <= 0) {
-    // No valid PID in payload — cannot determine liveness. Treat as alive so
-    // we don't aggressively reclaim a lock whose holder we cannot identify.
-    return true;
-  }
-  try {
-    // Signal 0 does not kill the process; it checks whether we have permission
-    // to send signals to pid. Throws ESRCH if the process does not exist.
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    // EPERM: the process exists but we cannot signal it — treat as alive.
-    return (err as NodeJS.ErrnoException).code === "EPERM";
-  }
-}
-
 async function commitPinnedWriteInRoot(
   root: RootContext,
   pinned: PinnedWriteTarget,
-  params: {
-    data: string | Buffer;
-    encoding?: BufferEncoding;
-    mkdir?: boolean;
-    mode?: number;
-    overwrite?: boolean;
-    renameIdentity?: RenameIdentityPolicy;
-  },
+  params: RootWriteOptions & { data: string | Buffer },
 ): Promise<void> {
-  const helperParams = {
-    rootPath: pinned.rootReal,
-    relativeParentPath: pinned.relativeParentPath,
-    basename: pinned.basename,
-    mkdir: params.mkdir !== false,
-    mode: params.mode ?? pinned.mode,
-    overwrite: params.overwrite,
-    input: { kind: "buffer" as const, data: params.data, encoding: params.encoding },
-  };
-
   let identity;
-
-  if (params.renameIdentity === "verify-content-with-lock") {
-    // On FUSE mounts where rename(2) causes inode-churn, hold a cooperative
-    // sidecar lock for the entire write so content-hash verification is
-    // meaningful. If the holder crashes, the PID-liveness check reclaims the
-    // stale lock immediately rather than after a fixed timeout.
-    await withSidecarLock(
-      pinned.targetPath,
-      {
-        managerKey: `fs-safe.write:${pinned.targetPath}`,
-        staleMs: 30_000,
-        payload: () => ({ pid: process.pid, createdAt: new Date().toISOString() }),
-        retry: { retries: 5, minTimeout: 100, maxTimeout: 2_000, factor: 2 },
-        shouldReclaim: ({ payload }) => !lockHolderIsAlive(payload),
-        staleRecovery: "remove-if-unchanged",
-        shouldRemoveStaleLock: ({ payload }) => !lockHolderIsAlive(payload),
-      },
-      async () => {
-        try {
-          identity = await runPinnedWriteHelper({
-            ...helperParams,
-            onRenameIdentityMismatch: "verify-content",
-          });
-        } catch (error) {
-          throw normalizePinnedWriteError(error);
-        }
-      },
-    );
-  } else {
-    try {
-      identity = await runPinnedWriteHelper(helperParams);
-    } catch (error) {
-      if (params.overwrite === false && isAlreadyExistsError(error)) {
-        throw new FsSafeError("already-exists", "file already exists", {
-          cause: error instanceof Error ? error : undefined,
-        });
-      }
-      throw normalizePinnedWriteError(error);
+  try {
+    identity = await runPinnedWriteWithRenamePolicy({
+      rootPath: pinned.rootReal,
+      relativeParentPath: pinned.relativeParentPath,
+      basename: pinned.basename,
+      targetPath: pinned.targetPath,
+      renameIdentity: params.renameIdentity,
+      mkdir: params.mkdir !== false,
+      mode: params.mode ?? pinned.mode,
+      overwrite: params.overwrite,
+      input: { kind: "buffer", data: params.data, encoding: params.encoding },
+    });
+  } catch (error) {
+    const errorCode = (error as { code?: unknown })?.code;
+    if (errorCode === "file_lock_stale" || errorCode === "file_lock_timeout") {
+      throw error;
     }
+    if (params.overwrite === false && isAlreadyExistsError(error)) {
+      throw new FsSafeError("already-exists", "file already exists", {
+        cause: error instanceof Error ? error : undefined,
+      });
+    }
+    throw normalizePinnedWriteError(error);
   }
 
   try {
     await verifyAtomicWriteResult({
       root,
       targetPath: pinned.targetPath,
-      expectedIdentity: identity!,
+      expectedIdentity: identity,
     });
   } catch (err) {
     emitWriteBoundaryWarning(`post-write verification failed: ${String(err)}`);

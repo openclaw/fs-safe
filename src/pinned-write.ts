@@ -17,6 +17,8 @@ import {
   runPinnedPythonOperation,
   validatePinnedOperationPayload,
 } from "./pinned-python.js";
+import { withSidecarLock } from "./sidecar-lock.js";
+import { getFsSafeTestHooks } from "./test-hooks.js";
 
 type PinnedWriteInput =
   | { kind: "buffer"; data: string | Buffer; encoding?: BufferEncoding }
@@ -99,7 +101,9 @@ async function inputToBase64(
 
 type RenameIdentityMismatchPolicy = "throw" | "verify-content";
 
-export async function runPinnedWriteHelper(params: {
+export type RenameIdentityPolicy = "strict" | "verify-content-with-lock";
+
+type PinnedWriteParams = {
   rootPath: string;
   relativeParentPath: string;
   basename: string;
@@ -110,11 +114,19 @@ export async function runPinnedWriteHelper(params: {
   input: PinnedWriteInput;
   rootIdentity?: FileIdentityStat;
   onRenameIdentityMismatch?: RenameIdentityMismatchPolicy;
-}): Promise<FileIdentityStat> {
+};
+
+export async function runPinnedWriteHelper(params: PinnedWriteParams): Promise<FileIdentityStat> {
   assertSafeBasename(params.basename);
   validatePinnedOperationPayload({
     relativeParentPath: params.relativeParentPath,
   });
+  // The Python helper deliberately enforces the strict post-rename inode
+  // contract. The explicit compatibility policy therefore uses the guarded
+  // Node fallback, where content verification can replace that one check.
+  if (params.onRenameIdentityMismatch === "verify-content") {
+    return await runPinnedWriteFallback(params);
+  }
   if (getFsSafePythonConfig().mode === "off") {
     return await runPinnedWriteFallback(params);
   }
@@ -154,6 +166,33 @@ export async function runPinnedWriteHelper(params: {
     }
     throw error;
   }
+}
+
+export async function runPinnedWriteWithRenamePolicy(
+  params: PinnedWriteParams & {
+    targetPath: string;
+    renameIdentity?: RenameIdentityPolicy;
+  },
+): Promise<FileIdentityStat> {
+  const { targetPath, renameIdentity, ...writeParams } = params;
+  if (renameIdentity !== "verify-content-with-lock") {
+    return await runPinnedWriteHelper(writeParams);
+  }
+  return await withSidecarLock(
+    targetPath,
+    {
+      managerKey: `fs-safe.write:${targetPath}`,
+      createParent: writeParams.mkdir,
+      staleMs: 30_000,
+      timeoutMs: 5_000,
+      payload: () => ({ pid: process.pid, createdAt: new Date().toISOString() }),
+      retry: { retries: 5, minTimeout: 100, maxTimeout: 2_000, factor: 2 },
+    },
+    async () => await runPinnedWriteHelper({
+      ...writeParams,
+      onRenameIdentityMismatch: "verify-content",
+    }),
+  );
 }
 
 export async function runPinnedCopyHelper(params: {
@@ -296,6 +335,7 @@ async function runPinnedWriteFallback(params: {
     await withAsyncDirectoryGuards([parentGuard], async () => {
       await fs.rename(tempPath, targetPath);
       renamed = true;
+      await getFsSafeTestHooks()?.afterPinnedWriteFallbackRename?.(targetPath);
       await syncDirectoryBestEffort(parentPath);
       targetStat = await fs.lstat(targetPath);
       if (targetStat.isSymbolicLink()) {

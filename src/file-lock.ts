@@ -13,7 +13,7 @@ export type FileLockStaleRecovery = SidecarLockStaleRecovery;
 
 export type FileLockAcquireOptions<TPayload extends Record<string, unknown>> = Omit<
   SidecarLockAcquireOptions<TPayload>,
-  "targetPath" | "staleMs"
+  "createParent" | "targetPath" | "staleMs"
 > & {
   managerKey?: string;
   staleMs?: number;

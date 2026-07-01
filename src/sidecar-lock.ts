@@ -25,6 +25,7 @@ export type SidecarLockStaleSnapshot = {
 export type SidecarLockAcquireOptions<TPayload extends Record<string, unknown>> = {
   targetPath: string;
   lockPath?: string;
+  createParent?: boolean;
   staleMs: number;
   timeoutMs?: number;
   retry?: SidecarLockRetryOptions;
@@ -218,10 +219,10 @@ function snapshotMatchesSync(lockPath: string, observed: LockSnapshot): boolean 
   }
 }
 
-async function resolveNormalizedTargetPath(targetPath: string): Promise<string> {
+async function resolveNormalizedTargetPath(targetPath: string, createParent: boolean): Promise<string> {
   const resolved = path.resolve(targetPath);
   const dir = path.dirname(resolved);
-  await fs.mkdir(dir, { recursive: true });
+  if (createParent) await fs.mkdir(dir, { recursive: true });
   try {
     return path.join(await fs.realpath(dir), path.basename(resolved));
   } catch {
@@ -321,7 +322,7 @@ export function createSidecarLockManager(key: string) {
     options: SidecarLockAcquireOptions<TPayload>,
   ): Promise<SidecarLockHandle> {
     ensureExitCleanupRegistered();
-    const normalizedTargetPath = await resolveNormalizedTargetPath(options.targetPath);
+    const normalizedTargetPath = await resolveNormalizedTargetPath(options.targetPath, options.createParent !== false);
     const lockPath = options.lockPath ?? `${normalizedTargetPath}.lock`;
     const held = state.held.get(normalizedTargetPath);
     if (held && options.allowReentrant) {
