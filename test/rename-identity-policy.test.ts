@@ -1,4 +1,5 @@
 import fsp from "node:fs/promises";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -23,6 +24,11 @@ function replaceTargetAfterFallbackRename(replacement?: string): void {
       await fsp.rename(replacementPath, targetPath);
     },
   });
+}
+
+function compatibilityLockPath(rootDir: string, relativePath = "file.txt"): string {
+  const digest = createHash("sha256").update(relativePath).digest("hex");
+  return path.join(rootDir, `.fs-safe-write-${digest}.lock`);
 }
 
 afterEach(async () => {
@@ -60,7 +66,9 @@ describe("rename identity policy", () => {
       const fs = await openRoot(rootDir, { renameIdentity: "verify-content-with-lock" });
       await expect(fs.write("file.txt", "hello")).resolves.toBeUndefined();
       await expect(fsp.readFile(targetPath, "utf8")).resolves.toBe("hello");
-      await expect(fsp.stat(`${targetPath}.lock`)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(fsp.stat(compatibilityLockPath(rootDir))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     },
   );
 
@@ -138,8 +146,7 @@ describe("rename identity policy", () => {
     "fails closed without deleting a stale sidecar lock",
     async () => {
       const rootDir = await makeTempRoot("fs-safe-rename-id-stale-");
-      const targetPath = path.join(rootDir, "file.txt");
-      const lockPath = `${targetPath}.lock`;
+      const lockPath = compatibilityLockPath(rootDir);
       await fsp.writeFile(
         lockPath,
         `${JSON.stringify({ pid: 9_999_999, createdAt: "2000-01-01T00:00:00.000Z" })}\n`,
@@ -164,7 +171,7 @@ describe("rename identity policy", () => {
       await expect(fsp.readFile(path.join(rootDir, "file.txt"), "utf8")).resolves.toBe(
         "content",
       );
-      await expect(fsp.stat(path.join(rootDir, "file.txt.lock"))).rejects.toMatchObject({
+      await expect(fsp.stat(compatibilityLockPath(rootDir))).rejects.toMatchObject({
         code: "ENOENT",
       });
     },

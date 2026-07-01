@@ -246,11 +246,11 @@ const fs = await root("/mnt/rclone-workspace", {
 await fs.write("state.json", body); // succeeds on rclone FUSE
 ```
 
-**How it works.** The full write runs under an exclusive sidecar lock at `{targetPath}.lock`. The guarded Node fallback accepts the source-temp-to-destination inode mismatch only when the SHA-256 of the re-read bytes matches the SHA-256 of the bytes written. Subsequent path identity checks remain strict, so this mode requires an unchanged destination path to report stable identity. It deliberately bypasses the stricter fd-relative Python helper because that helper requires rename to preserve inode identity. The lock is released before the call returns.
+**How it works.** The full write runs under an exclusive per-target lock named `.fs-safe-write-<sha256>.lock` in the root. Keeping the lock in the already-canonical root avoids creating an unguarded lock path through a missing or raced target parent. The guarded Node fallback accepts the source-temp-to-destination inode mismatch only when the SHA-256 of the re-read bytes matches the SHA-256 of the bytes written. Subsequent path identity checks remain strict, so this mode requires an unchanged destination path to report stable identity. It deliberately bypasses the stricter fd-relative Python helper because that helper requires rename to preserve inode identity. The lock is released before the call returns.
 
 **Security note.** `verify-content-with-lock` proves that the bytes observed after rename match the requested write and prevents *cooperating* writers from interleaving. It does **not** prove that the destination still names the temp-file object, retain the Python helper's fd-relative parent pinning, or stop a same-UID process that ignores the advisory lock. Do not use this option on directories writable by untrusted same-UID processes. Strict identity verification remains the default.
 
-Lock recovery is fail-closed. If a process crashes and leaves `{targetPath}.lock`, a later write reports the stale lock instead of deleting it based on a host-local PID. Remove a stale sidecar only after proving that its holder can no longer write, using the application-owned recovery guidance in [File lock](sidecar-lock.md#stale-recovery-remove-if-unchanged).
+Lock recovery is fail-closed. If a process crashes and leaves the root-level `.fs-safe-write-<sha256>.lock`, a later write reports the stale lock instead of deleting it based on a host-local PID. Remove a stale sidecar only after proving that its holder can no longer write, using the application-owned recovery guidance in [File lock](sidecar-lock.md#stale-recovery-remove-if-unchanged).
 
 ## See also
 

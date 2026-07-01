@@ -178,11 +178,18 @@ export async function runPinnedWriteWithRenamePolicy(
   if (renameIdentity !== "verify-content-with-lock") {
     return await runPinnedWriteHelper(writeParams);
   }
+  const relativeTargetPath = writeParams.relativeParentPath
+    ? `${writeParams.relativeParentPath}/${writeParams.basename}`
+    : writeParams.basename;
+  const lockPath = path.join(
+    writeParams.rootPath,
+    `.fs-safe-write-${sha256Hex(relativeTargetPath)}.lock`,
+  );
   return await withSidecarLock(
-    targetPath,
+    writeParams.rootPath,
     {
       managerKey: `fs-safe.write:${targetPath}`,
-      createParent: writeParams.mkdir,
+      lockPath,
       staleMs: 30_000,
       timeoutMs: 5_000,
       payload: () => ({ pid: process.pid, createdAt: new Date().toISOString() }),
