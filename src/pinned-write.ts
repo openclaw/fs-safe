@@ -342,11 +342,10 @@ async function runPinnedWriteFallback(params: {
         throw new FsSafeError("path-mismatch", "fallback target changed during write");
       }
       if (!sameFileIdentity(targetStat, expectedTempStat)) {
-        // On filesystems like rclone FUSE where rename(2) causes every subsequent
-        // path-based lookup to mint a fresh inode, the (dev,ino) check always fails
-        // even with zero concurrency. The caller is responsible for ensuring mutual
-        // exclusion before passing "verify-content"; fall back to a content-hash
-        // comparison. A hash mismatch still throws.
+        // On filesystems like rclone FUSE, rename(2) can give the destination a
+        // different inode from the source temp fd even with zero concurrency. The
+        // caller must ensure mutual exclusion before passing "verify-content";
+        // fall back to a content hash for this rename-boundary check only.
         if (params.onRenameIdentityMismatch !== "verify-content") {
           throw new FsSafeError("path-mismatch", "fallback target changed during write");
         }

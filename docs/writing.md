@@ -234,7 +234,7 @@ await fs.append(today, line);
 
 ## FUSE mounts and unstable inode numbers
 
-Some FUSE mounts — rclone is a confirmed example — assign a fresh inode number to a path on every lookup that follows a rename, even within a single process with zero concurrency. This makes the default post-rename `(dev, ino)` identity check always fail with `path-mismatch`, regardless of whether a race actually occurred.
+Some FUSE mounts — rclone is a confirmed example — assign the destination a different inode number from the source temp file as a result of rename, even within a single process with zero concurrency. Repeated stats of an unchanged destination remain stable, but the source-to-destination `(dev, ino)` comparison always fails with `path-mismatch`.
 
 Set `renameIdentity: "verify-content-with-lock"` on the root (or per call) to use a SHA-256 content comparison under a cooperative sidecar lock instead:
 
@@ -246,7 +246,7 @@ const fs = await root("/mnt/rclone-workspace", {
 await fs.write("state.json", body); // succeeds on rclone FUSE
 ```
 
-**How it works.** The full write runs under an exclusive sidecar lock at `{targetPath}.lock`. The guarded Node fallback accepts a post-rename inode mismatch only when the SHA-256 of the re-read bytes matches the SHA-256 of the bytes written. This mode deliberately bypasses the stricter fd-relative Python helper because that helper requires stable post-rename inode identity. The lock is released before the call returns.
+**How it works.** The full write runs under an exclusive sidecar lock at `{targetPath}.lock`. The guarded Node fallback accepts the source-temp-to-destination inode mismatch only when the SHA-256 of the re-read bytes matches the SHA-256 of the bytes written. Subsequent path identity checks remain strict, so this mode requires an unchanged destination path to report stable identity. It deliberately bypasses the stricter fd-relative Python helper because that helper requires rename to preserve inode identity. The lock is released before the call returns.
 
 **Security note.** `verify-content-with-lock` proves that the bytes observed after rename match the requested write and prevents *cooperating* writers from interleaving. It does **not** prove that the destination still names the temp-file object, retain the Python helper's fd-relative parent pinning, or stop a same-UID process that ignores the advisory lock. Do not use this option on directories writable by untrusted same-UID processes. Strict identity verification remains the default.
 
