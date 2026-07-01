@@ -2,6 +2,10 @@
 
 ## 0.4.1 - Unreleased
 
+### Security and Correctness
+
+- Update the optional TAR extractor to reject NUL-terminated PAX values, invalid negative entry sizes, and explosive decompression payloads.
+
 ### Compatibility
 
 - Add explicit `renameIdentity: "verify-content-with-lock"` writes for rclone-style FUSE mounts whose inode identity changes across rename, while keeping strict identity verification as the default and failing closed on stale cooperative locks. (#32, #33; thanks @jlautman)
