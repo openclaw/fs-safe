@@ -250,7 +250,7 @@ await fs.write("state.json", body); // succeeds on rclone FUSE
 
 **Security note.** `verify-content-with-lock` proves that the bytes observed after rename match the requested write and prevents *cooperating* writers from interleaving. It does **not** prove that the destination still names the temp-file object, retain the Python helper's fd-relative parent pinning, or stop a same-UID process that ignores the advisory lock. Do not use this option on directories writable by untrusted same-UID processes. Strict identity verification remains the default.
 
-Lock recovery is fail-closed. If a process crashes and leaves the root-level `.fs-safe-write-<sha256>.lock`, a later write reports the stale lock instead of deleting it based on a host-local PID. Remove a stale sidecar only after proving that its holder can no longer write, using the application-owned recovery guidance in [File lock](sidecar-lock.md#stale-recovery-remove-if-unchanged).
+Lock recovery is fail-closed. If a process crashes and leaves the root-level `.fs-safe-write-<sha256>.lock`, a later write reports the stale lock instead of deleting it based on a host-local PID. Recover only under external authority that excludes every competing writer; see [File lock](sidecar-lock.md#stale-recovery-is-fail-closed).
 
 ## See also
 

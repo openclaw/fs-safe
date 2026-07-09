@@ -2,6 +2,10 @@
 
 ## 0.4.2 - Unreleased
 
+### Security and Correctness
+
+- Disable `remove-if-unchanged` stale sidecar deletion because a pathname identity check followed by unlink can delete a replacement lock; retain the deprecated recovery inputs for compatibility while all stale locks fail closed.
+
 ## 0.4.1 - 2026-07-01
 
 ### Security and Correctness
