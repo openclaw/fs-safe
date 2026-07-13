@@ -35,13 +35,30 @@ export async function mkdirPathComponentsWithGuards(params: {
       }
     }
     const stat = await fs.lstat(next);
-    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    if (!stat.isSymbolicLink() && !stat.isDirectory()) {
       throw new FsSafeError("not-file", "directory component must be a directory");
     }
     // Node's recursive mkdir follows symlinks in missing components. Build one
     // segment at a time and realpath-check each segment before descending.
-    if (!isSameOrChildPath(path.resolve(await fs.realpath(next)), rootCanonical)) {
+    const nextReal = path.resolve(await fs.realpath(next));
+    if (!isSameOrChildPath(nextReal, rootCanonical)) {
       throw new FsSafeError("outside-workspace", "directory escaped workspace root");
+    }
+    if (stat.isSymbolicLink()) {
+      // An existing path component may legitimately be a symlink to a real
+      // directory inside the root (e.g. a skill-bank layout). We already
+      // verified above that it resolves inside the root, so treat the
+      // resolved real path as the directory for the rest of this walk
+      // instead of rejecting it outright. Guard checks from here on operate
+      // on the real (non-symlink) path, preserving TOCTOU protection for
+      // every subsequent segment.
+      const targetStat = await fs.stat(nextReal);
+      if (!targetStat.isDirectory()) {
+        throw new FsSafeError("not-file", "directory component must be a directory");
+      }
+      await createAsyncDirectoryGuard(nextReal);
+      current = nextReal;
+      continue;
     }
     await createAsyncDirectoryGuard(next);
     await assertAsyncDirectoryGuard(parentGuard);
