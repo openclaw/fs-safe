@@ -247,11 +247,18 @@ async function runPinnedWriteFallback(params: {
   input: PinnedWriteInput;
   onRenameIdentityMismatch?: RenameIdentityMismatchPolicy;
 }): Promise<FileIdentityStat> {
-  const parentPath = params.relativeParentPath
+  let parentPath = params.relativeParentPath
     ? path.join(params.rootPath, ...params.relativeParentPath.split("/"))
     : params.rootPath;
   if (params.mkdir) {
-    await mkdirPathComponentsWithGuards({ rootReal: params.rootPath, targetPath: parentPath });
+    // mkdirPathComponentsWithGuards may resolve the final component through
+    // an in-root symlink (e.g. a skill-bank layout). Use its returned real
+    // path for the subsequent guard and target path so we don't re-check the
+    // original, possibly-symlinked, lexical path and reject it outright.
+    parentPath = await mkdirPathComponentsWithGuards({
+      rootReal: params.rootPath,
+      targetPath: parentPath,
+    });
   }
   const parentGuard = params.mkdir
     ? await createAsyncDirectoryGuard(parentPath)
