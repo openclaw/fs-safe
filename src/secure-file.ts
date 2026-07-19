@@ -4,6 +4,7 @@ import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import { readFileHandleBounded } from "./bounded-read.js";
 import { assertNoUnsafeDeviceReadPath } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
@@ -202,14 +203,17 @@ async function assertSecurePermissions(
 async function readHandleWithTimeout(
   handle: FileHandle,
   timeoutMs: number | undefined,
+  maxBytes: number | undefined,
 ): Promise<Buffer> {
+  const read = () =>
+    maxBytes === undefined ? handle.readFile() : readFileHandleBounded(handle, maxBytes);
   if (timeoutMs === undefined || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    return await handle.readFile();
+    return await read();
   }
   let timeout: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([
-      handle.readFile(),
+      read(),
       new Promise<never>((_resolve, reject) => {
         timeout = setTimeout(() => {
           void handle.close().catch(() => undefined);
@@ -229,10 +233,11 @@ export async function readSecureFile(
   try {
     await assertTrustedDirs(options, opened.realPath);
     const permissions = await assertSecurePermissions(options, opened.pathStat, opened.realPath);
-    const buffer = await readHandleWithTimeout(opened.handle, options.io?.timeoutMs);
-    if (options.io?.maxBytes !== undefined && buffer.byteLength > options.io.maxBytes) {
-      throw new FsSafeError("too-large", `${label(options)} exceeded maxBytes (${options.io.maxBytes}).`);
-    }
+    const buffer = await readHandleWithTimeout(
+      opened.handle,
+      options.io?.timeoutMs,
+      options.io?.maxBytes,
+    );
     return { buffer, realPath: opened.realPath, stat: opened.pathStat, permissions };
   } finally {
     await opened.handle.close().catch(() => undefined);

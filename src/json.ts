@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import fsSync from "node:fs";
 import path from "node:path";
+import { readFileDescriptorBoundedSync } from "./bounded-read.js";
 import { FsSafeError } from "./errors.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
 import { readRegularFile, readRegularFileSync, statRegularFile } from "./regular-file.js";
@@ -30,12 +31,12 @@ function sleep(ms: number): Promise<void> {
 
 async function readRegularFileWithRetry(
   filePath: string,
-  options: { retryOpenRaceErrors?: boolean } = {},
+  options: { maxBytes?: number; retryOpenRaceErrors?: boolean } = {},
 ): Promise<Buffer> {
   let lastErr: unknown;
   for (let attempt = 0; attempt < READ_RETRY_MAX_ATTEMPTS; attempt++) {
     try {
-      return (await readRegularFile({ filePath })).buffer;
+      return (await readRegularFile({ filePath, maxBytes: options.maxBytes })).buffer;
     } catch (err) {
       lastErr = err;
       if (!isRetryableReadError(err, options) || attempt === READ_RETRY_MAX_ATTEMPTS - 1) {
@@ -47,12 +48,18 @@ async function readRegularFileWithRetry(
   throw lastErr;
 }
 
-async function readRegularFileIfExistsWithRetry(filePath: string): Promise<Buffer | null> {
+async function readRegularFileIfExistsWithRetry(
+  filePath: string,
+  options: ReadJsonOptions = {},
+): Promise<Buffer | null> {
   const initial = await statRegularFile(filePath);
   if (initial.missing) {
     return null;
   }
-  return await readRegularFileWithRetry(filePath, { retryOpenRaceErrors: true });
+  return await readRegularFileWithRetry(filePath, {
+    maxBytes: options.maxBytes,
+    retryOpenRaceErrors: true,
+  });
 }
 
 const JSON_FILE_MODE = 0o600;
@@ -143,9 +150,19 @@ function writeTempJsonFile(pathname: string, payload: string) {
   }
 }
 
-export function tryReadJsonSync<T = unknown>(pathname: string): T | null {
+export type ReadJsonOptions = {
+  maxBytes?: number;
+};
+
+export function tryReadJsonSync<T = unknown>(
+  pathname: string,
+  options: ReadJsonOptions = {},
+): T | null {
   try {
-    const raw = readRegularFileSync({ filePath: pathname }).buffer.toString("utf8");
+    const raw = readRegularFileSync({
+      filePath: pathname,
+      maxBytes: options.maxBytes,
+    }).buffer.toString("utf8");
     return JSON.parse(raw) as T;
   } catch {
     return null;
@@ -239,7 +256,11 @@ export function readRootStructuredFileSync<T>(
   }
 
   try {
-    const parsed = options.parse(fsSync.readFileSync(opened.fd, "utf8"));
+    const raw =
+      options.maxBytes === undefined
+        ? fsSync.readFileSync(opened.fd, "utf8")
+        : readFileDescriptorBoundedSync(opened.fd, options.maxBytes).toString("utf8");
+    const parsed = options.parse(raw);
     if (options.validate && !options.validate(parsed)) {
       return {
         ok: false,
@@ -285,9 +306,12 @@ export function readRootJsonObjectSync(
   });
 }
 
-export async function tryReadJson<T>(filePath: string): Promise<T | null> {
+export async function tryReadJson<T>(
+  filePath: string,
+  options: ReadJsonOptions = {},
+): Promise<T | null> {
   try {
-    const buffer = await readRegularFileIfExistsWithRetry(filePath);
+    const buffer = await readRegularFileIfExistsWithRetry(filePath, options);
     if (buffer === null) {
       return null;
     }
@@ -298,12 +322,15 @@ export async function tryReadJson<T>(filePath: string): Promise<T | null> {
   }
 }
 
-export async function readJson<T>(filePath: string): Promise<T> {
+export async function readJson<T>(filePath: string, options: ReadJsonOptions = {}): Promise<T> {
   let raw: string;
   try {
-    raw = (await readRegularFileWithRetry(filePath, { retryOpenRaceErrors: true })).toString(
-      "utf8",
-    );
+    raw = (
+      await readRegularFileWithRetry(filePath, {
+        maxBytes: options.maxBytes,
+        retryOpenRaceErrors: true,
+      })
+    ).toString("utf8");
   } catch (err) {
     throw new JsonFileReadError(filePath, "read", err);
   }
@@ -314,10 +341,13 @@ export async function readJson<T>(filePath: string): Promise<T> {
   }
 }
 
-export async function readJsonIfExists<T>(filePath: string): Promise<T | null> {
+export async function readJsonIfExists<T>(
+  filePath: string,
+  options: ReadJsonOptions = {},
+): Promise<T | null> {
   let raw: string;
   try {
-    const buffer = await readRegularFileIfExistsWithRetry(filePath);
+    const buffer = await readRegularFileIfExistsWithRetry(filePath, options);
     if (buffer === null) {
       return null;
     }
@@ -335,10 +365,13 @@ export async function readJsonIfExists<T>(filePath: string): Promise<T | null> {
   }
 }
 
-export function readJsonSync<T = unknown>(filePath: string): T {
+export function readJsonSync<T = unknown>(
+  filePath: string,
+  options: ReadJsonOptions = {},
+): T {
   let raw: string;
   try {
-    raw = readRegularFileSync({ filePath }).buffer.toString("utf8");
+    raw = readRegularFileSync({ filePath, maxBytes: options.maxBytes }).buffer.toString("utf8");
   } catch (err) {
     throw new JsonFileReadError(filePath, "read", err);
   }

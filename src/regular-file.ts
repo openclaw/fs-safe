@@ -3,6 +3,7 @@ import fsSync from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { readFileDescriptorBoundedSync, readFileHandleBounded } from "./bounded-read.js";
 import { assertNoUnsafeDeviceReadPath } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
@@ -47,54 +48,6 @@ function resolveRegularFileReadFlags(): number {
   );
 }
 
-async function readFileHandleBounded(params: {
-  handle: FileHandle;
-  filePath: string;
-  maxBytes?: number;
-}): Promise<Buffer> {
-  if (params.maxBytes === undefined) {
-    return await params.handle.readFile();
-  }
-  const chunks: Buffer[] = [];
-  const scratch = Buffer.allocUnsafe(Math.min(64 * 1024, Math.max(1, params.maxBytes + 1)));
-  let total = 0;
-  while (true) {
-    const { bytesRead } = await params.handle.read(scratch, 0, scratch.length, null);
-    if (bytesRead === 0) {
-      return Buffer.concat(chunks, total);
-    }
-    total += bytesRead;
-    if (total > params.maxBytes) {
-      throw new Error(`File exceeds ${params.maxBytes} bytes: ${params.filePath}`);
-    }
-    chunks.push(Buffer.from(scratch.subarray(0, bytesRead)));
-  }
-}
-
-function readFileDescriptorBounded(params: {
-  fd: number;
-  filePath: string;
-  maxBytes?: number;
-}): Buffer {
-  if (params.maxBytes === undefined) {
-    return fsSync.readFileSync(params.fd);
-  }
-  const chunks: Buffer[] = [];
-  const scratch = Buffer.allocUnsafe(Math.min(64 * 1024, Math.max(1, params.maxBytes + 1)));
-  let total = 0;
-  while (true) {
-    const bytesRead = fsSync.readSync(params.fd, scratch, 0, scratch.length, null);
-    if (bytesRead === 0) {
-      return Buffer.concat(chunks, total);
-    }
-    total += bytesRead;
-    if (total > params.maxBytes) {
-      throw new Error(`File exceeds ${params.maxBytes} bytes: ${params.filePath}`);
-    }
-    chunks.push(Buffer.from(scratch.subarray(0, bytesRead)));
-  }
-}
-
 export async function statRegularFile(filePath: string): Promise<RegularFileStatResult> {
   let stat: Stats;
   try {
@@ -137,7 +90,10 @@ export async function readRegularFile(params: {
     throw Object.assign(new Error(`File not found: ${params.filePath}`), { code: "ENOENT" });
   }
   if (params.maxBytes !== undefined && result.stat.size > params.maxBytes) {
-    throw new Error(`File exceeds ${params.maxBytes} bytes: ${params.filePath}`);
+    throw new FsSafeError(
+      "too-large",
+      `file exceeds limit of ${params.maxBytes} bytes (got ${result.stat.size})`,
+    );
   }
 
   let handle: FileHandle;
@@ -167,15 +123,17 @@ export async function readRegularFile(params: {
       preOpenStat: result.stat,
     });
     if (params.maxBytes !== undefined && stat.size > params.maxBytes) {
-      throw new Error(`File exceeds ${params.maxBytes} bytes: ${params.filePath}`);
+      throw new FsSafeError(
+        "too-large",
+        `file exceeds limit of ${params.maxBytes} bytes (got ${stat.size})`,
+      );
     }
     // With a byte cap, avoid readFile(): a raced file growth would allocate
     // the oversized content before the post-read check could reject it.
-    const buffer = await readFileHandleBounded({
-      handle,
-      filePath: params.filePath,
-      maxBytes: params.maxBytes,
-    });
+    const buffer =
+      params.maxBytes === undefined
+        ? await handle.readFile()
+        : await readFileHandleBounded(handle, params.maxBytes);
     return { buffer, stat };
   } finally {
     await handle.close();
@@ -213,15 +171,17 @@ function readOpenedRegularFileSync(params: {
     preOpenStat: params.preOpenStat,
   });
   if (params.maxBytes !== undefined && stat.size > params.maxBytes) {
-    throw new Error(`File exceeds ${params.maxBytes} bytes: ${params.filePath}`);
+    throw new FsSafeError(
+      "too-large",
+      `file exceeds limit of ${params.maxBytes} bytes (got ${stat.size})`,
+    );
   }
   // Keep capped sync reads incremental for the same reason as async reads:
   // readFileSync(fd) would buffer a raced oversized file before throwing.
-  const buffer = readFileDescriptorBounded({
-    fd: params.fd,
-    filePath: params.filePath,
-    maxBytes: params.maxBytes,
-  });
+  const buffer =
+    params.maxBytes === undefined
+      ? fsSync.readFileSync(params.fd)
+      : readFileDescriptorBoundedSync(params.fd, params.maxBytes);
   return { buffer, stat };
 }
 
@@ -235,7 +195,10 @@ export function readRegularFileSync(params: { filePath: string; maxBytes?: numbe
     throw Object.assign(new Error(`File not found: ${params.filePath}`), { code: "ENOENT" });
   }
   if (params.maxBytes !== undefined && result.stat.size > params.maxBytes) {
-    throw new Error(`File exceeds ${params.maxBytes} bytes: ${params.filePath}`);
+    throw new FsSafeError(
+      "too-large",
+      `file exceeds limit of ${params.maxBytes} bytes (got ${result.stat.size})`,
+    );
   }
 
   const fd = fsSync.openSync(params.filePath, resolveRegularFileReadFlags());

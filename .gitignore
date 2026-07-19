@@ -5,3 +5,4 @@ coverage/
 .clawpatch/
 .deepsec/
 .vscode
+.DS_Store

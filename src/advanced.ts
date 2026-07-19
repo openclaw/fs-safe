@@ -3,6 +3,11 @@
 // higher-level primitive.
 export { createAsyncLock } from "./async-lock.js";
 export {
+  readFileDescriptorBounded,
+  readFileDescriptorBoundedSync,
+  readFileHandleBounded,
+} from "./bounded-read.js";
+export {
   assertNoUnsafeDeviceReadPath,
   isUnsafeDeviceReadPath,
   matchUnsafeDeviceReadPath,

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { readFileDescriptorBoundedSync } from "./bounded-read.js";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, type AsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError, type FsSafeErrorCode } from "./errors.js";
 import { sameFileIdentity, type FileIdentityStat } from "./file-identity.js";
@@ -123,7 +124,7 @@ function readSecretFileOutcomeSync(
   }
 
   try {
-    const raw = fs.readFileSync(opened.fd, "utf8");
+    const raw = readFileDescriptorBoundedSync(opened.fd, maxBytes).toString("utf8");
     const secret = raw.trim();
     if (!secret) {
       return {
@@ -137,7 +138,10 @@ function readSecretFileOutcomeSync(
     const normalized = normalizeSecretReadError(error);
     return {
       ok: false,
-      code: "invalid-path",
+      code:
+        error instanceof FsSafeError && error.code === "too-large"
+          ? "too-large"
+          : "invalid-path",
       error: normalized,
       message: `Failed to read ${label} file at ${resolvedPath}: ${String(normalized)}`,
     };

@@ -3,6 +3,7 @@ import syncFs from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Readable } from "node:stream";
+import { readFileDescriptorBoundedSync } from "./bounded-read.js";
 import { createSyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import {
@@ -554,8 +555,11 @@ export function fileStoreSync(options: FileStoreOptions): FileStoreSync {
       }
       try {
         assertMaxBytes(opened.stat.size, readOptions?.maxBytes ?? maxBytes);
-        const raw = syncFs.readFileSync(opened.fd, "utf8");
-        assertMaxBytes(Buffer.byteLength(raw, "utf8"), readOptions?.maxBytes ?? maxBytes);
+        const limit = readOptions?.maxBytes ?? maxBytes;
+        const raw =
+          limit === undefined
+            ? syncFs.readFileSync(opened.fd, "utf8")
+            : readFileDescriptorBoundedSync(opened.fd, limit).toString("utf8");
         return raw;
       } finally {
         syncFs.closeSync(opened.fd);

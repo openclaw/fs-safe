@@ -1,5 +1,6 @@
 import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
+import { readFileHandleBounded } from "./bounded-read.js";
 import { FsSafeError } from "./errors.js";
 
 export type ReadResult = {
@@ -24,13 +25,10 @@ export async function readOpenedFileSafely(params: {
       `file exceeds limit of ${params.maxBytes} bytes (got ${params.opened.stat.size})`,
     );
   }
-  const buffer = await params.opened.handle.readFile();
-  if (params.maxBytes !== undefined && buffer.byteLength > params.maxBytes) {
-    throw new FsSafeError(
-      "too-large",
-      `file exceeds limit of ${params.maxBytes} bytes (got ${buffer.byteLength})`,
-    );
-  }
+  const buffer =
+    params.maxBytes === undefined
+      ? await params.opened.handle.readFile()
+      : await readFileHandleBounded(params.opened.handle, params.maxBytes);
   return {
     buffer,
     realPath: params.opened.realPath,

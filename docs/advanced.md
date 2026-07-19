@@ -55,12 +55,32 @@ Operational filesystem failures such as permissions or I/O errors are rethrown.
 
 | Export | Page | Notes |
 |---|---|---|
+| `readFileDescriptorBounded`, `readFileDescriptorBoundedSync`, `readFileHandleBounded` | – | Incremental whole-file reads for already-open descriptors/handles. They consume at most `maxBytes + 1`, do not close the input, and throw `FsSafeError("too-large")` on overflow. |
 | `openRootFile`, `openRootFileSync`, `canUseRootFileOpen`, `matchRootFileOpenFailure`, related types | – | Low-level no-follow open routed through the root-file path. |
 | `appendRegularFile`, `appendRegularFileSync`, `readRegularFile`, `readRegularFileSync`, `statRegularFile`, `statRegularFileSync`, `resolveRegularFileAppendFlags`, `AppendRegularFileOptions`, `RegularFileStatResult` | [regular-file.md](regular-file.md) | Type-checked regular-file I/O. |
 | `sameFileIdentity`, `FileIdentityStat` | – | Compare two stats for same-inode equality. |
 | `pathExists`, `pathExistsSync` | – | Boolean existence check that does not throw on `ENOENT`. |
 | `assertNoSymlinkParents`, `assertNoSymlinkParentsSync`, `AssertNoSymlinkParentsOptions` | – | Reject paths whose ancestor chain contains symlinks. |
 | `assertNoHardlinkedFinalPath`, `assertNoPathAliasEscape`, `PATH_ALIAS_POLICIES`, `PathAliasPolicy` | – | Hardlink/alias defense building blocks. |
+
+The bounded descriptor helpers start at the descriptor's current offset and
+leave ownership with the caller. They are intended for the second half of a
+safe read: first open and validate the path using the boundary appropriate to
+your application, then read the already-pinned descriptor without trusting a
+possibly stale size check.
+
+```ts
+import fs from "node:fs";
+import { readFileDescriptorBoundedSync } from "@openclaw/fs-safe/advanced";
+
+const fd = fs.openSync(filePath, "r");
+try {
+  const bytes = readFileDescriptorBoundedSync(fd, 256 * 1024);
+  consume(bytes);
+} finally {
+  fs.closeSync(fd);
+}
+```
 
 ### Local roots and file URLs
 

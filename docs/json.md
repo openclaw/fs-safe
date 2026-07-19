@@ -40,15 +40,22 @@ Use `readJson` when missing-or-malformed is a programmer error you want to surfa
 
 ## Reading
 
-### `readJson<T>(filePath)`
+### `readJson<T>(filePath, options?)`
 
 Async strict reader. Throws `JsonFileReadError` on missing or invalid input. The cast is unchecked — validate the shape with your own schema (zod, valibot, …) if it came from an untrusted source.
 
 ```ts
 const manifest = await readJson<Manifest>("./manifest.json");
+const smallManifest = await readJson<Manifest>("./manifest.json", {
+  maxBytes: 256 * 1024,
+});
 ```
 
-### `readJsonIfExists<T>(filePath)`
+All standalone readers accept `{ maxBytes?: number }`. When set, the read is
+incremental and consumes no more than `maxBytes + 1` bytes before rejecting, so
+file growth after the initial stat cannot cause an unbounded allocation.
+
+### `readJsonIfExists<T>(filePath, options?)`
 
 Async semi-lenient reader. Returns `null` if the file is missing; throws `JsonFileReadError` if the file exists but cannot be parsed.
 
@@ -56,7 +63,7 @@ Async semi-lenient reader. Returns `null` if the file is missing; throws `JsonFi
 const cache = (await readJsonIfExists<Cache>("./cache.json")) ?? freshCache();
 ```
 
-### `tryReadJson<T>(filePath)`
+### `tryReadJson<T>(filePath, options?)`
 
 Async lenient reader. Returns `null` for any failure (missing, unreadable, invalid). The "no fuss" sibling.
 
@@ -64,11 +71,11 @@ Async lenient reader. Returns `null` for any failure (missing, unreadable, inval
 const optional = (await tryReadJson<Settings>("./settings.json")) ?? defaults;
 ```
 
-### `readJsonSync<T>(filePath)`
+### `readJsonSync<T>(filePath, options?)`
 
 Synchronous strict reader. Throws `JsonFileReadError` on missing or invalid input, matching the async `readJson` contract.
 
-### `tryReadJsonSync<T>(pathname)`
+### `tryReadJsonSync<T>(pathname, options?)`
 
 Synchronous, generic, lenient. Returns `T | null`. Useful in boot paths where you want a typed result without async.
 
@@ -83,6 +90,7 @@ const result = readRootJsonObjectSync({
   rootDir: "/safe/workspace",
   relativePath: "plugin/openclaw.plugin.json",
   boundaryLabel: "plugin manifest",
+  maxBytes: 256 * 1024,
 });
 
 if (!result.ok) {

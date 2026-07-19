@@ -2,8 +2,13 @@
 
 ## 0.4.2 - Unreleased
 
+### Features
+
+- Add bounded async/sync reads for already-open file descriptors and handles, plus optional byte caps for standalone JSON readers.
+
 ### Security and Correctness
 
+- Make capped root, regular-file, secure-file, secret-file, structured JSON, and synchronous store reads incremental so a file that grows after validation cannot trigger an unbounded allocation.
 - Disable `remove-if-unchanged` stale sidecar deletion because a pathname identity check followed by unlink can delete a replacement lock; retain the deprecated recovery inputs for compatibility while all stale locks fail closed.
 
 ## 0.4.1 - 2026-07-01
