@@ -48,6 +48,17 @@ function resolveRegularFileReadFlags(): number {
   );
 }
 
+function regularFileTooLargeError(filePath: string, maxBytes: number, cause?: unknown): FsSafeError {
+  return new FsSafeError("too-large", `File exceeds ${maxBytes} bytes: ${filePath}`, { cause });
+}
+
+function translateBoundedReadOverflow(error: unknown, filePath: string, maxBytes: number): never {
+  if (error instanceof FsSafeError && error.code === "too-large") {
+    throw regularFileTooLargeError(filePath, maxBytes, error);
+  }
+  throw error;
+}
+
 export async function statRegularFile(filePath: string): Promise<RegularFileStatResult> {
   let stat: Stats;
   try {
@@ -90,10 +101,7 @@ export async function readRegularFile(params: {
     throw Object.assign(new Error(`File not found: ${params.filePath}`), { code: "ENOENT" });
   }
   if (params.maxBytes !== undefined && result.stat.size > params.maxBytes) {
-    throw new FsSafeError(
-      "too-large",
-      `file exceeds limit of ${params.maxBytes} bytes (got ${result.stat.size})`,
-    );
+    throw regularFileTooLargeError(params.filePath, params.maxBytes);
   }
 
   let handle: FileHandle;
@@ -123,17 +131,22 @@ export async function readRegularFile(params: {
       preOpenStat: result.stat,
     });
     if (params.maxBytes !== undefined && stat.size > params.maxBytes) {
-      throw new FsSafeError(
-        "too-large",
-        `file exceeds limit of ${params.maxBytes} bytes (got ${stat.size})`,
-      );
+      throw regularFileTooLargeError(params.filePath, params.maxBytes);
     }
     // With a byte cap, avoid readFile(): a raced file growth would allocate
     // the oversized content before the post-read check could reject it.
-    const buffer =
-      params.maxBytes === undefined
-        ? await handle.readFile()
-        : await readFileHandleBounded(handle, params.maxBytes);
+    let buffer: Buffer;
+    try {
+      buffer =
+        params.maxBytes === undefined
+          ? await handle.readFile()
+          : await readFileHandleBounded(handle, params.maxBytes);
+    } catch (error) {
+      if (params.maxBytes !== undefined) {
+        translateBoundedReadOverflow(error, params.filePath, params.maxBytes);
+      }
+      throw error;
+    }
     return { buffer, stat };
   } finally {
     await handle.close();
@@ -171,17 +184,22 @@ function readOpenedRegularFileSync(params: {
     preOpenStat: params.preOpenStat,
   });
   if (params.maxBytes !== undefined && stat.size > params.maxBytes) {
-    throw new FsSafeError(
-      "too-large",
-      `file exceeds limit of ${params.maxBytes} bytes (got ${stat.size})`,
-    );
+    throw regularFileTooLargeError(params.filePath, params.maxBytes);
   }
   // Keep capped sync reads incremental for the same reason as async reads:
   // readFileSync(fd) would buffer a raced oversized file before throwing.
-  const buffer =
-    params.maxBytes === undefined
-      ? fsSync.readFileSync(params.fd)
-      : readFileDescriptorBoundedSync(params.fd, params.maxBytes);
+  let buffer: Buffer;
+  try {
+    buffer =
+      params.maxBytes === undefined
+        ? fsSync.readFileSync(params.fd)
+        : readFileDescriptorBoundedSync(params.fd, params.maxBytes);
+  } catch (error) {
+    if (params.maxBytes !== undefined) {
+      translateBoundedReadOverflow(error, params.filePath, params.maxBytes);
+    }
+    throw error;
+  }
   return { buffer, stat };
 }
 
@@ -195,10 +213,7 @@ export function readRegularFileSync(params: { filePath: string; maxBytes?: numbe
     throw Object.assign(new Error(`File not found: ${params.filePath}`), { code: "ENOENT" });
   }
   if (params.maxBytes !== undefined && result.stat.size > params.maxBytes) {
-    throw new FsSafeError(
-      "too-large",
-      `file exceeds limit of ${params.maxBytes} bytes (got ${result.stat.size})`,
-    );
+    throw regularFileTooLargeError(params.filePath, params.maxBytes);
   }
 
   const fd = fsSync.openSync(params.filePath, resolveRegularFileReadFlags());

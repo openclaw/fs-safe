@@ -2,6 +2,10 @@
 
 ## 0.4.3 - Unreleased
 
+### Compatibility
+
+- Restore the pre-0.4.2 `readRegularFile` and `readRegularFileSync` overflow error message while retaining allocation-bounded reads and the structured `too-large` error on the new low-level bounded-read primitives.
+
 ## 0.4.2 - 2026-07-18
 
 ### Features
