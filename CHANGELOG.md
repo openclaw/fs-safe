@@ -2,6 +2,10 @@
 
 ## 0.4.4 - Unreleased
 
+### Security and Correctness
+
+- Restore opt-in stale sidecar recovery with an exclusive reclaim guard that serializes snapshot verification and unlink, preserving dead-owner recovery without allowing a competing reclaimer to delete a fresh replacement lock.
+
 ## 0.4.3 - 2026-07-18
 
 ### Compatibility

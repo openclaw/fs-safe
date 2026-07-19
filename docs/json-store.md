@@ -53,7 +53,7 @@ type JsonStoreLockOptions = {
   staleMs?: number;     // default 30_000
   timeoutMs?: number;   // default 30_000
   retry?: FileLockRetryOptions;
-  staleRecovery?: "fail-closed" | "remove-if-unchanged"; // legacy value also fails closed
+  staleRecovery?: "fail-closed" | "remove-if-unchanged";
   managerKey?: string;  // default `fs-safe.json-store:<filePath>`
 };
 
@@ -141,7 +141,7 @@ When `lock` is falsy, `read` / `write` / `update` are unlocked. The `update` sha
 
 Process-wide lock defaults from `configureFsSafeLocks()` apply only after locking is explicitly enabled. They do not make JSON stores lock by default.
 
-JSON store locks always fail closed on stale sidecars. The deprecated `staleRecovery: "remove-if-unchanged"` value remains accepted for compatibility, but it behaves as `"fail-closed"` and never removes the lock.
+JSON store locks fail closed on stale sidecars by default. Opt-in `staleRecovery: "remove-if-unchanged"` requires caller approval and uses the same exclusive reclaim guard as the low-level sidecar-lock API.
 
 The default `managerKey` namespaces the in-process `FileLockManager` per absolute file path, so two `jsonStore` calls on the same file share lock state automatically.
 

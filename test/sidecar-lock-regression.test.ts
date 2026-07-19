@@ -55,7 +55,10 @@ describe("sidecar lock regressions", () => {
         shouldReclaim: async () => {
           if (!replaced) {
             replaced = true;
-            await fsp.writeFile(lockPath, JSON.stringify({ createdAt: "2999-01-01T00:00:00.000Z" }));
+            await fsp.writeFile(
+              lockPath,
+              JSON.stringify({ createdAt: "2999-01-01T00:00:00.000Z" }),
+            );
             return true;
           }
           return false;
@@ -128,29 +131,165 @@ describe("sidecar lock regressions", () => {
     }
   });
 
-  it("fails closed even when legacy stale-removal inputs approve the snapshot", async () => {
+  it("removes a stale sidecar only after caller approval under the reclaim guard", async () => {
     const base = await tempRoot("fs-safe-sidecar-remove-");
     const targetPath = path.join(base, "state.json");
     const lockPath = `${targetPath}.lock`;
     const manager = createSidecarLockManager(`fs-safe-remove-test-${Date.now()}`);
     await fsp.writeFile(lockPath, JSON.stringify({ createdAt: "2000-01-01T00:00:00.000Z" }));
 
-    const shouldRemoveStaleLock = vi.fn(async () => true);
+    const seen: Array<Record<string, unknown> | null> = [];
+    const lock = await manager.acquire({
+      targetPath,
+      lockPath,
+      staleMs: 1,
+      staleRecovery: "remove-if-unchanged",
+      payload: async () => ({ createdAt: new Date().toISOString(), owner: "next" }),
+      shouldReclaim: async () => true,
+      shouldRemoveStaleLock: async (snapshot) => {
+        expect(snapshot.lockPath).toBe(lockPath);
+        expect(snapshot.raw).toContain("2000-01-01T00:00:00.000Z");
+        seen.push(snapshot.payload);
+        return true;
+      },
+    });
+    try {
+      expect(seen).toEqual([{ createdAt: "2000-01-01T00:00:00.000Z" }]);
+      await expect(fsp.readFile(lockPath, "utf8")).resolves.toContain("next");
+      await expect(fsp.stat(`${lockPath}.reclaim`)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await lock.release();
+    }
+  });
+
+  it("fails closed when stale removal is not explicitly approved", async () => {
+    const base = await tempRoot("fs-safe-sidecar-refuse-");
+    const targetPath = path.join(base, "state.json");
+    const lockPath = `${targetPath}.lock`;
+    const manager = createSidecarLockManager(`fs-safe-refuse-test-${Date.now()}`);
+    await fsp.writeFile(lockPath, JSON.stringify({ createdAt: "2000-01-01T00:00:00.000Z" }));
+
     await expect(
       manager.acquire({
         targetPath,
         lockPath,
         staleMs: 1,
+        retry: { retries: 0 },
         staleRecovery: "remove-if-unchanged",
-        payload: async () => ({ createdAt: new Date().toISOString(), owner: "next" }),
+        payload: async () => ({ createdAt: new Date().toISOString() }),
         shouldReclaim: async () => true,
-        shouldRemoveStaleLock,
       }),
     ).rejects.toMatchObject({ code: "file_lock_stale" });
-    expect(shouldRemoveStaleLock).not.toHaveBeenCalled();
-    await expect(fsp.readFile(lockPath, "utf8")).resolves.toContain(
-      "2000-01-01T00:00:00.000Z",
-    );
+    await expect(fsp.readFile(lockPath, "utf8")).resolves.toContain("2000");
+    await expect(fsp.stat(`${lockPath}.reclaim`)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("serializes stale reclaimers so a replacement lock cannot be deleted", async () => {
+    const base = await tempRoot("fs-safe-sidecar-reclaim-guard-");
+    const targetPath = path.join(base, "state.json");
+    const lockPath = `${targetPath}.lock`;
+    await fsp.writeFile(lockPath, JSON.stringify({ createdAt: "2000-01-01T00:00:00.000Z" }));
+
+    let approveFirst!: () => void;
+    const firstApproval = new Promise<void>((resolve) => {
+      approveFirst = resolve;
+    });
+    let firstEnteredApproval!: () => void;
+    const firstApprovalEntered = new Promise<void>((resolve) => {
+      firstEnteredApproval = resolve;
+    });
+    const firstManager = createSidecarLockManager(`fs-safe-first-reclaimer-${Date.now()}`);
+    const secondManager = createSidecarLockManager(`fs-safe-second-reclaimer-${Date.now()}`);
+    const secondRemoval = vi.fn(async () => true);
+
+    const firstAcquire = firstManager.acquire({
+      targetPath,
+      lockPath,
+      staleMs: 1,
+      staleRecovery: "remove-if-unchanged",
+      payload: async () => ({ createdAt: "2999-01-01T00:00:00.000Z", owner: "first" }),
+      shouldReclaim: async ({ payload }) => payload?.createdAt === "2000-01-01T00:00:00.000Z",
+      shouldRemoveStaleLock: async () => {
+        firstEnteredApproval();
+        await firstApproval;
+        return true;
+      },
+    });
+    await firstApprovalEntered;
+
+    const secondAcquire = secondManager.acquire({
+      targetPath,
+      lockPath,
+      staleMs: 1,
+      timeoutMs: 50,
+      retry: { retries: 20, minTimeout: 1, maxTimeout: 2 },
+      staleRecovery: "remove-if-unchanged",
+      payload: async () => ({ createdAt: new Date().toISOString(), owner: "second" }),
+      shouldReclaim: async ({ payload }) => payload?.createdAt === "2000-01-01T00:00:00.000Z",
+      shouldRemoveStaleLock: secondRemoval,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(secondRemoval).not.toHaveBeenCalled();
+    approveFirst();
+    const firstLock = await firstAcquire;
+    await expect(secondAcquire).rejects.toMatchObject({ code: "file_lock_timeout" });
+    expect(secondRemoval).not.toHaveBeenCalled();
+    await expect(fsp.readFile(lockPath, "utf8")).resolves.toContain("first");
+    await firstLock.release();
+  });
+
+  it("fails closed when a crashed reclaimer leaves its guard behind", async () => {
+    const base = await tempRoot("fs-safe-sidecar-reclaim-guard-stale-");
+    const targetPath = path.join(base, "state.json");
+    const lockPath = `${targetPath}.lock`;
+    const reclaimGuardPath = `${lockPath}.reclaim`;
+    await fsp.mkdir(reclaimGuardPath);
+
+    const manager = createSidecarLockManager(`fs-safe-stale-reclaim-guard-${Date.now()}`);
+    await expect(
+      manager.acquire({
+        targetPath,
+        lockPath,
+        staleMs: 1,
+        timeoutMs: 5,
+        retry: { retries: 1, minTimeout: 1, maxTimeout: 1 },
+        staleRecovery: "remove-if-unchanged",
+        payload: async () => ({ createdAt: new Date().toISOString() }),
+        shouldReclaim: async () => true,
+        shouldRemoveStaleLock: async () => true,
+      }),
+    ).rejects.toMatchObject({ code: "file_lock_timeout" });
+    expect((await fsp.stat(reclaimGuardPath)).isDirectory()).toBe(true);
+    await expect(fsp.stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("backfills reclaim state created by an older package copy", async () => {
+    const base = await tempRoot("fs-safe-sidecar-legacy-manager-state-");
+    const targetPath = path.join(base, "state.json");
+    const lockPath = `${targetPath}.lock`;
+    await fsp.writeFile(lockPath, JSON.stringify({ createdAt: "2000-01-01T00:00:00.000Z" }));
+
+    const managerKey = `fs-safe-legacy-manager-state-${Date.now()}`;
+    const managers = Reflect.get(globalThis, Symbol.for("fsSafe.sidecarLockManagers")) as Map<
+      string,
+      { cleanupRegistered: boolean; held: Map<string, unknown> }
+    >;
+    managers.set(managerKey, { cleanupRegistered: true, held: new Map() });
+
+    const manager = createSidecarLockManager(managerKey);
+    const lock = await manager.acquire({
+      targetPath,
+      lockPath,
+      staleMs: 1,
+      staleRecovery: "remove-if-unchanged",
+      payload: async () => ({ createdAt: new Date().toISOString(), owner: "next" }),
+      shouldReclaim: async () => true,
+      shouldRemoveStaleLock: async () => true,
+    });
+    await lock.release();
+    managers.delete(managerKey);
+    await expect(fsp.stat(`${lockPath}.reclaim`)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("cleans failed sidecar locks and preserves stale corrupt locks", async () => {

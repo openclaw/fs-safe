@@ -21,7 +21,7 @@ try {
 
 The lock file sits next to the protected resource. If a process crashes mid-lock, the next acquirer notices the held entry, inspects its payload (PID, host, acquired-at timestamp), and decides — via `shouldReclaim` (defaulting to "is the lock older than `staleMs`?") — whether it should keep waiting or fail.
 
-The library installs a `process.on("exit")` handler that releases all currently-held locks synchronously, so well-behaved exits leave no stale sidecars. Crashed holders leave their sidecar behind; remove those through an application-owned recovery path after you have proved the holder cannot still be writing.
+The library installs a `process.on("exit")` handler that releases all currently-held locks synchronously, so well-behaved exits leave no stale sidecars. Crashed holders leave their sidecar behind; recover only after an application-owned liveness policy proves the holder cannot still be writing.
 
 ## API
 
@@ -51,7 +51,7 @@ type FileLockAcquireOptions<TPayload extends Record<string, unknown>> = {
   staleMs?: number;                      // default 30_000
   timeoutMs?: number;                    // overall acquire deadline; default unbounded
   retry?: FileLockRetryOptions;
-  staleRecovery?: "fail-closed" | "remove-if-unchanged"; // legacy value also fails closed
+  staleRecovery?: "fail-closed" | "remove-if-unchanged"; // default "fail-closed"
   allowReentrant?: boolean;              // if this process already holds it, increment a count instead of failing
   payload: () => TPayload | Promise<TPayload>;
   shouldReclaim?: (params: {
@@ -62,7 +62,7 @@ type FileLockAcquireOptions<TPayload extends Record<string, unknown>> = {
     nowMs: number;
     heldByThisProcess: boolean;
   }) => boolean | Promise<boolean>;
-  shouldRemoveStaleLock?: (snapshot: {          // deprecated; retained but not invoked
+  shouldRemoveStaleLock?: (snapshot: {
     lockPath: string;
     normalizedTargetPath: string;
     raw: string;
@@ -170,24 +170,28 @@ const handle = await acquireFileLock(targetPath, {
 });
 ```
 
-`heldByThisProcess` is true when this manager already holds the lock (relevant for the reentrant case). A `true` result marks the observed sidecar as stale and acquisition throws an error with code `file_lock_stale`.
+`heldByThisProcess` is true when this manager already holds the lock (relevant for the reentrant case). A `true` result marks the observed sidecar as stale; `staleRecovery` then decides whether acquisition fails closed or attempts caller-approved removal.
 
-## Stale recovery is fail-closed
+## Stale recovery: guarded `remove-if-unchanged`
 
-fs-safe never removes a stale third-party sidecar during acquisition. Checking a pathname's content and identity before unlinking it is not atomic: another process can replace the lock between the final check and the unlink. Every stale result therefore fails closed with error code `file_lock_stale`.
+The default `staleRecovery: "fail-closed"` never removes third-party sidecars. Use `staleRecovery: "remove-if-unchanged"` only when your app has a reliable owner-liveness policy and can prove a stale owner cannot still be writing.
 
-The `"remove-if-unchanged"` value and `shouldRemoveStaleLock` callback remain accepted as deprecated compatibility inputs. They are ignored and the callback is not invoked. To recover, stop or otherwise exclude every process that can acquire the lock, remove the confirmed stale sidecar under that external authority, and retry acquisition.
+Opt-in recovery creates an exclusive `<lockPath>.reclaim` directory before the final snapshot check and unlink. Every compliant acquirer waits while that guard exists, so two reclaimers cannot perform the check/unlink race that could delete a fresh replacement lock. If another acquirer creates the replacement during the handoff, its exclusive create wins and the reclaimer leaves it untouched.
+
+`shouldRemoveStaleLock` receives the exact lock snapshot that fs-safe inspected. The callback must approve that owner as definitely stale. If the callback is missing, returns false, or the file changed, acquisition fails closed or keeps retrying according to the normal retry policy.
+
+A process killed during the short reclaim section can leave the empty `.reclaim` directory behind. That ambiguous state intentionally fails closed; remove the guard only under external authority that excludes every competing lock acquirer.
 
 ## What sidecar locks defend against
 
 - **Two processes writing the same file at once.** `acquire` serializes the critical section.
-- **Accidentally deleting a fresh lock during stale recovery.** Stale third-party locks always fail closed and are never unlinked during acquisition.
+- **Accidentally deleting a fresh lock during stale recovery.** Opt-in removal is serialized by the reclaim guard and rechecks the approved snapshot before unlinking.
 - **Race between simultaneous acquire attempts.** `O_CREAT | O_EXCL` ensures one wins.
 
 ## What they do **not** defend against
 
 - **Misbehaving holders that ignore the lock.** Locks are advisory — only callers that go through `acquire` are bound.
-- **Automatic stale lock deletion.** If a process crashes, recover only under external authority that excludes every competing lock acquirer.
+- **Unapproved stale lock deletion.** If a process crashes, use the payload and your own liveness policy before opting into guarded recovery.
 - **Multi-host coordination over network filesystems.** Behavior depends on the underlying filesystem's `O_EXCL` semantics; treat as best-effort.
 
 ## Common patterns

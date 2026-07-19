@@ -1,9 +1,21 @@
 import fsSync from "node:fs";
-import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { sameFileIdentity } from "./file-identity.js";
+import {
+  readSidecarLockSnapshot,
+  releaseSidecarReclaimGuard,
+  removeSidecarLockIfUnchanged,
+  removeStaleSidecarLockIfAllowed,
+  sidecarLockSnapshotStillPresent,
+  sidecarReclaimGuardExists,
+  tryAcquireSidecarReclaimGuard,
+  type SidecarLockSnapshot,
+  type SidecarLockStaleSnapshot,
+} from "./sidecar-lock-reclaim.js";
+
+export type { SidecarLockStaleSnapshot } from "./sidecar-lock-reclaim.js";
 
 export type SidecarLockRetryOptions = {
   retries?: number;
@@ -13,18 +25,7 @@ export type SidecarLockRetryOptions = {
   randomize?: boolean;
 };
 
-export type SidecarLockStaleRecovery =
-  | "fail-closed"
-  /** @deprecated Stale locks now always fail closed. */
-  | "remove-if-unchanged";
-
-/** @deprecated Stale-removal callbacks are retained for source compatibility but are not invoked. */
-export type SidecarLockStaleSnapshot = {
-  lockPath: string;
-  normalizedTargetPath: string;
-  raw: string;
-  payload: Record<string, unknown> | null;
-};
+export type SidecarLockStaleRecovery = "fail-closed" | "remove-if-unchanged";
 
 export type SidecarLockAcquireOptions<TPayload extends Record<string, unknown>> = {
   targetPath: string;
@@ -43,10 +44,7 @@ export type SidecarLockAcquireOptions<TPayload extends Record<string, unknown>> 
     nowMs: number;
     heldByThisProcess: boolean;
   }) => boolean | Promise<boolean>;
-  /** @deprecated Stale locks now always fail closed; this callback is not invoked. */
-  shouldRemoveStaleLock?: (
-    snapshot: SidecarLockStaleSnapshot,
-  ) => boolean | Promise<boolean>;
+  shouldRemoveStaleLock?: (snapshot: SidecarLockStaleSnapshot) => boolean | Promise<boolean>;
   metadata?: Record<string, unknown>;
 };
 
@@ -76,7 +74,7 @@ type HeldLock = {
   count: number;
   handle: FileHandle;
   lockPath: string;
-  snapshot: LockSnapshot;
+  snapshot: SidecarLockSnapshot;
   acquiredAt: number;
   metadata: Record<string, unknown>;
   releasePromise?: Promise<void>;
@@ -85,6 +83,8 @@ type HeldLock = {
 type SidecarLockManagerState = {
   cleanupRegistered: boolean;
   held: Map<string, HeldLock>;
+  reclaimCleanupRegistered: boolean;
+  reclaimGuards: Set<string>;
 };
 
 const GLOBAL_STATE_KEY = Symbol.for("fsSafe.sidecarLockManagers");
@@ -103,76 +103,23 @@ function resolveManagerState(key: string): SidecarLockManagerState {
   const managers = getGlobalManagers();
   let state = managers.get(key);
   if (!state) {
-    state = { cleanupRegistered: false, held: new Map() };
+    state = {
+      cleanupRegistered: false,
+      held: new Map(),
+      reclaimCleanupRegistered: false,
+      reclaimGuards: new Set(),
+    };
     managers.set(key, state);
+  } else {
+    // The global manager symbol is shared across package copies and hot reloads.
+    // Backfill state created by fs-safe versions that predate reclaim guards.
+    state.reclaimCleanupRegistered ??= false;
+    state.reclaimGuards ??= new Set();
   }
   return state;
 }
 
-type LockSnapshot = {
-  raw?: string;
-  payload: Record<string, unknown> | null;
-  stat?: Stats;
-};
-
-async function readLockSnapshot(lockPath: string): Promise<LockSnapshot | null> {
-  try {
-    const stat = await fs.lstat(lockPath);
-    const raw = await fs.readFile(lockPath, "utf8");
-    try {
-      const parsed = JSON.parse(raw) as unknown;
-      const payload =
-        parsed && typeof parsed === "object" && !Array.isArray(parsed)
-          ? (parsed as Record<string, unknown>)
-          : null;
-      return { raw, payload, stat };
-    } catch {
-      return { raw, payload: null, stat };
-    }
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return null;
-    }
-    throw err;
-  }
-}
-
-function snapshotMatches(current: LockSnapshot, observed: LockSnapshot): boolean {
-  if (observed.stat && current.stat && !sameFileIdentity(observed.stat, current.stat)) {
-    return false;
-  }
-  if (observed.raw !== undefined) {
-    return current.raw === observed.raw;
-  }
-  return observed.stat !== undefined && current.stat !== undefined;
-}
-
-async function removeLockIfUnchanged(
-  lockPath: string,
-  observed: LockSnapshot | null,
-): Promise<boolean> {
-  const current = await readLockSnapshot(lockPath);
-  if (!current || !observed) {
-    return false;
-  }
-  if (!snapshotMatches(current, observed)) {
-    // The lock changed after we decided it was stale. Leave the fresh holder's
-    // file alone; deleting by path here would break mutual exclusion.
-    return false;
-  }
-  await fs.rm(lockPath, { force: true }).catch(() => undefined);
-  return true;
-}
-
-async function lockSnapshotStillPresent(
-  lockPath: string,
-  observed: LockSnapshot | null,
-): Promise<boolean> {
-  const current = await readLockSnapshot(lockPath);
-  return !!current && !!observed && snapshotMatches(current, observed);
-}
-
-function snapshotMatchesSync(lockPath: string, observed: LockSnapshot): boolean {
+function snapshotMatchesSync(lockPath: string, observed: SidecarLockSnapshot): boolean {
   try {
     const stat = fsSync.lstatSync(lockPath);
     if (observed.stat && !sameFileIdentity(observed.stat, stat)) {
@@ -223,6 +170,17 @@ async function defaultShouldReclaim(params: {
   }
 }
 
+function releaseAllReclaimGuardsSync(state: SidecarLockManagerState): void {
+  for (const reclaimGuardPath of state.reclaimGuards) {
+    try {
+      fsSync.rmdirSync(reclaimGuardPath);
+      state.reclaimGuards.delete(reclaimGuardPath);
+    } catch {
+      // Best-effort process-exit cleanup. A surviving guard fails closed.
+    }
+  }
+}
+
 function releaseAllLocksSync(state: SidecarLockManagerState): void {
   for (const [normalizedTargetPath, held] of state.held) {
     void held.handle.close().catch(() => undefined);
@@ -235,6 +193,7 @@ function releaseAllLocksSync(state: SidecarLockManagerState): void {
     }
     state.held.delete(normalizedTargetPath);
   }
+  releaseAllReclaimGuardsSync(state);
 }
 
 async function releaseHeldLock(
@@ -262,7 +221,7 @@ async function releaseHeldLock(
   state.held.delete(normalizedTargetPath);
   held.releasePromise = (async () => {
     await held.handle.close().catch(() => undefined);
-    await removeLockIfUnchanged(held.lockPath, held.snapshot);
+    await removeSidecarLockIfUnchanged(held.lockPath, held.snapshot);
   })();
   try {
     await held.releasePromise;
@@ -276,11 +235,16 @@ export function createSidecarLockManager(key: string) {
   const state = resolveManagerState(key);
 
   function ensureExitCleanupRegistered(): void {
-    if (state.cleanupRegistered) {
+    if (!state.cleanupRegistered) {
+      state.cleanupRegistered = true;
+      state.reclaimCleanupRegistered = true;
+      process.on("exit", () => releaseAllLocksSync(state));
       return;
     }
-    state.cleanupRegistered = true;
-    process.on("exit", () => releaseAllLocksSync(state));
+    if (!state.reclaimCleanupRegistered) {
+      state.reclaimCleanupRegistered = true;
+      process.on("exit", () => releaseAllReclaimGuardsSync(state));
+    }
   }
 
   async function acquire<TPayload extends Record<string, unknown>>(
@@ -292,7 +256,8 @@ export function createSidecarLockManager(key: string) {
     const held = state.held.get(normalizedTargetPath);
     if (held && options.allowReentrant) {
       held.count += 1;
-      const release = () => releaseHeldLock(state, normalizedTargetPath, held).then(() => undefined);
+      const release = () =>
+        releaseHeldLock(state, normalizedTargetPath, held).then(() => undefined);
       return {
         lockPath,
         normalizedTargetPath,
@@ -304,103 +269,150 @@ export function createSidecarLockManager(key: string) {
     const startedAt = Date.now();
     const retry = options.retry ?? {};
     const maxRetries = options.timeoutMs === Number.POSITIVE_INFINITY ? undefined : retry.retries;
+    const reclaimGuardPath = `${lockPath}.reclaim`;
+    let ownsReclaimGuard = false;
     let attempt = 0;
-    while (true) {
-      let handle: FileHandle | null = null;
-      try {
-        handle = await fs.open(lockPath, "wx");
-        const payload = await options.payload();
-        const raw = `${JSON.stringify(payload, null, 2)}\n`;
-        await handle.writeFile(raw, "utf8");
-        const snapshot = { raw, payload, stat: await handle.stat() };
-        const createdHeld: HeldLock = {
-          count: 1,
-          handle,
-          lockPath,
-          snapshot,
-          acquiredAt: Date.now(),
-          metadata: options.metadata ?? {},
-        };
-        state.held.set(normalizedTargetPath, createdHeld);
-        const release = () =>
-          releaseHeldLock(state, normalizedTargetPath, createdHeld).then(() => undefined);
-        return {
+    const waitForRetry = async (): Promise<void> => {
+      const elapsed = Date.now() - startedAt;
+      if (
+        (options.timeoutMs !== undefined &&
+          options.timeoutMs !== Number.POSITIVE_INFINITY &&
+          elapsed >= options.timeoutMs) ||
+        (maxRetries !== undefined && attempt >= maxRetries)
+      ) {
+        throw Object.assign(new Error(`file lock timeout for ${normalizedTargetPath}`), {
+          code: "file_lock_timeout",
           lockPath,
           normalizedTargetPath,
-          release,
-          [Symbol.asyncDispose]: release,
-        };
-      } catch (err) {
-        if (handle) {
-          const failedSnapshot: LockSnapshot = { payload: null };
-          try {
-            failedSnapshot.stat = await handle.stat();
-          } catch {
-            // Best-effort cleanup of a failed exclusive create.
-          }
-          const current = state.held.get(normalizedTargetPath);
-          if (current?.handle === handle) {
-            state.held.delete(normalizedTargetPath);
-          }
-          // If payload serialization/write fails, the file may be empty or
-          // partial JSON, so remove while our exclusive handle is still open.
-          await fs.rm(lockPath, { force: true }).catch(() => undefined);
-          await handle.close().catch(() => undefined);
-          // Windows can refuse removing an open file; retry after close but
-          // only if the path still points at the file identity we created.
-          await removeLockIfUnchanged(lockPath, failedSnapshot);
-        }
-        if ((err as { code?: unknown }).code !== "EEXIST") {
-          throw err;
-        }
-        const nowMs = Date.now();
-        const snapshot = await readLockSnapshot(lockPath);
-        if (!snapshot) {
+        });
+      }
+      const remaining =
+        options.timeoutMs === undefined || options.timeoutMs === Number.POSITIVE_INFINITY
+          ? Number.POSITIVE_INFINITY
+          : Math.max(0, options.timeoutMs - elapsed);
+      const delay = Math.min(computeDelayMs(retry, attempt), remaining);
+      attempt += 1;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    };
+    try {
+      while (true) {
+        if (!ownsReclaimGuard && (await sidecarReclaimGuardExists(reclaimGuardPath))) {
+          await waitForRetry();
           continue;
         }
-        const shouldReclaim = options.shouldReclaim ?? defaultShouldReclaim;
-        if (
-          await shouldReclaim({
+        let handle: FileHandle | null = null;
+        try {
+          handle = await fs.open(lockPath, "wx");
+          const payload = await options.payload();
+          const raw = `${JSON.stringify(payload, null, 2)}\n`;
+          await handle.writeFile(raw, "utf8");
+          const snapshot = { raw, payload, stat: await handle.stat() };
+          const createdHeld: HeldLock = {
+            count: 1,
+            handle,
+            lockPath,
+            snapshot,
+            acquiredAt: Date.now(),
+            metadata: options.metadata ?? {},
+          };
+          state.held.set(normalizedTargetPath, createdHeld);
+          if (ownsReclaimGuard) {
+            try {
+              await releaseSidecarReclaimGuard(state.reclaimGuards, reclaimGuardPath);
+              ownsReclaimGuard = false;
+            } catch (err) {
+              await releaseHeldLock(state, normalizedTargetPath, createdHeld, { force: true });
+              throw err;
+            }
+          }
+          const release = () =>
+            releaseHeldLock(state, normalizedTargetPath, createdHeld).then(() => undefined);
+          return {
             lockPath,
             normalizedTargetPath,
-            payload: snapshot?.payload ?? null,
-            staleMs: options.staleMs,
-            nowMs,
-            heldByThisProcess: state.held.has(normalizedTargetPath),
-          })
-        ) {
-          if (!(await lockSnapshotStillPresent(lockPath, snapshot))) {
+            release,
+            [Symbol.asyncDispose]: release,
+          };
+        } catch (err) {
+          if (handle) {
+            const failedSnapshot: SidecarLockSnapshot = { payload: null };
+            try {
+              failedSnapshot.stat = await handle.stat();
+            } catch {
+              // Best-effort cleanup of a failed exclusive create.
+            }
+            const current = state.held.get(normalizedTargetPath);
+            if (current?.handle === handle) {
+              state.held.delete(normalizedTargetPath);
+            }
+            // If payload serialization/write fails, the file may be empty or
+            // partial JSON, so remove while our exclusive handle is still open.
+            await fs.rm(lockPath, { force: true }).catch(() => undefined);
+            await handle.close().catch(() => undefined);
+            // Windows can refuse removing an open file; retry after close but
+            // only if the path still points at the file identity we created.
+            await removeSidecarLockIfUnchanged(lockPath, failedSnapshot);
+          }
+          if ((err as { code?: unknown }).code !== "EEXIST") {
+            throw err;
+          }
+          if (ownsReclaimGuard) {
+            await releaseSidecarReclaimGuard(state.reclaimGuards, reclaimGuardPath);
+            ownsReclaimGuard = false;
             continue;
           }
-          // A pathname recheck followed by unlink is not atomic: a fresh lock
-          // can replace the observed file in between. Legacy recovery inputs
-          // remain accepted, but third-party stale locks always fail closed.
-          throw Object.assign(new Error(`file lock stale for ${normalizedTargetPath}`), {
-            code: "file_lock_stale",
-            lockPath,
-            normalizedTargetPath,
-          });
+          const nowMs = Date.now();
+          const snapshot = await readSidecarLockSnapshot(lockPath);
+          if (!snapshot) {
+            continue;
+          }
+          const shouldReclaim = options.shouldReclaim ?? defaultShouldReclaim;
+          if (
+            await shouldReclaim({
+              lockPath,
+              normalizedTargetPath,
+              payload: snapshot?.payload ?? null,
+              staleMs: options.staleMs,
+              nowMs,
+              heldByThisProcess: state.held.has(normalizedTargetPath),
+            })
+          ) {
+            if (!(await sidecarLockSnapshotStillPresent(lockPath, snapshot))) {
+              continue;
+            }
+            const staleRecovery = options.staleRecovery ?? "fail-closed";
+            if (staleRecovery === "remove-if-unchanged") {
+              if (!(await tryAcquireSidecarReclaimGuard(state.reclaimGuards, reclaimGuardPath))) {
+                await waitForRetry();
+                continue;
+              }
+              ownsReclaimGuard = true;
+              const removal = await removeStaleSidecarLockIfAllowed({
+                lockPath,
+                normalizedTargetPath,
+                snapshot,
+                shouldRemoveStaleLock: options.shouldRemoveStaleLock,
+              });
+              if (removal === "removed" || removal === "changed") {
+                continue;
+              }
+              await releaseSidecarReclaimGuard(state.reclaimGuards, reclaimGuardPath);
+              ownsReclaimGuard = false;
+            }
+            throw Object.assign(new Error(`file lock stale for ${normalizedTargetPath}`), {
+              code: "file_lock_stale",
+              lockPath,
+              normalizedTargetPath,
+            });
+          }
+          await waitForRetry();
         }
-        const elapsed = Date.now() - startedAt;
-        if (
-          (options.timeoutMs !== undefined &&
-            options.timeoutMs !== Number.POSITIVE_INFINITY &&
-            elapsed >= options.timeoutMs) ||
-          (maxRetries !== undefined && attempt >= maxRetries)
-        ) {
-          throw Object.assign(new Error(`file lock timeout for ${normalizedTargetPath}`), {
-            code: "file_lock_timeout",
-            lockPath,
-            normalizedTargetPath,
-          });
-        }
-        const remaining =
-          options.timeoutMs === undefined || options.timeoutMs === Number.POSITIVE_INFINITY
-            ? Number.POSITIVE_INFINITY
-            : Math.max(0, options.timeoutMs - elapsed);
-        const delay = Math.min(computeDelayMs(retry, attempt), remaining);
-        attempt += 1;
-        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    } finally {
+      if (ownsReclaimGuard) {
+        await releaseSidecarReclaimGuard(state.reclaimGuards, reclaimGuardPath).catch(
+          () => undefined,
+        );
       }
     }
   }

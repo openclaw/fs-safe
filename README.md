@@ -283,9 +283,10 @@ the common merge-into-defaults case. Standalone helpers use options bags
 because they do not carry a bound root and often need multiple authority, path,
 and policy knobs.
 
-Sidecar locks fail closed on stale holders. The legacy `remove-if-unchanged`
-option remains accepted for source compatibility, but it no longer unlinks a
-third-party stale lock during acquisition; see the [file lock docs](docs/sidecar-lock.md).
+Sidecar locks fail closed on stale holders by default. Opt-in `remove-if-unchanged`
+recovery requires caller approval and serializes snapshot verification and unlink
+with an exclusive reclaim guard so a replacement lock cannot be deleted; see the
+[file lock docs](docs/sidecar-lock.md).
 
 Use `fileStore()` for cache/blob/media-style directories where callers
 need safe relative paths, size limits, atomic replacement, stream writes, and
