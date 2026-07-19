@@ -51,6 +51,16 @@ function assertWithinMaxBytes(bytes: number, maxBytes: number | undefined): void
   }
 }
 
+async function syncFileBestEffort(handle: FileHandle): Promise<void> {
+  try {
+    await handle.sync();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | undefined)?.code !== "EPERM") {
+      throw error;
+    }
+  }
+}
+
 async function writeStreamToHandle(
   stream: Readable,
   handle: FileHandle,
@@ -289,7 +299,7 @@ async function runPinnedWriteFallback(params: {
       } else {
         await writeStreamToHandle(params.input.stream, handle, params.maxBytes);
       }
-      await handle.sync();
+      await syncFileBestEffort(handle);
       const stat = await handle.stat();
       await handle.close().catch(() => undefined);
       await syncDirectoryBestEffort(parentPath);
@@ -336,7 +346,7 @@ async function runPinnedWriteFallback(params: {
       throw new FsSafeError("path-mismatch", "fallback temp path changed during write");
     }
     const expectedTempStat = tempStat;
-    await handle.sync();
+    await syncFileBestEffort(handle);
     await handle.close().catch(() => undefined);
     handle = undefined;
     await withAsyncDirectoryGuards([parentGuard], async () => {

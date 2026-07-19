@@ -2,6 +2,8 @@
 
 ## 0.4.2 - Unreleased
 
+- Treat `EPERM` from pinned-write file and directory `fsync` calls as best effort for filesystems that permit the write but reject explicit synchronization.
+
 ### Features
 
 - Add bounded async/sync reads for already-open file descriptors and handles, plus optional byte caps for standalone JSON readers.

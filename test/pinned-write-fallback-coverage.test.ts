@@ -32,6 +32,7 @@ async function tempRoot(prefix: string): Promise<string> {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   if (originalPlatform) {
     Object.defineProperty(process, "platform", originalPlatform);
   }

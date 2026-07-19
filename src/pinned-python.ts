@@ -6,15 +6,11 @@ import { getFsSafePythonConfig } from "./pinned-python-config.js";
 const PINNED_PYTHON_WORKER_SOURCE = String.raw`
 import base64, errno, json, os, secrets, stat, sys
 DIR_FLAGS = os.O_RDONLY
-if hasattr(os, "O_DIRECTORY"):
-    DIR_FLAGS |= os.O_DIRECTORY
-if hasattr(os, "O_NOFOLLOW"):
-    DIR_FLAGS |= os.O_NOFOLLOW
+if hasattr(os, "O_DIRECTORY"): DIR_FLAGS |= os.O_DIRECTORY
+if hasattr(os, "O_NOFOLLOW"): DIR_FLAGS |= os.O_NOFOLLOW
 READ_FLAGS = os.O_RDONLY
-if hasattr(os, "O_NONBLOCK"):
-    READ_FLAGS |= os.O_NONBLOCK
-if hasattr(os, "O_NOFOLLOW"):
-    READ_FLAGS |= os.O_NOFOLLOW
+if hasattr(os, "O_NONBLOCK"): READ_FLAGS |= os.O_NONBLOCK
+if hasattr(os, "O_NOFOLLOW"): READ_FLAGS |= os.O_NOFOLLOW
 WRITE_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_EXCL
 if hasattr(os, "O_NOFOLLOW"):
     WRITE_FLAGS |= os.O_NOFOLLOW
@@ -94,6 +90,10 @@ def write_all(fd, data):
         if written <= 0:
             raise OSError(errno.EIO, "short write")
         view = view[written:]
+def fsync_best_effort(fd):
+    try: os.fsync(fd)
+    except OSError as error:
+        if error.errno != errno.EPERM: raise
 def link_unsupported(exc):
     unsupported = (errno.EPERM, errno.EOPNOTSUPP, getattr(errno, "ENOTSUP", errno.EOPNOTSUPP))
     return getattr(exc, "errno", None) in unsupported
@@ -299,13 +299,13 @@ def write_path(root_fd, payload):
         temp_name, temp_fd = create_temp_file(parent_fd, basename, mode)
         os.fchmod(temp_fd, mode)
         write_all(temp_fd, data)
-        os.fsync(temp_fd)
+        fsync_best_effort(temp_fd)
         temp_stat = os.fstat(temp_fd)
         os.close(temp_fd)
         temp_fd = None
         result_stat = commit_temp_file(parent_fd, temp_name, basename, overwrite, mode, temp_stat)
         temp_name = None
-        os.fsync(parent_fd)
+        fsync_best_effort(parent_fd)
         return {"dev": result_stat.st_dev, "ino": result_stat.st_ino}
     finally:
         if temp_fd is not None:
