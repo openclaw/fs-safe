@@ -2,12 +2,13 @@ import fsSync from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { sameFileIdentity } from "./file-identity.js";
 import {
   readSidecarLockSnapshot,
   releaseSidecarReclaimGuard,
   removeSidecarLockIfUnchanged,
   removeStaleSidecarLockIfAllowed,
+  serializeSidecarLockPayload,
+  sidecarLockSnapshotMatches,
   sidecarLockSnapshotStillPresent,
   sidecarReclaimGuardExists,
   tryAcquireSidecarReclaimGuard,
@@ -122,10 +123,8 @@ function resolveManagerState(key: string): SidecarLockManagerState {
 function snapshotMatchesSync(lockPath: string, observed: SidecarLockSnapshot): boolean {
   try {
     const stat = fsSync.lstatSync(lockPath);
-    if (observed.stat && !sameFileIdentity(observed.stat, stat)) {
-      return false;
-    }
-    return observed.raw === undefined || fsSync.readFileSync(lockPath, "utf8") === observed.raw;
+    const raw = fsSync.readFileSync(lockPath, "utf8");
+    return sidecarLockSnapshotMatches({ raw, payload: null, stat }, observed);
   } catch {
     return false;
   }
@@ -304,9 +303,9 @@ export function createSidecarLockManager(key: string) {
         try {
           handle = await fs.open(lockPath, "wx");
           const payload = await options.payload();
-          const raw = `${JSON.stringify(payload, null, 2)}\n`;
+          const { raw, ownershipToken } = serializeSidecarLockPayload(payload);
           await handle.writeFile(raw, "utf8");
-          const snapshot = { raw, payload, stat: await handle.stat() };
+          const snapshot = { raw, payload, stat: await handle.stat(), ownershipToken };
           const createdHeld: HeldLock = {
             count: 1,
             handle,

@@ -1,6 +1,14 @@
+import { randomBytes } from "node:crypto";
 import type { Stats } from "node:fs";
 import fs from "node:fs/promises";
 import { sameFileIdentity } from "./file-identity.js";
+
+const SIDECAR_LOCK_OWNERSHIP_TOKEN_BYTES = 16;
+const SIDECAR_LOCK_OWNERSHIP_TOKEN_BITS = SIDECAR_LOCK_OWNERSHIP_TOKEN_BYTES * 8;
+const SIDECAR_LOCK_OWNERSHIP_TOKEN_PREFIX = "\t".repeat(8);
+const SIDECAR_LOCK_OWNERSHIP_TOKEN_PATTERN = new RegExp(
+  `\\n(${SIDECAR_LOCK_OWNERSHIP_TOKEN_PREFIX}[ \\t]{${SIDECAR_LOCK_OWNERSHIP_TOKEN_BITS}})\\n$`,
+);
 
 export type SidecarLockStaleSnapshot = {
   lockPath: string;
@@ -13,7 +21,33 @@ export type SidecarLockSnapshot = {
   raw?: string;
   payload: Record<string, unknown> | null;
   stat?: Stats;
+  ownershipToken?: string;
 };
+
+function createSidecarLockOwnershipToken(): string {
+  let token = SIDECAR_LOCK_OWNERSHIP_TOKEN_PREFIX;
+  for (const byte of randomBytes(SIDECAR_LOCK_OWNERSHIP_TOKEN_BYTES)) {
+    for (let bit = 7; bit >= 0; bit -= 1) {
+      token += byte & (1 << bit) ? "\t" : " ";
+    }
+  }
+  return token;
+}
+
+export function readSidecarLockOwnershipToken(raw: string): string | undefined {
+  return SIDECAR_LOCK_OWNERSHIP_TOKEN_PATTERN.exec(raw)?.[1];
+}
+
+export function serializeSidecarLockPayload(payload: Record<string, unknown>): {
+  raw: string;
+  ownershipToken: string;
+} {
+  const ownershipToken = createSidecarLockOwnershipToken();
+  return {
+    raw: `${JSON.stringify(payload, null, 2)}\n${ownershipToken}\n`,
+    ownershipToken,
+  };
+}
 
 export async function readSidecarLockSnapshot(
   lockPath: string,
@@ -43,6 +77,16 @@ export function sidecarLockSnapshotMatches(
   current: SidecarLockSnapshot,
   observed: SidecarLockSnapshot,
 ): boolean {
+  if (observed.ownershipToken !== undefined) {
+    return (
+      current.stat?.isFile() === true &&
+      current.raw !== undefined &&
+      observed.raw !== undefined &&
+      readSidecarLockOwnershipToken(current.raw) === observed.ownershipToken &&
+      readSidecarLockOwnershipToken(observed.raw) === observed.ownershipToken &&
+      current.raw === observed.raw
+    );
+  }
   if (observed.stat && current.stat && !sameFileIdentity(observed.stat, current.stat)) {
     return false;
   }

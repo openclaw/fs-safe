@@ -2,6 +2,10 @@
 
 ## 0.4.5 - Unreleased
 
+### Security and Correctness
+
+- Give new sidecar locks an internal random ownership token outside the parsed JSON payload so release remains ownership-checked when virtual filesystems report different descriptor and pathname identities, while legacy locks retain the stricter identity-plus-content check.
+
 ## 0.4.4 - 2026-07-18
 
 ### Security and Correctness
