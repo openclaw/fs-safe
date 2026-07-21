@@ -111,6 +111,47 @@ describe("sidecar lock ownership tokens", () => {
     }
   });
 
+  it.skipIf(process.platform === "win32")(
+    "rejects non-regular exit-time replacements before reading them",
+    async () => {
+      const base = await tempRoot("fs-safe-sync-non-regular-replacement-");
+      const targetPath = path.join(base, "state.json");
+      const lockPath = `${targetPath}.lock`;
+      const replacementPath = path.join(base, "replacement.lock");
+      const manager = createSidecarLockManager(`fs-safe-sync-non-regular-${Date.now()}`);
+      const listenersBefore = new Set(process.listeners("exit"));
+      let exitListener: (() => void) | undefined;
+
+      try {
+        await manager.acquire({
+          targetPath,
+          lockPath,
+          staleMs: 1,
+          payload: async () => ({ createdAt: new Date().toISOString(), owner: "caller" }),
+        });
+        const raw = await fsp.readFile(lockPath, "utf8");
+        await fsp.rm(lockPath);
+        await fsp.writeFile(replacementPath, raw, "utf8");
+        await fsp.symlink(replacementPath, lockPath);
+        const readFileSync = vi.spyOn(fsSync, "readFileSync");
+
+        exitListener = process
+          .listeners("exit")
+          .find((listener) => !listenersBefore.has(listener)) as (() => void) | undefined;
+        expect(exitListener).toBeDefined();
+        exitListener?.();
+
+        expect(readFileSync).not.toHaveBeenCalledWith(lockPath, "utf8");
+        expect((await fsp.lstat(lockPath)).isSymbolicLink()).toBe(true);
+      } finally {
+        if (exitListener) {
+          process.removeListener("exit", exitListener);
+        }
+        manager.reset();
+      }
+    },
+  );
+
   it("does not delete a replacement lock with the same caller payload", async () => {
     const base = await tempRoot("fs-safe-sidecar-same-payload-");
     const targetPath = path.join(base, "state.json");

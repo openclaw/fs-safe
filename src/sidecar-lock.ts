@@ -2,6 +2,7 @@ import fsSync from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { sameFileIdentity } from "./file-identity.js";
 import {
   readSidecarLockSnapshot,
   releaseSidecarReclaimGuard,
@@ -121,12 +122,42 @@ function resolveManagerState(key: string): SidecarLockManagerState {
 }
 
 function snapshotMatchesSync(lockPath: string, observed: SidecarLockSnapshot): boolean {
+  let fd: number | undefined;
   try {
-    const stat = fsSync.lstatSync(lockPath);
-    const raw = fsSync.readFileSync(lockPath, "utf8");
-    return sidecarLockSnapshotMatches({ raw, payload: null, stat }, observed);
+    const beforeStat = fsSync.lstatSync(lockPath);
+    if (!beforeStat.isFile()) {
+      return false;
+    }
+    const openFlags =
+      fsSync.constants.O_RDONLY |
+      (process.platform !== "win32" && typeof fsSync.constants.O_NOFOLLOW === "number"
+        ? fsSync.constants.O_NOFOLLOW
+        : 0) |
+      (typeof fsSync.constants.O_NONBLOCK === "number" ? fsSync.constants.O_NONBLOCK : 0);
+    fd = fsSync.openSync(lockPath, openFlags);
+    const openedStat = fsSync.fstatSync(fd);
+    if (!openedStat.isFile()) {
+      return false;
+    }
+    if (observed.raw !== undefined && openedStat.size !== Buffer.byteLength(observed.raw)) {
+      return false;
+    }
+    const raw = fsSync.readFileSync(fd, "utf8");
+    const afterStat = fsSync.lstatSync(lockPath);
+    if (!afterStat.isFile() || !sameFileIdentity(beforeStat, afterStat)) {
+      return false;
+    }
+    return sidecarLockSnapshotMatches({ raw, payload: null, stat: afterStat }, observed);
   } catch {
     return false;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fsSync.closeSync(fd);
+      } catch {
+        // Best-effort process-exit cleanup.
+      }
+    }
   }
 }
 
