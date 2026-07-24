@@ -152,10 +152,8 @@ jobs:
           package_spec="${package_name}@${package_version}"
 
           verify_registry_artifact() {
-            set +e
             registry_integrity="$(npm view "${package_spec}" dist.integrity 2>registry-error.log)"
             view_status=$?
-            set -e
             if [ "${view_status}" -ne 0 ]; then
               if grep -q "E404" registry-error.log; then
                 return 2
