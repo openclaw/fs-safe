@@ -8,7 +8,8 @@ body:
     attributes:
       value: |
         Describe the capability and contract, not only an implementation idea.
-        Report boundary bypasses and other security issues through the private security advisory link instead.
+        Report boundary bypasses and other security issues through the
+        [private security advisory](https://github.com/openclaw/fs-safe/security/advisories/new) instead.
   - type: textarea
     id: problem
     attributes:
