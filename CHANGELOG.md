@@ -1,6 +1,28 @@
 # Changelog
 
-## 0.4.7 - Unreleased
+## 0.4.7 - 2026-07-24
+
+### Features
+
+- Add `@openclaw/fs-safe/durability` with identity-pinned directory handles,
+  explicit strict sync outcomes, synchronous and best-effort variants, and
+  durable nested-directory creation through every new parent edge.
+
+### Security and Correctness
+
+- Reject final symlinks, FIFOs, non-directories, canonical-path drift, and
+  descriptor/path identity replacement before or after directory sync.
+- Propagate POSIX directory synchronization failures while classifying known
+  unsupported Windows directory flushing only after revalidating the target;
+  directory-open access failures remain strict.
+- Route sibling-temp, root, and pinned-write best-effort parent synchronization
+  through the shared guarded primitive instead of maintaining divergent implementations.
+
+### Docs and Tooling
+
+- Document directory receipts, pin lifecycle, platform outcomes, custom
+  creation callbacks, and the boundary between filesystem durability and
+  application commit protocols.
 
 ## 0.4.6 - 2026-07-24
 

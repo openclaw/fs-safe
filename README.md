@@ -26,7 +26,7 @@ Full docs and reference at **[fs-safe.io](https://fs-safe.io)**.
 
 ## Contents
 
-[Why this exists](#why-this-exists) · [Not a sandbox](#not-a-sandbox) · [Install](#install) · [Quick start](#quick-start) · [Reading](#reading) · [Subpaths](#subpaths) · [Failure semantics](#failure-semantics-in-the-name) · [Atomic writes](#atomic-writes) · [External outputs](#external-outputs) · [Stores](#stores) · [Secure absolute reads](#secure-absolute-file-reads) · [Walking](#directory-walking) · [Archive extraction](#archive-extraction) · [Path scopes](#advanced-path-scopes) · [Errors](#errors) · [Safety model](#safety-model) · [Limitations](#limitations)
+[Why this exists](#why-this-exists) · [Not a sandbox](#not-a-sandbox) · [Install](#install) · [Quick start](#quick-start) · [Reading](#reading) · [Subpaths](#subpaths) · [Failure semantics](#failure-semantics-in-the-name) · [Directory durability](#directory-durability) · [Atomic writes](#atomic-writes) · [External outputs](#external-outputs) · [Stores](#stores) · [Secure absolute reads](#secure-absolute-file-reads) · [Walking](#directory-walking) · [Archive extraction](#archive-extraction) · [Path scopes](#advanced-path-scopes) · [Errors](#errors) · [Safety model](#safety-model) · [Limitations](#limitations)
 
 ## Why this exists
 
@@ -189,6 +189,7 @@ that OpenClaw needs to compose higher-level APIs are grouped under
 | `@openclaw/fs-safe/store` | `fileStore`, `fileStoreSync`, and `jsonStore` |
 | `@openclaw/fs-safe/secret` | strict and try-style secret file read/write helpers |
 | `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `replaceFileAtomicSync`, `replaceDirectoryAtomic`, `movePathWithCopyFallback` |
+| `@openclaw/fs-safe/durability` | pinned directory identities, strict and best-effort directory sync, durable nested-directory creation |
 | `@openclaw/fs-safe/temp` | `tempWorkspace`, `tempWorkspaceSync`, `withTempWorkspace`, `resolveSecureTempRoot` |
 | `@openclaw/fs-safe/secure-file` | fd-pinned absolute file reads with owner, mode, ACL, trusted-dir, size, and timeout checks |
 | `@openclaw/fs-safe/file-lock` | `acquireFileLock`, `withFileLock`, `createFileLockManager`, and related lock types |
@@ -215,6 +216,35 @@ For one-off structured reads under a trusted root, `readRootJsonObjectSync()`
 performs the root-bounded open and JSON object validation in one step. Use
 `readRootStructuredFileSync()` when the parser lives outside fs-safe, such as
 JSON5-backed plugin manifests.
+
+## Directory durability
+
+```ts
+import { ensureDurableDirectory, pinDirectory } from "@openclaw/fs-safe/durability";
+
+const receipt = await ensureDurableDirectory({
+  directoryPath: "/srv/backups/sqlite",
+  mode: 0o700,
+});
+const pinned = await pinDirectory(receipt);
+try {
+  await publishSnapshot();
+  const outcome = await pinned.sync();
+  // `unsupported` is explicit on platforms without directory flushing.
+  console.log(outcome.status);
+} finally {
+  await pinned.close();
+}
+```
+
+The durability subpath pins a directory descriptor to its pathname identity,
+detects symlink/FIFO/replacement races, and synchronizes every new parent edge
+when creating a nested directory. Strict sync propagates real I/O failures and
+reports known Windows directory-flush limitations explicitly. Separate
+best-effort helpers preserve operations that do not promise crash durability.
+
+See [Directory durability](docs/durability.md) for the receipt, pin lifecycle,
+creation callback, and platform contract.
 
 ## Atomic writes
 

@@ -2,6 +2,7 @@ import crypto, { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard } from "./directory-guard.js";
+import { syncDirectoryBestEffort } from "./directory-durability.js";
 import { withAsyncDirectoryGuards } from "./guarded-mutation.js";
 import { sanitizeUntrustedFileName } from "./filename.js";
 import { root } from "./root.js";
@@ -45,18 +46,6 @@ async function syncFileBestEffort(filePath: string): Promise<void> {
     }
   } finally {
     await handle.close();
-  }
-}
-
-async function syncDirectoryBestEffort(dirPath: string): Promise<void> {
-  let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
-  try {
-    handle = await fs.open(dirPath, "r");
-    await handle.sync();
-  } catch {
-    // Best-effort on platforms/filesystems that do not support directory fsync.
-  } finally {
-    await handle?.close().catch(() => undefined);
   }
 }
 

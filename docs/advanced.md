@@ -5,7 +5,7 @@ description: "Lower-level composition helpers under @openclaw/fs-safe/advanced. 
 
 # `@openclaw/fs-safe/advanced`
 
-Composition primitives that OpenClaw uses to build higher-level APIs. They are public — semver applies — but treated as a less stable surface than the focused subpaths (`root`, `json`, `store`, `temp`, `archive`, `errors`). Reach for them only when you are building a primitive of your own and the focused subpaths do not cover it.
+Composition primitives that OpenClaw uses to build higher-level APIs. They are public — semver applies — but treated as a less stable surface than the focused subpaths (`root`, `json`, `store`, `temp`, `archive`, `durability`, `errors`). Reach for them only when you are building a primitive of your own and the focused subpaths do not cover it.
 
 ```ts
 import {

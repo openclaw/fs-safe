@@ -61,6 +61,19 @@ When `hardlinks: "reject"` is set, reads stat the target and refuse if `nlink > 
 
 Within one process, async writes to the same target are queued so their temp-write/rename phases do not overlap. Cross-process writers still need an external protocol such as the sidecar lock helpers.
 
+### Directory durability
+
+`pinDirectory()` opens a directory without following its final component on
+POSIX, verifies the descriptor against the pathname identity and canonical
+path, and repeats those checks around synchronization. `ensureDurableDirectory()`
+pins the nearest existing ancestor and each newly created segment before
+synchronizing every new directory edge from the leaf upward.
+
+Known Windows directory-flush limitations are returned as an explicit
+`unsupported` outcome. POSIX and other I/O failures propagate from the strict
+API. The separately named best-effort helpers intentionally provide no crash
+durability guarantee.
+
 ### Archive extraction
 
 `extractArchive` first stages into a private temp directory (mode 0700) outside the destination, validates each entry path against `..` and absolute prefixes, refuses link-type entries by default, enforces entry count and byte budgets, and only then merges the staged tree into the destination through the same boundary checks used by direct writes.

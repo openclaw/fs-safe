@@ -52,6 +52,7 @@ await fs.remove("notes/archive/today.txt");
 | [`@openclaw/fs-safe/config`](config.md) | Process-global Python helper and lock-option defaults. |
 | [Python helper policy](python-helper.md) | Choose `auto`, `off`, or `require` for POSIX fd-relative hardening. |
 | [`replaceFileAtomic`](atomic.md) | Sibling-temp + rename, fsync hooks, mode preservation, copy fallback. |
+| [Directory durability](durability.md) | Pinned directory identities, explicit sync outcomes, and durable nested-directory creation. |
 | [`writeExternalFileWithinRoot`](output.md) | Stage external-library file output in private temp storage, then finalize under a root. |
 | [`writeJson` / `readJson*`](json.md) | JSON state files with strict and lenient read variants. |
 | [`@openclaw/fs-safe/store`](store.md) | Overview of `fileStore`, `fileStoreSync`, and `jsonStore`. |
