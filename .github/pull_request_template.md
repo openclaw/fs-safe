@@ -1,65 +1,59 @@
-<!--
-Optional linked context:
-Add a visible `Closes #<issue-number>` or `Related: #<issue-number>` line
-below this comment.
-
-Required PR title:
-type: user-facing description
-Use a parenthesized scope only when it adds clarity:
-fix(auth): login redirect loops when session cookie is expired
-
-Types: feat, fix, improve, refactor, docs, chore.
-For fixes, describe the user-visible symptom and trigger:
-fix: task list fails to load when user has no environments
-Avoid implementation details such as:
-fix: add null check to task query
--->
-
-<details>
-<summary>Additional instructions</summary>
-
-**MUST:** Keep **Allow edits from maintainers** enabled for this PR so maintainers
-can help update the branch when needed.
-
-</details>
-
 ## What Problem This Solves
 
 <!--
-Describe the concrete user, product, or operational problem.
+Describe the concrete problem for consumers of `@openclaw/fs-safe`.
 For fixes, begin with:
-"Fixes an issue where users <do X> would <experience Y> when <condition>."
+"Fixes an issue where consumers <do X> would <experience Y> when <condition>."
 or:
 "Resolves a problem where..."
 
-Name the affected UI surface or workflow. Do not describe the code-level cause here.
+Name the affected filesystem surface: root confinement, path validation,
+identity checks, archive extraction, permissions, atomic operations, stores,
+secrets, exports, packaging, or supported platforms. Do not describe only the
+code-level cause.
 -->
 
 ## Why This Change Was Made
 
 <!--
 In one or two sentences, explain the complete shipped solution, key design
-decisions, and relevant boundaries or non-goals. Include implementation detail
-only when it helps reviewers understand user-visible behavior or risk.
-Avoid file-by-file narration.
+decisions, and relevant boundaries or non-goals. Call out security,
+compatibility, export, error-shape, default, or platform implications.
 -->
 
 ## User Impact
 
 <!--
-State what users, operators, or developers can now do or expect. Lead with the
-concrete benefit and use user-facing language. If there is no user-visible
-impact, say so plainly.
+State what package consumers can now do or expect. If the change is breaking,
+describe the migration path. If it affects only tooling, tests, or docs and
+ships nothing new in the package, say so plainly.
 -->
 
 ## Evidence
 
 <!--
-Show the most useful proof that this change works. Screenshots, screencasts,
-terminal output, focused tests, CI results, live observations, redacted logs,
-and artifact links are all useful. Include before/after evidence for visual
-changes when it clarifies the result.
+Show the most useful proof that this change works:
 
-Reviewers will inspect the code, tests, and CI. Use this section to make the
-validation easy to understand, not to restate the diff.
+- focused regression or security tests
+- output of `pnpm check`
+- tarball/import proof from `pnpm pack:check`
+- platform or filesystem-specific reproduction
+- CI links or redacted logs
+-->
+
+- [ ] Tests added or updated when behavior changed
+- [ ] Security and compatibility impact considered
+- [ ] `CHANGELOG.md` updated when release-relevant
+- [ ] No credentials, private paths, private hosts, or sensitive contents included
+
+<!--
+Optional linked context:
+Add a visible `Closes #<issue-number>` or `Related: #<issue-number>` line.
+
+Required PR title:
+type(scope): user-facing description
+
+Types: feat, fix, improve, refactor, docs, chore.
+Suggested scopes: root, path, archive, atomic, store, secrets, permissions,
+exports, build, ci, deps, docs, tests.
 -->

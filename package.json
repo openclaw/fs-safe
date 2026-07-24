@@ -2,10 +2,26 @@
   "name": "@openclaw/fs-safe",
   "version": "0.4.5",
   "description": "Capability-style filesystem roots for Node.js apps that handle untrusted relative paths.",
+  "keywords": [
+    "filesystem",
+    "openclaw",
+    "path-traversal",
+    "security",
+    "typescript"
+  ],
+  "homepage": "https://fs-safe.io",
+  "bugs": {
+    "url": "https://github.com/openclaw/fs-safe/issues"
+  },
   "license": "MIT",
+  "author": "OpenClaw Team <dev@openclaw.ai>",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/openclaw/fs-safe.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "files": [
     "dist/**/*.js",
@@ -95,7 +111,8 @@
     "./test-hooks": {
       "types": "./dist/test-hooks.d.ts",
       "default": "./dist/test-hooks.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "scripts": {
     "benchmark": "node scripts/benchmark.mjs",
@@ -106,9 +123,11 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:security": "vitest run test/fs-safe.test.ts test/read-boundary-bypass.test.ts test/write-boundary-bypass.test.ts test/additional-boundary-bypass.test.ts test/adversarial-boundary-payloads.test.ts",
-    "check": "pnpm lint:file-size && pnpm lint:fs-boundary && pnpm build && pnpm test",
+    "check": "pnpm lint:file-size && pnpm lint:fs-boundary && pnpm build && pnpm test && node scripts/check-pack.mjs",
     "docs:site": "node scripts/build-docs-site.mjs",
+    "pack:check": "pnpm build && node scripts/check-pack.mjs",
     "check:changed": "pnpm run check",
+    "release:notes": "node scripts/release-notes.mjs",
     "test:changed": "pnpm run test",
     "crabbox:hydrate": "crabbox actions hydrate",
     "crabbox:run": "crabbox run",

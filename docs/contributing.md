@@ -10,7 +10,8 @@ cd fs-safe
 pnpm install
 ```
 
-Node 22 or newer. The dev toolchain uses pnpm; `npm install` works too but pnpm is what the lockfile is keyed against.
+Node 22 or newer. The dev toolchain and lockfile use pnpm; use the package
+manager version declared in `package.json`.
 
 ## Build
 
@@ -34,9 +35,16 @@ pnpm test test/archive.test.ts
 
 Use `vi.mock` sparingly. Most tests should drive real disk operations in a `mkdtemp`-created scratch directory, asserting on observable behavior. The library has [test hooks](testing.md) for the rare cases where you need to inject a TOCTOU race deterministically.
 
-## Format and types
+## Checks
 
-The repo doesn't ship a separate lint config; `tsc --noEmit` (run by `pnpm build`) is the type gate. Format with your editor's TypeScript Language Server defaults — keep diffs tight.
+Run the complete repository gate before handoff:
+
+```bash
+pnpm check
+```
+
+This runs the filesystem boundary checks, build, tests, and package
+tarball/import validation.
 
 ## Docs
 
@@ -69,7 +77,14 @@ Small, focused PRs land faster. The general shape:
 
 ## Releases
 
-Release process lives in the maintainer's runbook. External contributors don't need to do anything beyond getting the PR merged.
+Maintainers publish from a protected `vX.Y.Z` tag on `main` through
+`.github/workflows/release.yml`. The workflow requires the package version and a
+dated `CHANGELOG.md` section to match the tag, then publishes with npm trusted
+publishing and provenance before creating the GitHub release.
+
+External contributors do not need to do anything beyond getting the pull
+request merged. Maintainers must not publish locally or add npm automation
+tokens.
 
 ## Reporting security issues
 

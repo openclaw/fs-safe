@@ -1,0 +1,247 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: 24
+  PNPM_VERSION: 10.34.5
+
+jobs:
+  publish:
+    name: Publish @openclaw/fs-safe
+    if: github.ref_protected
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate package metadata
+        run: |
+          node <<'NODE'
+          const { readFileSync } = require("node:fs");
+
+          const pkg = JSON.parse(readFileSync("package.json", "utf8"));
+          const expectedName = "@openclaw/fs-safe";
+          const expectedAuthor = "OpenClaw Team <dev@openclaw.ai>";
+          const expectedRepo = "https://github.com/openclaw/fs-safe";
+          const repository = typeof pkg.repository === "string"
+            ? pkg.repository
+            : pkg.repository?.url;
+          const normalize = (value) =>
+            String(value ?? "")
+              .trim()
+              .replace(/^git\+/, "")
+              .replace(/\.git$/i, "")
+              .replace(/\/+$/, "");
+
+          const errors = [];
+          if (pkg.name !== expectedName) {
+            errors.push(`package name must be ${expectedName}; found ${pkg.name ?? "<missing>"}`);
+          }
+          if (pkg.author !== expectedAuthor) {
+            errors.push(`package author must be ${expectedAuthor}; found ${pkg.author ?? "<missing>"}`);
+          }
+          if (normalize(repository) !== expectedRepo) {
+            errors.push(`repository URL must be ${expectedRepo}; found ${normalize(repository) || "<missing>"}`);
+          }
+          if (pkg.private === true) {
+            errors.push("package must not be private");
+          }
+          if (pkg.publishConfig?.access !== "public") {
+            errors.push("publishConfig.access must be public");
+          }
+          if (pkg.publishConfig?.provenance !== true) {
+            errors.push("publishConfig.provenance must be true");
+          }
+          if (errors.length > 0) {
+            for (const error of errors) console.error(error);
+            process.exit(1);
+          }
+          NODE
+
+      - name: Validate release tag and changelog
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+
+          package_version="$(node -p "require('./package.json').version")"
+          expected_tag="v${package_version}"
+          if ! printf '%s\n' "${RELEASE_TAG}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "release tag must match vX.Y.Z; received ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+          if [ "${RELEASE_TAG}" != "${expected_tag}" ]; then
+            echo "release tag ${RELEASE_TAG} does not match package version ${package_version}" >&2
+            exit 1
+          fi
+          if [ "$(git cat-file -t "refs/tags/${RELEASE_TAG}")" != "tag" ]; then
+            echo "release tag ${RELEASE_TAG} must be annotated" >&2
+            exit 1
+          fi
+          release_commit="$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")"
+          git merge-base --is-ancestor "${release_commit}" origin/main
+          node scripts/release-notes.mjs "${package_version}" >/dev/null
+
+      - name: Check
+        run: pnpm check
+
+      - name: Prepare release artifact
+        id: artifact
+        run: |
+          set -euo pipefail
+          mkdir release-artifact
+          npm pack \
+            --json \
+            --ignore-scripts \
+            --pack-destination release-artifact \
+            > release-artifact/pack.json
+          node <<'NODE' >> "${GITHUB_OUTPUT}"
+          const { readFileSync } = require("node:fs");
+          const [artifact] = JSON.parse(readFileSync("release-artifact/pack.json", "utf8"));
+
+          if (!artifact?.filename || !artifact?.integrity) {
+            console.error("npm pack did not return an artifact filename and integrity");
+            process.exit(1);
+          }
+          console.log(`filename=${artifact.filename}`);
+          console.log(`integrity=${artifact.integrity}`);
+          NODE
+
+      - name: Publish or verify npm artifact
+        env:
+          PACKAGE_FILENAME: ${{ steps.artifact.outputs.filename }}
+          PACKAGE_INTEGRITY: ${{ steps.artifact.outputs.integrity }}
+        run: |
+          set -euo pipefail
+          package_name="$(node -p "require('./package.json').name")"
+          package_version="$(node -p "require('./package.json').version")"
+          package_spec="${package_name}@${package_version}"
+
+          verify_registry_artifact() {
+            set +e
+            registry_integrity="$(npm view "${package_spec}" dist.integrity 2>registry-error.log)"
+            view_status=$?
+            set -e
+            if [ "${view_status}" -ne 0 ]; then
+              if grep -q "E404" registry-error.log; then
+                return 2
+              fi
+              cat registry-error.log >&2
+              return 3
+            fi
+            registry_attestation="$(npm view "${package_spec}" dist.attestations.url)"
+            if [ "${registry_integrity}" != "${PACKAGE_INTEGRITY}" ]; then
+              echo "${package_spec} exists with different package bytes." >&2
+              return 1
+            fi
+            if [ -z "${registry_attestation}" ]; then
+              echo "${package_spec} exists without npm provenance." >&2
+              return 1
+            fi
+            echo "verified ${package_spec} integrity and provenance"
+          }
+
+          set +e
+          verify_registry_artifact
+          verify_status=$?
+          set -e
+          case "${verify_status}" in
+            0) exit 0 ;;
+            2) ;;
+            *) exit "${verify_status}" ;;
+          esac
+
+          set +e
+          npm publish \
+            "release-artifact/${PACKAGE_FILENAME}" \
+            --access public \
+            --provenance
+          publish_status=$?
+          set -e
+
+          for attempt in $(seq 1 12); do
+            set +e
+            verify_registry_artifact
+            verify_status=$?
+            set -e
+            if [ "${verify_status}" -eq 0 ]; then
+              exit 0
+            fi
+            if [ "${verify_status}" -eq 3 ]; then
+              exit "${verify_status}"
+            fi
+            echo "registry verification attempt ${attempt}/12 did not confirm the artifact yet"
+            sleep 5
+          done
+
+          echo "npm publish exited ${publish_status}; registry verification never confirmed the artifact." >&2
+          exit 1
+
+  release:
+    name: Publish GitHub Release
+    if: github.ref_protected
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: publish
+    permissions:
+      contents: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Generate release notes
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          package_version="${RELEASE_TAG#v}"
+          node scripts/release-notes.mjs "${package_version}" > release-notes.md
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "${RELEASE_TAG} already has a GitHub release."
+            exit 0
+          fi
+          gh release create "${RELEASE_TAG}" \
+            --verify-tag \
+            --title "fs-safe ${RELEASE_TAG#v}" \
+            --notes-file release-notes.md

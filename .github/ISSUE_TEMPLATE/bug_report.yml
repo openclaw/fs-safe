@@ -1,0 +1,85 @@
+name: Bug report
+description: Report a reproducible filesystem-safety defect or regression.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Report one issue at a time. Redact credentials, private paths, hostnames, and sensitive file contents.
+        Report boundary bypasses and other security issues through the private security advisory link instead.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Describe the observed defect in one or two sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Provide the shortest deterministic reproduction.
+      placeholder: |
+        1. Install @openclaw/fs-safe@...
+        2. Create a root or call...
+        3. Observe...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Package version or commit
+      placeholder: "@openclaw/fs-safe@0.4.5 or commit SHA"
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surface
+      options:
+        - Root-bounded reads or writes
+        - Path, symlink, or hardlink validation
+        - Atomic operations or file locking
+        - JSON, store, or secret-file helpers
+        - Archive extraction
+        - Permissions or ownership
+        - Temp files or external outputs
+        - TypeScript types or package exports
+        - Multiple surfaces
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Node.js version, operating system, filesystem type, and relevant mount options.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted logs or filesystem evidence
+      description: Include only the evidence needed to reproduce and diagnose the issue.
+      render: shell
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: Explain severity, frequency, and affected consumers or systems.
+    validations:
+      required: true

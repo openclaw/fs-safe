@@ -1,7 +1,19 @@
-# Protect ownership and automation rules.
-/.github/CODEOWNERS @openclaw/openclaw-secops
-/.github/workflows/ @openclaw/openclaw-secops
-/package.json @openclaw/openclaw-secops
-/.github/actionlint.yaml @openclaw/openclaw-secops
+# Protect repository governance and automation.
+/.github/ @openclaw/openclaw-secops
 /.agents/skills/ @openclaw/openclaw-secops
 /.crabbox.yaml @openclaw/openclaw-secops
+/AGENTS.md @openclaw/openclaw-secops
+/CLAUDE.md @openclaw/openclaw-secops
+/CONTRIBUTING.md @openclaw/openclaw-secops
+/CODE_OF_CONDUCT.md @openclaw/openclaw-secops
+/SECURITY.md @openclaw/openclaw-secops
+
+# Protect package, release, and filesystem boundary surfaces.
+/CHANGELOG.md @openclaw/openclaw-secops
+/LICENSE @openclaw/openclaw-secops
+/package.json @openclaw/openclaw-secops
+/pnpm-lock.yaml @openclaw/openclaw-secops
+/scripts/ @openclaw/openclaw-secops
+/src/ @openclaw/openclaw-secops
+/test/ @openclaw/openclaw-secops
+/docs/ @openclaw/openclaw-secops
