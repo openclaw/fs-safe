@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.4.8 - Unreleased
+
 ## 0.4.7 - 2026-07-24
 
 ### Features
