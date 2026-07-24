@@ -1,6 +1,11 @@
 # Changelog
 
-## 0.4.6 - Unreleased
+## 0.4.6 - 2026-07-24
+
+### Highlights
+
+- Reject foreign-owned or unverifiable Windows files in secure reads while
+  preserving supported trusted local owners and exact extended drive paths.
 
 ### Security and Correctness
 
