@@ -185,7 +185,7 @@ jobs:
 
           set +e
           npm publish \
-            "release-artifact/${PACKAGE_FILENAME}" \
+            "./release-artifact/${PACKAGE_FILENAME}" \
             --access public \
             --provenance
           publish_status=$?

@@ -31,6 +31,8 @@
   publishing with provenance and changelog-derived GitHub releases.
 - Let tag-driven publishing continue from an expected registry miss into npm
   trusted publishing instead of exiting before the publish attempt.
+- Publish the generated tarball through an explicit relative path so npm treats
+  it as a local artifact instead of GitHub repository shorthand.
 
 ## 0.4.5 - 2026-07-20
 
