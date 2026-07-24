@@ -1,0 +1,52 @@
+name: Feature request
+description: Propose a new filesystem-safety capability or public API change.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the capability and contract, not only an implementation idea.
+        Report boundary bypasses and other security issues through the private security advisory link instead.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What concrete filesystem problem cannot be solved safely with the current public API?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed API or behavior
+      description: Describe the desired contract, including inputs, outputs, errors, and security boundaries.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Explain existing workarounds and why they are insufficient.
+    validations:
+      required: true
+  - type: checkboxes
+    id: surfaces
+    attributes:
+      label: Affected surfaces
+      options:
+        - label: Root-bounded reads or writes
+        - label: Path, symlink, or hardlink validation
+        - label: Atomic operations or file locking
+        - label: JSON, store, or secret-file helpers
+        - label: Archive extraction
+        - label: Permissions or ownership
+        - label: Temp files or external outputs
+        - label: TypeScript types or package exports
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Security and compatibility considerations
+      description: Note traversal, identity, race, migration, platform, or breaking-change concerns.
+    validations:
+      required: true
