@@ -4,19 +4,45 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { hostNativeTarget, nativeTargets } from "./native-targets.mjs";
 
 const outputIndex = process.argv.indexOf("--output");
 const outputDir = resolve(outputIndex >= 0 ? process.argv[outputIndex + 1] : "release-artifacts");
 const allowHostOnly = process.argv.includes("--allow-host-only");
 mkdirSync(outputDir, { recursive: true });
+const npmCli = resolveNpmCli();
+
+function resolveNpmCli() {
+  const candidates = [
+    process.env.npm_execpath,
+    join(dirname(process.execPath), "..", "lib", "node_modules", "npm", "bin", "npm-cli.js"),
+    join(dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js"),
+  ];
+  if (process.platform !== "win32") {
+    try {
+      candidates.push(realpathSync(execFileSync("which", ["npm"], { encoding: "utf8" }).trim()));
+    } catch {
+      // The standard bundled paths remain valid on supported non-Windows installations.
+    }
+  }
+  const resolved = candidates.find(
+    (candidate) => candidate && basename(candidate) === "npm-cli.js" && existsSync(candidate),
+  );
+  if (!resolved) throw new Error("could not resolve npm-cli.js from the current Node installation");
+  return resolved;
+}
+
+function runNpm(args, options) {
+  return execFileSync(process.execPath, [npmCli, ...args], options);
+}
 
 const pkg = JSON.parse(readFileSync("package.json", "utf8"));
 if (pkg.name !== "@openclaw/fs-safe") throw new Error(`unexpected package name ${pkg.name}`);
@@ -42,8 +68,7 @@ for (const target of expectedTargets) {
 }
 
 const packed = JSON.parse(
-  execFileSync(
-    "npm",
+  runNpm(
     ["pack", "--json", "--ignore-scripts", "--pack-destination", outputDir],
     { encoding: "utf8" },
   ),
@@ -82,8 +107,7 @@ writeFileSync(join(outputDir, "manifest.json"), `${JSON.stringify(manifest, null
 const smoke = mkdtempSync(join(tmpdir(), "fs-safe-release-smoke-"));
 try {
   writeFileSync(join(smoke, "package.json"), '{"private":true,"type":"module"}\n');
-  execFileSync(
-    "npm",
+  runNpm(
     [
       "install",
       "--ignore-scripts",
