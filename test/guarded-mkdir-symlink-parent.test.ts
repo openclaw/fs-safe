@@ -143,3 +143,29 @@ it.runIf(process.platform !== "win32")(
   expect(written).toBe("# new content\n");
   },
 );
+
+it.runIf(process.platform !== "win32")(
+  "appends and opens writable files through an in-root symlinked parent",
+  async () => {
+    const rootDir = await tempRoot("fs-safe-root-writable-symlink-");
+    const realDir = path.join(rootDir, "real-parent");
+    await fs.mkdir(realDir);
+    await fs.symlink(realDir, path.join(rootDir, "alias"), "dir");
+    const r = await root(rootDir);
+
+    await r.append("alias/logs/app.log", "entry\n");
+    const opened = await r.openWritable("alias/output/result.txt");
+    try {
+      await opened.handle.writeFile("result\n");
+    } finally {
+      await opened.handle.close();
+    }
+
+    await expect(fs.readFile(path.join(realDir, "logs/app.log"), "utf8")).resolves.toBe(
+      "entry\n",
+    );
+    await expect(fs.readFile(path.join(realDir, "output/result.txt"), "utf8")).resolves.toBe(
+      "result\n",
+    );
+  },
+);

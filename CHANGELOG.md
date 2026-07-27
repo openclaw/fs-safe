@@ -13,6 +13,7 @@
 
 ### Security and Correctness
 
+- Create `append`, `openWritable`, and fallback `copyIn` parents through guarded per-component walks and continue I/O through the resolved in-root parent, preventing symlink-swap races from creating directories outside the root while preserving valid in-root symlink parents. Thanks @yetval for reporting this.
 - Add pinned-destination hardlink rejection and bounded original-content restoration to `replaceFileAtomic()` and its sync variant, including typed `restored` / `restore-failed` receipts for torn copy-fallback writes.
 - Add sibling staging to `writeExternalFileWithinRoot()`: external producers can write a randomized file in the target directory for fsynced same-filesystem atomic replacement, while private workspace staging remains the cross-device-tolerant default; staged and final basenames share portable C0/C1 and Windows-invalid-character sanitization on every host.
 - Enforce `movePathWithCopyFallback({ sourceHardlinks: "reject" })` with a streaming, entry-capped recursive preflight before mutation, closing a shipped 0.4.x gap where the common same-filesystem rename bypassed the policy; approved trees commit through a fresh staged copy with open-time and post-copy link-count fences so a scan/rename race cannot publish a hardlinked inode.

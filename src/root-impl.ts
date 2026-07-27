@@ -731,6 +731,16 @@ function rootWriteQueueKey(root: RootContext, relativePath: string): string {
 
 type PinnedWriteTarget = { rootReal: string; targetPath: string; relativeParentPath: string; basename: string; mode: number };
 
+async function prepareRootWriteTarget(rootReal: string, targetPath: string): Promise<string> {
+  const parentPath = await mkdirPathComponentsWithGuards({
+    rootReal,
+    targetPath: path.dirname(targetPath),
+  });
+  // Continue through the guarded walk's real parent instead of re-entering
+  // the original path through a symlinked component.
+  return path.join(parentPath, path.basename(targetPath));
+}
+
 async function writeTempFileForAtomicReplace(params: {
   tempPath: string;
   data: string | Buffer;
@@ -793,16 +803,11 @@ async function openWritableFileInRoot(
   } catch (err) {
     throw new FsSafeError("path-alias", "path alias escape blocked", { cause: err });
   }
-  if (params.mkdir !== false) {
-    const parentGuard = await createNearestExistingDirectoryGuard(rootReal, path.dirname(resolved));
-    await withAsyncDirectoryGuards([parentGuard], async () => {
-      await fs.mkdir(path.dirname(resolved), { recursive: true });
-    });
-  }
-
-  let ioPath = resolved;
+  let ioPath = params.mkdir === false
+    ? resolved
+    : await prepareRootWriteTarget(rootReal, resolved);
   try {
-    const resolvedRealPath = await fs.realpath(resolved);
+    const resolvedRealPath = await fs.realpath(ioPath);
     if (!isPathInside(rootWithSep, resolvedRealPath)) {
       throw new FsSafeError("outside-workspace", "file is outside workspace root");
     }
@@ -1559,16 +1564,16 @@ async function writeMissingFileFallback(
   } catch (err) {
     throw new FsSafeError("path-alias", "path alias escape blocked", { cause: err });
   }
-  if (params.mkdir !== false) {
-    await fs.mkdir(path.dirname(resolved), { recursive: true });
-  }
-  const parentGuard = await createAsyncDirectoryGuard(path.dirname(resolved));
+  const targetPath = params.mkdir === false
+    ? resolved
+    : await prepareRootWriteTarget(rootReal, resolved);
+  const parentGuard = await createAsyncDirectoryGuard(path.dirname(targetPath));
   let created = false;
   try {
     const { handle, writtenStat } = await withAsyncDirectoryGuards(
       [parentGuard],
       async () => {
-        const handle = await fs.open(resolved, OPEN_WRITE_CREATE_FLAGS, params.mode ?? 0o600);
+        const handle = await fs.open(targetPath, OPEN_WRITE_CREATE_FLAGS, params.mode ?? 0o600);
         created = true;
         try {
           if (typeof params.data === "string") {
@@ -1592,7 +1597,7 @@ async function writeMissingFileFallback(
     await handle.close();
     await verifyAtomicWriteResult({
       root,
-      targetPath: resolved,
+      targetPath,
       expectedIdentity: writtenStat,
     });
     created = false;
@@ -1605,7 +1610,7 @@ async function writeMissingFileFallback(
     throw err;
   } finally {
     if (created) {
-      await fs.rm(resolved, { force: true }).catch(() => undefined);
+      await fs.rm(targetPath, { force: true }).catch(() => undefined);
     }
   }
 }

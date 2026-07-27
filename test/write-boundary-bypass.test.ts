@@ -257,4 +257,89 @@ describe("write, move, and delete boundary bypass attempts", () => {
     });
     await expectNoOutsideWrite(layout);
   });
+
+  it.runIf(process.platform !== "win32")("does not create directories outside the root when append races a parent symlink swap", async () => {
+    const layout = await makeTempLayout("fs-safe-append-mkdir-swap");
+    const safeRoot = await openRoot(layout.root);
+    const swapPath = path.join(layout.root, "data");
+    let stopSwapping = false;
+    const swapper = (async () => {
+      while (!stopSwapping) {
+        await fsp.mkdir(swapPath).catch(() => {});
+        await fsp.rm(swapPath, { force: true, recursive: true }).catch(() => {});
+        await fsp.symlink(layout.outside, swapPath, "dir").catch(() => {});
+        await fsp.rm(swapPath, { force: true }).catch(() => {});
+      }
+    })();
+
+    try {
+      for (let attempt = 0; attempt < 400; attempt++) {
+        await safeRoot.append("data/logs/2026/07/app.log", "entry\n").catch(() => {});
+        expect(await fsp.readdir(layout.outside)).toEqual(["secret.txt"]);
+      }
+    } finally {
+      stopSwapping = true;
+      await swapper;
+      await fsp.rm(swapPath, { force: true, recursive: true }).catch(() => {});
+    }
+    await expectNoOutsideWrite(layout);
+  }, 30000);
+
+  it.runIf(process.platform !== "win32")("does not create directories outside the root when openWritable races a parent symlink swap", async () => {
+    const layout = await makeTempLayout("fs-safe-open-writable-mkdir-swap");
+    const safeRoot = await openRoot(layout.root);
+    const swapPath = path.join(layout.root, "data");
+    let stopSwapping = false;
+    const swapper = (async () => {
+      while (!stopSwapping) {
+        await fsp.mkdir(swapPath).catch(() => {});
+        await fsp.rm(swapPath, { force: true, recursive: true }).catch(() => {});
+        await fsp.symlink(layout.outside, swapPath, "dir").catch(() => {});
+        await fsp.rm(swapPath, { force: true }).catch(() => {});
+      }
+    })();
+
+    try {
+      for (let attempt = 0; attempt < 400; attempt++) {
+        const opened = await safeRoot.openWritable("data/logs/2026/07/app.log").catch(() => undefined);
+        await opened?.handle.close().catch(() => {});
+        expect(await fsp.readdir(layout.outside)).toEqual(["secret.txt"]);
+      }
+    } finally {
+      stopSwapping = true;
+      await swapper;
+      await fsp.rm(swapPath, { force: true, recursive: true }).catch(() => {});
+    }
+    await expectNoOutsideWrite(layout);
+  }, 30000);
+
+  it.runIf(process.platform !== "win32")("does not create directories outside the root when copyIn fallback races a parent symlink swap", async () => {
+    configureFsSafeNative({ mode: "off" });
+    const layout = await makeTempLayout("fs-safe-copy-in-mkdir-swap");
+    const safeRoot = await openRoot(layout.root);
+    const source = path.join(layout.root, "source.txt");
+    await fsp.writeFile(source, "source");
+    const swapPath = path.join(layout.root, "data");
+    let stopSwapping = false;
+    const swapper = (async () => {
+      while (!stopSwapping) {
+        await fsp.mkdir(swapPath).catch(() => {});
+        await fsp.rm(swapPath, { force: true, recursive: true }).catch(() => {});
+        await fsp.symlink(layout.outside, swapPath, "dir").catch(() => {});
+        await fsp.rm(swapPath, { force: true }).catch(() => {});
+      }
+    })();
+
+    try {
+      for (let attempt = 0; attempt < 400; attempt++) {
+        await safeRoot.copyIn("data/logs/2026/07/app.log", source).catch(() => {});
+        expect(await fsp.readdir(layout.outside)).toEqual(["secret.txt"]);
+      }
+    } finally {
+      stopSwapping = true;
+      await swapper;
+      await fsp.rm(swapPath, { force: true, recursive: true }).catch(() => {});
+    }
+    await expectNoOutsideWrite(layout);
+  }, 60000);
 });
