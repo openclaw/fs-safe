@@ -121,7 +121,7 @@ These do not pin a later operation. They are safe to expose to UIs and decision 
 
 ## Native helper mode
 
-Create-only writes prefer the optional native helper for fd-relative opens and
+Create-only writes prefer the bundled native helper for fd-relative opens and
 atomic no-replace rename. Operations without native wiring retain their guarded
 JavaScript implementations.
 

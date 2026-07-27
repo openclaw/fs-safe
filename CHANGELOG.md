@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0 - 2026-07-26
+## 0.5.0 - Unreleased
 
 ### Highlights
 
@@ -9,7 +9,7 @@
 - Add native fd-relative ZIP and TAR extraction/read support with gzip, zstd, and bzip2 streaming; TypeScript evaluates the shared entry policy before Rust creates any output, and zstd/bzip2 report a typed native-required error when no binding is available.
 - Bound PAX, GNU long-name/link, and sparse metadata with one `maxMetaEntryBytes` policy shared by node-tar and the native fixed-header metering reader, including typed failures for oversized or malformed metadata.
 - Add `Root.walk()` subtree pruning and partial directory-error reporting for bounded best-effort consumers, plus a shared `maxEntryPathComponents` archive limit that rejects implicit-directory depth attacks before either extraction path creates output.
-- Ship the optional `@openclaw/fs-safe-native` helper and seven platform packages from this repository for fd-relative opens, guarded directory creation and hardlinks, atomic no-replace rename, and file identity checks.
+- Bundle all seven prebuilt native binaries inside the single `@openclaw/fs-safe` package for fd-relative opens, guarded directory creation and hardlinks, atomic no-replace rename, and file identity checks. This deliberately increases the package size in exchange for deterministic installs with no optional platform packages, downloads, postinstall step, or consumer Rust build; unsupported platforms silently use the guarded JavaScript fallback in `auto` mode.
 
 ### Security and Correctness
 

@@ -1,21 +1,23 @@
 ---
 title: Native architecture
-description: "The optional native binding, fd-relative beneath model, platform mechanisms, loader security, and JavaScript fallback contract."
+description: "The bundled native bindings, fd-relative beneath model, platform mechanisms, loader security, and JavaScript fallback contract."
 ---
 
 # Native architecture
 
-The optional `@openclaw/fs-safe-native` package supplies mechanisms that Node
-does not expose directly. It is deliberately not a second policy engine.
+`@openclaw/fs-safe` bundles native bindings that supply mechanisms Node does
+not expose directly. The Rust layer is deliberately not a second policy engine.
 TypeScript owns trusted-root selection, path validation, archive filtering,
 budgets, modes, identity fencing, cleanup decisions, and error normalization.
 Rust receives already-decided relative operations and performs the smallest
 platform syscall sequence that can preserve the boundary.
 
 Every operation that has an equivalent safe Node implementation keeps that
-guarded JavaScript path. Native loading is lazy and optional; installs do not
-compile Rust. Native-only formats and creation-time Windows DACL guarantees
-fail explicitly instead of substituting a weaker implementation.
+guarded JavaScript path. Native loading is lazy; installs do not compile Rust,
+run postinstall code, or fetch binaries. The npm tarball carries all seven
+supported targets, so it is larger than a per-platform package by design.
+Native-only formats and creation-time Windows DACL guarantees fail explicitly
+instead of substituting a weaker implementation.
 
 ## The beneath model
 
@@ -111,13 +113,15 @@ infer native loading from timing.
 
 ## Loader security
 
-Importing fs-safe never executes a platform detector. Linux libc selection uses
+Importing fs-safe never executes a child process. Linux libc selection uses
 the Node process report, conventional musl library filenames, and the ELF
 `PT_INTERP` field of `process.execPath`. If all probes are inconclusive, the
-loader conservatively attempts the glibc package and lets normal module loading
-fail into `auto` fallback. After napi-rs generates bindings and declarations,
-the hardening script replaces its broad platform/WASI template with the
-checked-in seven-target loader this repository actually ships. Tests reject
+loader conservatively attempts the bundled glibc binary and lets normal module
+loading fail into `auto` fallback. The loader requires only
+`dist/native/<target>/fs-safe-native.node`; it never probes optional packages,
+downloads code, or runs a postinstall step. A missing or incompatible binary
+silently selects the JavaScript fallback in `auto`, throws typed
+`helper-unavailable` in `require`, and is never inspected in `off`. Tests reject
 `child_process`, `exec`, or `spawn` usage in the loader.
 
 ## Related pages

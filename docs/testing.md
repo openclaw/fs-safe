@@ -17,7 +17,7 @@ The double-underscore prefix is a deliberate "hands off" signal: production code
 ## When to reach for hooks
 
 - Reproduce a TOCTOU race deterministically: simulate a symlink swap between resolve and open, or between write and rename.
-- Force guarded JavaScript behavior without removing native packages from your runners.
+- Force guarded JavaScript behavior without removing bundled binaries from your runners.
 - Inject latency to test cancellation/timeout paths.
 
 If you don't need to inject a race, you don't need hooks — most tests should drive the library through normal calls and assert on observable behavior.

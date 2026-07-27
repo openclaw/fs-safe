@@ -27,6 +27,7 @@
     "dist/**/*.js",
     "dist/**/*.d.ts",
     "dist/**/*.d.ts.map",
+    "dist/native/**/*.node",
     "docs/**/*.md",
     "README.md",
     "CHANGELOG.md",
@@ -130,10 +131,10 @@
     "test:security": "vitest run test/fs-safe.test.ts test/read-boundary-bypass.test.ts test/write-boundary-bypass.test.ts test/additional-boundary-bypass.test.ts test/adversarial-boundary-payloads.test.ts",
     "check": "pnpm lint:file-size && pnpm lint:fs-boundary && pnpm build && pnpm test && node scripts/check-pack.mjs",
     "docs:site": "node scripts/build-docs-site.mjs",
-    "native:build": "pnpm --filter @openclaw/fs-safe-native build",
+    "native:build": "pnpm --filter @openclaw/fs-safe-native-build build",
     "native:test": "cargo test --manifest-path native/Cargo.toml",
     "pack:check": "pnpm build && node scripts/check-pack.mjs",
-    "release-graph:smoke": "node scripts/release-graph-smoke.mjs",
+    "package:smoke": "node scripts/check-release-packages.mjs --allow-host-only --output release-artifacts",
     "check:changed": "pnpm run check",
     "release:notes": "node scripts/release-notes.mjs",
     "test:changed": "pnpm run test",
@@ -143,7 +144,6 @@
     "crabbox:warmup": "crabbox warmup"
   },
   "optionalDependencies": {
-    "@openclaw/fs-safe-native": "0.5.0",
     "jszip": "^3.10.1",
     "tar": "7.5.21"
   },

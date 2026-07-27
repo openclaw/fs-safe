@@ -2,20 +2,21 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { createRequire } from "node:module";
 import { afterEach, describe, expect, it } from "vitest";
 import { configureFsSafeNative } from "../src/native-config.js";
 import { acquireFileLock } from "../src/file-lock.js";
-import { __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
+import {
+  __loadBundledNativeForTest,
+  __resetNativeLoaderForTest,
+  __setNativeLoaderForTest,
+  type NativeBinding,
+} from "../src/native.js";
 import { publishFileExclusive } from "../src/publish-file.js";
 import { runPinnedWriteHelper } from "../src/pinned-write.js";
 
-type NativeBinding = typeof import("../native/index.js");
-
-const require = createRequire(import.meta.url);
 let native: NativeBinding | undefined;
 try {
-  native = require("../native") as NativeBinding;
+  native = __loadBundledNativeForTest();
 } catch {
   // Native artifacts are built by dedicated platform jobs. The ordinary JS
   // matrix deliberately proves that installation without them still works.

@@ -1,4 +1,3 @@
-import { createRequire } from "node:module";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -10,12 +9,12 @@ import {
   configureFsSafeNative,
 } from "../dist/native-config.js";
 import {
+  __loadBundledNativeForTest,
   __resetNativeLoaderForTest,
   __setNativeLoaderForTest,
 } from "../dist/native.js";
 
-const require = createRequire(import.meta.url);
-const native = require("../native");
+const native = __loadBundledNativeForTest();
 const sizes = [
   { label: "4 KiB", bytes: 4 * 1024, iterations: 7 },
   { label: "1 MiB", bytes: 1024 * 1024, iterations: 7 },

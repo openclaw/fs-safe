@@ -1,21 +1,19 @@
 import os from "node:os";
 import path from "node:path";
-import { createRequire } from "node:module";
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { configureFsSafeNative, FsSafeError, root, type Root } from "../src/index.js";
 import {
   __resetNativeLoaderForTest,
+  __loadBundledNativeForTest,
   __setNativeLoaderForTest,
+  type NativeBinding,
 } from "../src/native.js";
 import { resolveRootPath, resolveRootPathSync } from "../src/root-path.js";
 
-type NativeBinding = typeof import("../native/index.js");
-
-const require = createRequire(import.meta.url);
 let native: NativeBinding | undefined;
 try {
-  native = require("../native") as NativeBinding;
+  native = __loadBundledNativeForTest();
 } catch {
   // Ordinary JavaScript-only jobs intentionally run without a platform artifact.
 }

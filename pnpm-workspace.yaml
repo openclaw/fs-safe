@@ -1,6 +1,5 @@
 packages:
   - native
-  - npm/*
 
 linkWorkspacePackages: true
 

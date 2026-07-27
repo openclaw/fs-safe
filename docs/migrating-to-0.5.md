@@ -8,18 +8,19 @@ description: "Ordered checklist for moving a 0.4 consumer from the Python helper
 Use this checklist from top to bottom. Version 0.5 replaces the Python worker,
 changes the default archive mode policy, and adds explicit contracts for
 publication, walking, locks, secrets, and native-only features. Nothing in this
-guide requires a Rust toolchain: supported native packages are prebuilt and
-optional.
+guide requires a Rust toolchain: all supported native binaries are prebuilt and
+bundled in `@openclaw/fs-safe`.
 
 ## 1. Update the package and runtime
 
 - Run on Node.js 22 or newer.
 - Update `@openclaw/fs-safe` and regenerate every lock or shrinkwrap file your
   deployment consumes.
-- Keep optional dependencies enabled if you want automatic native loading and
-  JavaScript ZIP/TAR support. An install that omits optional packages can still
-  import fs-safe, but native-only features and missing JS archive decoders fail
-  with actionable errors.
+- Keep optional dependencies enabled if you want JavaScript ZIP/TAR support.
+  Native loading no longer depends on optional packages because all seven
+  binaries ship in `@openclaw/fs-safe`. An install that omits optional packages
+  can still import fs-safe, but missing JS archive decoders fail with actionable
+  errors.
 
 If you call `resolveRootPath()` or `resolveRootPathSync()` directly, upgrade to
 0.5: versions through 0.4.7 could approve an in-root symlink traversal that
@@ -41,7 +42,7 @@ configureFsSafeNative({ mode: "auto" });
 | `configureFsSafePython({ mode })` | `configureFsSafeNative({ mode })` |
 | `FS_SAFE_PYTHON_MODE` | `FS_SAFE_NATIVE_MODE` |
 | `OPENCLAW_FS_SAFE_PYTHON_MODE` | `OPENCLAW_FS_SAFE_NATIVE_MODE` |
-| `pythonPath`, `FS_SAFE_PYTHON`, pinned-Python aliases | Nothing; native packages do not use an interpreter |
+| `pythonPath`, `FS_SAFE_PYTHON`, pinned-Python aliases | Nothing; bundled native binaries do not use an interpreter |
 
 The old names warn once and map `auto`, `off`, or `require` so a shipped 0.4
 deployment does not silently change policy. Interpreter paths are ignored and

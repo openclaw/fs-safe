@@ -8,6 +8,7 @@ import {
   getFsSafeNativeConfig,
 } from "../src/native-config.js";
 import {
+  __loadBundledNativeForTest,
   __resetNativeLoaderForTest,
   __setNativeLoaderForTest,
   getNativeBinding,
@@ -108,11 +109,25 @@ describe("native helper configuration", () => {
   });
 });
 
-describe("native package loader", () => {
+describe("bundled native loader", () => {
+  let hostBinding: NativeBinding | undefined;
+  try {
+    hostBinding = __loadBundledNativeForTest();
+  } catch {
+    // Ordinary JavaScript-only jobs intentionally run without a built binding.
+  }
+
+  it.runIf(Boolean(hostBinding))("loads the bundled binary for the host target", () => {
+    expect(hostBinding?.openBeneath).toBeTypeOf("function");
+    expect(hostBinding?.sha256File).toBeTypeOf("function");
+  });
+
   it("contains no import-time process execution path", () => {
-    const loader = readFileSync(fileURLToPath(new URL("../native/index.js", import.meta.url)), "utf8");
+    const loader = readFileSync(fileURLToPath(new URL("../src/native.ts", import.meta.url)), "utf8");
     expect(loader).not.toMatch(/(?:child_process|execSync|execFileSync|spawnSync|\bspawn\s*\()/);
     expect(loader).toContain("isMuslFromElfInterpreter");
-    expect(loader).toContain("Unknown Linux libc: try the glibc package");
+    expect(loader).toContain("Unknown Linux libc: try the glibc binary");
+    expect(loader).toContain('"fs-safe-native.node"');
+    expect(loader).not.toContain("@openclaw/fs-safe-native");
   });
 });

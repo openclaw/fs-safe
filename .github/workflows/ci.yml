@@ -93,11 +93,11 @@ jobs:
       - name: Test native crate
         run: cargo test --workspace --locked
 
-      - name: Build host binding
-        run: pnpm native:build
-
       - name: Build package
         run: pnpm build
+
+      - name: Build and stage host binding
+        run: pnpm native:build
 
       - name: Test native mode auto
         run: node scripts/native-mode-smoke.mjs auto
@@ -126,8 +126,8 @@ jobs:
             npm install --global pnpm@10.34.5
             pnpm install --frozen-lockfile
             cargo test --workspace --locked
-            pnpm native:build
             pnpm build
+            pnpm native:build
             node scripts/native-mode-smoke.mjs auto
             node scripts/native-mode-smoke.mjs require
             node scripts/native-mode-smoke.mjs off
@@ -160,8 +160,8 @@ jobs:
       - name: Audit
         run: cargo audit --deny warnings
 
-  release-graph-smoke:
-    name: Release graph smoke (${{ matrix.os }})
+  package-smoke:
+    name: Bundled package smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -191,15 +191,18 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build host binding
+      - name: Build package
+        run: pnpm build
+
+      - name: Build and stage host binding
         run: pnpm native:build
 
-      - name: Pack and smoke test release graph
-        run: pnpm release-graph:smoke
+      - name: Pack and smoke test bundled package
+        run: pnpm package:smoke
 
       - name: Upload behavior proof
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: release-graph-proof-${{ runner.os }}-${{ runner.arch }}
-          path: release-graph-proof.json
+          name: bundled-package-proof-${{ runner.os }}-${{ runner.arch }}
+          path: release-artifacts/manifest.json
           if-no-files-found: error

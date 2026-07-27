@@ -13,7 +13,7 @@ export async function createPrivateDirectory(
   if (platform !== "win32") {
     throw new FsSafeError(
       "helper-unavailable",
-      "private-directory creation is available only on Windows through the optional native binding",
+      "private-directory creation is available only on Windows through the bundled native binding",
     );
   }
 
@@ -21,7 +21,7 @@ export async function createPrivateDirectory(
   if (!native) {
     throw new FsSafeError(
       "helper-unavailable",
-      "private Windows directory creation requires the optional native binding",
+      "private Windows directory creation requires the bundled native binding",
     );
   }
   native.createPrivateDirectory(targetPath);

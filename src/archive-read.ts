@@ -252,7 +252,7 @@ export async function readArchiveEntry(
     if (kind === "tar-zstd" || kind === "tar-bzip2") {
       throw new FsSafeError(
         "helper-unavailable",
-        `${kind} archives require the optional native binding; install the matching platform package`,
+        `${kind} archives require a supported bundled native binding`,
       );
     }
     return kind === "zip"

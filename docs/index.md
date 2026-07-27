@@ -51,7 +51,7 @@ await fs.remove("notes/archive/today.txt");
 |---|---|
 | [`root()`](root.md) | One boundary for read/write/move/remove and bounded recursive walking inside a trusted directory. |
 | [`@openclaw/fs-safe/config`](config.md) | Process-global native helper and lock-option defaults. |
-| [Native helper policy](native-helper.md) | Choose `auto`, `off`, or `require` for optional native primitives. |
+| [Native helper policy](native-helper.md) | Choose `auto`, `off`, or `require` for bundled native primitives. |
 | [Native architecture](native.md) | Understand the thin syscall layer, beneath model, platform mechanisms, and fallback boundary. |
 | [`replaceFileAtomic`](atomic.md) | Sibling-temp + rename, fsync hooks, mode preservation, copy fallback. |
 | [`@openclaw/fs-safe/durability`](durability.md) | Pinned directory identities, durable creation, exclusive publication, streaming SHA-256, provenance receipts, and sync-failure policy. |

@@ -2,8 +2,12 @@ dist/
 node_modules
 target/
 native/*.node
+native/index.js
+native/index.d.ts
 coverage/
 release-graph-proof*.json
+artifacts*/
+release-artifacts*/
 *.tsbuildinfo
 .clawpatch/
 .deepsec/

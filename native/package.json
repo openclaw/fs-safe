@@ -1,7 +1,8 @@
 {
-  "name": "@openclaw/fs-safe-native",
+  "name": "@openclaw/fs-safe-native-build",
   "version": "0.5.0",
-  "description": "Native fd-relative filesystem primitives for @openclaw/fs-safe.",
+  "description": "Private build workspace for the native bindings bundled by @openclaw/fs-safe.",
+  "private": true,
   "license": "MIT",
   "author": "OpenClaw Team <dev@openclaw.ai>",
   "repository": {
@@ -9,22 +10,9 @@
     "url": "git+https://github.com/openclaw/fs-safe.git",
     "directory": "native"
   },
-  "main": "index.js",
-  "types": "index.d.ts",
-  "files": [
-    "index.js",
-    "index.d.ts"
-  ],
-  "publishConfig": {
-    "access": "public",
-    "provenance": true
-  },
-  "engines": {
-    "node": ">=22"
-  },
   "napi": {
     "binaryName": "fs-safe-native",
-    "packageName": "@openclaw/fs-safe-native",
+    "packageName": "@openclaw/fs-safe",
     "targets": [
       "x86_64-unknown-linux-gnu",
       "x86_64-unknown-linux-musl",
@@ -36,18 +24,7 @@
     ]
   },
   "scripts": {
-    "artifacts": "napi artifacts --npm-dir ../npm",
-    "build": "napi build --platform --release && node ../scripts/harden-native-loader.mjs",
-    "build:debug": "napi build --platform && node ../scripts/harden-native-loader.mjs",
-    "prepublishOnly": "napi prepublish -t npm"
-  },
-  "optionalDependencies": {
-    "@openclaw/fs-safe-native-darwin-arm64": "0.5.0",
-    "@openclaw/fs-safe-native-darwin-x64": "0.5.0",
-    "@openclaw/fs-safe-native-linux-arm64-gnu": "0.5.0",
-    "@openclaw/fs-safe-native-linux-arm64-musl": "0.5.0",
-    "@openclaw/fs-safe-native-linux-x64-gnu": "0.5.0",
-    "@openclaw/fs-safe-native-linux-x64-musl": "0.5.0",
-    "@openclaw/fs-safe-native-win32-x64-msvc": "0.5.0"
+    "build": "napi build --platform --release && node ../scripts/stage-host-native.mjs",
+    "build:debug": "napi build --platform && node ../scripts/stage-host-native.mjs"
   }
 }

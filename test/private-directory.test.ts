@@ -1,4 +1,3 @@
-import { createRequire } from "node:module";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -6,16 +5,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import {
   __resetNativeLoaderForTest,
+  __loadBundledNativeForTest,
   __setNativeLoaderForTest,
   type NativeBinding,
 } from "../src/native.js";
 import { inspectPathPermissions } from "../src/permissions.js";
 import { createPrivateDirectory } from "../src/private-directory.js";
 
-const require = createRequire(import.meta.url);
 let native: NativeBinding | undefined;
 try {
-  native = require("../native") as NativeBinding;
+  native = __loadBundledNativeForTest();
 } catch {
   // Ordinary JS jobs do not build a host binding.
 }

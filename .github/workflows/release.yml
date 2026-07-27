@@ -45,7 +45,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Validate tag, changelog, and package versions
+      - name: Validate tag, changelog, and versions
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
@@ -63,24 +63,18 @@ jobs:
           git merge-base --is-ancestor "${release_commit}" origin/main
           node <<'NODE'
           const { readFileSync } = require("node:fs");
-          const { join } = require("node:path");
           const version = process.env.RELEASE_TAG.slice(1);
-          const dirs = [
-            ".", "native", "npm/linux-x64-gnu", "npm/linux-x64-musl",
-            "npm/linux-arm64-gnu", "npm/linux-arm64-musl", "npm/darwin-x64",
-            "npm/darwin-arm64", "npm/win32-x64-msvc",
-          ];
-          for (const dir of dirs) {
-            const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
-            if (pkg.version !== version) throw new Error(`${pkg.name} is ${pkg.version}, expected ${version}`);
+          const pkg = JSON.parse(readFileSync("package.json", "utf8"));
+          if (pkg.name !== "@openclaw/fs-safe" || pkg.version !== version) {
+            throw new Error(`root package is ${pkg.name}@${pkg.version}, expected @openclaw/fs-safe@${version}`);
+          }
+          const nativePkg = JSON.parse(readFileSync("native/package.json", "utf8"));
+          if (!nativePkg.private || nativePkg.version !== version) {
+            throw new Error(`private native build workspace must declare ${version}`);
           }
           const cargo = readFileSync("native/Cargo.toml", "utf8");
           if (!cargo.match(new RegExp(`^version = "${version.replaceAll(".", "\\.")}"$`, "m"))) {
             throw new Error(`native/Cargo.toml does not declare ${version}`);
-          }
-          const loader = readFileSync("native/index.js", "utf8");
-          if (!loader.includes("require('./package.json').version")) {
-            throw new Error("native loader must derive its version check from package.json");
           }
           NODE
           package_version="$(node -p "require('./package.json').version")"
@@ -166,15 +160,15 @@ jobs:
 
       - name: Build native binding
         if: matrix.cross == 'none'
-        run: pnpm --filter @openclaw/fs-safe-native exec napi build --release --platform --target ${{ matrix.target }} --output-dir ../artifacts
+        run: pnpm --filter @openclaw/fs-safe-native-build exec napi build --release --platform --target ${{ matrix.target }} --output-dir ../artifacts
 
       - name: Build native binding with napi cross toolchain
         if: matrix.cross == 'napi'
-        run: pnpm --filter @openclaw/fs-safe-native exec napi build --release --platform --target ${{ matrix.target }} --use-napi-cross --output-dir ../artifacts
+        run: pnpm --filter @openclaw/fs-safe-native-build exec napi build --release --platform --target ${{ matrix.target }} --use-napi-cross --output-dir ../artifacts
 
       - name: Build native binding with Zig
         if: matrix.cross == 'zig'
-        run: pnpm --filter @openclaw/fs-safe-native exec napi build --release --platform --target ${{ matrix.target }} --cross-compile --output-dir ../artifacts
+        run: pnpm --filter @openclaw/fs-safe-native-build exec napi build --release --platform --target ${{ matrix.target }} --cross-compile --output-dir ../artifacts
 
       - name: Upload binding
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -185,7 +179,7 @@ jobs:
           retention-days: 1
 
   collect:
-    name: Validate release packages
+    name: Assemble and validate @openclaw/fs-safe
     if: github.ref_protected
     needs: prebuild
     runs-on: ubuntu-latest
@@ -210,32 +204,32 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Download bindings
+      - name: Build package
+        run: pnpm build
+
+      - name: Download all seven bindings
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: binding-*
           path: artifacts
           merge-multiple: true
 
-      - name: Assemble platform packages
-        run: pnpm --filter @openclaw/fs-safe-native exec napi artifacts --output-dir ../artifacts --npm-dir ../npm
+      - name: Assemble bundled bindings
+        run: node scripts/assemble-native-binaries.mjs --source artifacts --destination dist/native
 
-      - name: Build root package
-        run: pnpm build
-
-      - name: Pack and smoke test every package
+      - name: Pack and smoke test the single package
         run: node scripts/check-release-packages.mjs --output release-artifacts
 
-      - name: Upload release packages
+      - name: Upload release package
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: release-packages
+          name: release-package
           path: release-artifacts/*
           if-no-files-found: error
           retention-days: 7
 
-  publish-platforms:
-    name: Publish ${{ matrix.package }}
+  publish:
+    name: Publish @openclaw/fs-safe
     if: github.ref_protected
     needs: collect
     runs-on: ubuntu-latest
@@ -243,17 +237,6 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    strategy:
-      fail-fast: false
-      matrix:
-        package:
-          - "@openclaw/fs-safe-native-linux-x64-gnu"
-          - "@openclaw/fs-safe-native-linux-x64-musl"
-          - "@openclaw/fs-safe-native-linux-arm64-gnu"
-          - "@openclaw/fs-safe-native-linux-arm64-musl"
-          - "@openclaw/fs-safe-native-darwin-x64"
-          - "@openclaw/fs-safe-native-darwin-arm64"
-          - "@openclaw/fs-safe-native-win32-x64-msvc"
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -267,73 +250,19 @@ jobs:
       - name: Update npm
         run: npm install --global npm@${{ env.NPM_VERSION }}
 
-      - name: Download release packages
+      - name: Download release package
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: release-packages
+          name: release-package
           path: release-artifacts
 
-      - name: Publish or verify
-        run: node scripts/publish-or-verify.mjs --package "${{ matrix.package }}" --artifacts release-artifacts
-
-  publish-native:
-    name: Publish @openclaw/fs-safe-native
-    if: github.ref_protected
-    needs: publish-platforms
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - name: Check out
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          registry-url: https://registry.npmjs.org
-      - name: Update npm
-        run: npm install --global npm@${{ env.NPM_VERSION }}
-      - name: Download release packages
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: release-packages
-          path: release-artifacts
-      - name: Publish or verify
-        run: node scripts/publish-or-verify.mjs --package "@openclaw/fs-safe-native" --artifacts release-artifacts
-
-  publish-root:
-    name: Publish @openclaw/fs-safe
-    if: github.ref_protected
-    needs: publish-native
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - name: Check out
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          registry-url: https://registry.npmjs.org
-      - name: Update npm
-        run: npm install --global npm@${{ env.NPM_VERSION }}
-      - name: Download release packages
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: release-packages
-          path: release-artifacts
       - name: Publish or verify
         run: node scripts/publish-or-verify.mjs --package "@openclaw/fs-safe" --artifacts release-artifacts
 
   release:
     name: Publish GitHub Release
     if: github.ref_protected
-    needs: publish-root
+    needs: publish
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -349,10 +278,10 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Download release packages
+      - name: Download release package
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: release-packages
+          name: release-package
           path: release-artifacts
 
       - name: Generate release notes and proof

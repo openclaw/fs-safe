@@ -1,8 +1,8 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { createRequire } from "node:module";
 import { configureFsSafeNative, root } from "../dist/index.js";
+import { sha256File } from "../dist/file-hash.js";
 
 const mode = process.argv[2];
 if (!new Set(["auto", "require", "off"]).has(mode)) {
@@ -10,11 +10,13 @@ if (!new Set(["auto", "require", "off"]).has(mode)) {
 }
 configureFsSafeNative({ mode });
 if (mode !== "off") {
-  const require = createRequire(import.meta.url);
-  const binding = require("../native");
-  if (typeof binding.openBeneath !== "function") throw new Error("native binding did not load");
-} else {
-  process.env.NAPI_RS_NATIVE_LIBRARY_PATH = path.join(os.tmpdir(), "must-not-load.node");
+  const fixture = path.join(os.tmpdir(), `fs-safe-native-mode-${process.pid}`);
+  await fs.writeFile(fixture, "native");
+  try {
+    await sha256File(fixture);
+  } finally {
+    await fs.rm(fixture, { force: true });
+  }
 }
 
 const directory = await fs.mkdtemp(path.join(os.tmpdir(), `fs-safe-mode-${mode}-`));

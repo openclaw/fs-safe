@@ -70,7 +70,7 @@ group. Trusted defaults include the current user, SYSTEM, and Administrators.
 The parser is on the advanced surface so tests and CLIs can process captured
 `icacls` output without spawning a process.
 
-When the optional native binding is available, `inspectPathPermissions()`
+When the bundled native binding is available, `inspectPathPermissions()`
 reads the owner and DACL directly with Windows security APIs. It classifies the
 current user, LocalSystem, and built-in Administrators as trusted and reports
 the world/group read/write facts consumed by secure reads. Descriptor forms it
@@ -120,7 +120,7 @@ Object-specific and other ACE layouts are not guessed: they are omitted,
 `complete` becomes false, and their numeric types appear in
 `unsupportedAceTypes`, allowing a security-sensitive caller to fail closed.
 Non-Windows systems return `{ status: "unsupported-platform", platform }`.
-Windows requires the optional native binding; if it is unavailable or forced
+Windows requires the bundled native binding; if it is unavailable or forced
 off, the call throws `FsSafeError("helper-unavailable")`. The existing coarse
 `inspectPathPermissions()` API still owns its compatibility fallback and trust
 classification.

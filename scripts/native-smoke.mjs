@@ -1,11 +1,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createRequire } from "node:module";
+import { __loadBundledNativeForTest } from "../dist/native.js";
 
-const require = createRequire(import.meta.url);
 console.log("native smoke: load binding");
-const native = require("../native");
+const native = __loadBundledNativeForTest();
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-native-smoke-"));
 const rootFd = fs.openSync(root, fs.constants.O_RDONLY);
 try {

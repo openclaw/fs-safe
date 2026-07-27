@@ -44,7 +44,7 @@ export function readOwnerAndDacl(targetPath: string): OwnerAndDaclResult {
   if (!native) {
     throw new FsSafeError(
       "helper-unavailable",
-      "Windows owner and DACL facts require the optional native binding",
+      "Windows owner and DACL facts require the bundled native binding",
     );
   }
   const facts = native.readOwnerAndDacl(targetPath);

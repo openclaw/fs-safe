@@ -27,9 +27,6 @@ importers:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@26.1.1)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@26.1.1)(esbuild@0.28.1))
     optionalDependencies:
-      '@openclaw/fs-safe-native':
-        specifier: 0.5.0
-        version: link:native
       jszip:
         specifier: ^3.10.1
         version: 3.10.1
@@ -37,43 +34,7 @@ importers:
         specifier: 7.5.21
         version: 7.5.21
 
-  native:
-    optionalDependencies:
-      '@openclaw/fs-safe-native-darwin-arm64':
-        specifier: 0.5.0
-        version: link:../npm/darwin-arm64
-      '@openclaw/fs-safe-native-darwin-x64':
-        specifier: 0.5.0
-        version: link:../npm/darwin-x64
-      '@openclaw/fs-safe-native-linux-arm64-gnu':
-        specifier: 0.5.0
-        version: link:../npm/linux-arm64-gnu
-      '@openclaw/fs-safe-native-linux-arm64-musl':
-        specifier: 0.5.0
-        version: link:../npm/linux-arm64-musl
-      '@openclaw/fs-safe-native-linux-x64-gnu':
-        specifier: 0.5.0
-        version: link:../npm/linux-x64-gnu
-      '@openclaw/fs-safe-native-linux-x64-musl':
-        specifier: 0.5.0
-        version: link:../npm/linux-x64-musl
-      '@openclaw/fs-safe-native-win32-x64-msvc':
-        specifier: 0.5.0
-        version: link:../npm/win32-x64-msvc
-
-  npm/darwin-arm64: {}
-
-  npm/darwin-x64: {}
-
-  npm/linux-arm64-gnu: {}
-
-  npm/linux-arm64-musl: {}
-
-  npm/linux-x64-gnu: {}
-
-  npm/linux-x64-musl: {}
-
-  npm/win32-x64-msvc: {}
+  native: {}
 
 packages:
 

@@ -59,9 +59,10 @@ pnpm add @openclaw/fs-safe
 
 Node 22 or newer. Core root/path/json/temp helpers avoid framework dependencies. Archive helpers use optional `jszip` and `tar` dependencies for ZIP/TAR support; installs that omit optional dependencies can still use every non-archive subpath.
 
-The optional native package supplies fd-relative and atomic no-replace
-primitives that Node does not expose directly. Configure its lazy loader before
-first use when you need a strict environment policy:
+The package bundles prebuilt native bindings for seven supported targets. They
+supply fd-relative and atomic no-replace primitives that Node does not expose
+directly. Configure the lazy loader before first use when you need a strict
+environment policy:
 
 ```ts
 import { configureFsSafeNative } from "@openclaw/fs-safe";
@@ -71,10 +72,13 @@ configureFsSafeNative({ mode: "off" });     // guarded JavaScript only
 configureFsSafeNative({ mode: "require" }); // fail closed if the binding is unavailable
 ```
 
-Equivalent env var: `FS_SAFE_NATIVE_MODE=auto|off|require`. The seven platform
-packages are prebuilt; consumers do not need Rust. Without a matching package,
-`auto` retains lexical and canonical root checks, no-follow opens, guarded
-temp+rename writes, and post-write identity verification. See the [native
+Equivalent env var: `FS_SAFE_NATIVE_MODE=auto|off|require`. All seven binaries
+ship inside `@openclaw/fs-safe`; there are no platform packages, postinstall
+steps, downloads, or consumer Rust builds. This makes the tarball larger than
+a per-platform package, but makes installation deterministic. On a platform
+without a bundled binary, `auto` silently retains lexical and canonical root
+checks, no-follow opens, guarded temp+rename writes, and post-write identity
+verification. See the [native
 helper policy](docs/native-helper.md) for the exact boundary and deployment
 tradeoff, and [native architecture](docs/native.md) for the platform mechanisms
 and policy ownership model.
@@ -85,7 +89,7 @@ and guarded JavaScript results are best-effort. See the [security model](docs/se
 
 ## Migrating from the Python helper
 
-Version 0.5 replaces the persistent Python worker with optional prebuilt native
+Version 0.5 replaces the persistent Python worker with bundled prebuilt native
 bindings. The modes map directly: `configureFsSafePython({ mode: "auto" })`
 becomes `configureFsSafeNative({ mode: "auto" })`, and likewise for `off` and
 `require`. Replace `FS_SAFE_PYTHON_MODE` with `FS_SAFE_NATIVE_MODE`; remove
