@@ -65,18 +65,20 @@ Returned by `Root.open()` and `Root.read()`:
 ```ts
 type OpenResult = {
   handle: import("node:fs/promises").FileHandle;
+  containment: "kernel-atomic" | "best-effort";
   realPath: string;
   stat: import("node:fs").Stats;
 };
 
 type ReadResult = {
   buffer: Buffer;
+  containment: "kernel-atomic" | "best-effort";
   realPath: string;
   stat: import("node:fs").Stats;
 };
 ```
 
-`realPath` is the canonical real path the read or open landed on, after symlink resolution; `stat` is the verified `fstat` result.
+`realPath` is the canonical real path the read or open landed on, after symlink resolution; `stat` is the verified `fstat` result. Public root results currently report `containment: "best-effort"`; the union also describes direct native `openBeneath()` results, which report `"kernel-atomic"` on Linux. See the [security model](security-model.md#containment-guarantees-by-platform).
 
 ## `RootDefaults` / `RootOptions`
 

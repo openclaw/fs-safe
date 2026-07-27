@@ -146,7 +146,7 @@ codes remain `"destination-not-directory"`, `"destination-symlink"`, and
 
 - **Path traversal:** entries with `..`, absolute paths, or Windows drive prefixes are rejected (`ArchiveSecurityError`).
 - **Symlink/hardlink entries:** rejected by default. Some archives ship symlink/hardlink entries that point outside the destination once resolved; `extractArchive` does not follow them.
-- **TOCTOU during merge:** extraction first writes to a private temp dir, then merges into `destDir` using the same boundary checks as `root().write()`. A symlink swap in the destination tree mid-merge is caught.
+- **TOCTOU during merge:** extraction first writes to a private temp dir, then merges into `destDir` using the same boundary checks as `root().write()`. Destination symlink swaps are checked with the selected platform mechanism; non-Linux routes retain the best-effort race window documented in the [security model](security-model.md#containment-guarantees-by-platform).
 - **Zip bombs:** `maxExtractedBytes` and `maxEntryBytes` apply to *post-decompression* bytes, so highly-compressed payloads hit the cap before they exhaust disk.
 - **Slow-loris archives:** `timeoutMs` is a hard wall-clock budget. Extraction is aborted on overrun.
 - **Metadata bombs:** a fixed-header pass-through reader rejects oversized PAX, GNU long-name, and GNU long-link bodies before either TAR implementation buffers them. It understands octal and base-256 size fields without interpreting metadata content.

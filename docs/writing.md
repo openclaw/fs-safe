@@ -17,7 +17,7 @@ await fs.mkdir("snapshots/2026/05");
 
 1. Resolve the relative target against the canonical root and reject anything that escapes (`outside-workspace`).
 2. If `mkdir: true`, create missing parent directories with the parent fd pinned.
-3. Open the parent directory by fd. Subsequent rename/unlink uses the parent fd, not the path string, so a parent-directory symlink swap mid-call cannot divert the write.
+3. Pin or guard the parent directory for the selected mechanism. Native operations use a parent fd; guarded JavaScript verifies directory identity before and after mutation. Linux beneath opens are kernel-atomic, while macOS, Windows, and JavaScript routes retain the best-effort race boundaries in the [security model](security-model.md#containment-guarantees-by-platform).
 4. Write data to a sibling temp file in the same directory.
 5. Atomically rename the temp file over the destination.
 6. Stat the resulting fd and verify identity.

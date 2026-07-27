@@ -1,11 +1,13 @@
 import fsSync, { type Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import type { ContainmentGuarantee } from "./containment.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { getNativeBinding, type NativeBinding } from "./native.js";
 
 export type NativeFileHandle = {
   readonly fd: number;
+  readonly containment: ContainmentGuarantee;
   close(): Promise<void>;
   stat(): Promise<Stats>;
   writeFile(data: string | Buffer, encoding?: BufferEncoding): Promise<void>;
@@ -31,10 +33,11 @@ function writeAll(fd: number, data: Buffer): void {
   }
 }
 
-function wrapNativeFd(fd: number): NativeFileHandle {
+function wrapNativeFd(fd: number, containment: ContainmentGuarantee): NativeFileHandle {
   let open = true;
   return {
     fd,
+    containment,
     async close() {
       if (open) {
         open = false;
@@ -98,16 +101,17 @@ export async function createNativeExclusiveFile(
   let fd: number | undefined;
   let created: Stats | undefined;
   try {
-    fd = binding.openBeneath(
+    const opened = binding.openBeneath(
       parent.fd,
       basename,
       nativeOpenFlags(
         fsSync.constants.O_WRONLY | fsSync.constants.O_CREAT | fsSync.constants.O_EXCL,
       ),
     );
+    fd = opened.fd;
     fsSync.fchmodSync(fd, mode);
     created = fsSync.fstatSync(fd);
-    return wrapNativeFd(fd);
+    return wrapNativeFd(fd, opened.containment);
   } catch (error) {
     if (fd !== undefined) {
       try {

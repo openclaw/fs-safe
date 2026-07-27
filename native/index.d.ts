@@ -55,7 +55,12 @@ export interface NativeCopyResult {
   errorMessage?: string
 }
 
-export declare function openBeneath(rootFd: number, relPath: string, flags: number): number
+export declare function openBeneath(rootFd: number, relPath: string, flags: number): OpenBeneathResult
+
+export interface OpenBeneathResult {
+  fd: number
+  containment: 'kernel-atomic' | 'best-effort'
+}
 
 export declare function readArchiveEntryNative(path: string, kind: string, requested: string, maxBytes: number, maxEntries: number, maxMetaEntryBytes: number, signal: AbortSignal): Promise<Buffer>
 

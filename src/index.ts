@@ -42,6 +42,7 @@ export {
   type WritableOpenMode,
   type WritableOpenResult,
 } from "./root.js";
+export type { ContainmentGuarantee } from "./containment.js";
 export {
   configureFsSafePython,
   configureFsSafeNative,

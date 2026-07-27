@@ -31,7 +31,7 @@ If you need full sandboxing, run the worker under reduced privileges (uid, conta
 
 ### Path traversal and absolute paths
 
-Every relative path is resolved against the canonicalized real path of the root, then checked with `isPathInside`. Inputs containing `..`, leading `/` (without `pathScope` opt-in), or that resolve outside the root throw `outside-workspace`.
+Every relative path is resolved against the canonicalized real path of the root, then checked with `isPathInside`. Alias resolution walks components before applying a later `..`, so a symlink cannot change what that parent segment means after validation. Parent traversal that escapes, leading `/` (without `pathScope` opt-in), or any canonical result outside the root throws `outside-workspace`.
 
 ### Symlinks (read side)
 
@@ -49,7 +49,7 @@ When `hardlinks: "reject"` is set, reads stat the target and refuse if `nlink > 
 
 ### TOCTOU between resolve and use
 
-`resolve()`, `exists()`, `stat()`, and `list()` are explicitly **not** race-resistant — they answer a question and return. To act on a path with race resistance, use `read()`, `open()`, `write()`, `create()`, `copyIn()`, `move()`, or `remove()`. They re-pin the path identity at the point of use.
+`resolve()`, `exists()`, `stat()`, and `list()` are explicitly advisory — they answer a question and return. To act on a path with operation-local identity checks, use `read()`, `open()`, `write()`, `create()`, `copyIn()`, `move()`, or `remove()`. The containment table below states which opens are kernel-atomic and which remain best-effort.
 
 ### Denied mutations
 
@@ -84,13 +84,20 @@ A library cannot revoke its own caller's authority. If your code chooses to bypa
 
 The library does not modify or constrain the global Node.js `fs` namespace, and it does not patch the runtime. Other code in the same process retains its normal filesystem authority.
 
-## Platform notes
+## Containment guarantees by platform
 
-- **Linux:** Native opens use `openat2(RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS)` and no-replace publication uses `renameat2(RENAME_NOREPLACE)`; guarded JavaScript implementations remain for operations outside the native surface.
-- **macOS:** Native opens walk with `O_NOFOLLOW` and re-resolve in-root symlinks from the pinned root descriptor; no-replace publication uses `renameatx_np(RENAME_EXCL)`.
-- **Windows:** Native opens are handle-relative and reject reparse points; no-replace publication uses `FileRenameInfoEx` with replacement disabled. Other operations use the guarded Node implementation.
+`openBeneath()` and JavaScript open results report one of two factual containment classes:
 
-The library does not advertise different security guarantees per platform — it advertises the same surface and relies on the strongest mechanism the platform offers.
+| Mechanism | Reported containment | Boundary |
+|---|---|---|
+| Linux native | `kernel-atomic` | `openat2(RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS)` resolves and opens under the root in one kernel operation. |
+| macOS native | `best-effort` | macOS 15.4 and newer use `O_RESOLVE_BENEATH` first; older kernels use the guarded `openat(O_NOFOLLOW)` component walk. Both verify the opened descriptor with `F_GETPATH`. |
+| Windows native | `best-effort` | Handle-relative `NtCreateFile` rejects reparse points, but this package does not claim a Linux-style atomic beneath guarantee. |
+| JavaScript fallback | `best-effort` | Canonical checks, no-follow opens where Node exposes them, and post-open identity checks form a check-then-use sequence. |
+
+The macOS `F_GETPATH` verification is an escape detector, not a race-atomic guarantee. A hostile same-UID process can rename a directory after `O_RESOLVE_BENEATH` or the manual walk and race the post-open sample or a later descriptor-relative mutation. The native result therefore remains `best-effort` on macOS even when the kernel flag is available. No policy decision is attached to these labels; callers can inspect the fact and decide what their own threat model requires.
+
+The public `OpenResult`, `ReadResult`, and `WritableOpenResult` expose `containment`. Those root APIs currently report `best-effort`; direct native `openBeneath()` reports the platform value above. No-replace publication uses `renameat2(RENAME_NOREPLACE)` on Linux, `renameatx_np(RENAME_EXCL)` on macOS, and `FileRenameInfoEx` with replacement disabled on Windows, but those separate mutation semantics do not upgrade an open result's containment label.
 
 ## Limitations to keep in mind
 
@@ -99,7 +106,7 @@ The library does not advertise different security guarantees per platform — it
 | Not ambient authority removal | Code that can import `node:fs` can still bypass the handle. Keep caller-controlled path operations behind `root()` by convention, review, and tests. |
 | Absolute paths are escape hatches | APIs that accept or return absolute paths exist for audit, ingest, and advanced composition. Prefer root-relative names in normal application flow. |
 | Not a mount boundary | `root()` keeps path traversal inside the directory tree and blocks known unsafe read device paths, but it does not make bind mounts or virtual filesystems safe to expose wholesale. |
-| Per-call, not per-session | Another process with the same privileges can still mutate the tree between two separate calls. Use one verb method for the operation you need to make race-resistant. |
+| Per-call, not per-session | Another process with the same privileges can still mutate the tree between calls, and best-effort mechanisms retain documented same-call race windows. Use one verb method to minimize the window and inspect its reported containment class. |
 | Hardlink rejection is best-effort | Link-count checks depend on platform metadata. Treat `hardlinks: "reject"` as a tripwire, not an authorization primitive. |
 | Mode bits are not a full policy engine | `replaceFileAtomic` and secret-file helpers set requested modes, but you should still set umask and inspect modes when policy requires it. |
 | Archive extraction is path safety, not content safety | Unsafe entry paths and links are rejected; malicious payload contents remain your application layer's problem. |

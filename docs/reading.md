@@ -3,7 +3,7 @@
 The `Root` handle exposes five read shapes. Pick the narrowest one that gives you what you need — narrower shapes do less work and surface fewer footguns.
 
 ```ts
-const result = await fs.read("notes/today.txt");        // { buffer, realPath, stat }
+const result = await fs.read("notes/today.txt");        // { buffer, containment, realPath, stat }
 const text   = await fs.readText("notes/today.txt");    // string
 const bytes  = await fs.readBytes("image.png");         // Buffer
 const json   = await fs.readJson<Config>("config.json"); // T
@@ -30,7 +30,7 @@ Regardless of shape, every read goes through the same boundary checks:
 The full result. Use it when you need both the bytes and the verified `realPath` or `stat`:
 
 ```ts
-const { buffer, realPath, stat } = await fs.read("notes/today.txt");
+const { buffer, containment, realPath, stat } = await fs.read("notes/today.txt");
 console.log(`${stat.size} bytes at ${realPath}`);
 ```
 
@@ -63,7 +63,7 @@ For tighter control over malformed-or-missing JSON, use the standalone helpers i
 
 ### `fs.open(rel, options?)`
 
-Returns a `FileHandle` plus the verified `realPath` and `stat`. Use this for streaming or partial reads, and **always close the handle**:
+Returns a `FileHandle` plus `containment: "best-effort"`, the verified `realPath`, and `stat`. Use this for streaming or partial reads, and **always close the handle**:
 
 ```ts
 const opened = await fs.open("large.log");
@@ -121,7 +121,7 @@ if (await fs.exists("notes/today.txt")) {
 }
 ```
 
-A symlink swap between `exists` and `readText` is caught by the read; the boundary is per-call.
+A symlink swap between `exists` and `readText` is checked again by the read; the boundary and its documented race window are per-call.
 
 ## Streaming patterns
 

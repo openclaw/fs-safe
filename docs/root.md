@@ -44,11 +44,11 @@ Every method on the returned handle accepts paths relative to the root and rejec
 ### Reads
 
 ```ts
-fs.read(rel, options?)         // { buffer, realPath, stat }
+fs.read(rel, options?)         // { buffer, containment, realPath, stat }
 fs.readBytes(rel, options?)    // Buffer
 fs.readText(rel, options?)     // string
 fs.readJson<T>(rel, options?)  // parsed T
-fs.open(rel, options?)         // { handle, realPath, stat, [Symbol.asyncDispose] }
+fs.open(rel, options?)         // { handle, containment, realPath, stat, [Symbol.asyncDispose] }
 fs.readAbsolute(absPath, options?) // ReadResult; absPath must already be inside the root
 fs.reader(options?)            // (path) => Promise<Buffer>; useful for loader APIs
 fs.walk(rel, options)          // root-bounded AsyncIterable<{ relativePath, kind, size }>
@@ -78,6 +78,10 @@ await using opened = await fs.open("large.log");
   }
 }
 ```
+
+`open()`, `read()`, and `openWritable()` results include
+`containment: "best-effort"`. The field reports the mechanism used; see the
+[security model](security-model.md#containment-guarantees-by-platform).
 
 ### Writes
 

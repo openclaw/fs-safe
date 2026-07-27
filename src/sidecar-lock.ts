@@ -41,10 +41,11 @@ export type {
   SidecarLockStaleRecovery,
   WithSidecarLockOptions,
 } from "./sidecar-lock-types.js";
+type SidecarFileHandle = Pick<NativeFileHandle, "close" | "stat" | "writeFile">;
 type HeldLock = {
   refCount: number;
   reentrantOwner?: string;
-  handle: NativeFileHandle;
+  handle: SidecarFileHandle;
   lockPath: string;
   snapshot: SidecarLockSnapshot;
   acquiredAt: number;
@@ -288,7 +289,7 @@ export function createSidecarLockManager(key: string) {
           await waitForRetry();
           continue;
         }
-        let handle: NativeFileHandle | null = null;
+        let handle: SidecarFileHandle | null = null;
         try {
           const payload = await options.payload();
           const { raw, ownershipToken } = serializeSidecarLockPayload(payload);

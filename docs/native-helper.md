@@ -36,7 +36,7 @@ layer owns policy, retries, filters, budgets, modes, cleanup, error
 normalization, and the decision to fall back.
 
 - Linux uses `openat2` with `RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS` and `renameat2(RENAME_NOREPLACE)`.
-- macOS resolves components with `O_NOFOLLOW`, restarts in-root symlinks from the pinned root descriptor, and uses `renameatx_np(RENAME_EXCL)`.
+- macOS 15.4 and newer prefer `O_RESOLVE_BENEATH`; older kernels resolve components with `O_NOFOLLOW` and restart in-root symlinks from the pinned root descriptor. Both routes use an `F_GETPATH` post-open escape detector and report `best-effort` because directory rename races are not atomic with that check. No-replace publication uses `renameatx_np(RENAME_EXCL)`.
 - Windows uses handle-relative `NtCreateFile`, rejects reparse points, and uses `FileRenameInfoEx` with replacement disabled.
 
 Native primitives back create-only pinned writes, async sidecar creation,
@@ -44,6 +44,11 @@ guarded publication, archive acceleration, and direct Windows ACL operations.
 Equivalent JavaScript paths remain available for documented fallback-capable
 features. See [Native architecture](native.md#javascript-fallback-guarantees-and-delta)
 for the exact difference.
+
+`openBeneath()` returns `{ fd, containment }`. `containment` is
+`"kernel-atomic"` for Linux `openat2` and `"best-effort"` for macOS and
+Windows. Public JavaScript root open/read/writable results also expose the
+field and report `"best-effort"`; the label reports mechanism, not policy.
 
 ## Migration from the Python helper
 

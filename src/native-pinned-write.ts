@@ -87,7 +87,7 @@ export async function runPinnedWriteNative(
     const parentFlags =
       fsSync.constants.O_RDONLY |
       (typeof fsSync.constants.O_DIRECTORY === "number" ? fsSync.constants.O_DIRECTORY : 0);
-    parentFd = binding.openBeneath(root.fd, params.relativeParentPath, parentFlags);
+    parentFd = binding.openBeneath(root.fd, params.relativeParentPath, parentFlags).fd;
     parentPath = await fs.realpath(
       params.relativeParentPath
         ? path.join(params.rootPath, ...params.relativeParentPath.split("/"))
@@ -115,7 +115,7 @@ export async function runPinnedWriteNative(
       nativeOpenFlags(
         fsSync.constants.O_WRONLY | fsSync.constants.O_CREAT | fsSync.constants.O_EXCL,
       ),
-    );
+    ).fd;
     fsSync.fchmodSync(tempFd, params.mode || 0o600);
     writeNativeFd(tempFd, data);
     syncNativeFileBestEffort(tempFd);
@@ -126,7 +126,7 @@ export async function runPinnedWriteNative(
       parentFd,
       params.basename,
       nativeOpenFlags(fsSync.constants.O_RDONLY),
-    );
+    ).fd;
     const targetIdentity = binding.fstatIdentity(targetFd);
     if (!targetIdentity.isFile || !sameNativeIdentity(tempIdentity, targetIdentity)) {
       throw new FsSafeError("path-mismatch", "native write target changed after rename");

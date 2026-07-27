@@ -4,6 +4,7 @@ import { constants as fsConstants } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
+import type { ContainmentGuarantee } from "./containment.js";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, createNearestExistingDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { syncDirectoryBestEffort } from "./fsync.js";
@@ -60,6 +61,7 @@ export { resolveOpenedFileRealPathForHandle } from "./opened-realpath.js";
 export type { ReadResult } from "./read-opened-file.js";
 export type OpenResult = {
   handle: FileHandle;
+  containment: ContainmentGuarantee;
   realPath: string;
   stat: Stats;
   [Symbol.asyncDispose](): Promise<void>;
@@ -164,6 +166,7 @@ function openResult(params: {
 }): OpenResult {
   return {
     handle: params.handle,
+    containment: "best-effort",
     realPath: params.realPath,
     stat: params.stat,
     [Symbol.asyncDispose]: () => params.handle.close().catch(() => undefined),
@@ -359,7 +362,9 @@ class RootHandle implements Root {
   }
 
   async resolve(relativePath: string): Promise<string> {
-    return (await resolvePathInRoot(this.context, relativePath)).resolved;
+    return (
+      await resolvePathInRoot(this.context, relativePath, { allowFinalSymlink: true })
+    ).resolved;
   }
 
   async open(relativePath: string, options: RootOpenOptions = {}): Promise<OpenResult> {
@@ -620,7 +625,9 @@ async function openFileInRoot(
     symlinks?: SymlinkPolicy;
   },
 ): Promise<OpenResult> {
-  const { rootWithSep, resolved } = await resolvePathInRoot(root, params.relativePath);
+  const { rootWithSep, resolved } = await resolvePathInRoot(root, params.relativePath, {
+    allowFinalSymlink: true,
+  });
 
   let opened: OpenResult;
   try {
@@ -709,6 +716,7 @@ export async function openLocalFileSafely(params: { filePath: string }): Promise
 
 export type WritableOpenResult = {
   handle: FileHandle;
+  containment: ContainmentGuarantee;
   createdForWrite: boolean;
   realPath: string;
   stat: Stats;
@@ -792,6 +800,7 @@ async function openWritableFileInRoot(
   const { rootReal, rootWithSep, resolved } = await resolvePathInRoot(
     root,
     params.relativePath,
+    { aliasErrorCode: "path-alias" },
   );
   await assertMutationNotDenied(resolved, params.denyMutations);
   try {
@@ -897,6 +906,7 @@ async function openWritableFileInRoot(
     }
     return {
       handle,
+      containment: "best-effort",
       createdForWrite,
       realPath,
       stat,
@@ -1156,7 +1166,9 @@ async function resolvePinnedWriteTargetInRoot(
   requestedMode?: number,
   denyMutations?: DenyMutationPolicy,
 ): Promise<PinnedWriteTarget> {
-  const { rootReal, rootWithSep, resolved } = await resolvePathInRoot(root, relativePath);
+  const { rootReal, rootWithSep, resolved } = await resolvePathInRoot(root, relativePath, {
+    aliasErrorCode: "path-alias",
+  });
   await assertMutationNotDenied(resolved, denyMutations);
   try {
     await assertNoPathAliasEscape({
@@ -1291,8 +1303,11 @@ async function resolvePinnedRootPathInRoot(
   const rootReal = root.rootReal;
   let resolved;
   try {
+    const expandedPath = await expandRelativePathWithHome(params.relativePath);
     resolved = await resolveRootPath({
-      absolutePath: path.resolve(rootReal, await expandRelativePathWithHome(params.relativePath)),
+      absolutePath: path.isAbsolute(expandedPath)
+        ? expandedPath
+        : `${ensureTrailingSep(rootReal)}${expandedPath}`,
       rootPath: rootReal,
       rootCanonicalPath: rootReal,
       boundaryLabel: "root",
@@ -1376,9 +1391,15 @@ async function assertMoveMutationAllowed(
     denyMutations?: DenyMutationPolicy;
   },
 ): Promise<void> {
-  const source = await resolvePathInRoot(root, params.fromRelative);
+  const source = await resolvePathInRoot(root, params.fromRelative, {
+    aliasErrorCode: "path-alias",
+    allowFinalSymlink: true,
+  });
   await assertMutationNotDenied(source.resolved, params.denyMutations, { protectAncestors: true });
-  const target = await resolvePathInRoot(root, params.toRelative);
+  const target = await resolvePathInRoot(root, params.toRelative, {
+    aliasErrorCode: "path-alias",
+    allowFinalSymlink: true,
+  });
   await assertMutationNotDenied(target.resolved, params.denyMutations, { protectAncestors: true });
 }
 
@@ -1391,13 +1412,19 @@ async function movePathFallback(
     overwrite: boolean;
   },
 ): Promise<void> {
-  const source = await resolvePathInRoot(root, params.fromRelative);
+  const source = await resolvePathInRoot(root, params.fromRelative, {
+    aliasErrorCode: "path-alias",
+    allowFinalSymlink: true,
+  });
   await assertMutationNotDenied(source.resolved, params.denyMutations, { protectAncestors: true });
   await resolvePinnedRootPathInRoot(root, {
     relativePath: params.fromRelative,
     policy: PATH_ALIAS_POLICIES.strict,
   });
-  const target = await resolvePathInRoot(root, params.toRelative);
+  const target = await resolvePathInRoot(root, params.toRelative, {
+    aliasErrorCode: "path-alias",
+    allowFinalSymlink: true,
+  });
   await assertMutationNotDenied(target.resolved, params.denyMutations, { protectAncestors: true });
   await resolvePinnedRootPathInRoot(root, {
     relativePath: params.toRelative,
@@ -1553,7 +1580,9 @@ async function writeMissingFileFallback(
     denyMutations?: DenyMutationPolicy;
   },
 ): Promise<void> {
-  const { rootReal, resolved } = await resolvePathInRoot(root, params.relativePath);
+  const { rootReal, resolved } = await resolvePathInRoot(root, params.relativePath, {
+    aliasErrorCode: "path-alias",
+  });
   await assertMutationNotDenied(resolved, params.denyMutations);
   try {
     await assertNoPathAliasEscape({

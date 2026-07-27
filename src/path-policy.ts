@@ -28,7 +28,7 @@ export async function assertNoPathAliasEscape(params: {
     return;
   }
   await assertNoHardlinkedFinalPath({
-    filePath: resolved.absolutePath,
+    filePath: resolved.canonicalPath,
     root: resolved.rootPath,
     boundaryLabel: params.boundaryLabel,
     allowFinalHardlinkForUnlink: params.policy?.allowFinalHardlinkForUnlink,

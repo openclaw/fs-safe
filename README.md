@@ -10,7 +10,7 @@
 
 Capability-style filesystem roots for Node.js apps that handle untrusted relative paths.
 
-Think Go's `os.Root` / `OpenInRoot` or Rust's [`cap-std`](https://github.com/bytecodealliance/cap-std), but for Node. Hand `root()` a trusted directory and you get back a handle whose every method resolves relative paths against it and refuses to escape — through `..`, symlink swaps, hardlink aliases, or TOCTOU rename races between check and use.
+Think Go's `os.Root` / `OpenInRoot` or Rust's [`cap-std`](https://github.com/bytecodealliance/cap-std), but for Node. Hand `root()` a trusted directory and you get back a handle whose every method resolves relative paths against it and defends against `..`, symlink swaps, hardlink aliases, and TOCTOU rename races. The exact containment strength is reported per mechanism: Linux native opens are kernel-atomic; macOS, Windows, and JavaScript paths are best-effort.
 
 ```ts
 import { root } from "@openclaw/fs-safe";
@@ -45,11 +45,11 @@ The same idea has landed in other languages. Go [added `os.Root` and `OpenInRoot
 | `path.resolve().startsWith()` | string check only | – | – | – | – |
 | [`write-file-atomic`](https://www.npmjs.com/package/write-file-atomic) | – | ✓ | – | – | – |
 | Go [`os.Root`](https://go.dev/blog/osroot) / Rust [`cap-std`](https://github.com/bytecodealliance/cap-std) | ✓ | platform | ✓ | ✓ | – |
-| **`@openclaw/fs-safe`** | **✓** | **✓** | **✓** | **✓ (POSIX fd-relative)** | **✓ (ZIP/TAR; native zstd/bzip2)** |
+| **`@openclaw/fs-safe`** | **✓** | **✓** | **✓** | **Linux atomic; others best-effort** | **✓ (ZIP/TAR; native zstd/bzip2)** |
 
 ## Not a sandbox
 
-This is a **library-level guardrail**, not OS-level isolation. It does not replace containers, seccomp, AppArmor, or filesystem permissions. It is for code that already runs with the privileges of its workspace and wants to stop trivial path tricks from escaping it. If your threat model is a hostile process, you need OS isolation; if your threat model is "an agent, plugin, upload handler, or CLI will eventually be tricked into writing somewhere it shouldn't," `fs-safe` catches that.
+This is a **library-level guardrail**, not OS-level isolation. It does not replace containers, seccomp, AppArmor, or filesystem permissions. It is for code that already runs with the privileges of its workspace and wants to stop trivial path tricks from escaping it. If your threat model is a hostile process, you need OS isolation; if your threat model is "an agent, plugin, upload handler, or CLI will eventually be tricked into writing somewhere it shouldn't," `fs-safe` catches that. The [security model](docs/security-model.md) describes the exact Linux, macOS, Windows, and JavaScript fallback guarantees and race boundaries.
 
 ## Install
 
@@ -78,6 +78,10 @@ temp+rename writes, and post-write identity verification. See the [native
 helper policy](docs/native-helper.md) for the exact boundary and deployment
 tradeoff, and [native architecture](docs/native.md) for the platform mechanisms
 and policy ownership model.
+
+Open results report the mechanism's containment class as `"kernel-atomic"` or
+`"best-effort"`. Linux native `openBeneath()` is kernel-atomic; macOS, Windows,
+and guarded JavaScript results are best-effort. See the [security model](docs/security-model.md#containment-guarantees-by-platform) before using that fact in higher-level policy.
 
 ## Migrating from the Python helper
 
@@ -184,7 +188,7 @@ const locked = await root("/srv/workspace", {
 await locked.write(".env", "token"); // FsSafeError code "denied-path"
 ```
 
-`stat()`, `exists()`, and `list()` are boundary-checked, but they cannot pin a later operation to the same filesystem object. Use `read()`, `open()`, `write()`, `create()`, `copyIn()`, `move()`, or `remove()` for operations that must be race-resistant at the point of use.
+`stat()`, `exists()`, and `list()` are boundary-checked, but they cannot pin a later operation to the same filesystem object. Use `read()`, `open()`, `write()`, `create()`, `copyIn()`, `move()`, or `remove()` for operation-local identity checks, and inspect `containment` when the platform distinction matters.
 
 ## Subpaths
 

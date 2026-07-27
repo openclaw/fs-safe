@@ -30,18 +30,21 @@ afterEach(async () => {
 });
 
 describe.runIf(native)("native filesystem primitives", () => {
-  it("opens beneath a directory descriptor and reports fd identity", async () => {
+  it("opens beneath a directory descriptor and reports containment and fd identity", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-native-open-"));
     roots.push(root);
     await fs.mkdir(path.join(root, "nested"));
     await fs.writeFile(path.join(root, "nested", "value"), "ok");
     const rootFd = fsSync.openSync(root, fsSync.constants.O_RDONLY);
     try {
-      const fd = native!.openBeneath(rootFd, "nested/value", fsSync.constants.O_RDONLY);
+      const opened = native!.openBeneath(rootFd, "nested/value", fsSync.constants.O_RDONLY);
+      expect(opened.containment).toBe(
+        process.platform === "linux" ? "kernel-atomic" : "best-effort",
+      );
       try {
-        expect(native!.fstatIdentity(fd)).toMatchObject({ isFile: true, size: 2 });
+        expect(native!.fstatIdentity(opened.fd)).toMatchObject({ isFile: true, size: 2 });
       } finally {
-        fsSync.closeSync(fd);
+        fsSync.closeSync(opened.fd);
       }
       expect(() => native!.openBeneath(rootFd, "../outside", fsSync.constants.O_RDONLY)).toThrow();
     } finally {

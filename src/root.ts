@@ -28,6 +28,7 @@ export {
   type WritableOpenMode,
   type WritableOpenResult,
 } from "./root-impl.js";
+export type { ContainmentGuarantee } from "./containment.js";
 export type {
   RootWalkDataEntry,
   RootWalkDataEntryKind,

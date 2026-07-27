@@ -4,6 +4,7 @@ import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { expandHomePrefix } from "./home-dir.js";
 import { assertNoNulPathInput, isNotFoundPathError, isPathInside } from "./path.js";
+import { ROOT_PATH_ALIAS_POLICIES, resolveRootPath } from "./root-path.js";
 
 export type RootContext = {
   rootDir: string;
@@ -62,12 +63,37 @@ export async function resolveRootContext(rootDir: string): Promise<RootContext> 
 export async function resolvePathInRoot(
   root: RootContext,
   relativePath: string,
+  options?: {
+    aliasErrorCode?: "outside-workspace" | "path-alias";
+    allowFinalSymlink?: boolean;
+  },
 ): Promise<{ rootReal: string; rootWithSep: string; resolved: string }> {
   assertValidRootRelativePath(relativePath);
   const expanded = await expandRelativePathWithHome(relativePath);
   const resolved = path.resolve(root.rootWithSep, expanded);
   if (!isPathInside(root.rootWithSep, resolved)) {
     throw new FsSafeError("outside-workspace", "file is outside workspace root");
+  }
+  const rawAbsolutePath = path.isAbsolute(expanded)
+    ? expanded
+    : `${root.rootWithSep}${expanded}`;
+  try {
+    await resolveRootPath({
+      absolutePath: rawAbsolutePath,
+      rootPath: root.rootReal,
+      rootCanonicalPath: root.rootReal,
+      boundaryLabel: "root",
+      policy: options?.allowFinalSymlink ? ROOT_PATH_ALIAS_POLICIES.unlinkTarget : undefined,
+    });
+  } catch (error) {
+    const code = options?.aliasErrorCode ?? "outside-workspace";
+    throw new FsSafeError(
+      code,
+      code === "path-alias" ? "path alias escape blocked" : "file is outside workspace root",
+      {
+        cause: error instanceof Error ? error : undefined,
+      },
+    );
   }
   return { rootReal: root.rootReal, rootWithSep: root.rootWithSep, resolved };
 }

@@ -34,6 +34,10 @@ const hardenedTypes = generatedTypes
   .replace(
     /copyFileRangeExclusive\(([^)]*)\): Promise<unknown>/,
     "copyFileRangeExclusive($1): Promise<NativeCopyResult>",
+  )
+  .replace(
+    /containment: string/,
+    "containment: 'kernel-atomic' | 'best-effort'",
   );
 if (hardenedTypes !== generatedTypes) {
   writeFileSync(typesPath, hardenedTypes);

@@ -24,6 +24,12 @@ pub struct FileIdentity {
     pub is_symbolic_link: bool,
 }
 
+#[napi(object)]
+pub struct OpenBeneathResult {
+    pub fd: i32,
+    pub containment: String,
+}
+
 pub(crate) type NativeResult<T> = std::result::Result<T, Error<String>>;
 
 pub(crate) fn native_error(code: impl Into<String>, message: impl Into<String>) -> Error<String> {
@@ -68,12 +74,23 @@ fn into_napi<T>(env: Env, result: NativeResult<T>) -> Result<T> {
 }
 
 #[napi(js_name = "openBeneath")]
-pub fn open_beneath(env: Env, root_fd: i32, rel_path: String, flags: i32) -> Result<i32> {
-    into_napi(
-        env,
-        validate_relative_path(&rel_path, true)
-            .and_then(|()| platform::open_beneath(root_fd, &rel_path, flags)),
-    )
+pub fn open_beneath(
+    env: Env,
+    root_fd: i32,
+    rel_path: String,
+    flags: i32,
+) -> Result<OpenBeneathResult> {
+    let result = validate_relative_path(&rel_path, true)
+        .and_then(|()| platform::open_beneath(root_fd, &rel_path, flags))
+        .map(|fd| OpenBeneathResult {
+            fd,
+            containment: if cfg!(target_os = "linux") {
+                "kernel-atomic".to_owned()
+            } else {
+                "best-effort".to_owned()
+            },
+        });
+    into_napi(env, result)
 }
 
 #[napi(js_name = "mkdirBeneath")]

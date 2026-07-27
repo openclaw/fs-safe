@@ -631,10 +631,13 @@ mod macos {
     use std::collections::VecDeque;
     use std::ffi::{CStr, CString};
     use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
+    use std::sync::OnceLock;
 
     use crate::{NativeResult, native_error};
 
     const MAX_SYMLINKS: usize = 40;
+    const O_RESOLVE_BENEATH: i32 = 0x0000_1000;
+    static RESOLVE_BENEATH_AVAILABLE: OnceLock<bool> = OnceLock::new();
 
     fn last_error(operation: &str) -> napi::Error<String> {
         let error = std::io::Error::last_os_error();
@@ -670,6 +673,58 @@ mod macos {
         Ok(unsafe { CStr::from_ptr(buffer.as_ptr()) }
             .to_string_lossy()
             .into_owned())
+    }
+
+    pub(super) fn resolve_beneath_available() -> bool {
+        *RESOLVE_BENEATH_AVAILABLE.get_or_init(probe_resolve_beneath_availability)
+    }
+
+    fn probe_resolve_beneath_availability() -> bool {
+        let mut info = std::mem::MaybeUninit::<libc::utsname>::zeroed();
+        // SAFETY: uname initializes the supplied utsname on success.
+        if unsafe { libc::uname(info.as_mut_ptr()) } != 0 {
+            return false;
+        }
+        // SAFETY: uname succeeded, so info is initialized and release is NUL-terminated.
+        let info = unsafe { info.assume_init() };
+        let release = unsafe { CStr::from_ptr(info.release.as_ptr()) }.to_string_lossy();
+        let mut parts = release
+            .split('.')
+            .filter_map(|part| part.parse::<u32>().ok());
+        let major = parts.next().unwrap_or(0);
+        let minor = parts.next().unwrap_or(0);
+        major > 24 || (major == 24 && minor >= 4)
+    }
+
+    fn verify_opened_beneath(root_fd: RawFd, opened: OwnedFd) -> NativeResult<i32> {
+        let root = root_path(root_fd)?;
+        let opened_path = root_path(opened.as_raw_fd())?;
+        if !std::path::Path::new(&opened_path).starts_with(std::path::Path::new(&root)) {
+            return Err(native_error(
+                "EXDEV",
+                format!("opened path escaped root: {opened_path}"),
+            ));
+        }
+        Ok(opened.into_raw_fd())
+    }
+
+    fn open_with_resolve_beneath(root_fd: RawFd, rel_path: &str, flags: i32) -> NativeResult<i32> {
+        let path = CString::new(rel_path.as_bytes())
+            .map_err(|_| native_error("EINVAL", "path contains a NUL byte"))?;
+        // SAFETY: root_fd is borrowed for this call and path is NUL-terminated.
+        let opened = unsafe {
+            libc::openat(
+                root_fd,
+                path.as_ptr(),
+                flags | libc::O_CLOEXEC | O_RESOLVE_BENEATH,
+                0o600,
+            )
+        };
+        if opened < 0 {
+            return Err(last_error("open path with O_RESOLVE_BENEATH"));
+        }
+        // SAFETY: openat returned a new descriptor owned by this call.
+        verify_opened_beneath(root_fd, unsafe { OwnedFd::from_raw_fd(opened) })
     }
 
     fn read_link(fd: RawFd, name: &CString) -> NativeResult<String> {
@@ -717,7 +772,10 @@ mod macos {
 
     pub fn open_beneath(root_fd: RawFd, rel_path: &str, flags: i32) -> NativeResult<i32> {
         if rel_path.is_empty() || rel_path == "." {
-            return Ok(duplicate(root_fd)?.into_raw_fd());
+            return verify_opened_beneath(root_fd, duplicate(root_fd)?);
+        }
+        if resolve_beneath_available() {
+            return open_with_resolve_beneath(root_fd, rel_path, flags);
         }
         let mut queue: VecDeque<String> = rel_path
             .split('/')
@@ -742,7 +800,8 @@ mod macos {
                 unsafe { libc::openat(current.as_raw_fd(), name.as_ptr(), open_flags, 0o600) };
             if opened >= 0 {
                 if is_final {
-                    return Ok(opened);
+                    // SAFETY: openat returned a new descriptor owned by this call.
+                    return verify_opened_beneath(root_fd, unsafe { OwnedFd::from_raw_fd(opened) });
                 }
                 // SAFETY: opened is a new owned directory descriptor.
                 current = unsafe { OwnedFd::from_raw_fd(opened) };
@@ -871,5 +930,45 @@ mod tests {
         // SAFETY: fd is uniquely owned after open_beneath.
         drop(unsafe { std::fs::File::from_raw_fd(fd) });
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn resolve_beneath_flag_blocks_static_escape_and_allows_in_root_symlink() {
+        use std::os::unix::fs::symlink;
+        if !macos::resolve_beneath_available() {
+            return;
+        }
+
+        let base = temp_root("resolve-beneath");
+        let root = base.join("root");
+        let outside = base.join("outside");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(root.join("sub")).unwrap();
+        fs::create_dir(root.join("real")).unwrap();
+        fs::create_dir(&outside).unwrap();
+        fs::write(root.join("real/file"), b"ok").unwrap();
+        fs::write(outside.join("secret.txt"), b"outside").unwrap();
+        symlink("..", root.join("sub/up")).unwrap();
+        symlink("real", root.join("alias")).unwrap();
+        let root_handle = OpenOptions::new().read(true).open(&root).unwrap();
+
+        assert!(
+            macos::open_beneath(
+                root_handle.as_raw_fd(),
+                "sub/up/../outside/secret.txt",
+                OFlags::RDONLY.bits() as i32,
+            )
+            .is_err()
+        );
+        let fd = macos::open_beneath(
+            root_handle.as_raw_fd(),
+            "alias/file",
+            OFlags::RDONLY.bits() as i32,
+        )
+        .unwrap();
+        // SAFETY: open_beneath returned a fresh descriptor owned by this test.
+        drop(unsafe { std::fs::File::from_raw_fd(fd) });
+        fs::remove_dir_all(base).unwrap();
     }
 }

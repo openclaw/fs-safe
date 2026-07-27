@@ -3,6 +3,12 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { isNotFoundPathError, isPathInside, isPathRelativeEscape } from "./path.js";
+import {
+  resolvePathViaExistingAncestor,
+  resolvePathViaExistingAncestorSync,
+} from "./root-path-existing.js";
+
+export { resolvePathViaExistingAncestorSync } from "./root-path-existing.js";
 
 type RootPathIntent = "read" | "write" | "create" | "delete" | "stat";
 
@@ -143,14 +149,32 @@ function createLexicalTraversalState(params: {
   rootCanonicalPath: string;
   absolutePath: string;
 }): LexicalTraversalState {
-  const relative = path.relative(params.rootPath, params.absolutePath);
+  const rawAbsolutePath = params.params.absolutePath;
+  const rawRelativePath = rawPathRelativeToRoot(params.rootPath, rawAbsolutePath);
+  const relative = rawRelativePath ?? path.relative(params.rootPath, params.absolutePath);
   return {
-    segments: relative.split(path.sep).filter(Boolean),
+    segments: relative.split(path.sep).filter((segment) => Boolean(segment) && segment !== "."),
     allowFinalSymlink: params.params.policy?.allowFinalSymlinkForUnlink === true,
     canonicalCursor: params.rootCanonicalPath,
     lexicalCursor: params.rootPath,
     preserveFinalSymlink: false,
   };
+}
+
+function rawPathRelativeToRoot(rootPath: string, candidatePath: string): string | undefined {
+  if (!path.isAbsolute(candidatePath)) {
+    return undefined;
+  }
+  const root = path.resolve(rootPath);
+  if (candidatePath === root) {
+    return "";
+  }
+  const rootWithSep = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+  const candidatePrefix = candidatePath.slice(0, rootWithSep.length);
+  const prefixMatches = process.platform === "win32"
+    ? candidatePrefix.toLowerCase() === rootWithSep.toLowerCase()
+    : candidatePrefix === rootWithSep;
+  return prefixMatches ? candidatePath.slice(rootWithSep.length) : undefined;
 }
 
 function assertLexicalCursorInsideBoundary(params: {
@@ -175,13 +199,15 @@ function applyMissingSuffixToCanonicalCursor(params: {
   absolutePath: string;
 }): void {
   const missingSuffix = params.state.segments.slice(params.missingFromIndex);
-  params.state.canonicalCursor = path.resolve(params.state.canonicalCursor, ...missingSuffix);
-  assertLexicalCursorInsideBoundary({
-    params: params.params,
-    rootCanonicalPath: params.rootCanonicalPath,
-    candidatePath: params.state.canonicalCursor,
-    absolutePath: params.absolutePath,
-  });
+  for (const segment of missingSuffix) {
+    advanceCanonicalCursorForSegment({
+      state: params.state,
+      segment,
+      rootCanonicalPath: params.rootCanonicalPath,
+      params: params.params,
+      absolutePath: params.absolutePath,
+    });
+  }
 }
 
 function advanceCanonicalCursorForSegment(params: {
@@ -371,11 +397,26 @@ type LexicalTraversalStep = {
   isLast: boolean;
 };
 
+function applyParentTraversalStep(params: {
+  state: LexicalTraversalState;
+  rootCanonicalPath: string;
+  resolveParams: ResolveRootPathParams;
+  absolutePath: string;
+}): void {
+  params.state.lexicalCursor = path.resolve(params.state.lexicalCursor, "..");
+  advanceCanonicalCursorForSegment({
+    state: params.state,
+    segment: "..",
+    rootCanonicalPath: params.rootCanonicalPath,
+    params: params.resolveParams,
+    absolutePath: params.absolutePath,
+  });
+}
+
 function* iterateLexicalTraversal(state: LexicalTraversalState): Iterable<LexicalTraversalStep> {
   for (let idx = 0; idx < state.segments.length; idx += 1) {
     const segment = state.segments[idx] ?? "";
     const isLast = idx === state.segments.length - 1;
-    state.lexicalCursor = path.join(state.lexicalCursor, segment);
     yield { idx, segment, isLast };
   }
 }
@@ -395,6 +436,14 @@ async function resolveRootPathLexicalAsync(params: {
   };
 
   for (const { idx, segment, isLast } of iterateLexicalTraversal(state)) {
+    if (segment === "..") {
+      applyParentTraversalStep({
+        ...sharedStepParams,
+        resolveParams: params.params,
+      });
+      continue;
+    }
+    state.lexicalCursor = path.join(state.lexicalCursor, segment);
     const stat = await readLexicalStat({
       ...sharedStepParams,
       missingFromIndex: idx,
@@ -425,7 +474,7 @@ async function resolveRootPathLexicalAsync(params: {
     });
   }
 
-  const kind = await getPathKind(params.absolutePath, state.preserveFinalSymlink);
+  const kind = await getPathKind(state.canonicalCursor, state.preserveFinalSymlink);
   return finalizeLexicalResolution({
     ...params,
     state,
@@ -443,6 +492,15 @@ function resolveRootPathLexicalSync(params: {
   for (let idx = 0; idx < state.segments.length; idx += 1) {
     const segment = state.segments[idx] ?? "";
     const isLast = idx === state.segments.length - 1;
+    if (segment === "..") {
+      applyParentTraversalStep({
+        state,
+        rootCanonicalPath: params.rootCanonicalPath,
+        resolveParams: params.params,
+        absolutePath: params.absolutePath,
+      });
+      continue;
+    }
     state.lexicalCursor = path.join(state.lexicalCursor, segment);
     const maybeStat = readLexicalStat({
       state,
@@ -487,7 +545,7 @@ function resolveRootPathLexicalSync(params: {
     }
   }
 
-  const kind = getPathKindSync(params.absolutePath, state.preserveFinalSymlink);
+  const kind = getPathKindSync(state.canonicalCursor, state.preserveFinalSymlink);
   return finalizeLexicalResolution({
     ...params,
     state,
@@ -660,66 +718,6 @@ function buildResolvedRootPath(params: {
   };
 }
 
-async function resolvePathViaExistingAncestor(targetPath: string): Promise<string> {
-  const normalized = path.resolve(targetPath);
-  let cursor = normalized;
-  const missingSuffix: string[] = [];
-
-  while (!isFilesystemRoot(cursor) && !(await pathExists(cursor))) {
-    missingSuffix.unshift(path.basename(cursor));
-    const parent = path.dirname(cursor);
-    if (parent === cursor) {
-      break;
-    }
-    cursor = parent;
-  }
-
-  if (!(await pathExists(cursor))) {
-    return normalized;
-  }
-
-  try {
-    const resolvedAncestor = path.resolve(await fsp.realpath(cursor));
-    if (missingSuffix.length === 0) {
-      return resolvedAncestor;
-    }
-    return path.resolve(resolvedAncestor, ...missingSuffix);
-  } catch {
-    return normalized;
-  }
-}
-
-export function resolvePathViaExistingAncestorSync(targetPath: string): string {
-  const normalized = path.resolve(targetPath);
-  let cursor = normalized;
-  const missingSuffix: string[] = [];
-
-  while (!isFilesystemRoot(cursor) && !fs.existsSync(cursor)) {
-    missingSuffix.unshift(path.basename(cursor));
-    const parent = path.dirname(cursor);
-    if (parent === cursor) {
-      break;
-    }
-    cursor = parent;
-  }
-
-  if (!fs.existsSync(cursor)) {
-    return normalized;
-  }
-
-  try {
-    // Keep sync behavior aligned with async (`fsp.realpath`) to avoid
-    // platform-specific canonical alias drift (notably on Windows).
-    const resolvedAncestor = path.resolve(fs.realpathSync(cursor));
-    if (missingSuffix.length === 0) {
-      return resolvedAncestor;
-    }
-    return path.resolve(resolvedAncestor, ...missingSuffix);
-  } catch {
-    return normalized;
-  }
-}
-
 async function getPathKind(
   absolutePath: string,
   preserveFinalSymlink: boolean,
@@ -816,22 +814,6 @@ function shortPath(value: string): string {
     return `~${value.slice(home.length)}`;
   }
   return value;
-}
-
-function isFilesystemRoot(candidate: string): boolean {
-  return path.parse(candidate).root === candidate;
-}
-
-async function pathExists(targetPath: string): Promise<boolean> {
-  try {
-    await fsp.lstat(targetPath);
-    return true;
-  } catch (error) {
-    if (isNotFoundPathError(error)) {
-      return false;
-    }
-    throw error;
-  }
 }
 
 async function resolveSymlinkHopPath(symlinkPath: string): Promise<string> {

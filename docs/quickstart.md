@@ -67,7 +67,7 @@ const names = await fs.list("state");              // string[]
 const entries = await fs.list("state", { withFileTypes: true }); // DirEntry[]
 ```
 
-`exists`, `stat`, and `list` are boundary-checked but **do not pin a later operation** to the same filesystem object. For race-resistant reads or writes, use `read()`, `open()`, `write()`, `create()`, `copyIn()`, `move()`, or `remove()` — they pin the path identity at the point of use.
+`exists`, `stat`, and `list` are boundary-checked but **do not pin a later operation** to the same filesystem object. For operation-local identity checks, use `read()`, `open()`, `write()`, `create()`, `copyIn()`, `move()`, or `remove()`. Linux native beneath opens are kernel-atomic; other mechanisms remain best-effort as documented in the [security model](security-model.md#containment-guarantees-by-platform).
 
 ## 6. Catch escapes
 
