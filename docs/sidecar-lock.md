@@ -59,6 +59,7 @@ type FileLockAcquireOptions<TPayload extends Record<string, unknown>> = {
   timeoutMs?: number;                    // overall acquire deadline; default unbounded
   retry?: FileLockRetryOptions;
   staleRecovery?: "fail-closed" | "remove-if-unchanged"; // default "fail-closed"
+  reentrantOwner?: string;               // logical holder identity for owner-scoped nesting
   payload: () => TPayload | Promise<TPayload>;
   shouldReclaim?: (params: {
     lockPath: string;
@@ -95,11 +96,50 @@ type FileLockRetryOptions = {
 result is passed to `shouldReclaim` and `shouldRemoveStaleLock`, allowing PID,
 process-start, argv, or role schemas to remain application-owned.
 
-Async lock acquisition is not reentrant. Another acquisition for the same path,
-including one from the same process and manager, follows the normal retry and
-timeout policy until the current holder releases it. Version 0.5 removes the
-unsound process-scoped `allowReentrant` option; callers that passed it should
-delete the property.
+## Owner-scoped reentrancy
+
+Version 0.5 removes the unsound process-scoped `allowReentrant` boolean and
+replaces it with `reentrantOwner`. When a manager already holds the canonical
+target path, another acquisition reuses that sidecar only when both acquisitions
+provide the same owner string. Each acquisition gets an idempotent release
+handle; the sidecar remains until the last reference is released. A different or
+missing owner waits under the normal contention, retry, and timeout policy. A
+known live in-process holder is never stale-reclaimed by its own manager.
+
+This supports logical session writers that may reach one file through real and
+symlinked parent paths:
+
+```ts
+const managerKey = "session-write-locks";
+const reentrantOwner = `session:${sessionId}:operation:${operationId}`;
+
+const outer = await acquireFileLock(realSessionPath, {
+  managerKey,
+  reentrantOwner,
+  staleMs: 60_000,
+  payload: () => ({ pid: process.pid, operationId }),
+});
+const nested = await acquireFileLock(symlinkedSessionPath, {
+  managerKey,
+  reentrantOwner,
+  staleMs: 60_000,
+  payload: () => ({ pid: process.pid, operationId }),
+});
+
+await nested.release(); // sidecar remains for outer
+await outer.release();  // final reference removes it
+```
+
+The manager domain and canonical target path are part of the identity, so
+aliased paths must use the same `managerKey`. The owner key must identify one
+logical holder or call chain. **Never use a process-wide or other shared constant
+for unrelated tasks**: doing so would admit concurrent work to the same critical
+section and recreate the lost-update bug that removed `allowReentrant`.
+
+Omit `reentrantOwner` for ordinary acquisitions. `jsonStore` does so and keeps
+its separate canonical-path mutation queue. The synchronous APIs implement the
+same owner/refcount rules; a mismatched synchronous acquisition blocks the
+calling thread according to its retry and timeout options.
 
 Pass `lockRoot` to place sidecar create, read, verification, and removal behind
 an existing `Root` capability. `lockPath` must resolve inside that root.

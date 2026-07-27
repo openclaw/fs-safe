@@ -19,6 +19,7 @@ import {
 import { FsSafeError } from "./errors.js";
 import { createNativeExclusiveFile, type NativeFileHandle } from "./native-operations.js";
 import type { Root } from "./root-impl.js";
+import { createHeldSidecarLockHandle } from "./sidecar-lock-handle.js";
 import type {
   SidecarLockAcquireOptions,
   SidecarLockHandle,
@@ -41,6 +42,8 @@ export type {
   WithSidecarLockOptions,
 } from "./sidecar-lock-types.js";
 type HeldLock = {
+  refCount: number;
+  reentrantOwner?: string;
   handle: NativeFileHandle;
   lockPath: string;
   snapshot: SidecarLockSnapshot;
@@ -84,6 +87,9 @@ function resolveManagerState(key: string): SidecarLockManagerState {
     // Backfill state created by fs-safe versions that predate reclaim guards.
     state.reclaimCleanupRegistered ??= false;
     state.reclaimGuards ??= new Set();
+    for (const held of state.held.values()) {
+      held.refCount ??= 1;
+    }
   }
   return state;
 }
@@ -169,10 +175,19 @@ async function releaseHeldLock(
   state: SidecarLockManagerState,
   normalizedTargetPath: string,
   held: HeldLock,
+  options: { force?: boolean } = {},
 ): Promise<boolean> {
   const current = state.held.get(normalizedTargetPath);
   if (current !== held) {
     return false;
+  }
+  if (options.force) {
+    held.refCount = 0;
+  } else {
+    held.refCount -= 1;
+    if (held.refCount > 0) {
+      return false;
+    }
   }
   if (held.releasePromise) {
     await held.releasePromise.catch(() => undefined);
@@ -198,6 +213,14 @@ async function releaseHeldLock(
   }
 }
 
+function handleForHeldLock(state: SidecarLockManagerState, normalizedTargetPath: string, held: HeldLock) {
+  return createHeldSidecarLockHandle({
+    normalizedTargetPath,
+    held,
+    release: async () => await releaseHeldLock(state, normalizedTargetPath, held),
+  });
+}
+
 export function createSidecarLockManager(key: string) {
   const state = resolveManagerState(key);
 
@@ -220,6 +243,16 @@ export function createSidecarLockManager(key: string) {
     ensureExitCleanupRegistered();
     const normalizedTargetPath = await resolveNormalizedTargetPath(options.targetPath);
     const lockPath = options.lockPath ?? `${normalizedTargetPath}.lock`;
+    const held = state.held.get(normalizedTargetPath);
+    if (
+      held &&
+      options.reentrantOwner !== undefined &&
+      held.reentrantOwner !== undefined &&
+      options.reentrantOwner === held.reentrantOwner
+    ) {
+      held.refCount += 1;
+      return handleForHeldLock(state, normalizedTargetPath, held);
+    }
 
     const startedAt = Date.now();
     const retry = options.retry ?? {};
@@ -276,6 +309,8 @@ export function createSidecarLockManager(key: string) {
           }
           const snapshot = { raw, payload, stat: await handle.stat(), ownershipToken };
           const createdHeld: HeldLock = {
+            refCount: 1,
+            reentrantOwner: options.reentrantOwner,
             handle,
             lockPath,
             snapshot,
@@ -290,21 +325,15 @@ export function createSidecarLockManager(key: string) {
               await releaseSidecarReclaimGuard(state.reclaimGuards, reclaimGuardPath);
               ownsReclaimGuard = false;
             } catch (err) {
-              await releaseHeldLock(state, normalizedTargetPath, createdHeld);
+              await releaseHeldLock(state, normalizedTargetPath, createdHeld, { force: true });
               throw err;
             }
           }
-          const release = () =>
-            releaseHeldLock(state, normalizedTargetPath, createdHeld).then(() => undefined);
-          const verifyStillHeld = async () =>
-            await sidecarLockSnapshotStillPresent(lockPath, snapshot, {
-              lockRoot: options.lockRoot,
-              parsePayload: options.parsePayload,
-            });
+          const returnedHandle = handleForHeldLock(state, normalizedTargetPath, createdHeld);
           const interval = options.compromiseCheckIntervalMs;
           if (options.onCompromised && interval !== undefined && interval > 0) {
             createdHeld.compromiseTimer = setInterval(() => {
-              void verifyStillHeld().then((stillHeld) => {
+              void returnedHandle.verifyStillHeld().then((stillHeld) => {
                 if (!stillHeld && createdHeld.compromiseTimer) {
                   clearInterval(createdHeld.compromiseTimer);
                   createdHeld.compromiseTimer = undefined;
@@ -314,13 +343,7 @@ export function createSidecarLockManager(key: string) {
             }, interval);
             createdHeld.compromiseTimer.unref();
           }
-          return {
-            lockPath,
-            normalizedTargetPath,
-            verifyStillHeld,
-            release,
-            [Symbol.asyncDispose]: release,
-          };
+          return returnedHandle;
         } catch (err) {
           if (handle) {
             const failedSnapshot: SidecarLockSnapshot = { payload: null };
@@ -360,6 +383,10 @@ export function createSidecarLockManager(key: string) {
             parsePayload: options.parsePayload,
           });
           if (!snapshot) {
+            continue;
+          }
+          if (state.held.has(normalizedTargetPath)) {
+            await waitForRetry();
             continue;
           }
           const shouldReclaim = options.shouldReclaim ?? defaultSidecarLockShouldReclaim;
@@ -434,7 +461,7 @@ export function createSidecarLockManager(key: string) {
 
   async function drain(): Promise<void> {
     for (const [normalizedTargetPath, held] of Array.from(state.held.entries())) {
-      await releaseHeldLock(state, normalizedTargetPath, held).catch(
+      await releaseHeldLock(state, normalizedTargetPath, held, { force: true }).catch(
         () => undefined,
       );
     }
@@ -450,7 +477,7 @@ export function createSidecarLockManager(key: string) {
       lockPath: held.lockPath,
       acquiredAt: held.acquiredAt,
       metadata: held.metadata,
-      forceRelease: () => releaseHeldLock(state, normalizedTargetPath, held),
+      forceRelease: () => releaseHeldLock(state, normalizedTargetPath, held, { force: true }),
     }));
   }
 

@@ -32,7 +32,7 @@
 
 ### Compatibility
 
-- Remove the unsound process-scoped `allowReentrant` async file-lock option. Callers that passed it should delete the property; same-process contention now follows the normal retry and timeout policy, while nested same-file `jsonStore` mutations fail immediately instead of deadlocking.
+- Remove the unsound process-scoped `allowReentrant` async file-lock option and replace it with owner-scoped `reentrantOwner` for async and sync locks: only matching, explicitly defined logical owners reuse a canonical in-process lock, releases are reference-counted and idempotent, and different or absent owners contend normally. Callers that passed the boolean must either remove it or migrate intentional nesting to a per-operation owner key; `jsonStore` remains ownerless and rejects nested same-file mutations immediately.
 - Remove the persistent Python helper and its `pythonPath` configuration. Replace `configureFsSafePython`, `FS_SAFE_PYTHON_MODE`, and the OpenClaw Python aliases with `configureFsSafeNative` and `FS_SAFE_NATIVE_MODE`; 0.5 warns once and maps the former `auto`, `require`, and `off` policies solely as an upgrade bridge for shipped 0.4 consumers.
 - Add `publishFileExclusive({ strategy: "rename-noreplace" })`; this strategy requires the native helper, atomically moves the source, and never replaces an existing destination.
 

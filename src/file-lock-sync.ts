@@ -27,6 +27,7 @@ export type FileLockSyncAcquireOptions<TPayload extends Record<string, unknown>>
   timeoutMs?: number;
   retry?: SidecarLockRetryOptions;
   staleRecovery?: SidecarLockStaleRecovery;
+  reentrantOwner?: string;
   payload: () => TPayload;
   shouldReclaim?: (params: {
     lockPath: string;
@@ -50,6 +51,65 @@ export type FileLockSyncHandle = {
   release(): void;
   [Symbol.dispose](): void;
 };
+
+type SyncHeldLock = {
+  fd: number;
+  lockPath: string;
+  normalizedTargetPath: string;
+  parsePayload?: (raw: string) => unknown;
+  refCount: number;
+  reentrantOwner?: string;
+  snapshot: SidecarLockSnapshot;
+  timer?: NodeJS.Timeout;
+};
+
+const SYNC_HELD_LOCKS_KEY = Symbol.for("fsSafe.syncSidecarLocks");
+
+function getSyncHeldLocks(): Map<string, SyncHeldLock> {
+  const globalWithState = globalThis as typeof globalThis & {
+    [SYNC_HELD_LOCKS_KEY]?: Map<string, SyncHeldLock>;
+  };
+  if (!globalWithState[SYNC_HELD_LOCKS_KEY]) {
+    globalWithState[SYNC_HELD_LOCKS_KEY] = new Map();
+  }
+  return globalWithState[SYNC_HELD_LOCKS_KEY];
+}
+
+function verifySyncHeldLock(held: SyncHeldLock): boolean {
+  const current = readSidecarLockSnapshotSync(held.lockPath, held.parsePayload);
+  return !!current && sidecarLockSnapshotMatches(current, held.snapshot);
+}
+
+function releaseSyncHeldLock(held: SyncHeldLock): boolean {
+  const heldLocks = getSyncHeldLocks();
+  if (heldLocks.get(held.normalizedTargetPath) !== held) return false;
+  held.refCount -= 1;
+  if (held.refCount > 0) return false;
+  heldLocks.delete(held.normalizedTargetPath);
+  if (held.timer) {
+    clearInterval(held.timer);
+    held.timer = undefined;
+  }
+  fs.closeSync(held.fd);
+  removeSidecarLockIfUnchangedSync(held.lockPath, held.snapshot);
+  return true;
+}
+
+function createSyncHeldLockHandle(held: SyncHeldLock): FileLockSyncHandle {
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    releaseSyncHeldLock(held);
+  };
+  return {
+    lockPath: held.lockPath,
+    normalizedTargetPath: held.normalizedTargetPath,
+    verifyStillHeld: () => verifySyncHeldLock(held),
+    release,
+    [Symbol.dispose]: release,
+  };
+}
 
 function normalizeTargetPath(targetPath: string): string {
   const resolved = path.resolve(targetPath);
@@ -93,6 +153,17 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
 ): FileLockSyncHandle {
   const normalizedTargetPath = normalizeTargetPath(targetPath);
   const lockPath = boundedLockPath(options.lockPath ?? `${normalizedTargetPath}.lock`, options.lockRoot);
+  const heldLocks = getSyncHeldLocks();
+  const held = heldLocks.get(normalizedTargetPath);
+  if (
+    held &&
+    options.reentrantOwner !== undefined &&
+    held.reentrantOwner !== undefined &&
+    options.reentrantOwner === held.reentrantOwner
+  ) {
+    held.refCount += 1;
+    return createSyncHeldLockHandle(held);
+  }
   const staleMs = options.staleMs ?? 30_000;
   const retry = options.retry ?? {};
   const startedAt = Date.now();
@@ -120,38 +191,29 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
         stat: fs.fstatSync(fd),
         ownershipToken,
       };
-      const heldFd = fd;
-      let released = false;
-      let timer: NodeJS.Timeout | undefined;
-      const verifyStillHeld = () => {
-        const current = readSidecarLockSnapshotSync(lockPath, options.parsePayload);
-        return !!current && sidecarLockSnapshotMatches(current, snapshot);
+      const createdHeld: SyncHeldLock = {
+        fd,
+        lockPath,
+        normalizedTargetPath,
+        parsePayload: options.parsePayload,
+        refCount: 1,
+        reentrantOwner: options.reentrantOwner,
+        snapshot,
       };
-      const release = () => {
-        if (released) return;
-        released = true;
-        if (timer) clearInterval(timer);
-        fs.closeSync(heldFd);
-        fd = undefined;
-        removeSidecarLockIfUnchangedSync(lockPath, snapshot);
-      };
+      heldLocks.set(normalizedTargetPath, createdHeld);
+      const returnedHandle = createSyncHeldLockHandle(createdHeld);
       if (options.onCompromised && (options.compromiseCheckIntervalMs ?? 0) > 0) {
-        timer = setInterval(() => {
-          if (!verifyStillHeld()) {
-            if (timer) clearInterval(timer);
-            timer = undefined;
+        createdHeld.timer = setInterval(() => {
+          if (!returnedHandle.verifyStillHeld()) {
+            if (createdHeld.timer) clearInterval(createdHeld.timer);
+            createdHeld.timer = undefined;
             options.onCompromised?.({ lockPath, normalizedTargetPath });
           }
         }, options.compromiseCheckIntervalMs);
-        timer.unref();
+        createdHeld.timer.unref();
       }
-      return {
-        lockPath,
-        normalizedTargetPath,
-        verifyStillHeld,
-        release,
-        [Symbol.dispose]: release,
-      };
+      fd = undefined;
+      return returnedHandle;
     } catch (error) {
       if (fd !== undefined) {
         const failed = { payload: null, stat: fs.fstatSync(fd) } satisfies SidecarLockSnapshot;
@@ -160,6 +222,20 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
         removeSidecarLockIfUnchangedSync(lockPath, failed);
       }
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (heldLocks.has(normalizedTargetPath)) {
+        const elapsed = Date.now() - startedAt;
+        const timedOut = options.timeoutMs !== undefined && elapsed >= options.timeoutMs;
+        if (timedOut || (retry.retries !== undefined && attempt >= retry.retries)) {
+          throw Object.assign(new Error(`file lock timeout for ${normalizedTargetPath}`), {
+            code: "file_lock_timeout",
+            lockPath,
+            normalizedTargetPath,
+          });
+        }
+        sleep(computeSidecarLockDelayMs(retry, attempt));
+        attempt += 1;
+        continue;
+      }
       const snapshot = readSidecarLockSnapshotSync(lockPath, options.parsePayload);
       if (!snapshot) continue;
       const nowMs = Date.now();
