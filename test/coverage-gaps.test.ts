@@ -289,7 +289,7 @@ describe("trash helper", () => {
 });
 
 describe("sidecar lock manager", () => {
-  it("acquires, reenters, lists, force releases, and drains locks", async () => {
+  it("acquires, queues, lists, force releases, and drains locks", async () => {
     const root = await tempRoot("fs-safe-sidecar-");
     const targetPath = path.join(root, "state.json");
     const manager = createSidecarLockManager(`coverage-${Date.now()}-${Math.random()}`);
@@ -297,21 +297,22 @@ describe("sidecar lock manager", () => {
     const lock = await manager.acquire({
       targetPath,
       staleMs: 60_000,
-      allowReentrant: true,
       metadata: { test: true },
       payload: () => ({ owner: "coverage" }),
     });
-    const reentrant = await manager.acquire({
+    const queued = manager.acquire({
       targetPath,
       staleMs: 60_000,
-      allowReentrant: true,
+      timeoutMs: 1_000,
+      retry: { minTimeout: 1, maxTimeout: 2 },
       payload: () => ({ owner: "coverage" }),
     });
     expect(manager.heldEntries()).toHaveLength(1);
     expect(manager.heldEntries()[0]?.metadata).toEqual({ test: true });
-    await reentrant.release();
-    expect(await manager.heldEntries()[0]?.forceRelease()).toBe(true);
     await lock.release();
+    const queuedLock = await queued;
+    expect(await manager.heldEntries()[0]?.forceRelease()).toBe(true);
+    await queuedLock.release();
     expect(manager.heldEntries()).toEqual([]);
 
     const value = await manager.withLock(

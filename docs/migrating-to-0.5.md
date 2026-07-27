@@ -140,6 +140,11 @@ The default directory-error policy remains `throw`. See
 
 - Use `acquireFileLockSync()` only in synchronous boot or migration code; retry
   waits block the thread. Request-serving paths should use `withFileLock()`.
+- Remove `allowReentrant` from async file-lock options. Same-process contention
+  now follows the ordinary retry and timeout policy. Locked and unlocked
+  `jsonStore` mutations serialize by canonical file path; nested same-file
+  mutations from an update callback fail with `store-reentrant-update`, so
+  return the complete value from the outer callback instead.
 - Use `createSecretFileAtomic()` for first-writer-wins credentials and catch
   `secret-exists`; use `writeSecretFileAtomic()` only when replacement is the
   intended protocol.

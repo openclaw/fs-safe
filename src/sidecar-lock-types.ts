@@ -23,7 +23,6 @@ export type SidecarLockAcquireOptions<TPayload extends Record<string, unknown>> 
   timeoutMs?: number;
   retry?: SidecarLockRetryOptions;
   staleRecovery?: SidecarLockStaleRecovery;
-  allowReentrant?: boolean;
   payload: () => TPayload | Promise<TPayload>;
   shouldReclaim?: (params: {
     lockPath: string;

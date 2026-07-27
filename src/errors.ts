@@ -17,6 +17,7 @@ export type FsSafeErrorCode =
   | "path-mismatch"
   | "permission-unverified"
   | "secret-exists"
+  | "store-reentrant-update"
   | "symlink"
   | "timeout"
   | "too-large"

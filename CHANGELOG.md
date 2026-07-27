@@ -13,6 +13,7 @@
 
 ### Security and Correctness
 
+- Serialize async `jsonStore` writes and read-modify-write updates in-process by canonical store path before taking the cross-process sidecar lock, preventing overlapping `write`, `update`, and `updateOr` calls from silently losing updates; reject nested same-path mutations with typed `store-reentrant-update` errors. Thanks @yetval for reporting this.
 - Create `append`, `openWritable`, and fallback `copyIn` parents through guarded per-component walks and continue I/O through the resolved in-root parent, preventing symlink-swap races from creating directories outside the root while preserving valid in-root symlink parents. Thanks @yetval for reporting this.
 - Add pinned-destination hardlink rejection and bounded original-content restoration to `replaceFileAtomic()` and its sync variant, including typed `restored` / `restore-failed` receipts for torn copy-fallback writes.
 - Add sibling staging to `writeExternalFileWithinRoot()`: external producers can write a randomized file in the target directory for fsynced same-filesystem atomic replacement, while private workspace staging remains the cross-device-tolerant default; staged and final basenames share portable C0/C1 and Windows-invalid-character sanitization on every host.
@@ -31,6 +32,7 @@
 
 ### Compatibility
 
+- Remove the unsound process-scoped `allowReentrant` async file-lock option. Callers that passed it should delete the property; same-process contention now follows the normal retry and timeout policy, while nested same-file `jsonStore` mutations fail immediately instead of deadlocking.
 - Remove the persistent Python helper and its `pythonPath` configuration. Replace `configureFsSafePython`, `FS_SAFE_PYTHON_MODE`, and the OpenClaw Python aliases with `configureFsSafeNative` and `FS_SAFE_NATIVE_MODE`; 0.5 warns once and maps the former `auto`, `require`, and `off` policies solely as an upgrade bridge for shipped 0.4 consumers.
 - Add `publishFileExclusive({ strategy: "rename-noreplace" })`; this strategy requires the native helper, atomically moves the source, and never replaces an existing destination.
 

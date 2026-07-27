@@ -41,7 +41,6 @@ export type {
   WithSidecarLockOptions,
 } from "./sidecar-lock-types.js";
 type HeldLock = {
-  count: number;
   handle: NativeFileHandle;
   lockPath: string;
   snapshot: SidecarLockSnapshot;
@@ -170,19 +169,10 @@ async function releaseHeldLock(
   state: SidecarLockManagerState,
   normalizedTargetPath: string,
   held: HeldLock,
-  opts: { force?: boolean } = {},
 ): Promise<boolean> {
   const current = state.held.get(normalizedTargetPath);
   if (current !== held) {
     return false;
-  }
-  if (opts.force) {
-    held.count = 0;
-  } else {
-    held.count -= 1;
-    if (held.count > 0) {
-      return false;
-    }
   }
   if (held.releasePromise) {
     await held.releasePromise.catch(() => undefined);
@@ -230,24 +220,6 @@ export function createSidecarLockManager(key: string) {
     ensureExitCleanupRegistered();
     const normalizedTargetPath = await resolveNormalizedTargetPath(options.targetPath);
     const lockPath = options.lockPath ?? `${normalizedTargetPath}.lock`;
-    const held = state.held.get(normalizedTargetPath);
-    if (held && options.allowReentrant) {
-      held.count += 1;
-      const release = () =>
-        releaseHeldLock(state, normalizedTargetPath, held).then(() => undefined);
-      const verifyStillHeld = async () =>
-        await sidecarLockSnapshotStillPresent(held.lockPath, held.snapshot, {
-          lockRoot: held.lockRoot,
-          parsePayload: held.parsePayload,
-        });
-      return {
-        lockPath,
-        normalizedTargetPath,
-        verifyStillHeld,
-        release,
-        [Symbol.asyncDispose]: release,
-      };
-    }
 
     const startedAt = Date.now();
     const retry = options.retry ?? {};
@@ -304,7 +276,6 @@ export function createSidecarLockManager(key: string) {
           }
           const snapshot = { raw, payload, stat: await handle.stat(), ownershipToken };
           const createdHeld: HeldLock = {
-            count: 1,
             handle,
             lockPath,
             snapshot,
@@ -319,7 +290,7 @@ export function createSidecarLockManager(key: string) {
               await releaseSidecarReclaimGuard(state.reclaimGuards, reclaimGuardPath);
               ownsReclaimGuard = false;
             } catch (err) {
-              await releaseHeldLock(state, normalizedTargetPath, createdHeld, { force: true });
+              await releaseHeldLock(state, normalizedTargetPath, createdHeld);
               throw err;
             }
           }
@@ -463,7 +434,7 @@ export function createSidecarLockManager(key: string) {
 
   async function drain(): Promise<void> {
     for (const [normalizedTargetPath, held] of Array.from(state.held.entries())) {
-      await releaseHeldLock(state, normalizedTargetPath, held, { force: true }).catch(
+      await releaseHeldLock(state, normalizedTargetPath, held).catch(
         () => undefined,
       );
     }
@@ -479,7 +450,7 @@ export function createSidecarLockManager(key: string) {
       lockPath: held.lockPath,
       acquiredAt: held.acquiredAt,
       metadata: held.metadata,
-      forceRelease: () => releaseHeldLock(state, normalizedTargetPath, held, { force: true }),
+      forceRelease: () => releaseHeldLock(state, normalizedTargetPath, held),
     }));
   }
 

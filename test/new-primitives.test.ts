@@ -1021,19 +1021,20 @@ describe("file locks", () => {
 
     const lock = await manager.acquire(targetPath, {
       staleMs: 60_000,
-      allowReentrant: true,
       metadata: { suite: "new-primitives" },
       payload: () => ({ owner: "manager" }),
     });
-    const reentrant = await manager.acquire(targetPath, {
+    const queued = manager.acquire(targetPath, {
       staleMs: 60_000,
-      allowReentrant: true,
+      timeoutMs: 1_000,
+      retry: { minTimeout: 1, maxTimeout: 2 },
       payload: () => ({ owner: "manager" }),
     });
     expect(manager.heldEntries()).toHaveLength(1);
     expect(manager.heldEntries()[0]?.metadata).toEqual({ suite: "new-primitives" });
-    await reentrant.release();
     await lock.release();
+    const queuedLock = await queued;
+    await queuedLock.release();
     expect(manager.heldEntries()).toEqual([]);
 
     await expect(

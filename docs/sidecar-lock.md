@@ -59,7 +59,6 @@ type FileLockAcquireOptions<TPayload extends Record<string, unknown>> = {
   timeoutMs?: number;                    // overall acquire deadline; default unbounded
   retry?: FileLockRetryOptions;
   staleRecovery?: "fail-closed" | "remove-if-unchanged"; // default "fail-closed"
-  allowReentrant?: boolean;              // if this process already holds it, increment a count instead of failing
   payload: () => TPayload | Promise<TPayload>;
   shouldReclaim?: (params: {
     lockPath: string;
@@ -95,6 +94,12 @@ type FileLockRetryOptions = {
 `parsePayload` replaces JSON parsing for legacy or custom sidecars. Its `unknown`
 result is passed to `shouldReclaim` and `shouldRemoveStaleLock`, allowing PID,
 process-start, argv, or role schemas to remain application-owned.
+
+Async lock acquisition is not reentrant. Another acquisition for the same path,
+including one from the same process and manager, follows the normal retry and
+timeout policy until the current holder releases it. Version 0.5 removes the
+unsound process-scoped `allowReentrant` option; callers that passed it should
+delete the property.
 
 Pass `lockRoot` to place sidecar create, read, verification, and removal behind
 an existing `Root` capability. `lockPath` must resolve inside that root.
@@ -213,7 +218,7 @@ const handle = await acquireFileLock(targetPath, {
 });
 ```
 
-`heldByThisProcess` is true when this manager already holds the lock (relevant for the reentrant case). A `true` result marks the observed sidecar as stale; `staleRecovery` then decides whether acquisition fails closed or attempts caller-approved removal.
+`heldByThisProcess` is true when this manager already holds the lock. A `true` result marks the observed sidecar as stale; `staleRecovery` then decides whether acquisition fails closed or attempts caller-approved removal.
 
 ## Stale recovery: guarded `remove-if-unchanged`
 

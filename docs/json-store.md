@@ -113,7 +113,17 @@ Read, transform, write — under the lock if locking is enabled. Returns the new
 const next = await store.update((prev) => ({ count: (prev?.count ?? 0) + 1 }));
 ```
 
-`run` is async-friendly. The whole `read → run → write` sequence runs inside one `withLock` call, so concurrent updaters from different processes serialize cleanly.
+`run` is async-friendly. The whole `read → run → write` sequence is serialized
+by canonical file path inside the process. With locking enabled, the sidecar
+lock is acquired inside that queue, so concurrent updaters from different
+processes serialize cleanly too.
+
+Do not call `write()`, `update()`, or `updateOr()` for the same file from inside
+an update callback. That nested mutation cannot run until the outer update
+finishes, so `jsonStore` rejects it immediately with
+`FsSafeError("store-reentrant-update")`. Return the complete next value from the
+outer callback instead. The check follows Node async context, including promise
+and `queueMicrotask` boundaries.
 
 Use `update(run)` when missing state is part of your model. Use `updateOr(fallback, run)` when the missing-file case should start from a concrete value and you want to merge into defaults:
 
@@ -137,13 +147,18 @@ const counter = jsonStore<{ count: number }>({
 });
 ```
 
-When `lock` is falsy, `read` / `write` / `update` are unlocked. The `update` shape is still useful — it gives you a single function for the read-modify-write pattern — but it offers no concurrency guarantees if other processes also write to the file.
+When `lock` is falsy, writes and updates still serialize inside this process by
+canonical file path, including across separate `jsonStore` handles. They offer
+no concurrency guarantees if another process also writes to the file.
 
 Process-wide lock defaults from `configureFsSafeLocks()` apply only after locking is explicitly enabled. They do not make JSON stores lock by default.
 
 JSON store locks fail closed on stale sidecars by default. Opt-in `staleRecovery: "remove-if-unchanged"` requires caller approval and uses the same exclusive reclaim guard as the low-level sidecar-lock API.
 
-The default `managerKey` namespaces the in-process `FileLockManager` per absolute file path, so two `jsonStore` calls on the same file share lock state automatically.
+The default `managerKey` namespaces the `FileLockManager` per absolute file
+path. The JSON-store queue is independent of the manager key, so separate
+handles and custom lock-manager namespaces still cannot overlap mutations of
+the same canonical file path inside one process.
 
 ## Common patterns
 
