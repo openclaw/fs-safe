@@ -153,7 +153,7 @@ function createLexicalTraversalState(params: {
   const rawRelativePath = rawPathRelativeToRoot(params.rootPath, rawAbsolutePath);
   const relative = rawRelativePath ?? path.relative(params.rootPath, params.absolutePath);
   return {
-    segments: relative.split(path.sep).filter((segment) => Boolean(segment) && segment !== "."),
+    segments: splitTraversalSegments(relative),
     allowFinalSymlink: params.params.policy?.allowFinalSymlinkForUnlink === true,
     canonicalCursor: params.rootCanonicalPath,
     lexicalCursor: params.rootPath,
@@ -161,20 +161,29 @@ function createLexicalTraversalState(params: {
   };
 }
 
+function splitTraversalSegments(value: string): string[] {
+  return value
+    .split(process.platform === "win32" ? /[\\/]+/ : /\/+/)
+    .filter((segment) => Boolean(segment) && segment !== ".");
+}
+
 function rawPathRelativeToRoot(rootPath: string, candidatePath: string): string | undefined {
   if (!path.isAbsolute(candidatePath)) {
     return undefined;
   }
   const root = path.resolve(rootPath);
-  if (candidatePath === root) {
+  const candidate = process.platform === "win32"
+    ? candidatePath.replaceAll("/", path.sep)
+    : candidatePath;
+  if (candidate === root) {
     return "";
   }
   const rootWithSep = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
-  const candidatePrefix = candidatePath.slice(0, rootWithSep.length);
+  const candidatePrefix = candidate.slice(0, rootWithSep.length);
   const prefixMatches = process.platform === "win32"
     ? candidatePrefix.toLowerCase() === rootWithSep.toLowerCase()
     : candidatePrefix === rootWithSep;
-  return prefixMatches ? candidatePath.slice(rootWithSep.length) : undefined;
+  return prefixMatches ? candidate.slice(rootWithSep.length) : undefined;
 }
 
 function assertLexicalCursorInsideBoundary(params: {
