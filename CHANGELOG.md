@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Security and Correctness
+
+- **Security — `sanitizeUntrustedFileName()`:** Reject Windows reserved device basenames (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`, and variants with extensions or trailing spaces/dots) and return the caller fallback, matching the reserved-name rules already used by device-path read guards. Prevents staging/output helpers from accepting untrusted names that open devices on Windows.
+
 ## 0.5.0 - 2026-07-26
 
 ### Highlights

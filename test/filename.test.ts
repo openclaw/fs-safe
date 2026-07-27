@@ -18,4 +18,16 @@ describe("sanitizeUntrustedFileName", () => {
       sanitizeUntrustedFileName('re<po>r:t"|?*\u0085\u009f.pdf', "fallback.bin"),
     ).toBe("report.pdf");
   });
+
+  it("rejects Windows reserved device basenames", () => {
+    expect(sanitizeUntrustedFileName("CON", "fallback.bin")).toBe("fallback.bin");
+    expect(sanitizeUntrustedFileName("nul.txt", "fallback.bin")).toBe("fallback.bin");
+    expect(sanitizeUntrustedFileName("COM1", "fallback.bin")).toBe("fallback.bin");
+    expect(sanitizeUntrustedFileName("LPT9.doc", "fallback.bin")).toBe("fallback.bin");
+    expect(sanitizeUntrustedFileName("aux ", "fallback.bin")).toBe("fallback.bin");
+    expect(sanitizeUntrustedFileName("PRN.backup", "fallback.bin")).toBe("fallback.bin");
+    // Not reserved: longer names that only contain reserved tokens as a prefix/suffix.
+    expect(sanitizeUntrustedFileName("console.txt", "fallback.bin")).toBe("console.txt");
+    expect(sanitizeUntrustedFileName("null.pdf", "fallback.bin")).toBe("null.pdf");
+  });
 });

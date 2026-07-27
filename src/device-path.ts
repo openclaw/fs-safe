@@ -104,6 +104,11 @@ function normalizeWindowsDeviceBaseName(filePath: string): string {
   return (withoutTrailingIgnoredChars.split(".")[0] ?? withoutTrailingIgnoredChars).toUpperCase();
 }
 
+/** True when the basename is a Windows reserved device name (CON, NUL, COM1, …). */
+export function isWindowsReservedDeviceBaseName(fileName: string): boolean {
+  return WINDOWS_RESERVED_DEVICE_NAMES.has(normalizeWindowsDeviceBaseName(fileName));
+}
+
 function matchWindowsDeviceReadPath(filePath: string): UnsafeDeviceReadPathMatch | undefined {
   const normalized = filePath.replace(/\//g, "\\");
   if (/^\\\\\.\\/.test(normalized) || /^\\\\\?\\GLOBALROOT\\Device\\/i.test(normalized)) {
