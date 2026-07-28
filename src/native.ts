@@ -148,14 +148,22 @@ function isMusl(): boolean {
   return false;
 }
 
-function bundledTarget(): string | undefined {
-  if (process.platform === "win32" && process.arch === "x64") return "win32-x64-msvc";
-  if (process.platform === "darwin" && process.arch === "x64") return "darwin-x64";
-  if (process.platform === "darwin" && process.arch === "arm64") return "darwin-arm64";
-  if (process.platform === "linux" && (process.arch === "x64" || process.arch === "arm64")) {
-    return `linux-${process.arch}-${isMusl() ? "musl" : "gnu"}`;
+function targetFor(
+  platform: NodeJS.Platform,
+  arch: string,
+  musl: boolean,
+): string | undefined {
+  if (platform === "win32" && arch === "x64") return "win32-x64-msvc";
+  if (platform === "darwin" && arch === "x64") return "darwin-x64";
+  if (platform === "darwin" && arch === "arm64") return "darwin-arm64";
+  if (platform === "linux" && (arch === "x64" || arch === "arm64")) {
+    return `linux-${arch}-${musl ? "musl" : "gnu"}`;
   }
   return undefined;
+}
+
+function bundledTarget(): string | undefined {
+  return targetFor(process.platform, process.arch, isMusl());
 }
 
 function loadBundledBinding(): NativeBinding {
@@ -168,6 +176,26 @@ function loadBundledBinding(): NativeBinding {
 
 export function __loadBundledNativeForTest(): NativeBinding {
   return loadBundledBinding();
+}
+
+export function __nativeLoaderDetectorsForTest(): {
+  report: boolean | undefined;
+  filesystem: boolean | undefined;
+  elfInterpreter: boolean | undefined;
+} {
+  return {
+    report: isMuslFromReport(),
+    filesystem: isMuslFromFilesystem(),
+    elfInterpreter: isMuslFromElfInterpreter(),
+  };
+}
+
+export function __nativeTargetForTest(
+  platform: NodeJS.Platform,
+  arch: string,
+  musl = false,
+): string | undefined {
+  return targetFor(platform, arch, musl);
 }
 
 export function getNativeBinding(): NativeBinding | undefined {

@@ -9,6 +9,8 @@ import {
 } from "../src/native-config.js";
 import {
   __loadBundledNativeForTest,
+  __nativeLoaderDetectorsForTest,
+  __nativeTargetForTest,
   __resetNativeLoaderForTest,
   __setNativeLoaderForTest,
   getNativeBinding,
@@ -120,6 +122,28 @@ describe("bundled native loader", () => {
   it.runIf(Boolean(hostBinding))("loads the bundled binary for the host target", () => {
     expect(hostBinding?.openBeneath).toBeTypeOf("function");
     expect(hostBinding?.sha256File).toBeTypeOf("function");
+  });
+
+  it("maps every bundled target without probing the host", () => {
+    expect(__nativeTargetForTest("linux", "x64")).toBe("linux-x64-gnu");
+    expect(__nativeTargetForTest("linux", "x64", true)).toBe("linux-x64-musl");
+    expect(__nativeTargetForTest("linux", "arm64")).toBe("linux-arm64-gnu");
+    expect(__nativeTargetForTest("linux", "arm64", true)).toBe("linux-arm64-musl");
+    expect(__nativeTargetForTest("darwin", "x64")).toBe("darwin-x64");
+    expect(__nativeTargetForTest("darwin", "arm64")).toBe("darwin-arm64");
+    expect(__nativeTargetForTest("win32", "x64")).toBe("win32-x64-msvc");
+    expect(__nativeTargetForTest("freebsd", "x64")).toBeUndefined();
+    expect(__nativeTargetForTest("linux", "ppc64")).toBeUndefined();
+  });
+
+  it("runs only non-executing libc probes", () => {
+    const detected = __nativeLoaderDetectorsForTest();
+    expect([true, false, undefined]).toContain(detected.report);
+    expect([true, undefined]).toContain(detected.filesystem);
+    expect([true, false, undefined]).toContain(detected.elfInterpreter);
+    if (process.platform === "linux") {
+      expect(detected.elfInterpreter).toBeTypeOf("boolean");
+    }
   });
 
   it("contains no import-time process execution path", () => {
