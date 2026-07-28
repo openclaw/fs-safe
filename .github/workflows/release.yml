@@ -233,7 +233,7 @@ jobs:
     if: github.ref_protected
     needs: collect
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
       contents: read
       id-token: write
@@ -256,7 +256,7 @@ jobs:
           name: release-package
           path: release-artifacts
 
-      - name: Publish or verify
+      - name: Publish validated artifact or verify
         run: node scripts/publish-or-verify.mjs --package "@openclaw/fs-safe" --artifacts release-artifacts
 
   release:

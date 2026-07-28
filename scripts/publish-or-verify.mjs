@@ -1,59 +1,145 @@
 import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
-const packageIndex = process.argv.indexOf("--package");
-const artifactsIndex = process.argv.indexOf("--artifacts");
-const packageName = packageIndex >= 0 ? process.argv[packageIndex + 1] : undefined;
-const artifactsDir = resolve(artifactsIndex >= 0 ? process.argv[artifactsIndex + 1] : "release-artifacts");
-if (!packageName) throw new Error("--package is required");
+export const REGISTRY_RETRY_DELAYS_MS = [
+  5_000,
+  10_000,
+  20_000,
+  30_000,
+  45_000,
+  60_000,
+  60_000,
+  60_000,
+  60_000,
+  60_000,
+  60_000,
+  60_000,
+];
 
-const manifest = JSON.parse(readFileSync(join(artifactsDir, "manifest.json"), "utf8"));
-const artifact = manifest.find((entry) => entry.name === packageName);
-if (!artifact) throw new Error(`release manifest has no entry for ${packageName}`);
-const spec = `${artifact.name}@${artifact.version}`;
+function sha512Integrity(bytes) {
+  return `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
+}
 
-function registryState() {
+export function loadReleaseArtifact(packageName, artifactsDirectory) {
+  const artifactsDir = resolve(artifactsDirectory);
+  const manifest = JSON.parse(readFileSync(join(artifactsDir, "manifest.json"), "utf8"));
+  if (!Array.isArray(manifest)) throw new Error("release manifest must be an array");
+
+  const artifact = manifest.find((entry) => entry?.name === packageName);
+  if (!artifact) throw new Error(`release manifest has no entry for ${packageName}`);
+  if (
+    typeof artifact.version !== "string" ||
+    typeof artifact.filename !== "string" ||
+    basename(artifact.filename) !== artifact.filename
+  ) {
+    throw new Error(`release manifest has invalid artifact metadata for ${packageName}`);
+  }
+
+  const artifactPath = resolve(artifactsDir, artifact.filename);
+  if (dirname(artifactPath) !== artifactsDir) {
+    throw new Error(`release artifact escapes artifacts directory: ${artifact.filename}`);
+  }
+
+  const bytes = readFileSync(artifactPath);
+  const integrity = sha512Integrity(bytes);
+  if (integrity !== artifact.integrity) {
+    throw new Error(`${packageName}@${artifact.version} artifact bytes do not match release manifest`);
+  }
+  if (Number.isSafeInteger(artifact.size) && bytes.length !== artifact.size) {
+    throw new Error(`${packageName}@${artifact.version} artifact size does not match release manifest`);
+  }
+
+  return { ...artifact, path: artifactPath, integrity };
+}
+
+function registryState(artifact, execNpm) {
+  const spec = `${artifact.name}@${artifact.version}`;
   try {
-    const raw = execFileSync("npm", ["view", spec, "dist", "--json"], {
+    const raw = execNpm("npm", ["view", spec, "dist", "--json", "--prefer-online"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
     const dist = JSON.parse(raw);
     if (dist.integrity !== artifact.integrity) {
-      throw new Error(`${spec} exists with different package bytes`);
+      return { state: "pending", reason: "registry reports different package bytes" };
     }
     if (!dist.attestations?.url) {
-      throw new Error(`${spec} exists without npm provenance`);
+      return { state: "pending", reason: "registry has not exposed npm provenance" };
     }
-    return "verified";
+    return { state: "verified" };
   } catch (error) {
     const stderr = String(error?.stderr ?? "");
-    if (stderr.includes("E404")) return "missing";
-    throw error;
+    if (stderr.includes("E404")) return { state: "missing", reason: "version is not visible" };
+    return { state: "pending", reason: error instanceof Error ? error.message : String(error) };
   }
 }
 
-if (registryState() === "verified") {
-  console.log(`verified ${spec} integrity and provenance`);
-  process.exit(0);
+function sleep(milliseconds) {
+  return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
 }
 
-const published = spawnSync(
-  "npm",
-  ["publish", join(artifactsDir, artifact.filename), "--access", "public", "--provenance"],
-  { stdio: "inherit" },
-);
-for (let attempt = 1; attempt <= 12; attempt += 1) {
-  try {
-    if (registryState() === "verified") {
-      console.log(`verified ${spec} integrity and provenance`);
-      process.exit(0);
+export async function publishOrVerify({
+  packageName,
+  artifactsDir,
+  execNpm = execFileSync,
+  spawnNpm = spawnSync,
+  retryDelaysMs = REGISTRY_RETRY_DELAYS_MS,
+  wait = sleep,
+  log = console.log,
+}) {
+  if (!packageName) throw new Error("--package is required");
+  const artifact = loadReleaseArtifact(packageName, artifactsDir);
+  const spec = `${artifact.name}@${artifact.version}`;
+  let publishResult;
+
+  for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
+    const registry = registryState(artifact, execNpm);
+    if (registry.state === "verified") {
+      log(`verified ${spec} byte identity and provenance`);
+      return;
     }
-  } catch (error) {
-    if (attempt === 12) throw error;
+
+    if (registry.state === "missing" && publishResult === undefined) {
+      publishResult = spawnNpm(
+        "npm",
+        ["publish", artifact.path, "--access", "public", "--provenance"],
+        { stdio: "inherit" },
+      );
+      if (publishResult.error) {
+        log(`npm publish could not start: ${publishResult.error.message}`);
+      } else if (publishResult.status !== 0) {
+        log(`npm publish exited ${publishResult.status}; checking whether the registry committed it`);
+      }
+    }
+
+    if (attempt === retryDelaysMs.length) {
+      const publishSummary =
+        publishResult === undefined ? "npm publish was not attempted" : `npm publish exited ${publishResult.status}`;
+      throw new Error(`${publishSummary}; registry never confirmed ${spec}: ${registry.reason}`);
+    }
+
+    const delayMs = retryDelaysMs[attempt];
+    log(
+      `registry verification attempt ${attempt + 1}/${retryDelaysMs.length + 1} has not confirmed ${spec}` +
+        ` (${registry.reason}); retrying in ${delayMs / 1_000}s`,
+    );
+    await wait(delayMs);
   }
-  console.log(`registry verification attempt ${attempt}/12 has not confirmed ${spec}`);
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5_000);
 }
-throw new Error(`npm publish exited ${published.status}; registry never confirmed ${spec}`);
+
+function parseArguments(argv) {
+  const packageIndex = argv.indexOf("--package");
+  const artifactsIndex = argv.indexOf("--artifacts");
+  return {
+    packageName: packageIndex >= 0 ? argv[packageIndex + 1] : undefined,
+    artifactsDir: resolve(artifactsIndex >= 0 ? argv[artifactsIndex + 1] : "release-artifacts"),
+  };
+}
+
+const entryPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : undefined;
+if (entryPath === import.meta.url) {
+  await publishOrVerify(parseArguments(process.argv.slice(2)));
+}

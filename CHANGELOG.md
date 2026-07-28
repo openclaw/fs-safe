@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Docs and Tooling
+
+- Publish only the validated release tarball after asserting its byte identity against the release manifest, and tolerate npm registry propagation with bounded exponential backoff.
+
 ## 0.5.0 - 2026-07-27
 
 ### Highlights
