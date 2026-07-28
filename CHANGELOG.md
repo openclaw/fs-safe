@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Security and Correctness
+
+- Replace backtracking-prone path-segment, temp-name, and Windows device-path sanitizers with linear scans to keep attacker-controlled inputs from causing excessive CPU use.
+
 ### Docs and Tooling
 
 - Publish only the validated release tarball after asserting its byte identity against the release manifest, and tolerate npm registry propagation with bounded exponential backoff.

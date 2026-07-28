@@ -2,11 +2,24 @@ import { FsSafeError } from "./errors.js";
 
 const SAFE_PATH_SEGMENT_PATTERN = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
 const SAFE_DOT_PREFIX_PATH_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/;
+const HYPHEN_CHAR_CODE = 0x2d;
 
 export type SafePathSegmentOptions = {
   allowDotPrefix?: boolean;
   label?: string;
 };
+
+function trimHyphenEdges(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value.charCodeAt(start) === HYPHEN_CHAR_CODE) {
+    start += 1;
+  }
+  while (end > start && value.charCodeAt(end - 1) === HYPHEN_CHAR_CODE) {
+    end -= 1;
+  }
+  return start === 0 && end === value.length ? value : value.slice(start, end);
+}
 
 export function isSafePathSegment(
   segment: string,
@@ -50,10 +63,10 @@ export function sanitizeSafePathSegment(
     .trim()
     .replace(/[\\/]+/g, "-")
     .replace(/\0/g, "")
-    .replace(/[^A-Za-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  if (isSafePathSegment(sanitized, options)) {
-    return sanitized;
+    .replace(/[^A-Za-z0-9._-]+/g, "-");
+  const trimmed = trimHyphenEdges(sanitized);
+  if (isSafePathSegment(trimmed, options)) {
+    return trimmed;
   }
   return assertSafePathSegment(fallback, { ...options, label: "fallback path segment" });
 }

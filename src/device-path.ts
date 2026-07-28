@@ -63,6 +63,33 @@ const WINDOWS_RESERVED_DEVICE_NAMES = new Set([
   "LPT³",
 ]);
 
+const WINDOWS_SEPARATOR_CHAR_CODE = 0x5c;
+const WINDOWS_IGNORED_SPACE_CHAR_CODE = 0x20;
+const WINDOWS_IGNORED_DOT_CHAR_CODE = 0x2e;
+
+function trimTrailingWindowsSeparators(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === WINDOWS_SEPARATOR_CHAR_CODE) {
+    end -= 1;
+  }
+  return end === value.length ? value : value.slice(0, end);
+}
+
+function trimTrailingWindowsIgnoredChars(value: string): string {
+  let end = value.length;
+  while (end > 0) {
+    const charCode = value.charCodeAt(end - 1);
+    if (
+      charCode !== WINDOWS_IGNORED_SPACE_CHAR_CODE &&
+      charCode !== WINDOWS_IGNORED_DOT_CHAR_CODE
+    ) {
+      break;
+    }
+    end -= 1;
+  }
+  return end === value.length ? value : value.slice(0, end);
+}
+
 function candidateReadPaths(filePath: string): string[] {
   if (!filePath.startsWith("file://")) {
     return [filePath];
@@ -97,10 +124,10 @@ function matchPosixDeviceReadPath(
 }
 
 function normalizeWindowsDeviceBaseName(filePath: string): string {
-  const normalized = filePath.replace(/\//g, "\\").replace(/[\\]+$/g, "");
+  const normalized = trimTrailingWindowsSeparators(filePath.replace(/\//g, "\\"));
   const lastSegment = normalized.split("\\").filter(Boolean).at(-1) ?? normalized;
   const withoutStream = lastSegment.split(":")[0] ?? lastSegment;
-  const withoutTrailingIgnoredChars = withoutStream.replace(/[ .]+$/g, "");
+  const withoutTrailingIgnoredChars = trimTrailingWindowsIgnoredChars(withoutStream);
   return (withoutTrailingIgnoredChars.split(".")[0] ?? withoutTrailingIgnoredChars).toUpperCase();
 }
 
