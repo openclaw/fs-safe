@@ -59,6 +59,34 @@ describe("root error helpers", () => {
       message: "path is not under root",
     });
     expect(normalizePinnedPathError("raw string")).toMatchObject({ code: "path-alias" });
+
+    // Permission / space errors must not be reported as invalid path (#115920).
+    // OS failures use helper-failed (operational), not denied-path (denyMutations policy).
+    const eacces = Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+    expect(normalizePinnedWriteError(eacces)).toMatchObject({
+      code: "helper-failed",
+      message: "permission denied",
+    });
+    const eperm = Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+    expect(normalizePinnedWriteError(eperm)).toMatchObject({
+      code: "helper-failed",
+      message: "permission denied",
+    });
+    const erofs = Object.assign(new Error("read-only"), { code: "EROFS" });
+    expect(normalizePinnedWriteError(erofs)).toMatchObject({
+      code: "helper-failed",
+      message: "read-only filesystem",
+    });
+    const enospc = Object.assign(new Error("no space"), { code: "ENOSPC" });
+    expect(normalizePinnedWriteError(enospc)).toMatchObject({
+      code: "helper-failed",
+      message: "no space left on device",
+    });
+    const eio = Object.assign(new Error("io"), { code: "EIO" });
+    expect(normalizePinnedWriteError(eio)).toMatchObject({
+      code: "invalid-path",
+      message: "path is not a regular file under root (EIO)",
+    });
   });
 });
 
