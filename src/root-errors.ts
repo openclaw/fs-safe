@@ -15,9 +15,14 @@ function nodeErrorCode(error: unknown): string | undefined {
 
 /**
  * Map low-level write failures to accurate FsSafeError kinds.
+ *
  * Do not mask EACCES/EPERM as "path is not a regular file under root" — that
  * message is false for ordinary in-root files the process cannot write
  * (see openclaw/openclaw#115920).
+ *
+ * Also do not use `denied-path` here: that code is reserved for caller
+ * `denyMutations` policy matches (docs/errors.md). OS permission / ROFS
+ * failures are operational → `helper-failed`, same family as ENOSPC.
  */
 export function normalizePinnedWriteError(error: unknown): Error {
   if (error instanceof FsSafeError) {
@@ -25,10 +30,10 @@ export function normalizePinnedWriteError(error: unknown): Error {
   }
   const cause = error instanceof Error ? error : undefined;
   if (hasNodeErrorCode(error, "EACCES") || hasNodeErrorCode(error, "EPERM")) {
-    return new FsSafeError("denied-path", "permission denied", { cause });
+    return new FsSafeError("helper-failed", "permission denied", { cause });
   }
   if (hasNodeErrorCode(error, "EROFS")) {
-    return new FsSafeError("denied-path", "read-only filesystem", { cause });
+    return new FsSafeError("helper-failed", "read-only filesystem", { cause });
   }
   if (hasNodeErrorCode(error, "ENOSPC")) {
     return new FsSafeError("helper-failed", "no space left on device", { cause });
