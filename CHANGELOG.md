@@ -4,6 +4,7 @@
 
 ### Security and Correctness
 
+- Stop trimming surrounding whitespace when normalizing Windows paths for comparison, so a space-padded root no longer compares equal to its unpadded sibling and `isPathInside` keeps reporting outside paths as outside.
 - Replace backtracking-prone path-segment, temp-name, and Windows device-path sanitizers with linear scans to keep attacker-controlled inputs from causing excessive CPU use.
 
 ### Docs and Tooling

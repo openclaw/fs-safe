@@ -2,7 +2,6 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { FsSafeError } from "./errors.js";
-import { normalizeLowercaseStringOrEmpty } from "./string-coerce.js";
 
 export {
   assertNoUnsafeDeviceReadPath,
@@ -25,7 +24,9 @@ export function normalizeWindowsPathForComparison(input: string): string {
       normalized = `\\\\${normalized.slice(4)}`;
     }
   }
-  return normalizeLowercaseStringOrEmpty(normalized.replaceAll("/", "\\"));
+  // Lowercase only: this value feeds Windows containment math, so surrounding
+  // whitespace is part of the path and must not be trimmed away.
+  return normalized.replaceAll("/", "\\").toLowerCase();
 }
 
 export function isNodeError(value: unknown): value is NodeJS.ErrnoException {
