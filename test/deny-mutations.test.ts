@@ -116,7 +116,7 @@ describe("root denyMutations policies", () => {
     ).rejects.toMatchObject({ code: "invalid-path" });
   });
 
-  it.skipIf(skipOnWindows)("preserves trailing whitespace in denied paths", async () => {
+  it("preserves trailing whitespace in denied paths", async () => {
     const rootPath = await tempRoot("fs-safe-deny-space-");
     const deniedName = "secret ";
     const trimmedName = "secret";
@@ -131,7 +131,7 @@ describe("root denyMutations policies", () => {
     await expect(readFile(path.join(rootPath, trimmedName), "utf8")).resolves.toBe("allowed");
   });
 
-  it.skipIf(skipOnWindows)("preserves trailing whitespace in denied prefixes", async () => {
+  it("preserves trailing whitespace in denied prefixes", async () => {
     const rootPath = await tempRoot("fs-safe-deny-prefix-space-");
     const deniedDir = path.join(rootPath, "private ");
     const trimmedDir = path.join(rootPath, "private");

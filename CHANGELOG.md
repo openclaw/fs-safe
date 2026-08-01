@@ -5,6 +5,7 @@
 ### Security and Correctness
 
 - Stop trimming surrounding whitespace when normalizing Windows paths for comparison, so a space-padded root no longer compares equal to its unpadded sibling and `isPathInside` keeps reporting outside paths as outside.
+- Apply `denyMutations` prefixes to the directory they name on Windows. A prefix with trailing whitespace previously compared equal to its unpadded sibling, so the named directory stayed writable while the sibling was blocked; the two `preserves trailing whitespace` deny-mutation cases now run on Windows instead of being skipped.
 - Replace backtracking-prone path-segment, temp-name, and Windows device-path sanitizers with linear scans to keep attacker-controlled inputs from causing excessive CPU use.
 
 ### Docs and Tooling
