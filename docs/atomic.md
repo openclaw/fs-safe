@@ -14,7 +14,9 @@ import {
 
 ## `replaceFileAtomic` / `replaceFileAtomicSync`
 
-Write `content` to a sibling temp file in the destination directory, apply the final mode through its still-open descriptor, optionally `fsync` that descriptor, optionally `fsync` the parent directory after rename, then atomically rename over the destination. No permission change follows the caller-supplied destination path after publication.
+Write `content` to a sibling temp file in the destination directory, apply the parent-directory and final file modes through verified descriptors, optionally `fsync` the file descriptor, optionally `fsync` the parent directory after rename, then atomically rename over the destination. No permission change follows a caller-supplied pathname.
+
+On POSIX, the parent is opened with no-follow and directory-only flags, checked against its pre-open identity, and mode-adjusted through that descriptor. A replacement symlink is rejected rather than followed. If the directory cannot be opened for descriptor access, the operation fails closed instead of retrying by pathname. Windows does not enforce POSIX directory modes and Node cannot consistently open directory descriptors there, so `dirMode` is passed only to `mkdir`; no pathname `chmod` fallback is attempted.
 
 Async replacements to the same destination are serialized inside the current process, so two overlapping `replaceFileAtomic()` calls do not interleave their temp-write/rename phases. Use a sidecar lock when multiple processes may write the same target.
 
@@ -36,7 +38,7 @@ await replaceFileAtomic({
 type ReplaceFileAtomicOptions = {
   filePath: string;                 // destination
   content: string | Uint8Array;
-  dirMode?: number;                 // mode for parent dirs created by the helper
+  dirMode?: number;                 // parent-directory mode (POSIX; default 0o700)
   mode?: number;                    // explicit mode for the new file (e.g. 0o600)
   preserveExistingMode?: boolean;   // copy mode from existing destination, when present
   tempPrefix?: string;
@@ -212,7 +214,7 @@ await replaceFileAtomic({
 });
 ```
 
-The synchronous injectable interface adds one optional descriptor-mode operation:
+The synchronous injectable interface has one optional descriptor-mode operation:
 
 ```ts
 type ReplaceFileAtomicSyncFileSystem = {
@@ -221,7 +223,7 @@ type ReplaceFileAtomicSyncFileSystem = {
 };
 ```
 
-The async interface already requires `open()`, whose `FileHandle` supplies `chmod()`, so injecting `node:fs` or another conforming adapter needs no new async member. A custom synchronous filesystem that passes `mode` or `preserveExistingMode` must supply `fchmodSync`; omission fails before any file is created and never falls back to `chmod(destination)`. Existing synchronous adapters that request neither option may omit it. Copy fallback applies the mode through its pinned destination descriptor as well, preserving exact modes despite the process umask.
+The async interface already requires `open()`, whose `FileHandle` supplies `chmod()`, so injecting `node:fs` or another conforming adapter needs no new async member. On POSIX, that `open()` must support no-follow directory descriptors as Node does. A custom synchronous filesystem that passes `mode`, `dirMode`, or `preserveExistingMode` must supply `fchmodSync`; omission fails before any file or directory is created and never falls back to a pathname `chmod`. Existing synchronous adapters that request none of those options may omit it. Injecting plain `node:fs` supports explicit file and directory modes. Copy fallback applies the file mode through its pinned destination descriptor as well, preserving exact modes despite the process umask.
 
 ## See also
 

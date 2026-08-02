@@ -59,7 +59,7 @@ describe("atomic descriptor modes", () => {
         chmodPaths,
         publishedMode,
         victimMode: (await fs.stat(victimPath)).mode & 0o777,
-      }).toEqual({ chmodPaths: [root], publishedMode: 0o600, victimMode: 0o644 });
+      }).toEqual({ chmodPaths: [], publishedMode: 0o600, victimMode: 0o644 });
     },
   );
 
@@ -98,7 +98,7 @@ describe("atomic descriptor modes", () => {
         chmodPaths,
         publishedMode,
         victimMode: fsSync.statSync(victimPath).mode & 0o777,
-      }).toEqual({ chmodPaths: [root], publishedMode: 0o600, victimMode: 0o644 });
+      }).toEqual({ chmodPaths: [], publishedMode: 0o600, victimMode: 0o644 });
     },
   );
 

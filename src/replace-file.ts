@@ -14,6 +14,8 @@ import {
   type ReplaceFileDestinationHardlinkPolicy,
 } from "./replace-file-copy-fallback.js";
 import {
+  applyDirectoryMode,
+  applyDirectoryModeSync,
   type SyncFchmod,
   writeTempFile,
   writeTempFileSync,
@@ -26,7 +28,6 @@ export type ReplaceFileAtomicFileSystem = {
   promises: Pick<
     typeof fs,
     | "mkdir"
-    | "chmod"
     | "writeFile"
     | "rename"
     | "copyFile"
@@ -41,7 +42,6 @@ export type ReplaceFileAtomicFileSystem = {
 export type ReplaceFileAtomicSyncFileSystem = Pick<
   typeof syncFs,
   | "mkdirSync"
-  | "chmodSync"
   | "readFileSync"
   | "writeFileSync"
   | "renameSync"
@@ -251,7 +251,7 @@ function resolveModeSync(options: ReplaceFileAtomicSyncOptions): number {
 
 function missingFchmodSyncError(): TypeError {
   return new TypeError(
-    "fileSystem.fchmodSync is required when mode or preserveExistingMode is specified",
+    "fileSystem.fchmodSync is required when mode, dirMode, or preserveExistingMode is specified",
   );
 }
 
@@ -332,7 +332,7 @@ async function replaceFileAtomicUnserialized(
   let tempExists = false;
   let originalError: unknown;
   await fsModule.mkdir(dir, { recursive: true, mode: dirMode });
-  await fsModule.chmod(dir, dirMode).catch(() => undefined);
+  await applyDirectoryMode({ fsModule, dirPath: dir, mode: dirMode });
   try {
     tempExists = true;
     unregisterTempPath.setIdentity(await writeTempFile({
@@ -392,7 +392,12 @@ export function replaceFileAtomicSync(
   const fchmodSync = options.fileSystem?.fchmodSync ?? (
     options.fileSystem === undefined ? syncFs.fchmodSync : undefined
   );
-  if (!fchmodSync && (options.mode !== undefined || options.preserveExistingMode === true)) {
+  if (
+    !fchmodSync &&
+    (options.mode !== undefined ||
+      options.preserveExistingMode === true ||
+      (process.platform !== "win32" && options.dirMode !== undefined))
+  ) {
     throw missingFchmodSyncError();
   }
   const tempPath = buildReplaceTempPath(filePath, options.tempPrefix);
@@ -400,11 +405,7 @@ export function replaceFileAtomicSync(
   let tempExists = false;
   let originalError: unknown;
   fsModule.mkdirSync(dir, { recursive: true, mode: dirMode });
-  try {
-    fsModule.chmodSync(dir, dirMode);
-  } catch {
-    // Best-effort on platforms that do not enforce POSIX modes.
-  }
+  applyDirectoryModeSync({ fsModule, dirPath: dir, mode: dirMode, fchmodSync });
   try {
     tempExists = true;
     unregisterTempPath.setIdentity(writeTempFileSync({
