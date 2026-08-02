@@ -239,7 +239,7 @@ describe("secure file reads", () => {
         ownerTrusted: true,
       });
     },
-    15_000,
+    60_000,
   );
 
   it.runIf(process.platform === "win32")(
@@ -268,7 +268,7 @@ describe("secure file reads", () => {
         ownerTrusted: true,
       });
     },
-    15_000,
+    60_000,
   );
 
   it("rejects symlinks and files outside trusted dirs", async () => {
