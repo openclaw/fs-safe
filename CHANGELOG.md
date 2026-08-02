@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Features
+
+- Suffix Windows reserved basenames with `_` in `sanitizeUntrustedFileName()` while preserving case and extensions on every platform, including dollar names and superscript COM/LPT variants; thanks @SebTardif (#67).
+
 ## 0.5.1 - 2026-08-01
 
 ### Security and Correctness

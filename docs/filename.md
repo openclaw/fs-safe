@@ -24,7 +24,8 @@ In order:
 3. **Strip non-portable characters.** C0/C1 controls (`0x00`–`0x1f`, `0x7f`–`0x9f`) and the Windows-invalid set `< > : " / \\ | ? *` are removed on every platform.
 4. **Trim again.**
 5. If the result is empty, `"."`, or `".."`, return `fallbackName`.
-6. **Truncate.** If the cleaned segment is longer than 200 characters, take the first 200.
+6. **Suffix Windows reserved basenames.** Compare the part before the first `.` case-insensitively with the Windows device-name set, including `CON`, `PRN`, `AUX`, `NUL`, `CLOCK$`, `CONIN$`, `CONOUT$`, `COM1..9`, `LPT1..9`, and their superscript `¹`, `²`, and `³` variants. A match gains `_` before its extension, preserving the original case and extension on every platform.
+7. **Truncate.** If the cleaned segment is longer than 200 characters, take the first 200.
 
 That's it. The function stays intentionally small: it produces one traversal-free segment whose characters work across the common POSIX and Windows filename surfaces.
 
@@ -38,28 +39,24 @@ sanitizeUntrustedFileName("a\u0000b\tc", "upload");       // "abc"
 sanitizeUntrustedFileName("   ", "fallback");              // "fallback"
 sanitizeUntrustedFileName(".", "fallback");                // "fallback"
 sanitizeUntrustedFileName("..", "fallback");               // "fallback"
-sanitizeUntrustedFileName("a".repeat(300), "x");           // 200-char "aaa..."
+sanitizeUntrustedFileName("CON", "fallback");              // "CON_"
+sanitizeUntrustedFileName("nul.txt", "fallback");          // "nul_.txt"
+sanitizeUntrustedFileName("aux.c", "fallback");            // "aux_.c"
+sanitizeUntrustedFileName("conin$", "fallback");           // "conin$_"
+sanitizeUntrustedFileName("a".repeat(300), "x");          // 200-char "aaa..."
 ```
 
 ## What it does **not** do
 
 The function is deliberately narrow. It will not:
 
-- Reject Windows reserved names (`CON`, `PRN`, `AUX`, `NUL`, `COM1..9`, `LPT1..9`).
 - Replace leading dots (so a name like `.config` stays hidden on POSIX systems).
 - Trim trailing dots or spaces (Windows tolerates them silently).
 - Add an extension or change case.
 - Validate file *content*. To enforce an extension allow-list, check after sanitization.
 - Deduplicate against existing files. Append a random suffix if you need uniqueness.
 
-If your domain needs stricter handling, layer it on top:
-
-```ts
-const trimmed = sanitizeUntrustedFileName(input, "upload");
-const noWindowsReserved = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..+)?$/i.test(trimmed)
-  ? "upload"
-  : trimmed;
-```
+Windows reserved basenames are handled by the default portability pass; callers no longer need to layer a separate reserved-name recipe on top.
 
 ## Common patterns
 

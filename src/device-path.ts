@@ -29,7 +29,7 @@ const POSIX_BLOCKED_DEVICE_PATHS = new Set([
   "/dev/console",
 ]);
 
-const WINDOWS_RESERVED_DEVICE_NAMES = new Set([
+export const WINDOWS_RESERVED_DEVICE_NAMES: ReadonlySet<string> = new Set([
   "CON",
   "PRN",
   "AUX",

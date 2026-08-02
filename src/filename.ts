@@ -1,6 +1,17 @@
 import path from "node:path";
+import { WINDOWS_RESERVED_DEVICE_NAMES } from "./device-path.js";
 
 const WINDOWS_INVALID_FILE_NAME_CHARACTERS = new Set('<>:"/\\|?*');
+
+function suffixWindowsReservedDeviceName(fileName: string): string {
+  const extensionIndex = fileName.indexOf(".");
+  const baseNameEnd = extensionIndex < 0 ? fileName.length : extensionIndex;
+  const baseName = fileName.slice(0, baseNameEnd);
+  if (!WINDOWS_RESERVED_DEVICE_NAMES.has(baseName.toUpperCase())) {
+    return fileName;
+  }
+  return `${baseName}_${fileName.slice(baseNameEnd)}`;
+}
 
 export function sanitizeUntrustedFileName(fileName: string, fallbackName: string): string {
   const trimmed = typeof fileName === "string" ? fileName.trim() : "";
@@ -25,6 +36,7 @@ export function sanitizeUntrustedFileName(fileName: string, fallbackName: string
   if (!base || base === "." || base === "..") {
     return fallbackName;
   }
+  base = suffixWindowsReservedDeviceName(base);
   if (base.length > 200) {
     base = base.slice(0, 200);
   }
