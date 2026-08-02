@@ -37,6 +37,30 @@ describe("sidecar lock regressions", () => {
           { code: "EPERM", errno: -4048, syscall: "open", path: lockPath },
         );
 
+  it.runIf(process.platform === "win32")("propagates an EPERM raised outside the lock file", async () => {
+    // Only the lock-file create and snapshot read see the teardown window. An
+    // EPERM from the caller's payload must reach the caller unchanged instead
+    // of being retried, which would rerun the callback and hide the error.
+    const base = await fsp.realpath(await tempRoot("fs-safe-sidecar-eperm-payload-"));
+    const targetPath = path.join(base, "state.json");
+    configureFsSafeNative({ mode: "off" });
+    let payloadCalls = 0;
+
+    await expect(
+      acquireFileLock(targetPath, {
+        managerKey: `eperm-payload-${Date.now()}-${Math.random()}`,
+        staleMs: 60_000,
+        timeoutMs: 1_000,
+        retry: { retries: 0 },
+        payload: async () => {
+          payloadCalls += 1;
+          throw denial(`${targetPath}.lock`);
+        },
+      }),
+    ).rejects.toMatchObject({ code: "EPERM" });
+    expect(payloadCalls).toBe(1);
+  });
+
   it.runIf(process.platform === "win32")("retries an exclusive create denied mid-teardown", async () => {
     const base = await fsp.realpath(await tempRoot("fs-safe-sidecar-eperm-create-"));
     const targetPath = path.join(base, "state.json");

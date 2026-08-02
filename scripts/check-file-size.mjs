@@ -7,7 +7,7 @@ const LINE_BUDGETS = new Map([
   ["src/permissions.ts", 566],
   ["src/root-impl.ts", 1750],
   ["src/root-path.ts", 862],
-  ["src/sidecar-lock.ts", 520],
+  ["src/sidecar-lock.ts", 525],
   ["test/api-coverage.test.ts", 983],
   ["test/new-primitives.test.ts", 1500],
 ]);

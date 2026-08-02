@@ -265,8 +265,7 @@ export function createSidecarLockManager(key: string) {
     let attempt = 0;
     // Bounded so a genuine denial still surfaces as EPERM, not a lock timeout.
     let transientDenials = 0;
-    const isRetryableDenial = (error: unknown): boolean =>
-      isTransientLockFileDenial(error) && ++transientDenials <= maxTransientLockDenials;
+    const withinDenialBudget = (): boolean => ++transientDenials <= maxTransientLockDenials;
     const waitForRetry = async (): Promise<void> => {
       const elapsed = Date.now() - startedAt;
       if (
@@ -296,6 +295,7 @@ export function createSidecarLockManager(key: string) {
           continue;
         }
         let handle: SidecarFileHandle | null = null;
+        let lockFileCreateDenied = false;
         try {
           const payload = await options.payload();
           const { raw, ownershipToken } = serializeSidecarLockPayload(payload);
@@ -311,7 +311,13 @@ export function createSidecarLockManager(key: string) {
             }
             handle = (await options.lockRoot.open(relativeLockPath)).handle;
           } else {
-            handle = (await createNativeExclusiveFile(lockPath, 0o600)) ?? await fs.open(lockPath, "wx");
+            try {
+              handle =
+                (await createNativeExclusiveFile(lockPath, 0o600)) ?? (await fs.open(lockPath, "wx"));
+            } catch (createError) {
+              lockFileCreateDenied = isTransientLockFileDenial(createError);
+              throw createError;
+            }
             await handle.writeFile(raw, "utf8");
           }
           const snapshot = { raw, payload, stat: await handle.stat(), ownershipToken };
@@ -376,7 +382,7 @@ export function createSidecarLockManager(key: string) {
               parsePayload: options.parsePayload,
             });
           }
-          if (isRetryableDenial(err)) {
+          if (lockFileCreateDenied && withinDenialBudget()) {
             await waitForRetry();
             continue;
           }
@@ -396,7 +402,7 @@ export function createSidecarLockManager(key: string) {
               parsePayload: options.parsePayload,
             });
           } catch (readErr) {
-            if (!isRetryableDenial(readErr)) throw readErr;
+            if (!isTransientLockFileDenial(readErr) || !withinDenialBudget()) throw readErr;
             await waitForRetry();
             continue;
           }
