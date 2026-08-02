@@ -113,8 +113,21 @@ async function runFilesystemExamples() {
       roots: [tempDir],
       requireFile: true,
     });
-    assert.equal(localPath?.path, await fs.realpath(path.join(tempDir, "nested/value.txt")));
-    assert.equal(localPath?.root, await fs.realpath(tempDir));
+    assert.ok(localPath);
+    const [resolvedFileStat, sourceFileStat, resolvedRootStat, sourceRootStat] = await Promise.all([
+      fs.stat(localPath.path),
+      fs.stat(path.join(tempDir, "nested/value.txt")),
+      fs.stat(localPath.root),
+      fs.stat(tempDir),
+    ]);
+    assert.deepEqual(
+      { dev: resolvedFileStat.dev, ino: resolvedFileStat.ino },
+      { dev: sourceFileStat.dev, ino: sourceFileStat.ino },
+    );
+    assert.deepEqual(
+      { dev: resolvedRootStat.dev, ino: resolvedRootStat.ino },
+      { dev: sourceRootStat.dev, ino: sourceRootStat.ino },
+    );
     const localRead = await readLocalFileFromRoots({
       filePath: path.join(tempDir, "nested/value.txt"),
       roots: [tempDir],
