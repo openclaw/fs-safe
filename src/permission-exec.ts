@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-export const DEFAULT_PERMISSION_EXEC_TIMEOUT_MS = 10_000;
+export const DEFAULT_PERMISSION_EXEC_TIMEOUT_MS = 30_000;
 
 export async function executePermissionCommand(
   command: string,

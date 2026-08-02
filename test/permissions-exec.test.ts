@@ -25,7 +25,21 @@ describe("Windows permission command execution", () => {
     ).rejects.toThrow(`Windows permission inspection timed out after ${timeoutMs}ms`);
 
     expect(performance.now() - startedAt).toBeLessThan(3_000);
-    expect(DEFAULT_PERMISSION_EXEC_TIMEOUT_MS).toBe(10_000);
+    expect(DEFAULT_PERMISSION_EXEC_TIMEOUT_MS).toBe(30_000);
+  });
+
+  it("allows a slow command to finish within its deadline", async () => {
+    const delayMs = 250;
+    const startedAt = performance.now();
+
+    const result = await executePermissionCommand(
+      process.execPath,
+      ["-e", `setTimeout(() => process.stdout.write("done"), ${delayMs})`],
+      5_000,
+    );
+
+    expect(result.stdout).toBe("done");
+    expect(performance.now() - startedAt).toBeGreaterThanOrEqual(delayMs);
   });
 
   it("fails closed without starting an ACL query when owner inspection fails", async () => {

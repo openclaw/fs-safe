@@ -68,7 +68,7 @@ The fallback Windows inspector calls `icacls.exe <path>` using its supported
 path-only inspection syntax and classifies principals as trusted, world, or
 group. Trusted defaults include the current user, SYSTEM, and Administrators.
 Built-in PowerShell, `icacls.exe`, and `whoami.exe` invocations have a fixed
-10-second per-process deadline. A command failure or timeout returns an
+30-second per-process deadline. A command failure or timeout returns an
 unverified result (`source: "unknown"`) so callers fail closed. Advanced callers
 that inject a custom `exec` implementation own that executor's deadline.
 The parser is on the advanced surface so tests and CLIs can process captured
