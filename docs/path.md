@@ -19,7 +19,9 @@ import {
 } from "@openclaw/fs-safe/path";
 ```
 
-Only `root()`, `FsSafeError`, and the native helper config live on the main entry. Path helpers are deliberately a subpath import so the main entry stays small.
+Path helpers are deliberately a subpath import so the main entry stays focused
+on the root capability, its shared configuration, errors, and external-output
+helper.
 
 ## Boundary checks
 
@@ -62,7 +64,7 @@ Convenience wrapper around `isPathInside`. Same semantics, different name kept f
 Resolve a base directory to an absolute, normalized form ready for prefix comparison. Pre-normalized directories make subsequent `isPathInside` checks unambiguous.
 
 ```ts
-const base = resolveSafeBaseDir("/srv/uploads/.");  // "/srv/uploads"
+const base = resolveSafeBaseDir("/srv/uploads/.");  // "/srv/uploads/"
 ```
 
 ## Realpath and stat
@@ -80,7 +82,9 @@ All `realpath` failures collapse to `null` — there is no distinction between `
 
 ### `safeStatSync(targetPath)`
 
-Synchronous `stat` that returns `null` instead of throwing on missing paths. Returns `Stats` on success.
+Synchronous `stat` that returns `Stats` on success and `null` on any failure,
+including missing paths and permission errors. Use `fs.statSync` directly when
+the distinction matters.
 
 ```ts
 const stat = safeStatSync("/srv/uploads/photo.jpg");

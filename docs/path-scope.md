@@ -77,7 +77,10 @@ Async. Strict variant: every input must already exist as a regular file inside t
 
 ### `writable(rel, options?)`
 
-Async. Resolves a writable target: ensures the parent directory exists inside the scope, refuses targets whose existing inode is a symlink or hardlinked, and returns the absolute path to use for the write.
+Async. Resolves a writable target: requires the parent directory to already
+exist canonically inside the scope, refuses targets whose existing inode is a
+symlink or hardlinked, and returns the absolute path to use for the write. Use
+`ensureDir()` first when the parent needs to be created.
 
 ```ts
 const t = await uploads.writable("reports/2026/05/report.pdf");

@@ -57,6 +57,11 @@ Routine absence or inability to remove a path does not by itself indicate a
 filesystem boundary violation. Branch on the specific code when the distinction
 between those operational outcomes matters.
 
+The operational set is exactly `helper-failed`, `helper-unavailable`,
+`not-empty`, `not-found`, `not-removable`, `permission-unverified`, `timeout`,
+and `unsupported-platform`. Every other current `FsSafeErrorCode`, including
+`store-reentrant-update`, is categorized as `policy`.
+
 ## Code union
 
 ```ts
@@ -79,6 +84,7 @@ type FsSafeErrorCode =
   | "path-mismatch"
   | "permission-unverified"
   | "secret-exists"
+  | "store-reentrant-update"
   | "symlink"
   | "timeout"
   | "too-large"
@@ -107,10 +113,11 @@ type FsSafeErrorCode =
 | `path-mismatch` | Post-open identity check failed: the opened fd does not match the resolved path. | TOCTOU — something else swapped the path between resolve and open. |
 | `permission-unverified` | A secure file check could not verify required permissions. | Windows ACL inspection failed; POSIX ownership/mode was unavailable. |
 | `secret-exists` | `createSecretFileAtomic()` found an existing final path. | First-writer-wins secret creation lost a race or the credential was already initialized. |
+| `store-reentrant-update` | A `JsonStore.update()` callback called `update()` or `updateOr()` for the same canonical store before returning. | Reentrant mutation would deadlock or lose an update; return the complete next value from the outer callback. |
 | `symlink` | Path component is a symlink, policy is `reject`. | Caller followed a symlink they shouldn't have, or `symlinks: "reject"` is set. |
 | `timeout` | An operation with a wall-clock budget overran. | Secure file read or timed operation exceeded `timeoutMs`. |
 | `too-large` | A read or bounded walk exceeded its configured budget. | Caller gave a too-permissive file or traversal limit. |
-| `unsupported-platform` | The requested operation is not supported on the current platform. | E.g. POSIX-only helper invoked on Windows. |
+| `unsupported-platform` | Reserved compatibility code for a platform-specific operation. | No current public helper emits this `FsSafeError` code. Platform-specific APIs currently return a typed unsupported result or use `helper-unavailable`; keep the union member when exhaustively switching across supported package versions. |
 
 ## Branching
 
@@ -142,7 +149,9 @@ try {
 }
 ```
 
-The compiler will flag missing cases when you exhaust the union — keep your switch up-to-date as the library adds new codes.
+The `default` above deliberately rethrows unknown codes, so it remains safe as
+the union grows. If you want the compiler to flag every newly added code, end
+an exhaustive switch with a `never` assertion instead of a general `default`.
 
 ## Distinguishing from `NodeJS.ErrnoException`
 
@@ -169,7 +178,11 @@ try {
 
 A common pattern is to wrap your domain code in a single try/catch that maps both shapes to your application's typed error format.
 
-On Windows, access-denied failures from native operations use `EPERM` to match Node/libuv and the JavaScript fallback. Older fs-safe versions could report `EACCES` for the same native condition, so consumers spanning versions should accept both codes.
+On Windows, access-denied failures from native root/open filesystem operations
+use `EPERM` to match Node/libuv and the JavaScript fallback. Security-descriptor
+inspection has its own failure surface. Older fs-safe versions could report
+`EACCES` for the same root/open condition, so consumers spanning versions
+should accept both codes.
 
 ## Specialty errors
 

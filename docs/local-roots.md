@@ -1,11 +1,9 @@
 # Local roots
 
-`local-roots` is a small set of helpers for code that holds a list of trusted base directories ("roots") and wants to look up an absolute path or a relative-to-some-root reference against any of them.
-
-The shape covers two needs:
-
-- "Resolve this path string to an absolute path that lives inside one of the configured roots, or refuse it."
-- "Read this path, where it could be `/abs/path`, `~/relative`, `file://…`, or simply the basename of a file in one of my roots."
+The local-roots helpers accept a file path plus a list of trusted absolute
+directories and return the first canonical root that contains the file. Use
+them when configuration may name one of several approved media, cache, or
+workspace roots.
 
 ```ts
 import {
@@ -14,92 +12,102 @@ import {
 } from "@openclaw/fs-safe/advanced";
 ```
 
-## Shape of a "roots input"
+## Input shape
 
-Both helpers take roots as either an array of strings or a `LocalRootsInputOptions` record. Each root is an absolute path the caller already trusts:
+Both helpers take one options object. `filePath` may be absolute, home-relative,
+relative to the current working directory, or a local `file://` URL. Relative
+inputs are resolved exactly as Node resolves them; they are not searched as a
+basename under each root.
 
 ```ts
 type LocalRootsInputOptions = {
-  roots: string[];                    // absolute paths
-  allowAbsolute?: boolean;            // accept absolute inputs (default true)
-  allowFileUrls?: boolean;            // accept file:// URLs (default true)
-  expandHome?: boolean;               // expand ~ in inputs (default true)
+  filePath: string;
+  roots: readonly string[]; // trusted absolute paths, checked in order
+  label?: string;           // used in validation errors
 };
 ```
 
-If a root is a symlink, it is canonicalized at lookup time. The helpers work in the order roots are listed: the first root that contains the resolved path wins.
+Roots may use `~` or local `file://` spellings, but each resolved root must be
+absolute. Existing root symlinks are canonicalized before containment is
+checked. Invalid root entries throw `FsSafeError("invalid-path")`; an invalid
+`file://` input throws `Error`. A path that is valid but does not fall inside
+any usable root returns `null`.
 
-## `resolveLocalPathFromRootsSync(input, options)`
-
-Synchronous resolution. Returns:
+## `resolveLocalPathFromRootsSync(options)`
 
 ```ts
-type LocalRootsPathResult =
-  | { ok: true; absolutePath: string; rootDir: string; relativePath: string }
-  | { ok: false; reason: "outside-roots" | "invalid-input" };
+type ResolveLocalPathFromRootsSyncOptions = LocalRootsInputOptions & {
+  allowMissing?: boolean; // default false
+  requireFile?: boolean;  // default false
+};
+
+type LocalRootsPathResult = {
+  path: string; // canonical candidate path
+  root: string; // canonical containing root
+};
 ```
+
+For an existing upload:
 
 ```ts
 import { resolveLocalPathFromRootsSync } from "@openclaw/fs-safe/advanced";
 
-const r = resolveLocalPathFromRootsSync("photo.jpg", {
+const r = resolveLocalPathFromRootsSync({
+  filePath: "/srv/uploads/photo.jpg",
   roots: ["/srv/uploads", "/srv/cache"],
+  requireFile: true,
 });
 
-if (!r.ok) return reply(400, r.reason);
-console.log(r.absolutePath);  // /srv/uploads/photo.jpg (assuming it's there)
-console.log(r.rootDir);       // /srv/uploads
-console.log(r.relativePath);  // photo.jpg
+if (!r) throw new Error("photo is outside the configured roots");
+console.log(r.path); // canonical path to photo.jpg
+console.log(r.root); // canonical /srv/uploads
 ```
 
-### Resolution order
+By default the candidate must exist. `allowMissing: true` instead canonicalizes
+the nearest existing ancestor and validates the missing tail, which is useful
+when selecting a future output location. `requireFile: true` rejects existing
+directories and other non-file leaves. Dangling symlinks and candidates whose
+ancestors cannot be canonicalized are rejected rather than treated as safe
+missing paths.
 
-For each candidate input:
+## `readLocalFileFromRoots(options)`
 
-1. If the input is a `file://` URL and `allowFileUrls` is true, decode to an absolute path.
-2. If the input begins with `~/` and `expandHome` is true, expand to the user's home dir.
-3. If the input is absolute (`/...` or Windows drive) and `allowAbsolute` is true, accept it as-is and check it falls under one of the roots.
-4. Otherwise, treat the input as relative and resolve it against each root in order until one contains the resulting path.
-
-If no root contains the result, returns `{ ok: false, reason: "outside-roots" }`.
-
-`"invalid-input"` covers empty strings, embedded NULs, encoded `..` traversal, Windows network paths (`\\server\share`), and other constructs that should not be resolved at all.
-
-## `readLocalFileFromRoots(input, options)`
-
-Async. Resolves through the same logic, then reads the file via [`Root`](root.md) so the read benefits from boundary checks, `O_NOFOLLOW`, and fd identity verification.
-
-```ts
-type LocalRootsReadResult = ReadResult & {
-  rootDir: string;
-  relativePath: string;
-};
-
-const r = await readLocalFileFromRoots("photo.jpg", {
-  roots: ["/srv/uploads", "/srv/cache"],
-  maxBytes: 8 * 1024 * 1024,
-});
-if (!r) return reply(404);
-process.stdout.write(r.buffer);
-```
-
-The result extends `ReadResult` (`{ buffer, realPath, stat }`) with the matched `rootDir` and the path relative to it. Returns `null` if the input doesn't resolve into any root or the file is missing.
-
-### Read options
+The asynchronous helper opens the candidate through the matched [`Root`](root.md),
+so no-follow, identity, hardlink, device-path, and byte-limit checks happen at
+the read itself.
 
 ```ts
 type ReadLocalFileFromRootsOptions = LocalRootsInputOptions & {
   hardlinks?: "reject" | "allow";
   maxBytes?: number;
+  nonBlockingRead?: boolean;
   symlinks?: "reject" | "follow-within-root";
+};
+
+type LocalRootsReadResult = ReadResult & {
+  root: string; // canonical containing root
 };
 ```
 
-The read-side options are forwarded to `Root` for the actual read.
+```ts
+const r = await readLocalFileFromRoots({
+  filePath: "/srv/uploads/photo.jpg",
+  roots: ["/srv/uploads", "/srv/cache"],
+  maxBytes: 8 * 1024 * 1024,
+});
+if (!r) throw new Error("photo is missing, unreadable, or outside the roots");
+process.stdout.write(r.buffer);
+```
 
-## `local-file-access` companions
+The helper returns `null` when no configured root can be opened or no safe read
+succeeds. This intentionally collapses missing, outside-root, and per-root read
+failures; use a single `Root` directly when the caller must distinguish those
+outcomes. Omitting `maxBytes` preserves `Root`'s 16 MiB default.
 
-The `local-file-access` module (re-exported from `@openclaw/fs-safe/advanced`) supplies a few small helpers for input normalization that the roots helpers use under the hood. They are also useful on their own:
+## File URL and Windows-path companions
+
+The advanced surface also exports the normalization helpers used around this
+API:
 
 ```ts
 import {
@@ -113,52 +121,20 @@ import {
 } from "@openclaw/fs-safe/advanced";
 ```
 
-- `safeFileURLToPath(fileUrl)` — `url.fileURLToPath` with explicit error throwing. Refuses URLs that decode to network paths.
-- `trySafeFileURLToPath(fileUrl)` — same, returns `undefined` instead of throwing.
-- `isWindowsDriveLetterPath(p, platform?)` — true for `C:\...` style absolute paths when the platform is Windows.
-- `isWindowsNetworkPath(p, platform?)` — true for `\\server\share` and `//server/share` style paths when the platform is Windows.
-- `assertNoWindowsNetworkPath(p, label?)` — throws if it is.
-- `basenameFromMediaSource(source?)` — best-effort filename extraction from URLs / data URIs / paths, for naming downloaded media.
-- `hasEncodedFileUrlSeparator(pathname)` — true for paths containing percent-encoded `/` (`%2F` / `%5C`), which often indicate traversal attempts.
-
-## Common patterns
-
-### Multi-root config: search project, then user, then system
-
-```ts
-const text = await readLocalFileFromRoots(name, {
-  roots: [path.join(projectDir, "templates"), path.join(homedir(), ".app/templates"), "/etc/app/templates"],
-  allowAbsolute: false,  // only resolve names, never absolute paths
-  maxBytes: 256 * 1024,
-});
-```
-
-### Validate a file:// URL at the API boundary
-
-```ts
-import { safeFileURLToPath, isWindowsNetworkPath } from "@openclaw/fs-safe/advanced";
-
-let abs: string;
-try {
-  abs = safeFileURLToPath(req.body.fileUrl);
-} catch {
-  return reply(400, "invalid file URL");
-}
-if (isWindowsNetworkPath(abs)) return reply(400, "network paths not allowed");
-```
-
-### Deny absolute, allow relative-only
-
-```ts
-const r = resolveLocalPathFromRootsSync(input, {
-  roots: ["/srv/workspace"],
-  allowAbsolute: false,
-  allowFileUrls: false,
-});
-```
+- `safeFileURLToPath(fileUrl)` parses a local file URL and refuses remote hosts
+  or paths that decode to Windows network paths.
+- `trySafeFileURLToPath(fileUrl)` returns `undefined` instead of throwing.
+- `isWindowsDriveLetterPath()` and `isWindowsNetworkPath()` classify Windows
+  absolute and network spellings.
+- `assertNoWindowsNetworkPath()` throws for a network path on Windows.
+- `basenameFromMediaSource()` extracts a best-effort filename from a URL, data
+  URI, or path.
+- `hasEncodedFileUrlSeparator()` detects percent-encoded slash or backslash
+  spellings.
 
 ## See also
 
-- [`root()`](root.md) — single-root variant of this multi-root setup.
-- [Path helpers](path.md) — `isPathInside`, `safeRealpathSync` for ad-hoc checks.
-- [`pathScope()`](path-scope.md) — single-root with `Result`-style returns.
+- [`root()`](root.md) — use when one trusted root should preserve individual
+  failure codes.
+- [Path helpers](path.md) — lexical and canonical containment primitives.
+- [`pathScope()`](path-scope.md) — result-shaped single-root validation.

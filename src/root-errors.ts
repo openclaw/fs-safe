@@ -11,6 +11,11 @@ export function normalizePinnedWriteError(error: unknown): Error {
   if (error instanceof FsSafeError) {
     return error;
   }
+  if (isNotFoundPathError(error)) {
+    return new FsSafeError("not-found", "file not found", {
+      cause: error instanceof Error ? error : undefined,
+    });
+  }
   return new FsSafeError("invalid-path", "path is not a regular file under root", {
     cause: error instanceof Error ? error : undefined,
   });

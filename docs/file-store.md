@@ -43,7 +43,7 @@ type FileStore = {
   readonly rootDir: string;
   path(relativePath: string): string;
   root(): Promise<Root>;
-  write(rel, data: string | Buffer, options?): Promise<string>;
+  write(rel, data: string | Uint8Array, options?): Promise<string>;
   writeStream(rel, stream: Readable, options?): Promise<string>;
   copyIn(rel, sourcePath: string, options?): Promise<string>;
   open(rel, options?): Promise<OpenResult>;

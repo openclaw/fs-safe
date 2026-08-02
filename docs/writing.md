@@ -1,6 +1,11 @@
 # Writing
 
-The `Root` handle exposes a tight set of write verbs. Each one is atomic at the destination — no half-written intermediate state — and goes through the same boundary checks as reads.
+The `Root` handle exposes a tight set of mutation verbs. Replacement writes
+(`write`, `create`, `writeJson`, `createJson`, and `copyIn`) publish with a
+sibling-temp commit so no half-written replacement appears at the destination.
+`append` and `openWritable` intentionally modify an opened file in place;
+`move`, `remove`, and `mkdir` mutate directory entries rather than file bytes.
+Each verb applies the boundary checks appropriate to its operation.
 
 ```ts
 await fs.write("state.json", body);
@@ -13,7 +18,7 @@ await fs.remove("logs/yesterday.log");
 await fs.mkdir("snapshots/2026/05");
 ```
 
-## What every write does
+## What replacement writes do
 
 1. Resolve the relative target against the canonical root and reject anything that escapes (`outside-workspace`).
 2. If `mkdir: true`, create missing parent directories relative to a pinned parent fd in the native path, or with per-component identity guards in the JavaScript fallback.
@@ -22,7 +27,11 @@ await fs.mkdir("snapshots/2026/05");
 5. Atomically rename the temp file over the destination.
 6. Stat the resulting fd and verify identity.
 
-A failure at any point either leaves the destination at its previous contents or surfaces an `FsSafeError` — never a partially-written file at the destination path.
+A failure before the final rename leaves the destination at its previous
+contents. A successful rename publishes the complete replacement. This
+old-or-new guarantee does not apply to `append()` or `openWritable()`, which
+write in place, or to lower-level atomic helpers when their explicitly
+non-atomic permission-error copy fallback is enabled.
 
 ## Denying mutations
 
@@ -53,7 +62,7 @@ await fs.write("state/last-run.json", JSON.stringify(run));
 await fs.write("notes/today.txt", "hello\n", { encoding: "utf8" });
 ```
 
-`data` accepts `string | Buffer`. `options` are `{ denyMutations?: DenyMutationPolicy; encoding?: BufferEncoding; mkdir?: boolean; mode?: number; overwrite?: boolean }`. `mode` sets the file's POSIX mode; if omitted, falls back to the `mode` from `RootDefaults` and then to umask. `overwrite` defaults to `true`; set it to `false` for the same no-clobber behavior as `create()`.
+`data` accepts `string | Buffer`. `options` are `{ denyMutations?: DenyMutationPolicy; encoding?: BufferEncoding; mkdir?: boolean; mode?: number; overwrite?: boolean; renameIdentity?: RenameIdentityPolicy }`. `mode` sets the file's POSIX mode. If neither the call nor `RootDefaults` supplies it, a replacement preserves the existing file mode and a new file uses `0o600`. `mkdir` and `overwrite` both default to `true`; set `overwrite: false` for the same no-clobber behavior as `create()`.
 
 ### `fs.create(rel, data, options?)`
 
@@ -79,10 +88,7 @@ await fs.writeJson("compact.json", state, { trailingNewline: false });
 Options:
 
 ```ts
-type RootWriteJsonOptions = {
-  encoding?: BufferEncoding;
-  mkdir?: boolean;
-  mode?: number;
+type RootWriteJsonOptions = RootWriteOptions & {
   replacer?: (this: any, key: string, value: any) => any | (number | string)[];
   space?: number | string;
   trailingNewline?: boolean; // default true
@@ -112,7 +118,9 @@ await fs.copyIn("inbox/upload.bin", "/tmp/incoming.bin", {
 });
 ```
 
-Options: `{ encoding?, mkdir?, maxBytes?, sourceHardlinks? }`. Use `sourceHardlinks: "reject"` to refuse if the source itself is a hardlinked alias.
+Options are `{ denyMutations?, maxBytes?, mkdir?, mode?, sourceHardlinks? }`.
+Use `sourceHardlinks: "reject"` to refuse if the source itself is a hardlinked
+alias. There is no encoding option: copying preserves source bytes.
 
 ### `fs.move(from, to, options?)`
 
@@ -167,7 +175,12 @@ try {
 }
 ```
 
-Options: `{ mkdir?, mode?, writeMode? }`, where `writeMode` is `"replace"` (default), `"append"`, or `"update"`. `replace` truncates existing files; `update` keeps existing contents. Streaming writes go directly to the destination — there is no atomic-rename step. If you need both streaming and atomicity, write to a sibling temp yourself and rename when done; the [`atomic`](atomic.md) helpers can do this for you.
+Options are `{ denyMutations?, mkdir?, mode?, writeMode? }`, where `writeMode`
+is `"replace"` (default), `"append"`, or `"update"`. `replace` truncates existing
+files; `update` keeps existing contents. Streaming writes go directly to the
+destination — there is no atomic-rename step. If you need both streaming and
+atomicity, write to a sibling temp yourself and rename when done; the
+[`atomic`](atomic.md) helpers can do this for you.
 
 ## Write defaults vs per-call options
 

@@ -69,6 +69,7 @@ await fs.remove("notes/archive/today.txt");
 | [Permissions](permissions.md) | POSIX mode helpers plus Windows ACL inspection, raw owner/ACE facts, remediation, and private-directory creation. |
 | [`acquireFileLock`](sidecar-lock.md) | Cross-process file lock with retry and fail-closed stale-lock handling. |
 | [`FsSafeError`](errors.md) | Closed code union (with `policy` / `operational` category) you can branch on. |
+| [Public API inventory](public-api.md) | Complete runtime/type export cross-check against the generated declarations. |
 | [`pathScope()`](path-scope.md) | Lower-level absolute-path boundary helper; lives behind `@openclaw/fs-safe/advanced`. |
 | [`@openclaw/fs-safe/advanced`](advanced.md) | Directory of lower-level composition helpers (path scopes, regular-file I/O, install paths, sibling-temp writes, …). |
 | [`@openclaw/fs-safe/test-hooks`](test-hooks.md) | Test-only injection hooks for reproducing open/lstat races. |

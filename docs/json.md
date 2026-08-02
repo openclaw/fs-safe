@@ -133,7 +133,12 @@ where lower latency matters more than crash-durability.
 
 ### `writeJsonSync(pathname, data)`
 
-Synchronous variant. Convenience wrapper that uses the sync atomic-write path with sensible defaults.
+Synchronous variant. It pretty-prints with two spaces, appends a newline,
+creates parents at `0o700`, writes at `0o600`, and synchronizes the parent
+directory best-effort. It has no options bag. On `EPERM`/`EEXIST`, its legacy
+compatibility path may replace by copy rather than atomic rename; use the async
+`writeJson()`/`replaceFileAtomic()` surfaces when fallback policy must be
+explicit.
 
 ```ts
 writeJsonSync("./prefs.json", { theme: "dark" });
@@ -187,7 +192,8 @@ const state = await readJsonIfExists<State>("./state.json");
 
 | Throw / return | When |
 |---|---|
-| `null` (lenient reads) | File missing or contents are not valid JSON. |
+| `null` from `tryReadJson` / `tryReadJsonSync` | Any read or parse failure. |
+| `null` from `readJsonIfExists` | File is missing; invalid or unreadable input still throws. |
 | `JsonFileReadError` | `readJson` or `readJsonIfExists` saw unreadable or invalid input. Inspect `cause`. |
 | Native `NodeJS.ErrnoException` | Lower-level fs errors not wrapped. |
 

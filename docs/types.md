@@ -18,15 +18,24 @@ import type {
 
 ```ts
 type PathStat = {
-  kind: "file" | "directory" | "symlink" | "fifo" | "socket" | "blockDevice" | "characterDevice" | "unknown";
-  size: number;       // bytes
-  mtimeMs: number;    // milliseconds since epoch
-  mode: number;       // POSIX mode bits
-  nlink: number;      // hardlink count
+  dev: number;
+  gid: number;
+  ino: number;
+  isDirectory: boolean;
+  isFile: boolean;
+  isSymbolicLink: boolean;
+  mode: number;
+  mtimeMs: number;
+  nlink: number;
+  size: number;
+  uid: number;
 };
 ```
 
-The shape returned by `Root.stat()`. A trimmed view of `node:fs.Stats` — only the fields the boundary cares about. Use `kind` instead of inspecting the various `is*` methods on a Node `Stats` object; it covers every case in one switchable string.
+The shape returned by `Root.stat()`. It is a serializable view of the identity,
+ownership, mode, size, timestamp, link count, and three file-kind facts the
+boundary uses. Unlike Node's `Stats`, `isFile`, `isDirectory`, and
+`isSymbolicLink` are boolean fields rather than methods.
 
 ## `DirEntry`
 
@@ -36,21 +45,23 @@ type DirEntry = PathStat & {
 };
 ```
 
-Returned by `Root.list(rel, { withFileTypes: true })`. Includes the same `kind`/`size`/etc as `PathStat`, plus the entry's `name`.
+Returned by `Root.list(rel, { withFileTypes: true })`. Includes every
+`PathStat` field plus the entry's `name`.
 
 ## `BasePathOptions`
 
 ```ts
 type BasePathOptions = {
-  fastPathMode?: FastPathMode;
+  rootDir: string;
+  relativePath: string;
 };
 
 type FastPathMode = "auto" | "never" | "require";
 ```
 
-Options shared by helpers that can take a "fast path" (use cheaper syscalls when the input is already absolute and clearly inside scope). The default is `"auto"` — let the helper pick. Force `"never"` in tests if you want to exercise the slow path. Force `"require"` if you need to assert that the fast path is taken (the helper throws if it can't).
-
-Most callers don't need to touch this.
+`BasePathOptions` is the shared root-plus-relative-path record. `FastPathMode`
+is retained as a public compatibility union; no current exported options record
+consumes it, so setting a fast-path policy is not part of the current API.
 
 ## `SafeEncoding`
 
@@ -85,13 +96,16 @@ type ReadResult = {
 ## `RootDefaults` / `RootOptions`
 
 ```ts
+type RenameIdentityPolicy = "strict" | "verify-content-with-lock";
+
 type RootDefaults = {
   denyMutations?: DenyMutationPolicy;
   hardlinks?: "reject" | "allow";
   maxBytes?: number;
-  mkdir?: boolean;
+  mkdir?: boolean; // default true for mutation methods
   mode?: number;
   nonBlockingRead?: boolean;
+  renameIdentity?: RenameIdentityPolicy;
   symlinks?: "reject" | "follow-within-root";
 };
 
@@ -112,7 +126,7 @@ type RootOptions = {
 
 ```ts
 type RootReadOptions = Pick<RootDefaults, "hardlinks" | "maxBytes" | "nonBlockingRead" | "symlinks">;
-type RootWriteOptions = Pick<RootDefaults, "denyMutations" | "mkdir" | "mode"> & {
+type RootWriteOptions = Pick<RootDefaults, "denyMutations" | "mkdir" | "mode" | "renameIdentity"> & {
   encoding?: BufferEncoding;
   overwrite?: boolean;
 };
@@ -157,7 +171,8 @@ type FsSafeErrorCode =
   | "helper-unavailable" | "insecure-permissions" | "invalid-path"
   | "not-empty" | "not-file" | "not-found" | "not-owned"
   | "not-removable" | "outside-workspace" | "path-alias"
-  | "path-mismatch" | "permission-unverified" | "symlink"
+  | "path-mismatch" | "permission-unverified" | "secret-exists"
+  | "store-reentrant-update" | "symlink"
   | "timeout" | "too-large" | "unsupported-platform";
 ```
 

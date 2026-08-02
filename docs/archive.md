@@ -42,10 +42,10 @@ await extractArchive({
 ### Parameters
 
 ```ts
-type ExtractArchiveParams = {
+type ExtractArchiveOptions = {
   archivePath: string;          // absolute path to the archive
   destDir: string;              // absolute destination directory; must already exist
-  timeoutMs: number;            // wall-clock cap; throws on overrun
+  timeoutMs: number;            // positive wall-clock cap; <= 0/non-finite disables it
   kind?: ArchiveKind;           // "zip" | "tar" | "tar-zstd" | "tar-bzip2"
   stripComponents?: number;     // strip N leading dirs from entry paths
   tarGzip?: boolean;            // when archive is .tar.gz/.tgz
@@ -107,7 +107,7 @@ of leaving a paused parser to drain indefinitely. The native path finishes its
 bounded manifest read before TypeScript policy evaluation, so a rejected plan
 never starts the extraction worker.
 
-If `kind` is omitted, the helper calls `resolveArchiveKind(archivePath)` and throws if the extension is not recognized. Pass `kind` explicitly when the archive name doesn't carry the type (e.g. content-addressed names).
+If `kind` is omitted, the helper calls `resolveArchiveKind(archivePath)` and throws if the extension is not recognized. Pass `kind` explicitly when the archive name doesn't carry the type (e.g. content-addressed names). A positive finite `timeoutMs` is a wall-clock budget; zero, negative, `NaN`, and infinity disable the deadline.
 
 ### Limits
 
@@ -124,16 +124,20 @@ type ArchiveExtractLimits = {
 
 Defaults exist for each (`DEFAULT_MAX_ARCHIVE_BYTES_ZIP`, `DEFAULT_MAX_ENTRIES`, `DEFAULT_MAX_EXTRACTED_BYTES`, `DEFAULT_MAX_ENTRY_BYTES`, `DEFAULT_MAX_META_ENTRY_BYTES`, `DEFAULT_MAX_ENTRY_PATH_COMPONENTS`). The path-component default is 256. It is evaluated after `stripComponents` and before TypeScript accepts an entry for either JavaScript or native extraction, so rejected entries cannot cause implicit parent-directory creation. The 1 MiB metadata default matches node-tar's `maxMetaEntrySize`; fs-safe passes the same resolved value to node-tar and the native TAR meter.
 
-A limit violation throws `ArchiveLimitError`. The error's code is one of:
+A limit violation throws `ArchiveLimitError`. Its constant and string code are:
 
-```ts
-ARCHIVE_LIMIT_ERROR_CODE.ARCHIVE_SIZE_EXCEEDS_LIMIT
-ARCHIVE_LIMIT_ERROR_CODE.ENTRY_COUNT_EXCEEDS_LIMIT
-ARCHIVE_LIMIT_ERROR_CODE.EXTRACTED_SIZE_EXCEEDS_LIMIT
-ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT
-ARCHIVE_LIMIT_ERROR_CODE.META_ENTRY_SIZE_EXCEEDS_LIMIT
-ARCHIVE_LIMIT_ERROR_CODE.ENTRY_PATH_COMPONENTS_EXCEEDS_LIMIT
-```
+| Constant | Code |
+|---|---|
+| `ARCHIVE_SIZE_EXCEEDS_LIMIT` | `archive-size-exceeds-limit` |
+| `ENTRY_COUNT_EXCEEDS_LIMIT` | `archive-entry-count-exceeds-limit` |
+| `EXTRACTED_SIZE_EXCEEDS_LIMIT` | `archive-extracted-size-exceeds-limit` |
+| `ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT` | `archive-entry-extracted-size-exceeds-limit` |
+| `META_ENTRY_SIZE_EXCEEDS_LIMIT` | `archive-meta-entry-size-exceeds-limit` |
+| `ENTRY_PATH_COMPONENTS_EXCEEDS_LIMIT` | `archive-entry-path-components-exceeds-limit` |
+| `MANIFEST_SIZE_EXCEEDS_LIMIT` | `archive-manifest-size-exceeds-limit` |
+
+`MANIFEST_SIZE_EXCEEDS_LIMIT` is retained in the public compatibility union;
+no current public extractor emits it.
 
 Catch and branch on the code to surface a meaningful response to the caller.
 
@@ -168,7 +172,7 @@ import { resolveArchiveKind, type ArchiveKind } from "@openclaw/fs-safe/archive"
 const kind = resolveArchiveKind("upload.zip"); // "zip"
 const tar = resolveArchiveKind("upload.tar.gz"); // "tar"
 const zstd = resolveArchiveKind("upload.tar.zst"); // "tar-zstd" when native is available
-const unknown = resolveArchiveKind("upload.bin"); // undefined
+const unknown = resolveArchiveKind("upload.bin"); // null
 ```
 
 Recognizes:
@@ -178,7 +182,7 @@ Recognizes:
 - `*.tar.zst`, `*.tar.zstd`, `*.tzst` → `"tar-zstd"` (native only)
 - `*.tar.bz2`, `*.tbz2`, `*.tbz` → `"tar-bzip2"` (native only)
 
-Returns `undefined` for unknown extensions; check the result before calling
+Returns `null` for unknown extensions; check the result before calling
 `extractArchive` if the filename is caller-controlled. A recognized zstd or
 bzip2 TAR extension with no native binding throws the typed
 `FsSafeError("helper-unavailable")` with installation guidance. This includes

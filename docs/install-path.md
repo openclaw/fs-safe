@@ -95,16 +95,19 @@ Returns a directory-safe segment **plus** a short content hash when sanitization
 
 ```ts
 safePathSegmentHashed("plugin-v1");                  // "plugin-v1"  (unchanged short input)
-safePathSegmentHashed("plugin/v1");                  // "plugin-v1-3f2a..."
-safePathSegmentHashed("plugin\\v1");                 // "plugin-v1-91c4..."  (different hash; same safe form)
-safePathSegmentHashed("Über@");                       // "ber-9aae..."
-safePathSegmentHashed("");                           // "skill"  (empty fallback)
-safePathSegmentHashed(".");                          // "skill"
+safePathSegmentHashed("plugin/v1");                  // "plugin-v1-d9ef8af2eb"
+safePathSegmentHashed("plugin\\v1");                 // "plugin-v1-bed33f465b"
+safePathSegmentHashed("Über@");                       // "ber-e392bba2b3"
+safePathSegmentHashed("");                           // "skill-e3b0c44298"
+safePathSegmentHashed(".");                          // "skill-cdb4ee2aea"
 ```
 
 The sanitization is more aggressive than `safeDirName`: any character not in `[A-Za-z0-9._-]` becomes `-`, runs of `-` collapse, leading and trailing `-` are stripped, the empty/`.`/`..` fallback is `"skill"`. Long results are truncated to 50 chars before the hash is appended.
 
-The hash is the first 10 hex chars of `sha256(originalInput)`. It guarantees that two distinct inputs which sanitize to the same string yield distinct outputs.
+The suffix is the first 10 hex characters of `sha256(trimmedInput)`. It makes
+collisions between distinct trimmed inputs unlikely, but it is a 40-bit
+identifier rather than a mathematical uniqueness guarantee. Inputs that differ
+only by surrounding whitespace intentionally map to the same output.
 
 ## Common patterns
 

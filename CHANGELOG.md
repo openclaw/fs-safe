@@ -5,6 +5,7 @@
 ### Security and Correctness
 
 - Route `Root.copyIn()` and overwrite-capable `Root.write()` commits through a new descriptor-relative native replace rename, closing a parent-symlink swap that could create a missing destination directory outside the root before the JavaScript fallback detected the escape. Native `auto` and `require` mode now protect both create-only and replacing pinned writes; the explicitly best-effort JavaScript fallback remains available in `off` mode or when `auto` cannot load a binding.
+- Report `not-found` rather than `invalid-path` or raw `ENOENT` when pinned `Root.write()` and `Root.copyIn()` calls cannot find their parent with `mkdir: false`, preserving the documented operational error category.
 
 - Apply `movePathWithCopyFallback()` file and POSIX directory modes through staging descriptors before publication, so a replaceable staging pathname cannot redirect `chmod` to an unrelated symlink target. Windows no longer uses a pathname fallback for directory modes because Node cannot portably open a directory descriptor there and does not enforce POSIX modes.
 
@@ -28,6 +29,8 @@
 - Suffix Windows reserved basenames with `_` in `sanitizeUntrustedFileName()` while preserving case and extensions on every platform, including dollar names and superscript COM/LPT variants; thanks @SebTardif (#67).
 
 ### Docs and Tooling
+
+- Audit every public export and documented default against generated declarations and real filesystem behavior, add executable documentation-contract coverage, and correct stale examples and security guarantees across root writes, local roots, shared types, paths, temp roots, archives, errors, and filename portability.
 
 - Create GitHub Releases as drafts before npm publication, then attach immutable verification proof and promote them only after the published package passes the shared registry verifier, avoiding stranded releases during registry propagation incidents (#81).
 

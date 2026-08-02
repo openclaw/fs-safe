@@ -51,8 +51,11 @@ root"; callers should choose the filename before calling this API.
 Use `maxBytes` when the external producer can create arbitrarily large files,
 and `mode` when the finalized file needs a specific POSIX mode. Both staging
 modes enforce them after the producer returns and before committing the target.
-Requested basenames containing C0/C1 controls or Windows-invalid characters are
-sanitized portably; `fallbackFileName` supplies the name when nothing remains.
+Requested basenames containing C0/C1 controls or Windows-invalid characters go
+through the package's filename sanitizer; `fallbackFileName` supplies the name
+when nothing remains. This removes traversal, device-name, and invalid-character
+hazards but does not trim Windows-normalized trailing dots or spaces; reject or
+rewrite those when cross-platform filename uniqueness matters.
 The same sanitized basename is used for producer staging, guarded internal
 temps, the final rename target, and the returned `path`; raw and staged names
 never diverge.

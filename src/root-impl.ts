@@ -1125,17 +1125,22 @@ async function copyFileInRoot(
     );
     await serializePathWrite(pinned.targetPath, async () => {
       await assertCopySourceCurrent(source);
-      const identity = await runPinnedWriteHelper({
-        rootPath: pinned.rootReal,
-        relativeParentPath: pinned.relativeParentPath,
-        basename: pinned.basename,
-        mkdir: params.mkdir !== false,
-        mode: pinned.mode,
-        overwrite: true,
-        maxBytes: params.maxBytes,
-        input: { kind: "stream", stream: source.handle.createReadStream() },
-        rootIdentity: root.rootIdentity,
-      });
+      let identity: FileIdentityStat;
+      try {
+        identity = await runPinnedWriteHelper({
+          rootPath: pinned.rootReal,
+          relativeParentPath: pinned.relativeParentPath,
+          basename: pinned.basename,
+          mkdir: params.mkdir !== false,
+          mode: pinned.mode,
+          overwrite: true,
+          maxBytes: params.maxBytes,
+          input: { kind: "stream", stream: source.handle.createReadStream() },
+          rootIdentity: root.rootIdentity,
+        });
+      } catch (error) {
+        throw normalizePinnedWriteError(error);
+      }
       try {
         await assertCopySourcePathCurrent(source);
       } catch (error) {

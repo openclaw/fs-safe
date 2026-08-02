@@ -1,9 +1,9 @@
 # Filenames
 
-`sanitizeUntrustedFileName(name, fallback)` reduces a filename string from an untrusted source to one portable path segment. Use it as a thin first pass before storing user-supplied names; pair with [`safeDirName`](install-path.md#safedirname) when you need stricter directory-name handling.
+`sanitizeUntrustedFileName(name, fallback)` reduces a filename string from an untrusted source to one traversal-free path segment. Use it as a thin first pass before storing user-supplied names; pair with [`safeDirName`](install-path.md#safedirname) when you need stricter directory-name handling.
 
 ```ts
-import { sanitizeUntrustedFileName } from "@openclaw/fs-safe";
+import { sanitizeUntrustedFileName } from "@openclaw/fs-safe/advanced";
 
 const safe = sanitizeUntrustedFileName(req.body.fileName, "upload");
 await fs.write(`uploads/${safe}`, body);
@@ -27,7 +27,9 @@ In order:
 6. **Suffix Windows reserved basenames.** Compare the part before the first `.` case-insensitively with the Windows device-name set, including `CON`, `PRN`, `AUX`, `NUL`, `CLOCK$`, `CONIN$`, `CONOUT$`, `COM1..9`, `LPT1..9`, and their superscript `¹`, `²`, and `³` variants. A match gains `_` before its extension, preserving the original case and extension on every platform.
 7. **Truncate.** If the cleaned segment is longer than 200 characters, take the first 200.
 
-That's it. The function stays intentionally small: it produces one traversal-free segment whose characters work across the common POSIX and Windows filename surfaces.
+That's it. The function stays intentionally small: it removes traversal and
+the most obvious cross-platform device and character hazards, but it is not a
+complete portable-filename or uniqueness policy.
 
 ## Examples
 
@@ -51,7 +53,9 @@ sanitizeUntrustedFileName("a".repeat(300), "x");          // 200-char "aaa..."
 The function is deliberately narrow. It will not:
 
 - Replace leading dots (so a name like `.config` stays hidden on POSIX systems).
-- Trim trailing dots or spaces (Windows tolerates them silently).
+- Trim trailing dots or spaces. Windows normalizes those spellings, so names
+  that differ only there can alias; reject or rewrite them when Windows
+  portability or cross-platform store migration matters.
 - Add an extension or change case.
 - Validate file *content*. To enforce an extension allow-list, check after sanitization.
 - Deduplicate against existing files. Append a random suffix if you need uniqueness.
@@ -63,7 +67,7 @@ Windows reserved basenames are handled by the default portability pass; callers 
 ### Make a unique filename
 
 ```ts
-import { sanitizeUntrustedFileName } from "@openclaw/fs-safe";
+import { sanitizeUntrustedFileName } from "@openclaw/fs-safe/advanced";
 import { randomUUID } from "node:crypto";
 
 const base = sanitizeUntrustedFileName(req.body.fileName, "upload");

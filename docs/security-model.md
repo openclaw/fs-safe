@@ -22,7 +22,8 @@ case since `5ddca80`. Exposure is limited to consumers that call
 You hand a `root()` boundary to a piece of code that takes caller-controlled relative paths. The library defends against a caller that:
 
 - supplies `..` traversal segments to escape the boundary
-- supplies an absolute path where a relative one is expected
+- supplies an absolute path outside a configured root, or to an API whose input
+  contract is strictly relative/portable
 - replaces a path component with a symlink between check and use (TOCTOU)
 - replaces the destination directory with a symlink right before a write
 - creates a hardlink that aliases an out-of-tree inode and asks you to read or replace it
@@ -83,7 +84,7 @@ When `hardlinks: "reject"` is set, reads stat the target and refuse if `nlink > 
 
 ### Atomic writes
 
-`replaceFileAtomic` writes to a sibling temp file in the destination directory, optionally `fsync`s it, optionally `fsync`s the parent directory after rename, and atomically renames over the destination. On failure mid-write, the destination is either the old contents (rename never happened) or the new contents (rename succeeded). There is no half-written intermediate state visible at the destination path.
+`replaceFileAtomic` writes to a sibling temp file in the destination directory, optionally `fsync`s it, optionally `fsync`s the parent directory after rename, and atomically renames over the destination. On failure mid-write, the destination is either the old contents (rename never happened) or the new contents (rename succeeded). There is no half-written intermediate state visible at the destination path unless the caller explicitly enables `copyFallbackOnPermissionError`, whose default `copyFallbackRestore: "none"` contract may leave a partial destination after a failed in-place fallback.
 
 Within one process, async writes to the same target are queued so their temp-write/rename phases do not overlap. Cross-process writers still need an external protocol such as the sidecar lock helpers.
 

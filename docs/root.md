@@ -21,9 +21,10 @@ type RootDefaults = {
   hardlinks?: "reject" | "allow";  // refuse files with nlink > 1 on read; defaults to "reject"
   denyMutations?: DenyMutationPolicy; // absolute paths/prefixes mutation methods may not change
   maxBytes?: number;               // refuse reads larger than this many bytes; defaults to 16 MiB
-  mkdir?: boolean;                 // create missing parent dirs on write/openWritable/append
+  mkdir?: boolean;                 // create missing parent dirs on write/openWritable/append; default true
   mode?: number;                   // file mode applied to new writes; per-call override available
   nonBlockingRead?: boolean;       // schedule reads on a worker; useful for large files
+  renameIdentity?: "strict" | "verify-content-with-lock"; // default "strict"
   symlinks?: "reject" | "follow-within-root"; // policy when a path component is a symlink
 };
 
@@ -161,7 +162,10 @@ fs.defaults      // the RootDefaults you passed
 
 ## Failure semantics
 
-Every method throws `FsSafeError` with a `code`. Branch on `err.code`, not message text. Common codes:
+Boundary and policy failures throw `FsSafeError` with a `code`. Parsing callbacks
+and underlying filesystem operations can also surface `SyntaxError` or native
+`NodeJS.ErrnoException` values. Branch on `err.code`, not message text, after
+checking `err instanceof FsSafeError`. Common fs-safe codes:
 
 | Code | When it fires |
 |---|---|

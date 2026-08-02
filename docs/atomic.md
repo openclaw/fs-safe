@@ -39,17 +39,18 @@ type ReplaceFileAtomicOptions = {
   filePath: string;                 // destination
   content: string | Uint8Array;
   dirMode?: number;                 // parent-directory mode (POSIX; default 0o700)
-  mode?: number;                    // explicit mode for the new file (e.g. 0o600)
-  preserveExistingMode?: boolean;   // copy mode from existing destination, when present
-  tempPrefix?: string;
-  renameMaxRetries?: number;
-  renameRetryBaseDelayMs?: number;
-  copyFallbackOnPermissionError?: boolean;
+  mode?: number;                    // new-file mode (default 0o600)
+  preserveExistingMode?: boolean;   // copy existing mode; default false
+  tempPrefix?: string;              // default ".fs-safe-replace"
+  renameMaxRetries?: number;        // EBUSY retries; default 0
+  renameRetryBaseDelayMs?: number;  // exponential base; default 50
+  copyFallbackOnPermissionError?: boolean; // default false
   copyFallbackRestore?: "restore-original" | "none"; // default: "none"
   maxRestoreBytes?: number;          // required with "restore-original"
-  destinationHardlinks?: "reject";
-  syncTempFile?: boolean;           // fsync(temp) before rename
-  syncParentDir?: boolean;          // fsync(parent) after rename (POSIX only)
+  destinationHardlinks?: "reject"; // default unset (no destination nlink policy)
+  syncTempFile?: boolean;           // fsync(temp) before rename; default false
+  syncParentDir?: boolean;          // fsync(parent) after rename; default false
+  throwOnCleanupError?: boolean;    // report temp cleanup failure; default false
   beforeRename?: (params: { filePath: string; tempPath: string }) => Promise<void>;
   fileSystem?: ReplaceFileAtomicFileSystem; // injectable fs for tests
 };
@@ -101,7 +102,10 @@ fallback.
 
 ### Sync variant
 
-`replaceFileAtomicSync` accepts the same options shape, with the obvious removal of the async-only hooks. Use it inside synchronous boot paths or test setup code.
+`replaceFileAtomicSync` accepts the same base options, a synchronous
+`beforeRename` callback, and `ReplaceFileAtomicSyncFileSystem`. Use it inside
+synchronous boot paths or test setup code. It returns the same
+`{ method: "rename" | "copy-fallback" }` receipt as the async variant.
 
 ## `replaceDirectoryAtomic`
 
@@ -143,8 +147,8 @@ Options:
 ```ts
 type WriteTextAtomicOptions = {
   mode?: number;             // file mode (default 0o600)
-  dirMode?: number;          // mode for parent dirs created on demand
-  trailingNewline?: boolean; // append "\n" if missing
+  dirMode?: number;          // parent mode (default 0o777 masked by process umask)
+  trailingNewline?: boolean; // append "\n" if missing; default false
   durable?: boolean;         // default true; false skips temp/parent fsync
 };
 ```

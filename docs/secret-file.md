@@ -23,7 +23,7 @@ import {
 | The file is a credential (token, key, password). | The file is application state. |
 | You want the parent directory created at `0o700` if missing. | You don't care about the parent directory mode. |
 | You want a hard size cap on reads (to defend against bogus input). | You're reading bounded JSON state. |
-| Mode `0o600` is mandatory, not just nice. | Mode is whatever umask gives you. |
+| Mode `0o600` and the private parent policy are mandatory. | Standalone `writeJson` also defaults to `0o600`, but it does not enforce the secret-directory ownership and permission policy. |
 
 ## Constants
 
@@ -39,7 +39,10 @@ The 16 KiB cap is intentionally aggressive — credentials should be small. If y
 
 ### `tryReadSecretFileSync(filePath, label, options?)`
 
-The lenient reader. Returns the trimmed secret string, or `undefined` when the path is missing or blank. Validation failures, unreadable files, oversized files, symlinks, and hardlinks throw `FsSafeError` so callers fail closed on suspicious credential state.
+The missing-is-optional reader. It returns the trimmed secret string, or
+`undefined` when the `filePath` argument is absent/blank or the target does not
+exist. An existing empty file is invalid and throws, as do unreadable,
+oversized, symlink, hardlink, and other validation failures.
 
 ```ts
 import { tryReadSecretFileSync } from "@openclaw/fs-safe/secret";
@@ -65,12 +68,16 @@ const token = readSecretFileSync("/var/lib/app/auth.token", "auth token");
 ```ts
 type SecretFileReadOptions = {
   maxBytes?: number;         // default DEFAULT_SECRET_FILE_MAX_BYTES (16 KiB)
-  rejectSymlink?: boolean;
+  rejectSymlink?: boolean;   // default false
   rejectHardlinks?: boolean; // default true
 };
 ```
 
-The reader trims the file content and rejects empty results. `rejectSymlink` blocks a symlink path before the pinned read. Hardlinks are rejected by default so another in-tree name cannot alias the credential; pass `rejectHardlinks: false` only when you explicitly trust that layout.
+The reader trims the file content and rejects empty results. Symlink paths are
+followed and pinned by default; set `rejectSymlink: true` when the pathname
+itself must not be an alias. Hardlinks are rejected by default so another
+in-tree name cannot alias the credential; pass `rejectHardlinks: false` only
+when you explicitly trust that layout.
 
 `readSecretFile()` and `tryReadSecretFile()` are asynchronous counterparts with
 the same pinned-handle validation, byte cap, trimming, error codes, and strict

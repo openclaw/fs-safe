@@ -18,7 +18,11 @@ const fs = await root("/srv/jobs/incoming", {
 
 `root()` resolves the directory through the real filesystem (so symlinked roots become canonical) and verifies it exists. The defaults you pass apply to every call below; per-call options override them.
 
-If the root directory itself does not exist yet, `root()` throws `FsSafeError` with code `not-found`. Either create the directory before calling `root()`, or call `await fs.ensureRoot()` after a successful `root()` to create empty subpaths.
+If the root directory itself does not exist yet, `root()` throws `FsSafeError`
+with code `not-found`; create it before constructing the capability.
+`fs.ensureRoot()` is for generic code that needs to assert or recreate the root
+itself after a handle was successfully constructed. It does not accept a
+subpath and cannot bootstrap a root that prevented `root()` from returning.
 
 ## 2. Read and write text
 
@@ -62,7 +66,7 @@ await fs.remove("notes/archive/today.txt");
 
 ```ts
 const here = await fs.exists("state/config.json"); // boolean
-const stat = await fs.stat("state/config.json");   // { kind, size, mtimeMs, ... }
+const stat = await fs.stat("state/config.json");   // { isFile, isDirectory, size, mtimeMs, ... }
 const names = await fs.list("state");              // string[]
 const entries = await fs.list("state", { withFileTypes: true }); // DirEntry[]
 ```

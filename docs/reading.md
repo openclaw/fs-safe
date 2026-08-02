@@ -16,7 +16,9 @@ Regardless of shape, every read goes through the same boundary checks:
 
 1. Resolve the relative path against the canonical real root.
 2. Reject anything that escapes the root (`outside-workspace`).
-3. Reject `..` segments and absolute inputs (unless via `readAbsolute` with an in-root absolute path).
+3. Reject any lexical or canonical escape. The read family accepts an absolute
+   spelling only when it is already inside the root; `readAbsolute` makes that
+   compatibility explicit for loader-style call sites.
 4. Reject known unsafe device and process-fd paths before opening (`device-path`).
 5. Open with `O_NOFOLLOW` where available. A symlink in the path triggers `symlink` unless the call's `symlinks` policy is `follow-within-root`.
 6. Stat the open fd and compare to the resolved path's identity (`sameFileIdentity`). A swap mid-call triggers `path-mismatch`.
@@ -36,7 +38,8 @@ console.log(`${stat.size} bytes at ${realPath}`);
 
 ### `fs.readText(rel, options?)`
 
-`buffer.toString(encoding)`. Defaults to `defaults.encoding ?? "utf8"`. Pass `encoding` per call to override:
+`buffer.toString(encoding)`. Defaults to `"utf8"`; encoding is a per-call text
+option, not a `RootDefaults` field:
 
 ```ts
 const utf16 = await fs.readText("doc.txt", { encoding: "utf16le" });
@@ -101,7 +104,9 @@ fs.readAbsolute(absPath, options?)   // ReadResult, abs path must be inside the 
 fs.reader(options?)              // (path) => Promise<Buffer>
 ```
 
-`readAbsolute` accepts absolute paths. Anything outside the root throws `outside-workspace`.
+`readAbsolute` accepts absolute paths. Anything outside the root throws
+`outside-workspace`. It also accepts relative paths for compatibility, but use
+`read()`/`readBytes()` when the input contract is explicitly relative.
 
 `reader()` returns a closure that takes either a relative or an absolute path and returns a Buffer. Useful for plugging `fs-safe` into framework loader hooks:
 

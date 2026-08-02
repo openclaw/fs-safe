@@ -239,13 +239,41 @@ const tempRoot = resolveSecureTempRoot({ fallbackPrefix: "my-app" });
 
 ```ts
 type ResolveSecureTempRootOptions = {
-  fallbackPrefix: string;   // base name for the per-user fallback dir
-  preferredDir?: string;    // optional preferred secure temp root
-  tmpdir?: () => string;    // override os.tmpdir()
+  fallbackPrefix: string;             // fallback directory base name
+  preferredDir?: string;              // preferred secure temp root
+  skipPreferredOnWindows?: boolean;
+  unsafeFallbackLabel?: string;       // text used in thrown errors
+  warningPrefix?: string;             // default "[fs-safe]"
+  warn?: (message: string) => void;    // default console.warn
+
+  // Platform/test adapters; production callers normally omit these.
+  platform?: NodeJS.Platform;
+  getuid?: () => number | undefined;
+  tmpdir?: () => string;
+  accessSync?: typeof import("node:fs").accessSync;
+  chmodSync?: typeof import("node:fs").chmodSync;
+  lstatSync?: (path: string) => {
+    isDirectory(): boolean;
+    isSymbolicLink(): boolean;
+    mode?: number;
+    uid?: number;
+  };
+  mkdirSync?: (
+    path: string,
+    options: { recursive: boolean; mode?: number },
+  ) => void;
 };
 ```
 
-The directory name embeds the user's UID (POSIX) or username so multi-user systems don't collide. On unsupported platforms, falls back to `os.tmpdir()` directly with a `helper-unavailable` error code surfaced to callers that explicitly required the secure root.
+When `process.getuid()` is available, the fallback is
+`<tmpdir>/<fallbackPrefix>-<uid>`. Without a UID (including Windows), it is
+`<tmpdir>/<fallbackPrefix>`; no username is appended. The helper never returns
+the shared `os.tmpdir()` directory itself. It requires the selected path to be
+a writable, non-symlink directory and, when UID/mode facts are available,
+owned by the current user without group/world write bits. It creates or repairs
+the fallback to mode `0o700` where mode bits apply. If it cannot establish that
+state, it throws an ordinary `Error`; there is no native mode or
+`helper-unavailable` branch on this API.
 
 ## Common patterns
 
