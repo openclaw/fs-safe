@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -103,7 +103,12 @@ describe("drive-relative relative paths", () => {
   });
 
   it("keeps accepting an absolute path that stays inside the root", async () => {
-    const rootDir = await mkdtemp(path.join(os.tmpdir(), "fs-safe-drive-relative-absolute-"));
+    // The temp dir must be resolved: macOS hands back /var/... for a /private/var/...
+    // root and Windows CI hands back an 8.3 short name, either of which reads as
+    // outside the root once openRoot() resolves it.
+    const rootDir = await realpath(
+      await mkdtemp(path.join(os.tmpdir(), "fs-safe-drive-relative-absolute-")),
+    );
     try {
       const root = await openRoot(rootDir);
       await root.write("note.txt", "kept");
