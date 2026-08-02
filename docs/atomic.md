@@ -205,7 +205,6 @@ await replaceFileAtomic({
   fileSystem: {
     promises: {
       ...realFs,
-      fchmod: async (handle, mode) => handle.chmod(mode),
       writeFile: async (...args) => { ops.push("write"); return realFs.writeFile(...args); },
       rename: async (...args) => { ops.push("rename"); return realFs.rename(...args); },
     },
@@ -213,23 +212,16 @@ await replaceFileAtomic({
 });
 ```
 
-The injectable interfaces add optional descriptor-mode operations:
+The synchronous injectable interface adds one optional descriptor-mode operation:
 
 ```ts
-type ReplaceFileAtomicFileSystem = {
-  promises: {
-    // other required operations omitted
-    fchmod?: (handle: import("node:fs/promises").FileHandle, mode: number) => Promise<void>;
-  };
-};
-
 type ReplaceFileAtomicSyncFileSystem = {
   // other required operations omitted
   fchmodSync?: typeof import("node:fs").fchmodSync;
 };
 ```
 
-The built-in filesystem always applies the resolved mode through the temporary file descriptor. A custom filesystem that passes `mode` or `preserveExistingMode` must supply the matching descriptor operation; omission fails before any file is created and never falls back to `chmod(destination)`. Existing custom filesystems that request neither option may omit the new member. Copy fallback applies the mode through its pinned destination descriptor as well, preserving exact modes despite the process umask.
+The async interface already requires `open()`, whose `FileHandle` supplies `chmod()`, so injecting `node:fs` or another conforming adapter needs no new async member. A custom synchronous filesystem that passes `mode` or `preserveExistingMode` must supply `fchmodSync`; omission fails before any file is created and never falls back to `chmod(destination)`. Existing synchronous adapters that request neither option may omit it. Copy fallback applies the mode through its pinned destination descriptor as well, preserving exact modes despite the process umask.
 
 ## See also
 

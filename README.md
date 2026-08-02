@@ -290,7 +290,7 @@ await replaceFileAtomic({
 });
 ```
 
-`replaceFileAtomicSync()` covers the synchronous case with the same options shape. Both accept an injectable `fileSystem` for tests; custom adapters using `mode` or `preserveExistingMode` provide the optional descriptor-bound `promises.fchmod` or `fchmodSync` operation.
+`replaceFileAtomicSync()` covers the synchronous case with the same options shape. Both accept an injectable `fileSystem` for tests. Async adapters use `chmod()` on the `FileHandle` returned by their required `open()` operation; custom sync adapters using `mode` or `preserveExistingMode` provide the optional descriptor-bound `fchmodSync` operation.
 
 ## External outputs
 

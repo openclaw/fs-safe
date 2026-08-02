@@ -12,7 +12,7 @@
 
 ### Compatibility
 
-- Add optional `promises.fchmod` and `fchmodSync` operations to the injectable atomic-replacement filesystem types. Custom adapters that pass `mode` or `preserveExistingMode` must implement the matching descriptor operation and now fail before mutation when it is absent; adapters that request neither option remain compatible.
+- Add an optional `fchmodSync` operation to the injectable synchronous atomic-replacement filesystem type. Async adapters need no new member because their required `open()` returns a mode-capable `FileHandle`; custom sync adapters that pass `mode` or `preserveExistingMode` now fail before mutation when `fchmodSync` is absent, while adapters that request neither option remain compatible.
 
 ## 0.5.1 - 2026-08-01
 

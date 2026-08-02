@@ -38,7 +38,6 @@ describe("atomic descriptor modes", () => {
           fileSystem: {
             promises: {
               ...fs,
-              fchmod: async (handle, mode) => await handle.chmod(mode),
               chmod: async (candidate, mode) => {
                 chmodPaths.push(String(candidate));
                 await fs.chmod(candidate, mode);
@@ -141,7 +140,6 @@ describe("atomic descriptor modes", () => {
           fileSystem: {
             promises: {
               ...fs,
-              fchmod: async (handle, mode) => await handle.chmod(mode),
               rename: async () => { throw renameDenied(); },
             },
           },
@@ -165,20 +163,34 @@ describe("atomic descriptor modes", () => {
     },
   );
 
-  it("fails closed before mutation when an injected filesystem cannot set an explicit mode", async () => {
+  it.runIf(process.platform !== "win32")(
+    "accepts node:fs injection with an explicit async mode",
+    async () => {
+      const root = await tempRoot("fs-safe-atomic-node-fs-");
+      const filePath = path.join(root, "state.txt");
+      const previousUmask = process.umask(0o077);
+      try {
+        await replaceFileAtomic({
+          filePath,
+          content: "injected",
+          mode: 0o666,
+          fileSystem: fsSync,
+        });
+      } finally {
+        process.umask(previousUmask);
+      }
+
+      await expect(fs.readFile(filePath, "utf8")).resolves.toBe("injected");
+      expect((await fs.stat(filePath)).mode & 0o777).toBe(0o666);
+    },
+  );
+
+  it("fails closed before mutation when an injected sync filesystem cannot set an explicit mode", async () => {
     const root = await tempRoot("fs-safe-atomic-fchmod-missing-");
-    const asyncPath = path.join(root, "async.txt");
     const syncPath = path.join(root, "sync.txt");
-    const asyncDefaultPath = path.join(root, "async-default.txt");
     const syncDefaultPath = path.join(root, "sync-default.txt");
     const { fchmodSync: _fchmodSync, ...syncWithoutFchmod } = fsSync;
 
-    await expect(replaceFileAtomic({
-      filePath: asyncPath,
-      content: "async",
-      mode: 0o600,
-      fileSystem: { promises: { ...fs } },
-    })).rejects.toThrow("fileSystem.promises.fchmod is required");
     expect(() => replaceFileAtomicSync({
       filePath: syncPath,
       content: "sync",
@@ -186,20 +198,13 @@ describe("atomic descriptor modes", () => {
       fileSystem: syncWithoutFchmod,
     })).toThrow("fileSystem.fchmodSync is required");
 
-    await expect(fs.access(asyncPath)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(fs.access(syncPath)).rejects.toMatchObject({ code: "ENOENT" });
 
-    await replaceFileAtomic({
-      filePath: asyncDefaultPath,
-      content: "async default",
-      fileSystem: { promises: { ...fs } },
-    });
     replaceFileAtomicSync({
       filePath: syncDefaultPath,
       content: "sync default",
       fileSystem: syncWithoutFchmod,
     });
-    await expect(fs.readFile(asyncDefaultPath, "utf8")).resolves.toBe("async default");
     expect(fsSync.readFileSync(syncDefaultPath, "utf8")).toBe("sync default");
   });
 });

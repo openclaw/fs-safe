@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import syncFs from "node:fs";
 import type { Stats } from "node:fs";
 import fs from "node:fs/promises";
-import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
 import {
   assertDestinationHardlinkPolicy,
@@ -15,7 +14,6 @@ import {
   type ReplaceFileDestinationHardlinkPolicy,
 } from "./replace-file-copy-fallback.js";
 import {
-  type AsyncFchmod,
   type SyncFchmod,
   writeTempFile,
   writeTempFileSync,
@@ -37,9 +35,7 @@ export type ReplaceFileAtomicFileSystem = {
     | "open"
     | "stat"
     | "lstat"
-  > & {
-    fchmod?: (handle: FileHandle, mode: number) => Promise<void>;
-  };
+  >;
 };
 
 export type ReplaceFileAtomicSyncFileSystem = Pick<
@@ -127,7 +123,6 @@ async function renameWithRetry(params: {
   copyFallbackRestore: ReplaceFileCopyFallbackRestorePolicy;
   maxRestoreBytes?: number;
   destinationHardlinks?: ReplaceFileDestinationHardlinkPolicy;
-  fchmod?: AsyncFchmod;
 }): Promise<ReplaceFileAtomicResult> {
   for (let attempt = 0; attempt <= params.maxRetries; attempt++) {
     try {
@@ -146,7 +141,6 @@ async function renameWithRetry(params: {
           destinationHardlinks: params.destinationHardlinks,
           restore: params.copyFallbackRestore,
           maxRestoreBytes: params.maxRestoreBytes,
-          fchmod: params.fchmod,
         });
         return { method: "copy-fallback" };
       }
@@ -255,9 +249,9 @@ function resolveModeSync(options: ReplaceFileAtomicSyncOptions): number {
   return stat ? stat.mode : defaultMode;
 }
 
-function missingFchmodError(member: "promises.fchmod" | "fchmodSync"): TypeError {
+function missingFchmodSyncError(): TypeError {
   return new TypeError(
-    `fileSystem.${member} is required when mode or preserveExistingMode is specified`,
+    "fileSystem.fchmodSync is required when mode or preserveExistingMode is specified",
   );
 }
 
@@ -333,14 +327,6 @@ async function replaceFileAtomicUnserialized(
   const dir = path.dirname(filePath);
   const dirMode = options.dirMode ?? 0o700;
   const mode = await resolveMode(options);
-  const fchmod = options.fileSystem?.promises.fchmod ?? (
-    options.fileSystem === undefined
-      ? async (handle: FileHandle, requestedMode: number) => await handle.chmod(requestedMode)
-      : undefined
-  );
-  if (!fchmod && (options.mode !== undefined || options.preserveExistingMode === true)) {
-    throw missingFchmodError("promises.fchmod");
-  }
   const tempPath = buildReplaceTempPath(filePath, options.tempPrefix);
   const unregisterTempPath = registerTempPathForExit(tempPath);
   let tempExists = false;
@@ -354,7 +340,6 @@ async function replaceFileAtomicUnserialized(
       tempPath,
       content: options.content,
       mode,
-      fchmod,
       sync: options.syncTempFile === true,
     }));
     if (options.beforeRename) {
@@ -371,7 +356,6 @@ async function replaceFileAtomicUnserialized(
       copyFallbackRestore: options.copyFallbackRestore ?? "none",
       maxRestoreBytes: options.maxRestoreBytes,
       destinationHardlinks: options.destinationHardlinks,
-      fchmod,
     });
     tempExists = false;
     unregisterTempPath();
@@ -409,7 +393,7 @@ export function replaceFileAtomicSync(
     options.fileSystem === undefined ? syncFs.fchmodSync : undefined
   );
   if (!fchmodSync && (options.mode !== undefined || options.preserveExistingMode === true)) {
-    throw missingFchmodError("fchmodSync");
+    throw missingFchmodSyncError();
   }
   const tempPath = buildReplaceTempPath(filePath, options.tempPrefix);
   const unregisterTempPath = registerTempPathForExit(tempPath);

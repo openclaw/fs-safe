@@ -300,7 +300,6 @@ export async function copyFallbackReplace(params: {
   destinationHardlinks?: ReplaceFileDestinationHardlinkPolicy;
   restore: ReplaceFileCopyFallbackRestorePolicy;
   maxRestoreBytes?: number;
-  fchmod?: (handle: FileHandle, mode: number) => Promise<void>;
 }): Promise<void> {
   const sourcePreview = await params.fsModule.lstat(params.src);
   if (sourcePreview.isSymbolicLink() || !sourcePreview.isFile()) {
@@ -351,9 +350,7 @@ export async function copyFallbackReplace(params: {
       );
       await destHandle.writeFile(replacement);
     }
-    if (params.fchmod) {
-      await params.fchmod(destHandle, sourceStat.mode);
-    }
+    await destHandle.chmod(sourceStat.mode);
   } finally {
     await destHandle?.close().catch(() => undefined);
     await sourceHandle.close().catch(() => undefined);

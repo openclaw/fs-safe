@@ -7,7 +7,6 @@ type SyncTempFileSystem = Pick<
   "closeSync" | "fstatSync" | "fsyncSync" | "openSync" | "writeFileSync"
 >;
 
-export type AsyncFchmod = (handle: FileHandle, mode: number) => Promise<void>;
 export type SyncFchmod = (fd: number, mode: number) => void;
 
 export async function writeTempFile(params: {
@@ -15,15 +14,12 @@ export async function writeTempFile(params: {
   tempPath: string;
   content: string | Uint8Array;
   mode: number;
-  fchmod?: AsyncFchmod;
   sync: boolean;
 }): Promise<Stats> {
   const handle = await params.fsModule.open(params.tempPath, "wx", params.mode);
   try {
     await params.fsModule.writeFile(handle, params.content);
-    if (params.fchmod) {
-      await params.fchmod(handle, params.mode);
-    }
+    await handle.chmod(params.mode);
     if (params.sync) {
       try {
         await handle.sync();
