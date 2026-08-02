@@ -10,6 +10,7 @@
 
 ### Docs and Tooling
 
+- Refresh the npm and Rust build toolchains, including the `zip` 8.6 native archive reader and the latest pinned CodeQL v4 action.
 - Publish only the validated release tarball after asserting its byte identity against the release manifest, and tolerate npm registry propagation with bounded exponential backoff.
 
 ## 0.5.0 - 2026-07-27

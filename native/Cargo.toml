@@ -4,7 +4,7 @@ version = "0.5.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/openclaw/fs-safe"
-rust-version = "1.85"
+rust-version = "1.88"
 publish = false
 
 [lib]
@@ -13,18 +13,18 @@ crate-type = ["cdylib"]
 [dependencies]
 bzip2 = "0.6.1"
 flate2 = "1.1.9"
-napi = { version = "3.11.0", default-features = false, features = ["dyn-symbols", "napi8"] }
-napi-derive = "3.6.0"
+napi = { version = "3.12.0", default-features = false, features = ["dyn-symbols", "napi8"] }
+napi-derive = "3.6.2"
 sha2 = "0.11.0"
 tar = { version = "0.4.46", default-features = false }
-zip = { version = "6.0.0", default-features = false, features = ["deflate-flate2"] }
+zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2"] }
 zstd = { version = "0.13.3", default-features = false }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { version = "1.1.4", features = ["fs"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-libc = "0.2.177"
+libc = "0.2.189"
 rustix = { version = "1.1.4", features = ["fs"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
@@ -39,4 +39,4 @@ windows-sys = { version = "0.61.2", features = [
 ] }
 
 [build-dependencies]
-napi-build = "2.2.4"
+napi-build = "2.4.0"

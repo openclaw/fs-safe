@@ -148,11 +148,11 @@
     "tar": "7.5.22"
   },
   "devDependencies": {
-    "@napi-rs/cli": "3.7.4",
-    "@types/node": "^26.1.1",
+    "@napi-rs/cli": "3.8.1",
+    "@types/node": "^26.1.2",
     "@vitest/coverage-v8": "4.1.10",
     "typescript": "^7.0.2",
-    "vite": "8.1.5",
+    "vite": "8.2.0",
     "vitest": "^4.1.10"
   },
   "engines": {
