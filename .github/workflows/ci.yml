@@ -26,10 +26,6 @@ jobs:
     name: Node ${{ matrix.node }} check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
-    # Keep the ordinary matrix on the shipping JavaScript/command fallback;
-    # native-check owns explicit bundled-binding coverage below.
-    env:
-      FS_SAFE_NATIVE_MODE: off
     strategy:
       fail-fast: false
       matrix:
@@ -60,7 +56,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Check
+      # Deliberately do not build a host binding here. On Windows this exercises
+      # the shipping command fallback; native-check covers the bundled binding.
+      - name: Check JavaScript fallback
         run: pnpm check
 
   native-check:
