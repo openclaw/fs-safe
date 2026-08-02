@@ -103,6 +103,14 @@ fs.ensureRoot(options?)                  // accepts "" / "." as the root itself
 
 `copyIn` is a one-shot ingest from a trusted absolute source path: it streams the source through the boundary, atomically renames into the root, and respects `maxBytes`.
 
+Root operations that choose a new destination reject a leading Windows
+drive-relative spelling such as `C:name` on every platform. This applies to
+`write`, `create`, `append`, `openWritable`, `mkdir`, `copyIn`, and the
+destination argument of `move`. In particular, `copyIn(path.basename(source),
+source)` can reject a legal POSIX basename such as `c:photo.png`; callers that
+derive portable destination names from host files must sanitize or map that
+basename first.
+
 `openWritable` opens a writable file with options `mode?: number` and `writeMode?: "replace" | "append" | "update"`. `replace` truncates existing files and is the default; `update` keeps existing contents. Use it for streaming output. Prefer `await using` for cleanup.
 
 All mutation methods accept `denyMutations?: { paths?: string[]; prefixes?: string[] }`. Entries must be absolute paths. `paths` blocks those exact paths; `prefixes` blocks those paths and their descendants. fs-safe preserves path strings exactly and canonicalizes through existing ancestors before comparing, so a symlinked ancestor to a denied location is still denied. Denied mutations throw `FsSafeError` with code `denied-path`. Use this for caller-specific sensitive paths, not as a replacement for the root boundary, symlink, or hardlink checks.
@@ -118,6 +126,12 @@ fs.resolve(rel)                  // absolute path inside the root, after canonic
 ```
 
 These do not pin a later operation. They are safe to expose to UIs and decision points; for the actual read or write, use the verb methods so the operation pins identity at the point of use.
+
+`resolve()` is the exception to the existing-object rule: because it selects a
+location for later use, it rejects a leading drive-relative spelling. Reads,
+`stat`, `exists`, `list`, `walk`, `remove`, and the source argument of `move`
+accept an existing POSIX filename such as `c:notes.txt`. For `move`, only the
+new destination name is subject to the portable guard.
 
 ## Native helper mode
 
@@ -151,7 +165,7 @@ Every method throws `FsSafeError` with a `code`. Branch on `err.code`, not messa
 
 | Code | When it fires |
 |---|---|
-| `invalid-path` | The input path is malformed, including embedded NUL bytes. |
+| `invalid-path` | The input path is malformed, including embedded NUL bytes. Portable relative-path helpers and `FileStore` keys reject drive-relative segments; Root destination and resolution operations reject a leading drive-relative spelling such as `C:name`. |
 | `outside-workspace` | The input resolves outside the root, or contains a `..` segment that would escape it. |
 | `not-found` | The target does not exist (or its parent does not, with `mkdir: false`). |
 | `not-file` | A read or copy targeted a non-regular file (directory, FIFO, socket, …). |

@@ -64,6 +64,13 @@ type FileStore = {
 
 `path()` returns the absolute path the store would use, after asserting it stays inside `rootDir`. Useful for logging or for handing to other libraries.
 
+Every `relativePath` is a portable store key, including keys passed to reads,
+`exists`, and `remove`. A segment with a Windows drive-relative spelling such
+as `C:name` (including an embedded segment such as `a/C:name`) throws
+`invalid-path` on every platform. This prevents a key created on POSIX from
+aliasing a different file when the store is moved to Windows. Colons elsewhere,
+such as the timestamp in `logs/2026-08-02T10:30:00Z.log`, remain valid.
+
 `root()` returns a [`Root`](root.md) handle for the same directory when you need the full surface (move, list, mkdir). It's a fresh handle per call and is safe to call frequently.
 
 ## Writes

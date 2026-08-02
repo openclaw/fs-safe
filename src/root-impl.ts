@@ -36,6 +36,7 @@ import { readOpenedFileSafely, type ReadResult } from "./read-opened-file.js";
 import { pathStatFromStats } from "./path-stat.js";
 import { resolveRootPath } from "./root-path.js";
 import {
+  assertValidRootDestinationPath,
   assertValidRootRelativePath,
   ensureTrailingSep,
   expandRelativePathWithHome,
@@ -364,6 +365,7 @@ class RootHandle implements Root {
   }
 
   async resolve(relativePath: string): Promise<string> {
+    assertValidRootDestinationPath(relativePath);
     return (
       await resolvePathInRoot(this.context, relativePath, { allowFinalSymlink: true })
     ).resolved;
@@ -428,6 +430,7 @@ class RootHandle implements Root {
     relativePath: string,
     options: RootOpenWritableOptions = {},
   ): Promise<WritableOpenResult> {
+    assertValidRootDestinationPath(relativePath);
     const writeMode = options.writeMode ?? "replace";
     return await openWritableFileInRoot(this.context, {
       relativePath,
@@ -441,6 +444,7 @@ class RootHandle implements Root {
   }
 
   async append(relativePath: string, data: string | Buffer, options: RootAppendOptions = {}): Promise<void> {
+    assertValidRootDestinationPath(relativePath);
     await appendFileInRoot(this.context, {
       relativePath,
       data,
@@ -460,7 +464,7 @@ class RootHandle implements Root {
   }
 
   async mkdir(relativePath: string, options: RootMkdirOptions = {}): Promise<void> {
-    assertValidRootRelativePath(relativePath);
+    assertValidRootDestinationPath(relativePath);
     await mkdirPathInRoot(this.context, {
       relativePath,
       denyMutations: mergeDenyMutationPolicies(this.defaults.denyMutations, options.denyMutations),
@@ -480,6 +484,7 @@ class RootHandle implements Root {
     data: string | Buffer,
     options: RootWriteOptions = {},
   ): Promise<void> {
+    assertValidRootDestinationPath(relativePath);
     await writeFileInRoot(this.context, {
       relativePath,
       data,
@@ -496,6 +501,7 @@ class RootHandle implements Root {
     data: string | Buffer,
     options: RootCreateOptions = {},
   ): Promise<void> {
+    assertValidRootDestinationPath(relativePath);
     await writeFileInRoot(this.context, {
       relativePath,
       data,
@@ -532,7 +538,7 @@ class RootHandle implements Root {
     sourcePath: string,
     options: RootCopyOptions = {},
   ): Promise<void> {
-    assertValidRootRelativePath(relativePath);
+    assertValidRootDestinationPath(relativePath);
     await copyFileInRoot(this.context, {
       sourcePath,
       relativePath,
@@ -579,7 +585,7 @@ class RootHandle implements Root {
     options: RootMoveOptions = {},
   ): Promise<void> {
     assertValidRootRelativePath(fromRelative);
-    assertValidRootRelativePath(toRelative);
+    assertValidRootDestinationPath(toRelative);
     validatePinnedOperationPayload({ from: fromRelative, to: toRelative });
     const denyMutations = mergeDenyMutationPolicies(
       this.defaults.denyMutations,

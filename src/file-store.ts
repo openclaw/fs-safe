@@ -6,10 +6,7 @@ import type { Readable } from "node:stream";
 import { readFileDescriptorBoundedSync } from "./bounded-read.js";
 import { createSyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
-import {
-  pruneExpiredStoreEntries,
-  type FileStorePruneOptions,
-} from "./file-store-prune.js";
+import { pruneExpiredStoreEntries, type FileStorePruneOptions } from "./file-store-prune.js";
 export type { FileStorePruneOptions } from "./file-store-prune.js";
 import {
   assertSyncDirectoryGuard,
@@ -26,6 +23,7 @@ import { isPathInside, resolveSafeRelativePath } from "./path.js";
 import { root, type OpenResult, type ReadResult, type Root, type RootReadOptions } from "./root.js";
 import { DEFAULT_ROOT_MAX_BYTES } from "./root-impl.js";
 import { matchRootFileOpenFailure, openRootFileSync, type RootFileOpenFailure } from "./root-file.js";
+import { assertNoDriveRelativePathSegments } from "./safe-path-segment.js";
 import { writeSecretFileAtomic } from "./secret-file.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
@@ -113,7 +111,7 @@ function assertRelativePath(relativePath: string): string {
   if (!raw) {
     throw new FsSafeError("invalid-path", "relative path must be non-empty");
   }
-  return raw.replaceAll("\\", "/");
+  return assertNoDriveRelativePathSegments(raw.replaceAll("\\", "/"), "store key");
 }
 
 function resolveStorePath(rootDir: string, relativePath: string): string {

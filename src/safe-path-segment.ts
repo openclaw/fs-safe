@@ -2,12 +2,26 @@ import { FsSafeError } from "./errors.js";
 
 const SAFE_PATH_SEGMENT_PATTERN = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
 const SAFE_DOT_PREFIX_PATH_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/;
+// Windows treats "C:name" as relative to the drive's current directory even
+// though path.win32.isAbsolute() reports false.
+const DRIVE_RELATIVE_PREFIX = /^[A-Za-z]:(?![\\/])/;
 const HYPHEN_CHAR_CODE = 0x2d;
 
 export type SafePathSegmentOptions = {
   allowDotPrefix?: boolean;
   label?: string;
 };
+
+export function isDriveRelativePath(value: string): boolean {
+  return DRIVE_RELATIVE_PREFIX.test(value);
+}
+
+export function assertNoDriveRelativePathSegments(value: string, label: string): string {
+  if (value.split("/").some(isDriveRelativePath)) {
+    throw new FsSafeError("invalid-path", `${label} must not contain a drive letter`);
+  }
+  return value;
+}
 
 function trimHyphenEdges(value: string): string {
   let start = 0;

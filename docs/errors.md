@@ -96,7 +96,7 @@ type FsSafeErrorCode =
 | `helper-failed` | A native mechanism or multi-step operational helper failed. | Inspect `cause` and any operation-specific `details`; retrying may be unsafe if the operation partially completed. |
 | `helper-unavailable` | Required native binding could not be loaded. | Unsupported platform, missing/incompatible bundled binary, or `FS_SAFE_NATIVE_MODE=require`. `auto` falls back where possible; `require` fails closed. |
 | `insecure-permissions` | A secure file or path permission check found a mode/ACL that allows broader access than requested. | File or directory is group/world writable/readable; Windows ACL grants broad read. |
-| `invalid-path` | Input was empty, contained NUL, was an unparseable URL, or otherwise unusable. | Caller didn't validate input; input was a network path on Windows. |
+| `invalid-path` | Input was empty, contained NUL, was an unparseable URL, or otherwise unusable. | Caller didn't validate input; input was a network path on Windows, a drive-relative segment in a portable relative path or store key, or a leading drive-relative spelling such as `C:name` used as a Root destination. Existing-object Root lookups retain legal POSIX drive-like names. |
 | `not-empty` | `remove()` on a non-empty directory. | Use `replaceDirectoryAtomic` or remove children first. |
 | `not-file` | Read or copy targeted a non-regular file. | Target was a directory, FIFO, socket, device. |
 | `not-found` | The target does not exist (or its parent does not, with `mkdir: false`). | Typical missing-file case. |

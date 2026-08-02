@@ -257,7 +257,7 @@ describe("path helpers", () => {
     expect(safeStatSync(path.join(root, "missing"))).toBeNull();
     expect(() => assertNoNulPathInput("a\0b")).toThrow("NUL");
     expect(splitSafeRelativePath("./a//b")).toEqual(["a", "b"]);
-    for (const bad of ["../x", "/x", "C:\\x", "a\\b", "a\0b"]) {
+    for (const bad of ["../x", "/x", "C:\\x", "C:evil", "C:..", "a/C:b", "a\\b", "a\0b"]) {
       expect(() => splitSafeRelativePath(bad)).toThrow();
     }
     expect(resolveSafeRelativePath(root, "a/b")).toBe(path.join(root, "a", "b"));

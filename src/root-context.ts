@@ -5,6 +5,7 @@ import { FsSafeError } from "./errors.js";
 import { expandHomePrefix } from "./home-dir.js";
 import { assertNoNulPathInput, isNotFoundPathError, isPathInside } from "./path.js";
 import { ROOT_PATH_ALIAS_POLICIES, resolveRootPath } from "./root-path.js";
+import { isDriveRelativePath } from "./safe-path-segment.js";
 
 export type RootContext = {
   rootDir: string;
@@ -17,6 +18,13 @@ export const ensureTrailingSep = (value: string) =>
 
 export function assertValidRootRelativePath(relativePath: string): void {
   assertNoNulPathInput(relativePath, "relative path contains a NUL byte");
+}
+
+export function assertValidRootDestinationPath(relativePath: string): void {
+  assertValidRootRelativePath(relativePath);
+  if (isDriveRelativePath(relativePath)) {
+    throw new FsSafeError("invalid-path", "relative path must not start with a drive letter");
+  }
 }
 
 let cachedHomePath: { raw: string; real: string } | undefined;

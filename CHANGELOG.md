@@ -4,6 +4,8 @@
 
 ### Security and Correctness
 
+- Reject drive-relative segments such as `C:secret.txt` and `a/C:b` in portable relative-path parsing and every `FileStore` key, and reject leading drive-relative spellings on `Root` destinations and `resolve()` with `invalid-path`. Existing-object Root operations, including reads, inspection, removal, and the source of `move()`, continue to accept legal POSIX filenames such as `c:notes.txt`; thanks @Yigtwxx for the fix.
+
 - Apply atomic-replacement parent-directory modes through verified no-follow descriptors on POSIX, so a directory-entry swap cannot redirect `chmod` through a symlink to an unrelated directory. Windows keeps its explicit `mkdir(mode)`-only behavior because Node does not enforce POSIX directory modes there.
 - Retry a contended file-lock acquisition when Windows denies access to a lock file whose directory entry is still being torn down, including when the native binding performs the exclusive create. Both the exclusive create and the holder's snapshot read reported that transient `EPERM` as a hard failure, so concurrent `acquireFileLock()` calls failed intermittently on Windows even though the very next attempt would have succeeded. Retries stay bounded, so a genuine permission denial still surfaces as `EPERM` rather than a lock timeout; thanks @Yigtwxx for the fix.
 - Apply `replaceFileAtomic()` and `replaceFileAtomicSync()` modes through pinned temp-file descriptors before rename, and through pinned copy-fallback descriptors, so a post-rename symlink swap cannot redirect `chmod` to an unrelated file while exact modes remain independent of umask; thanks @yetval for reporting this (#86).

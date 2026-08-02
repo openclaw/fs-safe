@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { FsSafeError } from "./errors.js";
+import { isDriveRelativePath } from "./safe-path-segment.js";
 
 export {
   assertNoUnsafeDeviceReadPath,
@@ -155,6 +156,9 @@ export function splitSafeRelativePath(relativePath: string): string[] {
   for (const segment of segments) {
     if (segment === "..") {
       throw new FsSafeError("invalid-path", "relative path must not contain '..'");
+    }
+    if (isDriveRelativePath(segment)) {
+      throw new FsSafeError("invalid-path", "relative path must not contain a drive letter");
     }
   }
   return segments;
