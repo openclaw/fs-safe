@@ -140,11 +140,13 @@ function logWarn(message: string): void {
 }
 
 const SUPPORTS_NOFOLLOW = process.platform !== "win32" && "O_NOFOLLOW" in fsConstants;
-const NONBLOCK_OPEN_FLAG = "O_NONBLOCK" in fsConstants ? fsConstants.O_NONBLOCK : 0;
-const OPEN_READ_FLAGS = fsConstants.O_RDONLY | (SUPPORTS_NOFOLLOW ? fsConstants.O_NOFOLLOW : 0);
-const OPEN_READ_NONBLOCK_FLAGS = OPEN_READ_FLAGS | NONBLOCK_OPEN_FLAG;
-const OPEN_READ_FOLLOW_FLAGS = fsConstants.O_RDONLY;
-const OPEN_READ_FOLLOW_NONBLOCK_FLAGS = OPEN_READ_FOLLOW_FLAGS | NONBLOCK_OPEN_FLAG;
+const NONBLOCK_OPEN_FLAG =
+  process.platform !== "win32" && "O_NONBLOCK" in fsConstants ? fsConstants.O_NONBLOCK : 0;
+const OPEN_READ_FLAGS =
+  fsConstants.O_RDONLY |
+  (SUPPORTS_NOFOLLOW ? fsConstants.O_NOFOLLOW : 0) |
+  NONBLOCK_OPEN_FLAG;
+const OPEN_READ_FOLLOW_FLAGS = fsConstants.O_RDONLY | NONBLOCK_OPEN_FLAG;
 const OPEN_WRITE_EXISTING_FLAGS =
   fsConstants.O_WRONLY | (SUPPORTS_NOFOLLOW ? fsConstants.O_NOFOLLOW : 0);
 const OPEN_WRITE_CREATE_FLAGS =
@@ -187,11 +189,15 @@ async function openVerifiedLocalFile(
 ): Promise<OpenResult> {
   assertNoUnsafeDeviceReadPath(filePath);
   const fsSafeTestHooks = getFsSafeTestHooks();
+  let preOpenStat: Stats | undefined;
   // Reject directories before opening so we never surface EISDIR to callers (e.g. tool
   // results that get sent to messaging channels). See openclaw/openclaw#31186.
   try {
-    const preStat = await fs.lstat(filePath);
-    if (preStat.isDirectory()) {
+    preOpenStat = await fs.lstat(filePath);
+    if (preOpenStat.isSymbolicLink() && options?.symlinks !== "follow-within-root") {
+      throw new FsSafeError("symlink", "symlink not allowed");
+    }
+    if (!preOpenStat.isFile() && !preOpenStat.isSymbolicLink()) {
       throw new FsSafeError("not-file", "not a file");
     }
     await fsSafeTestHooks?.afterPreOpenLstat?.(filePath);
@@ -205,12 +211,8 @@ async function openVerifiedLocalFile(
   let handle: FileHandle;
   try {
     const openFlags = options?.symlinks === "follow-within-root"
-      ? options?.nonBlockingRead
-        ? OPEN_READ_FOLLOW_NONBLOCK_FLAGS
-        : OPEN_READ_FOLLOW_FLAGS
-      : options?.nonBlockingRead
-        ? OPEN_READ_NONBLOCK_FLAGS
-        : OPEN_READ_FLAGS;
+      ? OPEN_READ_FOLLOW_FLAGS
+      : OPEN_READ_FLAGS;
     await fsSafeTestHooks?.beforeOpen?.(filePath, openFlags);
     handle = await fs.open(filePath, openFlags);
     try {
@@ -237,6 +239,13 @@ async function openVerifiedLocalFile(
     const stat = await handle.stat();
     if (!stat.isFile()) {
       throw new FsSafeError("not-file", "not a file");
+    }
+    if (
+      preOpenStat &&
+      !preOpenStat.isSymbolicLink() &&
+      !sameFileIdentity(stat, preOpenStat)
+    ) {
+      throw new FsSafeError("path-mismatch", "path changed before open");
     }
     if (options?.hardlinks === "reject" && stat.nlink > 1) {
       throw new FsSafeError("hardlink", "hardlinked path not allowed");
@@ -639,6 +648,7 @@ async function openFileInRoot(
 ): Promise<OpenResult> {
   const { rootWithSep, resolved } = await resolvePathInRoot(root, params.relativePath, {
     allowFinalSymlink: true,
+    rejectSymlinks: params.symlinks !== "follow-within-root",
   });
 
   let opened: OpenResult;
@@ -1221,6 +1231,7 @@ async function resolvePinnedWriteTargetInRoot(
       relativePath,
       hardlinks: "reject",
       nonBlockingRead: true,
+      symlinks: "follow-within-root",
     });
     try {
       mode = requestedMode ?? (opened.stat.mode & 0o777);

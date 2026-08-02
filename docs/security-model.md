@@ -45,7 +45,7 @@ If you need full sandboxing, run the worker under reduced privileges (uid, conta
 
 ### Path traversal and absolute paths
 
-Every relative path is resolved against the canonicalized real path of the root, then checked with `isPathInside`. Alias resolution walks components before applying a later `..`, so a symlink cannot change what that parent segment means after validation. Parent traversal that escapes, leading `/` (without `pathScope` opt-in), or any canonical result outside the root throws `outside-workspace`.
+Every path is resolved against the canonicalized real path of the root, then checked with `isPathInside`. Alias resolution walks components before applying a later `..`, so a symlink cannot change what that parent segment means after validation. Parent traversal, an absolute spelling, or any alias whose canonical result is outside the root throws `outside-workspace`; absolute spellings that remain inside the root are accepted.
 
 ### Symlinks (read side)
 

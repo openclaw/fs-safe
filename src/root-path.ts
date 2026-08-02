@@ -2,11 +2,17 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { isNotFoundPathError, isPathInside, isPathRelativeEscape } from "./path.js";
+import { FsSafeError } from "./errors.js";
+import {
+  isNotFoundPathError,
+  isPathInside,
+  isPathRelativeEscape,
+} from "./path.js";
 import {
   resolvePathViaExistingAncestor,
   resolvePathViaExistingAncestorSync,
 } from "./root-path-existing.js";
+import { resolveSymlinkHopPath, resolveSymlinkHopPathSync } from "./root-path-symlink.js";
 
 export { resolvePathViaExistingAncestorSync } from "./root-path-existing.js";
 
@@ -34,6 +40,7 @@ type ResolveRootPathParams = {
   boundaryLabel: string;
   intent?: RootPathIntent;
   policy?: RootPathAliasPolicy;
+  rejectSymlinks?: boolean;
   skipLexicalRootCheck?: boolean;
   rootCanonicalPath?: string;
 };
@@ -322,6 +329,9 @@ function handleLexicalStatDisposition(params: {
     return "continue";
   }
 
+  if (params.resolveParams.rejectSymlinks === true && params.isLast) {
+    throw new FsSafeError("symlink", "symlink path component not allowed");
+  }
   if (params.state.allowFinalSymlink && params.isLast) {
     params.state.preserveFinalSymlink = true;
     advanceCanonicalCursorForSegment({
@@ -481,6 +491,9 @@ async function resolveRootPathLexicalAsync(params: {
       boundaryLabel: params.params.boundaryLabel,
       resolveLinkCanonical: (cursor) => resolveSymlinkHopPath(cursor),
     });
+    if (params.params.rejectSymlinks === true) {
+      throw new FsSafeError("symlink", "symlink path component not allowed");
+    }
   }
 
   const kind = await getPathKind(state.canonicalCursor, state.preserveFinalSymlink);
@@ -551,6 +564,9 @@ function resolveRootPathLexicalSync(params: {
     });
     if (isPromiseLike<void>(maybeApplied)) {
       throw new Error("Unexpected async symlink resolution");
+    }
+    if (params.params.rejectSymlinks === true) {
+      throw new FsSafeError("symlink", "symlink path component not allowed");
     }
   }
 
@@ -823,30 +839,4 @@ function shortPath(value: string): string {
     return `~${value.slice(home.length)}`;
   }
   return value;
-}
-
-async function resolveSymlinkHopPath(symlinkPath: string): Promise<string> {
-  try {
-    return path.resolve(await fsp.realpath(symlinkPath));
-  } catch (error) {
-    if (!isNotFoundPathError(error)) {
-      throw error;
-    }
-    const linkTarget = await fsp.readlink(symlinkPath);
-    const linkAbsolute = path.resolve(path.dirname(symlinkPath), linkTarget);
-    return resolvePathViaExistingAncestor(linkAbsolute);
-  }
-}
-
-function resolveSymlinkHopPathSync(symlinkPath: string): string {
-  try {
-    return path.resolve(fs.realpathSync(symlinkPath));
-  } catch (error) {
-    if (!isNotFoundPathError(error)) {
-      throw error;
-    }
-    const linkTarget = fs.readlinkSync(symlinkPath);
-    const linkAbsolute = path.resolve(path.dirname(symlinkPath), linkTarget);
-    return resolvePathViaExistingAncestorSync(linkAbsolute);
-  }
 }

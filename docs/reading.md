@@ -21,7 +21,7 @@ Regardless of shape, every read goes through the same boundary checks:
    compatibility explicit for loader-style call sites.
 4. Reject known unsafe device and process-fd paths before opening (`device-path`).
 5. Open with `O_NOFOLLOW` where available. A symlink in the path triggers `symlink` unless the call's `symlinks` policy is `follow-within-root`.
-6. Stat the open fd and compare to the resolved path's identity (`sameFileIdentity`). A swap mid-call triggers `path-mismatch`.
+6. Compare the pre-open path identity, the open fd, and the post-open resolved path (`sameFileIdentity`). A swap mid-call triggers `path-mismatch`.
 7. If `hardlinks: "reject"`, refuse files with `nlink > 1` (`hardlink`).
 8. If `maxBytes` is set, refuse reads larger than the cap (`too-large`).
 
@@ -86,14 +86,14 @@ try {
 type RootReadOptions = {
   hardlinks?: "reject" | "allow";   // override defaults.hardlinks
   maxBytes?: number;                // refuse reads larger than this many bytes
-  nonBlockingRead?: boolean;        // schedule the read off the main loop
+  nonBlockingRead?: boolean;        // compatibility hint; safe opens are already nonblocking where supported
   symlinks?: "reject" | "follow-within-root"; // override defaults.symlinks
 };
 ```
 
 `maxBytes` is enforced eagerly: the library reads up to `maxBytes + 1` and throws `too-large` if there is more, so a hostile target cannot silently exhaust memory.
 
-`nonBlockingRead` is a scheduling hint. It does not affect safety — it lets you keep the event loop responsive when reading large files.
+`nonBlockingRead` remains as a compatibility hint. Safe reads always add the platform's nonblocking open flag where available so a raced FIFO cannot pin a worker indefinitely; regular-file descriptor reads retain normal Node behavior.
 
 ## `readAbsolute()` and `reader()`
 

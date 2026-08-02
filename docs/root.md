@@ -23,7 +23,7 @@ type RootDefaults = {
   maxBytes?: number;               // refuse reads larger than this many bytes; defaults to 16 MiB
   mkdir?: boolean;                 // create missing parent dirs on write/openWritable/append; default true
   mode?: number;                   // file mode applied to new writes; per-call override available
-  nonBlockingRead?: boolean;       // schedule reads on a worker; useful for large files
+  nonBlockingRead?: boolean;       // compatibility hint; safe opens are already nonblocking where supported
   renameIdentity?: "strict" | "verify-content-with-lock"; // default "strict"
   symlinks?: "reject" | "follow-within-root"; // policy when a path component is a symlink
 };
@@ -83,6 +83,10 @@ await using opened = await fs.open("large.log");
 `open()`, `read()`, and `openWritable()` results include
 `containment: "best-effort"`. The field reports the mechanism used; see the
 [security model](security-model.md#containment-guarantees-by-platform).
+
+The read methods also accept an absolute spelling that already resolves inside
+the root. `readAbsolute()` and `reader()` make that intent explicit; an absolute
+path outside the root is still rejected.
 
 ### Writes
 

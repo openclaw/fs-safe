@@ -12,6 +12,10 @@
 
 - Route `Root.copyIn()` and overwrite-capable `Root.write()` commits through a new descriptor-relative native replace rename, closing a parent-symlink swap that could create a missing destination directory outside the root before the JavaScript fallback detected the escape. Native `auto` and `require` mode now protect both create-only and replacing pinned writes; the explicitly best-effort JavaScript fallback remains available in `off` mode or when `auto` cannot load a binding.
 - Report `not-found` rather than `invalid-path` or raw `ENOENT` when pinned `Root.write()` and `Root.copyIn()` calls cannot find their parent with `mkdir: false`, preserving the documented operational error category.
+- Reject stable intermediate symlinks in default `Root` reads and the sync/async root-file helpers, compare the pre-open path identity with the opened descriptor so an in-root parent swap reports `path-mismatch`, open reads nonblocking where supported so a raced FIFO cannot pin a worker, and report followed symlink loops with the documented `symlink` code.
+- Reject surrounding whitespace in every async and sync `FileStore` key instead of silently trimming one caller-supplied key onto another.
+- Keep Windows-ignored trailing spaces and dots from disguising reserved device basenames such as `CON .` in `sanitizeUntrustedFileName()` output.
+- Report overlong `Root` inputs as `invalid-path` instead of misclassifying the filesystem's `ENAMETOOLONG` failure as `outside-workspace`.
 
 - Apply `movePathWithCopyFallback()` file and POSIX directory modes through staging descriptors before publication, so a replaceable staging pathname cannot redirect `chmod` to an unrelated symlink target. Windows no longer uses a pathname fallback for directory modes because Node cannot portably open a directory descriptor there and does not enforce POSIX modes.
 

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { WINDOWS_RESERVED_DEVICE_NAMES } from "../src/device-path.js";
+import {
+  isUnsafeDeviceReadPath,
+  WINDOWS_RESERVED_DEVICE_NAMES,
+} from "../src/device-path.js";
 import { sanitizeUntrustedFileName } from "../src/filename.js";
 
 function mixedCase(value: string): string {
@@ -55,6 +58,14 @@ describe("sanitizeUntrustedFileName", () => {
     expect(sanitizeUntrustedFileName("LpT³.tar.gz", "fallback.bin")).toBe(
       "LpT³_.tar.gz",
     );
+  });
+
+  it("does not return a Windows device name disguised with ignored trailing characters", () => {
+    for (const input of ["CON .", "nul .txt", "LPT1..."]) {
+      const sanitized = sanitizeUntrustedFileName(input, "fallback.bin");
+      expect(isUnsafeDeviceReadPath(`C:\\tmp\\${sanitized}`, { platform: "win32" }), input)
+        .toBe(false);
+    }
   });
 
   it("suffixes reserved names before applying the 200-character limit", () => {

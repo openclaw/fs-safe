@@ -187,7 +187,7 @@ await using opened = await fs.openWritable("logs/current.log", { writeMode: "app
 }
 ```
 
-`nonBlockingRead` is the only I/O scheduling knob in `RootDefaults`; it applies to read/open operations because it changes how file descriptors are opened. Filesystem safety policy remains explicit through `hardlinks`, `symlinks`, and `denyMutations`.
+`nonBlockingRead` remains as a compatibility hint in `RootDefaults`. Safe read/open operations already use nonblocking descriptor opens where the platform supports them so a raced FIFO cannot pin a worker; filesystem safety policy remains explicit through `hardlinks`, `symlinks`, and `denyMutations`.
 
 ```ts
 const locked = await root("/srv/workspace", {

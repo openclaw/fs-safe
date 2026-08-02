@@ -38,6 +38,7 @@ export type OpenRootFileSyncParams = {
   rootRealPath?: string;
   maxBytes?: number;
   rejectHardlinks?: boolean;
+  rejectSymlinks?: boolean;
   allowedType?: PinnedOpenSyncAllowedType;
   skipLexicalRootCheck?: boolean;
   ioFs?: BoundaryReadFs;
@@ -76,6 +77,7 @@ export function openRootFileSync(params: OpenRootFileSyncParams): RootFileOpenRe
         rootPath: params.rootPath,
         rootCanonicalPath: params.rootRealPath,
         boundaryLabel: params.boundaryLabel,
+        rejectSymlinks: params.rejectSymlinks ?? true,
         skipLexicalRootCheck: params.skipLexicalRootCheck,
       }),
   });
@@ -174,6 +176,7 @@ export async function openRootFile(
         rootCanonicalPath: params.rootRealPath,
         boundaryLabel: params.boundaryLabel,
         policy: params.aliasPolicy,
+        rejectSymlinks: params.rejectSymlinks ?? true,
         skipLexicalRootCheck: params.skipLexicalRootCheck,
       }),
   });

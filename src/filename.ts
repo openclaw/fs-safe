@@ -3,11 +3,24 @@ import { WINDOWS_RESERVED_DEVICE_NAMES } from "./device-path.js";
 
 const WINDOWS_INVALID_FILE_NAME_CHARACTERS = new Set('<>:"/\\|?*');
 
+function trimWindowsIgnoredSuffix(value: string): string {
+  let end = value.length;
+  while (end > 0) {
+    const character = value.charCodeAt(end - 1);
+    if (character !== 0x20 && character !== 0x2e) {
+      break;
+    }
+    end -= 1;
+  }
+  return end === value.length ? value : value.slice(0, end);
+}
+
 function suffixWindowsReservedDeviceName(fileName: string): string {
   const extensionIndex = fileName.indexOf(".");
   const baseNameEnd = extensionIndex < 0 ? fileName.length : extensionIndex;
   const baseName = fileName.slice(0, baseNameEnd);
-  if (!WINDOWS_RESERVED_DEVICE_NAMES.has(baseName.toUpperCase())) {
+  const deviceBaseName = trimWindowsIgnoredSuffix(baseName);
+  if (!WINDOWS_RESERVED_DEVICE_NAMES.has(deviceBaseName.toUpperCase())) {
     return fileName;
   }
   return `${baseName}_${fileName.slice(baseNameEnd)}`;

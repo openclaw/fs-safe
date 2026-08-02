@@ -108,8 +108,8 @@ export type FileStoreSync = {
 
 function assertRelativePath(relativePath: string): string {
   const raw = relativePath.trim();
-  if (!raw) {
-    throw new FsSafeError("invalid-path", "relative path must be non-empty");
+  if (!raw || raw !== relativePath) {
+    throw new FsSafeError("invalid-path", "store key must be non-empty and unpadded");
   }
   return assertNoDriveRelativePathSegments(raw.replaceAll("\\", "/"), "store key");
 }

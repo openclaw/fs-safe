@@ -24,7 +24,7 @@ In order:
 3. **Strip non-portable characters.** C0/C1 controls (`0x00`–`0x1f`, `0x7f`–`0x9f`) and the Windows-invalid set `< > : " / \\ | ? *` are removed on every platform.
 4. **Trim again.**
 5. If the result is empty, `"."`, or `".."`, return `fallbackName`.
-6. **Suffix Windows reserved basenames.** Compare the part before the first `.` case-insensitively with the Windows device-name set, including `CON`, `PRN`, `AUX`, `NUL`, `CLOCK$`, `CONIN$`, `CONOUT$`, `COM1..9`, `LPT1..9`, and their superscript `¹`, `²`, and `³` variants. A match gains `_` before its extension, preserving the original case and extension on every platform.
+6. **Suffix Windows reserved basenames.** Compare the part before the first `.` case-insensitively with the Windows device-name set, including `CON`, `PRN`, `AUX`, `NUL`, `CLOCK$`, `CONIN$`, `CONOUT$`, `COM1..9`, `LPT1..9`, and their superscript `¹`, `²`, and `³` variants. Windows-ignored spaces and dots at the end of that basename do not disguise a device name. A match gains `_` before its extension, preserving the original case and extension on every platform.
 7. **Truncate.** If the cleaned segment is longer than 200 characters, take the first 200.
 
 That's it. The function stays intentionally small: it removes traversal and
@@ -53,9 +53,9 @@ sanitizeUntrustedFileName("a".repeat(300), "x");          // 200-char "aaa..."
 The function is deliberately narrow. It will not:
 
 - Replace leading dots (so a name like `.config` stays hidden on POSIX systems).
-- Trim trailing dots or spaces. Windows normalizes those spellings, so names
-  that differ only there can alias; reject or rewrite them when Windows
-  portability or cross-platform store migration matters.
+- Trim trailing dots. Surrounding spaces are removed by the documented trim
+  steps, but Windows-normalized dot/space spellings can still alias; reject or
+  rewrite them when Windows portability or cross-platform migration matters.
 - Add an extension or change case.
 - Validate file *content*. To enforce an extension allow-list, check after sanitization.
 - Deduplicate against existing files. Append a random suffix if you need uniqueness.

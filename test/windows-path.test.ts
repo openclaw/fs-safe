@@ -1,8 +1,9 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
-import { fileStore } from "../src/file-store.js";
+import { fileStore, fileStoreSync } from "../src/file-store.js";
 import { isWindowsNetworkPath } from "../src/local-file-access.js";
 import {
   isPathInside,
@@ -91,6 +92,8 @@ describe("drive-relative relative paths", () => {
         ["root.mkdir", () => root.mkdir(destination)],
         ["root.write", () => root.write(destination, "aliased")],
         ["root.create", () => root.create(destination, "aliased")],
+        ["root.writeJson", () => root.writeJson(destination, { aliased: true })],
+        ["root.createJson", () => root.createJson(destination, { aliased: true })],
         ["root.copyIn", () => root.copyIn(destination, path.join(rootDir, "source.txt"))],
         ["root.move destination", () => root.move("source.txt", destination)],
       ];
@@ -110,6 +113,7 @@ describe("drive-relative relative paths", () => {
       const rootDir = await mkdtemp(path.join(os.tmpdir(), "fs-safe-drive-like-existing-"));
       try {
         await writeFile(path.join(rootDir, "c:notes.txt"), "notes");
+        await writeFile(path.join(rootDir, "c:data.json"), '{"value":"json"}');
         await writeFile(path.join(rootDir, "c:move.txt"), "move");
         await writeFile(path.join(rootDir, "c:remove.txt"), "remove");
         await mkdir(path.join(rootDir, "c:folder"));
@@ -119,6 +123,11 @@ describe("drive-relative relative paths", () => {
         const opened = await root.open("c:notes.txt");
         await opened.handle.close();
         await expect(root.readText("c:notes.txt")).resolves.toBe("notes");
+        await expect(root.read("c:notes.txt")).resolves.toMatchObject({
+          buffer: Buffer.from("notes"),
+        });
+        await expect(root.readBytes("c:notes.txt")).resolves.toEqual(Buffer.from("notes"));
+        await expect(root.readJson("c:data.json")).resolves.toEqual({ value: "json" });
         await expect(root.readAbsolute("c:notes.txt")).resolves.toMatchObject({
           buffer: Buffer.from("notes"),
         });
@@ -147,6 +156,7 @@ describe("drive-relative relative paths", () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), "fs-safe-drive-relative-store-"));
     try {
       const store = fileStore({ rootDir });
+      const syncStore = fileStoreSync({ rootDir });
       await store.writeText("source.txt", "source");
       for (const input of aliasingInputs) {
         expect(() => store.path(input), input).toThrow("drive letter");
@@ -158,16 +168,34 @@ describe("drive-relative relative paths", () => {
       const key = "C:source.txt";
       const calls: Array<[string, () => Promise<unknown>]> = [
         ["store.open", () => store.open(key)],
+        ["store.read", () => store.read(key)],
+        ["store.readBytes", () => store.readBytes(key)],
         ["store.readText", () => store.readText(key)],
+        ["store.readTextIfExists", () => store.readTextIfExists(key)],
+        ["store.readJson", () => store.readJson(key)],
+        ["store.readJsonIfExists", () => store.readJsonIfExists(key)],
         ["store.exists", () => store.exists(key)],
         ["store.remove", () => store.remove(key)],
+        ["store.write", () => store.write(key, "aliased")],
         ["store.writeText", () => store.writeText(key, "aliased")],
+        ["store.writeJson", () => store.writeJson(key, { aliased: true })],
+        ["store.writeStream", () => store.writeStream(key, Readable.from(["aliased"]))],
         ["store.copyIn", () => store.copyIn(key, path.join(rootDir, "source.txt"))],
       ];
       for (const [label, call] of calls) {
         await expect(call(), label).rejects.toMatchObject({ code: "invalid-path" });
       }
       expect(() => store.json(key)).toThrow("drive letter");
+      for (const [label, call] of [
+        ["syncStore.path", () => syncStore.path(key)],
+        ["syncStore.readTextIfExists", () => syncStore.readTextIfExists(key)],
+        ["syncStore.readJsonIfExists", () => syncStore.readJsonIfExists(key)],
+        ["syncStore.write", () => syncStore.write(key, "aliased")],
+        ["syncStore.writeText", () => syncStore.writeText(key, "aliased")],
+        ["syncStore.writeJson", () => syncStore.writeJson(key, { aliased: true })],
+      ] satisfies Array<[string, () => unknown]>) {
+        expect(call, label).toThrow(expect.objectContaining({ code: "invalid-path" }));
+      }
       await expect(readFile(path.join(rootDir, "source.txt"), "utf8")).resolves.toBe("source");
     } finally {
       await rm(rootDir, { force: true, recursive: true });
