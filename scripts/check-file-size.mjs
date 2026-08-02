@@ -7,9 +7,10 @@ const LINE_BUDGETS = new Map([
   ["src/permissions.ts", 566],
   ["src/root-impl.ts", 1750],
   ["src/root-path.ts", 862],
-  ["src/sidecar-lock.ts", 525],
+  ["src/sidecar-lock.ts", 540],
   ["test/api-coverage.test.ts", 983],
   ["test/new-primitives.test.ts", 1500],
+  ["test/sidecar-lock-regression.test.ts", 540],
 ]);
 
 function walk(dir) {

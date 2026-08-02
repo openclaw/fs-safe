@@ -37,6 +37,32 @@ describe("sidecar lock regressions", () => {
           { code: "EPERM", errno: -4048, syscall: "open", path: lockPath },
         );
 
+  it.runIf(process.platform === "win32")("keeps the lock-file EPERM when no retry is left", async () => {
+    // Classifying the denial as contention must not cost the caller the
+    // diagnosis: with no retry budget the original EPERM has to survive
+    // instead of being replaced by the loop's timeout error.
+    const base = await fsp.realpath(await tempRoot("fs-safe-sidecar-eperm-exhausted-"));
+    const targetPath = path.join(base, "state.json");
+    const lockPath = `${targetPath}.lock`;
+    configureFsSafeNative({ mode: "off" });
+    const realOpen = fsp.open.bind(fsp) as typeof fsp.open;
+
+    vi.spyOn(fsp, "open").mockImplementation((async (...args: Parameters<typeof fsp.open>) => {
+      if (args[0] === lockPath && args[1] === "wx") throw denial(lockPath);
+      return await realOpen(...args);
+    }) as typeof fsp.open);
+
+    await expect(
+      acquireFileLock(targetPath, {
+        managerKey: `eperm-exhausted-${Date.now()}-${Math.random()}`,
+        staleMs: 60_000,
+        timeoutMs: 1_000,
+        retry: { retries: 0 },
+        payload: async () => ({ pid: process.pid }),
+      }),
+    ).rejects.toMatchObject({ code: "EPERM", path: lockPath });
+  });
+
   it.runIf(process.platform === "win32")("propagates an EPERM that names the lock parent", async () => {
     // createNativeExclusiveFile() opens dirname(lockPath) before the exclusive
     // create, so a denial can name the parent. Only the teardown window on the

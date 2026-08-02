@@ -266,6 +266,17 @@ export function createSidecarLockManager(key: string) {
     // Bounded so a genuine denial still surfaces as EPERM, not a lock timeout.
     let transientDenials = 0;
     const withinDenialBudget = (): boolean => ++transientDenials <= maxTransientLockDenials;
+    // Waiting can fail on the caller's own retry or deadline limits. Classifying
+    // a denial as contention must not cost them the original diagnosis, so hand
+    // the denial back when no further attempt can be scheduled.
+    const retryOrRethrowDenial = async (denial: unknown): Promise<void> => {
+      try {
+        await waitForRetry();
+      } catch (waitError) {
+        if ((waitError as NodeJS.ErrnoException).code === "file_lock_timeout") throw denial;
+        throw waitError;
+      }
+    };
     const waitForRetry = async (): Promise<void> => {
       const elapsed = Date.now() - startedAt;
       if (
@@ -383,7 +394,7 @@ export function createSidecarLockManager(key: string) {
             });
           }
           if (lockFileCreateDenied && withinDenialBudget()) {
-            await waitForRetry();
+            await retryOrRethrowDenial(err);
             continue;
           }
           if ((err as { code?: unknown }).code !== "EEXIST") {
@@ -404,7 +415,7 @@ export function createSidecarLockManager(key: string) {
           } catch (readErr) {
             if (!isTransientLockFileDenial(readErr, lockPath) || !withinDenialBudget())
               throw readErr;
-            await waitForRetry();
+            await retryOrRethrowDenial(readErr);
             continue;
           }
           if (!snapshot) {
