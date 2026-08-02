@@ -101,14 +101,6 @@ export async function runPinnedWriteNative(
     ) {
       throw new FsSafeError("path-mismatch", "native write parent changed during resolution");
     }
-    try {
-      await fs.lstat(path.join(parentPath, params.basename));
-      throw Object.assign(new Error("destination already exists"), { code: "EEXIST" });
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw error;
-      }
-    }
     tempFd = binding.openBeneath(
       parentFd,
       tempName,
@@ -120,7 +112,11 @@ export async function runPinnedWriteNative(
     writeNativeFd(tempFd, data);
     syncNativeFileBestEffort(tempFd);
     tempIdentity = fsSync.fstatSync(tempFd);
-    binding.renameNoReplace(parentFd, tempName, parentFd, params.basename);
+    if (params.overwrite === false) {
+      binding.renameNoReplace(parentFd, tempName, parentFd, params.basename);
+    } else {
+      binding.renameReplace(parentFd, tempName, parentFd, params.basename);
+    }
     renamed = true;
     targetFd = binding.openBeneath(
       parentFd,

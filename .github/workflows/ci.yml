@@ -111,7 +111,7 @@ jobs:
         run: node scripts/native-mode-smoke.mjs off
 
       - name: Test native security and path equivalence
-        run: pnpm test test/native-integration.test.ts test/native-archive-equivalence.test.ts test/native-publish-equivalence.test.ts test/private-directory.test.ts
+        run: pnpm test test/native-integration.test.ts test/native-write-containment.test.ts test/native-archive-equivalence.test.ts test/native-publish-equivalence.test.ts test/private-directory.test.ts
 
   native-musl:
     name: Native check (linux-x64-musl)
@@ -133,7 +133,7 @@ jobs:
             node scripts/native-mode-smoke.mjs auto
             node scripts/native-mode-smoke.mjs require
             node scripts/native-mode-smoke.mjs off
-            pnpm test test/native-archive-equivalence.test.ts test/native-publish-equivalence.test.ts
+            pnpm test test/native-write-containment.test.ts test/native-archive-equivalence.test.ts test/native-publish-equivalence.test.ts
           '
 
   cargo-quality:

@@ -70,6 +70,21 @@ describe.runIf(native)("native filesystem primitives", () => {
     await expect(fs.readFile(path.join(root, "target"), "utf8")).resolves.toBe("target");
   });
 
+  it("replaces an existing target by descriptor-relative native rename", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-native-rename-replace-"));
+    roots.push(root);
+    await fs.writeFile(path.join(root, "source"), "source");
+    await fs.writeFile(path.join(root, "target"), "target");
+    const rootFd = fsSync.openSync(root, fsSync.constants.O_RDONLY);
+    try {
+      native!.renameReplace(rootFd, "source", rootFd, "target");
+    } finally {
+      fsSync.closeSync(rootFd);
+    }
+    await expect(fs.lstat(path.join(root, "source"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.readFile(path.join(root, "target"), "utf8")).resolves.toBe("source");
+  });
+
   it.runIf(process.platform === "win32")("rejects reparse-point directory components", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-native-reparse-"));
     roots.push(root);
@@ -109,6 +124,33 @@ describe.runIf(native)("native filesystem primitives", () => {
     });
     expect(renameCalls).toBe(1);
     await expect(fs.readFile(path.join(directory, "nested/value"), "utf8")).resolves.toBe("native");
+  });
+
+  it("uses native replace commits for overwrite pinned writes", async () => {
+    let replaceCalls = 0;
+    __setNativeLoaderForTest(() => ({
+      ...native!,
+      renameReplace(...args) {
+        replaceCalls += 1;
+        return native!.renameReplace(...args);
+      },
+    }));
+    configureFsSafeNative({ mode: "require" });
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-native-overwrite-"));
+    roots.push(directory);
+    await fs.mkdir(path.join(directory, "nested"));
+    await fs.writeFile(path.join(directory, "nested/value"), "old");
+    await runPinnedWriteHelper({
+      rootPath: directory,
+      relativeParentPath: "nested",
+      basename: "value",
+      mkdir: true,
+      mode: 0o600,
+      overwrite: true,
+      input: { kind: "buffer", data: "new" },
+    });
+    expect(replaceCalls).toBe(1);
+    await expect(fs.readFile(path.join(directory, "nested/value"), "utf8")).resolves.toBe("new");
   });
 
   it("rejects native writes when the expected root identity does not match", async () => {

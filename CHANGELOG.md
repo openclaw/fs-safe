@@ -4,6 +4,8 @@
 
 ### Security and Correctness
 
+- Route `Root.copyIn()` and overwrite-capable `Root.write()` commits through a new descriptor-relative native replace rename, closing a parent-symlink swap that could create a missing destination directory outside the root before the JavaScript fallback detected the escape. Native `auto` and `require` mode now protect both create-only and replacing pinned writes; the explicitly best-effort JavaScript fallback remains available in `off` mode or when `auto` cannot load a binding.
+
 - Apply `movePathWithCopyFallback()` file and POSIX directory modes through staging descriptors before publication, so a replaceable staging pathname cannot redirect `chmod` to an unrelated symlink target. Windows no longer uses a pathname fallback for directory modes because Node cannot portably open a directory descriptor there and does not enforce POSIX modes.
 
 - Reject drive-relative segments such as `C:secret.txt` and `a/C:b` in portable relative-path parsing and every `FileStore` key, and reject leading drive-relative spellings on `Root` destinations and `resolve()` with `invalid-path`. Existing-object Root operations, including reads, inspection, removal, and the source of `move()`, continue to accept legal POSIX filenames such as `c:notes.txt`; thanks @Yigtwxx for the fix.

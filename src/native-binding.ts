@@ -117,5 +117,11 @@ export interface NativeBinding {
     targetRootFd: number,
     targetRelPath: string,
   ): void;
+  renameReplace(
+    sourceRootFd: number,
+    sourceRelPath: string,
+    targetRootFd: number,
+    targetRelPath: string,
+  ): void;
   sha256File(fd: number): Promise<NativeFileHash>;
 }

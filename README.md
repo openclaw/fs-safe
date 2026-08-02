@@ -72,6 +72,14 @@ configureFsSafeNative({ mode: "off" });     // guarded JavaScript only
 configureFsSafeNative({ mode: "require" }); // fail closed if the binding is unavailable
 ```
 
+Native mode performs `write()`, `create()`, and `copyIn()` parent creation and
+publication relative to pinned directory descriptors, including atomic
+replacement. The JavaScript path selected by `off`, or by `auto` when no
+binding can load, is explicitly best-effort: a same-privilege peer that can
+replace a writable parent between its identity check and Node's pathname
+mutation can redirect that mutation outside the root before the post-check
+reports the escape. Use `require` when hostile concurrent mutation is in scope.
+
 Equivalent env var: `FS_SAFE_NATIVE_MODE=auto|off|require`. All seven binaries
 ship inside `@openclaw/fs-safe`; there are no platform packages, postinstall
 steps, downloads, or consumer Rust builds. This makes the tarball larger than

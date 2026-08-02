@@ -11,7 +11,7 @@ use napi::{Env, Error, Result, Status};
 use napi_derive::napi;
 
 use crate::tar_meter::TarMetadataMeter;
-use crate::{NativeResult, native_error, platform, validate_relative_path};
+use crate::{NativeResult, native_error, platform, validate_portable_relative_path};
 
 #[napi(object)]
 pub struct NativeArchiveEntry {
@@ -477,7 +477,7 @@ fn checked_limit(value: f64, label: &str) -> Result<u64> {
 fn plan_map(plan: Vec<NativeArchivePlanEntry>) -> Result<HashMap<usize, NativeArchivePlanEntry>> {
     let mut entries = HashMap::with_capacity(plan.len());
     for entry in plan {
-        validate_relative_path(&entry.path, false)
+        validate_portable_relative_path(&entry.path, false)
             .map_err(|error| Error::new(Status::InvalidArg, error.reason))?;
         if entry.kind != "file" && entry.kind != "directory" {
             return Err(Error::new(

@@ -172,6 +172,23 @@ pub fn rename_no_replace(
     }
 }
 
+pub fn rename_replace(
+    source_root_fd: i32,
+    source_rel_path: &str,
+    target_root_fd: i32,
+    target_rel_path: &str,
+) -> NativeResult<()> {
+    let (source_parent, source_name) = open_parent(source_root_fd, source_rel_path)?;
+    let (target_parent, target_name) = open_parent(target_root_fd, target_rel_path)?;
+    rustix::fs::renameat(
+        source_parent.as_fd(),
+        source_name,
+        target_parent.as_fd(),
+        target_name,
+    )
+    .map_err(|error| os_error(error, "rename with replacement"))
+}
+
 pub fn fstat_identity(fd: i32) -> NativeResult<FileIdentity> {
     let stat = rustix::fs::fstat(borrowed(fd)).map_err(|error| os_error(error, "fstat"))?;
     let file_type = FileType::from_raw_mode(stat.st_mode);
@@ -909,6 +926,24 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.status, "EEXIST");
         assert_eq!(fs::read(root.join("target")).unwrap(), b"target");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rename_replace_replaces_existing_target() {
+        let root = temp_root("rename-replace");
+        fs::write(root.join("source"), b"source").unwrap();
+        fs::write(root.join("target"), b"target").unwrap();
+        let root_handle = OpenOptions::new().read(true).open(&root).unwrap();
+        rename_replace(
+            root_handle.as_raw_fd(),
+            "source",
+            root_handle.as_raw_fd(),
+            "target",
+        )
+        .unwrap();
+        assert!(!root.join("source").exists());
+        assert_eq!(fs::read(root.join("target")).unwrap(), b"source");
         fs::remove_dir_all(root).unwrap();
     }
 

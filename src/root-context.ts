@@ -9,6 +9,7 @@ import { isDriveRelativePath } from "./safe-path-segment.js";
 
 export type RootContext = {
   rootDir: string;
+  rootIdentity: { dev: number; ino: number };
   rootReal: string;
   rootWithSep: string;
 };
@@ -46,12 +47,14 @@ export async function expandRelativePathWithHome(relativePath: string): Promise<
 export async function resolveRootContext(rootDir: string): Promise<RootContext> {
   assertNoNulPathInput(rootDir, "root dir contains a NUL byte");
   let rootReal: string;
+  let rootIdentity: { dev: number; ino: number };
   try {
     rootReal = await fs.realpath(rootDir);
     const rootStat = await fs.stat(rootReal);
     if (!rootStat.isDirectory()) {
       throw new FsSafeError("invalid-path", "root dir is not a directory");
     }
+    rootIdentity = { dev: rootStat.dev, ino: rootStat.ino };
   } catch (err) {
     if (err instanceof FsSafeError) {
       throw err;
@@ -63,6 +66,7 @@ export async function resolveRootContext(rootDir: string): Promise<RootContext> 
   }
   return {
     rootDir: path.resolve(rootDir),
+    rootIdentity,
     rootReal,
     rootWithSep: ensureTrailingSep(rootReal),
   };

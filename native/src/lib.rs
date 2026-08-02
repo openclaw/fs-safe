@@ -40,7 +40,11 @@ fn invalid_path(message: impl Into<String>) -> Error<String> {
     native_error("EINVAL", message)
 }
 
-fn validate_relative_path(path: &str, allow_root: bool) -> NativeResult<()> {
+fn validate_relative_path_with_separators(
+    path: &str,
+    allow_root: bool,
+    backslash_is_separator: bool,
+) -> NativeResult<()> {
     if path.as_bytes().contains(&0) {
         return Err(invalid_path("relative path contains a NUL byte"));
     }
@@ -51,15 +55,28 @@ fn validate_relative_path(path: &str, allow_root: bool) -> NativeResult<()> {
             Err(invalid_path("operation requires a non-root path"))
         };
     }
-    if path.starts_with('/') || path.starts_with('\\') {
+    if path.starts_with('/') || (backslash_is_separator && path.starts_with('\\')) {
         return Err(invalid_path(
             "path must be relative to the supplied root descriptor",
         ));
     }
-    if path.split(['/', '\\']).any(|segment| segment == "..") {
+    let escapes = if backslash_is_separator {
+        path.split(['/', '\\']).any(|segment| segment == "..")
+    } else {
+        path.split('/').any(|segment| segment == "..")
+    };
+    if escapes {
         return Err(invalid_path("relative path must not contain '..'"));
     }
     Ok(())
+}
+
+fn validate_relative_path(path: &str, allow_root: bool) -> NativeResult<()> {
+    validate_relative_path_with_separators(path, allow_root, cfg!(windows))
+}
+
+pub(crate) fn validate_portable_relative_path(path: &str, allow_root: bool) -> NativeResult<()> {
+    validate_relative_path_with_separators(path, allow_root, true)
 }
 
 fn into_napi<T>(env: Env, result: NativeResult<T>) -> Result<T> {
@@ -148,6 +165,29 @@ pub fn rename_no_replace(
     )
 }
 
+#[napi(js_name = "renameReplace")]
+pub fn rename_replace(
+    env: Env,
+    source_root_fd: i32,
+    source_rel_path: String,
+    target_root_fd: i32,
+    target_rel_path: String,
+) -> Result<()> {
+    into_napi(
+        env,
+        validate_relative_path(&source_rel_path, false)
+            .and_then(|()| validate_relative_path(&target_rel_path, false))
+            .and_then(|()| {
+                platform::rename_replace(
+                    source_root_fd,
+                    &source_rel_path,
+                    target_root_fd,
+                    &target_rel_path,
+                )
+            }),
+    )
+}
+
 #[napi(js_name = "fstatIdentity")]
 pub fn fstat_identity(env: Env, fd: i32) -> Result<FileIdentity> {
     into_napi(env, platform::fstat_identity(fd))
@@ -164,6 +204,22 @@ pub use windows_security::{
     WindowsAccessControlEntry, WindowsAceFlags, WindowsSecurityFacts, create_private_directory,
     read_owner_and_dacl,
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filesystem_paths_follow_host_separator_rules() {
+        assert!(validate_relative_path("../escape", false).is_err());
+        if cfg!(windows) {
+            assert!(validate_relative_path("..\\escape", false).is_err());
+        } else {
+            assert!(validate_relative_path("..\\literal", false).is_ok());
+        }
+        assert!(validate_portable_relative_path("..\\escape", false).is_err());
+    }
+}
 
 #[cfg(unix)]
 use unix as platform;

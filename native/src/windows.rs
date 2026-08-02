@@ -44,6 +44,7 @@ const FILE_NON_DIRECTORY_FILE: u32 = 0x0000_0040;
 const FILE_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
 const OBJ_CASE_INSENSITIVE: u32 = 0x0000_0040;
 const OBJ_DONT_REPARSE: u32 = 0x0000_1000;
+const FILE_RENAME_FLAG_REPLACE_IF_EXISTS: u32 = 0x0000_0001;
 const FILE_RENAME_FLAG_POSIX_SEMANTICS: u32 = 0x0000_0002;
 const FILE_LINK_INFORMATION_CLASS: i32 = 11;
 const FILE_RENAME_INFORMATION_EX_CLASS: i32 = 65;
@@ -397,6 +398,7 @@ fn set_rename_information(
     source: HANDLE,
     target_root: HANDLE,
     target_path: &str,
+    replace: bool,
     operation: &str,
 ) -> NativeResult<()> {
     let name = wide_relative(target_path)?;
@@ -408,7 +410,12 @@ fn set_rename_information(
     // large enough for the trailing UTF-16 filename.
     unsafe {
         let header = buffer.as_mut_ptr().cast::<FileNameInfoHeader>();
-        (*header).flags = FILE_RENAME_FLAG_POSIX_SEMANTICS;
+        (*header).flags = FILE_RENAME_FLAG_POSIX_SEMANTICS
+            | if replace {
+                FILE_RENAME_FLAG_REPLACE_IF_EXISTS
+            } else {
+                0
+            };
         (*header).root_directory = target_root;
         (*header).file_name_length = name_bytes as u32;
         std::ptr::copy_nonoverlapping(
@@ -430,7 +437,10 @@ fn set_rename_information(
         )
     };
     if status < 0 {
-        if nt_open_relative(target_root, target_path, FILE_READ_ATTRIBUTES, FILE_OPEN, 0).is_ok() {
+        if !replace
+            && nt_open_relative(target_root, target_path, FILE_READ_ATTRIBUTES, FILE_OPEN, 0)
+                .is_ok()
+        {
             return Err(native_error("EEXIST", "rename destination already exists"));
         }
         return Err(nt_error(status, operation));
@@ -512,7 +522,24 @@ pub fn rename_no_replace(
         source.0,
         root_handle(target_root_fd)?,
         target_rel_path,
+        false,
         "rename without replacement",
+    )
+}
+
+pub fn rename_replace(
+    source_root_fd: i32,
+    source_rel_path: &str,
+    target_root_fd: i32,
+    target_rel_path: &str,
+) -> NativeResult<()> {
+    let source = open_source_for_metadata(source_root_fd, source_rel_path, DELETE_ACCESS)?;
+    set_rename_information(
+        source.0,
+        root_handle(target_root_fd)?,
+        target_rel_path,
+        true,
+        "rename with replacement",
     )
 }
 
@@ -702,11 +729,33 @@ mod tests {
             source.0,
             root_handle.as_raw_handle() as HANDLE,
             "target",
+            false,
             "rename without replacement",
         )
         .unwrap_err();
         assert_eq!(error.status, "EEXIST");
         assert_eq!(fs::read(root.join("target")).unwrap(), b"target");
+        drop(source);
+
+        fs::write(root.join("replacement"), b"replacement").unwrap();
+        let replacement = nt_open_relative(
+            root_handle.as_raw_handle() as HANDLE,
+            "replacement",
+            FILE_READ_ATTRIBUTES | DELETE_ACCESS,
+            FILE_OPEN,
+            FILE_NON_DIRECTORY_FILE,
+        )
+        .unwrap();
+        set_rename_information(
+            replacement.0,
+            root_handle.as_raw_handle() as HANDLE,
+            "target",
+            true,
+            "rename with replacement",
+        )
+        .unwrap();
+        assert_eq!(fs::read(root.join("target")).unwrap(), b"replacement");
+        drop(replacement);
         fs::remove_dir_all(root).unwrap();
     }
 }

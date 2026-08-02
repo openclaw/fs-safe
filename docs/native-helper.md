@@ -30,20 +30,26 @@ Configure the mode once during startup. Loading is lazy and cached; changing fro
 ## Native boundary
 
 The bundled native layer exposes policy-free filesystem mechanisms: beneath-root
-open/mkdir/link, no-replace rename, identity reads, archive decode/execution,
+open/mkdir/link, replace and no-replace rename, identity reads, archive decode/execution,
 clone/copy/hash workers, and Windows security descriptor calls. The TypeScript
 layer owns policy, retries, filters, budgets, modes, cleanup, error
 normalization, and the decision to fall back.
 
-- Linux uses `openat2` with `RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS` and `renameat2(RENAME_NOREPLACE)`.
-- macOS 15.4 and newer prefer `O_RESOLVE_BENEATH`; older kernels resolve components with `O_NOFOLLOW` and restart in-root symlinks from the pinned root descriptor. Both routes use an `F_GETPATH` post-open escape detector and report `best-effort` because directory rename races are not atomic with that check. No-replace publication uses `renameatx_np(RENAME_EXCL)`.
-- Windows uses handle-relative `NtCreateFile`, rejects reparse points, and uses `FileRenameInfoEx` with replacement disabled.
+- Linux uses `openat2` with `RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS`, `renameat`, and `renameat2(RENAME_NOREPLACE)`.
+- macOS 15.4 and newer prefer `O_RESOLVE_BENEATH`; older kernels resolve components with `O_NOFOLLOW` and restart in-root symlinks from the pinned root descriptor. Both routes use an `F_GETPATH` post-open escape detector and report `best-effort` because directory rename races are not atomic with that check. Publication uses `renameat` for replacement and `renameatx_np(RENAME_EXCL)` for no-replace.
+- Windows uses handle-relative `NtCreateFile`, rejects reparse points, and uses `FileRenameInfoEx` with replacement selected explicitly by the TypeScript policy layer.
 
-Native primitives back create-only pinned writes, async sidecar creation,
+Native primitives back create-only and replacing pinned writes, async sidecar creation,
 guarded publication, archive acceleration, and direct Windows ACL operations.
 Equivalent JavaScript paths remain available for documented fallback-capable
 features. See [Native architecture](native.md#javascript-fallback-guarantees-and-delta)
 for the exact difference.
+
+The guarded JavaScript mutation path is detection-based, not containment-atomic.
+If a same-privilege peer can replace a writable parent after its identity guard
+but before Node resolves a pathname mutation, the mutation can land outside the
+intended root before the post-operation guard throws. Select `require` rather
+than `auto` or `off` when that concurrent attacker is part of the threat model.
 
 `openBeneath()` returns `{ fd, containment }`. `containment` is
 `"kernel-atomic"` for Linux `openat2` and `"best-effort"` for macOS and

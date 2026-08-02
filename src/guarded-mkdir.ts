@@ -46,8 +46,8 @@ export async function mkdirPathComponentsWithGuards(params: {
   for (const part of relative.split(path.sep).filter(Boolean)) {
     const next = path.join(current, part);
     const parentGuard = await createAsyncDirectoryGuard(current);
-    await params.beforeComponent?.(next);
     await assertAsyncDirectoryGuard(parentGuard);
+    await params.beforeComponent?.(next);
     try {
       await fs.mkdir(next);
     } catch (error) {

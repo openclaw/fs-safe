@@ -22,6 +22,7 @@ import {
   runPinnedWriteHelper,
   runPinnedWriteWithRenamePolicy,
 } from "./pinned-write.js";
+import { getNativeBinding } from "./native.js";
 import { validatePinnedOperationPayload } from "./pinned-operation.js";
 import { assertNoPathAliasEscape, PATH_ALIAS_POLICIES } from "./path-policy.js";
 import {
@@ -344,12 +345,14 @@ export interface Root {
 }
 
 class RootHandle implements Root {
+  private readonly rootIdentity: RootContext["rootIdentity"];
   readonly rootDir: string;
   readonly rootReal: string;
   readonly rootWithSep: string;
   readonly defaults: RootDefaults;
 
   constructor(context: RootContext, defaults: RootDefaults = {}) {
+    this.rootIdentity = context.rootIdentity;
     this.rootDir = context.rootDir;
     this.rootReal = context.rootReal;
     this.rootWithSep = context.rootWithSep;
@@ -359,6 +362,7 @@ class RootHandle implements Root {
   private get context(): RootContext {
     return {
       rootDir: this.rootDir,
+      rootIdentity: this.rootIdentity,
       rootReal: this.rootReal,
       rootWithSep: this.rootWithSep,
     };
@@ -1021,7 +1025,10 @@ async function writeFileInRoot(
   root: RootContext,
   params: RootWriteOptions & { relativePath: string; data: string | Buffer },
 ): Promise<void> {
-  if (process.platform === "win32") {
+  if (
+    process.platform === "win32" &&
+    (params.renameIdentity === "verify-content-with-lock" || !getNativeBinding())
+  ) {
     await serializePathWrite(rootWriteQueueKey(root, params.relativePath), async () => {
       await writeFileFallback(root, params);
     });
@@ -1057,6 +1064,7 @@ async function commitPinnedWriteInRoot(
       mode: params.mode ?? pinned.mode,
       overwrite: params.overwrite,
       input: { kind: "buffer", data: params.data, encoding: params.encoding },
+      rootIdentity: root.rootIdentity,
     });
   } catch (error) {
     const errorCode = (error as { code?: unknown })?.code;
@@ -1126,6 +1134,7 @@ async function copyFileInRoot(
         overwrite: true,
         maxBytes: params.maxBytes,
         input: { kind: "stream", stream: source.handle.createReadStream() },
+        rootIdentity: root.rootIdentity,
       });
       try {
         await assertCopySourcePathCurrent(source);

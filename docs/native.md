@@ -41,7 +41,7 @@ The TypeScript layer validates and decides. The native layer never decides
 whether a path, archive entry, mode, owner, or cleanup policy is acceptable.
 
 - Linux uses `openat2(RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS)`, fd-relative
-  `mkdirat`/`linkat`/`renameat2`, `FICLONE`, and `copy_file_range`.
+  `mkdirat`/`linkat`/`renameat`/`renameat2`, `FICLONE`, and `copy_file_range`.
 - macOS 15.4 and newer first use `openat(O_RESOLVE_BENEATH)`; older kernels walk
   components with `openat(O_NOFOLLOW)` and restart in-root symlinks from the
   pinned root. Both routes apply an `F_GETPATH` post-open containment detector,
@@ -99,7 +99,7 @@ remain TypeScript-owned. What changes is the syscall strength or availability:
 
 | Capability | Native path | Guarded JavaScript path |
 |---|---|---|
-| Root-relative opens/mutations | Descriptor-relative beneath operations. Linux reports `kernel-atomic`; macOS and Windows report `best-effort`. macOS uses `O_RESOLVE_BENEATH` when available plus an `F_GETPATH` detector, while Windows rejects reparse traversal in the object-manager call. | Reports `best-effort`: component-wise alias checks, no-follow opens where Node exposes them, private temp/rename, and post-operation identity verification. A hostile same-UID peer has a wider pathname race window. |
+| Root-relative opens/mutations | Descriptor-relative beneath operations. Pinned writes create parents and publish both replacement and no-replace targets relative to open directory descriptors. Linux reports `kernel-atomic`; macOS and Windows report `best-effort`. macOS uses `O_RESOLVE_BENEATH` when available plus an `F_GETPATH` detector, while Windows rejects reparse traversal in the object-manager call. | Reports `best-effort`: component-wise alias checks, no-follow opens where Node exposes them, private temp/rename, and post-operation identity verification. A same-privilege peer can replace a writable parent after a guard assertion but before Node resolves the pathname mutation; the mutation may land outside the intended root before the post-check detects it. |
 | ZIP/TAR/gzip | Rust streaming decode and fd-relative output creation. | JSZip/node-tar into a private stage, then the same guarded merge policy. |
 | Zstd/bzip2 TAR | Supported. | Unsupported; typed `helper-unavailable`. |
 | Publication copy | Clone, Linux `copy_file_range`, async native SHA-256. | Exclusive `wx` byte loop and Node SHA-256 with the same content/identity fences. |

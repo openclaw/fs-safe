@@ -111,7 +111,7 @@ export async function runPinnedWriteHelper(params: PinnedWriteParams): Promise<F
     return await runPinnedWriteFallback(params);
   }
   const native = getNativeBinding();
-  if (native && params.overwrite === false) {
+  if (native) {
     return await runPinnedWriteNative(native, params);
   }
   return await runPinnedWriteFallback(params);
@@ -173,6 +173,8 @@ async function runPinnedWriteFallback(params: {
     parentPath = await mkdirPathComponentsWithGuards({
       rootReal: params.rootPath,
       targetPath: parentPath,
+      beforeComponent: async (componentPath) =>
+        await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("mkdir", componentPath),
     });
   }
   const parentGuard = params.mkdir

@@ -54,7 +54,20 @@ Per-call `symlinks: "follow-within-root"` allows symlinks whose final target is 
 
 ### Symlinks (write side)
 
-Writes use a sibling-temp + rename helper that opens the parent directory by fd, then performs the rename `at` the parent fd. Replacing the parent directory with a symlink between the parent-fd open and the rename does not divert the write.
+With the native binding loaded, `write()`, `create()`, and `copyIn()` use a
+sibling temp file and create parents and publish the target relative to pinned
+directory descriptors. Replacement uses descriptor-relative rename just like
+no-replace publication, so replacing the parent pathname does not divert the
+mutation.
+
+The JavaScript fallback used by `off`, by `auto` when no binding loads, and by
+the explicit `renameIdentity: "verify-content-with-lock"` compatibility policy
+cannot provide that guarantee because Node exposes no `mkdirat` or `renameat`.
+It asserts directory identity around a pathname mutation and detects many
+swaps, but detection occurs after the kernel may already have followed a new
+parent symlink. A same-privilege peer with write access to the parent can
+therefore cause an out-of-root side effect before the operation throws. Use
+native `require` mode when concurrent hostile mutation is in scope.
 
 ### Hardlink aliasing
 
@@ -120,6 +133,7 @@ The public `OpenResult`, `ReadResult`, and `WritableOpenResult` expose `containm
 | Absolute paths are escape hatches | APIs that accept or return absolute paths exist for audit, ingest, and advanced composition. Prefer root-relative names in normal application flow. |
 | Not a mount boundary | `root()` keeps path traversal inside the directory tree and blocks known unsafe read device paths, but it does not make bind mounts or virtual filesystems safe to expose wholesale. |
 | Per-call, not per-session | Another process with the same privileges can still mutate the tree between calls, and best-effort mechanisms retain documented same-call race windows. Use one verb method to minimize the window and inspect its reported containment class. |
+| JavaScript mutations are detection-based | Without the native binding, Node pathname mutations retain a check-to-syscall race. A writable parent can be swapped so a create, rename, or removal affects an out-of-root path before the fallback detects identity drift. |
 | Hardlink rejection is best-effort | Link-count checks depend on platform metadata. Treat `hardlinks: "reject"` as a tripwire, not an authorization primitive. |
 | Mode bits are not a full policy engine | `replaceFileAtomic` and secret-file helpers set requested modes, but you should still set umask and inspect modes when policy requires it. |
 | Archive extraction is path safety, not content safety | Unsafe entry paths and links are rejected; malicious payload contents remain your application layer's problem. |

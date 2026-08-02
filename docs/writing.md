@@ -16,8 +16,8 @@ await fs.mkdir("snapshots/2026/05");
 ## What every write does
 
 1. Resolve the relative target against the canonical root and reject anything that escapes (`outside-workspace`).
-2. If `mkdir: true`, create missing parent directories with the parent fd pinned.
-3. Pin or guard the parent directory for the selected mechanism. Native operations use a parent fd; guarded JavaScript verifies directory identity before and after mutation. Linux beneath opens are kernel-atomic, while macOS, Windows, and JavaScript routes retain the best-effort race boundaries in the [security model](security-model.md#containment-guarantees-by-platform).
+2. If `mkdir: true`, create missing parent directories relative to a pinned parent fd in the native path, or with per-component identity guards in the JavaScript fallback.
+3. Pin or guard the parent directory for the selected mechanism. Native operations use a parent fd; guarded JavaScript verifies directory identity before and after mutation. The JavaScript check cannot make the intervening pathname syscall atomic, so a same-privilege peer that can replace the parent may cause an out-of-root side effect before detection. Use native `require` mode for that threat model; see the [security model](security-model.md#symlinks-write-side).
 4. Write data to a sibling temp file in the same directory.
 5. Atomically rename the temp file over the destination.
 6. Stat the resulting fd and verify identity.
