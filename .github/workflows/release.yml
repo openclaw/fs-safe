@@ -228,10 +228,46 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  draft-release:
+    name: Create draft GitHub Release
+    if: github.ref_protected
+    needs: collect
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Generate release notes
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          package_version="${RELEASE_TAG#v}"
+          node scripts/release-notes.mjs "${package_version}" > release-notes.md
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "${RELEASE_TAG}" --json isDraft >/dev/null 2>&1; then
+            echo "${RELEASE_TAG} already has a GitHub release."
+            exit 0
+          fi
+          gh release create "${RELEASE_TAG}" \
+            --verify-tag \
+            --draft \
+            --title "fs-safe ${RELEASE_TAG#v}" \
+            --notes-file release-notes.md
+
   publish:
     name: Publish @openclaw/fs-safe
     if: github.ref_protected
-    needs: collect
+    needs: draft-release
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -241,11 +277,22 @@ jobs:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: https://registry.npmjs.org
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Update npm
         run: npm install --global npm@${{ env.NPM_VERSION }}
@@ -260,11 +307,11 @@ jobs:
         run: node scripts/publish-or-verify.mjs --package "@openclaw/fs-safe" --artifacts release-artifacts
 
   release:
-    name: Publish GitHub Release
+    name: Verify and promote GitHub Release
     if: github.ref_protected
     needs: publish
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     permissions:
       contents: write
     steps:
@@ -273,10 +320,21 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Download release package
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -292,16 +350,29 @@ jobs:
           node scripts/release-notes.mjs "${package_version}" > release-notes.md
           node scripts/append-release-proof.mjs release-notes.md release-artifacts/manifest.json "${GITHUB_REPOSITORY}" "${GITHUB_RUN_ID}"
 
-      - name: Publish release
+      - name: Upload release proof
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-notes.md
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Promote draft release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
-            echo "${RELEASE_TAG} already has a GitHub release."
+          release_state="$(gh release view "${RELEASE_TAG}" --json isDraft)"
+          if [ "$(printf '%s' "${release_state}" | jq -r '.isDraft')" != "true" ]; then
+            echo "${RELEASE_TAG} is already public."
             exit 0
           fi
-          gh release create "${RELEASE_TAG}" \
-            --verify-tag \
-            --title "fs-safe ${RELEASE_TAG#v}" \
-            --notes-file release-notes.md
+          gh release edit "${RELEASE_TAG}" \
+            --notes-file release-notes.md \
+            --draft=false
+          published_state="$(gh release view "${RELEASE_TAG}" --json isDraft)"
+          if [ "$(printf '%s' "${published_state}" | jq -r '.isDraft')" != "false" ]; then
+            echo "${RELEASE_TAG} did not become public." >&2
+            exit 1
+          fi

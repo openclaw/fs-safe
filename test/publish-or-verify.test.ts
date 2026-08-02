@@ -6,12 +6,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   REGISTRY_RETRY_DELAYS_MS,
   loadReleaseArtifact,
+  parseArguments,
   publishOrVerify,
 } from "../scripts/publish-or-verify.mjs";
 
 const temporaryDirectories: string[] = [];
 
-async function releaseArtifact(bytes = Buffer.from("validated tarball bytes")) {
+async function releaseArtifact(
+  bytes = Buffer.from("validated tarball bytes"),
+  overrides: Record<string, unknown> = {},
+) {
   const directory = await mkdtemp(join(tmpdir(), "fs-safe-publish-test-"));
   temporaryDirectories.push(directory);
   const filename = "openclaw-fs-safe-9.9.9.tgz";
@@ -26,10 +30,11 @@ async function releaseArtifact(bytes = Buffer.from("validated tarball bytes")) {
         filename,
         integrity,
         size: bytes.length,
+        ...overrides,
       },
     ])}\n`,
   );
-  return { directory, filename, integrity };
+  return { bytes, directory, filename, integrity };
 }
 
 afterEach(async () => {
@@ -48,66 +53,117 @@ describe("publish-or-verify", () => {
     );
   });
 
-  it("publishes the exact validated tarball path and verifies its registry identity", async () => {
+  it("rejects artifact size mismatches and paths escaping the artifact directory", async () => {
+    const wrongSize = await releaseArtifact(undefined, { size: 1 });
+    expect(() => loadReleaseArtifact("@openclaw/fs-safe", wrongSize.directory)).toThrow(
+      "artifact size does not match release manifest",
+    );
+
+    const escaped = await releaseArtifact(undefined, { filename: "../outside.tgz" });
+    expect(() => loadReleaseArtifact("@openclaw/fs-safe", escaped.directory)).toThrow(
+      "release artifact escapes artifacts directory",
+    );
+  });
+
+  it("publishes the exact validated tarball after a missing-version result", async () => {
     const artifact = await releaseArtifact();
-    const registryResponses = [
-      Object.assign(new Error("missing"), { stderr: "npm error code E404" }),
-      JSON.stringify({ integrity: "sha512-stale", attestations: { url: "https://example.test/stale" } }),
-      JSON.stringify({ integrity: artifact.integrity, attestations: { url: "https://example.test/provenance" } }),
-    ];
-    const execNpm = vi.fn(() => {
-      const response = registryResponses.shift();
-      if (response instanceof Error) throw response;
-      return response;
-    });
     const spawnNpm = vi.fn(() => ({ status: 0 }));
-    const wait = vi.fn(async () => undefined);
-
-    await publishOrVerify({
-      packageName: "@openclaw/fs-safe",
-      artifactsDir: artifact.directory,
-      execNpm,
-      spawnNpm,
-      retryDelaysMs: [5_000, 10_000],
-      wait,
-      log: vi.fn(),
+    const proof = { byteEvidence: "packument-integrity" };
+    const verifyPackage = vi.fn(async (_entry, options) => {
+      await options.onVersionMissing();
+      return proof;
     });
+    const log = vi.fn();
 
-    expect(spawnNpm).toHaveBeenCalledOnce();
+    await expect(
+      publishOrVerify({
+        packageName: "@openclaw/fs-safe",
+        artifactsDir: artifact.directory,
+        log,
+        spawnNpm,
+        verifyPackage,
+      }),
+    ).resolves.toBe(proof);
+
     expect(spawnNpm).toHaveBeenCalledWith(
       "npm",
       ["publish", resolve(artifact.directory, artifact.filename), "--access", "public", "--provenance"],
       { stdio: "inherit" },
     );
-    expect(wait.mock.calls.map(([delay]) => delay)).toEqual([5_000, 10_000]);
+    expect(log).toHaveBeenCalledWith(
+      "verified @openclaw/fs-safe@9.9.9 byte identity, registry signature, and provenance (packument-integrity)",
+    );
   });
 
-  it("backs off through transient mismatches without republishing an existing version", async () => {
+  it("does not republish an existing verified version", async () => {
     const artifact = await releaseArtifact();
-    const execNpm = vi
-      .fn()
-      .mockReturnValueOnce(JSON.stringify({ integrity: "sha512-stale", attestations: {} }))
-      .mockReturnValueOnce(JSON.stringify({ integrity: "sha512-stale", attestations: {} }))
-      .mockReturnValueOnce(
-        JSON.stringify({ integrity: artifact.integrity, attestations: { url: "https://example.test/provenance" } }),
-      );
     const spawnNpm = vi.fn(() => ({ status: 0 }));
-    const wait = vi.fn(async () => undefined);
+    const verifyPackage = vi.fn(async () => ({ byteEvidence: "canonical-tarball" }));
 
     await publishOrVerify({
       packageName: "@openclaw/fs-safe",
       artifactsDir: artifact.directory,
-      execNpm,
       spawnNpm,
-      retryDelaysMs: [5_000, 10_000],
-      wait,
-      log: vi.fn(),
+      verifyPackage,
     });
 
     expect(spawnNpm).not.toHaveBeenCalled();
-    expect(wait.mock.calls.map(([delay]) => delay)).toEqual([5_000, 10_000]);
-    expect(REGISTRY_RETRY_DELAYS_MS.reduce((total, delay) => total + delay, 0)).toBeGreaterThanOrEqual(
-      8 * 60_000,
+  });
+
+  it.each([
+    [{ error: new Error("spawn failed"), status: null }, "npm publish could not start"],
+    [{ status: 17 }, "npm publish exited 17"],
+  ])("reports publish failure while continuing registry verification", async (publishResult, summary) => {
+    const artifact = await releaseArtifact();
+    const verifyPackage = vi.fn(async (_entry, options) => {
+      await options.onVersionMissing();
+      throw new Error("registry verification exhausted 2 attempts");
+    });
+
+    await expect(
+      publishOrVerify({
+        packageName: "@openclaw/fs-safe",
+        artifactsDir: artifact.directory,
+        spawnNpm: vi.fn(() => publishResult),
+        verifyPackage,
+      }),
+    ).rejects.toThrow(`${summary}; registry did not verify @openclaw/fs-safe@9.9.9`);
+  });
+
+  it("exhausts the configured attempts, publishes once, and preserves the final reason", async () => {
+    const artifact = await releaseArtifact();
+    const fetchImpl = vi.fn(async () => new Response("missing", { status: 404 }));
+    const spawnNpm = vi.fn(() => ({ status: 0 }));
+    const wait = vi.fn(async () => undefined);
+
+    await expect(
+      publishOrVerify({
+        packageName: "@openclaw/fs-safe",
+        artifactsDir: artifact.directory,
+        fetchImpl,
+        retryDelaysMs: [5, 10],
+        spawnNpm,
+        wait,
+      }),
+    ).rejects.toThrow(
+      "npm publish exited 0; registry did not verify @openclaw/fs-safe@9.9.9: registry verification exhausted 3 attempts",
     );
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(spawnNpm).toHaveBeenCalledOnce();
+    expect(wait.mock.calls.map(([delay]) => delay)).toEqual([5, 10]);
+  });
+
+  it("parses CLI arguments and retains the production retry budget", () => {
+    expect(parseArguments(["--package", "@openclaw/fs-safe", "--artifacts", "proof"])).toEqual({
+      artifactsDir: resolve("proof"),
+      packageName: "@openclaw/fs-safe",
+    });
+    expect(parseArguments([])).toEqual({
+      artifactsDir: resolve("release-artifacts"),
+      packageName: undefined,
+    });
+    expect(() => parseArguments(["--package"])).toThrow("invalid argument: --package");
+    expect(() => parseArguments(["--unknown", "value"])).toThrow("invalid argument: --unknown");
+    expect(REGISTRY_RETRY_DELAYS_MS.reduce((total, delay) => total + delay, 0)).toBe(530_000);
   });
 });
