@@ -38,7 +38,7 @@ describe("sidecar lock regressions", () => {
         );
 
   it.runIf(process.platform === "win32")("retries an exclusive create denied mid-teardown", async () => {
-    const base = await tempRoot("fs-safe-sidecar-eperm-create-");
+    const base = await fsp.realpath(await tempRoot("fs-safe-sidecar-eperm-create-"));
     const targetPath = path.join(base, "state.json");
     const lockPath = `${targetPath}.lock`;
     configureFsSafeNative({ mode: "off" });
@@ -66,7 +66,7 @@ describe("sidecar lock regressions", () => {
   });
 
   it.runIf(process.platform === "win32")("retries a contended snapshot read denied mid-teardown", async () => {
-    const base = await tempRoot("fs-safe-sidecar-eperm-read-");
+    const base = await fsp.realpath(await tempRoot("fs-safe-sidecar-eperm-read-"));
     const targetPath = path.join(base, "state.json");
     const lockPath = `${targetPath}.lock`;
     configureFsSafeNative({ mode: "off" });
