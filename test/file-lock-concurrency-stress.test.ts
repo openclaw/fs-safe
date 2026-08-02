@@ -4,7 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
-import { acquireFileLock, acquireFileLockSync, withFileLock } from "../src/file-lock.js";
+import {
+  acquireFileLock,
+  acquireFileLockSync,
+  createFileLockManager,
+} from "../src/file-lock.js";
 import { createSidecarLockManager } from "../src/sidecar-lock.js";
 
 const childTarget = process.env.FS_SAFE_STRESS_LOCK_TARGET;
@@ -19,6 +23,14 @@ async function tempRoot(prefix: string): Promise<string> {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
   tempDirs.push(directory);
   return directory;
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }
 
 describe("file-lock concurrency stress", () => {
@@ -78,37 +90,64 @@ describe("file-lock concurrency stress", () => {
   it.runIf(!childTarget)("never overlaps many in-process holders and releases after throws", async () => {
     const root = await tempRoot("fs-safe-lock-in-process-");
     const targetPath = path.join(root, "state.json");
+    const manager = createFileLockManager(`stress-${Date.now()}-${Math.random()}`);
+    const throwingHolderEntered = deferred();
+    const releaseThrowingHolder = deferred();
+    const entries: number[] = [];
+    const exits: number[] = [];
     let active = 0;
     let peak = 0;
 
-    const results = await Promise.allSettled(
-      Array.from({ length: 40 }, async (_, index) => {
-        return await withFileLock(
-          targetPath,
-          {
-            staleMs: 60_000,
-            timeoutMs: 10_000,
-            retry: { minTimeout: 1, maxTimeout: 2 },
-            payload: async () => ({ index, createdAt: new Date().toISOString() }),
-          },
-          async () => {
-            active += 1;
-            peak = Math.max(peak, active);
-            try {
-              await delay(index % 3);
-              if (index % 11 === 0) throw new Error(`holder ${index} failed`);
-              return index;
-            } finally {
-              active -= 1;
+    const runContender = async (index: number, throws = false): Promise<number> =>
+      await manager.withLock(
+        targetPath,
+        {
+          staleMs: 60_000,
+          timeoutMs: 10_000,
+          retry: { minTimeout: 1, maxTimeout: 2 },
+          payload: async () => ({ index, createdAt: new Date().toISOString() }),
+        },
+        async () => {
+          entries.push(index);
+          active += 1;
+          peak = Math.max(peak, active);
+          try {
+            if (throws) {
+              throwingHolderEntered.resolve();
+              await releaseThrowingHolder.promise;
+              throw new Error(`holder ${index} failed`);
             }
-          },
-        );
-      }),
-    );
+            await delay(index % 3);
+            return index;
+          } finally {
+            active -= 1;
+            exits.push(index);
+          }
+        },
+      );
+
+    const throwingHolder = runContender(0, true);
+    await throwingHolderEntered.promise;
+    const otherContenders = Array.from({ length: 39 }, (_, index) => runContender(index + 1));
+    releaseThrowingHolder.resolve();
+    const results = await Promise.allSettled([throwingHolder, ...otherContenders]);
+    const fulfilled = results.filter((result) => result.status === "fulfilled");
+    const timedOut = results.slice(1).filter((result) => result.status === "rejected");
 
     expect(peak).toBe(1);
     expect(active).toBe(0);
-    expect(results.filter((result) => result.status === "rejected")).toHaveLength(4);
+    expect(results).toHaveLength(40);
+    expect(results[0]).toMatchObject({
+      status: "rejected",
+      reason: { message: "holder 0 failed" },
+    });
+    expect(entries).toHaveLength(fulfilled.length + 1);
+    expect(new Set(entries).size).toBe(entries.length);
+    expect(exits).toEqual(entries);
+    for (const result of timedOut) {
+      expect(result.reason).toMatchObject({ code: "file_lock_timeout" });
+    }
+    expect(manager.heldEntries()).toEqual([]);
     await expect(fs.stat(`${targetPath}.lock`)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
