@@ -2,6 +2,8 @@
 
 The types most callers reach for. Shared data shapes are exported from `@openclaw/fs-safe/types`; method-specific option/result types live next to their subpath.
 
+For atomic replacement, `ReplaceFileAtomicFileSystem` and `ReplaceFileAtomicSyncFileSystem` are exported from `@openclaw/fs-safe/atomic`. Their optional `promises.fchmod(handle, mode)` and `fchmodSync(fd, mode)` members let injected filesystems apply exact modes through pinned descriptors. Custom adapters that explicitly request `mode` or `preserveExistingMode` must implement the corresponding member; see [Atomic writes](atomic.md#test-injection).
+
 ```ts
 import type {
   BasePathOptions,

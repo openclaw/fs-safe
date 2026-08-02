@@ -1304,12 +1304,10 @@ describe("atomic file replacement", () => {
         ...fs,
         open: async (...args: Parameters<typeof fs.open>) => {
           const handle = await fs.open(...args);
-          return {
-            sync: async () => {
-              syncCalls += 1;
-            },
-            close: async () => await handle.close(),
-          } as Awaited<ReturnType<typeof fs.open>>;
+          handle.sync = async () => {
+            syncCalls += 1;
+          };
+          return handle;
         },
       },
     };
@@ -1357,10 +1355,8 @@ describe("atomic file replacement", () => {
         open: async (...args: Parameters<typeof fs.open>) => {
           openedDir = String(args[0]);
           const handle = await fs.open(...args);
-          return {
-            sync: async () => undefined,
-            close: async () => await handle.close(),
-          } as Awaited<ReturnType<typeof fs.open>>;
+          handle.sync = async () => undefined;
+          return handle;
         },
       },
     };

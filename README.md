@@ -276,7 +276,7 @@ publication policy, creation callback, and platform contract.
 
 ## Atomic writes
 
-`replaceFileAtomic()` writes a sibling temp file, optionally fsyncs it, and renames it over the destination. Mode preservation, pinned-destination hardlink rejection, rename retry / copy fallback on `EPERM`, bounded original-content restoration after a torn fallback, parent-directory fsync, and a `beforeRename` hook for backup or observer flows are all opt-in. `movePathWithCopyFallback()` stages cross-device moves before commit and removes only the copied source entries, so concurrent source additions or replacements are preserved.
+`replaceFileAtomic()` writes a sibling temp file, applies its exact mode through the still-open descriptor, optionally fsyncs it, and renames it over the destination. It never follows the published destination path to set file permissions. Mode preservation, pinned-destination hardlink rejection, rename retry / copy fallback on `EPERM`, bounded original-content restoration after a torn fallback, parent-directory fsync, and a `beforeRename` hook for backup or observer flows are all opt-in. `movePathWithCopyFallback()` stages cross-device moves before commit and removes only the copied source entries, so concurrent source additions or replacements are preserved.
 
 ```ts
 import { replaceFileAtomic } from "@openclaw/fs-safe/atomic";
@@ -290,7 +290,7 @@ await replaceFileAtomic({
 });
 ```
 
-`replaceFileAtomicSync()` covers the synchronous case with the same options shape. Both accept an injectable `fileSystem` for tests.
+`replaceFileAtomicSync()` covers the synchronous case with the same options shape. Both accept an injectable `fileSystem` for tests; custom adapters using `mode` or `preserveExistingMode` provide the optional descriptor-bound `promises.fchmod` or `fchmodSync` operation.
 
 ## External outputs
 

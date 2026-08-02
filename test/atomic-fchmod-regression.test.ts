@@ -1,0 +1,205 @@
+import fsSync from "node:fs";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { replaceFileAtomic, replaceFileAtomicSync } from "../src/atomic.js";
+
+const tempDirs: string[] = [];
+
+async function tempRoot(prefix: string): Promise<string> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { force: true, recursive: true })));
+});
+
+describe("atomic descriptor modes", () => {
+  it.runIf(process.platform !== "win32")(
+    "does not chmod an async destination swapped for a symlink after rename",
+    async () => {
+      const root = await tempRoot("fs-safe-atomic-chmod-race-");
+      const filePath = path.join(root, "state.txt");
+      const victimPath = path.join(root, "victim.txt");
+      const chmodPaths: string[] = [];
+      let publishedMode: number | undefined;
+      await fs.writeFile(victimPath, "victim", { mode: 0o644 });
+      await fs.chmod(victimPath, 0o644);
+
+      const previousUmask = process.umask(0o077);
+      try {
+        await replaceFileAtomic({
+          filePath,
+          content: "new",
+          mode: 0o600,
+          fileSystem: {
+            promises: {
+              ...fs,
+              fchmod: async (handle, mode) => await handle.chmod(mode),
+              chmod: async (candidate, mode) => {
+                chmodPaths.push(String(candidate));
+                await fs.chmod(candidate, mode);
+              },
+              rename: async (source, destination) => {
+                await fs.rename(source, destination);
+                publishedMode = (await fs.stat(destination)).mode & 0o777;
+                await fs.unlink(destination);
+                await fs.symlink(victimPath, destination);
+              },
+            },
+          },
+        });
+      } finally {
+        process.umask(previousUmask);
+      }
+
+      expect({
+        chmodPaths,
+        publishedMode,
+        victimMode: (await fs.stat(victimPath)).mode & 0o777,
+      }).toEqual({ chmodPaths: [root], publishedMode: 0o600, victimMode: 0o644 });
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "does not chmod a sync destination swapped for a symlink after rename",
+    async () => {
+      const root = await tempRoot("fs-safe-atomic-chmod-race-sync-");
+      const filePath = path.join(root, "state.txt");
+      const victimPath = path.join(root, "victim.txt");
+      const chmodPaths: string[] = [];
+      let publishedMode: number | undefined;
+      await fs.writeFile(victimPath, "victim", { mode: 0o644 });
+      await fs.chmod(victimPath, 0o644);
+      const fileSystem = {
+        ...fsSync,
+        chmodSync: ((candidate: fsSync.PathLike, mode: fsSync.Mode) => {
+          chmodPaths.push(String(candidate));
+          fsSync.chmodSync(candidate, mode);
+        }) as typeof fsSync.chmodSync,
+        renameSync: ((source: fsSync.PathLike, destination: fsSync.PathLike) => {
+          fsSync.renameSync(source, destination);
+          publishedMode = fsSync.statSync(destination).mode & 0o777;
+          fsSync.unlinkSync(destination);
+          fsSync.symlinkSync(victimPath, destination);
+        }) as typeof fsSync.renameSync,
+      };
+
+      const previousUmask = process.umask(0o077);
+      try {
+        replaceFileAtomicSync({ filePath, content: "new", mode: 0o600, fileSystem });
+      } finally {
+        process.umask(previousUmask);
+      }
+
+      expect({
+        chmodPaths,
+        publishedMode,
+        victimMode: fsSync.statSync(victimPath).mode & 0o777,
+      }).toEqual({ chmodPaths: [root], publishedMode: 0o600, victimMode: 0o644 });
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "applies exact async and sync modes through temp descriptors despite umask",
+    async () => {
+      const root = await tempRoot("fs-safe-atomic-fchmod-mode-");
+      const asyncPath = path.join(root, "async.txt");
+      const syncPath = path.join(root, "sync.txt");
+
+      const previousUmask = process.umask(0o077);
+      try {
+        await replaceFileAtomic({ filePath: asyncPath, content: "async", mode: 0o666 });
+        replaceFileAtomicSync({ filePath: syncPath, content: "sync", mode: 0o666 });
+      } finally {
+        process.umask(previousUmask);
+      }
+
+      expect((await fs.stat(asyncPath)).mode & 0o777).toBe(0o666);
+      expect(fsSync.statSync(syncPath).mode & 0o777).toBe(0o666);
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "preserves exact descriptor modes through async and sync copy fallback",
+    async () => {
+      const root = await tempRoot("fs-safe-atomic-fchmod-fallback-");
+      const asyncPath = path.join(root, "async.txt");
+      const syncPath = path.join(root, "sync.txt");
+      const renameDenied = () => Object.assign(new Error("rename denied"), { code: "EPERM" });
+
+      const previousUmask = process.umask(0o077);
+      try {
+        await replaceFileAtomic({
+          filePath: asyncPath,
+          content: "async",
+          mode: 0o666,
+          copyFallbackOnPermissionError: true,
+          fileSystem: {
+            promises: {
+              ...fs,
+              fchmod: async (handle, mode) => await handle.chmod(mode),
+              rename: async () => { throw renameDenied(); },
+            },
+          },
+        });
+        replaceFileAtomicSync({
+          filePath: syncPath,
+          content: "sync",
+          mode: 0o666,
+          copyFallbackOnPermissionError: true,
+          fileSystem: {
+            ...fsSync,
+            renameSync: () => { throw renameDenied(); },
+          },
+        });
+      } finally {
+        process.umask(previousUmask);
+      }
+
+      expect((await fs.stat(asyncPath)).mode & 0o777).toBe(0o666);
+      expect(fsSync.statSync(syncPath).mode & 0o777).toBe(0o666);
+    },
+  );
+
+  it("fails closed before mutation when an injected filesystem cannot set an explicit mode", async () => {
+    const root = await tempRoot("fs-safe-atomic-fchmod-missing-");
+    const asyncPath = path.join(root, "async.txt");
+    const syncPath = path.join(root, "sync.txt");
+    const asyncDefaultPath = path.join(root, "async-default.txt");
+    const syncDefaultPath = path.join(root, "sync-default.txt");
+    const { fchmodSync: _fchmodSync, ...syncWithoutFchmod } = fsSync;
+
+    await expect(replaceFileAtomic({
+      filePath: asyncPath,
+      content: "async",
+      mode: 0o600,
+      fileSystem: { promises: { ...fs } },
+    })).rejects.toThrow("fileSystem.promises.fchmod is required");
+    expect(() => replaceFileAtomicSync({
+      filePath: syncPath,
+      content: "sync",
+      mode: 0o600,
+      fileSystem: syncWithoutFchmod,
+    })).toThrow("fileSystem.fchmodSync is required");
+
+    await expect(fs.access(asyncPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.access(syncPath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    await replaceFileAtomic({
+      filePath: asyncDefaultPath,
+      content: "async default",
+      fileSystem: { promises: { ...fs } },
+    });
+    replaceFileAtomicSync({
+      filePath: syncDefaultPath,
+      content: "sync default",
+      fileSystem: syncWithoutFchmod,
+    });
+    await expect(fs.readFile(asyncDefaultPath, "utf8")).resolves.toBe("async default");
+    expect(fsSync.readFileSync(syncDefaultPath, "utf8")).toBe("sync default");
+  });
+});

@@ -30,13 +30,20 @@ afterEach(async () => {
 
 function mockOpenForSyncCounting(): { readonly syncCalls: number; restore: () => void } {
   let syncCalls = 0;
-  const openSpy = vi.spyOn(fs, "open").mockImplementation(async () => {
-    return {
-      sync: async () => {
-        syncCalls += 1;
+  const realOpen = fs.open.bind(fs);
+  const openSpy = vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+    const handle = await realOpen(...args);
+    return new Proxy(handle, {
+      get(target, property) {
+        if (property === "sync") {
+          return async () => {
+            syncCalls += 1;
+          };
+        }
+        const value = Reflect.get(target, property);
+        return typeof value === "function" ? value.bind(target) : value;
       },
-      close: async () => undefined,
-    } as Awaited<ReturnType<typeof fs.open>>;
+    });
   });
   return {
     get syncCalls() {
