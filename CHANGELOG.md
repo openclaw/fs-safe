@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Security and Correctness
+
+- Retry a contended file-lock acquisition when Windows denies access to a lock file whose directory entry is still being torn down. Both the exclusive create and the holder's snapshot read reported that transient `EPERM` as a hard failure, so concurrent `acquireFileLock()` calls failed intermittently on Windows even though the very next attempt would have succeeded. Retries stay bounded, so a genuine permission denial still surfaces as `EPERM` rather than a lock timeout.
+
 ### Features
 
 - Suffix Windows reserved basenames with `_` in `sanitizeUntrustedFileName()` while preserving case and extensions on every platform, including dollar names and superscript COM/LPT variants; thanks @SebTardif (#67).

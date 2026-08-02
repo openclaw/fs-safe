@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fileStore } from "../src/file-store.js";
 import { acquireFileLock } from "../src/file-lock.js";
 import { configureFsSafeLocks, getFsSafeLockConfig } from "../src/lock-config.js";
+import { configureFsSafeNative } from "../src/native-config.js";
 import { createSidecarLockManager } from "../src/sidecar-lock.js";
 
 const tempDirs: string[] = [];
@@ -17,6 +18,7 @@ async function tempRoot(prefix: string): Promise<string> {
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  configureFsSafeNative({ mode: "auto" });
   configureFsSafeLocks({
     retry: undefined,
     staleMs: undefined,
@@ -27,6 +29,73 @@ afterEach(async () => {
 });
 
 describe("sidecar lock regressions", () => {
+  // Windows denies access to a lock file while a just-unlinked directory entry is
+  // still being torn down. Both touch points below observed it in CI as EPERM.
+  const denial = (lockPath: string) =>
+    Object.assign(
+          new Error(`EPERM: operation not permitted, open '${lockPath}'`),
+          { code: "EPERM", errno: -4048, syscall: "open", path: lockPath },
+        );
+
+  it.runIf(process.platform === "win32")("retries an exclusive create denied mid-teardown", async () => {
+    const base = await tempRoot("fs-safe-sidecar-eperm-create-");
+    const targetPath = path.join(base, "state.json");
+    const lockPath = `${targetPath}.lock`;
+    configureFsSafeNative({ mode: "off" });
+    const realOpen = fsp.open.bind(fsp) as typeof fsp.open;
+    let injected = 0;
+    vi.spyOn(fsp, "open").mockImplementation((async (...args: Parameters<typeof fsp.open>) => {
+      if (args[0] === lockPath && args[1] === "wx" && injected === 0) {
+        injected += 1;
+        throw denial(lockPath);
+      }
+      return await realOpen(...args);
+    }) as typeof fsp.open);
+
+    const lock = await acquireFileLock(targetPath, {
+      managerKey: `eperm-create-${Date.now()}-${Math.random()}`,
+      staleMs: 60_000,
+      timeoutMs: 1_000,
+      retry: { minTimeout: 1, maxTimeout: 2 },
+      payload: async () => ({ pid: process.pid }),
+    });
+    await lock.release();
+
+    expect(injected).toBe(1);
+    await expect(fsp.stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.runIf(process.platform === "win32")("retries a contended snapshot read denied mid-teardown", async () => {
+    const base = await tempRoot("fs-safe-sidecar-eperm-read-");
+    const targetPath = path.join(base, "state.json");
+    const lockPath = `${targetPath}.lock`;
+    configureFsSafeNative({ mode: "off" });
+    await fsp.writeFile(lockPath, JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }));
+    const realReadFile = fsp.readFile.bind(fsp) as typeof fsp.readFile;
+    let injected = 0;
+    vi.spyOn(fsp, "readFile").mockImplementation((async (...args: Parameters<typeof fsp.readFile>) => {
+      if (args[0] === lockPath && injected === 0) {
+        injected += 1;
+        // The holder's unlink lands while the reader is being denied.
+        await fsp.rm(lockPath, { force: true });
+        throw denial(lockPath);
+      }
+      return await realReadFile(...args);
+    }) as typeof fsp.readFile);
+
+    const lock = await acquireFileLock(targetPath, {
+      managerKey: `eperm-read-${Date.now()}-${Math.random()}`,
+      staleMs: 60_000,
+      timeoutMs: 1_000,
+      retry: { minTimeout: 1, maxTimeout: 2 },
+      payload: async () => ({ pid: process.pid }),
+    });
+    await lock.release();
+
+    expect(injected).toBe(1);
+    await expect(fsp.stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("does not delete a fresh sidecar lock during stale reclaim or old release", async () => {
     const base = await tempRoot("fs-safe-sidecar-token-");
     const targetPath = path.join(base, "state.json");

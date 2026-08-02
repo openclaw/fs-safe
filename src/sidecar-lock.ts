@@ -30,6 +30,8 @@ import type {
 import {
   computeSidecarLockDelayMs,
   defaultSidecarLockShouldReclaim,
+  isTransientLockFileDenial,
+  maxTransientLockDenials,
 } from "./sidecar-lock-policy.js";
 export type { SidecarLockStaleSnapshot } from "./sidecar-lock-reclaim.js";
 export type {
@@ -261,6 +263,10 @@ export function createSidecarLockManager(key: string) {
     const reclaimGuardPath = `${lockPath}.reclaim`;
     let ownsReclaimGuard = false;
     let attempt = 0;
+    // Bounded so a genuine denial still surfaces as EPERM, not a lock timeout.
+    let transientDenials = 0;
+    const isRetryableDenial = (error: unknown): boolean =>
+      isTransientLockFileDenial(error) && ++transientDenials <= maxTransientLockDenials;
     const waitForRetry = async (): Promise<void> => {
       const elapsed = Date.now() - startedAt;
       if (
@@ -370,6 +376,10 @@ export function createSidecarLockManager(key: string) {
               parsePayload: options.parsePayload,
             });
           }
+          if (isRetryableDenial(err)) {
+            await waitForRetry();
+            continue;
+          }
           if ((err as { code?: unknown }).code !== "EEXIST") {
             throw err;
           }
@@ -379,10 +389,17 @@ export function createSidecarLockManager(key: string) {
             continue;
           }
           const nowMs = Date.now();
-          const snapshot = await readSidecarLockSnapshot(lockPath, {
-            lockRoot: options.lockRoot,
-            parsePayload: options.parsePayload,
-          });
+          let snapshot: SidecarLockSnapshot | null;
+          try {
+            snapshot = await readSidecarLockSnapshot(lockPath, {
+              lockRoot: options.lockRoot,
+              parsePayload: options.parsePayload,
+            });
+          } catch (readErr) {
+            if (!isRetryableDenial(readErr)) throw readErr;
+            await waitForRetry();
+            continue;
+          }
           if (!snapshot) {
             continue;
           }
