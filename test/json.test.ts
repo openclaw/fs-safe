@@ -293,49 +293,24 @@ describe("json file helpers", () => {
     const root = await tempRoot("fs-safe-json-retry-real-");
     const filePath = path.join(root, "paired.json");
     await writeTextAtomic(filePath, "{\"v\":0}");
-
-    const stop = { value: false };
-    let writes = 0;
-    const writer = (async () => {
-      while (!stop.value) {
-        writes += 1;
-        await writeTextAtomic(filePath, `{"v":${writes}}`);
-        // Leave a real stable window between atomic replacements so a bounded
-        // retry can recover instead of racing an intentionally nonstop writer.
-        await new Promise((resolve) => setTimeout(resolve, 1));
+    const originalOpen = fs.open.bind(fs);
+    let rewriteInjected = false;
+    const openSpy = vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+      if (!rewriteInjected && args[0] === filePath) {
+        rewriteInjected = true;
+        // Replace the path after readRegularFile's pre-open lstat. The first
+        // open observes a different inode, and readJson must recover on retry.
+        await writeTextAtomic(filePath, "{\"v\":1}");
       }
-    })();
-
-    let okReads = 0;
+      return await originalOpen(...args);
+    });
     try {
-      const deadline = Date.now() + 1000;
-      while (Date.now() < deadline) {
-        try {
-          const value = await readJson<{ v: number }>(filePath);
-          expect(typeof value.v).toBe("number");
-          okReads += 1;
-        } catch (err) {
-          if (
-            err instanceof JsonFileReadError &&
-            err.reason === "read" &&
-            err.cause instanceof Error &&
-            err.cause.message.includes("File changed during read")
-          ) {
-            // A real writer can still win every bounded retry; recovery is
-            // demonstrated by the repeated successful reads below.
-          } else {
-            throw err;
-          }
-        }
-      }
+      await expect(readJson<{ v: number }>(filePath)).resolves.toEqual({ v: 1 });
+      expect(rewriteInjected).toBe(true);
     } finally {
-      stop.value = true;
-      await writer;
+      openSpy.mockRestore();
     }
-
-    expect(writes).toBeGreaterThan(10);
-    expect(okReads).toBeGreaterThanOrEqual(10);
-  }, 5000);
+  });
 
   it("surfaces JsonFileReadError when read races exceed retry budget", async () => {
     const root = await tempRoot("fs-safe-json-retry-exhaust-");
