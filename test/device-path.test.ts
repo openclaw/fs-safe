@@ -85,12 +85,14 @@ describe("unsafe device read paths", () => {
     }
   });
 
-  posixIt("blocks root reads after resolving relative paths", async () => {
+  posixIt("gives explicit device namespaces precedence over intermediate symlinks", async () => {
     const openSpy = vi.spyOn(fs, "open").mockImplementation(async () => {
       throw new Error("open should not be called for unsafe device paths");
     });
     try {
       const scoped = await root("/");
+      // /dev/fd is normally a symlink on Linux. The explicit unsafe namespace
+      // remains a device-path error instead of depending on that host layout.
       await expect(scoped.read("dev/fd/0")).rejects.toMatchObject({
         code: "device-path",
       });

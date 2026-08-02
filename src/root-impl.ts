@@ -648,6 +648,7 @@ async function openFileInRoot(
 ): Promise<OpenResult> {
   const { rootWithSep, resolved } = await resolvePathInRoot(root, params.relativePath, {
     allowFinalSymlink: true,
+    rejectUnsafeDeviceReads: true,
     rejectSymlinks: params.symlinks !== "follow-within-root",
   });
 

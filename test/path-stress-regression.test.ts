@@ -144,12 +144,15 @@ describe("path stress regressions", () => {
     expect(fsSync.readFileSync(path.join(rootDir, "value.txt"), "utf8")).toBe("kept");
   });
 
-  it("classifies an overlong root path as invalid input rather than an escape", async () => {
-    const rootDir = await tempRoot("fs-safe-overlong-path-");
-    const scoped = await openRoot(rootDir);
+  it.runIf(process.platform !== "win32")(
+    "classifies an OS-rejected overlong root path as invalid input rather than an escape",
+    async () => {
+      const rootDir = await tempRoot("fs-safe-overlong-path-");
+      const scoped = await openRoot(rootDir);
 
-    await expect(scoped.readText("x".repeat(10_000))).rejects.toMatchObject({
-      code: "invalid-path",
-    });
-  });
+      await expect(scoped.readText("x".repeat(10_000))).rejects.toMatchObject({
+        code: "invalid-path",
+      });
+    },
+  );
 });

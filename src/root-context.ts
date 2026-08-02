@@ -5,6 +5,7 @@ import { FsSafeError } from "./errors.js";
 import { expandHomePrefix } from "./home-dir.js";
 import {
   assertNoNulPathInput,
+  assertNoUnsafeDeviceReadPath,
   hasNodeErrorCode,
   isNotFoundPathError,
   isPathInside,
@@ -83,6 +84,7 @@ export async function resolvePathInRoot(
   options?: {
     aliasErrorCode?: "outside-workspace" | "path-alias";
     allowFinalSymlink?: boolean;
+    rejectUnsafeDeviceReads?: boolean;
     rejectSymlinks?: boolean;
   },
 ): Promise<{ rootReal: string; rootWithSep: string; resolved: string }> {
@@ -91,6 +93,9 @@ export async function resolvePathInRoot(
   const resolved = path.resolve(root.rootWithSep, expanded);
   if (!isPathInside(root.rootWithSep, resolved)) {
     throw new FsSafeError("outside-workspace", "file is outside workspace root");
+  }
+  if (options?.rejectUnsafeDeviceReads === true) {
+    assertNoUnsafeDeviceReadPath(resolved);
   }
   const rawAbsolutePath = path.isAbsolute(expanded)
     ? expanded
