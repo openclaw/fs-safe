@@ -1,0 +1,669 @@
+{
+  "packageSubpaths": {
+    ".": {
+      "runtime": [
+        "DEFAULT_ROOT_MAX_BYTES",
+        "FsSafeError",
+        "categorizeFsSafeError",
+        "configureFsSafeLocks",
+        "configureFsSafeNative",
+        "configureFsSafePython",
+        "getFsSafeLockConfig",
+        "getFsSafeNativeConfig",
+        "root",
+        "writeExternalFileWithinRoot"
+      ],
+      "types": [
+        "ContainmentGuarantee",
+        "DenyMutationPolicy",
+        "ExternalFileWriteOptions",
+        "ExternalFileWriteResult",
+        "FsSafeError",
+        "FsSafeErrorCategory",
+        "FsSafeErrorCode",
+        "FsSafeErrorDetails",
+        "FsSafeLockConfig",
+        "FsSafeNativeConfig",
+        "FsSafeNativeMode",
+        "FsSafePythonConfig",
+        "HardlinkPolicy",
+        "OpenResult",
+        "ReadResult",
+        "RenameIdentityPolicy",
+        "Root",
+        "RootAppendOptions",
+        "RootCopyOptions",
+        "RootCreateJsonOptions",
+        "RootCreateOptions",
+        "RootDefaults",
+        "RootMkdirOptions",
+        "RootMoveOptions",
+        "RootOpenOptions",
+        "RootOpenWritableOptions",
+        "RootOptions",
+        "RootReadOptions",
+        "RootRemoveOptions",
+        "RootWalkDataEntry",
+        "RootWalkDataEntryKind",
+        "RootWalkDirectoryErrorBehavior",
+        "RootWalkEntry",
+        "RootWalkEntryFilter",
+        "RootWalkEntryFilterResult",
+        "RootWalkEntryKind",
+        "RootWalkLimitBehavior",
+        "RootWalkOptions",
+        "RootWalkSymlinkPolicy",
+        "RootWriteJsonOptions",
+        "RootWriteOptions",
+        "SymlinkPolicy",
+        "WritableOpenMode",
+        "WritableOpenResult"
+      ],
+      "errorCodes": {
+        "FsSafeErrorCode": [
+          "already-exists",
+          "denied-path",
+          "device-path",
+          "hardlink",
+          "helper-failed",
+          "helper-unavailable",
+          "insecure-permissions",
+          "invalid-path",
+          "not-empty",
+          "not-file",
+          "not-found",
+          "not-owned",
+          "not-removable",
+          "outside-workspace",
+          "path-alias",
+          "path-mismatch",
+          "permission-unverified",
+          "secret-exists",
+          "store-reentrant-update",
+          "symlink",
+          "timeout",
+          "too-large",
+          "unsupported-platform"
+        ]
+      }
+    },
+    "./root": {
+      "runtime": [
+        "DEFAULT_ROOT_MAX_BYTES",
+        "openLocalFileSafely",
+        "readLocalFileSafely",
+        "resolveOpenedFileRealPathForHandle",
+        "root"
+      ],
+      "types": [
+        "ContainmentGuarantee",
+        "DenyMutationPolicy",
+        "HardlinkPolicy",
+        "OpenResult",
+        "ReadResult",
+        "RenameIdentityPolicy",
+        "Root",
+        "RootAppendOptions",
+        "RootCopyOptions",
+        "RootCreateJsonOptions",
+        "RootCreateOptions",
+        "RootDefaults",
+        "RootMkdirOptions",
+        "RootMoveOptions",
+        "RootOpenOptions",
+        "RootOpenWritableOptions",
+        "RootOptions",
+        "RootReadOptions",
+        "RootRemoveOptions",
+        "RootWalkDataEntry",
+        "RootWalkDataEntryKind",
+        "RootWalkDirectoryErrorBehavior",
+        "RootWalkEntry",
+        "RootWalkEntryFilter",
+        "RootWalkEntryFilterResult",
+        "RootWalkEntryKind",
+        "RootWalkLimitBehavior",
+        "RootWalkOptions",
+        "RootWalkSymlinkPolicy",
+        "RootWriteJsonOptions",
+        "RootWriteOptions",
+        "SymlinkPolicy",
+        "WritableOpenMode",
+        "WritableOpenResult"
+      ],
+      "errorCodes": {}
+    },
+    "./config": {
+      "runtime": [
+        "configureFsSafeLocks",
+        "configureFsSafeNative",
+        "configureFsSafePython",
+        "getFsSafeLockConfig",
+        "getFsSafeNativeConfig"
+      ],
+      "types": [
+        "FsSafeLockConfig",
+        "FsSafeNativeConfig",
+        "FsSafeNativeMode",
+        "FsSafePythonConfig"
+      ],
+      "errorCodes": {}
+    },
+    "./path": {
+      "runtime": [
+        "assertNoNulPathInput",
+        "assertNoUnsafeDeviceReadPath",
+        "hasNodeErrorCode",
+        "isNodeError",
+        "isNotFoundPathError",
+        "isPathInside",
+        "isPathInsideWithRealpath",
+        "isPathRelativeEscape",
+        "isSymlinkOpenError",
+        "isUnsafeDeviceReadPath",
+        "isWithinDir",
+        "matchUnsafeDeviceReadPath",
+        "normalizeWindowsPathForComparison",
+        "resolveSafeBaseDir",
+        "resolveSafeRelativePath",
+        "safeRealpathSync",
+        "safeStatSync",
+        "splitSafeRelativePath"
+      ],
+      "types": [
+        "UnsafeDeviceReadPathMatch",
+        "UnsafeDeviceReadPathOptions",
+        "UnsafeDeviceReadPathReason"
+      ],
+      "errorCodes": {}
+    },
+    "./output": {
+      "runtime": [
+        "writeExternalFileWithinRoot"
+      ],
+      "types": [
+        "ExternalFileWriteOptions",
+        "ExternalFileWriteResult"
+      ],
+      "errorCodes": {}
+    },
+    "./advanced": {
+      "runtime": [
+        "PATH_ALIAS_POLICIES",
+        "ROOT_PATH_ALIAS_POLICIES",
+        "appendRegularFile",
+        "appendRegularFileSync",
+        "assertAbsolutePathInput",
+        "assertCanonicalPathWithinBase",
+        "assertNoHardlinkedFinalPath",
+        "assertNoPathAliasEscape",
+        "assertNoSymlinkParents",
+        "assertNoSymlinkParentsSync",
+        "assertNoUnsafeDeviceReadPath",
+        "assertNoWindowsNetworkPath",
+        "basenameFromMediaSource",
+        "buildRandomTempFilePath",
+        "canUseRootFileOpen",
+        "canonicalPathFromExistingAncestor",
+        "configureFsSafeLocks",
+        "createAsyncLock",
+        "createIcaclsResetCommand",
+        "ensureAbsoluteDirectory",
+        "ensureDirectoryWithinRoot",
+        "findExistingAncestor",
+        "formatIcaclsResetCommand",
+        "formatPosixMode",
+        "formatWindowsAclSummary",
+        "getFsSafeLockConfig",
+        "hasEncodedFileUrlSeparator",
+        "inspectWindowsAcl",
+        "isUnsafeDeviceReadPath",
+        "isWindowsDriveLetterPath",
+        "isWindowsNetworkPath",
+        "matchRootFileOpenFailure",
+        "matchUnsafeDeviceReadPath",
+        "movePathToTrash",
+        "openRootFile",
+        "openRootFileSync",
+        "parseIcaclsOutput",
+        "pathExists",
+        "pathExistsSync",
+        "pathScope",
+        "readFileDescriptorBounded",
+        "readFileDescriptorBoundedSync",
+        "readFileHandleBounded",
+        "readLocalFileFromRoots",
+        "readRegularFile",
+        "readRegularFileSync",
+        "resolveAbsolutePathForRead",
+        "resolveAbsolutePathForWrite",
+        "resolveExistingPathsWithinRoot",
+        "resolveHomeRelativePath",
+        "resolveLocalPathFromRootsSync",
+        "resolvePathViaExistingAncestorSync",
+        "resolvePathWithinRoot",
+        "resolvePathsWithinRoot",
+        "resolveRegularFileAppendFlags",
+        "resolveRootPath",
+        "resolveRootPathSync",
+        "resolveSafeInstallDir",
+        "resolveStrictExistingPathsWithinRoot",
+        "resolveWindowsUserPrincipal",
+        "resolveWritablePathWithinRoot",
+        "safeDirName",
+        "safeFileURLToPath",
+        "safePathSegmentHashed",
+        "sameFileIdentity",
+        "sanitizeTempFileName",
+        "sanitizeUntrustedFileName",
+        "statRegularFile",
+        "statRegularFileSync",
+        "summarizeWindowsAcl",
+        "tempFile",
+        "trySafeFileURLToPath",
+        "withTempFile",
+        "withTimeout",
+        "writeSiblingTempFile",
+        "writeViaSiblingTempPath"
+      ],
+      "types": [
+        "AbsolutePathSymlinkPolicy",
+        "AppendRegularFileOptions",
+        "AssertNoSymlinkParentsOptions",
+        "EnsureAbsoluteDirectoryOptions",
+        "EnsureAbsoluteDirectoryResult",
+        "FileIdentityStat",
+        "FsSafeLockConfig",
+        "IcaclsResetCommandOptions",
+        "LocalRootsInputOptions",
+        "LocalRootsPathResult",
+        "LocalRootsReadResult",
+        "MovePathToTrashOptions",
+        "OpenRootFileParams",
+        "OpenRootFileSyncParams",
+        "PathAliasPolicy",
+        "PathScope",
+        "PathScopeOptions",
+        "PathScopeResolveOptions",
+        "PermissionExec",
+        "ReadLocalFileFromRootsOptions",
+        "RegularFileStatResult",
+        "ResolveLocalPathFromRootsSyncOptions",
+        "ResolvedAbsolutePath",
+        "ResolvedRootPath",
+        "ResolvedWritableAbsolutePath",
+        "RootFileOpenFailure",
+        "RootFileOpenFailureReason",
+        "RootFileOpenResult",
+        "RootPathAliasPolicy",
+        "TempFile",
+        "UnsafeDeviceReadPathMatch",
+        "UnsafeDeviceReadPathOptions",
+        "UnsafeDeviceReadPathReason",
+        "WindowsAclEntry",
+        "WindowsAclSummary",
+        "WriteSiblingTempFileOptions",
+        "WriteSiblingTempFileResult"
+      ],
+      "errorCodes": {}
+    },
+    "./json": {
+      "runtime": [
+        "JsonFileReadError",
+        "readJson",
+        "readJsonIfExists",
+        "readJsonSync",
+        "readRootJsonObjectSync",
+        "readRootJsonSync",
+        "readRootStructuredFileSync",
+        "tryReadJson",
+        "tryReadJsonSync",
+        "writeJson",
+        "writeJsonSync"
+      ],
+      "types": [
+        "JsonFileReadError",
+        "ReadJsonOptions",
+        "ReadRootJsonSyncOptions",
+        "ReadRootStructuredFileSyncOptions",
+        "RootStructuredFileReadResult",
+        "WriteJsonOptions"
+      ],
+      "errorCodes": {}
+    },
+    "./store": {
+      "runtime": [
+        "ackJsonDurableQueueEntry",
+        "ensureJsonDurableQueueDirs",
+        "fileStore",
+        "fileStoreSync",
+        "jsonDurableQueueEntryExists",
+        "jsonStore",
+        "loadJsonDurableQueueEntry",
+        "loadPendingJsonDurableQueueEntries",
+        "moveJsonDurableQueueEntryToFailed",
+        "readJsonDurableQueueEntry",
+        "resolveJsonDurableQueueEntryPaths",
+        "unlinkBestEffort",
+        "writeJsonDurableQueueEntry"
+      ],
+      "types": [
+        "FileStore",
+        "FileStoreOptions",
+        "FileStorePruneOptions",
+        "FileStoreReadOptions",
+        "FileStoreSync",
+        "FileStoreWriteOptions",
+        "JsonDurableQueueEntryPaths",
+        "JsonDurableQueueLoadOptions",
+        "JsonDurableQueueReadResult",
+        "JsonFileStoreOptions",
+        "JsonStore",
+        "JsonStoreLockOptions",
+        "JsonStoreOptions"
+      ],
+      "errorCodes": {}
+    },
+    "./secret": {
+      "runtime": [
+        "DEFAULT_SECRET_FILE_MAX_BYTES",
+        "PRIVATE_SECRET_DIR_MODE",
+        "PRIVATE_SECRET_FILE_MODE",
+        "createSecretFileAtomic",
+        "readSecretFile",
+        "readSecretFileSync",
+        "tryReadSecretFile",
+        "tryReadSecretFileSync",
+        "writeSecretFileAtomic"
+      ],
+      "types": [
+        "SecretFileReadOptions"
+      ],
+      "errorCodes": {}
+    },
+    "./permissions": {
+      "runtime": [
+        "createPrivateDirectory",
+        "formatOctal",
+        "formatPermissionDetail",
+        "formatPermissionRemediation",
+        "inspectPathPermissions",
+        "isGroupReadable",
+        "isGroupWritable",
+        "isWorldReadable",
+        "isWorldWritable",
+        "modeBits",
+        "readOwnerAndDacl",
+        "safeStat"
+      ],
+      "types": [
+        "CreatePrivateDirectoryOptions",
+        "OwnerAndDaclResult",
+        "PermissionCheck",
+        "PermissionCheckOptions",
+        "SafeStatResult",
+        "WindowsAccessControlEntry",
+        "WindowsAceFlags"
+      ],
+      "errorCodes": {}
+    },
+    "./secure-file": {
+      "runtime": [
+        "readSecureFile"
+      ],
+      "types": [
+        "SecureFileInjectOptions",
+        "SecureFileIoOptions",
+        "SecureFilePermissionOptions",
+        "SecureFileReadOptions",
+        "SecureFileReadResult",
+        "SecureFileTrustOptions"
+      ],
+      "errorCodes": {}
+    },
+    "./file-lock": {
+      "runtime": [
+        "acquireFileLock",
+        "acquireFileLockSync",
+        "createFileLockManager",
+        "drainFileLockManagerForTest",
+        "resetFileLockManagerForTest",
+        "withFileLock",
+        "withFileLockSync"
+      ],
+      "types": [
+        "FileLockAcquireOptions",
+        "FileLockHandle",
+        "FileLockHeldEntry",
+        "FileLockManager",
+        "FileLockRetryOptions",
+        "FileLockStaleRecovery",
+        "FileLockSyncAcquireOptions",
+        "FileLockSyncHandle",
+        "SidecarLockCompromisedInfo"
+      ],
+      "errorCodes": {}
+    },
+    "./walk": {
+      "runtime": [
+        "walkDirectory",
+        "walkDirectorySync"
+      ],
+      "types": [
+        "WalkDirectoryEntry",
+        "WalkDirectoryFailure",
+        "WalkDirectoryOptions",
+        "WalkDirectoryResult",
+        "WalkEntryKind",
+        "WalkSymlinkPolicy"
+      ],
+      "errorCodes": {}
+    },
+    "./temp": {
+      "runtime": [
+        "resolveSecureTempRoot",
+        "tempWorkspace",
+        "tempWorkspaceSync",
+        "withTempWorkspace",
+        "withTempWorkspaceSync"
+      ],
+      "types": [
+        "ResolveSecureTempRootOptions",
+        "TempPathIdentityReceipt",
+        "TempWorkspace",
+        "TempWorkspaceCleanupResult",
+        "TempWorkspaceOptions",
+        "TempWorkspaceSync"
+      ],
+      "errorCodes": {}
+    },
+    "./atomic": {
+      "runtime": [
+        "movePathWithCopyFallback",
+        "replaceDirectoryAtomic",
+        "replaceFileAtomic",
+        "replaceFileAtomicSync",
+        "writeTextAtomic"
+      ],
+      "types": [
+        "MovePathWithCopyFallbackOptions",
+        "ReplaceDirectoryAtomicOptions",
+        "ReplaceFileAtomicFileSystem",
+        "ReplaceFileAtomicOptions",
+        "ReplaceFileAtomicRestoreCleanup",
+        "ReplaceFileAtomicRestoreFailureDetails",
+        "ReplaceFileAtomicResult",
+        "ReplaceFileAtomicSyncFileSystem",
+        "ReplaceFileAtomicSyncOptions",
+        "ReplaceFileCopyFallbackRestorePolicy",
+        "ReplaceFileDestinationHardlinkPolicy",
+        "WriteTextAtomicOptions"
+      ],
+      "errorCodes": {}
+    },
+    "./durability": {
+      "runtime": [
+        "ensureDurableDirectory",
+        "isHardlinkFallbackError",
+        "pinDirectory",
+        "publishFileExclusive",
+        "sha256File",
+        "syncDirectory",
+        "syncDirectoryBestEffort",
+        "syncDirectoryBestEffortSync",
+        "syncDirectorySync"
+      ],
+      "types": [
+        "DirectoryReceipt",
+        "DirectorySyncOutcome",
+        "DurableDirectoryReceipt",
+        "EnsureDurableDirectoryOptions",
+        "PinnedDirectory",
+        "PublishFileExclusiveCleanup",
+        "PublishFileExclusiveDirectorySyncFailure",
+        "PublishFileExclusiveFailureDetails",
+        "PublishFileExclusiveFailurePhase",
+        "PublishFileExclusiveResult",
+        "PublishFileExclusiveStrategy",
+        "PublishFileExclusiveSyncFailurePolicy",
+        "Sha256FileInput",
+        "Sha256FileResult"
+      ],
+      "errorCodes": {}
+    },
+    "./archive": {
+      "runtime": [
+        "ARCHIVE_LIMIT_ERROR_CODE",
+        "ArchiveFormatError",
+        "ArchiveLimitError",
+        "ArchiveSecurityError",
+        "DEFAULT_MAX_ARCHIVE_BYTES_ZIP",
+        "DEFAULT_MAX_ENTRIES",
+        "DEFAULT_MAX_ENTRY_BYTES",
+        "DEFAULT_MAX_ENTRY_PATH_COMPONENTS",
+        "DEFAULT_MAX_EXTRACTED_BYTES",
+        "DEFAULT_MAX_META_ENTRY_BYTES",
+        "createArchiveSymlinkTraversalError",
+        "createTarEntryPreflightChecker",
+        "extractArchive",
+        "isWindowsDrivePath",
+        "loadZipArchiveWithPreflight",
+        "mergeExtractedTreeIntoDestination",
+        "normalizeArchiveEntryPath",
+        "prepareArchiveDestinationDir",
+        "prepareArchiveOutputPath",
+        "readArchiveEntry",
+        "readZipCentralDirectoryEntryCount",
+        "resolveArchiveKind",
+        "resolveArchiveOutputPath",
+        "resolvePackedRootDir",
+        "stripArchivePath",
+        "validateArchiveEntryPath",
+        "withStagedArchiveDestination"
+      ],
+      "types": [
+        "ArchiveEntryFilter",
+        "ArchiveEntryKind",
+        "ArchiveEntryModePolicy",
+        "ArchiveExtractLimits",
+        "ArchiveFilteredEntryPolicy",
+        "ArchiveFormatError",
+        "ArchiveFormatErrorCode",
+        "ArchiveKind",
+        "ArchiveLimitError",
+        "ArchiveLimitErrorCode",
+        "ArchiveLogger",
+        "ArchiveSecurityError",
+        "ArchiveSecurityErrorCode",
+        "ExtractArchiveOptions",
+        "TarEntryInfo",
+        "ZipArchiveWithFiles"
+      ],
+      "errorCodes": {
+        "ArchiveFormatErrorCode": [
+          "archive-header-invalid"
+        ],
+        "ArchiveLimitErrorCode": [
+          "archive-entry-count-exceeds-limit",
+          "archive-entry-extracted-size-exceeds-limit",
+          "archive-entry-path-components-exceeds-limit",
+          "archive-extracted-size-exceeds-limit",
+          "archive-manifest-size-exceeds-limit",
+          "archive-meta-entry-size-exceeds-limit",
+          "archive-size-exceeds-limit"
+        ],
+        "ArchiveSecurityErrorCode": [
+          "destination-not-directory",
+          "destination-symlink",
+          "destination-symlink-traversal",
+          "entry-filtered",
+          "entry-link",
+          "entry-path"
+        ]
+      }
+    },
+    "./errors": {
+      "runtime": [
+        "FsSafeError",
+        "categorizeFsSafeError"
+      ],
+      "types": [
+        "FsSafeError",
+        "FsSafeErrorCategory",
+        "FsSafeErrorCode",
+        "FsSafeErrorDetails"
+      ],
+      "errorCodes": {
+        "FsSafeErrorCode": [
+          "already-exists",
+          "denied-path",
+          "device-path",
+          "hardlink",
+          "helper-failed",
+          "helper-unavailable",
+          "insecure-permissions",
+          "invalid-path",
+          "not-empty",
+          "not-file",
+          "not-found",
+          "not-owned",
+          "not-removable",
+          "outside-workspace",
+          "path-alias",
+          "path-mismatch",
+          "permission-unverified",
+          "secret-exists",
+          "store-reentrant-update",
+          "symlink",
+          "timeout",
+          "too-large",
+          "unsupported-platform"
+        ]
+      }
+    },
+    "./types": {
+      "runtime": [],
+      "types": [
+        "BasePathOptions",
+        "DirEntry",
+        "FastPathMode",
+        "PathStat",
+        "SafeEncoding"
+      ],
+      "errorCodes": {}
+    },
+    "./test-hooks": {
+      "runtime": [
+        "__setFsSafeTestHooksForTest",
+        "getFsSafeTestHooks"
+      ],
+      "types": [
+        "FsSafeTestHooks"
+      ],
+      "errorCodes": {}
+    },
+    "./package.json": {
+      "kind": "json"
+    }
+  }
+}

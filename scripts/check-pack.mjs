@@ -9,6 +9,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import {
+  assertPublicApi,
+  inspectPublicApi,
+  writePublicApiManifest,
+} from "./public-api-surface.mjs";
 
 const workdir = mkdtempSync(join(tmpdir(), "fs-safe-pack-"));
 const npmCommand = resolveNpmCli();
@@ -117,6 +122,16 @@ try {
     ],
     { cwd: workdir, stdio: "pipe" },
   );
+  const publicApi = inspectPublicApi({
+    packageName: pkg.name,
+    packageSubpaths: Object.keys(pkg.exports),
+    workdir,
+  });
+  if (process.argv.includes("--update-public-api")) {
+    writePublicApiManifest(publicApi);
+  } else {
+    assertPublicApi(publicApi);
+  }
 } finally {
   rmSync(workdir, { force: true, recursive: true });
 }
