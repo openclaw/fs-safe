@@ -25,6 +25,18 @@ export function normalizePinnedPathError(error: unknown): Error {
   });
 }
 
+export function normalizeRemoveGuardError(error: unknown): Error {
+  if (error instanceof FsSafeError) {
+    return error;
+  }
+  if (isNotFoundPathError(error)) {
+    return new FsSafeError("not-found", "file not found", {
+      cause: error instanceof Error ? error : undefined,
+    });
+  }
+  return normalizePinnedPathError(error);
+}
+
 export function normalizeRemovePathError(error: unknown): Error {
   if (error instanceof FsSafeError) {
     return error;

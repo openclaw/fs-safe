@@ -8,7 +8,7 @@
 
 ### Security and Correctness
 
-- Report the documented `remove()` failure codes instead of collapsing every failure to `path-alias`. A missing target now throws `not-found`, a non-empty directory throws `not-empty`, and any other filesystem failure throws `not-removable`, while directory identity drift keeps reporting `path-mismatch`.
+- Report the documented `remove()` failure codes instead of collapsing every failure to `path-alias`. A missing target now throws `not-found`, a non-empty directory throws `not-empty`, and any other filesystem failure throws `not-removable`, while directory identity drift keeps reporting `path-mismatch`. The errno classification covers only the deletion syscalls, so a parent-directory guard failure still fails closed with `path-alias` rather than implying a removal was attempted.
 
 ## 0.5.1 - 2026-08-01
 
