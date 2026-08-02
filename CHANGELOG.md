@@ -4,6 +4,8 @@
 
 ### Security and Correctness
 
+- Apply `movePathWithCopyFallback()` file and POSIX directory modes through staging descriptors before publication, so a replaceable staging pathname cannot redirect `chmod` to an unrelated symlink target. Windows no longer uses a pathname fallback for directory modes because Node cannot portably open a directory descriptor there and does not enforce POSIX modes.
+
 - Reject drive-relative segments such as `C:secret.txt` and `a/C:b` in portable relative-path parsing and every `FileStore` key, and reject leading drive-relative spellings on `Root` destinations and `resolve()` with `invalid-path`. Existing-object Root operations, including reads, inspection, removal, and the source of `move()`, continue to accept legal POSIX filenames such as `c:notes.txt`; thanks @Yigtwxx for the fix.
 
 - Apply atomic-replacement parent-directory modes through verified no-follow descriptors on POSIX, so a directory-entry swap cannot redirect `chmod` through a symlink to an unrelated directory. Windows keeps its explicit `mkdir(mode)`-only behavior because Node does not enforce POSIX directory modes there.

@@ -169,6 +169,24 @@ function regularReadFlags(): number {
   );
 }
 
+async function chmodDirectoryPinned(directoryPath: string, mode: number): Promise<void> {
+  if (process.platform === "win32") {
+    // Node cannot portably open a Windows directory for descriptor-bound
+    // chmod. POSIX modes are not enforced there, so do not fall back to a
+    // pathname operation that could follow a replacement symlink.
+    return;
+  }
+  const handle = await fs.open(
+    directoryPath,
+    fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW,
+  );
+  try {
+    await handle.chmod(mode);
+  } finally {
+    await handle.close();
+  }
+}
+
 async function writeAll(handle: FileHandle, buffer: Buffer, bytesRead: number): Promise<void> {
   let offset = 0;
   while (offset < bytesRead) {
@@ -219,20 +237,19 @@ async function copyRegularFilePinned(params: {
         }
         await writeAll(destinationHandle, scratch, bytesRead);
       }
+      // Re-check the opened source before the staged tree can be committed. If
+      // it changed while we copied, the caller should retry the move.
+      const finalSourceStat = await sourceHandle.stat();
+      if (params.rejectHardlinks && finalSourceStat.nlink > 1) {
+        throw hardlinkedSourceError(params.from);
+      }
+      if (!sameIdentity(params.identity, entryIdentity(finalSourceStat))) {
+        throw sourceChangedError(params.from);
+      }
+      await destinationHandle.chmod(modeBits(params.mode)).catch(() => undefined);
     } finally {
       await destinationHandle.close();
     }
-
-    // Re-check the opened handle before the staged tree can be committed. If
-    // the source changed while we copied, the caller should retry the move.
-    const finalSourceStat = await sourceHandle.stat();
-    if (params.rejectHardlinks && finalSourceStat.nlink > 1) {
-      throw hardlinkedSourceError(params.from);
-    }
-    if (!sameIdentity(params.identity, entryIdentity(finalSourceStat))) {
-      throw sourceChangedError(params.from);
-    }
-    await fs.chmod(params.to, modeBits(params.mode)).catch(() => undefined);
   } catch (error) {
     if (destinationCreated) {
       await fs.rm(params.to, { force: true }).catch(() => undefined);
@@ -284,7 +301,7 @@ async function copyEntryWithManifest(
     await assertSourceStillMatches(from, identity);
     // mkdir() honors process umask. Restore the source mode before commit so
     // EXDEV fallback preserves directory permissions like fs.cp did.
-    await fs.chmod(to, modeBits(sourceStat.mode));
+    await chmodDirectoryPinned(to, modeBits(sourceStat.mode));
     return { ...identity, children, kind: "directory" };
   }
 
