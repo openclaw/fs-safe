@@ -27,6 +27,13 @@ export function assertValidRootRelativePath(relativePath: string): void {
   }
 }
 
+export function assertValidRootPathInput(filePath: string): void {
+  assertNoNulPathInput(filePath, "file path contains a NUL byte");
+  if (isDriveRelativePath(filePath)) {
+    throw new FsSafeError("invalid-path", "file path must not start with a drive letter");
+  }
+}
+
 let cachedHomePath: { raw: string; real: string } | undefined;
 
 export async function expandRelativePathWithHome(relativePath: string): Promise<string> {

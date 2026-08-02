@@ -36,6 +36,7 @@ import { readOpenedFileSafely, type ReadResult } from "./read-opened-file.js";
 import { pathStatFromStats } from "./path-stat.js";
 import { resolveRootPath } from "./root-path.js";
 import {
+  assertValidRootPathInput,
   assertValidRootRelativePath,
   ensureTrailingSep,
   expandRelativePathWithHome,
@@ -683,6 +684,7 @@ async function readPathInRoot(
     symlinks?: SymlinkPolicy;
   },
 ): Promise<ReadResult> {
+  assertValidRootPathInput(params.filePath);
   const rootDir = root.rootDir;
   const candidatePath = path.isAbsolute(params.filePath)
     ? path.resolve(params.filePath)

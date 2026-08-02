@@ -85,6 +85,8 @@ describe("drive-relative relative paths", () => {
         ["root.remove", () => root.remove(key)],
         ["root.write", () => root.write(key, "aliased")],
         ["root.move", () => root.move(key, "moved.txt")],
+        ["root.readAbsolute", () => root.readAbsolute(key)],
+        ["root.reader", () => root.reader()(key)],
         ["store.readText", () => store.readText(key)],
         ["store.open", () => store.open(key)],
         ["store.exists", () => store.exists(key)],
@@ -107,6 +109,12 @@ describe("drive-relative relative paths", () => {
       await root.write("note.txt", "kept");
 
       await expect(root.readText(path.join(rootDir, "note.txt"))).resolves.toBe("kept");
+      await expect(
+        root.readAbsolute(path.join(rootDir, "note.txt")),
+      ).resolves.toMatchObject({ buffer: Buffer.from("kept") });
+      await expect(root.reader()(path.join(rootDir, "note.txt"))).resolves.toEqual(
+        Buffer.from("kept"),
+      );
     } finally {
       await rm(rootDir, { force: true, recursive: true });
     }
