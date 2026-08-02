@@ -37,6 +37,36 @@ describe("sidecar lock regressions", () => {
           { code: "EPERM", errno: -4048, syscall: "open", path: lockPath },
         );
 
+  it.runIf(process.platform === "win32")("propagates an EPERM that names the lock parent", async () => {
+    // createNativeExclusiveFile() opens dirname(lockPath) before the exclusive
+    // create, so a denial can name the parent. Only the teardown window on the
+    // lock file itself is contention; a parent denial must reach the caller.
+    const base = await fsp.realpath(await tempRoot("fs-safe-sidecar-eperm-parent-"));
+    const targetPath = path.join(base, "state.json");
+    configureFsSafeNative({ mode: "off" });
+    const realOpen = fsp.open.bind(fsp) as typeof fsp.open;
+    let payloadCalls = 0;
+
+    vi.spyOn(fsp, "open").mockImplementation((async (...args: Parameters<typeof fsp.open>) => {
+      if (args[0] === `${targetPath}.lock` && args[1] === "wx") throw denial(base);
+      return await realOpen(...args);
+    }) as typeof fsp.open);
+
+    await expect(
+      acquireFileLock(targetPath, {
+        managerKey: `eperm-parent-${Date.now()}-${Math.random()}`,
+        staleMs: 60_000,
+        timeoutMs: 1_000,
+        retry: { retries: 0 },
+        payload: async () => {
+          payloadCalls += 1;
+          return { pid: process.pid };
+        },
+      }),
+    ).rejects.toMatchObject({ code: "EPERM", path: base });
+    expect(payloadCalls).toBe(1);
+  });
+
   it.runIf(process.platform === "win32")("propagates an EPERM raised outside the lock file", async () => {
     // Only the lock-file create and snapshot read see the teardown window. An
     // EPERM from the caller's payload must reach the caller unchanged instead

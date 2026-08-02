@@ -315,7 +315,7 @@ export function createSidecarLockManager(key: string) {
               handle =
                 (await createNativeExclusiveFile(lockPath, 0o600)) ?? (await fs.open(lockPath, "wx"));
             } catch (createError) {
-              lockFileCreateDenied = isTransientLockFileDenial(createError);
+              lockFileCreateDenied = isTransientLockFileDenial(createError, lockPath);
               throw createError;
             }
             await handle.writeFile(raw, "utf8");
@@ -402,7 +402,8 @@ export function createSidecarLockManager(key: string) {
               parsePayload: options.parsePayload,
             });
           } catch (readErr) {
-            if (!isTransientLockFileDenial(readErr) || !withinDenialBudget()) throw readErr;
+            if (!isTransientLockFileDenial(readErr, lockPath) || !withinDenialBudget())
+              throw readErr;
             await waitForRetry();
             continue;
           }
