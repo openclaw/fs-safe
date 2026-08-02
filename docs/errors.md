@@ -50,8 +50,12 @@ destination.
 
 `category` separates caller-policy failures from operational failures:
 
-- `"policy"` — unsafe input or target state, such as `outside-workspace`, `symlink`, `hardlink`, or `too-large`.
-- `"operational"` — environment/runtime failures, such as helper startup, platform support, timeout, or unverifiable permissions.
+- `"policy"` — unsafe input or target state rejected by a safety policy, such as `outside-workspace`, `symlink`, `hardlink`, or `too-large`.
+- `"operational"` — routine filesystem outcomes or environment/runtime failures, such as `not-found`, `not-empty`, `not-removable`, helper startup, platform support, timeout, or unverifiable permissions.
+
+Routine absence or inability to remove a path does not by itself indicate a
+filesystem boundary violation. Branch on the specific code when the distinction
+between those operational outcomes matters.
 
 ## Code union
 

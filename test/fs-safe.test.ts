@@ -3,7 +3,12 @@ import { chmod, mkdtemp, readdir, readFile, rename, rm, stat, symlink, writeFile
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { configureFsSafeNative, FsSafeError, root as openRoot } from "../src/index.js";
+import {
+  categorizeFsSafeError,
+  configureFsSafeNative,
+  FsSafeError,
+  root as openRoot,
+} from "../src/index.js";
 import { openLocalFileSafely, readLocalFileSafely } from "../src/root.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { expectedFsSafeCode } from "./helpers/security.js";
@@ -26,6 +31,20 @@ afterEach(async () => {
 });
 
 describe("@openclaw/fs-safe", () => {
+  it("classifies routine removal outcomes as operational", () => {
+    for (const code of ["not-found", "not-empty", "not-removable"] as const) {
+      expect(categorizeFsSafeError(code)).toBe("operational");
+      expect(new FsSafeError(code, "remove failed")).toMatchObject({
+        category: "operational",
+        code,
+      });
+    }
+
+    for (const code of ["path-alias", "path-mismatch"] as const) {
+      expect(categorizeFsSafeError(code)).toBe("policy");
+    }
+  });
+
   it.skipIf(skipOnWindows)("reuses a root capability across filesystem operations", async () => {
     const rootPath = await tempRoot("fs-root-object-");
     const root = await openRoot(rootPath);
@@ -393,6 +412,22 @@ describe("@openclaw/fs-safe", () => {
     await expect(readFile(outsideFile, "utf8")).resolves.toBe("kept");
     await expect(root.stat("link")).rejects.toMatchObject({
       code: expectedFsSafeCode("not-found"),
+    });
+  });
+
+  it("reports documented failure codes when remove cannot unlink the target", async () => {
+    const rootPath = await tempRoot("fs-safe-remove-codes-");
+    const root = await openRoot(rootPath);
+    await root.mkdir("full/child");
+
+    await expect(root.remove("missing.txt")).rejects.toMatchObject({
+      code: expectedFsSafeCode("not-found"),
+    });
+    await expect(root.remove("missing-dir/missing.txt")).rejects.toMatchObject({
+      code: expectedFsSafeCode("not-found"),
+    });
+    await expect(root.remove("full")).rejects.toMatchObject({
+      code: expectedFsSafeCode("not-empty"),
     });
   });
 

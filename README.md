@@ -506,12 +506,16 @@ Codes are grouped by category:
 ```ts
 if (err instanceof FsSafeError) {
   if (err.category === "policy") {
-    // Unsafe caller input or filesystem state.
+    // Unsafe caller input or filesystem state rejected by a safety policy.
   } else {
-    // Operational problem such as helper startup, timeout, or unverifiable permissions.
+    // Routine filesystem outcome or runtime/environment problem.
   }
 }
 ```
+
+Routine filesystem outcomes such as `not-found`, `not-empty`, and
+`not-removable` are operational; they do not indicate that a filesystem
+boundary policy was violated.
 
 Current `FsSafeErrorCode` values are `already-exists`, `denied-path`, `device-path`, `hardlink`, `helper-failed`, `helper-unavailable`, `invalid-path`, `insecure-permissions`, `not-empty`, `not-file`, `not-found`, `not-owned`, `not-removable`, `outside-workspace`, `path-alias`, `path-mismatch`, `permission-unverified`, `secret-exists`, `symlink`, `timeout`, `too-large`, and `unsupported-platform`.
 

@@ -47,6 +47,8 @@ import {
   isAlreadyExistsError,
   normalizePinnedPathError,
   normalizePinnedWriteError,
+  normalizeRemoveGuardError,
+  normalizeRemovePathError,
 } from "./root-errors.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
@@ -1324,11 +1326,24 @@ async function resolvePinnedRootPathInRoot(
   };
 }
 
+async function prepareRemoveGuard(targetPath: string) {
+  try {
+    const guard = await createAsyncDirectoryGuard(path.dirname(targetPath));
+    await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("remove", targetPath);
+    await assertAsyncDirectoryGuard(guard);
+    return guard;
+  } catch (error) {
+    throw normalizeRemoveGuardError(error);
+  }
+}
+
 async function removePathFallback(resolved: { resolved: string }): Promise<void> {
-  const guard = await createAsyncDirectoryGuard(path.dirname(resolved.resolved));
-  await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("remove", resolved.resolved);
-  await assertAsyncDirectoryGuard(guard);
-  await ((await fs.lstat(resolved.resolved)).isDirectory() ? fs.rmdir(resolved.resolved) : fs.rm(resolved.resolved));
+  const guard = await prepareRemoveGuard(resolved.resolved);
+  try {
+    await ((await fs.lstat(resolved.resolved)).isDirectory() ? fs.rmdir(resolved.resolved) : fs.rm(resolved.resolved));
+  } catch (error) {
+    throw normalizeRemovePathError(error);
+  }
   await assertAsyncDirectoryGuard(guard).catch(() => undefined);
 }
 

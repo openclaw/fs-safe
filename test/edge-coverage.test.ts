@@ -16,11 +16,15 @@ import {
   safePathSegmentHashed,
 } from "../src/install-path.js";
 import { replaceDirectoryAtomic } from "../src/replace-directory.js";
+import { root as openRoot } from "../src/root.js";
 import {
   isAlreadyExistsError,
   normalizePinnedPathError,
   normalizePinnedWriteError,
+  normalizeRemoveGuardError,
+  normalizeRemovePathError,
 } from "../src/root-errors.js";
+import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { movePathToTrash } from "../src/trash.js";
 
 const tempDirs = new Set<string>();
@@ -59,6 +63,60 @@ describe("root error helpers", () => {
       message: "path is not under root",
     });
     expect(normalizePinnedPathError("raw string")).toMatchObject({ code: "path-alias" });
+  });
+
+  it("maps remove syscall failures without swallowing boundary errors", () => {
+    const drift = new FsSafeError("path-mismatch", "directory changed during operation");
+    expect(normalizeRemovePathError(drift)).toBe(drift);
+
+    const mappings = [
+      ["ENOENT", "not-found"],
+      ["ENOTDIR", "not-found"],
+      ["ENOTEMPTY", "not-empty"],
+      ["EEXIST", "not-empty"],
+      ["EACCES", "not-removable"],
+      ["EBUSY", "not-removable"],
+    ] as const;
+    for (const [errno, code] of mappings) {
+      const error = Object.assign(new Error(errno), { code: errno });
+      expect(normalizeRemovePathError(error)).toMatchObject({ code });
+    }
+
+    expect(normalizeRemovePathError(new Error("raw"))).toMatchObject({ code: "path-alias" });
+    expect(normalizeRemovePathError("raw string")).toMatchObject({ code: "path-alias" });
+  });
+
+  it("keeps guard-stage failures fail-closed instead of reporting a removal outcome", () => {
+    const drift = new FsSafeError("path-mismatch", "directory changed during operation");
+    expect(normalizeRemoveGuardError(drift)).toBe(drift);
+
+    for (const errno of ["ENOENT", "ENOTDIR"]) {
+      const error = Object.assign(new Error(errno), { code: errno });
+      expect(normalizeRemoveGuardError(error), errno).toMatchObject({ code: "not-found" });
+    }
+    for (const errno of ["ELOOP", "EACCES", "EBUSY", "ENOTEMPTY", "EEXIST"]) {
+      const error = Object.assign(new Error(errno), { code: errno });
+      expect(normalizeRemoveGuardError(error), errno).toMatchObject({ code: "path-alias" });
+    }
+    expect(normalizeRemoveGuardError(new Error("raw"))).toMatchObject({ code: "path-alias" });
+  });
+
+  it("does not map a guard-stage filesystem failure to a removal code", async () => {
+    const rootPath = await tempRoot("fs-safe-remove-guard-");
+    const scoped = await openRoot(rootPath);
+    await scoped.write("target.txt", "keep");
+
+    __setFsSafeTestHooksForTest({
+      beforeRootFallbackMutation() {
+        throw Object.assign(new Error("ELOOP"), { code: "ELOOP" });
+      },
+    });
+    try {
+      await expect(scoped.remove("target.txt")).rejects.toMatchObject({ code: "path-alias" });
+    } finally {
+      __setFsSafeTestHooksForTest(undefined);
+    }
+    await expect(fs.readFile(path.join(rootPath, "target.txt"), "utf8")).resolves.toBe("keep");
   });
 });
 

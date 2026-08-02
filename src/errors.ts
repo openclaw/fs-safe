@@ -29,6 +29,9 @@ export type FsSafeErrorDetails = Readonly<Record<string, unknown>>;
 const OPERATIONAL_CODES: ReadonlySet<FsSafeErrorCode> = new Set([
   "helper-failed",
   "helper-unavailable",
+  "not-empty",
+  "not-found",
+  "not-removable",
   "permission-unverified",
   "timeout",
   "unsupported-platform",

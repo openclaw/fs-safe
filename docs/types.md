@@ -163,7 +163,7 @@ type FsSafeErrorCode =
 
 Closed union you switch on. See the [Errors](errors.md) reference for what each one means.
 
-`FsSafeError.category` is `"policy"` for unsafe input/target-state failures and `"operational"` for environment/runtime failures.
+`FsSafeError.category` is `"policy"` for unsafe input or target state rejected by a safety policy and `"operational"` for routine filesystem outcomes or environment/runtime failures. `not-found`, `not-empty`, and `not-removable` are operational.
 
 ## See also
 
