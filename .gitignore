@@ -8,6 +8,7 @@ coverage/
 release-graph-proof*.json
 artifacts*/
 release-artifacts*/
+*.tgz
 *.tsbuildinfo
 .clawpatch/
 .deepsec/
