@@ -4,6 +4,10 @@
 
 ### Security and Correctness
 
+- Keep the POSIX parent-directory no-follow identity check active for synchronous atomic-replacement adapters that omit `fchmodSync`, preventing the documented default adapter path from writing through a symlinked parent.
+- Synchronize the actual destination after descriptor-bound mode application when atomic rename uses copy fallback, and include both bytes and mode in bounded fallback restoration.
+- Continue accepting legacy atomic-replacement adapter literals that expose pathname `chmod` or `chmodSync` methods while keeping those methods unused.
+
 - Reject non-file sidecars without spinning, and read contended async and synchronous sidecar locks through bounded, no-follow, identity-checked descriptors; keep valid `createdAt` timestamps authoritative under filesystem clock skew; fail closed when fallback Windows ACL inspection returns no verifiable access entries; preserve synchronous stale-reclaim guards owned by another acquirer; and share one process-exit cleanup listener across file-lock manager domains.
 
 - Route `Root.copyIn()` and overwrite-capable `Root.write()` commits through a new descriptor-relative native replace rename, closing a parent-symlink swap that could create a missing destination directory outside the root before the JavaScript fallback detected the escape. Native `auto` and `require` mode now protect both create-only and replacing pinned writes; the explicitly best-effort JavaScript fallback remains available in `off` mode or when `auto` cannot load a binding.

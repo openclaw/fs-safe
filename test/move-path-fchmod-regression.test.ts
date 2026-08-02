@@ -74,6 +74,45 @@ afterEach(async () => {
 });
 
 describe.runIf(process.platform !== "win32")("move staging descriptor modes", () => {
+  it("preserves exact file modes across all umasks and directory modes while reopenable", async () => {
+    const root = await tempRoot("fs-safe-move-mode-umasks-");
+    const previousUmask = process.umask();
+    try {
+      for (const mask of [0o000, 0o022, 0o077, 0o777]) {
+        process.umask(mask);
+        const suffix = mask.toString(8);
+        const sourceFile = path.join(root, `source-${suffix}.txt`);
+        const targetFile = path.join(root, `target-${suffix}.txt`);
+        const sourceDir = path.join(root, `source-${suffix}`);
+        const targetDir = path.join(root, `target-${suffix}`);
+        await fs.writeFile(sourceFile, "source");
+        await fs.chmod(sourceFile, 0o666);
+        await fs.mkdir(sourceDir);
+        await fs.chmod(sourceDir, 0o751);
+
+        await movePathWithCopyFallback({
+          from: sourceFile,
+          sourceHardlinks: "reject",
+          to: targetFile,
+        });
+        if (mask !== 0o777) {
+          await movePathWithCopyFallback({
+            from: sourceDir,
+            sourceHardlinks: "reject",
+            to: targetDir,
+          });
+        }
+
+        expect((await fs.stat(targetFile)).mode & 0o777).toBe(0o666);
+        if (mask !== 0o777) {
+          expect((await fs.stat(targetDir)).mode & 0o777).toBe(0o751);
+        }
+      }
+    } finally {
+      process.umask(previousUmask);
+    }
+  });
+
   it("does not redirect a staged file mode through a swapped symlink", async () => {
     const sourceDir = await tempRoot("fs-safe-move-file-source-");
     const targetDir = await tempRoot("fs-safe-move-file-target-");

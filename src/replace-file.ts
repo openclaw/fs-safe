@@ -36,7 +36,10 @@ export type ReplaceFileAtomicFileSystem = {
     | "open"
     | "stat"
     | "lstat"
-  >;
+  > & {
+    /** @deprecated Accepted for adapter compatibility but never called. */
+    chmod?: typeof fs.chmod;
+  };
 };
 
 export type ReplaceFileAtomicSyncFileSystem = Pick<
@@ -58,6 +61,8 @@ export type ReplaceFileAtomicSyncFileSystem = Pick<
   | "readSync"
   | "writeSync"
 > & {
+  /** @deprecated Accepted for adapter compatibility but never called. */
+  chmodSync?: typeof syncFs.chmodSync;
   fchmodSync?: typeof syncFs.fchmodSync;
 };
 
@@ -123,6 +128,7 @@ async function renameWithRetry(params: {
   copyFallbackRestore: ReplaceFileCopyFallbackRestorePolicy;
   maxRestoreBytes?: number;
   destinationHardlinks?: ReplaceFileDestinationHardlinkPolicy;
+  syncFallback: boolean;
 }): Promise<ReplaceFileAtomicResult> {
   for (let attempt = 0; attempt <= params.maxRetries; attempt++) {
     try {
@@ -141,6 +147,7 @@ async function renameWithRetry(params: {
           destinationHardlinks: params.destinationHardlinks,
           restore: params.copyFallbackRestore,
           maxRestoreBytes: params.maxRestoreBytes,
+          sync: params.syncFallback,
         });
         return { method: "copy-fallback" };
       }
@@ -168,6 +175,7 @@ function renameWithRetrySync(params: {
   maxRestoreBytes?: number;
   destinationHardlinks?: ReplaceFileDestinationHardlinkPolicy;
   fchmodSync?: SyncFchmod;
+  syncFallback: boolean;
 }): ReplaceFileAtomicResult {
   for (let attempt = 0; attempt <= params.maxRetries; attempt++) {
     try {
@@ -187,6 +195,7 @@ function renameWithRetrySync(params: {
           restore: params.copyFallbackRestore,
           maxRestoreBytes: params.maxRestoreBytes,
           fchmodSync: params.fchmodSync,
+          sync: params.syncFallback,
         });
         return { method: "copy-fallback" };
       }
@@ -331,9 +340,9 @@ async function replaceFileAtomicUnserialized(
   const unregisterTempPath = registerTempPathForExit(tempPath);
   let tempExists = false;
   let originalError: unknown;
-  await fsModule.mkdir(dir, { recursive: true, mode: dirMode });
-  await applyDirectoryMode({ fsModule, dirPath: dir, mode: dirMode });
   try {
+    await fsModule.mkdir(dir, { recursive: true, mode: dirMode });
+    await applyDirectoryMode({ fsModule, dirPath: dir, mode: dirMode });
     tempExists = true;
     unregisterTempPath.setIdentity(await writeTempFile({
       fsModule,
@@ -356,6 +365,7 @@ async function replaceFileAtomicUnserialized(
       copyFallbackRestore: options.copyFallbackRestore ?? "none",
       maxRestoreBytes: options.maxRestoreBytes,
       destinationHardlinks: options.destinationHardlinks,
+      syncFallback: options.syncTempFile === true,
     });
     tempExists = false;
     unregisterTempPath();
@@ -404,9 +414,9 @@ export function replaceFileAtomicSync(
   const unregisterTempPath = registerTempPathForExit(tempPath);
   let tempExists = false;
   let originalError: unknown;
-  fsModule.mkdirSync(dir, { recursive: true, mode: dirMode });
-  applyDirectoryModeSync({ fsModule, dirPath: dir, mode: dirMode, fchmodSync });
   try {
+    fsModule.mkdirSync(dir, { recursive: true, mode: dirMode });
+    applyDirectoryModeSync({ fsModule, dirPath: dir, mode: dirMode, fchmodSync });
     tempExists = true;
     unregisterTempPath.setIdentity(writeTempFileSync({
       fsModule,
@@ -431,6 +441,7 @@ export function replaceFileAtomicSync(
       maxRestoreBytes: options.maxRestoreBytes,
       destinationHardlinks: options.destinationHardlinks,
       fchmodSync,
+      syncFallback: options.syncTempFile === true,
     });
     tempExists = false;
     unregisterTempPath();

@@ -65,7 +65,7 @@ export function applyDirectoryModeSync(params: {
   mode: number;
   fchmodSync?: SyncFchmod;
 }): void {
-  if (process.platform === "win32" || !params.fchmodSync) {
+  if (process.platform === "win32") {
     return;
   }
 
@@ -74,7 +74,7 @@ export function applyDirectoryModeSync(params: {
   const fd = params.fsModule.openSync(params.dirPath, directoryOpenFlags());
   try {
     assertSameDirectory(expected, params.fsModule.fstatSync(fd), params.dirPath);
-    params.fchmodSync(fd, params.mode);
+    params.fchmodSync?.(fd, params.mode);
   } finally {
     params.fsModule.closeSync(fd);
   }

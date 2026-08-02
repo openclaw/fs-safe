@@ -206,4 +206,26 @@ describe("atomic parent-directory descriptor modes", () => {
       await expect(fs.access(path.dirname(filePath))).rejects.toMatchObject({ code: "ENOENT" });
     },
   );
+
+  it.runIf(process.platform !== "win32")(
+    "rejects a symlinked parent with a sync adapter that omits fchmodSync",
+    async () => {
+      const root = await tempRoot("fs-safe-atomic-dirmode-symlink-");
+      const outside = await tempRoot("fs-safe-atomic-dirmode-outside-");
+      const linkedDir = path.join(root, "linked");
+      const filePath = path.join(linkedDir, "state.txt");
+      const { fchmodSync: _fchmodSync, ...syncWithoutFchmod } = fsSync;
+      await fs.symlink(outside, linkedDir, "dir");
+
+      expect(() => replaceFileAtomicSync({
+        filePath,
+        content: "must not escape",
+        fileSystem: syncWithoutFchmod,
+      })).toThrow("Atomic replace parent must be a real directory");
+
+      await expect(fs.access(path.join(outside, "state.txt"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
 });

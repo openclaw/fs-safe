@@ -48,8 +48,8 @@ type ReplaceFileAtomicOptions = {
   copyFallbackRestore?: "restore-original" | "none"; // default: "none"
   maxRestoreBytes?: number;          // required with "restore-original"
   destinationHardlinks?: "reject"; // default unset (no destination nlink policy)
-  syncTempFile?: boolean;           // fsync(temp) before rename; default false
-  syncParentDir?: boolean;          // fsync(parent) after rename; default false
+  syncTempFile?: boolean;           // fsync(temp) before rename, or the final file after copy fallback; default false
+  syncParentDir?: boolean;          // fsync(parent) after rename, POSIX only; default false
   throwOnCleanupError?: boolean;    // report temp cleanup failure; default false
   beforeRename?: (params: { filePath: string; tempPath: string }) => Promise<void>;
   fileSystem?: ReplaceFileAtomicFileSystem; // injectable fs for tests
@@ -90,9 +90,10 @@ The default `copyFallbackRestore: "none"` preserves the existing fallback
 contract: a failed copy can leave a partial destination. For state files where
 preserving the old bytes is more important, choose `"restore-original"` and set
 an explicit `maxRestoreBytes` memory budget. If the destination exists, fs-safe
-snapshots it through a pinned descriptor, overwrites through that same
-descriptor, and synchronizes the result. Any write or sync failure triggers a
-restore and another sync through the same descriptor.
+snapshots it through a pinned descriptor, overwrites and mode-adjusts through
+that same descriptor, and synchronizes the result. Any write, mode, or sync
+failure triggers a byte-and-mode restore and another sync through the same
+descriptor.
 
 Restore failures are `FsSafeError("helper-failed")` values with typed
 `details.cleanup` set to `"restored"` or `"restore-failed"`. An original larger
@@ -163,7 +164,11 @@ Rename a path. If the rename fails with `EXDEV` (cross-device), fall back to
 copying into a staged sibling path, renaming that staged path into place, and
 then removing only the source entries that were copied. The fallback avoids
 buffering regular files into memory and does not tighten the destination parent
-directory mode.
+directory mode. Staged file modes are applied through their still-open handles.
+On POSIX, staged directory modes are applied through no-follow directory
+descriptors; on Windows, Node cannot portably open those descriptors and no
+pathname `chmod` fallback is attempted, so directory modes remain subject to
+Windows' `mkdir(mode)` behavior.
 
 ```ts
 import { movePathWithCopyFallback } from "@openclaw/fs-safe/atomic";
@@ -227,7 +232,7 @@ type ReplaceFileAtomicSyncFileSystem = {
 };
 ```
 
-The async interface already requires `open()`, whose `FileHandle` supplies `chmod()`, so injecting `node:fs` or another conforming adapter needs no new async member. On POSIX, that `open()` must support no-follow directory descriptors as Node does. A custom synchronous filesystem that passes `mode`, `dirMode`, or `preserveExistingMode` must supply `fchmodSync`; omission fails before any file or directory is created and never falls back to a pathname `chmod`. Existing synchronous adapters that request none of those options may omit it. Injecting plain `node:fs` supports explicit file and directory modes. Copy fallback applies the file mode through its pinned destination descriptor as well, preserving exact modes despite the process umask.
+The async interface already requires `open()`, whose `FileHandle` supplies `chmod()`, so injecting `node:fs` or another conforming adapter needs no new async member. On POSIX, that `open()` must support no-follow directory descriptors as Node does. A custom synchronous filesystem that passes `mode`, `dirMode`, or `preserveExistingMode` must supply `fchmodSync`; omission fails before any file or directory is created and never falls back to a pathname `chmod`. Existing synchronous adapters that request none of those options may omit it; their parent is still opened and identity-checked through a no-follow directory descriptor. Injecting plain `node:fs` supports explicit file and directory modes. Older adapter literals may continue to include `chmod` or `chmodSync` for source compatibility, but those operations are ignored. Copy fallback applies the file mode through its pinned destination descriptor as well, preserving exact modes despite the process umask.
 
 ## See also
 

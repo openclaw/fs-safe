@@ -250,14 +250,18 @@ async function replacePinnedWithRestore(
   handle: FileHandle,
   replacement: Buffer,
   maxRestoreBytes: number,
+  replacementMode: number,
 ): Promise<void> {
+  const originalMode = (await handle.stat()).mode;
   const original = await readBounded(handle, maxRestoreBytes);
   try {
     await writeAll(handle, replacement);
+    await handle.chmod(replacementMode);
     await handle.sync();
   } catch (writeError) {
     try {
       await writeAll(handle, original);
+      await handle.chmod(originalMode);
       await handle.sync();
       throw restoreFailure(writeError, "restored");
     } catch (restoreError) {
@@ -274,14 +278,19 @@ function replacePinnedWithRestoreSync(
   fd: number,
   replacement: Buffer,
   maxRestoreBytes: number,
+  replacementMode: number,
+  fchmodSync?: (fd: number, mode: number) => void,
 ): void {
+  const originalMode = fsModule.fstatSync(fd).mode;
   const original = readBoundedSync(fsModule, fd, maxRestoreBytes);
   try {
     writeAllSync(fsModule, fd, replacement);
+    fchmodSync?.(fd, replacementMode);
     fsModule.fsyncSync(fd);
   } catch (writeError) {
     try {
       writeAllSync(fsModule, fd, original);
+      fchmodSync?.(fd, originalMode);
       fsModule.fsyncSync(fd);
       throw restoreFailure(writeError, "restored");
     } catch (restoreError) {
@@ -300,6 +309,7 @@ export async function copyFallbackReplace(params: {
   destinationHardlinks?: ReplaceFileDestinationHardlinkPolicy;
   restore: ReplaceFileCopyFallbackRestorePolicy;
   maxRestoreBytes?: number;
+  sync: boolean;
 }): Promise<void> {
   const sourcePreview = await params.fsModule.lstat(params.src);
   if (sourcePreview.isSymbolicLink() || !sourcePreview.isFile()) {
@@ -323,7 +333,12 @@ export async function copyFallbackReplace(params: {
       );
       if (pinned) {
         destHandle = pinned.handle;
-        await replacePinnedWithRestore(destHandle, replacement, params.maxRestoreBytes!);
+        await replacePinnedWithRestore(
+          destHandle,
+          replacement,
+          params.maxRestoreBytes!,
+          sourceStat.mode,
+        );
       }
     }
 
@@ -349,8 +364,11 @@ export async function copyFallbackReplace(params: {
         sourceStat.mode & 0o777,
       );
       await destHandle.writeFile(replacement);
+      await destHandle.chmod(sourceStat.mode);
+      if (params.sync) {
+        await destHandle.sync();
+      }
     }
-    await destHandle.chmod(sourceStat.mode);
   } finally {
     await destHandle?.close().catch(() => undefined);
     await sourceHandle.close().catch(() => undefined);
@@ -366,6 +384,7 @@ export function copyFallbackReplaceSync(params: {
   restore: ReplaceFileCopyFallbackRestorePolicy;
   maxRestoreBytes?: number;
   fchmodSync?: (fd: number, mode: number) => void;
+  sync: boolean;
 }): void {
   const sourcePreview = params.fsModule.lstatSync(params.src);
   if (sourcePreview.isSymbolicLink() || !sourcePreview.isFile()) {
@@ -394,6 +413,8 @@ export function copyFallbackReplaceSync(params: {
           destFd,
           replacement,
           params.maxRestoreBytes!,
+          sourceStat.mode,
+          params.fchmodSync,
         );
       }
     }
@@ -422,8 +443,11 @@ export function copyFallbackReplaceSync(params: {
         sourceStat.mode & 0o777,
       );
       writeAllSync(params.fsModule, destFd, replacement);
+      params.fchmodSync?.(destFd, sourceStat.mode);
+      if (params.sync) {
+        params.fsModule.fsyncSync(destFd);
+      }
     }
-    params.fchmodSync?.(destFd, sourceStat.mode);
   } finally {
     if (destFd !== undefined) {
       try {
