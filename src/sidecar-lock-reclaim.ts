@@ -2,10 +2,11 @@ import { randomBytes } from "node:crypto";
 import fsSync, { type Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { readFileHandleBounded } from "./bounded-read.js";
+import { readFileDescriptorBoundedSync, readFileHandleBounded } from "./bounded-read.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import type { Root } from "./root-impl.js";
+import { getFsSafeTestHooks } from "./test-hooks.js";
 
 const MAX_LOCK_PAYLOAD_BYTES = 1024 * 1024;
 
@@ -87,8 +88,14 @@ export function parseSidecarLockPayload(
 
 export async function readSidecarLockSnapshot(
   lockPath: string,
-  options: { lockRoot?: Root; parsePayload?: (raw: string) => unknown } = {},
+  options: {
+    lockRoot?: Root;
+    parsePayload?: (raw: string) => unknown;
+    rejectNonFile?: boolean;
+    allowDescriptorIdentityDrift?: boolean;
+  } = {},
 ): Promise<SidecarLockSnapshot | null> {
+  let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
   try {
     if (options.lockRoot) {
       const opened = await options.lockRoot.open(relativeSidecarLockPath(options.lockRoot, lockPath));
@@ -103,9 +110,45 @@ export async function readSidecarLockSnapshot(
         await opened.handle.close().catch(() => undefined);
       }
     }
-    const stat = await fs.lstat(lockPath);
-    const raw = await fs.readFile(lockPath, "utf8");
-    return { raw, payload: parseSidecarLockPayload(raw, options.parsePayload), stat };
+    const before = await fs.lstat(lockPath);
+    if (!before.isFile() || before.isSymbolicLink()) {
+      if (options.rejectNonFile) {
+        throw new FsSafeError("not-file", `sidecar lock is not a regular file: ${lockPath}`);
+      }
+      return null;
+    }
+    await getFsSafeTestHooks()?.beforeSidecarLockSnapshotOpen?.(lockPath);
+    const noFollow =
+      process.platform !== "win32" && typeof fsSync.constants.O_NOFOLLOW === "number"
+        ? fsSync.constants.O_NOFOLLOW
+        : 0;
+    try {
+      handle = await fs.open(
+        lockPath,
+        fsSync.constants.O_RDONLY |
+          noFollow |
+          (typeof fsSync.constants.O_NONBLOCK === "number" ? fsSync.constants.O_NONBLOCK : 0),
+      );
+    } catch (error) {
+      if (options.rejectNonFile && (error as NodeJS.ErrnoException).code === "ELOOP") {
+        throw new FsSafeError("not-file", `sidecar lock is not a regular file: ${lockPath}`, {
+          cause: error,
+        });
+      }
+      throw error;
+    }
+    const opened = await handle.stat();
+    if (!opened.isFile()) {
+      if (options.rejectNonFile) {
+        throw new FsSafeError("not-file", `sidecar lock is not a regular file: ${lockPath}`);
+      }
+      return null;
+    }
+    if (!options.allowDescriptorIdentityDrift && !sameFileIdentity(before, opened)) return null;
+    const raw = (await readFileHandleBounded(handle, MAX_LOCK_PAYLOAD_BYTES)).toString("utf8");
+    const after = await fs.lstat(lockPath);
+    if (!after.isFile() || !sameFileIdentity(before, after)) return null;
+    return { raw, payload: parseSidecarLockPayload(raw, options.parsePayload), stat: after };
   } catch (err) {
     if (
       (err as NodeJS.ErrnoException).code === "ENOENT" ||
@@ -114,24 +157,32 @@ export async function readSidecarLockSnapshot(
       return null;
     }
     throw err;
+  } finally {
+    await handle?.close().catch(() => undefined);
   }
 }
 
 export function readSidecarLockSnapshotSync(
   lockPath: string,
   parsePayload?: (raw: string) => unknown,
+  options: { rejectNonFile?: boolean } = {},
 ): SidecarLockSnapshot | null {
   let fd: number | undefined;
   try {
     const before = fsSync.lstatSync(lockPath);
-    if (!before.isFile() || before.isSymbolicLink()) return null;
+    if (!before.isFile() || before.isSymbolicLink()) {
+      if (options.rejectNonFile) {
+        throw new FsSafeError("not-file", `sidecar lock is not a regular file: ${lockPath}`);
+      }
+      return null;
+    }
     const noFollow =
       process.platform !== "win32" && typeof fsSync.constants.O_NOFOLLOW === "number"
         ? fsSync.constants.O_NOFOLLOW
         : 0;
     fd = fsSync.openSync(lockPath, fsSync.constants.O_RDONLY | noFollow);
     const opened = fsSync.fstatSync(fd);
-    const raw = fsSync.readFileSync(fd, "utf8");
+    const raw = readFileDescriptorBoundedSync(fd, MAX_LOCK_PAYLOAD_BYTES).toString("utf8");
     const after = fsSync.lstatSync(lockPath);
     if (!sameFileIdentity(before, opened) || !sameFileIdentity(opened, after)) return null;
     return {
@@ -186,7 +237,10 @@ export async function removeSidecarLockIfUnchanged(
   observed: SidecarLockSnapshot | null,
   options: { lockRoot?: Root; parsePayload?: (raw: string) => unknown } = {},
 ): Promise<boolean> {
-  const current = await readSidecarLockSnapshot(lockPath, options);
+  const current = await readSidecarLockSnapshot(lockPath, {
+    ...options,
+    allowDescriptorIdentityDrift: observed?.ownershipToken !== undefined,
+  });
   if (!current || !observed || !sidecarLockSnapshotMatches(current, observed)) {
     return false;
   }
@@ -203,7 +257,10 @@ export async function sidecarLockSnapshotStillPresent(
   observed: SidecarLockSnapshot | null,
   options: { lockRoot?: Root; parsePayload?: (raw: string) => unknown } = {},
 ): Promise<boolean> {
-  const current = await readSidecarLockSnapshot(lockPath, options);
+  const current = await readSidecarLockSnapshot(lockPath, {
+    ...options,
+    allowDescriptorIdentityDrift: observed?.ownershipToken !== undefined,
+  });
   return !!current && !!observed && sidecarLockSnapshotMatches(current, observed);
 }
 

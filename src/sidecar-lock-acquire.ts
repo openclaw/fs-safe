@@ -236,6 +236,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
           snapshot = await readSidecarLockSnapshot(lockPath, {
             lockRoot: options.lockRoot,
             parsePayload: options.parsePayload,
+            rejectNonFile: true,
           });
         } catch (readErr) {
           if (!isTransientLockFileDenial(readErr, lockPath) || !withinDenialBudget()) throw readErr;

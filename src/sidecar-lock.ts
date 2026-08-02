@@ -30,6 +30,8 @@ type SidecarLockManagerState = {
   reclaimGuards: Set<string>;
 };
 const GLOBAL_STATE_KEY = Symbol.for("fsSafe.sidecarLockManagers");
+const GLOBAL_CLEANUP_KEY = Symbol.for("fsSafe.sidecarLockCleanupRegistered");
+const GLOBAL_CLEANUP_HANDLER_KEY = Symbol.for("fsSafe.sidecarLockCleanupHandler");
 function getGlobalManagers(): Map<string, SidecarLockManagerState> {
   const globalWithState = globalThis as typeof globalThis & {
     [GLOBAL_STATE_KEY]?: Map<string, SidecarLockManagerState>;
@@ -129,6 +131,22 @@ function releaseAllLocksSync(state: SidecarLockManagerState): void {
   releaseAllReclaimGuardsSync(state);
 }
 
+function ensureGlobalExitCleanupRegistered(): void {
+  const globalWithCleanup = globalThis as typeof globalThis & {
+    [GLOBAL_CLEANUP_KEY]?: boolean;
+    [GLOBAL_CLEANUP_HANDLER_KEY]?: () => void;
+  };
+  if (globalWithCleanup[GLOBAL_CLEANUP_KEY]) return;
+  globalWithCleanup[GLOBAL_CLEANUP_KEY] = true;
+  const cleanup = () => {
+    for (const state of getGlobalManagers().values()) {
+      releaseAllLocksSync(state);
+    }
+  };
+  globalWithCleanup[GLOBAL_CLEANUP_HANDLER_KEY] = cleanup;
+  process.on("exit", cleanup);
+}
+
 async function releaseHeldLock(
   state: SidecarLockManagerState,
   normalizedTargetPath: string,
@@ -187,16 +205,9 @@ export function createSidecarLockManager(key: string) {
   const state = resolveManagerState(key);
 
   function ensureExitCleanupRegistered(): void {
-    if (!state.cleanupRegistered) {
-      state.cleanupRegistered = true;
-      state.reclaimCleanupRegistered = true;
-      process.on("exit", () => releaseAllLocksSync(state));
-      return;
-    }
-    if (!state.reclaimCleanupRegistered) {
-      state.reclaimCleanupRegistered = true;
-      process.on("exit", () => releaseAllReclaimGuardsSync(state));
-    }
+    state.cleanupRegistered = true;
+    state.reclaimCleanupRegistered = true;
+    ensureGlobalExitCleanupRegistered();
   }
 
   async function acquire<TPayload extends Record<string, unknown>>(

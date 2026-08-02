@@ -137,6 +137,38 @@ describe.runIf(process.platform === "win32")("Windows sidecar lock denials", () 
     await expect(fsp.stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("retries exactly eight pathed lock-file denials before surfacing EPERM", async () => {
+    const base = await fsp.realpath(await tempRoot("fs-safe-sidecar-eperm-budget-"));
+    const targetPath = path.join(base, "state.json");
+    const lockPath = `${targetPath}.lock`;
+    configureFsSafeNative({ mode: "off" });
+    const realOpen = fsp.open.bind(fsp) as typeof fsp.open;
+    let deniedCreates = 0;
+    let payloadCalls = 0;
+    vi.spyOn(fsp, "open").mockImplementation((async (...args: Parameters<typeof fsp.open>) => {
+      if (args[0] === lockPath && args[1] === "wx") {
+        deniedCreates += 1;
+        throw denial(lockPath);
+      }
+      return await realOpen(...args);
+    }) as typeof fsp.open);
+
+    await expect(
+      acquireFileLock(targetPath, {
+        managerKey: `eperm-budget-${Date.now()}-${Math.random()}`,
+        staleMs: 60_000,
+        timeoutMs: 1_000,
+        retry: { minTimeout: 1, maxTimeout: 1 },
+        payload: async () => {
+          payloadCalls += 1;
+          return { pid: process.pid };
+        },
+      }),
+    ).rejects.toMatchObject({ code: "EPERM", path: lockPath });
+    expect(deniedCreates).toBe(9);
+    expect(payloadCalls).toBe(9);
+  });
+
   it("retries a contended snapshot read denied mid-teardown", async () => {
     const base = await fsp.realpath(await tempRoot("fs-safe-sidecar-eperm-read-"));
     const targetPath = path.join(base, "state.json");
@@ -146,17 +178,17 @@ describe.runIf(process.platform === "win32")("Windows sidecar lock denials", () 
       lockPath,
       JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }),
     );
-    const realReadFile = fsp.readFile.bind(fsp) as typeof fsp.readFile;
+    const realOpen = fsp.open.bind(fsp) as typeof fsp.open;
     let injected = 0;
-    vi.spyOn(fsp, "readFile").mockImplementation((async (...args: Parameters<typeof fsp.readFile>) => {
-      if (args[0] === lockPath && injected === 0) {
+    vi.spyOn(fsp, "open").mockImplementation((async (...args: Parameters<typeof fsp.open>) => {
+      if (args[0] === lockPath && typeof args[1] === "number" && injected === 0) {
         injected += 1;
         // The holder's unlink lands while the reader is being denied.
         await fsp.rm(lockPath, { force: true });
         throw denial(lockPath);
       }
-      return await realReadFile(...args);
-    }) as typeof fsp.readFile);
+      return await realOpen(...args);
+    }) as typeof fsp.open);
 
     const lock = await acquireFileLock(targetPath, {
       managerKey: `eperm-read-${Date.now()}-${Math.random()}`,

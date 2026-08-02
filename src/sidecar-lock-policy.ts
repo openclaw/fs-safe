@@ -29,6 +29,11 @@ export function sidecarLockPayloadIsStale(
   staleMs: number,
   nowMs: number,
 ): boolean {
+  const createdAtMs = sidecarLockPayloadCreatedAtMs(payload);
+  return createdAtMs !== null && nowMs - createdAtMs > staleMs;
+}
+
+export function sidecarLockPayloadCreatedAtMs(payload: unknown): number | null {
   const createdAt =
     payload &&
     typeof payload === "object" &&
@@ -37,7 +42,7 @@ export function sidecarLockPayloadIsStale(
       ? payload.createdAt
       : "";
   const createdAtMs = Date.parse(createdAt);
-  return Number.isFinite(createdAtMs) && nowMs - createdAtMs > staleMs;
+  return Number.isFinite(createdAtMs) ? createdAtMs : null;
 }
 
 export async function defaultSidecarLockShouldReclaim(params: {
@@ -46,7 +51,8 @@ export async function defaultSidecarLockShouldReclaim(params: {
   staleMs: number;
   nowMs: number;
 }): Promise<boolean> {
-  if (sidecarLockPayloadIsStale(params.payload, params.staleMs, params.nowMs)) return true;
+  const createdAtMs = sidecarLockPayloadCreatedAtMs(params.payload);
+  if (createdAtMs !== null) return params.nowMs - createdAtMs > params.staleMs;
   try {
     return params.nowMs - (await fs.stat(params.lockPath)).mtimeMs > params.staleMs;
   } catch {

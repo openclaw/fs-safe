@@ -37,6 +37,7 @@ type FsSafeTestHooks = {
   beforeRootFallbackMutation?: (operation: "mkdir" | "move" | "remove", targetPath: string) => Promise<void> | void;
   afterPinnedWriteFallbackRename?: (targetPath: string) => Promise<void> | void;
   beforeSiblingTempWrite?: (tempPath: string) => Promise<void> | void;
+  beforeSidecarLockSnapshotOpen?: (lockPath: string) => Promise<void> | void;
   beforeTrashMove?: (targetPath: string, destPath: string) => void;
   afterPublishTargetCreated?: (method, targetPath, identity) => Promise<void> | void;
   beforePublishDirectorySync?: (method, targetPath, identity) => Promise<void> | void;
@@ -54,6 +55,7 @@ type FsSafeTestHooks = {
 | `beforeRootFallbackMutation` | A guarded JS root fallback is about to mkdir, move, or remove. |
 | `afterPinnedWriteFallbackRename` | A fallback rename committed and post-commit identity checks have not run yet. |
 | `beforeSiblingTempWrite` | A sibling temp file exists and its writer is about to run. |
+| `beforeSidecarLockSnapshotOpen` | A sidecar lock was inspected and is about to be opened for a bounded snapshot read. |
 | `beforeTrashMove` | Trash handling is about to move the target. |
 | `afterPublishTargetCreated` | Exclusive publication created its target and final fences have not run yet. |
 | `beforePublishDirectorySync` | Publication verified the target and is about to sync its parent directory. |

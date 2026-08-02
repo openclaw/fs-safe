@@ -64,6 +64,51 @@ describe("Windows permission command execution", () => {
     expect(exec).toHaveBeenCalledTimes(1);
   });
 
+  it("fails closed when a successful ACL command yields no verifiable entries", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-permission-empty-acl-"));
+    tempDirs.push(dir);
+    const target = path.join(dir, "secret.json");
+    await fs.writeFile(target, "{}", { mode: 0o600 });
+    const exec = vi.fn(async (command: string) => {
+      if (command.toLowerCase().endsWith("powershell.exe")) {
+        return {
+          stdout: JSON.stringify({
+            ownerSid: "S-1-5-21-42",
+            currentUserSid: "S-1-5-21-42",
+            principalSids: [],
+            principalTranslationFailed: false,
+            remote: false,
+          }),
+          stderr: "",
+        };
+      }
+      return { stdout: "", stderr: "" };
+    });
+
+    await expect(
+      inspectPathPermissions(target, {
+        platform: "win32",
+        env: { SystemRoot: "C:\\Windows" },
+        exec,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      source: "unknown",
+      error: expect.stringContaining("could not be verified"),
+    });
+
+    await expect(
+      readSecureFile({
+        filePath: target,
+        inject: {
+          platform: "win32",
+          env: { SystemRoot: "C:\\Windows" },
+          exec,
+        },
+      }),
+    ).rejects.toMatchObject({ code: "permission-unverified" });
+  });
+
   it("inspects permissions once for one secure read", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-permission-count-"));
     tempDirs.push(dir);

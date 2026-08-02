@@ -13,7 +13,7 @@ import {
 } from "./sidecar-lock-reclaim.js";
 import {
   computeSidecarLockDelayMs,
-  sidecarLockPayloadIsStale,
+  sidecarLockPayloadCreatedAtMs,
 } from "./sidecar-lock-policy.js";
 import type {
   SidecarLockCompromisedInfo,
@@ -135,7 +135,8 @@ function boundedLockPath(lockPath: string, lockRoot?: Root): string {
 }
 
 function defaultShouldReclaim(payload: unknown, lockPath: string, staleMs: number, nowMs: number): boolean {
-  if (sidecarLockPayloadIsStale(payload, staleMs, nowMs)) return true;
+  const createdAtMs = sidecarLockPayloadCreatedAtMs(payload);
+  if (createdAtMs !== null) return nowMs - createdAtMs > staleMs;
   try {
     return nowMs - fs.statSync(lockPath).mtimeMs > staleMs;
   } catch {
@@ -145,6 +146,16 @@ function defaultShouldReclaim(payload: unknown, lockPath: string, staleMs: numbe
 
 function sleep(milliseconds: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
+function reclaimGuardExists(reclaimGuardPath: string): boolean {
+  try {
+    fs.lstatSync(reclaimGuardPath);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
 }
 
 export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
@@ -168,8 +179,26 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
   const retry = options.retry ?? {};
   const startedAt = Date.now();
   let attempt = 0;
+  const reclaimGuardPath = `${lockPath}.reclaim`;
+  const waitForRetry = (): void => {
+    const elapsed = Date.now() - startedAt;
+    const timedOut = options.timeoutMs !== undefined && elapsed >= options.timeoutMs;
+    if (timedOut || (retry.retries !== undefined && attempt >= retry.retries)) {
+      throw Object.assign(new Error(`file lock timeout for ${normalizedTargetPath}`), {
+        code: "file_lock_timeout",
+        lockPath,
+        normalizedTargetPath,
+      });
+    }
+    sleep(computeSidecarLockDelayMs(retry, attempt));
+    attempt += 1;
+  };
 
   while (true) {
+    if (reclaimGuardExists(reclaimGuardPath)) {
+      waitForRetry();
+      continue;
+    }
     let fd: number | undefined;
     try {
       const payload = options.payload();
@@ -223,20 +252,12 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
       }
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       if (heldLocks.has(normalizedTargetPath)) {
-        const elapsed = Date.now() - startedAt;
-        const timedOut = options.timeoutMs !== undefined && elapsed >= options.timeoutMs;
-        if (timedOut || (retry.retries !== undefined && attempt >= retry.retries)) {
-          throw Object.assign(new Error(`file lock timeout for ${normalizedTargetPath}`), {
-            code: "file_lock_timeout",
-            lockPath,
-            normalizedTargetPath,
-          });
-        }
-        sleep(computeSidecarLockDelayMs(retry, attempt));
-        attempt += 1;
+        waitForRetry();
         continue;
       }
-      const snapshot = readSidecarLockSnapshotSync(lockPath, options.parsePayload);
+      const snapshot = readSidecarLockSnapshotSync(lockPath, options.parsePayload, {
+        rejectNonFile: true,
+      });
       if (!snapshot) continue;
       const nowMs = Date.now();
       const reclaim = options.shouldReclaim
@@ -260,15 +281,24 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
             payload: snapshot.payload,
           })
         ) {
-          const reclaimGuard = `${lockPath}.reclaim`;
+          let ownsReclaimGuard = false;
           try {
-            fs.mkdirSync(reclaimGuard);
+            fs.mkdirSync(reclaimGuardPath);
+            ownsReclaimGuard = true;
             if (removeSidecarLockIfUnchangedSync(lockPath, snapshot)) continue;
+          } catch (reclaimError) {
+            if ((reclaimError as NodeJS.ErrnoException).code !== "EEXIST") {
+              throw reclaimError;
+            }
+            waitForRetry();
+            continue;
           } finally {
-            try {
-              fs.rmdirSync(reclaimGuard);
-            } catch {
-              // A surviving reclaim guard fails closed.
+            if (ownsReclaimGuard) {
+              try {
+                fs.rmdirSync(reclaimGuardPath);
+              } catch {
+                // A surviving reclaim guard fails closed.
+              }
             }
           }
         }
@@ -278,17 +308,7 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
           normalizedTargetPath,
         });
       }
-      const elapsed = Date.now() - startedAt;
-      const timedOut = options.timeoutMs !== undefined && elapsed >= options.timeoutMs;
-      if (timedOut || (retry.retries !== undefined && attempt >= retry.retries)) {
-        throw Object.assign(new Error(`file lock timeout for ${normalizedTargetPath}`), {
-          code: "file_lock_timeout",
-          lockPath,
-          normalizedTargetPath,
-        });
-      }
-      sleep(computeSidecarLockDelayMs(retry, attempt));
-      attempt += 1;
+      waitForRetry();
     }
   }
 }

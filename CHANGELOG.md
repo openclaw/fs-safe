@@ -4,6 +4,8 @@
 
 ### Security and Correctness
 
+- Reject non-file sidecars without spinning, and read contended async and synchronous sidecar locks through bounded, no-follow, identity-checked descriptors; keep valid `createdAt` timestamps authoritative under filesystem clock skew; fail closed when fallback Windows ACL inspection returns no verifiable access entries; preserve synchronous stale-reclaim guards owned by another acquirer; and share one process-exit cleanup listener across file-lock manager domains.
+
 - Route `Root.copyIn()` and overwrite-capable `Root.write()` commits through a new descriptor-relative native replace rename, closing a parent-symlink swap that could create a missing destination directory outside the root before the JavaScript fallback detected the escape. Native `auto` and `require` mode now protect both create-only and replacing pinned writes; the explicitly best-effort JavaScript fallback remains available in `off` mode or when `auto` cannot load a binding.
 
 - Apply `movePathWithCopyFallback()` file and POSIX directory modes through staging descriptors before publication, so a replaceable staging pathname cannot redirect `chmod` to an unrelated symlink target. Windows no longer uses a pathname fallback for directory modes because Node cannot portably open a directory descriptor there and does not enforce POSIX modes.

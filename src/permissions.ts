@@ -471,6 +471,7 @@ export async function inspectWindowsAcl(
       targetPath,
     ]);
     let entries = parseIcaclsOutput(`${stdout}\n${stderr}`.trim(), targetPath);
+    if (!entries.length) throw new Error("Windows ACL output could not be verified");
     const unresolvedPrincipals = entries
       .filter((entry) => !entry.sid)
       .map((entry) => entry.principal);

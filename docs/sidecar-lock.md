@@ -96,6 +96,12 @@ type FileLockRetryOptions = {
 result is passed to `shouldReclaim` and `shouldRemoveStaleLock`, allowing PID,
 process-start, argv, or role schemas to remain application-owned.
 
+On Windows, a pathed `EPERM` from creating or opening the lock file can be a
+short teardown race after another holder unlinks it. The async lock retries that
+specific denial at most eight times. A parent-directory denial, a denial from a
+callback, or a ninth consecutive lock-file denial surfaces as the original
+`EPERM`; it is not converted to `file_lock_timeout`.
+
 ## Owner-scoped reentrancy
 
 Version 0.5 removes the unsound process-scoped `allowReentrant` boolean and
@@ -167,10 +173,10 @@ progress.
 ## Synchronous locks
 
 `acquireFileLockSync()` and `withFileLockSync()` mirror filesystem arbitration,
-retry, payload parsing, stale policy, guarded identity-conditioned reclaim,
-verification, and compromise monitoring. They do not use the async manager
-queue, support async callbacks, or provide same-process reentrancy. Retry waits
-block the calling thread; use the async API in request-serving code.
+retry, payload parsing, stale policy, owner-scoped reentrancy, guarded
+identity-conditioned reclaim, verification, and compromise monitoring. They do
+not use the async manager queue or support async callbacks. Retry waits block
+the calling thread; use the async API in request-serving code.
 
 Always release in a `finally`:
 
@@ -236,7 +242,11 @@ await locks.drain();
 
 ## Stale policy: `shouldReclaim`
 
-The default policy treats locks whose `createdAt` is older than `staleMs` as stale. Pass a custom callback when you want a richer notion of "is the holder still alive":
+The default policy treats locks whose valid `createdAt` is older than `staleMs`
+as stale. A valid current or future timestamp remains authoritative under
+filesystem clock skew; only absent or malformed timestamps fall back to the
+sidecar `mtime`. Pass a custom callback when you want a richer notion of "is the
+holder still alive":
 
 ```ts
 import { kill } from "node:process";

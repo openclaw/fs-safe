@@ -77,7 +77,6 @@ describe("sidecar lock ownership tokens", () => {
     const targetPath = path.join(base, "state.json");
     const lockPath = `${targetPath}.lock`;
     const manager = createSidecarLockManager(`fs-safe-sync-identity-drift-${Date.now()}`);
-    const listenersBefore = new Set(process.listeners("exit"));
     let exitListener: (() => void) | undefined;
 
     try {
@@ -98,17 +97,15 @@ describe("sidecar lock ownership tokens", () => {
         });
       });
 
-      exitListener = process
-        .listeners("exit")
-        .find((listener) => !listenersBefore.has(listener)) as (() => void) | undefined;
+      exitListener = Reflect.get(
+        globalThis,
+        Symbol.for("fsSafe.sidecarLockCleanupHandler"),
+      ) as (() => void) | undefined;
       expect(exitListener).toBeDefined();
       exitListener?.();
 
       expect(fsSync.existsSync(lockPath)).toBe(false);
     } finally {
-      if (exitListener) {
-        process.removeListener("exit", exitListener);
-      }
       manager.reset();
     }
   });
@@ -121,7 +118,6 @@ describe("sidecar lock ownership tokens", () => {
       const lockPath = `${targetPath}.lock`;
       const replacementPath = path.join(base, "replacement.lock");
       const manager = createSidecarLockManager(`fs-safe-sync-non-regular-${Date.now()}`);
-      const listenersBefore = new Set(process.listeners("exit"));
       let exitListener: (() => void) | undefined;
 
       try {
@@ -137,18 +133,16 @@ describe("sidecar lock ownership tokens", () => {
         await fsp.symlink(replacementPath, lockPath);
         const readFileSync = vi.spyOn(fsSync, "readFileSync");
 
-        exitListener = process
-          .listeners("exit")
-          .find((listener) => !listenersBefore.has(listener)) as (() => void) | undefined;
+        exitListener = Reflect.get(
+          globalThis,
+          Symbol.for("fsSafe.sidecarLockCleanupHandler"),
+        ) as (() => void) | undefined;
         expect(exitListener).toBeDefined();
         exitListener?.();
 
         expect(readFileSync).not.toHaveBeenCalledWith(lockPath, "utf8");
         expect((await fsp.lstat(lockPath)).isSymbolicLink()).toBe(true);
       } finally {
-        if (exitListener) {
-          process.removeListener("exit", exitListener);
-        }
         manager.reset();
       }
     },
