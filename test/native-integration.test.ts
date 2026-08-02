@@ -124,6 +124,17 @@ describe.runIf(native)("native filesystem primitives", () => {
     });
     expect(renameCalls).toBe(1);
     await expect(fs.readFile(path.join(directory, "nested/value"), "utf8")).resolves.toBe("native");
+    await expect(
+      runPinnedWriteHelper({
+        rootPath: directory,
+        relativeParentPath: "nested",
+        basename: "value",
+        mkdir: true,
+        mode: 0o600,
+        overwrite: false,
+        input: { kind: "buffer", data: "second" },
+      }),
+    ).rejects.toMatchObject({ code: "EEXIST" });
   });
 
   it("uses the native transaction for root-level pinned writes", async () => {

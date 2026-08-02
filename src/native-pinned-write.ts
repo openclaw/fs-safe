@@ -101,6 +101,16 @@ export async function runPinnedWriteNative(
     ) {
       throw new FsSafeError("path-mismatch", "native write parent changed during resolution");
     }
+    if (params.overwrite === false) {
+      try {
+        await fs.lstat(path.join(parentPath, params.basename));
+        throw Object.assign(new Error("destination already exists"), { code: "EEXIST" });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          throw error;
+        }
+      }
+    }
     tempFd = binding.openBeneath(
       parentFd,
       tempName,
