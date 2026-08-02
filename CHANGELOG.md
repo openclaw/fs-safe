@@ -8,7 +8,7 @@
 
 ### Security and Correctness
 
-- Reject drive-relative segments such as `C:secret.txt` and `a/C:b` in untrusted relative paths with `invalid-path`. `path.win32.isAbsolute()` reports these as relative, so on Windows `path.resolve()` consumed the drive prefix and silently aliased them onto the plain in-root path, letting two distinct store keys resolve to the same file.
+- Reject drive-relative paths such as `C:secret.txt` with `invalid-path` on every `Root` method and on the `fileStore()` keys that delegate to them, and reject drive-relative segments such as `a/C:b` in the resolving path parser. `path.win32.isAbsolute()` reports these as relative, so on Windows `path.resolve()` consumed the drive prefix and silently aliased them onto the plain in-root path, letting two distinct keys resolve to the same file. Drive-absolute inputs such as `C:\root\file.txt` keep working.
 
 ## 0.5.1 - 2026-08-01
 

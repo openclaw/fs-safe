@@ -15,7 +15,7 @@ export {
 // Windows treats "C:name" as relative to the drive's own working directory, so
 // path.win32.isAbsolute() reports false while path.resolve() still consumes the
 // prefix. Reject the spelling outright rather than let it alias a plain segment.
-const DRIVE_RELATIVE_SEGMENT = /^[A-Za-z]:/;
+const DRIVE_RELATIVE_PREFIX = /^[A-Za-z]:(?![\\/])/;
 const NOT_FOUND_CODES = new Set(["ENOENT", "ENOTDIR"]);
 const SYMLINK_OPEN_CODES = new Set(["ELOOP", "EINVAL", "ENOTSUP"]);
 const POSIX_SEPARATOR_CHAR_CODE = 0x2f;
@@ -139,6 +139,10 @@ export function safeStatSync(targetPath: string): fs.Stats | null {
   }
 }
 
+export function isDriveRelativePath(value: string): boolean {
+  return DRIVE_RELATIVE_PREFIX.test(value);
+}
+
 export function splitSafeRelativePath(relativePath: string): string[] {
   if (relativePath.length === 0 || relativePath === ".") {
     return [];
@@ -160,7 +164,7 @@ export function splitSafeRelativePath(relativePath: string): string[] {
     if (segment === "..") {
       throw new FsSafeError("invalid-path", "relative path must not contain '..'");
     }
-    if (DRIVE_RELATIVE_SEGMENT.test(segment)) {
+    if (isDriveRelativePath(segment)) {
       throw new FsSafeError("invalid-path", "relative path must not contain a drive letter");
     }
   }

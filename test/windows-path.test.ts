@@ -5,10 +5,12 @@ import { describe, expect, it } from "vitest";
 import { fileStore } from "../src/file-store.js";
 import { isWindowsNetworkPath } from "../src/local-file-access.js";
 import {
+  isDriveRelativePath,
   isPathInside,
   normalizeWindowsPathForComparison,
   splitSafeRelativePath,
 } from "../src/path.js";
+import { root as openRoot } from "../src/root.js";
 
 describe("Windows path classification", () => {
   it("distinguishes extended local paths from UNC paths", () => {
@@ -49,11 +51,65 @@ describe("drive-relative relative paths", () => {
     }
   });
 
+  it("separates drive-relative spellings from drive-absolute ones", () => {
+    for (const value of ["C:evil", "c:", "Z:.."]) {
+      expect(isDriveRelativePath(value), value).toBe(true);
+    }
+    for (const value of ["C:\\root\\file.txt", "C:/root/file.txt", "notes/c:file"]) {
+      expect(isDriveRelativePath(value), value).toBe(false);
+    }
+  });
+
   it("keeps accepting ordinary segments that merely contain a colon", () => {
     expect(splitSafeRelativePath("logs/2026-08-02T10:30:00Z.log")).toEqual([
       "logs",
       "2026-08-02T10:30:00Z.log",
     ]);
+  });
+
+  it("rejects a drive-relative key on every root and store entry point", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "fs-safe-drive-relative-delegates-"));
+    try {
+      const store = fileStore({ rootDir });
+      await store.writeText("secret.txt", "real");
+      const root = await openRoot(rootDir);
+      const key = "C:secret.txt";
+
+      const calls: Array<[string, () => Promise<unknown>]> = [
+        ["root.read", () => root.read(key)],
+        ["root.readText", () => root.readText(key)],
+        ["root.open", () => root.open(key)],
+        ["root.stat", () => root.stat(key)],
+        ["root.exists", () => root.exists(key)],
+        ["root.list", () => root.list(key)],
+        ["root.remove", () => root.remove(key)],
+        ["root.write", () => root.write(key, "aliased")],
+        ["root.move", () => root.move(key, "moved.txt")],
+        ["store.readText", () => store.readText(key)],
+        ["store.open", () => store.open(key)],
+        ["store.exists", () => store.exists(key)],
+        ["store.remove", () => store.remove(key)],
+      ];
+      for (const [label, call] of calls) {
+        await expect(call(), label).rejects.toMatchObject({ code: "invalid-path" });
+      }
+
+      await expect(readFile(path.join(rootDir, "secret.txt"), "utf8")).resolves.toBe("real");
+    } finally {
+      await rm(rootDir, { force: true, recursive: true });
+    }
+  });
+
+  it("keeps accepting an absolute path that stays inside the root", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "fs-safe-drive-relative-absolute-"));
+    try {
+      const root = await openRoot(rootDir);
+      await root.write("note.txt", "kept");
+
+      await expect(root.readText(path.join(rootDir, "note.txt"))).resolves.toBe("kept");
+    } finally {
+      await rm(rootDir, { force: true, recursive: true });
+    }
   });
 
   it("stops a drive-relative store key from aliasing a plain key", async () => {

@@ -151,7 +151,7 @@ Every method throws `FsSafeError` with a `code`. Branch on `err.code`, not messa
 
 | Code | When it fires |
 |---|---|
-| `invalid-path` | The input path is malformed, including embedded NUL bytes. |
+| `invalid-path` | The input path is malformed, including embedded NUL bytes and drive-relative spellings such as `C:name`. |
 | `outside-workspace` | The input resolves outside the root, or contains a `..` segment that would escape it. |
 | `not-found` | The target does not exist (or its parent does not, with `mkdir: false`). |
 | `not-file` | A read or copy targeted a non-regular file (directory, FIFO, socket, …). |
