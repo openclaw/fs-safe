@@ -5,6 +5,7 @@
 ### Security and Correctness
 
 - Retry a contended file-lock acquisition when Windows denies access to a lock file whose directory entry is still being torn down, including when the native binding performs the exclusive create. Both the exclusive create and the holder's snapshot read reported that transient `EPERM` as a hard failure, so concurrent `acquireFileLock()` calls failed intermittently on Windows even though the very next attempt would have succeeded. Retries stay bounded, so a genuine permission denial still surfaces as `EPERM` rather than a lock timeout; thanks @Yigtwxx for the fix.
+- Report access-denied failures from native Windows operations as `EPERM` rather than `EACCES`, matching Node/libuv and the JavaScript fallback. Consumers that matched the previous native-only `EACCES` code should accept `EPERM` as well when supporting older package versions.
 
 ### Features
 

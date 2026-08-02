@@ -142,7 +142,7 @@ The compiler will flag missing cases when you exhaust the union — keep your sw
 
 ## Distinguishing from `NodeJS.ErrnoException`
 
-Some failures bubble up as native Node errors (e.g. `EACCES`, `EISDIR`, `EBUSY`) when they don't map cleanly to a library code. Inspect both:
+Some failures bubble up as native Node errors (e.g. `EACCES`, `EPERM`, `EISDIR`, `EBUSY`) when they don't map cleanly to a library code. Inspect both:
 
 ```ts
 import { FsSafeError } from "@openclaw/fs-safe";
@@ -154,7 +154,8 @@ try {
     handleFsSafe(err);
     return;
   }
-  if ((err as NodeJS.ErrnoException).code === "EACCES") {
+  const code = (err as NodeJS.ErrnoException).code;
+  if (code === "EACCES" || code === "EPERM") {
     handleAccess();
     return;
   }
@@ -163,6 +164,8 @@ try {
 ```
 
 A common pattern is to wrap your domain code in a single try/catch that maps both shapes to your application's typed error format.
+
+On Windows, access-denied failures from native operations use `EPERM` to match Node/libuv and the JavaScript fallback. Older fs-safe versions could report `EACCES` for the same native condition, so consumers spanning versions should accept both codes.
 
 ## Specialty errors
 
