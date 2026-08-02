@@ -20,6 +20,7 @@ import {
   isAlreadyExistsError,
   normalizePinnedPathError,
   normalizePinnedWriteError,
+  normalizeRemovePathError,
 } from "../src/root-errors.js";
 import { movePathToTrash } from "../src/trash.js";
 
@@ -59,6 +60,27 @@ describe("root error helpers", () => {
       message: "path is not under root",
     });
     expect(normalizePinnedPathError("raw string")).toMatchObject({ code: "path-alias" });
+  });
+
+  it("maps remove syscall failures without swallowing boundary errors", () => {
+    const drift = new FsSafeError("path-mismatch", "directory changed during operation");
+    expect(normalizeRemovePathError(drift)).toBe(drift);
+
+    const mappings = [
+      ["ENOENT", "not-found"],
+      ["ENOTDIR", "not-found"],
+      ["ENOTEMPTY", "not-empty"],
+      ["EEXIST", "not-empty"],
+      ["EACCES", "not-removable"],
+      ["EBUSY", "not-removable"],
+    ] as const;
+    for (const [errno, code] of mappings) {
+      const error = Object.assign(new Error(errno), { code: errno });
+      expect(normalizeRemovePathError(error)).toMatchObject({ code });
+    }
+
+    expect(normalizeRemovePathError(new Error("raw"))).toMatchObject({ code: "path-alias" });
+    expect(normalizeRemovePathError("raw string")).toMatchObject({ code: "path-alias" });
   });
 });
 

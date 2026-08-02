@@ -6,6 +6,10 @@
 
 - Suffix Windows reserved basenames with `_` in `sanitizeUntrustedFileName()` while preserving case and extensions on every platform, including dollar names and superscript COM/LPT variants; thanks @SebTardif (#67).
 
+### Security and Correctness
+
+- Report the documented `remove()` failure codes instead of collapsing every failure to `path-alias`. A missing target now throws `not-found`, a non-empty directory throws `not-empty`, and any other filesystem failure throws `not-removable`, while directory identity drift keeps reporting `path-mismatch`.
+
 ## 0.5.1 - 2026-08-01
 
 ### Security and Correctness

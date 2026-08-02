@@ -396,6 +396,22 @@ describe("@openclaw/fs-safe", () => {
     });
   });
 
+  it("reports documented failure codes when remove cannot unlink the target", async () => {
+    const rootPath = await tempRoot("fs-safe-remove-codes-");
+    const root = await openRoot(rootPath);
+    await root.mkdir("full/child");
+
+    await expect(root.remove("missing.txt")).rejects.toMatchObject({
+      code: expectedFsSafeCode("not-found"),
+    });
+    await expect(root.remove("missing-dir/missing.txt")).rejects.toMatchObject({
+      code: expectedFsSafeCode("not-found"),
+    });
+    await expect(root.remove("full")).rejects.toMatchObject({
+      code: expectedFsSafeCode("not-empty"),
+    });
+  });
+
   it("opens a file handle for fast reads when kernel fd path validation is available", async () => {
     const root = await openRoot(await tempRoot("fs-safe-open-"));
     await root.write("file.txt", "fast");

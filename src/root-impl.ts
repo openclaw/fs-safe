@@ -47,6 +47,7 @@ import {
   isAlreadyExistsError,
   normalizePinnedPathError,
   normalizePinnedWriteError,
+  normalizeRemovePathError,
 } from "./root-errors.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
@@ -988,7 +989,7 @@ async function removePathInRoot(
   try {
     await removePathFallback(resolved);
   } catch (error) {
-    throw normalizePinnedPathError(error);
+    throw normalizeRemovePathError(error);
   }
 }
 
