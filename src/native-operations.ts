@@ -101,13 +101,25 @@ export async function createNativeExclusiveFile(
   let fd: number | undefined;
   let created: Stats | undefined;
   try {
-    const opened = binding.openBeneath(
-      parent.fd,
-      basename,
-      nativeOpenFlags(
-        fsSync.constants.O_WRONLY | fsSync.constants.O_CREAT | fsSync.constants.O_EXCL,
-      ),
-    );
+    let opened: ReturnType<NativeBinding["openBeneath"]>;
+    try {
+      opened = binding.openBeneath(
+        parent.fd,
+        basename,
+        nativeOpenFlags(
+          fsSync.constants.O_WRONLY | fsSync.constants.O_CREAT | fsSync.constants.O_EXCL,
+        ),
+      );
+    } catch (error) {
+      // The parent open above and every post-create operation remain untagged.
+      // Only this exclusive-open failure has enough provenance for a caller to
+      // classify a Windows lock-file denial without swallowing setup failures.
+      const openError = error as NodeJS.ErrnoException;
+      if (process.platform === "win32" && openError.code === "EPERM") {
+        openError.path = targetPath;
+      }
+      throw error;
+    }
     fd = opened.fd;
     fsSync.fchmodSync(fd, mode);
     created = fsSync.fstatSync(fd);

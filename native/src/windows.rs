@@ -226,7 +226,10 @@ fn win_error(code: u32, operation: &str) -> napi::Error<String> {
     let typed = match code {
         ERROR_FILE_EXISTS | ERROR_ALREADY_EXISTS => "EEXIST",
         ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND => "ENOENT",
-        ERROR_ACCESS_DENIED => "EACCES",
+        // Node/libuv reports Windows ERROR_ACCESS_DENIED from filesystem opens
+        // as EPERM. Keep the native path aligned so callers can apply the same
+        // operation-specific policy after adding their own path provenance.
+        ERROR_ACCESS_DENIED => "EPERM",
         _ => "EIO",
     };
     native_error(
@@ -653,6 +656,11 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+
+    #[test]
+    fn maps_access_denied_to_node_filesystem_eperm() {
+        assert_eq!(win_error(ERROR_ACCESS_DENIED, "test").status, "EPERM");
+    }
 
     #[test]
     fn rejects_reparse_points_and_preserves_existing_rename_target() {

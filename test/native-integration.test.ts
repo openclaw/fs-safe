@@ -153,6 +153,80 @@ describe.runIf(native)("native filesystem primitives", () => {
     }
   });
 
+  it.runIf(process.platform === "win32")(
+    "retries a path-tagged native exclusive-open denial",
+    async () => {
+      let exclusiveOpenCalls = 0;
+      __setNativeLoaderForTest(() => ({
+        ...native!,
+        openBeneath(rootFd, relPath, flags) {
+          if (flags & fsSync.constants.O_EXCL) {
+            exclusiveOpenCalls += 1;
+            if (exclusiveOpenCalls === 1) {
+              // Match the binding's bare error: the TypeScript operation
+              // boundary is responsible for attaching the full lock path.
+              throw Object.assign(new Error("open relative path failed with Windows error 5"), {
+                code: "EPERM",
+              });
+            }
+          }
+          return native!.openBeneath(rootFd, relPath, flags);
+        },
+      }));
+      configureFsSafeNative({ mode: "require" });
+      const directory = await fs.realpath(
+        await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-native-lock-denial-")),
+      );
+      roots.push(directory);
+      const targetPath = path.join(directory, "state.json");
+      const lock = await acquireFileLock(targetPath, {
+        retry: { minTimeout: 1, maxTimeout: 2 },
+        payload: () => ({ pid: process.pid }),
+      });
+      try {
+        expect(exclusiveOpenCalls).toBe(2);
+        await expect(lock.verifyStillHeld()).resolves.toBe(true);
+      } finally {
+        await lock.release();
+      }
+    },
+  );
+
+  it.runIf(process.platform === "win32")(
+    "preserves a native exclusive-open denial after the bounded retry budget",
+    async () => {
+      let exclusiveOpenCalls = 0;
+      __setNativeLoaderForTest(() => ({
+        ...native!,
+        openBeneath(rootFd, relPath, flags) {
+          if (flags & fsSync.constants.O_EXCL) {
+            exclusiveOpenCalls += 1;
+            throw Object.assign(new Error("open relative path failed with Windows error 5"), {
+              code: "EPERM",
+            });
+          }
+          return native!.openBeneath(rootFd, relPath, flags);
+        },
+      }));
+      configureFsSafeNative({ mode: "require" });
+      const directory = await fs.realpath(
+        await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-native-lock-permission-")),
+      );
+      roots.push(directory);
+      const targetPath = path.join(directory, "state.json");
+      const lockPath = `${targetPath}.lock`;
+
+      await expect(
+        acquireFileLock(targetPath, {
+          timeoutMs: 1_000,
+          retry: { retries: 20, minTimeout: 1, maxTimeout: 1 },
+          payload: () => ({ pid: process.pid }),
+        }),
+      ).rejects.toMatchObject({ code: "EPERM", path: lockPath });
+      expect(exclusiveOpenCalls).toBe(9);
+    },
+  );
+
   it("publishes by native rename without replacing an existing target", async () => {
     __setNativeLoaderForTest(() => native!);
     configureFsSafeNative({ mode: "require" });
