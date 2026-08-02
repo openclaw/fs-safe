@@ -221,12 +221,6 @@ describe("secure file reads", () => {
       await fs.writeFile(filePath, '{"token":"ok"}', { mode: 0o600 });
       await secureWindowsTestFile(filePath);
 
-      const permissions = await inspectPathPermissions(filePath);
-      expect(permissions, permissions.ownerError ?? JSON.stringify(permissions)).toMatchObject({
-        source: "windows-acl",
-        ownerTrusted: true,
-      });
-
       const result = await readSecureFile({
         filePath,
         label: "test secret",
@@ -249,12 +243,6 @@ describe("secure file reads", () => {
       await fs.writeFile(filePath, '{"token":"ok"}', { mode: 0o600 });
       await secureWindowsTestFile(filePath);
       const extendedPath = `\\\\?\\${path.resolve(filePath)}`;
-
-      const permissions = await inspectPathPermissions(extendedPath);
-      expect(permissions, permissions.ownerError ?? JSON.stringify(permissions)).toMatchObject({
-        source: "windows-acl",
-        ownerTrusted: true,
-      });
 
       const result = await readSecureFile({
         filePath: extendedPath,
@@ -559,9 +547,20 @@ describe("secure file reads", () => {
   it("reports broad Windows SID writes as world-writable", async () => {
     const target = path.join(root, "windows-acl-token.txt");
     await fs.writeFile(target, "secret", { mode: 0o600 });
-    const exec = vi.fn().mockResolvedValue({
-      stdout: `${target} *S-1-5-18:(F)\n *S-1-5-7:(F)\n`,
-      stderr: "",
+    const exec = vi.fn(async (command: string) => {
+      if (command.toLowerCase().endsWith("powershell.exe")) {
+        return {
+          stdout: JSON.stringify({
+            ownerSid: "S-1-5-7",
+            currentUserSid: "S-1-5-7",
+          }),
+          stderr: "",
+        };
+      }
+      return {
+        stdout: `${target} *S-1-5-18:(F)\n *S-1-5-7:(F)\n`,
+        stderr: "",
+      };
     });
 
     const result = await inspectPathPermissions(target, {
@@ -696,10 +695,12 @@ describe("secure file reads", () => {
       exec,
     });
 
-    expect(result.source).toBe("windows-acl");
+    expect(result.source).toBe("unknown");
     expect(result.ownerSid).toBeUndefined();
     expect(result.ownerTrusted).toBeUndefined();
     expect(result.ownerError).toContain("owner lookup failed");
+    expect(result.error).toContain("Windows owner inspection failed");
+    expect(exec).toHaveBeenCalledTimes(1);
   });
 
   it("fails Windows ACL verification closed when a principal SID cannot be translated", async () => {

@@ -1,8 +1,7 @@
-import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
+import { executePermissionCommand } from "./permission-exec.js";
 import { normalizeLowercaseStringOrEmpty } from "./string-coerce.js";
 import { inspectWindowsPermissionsNative } from "./windows-permissions-native.js";
 import { resolveWindowsSystemCommand } from "./windows-command.js";
@@ -11,7 +10,6 @@ import {
   resolveWindowsCurrentUserSid,
   resolveWindowsPrincipalSids,
 } from "./windows-owner.js";
-const execFileAsync = promisify(execFile);
 export type PermissionExec = (
   command: string,
   args: string[],
@@ -116,13 +114,7 @@ const TRUSTED_BASE_ASCII = new Set([...TRUSTED_BASE].map(stripDiacritics));
 const normalize = (value: string) => normalizeLowercaseStringOrEmpty(value);
 const defaultWindowsUserInfo: WindowsUserInfoProvider = () => os.userInfo();
 
-function defaultPermissionExec(command: string, args: string[]) {
-  return execFileAsync(command, args, {
-    encoding: "utf8",
-    windowsHide: true,
-    maxBuffer: 1024 * 1024,
-  }) as Promise<{ stdout: string; stderr: string }>;
-}
+const defaultPermissionExec: PermissionExec = executePermissionCommand;
 
 export async function safeStat(targetPath: string): Promise<SafeStatResult> {
   try {
@@ -188,11 +180,27 @@ export async function inspectPathPermissions(
       targetPath, stat: st, effectiveIsDir, effectiveMode, bits,
     });
     if (native) return native;
+    const unverified: PermissionCheck = {
+      ok: true,
+      isSymlink: st.isSymlink,
+      isDir: effectiveIsDir,
+      mode: effectiveMode,
+      bits,
+      source: "unknown",
+      worldWritable: false,
+      groupWritable: false,
+      worldReadable: false,
+      groupReadable: false,
+    };
     const owner = await inspectWindowsOwner({
       targetPath,
       env: opts?.env,
       exec: opts?.exec ?? defaultPermissionExec,
     });
+    if (owner.error) {
+      const error = `Windows owner inspection failed: ${owner.error}`;
+      return { ...unverified, ownerError: owner.error, error };
+    }
     const acl = await inspectWindowsAcl(targetPath, {
       env: opts?.env,
       exec: opts?.exec,
@@ -207,16 +215,7 @@ export async function inspectPathPermissions(
     };
     if (!acl.ok) {
       return {
-        ok: true,
-        isSymlink: st.isSymlink,
-        isDir: effectiveIsDir,
-        mode: effectiveMode,
-        bits,
-        source: "unknown",
-        worldWritable: false,
-        groupWritable: false,
-        worldReadable: false,
-        groupReadable: false,
+        ...unverified,
         ...ownerFields,
         error: acl.error,
       };

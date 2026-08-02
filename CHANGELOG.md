@@ -5,19 +5,17 @@
 ### Security and Correctness
 
 - Retry a contended file-lock acquisition when Windows denies access to a lock file whose directory entry is still being torn down, including when the native binding performs the exclusive create. Both the exclusive create and the holder's snapshot read reported that transient `EPERM` as a hard failure, so concurrent `acquireFileLock()` calls failed intermittently on Windows even though the very next attempt would have succeeded. Retries stay bounded, so a genuine permission denial still surfaces as `EPERM` rather than a lock timeout; thanks @Yigtwxx for the fix.
+- Apply `replaceFileAtomic()` and `replaceFileAtomicSync()` modes through pinned temp-file descriptors before rename, and through pinned copy-fallback descriptors, so a post-rename symlink swap cannot redirect `chmod` to an unrelated file while exact modes remain independent of umask; thanks @yetval for reporting this (#86).
+- Bound fallback Windows owner and ACL command execution to 10 seconds per process and report owner-query failures as unverified instead of returning a partial permission classification; thanks @Yigtwxx for the diagnosis.
+
+### Compatibility
+
 - Report access-denied failures from native Windows operations as `EPERM` rather than `EACCES`, matching Node/libuv and the JavaScript fallback. Consumers that matched the previous native-only `EACCES` code should accept `EPERM` as well when supporting older package versions.
+- Add an optional `fchmodSync` operation to the injectable synchronous atomic-replacement filesystem type. Async adapters need no new member because their required `open()` returns a mode-capable `FileHandle`; custom sync adapters that pass `mode` or `preserveExistingMode` now fail before mutation when `fchmodSync` is absent, while adapters that request neither option remain compatible.
 
 ### Features
 
 - Suffix Windows reserved basenames with `_` in `sanitizeUntrustedFileName()` while preserving case and extensions on every platform, including dollar names and superscript COM/LPT variants; thanks @SebTardif (#67).
-
-### Security and Correctness
-
-- Apply `replaceFileAtomic()` and `replaceFileAtomicSync()` modes through pinned temp-file descriptors before rename, and through pinned copy-fallback descriptors, so a post-rename symlink swap cannot redirect `chmod` to an unrelated file while exact modes remain independent of umask; thanks @yetval for reporting this (#86).
-
-### Compatibility
-
-- Add an optional `fchmodSync` operation to the injectable synchronous atomic-replacement filesystem type. Async adapters need no new member because their required `open()` returns a mode-capable `FileHandle`; custom sync adapters that pass `mode` or `preserveExistingMode` now fail before mutation when `fchmodSync` is absent, while adapters that request neither option remain compatible.
 
 ## 0.5.1 - 2026-08-01
 
