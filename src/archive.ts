@@ -5,6 +5,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import {
+  createArchiveOutputPathTracker,
   resolveArchiveOutputPath,
   stripArchivePath,
   validateArchiveEntryPath,
@@ -42,6 +43,7 @@ import {
   zipEntryMode,
   type ZipEntry,
 } from "./archive-zip-entry.js";
+import { createZipIntegrityTransform } from "./archive-zip-integrity.js";
 import { FsSafeError } from "./errors.js";
 import { ArchiveSecurityError } from "./archive-errors.js";
 import { extractNativeArchive } from "./archive-native.js";
@@ -179,6 +181,7 @@ async function writeZipFileEntry(params: {
           await pipeline(
             readable,
             createExtractBudgetTransform({ onChunkBytes: params.budget.addBytes }),
+            createZipIntegrityTransform(params.entry),
             writable,
             { signal: params.deadline.signal },
           );
@@ -236,6 +239,7 @@ async function extractZip(params: {
     assertArchiveEntryCountWithinLimit(entries.length, limits);
 
     const budget = createByteBudgetTracker(limits);
+    const trackOutputPath = createArchiveOutputPathTracker();
 
     await withStagedArchiveDestination({
       destinationRealDir,
@@ -252,6 +256,7 @@ async function extractZip(params: {
             continue;
           }
           assertArchiveEntryPathComponentsWithinLimit(output.relPath, limits);
+          trackOutputPath(output.relPath, entry.name);
 
           const isSymlink = isZipSymlinkEntry(entry);
           const entryKind = isSymlink ? "symlink" : entry.dir ? "directory" : "file";

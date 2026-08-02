@@ -1,7 +1,12 @@
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import { ArchiveFormatError, ArchiveSecurityError } from "./archive-errors.js";
-import { resolveArchiveOutputPath, stripArchivePath, validateArchiveEntryPath } from "./archive-entry.js";
+import {
+  createArchiveOutputPathTracker,
+  resolveArchiveOutputPath,
+  stripArchivePath,
+  validateArchiveEntryPath,
+} from "./archive-entry.js";
 import type { ExtractionDeadline } from "./archive-deadline.js";
 import { stageArchiveFileForExtraction } from "./archive-input.js";
 import type { ArchiveKind } from "./archive-kind.js";
@@ -79,6 +84,7 @@ export async function extractNativeArchive(params: {
         assertArchiveEntryCountWithinLimit(manifest.length, limits);
         const strip = Math.max(0, Math.floor(params.stripComponents ?? 0));
         const budget = createByteBudgetTracker(limits);
+        const trackOutputPath = createArchiveOutputPathTracker();
         const plan: Array<{
           index: number;
           path: string;
@@ -94,6 +100,7 @@ export async function extractNativeArchive(params: {
           if (!relPath) continue;
           validateArchiveEntryPath(relPath);
           assertArchiveEntryPathComponentsWithinLimit(relPath, limits);
+          trackOutputPath(relPath, entry.path);
           resolveArchiveOutputPath({ rootDir: stagingDir, relPath, originalPath: entry.path });
           const kind = policyKind(entry.kind);
           if (

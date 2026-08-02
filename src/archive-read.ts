@@ -2,7 +2,7 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import { Readable } from "node:stream";
 import { readFileHandleBounded } from "./bounded-read.js";
-import { ArchiveFormatError } from "./archive-errors.js";
+import { ArchiveFormatError, ArchiveSecurityError } from "./archive-errors.js";
 import {
   normalizeArchiveEntryPath,
   validateArchiveEntryPath,
@@ -19,18 +19,12 @@ import { readTarEntryInfo } from "./archive-tar.js";
 import { preflightTarMetadata } from "./archive-tar-meta.js";
 import { importOptionalTar } from "./archive-tar-runtime.js";
 import { loadZipArchiveWithPreflight } from "./archive-zip-preflight.js";
+import { createZipIntegrityTransform } from "./archive-zip-integrity.js";
+import type { ZipEntry } from "./archive-zip-entry.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { getNativeBinding } from "./native.js";
 import { tempFile } from "./temp-target.js";
-
-type ZipEntry = {
-  name: string;
-  dir: boolean;
-  unixPermissions?: number;
-  nodeStream?: () => NodeJS.ReadableStream;
-  async(type: "nodebuffer"): Promise<Buffer>;
-};
 
 const ZIP_UNIX_FILE_TYPE_MASK = 0o170000;
 const ZIP_UNIX_SYMLINK_TYPE = 0o120000;
@@ -142,7 +136,7 @@ async function readZipEntry(buffer: Buffer, entryPath: string, maxBytes: number)
     typeof entry.nodeStream === "function"
       ? entry.nodeStream()
       : Readable.from(await entry.async("nodebuffer"));
-  return await readStreamBounded(stream, maxBytes);
+  return await readStreamBounded(stream.pipe(createZipIntegrityTransform(entry)), maxBytes);
 }
 
 async function readTarEntry(archivePath: string, entryPath: string, maxBytes: number): Promise<Buffer> {
@@ -152,6 +146,8 @@ async function readTarEntry(archivePath: string, entryPath: string, maxBytes: nu
     maxMetaEntryBytes: DEFAULT_MAX_META_ENTRY_BYTES,
   });
   let matched: Promise<Buffer> | undefined;
+  let entryError: Error | undefined;
+  const seenPaths = new Set<string>();
   await tar.t({
     file: archivePath,
     strict: true,
@@ -160,18 +156,27 @@ async function readTarEntry(archivePath: string, entryPath: string, maxBytes: nu
       const info = readTarEntryInfo(entry);
       validateArchiveEntryPath(info.path, { escapeLabel: "archive root" });
       const normalized = normalizeArchiveEntryPath(info.path).replace(/^\.\//, "");
+      if (seenPaths.has(normalized)) {
+        entryError ??= new ArchiveSecurityError(
+          "entry-path",
+          `archive contains duplicate entry path: ${normalized}`,
+        );
+        entry.resume();
+        return;
+      }
+      seenPaths.add(normalized);
       if (normalized !== entryPath) {
         entry.resume();
         return;
       }
       if (info.type !== "File" && info.type !== "OldFile" && info.type !== "ContiguousFile") {
-        matched = Promise.reject(new Error(`archive entry is not a file: ${entryPath}`));
+        entryError ??= new Error(`archive entry is not a file: ${entryPath}`);
         entry.resume();
         return;
       }
       if (info.size > maxBytes) {
-        matched = Promise.reject(
-          new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT),
+        entryError ??= new ArchiveLimitError(
+          ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT,
         );
         entry.resume();
         return;
@@ -179,6 +184,9 @@ async function readTarEntry(archivePath: string, entryPath: string, maxBytes: nu
       matched = readStreamBounded(entry, maxBytes);
     },
   });
+  if (entryError) {
+    throw entryError;
+  }
   if (!matched) {
     throw new Error(`archive entry not found: ${entryPath}`);
   }
@@ -213,15 +221,22 @@ export async function readArchiveEntry(
           signal,
         );
         let rawEntryPath: string | undefined;
+        const seenPaths = new Set<string>();
         for (const entry of manifest) {
           validateArchiveEntryPath(entry.path, { escapeLabel: "archive root" });
           const normalized = normalizeArchiveEntryPath(entry.path).replace(/^\.\//, "");
+          if (seenPaths.has(normalized)) {
+            throw new ArchiveSecurityError(
+              "entry-path",
+              `archive contains duplicate entry path: ${normalized}`,
+            );
+          }
+          seenPaths.add(normalized);
           if (normalized === requestedEntry) {
             if (entry.kind !== "file") {
               throw new Error(`archive entry is not a file: ${entryPath}`);
             }
             rawEntryPath = entry.path;
-            break;
           }
         }
         if (!rawEntryPath) throw new Error(`archive entry not found: ${entryPath}`);

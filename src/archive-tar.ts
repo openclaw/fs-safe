@@ -1,4 +1,5 @@
 import {
+  createArchiveOutputPathTracker,
   resolveArchiveOutputPath,
   stripArchivePath,
   validateArchiveEntryPath,
@@ -68,8 +69,11 @@ export function createTarEntryPreflightChecker(params: {
   const limits = resolveExtractLimits(params.limits);
   let entryCount = 0;
   const budget = createByteBudgetTracker(limits);
+  const trackOutputPath = createArchiveOutputPathTracker();
 
   return (entry: TarEntryInfo) => {
+    entryCount += 1;
+    assertArchiveEntryCountWithinLimit(entryCount, limits);
     validateArchiveEntryPath(entry.path, { escapeLabel: params.escapeLabel });
 
     const relPath = stripArchivePath(entry.path, strip);
@@ -78,15 +82,13 @@ export function createTarEntryPreflightChecker(params: {
     }
     validateArchiveEntryPath(relPath, { escapeLabel: params.escapeLabel });
     assertArchiveEntryPathComponentsWithinLimit(relPath, limits);
+    trackOutputPath(relPath, entry.path);
     resolveArchiveOutputPath({
       rootDir: params.rootDir,
       relPath,
       originalPath: entry.path,
       escapeLabel: params.escapeLabel,
     });
-
-    entryCount += 1;
-    assertArchiveEntryCountWithinLimit(entryCount, limits);
 
     const kind = archiveEntryKindFromTarType(entry.type);
     if (

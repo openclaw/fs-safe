@@ -3,7 +3,9 @@ import { ArchiveSecurityError } from "./archive-errors.js";
 import { resolveSafeBaseDir } from "./path.js";
 
 export function isWindowsDrivePath(value: string): boolean {
-  return /^[a-zA-Z]:[\\/]/.test(value);
+  return normalizeArchiveEntryPath(value)
+    .split("/")
+    .some((segment) => /^[a-zA-Z]:/.test(segment));
 }
 
 export function normalizeArchiveEntryPath(raw: string): string {
@@ -19,6 +21,12 @@ export function validateArchiveEntryPath(
   }
   if (isWindowsDrivePath(entryPath)) {
     throw new ArchiveSecurityError("entry-path", `archive entry uses a drive path: ${entryPath}`);
+  }
+  if (entryPath.includes("\0")) {
+    throw new ArchiveSecurityError(
+      "entry-path",
+      `archive entry contains a NUL byte: ${entryPath}`,
+    );
   }
   const normalized = path.posix.normalize(normalizeArchiveEntryPath(entryPath));
   const escapeLabel = params?.escapeLabel ?? "destination";
@@ -47,6 +55,20 @@ export function stripArchivePath(entryPath: string, stripComponents: number): st
     return null;
   }
   return result;
+}
+
+export function createArchiveOutputPathTracker(): (entryPath: string, originalPath: string) => void {
+  const seen = new Set<string>();
+  return (entryPath, originalPath) => {
+    const normalized = path.posix.normalize(normalizeArchiveEntryPath(entryPath));
+    if (seen.has(normalized)) {
+      throw new ArchiveSecurityError(
+        "entry-path",
+        `archive entries collide at output path ${normalized}: ${originalPath}`,
+      );
+    }
+    seen.add(normalized);
+  };
 }
 
 export function resolveArchiveOutputPath(params: {

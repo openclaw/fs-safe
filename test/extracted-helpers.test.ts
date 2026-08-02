@@ -117,6 +117,8 @@ describe("json helpers", () => {
 describe("archive entry helpers", () => {
   it("validates and strips archive paths", () => {
     expect(isWindowsDrivePath("C:\\temp\\file.txt")).toBe(true);
+    expect(isWindowsDrivePath("C:secret.txt")).toBe(true);
+    expect(isWindowsDrivePath("nested/C:secret.txt")).toBe(true);
     expect(normalizeArchiveEntryPath("dir\\file.txt")).toBe("dir/file.txt");
     expect(stripArchivePath("a//b/file.txt", 1)).toBe("b/file.txt");
     expect(stripArchivePath("./", 0)).toBeNull();
@@ -125,6 +127,15 @@ describe("archive entry helpers", () => {
     );
     expect(() => validateArchiveEntryPath("C:\\temp\\file.txt")).toThrow(
       "archive entry uses a drive path",
+    );
+    expect(() => validateArchiveEntryPath("C:secret.txt")).toThrow(
+      "archive entry uses a drive path",
+    );
+    expect(() => validateArchiveEntryPath("nested/C:secret.txt")).toThrow(
+      "archive entry uses a drive path",
+    );
+    expect(() => validateArchiveEntryPath("nested/secret\0.txt")).toThrow(
+      "archive entry contains a NUL byte",
     );
   });
 

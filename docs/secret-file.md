@@ -79,6 +79,12 @@ itself must not be an alias. Hardlinks are rejected by default so another
 in-tree name cannot alias the credential; pass `rejectHardlinks: false` only
 when you explicitly trust that layout.
 
+These readers do not enforce ownership or mode bits on an existing file. Their
+read contract covers pinned identity, file type, link policy, and byte bounds;
+the `0o600` guarantee belongs to the write helpers below. Use
+[`readSecureFile`](secure-file.md) when reading an externally managed
+credential must also fail on broad permissions or unexpected ownership.
+
 `readSecretFile()` and `tryReadSecretFile()` are asynchronous counterparts with
 the same pinned-handle validation, byte cap, trimming, error codes, and strict
 versus missing-is-undefined naming semantics.

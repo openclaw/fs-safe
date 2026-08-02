@@ -9,6 +9,7 @@ import {
   readFileDescriptorBoundedSync,
   readFileHandleBounded,
 } from "../src/bounded-read.js";
+import { createMaxBytesTransform } from "../src/bounded-read-stream.js";
 import { FsSafeError } from "../src/errors.js";
 import { readJson, readJsonSync } from "../src/json.js";
 import { root } from "../src/root.js";
@@ -33,6 +34,10 @@ afterEach(async () => {
 });
 
 describe("bounded descriptor reads", () => {
+  it("rejects a non-finite stream byte cap instead of disabling the bound", () => {
+    expect(() => createMaxBytesTransform(Number.NaN)).toThrow(RangeError);
+    expect(() => createMaxBytesTransform(Number.NEGATIVE_INFINITY)).toThrow(RangeError);
+  });
   it("exports the descriptor and handle primitives from the advanced surface", () => {
     expect(advanced.readFileDescriptorBounded).toBe(readFileDescriptorBounded);
     expect(advanced.readFileDescriptorBoundedSync).toBe(readFileDescriptorBoundedSync);

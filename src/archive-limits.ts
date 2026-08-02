@@ -68,7 +68,7 @@ function clampLimit(value: number | undefined): number | undefined {
     return undefined;
   }
   const v = Math.floor(value);
-  return v > 0 ? v : undefined;
+  return v >= 0 ? v : undefined;
 }
 
 export function resolveExtractLimits(

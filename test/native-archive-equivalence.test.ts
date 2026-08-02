@@ -248,6 +248,73 @@ describe.each(archiveBackends)("%s archive path", (backend) => {
     }
   });
 
+  it("counts entries removed by stripComponents against maxEntries", async () => {
+    useBackend(backend);
+    const root = await tempRoot();
+    const archivePath = path.join(root, "stripped-entry-limit.tar");
+    const destination = path.join(root, "destination");
+    await fs.writeFile(
+      archivePath,
+      tarFixture([
+        { path: "one", body: "1" },
+        { path: "two", body: "2" },
+      ]),
+    );
+    await fs.mkdir(destination);
+
+    await expect(
+      extractArchive({
+        archivePath,
+        destDir: destination,
+        timeoutMs: 10_000,
+        stripComponents: 1,
+        limits: { maxEntries: 1 },
+      }),
+    ).rejects.toMatchObject({ code: ARCHIVE_LIMIT_ERROR_CODE.ENTRY_COUNT_EXCEEDS_LIMIT });
+    await expect(fs.readdir(destination)).resolves.toEqual([]);
+  });
+
+  it("rejects entries that collide after stripComponents", async () => {
+    useBackend(backend);
+    const root = await tempRoot();
+    const archivePath = path.join(root, "stripped-collision.tar");
+    const destination = path.join(root, "destination");
+    await fs.writeFile(
+      archivePath,
+      tarFixture([
+        { path: "one/value.txt", body: "first" },
+        { path: "two/value.txt", body: "second" },
+      ]),
+    );
+    await fs.mkdir(destination);
+
+    await expect(
+      extractArchive({
+        archivePath,
+        destDir: destination,
+        timeoutMs: 10_000,
+        stripComponents: 1,
+      }),
+    ).rejects.toMatchObject({ name: "ArchiveSecurityError", code: "entry-path" });
+    await expect(fs.readdir(destination)).resolves.toEqual([]);
+  });
+
+  it("rejects duplicate TAR names during bounded reads", async () => {
+    useBackend(backend);
+    const root = await tempRoot();
+    const archivePath = path.join(root, "duplicate-read.tar");
+    await fs.writeFile(
+      archivePath,
+      tarFixture([
+        { path: "value.txt", body: "first" },
+        { path: "value.txt", body: "second" },
+      ]),
+    );
+
+    await expect(readArchiveEntry(archivePath, "value.txt", { maxBytes: 16 }))
+      .rejects.toMatchObject({ name: "ArchiveSecurityError", code: "entry-path" });
+  });
+
   it("rejects deep entry paths before creating implicit directories", async () => {
     useBackend(backend);
     const root = await tempRoot();

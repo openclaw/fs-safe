@@ -122,7 +122,7 @@ type ArchiveExtractLimits = {
 };
 ```
 
-Defaults exist for each (`DEFAULT_MAX_ARCHIVE_BYTES_ZIP`, `DEFAULT_MAX_ENTRIES`, `DEFAULT_MAX_EXTRACTED_BYTES`, `DEFAULT_MAX_ENTRY_BYTES`, `DEFAULT_MAX_META_ENTRY_BYTES`, `DEFAULT_MAX_ENTRY_PATH_COMPONENTS`). The path-component default is 256. It is evaluated after `stripComponents` and before TypeScript accepts an entry for either JavaScript or native extraction, so rejected entries cannot cause implicit parent-directory creation. The 1 MiB metadata default matches node-tar's `maxMetaEntrySize`; fs-safe passes the same resolved value to node-tar and the native TAR meter.
+Defaults exist for each (`DEFAULT_MAX_ARCHIVE_BYTES_ZIP`, `DEFAULT_MAX_ENTRIES`, `DEFAULT_MAX_EXTRACTED_BYTES`, `DEFAULT_MAX_ENTRY_BYTES`, `DEFAULT_MAX_META_ENTRY_BYTES`, `DEFAULT_MAX_ENTRY_PATH_COMPONENTS`). An explicit zero remains zero rather than selecting the default. `maxEntries` counts every archive entry, including entries removed by `stripComponents` or an explicit filter. The path-component default is 256. It is evaluated after `stripComponents` and before TypeScript accepts an entry for either JavaScript or native extraction, so rejected entries cannot cause implicit parent-directory creation. The 1 MiB metadata default matches node-tar's `maxMetaEntrySize`; fs-safe passes the same resolved value to node-tar and the native TAR meter.
 
 A limit violation throws `ArchiveLimitError`. Its constant and string code are:
 
@@ -148,10 +148,12 @@ codes remain `"destination-not-directory"`, `"destination-symlink"`, and
 
 ## What it defends against
 
-- **Path traversal:** entries with `..`, absolute paths, or Windows drive prefixes are rejected (`ArchiveSecurityError`).
+- **Path traversal:** entries with `..`, absolute paths, NUL bytes, or Windows drive-relative segments such as `C:secret` and `nested/C:secret` are rejected (`ArchiveSecurityError`).
 - **Symlink/hardlink entries:** rejected by default. Some archives ship symlink/hardlink entries that point outside the destination once resolved; `extractArchive` does not follow them.
+- **Ambiguous output names:** duplicate names and distinct names that collide after `stripComponents` are rejected instead of relying on backend-specific overwrite order.
 - **TOCTOU during merge:** extraction first writes to a private temp dir, then merges into `destDir` using the same boundary checks as `root().write()`. Destination symlink swaps are checked with the selected platform mechanism; non-Linux routes retain the best-effort race window documented in the [security model](security-model.md#containment-guarantees-by-platform).
 - **Zip bombs:** `maxExtractedBytes` and `maxEntryBytes` apply to *post-decompression* bytes, so highly-compressed payloads hit the cap before they exhaust disk.
+- **Corrupt ZIP payloads:** streamed output must match both the central-directory CRC and declared uncompressed size before it can leave private staging.
 - **Slow-loris archives:** `timeoutMs` is a hard wall-clock budget. Extraction is aborted on overrun.
 - **Metadata bombs:** a fixed-header pass-through reader rejects oversized PAX, GNU long-name, and GNU long-link bodies before either TAR implementation buffers them. It understands octal and base-256 size fields without interpreting metadata content.
 
@@ -208,7 +210,8 @@ await extractArchive({
 
 `readArchiveEntry(archivePath, entryPath, { maxBytes, kind? })` reads one
 regular-file entry into a bounded `Buffer` without extracting a tree. It pins
-and privately stages the archive input, rejects link and directory entries,
+and privately stages the archive input, rejects link, directory, and duplicate
+entries, verifies ZIP CRC and declared size,
 and throws `ArchiveLimitError` if decompressed bytes exceed `maxBytes`. ZIP
 inputs retain the archive subpath's 256 MiB compressed-input ceiling.
 With a native binding it uses the same Rust decoders as extraction, including
@@ -252,11 +255,11 @@ import {
 } from "@openclaw/fs-safe/archive";
 ```
 
-- `validateArchiveEntryPath(raw, opts)` — throws `ArchiveSecurityError` for `..`, absolute, drive-prefixed, or otherwise unsafe entry paths.
-- `normalizeArchiveEntryPath(raw)` — POSIX-normalizes the entry path (forward slashes, no `.` segments).
+- `validateArchiveEntryPath(raw, opts)` — throws `ArchiveSecurityError` for `..`, absolute, NUL-containing, drive-relative, or otherwise unsafe entry paths.
+- `normalizeArchiveEntryPath(raw)` — converts backslashes in the entry path to forward slashes.
 - `stripArchivePath(entryPath, n)` — strip the leading N path components, returning `null` if not enough remain.
 - `resolveArchiveOutputPath({ destDir, entryPath })` — combines the entry path with the destination, after validation.
-- `isWindowsDrivePath(value)` — detects `C:\…` style entries that should be rejected.
+- `isWindowsDrivePath(value)` — detects drive-relative segments such as `C:secret` or `nested/C:secret` that should be rejected.
 
 ## Common patterns
 

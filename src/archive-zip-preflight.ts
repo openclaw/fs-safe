@@ -5,6 +5,7 @@ import {
   resolveExtractLimits,
   type ArchiveExtractLimits,
 } from "./archive-limits.js";
+import { ArchiveSecurityError } from "./archive-errors.js";
 
 export type ZipArchiveWithFiles = {
   files: Record<string, unknown>;
@@ -210,7 +211,14 @@ export async function loadZipArchiveWithPreflight(
     assertArchiveEntryCountWithinLimit(entryCount, resolvedLimits);
   }
   const JSZip = await importOptionalJsZip();
-  return await JSZip.loadAsync(buffer);
+  const archive = await JSZip.loadAsync(buffer);
+  if (entryCount !== null && Object.keys(archive.files).length !== entryCount) {
+    throw new ArchiveSecurityError(
+      "entry-path",
+      "zip archive contains duplicate or colliding entry names",
+    );
+  }
+  return archive;
 }
 
 async function importOptionalJsZip(): Promise<JsZipConstructor> {

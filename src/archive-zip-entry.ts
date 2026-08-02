@@ -7,7 +7,7 @@ export type ZipEntry = {
   name: string;
   dir: boolean;
   unixPermissions?: number;
-  _data?: { uncompressedSize?: number };
+  _data?: { crc32?: number; uncompressedSize?: number };
   nodeStream?: () => NodeJS.ReadableStream;
   async: (type: "nodebuffer") => Promise<Buffer>;
 };

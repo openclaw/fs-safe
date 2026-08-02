@@ -7,6 +7,7 @@
 - Keep the POSIX parent-directory no-follow identity check active for synchronous atomic-replacement adapters that omit `fchmodSync`, preventing the documented default adapter path from writing through a symlinked parent.
 - Synchronize the actual destination after descriptor-bound mode application when atomic rename uses copy fallback, and include both bytes and mode in bounded fallback restoration.
 - Continue accepting legacy atomic-replacement adapter literals that expose pathname `chmod` or `chmodSync` methods while keeping those methods unused.
+- Reject archive NUL names, drive-relative path segments, duplicate output names (including collisions introduced by `stripComponents`), and ZIP CRC or declared-size mismatches before publishing output. Explicit zero archive limits now remain zero, and stripped TAR entries count toward `maxEntries`, keeping the native and JavaScript policies aligned.
 
 - Reject non-file sidecars without spinning, and read contended async and synchronous sidecar locks through bounded, no-follow, identity-checked descriptors; keep valid `createdAt` timestamps authoritative under filesystem clock skew; fail closed when fallback Windows ACL inspection returns no verifiable access entries; preserve synchronous stale-reclaim guards owned by another acquirer; and share one process-exit cleanup listener across file-lock manager domains.
 

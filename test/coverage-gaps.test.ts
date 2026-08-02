@@ -169,7 +169,7 @@ describe("archive kind and tar preflight helpers", () => {
     const check = createTarEntryPreflightChecker({
       rootDir: "/tmp/extract",
       stripComponents: 1,
-      limits: { maxEntries: 2, maxEntryBytes: 10, maxExtractedBytes: 20 },
+      limits: { maxEntries: 4, maxEntryBytes: 10, maxExtractedBytes: 20 },
     });
     expect(() => check({ path: "package/", type: "Directory", size: 0 })).not.toThrow();
     expect(() => check({ path: "package/file.txt", type: "File", size: 4 })).not.toThrow();
