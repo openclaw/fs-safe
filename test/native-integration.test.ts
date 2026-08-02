@@ -126,6 +126,25 @@ describe.runIf(native)("native filesystem primitives", () => {
     await expect(fs.readFile(path.join(directory, "nested/value"), "utf8")).resolves.toBe("native");
   });
 
+  it("uses the native transaction for root-level pinned writes", async () => {
+    __setNativeLoaderForTest(() => native!);
+    configureFsSafeNative({ mode: "require" });
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-native-root-write-"));
+    roots.push(directory);
+    await runPinnedWriteHelper({
+      rootPath: directory,
+      relativeParentPath: "",
+      basename: "value",
+      mkdir: true,
+      mode: 0o600,
+      overwrite: false,
+      input: { kind: "buffer", data: "native-root" },
+    });
+    await expect(fs.readFile(path.join(directory, "value"), "utf8")).resolves.toBe(
+      "native-root",
+    );
+  });
+
   it("uses native replace commits for overwrite pinned writes", async () => {
     let replaceCalls = 0;
     __setNativeLoaderForTest(() => ({

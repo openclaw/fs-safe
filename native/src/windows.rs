@@ -6,9 +6,9 @@ use std::os::windows::io::FromRawHandle;
 use std::ptr::{null, null_mut};
 
 use windows_sys::Win32::Foundation::{
-    CloseHandle, ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS, ERROR_FILE_EXISTS,
-    ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, GENERIC_READ, GetLastError, HANDLE,
-    INVALID_HANDLE_VALUE,
+    CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS,
+    ERROR_FILE_EXISTS, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, GENERIC_READ, GetLastError,
+    HANDLE, INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
@@ -18,6 +18,7 @@ use windows_sys::Win32::Storage::FileSystem::{
 };
 use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
 use crate::{FileIdentity, NativeResult, native_error};
 
@@ -340,9 +341,33 @@ fn disposition_from_flags(flags: i32) -> u32 {
 }
 
 pub fn open_beneath(root_fd: i32, rel_path: &str, flags: i32) -> NativeResult<i32> {
+    if rel_path.is_empty() || rel_path == "." {
+        let process = unsafe { GetCurrentProcess() };
+        let mut duplicate = null_mut();
+        if unsafe {
+            DuplicateHandle(
+                process,
+                root_handle(root_fd)?,
+                process,
+                &mut duplicate,
+                0,
+                0,
+                DUPLICATE_SAME_ACCESS,
+            )
+        } == 0
+        {
+            return Err(win_error(
+                unsafe { GetLastError() },
+                "duplicate root handle",
+            ));
+        }
+        let duplicate = OwnedHandle(duplicate);
+        assert_not_reparse(duplicate.0)?;
+        return node_fd_from_handle(duplicate, flags);
+    }
     let handle = nt_open_relative(
         root_handle(root_fd)?,
-        if rel_path.is_empty() { "." } else { rel_path },
+        rel_path,
         access_from_flags(flags),
         disposition_from_flags(flags),
         0,
