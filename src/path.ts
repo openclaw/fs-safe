@@ -12,6 +12,10 @@ export {
   type UnsafeDeviceReadPathReason,
 } from "./device-path.js";
 
+// Windows treats "C:name" as relative to the drive's own working directory, so
+// path.win32.isAbsolute() reports false while path.resolve() still consumes the
+// prefix. Reject the spelling outright rather than let it alias a plain segment.
+const DRIVE_RELATIVE_SEGMENT = /^[A-Za-z]:/;
 const NOT_FOUND_CODES = new Set(["ENOENT", "ENOTDIR"]);
 const SYMLINK_OPEN_CODES = new Set(["ELOOP", "EINVAL", "ENOTSUP"]);
 const POSIX_SEPARATOR_CHAR_CODE = 0x2f;
@@ -155,6 +159,9 @@ export function splitSafeRelativePath(relativePath: string): string[] {
   for (const segment of segments) {
     if (segment === "..") {
       throw new FsSafeError("invalid-path", "relative path must not contain '..'");
+    }
+    if (DRIVE_RELATIVE_SEGMENT.test(segment)) {
+      throw new FsSafeError("invalid-path", "relative path must not contain a drive letter");
     }
   }
   return segments;

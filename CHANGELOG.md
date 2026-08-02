@@ -6,6 +6,10 @@
 
 - Suffix Windows reserved basenames with `_` in `sanitizeUntrustedFileName()` while preserving case and extensions on every platform, including dollar names and superscript COM/LPT variants; thanks @SebTardif (#67).
 
+### Security and Correctness
+
+- Reject drive-relative segments such as `C:secret.txt` and `a/C:b` in untrusted relative paths with `invalid-path`. `path.win32.isAbsolute()` reports these as relative, so on Windows `path.resolve()` consumed the drive prefix and silently aliased them onto the plain in-root path, letting two distinct store keys resolve to the same file.
+
 ## 0.5.1 - 2026-08-01
 
 ### Security and Correctness
