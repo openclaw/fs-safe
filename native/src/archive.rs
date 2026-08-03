@@ -862,6 +862,8 @@ mod tests {
 
     use super::*;
 
+    static TEMP_PATH_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
     fn fixture_tar() -> Vec<u8> {
         let mut bytes = Vec::new();
         {
@@ -886,8 +888,9 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
+        let sequence = TEMP_PATH_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         std::env::temp_dir().join(format!(
-            "fs-safe-archive-{}-{nonce}.{suffix}",
+            "fs-safe-archive-{}-{nonce}-{sequence}.{suffix}",
             std::process::id()
         ))
     }
