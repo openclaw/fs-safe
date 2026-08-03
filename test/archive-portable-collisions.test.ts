@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { tarFixture } from "./helpers/archive-fuzz.js";
 import { extractArchive } from "../src/archive.js";
 import {
   __resetFsSafeNativeConfigForTest,
@@ -20,32 +21,6 @@ try {
   native = __loadBundledNativeForTest();
 } catch {
   // JS-only jobs intentionally exercise the fallback without a built binding.
-}
-
-function writeOctal(block: Buffer, offset: number, length: number, value: number): void {
-  block.write(`${value.toString(8).padStart(length - 1, "0")}\0`, offset, length, "ascii");
-}
-
-function tarFixture(paths: string[]): Buffer {
-  const blocks: Buffer[] = [];
-  for (const [index, entryPath] of paths.entries()) {
-    const body = Buffer.from(index === 0 ? "first" : "second");
-    const header = Buffer.alloc(512);
-    header.write(entryPath, 0, 100, "utf8");
-    writeOctal(header, 100, 8, 0o644);
-    writeOctal(header, 108, 8, 0);
-    writeOctal(header, 116, 8, 0);
-    writeOctal(header, 124, 12, body.length);
-    writeOctal(header, 136, 12, 0);
-    header.fill(0x20, 148, 156);
-    header[156] = 0x30;
-    header.write("ustar\0", 257, 6, "ascii");
-    header.write("00", 263, 2, "ascii");
-    const checksum = header.reduce((sum, byte) => sum + byte, 0);
-    header.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, 8, "ascii");
-    blocks.push(header, body, Buffer.alloc((512 - (body.length % 512)) % 512));
-  }
-  return Buffer.concat([...blocks, Buffer.alloc(1024)]);
 }
 
 function useBackend(backend: "native" | "javascript"): void {
@@ -73,7 +48,10 @@ describe.each(backends)("%s portable archive collisions", (backend) => {
     const root = await tempRoot("fs-safe-archive-portable-tar-");
     const archivePath = path.join(root, "payload.tar");
     const destDir = path.join(root, "dest");
-    await fs.writeFile(archivePath, tarFixture([firstName, secondName]));
+    await fs.writeFile(archivePath, tarFixture([
+      { path: firstName, body: "first" },
+      { path: secondName, body: "second" },
+    ]));
     await fs.mkdir(destDir);
 
     await expect(

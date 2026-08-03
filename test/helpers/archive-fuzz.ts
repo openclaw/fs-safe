@@ -9,6 +9,16 @@ export type TarSizeEncoding =
   | "base256-negative"
   | "invalid-octal";
 
+export type TarFixtureEntry = {
+  path: string;
+  body?: Buffer | string;
+  mode?: number;
+  type?: string;
+  linkPath?: string;
+  base256Size?: number;
+  mutateHeader?: (header: Buffer) => void;
+};
+
 function writeString(block: Buffer, offset: number, length: number, value: string): void {
   block.write(value, offset, Math.min(length, Buffer.byteLength(value)), "utf8");
 }
@@ -21,6 +31,42 @@ function updateTarChecksum(header: Buffer): void {
   header.fill(0x20, 148, 156);
   const checksum = header.reduce((sum, byte) => sum + byte, 0);
   writeString(header, 148, 8, `${checksum.toString(8).padStart(6, "0")}\0 `);
+}
+
+export function tarFixture(
+  entries: readonly TarFixtureEntry[],
+  endBlocks = true,
+): Buffer {
+  const blocks: Buffer[] = [];
+  for (const entry of entries) {
+    const body = Buffer.isBuffer(entry.body) ? entry.body : Buffer.from(entry.body ?? "");
+    const type = entry.type ?? "0";
+    const hasBody = ["0", "7", "K", "L", "g", "x"].includes(type);
+    const header = Buffer.alloc(512);
+    writeString(header, 0, 100, entry.path);
+    writeOctal(header, 100, 8, entry.mode ?? (type === "5" ? 0o755 : 0o644));
+    writeOctal(header, 108, 8, 0);
+    writeOctal(header, 116, 8, 0);
+    if (entry.base256Size === undefined) {
+      writeOctal(header, 124, 12, hasBody ? body.length : 0);
+    } else {
+      header[124] = 0x80;
+      header.writeBigUInt64BE(BigInt(entry.base256Size), 128);
+    }
+    writeOctal(header, 136, 12, 0);
+    writeString(header, 156, 1, type);
+    writeString(header, 157, 100, entry.linkPath ?? "");
+    writeString(header, 257, 6, "ustar\0");
+    writeString(header, 263, 2, "00");
+    entry.mutateHeader?.(header);
+    updateTarChecksum(header);
+    blocks.push(header);
+    if (hasBody && entry.base256Size === undefined) {
+      blocks.push(body, Buffer.alloc((512 - (body.length % 512)) % 512));
+    }
+  }
+  if (endBlocks) blocks.push(Buffer.alloc(1024));
+  return Buffer.concat(blocks);
 }
 
 export function tarBytes(params: {
@@ -76,10 +122,7 @@ export function tarBytes(params: {
 export function tarEntriesBytes(
   entries: ReadonlyArray<{ name: string; body?: Buffer }>,
 ): Buffer {
-  return Buffer.concat([
-    ...entries.map((entry) => tarBytes(entry).subarray(0, -1024)),
-    Buffer.alloc(1024),
-  ]);
+  return tarFixture(entries.map(({ name, body }) => ({ path: name, body })));
 }
 
 export async function zipBytes(params: {

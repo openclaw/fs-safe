@@ -3,6 +3,7 @@ import path from "node:path";
 import { gzipSync } from "node:zlib";
 import JSZip from "jszip";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { tarFixture } from "./helpers/archive-fuzz.js";
 import { useTempDirs } from "./helpers/vitest.js";
 import {
   ARCHIVE_LIMIT_ERROR_CODE,
@@ -22,45 +23,6 @@ import {
 } from "../src/native.js";
 
 const { tempRoot } = useTempDirs();
-
-type TarEntry = {
-  path: string;
-  body?: Buffer | string;
-  type?: string;
-  mutateHeader?: (header: Buffer) => void;
-};
-
-function writeString(block: Buffer, offset: number, length: number, value: string): void {
-  block.write(value, offset, Math.min(length, Buffer.byteLength(value)), "utf8");
-}
-
-function writeOctal(block: Buffer, offset: number, length: number, value: number): void {
-  writeString(block, offset, length, `${value.toString(8).padStart(length - 1, "0")}\0`);
-}
-
-function tarFixture(entries: TarEntry[], endBlocks = true): Buffer {
-  const blocks: Buffer[] = [];
-  for (const entry of entries) {
-    const body = Buffer.isBuffer(entry.body) ? entry.body : Buffer.from(entry.body ?? "");
-    const header = Buffer.alloc(512);
-    writeString(header, 0, 100, entry.path);
-    writeOctal(header, 100, 8, 0o644);
-    writeOctal(header, 108, 8, 0);
-    writeOctal(header, 116, 8, 0);
-    writeOctal(header, 124, 12, body.length);
-    writeOctal(header, 136, 12, 0);
-    header.fill(0x20, 148, 156);
-    writeString(header, 156, 1, entry.type ?? "0");
-    writeString(header, 257, 6, "ustar\0");
-    writeString(header, 263, 2, "00");
-    entry.mutateHeader?.(header);
-    const checksum = header.reduce((sum, byte) => sum + byte, 0);
-    writeString(header, 148, 8, `${checksum.toString(8).padStart(6, "0")}\0 `);
-    blocks.push(header, body, Buffer.alloc((512 - (body.length % 512)) % 512));
-  }
-  if (endBlocks) blocks.push(Buffer.alloc(1024));
-  return Buffer.concat(blocks);
-}
 
 function rawHeader(type = "0", size = 0): Buffer {
   return tarFixture([{ path: "entry", type, body: Buffer.alloc(size) }], false).subarray(0, 512);

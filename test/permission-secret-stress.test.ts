@@ -3,7 +3,6 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
-import { FsSafeError } from "../src/errors.js";
 import {
   formatPermissionRemediation,
   inspectPathPermissions,
@@ -14,28 +13,39 @@ import { readSecretFileSync } from "../src/secret-file.js";
 import { readSecureFile } from "../src/secure-file.js";
 
 const { tempRoot } = useTempDirs();
+const POSIX_PERMISSIONS: PermissionCheck = {
+  ok: true,
+  isSymlink: false,
+  isDir: false,
+  mode: 0o100644,
+  bits: 0o644,
+  source: "posix",
+  worldWritable: false,
+  groupWritable: false,
+  worldReadable: true,
+  groupReadable: true,
+};
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function expectCode(error: unknown, code: FsSafeError["code"]): boolean {
-  expect(error).toBeInstanceOf(FsSafeError);
-  expect((error as FsSafeError).code).toBe(code);
-  return true;
-}
-
 describe("permission and secret stress matrix", () => {
   itPosix.each([
-    [0o400, true],
-    [0o500, true],
-    [0o600, true],
-    [0o700, true],
-    [0o440, false],
-    [0o604, false],
-    [0o620, false],
-    [0o602, false],
-  ] as const)("classifies secure-file mode %s independently of owner execute bits", async (mode, accepted) => {
+    [0o400, false, true],
+    [0o500, false, true],
+    [0o600, false, true],
+    [0o700, false, true],
+    [0o440, false, false],
+    [0o440, true, true],
+    [0o404, true, true],
+    [0o620, true, false],
+    [0o602, true, false],
+  ] as const)("classifies secure-file mode %s (allow readable=%s)", async (
+    mode,
+    allowReadableByOthers,
+    accepted,
+  ) => {
     const root = await tempRoot("fs-safe-secure-mode-matrix-");
     const filePath = path.join(root, "credential");
     await fs.writeFile(filePath, "secret", { mode: 0o600 });
@@ -44,36 +54,14 @@ describe("permission and secret stress matrix", () => {
     const permissions = await inspectPathPermissions(filePath);
     expect(permissions.bits).toBe(mode);
 
-    const read = readSecureFile({ filePath });
+    const read = readSecureFile({ filePath, permissions: { allowReadableByOthers } });
     if (accepted) {
       await expect(read).resolves.toMatchObject({ buffer: Buffer.from("secret") });
     } else {
-      await expect(read).rejects.toSatisfy((error: unknown) =>
-        expectCode(error, "insecure-permissions"),
-      );
-    }
-  });
-
-  itPosix("allows read-only group/world access only through the explicit option", async () => {
-    const root = await tempRoot("fs-safe-secure-readable-");
-    for (const mode of [0o440, 0o404]) {
-      const filePath = path.join(root, `credential-${mode.toString(8)}`);
-      await fs.writeFile(filePath, "secret", { mode: 0o600 });
-      await fs.chmod(filePath, mode);
-
-      await expect(
-        readSecureFile({ filePath, permissions: { allowReadableByOthers: true } }),
-      ).resolves.toMatchObject({ buffer: Buffer.from("secret") });
-    }
-
-    for (const mode of [0o620, 0o602]) {
-      const filePath = path.join(root, `credential-${mode.toString(8)}`);
-      await fs.writeFile(filePath, "secret", { mode: 0o600 });
-      await fs.chmod(filePath, mode);
-
-      await expect(
-        readSecureFile({ filePath, permissions: { allowReadableByOthers: true } }),
-      ).rejects.toSatisfy((error: unknown) => expectCode(error, "insecure-permissions"));
+      await expect(read).rejects.toMatchObject({
+        name: "FsSafeError",
+        code: "insecure-permissions",
+      });
     }
   });
 
@@ -103,43 +91,18 @@ describe("permission and secret stress matrix", () => {
     });
   });
 
-  it("shell-quotes unsafe POSIX remediation paths", () => {
-    const perms: PermissionCheck = {
-      ok: true,
-      isSymlink: false,
-      isDir: false,
-      mode: 0o100644,
-      bits: 0o644,
-      source: "posix",
-      worldWritable: false,
-      groupWritable: false,
-      worldReadable: true,
-      groupReadable: true,
-    };
-
+  it.each([
+    ["/tmp/token; touch /tmp/unintended", "chmod 600 '/tmp/token; touch /tmp/unintended'"],
+    ["/tmp/owner's token", "chmod 600 '/tmp/owner'\\''s token'"],
+    ["-unexpected-option", "chmod 600 -- -unexpected-option"],
+  ])("shell-quotes POSIX remediation path %s", (targetPath, expected) => {
     expect(
       formatPermissionRemediation({
-        targetPath: "/tmp/token; touch /tmp/unintended",
-        perms,
+        targetPath,
+        perms: POSIX_PERMISSIONS,
         isDir: false,
         posixMode: 0o600,
       }),
-    ).toBe("chmod 600 '/tmp/token; touch /tmp/unintended'");
-    expect(
-      formatPermissionRemediation({
-        targetPath: "/tmp/owner's token",
-        perms,
-        isDir: false,
-        posixMode: 0o600,
-      }),
-    ).toBe("chmod 600 '/tmp/owner'\\''s token'");
-    expect(
-      formatPermissionRemediation({
-        targetPath: "-unexpected-option",
-        perms,
-        isDir: false,
-        posixMode: 0o600,
-      }),
-    ).toBe("chmod 600 -- -unexpected-option");
+    ).toBe(expected);
   });
 });

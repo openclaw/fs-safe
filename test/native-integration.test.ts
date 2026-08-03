@@ -1,11 +1,10 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { expectFsSafeError } from "./helpers/security.js";
-import { itWin32 } from "./helpers/vitest.js";
+import { itWin32, useTempDirs } from "./helpers/vitest.js";
 import { configureFsSafeNative } from "../src/native-config.js";
 import { acquireFileLock } from "../src/file-lock.js";
 import {
@@ -25,18 +24,25 @@ try {
   // matrix deliberately proves that installation without them still works.
 }
 
-const roots: string[] = [];
+const { tempRoot } = useTempDirs();
 
-afterEach(async () => {
+afterEach(() => {
   configureFsSafeNative({ mode: "auto" });
   __resetNativeLoaderForTest();
-  await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
 });
+
+async function pinnedWriteRoot(
+  mode: "off" | "require",
+  suffix: string,
+): Promise<string> {
+  if (mode === "require") __setNativeLoaderForTest(() => native!);
+  configureFsSafeNative({ mode });
+  return await tempRoot(`fs-safe-${mode}-${suffix}-`);
+}
 
 describe.runIf(native)("native filesystem primitives", () => {
   it("opens beneath a directory descriptor and reports containment and fd identity", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-native-open-"));
-    roots.push(root);
+    const root = await tempRoot("fs-safe-native-open-");
     await fs.mkdir(path.join(root, "nested"));
     await fs.writeFile(path.join(root, "nested", "value"), "ok");
     const rootFd = fsSync.openSync(root, fsSync.constants.O_RDONLY);
@@ -57,8 +63,7 @@ describe.runIf(native)("native filesystem primitives", () => {
   });
 
   it("maps no-replace collisions to EEXIST without changing either file", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-native-rename-"));
-    roots.push(root);
+    const root = await tempRoot("fs-safe-native-rename-");
     await fs.writeFile(path.join(root, "source"), "source");
     await fs.writeFile(path.join(root, "target"), "target");
     const rootFd = fsSync.openSync(root, fsSync.constants.O_RDONLY);
@@ -74,8 +79,7 @@ describe.runIf(native)("native filesystem primitives", () => {
   });
 
   it("replaces an existing target by descriptor-relative native rename", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-native-rename-replace-"));
-    roots.push(root);
+    const root = await tempRoot("fs-safe-native-rename-replace-");
     await fs.writeFile(path.join(root, "source"), "source");
     await fs.writeFile(path.join(root, "target"), "target");
     const rootFd = fsSync.openSync(root, fsSync.constants.O_RDONLY);
@@ -89,8 +93,7 @@ describe.runIf(native)("native filesystem primitives", () => {
   });
 
   itWin32("rejects reparse-point directory components", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-native-reparse-"));
-    roots.push(root);
+    const root = await tempRoot("fs-safe-native-reparse-");
     const real = path.join(root, "real");
     await fs.mkdir(real);
     await fs.writeFile(path.join(real, "value"), "ok");
@@ -114,8 +117,7 @@ describe.runIf(native)("native filesystem primitives", () => {
       },
     }));
     configureFsSafeNative({ mode: "require" });
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-native-write-"));
-    roots.push(directory);
+    const directory = await tempRoot("fs-safe-native-write-");
     await runPinnedWriteHelper({
       rootPath: directory,
       relativeParentPath: "nested",
@@ -143,14 +145,7 @@ describe.runIf(native)("native filesystem primitives", () => {
   it.each(["off", "require"] as const)(
     "rejects a create-only collision before consuming the input stream in %s mode",
     async (mode) => {
-      if (mode === "require") {
-        __setNativeLoaderForTest(() => native!);
-      }
-      configureFsSafeNative({ mode });
-      const directory = await fs.mkdtemp(
-        path.join(os.tmpdir(), `fs-safe-${mode}-collision-stream-`),
-      );
-      roots.push(directory);
+      const directory = await pinnedWriteRoot(mode, "collision-stream");
       await fs.writeFile(path.join(directory, "value"), "original");
       let consumed = false;
       const stream = Readable.from((async function* () {
@@ -179,12 +174,7 @@ describe.runIf(native)("native filesystem primitives", () => {
   it.runIf(process.platform !== "win32").each(["off", "require"] as const)(
     "preserves an explicit zero file mode in %s mode",
     async (mode) => {
-      if (mode === "require") {
-        __setNativeLoaderForTest(() => native!);
-      }
-      configureFsSafeNative({ mode });
-      const directory = await fs.mkdtemp(path.join(os.tmpdir(), `fs-safe-${mode}-zero-mode-`));
-      roots.push(directory);
+      const directory = await pinnedWriteRoot(mode, "zero-mode");
 
       await runPinnedWriteHelper({
         rootPath: directory,
@@ -203,12 +193,7 @@ describe.runIf(native)("native filesystem primitives", () => {
   it.each(["off", "require"] as const)(
     "removes partial output when a streamed write exceeds its limit in %s mode",
     async (mode) => {
-      if (mode === "require") {
-        __setNativeLoaderForTest(() => native!);
-      }
-      configureFsSafeNative({ mode });
-      const directory = await fs.mkdtemp(path.join(os.tmpdir(), `fs-safe-${mode}-stream-limit-`));
-      roots.push(directory);
+      const directory = await pinnedWriteRoot(mode, "stream-limit");
       const stream = Readable.from([Buffer.from("12"), Buffer.from("34")]);
 
       await expect(
@@ -230,12 +215,7 @@ describe.runIf(native)("native filesystem primitives", () => {
   it.each(["off", "require"] as const)(
     "allows exactly one of many concurrent create-only writes in %s mode",
     async (mode) => {
-      if (mode === "require") {
-        __setNativeLoaderForTest(() => native!);
-      }
-      configureFsSafeNative({ mode });
-      const directory = await fs.mkdtemp(path.join(os.tmpdir(), `fs-safe-${mode}-write-race-`));
-      roots.push(directory);
+      const directory = await pinnedWriteRoot(mode, "write-race");
       const attempts = Array.from({ length: 32 }, (_, index) =>
         runPinnedWriteHelper({
           rootPath: directory,
@@ -260,8 +240,7 @@ describe.runIf(native)("native filesystem primitives", () => {
   it("uses the native transaction for root-level pinned writes", async () => {
     __setNativeLoaderForTest(() => native!);
     configureFsSafeNative({ mode: "require" });
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-native-root-write-"));
-    roots.push(directory);
+    const directory = await tempRoot("fs-safe-native-root-write-");
     await runPinnedWriteHelper({
       rootPath: directory,
       relativeParentPath: "",
@@ -286,8 +265,7 @@ describe.runIf(native)("native filesystem primitives", () => {
       },
     }));
     configureFsSafeNative({ mode: "require" });
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-native-overwrite-"));
-    roots.push(directory);
+    const directory = await tempRoot("fs-safe-native-overwrite-");
     await fs.mkdir(path.join(directory, "nested"));
     await fs.writeFile(path.join(directory, "nested/value"), "old");
     await runPinnedWriteHelper({
@@ -306,8 +284,7 @@ describe.runIf(native)("native filesystem primitives", () => {
   it("rejects native writes when the expected root identity does not match", async () => {
     __setNativeLoaderForTest(() => native!);
     configureFsSafeNative({ mode: "require" });
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-native-identity-"));
-    roots.push(directory);
+    const directory = await tempRoot("fs-safe-native-identity-");
     const identity = await fs.lstat(directory);
     await expectFsSafeError(runPinnedWriteHelper({
       rootPath: directory,
@@ -333,8 +310,7 @@ describe.runIf(native)("native filesystem primitives", () => {
       },
     }));
     configureFsSafeNative({ mode: "require" });
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-native-lock-"));
-    roots.push(directory);
+    const directory = await tempRoot("fs-safe-native-lock-");
     const targetPath = path.join(directory, "state.json");
     const lock = await acquireFileLock(targetPath, { payload: () => ({ pid: process.pid }) });
     try {
@@ -364,10 +340,7 @@ describe.runIf(native)("native filesystem primitives", () => {
       },
     }));
     configureFsSafeNative({ mode: "require" });
-    const directory = await fs.realpath(
-      await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-native-lock-denial-")),
-    );
-    roots.push(directory);
+    const directory = await fs.realpath(await tempRoot("fs-safe-native-lock-denial-"));
     const targetPath = path.join(directory, "state.json");
     const lock = await acquireFileLock(targetPath, {
       retry: { minTimeout: 1, maxTimeout: 2 },
@@ -396,10 +369,7 @@ describe.runIf(native)("native filesystem primitives", () => {
       },
     }));
     configureFsSafeNative({ mode: "require" });
-    const directory = await fs.realpath(
-      await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-native-lock-permission-")),
-    );
-    roots.push(directory);
+    const directory = await fs.realpath(await tempRoot("fs-safe-native-lock-permission-"));
     const targetPath = path.join(directory, "state.json");
     const lockPath = `${targetPath}.lock`;
 
@@ -416,8 +386,7 @@ describe.runIf(native)("native filesystem primitives", () => {
   it("publishes by native rename without replacing an existing target", async () => {
     __setNativeLoaderForTest(() => native!);
     configureFsSafeNative({ mode: "require" });
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-native-publish-"));
-    roots.push(directory);
+    const directory = await tempRoot("fs-safe-native-publish-");
     const sourcePath = path.join(directory, "source");
     const targetPath = path.join(directory, "target");
     await fs.writeFile(sourcePath, "content");

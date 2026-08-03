@@ -1,8 +1,9 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { expectFsSafeErrorSync } from "./helpers/security.js";
+import { tarFixture, type TarFixtureEntry } from "./helpers/archive-fuzz.js";
+import { useTempDirs } from "./helpers/vitest.js";
 import {
   ARCHIVE_LIMIT_ERROR_CODE,
   extractArchive,
@@ -25,71 +26,8 @@ try {
 } catch {
   // JS-only jobs intentionally exercise the fallback without a built binding.
 }
-const tempDirs: string[] = [];
-
-type TarFixtureEntry = {
-  path: string;
-  body?: string;
-  mode?: number;
-  type?: "0" | "1" | "2" | "5" | "7" | "K" | "L" | "S" | "g" | "x";
-  linkPath?: string;
-  base256Size?: number;
-};
-
-function writeString(block: Buffer, offset: number, length: number, value: string): void {
-  block.write(value, offset, Math.min(length, Buffer.byteLength(value)), "utf8");
-}
-
-function writeOctal(block: Buffer, offset: number, length: number, value: number): void {
-  writeString(block, offset, length, `${value.toString(8).padStart(length - 1, "0")}\0`);
-}
-
-function tarFixture(entries: TarFixtureEntry[]): Buffer {
-  const blocks: Buffer[] = [];
-  for (const fixture of entries) {
-    const body = Buffer.from(fixture.body ?? "");
-    const type = fixture.type ?? "0";
-    const header = Buffer.alloc(512);
-    writeString(header, 0, 100, fixture.path);
-    writeOctal(header, 100, 8, fixture.mode ?? (type === "5" ? 0o755 : 0o644));
-    writeOctal(header, 108, 8, 0);
-    writeOctal(header, 116, 8, 0);
-    const hasBody =
-      type === "0" ||
-      type === "7" ||
-      type === "K" ||
-      type === "L" ||
-      type === "g" ||
-      type === "x";
-    const size = fixture.base256Size ?? (hasBody ? body.length : 0);
-    if (fixture.base256Size === undefined) {
-      writeOctal(header, 124, 12, size);
-    } else {
-      header[124] = 0x80;
-      header.writeBigUInt64BE(BigInt(size), 128);
-    }
-    writeOctal(header, 136, 12, 0);
-    header.fill(0x20, 148, 156);
-    writeString(header, 156, 1, type);
-    writeString(header, 157, 100, fixture.linkPath ?? "");
-    writeString(header, 257, 6, "ustar\0");
-    writeString(header, 263, 2, "00");
-    const checksum = header.reduce((sum, byte) => sum + byte, 0);
-    writeString(header, 148, 8, `${checksum.toString(8).padStart(6, "0")}\0 `);
-    blocks.push(header);
-    if (hasBody && fixture.base256Size === undefined) {
-      blocks.push(body, Buffer.alloc((512 - (body.length % 512)) % 512));
-    }
-  }
-  blocks.push(Buffer.alloc(1024));
-  return Buffer.concat(blocks);
-}
-
-async function tempRoot(): Promise<string> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-native-archive-"));
-  tempDirs.push(root);
-  return root;
-}
+const { tempRoot: createTempRoot } = useTempDirs();
+const tempRoot = () => createTempRoot("fs-safe-native-archive-");
 
 function useBackend(backend: "native" | "javascript"): void {
   if (backend === "native") {
@@ -117,10 +55,9 @@ async function settleWithin<T>(promise: Promise<T>, milliseconds = 2_000): Promi
   }
 }
 
-afterEach(async () => {
+afterEach(() => {
   __resetFsSafeNativeConfigForTest();
   __resetNativeLoaderForTest();
-  await Promise.all(tempDirs.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
 });
 
 const archiveBackends = native

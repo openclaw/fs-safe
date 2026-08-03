@@ -11,6 +11,26 @@ describe("opened file realpath resolution", () => {
     vi.restoreAllMocks();
   });
 
+  async function withOpenedFile(
+    prefix: string,
+    name: string,
+    run: (fixture: {
+      directory: string;
+      filePath: string;
+      handle: Awaited<ReturnType<typeof fs.open>>;
+    }) => Promise<void>,
+  ): Promise<void> {
+    const directory = await tempRoot(prefix);
+    const filePath = path.join(directory, name);
+    await fs.writeFile(filePath, name, "utf8");
+    const handle = await fs.open(filePath, "r");
+    try {
+      await run({ directory, filePath, handle });
+    } finally {
+      await handle.close();
+    }
+  }
+
   function blockDescriptorPathLookups(
     fd: number,
     pathError?: { path: string; code: string },
@@ -30,92 +50,60 @@ describe("opened file realpath resolution", () => {
   }
 
   it("falls back to the supplied path when descriptor paths are unavailable", async () => {
-    const directory = await tempRoot("fs-safe-opened-realpath-");
-    const filePath = path.join(directory, "current.txt");
-    await fs.writeFile(filePath, "current", "utf8");
-    const handle = await fs.open(filePath, "r");
-
-    try {
+    await withOpenedFile("fs-safe-opened-realpath-", "current.txt", async ({ filePath, handle }) => {
       blockDescriptorPathLookups(handle.fd);
-
       await expect(resolveOpenedFileRealPathForHandle(handle, filePath)).resolves.toBe(
         await fs.realpath(filePath),
       );
-    } finally {
-      await handle.close();
-    }
+    });
   });
 
   it("preserves non-not-found errors from the supplied path", async () => {
-    const directory = await tempRoot("fs-safe-opened-realpath-error-");
-    const filePath = path.join(directory, "denied.txt");
-    await fs.writeFile(filePath, "denied", "utf8");
-    const handle = await fs.open(filePath, "r");
-
-    try {
+    await withOpenedFile("fs-safe-opened-realpath-error-", "denied.txt", async ({ filePath, handle }) => {
       blockDescriptorPathLookups(handle.fd, { path: filePath, code: "EACCES" });
-
       await expect(resolveOpenedFileRealPathForHandle(handle, filePath)).rejects.toMatchObject({
         code: "EACCES",
       });
-    } finally {
-      await handle.close();
-    }
+    });
   });
 
   itPosix("finds a renamed open file by identity in its original parent", async () => {
-    const directory = await tempRoot("fs-safe-opened-realpath-renamed-");
-    const originalPath = path.join(directory, "before.txt");
-    const renamedPath = path.join(directory, "after.txt");
-    await fs.writeFile(originalPath, "renamed", "utf8");
-    const handle = await fs.open(originalPath, "r");
-
-    try {
-      await fs.rename(originalPath, renamedPath);
+    await withOpenedFile("fs-safe-opened-realpath-renamed-", "before.txt", async ({
+      directory,
+      filePath,
+      handle,
+    }) => {
+      const renamedPath = path.join(directory, "after.txt");
+      await fs.rename(filePath, renamedPath);
       blockDescriptorPathLookups(handle.fd);
-
-      await expect(resolveOpenedFileRealPathForHandle(handle, originalPath)).resolves.toBe(
+      await expect(resolveOpenedFileRealPathForHandle(handle, filePath)).resolves.toBe(
         await fs.realpath(renamedPath),
       );
-    } finally {
-      await handle.close();
-    }
+    });
   });
 
   itPosix("rejects an unlinked open file when no path with its identity remains", async () => {
-    const directory = await tempRoot("fs-safe-opened-realpath-unlinked-");
-    const filePath = path.join(directory, "unlinked.txt");
-    await fs.writeFile(filePath, "unlinked", "utf8");
-    const handle = await fs.open(filePath, "r");
-
-    try {
+    await withOpenedFile("fs-safe-opened-realpath-unlinked-", "unlinked.txt", async ({ filePath, handle }) => {
       await fs.unlink(filePath);
       blockDescriptorPathLookups(handle.fd);
-
       await expect(resolveOpenedFileRealPathForHandle(handle, filePath)).rejects.toMatchObject({
         code: "path-mismatch",
       });
-    } finally {
-      await handle.close();
-    }
+    });
   });
 
   itPosix("rejects cleanly when an opened file and its parent are both removed", async () => {
-    const directory = await tempRoot("fs-safe-opened-realpath-removed-parent-");
-    const filePath = path.join(directory, "removed.txt");
-    await fs.writeFile(filePath, "removed", "utf8");
-    const handle = await fs.open(filePath, "r");
-
-    try {
+    await withOpenedFile("fs-safe-opened-realpath-removed-parent-", "removed.txt", async ({
+      directory,
+      filePath,
+      handle,
+    }) => {
       await fs.unlink(filePath);
       await fs.rmdir(directory);
       blockDescriptorPathLookups(handle.fd);
-
       await expect(resolveOpenedFileRealPathForHandle(handle, filePath)).rejects.toMatchObject({
         code: "path-mismatch",
       });
-    } finally {
-      await handle.close();
-    }
+    });
   });
 });
