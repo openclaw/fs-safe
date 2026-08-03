@@ -38,6 +38,7 @@ const { tempRoot } = useRealTempDirs();
 const DOCUMENTED_REJECTION_CODES = new Set([
   "archive-header-invalid",
   "device-path",
+  "ENOENT",
   "entry-path",
   ...Object.values(ARCHIVE_LIMIT_ERROR_CODE),
 ]);
@@ -212,8 +213,9 @@ describe.each(["tar", "zip"] as const)("%s Windows-name portability", (kind) => 
         const outcome = await extractOutcome({ bytes, kind, backend });
         observed.push({ name, outcome });
         if (process.platform === "win32") {
-          expect(outcome, JSON.stringify({ kind, backend, name })).toMatchObject({
+          expect(outcome, JSON.stringify({ kind, backend, name })).toEqual({
             accepted: false,
+            code: name.includes(":") ? "ENOENT" : "device-path",
           });
         } else {
           expect(outcome, JSON.stringify({ kind, backend, name })).toEqual({ accepted: true });
