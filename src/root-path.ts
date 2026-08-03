@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { formatErrorDetail } from "./error-detail.js";
 import { FsSafeError } from "./errors.js";
 import {
   assertNoNulPathInput,
@@ -62,6 +63,16 @@ export type ResolvedRootPath = {
 export async function resolveRootPath(
   params: ResolveRootPathParams,
 ): Promise<ResolvedRootPath> {
+  try {
+    return await resolveRootPathInternal(params);
+  } catch (error) {
+    throw sanitizeRootPathError(error);
+  }
+}
+
+async function resolveRootPathInternal(
+  params: ResolveRootPathParams,
+): Promise<ResolvedRootPath> {
   assertValidRootPathInputs(params);
   const rootPath = path.resolve(params.rootPath);
   const absolutePath = path.resolve(params.absolutePath);
@@ -96,6 +107,14 @@ export async function resolveRootPath(
 }
 
 export function resolveRootPathSync(params: ResolveRootPathParams): ResolvedRootPath {
+  try {
+    return resolveRootPathSyncInternal(params);
+  } catch (error) {
+    throw sanitizeRootPathError(error);
+  }
+}
+
+function resolveRootPathSyncInternal(params: ResolveRootPathParams): ResolvedRootPath {
   assertValidRootPathInputs(params);
   const rootPath = path.resolve(params.rootPath);
   const absolutePath = path.resolve(params.absolutePath);
@@ -127,6 +146,13 @@ export function resolveRootPathSync(params: ResolveRootPathParams): ResolvedRoot
     rootPath: context.rootPath,
     rootCanonicalPath: context.rootCanonicalPath,
   });
+}
+
+function sanitizeRootPathError(error: unknown): unknown {
+  if (error instanceof Error) {
+    error.message = formatErrorDetail(error.message);
+  }
+  return error;
 }
 
 function assertValidRootPathInputs(params: ResolveRootPathParams): void {
