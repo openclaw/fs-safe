@@ -20,6 +20,7 @@ import type {
   SidecarLockRetryOptions,
   SidecarLockStaleRecovery,
 } from "./sidecar-lock-types.js";
+import { sleepSync } from "./timing.js";
 
 export type FileLockSyncAcquireOptions<TPayload extends Record<string, unknown>> = {
   lockPath?: string;
@@ -144,10 +145,6 @@ function defaultShouldReclaim(payload: unknown, lockPath: string, staleMs: numbe
   }
 }
 
-function sleep(milliseconds: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
-}
-
 function reclaimGuardExists(reclaimGuardPath: string): boolean {
   try {
     fs.lstatSync(reclaimGuardPath);
@@ -190,7 +187,7 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
         normalizedTargetPath,
       });
     }
-    sleep(computeSidecarLockDelayMs(retry, attempt));
+    sleepSync(computeSidecarLockDelayMs(retry, attempt));
     attempt += 1;
   };
 

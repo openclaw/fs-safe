@@ -1,3 +1,14 @@
+export function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function sleepSync(ms: number): void {
+  if (ms <= 0) {
+    return;
+  }
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 export async function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,

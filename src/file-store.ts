@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import syncFs from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -8,24 +7,20 @@ import { FsSafeError } from "./errors.js";
 import { pruneExpiredStoreEntries, type FileStorePruneOptions } from "./file-store-prune.js";
 export type { FileStorePruneOptions } from "./file-store-prune.js";
 import {
-  assertSyncDirectoryGuard,
   ensureParentInRoot,
-  ensureParentSync,
-  ensureStoreDirectorySync,
   openWritableStoreRoot,
-  type SyncParentGuard,
   writeStreamToTempSource,
 } from "./file-store-boundary.js";
-import { readFileStoreCopySource } from "./file-store-source.js";
+import { writeFileSyncAtomic } from "./file-store-sync-write.js";
 import { createJsonStore, type JsonFileStoreOptions, type JsonStore } from "./json-document-store.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
-import { isPathInside, resolveSafeRelativePath } from "./path.js";
+import { resolveSafeRelativePath } from "./path.js";
 import { root, type OpenResult, type ReadResult, type Root, type RootReadOptions } from "./root.js";
 import { DEFAULT_ROOT_MAX_BYTES } from "./root-impl.js";
+import { readRegularFile } from "./regular-file.js";
 import { matchRootFileOpenFailure, openRootFileSync, type RootFileOpenFailure } from "./root-file.js";
 import { assertNoDriveRelativePathSegments } from "./safe-path-segment.js";
 import { writeSecretFileAtomic } from "./secret-file.js";
-import { getFsSafeTestHooks } from "./test-hooks.js";
 
 export type FileStoreOptions = {
   rootDir: string;
@@ -118,11 +113,6 @@ function resolveStorePath(rootDir: string, relativePath: string): string {
   return resolveSafeRelativePath(rootDir, assertRelativePath(relativePath));
 }
 
-function assertStoreFilePath(rootDir: string, filePath: string): void {
-  if (!isPathInside(rootDir, filePath)) {
-    throw new FsSafeError("outside-workspace", "file path escapes store root");
-  }
-}
 function assertMaxBytes(size: number, maxBytes?: number): void {
   if (maxBytes !== undefined && size > maxBytes) {
     throw new FsSafeError("too-large", `file exceeds maximum size of ${maxBytes} bytes`);
@@ -162,6 +152,36 @@ function handleSyncStoreReadOpenFailure(opened: RootFileOpenFailure): null {
       });
     },
   });
+}
+
+async function readFileStoreCopySource(params: {
+  sourcePath: string;
+  maxBytes?: number;
+}): Promise<Buffer> {
+  const sourceStat = await fs.lstat(params.sourcePath);
+  if (sourceStat.isSymbolicLink() || !sourceStat.isFile()) {
+    throw new FsSafeError("not-file", "source path is not a file");
+  }
+  if (params.maxBytes !== undefined && sourceStat.size > params.maxBytes) {
+    throw new FsSafeError("too-large", `file exceeds maximum size of ${params.maxBytes} bytes`);
+  }
+  try {
+    return (await readRegularFile({ filePath: params.sourcePath, maxBytes: params.maxBytes }))
+      .buffer;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("regular file") || message.includes("not a regular file")) {
+      throw new FsSafeError("not-file", "source path is not a file", {
+        cause: error instanceof Error ? error : undefined,
+      });
+    }
+    if (params.maxBytes !== undefined && message.includes(`exceeds ${params.maxBytes} bytes`)) {
+      throw new FsSafeError("too-large", `file exceeds maximum size of ${params.maxBytes} bytes`, {
+        cause: error instanceof Error ? error : undefined,
+      });
+    }
+    throw error;
+  }
 }
 
 async function copyIntoRoot(params: {
@@ -391,87 +411,6 @@ export function fileStore(options: FileStoreOptions): FileStore {
       await pruneExpiredStoreEntries({ rootDir, dirMode, options: pruneOptions });
     },
   };
-}
-
-function ensurePrivateDirectorySync(rootDir: string, targetDir: string, mode: number): SyncParentGuard {
-  return ensureStoreDirectorySync({
-    rootDir,
-    targetDir,
-    mode,
-    messagePrefix: "private store",
-  });
-}
-
-function writeFileSyncAtomic(params: {
-  rootDir: string;
-  filePath: string;
-  content: string | Uint8Array;
-  privateMode: boolean;
-  dirMode: number;
-  mode: number;
-}): string {
-  const filePath = path.resolve(params.filePath);
-  assertStoreFilePath(params.rootDir, filePath);
-  let parentGuard: SyncParentGuard | undefined;
-  if (params.privateMode) {
-    parentGuard = ensurePrivateDirectorySync(params.rootDir, path.dirname(filePath), params.dirMode);
-    try {
-      const stat = syncFs.lstatSync(filePath);
-      if (stat.isSymbolicLink() || !stat.isFile()) {
-        throw new FsSafeError("not-file", `private store target must be a regular file: ${filePath}`);
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw error;
-      }
-    }
-  } else {
-    parentGuard = ensureParentSync({
-      rootDir: params.rootDir,
-      filePath,
-      mode: params.dirMode,
-    });
-  }
-  const tempPath = path.join(
-    parentGuard?.dir ?? path.dirname(filePath),
-    `.fs-safe-${process.pid}-${randomUUID()}.tmp`,
-  );
-  let tempExists = false;
-  try {
-    getFsSafeTestHooks()?.beforeFileStoreSyncPrivateWrite?.(filePath);
-    if (parentGuard) {
-      assertSyncDirectoryGuard(parentGuard);
-    }
-    syncFs.writeFileSync(tempPath, params.content, { flag: "wx", mode: params.mode });
-    tempExists = true;
-    try {
-      syncFs.chmodSync(tempPath, params.mode);
-    } catch {
-      // Best-effort on platforms that do not enforce POSIX modes.
-    }
-    if (parentGuard) {
-      assertSyncDirectoryGuard(parentGuard);
-    }
-    syncFs.renameSync(tempPath, filePath);
-    tempExists = false;
-    if (parentGuard) {
-      assertSyncDirectoryGuard(parentGuard);
-    }
-    try {
-      syncFs.chmodSync(filePath, params.mode);
-    } catch {
-      // Best-effort on platforms that do not enforce POSIX modes.
-    }
-    return filePath;
-  } finally {
-    if (tempExists) {
-      try {
-        syncFs.unlinkSync(tempPath);
-      } catch {
-        // Best-effort cleanup after write failure.
-      }
-    }
-  }
 }
 
 export function fileStoreSync(options: FileStoreOptions): FileStoreSync {

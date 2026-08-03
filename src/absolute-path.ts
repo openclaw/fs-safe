@@ -7,6 +7,7 @@ import {
   createAsyncDirectoryGuard,
 } from "./directory-guard.js";
 import { FsSafeError, type FsSafeErrorCode } from "./errors.js";
+import { pathExists } from "./fs.js";
 
 export type AbsolutePathSymlinkPolicy = "reject" | "follow";
 
@@ -217,15 +218,6 @@ export function assertAbsolutePathInput(filePath: string): string {
     throw new FsSafeError("invalid-path", "path must be absolute");
   }
   return path.normalize(filePath);
-}
-
-async function pathExists(filePath: string): Promise<boolean> {
-  try {
-    await fs.access(filePath);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export async function findExistingAncestor(filePath: string): Promise<string | null> {

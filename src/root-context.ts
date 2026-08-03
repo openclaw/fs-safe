@@ -11,6 +11,7 @@ import {
   isPathInside,
 } from "./path.js";
 import { ROOT_PATH_ALIAS_POLICIES, resolveRootPath } from "./root-path.js";
+import { outsideWorkspaceError } from "./root-errors.js";
 import { isDriveRelativePath } from "./safe-path-segment.js";
 
 export type RootContext = {
@@ -92,7 +93,7 @@ export async function resolvePathInRoot(
   const expanded = await expandRelativePathWithHome(relativePath);
   const resolved = path.resolve(root.rootWithSep, expanded);
   if (!isPathInside(root.rootWithSep, resolved)) {
-    throw new FsSafeError("outside-workspace", "file is outside workspace root");
+    throw outsideWorkspaceError();
   }
   if (options?.rejectUnsafeDeviceReads === true) {
     assertNoUnsafeDeviceReadPath(resolved);

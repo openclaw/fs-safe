@@ -22,6 +22,7 @@ import {
 } from "./replace-file-descriptor.js";
 import { assertSafePathPrefix } from "./safe-path-segment.js";
 import { registerTempPathForExit } from "./temp-cleanup.js";
+import { sleep, sleepSync } from "./timing.js";
 import { serializePathWrite } from "./write-queue.js";
 
 export type ReplaceFileAtomicFileSystem = {
@@ -114,10 +115,6 @@ function isPermissionRenameError(error: unknown): boolean {
   return code === "EPERM" || code === "EEXIST";
 }
 
-async function sleep(ms: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 async function renameWithRetry(params: {
   fsModule: ReplaceFileAtomicFileSystem["promises"];
   src: string;
@@ -155,13 +152,6 @@ async function renameWithRetry(params: {
     }
   }
   throw new Error("Atomic rename retry loop exhausted.");
-}
-
-function sleepSync(ms: number): void {
-  if (ms <= 0) {
-    return;
-  }
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 function renameWithRetrySync(params: {

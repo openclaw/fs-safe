@@ -34,7 +34,6 @@ import {
   isSymlinkOpenError,
 } from "./path.js";
 import { readOpenedFileSafely, type ReadResult } from "./read-opened-file.js";
-import { pathStatFromStats } from "./path-stat.js";
 import { resolveRootPath } from "./root-path.js";
 import {
   assertValidRootDestinationPath,
@@ -46,11 +45,14 @@ import {
   type RootContext,
 } from "./root-context.js";
 import {
+  fileNotFoundError,
+  hardlinkedPathNotAllowedError,
   isAlreadyExistsError,
   normalizePinnedPathError,
   normalizePinnedWriteError,
   normalizeRemoveGuardError,
   normalizeRemovePathError,
+  outsideWorkspaceError,
 } from "./root-errors.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
@@ -165,6 +167,22 @@ const OPEN_APPEND_CREATE_FLAGS =
 
 export const DEFAULT_ROOT_MAX_BYTES = 16 * 1024 * 1024;
 
+function pathStatFromStats(stat: Stats): PathStat {
+  return {
+    dev: Number(stat.dev),
+    gid: Number(stat.gid),
+    ino: Number(stat.ino),
+    isDirectory: stat.isDirectory(),
+    isFile: stat.isFile(),
+    isSymbolicLink: stat.isSymbolicLink(),
+    mode: stat.mode,
+    mtimeMs: stat.mtimeMs,
+    nlink: stat.nlink,
+    size: stat.size,
+    uid: stat.uid,
+  };
+}
+
 function openResult(params: {
   handle: FileHandle;
   realPath: string;
@@ -223,7 +241,7 @@ async function openVerifiedLocalFile(
     }
   } catch (err) {
     if (isNotFoundPathError(err)) {
-      throw new FsSafeError("not-found", "file not found");
+      throw fileNotFoundError();
     }
     if (isSymlinkOpenError(err)) {
       throw new FsSafeError("symlink", "symlink open blocked", { cause: err });
@@ -248,7 +266,7 @@ async function openVerifiedLocalFile(
       throw new FsSafeError("path-mismatch", "path changed before open");
     }
     if (options?.hardlinks === "reject" && stat.nlink > 1) {
-      throw new FsSafeError("hardlink", "hardlinked path not allowed");
+      throw hardlinkedPathNotAllowedError();
     }
 
     if (options?.symlinks === "follow-within-root") {
@@ -269,7 +287,7 @@ async function openVerifiedLocalFile(
     const realPath = await resolveOpenedFileRealPathForHandle(handle, filePath);
     const realStat = await fs.stat(realPath);
     if (options?.hardlinks === "reject" && realStat.nlink > 1) {
-      throw new FsSafeError("hardlink", "hardlinked path not allowed");
+      throw hardlinkedPathNotAllowedError();
     }
     if (!sameFileIdentity(stat, realStat)) {
       throw new FsSafeError("path-mismatch", "path mismatch");
@@ -282,7 +300,7 @@ async function openVerifiedLocalFile(
       throw err;
     }
     if (isNotFoundPathError(err)) {
-      throw new FsSafeError("not-found", "file not found");
+      throw fileNotFoundError();
     }
     throw err;
   }
@@ -377,6 +395,16 @@ class RootHandle implements Root {
     };
   }
 
+  private mutationOptions<T extends { denyMutations?: DenyMutationPolicy }>(options: T): T {
+    return {
+      ...options,
+      denyMutations: mergeDenyMutationPolicies(
+        this.defaults.denyMutations,
+        options.denyMutations,
+      ),
+    };
+  }
+
   async resolve(relativePath: string): Promise<string> {
     assertValidRootDestinationPath(relativePath);
     return (
@@ -449,8 +477,7 @@ class RootHandle implements Root {
       relativePath,
       mkdir: this.defaults.mkdir,
       mode: this.defaults.mode,
-      ...options,
-      denyMutations: mergeDenyMutationPolicies(this.defaults.denyMutations, options.denyMutations),
+      ...this.mutationOptions(options),
       append: writeMode === "append",
       truncateExisting: writeMode === "replace",
     });
@@ -463,8 +490,7 @@ class RootHandle implements Root {
       data,
       mkdir: this.defaults.mkdir,
       mode: this.defaults.mode,
-      ...options,
-      denyMutations: mergeDenyMutationPolicies(this.defaults.denyMutations, options.denyMutations),
+      ...this.mutationOptions(options),
     });
   }
 
@@ -472,7 +498,7 @@ class RootHandle implements Root {
     assertValidRootRelativePath(relativePath);
     await removePathInRoot(this.context, {
       relativePath,
-      denyMutations: mergeDenyMutationPolicies(this.defaults.denyMutations, options.denyMutations),
+      ...this.mutationOptions(options),
     });
   }
 
@@ -480,7 +506,7 @@ class RootHandle implements Root {
     assertValidRootDestinationPath(relativePath);
     await mkdirPathInRoot(this.context, {
       relativePath,
-      denyMutations: mergeDenyMutationPolicies(this.defaults.denyMutations, options.denyMutations),
+      ...this.mutationOptions(options),
     });
   }
 
@@ -488,7 +514,7 @@ class RootHandle implements Root {
     await mkdirPathInRoot(this.context, {
       relativePath: "",
       allowRoot: true,
-      denyMutations: mergeDenyMutationPolicies(this.defaults.denyMutations, options.denyMutations),
+      ...this.mutationOptions(options),
     });
   }
 
@@ -504,8 +530,7 @@ class RootHandle implements Root {
       mkdir: this.defaults.mkdir,
       mode: this.defaults.mode,
       renameIdentity: this.defaults.renameIdentity,
-      ...options,
-      denyMutations: mergeDenyMutationPolicies(this.defaults.denyMutations, options.denyMutations),
+      ...this.mutationOptions(options),
     });
   }
 
@@ -520,8 +545,7 @@ class RootHandle implements Root {
       data,
       mkdir: this.defaults.mkdir,
       mode: this.defaults.mode,
-      ...options,
-      denyMutations: mergeDenyMutationPolicies(this.defaults.denyMutations, options.denyMutations),
+      ...this.mutationOptions(options),
       overwrite: false,
     });
   }
@@ -558,8 +582,7 @@ class RootHandle implements Root {
       maxBytes: this.defaults.maxBytes,
       mkdir: this.defaults.mkdir,
       mode: this.defaults.mode,
-      ...options,
-      denyMutations: mergeDenyMutationPolicies(this.defaults.denyMutations, options.denyMutations),
+      ...this.mutationOptions(options),
     });
   }
 
@@ -600,10 +623,7 @@ class RootHandle implements Root {
     assertValidRootRelativePath(fromRelative);
     assertValidRootDestinationPath(toRelative);
     validatePinnedOperationPayload({ from: fromRelative, to: toRelative });
-    const denyMutations = mergeDenyMutationPolicies(
-      this.defaults.denyMutations,
-      options.denyMutations,
-    );
+    const { denyMutations } = this.mutationOptions(options);
     await assertMoveMutationAllowed(this.context, {
       fromRelative,
       toRelative,
@@ -667,12 +687,12 @@ async function openFileInRoot(
 
   if (params.hardlinks !== "allow" && opened.stat.nlink > 1) {
     await opened.handle.close().catch(() => {});
-    throw new FsSafeError("hardlink", "hardlinked path not allowed");
+    throw hardlinkedPathNotAllowedError();
   }
 
   if (!isPathInside(rootWithSep, opened.realPath)) {
     await opened.handle.close().catch(() => {});
-    throw new FsSafeError("outside-workspace", "file is outside workspace root");
+    throw outsideWorkspaceError();
   }
 
   return opened;
@@ -802,7 +822,7 @@ async function verifyAtomicWriteResult(params: {
       throw new FsSafeError("path-mismatch", "path changed during write");
     }
     if (!isPathInside(params.root.rootWithSep, opened.realPath)) {
-      throw new FsSafeError("outside-workspace", "file is outside workspace root");
+      throw outsideWorkspaceError();
     }
   } finally {
     await opened.handle.close().catch(() => {});
@@ -867,7 +887,7 @@ async function openWritableFileInRoot(
   try {
     const resolvedRealPath = await fs.realpath(ioPath);
     if (!isPathInside(rootWithSep, resolvedRealPath)) {
-      throw new FsSafeError("outside-workspace", "file is outside workspace root");
+      throw outsideWorkspaceError();
     }
     ioPath = resolvedRealPath;
   } catch (err) {
@@ -897,7 +917,7 @@ async function openWritableFileInRoot(
     }
   } catch (err) {
     if (isNotFoundPathError(err)) {
-      throw new FsSafeError("not-found", "file not found");
+      throw fileNotFoundError();
     }
     if (isSymlinkOpenError(err)) {
       throw new FsSafeError("symlink", "symlink open blocked", { cause: err });
@@ -915,7 +935,7 @@ async function openWritableFileInRoot(
       throw new FsSafeError("invalid-path", "path is not a regular file under root");
     }
     if (stat.nlink > 1) {
-      throw new FsSafeError("hardlink", "hardlinked path not allowed");
+      throw hardlinkedPathNotAllowedError();
     }
 
     try {
@@ -942,10 +962,10 @@ async function openWritableFileInRoot(
       throw new FsSafeError("path-mismatch", "path mismatch");
     }
     if (realStat.nlink > 1) {
-      throw new FsSafeError("hardlink", "hardlinked path not allowed");
+      throw hardlinkedPathNotAllowedError();
     }
     if (!isPathInside(rootWithSep, realPath)) {
-      throw new FsSafeError("outside-workspace", "file is outside workspace root");
+      throw outsideWorkspaceError();
     }
 
     // Truncate only after boundary and identity checks complete. This avoids
@@ -1029,11 +1049,11 @@ async function removePathInRoot(
   params: { relativePath: string; denyMutations?: DenyMutationPolicy },
 ): Promise<void> {
   validatePinnedOperationPayload({ relativePath: params.relativePath });
-  const resolved = await resolvePinnedRemovePathInRoot(
-    root,
-    params.relativePath,
-    params.denyMutations,
-  );
+  const resolved = await resolvePinnedPathInRoot(root, {
+    relativePath: params.relativePath,
+    denyMutations: params.denyMutations,
+    remove: true,
+  });
   try {
     await removePathFallback(resolved);
   } catch (error) {
@@ -1234,7 +1254,7 @@ async function resolvePinnedWriteTargetInRoot(
   // is rejected upstream.
   const relativeResolved = path.relative(rootReal, resolved);
   if (path.isAbsolute(relativeResolved)) {
-    throw new FsSafeError("outside-workspace", "file is outside workspace root");
+    throw outsideWorkspaceError();
   }
   const relativePosix = relativeResolved
     ? relativeResolved.split(path.sep).join(path.posix.sep)
@@ -1254,7 +1274,7 @@ async function resolvePinnedWriteTargetInRoot(
     try {
       mode = requestedMode ?? (opened.stat.mode & 0o777);
       if (!isPathInside(rootWithSep, opened.realPath)) {
-        throw new FsSafeError("outside-workspace", "file is outside workspace root");
+        throw outsideWorkspaceError();
       }
     } finally {
       await opened.handle.close().catch(() => {});
@@ -1281,27 +1301,15 @@ async function resolvePinnedPathInRoot(
     relativePath: string;
     allowRoot?: boolean;
     denyMutations?: DenyMutationPolicy;
+    remove?: boolean;
   },
 ): Promise<{ rootReal: string; resolved: string; relativePosix: string }> {
   return await resolvePinnedOperationPathInRoot(root, {
     allowRoot: params.allowRoot,
     denyMutations: params.denyMutations,
-    protectDenyMutationAncestors: false,
+    protectDenyMutationAncestors: params.remove === true,
     relativePath: params.relativePath,
-    policy: PATH_ALIAS_POLICIES.strict,
-  });
-}
-
-async function resolvePinnedRemovePathInRoot(
-  root: RootContext,
-  relativePath: string,
-  denyMutations?: DenyMutationPolicy,
-): Promise<{ rootReal: string; resolved: string; relativePosix: string }> {
-  return await resolvePinnedOperationPathInRoot(root, {
-    denyMutations,
-    protectDenyMutationAncestors: true,
-    relativePath,
-    policy: PATH_ALIAS_POLICIES.unlinkTarget,
+    policy: params.remove ? PATH_ALIAS_POLICIES.unlinkTarget : PATH_ALIAS_POLICIES.strict,
   });
 }
 
@@ -1331,11 +1339,11 @@ async function resolvePinnedOperationPathInRoot(
     firstSegment === ".." ||
     path.isAbsolute(relativeResolved)
   ) {
-    throw new FsSafeError("outside-workspace", "file is outside workspace root");
+    throw outsideWorkspaceError();
   }
   const relativePosix = relativeResolved.split(path.sep).join(path.posix.sep);
   if (!isPathInside(resolved.rootWithSep, resolved.canonicalPath)) {
-    throw new FsSafeError("outside-workspace", "file is outside workspace root");
+    throw outsideWorkspaceError();
   }
   await assertMutationNotDenied(resolved.canonicalPath, params.denyMutations, {
     protectAncestors: params.protectDenyMutationAncestors,
@@ -1409,9 +1417,7 @@ async function statPathFallback(root: RootContext, relativePath: string): Promis
     return pathStatFromStats(await fs.lstat(resolved.resolved));
   } catch (error) {
     if (isNotFoundPathError(error)) {
-      throw new FsSafeError("not-found", "file not found", {
-        cause: error instanceof Error ? error : undefined,
-      });
+      throw fileNotFoundError(error instanceof Error ? error : undefined);
     }
     throw error;
   }
@@ -1455,6 +1461,8 @@ async function assertMoveMutationAllowed(
     denyMutations?: DenyMutationPolicy;
   },
 ): Promise<void> {
+  // Keep this preflight separate from the pinned resolutions in movePathFallback:
+  // mutation denials must take precedence over source alias or identity failures.
   const source = await resolvePathInRoot(root, params.fromRelative, {
     aliasErrorCode: "path-alias",
     allowFinalSymlink: true,
@@ -1509,9 +1517,7 @@ async function movePathFallback(
     sourceStat = await fs.lstat(source.resolved);
   } catch (error) {
     if (isNotFoundPathError(error)) {
-      throw new FsSafeError("not-found", "file not found", {
-        cause: error instanceof Error ? error : undefined,
-      });
+      throw fileNotFoundError(error instanceof Error ? error : undefined);
     }
     throw error;
   }
@@ -1519,7 +1525,7 @@ async function movePathFallback(
     throw new FsSafeError("symlink", "symlink not allowed");
   }
   if (sourceStat.isFile() && sourceStat.nlink > 1) {
-    throw new FsSafeError("hardlink", "hardlinked path not allowed");
+    throw hardlinkedPathNotAllowedError();
   }
   if (!params.overwrite && sourceStat.isDirectory()) {
     throw new FsSafeError("invalid-path", "directory moves require overwrite: true");
@@ -1547,9 +1553,7 @@ async function movePathFallback(
     await fs.rename(source.resolved, target.resolved);
   } catch (error) {
     if (isNotFoundPathError(error)) {
-      throw new FsSafeError("not-found", "file not found", {
-        cause: error instanceof Error ? error : undefined,
-      });
+      throw fileNotFoundError(error instanceof Error ? error : undefined);
     }
     if (hasNodeErrorCode(error, "EEXIST")) {
       throw new FsSafeError("already-exists", "destination exists", {
