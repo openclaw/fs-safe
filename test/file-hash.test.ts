@@ -96,6 +96,22 @@ describe("sha256File", () => {
     await expect(sha256File(linkPath)).rejects.toMatchObject({ code: "symlink" });
   });
 
+  it("rejects a regular file replaced between inspection and open", async () => {
+    const root = await tempRoot();
+    const filePath = path.join(root, "payload.bin");
+    const displacedPath = path.join(root, "payload.displaced");
+    await fs.writeFile(filePath, "original");
+    configureFsSafeNative({ mode: "off" });
+    const originalOpen = fs.open.bind(fs);
+    vi.spyOn(fs, "open").mockImplementationOnce(async (...args) => {
+      await fs.rename(filePath, displacedPath);
+      await fs.writeFile(filePath, "replacement");
+      return await originalOpen(...args);
+    });
+
+    await expect(sha256File(filePath)).rejects.toMatchObject({ code: "path-mismatch" });
+  });
+
   itPosix("rejects a FIFO swapped in before open without blocking", async () => {
     const root = await tempRoot();
     const filePath = path.join(root, "payload.bin");

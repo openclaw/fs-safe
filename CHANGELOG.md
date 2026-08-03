@@ -5,6 +5,7 @@
 ### Security and Correctness
 
 - Shell-quote POSIX permission-remediation paths, and report a secret file that grows past the synchronous read limit as `too-large` just like the asynchronous reader.
+- Fence pathname SHA-256 hashing against pre-open identity replacement, propagate bounded-stream source failures while tearing down file streams on early consumer close, and report synchronous regular-file disappearance races as `path-mismatch` consistently with the async reader.
 - Pin synchronous file-store roots across every parent-walk segment, so private and non-private writes reject a store root replaced during directory creation, and route deny-mutation ancestor canonicalization through the shared root resolver on Windows and POSIX.
 - Keep the POSIX parent-directory no-follow identity check active for synchronous atomic-replacement adapters that omit `fchmodSync`, preventing the documented default adapter path from writing through a symlinked parent.
 - Synchronize the actual destination after descriptor-bound mode application when atomic rename uses copy fallback, and include both bytes and mode in bounded fallback restoration.

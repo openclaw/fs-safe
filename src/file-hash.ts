@@ -77,7 +77,12 @@ async function hashPath(filePath: string): Promise<Sha256FileResult> {
     if (!opened.isFile()) {
       throw new FsSafeError("not-file", "SHA-256 path is not a regular file");
     }
-    if (current.isSymbolicLink() || !current.isFile() || !sameFileIdentity(opened, current)) {
+    if (
+      current.isSymbolicLink() ||
+      !current.isFile() ||
+      !sameFileIdentity(before, opened) ||
+      !sameFileIdentity(opened, current)
+    ) {
       throw new FsSafeError("path-mismatch", "SHA-256 path changed while opening");
     }
     return await hashFileHandle(handle);
