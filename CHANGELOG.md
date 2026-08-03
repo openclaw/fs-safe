@@ -4,6 +4,7 @@
 
 ### Security and Correctness
 
+- Preserve unrelated files when the create-only JavaScript `Root.write()` fallback loses a parent-directory race during post-write verification, limiting failure cleanup to the inode created by the operation.
 - Pin synchronous file-store roots across every parent-walk segment, so private and non-private writes reject a store root replaced during directory creation, and route deny-mutation ancestor canonicalization through the shared root resolver on Windows and POSIX.
 - Keep the POSIX parent-directory no-follow identity check active for synchronous atomic-replacement adapters that omit `fchmodSync`, preventing the documented default adapter path from writing through a symlinked parent.
 - Synchronize the actual destination after descriptor-bound mode application when atomic rename uses copy fallback, and include both bytes and mode in bounded fallback restoration.

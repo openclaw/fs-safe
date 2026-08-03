@@ -1646,6 +1646,7 @@ async function writeMissingFileFallback(
     : await prepareRootWriteTarget(rootReal, resolved);
   const parentGuard = await createAsyncDirectoryGuard(path.dirname(targetPath));
   let created = false;
+  let createdIdentity: FileIdentityStat | undefined;
   try {
     const { handle, writtenStat } = await withAsyncDirectoryGuards(
       [parentGuard],
@@ -1653,6 +1654,7 @@ async function writeMissingFileFallback(
         const handle = await fs.open(targetPath, OPEN_WRITE_CREATE_FLAGS, params.mode ?? 0o600);
         created = true;
         try {
+          createdIdentity = await handle.stat();
           if (typeof params.data === "string") {
             await handle.writeFile(params.data, params.encoding ?? "utf8");
           } else {
@@ -1686,8 +1688,8 @@ async function writeMissingFileFallback(
     }
     throw err;
   } finally {
-    if (created) {
-      await fs.rm(targetPath, { force: true }).catch(() => undefined);
+    if (created && createdIdentity) {
+      await removeCopyTargetIfUnchanged(targetPath, createdIdentity).catch(() => undefined);
     }
   }
 }
