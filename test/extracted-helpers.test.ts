@@ -73,7 +73,7 @@ describe("install path helpers", () => {
       }),
     ).toEqual({
       ok: true,
-      path: path.join("/tmp/plugins", "@openclaw__matrix"),
+      path: path.resolve("/tmp/plugins", "@openclaw__matrix"),
     });
   });
 

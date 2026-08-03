@@ -1,4 +1,5 @@
 import path from "node:path";
+import { fileURLToPath, URL } from "node:url";
 import { FsSafeError } from "./errors.js";
 import { isFileUrl, trySafeFileURLToPath } from "./local-file-access.js";
 
@@ -90,12 +91,25 @@ function trimTrailingWindowsIgnoredChars(value: string): string {
   return end === value.length ? value : value.slice(0, end);
 }
 
-function candidateReadPaths(filePath: string): string[] {
+function candidateReadPaths(filePath: string, platform: NodeJS.Platform): string[] {
   if (!isFileUrl(filePath)) {
     return [filePath];
   }
   const parsed = trySafeFileURLToPath(filePath);
-  return parsed === undefined ? [filePath] : [filePath, parsed];
+  if (parsed === undefined) {
+    return [filePath];
+  }
+  if (platform === process.platform) {
+    return [filePath, parsed];
+  }
+  try {
+    return [
+      filePath,
+      fileURLToPath(new URL(filePath), { windows: platform === "win32" }),
+    ];
+  } catch {
+    return [filePath];
+  }
 }
 
 function normalizePosixPath(filePath: string, cwd?: string): string {
@@ -148,7 +162,7 @@ export function matchUnsafeDeviceReadPath(
   options: UnsafeDeviceReadPathOptions = {},
 ): UnsafeDeviceReadPathMatch | undefined {
   const platform = options.platform ?? process.platform;
-  for (const candidate of candidateReadPaths(filePath)) {
+  for (const candidate of candidateReadPaths(filePath, platform)) {
     const match = platform === "win32"
       ? matchWindowsDeviceReadPath(candidate)
       : matchPosixDeviceReadPath(candidate, options.cwd);

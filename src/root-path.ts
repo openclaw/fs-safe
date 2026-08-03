@@ -13,6 +13,7 @@ import {
   resolvePathViaExistingAncestorSync,
 } from "./root-path-existing.js";
 import { resolveSymlinkHopPath, resolveSymlinkHopPathSync } from "./root-path-symlink.js";
+import { assertNoDriveRelativePathSegments } from "./safe-path-segment.js";
 import { shortPath } from "./short-path.js";
 
 export { resolvePathViaExistingAncestorSync } from "./root-path-existing.js";
@@ -131,9 +132,23 @@ export function resolveRootPathSync(params: ResolveRootPathParams): ResolvedRoot
 function assertValidRootPathInputs(params: ResolveRootPathParams): void {
   assertNoNulPathInput(params.rootPath, "root path contains a NUL byte");
   assertNoNulPathInput(params.absolutePath, "absolute path contains a NUL byte");
+  assertNoEmbeddedDriveRelativeSegment(params.rootPath, "root path");
+  assertNoEmbeddedDriveRelativeSegment(params.absolutePath, "absolute path");
   if (params.rootCanonicalPath !== undefined) {
     assertNoNulPathInput(params.rootCanonicalPath, "canonical root path contains a NUL byte");
+    assertNoEmbeddedDriveRelativeSegment(params.rootCanonicalPath, "canonical root path");
   }
+}
+
+function assertNoEmbeddedDriveRelativeSegment(filePath: string, label: string): void {
+  if (process.platform !== "win32") {
+    return;
+  }
+  const root = path.parse(filePath).root;
+  assertNoDriveRelativePathSegments(
+    filePath.slice(root.length).replaceAll("\\", "/"),
+    label,
+  );
 }
 
 type LexicalTraversalState = {
