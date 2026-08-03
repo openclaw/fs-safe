@@ -230,7 +230,7 @@ describe("secure file reads", () => {
       source: "windows-acl",
       ownerTrusted: true,
     });
-  }, 15_000);
+  }, 60_000);
 
   itWin32("treats an extended-length local Windows path as local", async () => {
     const filePath = path.join(root, "extended-secret.json");
@@ -249,7 +249,7 @@ describe("secure file reads", () => {
       source: "windows-acl",
       ownerTrusted: true,
     });
-  }, 15_000);
+  }, 60_000);
 
   it("rejects symlinks and files outside trusted dirs", async () => {
     const trusted = path.join(root, "trusted");

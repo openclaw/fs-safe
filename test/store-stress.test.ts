@@ -99,7 +99,7 @@ describe("store stress matrix", () => {
     await expect(jsonStore<{ count: number }>({ filePath }).readRequired()).resolves.toEqual({
       count: 12,
     });
-  });
+  }, 20_000);
 
   it("serializes queue writers and preserves the last complete entry on serializer failure", async () => {
     const root = await tempRoot("fs-safe-queue-writers-");

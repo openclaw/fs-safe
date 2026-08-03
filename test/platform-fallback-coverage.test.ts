@@ -18,6 +18,7 @@ async function importRootForPlatform(platform: NodeJS.Platform) {
 }
 
 afterEach(async () => {
+  vi.doUnmock("node:fs/promises");
   if (platformDescriptor) {
     Object.defineProperty(process, "platform", platformDescriptor);
   }
@@ -99,6 +100,74 @@ describe("platform fallback coverage", () => {
     await expect(fs.stat(path.join(rootDir, "old"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("maps Windows fallback mutation failures to stable FsSafeError codes", async () => {
+    const { root: openRoot } = await importRootForPlatform("win32");
+    const rootDir = await tempRoot("fs-safe-win-errors-");
+    const scoped = await openRoot(rootDir, { mkdir: true });
+
+    await fs.mkdir(path.join(rootDir, "directory"));
+    await fs.mkdir(path.join(rootDir, "non-empty"));
+    await fs.writeFile(path.join(rootDir, "non-empty", "child.txt"), "child");
+    await fs.writeFile(path.join(rootDir, "source.txt"), "source");
+    await fs.writeFile(path.join(rootDir, "existing.txt"), "existing");
+    await fs.writeFile(path.join(rootDir, "hardlink-origin.txt"), "linked");
+    await fs.link(path.join(rootDir, "hardlink-origin.txt"), path.join(rootDir, "hardlink.txt"));
+
+    await expect(scoped.openWritable("missing/child.txt", { mkdir: false }))
+      .rejects.toMatchObject({ code: "not-found" });
+    await expect(scoped.write("directory", "data"))
+      .rejects.toMatchObject({ code: "not-file" });
+    await expect(scoped.remove("missing.txt"))
+      .rejects.toMatchObject({ code: "not-found" });
+    await expect(scoped.remove("non-empty"))
+      .rejects.toMatchObject({ code: "not-empty" });
+    await expect(scoped.stat("missing.txt"))
+      .rejects.toMatchObject({ code: "not-found" });
+    await expect(scoped.list("missing"))
+      .rejects.toMatchObject({ code: "not-found" });
+    await expect(scoped.list("source.txt"))
+      .rejects.toMatchObject({ code: "not-found" });
+    await expect(scoped.move("missing.txt", "moved.txt"))
+      .rejects.toMatchObject({ code: "not-found" });
+    await expect(scoped.move("hardlink.txt", "moved-hardlink.txt"))
+      .rejects.toMatchObject({ code: "hardlink" });
+    await expect(scoped.move("directory", "moved-directory"))
+      .rejects.toMatchObject({ code: "invalid-path" });
+    await expect(scoped.move("source.txt", "existing.txt"))
+      .rejects.toMatchObject({ code: "already-exists" });
+    await expect(scoped.move("source.txt", "missing-parent/moved.txt"))
+      .rejects.toMatchObject({ code: "not-found" });
+
+    await expect(fs.readFile(path.join(rootDir, "source.txt"), "utf8")).resolves.toBe("source");
+    await expect(fs.readFile(path.join(rootDir, "existing.txt"), "utf8")).resolves.toBe("existing");
+  });
+
+  it("rejects every denied mutation before a Windows fallback syscall", async () => {
+    const { root: openRoot } = await importRootForPlatform("win32");
+    const rootDir = await tempRoot("fs-safe-win-denied-");
+    const denied = path.join(rootDir, "denied");
+    await fs.mkdir(denied);
+    await fs.writeFile(path.join(denied, "source.txt"), "source");
+    const scoped = await openRoot(rootDir, {
+      mkdir: true,
+      denyMutations: { prefixes: [denied] },
+    });
+
+    await expect(scoped.write("denied/write.txt", "data"))
+      .rejects.toMatchObject({ code: "denied-path" });
+    await expect(scoped.mkdir("denied/nested"))
+      .rejects.toMatchObject({ code: "denied-path" });
+    await expect(scoped.remove("denied/source.txt"))
+      .rejects.toMatchObject({ code: "denied-path" });
+    await expect(scoped.move("denied/source.txt", "moved.txt"))
+      .rejects.toMatchObject({ code: "denied-path" });
+    await expect(scoped.move("moved.txt", "denied/target.txt"))
+      .rejects.toMatchObject({ code: "denied-path" });
+
+    await expect(fs.readFile(path.join(denied, "source.txt"), "utf8")).resolves.toBe("source");
+    await expect(fs.readdir(denied)).resolves.toEqual(["source.txt"]);
+  });
+
   itPosix("rejects symlinked missing mkdir components in fallback", async () => {
     const { root: openRoot } = await importRootForPlatform("win32");
     const { __setFsSafeTestHooksForTest } = await import("../src/test-hooks.js");
@@ -115,5 +184,82 @@ describe("platform fallback coverage", () => {
 
     await expect(scoped.mkdir("link/created")).rejects.toBeTruthy();
     await expect(fs.stat(path.join(outsideDir, "created"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  itPosix("does not remove an attacker file after a missing-write verification race", async () => {
+    const { root: openRoot } = await importRootForPlatform("win32");
+    const { __setFsSafeTestHooksForTest } = await import("../src/test-hooks.js");
+    const rootDir = await fs.realpath(await tempRoot("fs-safe-win-create-cleanup-"));
+    const outsideDir = await fs.realpath(await tempRoot("fs-safe-win-create-cleanup-outside-"));
+    const parent = path.join(rootDir, "nested");
+    const target = path.join(parent, "created.txt");
+    const outsideTarget = path.join(outsideDir, "created.txt");
+    await fs.mkdir(parent);
+    await fs.writeFile(outsideTarget, "attacker");
+    const scoped = await openRoot(rootDir, { mkdir: false });
+    let swapped = false;
+    __setFsSafeTestHooksForTest({
+      async afterPreOpenLstat(filePath) {
+        if (swapped || filePath !== target) return;
+        swapped = true;
+        await fs.rename(parent, `${parent}-original`);
+        await fs.symlink(outsideDir, parent, "dir");
+      },
+    });
+
+    try {
+      await expect(scoped.create("nested/created.txt", "library", {
+        renameIdentity: "verify-content-with-lock",
+      }))
+        .rejects.toMatchObject({ code: "path-mismatch" });
+    } finally {
+      __setFsSafeTestHooksForTest(undefined);
+    }
+    await expect(fs.readFile(outsideTarget, "utf8")).resolves.toBe("attacker");
+    await expect(fs.readFile(path.join(`${parent}-original`, "created.txt"), "utf8"))
+      .resolves.toBe("library");
+  });
+
+  itPosix("warns when overwrite verification detects a parent swap", async () => {
+    const { root: openRoot } = await importRootForPlatform("win32");
+    const { __setFsSafeTestHooksForTest } = await import("../src/test-hooks.js");
+    const rootDir = await fs.realpath(await tempRoot("fs-safe-win-overwrite-warning-"));
+    const outsideDir = await fs.realpath(await tempRoot("fs-safe-win-overwrite-warning-outside-"));
+    const parent = path.join(rootDir, "nested");
+    const target = path.join(parent, "value.txt");
+    const outsideTarget = path.join(outsideDir, "value.txt");
+    await fs.mkdir(parent);
+    await fs.writeFile(target, "old");
+    await fs.writeFile(outsideTarget, "attacker");
+    const scoped = await openRoot(rootDir, { mkdir: false });
+    const priorWarnings = process.env.FS_SAFE_DEBUG_WARNINGS;
+    process.env.FS_SAFE_DEBUG_WARNINGS = "1";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let swapped = false;
+    __setFsSafeTestHooksForTest({
+      async afterPreOpenLstat(filePath) {
+        if (swapped || filePath !== target) return;
+        swapped = true;
+        await fs.rename(parent, `${parent}-original`);
+        await fs.symlink(outsideDir, parent, "dir");
+      },
+    });
+
+    try {
+      await expect(scoped.write("nested/value.txt", "library", {
+        renameIdentity: "verify-content-with-lock",
+      })).rejects.toMatchObject({ code: "path-mismatch" });
+    } finally {
+      __setFsSafeTestHooksForTest(undefined);
+      if (priorWarnings === undefined) {
+        delete process.env.FS_SAFE_DEBUG_WARNINGS;
+      } else {
+        process.env.FS_SAFE_DEBUG_WARNINGS = priorWarnings;
+      }
+    }
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("post-write verification failed"));
+    await expect(fs.readFile(outsideTarget, "utf8")).resolves.toBe("attacker");
+    await expect(fs.readFile(path.join(`${parent}-original`, "value.txt"), "utf8"))
+      .resolves.toBe("library");
   });
 });

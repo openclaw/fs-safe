@@ -5,6 +5,8 @@
 ### Security and Correctness
 
 - Reject negative, malformed, and oversized base-256 TAR sizes using the full encoded field, preventing high-order size bytes from bypassing archive metadata metering.
+- Preserve unrelated files when the create-only JavaScript `Root.write()` fallback loses a parent-directory race during post-write verification, limiting failure cleanup to the inode created by the operation.
+- Report the documented `not-file` code when a writable Root open reaches a non-regular descriptor on Windows, matching the existing POSIX `EISDIR` mapping.
 - Serialize same-target `Root.write()` and `Root.copyIn()` calls before inspecting the existing destination, so ordinary overlapping writers do not race the mode-preservation open against another writer's atomic replacement.
 - Serialize same-target directory replacements, confine their randomized backup names to the target parent, retain identity-bound exit cleanup after transient atomic/output/move staging cleanup failures, and refuse to publish EXDEV move copies when descriptor-bound mode application fails.
 - Stream native pinned-write inputs only after create-only collision checks, avoiding backend-dependent eager buffering, and preserve explicit zero file modes instead of replacing them with `0o600`.
