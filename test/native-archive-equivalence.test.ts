@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { expectFsSafeErrorSync } from "./helpers/security.js";
 import {
   ARCHIVE_LIMIT_ERROR_CODE,
   extractArchive,
@@ -483,8 +484,6 @@ describe.runIf(Boolean(native))("native-only compressed tar formats", () => {
 
   it("reports a typed actionable error when a native-only format is forced off", async () => {
     configureFsSafeNative({ mode: "off" });
-    expect(() => resolveArchiveKind("fixture.tar.zst")).toThrow(
-      expect.objectContaining({ code: "helper-unavailable" }),
-    );
+    expectFsSafeErrorSync(() => resolveArchiveKind("fixture.tar.zst"), "helper-unavailable");
   });
 });

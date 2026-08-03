@@ -2,20 +2,10 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
+import { itPosix } from "./helpers/vitest.js";
 import { fileStore, fileStoreSync } from "../src/file-store.js";
 import { configureFsSafeNative, root as openRoot } from "../src/index.js";
-import {
-  ESCAPING_DIRECTORY_PAYLOADS,
-  ESCAPING_WRITE_PAYLOADS,
-  expectFsSafeCode,
-  expectNoOutsideWrite,
-  LITERAL_SUSPICIOUS_DIRECTORY_PAYLOADS,
-  LITERAL_SUSPICIOUS_WRITE_PAYLOADS,
-  makeTempLayout as makeSecurityTempLayout,
-  POSIX_LITERAL_SUSPICIOUS_WRITE_PAYLOADS,
-  SAFE_REJECTED_SUSPICIOUS_DIRECTORY_PAYLOADS,
-  WINDOWS_REJECTED_SUSPICIOUS_DIRECTORY_PAYLOADS,
-} from "./helpers/security.js";
+import { ESCAPING_DIRECTORY_PAYLOADS, ESCAPING_WRITE_PAYLOADS, expectFsSafeCode, expectNoOutsideWrite, LITERAL_SUSPICIOUS_DIRECTORY_PAYLOADS, LITERAL_SUSPICIOUS_WRITE_PAYLOADS, makeTempLayout as makeSecurityTempLayout, POSIX_LITERAL_SUSPICIOUS_WRITE_PAYLOADS, SAFE_REJECTED_SUSPICIOUS_DIRECTORY_PAYLOADS, WINDOWS_REJECTED_SUSPICIOUS_DIRECTORY_PAYLOADS, expectFsSafeError } from "./helpers/security.js";
 
 const tempDirs: string[] = [];
 
@@ -93,7 +83,7 @@ describe("write, move, and delete boundary bypass attempts", () => {
     await expectNoOutsideWrite(layout);
   });
 
-  it.runIf(process.platform !== "win32")("rejects file store symlink parent writes", async () => {
+  itPosix("rejects file store symlink parent writes", async () => {
     const layout = await makeTempLayout("fs-safe-file-store-symlink-parent");
     const source = path.join(layout.root, "source.txt");
     await fsp.writeFile(source, "source");
@@ -170,8 +160,7 @@ describe("write, move, and delete boundary bypass attempts", () => {
 
     await expect(safeRoot.move("source-link.txt", "moved.txt")).rejects.toBeTruthy();
     if (process.platform === "win32") {
-      await expect(safeRoot.move("from.txt", "dest-link.txt", { overwrite: true })).rejects
-        .toMatchObject({ code: "path-alias" });
+      await expectFsSafeError(safeRoot.move("from.txt", "dest-link.txt", { overwrite: true }), "path-alias");
       await expectNoOutsideWrite(layout);
       return;
     }
@@ -240,7 +229,7 @@ describe("write, move, and delete boundary bypass attempts", () => {
     await expectNoOutsideWrite(layout);
   }, 15000);
 
-  it.runIf(process.platform !== "win32")("keeps literal '..'-prefixed read paths available when the helper is disabled", async () => {
+  itPosix("keeps literal '..'-prefixed read paths available when the helper is disabled", async () => {
     configureFsSafeNative({ mode: "off" });
     const layout = await makeTempLayout("fs-safe-write-helper-off-literal");
     const safeRoot = await openRoot(layout.root);
@@ -258,7 +247,7 @@ describe("write, move, and delete boundary bypass attempts", () => {
     await expectNoOutsideWrite(layout);
   });
 
-  it.runIf(process.platform !== "win32")("does not create directories outside the root when append races a parent symlink swap", async () => {
+  itPosix("does not create directories outside the root when append races a parent symlink swap", async () => {
     const layout = await makeTempLayout("fs-safe-append-mkdir-swap");
     const safeRoot = await openRoot(layout.root);
     const swapPath = path.join(layout.root, "data");
@@ -285,7 +274,7 @@ describe("write, move, and delete boundary bypass attempts", () => {
     await expectNoOutsideWrite(layout);
   }, 30000);
 
-  it.runIf(process.platform !== "win32")("does not create directories outside the root when openWritable races a parent symlink swap", async () => {
+  itPosix("does not create directories outside the root when openWritable races a parent symlink swap", async () => {
     const layout = await makeTempLayout("fs-safe-open-writable-mkdir-swap");
     const safeRoot = await openRoot(layout.root);
     const swapPath = path.join(layout.root, "data");
@@ -313,7 +302,7 @@ describe("write, move, and delete boundary bypass attempts", () => {
     await expectNoOutsideWrite(layout);
   }, 30000);
 
-  it.runIf(process.platform !== "win32")("does not create directories outside the root when copyIn fallback races a parent symlink swap", async () => {
+  itPosix("does not create directories outside the root when copyIn fallback races a parent symlink swap", async () => {
     configureFsSafeNative({ mode: "off" });
     const layout = await makeTempLayout("fs-safe-copy-in-mkdir-swap");
     const safeRoot = await openRoot(layout.root);

@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { expectFsSafeError } from "./helpers/security.js";
 import {
   DEFAULT_PERMISSION_EXEC_TIMEOUT_MS,
   executePermissionCommand,
@@ -97,16 +98,14 @@ describe("Windows permission command execution", () => {
       error: expect.stringContaining("could not be verified"),
     });
 
-    await expect(
-      readSecureFile({
+    await expectFsSafeError(readSecureFile({
         filePath: target,
         inject: {
           platform: "win32",
           env: { SystemRoot: "C:\\Windows" },
           exec,
         },
-      }),
-    ).rejects.toMatchObject({ code: "permission-unverified" });
+      }), "permission-unverified");
   });
 
   it("inspects permissions once for one secure read", async () => {

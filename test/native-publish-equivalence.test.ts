@@ -5,6 +5,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { expectFsSafeError } from "./helpers/security.js";
+import { itDarwin } from "./helpers/vitest.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import {
   __resetNativeLoaderForTest,
@@ -85,32 +87,29 @@ describe.runIf(Boolean(native))("native publication primitives", () => {
     }
   });
 
-  it.runIf(process.platform === "darwin")(
-    "clones APFS files with xattrs and strips custom metadata from the target",
-    async () => {
-      const root = await tempRoot();
-      const sourcePath = path.join(root, "source-xattr");
-      const targetPath = path.join(root, "target-xattr");
-      await fs.writeFile(sourcePath, "clone-with-xattr");
-      execFileSync("xattr", ["-w", "com.openclaw.fs-safe-test", "fixture", sourcePath]);
-      const source = await fs.open(sourcePath, "r");
-      const directory = await fs.open(
-        root,
-        fsSync.constants.O_RDONLY | fsSync.constants.O_DIRECTORY,
-      );
-      try {
-        const clonedFd = native!.cloneFileExclusive(source.fd, directory.fd, "target-xattr");
-        fsSync.closeSync(clonedFd);
-      } finally {
-        await source.close();
-        await directory.close();
-      }
-      await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("clone-with-xattr");
-      expect(execFileSync("xattr", [targetPath], { encoding: "utf8" })).not.toContain(
-        "com.openclaw.fs-safe-test",
-      );
-    },
-  );
+  itDarwin("clones APFS files with xattrs and strips custom metadata from the target", async () => {
+    const root = await tempRoot();
+    const sourcePath = path.join(root, "source-xattr");
+    const targetPath = path.join(root, "target-xattr");
+    await fs.writeFile(sourcePath, "clone-with-xattr");
+    execFileSync("xattr", ["-w", "com.openclaw.fs-safe-test", "fixture", sourcePath]);
+    const source = await fs.open(sourcePath, "r");
+    const directory = await fs.open(
+      root,
+      fsSync.constants.O_RDONLY | fsSync.constants.O_DIRECTORY,
+    );
+    try {
+      const clonedFd = native!.cloneFileExclusive(source.fd, directory.fd, "target-xattr");
+      fsSync.closeSync(clonedFd);
+    } finally {
+      await source.close();
+      await directory.close();
+    }
+    await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("clone-with-xattr");
+    expect(execFileSync("xattr", [targetPath], { encoding: "utf8" })).not.toContain(
+      "com.openclaw.fs-safe-test",
+    );
+  });
 
   it("fences a native clone result by identity and hash", async () => {
     const root = await tempRoot();
@@ -163,9 +162,7 @@ describe.runIf(Boolean(native))("native publication primitives", () => {
     }));
     configureFsSafeNative({ mode: "require" });
 
-    await expect(
-      publishFileExclusive({ sourcePath, targetPath, strategy: "link-or-copy" }),
-    ).rejects.toMatchObject({ code: "path-mismatch" });
+    await expectFsSafeError(publishFileExclusive({ sourcePath, targetPath, strategy: "link-or-copy" }), "path-mismatch");
     await expect(fs.access(targetPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -186,27 +183,24 @@ describe.runIf(Boolean(native))("native publication primitives", () => {
     }
   });
 
-  it.runIf(process.platform === "darwin")(
-    "falls back for ACL-bearing sources without inheriting the ACL",
-    async () => {
-    const root = await tempRoot();
-    const sourcePath = path.join(root, "source-acl");
-    const targetPath = path.join(root, "target-acl");
-    await fs.writeFile(sourcePath, "private", { mode: 0o600 });
-    execFileSync("chmod", ["+a", "everyone allow read", sourcePath]);
-    __setNativeLoaderForTest(() => ({
-      ...native!,
-      linkBeneath() {
-        throw Object.assign(new Error("force copy"), { code: "EXDEV" });
-      },
-    }));
-    configureFsSafeNative({ mode: "require" });
-    await publishFileExclusive({ sourcePath, targetPath, strategy: "link-or-copy" });
-    expect(execFileSync("ls", ["-lde", targetPath], { encoding: "utf8" })).not.toContain(
-      "everyone:allow read",
-    );
+  itDarwin("falls back for ACL-bearing sources without inheriting the ACL", async () => {
+  const root = await tempRoot();
+  const sourcePath = path.join(root, "source-acl");
+  const targetPath = path.join(root, "target-acl");
+  await fs.writeFile(sourcePath, "private", { mode: 0o600 });
+  execFileSync("chmod", ["+a", "everyone allow read", sourcePath]);
+  __setNativeLoaderForTest(() => ({
+    ...native!,
+    linkBeneath() {
+      throw Object.assign(new Error("force copy"), { code: "EXDEV" });
     },
+  }));
+  configureFsSafeNative({ mode: "require" });
+  await publishFileExclusive({ sourcePath, targetPath, strategy: "link-or-copy" });
+  expect(execFileSync("ls", ["-lde", targetPath], { encoding: "utf8" })).not.toContain(
+    "everyone:allow read",
   );
+  });
 });
 
 const publishBackends = native

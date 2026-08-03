@@ -1,16 +1,11 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { useTempDirs } from "./helpers/vitest.js";
 import { movePathWithCopyFallback } from "../src/move-path.js";
 
-const tempDirs: string[] = [];
+const { tempRoot } = useTempDirs();
 
-async function tempRoot(prefix: string): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
 
 async function installStagingModeSwap(params: {
   targetDir: string;
@@ -70,7 +65,6 @@ async function installStagingModeSwap(params: {
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { force: true, recursive: true })));
 });
 
 describe.runIf(process.platform !== "win32")("move staging descriptor modes", () => {

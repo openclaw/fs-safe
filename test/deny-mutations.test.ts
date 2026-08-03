@@ -1,19 +1,15 @@
 import fs, { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveMutationComparablePaths } from "../src/deny-mutations.js";
+import { expectFsSafeError } from "./helpers/security.js";
+import { useTempDirs } from "./helpers/vitest.js";
 import { root as openRoot } from "../src/index.js";
 import { resolvePathViaExistingAncestor } from "../src/root-path-existing.js";
 
 const skipOnWindows = process.platform === "win32";
-const tempDirs: string[] = [];
+const { tempDirs, tempRoot } = useTempDirs();
 
-async function tempRoot(prefix: string): Promise<string> {
-  const dir = await mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -72,21 +68,11 @@ describe("root denyMutations policies", () => {
       denyMutations: { prefixes: [deniedDir] },
     });
 
-    await expect(root.write("private/file.txt", "write")).rejects.toMatchObject({
-      code: "denied-path",
-    });
-    await expect(root.mkdir("private/nested")).rejects.toMatchObject({
-      code: "denied-path",
-    });
-    await expect(root.remove("private/seed.txt")).rejects.toMatchObject({
-      code: "denied-path",
-    });
-    await expect(root.move("safe.txt", "private/moved.txt")).rejects.toMatchObject({
-      code: "denied-path",
-    });
-    await expect(root.move("private/source.txt", "moved-out.txt")).rejects.toMatchObject({
-      code: "denied-path",
-    });
+    await expectFsSafeError(root.write("private/file.txt", "write"), "denied-path");
+    await expectFsSafeError(root.mkdir("private/nested"), "denied-path");
+    await expectFsSafeError(root.remove("private/seed.txt"), "denied-path");
+    await expectFsSafeError(root.move("safe.txt", "private/moved.txt"), "denied-path");
+    await expectFsSafeError(root.move("private/source.txt", "moved-out.txt"), "denied-path");
 
     await expect(readFile(path.join(rootPath, "safe.txt"), "utf8")).resolves.toBe("safe");
     await expect(readFile(path.join(deniedDir, "seed.txt"), "utf8")).resolves.toBe("seed");
@@ -101,17 +87,11 @@ describe("root denyMutations policies", () => {
       denyMutations: { paths: [rootDeniedPath] },
     });
 
-    await expect(
-      root.write("root-denied.txt", "write", { denyMutations: { paths: [] } }),
-    ).rejects.toMatchObject({ code: "denied-path" });
-    await expect(
-      root.write("call-denied.txt", "write", {
+    await expectFsSafeError(root.write("root-denied.txt", "write", { denyMutations: { paths: [] } }), "denied-path");
+    await expectFsSafeError(root.write("call-denied.txt", "write", {
         denyMutations: { paths: [callDeniedPath] },
-      }),
-    ).rejects.toMatchObject({ code: "denied-path" });
-    await expect(
-      root.ensureRoot({ denyMutations: { paths: [rootPath] } }),
-    ).rejects.toMatchObject({ code: "denied-path" });
+      }), "denied-path");
+    await expectFsSafeError(root.ensureRoot({ denyMutations: { paths: [rootPath] } }), "denied-path");
 
     await expect(
       root.write("allowed.txt", "ok", { denyMutations: { paths: [callDeniedPath] } }),
@@ -122,17 +102,13 @@ describe("root denyMutations policies", () => {
   it("rejects relative denyMutations entries", async () => {
     const root = await openRoot(await tempRoot("fs-safe-deny-relative-"));
 
-    await expect(
-      root.write("file.txt", "write", { denyMutations: { paths: ["file.txt"] } }),
-    ).rejects.toMatchObject({ code: "invalid-path" });
+    await expectFsSafeError(root.write("file.txt", "write", { denyMutations: { paths: ["file.txt"] } }), "invalid-path");
   });
 
   it("rejects empty denyMutations entries", async () => {
     const root = await openRoot(await tempRoot("fs-safe-deny-empty-"));
 
-    await expect(
-      root.write("file.txt", "write", { denyMutations: { paths: [""] } }),
-    ).rejects.toMatchObject({ code: "invalid-path" });
+    await expectFsSafeError(root.write("file.txt", "write", { denyMutations: { paths: [""] } }), "invalid-path");
   });
 
   it("preserves trailing whitespace in denied paths", async () => {
@@ -143,9 +119,7 @@ describe("root denyMutations policies", () => {
       denyMutations: { paths: [path.join(rootPath, deniedName)] },
     });
 
-    await expect(root.write(deniedName, "blocked")).rejects.toMatchObject({
-      code: "denied-path",
-    });
+    await expectFsSafeError(root.write(deniedName, "blocked"), "denied-path");
     await expect(root.write(trimmedName, "allowed")).resolves.toBeUndefined();
     await expect(readFile(path.join(rootPath, trimmedName), "utf8")).resolves.toBe("allowed");
   });
@@ -160,9 +134,7 @@ describe("root denyMutations policies", () => {
       denyMutations: { prefixes: [deniedDir] },
     });
 
-    await expect(root.write("private /file.txt", "blocked")).rejects.toMatchObject({
-      code: "denied-path",
-    });
+    await expectFsSafeError(root.write("private /file.txt", "blocked"), "denied-path");
     await expect(root.write("private/file.txt", "allowed")).resolves.toBeUndefined();
     await expect(readFile(path.join(trimmedDir, "file.txt"), "utf8")).resolves.toBe("allowed");
   });
@@ -189,9 +161,7 @@ describe("root denyMutations policies", () => {
       denyMutations: { prefixes: [path.join(rootPath, "parent", "locked")] },
     });
 
-    await expect(root.move("parent", "moved", { overwrite: true })).rejects.toMatchObject({
-      code: "denied-path",
-    });
+    await expectFsSafeError(root.move("parent", "moved", { overwrite: true }), "denied-path");
     await expect(readFile(path.join(rootPath, "parent", "locked", "secret.txt"), "utf8")).resolves.toBe(
       "secret",
     );
@@ -204,9 +174,7 @@ describe("root denyMutations policies", () => {
     });
 
     await expect(root.mkdir("parent")).resolves.toBeUndefined();
-    await expect(root.write("parent/secret.txt", "blocked")).rejects.toMatchObject({
-      code: "denied-path",
-    });
+    await expectFsSafeError(root.write("parent/secret.txt", "blocked"), "denied-path");
   });
 
   it.skipIf(skipOnWindows)("matches denyMutations through existing symlink ancestors", async () => {
@@ -218,8 +186,6 @@ describe("root denyMutations policies", () => {
       denyMutations: { prefixes: [deniedDir] },
     });
 
-    await expect(root.write("link/file.txt", "write")).rejects.toMatchObject({
-      code: "denied-path",
-    });
+    await expectFsSafeError(root.write("link/file.txt", "write"), "denied-path");
   });
 });

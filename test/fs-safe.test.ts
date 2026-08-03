@@ -1,8 +1,8 @@
 import { appendFileSync } from "node:fs";
 import { chmod, mkdtemp, readdir, readFile, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import {
   categorizeFsSafeError,
   configureFsSafeNative,
@@ -11,17 +11,12 @@ import {
 } from "../src/index.js";
 import { openLocalFileSafely, readLocalFileSafely } from "../src/root.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
-import { expectedFsSafeCode } from "./helpers/security.js";
+import { expectedFsSafeCode, expectFsSafeError } from "./helpers/security.js";
 
 const skipOnWindows = process.platform === "win32";
 
-const tempDirs: string[] = [];
+const { tempDirs, tempRoot } = useTempDirs();
 
-async function tempRoot(prefix: string): Promise<string> {
-  const dir = await mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
 
 afterEach(async () => {
   configureFsSafeNative({ mode: "auto" });
@@ -68,9 +63,7 @@ describe("@openclaw/fs-safe", () => {
     });
 
     await root.remove("nested/renamed.txt");
-    await expect(root.stat("nested/renamed.txt")).rejects.toMatchObject({
-      code: "not-found",
-    });
+    await expectFsSafeError(root.stat("nested/renamed.txt"), "not-found");
   });
 
   it("rejects non-directory roots before creating a capability", async () => {
@@ -126,9 +119,7 @@ describe("@openclaw/fs-safe", () => {
     const rootPath = await tempRoot("fs-safe-append-semantics-");
     const root = await openRoot(rootPath);
 
-    await expect(root.append("missing/file.txt", "x", { mkdir: false })).rejects.toMatchObject({
-      code: "not-found",
-    });
+    await expectFsSafeError(root.append("missing/file.txt", "x", { mkdir: false }), "not-found");
     await expect(root.exists("missing")).resolves.toBe(false);
 
     await root.write("utf16.txt", "alpha", { encoding: "utf16le" });
@@ -183,15 +174,11 @@ describe("@openclaw/fs-safe", () => {
     const root = await openRoot(rootPath);
 
     await expect(root.create("nested/file.txt", "first")).resolves.toBeUndefined();
-    await expect(root.create("nested/file.txt", "second")).rejects.toMatchObject({
-      code: "already-exists",
-    });
+    await expectFsSafeError(root.create("nested/file.txt", "second"), "already-exists");
     await expect(readFile(path.join(rootPath, "nested/file.txt"), "utf8")).resolves.toBe("first");
 
     await expect(root.createJson("state.json", { ok: true })).resolves.toBeUndefined();
-    await expect(root.createJson("state.json", { ok: false })).rejects.toMatchObject({
-      code: "already-exists",
-    });
+    await expectFsSafeError(root.createJson("state.json", { ok: false }), "already-exists");
     await expect(readFile(path.join(rootPath, "state.json"), "utf8")).resolves.toBe(
       '{"ok":true}\n',
     );
@@ -225,9 +212,7 @@ describe("@openclaw/fs-safe", () => {
       category: "policy",
       code: "outside-workspace",
     } satisfies Partial<FsSafeError>);
-    await expect(root.write("../write", "")).rejects.toMatchObject({
-      code: "outside-workspace",
-    });
+    await expectFsSafeError(root.write("../write", ""), "outside-workspace");
   });
 
   it("rejects NUL bytes with FsSafeError before reaching Node fs", async () => {
@@ -291,9 +276,7 @@ describe("@openclaw/fs-safe", () => {
     const outsidePath = path.join(outside, "secret.txt");
     await writeFile(outsidePath, "secret");
 
-    await expect(root.reader()(outsidePath)).rejects.toMatchObject({
-      code: "outside-workspace",
-    });
+    await expectFsSafeError(root.reader()(outsidePath), "outside-workspace");
   });
 
   it("rejects symlink parents", async () => {
@@ -303,9 +286,7 @@ describe("@openclaw/fs-safe", () => {
     await writeFile(path.join(outside, "secret.txt"), "secret");
     await symlink(outside, path.join(rootPath, "link"), "dir");
 
-    await expect(root.read("link/secret.txt")).rejects.toMatchObject({
-      code: "outside-workspace",
-    });
+    await expectFsSafeError(root.read("link/secret.txt"), "outside-workspace");
     await expect(root.list("link")).rejects.toMatchObject({ code: expectedFsSafeCode("path-alias") });
   });
 
@@ -331,9 +312,7 @@ describe("@openclaw/fs-safe", () => {
 
     await writeFile(path.join(outside, "secret.txt"), "secret");
     await symlink(path.join(outside, "secret.txt"), path.join(rootPath, "link"), "file");
-    await expect(root.move("link", "moved-link")).rejects.toMatchObject({
-      code: "path-alias",
-    });
+    await expectFsSafeError(root.move("link", "moved-link"), "path-alias");
   });
 
   it.skipIf(skipOnWindows)("requires explicit overwrite for moves that replace a target", async () => {
@@ -342,9 +321,7 @@ describe("@openclaw/fs-safe", () => {
     await root.write("from.txt", "source");
     await root.write("to.txt", "target");
 
-    await expect(root.move("from.txt", "to.txt")).rejects.toMatchObject({
-      code: "already-exists",
-    });
+    await expectFsSafeError(root.move("from.txt", "to.txt"), "already-exists");
     await expect(readFile(path.join(rootPath, "to.txt"), "utf8")).resolves.toBe("target");
 
     await root.move("from.txt", "to.txt", { overwrite: true });
@@ -367,14 +344,12 @@ describe("@openclaw/fs-safe", () => {
       },
     });
 
-    await expect(root.copyIn("copied.txt", sourcePath, { maxBytes: 4 })).rejects.toMatchObject({
-      code: "too-large",
-    });
+    await expectFsSafeError(root.copyIn("copied.txt", sourcePath, { maxBytes: 4 }), "too-large");
     await expect(root.exists("copied.txt")).resolves.toBe(false);
     await expect(readdir(rootPath)).resolves.toEqual([]);
   });
 
-  it.runIf(process.platform !== "win32")("rejects a copy when the source path is swapped after open", async () => {
+  itPosix("rejects a copy when the source path is swapped after open", async () => {
     const rootPath = await tempRoot("fs-safe-copy-source-swap-root-");
     const sourceRoot = await tempRoot("fs-safe-copy-source-swap-source-");
     const sourcePath = path.join(sourceRoot, "source.txt");
@@ -392,8 +367,7 @@ describe("@openclaw/fs-safe", () => {
       },
     });
     const scoped = await openRoot(rootPath);
-    await expect(scoped.copyIn("copied.txt", sourcePath, { maxBytes: 1024 })).rejects
-      .toMatchObject({ code: "path-mismatch" });
+    await expectFsSafeError(scoped.copyIn("copied.txt", sourcePath, { maxBytes: 1024 }), "path-mismatch");
     await expect(stat(path.join(rootPath, "copied.txt"))).rejects.toMatchObject({
       code: "ENOENT",
     });
@@ -470,7 +444,7 @@ describe("@openclaw/fs-safe", () => {
     );
   });
 
-  it.runIf(process.platform !== "win32")("honors mode on root text and JSON writes", async () => {
+  itPosix("honors mode on root text and JSON writes", async () => {
     const rootPath = await tempRoot("fs-safe-write-mode-");
     const root = await openRoot(rootPath);
 
@@ -483,7 +457,7 @@ describe("@openclaw/fs-safe", () => {
       .toBe(0o640);
   });
 
-  it.runIf(process.platform !== "win32")("honors default mode on root writes", async () => {
+  itPosix("honors default mode on root writes", async () => {
     const rootPath = await tempRoot("fs-safe-default-write-mode-");
     const root = await openRoot(rootPath, { mode: 0o640 });
 

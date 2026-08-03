@@ -1,20 +1,16 @@
 import fsp from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { expectFsSafeError } from "./helpers/security.js";
+import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { fileStore } from "../src/file-store.js";
 import { acquireFileLock, acquireFileLockSync } from "../src/file-lock.js";
 import { configureFsSafeLocks, getFsSafeLockConfig } from "../src/lock-config.js";
 import { createSidecarLockManager } from "../src/sidecar-lock.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 
-const tempDirs: string[] = [];
+const { tempRoot } = useTempDirs();
 
-async function tempRoot(prefix: string): Promise<string> {
-  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
 
 afterEach(async () => {
   __setFsSafeTestHooksForTest();
@@ -25,7 +21,6 @@ afterEach(async () => {
     staleRecovery: "fail-closed",
     timeoutMs: undefined,
   });
-  await Promise.all(tempDirs.splice(0).map((dir) => fsp.rm(dir, { recursive: true, force: true })));
 });
 
 describe("sidecar lock regressions", () => {
@@ -424,52 +419,47 @@ describe("sidecar lock regressions", () => {
     ).rejects.toMatchObject({ code: "EACCES" });
   });
 
-  it.runIf(process.platform !== "win32")(
-    "does not follow a sidecar replaced with a symlink during inspection",
-    async () => {
-      const base = await tempRoot("fs-safe-sidecar-snapshot-symlink-");
-      const targetPath = path.join(base, "state.json");
-      const lockPath = `${targetPath}.lock`;
-      const oldLockPath = `${lockPath}.old`;
-      const secretPath = path.join(base, "secret.json");
-      await fsp.writeFile(
+  itPosix("does not follow a sidecar replaced with a symlink during inspection", async () => {
+    const base = await tempRoot("fs-safe-sidecar-snapshot-symlink-");
+    const targetPath = path.join(base, "state.json");
+    const lockPath = `${targetPath}.lock`;
+    const oldLockPath = `${lockPath}.old`;
+    const secretPath = path.join(base, "secret.json");
+    await fsp.writeFile(
+      lockPath,
+      JSON.stringify({ createdAt: "2000-01-01T00:00:00.000Z", owner: "original" }),
+    );
+    await fsp.writeFile(
+      secretPath,
+      JSON.stringify({ createdAt: "2999-01-01T00:00:00.000Z", secret: "do-not-read" }),
+    );
+
+    let swapped = false;
+    __setFsSafeTestHooksForTest({
+      beforeSidecarLockSnapshotOpen: async (inspectedPath) => {
+        if (swapped || inspectedPath !== lockPath) return;
+        swapped = true;
+        await fsp.rename(lockPath, oldLockPath);
+        await fsp.symlink(secretPath, lockPath);
+      },
+    });
+    const observedPayloads: unknown[] = [];
+    const manager = createSidecarLockManager(`fs-safe-snapshot-symlink-${Date.now()}`);
+
+    await expectFsSafeError(manager.acquire({
+        targetPath,
         lockPath,
-        JSON.stringify({ createdAt: "2000-01-01T00:00:00.000Z", owner: "original" }),
-      );
-      await fsp.writeFile(
-        secretPath,
-        JSON.stringify({ createdAt: "2999-01-01T00:00:00.000Z", secret: "do-not-read" }),
-      );
-
-      let swapped = false;
-      __setFsSafeTestHooksForTest({
-        beforeSidecarLockSnapshotOpen: async (inspectedPath) => {
-          if (swapped || inspectedPath !== lockPath) return;
-          swapped = true;
-          await fsp.rename(lockPath, oldLockPath);
-          await fsp.symlink(secretPath, lockPath);
+        staleMs: 1,
+        timeoutMs: 1,
+        retry: { retries: 0 },
+        payload: async () => ({ createdAt: new Date().toISOString() }),
+        shouldReclaim: async ({ payload }) => {
+          observedPayloads.push(payload);
+          return false;
         },
-      });
-      const observedPayloads: unknown[] = [];
-      const manager = createSidecarLockManager(`fs-safe-snapshot-symlink-${Date.now()}`);
-
-      await expect(
-        manager.acquire({
-          targetPath,
-          lockPath,
-          staleMs: 1,
-          timeoutMs: 1,
-          retry: { retries: 0 },
-          payload: async () => ({ createdAt: new Date().toISOString() }),
-          shouldReclaim: async ({ payload }) => {
-            observedPayloads.push(payload);
-            return false;
-          },
-        }),
-      ).rejects.toMatchObject({ code: "not-file" });
-      expect(observedPayloads).toEqual([]);
-    },
-  );
+      }), "not-file");
+    expect(observedPayloads).toEqual([]);
+  });
 
   it("keeps lock config as explicit defaults, not global auto-locking", async () => {
     const base = await tempRoot("fs-safe-lock-config-");

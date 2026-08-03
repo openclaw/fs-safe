@@ -1,23 +1,13 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { expectFsSafeError } from "./helpers/security.js";
+import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { writeExternalFileWithinRoot } from "../src/output.js";
 
-const tempDirs = new Set<string>();
+const { tempRoot } = useTempDirs();
 
-async function tempRoot(prefix: string): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.add(dir);
-  return dir;
-}
 
-afterEach(async () => {
-  for (const dir of tempDirs) {
-    await fs.rm(dir, { force: true, recursive: true });
-  }
-  tempDirs.clear();
-});
 
 describe("writeExternalFileWithinRoot", () => {
   it("stages an external writer in private temp storage and finalizes under the root", async () => {
@@ -93,8 +83,7 @@ describe("writeExternalFileWithinRoot", () => {
     const targetPath = path.join(rootDir, "output.bin");
     await fs.writeFile(targetPath, "old", "utf8");
 
-    await expect(
-      writeExternalFileWithinRoot({
+    await expectFsSafeError(writeExternalFileWithinRoot({
         rootDir,
         path: "output.bin",
         staging: "sibling",
@@ -102,8 +91,7 @@ describe("writeExternalFileWithinRoot", () => {
         write: async (candidate) => {
           await fs.writeFile(candidate, "too large", "utf8");
         },
-      }),
-    ).rejects.toMatchObject({ code: "too-large" });
+      }), "too-large");
 
     await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("old");
     expect((await fs.readdir(rootDir)).filter((name) => name.startsWith(".fs-safe-output-")))
@@ -201,21 +189,19 @@ describe("writeExternalFileWithinRoot", () => {
     const rootDir = await tempRoot("fs-safe-output-max-bytes-");
     const targetPath = path.join(rootDir, "too-large.bin");
 
-    await expect(
-      writeExternalFileWithinRoot({
+    await expectFsSafeError(writeExternalFileWithinRoot({
         rootDir,
         path: "too-large.bin",
         maxBytes: 3,
         write: async (candidate) => {
           await fs.writeFile(candidate, "larger", "utf8");
         },
-      }),
-    ).rejects.toMatchObject({ code: "too-large" });
+      }), "too-large");
 
     await expect(fs.stat(targetPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it.runIf(process.platform !== "win32")("applies the requested final file mode", async () => {
+  itPosix("applies the requested final file mode", async () => {
     const rootDir = await tempRoot("fs-safe-output-mode-");
     const targetPath = path.join(rootDir, "private.txt");
 
@@ -236,16 +222,14 @@ describe("writeExternalFileWithinRoot", () => {
     const rootDir = await tempRoot("fs-safe-output-default-");
     let called = false;
 
-    await expect(
-      writeExternalFileWithinRoot({
+    await expectFsSafeError(writeExternalFileWithinRoot({
         rootDir,
         path: "",
         write: async (candidate) => {
           called = true;
           await fs.writeFile(candidate, "named", "utf8");
         },
-      }),
-    ).rejects.toMatchObject({ code: "invalid-path" });
+      }), "invalid-path");
 
     expect(called).toBe(false);
   });
@@ -256,16 +240,14 @@ describe("writeExternalFileWithinRoot", () => {
     const outsidePath = path.join(outsideDir, "pwned.txt");
     let called = false;
 
-    await expect(
-      writeExternalFileWithinRoot({
+    await expectFsSafeError(writeExternalFileWithinRoot({
         rootDir,
         path: outsidePath,
         write: async (candidate) => {
           called = true;
           await fs.writeFile(candidate, "pwned", "utf8");
         },
-      }),
-    ).rejects.toMatchObject({ code: "outside-workspace" });
+      }), "outside-workspace");
 
     expect(called).toBe(false);
     await expect(fs.stat(outsidePath)).rejects.toMatchObject({ code: "ENOENT" });
@@ -275,16 +257,14 @@ describe("writeExternalFileWithinRoot", () => {
     const rootDir = await tempRoot("fs-safe-output-traversal-root-");
     let called = false;
 
-    await expect(
-      writeExternalFileWithinRoot({
+    await expectFsSafeError(writeExternalFileWithinRoot({
         rootDir,
         path: "../../../pwned.txt",
         write: async (candidate) => {
           called = true;
           await fs.writeFile(candidate, "pwned", "utf8");
         },
-      }),
-    ).rejects.toMatchObject({ code: "outside-workspace" });
+      }), "outside-workspace");
 
     expect(called).toBe(false);
   });
@@ -293,16 +273,14 @@ describe("writeExternalFileWithinRoot", () => {
     const rootDir = await tempRoot("fs-safe-output-root-target-");
     let called = false;
 
-    await expect(
-      writeExternalFileWithinRoot({
+    await expectFsSafeError(writeExternalFileWithinRoot({
         rootDir,
         path: rootDir,
         write: async (candidate) => {
           called = true;
           await fs.writeFile(candidate, "not a file target", "utf8");
         },
-      }),
-    ).rejects.toMatchObject({ code: "invalid-path" });
+      }), "invalid-path");
 
     expect(called).toBe(false);
   });
@@ -311,16 +289,14 @@ describe("writeExternalFileWithinRoot", () => {
     const rootDir = await tempRoot("fs-safe-output-dir-target-");
     let called = false;
 
-    await expect(
-      writeExternalFileWithinRoot({
+    await expectFsSafeError(writeExternalFileWithinRoot({
         rootDir,
         path: "nested/",
         write: async (candidate) => {
           called = true;
           await fs.writeFile(candidate, "not a file target", "utf8");
         },
-      }),
-    ).rejects.toMatchObject({ code: "invalid-path" });
+      }), "invalid-path");
 
     expect(called).toBe(false);
   });
@@ -329,95 +305,84 @@ describe("writeExternalFileWithinRoot", () => {
     const rootDir = await tempRoot("fs-safe-output-absolute-dir-target-");
     let called = false;
 
-    await expect(
-      writeExternalFileWithinRoot({
+    await expectFsSafeError(writeExternalFileWithinRoot({
         rootDir,
         path: path.join(rootDir, "nested") + path.sep,
         write: async (candidate) => {
           called = true;
           await fs.writeFile(candidate, "not a file target", "utf8");
         },
-      }),
-    ).rejects.toMatchObject({ code: "invalid-path" });
+      }), "invalid-path");
 
     expect(called).toBe(false);
   });
 
-  it.runIf(process.platform !== "win32")(
-    "does not let symlinked target parents redirect the external temp write",
-    async () => {
-      const rootDir = await tempRoot("fs-safe-output-link-root-");
-      const outsideDir = await tempRoot("fs-safe-output-link-outside-");
-      await fs.symlink(outsideDir, path.join(rootDir, "link"), "dir");
-      let tempPath = "";
+  itPosix("does not let symlinked target parents redirect the external temp write", async () => {
+    const rootDir = await tempRoot("fs-safe-output-link-root-");
+    const outsideDir = await tempRoot("fs-safe-output-link-outside-");
+    await fs.symlink(outsideDir, path.join(rootDir, "link"), "dir");
+    let tempPath = "";
 
-      await expect(
-        writeExternalFileWithinRoot({
-          rootDir,
-          path: "link/out.txt",
-          write: async (candidate) => {
-            tempPath = candidate;
-            await fs.writeFile(candidate, "pwned", "utf8");
-          },
-        }),
-      ).rejects.toBeTruthy();
-
-      await expect(fs.stat(tempPath)).rejects.toMatchObject({ code: "ENOENT" });
-      await expect(fs.readdir(outsideDir)).resolves.toEqual([]);
-    },
-  );
-
-  it.runIf(process.platform !== "win32")(
-    "atomically replaces a symlink destination without following it",
-    async () => {
-      const rootDir = await tempRoot("fs-safe-output-sibling-link-root-");
-      const outsideDir = await tempRoot("fs-safe-output-sibling-link-outside-");
-      const outsidePath = path.join(outsideDir, "outside.txt");
-      const targetPath = path.join(rootDir, "output.txt");
-      await fs.writeFile(outsidePath, "outside", "utf8");
-      await fs.symlink(outsidePath, targetPath);
-      let called = false;
-
-      await writeExternalFileWithinRoot({
+    await expect(
+      writeExternalFileWithinRoot({
         rootDir,
-        path: "output.txt",
-        staging: "sibling",
+        path: "link/out.txt",
         write: async (candidate) => {
-          called = true;
+          tempPath = candidate;
+          await fs.writeFile(candidate, "pwned", "utf8");
+        },
+      }),
+    ).rejects.toBeTruthy();
+
+    await expect(fs.stat(tempPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.readdir(outsideDir)).resolves.toEqual([]);
+  });
+
+  itPosix("atomically replaces a symlink destination without following it", async () => {
+    const rootDir = await tempRoot("fs-safe-output-sibling-link-root-");
+    const outsideDir = await tempRoot("fs-safe-output-sibling-link-outside-");
+    const outsidePath = path.join(outsideDir, "outside.txt");
+    const targetPath = path.join(rootDir, "output.txt");
+    await fs.writeFile(outsidePath, "outside", "utf8");
+    await fs.symlink(outsidePath, targetPath);
+    let called = false;
+
+    await writeExternalFileWithinRoot({
+      rootDir,
+      path: "output.txt",
+      staging: "sibling",
+      write: async (candidate) => {
+        called = true;
+        await fs.writeFile(candidate, "replacement", "utf8");
+      },
+    });
+
+    expect(called).toBe(true);
+    await expect(fs.readFile(outsidePath, "utf8")).resolves.toBe("outside");
+    expect((await fs.lstat(targetPath)).isSymbolicLink()).toBe(false);
+    await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("replacement");
+  });
+
+  itPosix("rejects hardlinked final targets and preserves the existing file", async () => {
+    const rootDir = await tempRoot("fs-safe-output-hardlink-");
+    const sourcePath = path.join(rootDir, "source.txt");
+    const hardlinkPath = path.join(rootDir, "hardlink.txt");
+    await fs.writeFile(sourcePath, "original", "utf8");
+    await fs.link(sourcePath, hardlinkPath);
+
+    await expect(
+      writeExternalFileWithinRoot({
+        rootDir,
+        path: "hardlink.txt",
+        write: async (candidate) => {
           await fs.writeFile(candidate, "replacement", "utf8");
         },
-      });
+      }),
+    ).rejects.toBeTruthy();
 
-      expect(called).toBe(true);
-      await expect(fs.readFile(outsidePath, "utf8")).resolves.toBe("outside");
-      expect((await fs.lstat(targetPath)).isSymbolicLink()).toBe(false);
-      await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("replacement");
-    },
-  );
-
-  it.runIf(process.platform !== "win32")(
-    "rejects hardlinked final targets and preserves the existing file",
-    async () => {
-      const rootDir = await tempRoot("fs-safe-output-hardlink-");
-      const sourcePath = path.join(rootDir, "source.txt");
-      const hardlinkPath = path.join(rootDir, "hardlink.txt");
-      await fs.writeFile(sourcePath, "original", "utf8");
-      await fs.link(sourcePath, hardlinkPath);
-
-      await expect(
-        writeExternalFileWithinRoot({
-          rootDir,
-          path: "hardlink.txt",
-          write: async (candidate) => {
-            await fs.writeFile(candidate, "replacement", "utf8");
-          },
-        }),
-      ).rejects.toBeTruthy();
-
-      await expect(fs.readFile(sourcePath, "utf8")).resolves.toBe("original");
-      await expect(fs.readFile(hardlinkPath, "utf8")).resolves.toBe("original");
-    },
-  );
+    await expect(fs.readFile(sourcePath, "utf8")).resolves.toBe("original");
+    await expect(fs.readFile(hardlinkPath, "utf8")).resolves.toBe("original");
+  });
 
   it("cleans private temp files when the external writer fails", async () => {
     const rootDir = await tempRoot("fs-safe-output-fail-root-");

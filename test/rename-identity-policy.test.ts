@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { expectFsSafeError } from "./helpers/security.js";
+import { itPosix } from "./helpers/vitest.js";
 import { configureFsSafeNative, root as openRoot } from "../src/index.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 
@@ -39,139 +41,106 @@ afterEach(async () => {
 });
 
 describe("rename identity policy", () => {
-  it.runIf(process.platform !== "win32")(
-    "keeps strict post-rename identity verification as the default",
-    async () => {
-      configureFsSafeNative({ mode: "off" });
-      const rootDir = await makeTempRoot("fs-safe-rename-id-strict-");
-      replaceTargetAfterFallbackRename();
+  itPosix("keeps strict post-rename identity verification as the default", async () => {
+    configureFsSafeNative({ mode: "off" });
+    const rootDir = await makeTempRoot("fs-safe-rename-id-strict-");
+    replaceTargetAfterFallbackRename();
 
-      const fs = await openRoot(rootDir);
-      await expect(fs.write("file.txt", "hello")).rejects.toMatchObject({
-        code: "path-mismatch",
-      });
-    },
-  );
+    const fs = await openRoot(rootDir);
+    await expectFsSafeError(fs.write("file.txt", "hello"), "path-mismatch");
+  });
 
-  it.runIf(process.platform !== "win32")(
-    "accepts matching content under the explicit compatibility lock",
-    async () => {
-      configureFsSafeNative({ mode: "off" });
-      const rootDir = await makeTempRoot("fs-safe-rename-id-lock-");
-      const targetPath = path.join(rootDir, "file.txt");
-      replaceTargetAfterFallbackRename();
+  itPosix("accepts matching content under the explicit compatibility lock", async () => {
+    configureFsSafeNative({ mode: "off" });
+    const rootDir = await makeTempRoot("fs-safe-rename-id-lock-");
+    const targetPath = path.join(rootDir, "file.txt");
+    replaceTargetAfterFallbackRename();
 
-      const fs = await openRoot(rootDir, { renameIdentity: "verify-content-with-lock" });
-      await expect(fs.write("file.txt", "hello")).resolves.toBeUndefined();
-      await expect(fsp.readFile(targetPath, "utf8")).resolves.toBe("hello");
-      await expect(fsp.stat(compatibilityLockPath(rootDir))).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-    },
-  );
+    const fs = await openRoot(rootDir, { renameIdentity: "verify-content-with-lock" });
+    await expect(fs.write("file.txt", "hello")).resolves.toBeUndefined();
+    await expect(fsp.readFile(targetPath, "utf8")).resolves.toBe("hello");
+    await expect(fsp.stat(compatibilityLockPath(rootDir))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
 
-  it.runIf(process.platform !== "win32")(
-    "rejects replacement content despite the compatibility lock",
-    async () => {
-      configureFsSafeNative({ mode: "off" });
-      const rootDir = await makeTempRoot("fs-safe-rename-id-attack-");
-      replaceTargetAfterFallbackRename("attacker-content");
+  itPosix("rejects replacement content despite the compatibility lock", async () => {
+    configureFsSafeNative({ mode: "off" });
+    const rootDir = await makeTempRoot("fs-safe-rename-id-attack-");
+    replaceTargetAfterFallbackRename("attacker-content");
 
-      const fs = await openRoot(rootDir, { renameIdentity: "verify-content-with-lock" });
-      await expect(fs.write("file.txt", "hello")).rejects.toMatchObject({
-        code: "path-mismatch",
-      });
-    },
-  );
+    const fs = await openRoot(rootDir, { renameIdentity: "verify-content-with-lock" });
+    await expectFsSafeError(fs.write("file.txt", "hello"), "path-mismatch");
+  });
 
-  it.runIf(process.platform !== "win32")(
-    "supports a per-call compatibility override",
-    async () => {
-      configureFsSafeNative({ mode: "off" });
-      const rootDir = await makeTempRoot("fs-safe-rename-id-per-call-");
-      replaceTargetAfterFallbackRename();
+  itPosix("supports a per-call compatibility override", async () => {
+    configureFsSafeNative({ mode: "off" });
+    const rootDir = await makeTempRoot("fs-safe-rename-id-per-call-");
+    replaceTargetAfterFallbackRename();
 
-      const fs = await openRoot(rootDir);
-      await expect(
-        fs.write("file.txt", "per-call", {
-          renameIdentity: "verify-content-with-lock",
-        }),
-      ).resolves.toBeUndefined();
-    },
-  );
+    const fs = await openRoot(rootDir);
+    await expect(
+      fs.write("file.txt", "per-call", {
+        renameIdentity: "verify-content-with-lock",
+      }),
+    ).resolves.toBeUndefined();
+  });
 
-  it.runIf(process.platform !== "win32")(
-    "deliberately keeps compatibility writes on the guarded JavaScript path",
-    async () => {
-      configureFsSafeNative({ mode: "off" });
-      const rootDir = await makeTempRoot("fs-safe-rename-id-native-");
-      replaceTargetAfterFallbackRename();
+  itPosix("deliberately keeps compatibility writes on the guarded JavaScript path", async () => {
+    configureFsSafeNative({ mode: "off" });
+    const rootDir = await makeTempRoot("fs-safe-rename-id-native-");
+    replaceTargetAfterFallbackRename();
 
-      const fs = await openRoot(rootDir, { renameIdentity: "verify-content-with-lock" });
-      await expect(fs.write("file.txt", "hello")).resolves.toBeUndefined();
-      await expect(fsp.readFile(path.join(rootDir, "file.txt"), "utf8")).resolves.toBe("hello");
-    },
-  );
+    const fs = await openRoot(rootDir, { renameIdentity: "verify-content-with-lock" });
+    await expect(fs.write("file.txt", "hello")).resolves.toBeUndefined();
+    await expect(fsp.readFile(path.join(rootDir, "file.txt"), "utf8")).resolves.toBe("hello");
+  });
 
-  it.runIf(process.platform !== "win32")(
-    "preserves already-exists errors for create",
-    async () => {
-      configureFsSafeNative({ mode: "off" });
-      const rootDir = await makeTempRoot("fs-safe-rename-id-create-");
-      await fsp.writeFile(path.join(rootDir, "file.txt"), "existing");
+  itPosix("preserves already-exists errors for create", async () => {
+    configureFsSafeNative({ mode: "off" });
+    const rootDir = await makeTempRoot("fs-safe-rename-id-create-");
+    await fsp.writeFile(path.join(rootDir, "file.txt"), "existing");
 
-      const fs = await openRoot(rootDir, { renameIdentity: "verify-content-with-lock" });
-      await expect(fs.create("file.txt", "new")).rejects.toMatchObject({
-        code: "already-exists",
-      });
-    },
-  );
+    const fs = await openRoot(rootDir, { renameIdentity: "verify-content-with-lock" });
+    await expectFsSafeError(fs.create("file.txt", "new"), "already-exists");
+  });
 
-  it.runIf(process.platform !== "win32")(
-    "does not create a missing parent when mkdir is disabled",
-    async () => {
-      configureFsSafeNative({ mode: "off" });
-      const rootDir = await makeTempRoot("fs-safe-rename-id-no-mkdir-");
-      const parentPath = path.join(rootDir, "missing");
+  itPosix("does not create a missing parent when mkdir is disabled", async () => {
+    configureFsSafeNative({ mode: "off" });
+    const rootDir = await makeTempRoot("fs-safe-rename-id-no-mkdir-");
+    const parentPath = path.join(rootDir, "missing");
 
-      const fs = await openRoot(rootDir, { renameIdentity: "verify-content-with-lock" });
-      await expect(fs.write("missing/file.txt", "hello", { mkdir: false })).rejects.toBeDefined();
-      await expect(fsp.stat(parentPath)).rejects.toMatchObject({ code: "ENOENT" });
-    },
-  );
+    const fs = await openRoot(rootDir, { renameIdentity: "verify-content-with-lock" });
+    await expect(fs.write("missing/file.txt", "hello", { mkdir: false })).rejects.toBeDefined();
+    await expect(fsp.stat(parentPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
 
-  it.runIf(process.platform !== "win32")(
-    "fails closed without deleting a stale sidecar lock",
-    async () => {
-      const rootDir = await makeTempRoot("fs-safe-rename-id-stale-");
-      const lockPath = compatibilityLockPath(rootDir);
-      await fsp.writeFile(
-        lockPath,
-        `${JSON.stringify({ pid: 9_999_999, createdAt: "2000-01-01T00:00:00.000Z" })}\n`,
-      );
+  itPosix("fails closed without deleting a stale sidecar lock", async () => {
+    const rootDir = await makeTempRoot("fs-safe-rename-id-stale-");
+    const lockPath = compatibilityLockPath(rootDir);
+    await fsp.writeFile(
+      lockPath,
+      `${JSON.stringify({ pid: 9_999_999, createdAt: "2000-01-01T00:00:00.000Z" })}\n`,
+    );
 
-      const fs = await openRoot(rootDir, { renameIdentity: "verify-content-with-lock" });
-      await expect(fs.write("file.txt", "hello")).rejects.toMatchObject({
-        code: "file_lock_stale",
-      });
-      await expect(fsp.readFile(lockPath, "utf8")).resolves.toContain("9999999");
-    },
-  );
+    const fs = await openRoot(rootDir, { renameIdentity: "verify-content-with-lock" });
+    await expect(fs.write("file.txt", "hello")).rejects.toMatchObject({
+      code: "file_lock_stale",
+    });
+    await expect(fsp.readFile(lockPath, "utf8")).resolves.toContain("9999999");
+  });
 
-  it.runIf(process.platform !== "win32")(
-    "works on a normal POSIX filesystem and releases the lock",
-    async () => {
-      configureFsSafeNative({ mode: "off" });
-      const rootDir = await makeTempRoot("fs-safe-rename-id-posix-");
+  itPosix("works on a normal POSIX filesystem and releases the lock", async () => {
+    configureFsSafeNative({ mode: "off" });
+    const rootDir = await makeTempRoot("fs-safe-rename-id-posix-");
 
-      const fs = await openRoot(rootDir, { renameIdentity: "verify-content-with-lock" });
-      await expect(fs.write("file.txt", "content")).resolves.toBeUndefined();
-      await expect(fsp.readFile(path.join(rootDir, "file.txt"), "utf8")).resolves.toBe(
-        "content",
-      );
-      await expect(fsp.stat(compatibilityLockPath(rootDir))).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-    },
-  );
+    const fs = await openRoot(rootDir, { renameIdentity: "verify-content-with-lock" });
+    await expect(fs.write("file.txt", "content")).resolves.toBeUndefined();
+    await expect(fsp.readFile(path.join(rootDir, "file.txt"), "utf8")).resolves.toBe(
+      "content",
+    );
+    await expect(fsp.stat(compatibilityLockPath(rootDir))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
 });

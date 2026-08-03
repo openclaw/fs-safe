@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { itPosix } from "./helpers/vitest.js";
 import { sha256File } from "../src/file-hash.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import {
@@ -85,7 +86,7 @@ describe("sha256File", () => {
     expect(nativeHash).toHaveBeenCalledOnce();
   });
 
-  it.runIf(process.platform !== "win32")("rejects symbolic-link path inputs", async () => {
+  itPosix("rejects symbolic-link path inputs", async () => {
     const root = await tempRoot();
     const filePath = path.join(root, "payload.bin");
     const linkPath = path.join(root, "link.bin");
@@ -95,28 +96,25 @@ describe("sha256File", () => {
     await expect(sha256File(linkPath)).rejects.toMatchObject({ code: "symlink" });
   });
 
-  it.runIf(process.platform !== "win32")(
-    "rejects a FIFO swapped in before open without blocking",
-    async () => {
-      const root = await tempRoot();
-      const filePath = path.join(root, "payload.bin");
-      const displacedPath = path.join(root, "payload.displaced");
-      await fs.writeFile(filePath, "payload");
-      configureFsSafeNative({ mode: "off" });
-      const originalOpen = fs.open.bind(fs);
-      vi.spyOn(fs, "open").mockImplementation(async (candidate, flags, mode) => {
-        if (candidate === filePath) {
-          expect(typeof flags).toBe("number");
-          expect((flags as number) & fsSync.constants.O_NONBLOCK).toBe(
-            fsSync.constants.O_NONBLOCK,
-          );
-          await fs.rename(filePath, displacedPath);
-          await createFifo(filePath);
-        }
-        return await originalOpen(candidate, flags, mode);
-      });
+  itPosix("rejects a FIFO swapped in before open without blocking", async () => {
+    const root = await tempRoot();
+    const filePath = path.join(root, "payload.bin");
+    const displacedPath = path.join(root, "payload.displaced");
+    await fs.writeFile(filePath, "payload");
+    configureFsSafeNative({ mode: "off" });
+    const originalOpen = fs.open.bind(fs);
+    vi.spyOn(fs, "open").mockImplementation(async (candidate, flags, mode) => {
+      if (candidate === filePath) {
+        expect(typeof flags).toBe("number");
+        expect((flags as number) & fsSync.constants.O_NONBLOCK).toBe(
+          fsSync.constants.O_NONBLOCK,
+        );
+        await fs.rename(filePath, displacedPath);
+        await createFifo(filePath);
+      }
+      return await originalOpen(candidate, flags, mode);
+    });
 
-      await expect(sha256File(filePath)).rejects.toMatchObject({ code: "not-file" });
-    },
-  );
+    await expect(sha256File(filePath)).rejects.toMatchObject({ code: "not-file" });
+  });
 });

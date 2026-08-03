@@ -1,7 +1,8 @@
 import fsp from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { expectFsSafeError } from "./helpers/security.js";
+import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { fileStore } from "../src/file-store.js";
 import { configureFsSafeNative, root as openRoot } from "../src/index.js";
 import { loadPendingJsonDurableQueueEntries } from "../src/json-durable-queue.js";
@@ -13,18 +14,12 @@ import { writeSecretFileAtomic } from "../src/secret-file.js";
 import { writeViaSiblingTempPath } from "../src/sibling-temp.js";
 import { buildRandomTempFilePath, tempFile } from "../src/temp-target.js";
 
-const tempDirs: string[] = [];
+const { tempRoot } = useTempDirs();
 
-async function tempRoot(prefix: string): Promise<string> {
-  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
 
 afterEach(async () => {
   vi.restoreAllMocks();
   configureFsSafeNative({ mode: "auto" });
-  await Promise.all(tempDirs.splice(0).map((dir) => fsp.rm(dir, { recursive: true, force: true })));
 });
 
 describe("deepsec regressions", () => {
@@ -111,23 +106,20 @@ describe("deepsec regressions", () => {
     }
   });
 
-  it.runIf(process.platform !== "win32")(
-    "does not treat dangling symlinks as safe missing local-root paths",
-    async () => {
-      const base = await tempRoot("fs-safe-local-roots-");
-      const outside = await tempRoot("fs-safe-local-roots-outside-");
-      const linkPath = path.join(base, "dangling");
-      await fsp.symlink(path.join(outside, "missing.txt"), linkPath, "file");
+  itPosix("does not treat dangling symlinks as safe missing local-root paths", async () => {
+    const base = await tempRoot("fs-safe-local-roots-");
+    const outside = await tempRoot("fs-safe-local-roots-outside-");
+    const linkPath = path.join(base, "dangling");
+    await fsp.symlink(path.join(outside, "missing.txt"), linkPath, "file");
 
-      expect(
-        resolveLocalPathFromRootsSync({
-          filePath: linkPath,
-          roots: [base],
-          allowMissing: true,
-        }),
-      ).toBeNull();
-    },
-  );
+    expect(
+      resolveLocalPathFromRootsSync({
+        filePath: linkPath,
+        roots: [base],
+        allowMissing: true,
+      }),
+    ).toBeNull();
+  });
 
   it("preserves Root's default read cap for local-root reads", async () => {
     const base = await tempRoot("fs-safe-local-root-cap-");
@@ -143,7 +135,7 @@ describe("deepsec regressions", () => {
     expect(uncapped?.buffer.byteLength).toBe(16 * 1024 * 1024 + 1);
   });
 
-  it.runIf(process.platform !== "win32")("pins private copyIn sources after validation", async () => {
+  itPosix("pins private copyIn sources after validation", async () => {
     const base = await tempRoot("fs-safe-private-copyin-");
     const sourceDir = await tempRoot("fs-safe-private-copyin-source-");
     const outside = await tempRoot("fs-safe-private-copyin-outside-");
@@ -168,7 +160,7 @@ describe("deepsec regressions", () => {
     await expect(fsp.stat(path.join(base, "copied.txt"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it.runIf(process.platform !== "win32")("preserves private copyIn source error codes", async () => {
+  itPosix("preserves private copyIn source error codes", async () => {
     const base = await tempRoot("fs-safe-private-copyin-codes-");
     const sourceDir = await tempRoot("fs-safe-private-copyin-codes-source-");
     const source = path.join(sourceDir, "source.txt");
@@ -179,12 +171,10 @@ describe("deepsec regressions", () => {
 
     await expect(store.copyIn("dir.txt", sourceDir)).rejects.toMatchObject({ code: "not-file" });
     await expect(store.copyIn("link.txt", link)).rejects.toMatchObject({ code: "not-file" });
-    await expect(store.copyIn("large.txt", source, { maxBytes: 4 })).rejects.toMatchObject({
-      code: "too-large",
-    });
+    await expectFsSafeError(store.copyIn("large.txt", source, { maxBytes: 4 }), "too-large");
   });
 
-  it.runIf(process.platform !== "win32")("skips symlinked durable queue entries", async () => {
+  itPosix("skips symlinked durable queue entries", async () => {
     const base = await tempRoot("fs-safe-queue-symlink-");
     const queueDir = path.join(base, "queue");
     const outside = await tempRoot("fs-safe-queue-outside-");
@@ -208,7 +198,7 @@ describe("deepsec regressions", () => {
     ).resolves.toEqual([]);
   });
 
-  it.runIf(process.platform !== "win32")("rejects fallback writes when a missing parent is raced to a symlink", async () => {
+  itPosix("rejects fallback writes when a missing parent is raced to a symlink", async () => {
     configureFsSafeNative({ mode: "off" });
     const base = await tempRoot("fs-safe-fallback-mkdir-symlink-");
     const rootDir = path.join(base, "root");
@@ -231,7 +221,7 @@ describe("deepsec regressions", () => {
     await expect(fsp.lstat(path.join(outside, "nested"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it.runIf(process.platform !== "win32")("rejects private secret writes when the root path is swapped", async () => {
+  itPosix("rejects private secret writes when the root path is swapped", async () => {
     const base = await tempRoot("fs-safe-secret-root-swap-");
     const rootDir = path.join(base, "root");
     const originalRoot = path.join(base, "root-original");
@@ -256,7 +246,7 @@ describe("deepsec regressions", () => {
     await expect(fsp.lstat(path.join(outside, "nested"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it.runIf(process.platform !== "win32")("uses guarded private secret writes with native mode off", async () => {
+  itPosix("uses guarded private secret writes with native mode off", async () => {
     configureFsSafeNative({ mode: "off" });
     const base = await tempRoot("fs-safe-secret-native-off-");
     const rootDir = path.join(base, "root");
@@ -270,7 +260,7 @@ describe("deepsec regressions", () => {
     expect((await fsp.stat(secretPath)).mode & 0o777).toBe(0o600);
   });
 
-  it.runIf(process.platform !== "win32")("rejects private secret writes when the pinned parent is swapped", async () => {
+  itPosix("rejects private secret writes when the pinned parent is swapped", async () => {
     const base = await tempRoot("fs-safe-secret-parent-swap-");
     const rootDir = path.join(base, "root");
     const outside = path.join(base, "outside");
@@ -295,7 +285,7 @@ describe("deepsec regressions", () => {
     await expect(fsp.lstat(path.join(outside, "secret.txt"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it.runIf(process.platform !== "win32")("rejects private secret writes when the parent is swapped after commit", async () => {
+  itPosix("rejects private secret writes when the parent is swapped after commit", async () => {
     const base = await tempRoot("fs-safe-secret-parent-post-swap-");
     const rootDir = path.join(base, "root");
     const outside = path.join(base, "outside");
@@ -326,7 +316,7 @@ describe("deepsec regressions", () => {
     await expect(fsp.lstat(path.join(outside, "secret.txt"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it.runIf(process.platform !== "win32")("rejects private secret writes when the final path is swapped after commit", async () => {
+  itPosix("rejects private secret writes when the final path is swapped after commit", async () => {
     const base = await tempRoot("fs-safe-secret-final-post-swap-");
     const rootDir = path.join(base, "root");
     const outside = path.join(base, "outside");

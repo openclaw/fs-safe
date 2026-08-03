@@ -1,11 +1,12 @@
 import fs from "node:fs/promises";
 import { realpathSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import JSZip from "jszip";
 import * as tar from "tar";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { expectFsSafeError } from "./helpers/security.js";
+import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { extractArchive } from "../src/archive.js";
 import { loadZipArchiveWithPreflight, readZipCentralDirectoryEntryCount } from "../src/archive-zip-preflight.js";
 import { createAsyncLock } from "../src/async-lock.js";
@@ -17,51 +18,15 @@ import {
   safeDirName,
   safePathSegmentHashed,
 } from "../src/install-path.js";
-import {
-  readJson,
-  readJsonIfExists,
-  readJsonSync,
-  tryReadJson,
-  tryReadJsonSync,
-  writeJson,
-  writeJsonSync,
-} from "../src/json.js";
+import * as json from "../src/json.js";
 import { jsonStore } from "../src/json-store.js";
-import {
-  assertNoWindowsNetworkPath,
-  basenameFromMediaSource,
-  hasEncodedFileUrlSeparator,
-  isWindowsDriveLetterPath,
-  safeFileURLToPath,
-  trySafeFileURLToPath,
-} from "../src/local-file-access.js";
+import * as localFile from "../src/local-file-access.js";
 import { resolveLocalPathFromRootsSync } from "../src/local-roots.js";
 import { movePathWithCopyFallback } from "../src/move-path.js";
-import {
-  assertNoNulPathInput,
-  hasNodeErrorCode,
-  isNotFoundPathError,
-  isPathInside,
-  isPathInsideWithRealpath,
-  isSymlinkOpenError,
-  normalizeWindowsPathForComparison,
-  resolveSafeBaseDir,
-  resolveSafeRelativePath,
-  safeRealpathSync,
-  safeStatSync,
-  splitSafeRelativePath,
-} from "../src/path.js";
+import * as safePath from "../src/path.js";
 import { assertNoHardlinkedFinalPath, assertNoPathAliasEscape } from "../src/path-policy.js";
 import { ROOT_PATH_ALIAS_POLICIES, resolveRootPath, resolveRootPathSync } from "../src/root-path.js";
-import {
-  ensureDirectoryWithinRoot,
-  pathScope,
-  resolveExistingPathsWithinRoot,
-  resolvePathsWithinRoot,
-  resolvePathWithinRoot,
-  resolveStrictExistingPathsWithinRoot,
-  resolveWritablePathWithinRoot,
-} from "../src/root-paths.js";
+import * as rootPaths from "../src/root-paths.js";
 import { replaceDirectoryAtomic } from "../src/replace-directory.js";
 import { openLocalFileSafely, readLocalFileSafely, root as openRoot } from "../src/root.js";
 import {
@@ -71,15 +36,7 @@ import {
 } from "../src/secret-file.js";
 import { resolveSecureTempRoot } from "../src/secure-temp-dir.js";
 import { assertNoSymlinkParents, assertNoSymlinkParentsSync } from "../src/symlink-parents.js";
-import {
-  appendRegularFile,
-  appendRegularFileSync,
-  readRegularFile,
-  readRegularFileSync,
-  resolveRegularFileAppendFlags,
-  statRegularFile,
-  statRegularFileSync,
-} from "../src/regular-file.js";
+import * as regularFile from "../src/regular-file.js";
 import {
   buildRandomTempFilePath,
   sanitizeTempFileName,
@@ -94,20 +51,9 @@ import {
 } from "../src/private-temp-workspace.js";
 import { withTimeout } from "../src/timing.js";
 
-const tempDirs = new Set<string>();
+const { tempRoot } = useTempDirs();
 
-async function tempRoot(prefix: string): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.add(dir);
-  return dir;
-}
 
-afterEach(async () => {
-  for (const dir of tempDirs) {
-    await fs.rm(dir, { recursive: true, force: true });
-  }
-  tempDirs.clear();
-});
 
 describe("root handle coverage", () => {
   it("covers root reads, absolute reads, append newline logic, and writable handles", async () => {
@@ -165,23 +111,19 @@ describe("root handle coverage", () => {
 
     await scoped.copyIn("copied/source.txt", source, { maxBytes: 16, mode: 0o600 });
     await expect(scoped.readText("copied/source.txt")).resolves.toBe("copy me");
-    await expect(scoped.copyIn("too-large.txt", source, { maxBytes: 3 })).rejects.toMatchObject({
-      code: "too-large",
-    });
+    await expectFsSafeError(scoped.copyIn("too-large.txt", source, { maxBytes: 3 }), "too-large");
     await expect(scoped.copyIn("bad.txt", sourceDir)).rejects.toMatchObject({ code: "not-file" });
 
     await scoped.writeJson("json/state.json", { ok: true }, { trailingNewline: false });
     await expect(scoped.readJson("json/state.json")).resolves.toEqual({ ok: true });
     await scoped.createJson("json/new.json", { value: 1 }, { space: 0 });
-    await expect(scoped.create("json/new.json", "again")).rejects.toMatchObject({
-      code: "already-exists",
-    });
+    await expectFsSafeError(scoped.create("json/new.json", "again"), "already-exists");
     await expect(scoped.read("missing.txt")).rejects.toMatchObject({ code: "not-found" });
     await expect(scoped.open("json")).rejects.toMatchObject({ code: "not-file" });
     await expect(scoped.mkdir(".")).rejects.toMatchObject({ code: "outside-workspace" });
   });
 
-  it.runIf(process.platform !== "win32")("covers root symlink, hardlink, local read, and writable rejection paths", async () => {
+  itPosix("covers root symlink, hardlink, local read, and writable rejection paths", async () => {
     const rootDir = await tempRoot("fs-safe-root-errors-");
     const outside = await tempRoot("fs-safe-root-errors-outside-");
     const scoped = await openRoot(rootDir);
@@ -210,19 +152,13 @@ describe("root handle coverage", () => {
 
     await fs.mkdir(path.join(rootDir, "dir"));
     await expect(scoped.openWritable("dir")).rejects.toMatchObject({ code: "not-file" });
-    await expect(scoped.openWritable("inside-hardlink.txt")).rejects.toMatchObject({
-      code: "path-alias",
-    });
-    await expect(scoped.openWritable("inside-link.txt")).rejects.toMatchObject({
-      code: "path-alias",
-    });
+    await expectFsSafeError(scoped.openWritable("inside-hardlink.txt"), "path-alias");
+    await expectFsSafeError(scoped.openWritable("inside-link.txt"), "path-alias");
 
     const outsideFile = path.join(outside, "outside.txt");
     await fs.writeFile(outsideFile, "outside", "utf8");
     await fs.symlink(outsideFile, path.join(rootDir, "outside-link.txt"));
-    await expect(scoped.openWritable("outside-link.txt")).rejects.toMatchObject({
-      code: "path-alias",
-    });
+    await expectFsSafeError(scoped.openWritable("outside-link.txt"), "path-alias");
   });
 });
 
@@ -233,39 +169,39 @@ describe("path helpers", () => {
     await fs.writeFile(file, "ok", "utf8");
     const cache = new Map<string, string>();
 
-    expect(normalizeWindowsPathForComparison("\\\\?\\UNC\\Server\\Share\\A/../B")).toContain(
+    expect(safePath.normalizeWindowsPathForComparison("\\\\?\\UNC\\Server\\Share\\A/../B")).toContain(
       "\\\\server\\share",
     );
-    expect(hasNodeErrorCode(Object.assign(new Error("x"), { code: "ENOENT" }), "ENOENT")).toBe(
+    expect(safePath.hasNodeErrorCode(Object.assign(new Error("x"), { code: "ENOENT" }), "ENOENT")).toBe(
       true,
     );
-    expect(isNotFoundPathError(Object.assign(new Error("x"), { code: "ENOTDIR" }))).toBe(true);
-    expect(isSymlinkOpenError(Object.assign(new Error("x"), { code: "ELOOP" }))).toBe(true);
-    expect(isPathInside(root, file)).toBe(true);
-    expect(resolveSafeBaseDir(root)).toBe(`${path.resolve(root)}${path.sep}`);
+    expect(safePath.isNotFoundPathError(Object.assign(new Error("x"), { code: "ENOTDIR" }))).toBe(true);
+    expect(safePath.isSymlinkOpenError(Object.assign(new Error("x"), { code: "ELOOP" }))).toBe(true);
+    expect(safePath.isPathInside(root, file)).toBe(true);
+    expect(safePath.resolveSafeBaseDir(root)).toBe(`${path.resolve(root)}${path.sep}`);
     // Use the sync realpath to compare against safeRealpathSync. On windows
     // fs.realpathSync and fs.realpath (async) sometimes disagree on 8.3
     // short-name canonicalization (e.g. "RUNNER~1" vs "runneradmin").
-    expect(safeRealpathSync(file, cache)).toBe(realpathSync(file));
-    expect(safeRealpathSync(file, cache)).toBe(realpathSync(file));
-    expect(safeRealpathSync(path.join(root, "missing"), cache)).toBeNull();
-    expect(isPathInsideWithRealpath(root, file, { cache })).toBe(true);
-    expect(isPathInsideWithRealpath(root, path.join(root, "missing"), { requireRealpath: false }))
+    expect(safePath.safeRealpathSync(file, cache)).toBe(realpathSync(file));
+    expect(safePath.safeRealpathSync(file, cache)).toBe(realpathSync(file));
+    expect(safePath.safeRealpathSync(path.join(root, "missing"), cache)).toBeNull();
+    expect(safePath.isPathInsideWithRealpath(root, file, { cache })).toBe(true);
+    expect(safePath.isPathInsideWithRealpath(root, path.join(root, "missing"), { requireRealpath: false }))
       .toBe(true);
-    expect(isPathInsideWithRealpath(root, path.join(root, "missing"))).toBe(false);
-    expect(safeStatSync(file)?.isFile()).toBe(true);
-    expect(safeStatSync(path.join(root, "missing"))).toBeNull();
-    expect(() => assertNoNulPathInput("a\0b")).toThrow("NUL");
-    expect(splitSafeRelativePath("./a//b")).toEqual(["a", "b"]);
+    expect(safePath.isPathInsideWithRealpath(root, path.join(root, "missing"))).toBe(false);
+    expect(safePath.safeStatSync(file)?.isFile()).toBe(true);
+    expect(safePath.safeStatSync(path.join(root, "missing"))).toBeNull();
+    expect(() => safePath.assertNoNulPathInput("a\0b")).toThrow("NUL");
+    expect(safePath.splitSafeRelativePath("./a//b")).toEqual(["a", "b"]);
     for (const bad of ["../x", "/x", "C:\\x", "C:evil", "C:..", "a/C:b", "a\\b", "a\0b"]) {
-      expect(() => splitSafeRelativePath(bad)).toThrow();
+      expect(() => safePath.splitSafeRelativePath(bad)).toThrow();
     }
-    expect(resolveSafeRelativePath(root, "a/b")).toBe(path.join(root, "a", "b"));
+    expect(safePath.resolveSafeRelativePath(root, "a/b")).toBe(path.join(root, "a", "b"));
   });
 });
 
 describe("root path resolution helpers", () => {
-  it.runIf(process.platform !== "win32")("covers canonical aliases and final symlink policies", async () => {
+  itPosix("covers canonical aliases and final symlink policies", async () => {
     const base = await tempRoot("fs-safe-root-path-extra-");
     const root = path.join(base, "root");
     const outside = path.join(base, "outside");
@@ -327,14 +263,14 @@ describe("root path resolution helpers", () => {
     await fs.mkdir(path.join(root, "dir"));
 
     expect(
-      resolvePathWithinRoot({
+      rootPaths.resolvePathWithinRoot({
         rootDir: root,
         requestedPath: " ",
         scopeLabel: "uploads",
       }),
     ).toEqual({ ok: false, error: "path is required" });
     expect(
-      resolvePathWithinRoot({
+      rootPaths.resolvePathWithinRoot({
         rootDir: root,
         requestedPath: " ",
         defaultFileName: "default.txt",
@@ -342,28 +278,28 @@ describe("root path resolution helpers", () => {
       }),
     ).toEqual({ ok: true, path: path.join(root, "default.txt") });
     expect(
-      resolvePathsWithinRoot({
+      rootPaths.resolvePathsWithinRoot({
         rootDir: root,
         requestedPaths: ["file.txt", "../escape.txt"],
         scopeLabel: "uploads",
       }),
     ).toMatchObject({ ok: false });
     await expect(
-      resolveWritablePathWithinRoot({
+      rootPaths.resolveWritablePathWithinRoot({
         rootDir: file,
         requestedPath: "new.txt",
         scopeLabel: "uploads",
       }),
     ).resolves.toMatchObject({ ok: false });
     await expect(
-      resolveWritablePathWithinRoot({
+      rootPaths.resolveWritablePathWithinRoot({
         rootDir: root,
         requestedPath: "dir",
         scopeLabel: "uploads",
       }),
     ).resolves.toMatchObject({ ok: false });
     await expect(
-      ensureDirectoryWithinRoot({
+      rootPaths.ensureDirectoryWithinRoot({
         rootDir: root,
         requestedPath: "made/nested",
         scopeLabel: "uploads",
@@ -371,28 +307,28 @@ describe("root path resolution helpers", () => {
       }),
     ).resolves.toMatchObject({ ok: true, path: path.join(root, "made", "nested") });
     await expect(
-      ensureDirectoryWithinRoot({
+      rootPaths.ensureDirectoryWithinRoot({
         rootDir: root,
         requestedPath: "file.txt",
         scopeLabel: "uploads",
       }),
     ).resolves.toMatchObject({ ok: false });
     await expect(
-      resolveExistingPathsWithinRoot({
+      rootPaths.resolveExistingPathsWithinRoot({
         rootDir: path.join(base, "missing-root"),
         requestedPaths: ["missing.txt"],
         scopeLabel: "uploads",
       }),
     ).resolves.toMatchObject({ ok: true });
     await expect(
-      resolveStrictExistingPathsWithinRoot({
+      rootPaths.resolveStrictExistingPathsWithinRoot({
         rootDir: root,
         requestedPaths: ["dir"],
         scopeLabel: "uploads",
       }),
     ).resolves.toMatchObject({ ok: false });
 
-    const scope = pathScope(root, { label: "uploads" });
+    const scope = rootPaths.pathScope(root, { label: "uploads" });
     expect(scope.resolve(" ", { defaultName: "fallback.txt" })).toEqual({
       ok: true,
       path: path.join(root, "fallback.txt"),
@@ -416,18 +352,18 @@ describe("URL, install, and local-root helpers", () => {
     await fs.writeFile(file, "ok", "utf8");
     const fileUrl = new URL(`file://${file}`).href;
 
-    expect(hasEncodedFileUrlSeparator("file:///tmp/a%2Fb")).toBe(true);
-    expect(safeFileURLToPath(fileUrl)).toBe(file);
-    expect(trySafeFileURLToPath("https://example.com/file")).toBeUndefined();
-    expect(basenameFromMediaSource(fileUrl)).toBe("hello world.txt");
-    expect(basenameFromMediaSource("plain/name.txt")).toBe("name.txt");
-    expect(() => safeFileURLToPath("file://remote/share/file.txt")).toThrow("remote hosts");
-    expect(isWindowsDriveLetterPath("C:\\Users\\demo", "win32")).toBe(true);
-    expect(isWindowsDriveLetterPath("C:\\Users\\demo", "linux")).toBe(false);
+    expect(localFile.hasEncodedFileUrlSeparator("file:///tmp/a%2Fb")).toBe(true);
+    expect(localFile.safeFileURLToPath(fileUrl)).toBe(file);
+    expect(localFile.trySafeFileURLToPath("https://example.com/file")).toBeUndefined();
+    expect(localFile.basenameFromMediaSource(fileUrl)).toBe("hello world.txt");
+    expect(localFile.basenameFromMediaSource("plain/name.txt")).toBe("name.txt");
+    expect(() => localFile.safeFileURLToPath("file://remote/share/file.txt")).toThrow("remote hosts");
+    expect(localFile.isWindowsDriveLetterPath("C:\\Users\\demo", "win32")).toBe(true);
+    expect(localFile.isWindowsDriveLetterPath("C:\\Users\\demo", "linux")).toBe(false);
     if (process.platform === "win32") {
-      expect(() => assertNoWindowsNetworkPath("\\\\server\\share", "Media")).toThrow();
+      expect(() => localFile.assertNoWindowsNetworkPath("\\\\server\\share", "Media")).toThrow();
     } else {
-      expect(() => assertNoWindowsNetworkPath("\\\\server\\share", "Media")).not.toThrow();
+      expect(() => localFile.assertNoWindowsNetworkPath("\\\\server\\share", "Media")).not.toThrow();
     }
 
     expect(safeDirName(" bad/name? ")).toBe("bad__name?");
@@ -592,22 +528,22 @@ describe("JSON and regular-file helpers", () => {
   it("covers JSON success, parse, read, and lock behavior", async () => {
     const root = await tempRoot("fs-safe-json-extra-");
     const file = path.join(root, "state", "value.json");
-    await writeJson(file, { ok: true }, { trailingNewline: true });
-    await expect(readJson(file)).resolves.toEqual({ ok: true });
-    await expect(readJsonIfExists(path.join(root, "missing.json"))).resolves.toBeNull();
-    await expect(tryReadJson(file)).resolves.toEqual({ ok: true });
+    await json.writeJson(file, { ok: true }, { trailingNewline: true });
+    await expect(json.readJson(file)).resolves.toEqual({ ok: true });
+    await expect(json.readJsonIfExists(path.join(root, "missing.json"))).resolves.toBeNull();
+    await expect(json.tryReadJson(file)).resolves.toEqual({ ok: true });
     await fs.writeFile(file, "{bad", "utf8");
-    await expect(readJson(file)).rejects.toMatchObject({ reason: "parse" });
-    await expect(readJson(path.join(root, "missing.json"))).rejects.toMatchObject({
+    await expect(json.readJson(file)).rejects.toMatchObject({ reason: "parse" });
+    await expect(json.readJson(path.join(root, "missing.json"))).rejects.toMatchObject({
       reason: "read",
     });
-    await expect(readJsonIfExists(file)).rejects.toMatchObject({ reason: "parse" });
-    await expect(tryReadJson(file)).resolves.toBeNull();
+    await expect(json.readJsonIfExists(file)).rejects.toMatchObject({ reason: "parse" });
+    await expect(json.tryReadJson(file)).resolves.toBeNull();
 
     const syncFile = path.join(root, "sync", "value.json");
-    writeJsonSync(syncFile, { sync: true });
-    expect(readJsonSync(syncFile)).toEqual({ sync: true });
-    expect(tryReadJsonSync(syncFile)).toEqual({ sync: true });
+    json.writeJsonSync(syncFile, { sync: true });
+    expect(json.readJsonSync(syncFile)).toEqual({ sync: true });
+    expect(json.tryReadJsonSync(syncFile)).toEqual({ sync: true });
     await writeTextAtomic(path.join(root, "text.txt"), "text", { trailingNewline: false });
 
     const calls: string[] = [];
@@ -655,24 +591,24 @@ describe("JSON and regular-file helpers", () => {
     await fs.mkdir(dir);
     await fs.writeFile(file, "abc", "utf8");
 
-    expect(resolveRegularFileAppendFlags({ O_APPEND: 8, O_CREAT: 512, O_WRONLY: 1 })).toBe(521);
-    await expect(statRegularFile(path.join(root, "missing.txt"))).resolves.toEqual({
+    expect(regularFile.resolveRegularFileAppendFlags({ O_APPEND: 8, O_CREAT: 512, O_WRONLY: 1 })).toBe(521);
+    await expect(regularFile.statRegularFile(path.join(root, "missing.txt"))).resolves.toEqual({
       missing: true,
     });
-    expect(statRegularFileSync(path.join(root, "missing.txt"))).toEqual({ missing: true });
-    await expect(statRegularFile(dir)).rejects.toThrow("regular file");
-    expect(() => statRegularFileSync(dir)).toThrow("regular file");
-    await expect(readRegularFile({ filePath: file, maxBytes: 8 })).resolves.toMatchObject({
+    expect(regularFile.statRegularFileSync(path.join(root, "missing.txt"))).toEqual({ missing: true });
+    await expect(regularFile.statRegularFile(dir)).rejects.toThrow("regular file");
+    expect(() => regularFile.statRegularFileSync(dir)).toThrow("regular file");
+    await expect(regularFile.readRegularFile({ filePath: file, maxBytes: 8 })).resolves.toMatchObject({
       buffer: Buffer.from("abc"),
     });
-    await expect(readRegularFile({ filePath: file, maxBytes: 2 })).rejects.toThrow("exceeds");
-    expect(readRegularFileSync({ filePath: file, maxBytes: 8 }).buffer).toEqual(Buffer.from("abc"));
-    expect(() => readRegularFileSync({ filePath: file, maxBytes: 2 })).toThrow("exceeds");
+    await expect(regularFile.readRegularFile({ filePath: file, maxBytes: 2 })).rejects.toThrow("exceeds");
+    expect(regularFile.readRegularFileSync({ filePath: file, maxBytes: 8 }).buffer).toEqual(Buffer.from("abc"));
+    expect(() => regularFile.readRegularFileSync({ filePath: file, maxBytes: 2 })).toThrow("exceeds");
 
-    await appendRegularFile({ filePath: file, content: "d", maxFileBytes: 10 });
-    await appendRegularFile({ filePath: file, content: "skip", maxFileBytes: 2 });
-    appendRegularFileSync({ filePath: file, content: Buffer.from("e"), maxFileBytes: 10 });
-    appendRegularFileSync({ filePath: file, content: "skip", maxFileBytes: 2 });
+    await regularFile.appendRegularFile({ filePath: file, content: "d", maxFileBytes: 10 });
+    await regularFile.appendRegularFile({ filePath: file, content: "skip", maxFileBytes: 2 });
+    regularFile.appendRegularFileSync({ filePath: file, content: Buffer.from("e"), maxFileBytes: 10 });
+    regularFile.appendRegularFileSync({ filePath: file, content: "skip", maxFileBytes: 2 });
     await expect(fs.readFile(file, "utf8")).resolves.toBe("abcde");
   });
 });
@@ -729,7 +665,7 @@ describe("temporary workspace and symlink parent helpers", () => {
     ).toBe("value");
   });
 
-  it.runIf(process.platform !== "win32")("covers symlink parent policies", async () => {
+  itPosix("covers symlink parent policies", async () => {
     const root = await tempRoot("fs-safe-symlink-parent-extra-");
     const outside = await tempRoot("fs-safe-symlink-parent-outside-");
     await fs.mkdir(path.join(root, "real"));
@@ -807,18 +743,14 @@ describe("file stores and private stores", () => {
       path.join(root, "state.json"),
     );
     await expect(store.readJson("state.json")).resolves.toEqual({ ok: true });
-    await expect(store.write("too-large.txt", Buffer.alloc(65))).rejects.toMatchObject({
-      code: "too-large",
-    });
+    await expectFsSafeError(store.write("too-large.txt", Buffer.alloc(65)), "too-large");
     await store.writeStream("stream.txt", Readable.from(["hello"]));
     await expect(fs.readFile(path.join(root, "stream.txt"), "utf8")).resolves.toBe("hello");
-    await expect(store.writeStream("stream-too-large.txt", Readable.from(["123", "456"]), {
+    await expectFsSafeError(store.writeStream("stream-too-large.txt", Readable.from(["123", "456"]), {
       maxBytes: 4,
-    })).rejects.toMatchObject({ code: "too-large" });
+    }), "too-large");
     await expect(store.copyIn("copied.txt", source)).resolves.toBe(path.join(root, "copied.txt"));
-    await expect(store.copyIn("bad.txt", sourceRoot))
-      .rejects
-      .toMatchObject({ code: "not-file" });
+    await expectFsSafeError(store.copyIn("bad.txt", sourceRoot), "not-file");
     await expect(store.exists("copied.txt")).resolves.toBe(true);
     await store.remove("copied.txt");
     await expect(store.exists("copied.txt")).resolves.toBe(false);

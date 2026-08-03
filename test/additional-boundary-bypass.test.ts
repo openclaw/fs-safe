@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { expectNoOutsideWrite, makeTempLayout } from "./helpers/security.js";
+import { useTempDirs } from "./helpers/vitest.js";
 import { safeFileURLToPath } from "../src/local-file-access.js";
 import { assertCanonicalPathWithinBase, resolveSafeInstallDir } from "../src/install-path.js";
 import { createJsonStore } from "../src/json-document-store.js";
@@ -13,13 +15,7 @@ import { prepareArchiveOutputPath } from "../src/archive-staging.js";
 import { sanitizeTempFileName, tempFile } from "../src/temp-target.js";
 import { walkDirectory, walkDirectorySync } from "../src/walk.js";
 
-type TempLayout = {
-  base: string;
-  outside: string;
-  outsideFile: string;
-};
-
-const tempDirs: string[] = [];
+const { tempDirs } = useTempDirs();
 
 const ARCHIVE_ESCAPE_PAYLOADS = [
   "../evil.txt",
@@ -33,45 +29,35 @@ const ARCHIVE_ESCAPE_PAYLOADS = [
   "nested\\..\\..\\evil.txt",
 ] as const;
 
-async function makeTempLayout(prefix: string): Promise<TempLayout> {
-  const base = await fsp.mkdtemp(path.join(os.tmpdir(), `${prefix}-base-`));
-  const outside = await fsp.mkdtemp(path.join(os.tmpdir(), `${prefix}-outside-`));
-  tempDirs.push(base, outside);
-  const outsideFile = path.join(outside, "secret.txt");
-  await fsp.writeFile(outsideFile, "outside secret");
-  return { base, outside, outsideFile };
-}
-
 afterEach(async () => {
   vi.restoreAllMocks();
-  await Promise.all(tempDirs.splice(0).map((dir) => fsp.rm(dir, { force: true, recursive: true })));
 });
 
 describe("additional helper boundary bypass attempts", () => {
   it("rejects archive traversal payloads before resolving output paths", async () => {
-    const layout = await makeTempLayout("fs-safe-archive-payloads");
+    const layout = await makeTempLayout("fs-safe-archive-payloads", tempDirs);
 
     for (const payload of ARCHIVE_ESCAPE_PAYLOADS) {
       expect(() => validateArchiveEntryPath(payload), `validate ${payload}`).toThrow();
       await expect(
-        prepareArchiveOutputPath({ destDir: layout.base, relativePath: payload, originalPath: payload }),
+        prepareArchiveOutputPath({ destDir: layout.root, relativePath: payload, originalPath: payload }),
       ).rejects.toThrow();
     }
   });
 
   it("keeps archive output resolution inside the destination for benign weird names", async () => {
-    const layout = await makeTempLayout("fs-safe-archive-literals");
+    const layout = await makeTempLayout("fs-safe-archive-literals", tempDirs);
     const payloads = ["%2e%2e%2fevil.txt", "..%2fevil.txt", "safe/..hidden/file.txt"];
 
     for (const payload of payloads) {
       validateArchiveEntryPath(payload);
-      const output = resolveArchiveOutputPath({ rootDir: layout.base, relPath: payload, originalPath: payload });
-      expect(output.startsWith(`${layout.base}${path.sep}`)).toBe(true);
+      const output = resolveArchiveOutputPath({ rootDir: layout.root, relPath: payload, originalPath: payload });
+      expect(output.startsWith(`${layout.root}${path.sep}`)).toBe(true);
     }
   });
 
   it("sanitizes temp file names and keeps temp file helpers inside their created directory", async () => {
-    const layout = await makeTempLayout("fs-safe-temp");
+    const layout = await makeTempLayout("fs-safe-temp", tempDirs);
     expect(sanitizeTempFileName("../../evil.txt")).toBe("evil.txt");
     if (process.platform !== "win32") {
       // On windows "\" is a reserved path separator and cannot appear in a
@@ -81,9 +67,9 @@ describe("additional helper boundary bypass attempts", () => {
     }
     expect(sanitizeTempFileName("\u0000../evil.txt")).toBe("evil.txt");
 
-    const target = await tempFile({ rootDir: layout.base, prefix: "../../prefix", fileName: "../../evil.txt" });
+    const target = await tempFile({ rootDir: layout.root, prefix: "../../prefix", fileName: "../../evil.txt" });
     tempDirs.push(target.dir);
-    expect(target.dir.startsWith(`${layout.base}${path.sep}`)).toBe(true);
+    expect(target.dir.startsWith(`${layout.root}${path.sep}`)).toBe(true);
     expect(target.path).toBe(path.join(target.dir, "evil.txt"));
     expect(target.file("../../other.txt")).toBe(path.join(target.dir, "other.txt"));
     await target.cleanup();
@@ -100,20 +86,20 @@ describe("additional helper boundary bypass attempts", () => {
   });
 
   it("keeps install directories and canonical base checks inside their base", async () => {
-    const layout = await makeTempLayout("fs-safe-install");
-    const safe = resolveSafeInstallDir({ baseDir: layout.base, id: "../../evil/pkg", invalidNameMessage: "bad package" });
+    const layout = await makeTempLayout("fs-safe-install", tempDirs);
+    const safe = resolveSafeInstallDir({ baseDir: layout.root, id: "../../evil/pkg", invalidNameMessage: "bad package" });
     expect(safe).toMatchObject({ ok: true });
     if (!safe.ok) throw new Error("expected safe install dir");
-    expect(safe.path.startsWith(`${layout.base}${path.sep}`)).toBe(true);
+    expect(safe.path.startsWith(`${layout.root}${path.sep}`)).toBe(true);
 
     await expect(
-      assertCanonicalPathWithinBase({ baseDir: layout.base, candidatePath: layout.outsideFile, boundaryLabel: "install base" }),
+      assertCanonicalPathWithinBase({ baseDir: layout.root, candidatePath: layout.outsideFile, boundaryLabel: "install base" }),
     ).rejects.toThrow();
-    const insideDir = path.join(layout.base, "inside");
+    const insideDir = path.join(layout.root, "inside");
     await fsp.mkdir(insideDir);
     await expect(
       assertCanonicalPathWithinBase({
-        baseDir: layout.base,
+        baseDir: layout.root,
         boundaryLabel: "install base",
         candidatePath: path.join(insideDir, "future-file.txt"),
       }),
@@ -121,33 +107,33 @@ describe("additional helper boundary bypass attempts", () => {
   });
 
   it("walks do not follow symlinks by default and do not loop when following cycles", async () => {
-    const layout = await makeTempLayout("fs-safe-walk");
-    await fsp.mkdir(path.join(layout.base, "dir"));
-    await fsp.writeFile(path.join(layout.base, "dir", "inside.txt"), "inside");
-    await fsp.symlink(layout.outside, path.join(layout.base, "outside-link"), "dir");
-    await fsp.symlink(layout.base, path.join(layout.base, "dir", "cycle"), "dir");
+    const layout = await makeTempLayout("fs-safe-walk", tempDirs);
+    await fsp.mkdir(path.join(layout.root, "dir"));
+    await fsp.writeFile(path.join(layout.root, "dir", "inside.txt"), "inside");
+    await fsp.symlink(layout.outside, path.join(layout.root, "outside-link"), "dir");
+    await fsp.symlink(layout.root, path.join(layout.root, "dir", "cycle"), "dir");
 
-    const skipped = await walkDirectory(layout.base);
+    const skipped = await walkDirectory(layout.root);
     expect(skipped.entries.some((entry) => entry.path.startsWith(layout.outside))).toBe(false);
     expect(skipped.entries.some((entry) => entry.relativePath.includes("outside-link"))).toBe(false);
 
-    const followed = await walkDirectory(layout.base, { symlinks: "follow", maxEntries: 20 });
+    const followed = await walkDirectory(layout.root, { symlinks: "follow", maxEntries: 20 });
     expect(followed.entries.length).toBeLessThanOrEqual(20);
     expect(followed.entries.some((entry) => entry.path.startsWith(layout.outside))).toBe(false);
 
-    const syncFollowed = walkDirectorySync(layout.base, { symlinks: "follow", maxEntries: 20 });
+    const syncFollowed = walkDirectorySync(layout.root, { symlinks: "follow", maxEntries: 20 });
     expect(syncFollowed.entries.length).toBeLessThanOrEqual(20);
   });
 
   it("refuses to trash targets outside explicit allowed roots and does not move them", async () => {
-    const layout = await makeTempLayout("fs-safe-trash");
-    await expect(movePathToTrash(layout.outsideFile, { allowedRoots: [layout.base] })).rejects.toThrow();
-    await expect(fsp.readFile(layout.outsideFile, "utf8")).resolves.toBe("outside secret");
+    const layout = await makeTempLayout("fs-safe-trash", tempDirs);
+    await expect(movePathToTrash(layout.outsideFile, { allowedRoots: [layout.root] })).rejects.toThrow();
+    await expectNoOutsideWrite(layout);
   });
 
   it("json stores cannot bypass adapter-enforced root checks through lock/update flow", async () => {
-    const layout = await makeTempLayout("fs-safe-json-store");
-    const filePath = path.join(layout.base, "state.json");
+    const layout = await makeTempLayout("fs-safe-json-store", tempDirs);
+    const filePath = path.join(layout.root, "state.json");
     const adapter = {
       filePath,
       async readIfExists(): Promise<{ ok: boolean } | undefined> {
@@ -163,7 +149,7 @@ describe("additional helper boundary bypass attempts", () => {
       },
       async write(value: { ok: boolean }): Promise<void> {
         const resolved = path.resolve(filePath);
-        if (!resolved.startsWith(`${layout.base}${path.sep}`)) {
+        if (!resolved.startsWith(`${layout.root}${path.sep}`)) {
           throw new Error("adapter escaped root");
         }
         await fsp.writeFile(filePath, JSON.stringify(value));
@@ -172,6 +158,6 @@ describe("additional helper boundary bypass attempts", () => {
     const store = createJsonStore(adapter, { lock: true });
     await expect(store.updateOr({ ok: false }, () => ({ ok: true }))).resolves.toEqual({ ok: true });
     await expect(fsp.readFile(filePath, "utf8")).resolves.toBe('{"ok":true}');
-    await expect(fsp.readFile(layout.outsideFile, "utf8")).resolves.toBe("outside secret");
+    await expectNoOutsideWrite(layout);
   });
 });

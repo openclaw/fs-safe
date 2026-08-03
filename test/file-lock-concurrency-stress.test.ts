@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { expectFsSafeErrorSync, expectFsSafeError } from "./helpers/security.js";
+import { useTempDirs } from "./helpers/vitest.js";
 import {
   acquireFileLock,
   acquireFileLockSync,
@@ -13,17 +14,9 @@ import { createSidecarLockManager } from "../src/sidecar-lock.js";
 
 const childTarget = process.env.FS_SAFE_STRESS_LOCK_TARGET;
 const childLog = process.env.FS_SAFE_STRESS_LOCK_LOG;
-const tempDirs: string[] = [];
+const { tempRoot } = useTempDirs();
 
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
-});
 
-async function tempRoot(prefix: string): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.push(directory);
-  return directory;
-}
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
@@ -41,24 +34,21 @@ describe("file-lock concurrency stress", () => {
     await fs.writeFile(lockPath, Buffer.alloc(1024 * 1024 + 1, 0x20));
     const manager = createSidecarLockManager(`fs-safe-payload-limit-${Date.now()}`);
 
-    await expect(
-      manager.acquire({
+    await expectFsSafeError(manager.acquire({
         targetPath,
         lockPath,
         staleMs: 1,
         timeoutMs: 0,
         retry: { retries: 0 },
         payload: async () => ({ createdAt: new Date().toISOString() }),
-      }),
-    ).rejects.toMatchObject({ code: "too-large" });
-    expect(() =>
+      }), "too-large");
+    expectFsSafeErrorSync(() =>
       acquireFileLockSync(targetPath, {
         staleMs: 1,
         timeoutMs: 0,
         retry: { retries: 0 },
         payload: () => ({ createdAt: new Date().toISOString() }),
-      }),
-    ).toThrow(expect.objectContaining({ code: "too-large" }));
+      }), "too-large");
   });
 
   it.runIf(!childTarget && process.platform !== "win32")(
@@ -68,22 +58,19 @@ describe("file-lock concurrency stress", () => {
       const targetPath = path.join(base, "state.json");
       await fs.symlink(path.join(base, "missing"), `${targetPath}.lock`);
 
-      await expect(
-        acquireFileLock(targetPath, {
+      await expectFsSafeError(acquireFileLock(targetPath, {
           staleMs: 1,
           timeoutMs: 0,
           retry: { retries: 0 },
           payload: async () => ({ createdAt: new Date().toISOString() }),
-        }),
-      ).rejects.toMatchObject({ code: "not-file" });
-      expect(() =>
+        }), "not-file");
+      expectFsSafeErrorSync(() =>
         acquireFileLockSync(targetPath, {
           staleMs: 1,
           timeoutMs: 0,
           retry: { retries: 0 },
           payload: () => ({ createdAt: new Date().toISOString() }),
-        }),
-      ).toThrow(expect.objectContaining({ code: "not-file" }));
+        }), "not-file");
     },
   );
 

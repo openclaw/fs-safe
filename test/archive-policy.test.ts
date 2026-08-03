@@ -1,34 +1,28 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import JSZip from "jszip";
 import * as tar from "tar";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { extractArchive, readArchiveEntry } from "../src/archive.js";
 import {
   __resetFsSafeNativeConfigForTest,
   configureFsSafeNative,
 } from "../src/native-config.js";
 
-const tempDirs: string[] = [];
+const { tempRoot } = useTempDirs();
 
 beforeEach(() => {
   configureFsSafeNative({ mode: "off" });
 });
 
-async function tempRoot(prefix: string): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.push(directory);
-  return directory;
-}
 
 afterEach(async () => {
   __resetFsSafeNativeConfigForTest();
-  await Promise.all(tempDirs.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })));
 });
 
 describe("archive entry policy", () => {
-  it.runIf(process.platform !== "win32")("clamps ZIP modes by default and preserves safe permission bits on request", async () => {
+  itPosix("clamps ZIP modes by default and preserves safe permission bits on request", async () => {
     const root = await tempRoot("fs-safe-archive-policy-");
     const archivePath = path.join(root, "package.zip");
     const zip = new JSZip();
@@ -84,7 +78,7 @@ describe("archive entry policy", () => {
     await expect(fs.access(path.join(skipped, "skip.txt"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it.runIf(process.platform !== "win32")("applies TAR mode and filtering policy in staging", async () => {
+  itPosix("applies TAR mode and filtering policy in staging", async () => {
     const root = await tempRoot("fs-safe-tar-policy-");
     const input = path.join(root, "input");
     await fs.mkdir(input);

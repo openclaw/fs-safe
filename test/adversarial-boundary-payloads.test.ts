@@ -1,16 +1,11 @@
 import fsp from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { expectNoOutsideWrite, makeTempLayout } from "./helpers/security.js";
+import { useTempDirs } from "./helpers/vitest.js";
 import { root as openRoot } from "../src/index.js";
 
-type TempLayout = {
-  outside: string;
-  outsideFile: string;
-  root: string;
-};
-
-const tempDirs: string[] = [];
+const { tempDirs } = useTempDirs();
 
 const DOT_SEGMENTS = ["..", "...", ". .", ".. ", " ..", "%2e%2e", "%252e%252e"] as const;
 const SEPARATORS = ["/", "//", "\\", "\\\\", "%2f", "%5c"] as const;
@@ -23,15 +18,6 @@ const CONTROL_PAYLOADS = [
   "safe\u202ename.txt",
   "safe\ufeffname.txt",
 ] as const;
-
-async function makeTempLayout(prefix: string): Promise<TempLayout> {
-  const root = await fsp.mkdtemp(path.join(os.tmpdir(), `${prefix}-root-`));
-  const outside = await fsp.mkdtemp(path.join(os.tmpdir(), `${prefix}-outside-`));
-  tempDirs.push(root, outside);
-  const outsideFile = path.join(outside, "secret.txt");
-  await fsp.writeFile(outsideFile, "outside secret");
-  return { outside, outsideFile, root };
-}
 
 function buildPayloadCorpus(): string[] {
   const payloads = new Set<string>();
@@ -51,10 +37,6 @@ function buildPayloadCorpus(): string[] {
     payloads.add(payload);
   }
   return [...payloads];
-}
-
-async function expectOutsideUntouched(layout: TempLayout): Promise<void> {
-  await expect(fsp.readFile(layout.outsideFile, "utf8")).resolves.toBe("outside secret");
 }
 
 async function closeIfOpened(value: unknown): Promise<void> {
@@ -88,13 +70,9 @@ async function attemptAll(rootDir: Awaited<ReturnType<typeof openRoot>>, payload
   ]);
 }
 
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => fsp.rm(dir, { force: true, recursive: true })));
-});
-
 describe("adversarial boundary payloads", () => {
   it("never reads, writes, or deletes outside the root for a generated traversal corpus", async () => {
-    const layout = await makeTempLayout("fs-safe-adversarial-corpus");
+    const layout = await makeTempLayout("fs-safe-adversarial-corpus", tempDirs);
     await fsp.mkdir(path.join(layout.root, "nested"), { recursive: true });
     await fsp.mkdir(path.join(layout.root, "safe"), { recursive: true });
     const safeRoot = await openRoot(layout.root);
@@ -102,12 +80,12 @@ describe("adversarial boundary payloads", () => {
     const payloads = buildPayloadCorpus().slice(0, 96);
     for (const payload of payloads) {
       await attemptAll(safeRoot, payload);
-      await expectOutsideUntouched(layout);
+      await expectNoOutsideWrite(layout);
     }
   }, 30_000);
 
   it("rejects chained symlink parent escapes across read and write surfaces", async () => {
-    const layout = await makeTempLayout("fs-safe-symlink-chain");
+    const layout = await makeTempLayout("fs-safe-symlink-chain", tempDirs);
     await fsp.mkdir(path.join(layout.root, "a"), { recursive: true });
     await fsp.symlink(path.join(layout.root, "a"), path.join(layout.root, "link-a"), "dir");
     await fsp.symlink(layout.outside, path.join(layout.root, "a", "link-out"), "dir");
@@ -118,11 +96,11 @@ describe("adversarial boundary payloads", () => {
       await expect(safeRoot.write(payload, "pwned"), `write ${payload}`).rejects.toBeTruthy();
       await expect(safeRoot.remove(payload), `remove ${payload}`).rejects.toBeTruthy();
     }
-    await expectOutsideUntouched(layout);
+    await expectNoOutsideWrite(layout);
   });
 
   it("does not clobber outside files when copy and move payloads mix source and destination attacks", async () => {
-    const layout = await makeTempLayout("fs-safe-copy-move-corpus");
+    const layout = await makeTempLayout("fs-safe-copy-move-corpus", tempDirs);
     const source = path.join(layout.root, "source.txt");
     await fsp.writeFile(source, "source");
     await fsp.symlink(layout.outsideFile, path.join(layout.root, "outside-link.txt"), "file");
@@ -137,7 +115,7 @@ describe("adversarial boundary payloads", () => {
         safeRoot.move(payload, "moved.txt", { overwrite: true }),
         safeRoot.move("outside-link.txt", "moved-link.txt", { overwrite: true }),
       ]);
-      await expectOutsideUntouched(layout);
+      await expectNoOutsideWrite(layout);
       await fsp.writeFile(source, "source");
     }
   }, 30_000);

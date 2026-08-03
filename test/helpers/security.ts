@@ -112,6 +112,32 @@ export function expectFsSafeCode(
   expect(accepted).toContain((error as FsSafeError).code);
 }
 
+export async function expectFsSafeError(
+  promise: PromiseLike<unknown>,
+  code: FsSafeError["code"],
+): Promise<void> {
+  const error = await promise.then(
+    () => undefined,
+    (reason: unknown) => reason,
+  );
+  expect(error).toBeInstanceOf(FsSafeError);
+  expect(error).toMatchObject({ code });
+}
+
+export function expectFsSafeErrorSync(
+  operation: () => unknown,
+  code: FsSafeError["code"],
+): void {
+  let error: unknown;
+  try {
+    operation();
+  } catch (reason) {
+    error = reason;
+  }
+  expect(error).toBeInstanceOf(FsSafeError);
+  expect(error).toMatchObject({ code });
+}
+
 export function expectedFsSafeCode(code: string): string {
   return code;
 }

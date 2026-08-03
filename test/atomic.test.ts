@@ -1,8 +1,9 @@
 import fsSync from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { expectFsSafeError, expectFsSafeErrorSync } from "./helpers/security.js";
+import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import {
   replaceDirectoryAtomic,
   replaceFileAtomic,
@@ -14,17 +15,9 @@ import {
   registerTempPathForExit,
 } from "../src/temp-cleanup.js";
 
-const tempDirs: string[] = [];
+const { tempRoot } = useTempDirs();
 
-async function tempRoot(prefix: string): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
 
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { force: true, recursive: true })));
-});
 
 describe("atomic helpers", () => {
   it("replaces a file through a sibling temp path", async () => {
@@ -137,59 +130,50 @@ describe("atomic helpers", () => {
     await expect(fs.readFile(filePath, "utf8")).resolves.toBe("new");
   });
 
-  it.runIf(process.platform !== "win32")(
-    "rejects a hardlinked destination from its pinned descriptor",
-    async () => {
-      const root = await tempRoot("fs-safe-atomic-hardlink-");
-      const filePath = path.join(root, "state.txt");
-      const otherPath = path.join(root, "other.txt");
-      await fs.writeFile(filePath, "old", "utf8");
-      await fs.link(filePath, otherPath);
+  itPosix("rejects a hardlinked destination from its pinned descriptor", async () => {
+    const root = await tempRoot("fs-safe-atomic-hardlink-");
+    const filePath = path.join(root, "state.txt");
+    const otherPath = path.join(root, "other.txt");
+    await fs.writeFile(filePath, "old", "utf8");
+    await fs.link(filePath, otherPath);
 
-      await expect(
-        replaceFileAtomic({
-          filePath,
-          content: "new",
-          destinationHardlinks: "reject",
-          fileSystem: {
-            promises: {
-              ...fs,
-              lstat: async (candidate) => {
-                const stat = await fs.lstat(candidate);
-                return candidate === filePath
-                  ? new Proxy(stat, { get: (target, property) => property === "nlink" ? 1 : Reflect.get(target, property) })
-                  : stat;
-              },
+    await expectFsSafeError(replaceFileAtomic({
+        filePath,
+        content: "new",
+        destinationHardlinks: "reject",
+        fileSystem: {
+          promises: {
+            ...fs,
+            lstat: async (candidate) => {
+              const stat = await fs.lstat(candidate);
+              return candidate === filePath
+                ? new Proxy(stat, { get: (target, property) => property === "nlink" ? 1 : Reflect.get(target, property) })
+                : stat;
             },
           },
-        }),
-      ).rejects.toMatchObject({ code: "hardlink" });
+        },
+      }), "hardlink");
 
-      await expect(fs.readFile(filePath, "utf8")).resolves.toBe("old");
-      await expect(fs.readFile(otherPath, "utf8")).resolves.toBe("old");
-    },
-  );
+    await expect(fs.readFile(filePath, "utf8")).resolves.toBe("old");
+    await expect(fs.readFile(otherPath, "utf8")).resolves.toBe("old");
+  });
 
-  it.runIf(process.platform !== "win32")(
-    "rejects a hardlinked destination in the synchronous variant",
-    async () => {
-      const root = await tempRoot("fs-safe-atomic-hardlink-sync-");
-      const filePath = path.join(root, "state.txt");
-      const otherPath = path.join(root, "other.txt");
-      await fs.writeFile(filePath, "old", "utf8");
-      await fs.link(filePath, otherPath);
+  itPosix("rejects a hardlinked destination in the synchronous variant", async () => {
+    const root = await tempRoot("fs-safe-atomic-hardlink-sync-");
+    const filePath = path.join(root, "state.txt");
+    const otherPath = path.join(root, "other.txt");
+    await fs.writeFile(filePath, "old", "utf8");
+    await fs.link(filePath, otherPath);
 
-      expect(() =>
-        replaceFileAtomicSync({
-          filePath,
-          content: "new",
-          destinationHardlinks: "reject",
-        }),
-      ).toThrow(expect.objectContaining({ code: "hardlink" }));
-      expect(fsSync.readFileSync(filePath, "utf8")).toBe("old");
-      expect(fsSync.readFileSync(otherPath, "utf8")).toBe("old");
-    },
-  );
+    expectFsSafeErrorSync(() =>
+      replaceFileAtomicSync({
+        filePath,
+        content: "new",
+        destinationHardlinks: "reject",
+      }), "hardlink");
+    expect(fsSync.readFileSync(filePath, "utf8")).toBe("old");
+    expect(fsSync.readFileSync(otherPath, "utf8")).toBe("old");
+  });
 
   it("restores a destination after a torn copy-fallback write", async () => {
     const root = await tempRoot("fs-safe-atomic-restore-");
@@ -308,8 +292,7 @@ describe("atomic helpers", () => {
     const filePath = path.join(root, "state.txt");
     await fs.writeFile(filePath, "original", "utf8");
 
-    await expect(
-      replaceFileAtomic({
+    await expectFsSafeError(replaceFileAtomic({
         filePath,
         content: "new",
         copyFallbackOnPermissionError: true,
@@ -323,8 +306,7 @@ describe("atomic helpers", () => {
             },
           },
         },
-      }),
-    ).rejects.toMatchObject({ code: "too-large" });
+      }), "too-large");
 
     await expect(fs.readFile(filePath, "utf8")).resolves.toBe("original");
   });
@@ -375,75 +357,69 @@ describe("atomic helpers", () => {
     expect(fsSync.readFileSync(filePath, "utf8")).toBe("original");
   });
 
-  it.runIf(process.platform !== "win32")(
-    "does not copy fallback through destination symlinks",
-    async () => {
-      const root = await tempRoot("fs-safe-atomic-link-");
-      const filePath = path.join(root, "state.txt");
-      const outsidePath = path.join(root, "outside.txt");
-      await fs.writeFile(outsidePath, "outside", "utf8");
-      await fs.symlink(outsidePath, filePath);
+  itPosix("does not copy fallback through destination symlinks", async () => {
+    const root = await tempRoot("fs-safe-atomic-link-");
+    const filePath = path.join(root, "state.txt");
+    const outsidePath = path.join(root, "outside.txt");
+    await fs.writeFile(outsidePath, "outside", "utf8");
+    await fs.symlink(outsidePath, filePath);
 
-      await expect(
-        replaceFileAtomic({
-          filePath,
-          content: "new",
-          copyFallbackOnPermissionError: true,
-          copyFallbackRestore: "restore-original",
-          maxRestoreBytes: 1024,
-          fileSystem: {
-            promises: {
-              ...fs,
-              rename: async () => {
-                const error = new Error("rename denied") as NodeJS.ErrnoException;
-                error.code = "EPERM";
-                throw error;
-              },
-            },
-          },
-        }),
-      ).rejects.toThrow("Refusing copy fallback through symlink destination");
-
-      await expect(fs.readFile(outsidePath, "utf8")).resolves.toBe("outside");
-      expect((await fs.lstat(filePath)).isSymbolicLink()).toBe(true);
-      expect((await fs.readdir(root)).filter((entry) => entry.startsWith(".fs-safe-replace")))
-        .toEqual([]);
-    },
-  );
-
-  it.runIf(process.platform !== "win32")(
-    "does not sync-copy fallback through destination symlinks",
-    async () => {
-      const root = await tempRoot("fs-safe-atomic-link-sync-");
-      const filePath = path.join(root, "state.txt");
-      const outsidePath = path.join(root, "outside.txt");
-      await fs.writeFile(outsidePath, "outside", "utf8");
-      await fs.symlink(outsidePath, filePath);
-
-      expect(() =>
-        replaceFileAtomicSync({
-          filePath,
-          content: "new",
-          copyFallbackOnPermissionError: true,
-          copyFallbackRestore: "restore-original",
-          maxRestoreBytes: 1024,
-          fileSystem: {
-            ...fsSync,
-            renameSync: () => {
+    await expect(
+      replaceFileAtomic({
+        filePath,
+        content: "new",
+        copyFallbackOnPermissionError: true,
+        copyFallbackRestore: "restore-original",
+        maxRestoreBytes: 1024,
+        fileSystem: {
+          promises: {
+            ...fs,
+            rename: async () => {
               const error = new Error("rename denied") as NodeJS.ErrnoException;
               error.code = "EPERM";
               throw error;
             },
           },
-        }),
-      ).toThrow("Refusing copy fallback through symlink destination");
+        },
+      }),
+    ).rejects.toThrow("Refusing copy fallback through symlink destination");
 
-      await expect(fs.readFile(outsidePath, "utf8")).resolves.toBe("outside");
-      expect((await fs.lstat(filePath)).isSymbolicLink()).toBe(true);
-      expect((await fs.readdir(root)).filter((entry) => entry.startsWith(".fs-safe-replace")))
-        .toEqual([]);
-    },
-  );
+    await expect(fs.readFile(outsidePath, "utf8")).resolves.toBe("outside");
+    expect((await fs.lstat(filePath)).isSymbolicLink()).toBe(true);
+    expect((await fs.readdir(root)).filter((entry) => entry.startsWith(".fs-safe-replace")))
+      .toEqual([]);
+  });
+
+  itPosix("does not sync-copy fallback through destination symlinks", async () => {
+    const root = await tempRoot("fs-safe-atomic-link-sync-");
+    const filePath = path.join(root, "state.txt");
+    const outsidePath = path.join(root, "outside.txt");
+    await fs.writeFile(outsidePath, "outside", "utf8");
+    await fs.symlink(outsidePath, filePath);
+
+    expect(() =>
+      replaceFileAtomicSync({
+        filePath,
+        content: "new",
+        copyFallbackOnPermissionError: true,
+        copyFallbackRestore: "restore-original",
+        maxRestoreBytes: 1024,
+        fileSystem: {
+          ...fsSync,
+          renameSync: () => {
+            const error = new Error("rename denied") as NodeJS.ErrnoException;
+            error.code = "EPERM";
+            throw error;
+          },
+        },
+      }),
+    ).toThrow("Refusing copy fallback through symlink destination");
+
+    await expect(fs.readFile(outsidePath, "utf8")).resolves.toBe("outside");
+    expect((await fs.lstat(filePath)).isSymbolicLink()).toBe(true);
+    expect((await fs.readdir(root)).filter((entry) => entry.startsWith(".fs-safe-replace")))
+      .toEqual([]);
+  });
 
   it("supports the synchronous replace variant", async () => {
     const root = await tempRoot("fs-safe-atomic-");

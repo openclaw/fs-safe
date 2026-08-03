@@ -3,6 +3,7 @@ import { realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { itPosix } from "./helpers/vitest.js";
 import { readLocalFileFromRoots, resolveLocalPathFromRootsSync } from "../src/local-roots.js";
 import {
   ensureDirectoryWithinRoot,
@@ -93,7 +94,7 @@ describe("root path list helpers", () => {
     });
   });
 
-  it.runIf(process.platform !== "win32")("rejects symlink escapes", async () => {
+  itPosix("rejects symlink escapes", async () => {
     await withFixtureRoot(async ({ baseDir, uploadsDir }) => {
       const outsideDir = path.join(baseDir, "outside");
       await fs.mkdir(outsideDir, { recursive: true });
@@ -180,7 +181,7 @@ describe("local roots helpers", () => {
     });
   });
 
-  it.runIf(process.platform !== "win32")("rejects symlink escapes while reading", async () => {
+  itPosix("rejects symlink escapes while reading", async () => {
     await withFixtureRoot(async ({ baseDir, uploadsDir }) => {
       const outsideDir = path.join(baseDir, "outside");
       await fs.mkdir(outsideDir, { recursive: true });

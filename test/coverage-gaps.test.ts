@@ -1,8 +1,9 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { expectFsSafeError } from "./helpers/security.js";
+import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import {
   assertAbsolutePathInput,
   canonicalPathFromExistingAncestor,
@@ -45,20 +46,9 @@ import {
 } from "../src/string-coerce.js";
 import { movePathToTrash } from "../src/trash.js";
 
-const tempDirs = new Set<string>();
+const { tempRoot } = useTempDirs();
 
-async function tempRoot(prefix: string): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.add(dir);
-  return dir;
-}
 
-afterEach(async () => {
-  for (const dir of tempDirs) {
-    await fs.rm(dir, { recursive: true, force: true });
-  }
-  tempDirs.clear();
-});
 
 describe("string coercion helpers", () => {
   it("normalizes optional string-like values", () => {
@@ -216,12 +206,10 @@ describe("absolute path helpers", () => {
       parentDir: nested,
       parentExists: true,
     });
-    await expect(resolveAbsolutePathForRead(path.join(root, "missing.txt"))).rejects.toMatchObject({
-      code: "not-found",
-    });
+    await expectFsSafeError(resolveAbsolutePathForRead(path.join(root, "missing.txt")), "not-found");
   });
 
-  it.runIf(process.platform !== "win32")("rejects symlinked absolute paths by default", async () => {
+  itPosix("rejects symlinked absolute paths by default", async () => {
     const root = await tempRoot("fs-safe-absolute-link-");
     const realDir = path.join(root, "real");
     const linkDir = path.join(root, "link");
@@ -229,15 +217,11 @@ describe("absolute path helpers", () => {
     await fs.writeFile(path.join(realDir, "file.txt"), "ok", "utf8");
     await fs.symlink(realDir, linkDir);
 
-    await expect(resolveAbsolutePathForRead(path.join(linkDir, "file.txt"))).rejects.toMatchObject({
-      code: "symlink",
-    });
+    await expectFsSafeError(resolveAbsolutePathForRead(path.join(linkDir, "file.txt")), "symlink");
     await expect(
       resolveAbsolutePathForRead(path.join(linkDir, "file.txt"), { symlinks: "follow" }),
     ).resolves.toMatchObject({ canonicalPath: await fs.realpath(path.join(realDir, "file.txt")) });
-    await expect(resolveAbsolutePathForWrite(path.join(linkDir, "new.txt"))).rejects.toMatchObject({
-      code: "symlink",
-    });
+    await expectFsSafeError(resolveAbsolutePathForWrite(path.join(linkDir, "new.txt")), "symlink");
   });
 
 });

@@ -1,6 +1,7 @@
 import syncFs from "node:fs";
 import fs from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
+import { expectFsSafeError } from "./helpers/security.js";
 import {
   isUnsafeDeviceReadPath,
   matchUnsafeDeviceReadPath,
@@ -67,18 +68,12 @@ describe("unsafe device read paths", () => {
       throw new Error("open should not be called for unsafe device paths");
     });
     try {
-      await expect(readLocalFileSafely({ filePath: "/dev/zero" })).rejects.toMatchObject({
-        code: "device-path",
-      });
-      await expect(readRegularFile({ filePath: "/dev/zero" })).rejects.toMatchObject({
-        code: "device-path",
-      });
-      await expect(
-        readSecureFile({
+      await expectFsSafeError(readLocalFileSafely({ filePath: "/dev/zero" }), "device-path");
+      await expectFsSafeError(readRegularFile({ filePath: "/dev/zero" }), "device-path");
+      await expectFsSafeError(readSecureFile({
           filePath: "/dev/zero",
           permissions: { allowInsecure: true },
-        }),
-      ).rejects.toMatchObject({ code: "device-path" });
+        }), "device-path");
       expect(openSpy).not.toHaveBeenCalled();
     } finally {
       openSpy.mockRestore();
@@ -93,9 +88,7 @@ describe("unsafe device read paths", () => {
       const scoped = await root("/");
       // /dev/fd is normally a symlink on Linux. The explicit unsafe namespace
       // remains a device-path error instead of depending on that host layout.
-      await expect(scoped.read("dev/fd/0")).rejects.toMatchObject({
-        code: "device-path",
-      });
+      await expectFsSafeError(scoped.read("dev/fd/0"), "device-path");
       expect(openSpy).not.toHaveBeenCalled();
     } finally {
       openSpy.mockRestore();

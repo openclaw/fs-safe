@@ -2,6 +2,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { expectFsSafeError } from "./helpers/security.js";
+import { itPosix } from "./helpers/vitest.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import {
   __resetNativeLoaderForTest,
@@ -34,12 +36,10 @@ afterEach(async () => {
 });
 
 describe("createPrivateDirectory", () => {
-  it.runIf(process.platform !== "win32")("fails closed without mutating POSIX paths", async () => {
+  itPosix("fails closed without mutating POSIX paths", async () => {
     const root = await tempRoot();
     const target = path.join(root, "private");
-    await expect(createPrivateDirectory(target)).rejects.toMatchObject({
-      code: "helper-unavailable",
-    });
+    await expectFsSafeError(createPrivateDirectory(target), "helper-unavailable");
     await expect(fs.stat(target)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -47,9 +47,7 @@ describe("createPrivateDirectory", () => {
     const root = await tempRoot();
     const target = path.join(root, "fallback");
     configureFsSafeNative({ mode: "off" });
-    await expect(createPrivateDirectory(target, { platform: "win32" })).rejects.toMatchObject({
-      code: "helper-unavailable",
-    });
+    await expectFsSafeError(createPrivateDirectory(target, { platform: "win32" }), "helper-unavailable");
     await expect(fs.stat(target)).rejects.toMatchObject({ code: "ENOENT" });
   });
 

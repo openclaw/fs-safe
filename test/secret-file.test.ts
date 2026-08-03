@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { FsSafeError } from "../src/errors.js";
 import {
   PRIVATE_SECRET_DIR_MODE,
@@ -11,17 +11,9 @@ import {
   writeSecretFileAtomic,
 } from "../src/secret-file.js";
 
-const tempDirs: string[] = [];
+const { tempRoot } = useTempDirs();
 
-async function tempRoot(prefix: string): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
 
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { force: true, recursive: true })));
-});
 
 function expectSecretReadCode(run: () => string, code: FsSafeError["code"]): void {
   try {
@@ -85,7 +77,7 @@ describe("secret file helpers", () => {
     );
   });
 
-  it.runIf(process.platform !== "win32")("rejects hardlinked secret files by default", async () => {
+  itPosix("rejects hardlinked secret files by default", async () => {
     const root = await tempRoot("fs-safe-secret-hardlink-");
     const target = path.join(root, "target.txt");
     const link = path.join(root, "alias.txt");
@@ -128,7 +120,7 @@ describe("secret file helpers", () => {
     }
   });
 
-  it.runIf(process.platform !== "win32")("keeps private secret file mode under restrictive umask", async () => {
+  itPosix("keeps private secret file mode under restrictive umask", async () => {
     const root = await tempRoot("fs-safe-secret-umask-");
     const filePath = path.join(root, "token.txt");
     const oldUmask = process.umask(0o777);

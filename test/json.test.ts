@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { createAsyncLock } from "../src/async-lock.js";
 import { writeTextAtomic } from "../src/atomic.js";
 import {
@@ -16,17 +16,9 @@ import {
   writeJsonSync,
 } from "../src/json.js";
 
-const tempDirs: string[] = [];
+const { tempRoot } = useTempDirs();
 
-async function tempRoot(prefix: string): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
 
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { force: true, recursive: true })));
-});
 
 function mockOpenForSyncCounting(): { readonly syncCalls: number; restore: () => void } {
   let syncCalls = 0;
@@ -192,7 +184,7 @@ describe("json file helpers", () => {
     }
   });
 
-  it.runIf(process.platform !== "win32")("replaces symlink leaves on sync writes", async () => {
+  itPosix("replaces symlink leaves on sync writes", async () => {
     const root = await tempRoot("fs-safe-json-link-");
     const outsidePath = path.join(root, "outside.json");
     const linkPath = path.join(root, "state.json");

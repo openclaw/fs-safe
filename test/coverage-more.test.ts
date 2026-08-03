@@ -1,9 +1,10 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { expectFsSafeError } from "./helpers/security.js";
+import { useTempDirs } from "./helpers/vitest.js";
 import { createBoundedReadStream, createMaxBytesTransform } from "../src/bounded-read-stream.js";
 import {
   assertAsyncDirectoryGuard,
@@ -31,13 +32,8 @@ type SecureDirStat = NonNullable<ResolveSecureTempRootOptions["lstatSync"]> exte
   ? Result
   : never;
 
-const tempDirs = new Set<string>();
+const { tempRoot } = useTempDirs();
 
-async function tempRoot(prefix: string): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.add(dir);
-  return dir;
-}
 
 function nodeError(code: string): Error & { code: string } {
   return Object.assign(new Error(code), { code });
@@ -59,10 +55,6 @@ function dirStat(params?: {
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  for (const dir of tempDirs) {
-    await fs.rm(dir, { recursive: true, force: true });
-  }
-  tempDirs.clear();
 });
 
 describe("secure temp root fallback coverage", () => {
@@ -156,11 +148,11 @@ describe("bounded streams and directory guard coverage", () => {
     const returned = createBoundedReadStream({ handle: { createReadStream: () => raw } }, undefined);
     expect(returned).toBe(raw);
 
-    await expect(async () => {
+    await expectFsSafeError((async () => {
       for await (const _chunk of Readable.from(["ab", "cd"]).pipe(createMaxBytesTransform(3))) {
         // Drain the stream so transform errors surface.
       }
-    }).rejects.toMatchObject({ code: "too-large" });
+    })(), "too-large");
   });
 
   it("detects changed or invalid directory guards", async () => {
@@ -175,9 +167,7 @@ describe("bounded streams and directory guard coverage", () => {
 
     const asyncGuard = await createAsyncDirectoryGuard(nested);
     const syncGuard = createSyncDirectoryGuard(nested);
-    await expect(assertAsyncDirectoryGuard({ ...asyncGuard, realPath: root })).rejects.toMatchObject({
-      code: "path-mismatch",
-    });
+    await expectFsSafeError(assertAsyncDirectoryGuard({ ...asyncGuard, realPath: root }), "path-mismatch");
     expect(() => assertSyncDirectoryGuard({ ...syncGuard, realPath: root })).toThrow(
       "directory changed",
     );
@@ -185,9 +175,7 @@ describe("bounded streams and directory guard coverage", () => {
     await fs.rm(nested, { recursive: true });
     await fs.writeFile(nested, "not a dir", "utf8");
 
-    await expect(assertAsyncDirectoryGuard(asyncGuard)).rejects.toMatchObject({
-      code: "not-file",
-    });
+    await expectFsSafeError(assertAsyncDirectoryGuard(asyncGuard), "not-file");
     expect(() => assertSyncDirectoryGuard(syncGuard)).toThrow("directory component");
 
     const nearest = await createNearestExistingDirectoryGuard(root, path.join(root, "missing", "x"));

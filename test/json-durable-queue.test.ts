@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { itPosix } from "./helpers/vitest.js";
 import {
   ackJsonDurableQueueEntry,
   ensureJsonDurableQueueDirs,
@@ -95,7 +96,7 @@ describe("durable JSON queues", () => {
     expect(() => resolveJsonDurableQueueEntryPaths(queueDir, " job")).toThrow();
   });
 
-  it.runIf(process.platform !== "win32")("skips hardlinked pending entries", async () => {
+  itPosix("skips hardlinked pending entries", async () => {
     const queueDir = path.join(root, "queue");
     const failedDir = path.join(root, "failed");
     await ensureJsonDurableQueueDirs({ queueDir, failedDir });

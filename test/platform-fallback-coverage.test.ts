@@ -1,16 +1,11 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { itPosix, useTempDirs } from "./helpers/vitest.js";
 
-const tempDirs = new Set<string>();
+const { tempRoot } = useTempDirs();
 const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
 
-async function tempRoot(prefix: string): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.add(dir);
-  return dir;
-}
 
 async function importRootForPlatform(platform: NodeJS.Platform) {
   vi.resetModules();
@@ -27,10 +22,6 @@ afterEach(async () => {
     Object.defineProperty(process, "platform", platformDescriptor);
   }
   vi.resetModules();
-  for (const dir of tempDirs) {
-    await fs.rm(dir, { recursive: true, force: true });
-  }
-  tempDirs.clear();
 });
 
 describe("platform fallback coverage", () => {
@@ -81,8 +72,9 @@ describe("platform fallback coverage", () => {
     await expect(fs.readFile(path.join(rootDir, "nested", "copied.txt"), "utf8")).resolves.toBe(
       "copied",
     );
-    await expect(scoped.copyIn("nested/too-large.txt", source, { maxBytes: 3 })).rejects
-      .toMatchObject({ code: "too-large" });
+    await expect(scoped.copyIn("nested/too-large.txt", source, { maxBytes: 3 })).rejects.toMatchObject({
+      code: "too-large",
+    });
 
     await scoped.remove("nested/copied.txt");
     await expect(fs.stat(path.join(rootDir, "nested", "copied.txt"))).rejects.toMatchObject({
@@ -107,7 +99,7 @@ describe("platform fallback coverage", () => {
     await expect(fs.stat(path.join(rootDir, "old"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it.runIf(process.platform !== "win32")("rejects symlinked missing mkdir components in fallback", async () => {
+  itPosix("rejects symlinked missing mkdir components in fallback", async () => {
     const { root: openRoot } = await importRootForPlatform("win32");
     const { __setFsSafeTestHooksForTest } = await import("../src/test-hooks.js");
     const rootDir = await tempRoot("fs-safe-win-mkdir-race-");

@@ -1,22 +1,16 @@
 import fsp from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { useTempDirs } from "./helpers/vitest.js";
 import { acquireFileLock } from "../src/file-lock.js";
 import { configureFsSafeNative } from "../src/native-config.js";
 
-const tempDirs: string[] = [];
+const { tempRoot } = useTempDirs();
 
-async function tempRoot(prefix: string): Promise<string> {
-  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
 
 afterEach(async () => {
   vi.restoreAllMocks();
   configureFsSafeNative({ mode: "auto" });
-  await Promise.all(tempDirs.splice(0).map((dir) => fsp.rm(dir, { recursive: true, force: true })));
 });
 
 describe.runIf(process.platform === "win32")("Windows sidecar lock denials", () => {

@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { expectFsSafeErrorSync } from "./helpers/security.js";
 import * as advanced from "../src/advanced.js";
 import {
   readFileDescriptorBounded,
@@ -59,9 +60,7 @@ describe("bounded descriptor reads", () => {
     const filePath = await tempFile("abcdef");
     const fd = fsSync.openSync(filePath, "r");
     try {
-      expect(() => readFileDescriptorBoundedSync(fd, 2)).toThrowError(
-        expect.objectContaining({ code: "too-large" }),
-      );
+      expectFsSafeErrorSync(() => readFileDescriptorBoundedSync(fd, 2), "too-large");
       const next = Buffer.alloc(1);
       expect(fsSync.readSync(fd, next, 0, 1, null)).toBe(1);
       expect(next.toString("utf8")).toBe("d");

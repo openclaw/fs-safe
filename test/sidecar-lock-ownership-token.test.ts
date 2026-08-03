@@ -1,8 +1,8 @@
 import fsSync from "node:fs";
 import fsp from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { useTempDirs } from "./helpers/vitest.js";
 import { createSidecarLockManager } from "../src/sidecar-lock.js";
 import { configureFsSafeNative } from "../src/native-config.js";
 import {
@@ -12,18 +12,12 @@ import {
   sidecarLockSnapshotMatches,
 } from "../src/sidecar-lock-reclaim.js";
 
-const tempDirs: string[] = [];
+const { tempRoot } = useTempDirs();
 
-async function tempRoot(prefix: string): Promise<string> {
-  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
 
 afterEach(async () => {
   configureFsSafeNative({ mode: "auto" });
   vi.restoreAllMocks();
-  await Promise.all(tempDirs.splice(0).map((dir) => fsp.rm(dir, { recursive: true, force: true })));
 });
 
 describe("sidecar lock ownership tokens", () => {

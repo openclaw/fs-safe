@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { useTempDirs } from "./helpers/vitest.js";
 import {
   isWindowsDrivePath,
   normalizeArchiveEntryPath,
@@ -28,17 +28,9 @@ import {
   writeSecretFileAtomic,
 } from "../src/secret-file.js";
 
-const tempDirs: string[] = [];
+const { tempRoot } = useTempDirs();
 
-async function tempRoot(prefix: string): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
 
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { force: true, recursive: true })));
-});
 
 describe("local file access helpers", () => {
   it("accepts local file URLs and rejects remote hosts or encoded separators", () => {

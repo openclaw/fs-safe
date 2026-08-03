@@ -1,10 +1,10 @@
 import { spawn } from "node:child_process";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import {
   acquireFileLock,
   acquireFileLockSync,
@@ -12,13 +12,8 @@ import {
   withFileLockSync,
 } from "../src/file-lock.js";
 
-const tempDirs: string[] = [];
+const { tempRoot } = useTempDirs();
 
-async function tempRoot(prefix: string): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.push(directory);
-  return directory;
-}
 
 function payload(): { pid: number; createdAt: string } {
   return { pid: process.pid, createdAt: new Date().toISOString() };
@@ -32,51 +27,45 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
-});
 
 describe("owner-scoped file-lock reentrancy", () => {
-  it.runIf(process.platform !== "win32")(
-    "shares one reference-counted lock across symlinked target paths",
-    async () => {
-      const root = await tempRoot("fs-safe-reentrant-alias-");
-      const realDir = path.join(root, "real");
-      const linkDir = path.join(root, "link");
-      await fs.mkdir(realDir);
-      await fs.symlink(realDir, linkDir, "dir");
-      const realPath = path.join(realDir, "session.json");
-      const linkPath = path.join(linkDir, "session.json");
-      const managerKey = `alias-${Date.now()}-${Math.random()}`;
-      const reentrantOwner = "session:run-1";
-      const first = await acquireFileLock(realPath, {
-        managerKey,
-        reentrantOwner,
-        staleMs: 60_000,
-        payload,
-      });
-      const second = await acquireFileLock(linkPath, {
-        managerKey,
-        reentrantOwner,
-        staleMs: 60_000,
-        payload,
-      });
+  itPosix("shares one reference-counted lock across symlinked target paths", async () => {
+    const root = await tempRoot("fs-safe-reentrant-alias-");
+    const realDir = path.join(root, "real");
+    const linkDir = path.join(root, "link");
+    await fs.mkdir(realDir);
+    await fs.symlink(realDir, linkDir, "dir");
+    const realPath = path.join(realDir, "session.json");
+    const linkPath = path.join(linkDir, "session.json");
+    const managerKey = `alias-${Date.now()}-${Math.random()}`;
+    const reentrantOwner = "session:run-1";
+    const first = await acquireFileLock(realPath, {
+      managerKey,
+      reentrantOwner,
+      staleMs: 60_000,
+      payload,
+    });
+    const second = await acquireFileLock(linkPath, {
+      managerKey,
+      reentrantOwner,
+      staleMs: 60_000,
+      payload,
+    });
 
-      try {
-        expect(second.normalizedTargetPath).toBe(first.normalizedTargetPath);
-        expect(second.lockPath).toBe(first.lockPath);
-        await expect(fs.stat(`${realPath}.lock`)).resolves.toMatchObject({});
-        await expect(fs.stat(`${linkPath}.lock`)).resolves.toMatchObject({});
-        await first.release();
-        await expect(fs.stat(first.lockPath)).resolves.toMatchObject({});
-        await second.release();
-        await expect(fs.stat(first.lockPath)).rejects.toMatchObject({ code: "ENOENT" });
-      } finally {
-        await first.release();
-        await second.release();
-      }
-    },
-  );
+    try {
+      expect(second.normalizedTargetPath).toBe(first.normalizedTargetPath);
+      expect(second.lockPath).toBe(first.lockPath);
+      await expect(fs.stat(`${realPath}.lock`)).resolves.toMatchObject({});
+      await expect(fs.stat(`${linkPath}.lock`)).resolves.toMatchObject({});
+      await first.release();
+      await expect(fs.stat(first.lockPath)).resolves.toMatchObject({});
+      await second.release();
+      await expect(fs.stat(first.lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await first.release();
+      await second.release();
+    }
+  });
 
   it.each([
     ["different", "owner-b"],
@@ -234,30 +223,27 @@ describe("owner-scoped file-lock reentrancy", () => {
     expect(fsSync.existsSync(first.lockPath)).toBe(false);
   });
 
-  it.runIf(process.platform !== "win32")(
-    "provides synchronous canonical-alias parity",
-    async () => {
-      const root = await tempRoot("fs-safe-reentrant-sync-alias-");
-      const realDir = path.join(root, "real");
-      const linkDir = path.join(root, "link");
-      await fs.mkdir(realDir);
-      await fs.symlink(realDir, linkDir, "dir");
-      const options = {
-        reentrantOwner: "sync-session:aliased-run",
-        staleMs: 60_000,
-        timeoutMs: 0,
-        retry: { retries: 0 },
-        payload,
-      };
-      const first = acquireFileLockSync(path.join(realDir, "session.json"), options);
-      const second = acquireFileLockSync(path.join(linkDir, "session.json"), options);
+  itPosix("provides synchronous canonical-alias parity", async () => {
+    const root = await tempRoot("fs-safe-reentrant-sync-alias-");
+    const realDir = path.join(root, "real");
+    const linkDir = path.join(root, "link");
+    await fs.mkdir(realDir);
+    await fs.symlink(realDir, linkDir, "dir");
+    const options = {
+      reentrantOwner: "sync-session:aliased-run",
+      staleMs: 60_000,
+      timeoutMs: 0,
+      retry: { retries: 0 },
+      payload,
+    };
+    const first = acquireFileLockSync(path.join(realDir, "session.json"), options);
+    const second = acquireFileLockSync(path.join(linkDir, "session.json"), options);
 
-      expect(second.normalizedTargetPath).toBe(first.normalizedTargetPath);
-      expect(second.lockPath).toBe(first.lockPath);
-      first.release();
-      expect(fsSync.existsSync(first.lockPath)).toBe(true);
-      second.release();
-      expect(fsSync.existsSync(first.lockPath)).toBe(false);
-    },
-  );
+    expect(second.normalizedTargetPath).toBe(first.normalizedTargetPath);
+    expect(second.lockPath).toBe(first.lockPath);
+    first.release();
+    expect(fsSync.existsSync(first.lockPath)).toBe(true);
+    second.release();
+    expect(fsSync.existsSync(first.lockPath)).toBe(false);
+  });
 });

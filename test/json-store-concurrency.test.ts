@@ -1,8 +1,8 @@
 import fsp from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import {
   createJsonStore,
   type JsonStore,
@@ -13,17 +13,9 @@ import { jsonStore } from "../src/json-store.js";
 type State = { count: number };
 type Mutation = "update" | "updateOr" | "write";
 
-const tempDirs: string[] = [];
+const { tempRoot } = useTempDirs();
 
-async function tempRoot(prefix: string): Promise<string> {
-  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
 
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => fsp.rm(dir, { recursive: true, force: true })));
-});
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
@@ -149,57 +141,54 @@ describe("jsonStore mutation serialization", () => {
     expect(stored).toEqual({ count: 2 });
   });
 
-  it.runIf(process.platform !== "win32")(
-    "shares one queue across canonical parent aliases",
-    async () => {
-      const root = await tempRoot("fs-safe-json-store-alias-");
-      const realDir = path.join(root, "real");
-      const aliasDir = path.join(root, "alias");
-      await fsp.mkdir(realDir);
-      await fsp.symlink(realDir, aliasDir, "dir");
-      let stored: State | undefined = { count: 0 };
-      let aliasRead = false;
-      const firstEntered = deferred();
-      const releaseFirst = deferred();
-      const adapter = (filePath: string, onRead: () => void): JsonStoreAdapter<State> => ({
-        filePath,
-        readIfExists: async () => {
-          onRead();
-          return stored && { ...stored };
-        },
-        readRequired: async () => {
-          onRead();
-          if (!stored) throw new Error("missing test state");
-          return { ...stored };
-        },
-        write: async (value) => {
-          stored = { ...value };
-        },
-      });
-      const realStore = createJsonStore(adapter(path.join(realDir, "state.json"), () => undefined));
-      const aliasStore = createJsonStore(
-        adapter(path.join(aliasDir, "state.json"), () => {
-          aliasRead = true;
-        }),
-      );
+  itPosix("shares one queue across canonical parent aliases", async () => {
+    const root = await tempRoot("fs-safe-json-store-alias-");
+    const realDir = path.join(root, "real");
+    const aliasDir = path.join(root, "alias");
+    await fsp.mkdir(realDir);
+    await fsp.symlink(realDir, aliasDir, "dir");
+    let stored: State | undefined = { count: 0 };
+    let aliasRead = false;
+    const firstEntered = deferred();
+    const releaseFirst = deferred();
+    const adapter = (filePath: string, onRead: () => void): JsonStoreAdapter<State> => ({
+      filePath,
+      readIfExists: async () => {
+        onRead();
+        return stored && { ...stored };
+      },
+      readRequired: async () => {
+        onRead();
+        if (!stored) throw new Error("missing test state");
+        return { ...stored };
+      },
+      write: async (value) => {
+        stored = { ...value };
+      },
+    });
+    const realStore = createJsonStore(adapter(path.join(realDir, "state.json"), () => undefined));
+    const aliasStore = createJsonStore(
+      adapter(path.join(aliasDir, "state.json"), () => {
+        aliasRead = true;
+      }),
+    );
 
-      const first = realStore.update(async () => {
-        firstEntered.resolve();
-        await releaseFirst.promise;
-        return { count: 1 };
-      });
-      await firstEntered.promise;
-      const second = aliasStore.update((current) => ({ count: (current?.count ?? 0) + 1 }));
-      try {
-        await delay(10);
-        expect(aliasRead).toBe(false);
-      } finally {
-        releaseFirst.resolve();
-      }
-      await Promise.all([first, second]);
-      expect(stored).toEqual({ count: 2 });
-    },
-  );
+    const first = realStore.update(async () => {
+      firstEntered.resolve();
+      await releaseFirst.promise;
+      return { count: 1 };
+    });
+    await firstEntered.promise;
+    const second = aliasStore.update((current) => ({ count: (current?.count ?? 0) + 1 }));
+    try {
+      await delay(10);
+      expect(aliasRead).toBe(false);
+    } finally {
+      releaseFirst.resolve();
+    }
+    await Promise.all([first, second]);
+    expect(stored).toEqual({ count: 2 });
+  });
 
   it("rejects nested updates with a typed error across a queueMicrotask boundary", async () => {
     const root = await tempRoot("fs-safe-json-store-reentrant-");

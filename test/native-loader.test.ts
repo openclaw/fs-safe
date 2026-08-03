@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { expectFsSafeErrorSync } from "./helpers/security.js";
 import {
   __resetFsSafeNativeConfigForTest,
   configureFsSafePython,
@@ -96,9 +97,7 @@ describe("native helper configuration", () => {
     expect(unavailable).toHaveBeenCalledTimes(1);
 
     configureFsSafeNative({ mode: "require" });
-    expect(() => getNativeBinding()).toThrowError(
-      expect.objectContaining({ code: "helper-unavailable" }),
-    );
+    expectFsSafeErrorSync(() => getNativeBinding(), "helper-unavailable");
     expect(unavailable).toHaveBeenCalledTimes(1);
   });
 

@@ -1,20 +1,14 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { ensureAbsoluteDirectory } from "../src/absolute-path.js";
 
-const tempDirs: string[] = [];
+const { tempRoot } = useTempDirs();
 
-async function tempRoot(prefix: string): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { force: true, recursive: true })));
 });
 
 describe("ensureAbsoluteDirectory", () => {
@@ -46,43 +40,37 @@ describe("ensureAbsoluteDirectory", () => {
     ).resolves.toMatchObject({ ok: false, code: "not-file" });
   });
 
-  it.runIf(process.platform !== "win32")(
-    "rejects absolute directory creation through symlinked existing segments",
-    async () => {
-      const root = await fs.realpath(await tempRoot("fs-safe-absolute-dir-link-"));
-      const outside = await fs.realpath(await tempRoot("fs-safe-absolute-dir-outside-"));
-      const linkDir = path.join(root, "link");
-      await fs.symlink(outside, linkDir);
+  itPosix("rejects absolute directory creation through symlinked existing segments", async () => {
+    const root = await fs.realpath(await tempRoot("fs-safe-absolute-dir-link-"));
+    const outside = await fs.realpath(await tempRoot("fs-safe-absolute-dir-outside-"));
+    const linkDir = path.join(root, "link");
+    await fs.symlink(outside, linkDir);
 
-      await expect(
-        ensureAbsoluteDirectory(path.join(linkDir, "nested"), {
-          scopeLabel: "output directory",
-        }),
-      ).resolves.toMatchObject({ ok: false, code: "symlink" });
-      await expect(fs.readdir(outside)).resolves.toEqual([]);
-    },
-  );
+    await expect(
+      ensureAbsoluteDirectory(path.join(linkDir, "nested"), {
+        scopeLabel: "output directory",
+      }),
+    ).resolves.toMatchObject({ ok: false, code: "symlink" });
+    await expect(fs.readdir(outside)).resolves.toEqual([]);
+  });
 
-  it.runIf(process.platform !== "win32")(
-    "rejects symlinked parents even when the requested suffix already exists",
-    async () => {
-      const root = await fs.realpath(await tempRoot("fs-safe-absolute-dir-link-existing-"));
-      const outside = await fs.realpath(
-        await tempRoot("fs-safe-absolute-dir-link-existing-outside-"),
-      );
-      const existing = path.join(outside, "existing");
-      const linkDir = path.join(root, "link");
-      await fs.mkdir(existing);
-      await fs.symlink(outside, linkDir);
+  itPosix("rejects symlinked parents even when the requested suffix already exists", async () => {
+    const root = await fs.realpath(await tempRoot("fs-safe-absolute-dir-link-existing-"));
+    const outside = await fs.realpath(
+      await tempRoot("fs-safe-absolute-dir-link-existing-outside-"),
+    );
+    const existing = path.join(outside, "existing");
+    const linkDir = path.join(root, "link");
+    await fs.mkdir(existing);
+    await fs.symlink(outside, linkDir);
 
-      await expect(
-        ensureAbsoluteDirectory(path.join(linkDir, "existing", "new"), {
-          scopeLabel: "output directory",
-        }),
-      ).resolves.toMatchObject({ ok: false, code: "symlink" });
-      await expect(fs.stat(path.join(existing, "new"))).rejects.toMatchObject({ code: "ENOENT" });
-    },
-  );
+    await expect(
+      ensureAbsoluteDirectory(path.join(linkDir, "existing", "new"), {
+        scopeLabel: "output directory",
+      }),
+    ).resolves.toMatchObject({ ok: false, code: "symlink" });
+    await expect(fs.stat(path.join(existing, "new"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
 
   it("returns a policy failure when an intermediate component is a file", async () => {
     const root = await fs.realpath(await tempRoot("fs-safe-absolute-dir-file-component-"));
@@ -96,72 +84,66 @@ describe("ensureAbsoluteDirectory", () => {
     ).resolves.toMatchObject({ ok: false, code: "not-file" });
   });
 
-  it.runIf(process.platform !== "win32")(
-    "rejects absolute directory creation when an existing parent is swapped before mkdir",
-    async () => {
-      const root = await fs.realpath(await tempRoot("fs-safe-absolute-dir-race-"));
-      const outside = await fs.realpath(await tempRoot("fs-safe-absolute-dir-race-outside-"));
-      const parentDir = path.join(root, "parent");
-      const targetDir = path.join(parentDir, "child");
-      await fs.mkdir(parentDir);
+  itPosix("rejects absolute directory creation when an existing parent is swapped before mkdir", async () => {
+    const root = await fs.realpath(await tempRoot("fs-safe-absolute-dir-race-"));
+    const outside = await fs.realpath(await tempRoot("fs-safe-absolute-dir-race-outside-"));
+    const parentDir = path.join(root, "parent");
+    const targetDir = path.join(parentDir, "child");
+    await fs.mkdir(parentDir);
 
-      const realLstat = fs.lstat.bind(fs);
-      let swapped = false;
-      const lstatSpy = vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
-        const candidate = String(args[0]);
-        if (!swapped && candidate === targetDir) {
-          swapped = true;
-          await fs.rename(parentDir, `${parentDir}-real`);
-          await fs.symlink(outside, parentDir, "dir");
-        }
-        return await realLstat(...args);
-      });
-
-      try {
-        await expect(
-          ensureAbsoluteDirectory(targetDir, { scopeLabel: "output directory" }),
-        ).resolves.toMatchObject({ ok: false, code: "symlink" });
-      } finally {
-        lstatSpy.mockRestore();
+    const realLstat = fs.lstat.bind(fs);
+    let swapped = false;
+    const lstatSpy = vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+      const candidate = String(args[0]);
+      if (!swapped && candidate === targetDir) {
+        swapped = true;
+        await fs.rename(parentDir, `${parentDir}-real`);
+        await fs.symlink(outside, parentDir, "dir");
       }
+      return await realLstat(...args);
+    });
 
-      await expect(fs.stat(path.join(outside, "child"))).rejects.toMatchObject({ code: "ENOENT" });
-    },
-  );
+    try {
+      await expect(
+        ensureAbsoluteDirectory(targetDir, { scopeLabel: "output directory" }),
+      ).resolves.toMatchObject({ ok: false, code: "symlink" });
+    } finally {
+      lstatSpy.mockRestore();
+    }
 
-  it.runIf(process.platform !== "win32")(
-    "rejects absolute directory creation when the existing target changes before return",
-    async () => {
-      const root = await fs.realpath(await tempRoot("fs-safe-absolute-dir-target-race-"));
-      const outside = await fs.realpath(
-        await tempRoot("fs-safe-absolute-dir-target-race-outside-"),
-      );
-      const targetDir = path.join(root, "target");
-      await fs.mkdir(targetDir);
+    await expect(fs.stat(path.join(outside, "child"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
 
-      const realRealpath = fs.realpath.bind(fs);
-      let swapped = false;
-      const realpathSpy = vi.spyOn(fs, "realpath").mockImplementation(async (...args) => {
-        const candidate = String(args[0]);
-        if (!swapped && candidate === targetDir) {
-          swapped = true;
-          const resolved = await realRealpath(...args);
-          await fs.rename(targetDir, `${targetDir}-real`);
-          await fs.symlink(outside, targetDir, "dir");
-          return resolved;
-        }
-        return await realRealpath(...args);
-      });
+  itPosix("rejects absolute directory creation when the existing target changes before return", async () => {
+    const root = await fs.realpath(await tempRoot("fs-safe-absolute-dir-target-race-"));
+    const outside = await fs.realpath(
+      await tempRoot("fs-safe-absolute-dir-target-race-outside-"),
+    );
+    const targetDir = path.join(root, "target");
+    await fs.mkdir(targetDir);
 
-      try {
-        await expect(
-          ensureAbsoluteDirectory(targetDir, { scopeLabel: "output directory" }),
-        ).resolves.toMatchObject({ ok: false, code: "symlink" });
-      } finally {
-        realpathSpy.mockRestore();
+    const realRealpath = fs.realpath.bind(fs);
+    let swapped = false;
+    const realpathSpy = vi.spyOn(fs, "realpath").mockImplementation(async (...args) => {
+      const candidate = String(args[0]);
+      if (!swapped && candidate === targetDir) {
+        swapped = true;
+        const resolved = await realRealpath(...args);
+        await fs.rename(targetDir, `${targetDir}-real`);
+        await fs.symlink(outside, targetDir, "dir");
+        return resolved;
       }
-    },
-  );
+      return await realRealpath(...args);
+    });
+
+    try {
+      await expect(
+        ensureAbsoluteDirectory(targetDir, { scopeLabel: "output directory" }),
+      ).resolves.toMatchObject({ ok: false, code: "symlink" });
+    } finally {
+      realpathSpy.mockRestore();
+    }
+  });
 
   it("rethrows operational absolute directory creation failures", async () => {
     const root = await fs.realpath(await tempRoot("fs-safe-absolute-dir-io-"));

@@ -1,8 +1,9 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { expectFsSafeError } from "./helpers/security.js";
+import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import {
   isHardlinkFallbackError,
   publishFileExclusive,
@@ -23,19 +24,13 @@ import { configureFsSafeNative } from "../src/native-config.js";
 import { FsSafeError } from "../src/errors.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 
-const tempDirs: string[] = [];
+const { tempDirs, tempRoot } = useTempDirs();
 
-async function tempRoot(prefix: string): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.push(directory);
-  return directory;
-}
 
 afterEach(async () => {
   configureFsSafeNative({ mode: "auto" });
   __setFsSafeTestHooksForTest();
   vi.restoreAllMocks();
-  await Promise.all(tempDirs.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })));
 });
 
 describe("exclusive file publication", () => {
@@ -232,44 +227,41 @@ describe("exclusive file publication", () => {
     );
   });
 
-  it.runIf(process.platform !== "win32")(
-    "detects parent replacement inside the shared directory-sync boundary",
-    async () => {
-      configureFsSafeNative({ mode: "off" });
-      const directory = await tempRoot("fs-safe-publish-parent-drift-");
-      const movedDirectory = `${directory}.moved`;
-      tempDirs.push(movedDirectory);
-      const sourcePath = path.join(directory, "source");
-      const targetPath = path.join(directory, "target");
-      await fs.writeFile(sourcePath, "complete-archive");
-      __setFsSafeTestHooksForTest({
-        async beforePublishDirectorySync() {
-          await fs.rename(directory, movedDirectory);
-          await fs.mkdir(directory);
-          await fs.writeFile(targetPath, "replacement");
-        },
-      });
+  itPosix("detects parent replacement inside the shared directory-sync boundary", async () => {
+    configureFsSafeNative({ mode: "off" });
+    const directory = await tempRoot("fs-safe-publish-parent-drift-");
+    const movedDirectory = `${directory}.moved`;
+    tempDirs.push(movedDirectory);
+    const sourcePath = path.join(directory, "source");
+    const targetPath = path.join(directory, "target");
+    await fs.writeFile(sourcePath, "complete-archive");
+    __setFsSafeTestHooksForTest({
+      async beforePublishDirectorySync() {
+        await fs.rename(directory, movedDirectory);
+        await fs.mkdir(directory);
+        await fs.writeFile(targetPath, "replacement");
+      },
+    });
 
-      await expect(
-        publishFileExclusive({
-          sourcePath,
-          targetPath,
-          strategy: "link-required",
-          onSyncFailure: "rollback",
-        }),
-      ).rejects.toMatchObject({
-        details: {
-          phase: "directory-sync",
-          cleanup: "preserved",
-          directorySync: { status: "failed", code: "path-mismatch" },
-        },
-      });
-      await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("replacement");
-      await expect(fs.readFile(path.join(movedDirectory, "target"), "utf8")).resolves.toBe(
-        "complete-archive",
-      );
-    },
-  );
+    await expect(
+      publishFileExclusive({
+        sourcePath,
+        targetPath,
+        strategy: "link-required",
+        onSyncFailure: "rollback",
+      }),
+    ).rejects.toMatchObject({
+      details: {
+        phase: "directory-sync",
+        cleanup: "preserved",
+        directorySync: { status: "failed", code: "path-mismatch" },
+      },
+    });
+    await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("replacement");
+    await expect(fs.readFile(path.join(movedDirectory, "target"), "utf8")).resolves.toBe(
+      "complete-archive",
+    );
+  });
 });
 
 describe("secret file additions", () => {
@@ -279,9 +271,7 @@ describe("secret file additions", () => {
     await createSecretFileAtomic({ rootDir: directory, filePath, content: " token\n" });
     await expect(readSecretFile(filePath, "token")).resolves.toBe("token");
     await expect(tryReadSecretFile(path.join(directory, "missing"), "token")).resolves.toBeUndefined();
-    await expect(
-      createSecretFileAtomic({ rootDir: directory, filePath, content: "replacement" }),
-    ).rejects.toMatchObject({ code: "secret-exists" });
+    await expectFsSafeError(createSecretFileAtomic({ rootDir: directory, filePath, content: "replacement" }), "secret-exists");
     await expect(fs.readFile(filePath, "utf8")).resolves.toBe(" token\n");
   });
 });
@@ -330,13 +320,11 @@ describe("file lock additions", () => {
     await lock.release();
     await expect(fs.readFile(lockPath, "utf8")).resolves.toBe("replacement");
 
-    await expect(
-      acquireFileLock(path.join(directory, "other.json"), {
+    await expectFsSafeError(acquireFileLock(path.join(directory, "other.json"), {
         lockPath: path.join(directory, "outside.lock"),
         lockRoot,
         payload: () => ({}),
-      }),
-    ).rejects.toMatchObject({ code: "outside-workspace" });
+      }), "outside-workspace");
   });
 
   it("lets application parsers drive guarded legacy payload reclaim", async () => {
@@ -383,7 +371,7 @@ describe("root walk and temp receipts", () => {
       { relativePath: "nested", kind: "directory", size: expect.any(Number) },
       { relativePath: "nested", kind: "truncated", size: 0 },
     ]);
-    await expect(async () => {
+    await expectFsSafeError((async () => {
       for await (const _entry of capability.walk("", {
         maxEntries: 0,
         symlinkPolicy: "skip",
@@ -391,10 +379,10 @@ describe("root walk and temp receipts", () => {
       })) {
         // Consume the iterator.
       }
-    }).rejects.toMatchObject({ code: "too-large" });
+    })(), "too-large");
   });
 
-  it.runIf(process.platform !== "win32")("follows only symlinks that remain inside the walk root", async () => {
+  itPosix("follows only symlinks that remain inside the walk root", async () => {
     const directory = await tempRoot("fs-safe-root-walk-links-");
     const outside = await tempRoot("fs-safe-root-walk-outside-");
     await fs.mkdir(path.join(directory, "real"));

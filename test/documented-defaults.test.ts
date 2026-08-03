@@ -1,24 +1,16 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { replaceFileAtomic } from "../src/atomic.js";
 import { fileStore } from "../src/file-store.js";
 import { writeJson } from "../src/json.js";
 import { jsonStore } from "../src/json-store.js";
 import { DEFAULT_ROOT_MAX_BYTES, root } from "../src/root.js";
 
-const tempDirs: string[] = [];
+const { tempRoot } = useTempDirs();
 
-async function tempRoot(prefix: string): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
 
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
-});
 
 describe("documented defaults observed on real files", () => {
   it("uses the Root read, write, move, JSON, and writable-open defaults", async () => {
@@ -74,20 +66,17 @@ describe("documented defaults observed on real files", () => {
     });
   });
 
-  it.runIf(process.platform !== "win32")(
-    "rejects symlinks and hardlinks by default",
-    async () => {
-      const rootDir = await tempRoot("fs-safe-doc-link-defaults-");
-      const filePath = path.join(rootDir, "file.txt");
-      await fs.writeFile(filePath, "data");
-      await fs.symlink(filePath, path.join(rootDir, "symlink.txt"));
-      await fs.link(filePath, path.join(rootDir, "hardlink.txt"));
-      const scoped = await root(rootDir);
+  itPosix("rejects symlinks and hardlinks by default", async () => {
+    const rootDir = await tempRoot("fs-safe-doc-link-defaults-");
+    const filePath = path.join(rootDir, "file.txt");
+    await fs.writeFile(filePath, "data");
+    await fs.symlink(filePath, path.join(rootDir, "symlink.txt"));
+    await fs.link(filePath, path.join(rootDir, "hardlink.txt"));
+    const scoped = await root(rootDir);
 
-      await expect(scoped.read("symlink.txt")).rejects.toMatchObject({ code: "symlink" });
-      await expect(scoped.read("hardlink.txt")).rejects.toMatchObject({ code: "hardlink" });
-    },
-  );
+    await expect(scoped.read("symlink.txt")).rejects.toMatchObject({ code: "symlink" });
+    await expect(scoped.read("hardlink.txt")).rejects.toMatchObject({ code: "hardlink" });
+  });
 
   it("uses distinct standalone and store JSON newline defaults", async () => {
     const rootDir = await tempRoot("fs-safe-doc-json-defaults-");
@@ -108,36 +97,30 @@ describe("documented defaults observed on real files", () => {
     );
   });
 
-  it.runIf(process.platform !== "win32")(
-    "applies the documented atomic and FileStore mode defaults",
-    async () => {
-      const rootDir = await tempRoot("fs-safe-doc-mode-defaults-");
-      const atomicPath = path.join(rootDir, "atomic/state.txt");
-      await replaceFileAtomic({ filePath: atomicPath, content: "state" });
-      expect((await fs.stat(path.dirname(atomicPath))).mode & 0o777).toBe(0o700);
-      expect((await fs.stat(atomicPath)).mode & 0o777).toBe(0o600);
+  itPosix("applies the documented atomic and FileStore mode defaults", async () => {
+    const rootDir = await tempRoot("fs-safe-doc-mode-defaults-");
+    const atomicPath = path.join(rootDir, "atomic/state.txt");
+    await replaceFileAtomic({ filePath: atomicPath, content: "state" });
+    expect((await fs.stat(path.dirname(atomicPath))).mode & 0o777).toBe(0o700);
+    expect((await fs.stat(atomicPath)).mode & 0o777).toBe(0o600);
 
-      const store = fileStore({ rootDir: path.join(rootDir, "store") });
-      const storedPath = await store.write("nested/value.txt", "value");
-      expect((await fs.stat(path.dirname(storedPath))).mode & 0o777).toBe(0o700);
-      expect((await fs.stat(storedPath)).mode & 0o777).toBe(0o600);
-    },
-  );
+    const store = fileStore({ rootDir: path.join(rootDir, "store") });
+    const storedPath = await store.write("nested/value.txt", "value");
+    expect((await fs.stat(path.dirname(storedPath))).mode & 0o777).toBe(0o700);
+    expect((await fs.stat(storedPath)).mode & 0o777).toBe(0o600);
+  });
 
-  it.runIf(process.platform !== "win32")(
-    "uses 0o600 for a new Root file and preserves an existing mode",
-    async () => {
-      const rootDir = await tempRoot("fs-safe-doc-root-mode-");
-      const filePath = path.join(rootDir, "state.txt");
-      const scoped = await root(rootDir);
-      await scoped.write("state.txt", "new");
-      expect((await fs.stat(filePath)).mode & 0o777).toBe(0o600);
+  itPosix("uses 0o600 for a new Root file and preserves an existing mode", async () => {
+    const rootDir = await tempRoot("fs-safe-doc-root-mode-");
+    const filePath = path.join(rootDir, "state.txt");
+    const scoped = await root(rootDir);
+    await scoped.write("state.txt", "new");
+    expect((await fs.stat(filePath)).mode & 0o777).toBe(0o600);
 
-      await fs.chmod(filePath, 0o644);
-      await scoped.write("state.txt", "replacement");
-      expect((await fs.stat(filePath)).mode & 0o777).toBe(0o644);
-    },
-  );
+    await fs.chmod(filePath, 0o644);
+    await scoped.write("state.txt", "replacement");
+    expect((await fs.stat(filePath)).mode & 0o777).toBe(0o644);
+  });
 
   it("classifies documented non-empty and reentrant-update errors by observation", async () => {
     const rootDir = await tempRoot("fs-safe-doc-error-defaults-");

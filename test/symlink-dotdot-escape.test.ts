@@ -2,6 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
+import { itPosix } from "./helpers/vitest.js";
 import { configureFsSafeNative, FsSafeError, root, type Root } from "../src/index.js";
 import {
   __resetNativeLoaderForTest,
@@ -74,7 +75,7 @@ describe("static symlink + dot-dot boundary escape", () => {
   const backends = native ? (["javascript", "native"] as const) : (["javascript"] as const);
 
   describe.each(backends)("%s path", (backend) => {
-    it.runIf(process.platform !== "win32").each(operations)(
+    itPosix.each(operations)(
       "blocks $name",
       async ({ run }) => {
         if (backend === "native") {
@@ -98,46 +99,40 @@ describe("static symlink + dot-dot boundary escape", () => {
     );
   });
 
-  it.runIf(process.platform !== "win32")(
-    "reports best-effort containment for JavaScript root results",
-    async () => {
-      __setNativeLoaderForTest(() => {
-        throw Object.assign(new Error("native helper disabled for fallback proof"), {
-          code: "MODULE_NOT_FOUND",
-        });
+  itPosix("reports best-effort containment for JavaScript root results", async () => {
+    __setNativeLoaderForTest(() => {
+      throw Object.assign(new Error("native helper disabled for fallback proof"), {
+        code: "MODULE_NOT_FOUND",
       });
-      configureFsSafeNative({ mode: "auto" });
-      const base = await mkdtemp(path.join(fixtureParent, "fs-safe-containment-result-"));
-      tempDirs.push(base);
-      await writeFile(path.join(base, "input.txt"), "input");
-      const scoped = await root(base);
+    });
+    configureFsSafeNative({ mode: "auto" });
+    const base = await mkdtemp(path.join(fixtureParent, "fs-safe-containment-result-"));
+    tempDirs.push(base);
+    await writeFile(path.join(base, "input.txt"), "input");
+    const scoped = await root(base);
 
-      const opened = await scoped.open("input.txt");
-      expect(opened.containment).toBe("best-effort");
-      await opened.handle.close();
-      await expect(scoped.read("input.txt")).resolves.toMatchObject({
-        containment: "best-effort",
-      });
-      const writable = await scoped.openWritable("output.txt");
-      expect(writable.containment).toBe("best-effort");
-      await writable.handle.close();
-    },
-  );
+    const opened = await scoped.open("input.txt");
+    expect(opened.containment).toBe("best-effort");
+    await opened.handle.close();
+    await expect(scoped.read("input.txt")).resolves.toMatchObject({
+      containment: "best-effort",
+    });
+    const writable = await scoped.openWritable("output.txt");
+    expect(writable.containment).toBe("best-effort");
+    await writable.handle.close();
+  });
 
-  it.runIf(process.platform !== "win32")(
-    "walks aliases before dot-dot in async and sync root-path resolution",
-    async () => {
-      const fixture = await makeStaticEscapeFixture();
-      const absolutePath = `${fixture.rootDir}/${escapePath}`;
-      const params = {
-        rootPath: fixture.rootDir,
-        rootCanonicalPath: fixture.rootDir,
-        absolutePath,
-        boundaryLabel: "root",
-      } as const;
+  itPosix("walks aliases before dot-dot in async and sync root-path resolution", async () => {
+    const fixture = await makeStaticEscapeFixture();
+    const absolutePath = `${fixture.rootDir}/${escapePath}`;
+    const params = {
+      rootPath: fixture.rootDir,
+      rootCanonicalPath: fixture.rootDir,
+      absolutePath,
+      boundaryLabel: "root",
+    } as const;
 
-      await expect(resolveRootPath(params)).rejects.toThrow("outside root");
-      expect(() => resolveRootPathSync(params)).toThrow("outside root");
-    },
-  );
+    await expect(resolveRootPath(params)).rejects.toThrow("outside root");
+    expect(() => resolveRootPathSync(params)).toThrow("outside root");
+  });
 });

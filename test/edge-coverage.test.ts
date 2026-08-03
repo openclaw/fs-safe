@@ -1,9 +1,10 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { expectFsSafeError } from "./helpers/security.js";
+import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { FsSafeError } from "../src/errors.js";
 import {
   assertSyncDirectoryGuard,
@@ -27,20 +28,11 @@ import {
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { movePathToTrash } from "../src/trash.js";
 
-const tempDirs = new Set<string>();
+const { tempRoot } = useTempDirs();
 
-async function tempRoot(prefix: string): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.add(dir);
-  return dir;
-}
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  for (const dir of tempDirs) {
-    await fs.rm(dir, { recursive: true, force: true });
-  }
-  tempDirs.clear();
 });
 
 describe("root error helpers", () => {
@@ -186,13 +178,11 @@ describe("directory replacement and file store boundary helpers", () => {
     }
     await expect(fs.stat(path.dirname(staged.path))).rejects.toMatchObject({ code: "ENOENT" });
 
-    await expect(
-      writeStreamToTempSource({
+    await expectFsSafeError(writeStreamToTempSource({
         stream: Readable.from(["123", "456"]),
         maxBytes: 4,
         mode: 0o600,
-      }),
-    ).rejects.toMatchObject({ code: "too-large" });
+      }), "too-large");
   });
 });
 
@@ -288,7 +278,7 @@ describe("trash edge paths", () => {
     }
   });
 
-  it.runIf(process.platform !== "win32")("moves broken symlinks to trash", async () => {
+  itPosix("moves broken symlinks to trash", async () => {
     const root = await tempRoot("fs-safe-trash-broken-link-");
     const linkPath = path.join(root, "broken-link");
     const missingTarget = path.join(root, "missing-target");

@@ -1,8 +1,9 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { expectFsSafeError, expectFsSafeErrorSync } from "./helpers/security.js";
+import { itPosix, itDarwin, useTempDirs } from "./helpers/vitest.js";
 import { prepareArchiveDestinationDir } from "../src/archive-staging.js";
 import { fileStoreSync } from "../src/file-store.js";
 import { writeJson, writeJsonSync } from "../src/json.js";
@@ -19,22 +20,16 @@ import { resolveExistingPathsWithinRoot, resolvePathWithinRoot } from "../src/ro
 import { readSecureFile } from "../src/secure-file.js";
 import { withTimeout } from "../src/timing.js";
 
-const tempDirs: string[] = [];
+const { tempRoot } = useTempDirs();
 
-async function tempRoot(prefix: string): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
 
 afterEach(async () => {
   vi.restoreAllMocks();
   configureFsSafeNative({ mode: "auto" });
-  await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
 });
 
 describe("clawpatch regression coverage", () => {
-  it.runIf(process.platform !== "win32")("rejects Windows drive-letter strings on POSIX secure reads", async () => {
+  itPosix("rejects Windows drive-letter strings on POSIX secure reads", async () => {
     const dir = await tempRoot("fs-safe-secure-drive-");
     const oldCwd = process.cwd();
     process.chdir(dir);
@@ -42,15 +37,13 @@ describe("clawpatch regression coverage", () => {
       const fileName = "C:\\tmp\\secret.txt";
       await fs.writeFile(fileName, "secret", { mode: 0o600 });
 
-      await expect(
-        readSecureFile({ filePath: fileName, permissions: { allowInsecure: true } }),
-      ).rejects.toMatchObject({ code: "invalid-path" });
+      await expectFsSafeError(readSecureFile({ filePath: fileName, permissions: { allowInsecure: true } }), "invalid-path");
     } finally {
       process.chdir(oldCwd);
     }
   });
 
-  it.runIf(process.platform !== "win32")("rejects missing fallback paths under symlinked parents", async () => {
+  itPosix("rejects missing fallback paths under symlinked parents", async () => {
     const base = await tempRoot("fs-safe-root-paths-missing-");
     const rootDir = path.join(base, "root");
     const outside = path.join(base, "outside");
@@ -81,18 +74,16 @@ describe("clawpatch regression coverage", () => {
     expect(resolveSafeRelativePath(rootDir, "tmp")).toBe(path.join(rootDir, "tmp"));
   });
 
-  it.runIf(process.platform !== "win32")("rejects hardlinked sync store reads by default", async () => {
+  itPosix("rejects hardlinked sync store reads by default", async () => {
     const rootDir = await tempRoot("fs-safe-sync-store-default-hardlink-");
     const filePath = path.join(rootDir, "value.txt");
     await fs.writeFile(filePath, "secret");
     await fs.link(filePath, path.join(rootDir, "alias.txt"));
 
-    expect(() => fileStoreSync({ rootDir }).readTextIfExists("alias.txt")).toThrow(
-      expect.objectContaining({ code: "path-mismatch" }),
-    );
+    expectFsSafeErrorSync(() => fileStoreSync({ rootDir }).readTextIfExists("alias.txt"), "path-mismatch");
   });
 
-  it.runIf(process.platform !== "win32")("rejects archive destinations swapped before realpath settles", async () => {
+  itPosix("rejects archive destinations swapped before realpath settles", async () => {
     const base = await tempRoot("fs-safe-archive-root-swap-");
     const dest = path.join(base, "dest");
     const outside = path.join(base, "outside");
@@ -114,7 +105,7 @@ describe("clawpatch regression coverage", () => {
     });
   });
 
-  it.runIf(process.platform !== "win32")("rejects archive destinations swapped only during realpath", async () => {
+  itPosix("rejects archive destinations swapped only during realpath", async () => {
     const base = await tempRoot("fs-safe-archive-root-swap-back-");
     const dest = path.join(base, "dest");
     const outside = path.join(base, "outside");
@@ -216,7 +207,7 @@ describe("clawpatch regression coverage", () => {
     await expect(store.updateOr(1, (value) => (value === null ? 2 : value))).resolves.toBe(2);
   });
 
-  it.runIf(process.platform !== "win32")("tightens pre-existing durable queue directory modes", async () => {
+  itPosix("tightens pre-existing durable queue directory modes", async () => {
     const rootDir = await tempRoot("fs-safe-queue-mode-");
     const queueDir = path.join(rootDir, "queue");
     const failedDir = path.join(rootDir, "failed");
@@ -242,7 +233,7 @@ describe("clawpatch regression coverage", () => {
     expect((await fs.stat(failedDir)).isDirectory()).toBe(true);
   });
 
-  it.runIf(process.platform === "darwin")("allows durable queue dirs below a symlinked missing prefix", async () => {
+  itDarwin("allows durable queue dirs below a symlinked missing prefix", async () => {
     const prefix = "/tmp";
     if (!(await fs.lstat(prefix)).isSymbolicLink()) {
       return;
@@ -260,7 +251,7 @@ describe("clawpatch regression coverage", () => {
     }
   });
 
-  it.runIf(process.platform === "darwin")("allows durable queue sibling dirs directly below /tmp", async () => {
+  itDarwin("allows durable queue sibling dirs directly below /tmp", async () => {
     const prefix = "/tmp";
     if (!(await fs.lstat(prefix)).isSymbolicLink()) {
       return;
@@ -278,7 +269,7 @@ describe("clawpatch regression coverage", () => {
     }
   });
 
-  it.runIf(process.platform !== "win32")("rejects symlinked durable queue directories without chmoding targets", async () => {
+  itPosix("rejects symlinked durable queue directories without chmoding targets", async () => {
     const rootDir = await tempRoot("fs-safe-queue-symlink-mode-");
     const outsideDir = path.join(rootDir, "outside");
     const queueDir = path.join(rootDir, "queue");
@@ -292,7 +283,7 @@ describe("clawpatch regression coverage", () => {
     expect((await fs.stat(outsideDir)).mode & 0o777).toBe(0o755);
   });
 
-  it.runIf(process.platform !== "win32")("rejects symlinked durable queue parents before mkdir", async () => {
+  itPosix("rejects symlinked durable queue parents before mkdir", async () => {
     const rootDir = await tempRoot("fs-safe-queue-symlink-parent-");
     const outsideDir = path.join(rootDir, "outside");
     const queueParent = path.join(rootDir, "link");
@@ -310,7 +301,7 @@ describe("clawpatch regression coverage", () => {
     expect((await fs.stat(outsideDir)).mode & 0o777).toBe(0o755);
   });
 
-  it.runIf(process.platform !== "win32")("rejects missing durable queue dirs under shared symlink parents", async () => {
+  itPosix("rejects missing durable queue dirs under shared symlink parents", async () => {
     const rootDir = await tempRoot("fs-safe-queue-shared-symlink-parent-");
     const outsideDir = path.join(rootDir, "outside");
     const queueParent = path.join(rootDir, "link");
@@ -325,33 +316,36 @@ describe("clawpatch regression coverage", () => {
     });
   });
 
-  it.runIf(process.platform !== "win32")("rejects existing durable queue directories under symlinked parents", async () => {
+  itPosix("rejects existing durable queue directories under symlinked parents", async () => {
     const rootDir = await tempRoot("fs-safe-queue-existing-symlink-parent-");
     const outsideDir = path.join(rootDir, "outside");
     const queueParent = path.join(rootDir, "link");
     const queueDir = path.join(queueParent, "queue");
     const failedDir = path.join(rootDir, "failed");
-    await fs.mkdir(path.join(outsideDir, "queue"), { recursive: true });
+    await fs.mkdir(path.join(outsideDir, "queue"), { mode: 0o755, recursive: true });
     await fs.mkdir(failedDir);
     await fs.symlink(outsideDir, queueParent, "dir");
 
     await expect(ensureJsonDurableQueueDirs({ queueDir, failedDir })).rejects.toBeTruthy();
+    expect((await fs.stat(path.join(outsideDir, "queue"))).mode & 0o777).toBe(0o755);
   });
 
-  it.runIf(process.platform !== "win32")("rejects shared existing durable queue dirs under symlinked parents", async () => {
+  itPosix("rejects shared existing durable queue dirs under symlinked parents", async () => {
     const rootDir = await tempRoot("fs-safe-queue-shared-existing-symlink-parent-");
     const outsideDir = path.join(rootDir, "outside");
     const queueParent = path.join(rootDir, "link");
     const queueDir = path.join(queueParent, "state", "queue");
     const failedDir = path.join(queueParent, "state", "failed");
-    await fs.mkdir(path.join(outsideDir, "state", "queue"), { recursive: true });
-    await fs.mkdir(path.join(outsideDir, "state", "failed"), { recursive: true });
+    await fs.mkdir(path.join(outsideDir, "state", "queue"), { mode: 0o755, recursive: true });
+    await fs.mkdir(path.join(outsideDir, "state", "failed"), { mode: 0o755, recursive: true });
     await fs.symlink(outsideDir, queueParent, "dir");
 
     await expect(ensureJsonDurableQueueDirs({ queueDir, failedDir })).rejects.toBeTruthy();
+    expect((await fs.stat(path.join(outsideDir, "state", "queue"))).mode & 0o777).toBe(0o755);
+    expect((await fs.stat(path.join(outsideDir, "state", "failed"))).mode & 0o777).toBe(0o755);
   });
 
-  it.runIf(process.platform !== "win32")("rejects symlinked durable queue failed directories during moves", async () => {
+  itPosix("rejects symlinked durable queue failed directories during moves", async () => {
     const rootDir = await tempRoot("fs-safe-queue-failed-symlink-");
     const queueDir = path.join(rootDir, "queue");
     const outsideDir = path.join(rootDir, "outside");
@@ -372,19 +366,17 @@ describe("clawpatch regression coverage", () => {
     );
   });
 
-  it.runIf(process.platform !== "win32")("uses atomic no-clobber writes for root create", async () => {
+  itPosix("uses atomic no-clobber writes for root create", async () => {
     configureFsSafeNative({ mode: "auto" });
     const rootDir = await tempRoot("fs-safe-root-create-noclobber-");
     const scoped = await openRoot(rootDir);
     await scoped.create("created.txt", "first");
 
-    await expect(scoped.create("created.txt", "second")).rejects.toMatchObject({
-      code: "already-exists",
-    });
+    await expectFsSafeError(scoped.create("created.txt", "second"), "already-exists");
     await expect(fs.readFile(path.join(rootDir, "created.txt"), "utf8")).resolves.toBe("first");
   });
 
-  it.runIf(process.platform !== "win32")("keeps already-exists for no-clobber creates in read-only parents", async () => {
+  itPosix("keeps already-exists for no-clobber creates in read-only parents", async () => {
     configureFsSafeNative({ mode: "auto" });
     const rootDir = await tempRoot("fs-safe-root-create-existing-readonly-");
     const parent = path.join(rootDir, "readonly");
@@ -394,15 +386,13 @@ describe("clawpatch regression coverage", () => {
     const scoped = await openRoot(rootDir);
 
     try {
-      await expect(scoped.create("readonly/created.txt", "second")).rejects.toMatchObject({
-        code: "already-exists",
-      });
+      await expectFsSafeError(scoped.create("readonly/created.txt", "second"), "already-exists");
     } finally {
       await fs.chmod(parent, 0o755).catch(() => undefined);
     }
   });
 
-  it.runIf(process.platform !== "win32")("rolls back no-clobber move links when source unlink fails", async () => {
+  itPosix("rolls back no-clobber move links when source unlink fails", async () => {
     configureFsSafeNative({ mode: "auto" });
     const rootDir = await tempRoot("fs-safe-root-move-link-rollback-");
     const srcDir = path.join(rootDir, "src");
@@ -424,7 +414,7 @@ describe("clawpatch regression coverage", () => {
     }
   });
 
-  it.runIf(process.platform !== "win32")("rejects no-clobber directory moves instead of racing rename", async () => {
+  itPosix("rejects no-clobber directory moves instead of racing rename", async () => {
     for (const mode of ["auto", "off"] as const) {
       configureFsSafeNative({ mode });
       const rootDir = await tempRoot(`fs-safe-root-move-dir-noclobber-${mode}-`);

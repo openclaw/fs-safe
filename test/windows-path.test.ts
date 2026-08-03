@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
+import { expectFsSafeError } from "./helpers/security.js";
 import { fileStore, fileStoreSync } from "../src/file-store.js";
 import { isWindowsNetworkPath } from "../src/local-file-access.js";
 import {
@@ -231,9 +232,7 @@ describe("drive-relative relative paths", () => {
       const store = fileStore({ rootDir });
       await store.writeText("secret.txt", "real");
 
-      await expect(store.writeText("C:secret.txt", "aliased")).rejects.toMatchObject({
-        code: "invalid-path",
-      });
+      await expectFsSafeError(store.writeText("C:secret.txt", "aliased"), "invalid-path");
       await expect(readFile(path.join(rootDir, "secret.txt"), "utf8")).resolves.toBe("real");
     } finally {
       await rm(rootDir, { force: true, recursive: true });

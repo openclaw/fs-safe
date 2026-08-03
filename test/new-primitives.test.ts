@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { expectFsSafeError } from "./helpers/security.js";
+import { itPosix, itWin32 } from "./helpers/vitest.js";
 import {
   appendRegularFile,
   appendRegularFileSync,
@@ -170,9 +172,7 @@ describe("file store", () => {
   it("rejects escaped paths and size limit violations", async () => {
     const store = fileStore({ rootDir: root, maxBytes: 3 });
     await expect(store.write("../escape.txt", "nope")).rejects.toThrow();
-    await expect(store.write("too-large.txt", "four")).rejects.toMatchObject({
-      code: "too-large",
-    });
+    await expectFsSafeError(store.write("too-large.txt", "four"), "too-large");
   });
 });
 
@@ -199,7 +199,7 @@ describe("json store", () => {
 });
 
 describe("secure file reads", () => {
-  it.runIf(process.platform !== "win32")("reads from a validated file handle", async () => {
+  itPosix("reads from a validated file handle", async () => {
     const filePath = path.join(root, "secret.json");
     await fs.writeFile(filePath, '{"token":"ok"}', { mode: 0o600 });
     await fs.chmod(filePath, 0o600).catch(() => undefined);
@@ -214,50 +214,42 @@ describe("secure file reads", () => {
     expect(result.realPath).toBe(await fs.realpath(filePath));
   });
 
-  it.runIf(process.platform === "win32")(
-    "reads from a validated Windows ACL and owner",
-    async () => {
-      const filePath = path.join(root, "secret.json");
-      await fs.writeFile(filePath, '{"token":"ok"}', { mode: 0o600 });
-      await secureWindowsTestFile(filePath);
+  itWin32("reads from a validated Windows ACL and owner", async () => {
+    const filePath = path.join(root, "secret.json");
+    await fs.writeFile(filePath, '{"token":"ok"}', { mode: 0o600 });
+    await secureWindowsTestFile(filePath);
 
-      const result = await readSecureFile({
-        filePath,
-        label: "test secret",
-        io: { maxBytes: 1024 },
-      });
+    const result = await readSecureFile({
+      filePath,
+      label: "test secret",
+      io: { maxBytes: 1024 },
+    });
 
-      expect(result.buffer.toString("utf8")).toBe('{"token":"ok"}');
-      expect(result.permissions).toMatchObject({
-        source: "windows-acl",
-        ownerTrusted: true,
-      });
-    },
-    15_000,
-  );
+    expect(result.buffer.toString("utf8")).toBe('{"token":"ok"}');
+    expect(result.permissions).toMatchObject({
+      source: "windows-acl",
+      ownerTrusted: true,
+    });
+  }, 15_000);
 
-  it.runIf(process.platform === "win32")(
-    "treats an extended-length local Windows path as local",
-    async () => {
-      const filePath = path.join(root, "extended-secret.json");
-      await fs.writeFile(filePath, '{"token":"ok"}', { mode: 0o600 });
-      await secureWindowsTestFile(filePath);
-      const extendedPath = `\\\\?\\${path.resolve(filePath)}`;
+  itWin32("treats an extended-length local Windows path as local", async () => {
+    const filePath = path.join(root, "extended-secret.json");
+    await fs.writeFile(filePath, '{"token":"ok"}', { mode: 0o600 });
+    await secureWindowsTestFile(filePath);
+    const extendedPath = `\\\\?\\${path.resolve(filePath)}`;
 
-      const result = await readSecureFile({
-        filePath: extendedPath,
-        label: "extended-path secret",
-        io: { maxBytes: 1024 },
-      });
+    const result = await readSecureFile({
+      filePath: extendedPath,
+      label: "extended-path secret",
+      io: { maxBytes: 1024 },
+    });
 
-      expect(result.buffer.toString("utf8")).toBe('{"token":"ok"}');
-      expect(result.permissions).toMatchObject({
-        source: "windows-acl",
-        ownerTrusted: true,
-      });
-    },
-    15_000,
-  );
+    expect(result.buffer.toString("utf8")).toBe('{"token":"ok"}');
+    expect(result.permissions).toMatchObject({
+      source: "windows-acl",
+      ownerTrusted: true,
+    });
+  }, 15_000);
 
   it("rejects symlinks and files outside trusted dirs", async () => {
     const trusted = path.join(root, "trusted");
@@ -272,24 +264,19 @@ describe("secure file reads", () => {
     await fs.symlink(outsideFile, link);
 
     await expect(readSecureFile({ filePath: link })).rejects.toMatchObject({ code: "symlink" });
-    await expect(
-      readSecureFile({ filePath: outsideFile, trust: { trustedDirs: [trusted] } }),
-    ).rejects.toMatchObject({ code: "outside-workspace" });
+    await expectFsSafeError(readSecureFile({ filePath: outsideFile, trust: { trustedDirs: [trusted] } }), "outside-workspace");
   });
 
   it("rejects network paths unless explicitly trusted", async () => {
-    await expect(readSecureFile({ filePath: String.raw`\\server\share\secret.txt` })).rejects
-      .toMatchObject({ code: "invalid-path" });
+    await expectFsSafeError(readSecureFile({ filePath: String.raw`\\server\share\secret.txt` }), "invalid-path");
   });
 
-  it.runIf(process.platform !== "win32")("rejects overly broad POSIX permissions", async () => {
+  itPosix("rejects overly broad POSIX permissions", async () => {
     const filePath = path.join(root, "too-open.txt");
     await fs.writeFile(filePath, "secret", { mode: 0o644 });
     await fs.chmod(filePath, 0o644);
 
-    await expect(readSecureFile({ filePath })).rejects.toMatchObject({
-      code: "insecure-permissions",
-    });
+    await expectFsSafeError(readSecureFile({ filePath }), "insecure-permissions");
   });
 
   it("covers symlink, directory, size, and trusted-dir secure read branches", async () => {
@@ -302,17 +289,13 @@ describe("secure file reads", () => {
     await fs.mkdir(trusted);
     await fs.mkdir(outsideTrusted);
 
-    await expect(readSecureFile({ filePath: "relative.txt" })).rejects.toMatchObject({
-      code: "invalid-path",
-    });
+    await expectFsSafeError(readSecureFile({ filePath: "relative.txt" }), "invalid-path");
     await expect(readSecureFile({ filePath: root })).rejects.toMatchObject({ code: "not-file" });
-    await expect(
-      readSecureFile({
+    await expectFsSafeError(readSecureFile({
         filePath: link,
         trust: { allowSymlink: true, trustedDirs: [outsideTrusted] },
         permissions: { allowInsecure: true },
-      }),
-    ).rejects.toMatchObject({ code: "outside-workspace" });
+      }), "outside-workspace");
 
     const result = await readSecureFile({
       filePath: link,
@@ -322,13 +305,11 @@ describe("secure file reads", () => {
     });
     expect(result.buffer.toString("utf8")).toBe("secret");
 
-    await expect(
-      readSecureFile({
+    await expectFsSafeError(readSecureFile({
         filePath: target,
         permissions: { allowInsecure: true },
         io: { maxBytes: 2 },
-      }),
-    ).rejects.toMatchObject({ code: "too-large" });
+      }), "too-large");
   });
 
   it("uses Windows ACL permission checks for secure reads when requested", async () => {
@@ -364,12 +345,10 @@ describe("secure file reads", () => {
         stderr: "",
       })
       .mockResolvedValueOnce({ stdout: "Everyone:(R)\n", stderr: "" });
-    await expect(
-      readSecureFile({
+    await expectFsSafeError(readSecureFile({
         filePath,
         inject: { platform: "win32", exec: unsafeExec },
-      }),
-    ).rejects.toMatchObject({ code: "insecure-permissions" });
+      }), "insecure-permissions");
 
     const foreignOwnerExec = vi
       .fn()
@@ -381,21 +360,17 @@ describe("secure file reads", () => {
         stderr: "",
       })
       .mockResolvedValueOnce({ stdout: "*S-1-5-21-999:(R)\n", stderr: "" });
-    await expect(
-      readSecureFile({
+    await expectFsSafeError(readSecureFile({
         filePath,
         inject: { platform: "win32", exec: foreignOwnerExec },
         permissions: { allowReadableByOthers: true },
-      }),
-    ).rejects.toMatchObject({ code: "not-owned" });
+      }), "not-owned");
 
     const failedExec = vi.fn().mockRejectedValue(new Error("icacls failed"));
-    await expect(
-      readSecureFile({
+    await expectFsSafeError(readSecureFile({
         filePath,
         inject: { platform: "win32", exec: failedExec },
-      }),
-    ).rejects.toMatchObject({ code: "permission-unverified" });
+      }), "permission-unverified");
   });
 
   it("parses icacls output into ACL entries", () => {
@@ -845,7 +820,7 @@ describe("directory walking", () => {
     expect(truncated.scannedEntryCount).toBe(1);
   });
 
-  it.runIf(process.platform !== "win32")("does not recurse forever through followed symlink cycles", async () => {
+  itPosix("does not recurse forever through followed symlink cycles", async () => {
     await fs.mkdir(path.join(root, "a"), { recursive: true });
     await fs.writeFile(path.join(root, "a", "file.txt"), "1");
     await fs.symlink(root, path.join(root, "a", "loop"));
@@ -867,100 +842,88 @@ describe("directory walking", () => {
     expect(walkDirectorySync(root).failedDirs).toEqual([]);
   });
 
-  it.runIf(process.platform !== "win32")(
-    "reports an unreadable subtree in failedDirs without dropping readable siblings",
-    async () => {
-      await fs.mkdir(path.join(root, "readable"), { recursive: true });
-      await fs.writeFile(path.join(root, "readable", "ok.txt"), "1");
-      const blocked = path.join(root, "blocked");
-      await fs.mkdir(blocked, { recursive: true });
-      await fs.writeFile(path.join(blocked, "hidden.txt"), "secret");
-      await fs.chmod(blocked, 0o000);
-      try {
-        const scan = await walkDirectory(root, { include: (entry) => entry.kind === "file" });
+  itPosix("reports an unreadable subtree in failedDirs without dropping readable siblings", async () => {
+    await fs.mkdir(path.join(root, "readable"), { recursive: true });
+    await fs.writeFile(path.join(root, "readable", "ok.txt"), "1");
+    const blocked = path.join(root, "blocked");
+    await fs.mkdir(blocked, { recursive: true });
+    await fs.writeFile(path.join(blocked, "hidden.txt"), "secret");
+    await fs.chmod(blocked, 0o000);
+    try {
+      const scan = await walkDirectory(root, { include: (entry) => entry.kind === "file" });
 
-        // The readable sibling is still enumerated.
-        expect(scan.entries.map((entry) => entry.relativePath)).toContain(
-          path.join("readable", "ok.txt"),
-        );
-        // The unreadable subtree contributes no entries.
-        expect(scan.entries.map((entry) => entry.relativePath)).not.toContain(
-          path.join("blocked", "hidden.txt"),
-        );
-        // ...but the failure is reported, not silently swallowed.
-        expect(scan.failedDirs.map((failure) => failure.relativePath)).toEqual(["blocked"]);
-        expect(scan.failedDirs[0]).toMatchObject({ path: blocked, depth: 1 });
-        expect((scan.failedDirs[0]?.error as NodeJS.ErrnoException).code).toBe("EACCES");
-      } finally {
-        await fs.chmod(blocked, 0o755);
-      }
-    },
-  );
+      // The readable sibling is still enumerated.
+      expect(scan.entries.map((entry) => entry.relativePath)).toContain(
+        path.join("readable", "ok.txt"),
+      );
+      // The unreadable subtree contributes no entries.
+      expect(scan.entries.map((entry) => entry.relativePath)).not.toContain(
+        path.join("blocked", "hidden.txt"),
+      );
+      // ...but the failure is reported, not silently swallowed.
+      expect(scan.failedDirs.map((failure) => failure.relativePath)).toEqual(["blocked"]);
+      expect(scan.failedDirs[0]).toMatchObject({ path: blocked, depth: 1 });
+      expect((scan.failedDirs[0]?.error as NodeJS.ErrnoException).code).toBe("EACCES");
+    } finally {
+      await fs.chmod(blocked, 0o755);
+    }
+  });
 
-  it.runIf(process.platform !== "win32")(
-    "reports an unreadable walk root in failedDirs with an empty listing",
-    async () => {
-      const scanRoot = path.join(root, "scan");
-      await fs.mkdir(scanRoot, { recursive: true });
-      await fs.writeFile(path.join(scanRoot, "file.txt"), "1");
-      await fs.chmod(scanRoot, 0o000);
-      try {
-        const scan = await walkDirectory(scanRoot);
+  itPosix("reports an unreadable walk root in failedDirs with an empty listing", async () => {
+    const scanRoot = path.join(root, "scan");
+    await fs.mkdir(scanRoot, { recursive: true });
+    await fs.writeFile(path.join(scanRoot, "file.txt"), "1");
+    await fs.chmod(scanRoot, 0o000);
+    try {
+      const scan = await walkDirectory(scanRoot);
 
-        expect(scan.entries).toEqual([]);
-        expect(scan.failedDirs.map((failure) => failure.relativePath)).toEqual([""]);
-        expect(scan.failedDirs[0]).toMatchObject({ path: scanRoot, depth: 0 });
-        expect((scan.failedDirs[0]?.error as NodeJS.ErrnoException).code).toBe("EACCES");
-      } finally {
-        await fs.chmod(scanRoot, 0o755);
-      }
-    },
-  );
+      expect(scan.entries).toEqual([]);
+      expect(scan.failedDirs.map((failure) => failure.relativePath)).toEqual([""]);
+      expect(scan.failedDirs[0]).toMatchObject({ path: scanRoot, depth: 0 });
+      expect((scan.failedDirs[0]?.error as NodeJS.ErrnoException).code).toBe("EACCES");
+    } finally {
+      await fs.chmod(scanRoot, 0o755);
+    }
+  });
 
-  it.runIf(process.platform !== "win32")(
-    "reports unreadable directories from the synchronous walk too",
-    async () => {
-      await fs.mkdir(path.join(root, "readable"), { recursive: true });
-      await fs.writeFile(path.join(root, "readable", "ok.txt"), "1");
-      const blocked = path.join(root, "blocked");
-      await fs.mkdir(blocked, { recursive: true });
-      await fs.chmod(blocked, 0o000);
-      try {
-        const scan = walkDirectorySync(root, { include: (entry) => entry.kind === "file" });
+  itPosix("reports unreadable directories from the synchronous walk too", async () => {
+    await fs.mkdir(path.join(root, "readable"), { recursive: true });
+    await fs.writeFile(path.join(root, "readable", "ok.txt"), "1");
+    const blocked = path.join(root, "blocked");
+    await fs.mkdir(blocked, { recursive: true });
+    await fs.chmod(blocked, 0o000);
+    try {
+      const scan = walkDirectorySync(root, { include: (entry) => entry.kind === "file" });
 
-        expect(scan.entries.map((entry) => entry.relativePath)).toContain(
-          path.join("readable", "ok.txt"),
-        );
-        expect(scan.failedDirs.map((failure) => failure.relativePath)).toEqual(["blocked"]);
-        expect(scan.failedDirs[0]).toMatchObject({ path: blocked, depth: 1 });
-        expect((scan.failedDirs[0]?.error as NodeJS.ErrnoException).code).toBe("EACCES");
-      } finally {
-        await fs.chmod(blocked, 0o755);
-      }
-    },
-  );
+      expect(scan.entries.map((entry) => entry.relativePath)).toContain(
+        path.join("readable", "ok.txt"),
+      );
+      expect(scan.failedDirs.map((failure) => failure.relativePath)).toEqual(["blocked"]);
+      expect(scan.failedDirs[0]).toMatchObject({ path: blocked, depth: 1 });
+      expect((scan.failedDirs[0]?.error as NodeJS.ErrnoException).code).toBe("EACCES");
+    } finally {
+      await fs.chmod(blocked, 0o755);
+    }
+  });
 
-  it.runIf(process.platform !== "win32")(
-    "reports nested failed directory depth relative to the walk root",
-    async () => {
-      const parent = path.join(root, "parent");
-      const blocked = path.join(parent, "blocked");
-      await fs.mkdir(blocked, { recursive: true });
-      await fs.writeFile(path.join(blocked, "hidden.txt"), "secret");
-      await fs.chmod(blocked, 0o000);
-      try {
-        const scan = await walkDirectory(root);
+  itPosix("reports nested failed directory depth relative to the walk root", async () => {
+    const parent = path.join(root, "parent");
+    const blocked = path.join(parent, "blocked");
+    await fs.mkdir(blocked, { recursive: true });
+    await fs.writeFile(path.join(blocked, "hidden.txt"), "secret");
+    await fs.chmod(blocked, 0o000);
+    try {
+      const scan = await walkDirectory(root);
 
-        expect(scan.failedDirs.map((failure) => failure.relativePath)).toEqual([
-          path.join("parent", "blocked"),
-        ]);
-        expect(scan.failedDirs[0]).toMatchObject({ path: blocked, depth: 2 });
-        expect((scan.failedDirs[0]?.error as NodeJS.ErrnoException).code).toBe("EACCES");
-      } finally {
-        await fs.chmod(blocked, 0o755);
-      }
-    },
-  );
+      expect(scan.failedDirs.map((failure) => failure.relativePath)).toEqual([
+        path.join("parent", "blocked"),
+      ]);
+      expect(scan.failedDirs[0]).toMatchObject({ path: blocked, depth: 2 });
+      expect((scan.failedDirs[0]?.error as NodeJS.ErrnoException).code).toBe("EACCES");
+    } finally {
+      await fs.chmod(blocked, 0o755);
+    }
+  });
 });
 
 describe("private file store mode", () => {
@@ -1091,7 +1054,7 @@ describe("regular file append", () => {
     }
   });
 
-  it.runIf(process.platform !== "win32")("rejects symlink leaves synchronously", async () => {
+  itPosix("rejects symlink leaves synchronously", async () => {
     const target = path.join(root, "target.txt");
     const link = path.join(root, "link.txt");
     await fs.writeFile(target, "secret", "utf8");
@@ -1101,7 +1064,7 @@ describe("regular file append", () => {
     expect(await fs.readFile(target, "utf8")).toBe("secret");
   });
 
-  it.runIf(process.platform !== "win32")("rejects symlink parents", async () => {
+  itPosix("rejects symlink parents", async () => {
     const targetDir = path.join(root, "target");
     const linkDir = path.join(root, "link");
     await fs.mkdir(targetDir);
@@ -1250,7 +1213,7 @@ describe("atomic file replacement", () => {
     expect(entries.filter((entry) => entry.startsWith(".cron-store"))).toEqual([]);
   });
 
-  it.runIf(process.platform !== "win32")("applies requested directory and file modes", async () => {
+  itPosix("applies requested directory and file modes", async () => {
     const filePath = path.join(root, "nested", "mode.txt");
     await replaceFileAtomic({
       filePath,

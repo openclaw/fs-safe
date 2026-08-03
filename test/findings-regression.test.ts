@@ -1,9 +1,9 @@
 import fsSync from "node:fs";
 import fsp from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import JSZip from "jszip";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { extractArchive } from "../src/archive.js";
 import { configureFsSafeNative, root as openRoot } from "../src/index.js";
 import { prepareArchiveDestinationDir, prepareArchiveOutputPath, mergeExtractedTreeIntoDestination } from "../src/archive-staging.js";
@@ -22,14 +22,9 @@ import { tempWorkspace, tempWorkspaceSync } from "../src/private-temp-workspace.
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { movePathToTrash } from "../src/trash.js";
 
-const tempDirs: string[] = [];
+const { tempRoot } = useTempDirs();
 const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
 
-async function tempRoot(prefix: string): Promise<string> {
-  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
 
 async function writeOldFile(filePath: string, content = "old"): Promise<void> {
   await fsp.writeFile(filePath, content);
@@ -42,11 +37,10 @@ afterEach(async () => {
   Object.defineProperty(process, "platform", originalPlatformDescriptor);
   configureFsSafeNative({ mode: "auto" });
   __setFsSafeTestHooksForTest(undefined);
-  await Promise.all(tempDirs.splice(0).map((dir) => fsp.rm(dir, { recursive: true, force: true })));
 });
 
 describe("security finding regressions", () => {
-  it.runIf(process.platform !== "win32")("guards Root fallback mutators against parent swaps", async () => {
+  itPosix("guards Root fallback mutators against parent swaps", async () => {
     configureFsSafeNative({ mode: "off" });
     const base = await tempRoot("fs-safe-root-fallback-race-");
     const outside = await tempRoot("fs-safe-root-fallback-outside-");
@@ -91,7 +85,7 @@ describe("security finding regressions", () => {
     await expect(fsp.stat(path.join(outside, "moved.txt"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it.runIf(process.platform !== "win32")("does not create archive directories through a swapped destination", async () => {
+  itPosix("does not create archive directories through a swapped destination", async () => {
     const base = await tempRoot("fs-safe-archive-dir-race-");
     const dest = path.join(base, "dest");
     const outside = await tempRoot("fs-safe-archive-dir-outside-");
@@ -119,7 +113,7 @@ describe("security finding regressions", () => {
     await expect(fsp.stat(path.join(outside, "nested"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it.runIf(process.platform !== "win32")("does not chmod through an archive entry symlink swap", async () => {
+  itPosix("does not chmod through an archive entry symlink swap", async () => {
     const base = await tempRoot("fs-safe-archive-chmod-race-");
     const source = path.join(base, "source");
     const dest = path.join(base, "dest");
@@ -146,7 +140,7 @@ describe("security finding regressions", () => {
     expect((await fsp.stat(outsideFile)).mode & 0o777).toBe(0o600);
   });
 
-  it.runIf(process.platform !== "win32")("uses unguessable no-follow temp files in pinned write fallback", async () => {
+  itPosix("uses unguessable no-follow temp files in pinned write fallback", async () => {
     configureFsSafeNative({ mode: "off" });
     const base = await tempRoot("fs-safe-pinned-write-fallback-");
     const outside = await tempRoot("fs-safe-pinned-write-outside-");
@@ -170,7 +164,9 @@ describe("security finding regressions", () => {
 
   it("validates pinned write fallback payloads even when native mode is off", async () => {
     configureFsSafeNative({ mode: "off" });
-    const base = await tempRoot("fs-safe-pinned-write-validation-");
+    const parent = await tempRoot("fs-safe-pinned-write-validation-");
+    const base = path.join(parent, "root");
+    await fsp.mkdir(base);
     await expect(
       runPinnedWriteHelper({
         rootPath: base,
@@ -182,9 +178,12 @@ describe("security finding regressions", () => {
         input: { kind: "buffer", data: "bad" },
       }),
     ).rejects.toBeTruthy();
+    await expect(fsp.lstat(path.join(parent, "escape", "victim.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
-  it.runIf(process.platform !== "win32")("guards private sync store writes against parent swaps", async () => {
+  itPosix("guards private sync store writes against parent swaps", async () => {
     const base = await tempRoot("fs-safe-sync-private-write-");
     const outside = await tempRoot("fs-safe-sync-private-outside-");
     await fsp.mkdir(path.join(base, "nested"));
@@ -201,7 +200,7 @@ describe("security finding regressions", () => {
     await expect(fsp.stat(path.join(outside, "value.txt"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it.runIf(process.platform !== "win32")("pins sync store reads against final symlink swaps", async () => {
+  itPosix("pins sync store reads against final symlink swaps", async () => {
     const base = await tempRoot("fs-safe-sync-read-race-");
     const outside = await tempRoot("fs-safe-sync-read-outside-");
     const filePath = path.join(base, "value.txt");
@@ -224,7 +223,7 @@ describe("security finding regressions", () => {
     expect(fsSync.readFileSync(outsideFile, "utf8")).toBe("outside");
   });
 
-  it.runIf(process.platform !== "win32")("does not recurse prune through a swapped directory symlink", async () => {
+  itPosix("does not recurse prune through a swapped directory symlink", async () => {
     const base = await tempRoot("fs-safe-prune-race-");
     const outside = await tempRoot("fs-safe-prune-outside-");
     await fsp.mkdir(path.join(base, "cache"));
@@ -244,7 +243,7 @@ describe("security finding regressions", () => {
     await expect(fsp.readFile(path.join(outside, "old.txt"), "utf8")).resolves.toBe("outside");
   });
 
-  it.runIf(process.platform !== "win32")("does not copy JSON through a raced fallback symlink", async () => {
+  itPosix("does not copy JSON through a raced fallback symlink", async () => {
     const base = await tempRoot("fs-safe-json-fallback-race-");
     const outside = await tempRoot("fs-safe-json-fallback-outside-");
     const target = path.join(base, "state.json");
@@ -277,7 +276,7 @@ describe("security finding regressions", () => {
     await expect(fsp.readFile(target, "utf8")).resolves.toContain('"ok": true');
   });
 
-  it.runIf(process.platform !== "win32")("does not chmod existing parents during sync JSON writes", async () => {
+  itPosix("does not chmod existing parents during sync JSON writes", async () => {
     const base = await tempRoot("fs-safe-json-parent-mode-");
     const parent = path.join(base, "shared");
     await fsp.mkdir(parent, { mode: 0o755 });
@@ -288,7 +287,7 @@ describe("security finding regressions", () => {
     expect((await fsp.stat(parent)).mode & 0o777).toBe(0o755);
   });
 
-  it.runIf(process.platform !== "win32")("does not copy atomic fallback through a raced destination symlink", async () => {
+  itPosix("does not copy atomic fallback through a raced destination symlink", async () => {
     const base = await tempRoot("fs-safe-atomic-fallback-race-");
     const outside = await tempRoot("fs-safe-atomic-fallback-outside-");
     const target = path.join(base, "state.txt");
@@ -325,7 +324,7 @@ describe("security finding regressions", () => {
     await expect(fsp.readFile(target, "utf8")).resolves.toBe("new");
   });
 
-  it.runIf(process.platform !== "win32")("stages EXDEV file moves without buffering or chmodding parents", async () => {
+  itPosix("stages EXDEV file moves without buffering or chmodding parents", async () => {
     const base = await tempRoot("fs-safe-move-exdev-mode-");
     const source = path.join(base, "source.bin");
     const destDir = path.join(base, "public");
@@ -355,7 +354,7 @@ describe("security finding regressions", () => {
     expect((await fsp.readFile(dest)).byteLength).toBe(1024 * 1024);
   });
 
-  it.runIf(process.platform !== "win32")("preserves default directory modes for zip staging parents", async () => {
+  itPosix("preserves default directory modes for zip staging parents", async () => {
     const expectedDirectoryMode = 0o777 & ~process.umask();
     const base = await tempRoot("fs-safe-zip-dir-mode-");
     const archivePath = path.join(base, "pkg.zip");
@@ -376,6 +375,9 @@ describe("security finding regressions", () => {
     await expect(
       moveJsonDurableQueueEntryToFailed({ queueDir: base, failedDir: path.join(base, "failed"), id: "nested/escape" }),
     ).rejects.toBeTruthy();
+    await expect(fsp.lstat(path.join(base, "failed", "nested", "escape.json"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("keeps dot-only temp filenames inside the private temp directory", async () => {
@@ -404,7 +406,7 @@ describe("security finding regressions", () => {
     await expect(workspace.read(".env")).resolves.toEqual(Buffer.from("TOKEN=ok"));
   });
 
-  it.runIf(process.platform !== "win32")("pins sync temp workspace reads against final symlink swaps", async () => {
+  itPosix("pins sync temp workspace reads against final symlink swaps", async () => {
     const base = await tempRoot("fs-safe-temp-workspace-sync-read-");
     const outside = await tempRoot("fs-safe-temp-workspace-sync-outside-");
     const workspace = tempWorkspaceSync({ rootDir: base, prefix: "ws-" });
@@ -431,7 +433,7 @@ describe("security finding regressions", () => {
     }
   });
 
-  it.runIf(process.platform !== "win32")("writes sibling-temp content from a private temp path, not a swapped target parent", async () => {
+  itPosix("writes sibling-temp content from a private temp path, not a swapped target parent", async () => {
     const base = await tempRoot("fs-safe-sibling-temp-race-");
     const outside = await tempRoot("fs-safe-sibling-temp-outside-");
     await fsp.mkdir(path.join(base, "nested"));
@@ -455,7 +457,7 @@ describe("security finding regressions", () => {
     await expect(fsp.stat(path.join(outside, "out.txt"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it.runIf(process.platform !== "win32")("does not trash a different path after an allowed parent swap", async () => {
+  itPosix("does not trash a different path after an allowed parent swap", async () => {
     const base = await tempRoot("fs-safe-trash-race-");
     const outside = await tempRoot("fs-safe-trash-outside-");
     await fsp.mkdir(path.join(base, "dir"));

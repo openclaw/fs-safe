@@ -1,8 +1,8 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import JSZip from "jszip";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { useTempDirs } from "./helpers/vitest.js";
 import {
   ARCHIVE_LIMIT_ERROR_CODE,
   ArchiveFormatError,
@@ -14,22 +14,14 @@ import {
   configureFsSafeNative,
 } from "../src/native-config.js";
 
-const tempDirs: string[] = [];
+const { tempRoot } = useTempDirs();
 
 beforeEach(() => configureFsSafeNative({ mode: "off" }));
 
 afterEach(async () => {
   __resetFsSafeNativeConfigForTest();
-  await Promise.all(
-    tempDirs.splice(0).map((dir) => fs.rm(dir, { force: true, recursive: true })),
-  );
 });
 
-async function tempRoot(prefix: string): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
 
 function duplicateOnlyZipEntry(bytes: Buffer): Buffer {
   const eocd = bytes.indexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));

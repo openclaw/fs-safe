@@ -1,25 +1,16 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it } from "vitest";
+import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { FsSafeError } from "../src/errors.js";
 import { mkdirPathComponentsWithGuards } from "../src/guarded-mkdir.js";
 import { configureFsSafeNative } from "../src/native-config.js";
 import { root } from "../src/root.js";
 
-const tempDirs = new Set<string>();
+const { tempRoot } = useTempDirs();
 
-async function tempRoot(prefix: string): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.add(dir);
-  return dir;
-}
 
 afterEach(async () => {
-  for (const dir of tempDirs) {
-    await fs.rm(dir, { recursive: true, force: true });
-  }
-  tempDirs.clear();
   configureFsSafeNative({ mode: "auto" });
 });
 
@@ -115,57 +106,51 @@ it("rejects a dangling symlink directory component with a typed FsSafeError, not
 // mkdirPathComponentsWithGuards returns, so the fix must flow the resolved
 // path back to the caller, not just resolve it internally. ---
 
-it.runIf(process.platform !== "win32")(
-  "writes a file through root().write() when the parent directory is an in-root symlink (mkdir: true)",
-  async () => {
-  // Force the JS fallback path deterministically, matching this repo's own
-  // convention in test/pinned-write-fallback-coverage.test.ts.
-  configureFsSafeNative({ mode: "off" });
+itPosix("writes a file through root().write() when the parent directory is an in-root symlink (mkdir: true)", async () => {
+// Force the JS fallback path deterministically, matching this repo's own
+// convention in test/pinned-write-fallback-coverage.test.ts.
+configureFsSafeNative({ mode: "off" });
 
-  const rootDir = await tempRoot("fs-safe-root-write-symlink-");
-  const realDir = path.join(rootDir, "skills-bank", "skills", "auth-doctor");
-  await fs.mkdir(realDir, { recursive: true });
-  await fs.writeFile(path.join(realDir, "SKILL.md"), "# old content\n", "utf8");
-  const skillsDir = path.join(rootDir, "skills");
-  await fs.mkdir(skillsDir, { recursive: true });
-  await fs.symlink(realDir, path.join(skillsDir, "auth-doctor"), "dir");
+const rootDir = await tempRoot("fs-safe-root-write-symlink-");
+const realDir = path.join(rootDir, "skills-bank", "skills", "auth-doctor");
+await fs.mkdir(realDir, { recursive: true });
+await fs.writeFile(path.join(realDir, "SKILL.md"), "# old content\n", "utf8");
+const skillsDir = path.join(rootDir, "skills");
+await fs.mkdir(skillsDir, { recursive: true });
+await fs.symlink(realDir, path.join(skillsDir, "auth-doctor"), "dir");
 
+const r = await root(rootDir);
+await expect(
+  r.write("skills/auth-doctor/SKILL.md", "# new content\n", {
+    encoding: "utf8",
+    mkdir: true,
+    overwrite: true,
+  }),
+).resolves.toBeUndefined();
+
+const written = await fs.readFile(path.join(realDir, "SKILL.md"), "utf8");
+expect(written).toBe("# new content\n");
+});
+
+itPosix("appends and opens writable files through an in-root symlinked parent", async () => {
+  const rootDir = await tempRoot("fs-safe-root-writable-symlink-");
+  const realDir = path.join(rootDir, "real-parent");
+  await fs.mkdir(realDir);
+  await fs.symlink(realDir, path.join(rootDir, "alias"), "dir");
   const r = await root(rootDir);
-  await expect(
-    r.write("skills/auth-doctor/SKILL.md", "# new content\n", {
-      encoding: "utf8",
-      mkdir: true,
-      overwrite: true,
-    }),
-  ).resolves.toBeUndefined();
 
-  const written = await fs.readFile(path.join(realDir, "SKILL.md"), "utf8");
-  expect(written).toBe("# new content\n");
-  },
-);
+  await r.append("alias/logs/app.log", "entry\n");
+  const opened = await r.openWritable("alias/output/result.txt");
+  try {
+    await opened.handle.writeFile("result\n");
+  } finally {
+    await opened.handle.close();
+  }
 
-it.runIf(process.platform !== "win32")(
-  "appends and opens writable files through an in-root symlinked parent",
-  async () => {
-    const rootDir = await tempRoot("fs-safe-root-writable-symlink-");
-    const realDir = path.join(rootDir, "real-parent");
-    await fs.mkdir(realDir);
-    await fs.symlink(realDir, path.join(rootDir, "alias"), "dir");
-    const r = await root(rootDir);
-
-    await r.append("alias/logs/app.log", "entry\n");
-    const opened = await r.openWritable("alias/output/result.txt");
-    try {
-      await opened.handle.writeFile("result\n");
-    } finally {
-      await opened.handle.close();
-    }
-
-    await expect(fs.readFile(path.join(realDir, "logs/app.log"), "utf8")).resolves.toBe(
-      "entry\n",
-    );
-    await expect(fs.readFile(path.join(realDir, "output/result.txt"), "utf8")).resolves.toBe(
-      "result\n",
-    );
-  },
-);
+  await expect(fs.readFile(path.join(realDir, "logs/app.log"), "utf8")).resolves.toBe(
+    "entry\n",
+  );
+  await expect(fs.readFile(path.join(realDir, "output/result.txt"), "utf8")).resolves.toBe(
+    "result\n",
+  );
+});

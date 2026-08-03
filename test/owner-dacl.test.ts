@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { itPosix } from "./helpers/vitest.js";
 import { readOwnerAndDacl } from "../src/owner-dacl.js";
 import { __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import {
@@ -24,14 +25,14 @@ afterEach(() => {
 });
 
 describe("readOwnerAndDacl", () => {
-  it.runIf(process.platform !== "win32")("returns a typed unsupported result off Windows", () => {
+  itPosix("returns a typed unsupported result off Windows", () => {
     expect(readOwnerAndDacl("/tmp/example")).toEqual({
       status: "unsupported-platform",
       platform: process.platform,
     });
   });
 
-  it.runIf(process.platform !== "win32")("returns ACE facts without applying trust policy", () => {
+  itPosix("returns ACE facts without applying trust policy", () => {
     __setNativeLoaderForTest(
       () =>
         ({
