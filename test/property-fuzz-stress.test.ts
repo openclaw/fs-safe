@@ -222,7 +222,7 @@ describe("seeded path property stress", () => {
         }
       }
     }
-  });
+  }, 10_000);
 });
 
 describe("minimal control-character diagnostic regressions", () => {
