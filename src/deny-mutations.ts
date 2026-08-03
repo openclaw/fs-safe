@@ -1,45 +1,9 @@
-import fs from "node:fs/promises";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
-import { assertNoNulPathInput, isNotFoundPathError, isPathInside } from "./path.js";
+import { assertNoNulPathInput, isPathInside } from "./path.js";
+import { resolvePathViaExistingAncestor } from "./root-path-existing.js";
 
-async function pathExists(filePath: string): Promise<boolean> {
-  try {
-    await fs.lstat(filePath);
-    return true;
-  } catch (err) {
-    if (!isNotFoundPathError(err)) {
-      throw err;
-    }
-    return false;
-  }
-}
-
-async function resolvePathViaExistingAncestor(targetPath: string): Promise<string> {
-  const normalized = path.resolve(targetPath);
-  let cursor = normalized;
-  const missingSuffix: string[] = [];
-
-  while (path.dirname(cursor) !== cursor && !(await pathExists(cursor))) {
-    missingSuffix.unshift(path.basename(cursor));
-    cursor = path.dirname(cursor);
-  }
-
-  if (!(await pathExists(cursor))) {
-    return normalized;
-  }
-
-  try {
-    const resolvedAncestor = path.resolve(await fs.realpath(cursor));
-    return missingSuffix.length === 0
-      ? resolvedAncestor
-      : path.resolve(resolvedAncestor, ...missingSuffix);
-  } catch {
-    return normalized;
-  }
-}
-
-async function comparablePaths(rawPath: string): Promise<Set<string>> {
+export async function resolveMutationComparablePaths(rawPath: string): Promise<Set<string>> {
   assertNoNulPathInput(rawPath, "path contains a NUL byte");
   const resolved = path.resolve(rawPath);
   return new Set([resolved, await resolvePathViaExistingAncestor(resolved)]);
@@ -86,9 +50,9 @@ export async function assertMutationNotDenied(
     return;
   }
 
-  const targetPaths = await comparablePaths(filePath);
+  const targetPaths = await resolveMutationComparablePaths(filePath);
   for (const deniedPath of policyPathEntries(policy.paths)) {
-    const deniedPaths = await comparablePaths(deniedPath);
+    const deniedPaths = await resolveMutationComparablePaths(deniedPath);
     for (const target of targetPaths) {
       for (const denied of deniedPaths) {
         if (
@@ -102,7 +66,7 @@ export async function assertMutationNotDenied(
   }
 
   for (const deniedPrefix of policyPathEntries(policy.prefixes)) {
-    const deniedPaths = await comparablePaths(deniedPrefix);
+    const deniedPaths = await resolveMutationComparablePaths(deniedPrefix);
     for (const target of targetPaths) {
       for (const denied of deniedPaths) {
         if (

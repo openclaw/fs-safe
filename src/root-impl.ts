@@ -809,6 +809,43 @@ async function verifyAtomicWriteResult(params: {
   }
 }
 
+type GuardedWritePath = Awaited<ReturnType<typeof resolvePathInRoot>>;
+
+async function resolveGuardedWritePathInRoot(
+  root: RootContext,
+  params: {
+    relativePath: string;
+    denyMutations?: DenyMutationPolicy;
+    allowFinalSymlink?: boolean;
+    protectDeniedAncestors?: boolean;
+    shouldAssertNoPathAlias?: (resolved: GuardedWritePath) => Promise<boolean> | boolean;
+  },
+): Promise<GuardedWritePath> {
+  const resolvedPath = await resolvePathInRoot(root, params.relativePath, {
+    aliasErrorCode: "path-alias",
+    allowFinalSymlink: params.allowFinalSymlink,
+  });
+  await assertMutationNotDenied(
+    resolvedPath.resolved,
+    params.denyMutations,
+    params.protectDeniedAncestors ? { protectAncestors: true } : undefined,
+  );
+  if (await (params.shouldAssertNoPathAlias?.(resolvedPath) ?? true)) {
+    try {
+      await assertNoPathAliasEscape({
+        absolutePath: resolvedPath.resolved,
+        rootPath: resolvedPath.rootReal,
+        boundaryLabel: "root",
+      });
+    } catch (error) {
+      throw new FsSafeError("path-alias", "path alias escape blocked", {
+        cause: error instanceof Error ? error : undefined,
+      });
+    }
+  }
+  return resolvedPath;
+}
+
 async function openWritableFileInRoot(
   root: RootContext,
   params: {
@@ -820,21 +857,10 @@ async function openWritableFileInRoot(
     append?: boolean;
   },
 ): Promise<WritableOpenResult> {
-  const { rootReal, rootWithSep, resolved } = await resolvePathInRoot(
-    root,
-    params.relativePath,
-    { aliasErrorCode: "path-alias" },
-  );
-  await assertMutationNotDenied(resolved, params.denyMutations);
-  try {
-    await assertNoPathAliasEscape({
-      absolutePath: resolved,
-      rootPath: rootReal,
-      boundaryLabel: "root",
-    });
-  } catch (err) {
-    throw new FsSafeError("path-alias", "path alias escape blocked", { cause: err });
-  }
+  const { rootReal, rootWithSep, resolved } = await resolveGuardedWritePathInRoot(root, {
+    relativePath: params.relativePath,
+    denyMutations: params.denyMutations,
+  });
   let ioPath = params.mkdir === false
     ? resolved
     : await prepareRootWriteTarget(rootReal, resolved);
@@ -1199,19 +1225,10 @@ async function resolvePinnedWriteTargetInRoot(
   requestedMode?: number,
   denyMutations?: DenyMutationPolicy,
 ): Promise<PinnedWriteTarget> {
-  const { rootReal, rootWithSep, resolved } = await resolvePathInRoot(root, relativePath, {
-    aliasErrorCode: "path-alias",
+  const { rootReal, rootWithSep, resolved } = await resolveGuardedWritePathInRoot(root, {
+    relativePath,
+    denyMutations,
   });
-  await assertMutationNotDenied(resolved, denyMutations);
-  try {
-    await assertNoPathAliasEscape({
-      absolutePath: resolved,
-      rootPath: rootReal,
-      boundaryLabel: "root",
-    });
-  } catch (err) {
-    throw new FsSafeError("path-alias", "path alias escape blocked", { cause: err });
-  }
 
   // resolvePathInRoot already enforces isPathInside, so any actual escape
   // is rejected upstream.
@@ -1468,31 +1485,24 @@ async function movePathFallback(
     relativePath: params.fromRelative,
     policy: PATH_ALIAS_POLICIES.strict,
   });
-  const target = await resolvePathInRoot(root, params.toRelative, {
-    aliasErrorCode: "path-alias",
-    allowFinalSymlink: true,
-  });
-  await assertMutationNotDenied(target.resolved, params.denyMutations, { protectAncestors: true });
-  await resolvePinnedRootPathInRoot(root, {
+  const target = await resolveGuardedWritePathInRoot(root, {
     relativePath: params.toRelative,
-    policy: PATH_ALIAS_POLICIES.unlinkTarget,
+    denyMutations: params.denyMutations,
+    allowFinalSymlink: true,
+    protectDeniedAncestors: true,
+    shouldAssertNoPathAlias: async (resolvedTarget) => {
+      await resolvePinnedRootPathInRoot(root, {
+        relativePath: params.toRelative,
+        policy: PATH_ALIAS_POLICIES.unlinkTarget,
+      });
+      const targetStat = await fs.lstat(resolvedTarget.resolved).catch(() => undefined);
+      return !(
+        process.platform !== "win32" &&
+        params.overwrite &&
+        targetStat?.isSymbolicLink() === true
+      );
+    },
   });
-  const targetStat = await fs.lstat(target.resolved).catch(() => undefined);
-  const replacesFinalSymlink =
-    process.platform !== "win32" && params.overwrite && targetStat?.isSymbolicLink() === true;
-  if (!replacesFinalSymlink) {
-    try {
-      await assertNoPathAliasEscape({
-        absolutePath: target.resolved,
-        rootPath: target.rootReal,
-        boundaryLabel: "root",
-      });
-    } catch (error) {
-      throw new FsSafeError("path-alias", "path alias escape blocked", {
-        cause: error instanceof Error ? error : undefined,
-      });
-    }
-  }
 
   let sourceStat: Stats;
   try {
@@ -1627,19 +1637,10 @@ async function writeMissingFileFallback(
     denyMutations?: DenyMutationPolicy;
   },
 ): Promise<void> {
-  const { rootReal, resolved } = await resolvePathInRoot(root, params.relativePath, {
-    aliasErrorCode: "path-alias",
+  const { rootReal, resolved } = await resolveGuardedWritePathInRoot(root, {
+    relativePath: params.relativePath,
+    denyMutations: params.denyMutations,
   });
-  await assertMutationNotDenied(resolved, params.denyMutations);
-  try {
-    await assertNoPathAliasEscape({
-      absolutePath: resolved,
-      rootPath: rootReal,
-      boundaryLabel: "root",
-    });
-  } catch (err) {
-    throw new FsSafeError("path-alias", "path alias escape blocked", { cause: err });
-  }
   const targetPath = params.mkdir === false
     ? resolved
     : await prepareRootWriteTarget(rootReal, resolved);

@@ -4,6 +4,7 @@
 
 ### Security and Correctness
 
+- Pin synchronous file-store roots across every parent-walk segment, so private and non-private writes reject a store root replaced during directory creation, and route deny-mutation ancestor canonicalization through the shared root resolver on Windows and POSIX.
 - Keep the POSIX parent-directory no-follow identity check active for synchronous atomic-replacement adapters that omit `fchmodSync`, preventing the documented default adapter path from writing through a symlinked parent.
 - Synchronize the actual destination after descriptor-bound mode application when atomic rename uses copy fallback, and include both bytes and mode in bounded fallback restoration.
 - Continue accepting legacy atomic-replacement adapter literals that expose pathname `chmod` or `chmodSync` methods while keeping those methods unused.

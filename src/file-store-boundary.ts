@@ -9,6 +9,7 @@ import {
   type SyncDirectoryGuard,
 } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
+import { sameFileIdentity } from "./file-identity.js";
 import { isPathInside, isPathRelativeEscape } from "./path.js";
 import { resolveOpenedFileRealPathForHandle, root, type Root } from "./root.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
@@ -159,8 +160,22 @@ export function ensureParentSync(params: {
   filePath: string;
   mode: number;
 }): SyncParentGuard {
+  return ensureStoreDirectorySync({
+    rootDir: params.rootDir,
+    targetDir: path.dirname(path.resolve(params.filePath)),
+    mode: params.mode,
+    messagePrefix: "store",
+  });
+}
+
+export function ensureStoreDirectorySync(params: {
+  rootDir: string;
+  targetDir: string;
+  mode: number;
+  messagePrefix: "private store" | "store";
+}): SyncParentGuard {
   const rootDir = path.resolve(params.rootDir);
-  const dir = path.dirname(path.resolve(params.filePath));
+  const dir = path.resolve(params.targetDir);
   const relative = path.relative(rootDir, dir);
   if (isPathRelativeEscape(relative)) {
     throw new FsSafeError("outside-workspace", "file path escapes store root");
@@ -169,7 +184,10 @@ export function ensureParentSync(params: {
   syncFs.mkdirSync(rootDir, { recursive: true, mode: params.mode });
   const rootStat = syncFs.lstatSync(rootDir);
   if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
-    throw new FsSafeError("not-file", `store root must be a directory: ${rootDir}`);
+    throw new FsSafeError(
+      "not-file",
+      `${params.messagePrefix} root must be a directory: ${rootDir}`,
+    );
   }
   const rootReal = syncFs.realpathSync(rootDir);
   chmodDirectorySyncBestEffort(rootDir, params.mode);
@@ -180,7 +198,10 @@ export function ensureParentSync(params: {
     try {
       const stat = syncFs.lstatSync(current);
       if (stat.isSymbolicLink() || !stat.isDirectory()) {
-        throw new FsSafeError("not-file", `store directory component must be a directory: ${current}`);
+        throw new FsSafeError(
+          "not-file",
+          `${params.messagePrefix} directory component must be a directory: ${current}`,
+        );
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
@@ -188,9 +209,20 @@ export function ensureParentSync(params: {
       }
       syncFs.mkdirSync(current, { mode: params.mode });
     }
+    const currentRootStat = syncFs.lstatSync(rootDir);
+    const currentRootReal = syncFs.realpathSync(rootDir);
     const currentReal = syncFs.realpathSync(current);
-    if (!isPathInside(rootReal, currentReal)) {
-      throw new FsSafeError("outside-workspace", "store directory escapes root");
+    if (
+      currentRootStat.isSymbolicLink() ||
+      !currentRootStat.isDirectory() ||
+      !sameFileIdentity(rootStat, currentRootStat) ||
+      currentRootReal !== rootReal ||
+      !isPathInside(rootReal, currentReal)
+    ) {
+      throw new FsSafeError(
+        "outside-workspace",
+        `${params.messagePrefix} directory escapes root`,
+      );
     }
     chmodDirectorySyncBestEffort(current, params.mode);
   }

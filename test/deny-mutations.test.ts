@@ -1,8 +1,10 @@
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import fs, { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { resolveMutationComparablePaths } from "../src/deny-mutations.js";
 import { root as openRoot } from "../src/index.js";
+import { resolvePathViaExistingAncestor } from "../src/root-path-existing.js";
 
 const skipOnWindows = process.platform === "win32";
 const tempDirs: string[] = [];
@@ -14,10 +16,27 @@ async function tempRoot(prefix: string): Promise<string> {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { force: true, recursive: true })));
 });
 
 describe("root denyMutations policies", () => {
+  it.runIf(process.platform === "win32")(
+    "uses the root ancestor canonicalizer for drive-relative and UNC roots",
+    async () => {
+      vi.spyOn(fs, "lstat").mockRejectedValue(Object.assign(new Error("missing"), { code: "ENOENT" }));
+
+      for (const input of ["C:foo", "\\\\?\\C:\\", "\\\\server\\share"]) {
+        const normalized = path.resolve(input);
+        const rootCanonical = await resolvePathViaExistingAncestor(input);
+        const denyCanonical = await resolveMutationComparablePaths(input);
+
+        expect(rootCanonical, input).toBe(normalized);
+        expect(denyCanonical, input).toEqual(new Set([normalized]));
+      }
+    },
+  );
+
   it("denies root mutations by exact denied path", async () => {
     const rootPath = await tempRoot("fs-safe-deny-exact-");
     const sourceRoot = await tempRoot("fs-safe-deny-exact-source-");

@@ -4,7 +4,6 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { Readable } from "node:stream";
 import { readFileDescriptorBoundedSync } from "./bounded-read.js";
-import { createSyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { pruneExpiredStoreEntries, type FileStorePruneOptions } from "./file-store-prune.js";
 export type { FileStorePruneOptions } from "./file-store-prune.js";
@@ -12,6 +11,7 @@ import {
   assertSyncDirectoryGuard,
   ensureParentInRoot,
   ensureParentSync,
+  ensureStoreDirectorySync,
   openWritableStoreRoot,
   type SyncParentGuard,
   writeStreamToTempSource,
@@ -394,50 +394,12 @@ export function fileStore(options: FileStoreOptions): FileStore {
 }
 
 function ensurePrivateDirectorySync(rootDir: string, targetDir: string, mode: number): SyncParentGuard {
-  const root = path.resolve(rootDir);
-  const target = path.resolve(targetDir);
-  assertStoreFilePath(root, target);
-  let current = root;
-  syncFs.mkdirSync(current, { recursive: true, mode });
-  const rootStat = syncFs.lstatSync(current);
-  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
-    throw new FsSafeError("not-file", `private store root must be a directory: ${current}`);
-  }
-  try {
-    syncFs.chmodSync(current, mode);
-  } catch {
-    // Best-effort on platforms that do not enforce POSIX modes.
-  }
-  for (const segment of path.relative(root, target).split(path.sep).filter(Boolean)) {
-    current = path.join(current, segment);
-    try {
-      const stat = syncFs.lstatSync(current);
-      if (stat.isSymbolicLink() || !stat.isDirectory()) {
-        throw new FsSafeError(
-          "not-file",
-          `private store directory component must be a directory: ${current}`,
-        );
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw error;
-      }
-      syncFs.mkdirSync(current, { mode });
-    }
-    const rootReal = syncFs.realpathSync(root);
-    const currentReal = syncFs.realpathSync(current);
-    if (!isPathInside(rootReal, currentReal)) {
-      throw new FsSafeError("outside-workspace", "private store directory escapes root");
-    }
-    try {
-      syncFs.chmodSync(current, mode);
-    } catch {
-      // Best-effort on platforms that do not enforce POSIX modes.
-    }
-  }
-  const guard = createSyncDirectoryGuard(target);
-  assertSyncDirectoryGuard(guard);
-  return guard;
+  return ensureStoreDirectorySync({
+    rootDir,
+    targetDir,
+    mode,
+    messagePrefix: "private store",
+  });
 }
 
 function writeFileSyncAtomic(params: {
