@@ -29,7 +29,7 @@ afterEach(async () => {
 });
 
 describe("path stress regressions", () => {
-  it("serializes same-target writes before resolving the existing target", async () => {
+  itPosix("serializes same-target writes before resolving the existing target", async () => {
     const rootDir = await tempRoot("fs-safe-write-resolution-queue-");
     const scoped = await openRoot(rootDir);
     const targetPath = path.join(scoped.rootReal, "state.txt");
