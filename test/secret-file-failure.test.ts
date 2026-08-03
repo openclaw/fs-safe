@@ -2,7 +2,7 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { itPosix, useTempDirs } from "./helpers/vitest.js";
+import { itPosix, itWin32, useTempDirs } from "./helpers/vitest.js";
 import {
   readSecretFileSync,
   tryReadSecretFileSync,
@@ -145,7 +145,7 @@ describe("secret file refusal paths", () => {
     ).rejects.toMatchObject({ code: "path-mismatch" });
   });
 
-  it("rejects an insecure mode reported after post-write chmod", async () => {
+  itPosix("rejects an insecure mode reported after post-write chmod", async () => {
     const root = await tempRoot("fs-safe-secret-write-mode-");
     const filePath = path.join(root, "token");
     const realOpen = fs.open.bind(fs);
@@ -162,5 +162,16 @@ describe("secret file refusal paths", () => {
     await expect(
       writeSecretFileAtomic({ rootDir: root, filePath, content: "secret" }),
     ).rejects.toThrow("has insecure permissions 644");
+  });
+
+  itWin32("publishes the secret when POSIX mode enforcement is unavailable", async () => {
+    const root = await tempRoot("fs-safe-secret-write-mode-win32-");
+    const filePath = path.join(root, "token");
+
+    await expect(
+      writeSecretFileAtomic({ rootDir: root, filePath, content: "secret" }),
+    ).resolves.toBeUndefined();
+    await expect(fs.readFile(filePath, "utf8")).resolves.toBe("secret");
+    expect(readSecretFileSync(filePath, "token")).toBe("secret");
   });
 });
