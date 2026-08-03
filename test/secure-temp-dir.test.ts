@@ -77,6 +77,22 @@ function resolveWithMocks(params: {
 }
 
 describe("resolveSecureTempRoot", () => {
+  it.each(["", ".", "..", "../escape", "nested/escape", "nested\\escape", "C:escape", "bad\0name"])(
+    "rejects a fallback prefix that is not one safe path segment: %j",
+    (fallbackPrefix) => {
+      const mkdirSync = vi.fn();
+      expect(() =>
+        resolveSecureTempRoot({
+          fallbackPrefix,
+          getuid: vi.fn(() => 501),
+          mkdirSync,
+          tmpdir: vi.fn(() => "/var/fallback"),
+        }),
+      ).toThrow(/fallback temp prefix/u);
+      expect(mkdirSync).not.toHaveBeenCalled();
+    },
+  );
+
   it("prefers an existing secure preferred directory", () => {
     const { resolved, tmpdir } = resolveWithMocks({
       lstatSync: vi.fn(() => secureDirStat()),

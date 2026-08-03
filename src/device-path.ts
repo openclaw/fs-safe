@@ -1,6 +1,6 @@
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
-import { trySafeFileURLToPath } from "./local-file-access.js";
+import { isFileUrl, trySafeFileURLToPath } from "./local-file-access.js";
 
 export type UnsafeDeviceReadPathReason =
   | "posix-device"
@@ -91,7 +91,7 @@ function trimTrailingWindowsIgnoredChars(value: string): string {
 }
 
 function candidateReadPaths(filePath: string): string[] {
-  if (!filePath.startsWith("file://")) {
+  if (!isFileUrl(filePath)) {
     return [filePath];
   }
   const parsed = trySafeFileURLToPath(filePath);

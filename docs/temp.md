@@ -157,10 +157,14 @@ type TempFile = {
   path: string;                            // absolute path; safe to write to
   dir: string;                             // the enclosing private workspace dir
   file(fileName?: string): string;          // resolve another file in the same dir
-  cleanup(): Promise<void>;                 // removes the private workspace dir
+  cleanup(): Promise<void>;                 // removes the original private workspace dir
   [Symbol.asyncDispose](): Promise<void>;   // alias of cleanup()
 };
 ```
+
+Cleanup captures the directory identity at creation time. If that path is
+renamed away and replaced, cleanup preserves the replacement rather than
+recursively deleting a directory it did not create.
 
 ### `withTempFile`
 
@@ -239,7 +243,7 @@ const tempRoot = resolveSecureTempRoot({ fallbackPrefix: "my-app" });
 
 ```ts
 type ResolveSecureTempRootOptions = {
-  fallbackPrefix: string;             // fallback directory base name
+  fallbackPrefix: string;             // one portable path segment; invalid values throw
   preferredDir?: string;              // preferred secure temp root
   skipPreferredOnWindows?: boolean;
   unsafeFallbackLabel?: string;       // text used in thrown errors

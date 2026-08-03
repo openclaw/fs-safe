@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { lstat, mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
+import { sameFileIdentity, type FileIdentityStat } from "./file-identity.js";
 import { assertSafePathSegment, sanitizeSafePathSegment } from "./safe-path-segment.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
 import { registerTempPathForExit } from "./temp-cleanup.js";
@@ -121,8 +122,21 @@ function isNodeErrorWithCode(err: unknown, code: string): boolean {
   );
 }
 
-async function cleanupTempDir(dir: string, onCleanupError?: (error: unknown) => void) {
+async function cleanupTempDir(
+  dir: string,
+  identity: FileIdentityStat,
+  onCleanupError?: (error: unknown) => void,
+) {
   try {
+    const current = await lstat(dir).catch((error: unknown) => {
+      if (isNodeErrorWithCode(error, "ENOENT")) {
+        return undefined;
+      }
+      throw error;
+    });
+    if (!current || !sameFileIdentity(current, identity)) {
+      return;
+    }
     await rm(dir, { recursive: true, force: true });
   } catch (err) {
     if (!isNodeErrorWithCode(err, "ENOENT")) {
@@ -144,12 +158,13 @@ export async function tempFile(params: {
   const rootDir = resolveTempRoot(params.rootDir);
   const prefix = `${sanitizePrefix(params.prefix)}-`;
   const dir = await mkdtemp(path.join(rootDir, prefix));
-  const unregisterTempDir = registerTempPathForExit(dir, { recursive: true });
+  const identity = await lstat(dir);
+  const unregisterTempDir = registerTempPathForExit(dir, { recursive: true, identity });
   const file = (fileName?: string) =>
     path.join(dir, sanitizeTempFileName(fileName ?? params.fileName ?? "download.bin"));
   const cleanup = async () => {
     try {
-      await cleanupTempDir(dir, params.onCleanupError);
+      await cleanupTempDir(dir, identity, params.onCleanupError);
     } finally {
       unregisterTempDir();
     }

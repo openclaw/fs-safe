@@ -1,6 +1,7 @@
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import { ArchiveFormatError, ArchiveSecurityError } from "./archive-errors.js";
+import { formatErrorDetail } from "./error-detail.js";
 import {
   createArchiveOutputPathTracker,
   resolveArchiveOutputPath,
@@ -114,14 +115,14 @@ export async function extractNativeArchive(params: {
           }
           if (entry.kind === "sparse") {
             throw new ArchiveFormatError(
-              `GNU sparse archive entry is not supported: ${entry.path}`,
+              `GNU sparse archive entry is not supported: ${formatErrorDetail(entry.path)}`,
             );
           }
           if (kind === "symlink") {
             const label = params.kind === "zip" ? "zip" : "tar";
             throw new ArchiveSecurityError(
               "entry-link",
-              `${label} entry is a link: ${entry.path}`,
+              `${label} entry is a link: ${formatErrorDetail(entry.path)}`,
             );
           }
           if (!Number.isSafeInteger(entry.size) || entry.size < 0) {

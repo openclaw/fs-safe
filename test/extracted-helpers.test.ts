@@ -77,6 +77,16 @@ describe("install path helpers", () => {
     });
   });
 
+  it("returns an absolute install path for a relative base", () => {
+    expect(
+      resolveSafeInstallDir({
+        baseDir: "plugins",
+        id: "matrix",
+        invalidNameMessage: "invalid plugin name",
+      }),
+    ).toEqual({ ok: true, path: path.resolve("plugins", "matrix") });
+  });
+
   it("validates canonical paths under a base directory", async () => {
     const baseDir = await tempRoot("fs-safe-install-");
     const candidate = path.join(baseDir, "tools", "plugin");

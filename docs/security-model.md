@@ -78,6 +78,8 @@ When `hardlinks: "reject"` is set, reads stat the target and refuse if `nlink > 
 
 `resolve()`, `exists()`, `stat()`, and `list()` are explicitly advisory — they answer a question and return. To act on a path with operation-local identity checks, use `read()`, `open()`, `write()`, `create()`, `copyIn()`, `move()`, or `remove()`. The containment table below states which opens are kernel-atomic and which remain best-effort.
 
+A `root()` handle also remembers the canonical root directory identity. Calls fail with `path-mismatch` if that canonical pathname is replaced, including advisory inspection and walking calls, rather than following a replacement root into another tree.
+
 ### Denied mutations
 
 `denyMutations` is an opt-in application policy for `root()` mutation methods. It blocks exact absolute paths with `paths` and whole subtrees with `prefixes`, merging root defaults with per-call entries so a call cannot clear root-level denies. This is not an OS permission boundary: code with access to `node:fs`, a shell, or another process with the same filesystem privileges can bypass it.

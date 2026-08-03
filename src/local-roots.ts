@@ -2,7 +2,7 @@ import fsSync from "node:fs";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { expandHomePrefix, resolveUserPath } from "./home-dir.js";
-import { safeFileURLToPath } from "./local-file-access.js";
+import { isFileUrl, safeFileURLToPath } from "./local-file-access.js";
 import { isPathInside } from "./path.js";
 import { root, type HardlinkPolicy, type ReadResult, type SymlinkPolicy } from "./root.js";
 
@@ -34,7 +34,7 @@ export type ReadLocalFileFromRootsOptions = LocalRootsInputOptions & {
 };
 
 function resolveLocalPathInput(input: string, label: string): string {
-  if (input.startsWith("file://")) {
+  if (isFileUrl(input)) {
     try {
       return safeFileURLToPath(input);
     } catch {
@@ -53,7 +53,7 @@ function resolveLocalRootInput(input: string, label: string): string {
   if (!trimmed) {
     throw new FsSafeError("invalid-path", `${label} entry is required`);
   }
-  const resolved = trimmed.startsWith("file://")
+  const resolved = isFileUrl(trimmed)
     ? resolveLocalPathInput(trimmed, label)
     : expandHomePrefix(trimmed);
   if (resolved.includes("\0")) {
@@ -71,7 +71,9 @@ function isPathInsideRoot(candidate: string, rootDir: string): boolean {
 
 function resolveRootRealSync(rootDir: string): string | null {
   try {
-    const stat = fsSync.lstatSync(rootDir);
+    // Configured roots may themselves be symlinks. Follow only this trusted
+    // root entry, then use its canonical directory for containment checks.
+    const stat = fsSync.statSync(rootDir);
     if (!stat.isDirectory()) {
       return null;
     }
@@ -135,9 +137,9 @@ export function resolveLocalPathFromRootsSync(
 ): LocalRootsPathResult | null {
   const label = options.label ?? "local roots";
   const requestedPath = path.resolve(resolveLocalPathInput(options.filePath, "file path"));
+  const rootDirs = options.roots.map((rootEntry) => resolveLocalRootInput(rootEntry, label));
 
-  for (const rootEntry of options.roots) {
-    const rootDir = resolveLocalRootInput(rootEntry, label);
+  for (const rootDir of rootDirs) {
     const rootReal = resolveRootRealSync(rootDir);
     if (!rootReal) {
       continue;
@@ -168,9 +170,9 @@ export async function readLocalFileFromRoots(
 ): Promise<LocalRootsReadResult | null> {
   const label = options.label ?? "local roots";
   const requestedPath = path.resolve(resolveLocalPathInput(options.filePath, "file path"));
+  const rootDirs = options.roots.map((rootEntry) => resolveLocalRootInput(rootEntry, label));
 
-  for (const rootEntry of options.roots) {
-    const rootDir = resolveLocalRootInput(rootEntry, label);
+  for (const rootDir of rootDirs) {
     let scopedRoot: Awaited<ReturnType<typeof root>>;
     try {
       scopedRoot = await root(rootDir);
@@ -178,31 +180,32 @@ export async function readLocalFileFromRoots(
       continue;
     }
 
-    const relativePath = path.relative(scopedRoot.rootDir, requestedPath);
-    if (
-      !relativePath ||
-      relativePath === ".." ||
-      relativePath.startsWith(`..${path.sep}`) ||
-      path.isAbsolute(relativePath)
-    ) {
-      continue;
+    const readOptions: Parameters<typeof scopedRoot.read>[1] = {
+      hardlinks: options.hardlinks,
+      nonBlockingRead: options.nonBlockingRead,
+      symlinks: options.symlinks,
+    };
+    // Leave maxBytes absent when the caller omits it so Root's own default
+    // cap remains in force instead of being overwritten by undefined.
+    if (options.maxBytes !== undefined) {
+      readOptions.maxBytes = options.maxBytes;
     }
 
-    try {
-      const readOptions: Parameters<typeof scopedRoot.read>[1] = {
-        hardlinks: options.hardlinks,
-        nonBlockingRead: options.nonBlockingRead,
-        symlinks: options.symlinks,
-      };
-      // Leave maxBytes absent when the caller omits it so Root's own default
-      // cap remains in force instead of being overwritten by undefined.
-      if (options.maxBytes !== undefined) {
-        readOptions.maxBytes = options.maxBytes;
+    // A trusted root symlink has two valid spellings. Preserve the caller's
+    // lexical spelling when possible so Root.read() still enforces its
+    // symlink policy, while also accepting a path expressed below rootReal.
+    const relativePaths = [scopedRoot.rootDir, scopedRoot.rootReal]
+      .filter((rootPath, index, roots) => roots.indexOf(rootPath) === index)
+      .filter((rootPath) => isPathInside(rootPath, requestedPath))
+      .map((rootPath) => path.relative(rootPath, requestedPath))
+      .filter(Boolean);
+    for (const relativePath of relativePaths) {
+      try {
+        const result = await scopedRoot.read(relativePath, readOptions);
+        return { ...result, root: scopedRoot.rootReal };
+      } catch {
+        // Try the canonical spelling before moving to the next configured root.
       }
-      const result = await scopedRoot.read(relativePath, readOptions);
-      return { ...result, root: scopedRoot.rootReal };
-    } catch {
-      continue;
     }
   }
 

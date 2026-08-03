@@ -52,6 +52,10 @@ export function sanitizeUntrustedFileName(fileName: string, fallbackName: string
   base = suffixWindowsReservedDeviceName(base);
   if (base.length > 200) {
     base = base.slice(0, 200);
+    const trailingCodeUnit = base.charCodeAt(base.length - 1);
+    if (trailingCodeUnit >= 0xd800 && trailingCodeUnit <= 0xdbff) {
+      base = base.slice(0, -1);
+    }
   }
   return base;
 }

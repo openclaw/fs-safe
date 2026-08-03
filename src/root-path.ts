@@ -3,6 +3,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import {
+  assertNoNulPathInput,
   isNotFoundPathError,
   isPathInside,
   isPathRelativeEscape,
@@ -60,6 +61,7 @@ export type ResolvedRootPath = {
 export async function resolveRootPath(
   params: ResolveRootPathParams,
 ): Promise<ResolvedRootPath> {
+  assertValidRootPathInputs(params);
   const rootPath = path.resolve(params.rootPath);
   const absolutePath = path.resolve(params.absolutePath);
   const rootCanonicalPath = params.rootCanonicalPath
@@ -93,6 +95,7 @@ export async function resolveRootPath(
 }
 
 export function resolveRootPathSync(params: ResolveRootPathParams): ResolvedRootPath {
+  assertValidRootPathInputs(params);
   const rootPath = path.resolve(params.rootPath);
   const absolutePath = path.resolve(params.absolutePath);
   const rootCanonicalPath = params.rootCanonicalPath
@@ -123,6 +126,14 @@ export function resolveRootPathSync(params: ResolveRootPathParams): ResolvedRoot
     rootPath: context.rootPath,
     rootCanonicalPath: context.rootCanonicalPath,
   });
+}
+
+function assertValidRootPathInputs(params: ResolveRootPathParams): void {
+  assertNoNulPathInput(params.rootPath, "root path contains a NUL byte");
+  assertNoNulPathInput(params.absolutePath, "absolute path contains a NUL byte");
+  if (params.rootCanonicalPath !== undefined) {
+    assertNoNulPathInput(params.rootCanonicalPath, "canonical root path contains a NUL byte");
+  }
 }
 
 type LexicalTraversalState = {

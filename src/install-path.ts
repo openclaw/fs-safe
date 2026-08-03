@@ -54,7 +54,7 @@ export function resolveSafeInstallDir(params: {
   ) {
     return { ok: false, error: params.invalidNameMessage };
   }
-  return { ok: true, path: targetDir };
+  return { ok: true, path: resolvedTarget };
 }
 
 export async function assertCanonicalPathWithinBase(params: {

@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { itPosix } from "./helpers/vitest.js";
 import { readLocalFileFromRoots, resolveLocalPathFromRootsSync } from "../src/local-roots.js";
@@ -195,6 +196,75 @@ describe("local roots helpers", () => {
       });
 
       expect(result).toBeNull();
+    });
+  });
+
+  itPosix("canonicalizes configured symlink roots for sync resolution and async reads", async () => {
+    await withFixtureRoot(async ({ baseDir, uploadsDir }) => {
+      const rootAlias = path.join(baseDir, "uploads-alias");
+      const filePath = path.join(uploadsDir, "ok.txt");
+      await fs.writeFile(filePath, "ok", "utf8");
+      await fs.symlink(uploadsDir, rootAlias, "dir");
+      const canonicalFilePath = realpathSync(filePath);
+
+      expect(
+        resolveLocalPathFromRootsSync({
+          filePath: canonicalFilePath,
+          roots: [rootAlias],
+          label: "media roots",
+          requireFile: true,
+        }),
+      ).toEqual({ path: canonicalFilePath, root: realpathSync(uploadsDir) });
+
+      const read = await readLocalFileFromRoots({
+        filePath: canonicalFilePath,
+        roots: [rootAlias],
+        label: "media roots",
+      });
+      expect(read?.buffer.toString("utf8")).toBe("ok");
+      expect(read?.root).toBe(realpathSync(uploadsDir));
+    });
+  });
+
+  it("accepts case-insensitive file URL schemes for candidates and roots", async () => {
+    await withFixtureRoot(async ({ uploadsDir }) => {
+      const filePath = path.join(uploadsDir, "ok.txt");
+      await fs.writeFile(filePath, "ok", "utf8");
+      const upperFileUrl = pathToFileURL(filePath).href.replace(/^file:/u, "FILE:");
+      const upperRootUrl = pathToFileURL(uploadsDir).href.replace(/^file:/u, "FILE:");
+
+      expect(
+        resolveLocalPathFromRootsSync({
+          filePath: upperFileUrl,
+          roots: [upperRootUrl],
+          requireFile: true,
+        }),
+      ).toEqual({ path: realpathSync(filePath), root: realpathSync(uploadsDir) });
+      await expect(
+        readLocalFileFromRoots({ filePath: upperFileUrl, roots: [upperRootUrl] }),
+      ).resolves.toMatchObject({ buffer: Buffer.from("ok") });
+    });
+  });
+
+  it("validates every configured root before using an earlier match", async () => {
+    await withFixtureRoot(async ({ uploadsDir }) => {
+      const filePath = path.join(uploadsDir, "ok.txt");
+      await fs.writeFile(filePath, "ok", "utf8");
+
+      expect(() =>
+        resolveLocalPathFromRootsSync({
+          filePath,
+          roots: [uploadsDir, "relative-root"],
+          label: "media roots",
+        }),
+      ).toThrow(/media roots entries must be absolute/u);
+      await expect(
+        readLocalFileFromRoots({
+          filePath,
+          roots: [uploadsDir, "relative-root"],
+          label: "media roots",
+        }),
+      ).rejects.toThrow(/media roots entries must be absolute/u);
     });
   });
 

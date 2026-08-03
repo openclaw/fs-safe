@@ -25,7 +25,7 @@ In order:
 4. **Trim again.**
 5. If the result is empty, `"."`, or `".."`, return `fallbackName`.
 6. **Suffix Windows reserved basenames.** Compare the part before the first `.` case-insensitively with the Windows device-name set, including `CON`, `PRN`, `AUX`, `NUL`, `CLOCK$`, `CONIN$`, `CONOUT$`, `COM1..9`, `LPT1..9`, and their superscript `¹`, `²`, and `³` variants. Windows-ignored spaces and dots at the end of that basename do not disguise a device name. A match gains `_` before its extension, preserving the original case and extension on every platform.
-7. **Truncate.** If the cleaned segment is longer than 200 characters, take the first 200.
+7. **Truncate.** If the cleaned segment is longer than 200 UTF-16 code units, take up to the first 200 without splitting a valid Unicode surrogate pair.
 
 That's it. The function stays intentionally small: it removes traversal and
 the most obvious cross-platform device and character hazards, but it is not a

@@ -3,6 +3,11 @@ import { fileURLToPath, URL } from "node:url";
 import { normalizeLowercaseStringOrEmpty } from "./string-coerce.js";
 
 const ENCODED_FILE_URL_SEPARATOR_RE = /%(?:2f|5c)/i;
+const FILE_URL_PREFIX_RE = /^file:\/\//i;
+
+export function isFileUrl(input: string): boolean {
+  return FILE_URL_PREFIX_RE.test(input);
+}
 
 function isLocalFileUrlHost(hostname: string): boolean {
   const normalized = normalizeLowercaseStringOrEmpty(hostname);
@@ -79,7 +84,7 @@ export function basenameFromMediaSource(source?: string): string | undefined {
   if (!source) {
     return undefined;
   }
-  if (source.startsWith("file://")) {
+  if (isFileUrl(source)) {
     const filePath = trySafeFileURLToPath(source);
     return filePath ? path.basename(filePath) || undefined : undefined;
   }
