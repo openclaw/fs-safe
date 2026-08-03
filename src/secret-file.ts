@@ -109,7 +109,6 @@ function readSecretFileOutcomeSync(
     filePath: resolvedPath,
     rejectPathSymlink: options.rejectSymlink,
     rejectHardlinks: options.rejectHardlinks !== false,
-    maxBytes,
   });
   if (!opened.ok) {
     const error = normalizeSecretReadError(

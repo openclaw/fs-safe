@@ -163,7 +163,18 @@ export function formatPermissionRemediation(params: {
       env: params.env,
     });
   }
-  return `chmod ${params.posixMode.toString(8).padStart(3, "0")} ${params.targetPath}`;
+  const optionSeparator = params.targetPath.startsWith("-") ? "-- " : "";
+  return (
+    `chmod ${params.posixMode.toString(8).padStart(3, "0")} ${optionSeparator}` +
+    formatPosixShellArgument(params.targetPath)
+  );
+}
+
+function formatPosixShellArgument(value: string): string {
+  if (value && /^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) {
+    return value;
+  }
+  return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 export function modeBits(mode: number | null): number | null {

@@ -38,6 +38,10 @@ isWorldReadable(bits);
 isGroupReadable(bits);
 ```
 
+POSIX remediation strings shell-quote paths with whitespace or metacharacters
+and protect option-like paths with `--`, so they can be presented as commands
+without letting the inspected pathname add shell syntax.
+
 `inspectPathPermissions()` follows symlink targets for the effective mode but tells you whether the original path was a symlink. On POSIX it reports owner/group/world bits. On Windows it delegates to the ACL helpers below and also reports `ownerSid` plus `ownerTrusted` when ownership can be verified. `ownerTrusted` is true only for a local volume owned by the current user, LocalSystem, or built-in Administrators; remote filesystems fail closed. Secure reads and callers that protect credential-bearing execution require `ownerTrusted === true`.
 
 ## Advanced Windows ACL helpers
