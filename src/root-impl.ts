@@ -1087,25 +1087,25 @@ async function writeFileInRoot(
   root: RootContext,
   params: RootWriteOptions & { relativePath: string; data: string | Buffer },
 ): Promise<void> {
-  if (
-    process.platform === "win32" &&
-    (params.renameIdentity === "verify-content-with-lock" || !getNativeBinding())
-  ) {
-    await serializePathWrite(rootWriteQueueKey(root, params.relativePath), async () => {
+  await serializePathWrite(rootWriteQueueKey(root, params.relativePath), async () => {
+    if (
+      process.platform === "win32" &&
+      (params.renameIdentity === "verify-content-with-lock" || !getNativeBinding())
+    ) {
       await writeFileFallback(root, params);
+      return;
+    }
+
+    const pinned = await resolvePinnedWriteTargetInRoot(
+      root,
+      params.relativePath,
+      params.mode,
+      params.denyMutations,
+    );
+
+    await serializePathWrite(pinned.targetPath, async () => {
+      await commitPinnedWriteInRoot(root, pinned, params);
     });
-    return;
-  }
-
-  const pinned = await resolvePinnedWriteTargetInRoot(
-    root,
-    params.relativePath,
-    params.mode,
-    params.denyMutations,
-  );
-
-  await serializePathWrite(pinned.targetPath, async () => {
-    await commitPinnedWriteInRoot(root, pinned, params);
   });
 }
 
@@ -1179,36 +1179,38 @@ async function copyFileInRoot(
   }
 
   try {
-    const pinned = await resolvePinnedWriteTargetInRoot(
-      root,
-      params.relativePath,
-      params.mode,
-      params.denyMutations,
-    );
-    await serializePathWrite(pinned.targetPath, async () => {
-      await assertCopySourceCurrent(source);
-      let identity: FileIdentityStat;
-      try {
-        identity = await runPinnedWriteHelper({
-          rootPath: pinned.rootReal,
-          relativeParentPath: pinned.relativeParentPath,
-          basename: pinned.basename,
-          mkdir: params.mkdir !== false,
-          mode: pinned.mode,
-          overwrite: true,
-          maxBytes: params.maxBytes,
-          input: { kind: "stream", stream: source.handle.createReadStream() },
-          rootIdentity: root.rootIdentity,
-        });
-      } catch (error) {
-        throw normalizePinnedWriteError(error);
-      }
-      try {
-        await assertCopySourcePathCurrent(source);
-      } catch (error) {
-        await removePathIfIdentityUnchanged(pinned.targetPath, identity).catch(() => undefined);
-        throw error;
-      }
+    await serializePathWrite(rootWriteQueueKey(root, params.relativePath), async () => {
+      const pinned = await resolvePinnedWriteTargetInRoot(
+        root,
+        params.relativePath,
+        params.mode,
+        params.denyMutations,
+      );
+      await serializePathWrite(pinned.targetPath, async () => {
+        await assertCopySourceCurrent(source);
+        let identity: FileIdentityStat;
+        try {
+          identity = await runPinnedWriteHelper({
+            rootPath: pinned.rootReal,
+            relativeParentPath: pinned.relativeParentPath,
+            basename: pinned.basename,
+            mkdir: params.mkdir !== false,
+            mode: pinned.mode,
+            overwrite: true,
+            maxBytes: params.maxBytes,
+            input: { kind: "stream", stream: source.handle.createReadStream() },
+            rootIdentity: root.rootIdentity,
+          });
+        } catch (error) {
+          throw normalizePinnedWriteError(error);
+        }
+        try {
+          await assertCopySourcePathCurrent(source);
+        } catch (error) {
+          await removePathIfIdentityUnchanged(pinned.targetPath, identity).catch(() => undefined);
+          throw error;
+        }
+      });
     });
   } finally {
     await source.handle.close().catch(() => {});

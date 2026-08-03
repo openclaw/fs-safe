@@ -29,6 +29,46 @@ afterEach(async () => {
 });
 
 describe("path stress regressions", () => {
+  it("serializes same-target writes before resolving the existing target", async () => {
+    const rootDir = await tempRoot("fs-safe-write-resolution-queue-");
+    const scoped = await openRoot(rootDir);
+    const targetPath = path.join(scoped.rootReal, "state.txt");
+    await scoped.write("state.txt", "initial");
+
+    let activeTargetOpens = 0;
+    let maxActiveTargetOpens = 0;
+    let heldFirstOpen = false;
+    let signalFirstOpen!: () => void;
+    const firstOpen = new Promise<void>((resolve) => {
+      signalFirstOpen = resolve;
+    });
+    __setFsSafeTestHooksForTest({
+      async afterOpen(filePath) {
+        if (filePath !== targetPath) {
+          return;
+        }
+        activeTargetOpens += 1;
+        maxActiveTargetOpens = Math.max(maxActiveTargetOpens, activeTargetOpens);
+        try {
+          if (!heldFirstOpen) {
+            heldFirstOpen = true;
+            signalFirstOpen();
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
+        } finally {
+          activeTargetOpens -= 1;
+        }
+      },
+    });
+
+    const firstWrite = scoped.write("state.txt", "first");
+    await firstOpen;
+    const secondWrite = scoped.write("state.txt", "second");
+    await expect(Promise.all([firstWrite, secondWrite])).resolves.toEqual([undefined, undefined]);
+    expect(maxActiveTargetOpens).toBe(1);
+    await expect(scoped.readText("state.txt")).resolves.toBe("second");
+  });
+
   itPosix("rejects stable intermediate symlinks unless following is explicit", async () => {
     const rootDir = await tempRoot("fs-safe-intermediate-symlink-");
     await fs.mkdir(path.join(rootDir, "real"));

@@ -4,6 +4,7 @@
 
 ### Security and Correctness
 
+- Serialize same-target `Root.write()` and `Root.copyIn()` calls before inspecting the existing destination, so ordinary overlapping writers do not race the mode-preservation open against another writer's atomic replacement.
 - Serialize same-target directory replacements, confine their randomized backup names to the target parent, retain identity-bound exit cleanup after transient atomic/output/move staging cleanup failures, and refuse to publish EXDEV move copies when descriptor-bound mode application fails.
 - Stream native pinned-write inputs only after create-only collision checks, avoiding backend-dependent eager buffering, and preserve explicit zero file modes instead of replacing them with `0o600`.
 - Verify synchronous file-store publication by inode after rename and avoid pathname-based post-publication mode changes, so a raced symlink or hardlink swap fails closed without changing an unrelated target's permissions.
