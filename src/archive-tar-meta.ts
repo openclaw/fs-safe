@@ -26,7 +26,13 @@ class TarMetadataMeter extends Transform {
   private parseSize(): number {
     const field = this.block.subarray(124, 136);
     if ((field[0] ?? 0) & 0x80) {
-      const value = field.readBigUInt64BE(4);
+      if (field[0] !== 0x80) {
+        throw this.invalid("base-256 size is negative or malformed");
+      }
+      let value = 0n;
+      for (const byte of field.subarray(1)) {
+        value = (value << 8n) | BigInt(byte);
+      }
       if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
         throw this.invalid("base-256 size exceeds the safe integer range");
       }
