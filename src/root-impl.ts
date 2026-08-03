@@ -912,7 +912,7 @@ async function openWritableFileInRoot(
   try {
     const stat = await handle.stat();
     if (!stat.isFile()) {
-      throw new FsSafeError("invalid-path", "path is not a regular file under root");
+      throw new FsSafeError("not-file", "path is not a regular file under root");
     }
     if (stat.nlink > 1) {
       throw new FsSafeError("hardlink", "hardlinked path not allowed");
