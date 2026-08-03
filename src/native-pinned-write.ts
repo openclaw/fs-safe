@@ -21,26 +21,26 @@ function assertWithinMaxBytes(bytes: number, maxBytes: number | undefined): void
   }
 }
 
-async function inputToBuffer(
+async function writeNativeInput(
+  fd: number,
   input: PinnedWriteInput,
   maxBytes: number | undefined,
-): Promise<Buffer> {
+): Promise<void> {
   if (input.kind === "buffer") {
     const data = typeof input.data === "string"
       ? Buffer.from(input.data, input.encoding ?? "utf8")
       : Buffer.from(input.data);
     assertWithinMaxBytes(data.byteLength, maxBytes);
-    return data;
+    writeNativeFd(fd, data);
+    return;
   }
-  const chunks: Buffer[] = [];
   let bytes = 0;
   for await (const chunk of input.stream) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
     bytes += buffer.byteLength;
     assertWithinMaxBytes(bytes, maxBytes);
-    chunks.push(buffer);
+    writeNativeFd(fd, buffer);
   }
-  return Buffer.concat(chunks, bytes);
 }
 
 function nativeOpenFlags(flags: number): number {
@@ -63,7 +63,6 @@ export async function runPinnedWriteNative(
   binding: NativeBinding,
   params: PinnedWriteParams,
 ): Promise<FileIdentityStat> {
-  const data = await inputToBuffer(params.input, params.maxBytes);
   const root = await fs.open(
     params.rootPath,
     fsSync.constants.O_RDONLY |
@@ -118,10 +117,13 @@ export async function runPinnedWriteNative(
         fsSync.constants.O_WRONLY | fsSync.constants.O_CREAT | fsSync.constants.O_EXCL,
       ),
     ).fd;
-    fsSync.fchmodSync(tempFd, params.mode || 0o600);
-    writeNativeFd(tempFd, data);
-    syncNativeFileBestEffort(tempFd);
     tempIdentity = fsSync.fstatSync(tempFd);
+    // Creation is requested at 0600 in the binding, but a restrictive umask
+    // can remove owner access. Keep the unpublished inode private and
+    // reopenable until the published name has been identity-fenced.
+    fsSync.fchmodSync(tempFd, 0o600);
+    await writeNativeInput(tempFd, params.input, params.maxBytes);
+    syncNativeFileBestEffort(tempFd);
     if (params.overwrite === false) {
       binding.renameNoReplace(parentFd, tempName, parentFd, params.basename);
     } else {
@@ -136,6 +138,24 @@ export async function runPinnedWriteNative(
     const targetIdentity = binding.fstatIdentity(targetFd);
     if (!targetIdentity.isFile || !sameNativeIdentity(tempIdentity, targetIdentity)) {
       throw new FsSafeError("path-mismatch", "native write target changed after rename");
+    }
+    // Native exclusive creation starts at 0600. Apply the requested mode only
+    // after reopening and fencing the published name, both so mode 000 stays
+    // verifiable and so broader modes are never exposed before that fence.
+    try {
+      fsSync.fchmodSync(targetFd, params.mode);
+      syncNativeFileBestEffort(targetFd);
+    } catch (error) {
+      fsSync.closeSync(targetFd);
+      targetFd = undefined;
+      removeNativeCreatedFileIfStillPinned({
+        binding,
+        parentPath,
+        parentFd,
+        basename: params.basename,
+        created: tempIdentity,
+      });
+      throw error;
     }
     syncNativeFileBestEffort(parentFd);
     return { dev: targetIdentity.dev, ino: targetIdentity.ino };

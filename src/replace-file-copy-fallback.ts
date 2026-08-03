@@ -373,7 +373,6 @@ export async function copyFallbackReplace(params: {
     await destHandle?.close().catch(() => undefined);
     await sourceHandle.close().catch(() => undefined);
   }
-  await params.fsModule.unlink(params.src).catch(() => undefined);
 }
 
 export function copyFallbackReplaceSync(params: {
@@ -461,10 +460,5 @@ export function copyFallbackReplaceSync(params: {
     } catch {
       // Best-effort close after fallback replacement.
     }
-  }
-  try {
-    params.fsModule.unlinkSync(params.src);
-  } catch {
-    // Best-effort cleanup after fallback replacement.
   }
 }

@@ -5,6 +5,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { guardedRename } from "./guarded-mutation.js";
+import { registerTempPathForExit } from "./temp-cleanup.js";
 
 export type MovePathWithCopyFallbackOptions = {
   from: string;
@@ -246,7 +247,7 @@ async function copyRegularFilePinned(params: {
       if (!sameIdentity(params.identity, entryIdentity(finalSourceStat))) {
         throw sourceChangedError(params.from);
       }
-      await destinationHandle.chmod(modeBits(params.mode)).catch(() => undefined);
+      await destinationHandle.chmod(modeBits(params.mode));
     } finally {
       await destinationHandle.close();
     }
@@ -402,18 +403,38 @@ export async function movePathWithCopyFallback(
   await assertCopyDestinationOutsideSource(sourcePath, targetPath);
   const targetDir = path.dirname(targetPath);
   const staged = path.join(targetDir, `.fs-safe-move-${process.pid}-${randomUUID()}.tmp`);
+  const unregisterStaged = registerTempPathForExit(staged, { recursive: true });
+  let stagedCommitted = false;
   try {
     const manifest = await copyEntryWithManifest(sourcePath, staged, {
       sourceHardlinks: options.sourceHardlinks ?? "allow",
       ...(rejectHardlinks ? { budget: { discovered: 1 } } : {}),
     });
+    unregisterStaged.setIdentity(await fs.lstat(staged));
     await assertCopyDestinationOutsideSource(sourcePath, targetPath);
     await guardedRename({ from: staged, to: targetPath });
+    stagedCommitted = true;
+    unregisterStaged();
     const cleanupResult = await cleanupCopiedEntry(sourcePath, manifest);
     if (cleanupResult === "stale") {
       throw sourceChangedError(sourcePath);
     }
   } finally {
-    await fs.rm(staged, { recursive: true, force: true }).catch(() => undefined);
+    if (!stagedCommitted) {
+      try {
+        const stagedIdentity = await fs.lstat(staged);
+        if (!stagedIdentity.isSymbolicLink()) unregisterStaged.setIdentity(stagedIdentity);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          unregisterStaged();
+        }
+      }
+      try {
+        await fs.rm(staged, { recursive: true, force: true });
+        unregisterStaged();
+      } catch {
+        // Keep the identity-bound exit cleanup registered for a later retry.
+      }
+    }
   }
 }

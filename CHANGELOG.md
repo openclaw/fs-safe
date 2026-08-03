@@ -4,6 +4,12 @@
 
 ### Security and Correctness
 
+- Serialize same-target directory replacements, confine their randomized backup names to the target parent, retain identity-bound exit cleanup after transient atomic/output/move staging cleanup failures, and refuse to publish EXDEV move copies when descriptor-bound mode application fails.
+- Stream native pinned-write inputs only after create-only collision checks, avoiding backend-dependent eager buffering, and preserve explicit zero file modes instead of replacing them with `0o600`.
+- Verify synchronous file-store publication by inode after rename and avoid pathname-based post-publication mode changes, so a raced symlink or hardlink swap fails closed without changing an unrelated target's permissions.
+- Track live JSON-store mutation ownership separately from inherited async context, so continuations scheduled by an update can mutate the store after that update finishes while genuinely nested mutations remain rejected.
+- Serialize private secret and file-store publications by canonical destination, preventing ordinary overlapping writers from tripping the fallback's post-rename identity fence while retaining atomic last-writer-wins replacement.
+- Preserve replacement sidecars when asynchronous lock setup fails, remove an identity-matching `Root`-backed sidecar when its post-create open fails, and clean up synchronous sidecars on normal process exit.
 - Pin each `Root` handle to the canonical root directory identity so root-path replacement cannot expose outside metadata through `stat()`, `exists()`, `list()`, or `walk()`, and preserve a swapped-in writable leaf when failed-open cleanup no longer owns its inode.
 - Fail closed on invalid walk and absolute-path policies, keep standalone walk budgets bounded at runtime, reject final symlinks from absolute writable paths, and observe aborts that arrive during directory listing.
 - Canonicalize configured local-root symlinks, recognize case-insensitive `file:` URL schemes (including unsafe device targets), validate every configured root, confine secure-temp fallback prefixes to one segment, preserve replaced temp-file directories during cleanup, return absolute install paths, and avoid splitting Unicode surrogate pairs while truncating filenames.

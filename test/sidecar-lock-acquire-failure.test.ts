@@ -34,6 +34,33 @@ describe("asynchronous sidecar lock acquisition failures", () => {
     expect(manager.heldEntries()).toEqual([]);
   });
 
+  it("preserves a replacement lock when payload persistence fails", async () => {
+    configureFsSafeNative({ mode: "off" });
+    const directory = await tempRoot("fs-safe-sidecar-write-failure-swap-");
+    const targetPath = path.join(directory, "state.json");
+    const lockPath = `${targetPath}.lock`;
+    const displacedPath = `${lockPath}.displaced`;
+    const realOpen = fs.open.bind(fs);
+    const failure = Object.assign(new Error("lock write failed"), { code: "EIO" });
+    vi.spyOn(fs, "open").mockImplementationOnce(async (...args) => {
+      const handle = await realOpen(...args);
+      vi.spyOn(handle, "writeFile").mockImplementationOnce(async () => {
+        await fs.rename(lockPath, displacedPath);
+        await fs.writeFile(lockPath, "replacement");
+        throw failure;
+      });
+      return handle;
+    });
+
+    const manager = createSidecarLockManager(
+      `write-failure-swap-${Date.now()}-${Math.random()}`,
+    );
+    await expect(manager.acquire({ targetPath, payload: async () => ({ owner: "one" }) }))
+      .rejects.toBe(failure);
+    await expect(fs.readFile(lockPath, "utf8")).resolves.toBe("replacement");
+    expect(manager.heldEntries()).toEqual([]);
+  });
+
   it("falls back to a resolved target when parent realpath lookup fails", async () => {
     configureFsSafeNative({ mode: "off" });
     const directory = await tempRoot("fs-safe-sidecar-realpath-failure-");
@@ -69,6 +96,59 @@ describe("asynchronous sidecar lock acquisition failures", () => {
       payload: async () => ({ owner: "second" }),
     })).rejects.toMatchObject({ code: "file_lock_timeout" });
     await first.release();
+  });
+
+  it("removes a lockRoot sidecar if opening the created lock fails", async () => {
+    const directory = await tempRoot("fs-safe-sidecar-root-open-failure-");
+    const lockDirectory = path.join(directory, "locks");
+    await fs.mkdir(lockDirectory);
+    const lockRoot = await root(lockDirectory);
+    const targetPath = path.join(directory, "state.json");
+    const lockPath = path.join(lockDirectory, "state.lock");
+    const failure = Object.assign(new Error("lock open failed"), { code: "EIO" });
+    vi.spyOn(lockRoot, "open").mockRejectedValueOnce(failure);
+
+    const manager = createSidecarLockManager(`root-open-failure-${Date.now()}-${Math.random()}`);
+    await expect(
+      manager.acquire({
+        targetPath,
+        lockPath,
+        lockRoot,
+        payload: async () => ({ owner: "one" }),
+      }),
+    ).rejects.toBe(failure);
+    await expect(fs.access(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(manager.heldEntries()).toEqual([]);
+  });
+
+  it("preserves a replacement lockRoot sidecar if opening the created lock fails", async () => {
+    const directory = await tempRoot("fs-safe-sidecar-root-open-failure-swap-");
+    const lockDirectory = path.join(directory, "locks");
+    await fs.mkdir(lockDirectory);
+    const lockRoot = await root(lockDirectory);
+    const targetPath = path.join(directory, "state.json");
+    const lockPath = path.join(lockDirectory, "state.lock");
+    const displacedPath = path.join(lockDirectory, "state.displaced");
+    const failure = Object.assign(new Error("lock open failed"), { code: "EIO" });
+    vi.spyOn(lockRoot, "open").mockImplementationOnce(async () => {
+      await fs.rename(lockPath, displacedPath);
+      await fs.writeFile(lockPath, "replacement");
+      throw failure;
+    });
+
+    const manager = createSidecarLockManager(
+      `root-open-failure-swap-${Date.now()}-${Math.random()}`,
+    );
+    await expect(
+      manager.acquire({
+        targetPath,
+        lockPath,
+        lockRoot,
+        payload: async () => ({ owner: "one" }),
+      }),
+    ).rejects.toBe(failure);
+    await expect(fs.readFile(lockPath, "utf8")).resolves.toBe("replacement");
+    expect(manager.heldEntries()).toEqual([]);
   });
 
   it("releases a newly-created lock if reclaim-guard cleanup cannot complete", async () => {

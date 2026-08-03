@@ -2,6 +2,7 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { expectFsSafeError } from "./helpers/security.js";
 import { itWin32 } from "./helpers/vitest.js";
@@ -138,6 +139,123 @@ describe.runIf(native)("native filesystem primitives", () => {
       }),
     ).rejects.toMatchObject({ code: "EEXIST" });
   });
+
+  it.each(["off", "require"] as const)(
+    "rejects a create-only collision before consuming the input stream in %s mode",
+    async (mode) => {
+      if (mode === "require") {
+        __setNativeLoaderForTest(() => native!);
+      }
+      configureFsSafeNative({ mode });
+      const directory = await fs.mkdtemp(
+        path.join(os.tmpdir(), `fs-safe-${mode}-collision-stream-`),
+      );
+      roots.push(directory);
+      await fs.writeFile(path.join(directory, "value"), "original");
+      let consumed = false;
+      const stream = Readable.from((async function* () {
+        consumed = true;
+        yield "replacement";
+      })());
+
+      await expect(
+        runPinnedWriteHelper({
+          rootPath: directory,
+          relativeParentPath: "",
+          basename: "value",
+          mkdir: false,
+          mode: 0o600,
+          overwrite: false,
+          input: { kind: "stream", stream },
+        }),
+      ).rejects.toMatchObject({ code: "EEXIST" });
+      expect(consumed).toBe(false);
+      await expect(fs.readFile(path.join(directory, "value"), "utf8")).resolves.toBe(
+        "original",
+      );
+    },
+  );
+
+  it.runIf(process.platform !== "win32").each(["off", "require"] as const)(
+    "preserves an explicit zero file mode in %s mode",
+    async (mode) => {
+      if (mode === "require") {
+        __setNativeLoaderForTest(() => native!);
+      }
+      configureFsSafeNative({ mode });
+      const directory = await fs.mkdtemp(path.join(os.tmpdir(), `fs-safe-${mode}-zero-mode-`));
+      roots.push(directory);
+
+      await runPinnedWriteHelper({
+        rootPath: directory,
+        relativeParentPath: "",
+        basename: "value",
+        mkdir: false,
+        mode: 0o000,
+        overwrite: false,
+        input: { kind: "buffer", data: "private" },
+      });
+
+      expect((await fs.stat(path.join(directory, "value"))).mode & 0o777).toBe(0o000);
+    },
+  );
+
+  it.each(["off", "require"] as const)(
+    "removes partial output when a streamed write exceeds its limit in %s mode",
+    async (mode) => {
+      if (mode === "require") {
+        __setNativeLoaderForTest(() => native!);
+      }
+      configureFsSafeNative({ mode });
+      const directory = await fs.mkdtemp(path.join(os.tmpdir(), `fs-safe-${mode}-stream-limit-`));
+      roots.push(directory);
+      const stream = Readable.from([Buffer.from("12"), Buffer.from("34")]);
+
+      await expect(
+        runPinnedWriteHelper({
+          rootPath: directory,
+          relativeParentPath: "",
+          basename: "value",
+          mkdir: false,
+          mode: 0o600,
+          maxBytes: 3,
+          overwrite: false,
+          input: { kind: "stream", stream },
+        }),
+      ).rejects.toMatchObject({ code: "too-large" });
+      await expect(fs.readdir(directory)).resolves.toEqual([]);
+    },
+  );
+
+  it.each(["off", "require"] as const)(
+    "allows exactly one of many concurrent create-only writes in %s mode",
+    async (mode) => {
+      if (mode === "require") {
+        __setNativeLoaderForTest(() => native!);
+      }
+      configureFsSafeNative({ mode });
+      const directory = await fs.mkdtemp(path.join(os.tmpdir(), `fs-safe-${mode}-write-race-`));
+      roots.push(directory);
+      const attempts = Array.from({ length: 32 }, (_, index) =>
+        runPinnedWriteHelper({
+          rootPath: directory,
+          relativeParentPath: "",
+          basename: "winner",
+          mkdir: false,
+          mode: 0o600,
+          overwrite: false,
+          input: { kind: "buffer", data: String(index) },
+        }),
+      );
+
+      const results = await Promise.allSettled(attempts);
+      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      expect(results.filter((result) => result.status === "rejected")).toHaveLength(31);
+      expect(Number(await fs.readFile(path.join(directory, "winner"), "utf8"))).toSatisfy(
+        (value: number) => Number.isInteger(value) && value >= 0 && value < attempts.length,
+      );
+    },
+  );
 
   it("uses the native transaction for root-level pinned writes", async () => {
     __setNativeLoaderForTest(() => native!);

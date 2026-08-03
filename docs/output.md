@@ -76,7 +76,9 @@ and size-limit violations, applies `mode`, fsyncs it, and atomically renames it
 over the target. Existing files and symlink entries are replaced without
 following their contents or referents. The parent identity is guarded across
 the operation and the parent directory is synchronized best-effort after
-rename.
+rename. If an error leaves the sibling temp in place and immediate cleanup
+fails, its verified identity remains registered for a best-effort process-exit
+cleanup retry.
 
 ## Why not pass the final path to the library?
 
