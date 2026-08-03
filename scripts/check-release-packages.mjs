@@ -19,6 +19,9 @@ const outputDir = resolve(outputIndex >= 0 ? process.argv[outputIndex + 1] : "re
 const allowHostOnly = process.argv.includes("--allow-host-only");
 mkdirSync(outputDir, { recursive: true });
 const npmCli = resolveNpmCli();
+const npmEnv = Object.fromEntries(
+  Object.entries(process.env).filter(([key]) => !key.toLowerCase().startsWith("npm_config_")),
+);
 
 function resolveNpmCli() {
   const candidates = [
@@ -41,7 +44,10 @@ function resolveNpmCli() {
 }
 
 function runNpm(args, options) {
-  return execFileSync(process.execPath, [npmCli, ...args], options);
+  return execFileSync(process.execPath, [npmCli, ...args], {
+    ...options,
+    env: npmEnv,
+  });
 }
 
 const pkg = JSON.parse(readFileSync("package.json", "utf8"));

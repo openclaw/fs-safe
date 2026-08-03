@@ -55,6 +55,7 @@
 
 ### Docs and Tooling
 
+- Include the README banner in the npm tarball and require it during pack checks so the published README does not reference a missing package asset; sanitize pnpm-only npm configuration from package-smoke subprocesses so the documented release check stays warning-free on newer npm versions.
 - Audit every public export and documented default against generated declarations and real filesystem behavior, add executable documentation-contract coverage, and correct stale examples and security guarantees across root writes, local roots, shared types, paths, temp roots, archives, errors, and filename portability.
 
 - Create GitHub Releases as drafts before npm publication, then attach immutable verification proof and promote them only after the published package passes the shared registry verifier, avoiding stranded releases during registry propagation incidents (#81).
