@@ -219,7 +219,7 @@ describe("sync and async public contracts", () => {
     }
   });
 
-  it("does not treat a non-directory ancestor as an allowed missing suffix", async () => {
+  it("reports a non-directory ancestor as not-file instead of an allowed missing suffix", async () => {
     const root = await tempRoot("fs-safe-symlink-parent-nondirectory-");
     const filePath = path.join(root, "file");
     const childPath = path.join(filePath, "child");
@@ -232,7 +232,7 @@ describe("sync and async public contracts", () => {
       assertNoSymlinkParentsSync({ rootDir: root, targetPath: childPath }),
     );
 
-    expect(asyncError).toMatchObject({ code: "ENOTDIR" });
-    expect(syncError).toMatchObject({ code: "ENOTDIR" });
+    expectFsSafeCode(asyncError, "not-file");
+    expectFsSafeCode(syncError, "not-file");
   });
 });

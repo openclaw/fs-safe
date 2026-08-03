@@ -10,7 +10,7 @@
 
 - Report filesystem I/O failures from secret, `FileStore`, and temp-workspace twin readers as the new operational `read-failed` code with the original error in `cause`, replacing synchronous secret `invalid-path`, asynchronous secret and synchronous store `path-mismatch`, and raw Node errors; consumers matching the old wrapper or `EIO`-style top-level code should match `read-failed` and inspect `cause.code` instead.
 - Preserve semantic path and validation codes in synchronous `FileStore` and temp-workspace reads: missing temp leaves now report `not-found`, stable directories report `not-file`, and hardlinks and symlinks report `hardlink` and `symlink`, replacing `path-mismatch` and fabricated raw `ENOENT` respectively to match their asynchronous twins; consumers treating either old result as absence or identity drift should match the specific path-state code instead.
-- Preserve `ENOTDIR` from asynchronous `assertNoSymlinkParents()` when an existing file is followed by a child segment, replacing the previous success under default `allowMissing` and matching the synchronous helper; callers relying on that acceptance should ensure every existing prefix component is a directory or handle `ENOTDIR`.
+- Report an existing non-directory ancestor as `not-file` from both `assertNoSymlinkParents()` variants, replacing asynchronous success and the synchronous helper's platform-dependent success or raw `ENOTDIR` under default `allowMissing`; callers relying on that acceptance should ensure every existing prefix component is a directory or handle `not-file`.
 
 ## 0.5.2 - 2026-08-02
 

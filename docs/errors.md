@@ -109,7 +109,7 @@ type FsSafeErrorCode =
 | `insecure-permissions` | A secure file or path permission check found a mode/ACL that allows broader access than requested. | File or directory is group/world writable/readable; Windows ACL grants broad read. |
 | `invalid-path` | Input was empty, contained NUL, was an unparseable URL, or otherwise unusable. | Caller didn't validate input; input was a network path on Windows, a drive-relative segment in a portable relative path or store key, or a leading drive-relative spelling such as `C:name` used as a Root destination. Existing-object Root lookups retain legal POSIX drive-like names. |
 | `not-empty` | `remove()` on a non-empty directory. | Use `replaceDirectoryAtomic` or remove children first. |
-| `not-file` | Read or copy targeted a non-regular file. | Target was a directory, FIFO, socket, device. |
+| `not-file` | Read or copy targeted a non-regular file, or a path walk found a non-directory ancestor. | Target was a directory, FIFO, socket, device, or an existing file was followed by another segment. |
 | `not-found` | The target does not exist (or its parent does not, with `mkdir: false`). | Typical missing-file case. |
 | `not-owned` | A secure file owner check failed. | File is owned by another UID. |
 | `not-removable` | `remove()` couldn't `unlink`/`rmdir` for a reason other than non-empty. | Permissions, device busy, immutable bit. |

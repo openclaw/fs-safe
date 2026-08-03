@@ -83,9 +83,10 @@ try {
 ```
 
 For the symlink-parent guards, `allowMissing` defaults to `true` and permits the
-walk to stop only at an actually absent (`ENOENT`) suffix. It does not suppress
-`ENOTDIR` when an existing non-directory component is followed by another
-segment; the async and sync helpers both preserve that filesystem error.
+walk to stop only at an actually absent suffix. When an existing non-directory
+component is followed by another segment, both helpers throw
+`FsSafeError("not-file")` before the platform can expose that state as POSIX
+`ENOTDIR` or Windows `ENOENT`.
 
 ### Local roots and file URLs
 

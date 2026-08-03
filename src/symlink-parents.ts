@@ -1,6 +1,7 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { FsSafeError } from "./errors.js";
 import { hasNodeErrorCode, isPathRelativeEscape } from "./path.js";
 
 export type AssertNoSymlinkParentsOptions = {
@@ -44,7 +45,7 @@ export async function assertNoSymlinkParents(
     return;
   }
   let current = walk.root;
-  for (const segment of walk.segments) {
+  for (const [index, segment] of walk.segments.entries()) {
     current = path.join(current, segment);
     try {
       const stat = await fs.lstat(current);
@@ -54,8 +55,11 @@ export async function assertNoSymlinkParents(
         }
         throw new Error(formatUnsafePath(params, current));
       }
-      if (params.requireDirectories && !stat.isDirectory()) {
-        throw new Error(`${params.messagePrefix ?? "Path"} must traverse directories: ${current}`);
+      if ((params.requireDirectories || index < walk.segments.length - 1) && !stat.isDirectory()) {
+        throw new FsSafeError(
+          "not-file",
+          `${params.messagePrefix ?? "Path"} must traverse directories: ${current}`,
+        );
       }
     } catch (err) {
       if (hasNodeErrorCode(err, "ENOENT") && params.allowMissing !== false) {
@@ -74,7 +78,7 @@ export function assertNoSymlinkParentsSync(
     return;
   }
   let current = walk.root;
-  for (const segment of walk.segments) {
+  for (const [index, segment] of walk.segments.entries()) {
     current = path.join(current, segment);
     try {
       const stat = fsSync.lstatSync(current);
@@ -84,8 +88,11 @@ export function assertNoSymlinkParentsSync(
         }
         throw new Error(formatUnsafePath(params, current));
       }
-      if (params.requireDirectories && !stat.isDirectory()) {
-        throw new Error(`${params.messagePrefix ?? "Path"} must traverse directories: ${current}`);
+      if ((params.requireDirectories || index < walk.segments.length - 1) && !stat.isDirectory()) {
+        throw new FsSafeError(
+          "not-file",
+          `${params.messagePrefix ?? "Path"} must traverse directories: ${current}`,
+        );
       }
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT" && params.allowMissing !== false) {
