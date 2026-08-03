@@ -1,6 +1,6 @@
 [package]
 name = "fs-safe-native"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/openclaw/fs-safe"

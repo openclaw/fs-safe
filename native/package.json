@@ -1,6 +1,6 @@
 {
   "name": "@openclaw/fs-safe-native-build",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Private build workspace for the native bindings bundled by @openclaw/fs-safe.",
   "private": true,
   "license": "MIT",

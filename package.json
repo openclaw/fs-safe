@@ -1,6 +1,6 @@
 {
   "name": "@openclaw/fs-safe",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Capability-style filesystem roots for Node.js apps that handle untrusted relative paths.",
   "keywords": [
     "filesystem",
