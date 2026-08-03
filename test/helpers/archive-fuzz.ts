@@ -2,7 +2,9 @@ import JSZip from "jszip";
 
 export type TarSizeEncoding =
   | "octal"
+  | "octal-max"
   | "base256"
+  | "base256-u64-max"
   | "base256-high-bits"
   | "base256-negative"
   | "invalid-octal";
@@ -43,9 +45,14 @@ export function tarBytes(params: {
 
   if (encoding === "octal") {
     writeOctal(header, 124, 12, declaredSize);
+  } else if (encoding === "octal-max") {
+    writeString(header, 124, 12, "77777777777\0");
   } else if (encoding === "base256") {
     header[124] = 0x80;
     header.writeBigUInt64BE(BigInt(declaredSize), 128);
+  } else if (encoding === "base256-u64-max") {
+    header[124] = 0x80;
+    header.fill(0xff, 128, 136);
   } else if (encoding === "base256-high-bits") {
     header[124] = 0x80;
     header[125] = 1;

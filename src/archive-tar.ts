@@ -109,6 +109,7 @@ export function createTarEntryPreflightChecker(params: {
       );
     }
 
+    budget.startEntry();
     budget.addEntrySize(entry.size);
     return true;
   };

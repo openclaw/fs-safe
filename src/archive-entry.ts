@@ -32,7 +32,8 @@ export function validateArchiveEntryPath(
       `archive entry contains a NUL byte: ${formatErrorDetail(entryPath)}`,
     );
   }
-  const normalized = path.posix.normalize(normalizeArchiveEntryPath(entryPath));
+  const slashNormalized = normalizeArchiveEntryPath(entryPath);
+  const normalized = path.posix.normalize(slashNormalized);
   if (
     normalized.split("/").some((segment) =>
       Math.max(
@@ -57,6 +58,12 @@ export function validateArchiveEntryPath(
     throw new ArchiveSecurityError(
       "entry-path",
       `archive entry is absolute: ${formatErrorDetail(entryPath)}`,
+    );
+  }
+  if (slashNormalized.split("/").includes("..")) {
+    throw new ArchiveSecurityError(
+      "entry-path",
+      `archive entry contains a parent segment: ${formatErrorDetail(entryPath)}`,
     );
   }
 }

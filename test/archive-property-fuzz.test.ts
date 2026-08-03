@@ -17,6 +17,7 @@ import { useRealTempDirs } from "./helpers/vitest.js";
 import {
   ARCHIVE_LIMIT_ERROR_CODE,
   extractArchive,
+  type ArchiveExtractLimits,
   type ArchiveKind,
 } from "../src/archive.js";
 import {
@@ -75,7 +76,7 @@ async function extractOutcome(params: {
   bytes: Buffer;
   kind: ArchiveKind;
   backend: Backend;
-  limits?: { maxEntryBytes?: number; maxExtractedBytes?: number };
+  limits?: ArchiveExtractLimits;
 }): Promise<ArchiveOutcome> {
   useBackend(params.backend);
   const base = await tempRoot(`fs-safe-${params.kind}-${params.backend}-property-`);
@@ -112,7 +113,9 @@ afterEach(() => {
 
 const tarEncoding = fc.constantFrom<TarSizeEncoding>(
   "octal",
+  "octal-max",
   "base256",
+  "base256-u64-max",
   "base256-high-bits",
   "base256-negative",
   "invalid-octal",
@@ -201,6 +204,21 @@ describe("minimized parser fuzz regressions", () => {
       kind: "tar",
       backend,
     })).resolves.toEqual({ accepted: false, code: "archive-header-invalid" });
+  });
+
+  it.each(backends)("types numeric TAR fields at and past their maxima with %s", async (backend) => {
+    for (const sizeEncoding of [
+      "octal-max",
+      "invalid-octal",
+      "base256-u64-max",
+      "base256-high-bits",
+    ] as const) {
+      await expect(extractOutcome({
+        bytes: tarBytes({ name: "value", sizeEncoding }),
+        kind: "tar",
+        backend,
+      })).resolves.toEqual({ accepted: false, code: "archive-header-invalid" });
+    }
   });
 
   it.each(backends)("types empty and separator-terminated TAR file names with %s", async (backend) => {
@@ -298,5 +316,39 @@ describe.each(["tar", "zip"] as const)("%s declared limits", (kind) => {
       );
     },
     20_000,
+  );
+
+  it.each(backends)(
+    "honours entry-count, total-byte, path-component, and archive-byte edges with %s",
+    async (backend) => {
+      const body = Buffer.from("x");
+      const archive = kind === "tar"
+        ? tarEntriesBytes([{ name: "a/one", body }, { name: "a/two", body }])
+        : await zipBytes({ names: ["a/one", "a/two"], body });
+      const entryCount = kind === "zip" ? 3 : 2;
+      await expect(extractOutcome({
+        bytes: archive,
+        kind,
+        backend,
+        limits: {
+          maxArchiveBytes: archive.byteLength,
+          maxEntries: entryCount,
+          maxEntryBytes: 1,
+          maxExtractedBytes: 2,
+          maxEntryPathComponents: 2,
+        },
+      })).resolves.toEqual({ accepted: true });
+
+      for (const [limits, code] of [
+        [{ maxEntries: entryCount - 1 }, ARCHIVE_LIMIT_ERROR_CODE.ENTRY_COUNT_EXCEEDS_LIMIT],
+        [{ maxExtractedBytes: 1 }, ARCHIVE_LIMIT_ERROR_CODE.EXTRACTED_SIZE_EXCEEDS_LIMIT],
+        [{ maxEntryPathComponents: 1 }, ARCHIVE_LIMIT_ERROR_CODE.ENTRY_PATH_COMPONENTS_EXCEEDS_LIMIT],
+        [{ maxArchiveBytes: archive.byteLength - 1 }, ARCHIVE_LIMIT_ERROR_CODE.ARCHIVE_SIZE_EXCEEDS_LIMIT],
+      ] as const) {
+        await expect(extractOutcome({ bytes: archive, kind, backend, limits }))
+          .resolves.toMatchObject({ accepted: false, code });
+      }
+    },
+    15_000,
   );
 });
