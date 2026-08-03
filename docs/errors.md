@@ -2,6 +2,10 @@
 
 Every failure that's the library's job to surface lands as an `FsSafeError` with a closed `code` union you can branch on. Catch by code, not by message text — messages may change, codes will not.
 
+Path and archive-entry details embedded in diagnostics escape control characters
+as `\\uXXXX` sequences. This keeps attacker-controlled names on one log line;
+the escaped message is for diagnosis, not for reconstructing the original path.
+
 ```ts
 import { FsSafeError, type FsSafeErrorCode } from "@openclaw/fs-safe";
 ```

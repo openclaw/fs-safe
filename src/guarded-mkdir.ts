@@ -3,6 +3,7 @@ import path from "node:path";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { isNotFoundPathError, isPathRelativeEscape } from "./path.js";
+import { directoryComponentNotDirectoryError } from "./root-errors.js";
 
 function isSameOrChildPath(candidate: string, parent: string): boolean {
   const parentPrefix = parent.endsWith(path.sep) ? parent : `${parent}${path.sep}`;
@@ -16,9 +17,7 @@ async function realpathOrThrowNotFile(target: string): Promise<string> {
     if (isNotFoundPathError(error)) {
       // A dangling symlink (or a component removed between lstat and
       // realpath) is not a usable directory component.
-      throw new FsSafeError("not-file", "directory component must be a directory", {
-        cause: error instanceof Error ? error : undefined,
-      });
+      throw directoryComponentNotDirectoryError(error instanceof Error ? error : undefined);
     }
     throw error;
   }
@@ -57,7 +56,7 @@ export async function mkdirPathComponentsWithGuards(params: {
     }
     const stat = await fs.lstat(next);
     if (!stat.isSymbolicLink() && !stat.isDirectory()) {
-      throw new FsSafeError("not-file", "directory component must be a directory");
+      throw directoryComponentNotDirectoryError();
     }
     // Node's recursive mkdir follows symlinks in missing components. Build one
     // segment at a time and realpath-check each segment before descending.
@@ -77,7 +76,7 @@ export async function mkdirPathComponentsWithGuards(params: {
       // the returned resolved path, not their own lexical parent path.
       const targetStat = await fs.stat(nextReal);
       if (!targetStat.isDirectory()) {
-        throw new FsSafeError("not-file", "directory component must be a directory");
+        throw directoryComponentNotDirectoryError();
       }
       await createAsyncDirectoryGuard(nextReal);
       await assertAsyncDirectoryGuard(parentGuard);

@@ -123,3 +123,40 @@ it("reports failed directory subtrees and continues when requested", async () =>
     }
   }).rejects.toMatchObject({ code: "EACCES" });
 });
+
+it("observes an abort that occurs while an empty directory is being listed", async () => {
+  const directory = await tempRoot();
+  const controller = new AbortController();
+  const capability = await root(directory);
+  const walkingRoot = {
+    rootReal: capability.rootReal,
+    async list(): Promise<DirEntry[]> {
+      controller.abort();
+      return [];
+    },
+  };
+
+  await expect(async () => {
+    for await (const _entry of walkRoot(walkingRoot, "", {
+      signal: controller.signal,
+      symlinkPolicy: "skip",
+    })) {
+      // Consume the iterator.
+    }
+  }).rejects.toMatchObject({ name: "AbortError" });
+});
+
+it.each([
+  { symlinkPolicy: "unexpected" },
+  { symlinkPolicy: "skip", limitBehavior: "unexpected" },
+  { symlinkPolicy: "skip", onDirectoryError: "unexpected" },
+])("rejects invalid runtime walk policies: %j", async (options) => {
+  const directory = await tempRoot();
+  const capability = await root(directory);
+
+  await expect(async () => {
+    for await (const _entry of capability.walk("", options as never)) {
+      // Consume the iterator.
+    }
+  }).rejects.toThrow(TypeError);
+});

@@ -3,7 +3,6 @@ import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { ExtractionDeadline } from "./archive-deadline.js";
-import { writeFileHandleFully } from "./archive-file-io.js";
 import {
   ARCHIVE_LIMIT_ERROR_CODE,
   ArchiveLimitError,
@@ -16,6 +15,27 @@ export type StagedArchiveFile = { path: string; cleanup: () => Promise<void> };
 
 async function closeFileHandle(handle: FileHandle | undefined): Promise<void> {
   if (handle) await handle.close().catch(() => undefined);
+}
+
+async function writeFileHandleFully(params: {
+  handle: FileHandle;
+  buffer: Buffer;
+  bytes: number;
+  deadline: ExtractionDeadline;
+}): Promise<void> {
+  let offset = 0;
+  while (offset < params.bytes) {
+    params.deadline.check();
+    const { bytesWritten } = await params.handle.write(
+      params.buffer,
+      offset,
+      params.bytes - offset,
+    );
+    if (bytesWritten <= 0) {
+      throw new Error("archive staging write made no progress");
+    }
+    offset += bytesWritten;
+  }
 }
 
 export async function stageArchiveFileForExtraction(params: {

@@ -3,6 +3,26 @@ import { hasNodeErrorCode, isNodeError, isNotFoundPathError } from "./path.js";
 
 const REMOVE_NOT_EMPTY_CODES = new Set(["ENOTEMPTY", "EEXIST"]);
 
+export function fileNotFoundError(cause?: unknown): FsSafeError {
+  return cause === undefined
+    ? new FsSafeError("not-found", "file not found")
+    : new FsSafeError("not-found", "file not found", { cause });
+}
+
+export function outsideWorkspaceError(): FsSafeError {
+  return new FsSafeError("outside-workspace", "file is outside workspace root");
+}
+
+export function directoryComponentNotDirectoryError(cause?: unknown): FsSafeError {
+  return cause === undefined
+    ? new FsSafeError("not-file", "directory component must be a directory")
+    : new FsSafeError("not-file", "directory component must be a directory", { cause });
+}
+
+export function hardlinkedPathNotAllowedError(): FsSafeError {
+  return new FsSafeError("hardlink", "hardlinked path not allowed");
+}
+
 export function isAlreadyExistsError(error: unknown): boolean {
   return hasNodeErrorCode(error, "EEXIST") || /File exists|EEXIST/i.test(String(error));
 }
@@ -12,9 +32,7 @@ export function normalizePinnedWriteError(error: unknown): Error {
     return error;
   }
   if (isNotFoundPathError(error)) {
-    return new FsSafeError("not-found", "file not found", {
-      cause: error instanceof Error ? error : undefined,
-    });
+    return fileNotFoundError(error instanceof Error ? error : undefined);
   }
   return new FsSafeError("invalid-path", "path is not a regular file under root", {
     cause: error instanceof Error ? error : undefined,
@@ -35,9 +53,7 @@ export function normalizeRemoveGuardError(error: unknown): Error {
     return error;
   }
   if (isNotFoundPathError(error)) {
-    return new FsSafeError("not-found", "file not found", {
-      cause: error instanceof Error ? error : undefined,
-    });
+    return fileNotFoundError(error instanceof Error ? error : undefined);
   }
   return normalizePinnedPathError(error);
 }
@@ -51,7 +67,7 @@ export function normalizeRemovePathError(error: unknown): Error {
   }
   const cause = error instanceof Error ? error : undefined;
   if (isNotFoundPathError(error)) {
-    return new FsSafeError("not-found", "file not found", { cause });
+    return fileNotFoundError(cause);
   }
   if (REMOVE_NOT_EMPTY_CODES.has(error.code)) {
     return new FsSafeError("not-empty", "directory is not empty", { cause });

@@ -1,11 +1,11 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import {
   ROOT_PATH_ALIAS_POLICIES,
   resolveRootPath,
   type RootPathAliasPolicy,
 } from "./root-path.js";
 import { isNotFoundPathError } from "./path.js";
+import { shortPath } from "./short-path.js";
 
 export type PathAliasPolicy = RootPathAliasPolicy;
 
@@ -61,11 +61,4 @@ export async function assertNoHardlinkedFinalPath(params: {
       `Hardlinked path is not allowed under ${params.boundaryLabel} (${shortPath(params.root)}): ${shortPath(params.filePath)}`,
     );
   }
-}
-
-function shortPath(value: string) {
-  if (value.startsWith(os.homedir())) {
-    return `~${value.slice(os.homedir().length)}`;
-  }
-  return value;
 }

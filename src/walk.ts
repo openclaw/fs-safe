@@ -42,6 +42,23 @@ type WalkDirectoryResultWithFailures = WalkDirectoryResult & {
   failedDirs: WalkDirectoryFailure[];
 };
 
+function validateWalkBudget(name: string, value: number | undefined): void {
+  if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) {
+    throw new RangeError(`${name} must be a non-negative safe integer`);
+  }
+}
+
+function validateWalkOptions(options: WalkDirectoryOptions): void {
+  validateWalkBudget("maxDepth", options.maxDepth);
+  validateWalkBudget("maxEntries", options.maxEntries);
+  if (
+    options.symlinks !== undefined &&
+    !(["skip", "follow", "include"] as const).includes(options.symlinks)
+  ) {
+    throw new TypeError(`invalid walk symlink policy: ${String(options.symlinks)}`);
+  }
+}
+
 function kindForDirent(dirent: fsSync.Dirent): WalkEntryKind {
   if (dirent.isDirectory()) return "directory";
   if (dirent.isFile()) return "file";
@@ -122,6 +139,7 @@ export function walkDirectorySync(
   rootDir: string,
   options: WalkDirectoryOptions = {},
 ): WalkDirectoryResultWithFailures {
+  validateWalkOptions(options);
   const root = path.resolve(rootDir);
   const symlinks = options.symlinks ?? "skip";
   const result: WalkDirectoryResultWithFailures = {
@@ -183,6 +201,7 @@ export async function walkDirectory(
   rootDir: string,
   options: WalkDirectoryOptions = {},
 ): Promise<WalkDirectoryResultWithFailures> {
+  validateWalkOptions(options);
   const root = path.resolve(rootDir);
   const symlinks = options.symlinks ?? "skip";
   const result: WalkDirectoryResultWithFailures = {

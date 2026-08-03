@@ -5,6 +5,7 @@ import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { isNotFoundPathError } from "./path.js";
+import { directoryComponentNotDirectoryError } from "./root-errors.js";
 
 export type AsyncDirectoryGuard = {
   dir: string;
@@ -21,7 +22,7 @@ export type SyncDirectoryGuard = {
 export async function createAsyncDirectoryGuard(dir: string): Promise<AsyncDirectoryGuard> {
   const stat = await fs.lstat(dir);
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
-    throw new FsSafeError("not-file", "directory component must be a directory");
+    throw directoryComponentNotDirectoryError();
   }
   return { dir, realPath: await fs.realpath(dir), stat };
 }
@@ -29,7 +30,7 @@ export async function createAsyncDirectoryGuard(dir: string): Promise<AsyncDirec
 export async function assertAsyncDirectoryGuard(guard: AsyncDirectoryGuard): Promise<void> {
   const stat = await fs.lstat(guard.dir);
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
-    throw new FsSafeError("not-file", "directory component must be a directory");
+    throw directoryComponentNotDirectoryError();
   }
   if (!sameFileIdentity(stat, guard.stat) || (await fs.realpath(guard.dir)) !== guard.realPath) {
     throw new FsSafeError("path-mismatch", "directory changed during operation");
@@ -39,7 +40,7 @@ export async function assertAsyncDirectoryGuard(guard: AsyncDirectoryGuard): Pro
 export function createSyncDirectoryGuard(dir: string): SyncDirectoryGuard {
   const stat = fsSync.lstatSync(dir);
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
-    throw new FsSafeError("not-file", "directory component must be a directory");
+    throw directoryComponentNotDirectoryError();
   }
   return { dir, realPath: fsSync.realpathSync(dir), stat };
 }
@@ -47,7 +48,7 @@ export function createSyncDirectoryGuard(dir: string): SyncDirectoryGuard {
 export function assertSyncDirectoryGuard(guard: SyncDirectoryGuard): void {
   const stat = fsSync.lstatSync(guard.dir);
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
-    throw new FsSafeError("not-file", "directory component must be a directory");
+    throw directoryComponentNotDirectoryError();
   }
   if (!sameFileIdentity(stat, guard.stat) || fsSync.realpathSync(guard.dir) !== guard.realPath) {
     throw new FsSafeError("path-mismatch", "directory changed during operation");

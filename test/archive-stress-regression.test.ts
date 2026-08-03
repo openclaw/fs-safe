@@ -41,6 +41,25 @@ function duplicateOnlyZipEntry(bytes: Buffer): Buffer {
 }
 
 describe("archive stress regressions", () => {
+  it.each([
+    ["case", "Payload.txt", "payload.txt"],
+    ["Unicode normalization", "caf\u00e9.txt", "cafe\u0301.txt"],
+  ])("rejects %s-equivalent zip output names", async (_label, firstName, secondName) => {
+    const root = await tempRoot("fs-safe-archive-portable-collision-");
+    const archivePath = path.join(root, "payload.zip");
+    const destDir = path.join(root, "dest");
+    await fs.mkdir(destDir);
+    const zip = new JSZip();
+    zip.file(firstName, "first");
+    zip.file(secondName, "second");
+    await fs.writeFile(archivePath, await zip.generateAsync({ type: "nodebuffer" }));
+
+    await expect(
+      extractArchive({ archivePath, destDir, kind: "zip", timeoutMs: 15_000 }),
+    ).rejects.toMatchObject({ name: "ArchiveSecurityError", code: "entry-path" });
+    await expect(fs.readdir(destDir)).resolves.toEqual([]);
+  });
+
   it.each(["C:secret.txt", "nested/C:secret.txt"])(
     "rejects drive-relative zip entry %s without destination debris",
     async (entryName) => {

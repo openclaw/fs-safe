@@ -7,8 +7,17 @@ import {
   createAsyncDirectoryGuard,
 } from "./directory-guard.js";
 import { FsSafeError, type FsSafeErrorCode } from "./errors.js";
+import { pathExists } from "./fs.js";
 
 export type AbsolutePathSymlinkPolicy = "reject" | "follow";
+
+function resolveSymlinkPolicy(policy: AbsolutePathSymlinkPolicy | undefined): AbsolutePathSymlinkPolicy {
+  if (policy === undefined) return "reject";
+  if (policy !== "reject" && policy !== "follow") {
+    throw new TypeError(`invalid absolute path symlink policy: ${String(policy)}`);
+  }
+  return policy;
+}
 
 export type ResolvedAbsolutePath = {
   path: string;
@@ -219,15 +228,6 @@ export function assertAbsolutePathInput(filePath: string): string {
   return path.normalize(filePath);
 }
 
-async function pathExists(filePath: string): Promise<boolean> {
-  try {
-    await fs.access(filePath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export async function findExistingAncestor(filePath: string): Promise<string | null> {
   return (await findExistingAncestorWithStat(filePath))?.path ?? null;
 }
@@ -356,6 +356,7 @@ export async function resolveAbsolutePathForRead(
   filePath: string,
   options: { symlinks?: AbsolutePathSymlinkPolicy } = {},
 ): Promise<ResolvedAbsolutePath> {
+  const symlinks = resolveSymlinkPolicy(options.symlinks);
   const normalized = assertAbsolutePathInput(filePath);
   let canonicalPath: string;
   try {
@@ -366,7 +367,7 @@ export async function resolveAbsolutePathForRead(
     }
     throw err;
   }
-  if ((options.symlinks ?? "reject") === "reject" && canonicalPath !== normalized) {
+  if (symlinks === "reject" && canonicalPath !== normalized) {
     throw new FsSafeError("symlink", "path traverses a symlink", { cause: { canonicalPath } });
   }
   return { path: normalized, canonicalPath };
@@ -376,10 +377,11 @@ export async function resolveAbsolutePathForWrite(
   filePath: string,
   options: { symlinks?: AbsolutePathSymlinkPolicy } = {},
 ): Promise<ResolvedWritableAbsolutePath> {
+  const symlinks = resolveSymlinkPolicy(options.symlinks);
   const normalized = assertAbsolutePathInput(filePath);
   const parentDir = path.dirname(normalized);
   const parentExists = await pathExists(parentDir);
-  if ((options.symlinks ?? "reject") === "reject") {
+  if (symlinks === "reject") {
     const ancestor = await findExistingAncestor(parentDir);
     if (ancestor) {
       const canonicalAncestor = await fs.realpath(ancestor).catch(() => ancestor);
@@ -391,9 +393,15 @@ export async function resolveAbsolutePathForWrite(
       }
     }
   }
+  const canonicalPath = await canonicalPathFromExistingAncestor(normalized);
+  if (symlinks === "reject" && canonicalPath !== normalized) {
+    throw new FsSafeError("symlink", "path traverses a symlink", {
+      cause: { canonicalPath },
+    });
+  }
   return {
     path: normalized,
-    canonicalPath: await canonicalPathFromExistingAncestor(normalized),
+    canonicalPath,
     parentDir,
     parentExists,
   };

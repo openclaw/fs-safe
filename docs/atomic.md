@@ -122,6 +122,10 @@ await replaceDirectoryAtomic({
 ```
 
 The helper renames `targetDir` to a generated backup path, renames `stagedDir → targetDir`, then removes the backup. If the second rename fails, it tries to restore the original target before rethrowing.
+Concurrent replacements of the same resolved target are serialized inside the
+current process so their backup, commit, and cleanup phases cannot interleave.
+`backupPrefix`, when supplied, is sanitized as one path prefix and cannot contain
+path separators or NUL bytes; the generated backup tail is randomized.
 
 Use it when callers must see a whole staged tree at the target path. For single-file replacement, `replaceFileAtomic` is the right tool.
 
@@ -165,6 +169,9 @@ copying into a staged sibling path, renaming that staged path into place, and
 then removing only the source entries that were copied. The fallback avoids
 buffering regular files into memory and does not tighten the destination parent
 directory mode. Staged file modes are applied through their still-open handles.
+If descriptor-bound mode application fails, the staged path is removed and the
+move fails before publication. A transient staged-path cleanup failure retains
+an identity-bound process-exit cleanup retry.
 On POSIX, staged directory modes are applied through no-follow directory
 descriptors; on Windows, Node cannot portably open those descriptors and no
 pathname `chmod` fallback is attempted, so directory modes remain subject to

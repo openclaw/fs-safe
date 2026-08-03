@@ -3,6 +3,11 @@ import { fileURLToPath, URL } from "node:url";
 import { normalizeLowercaseStringOrEmpty } from "./string-coerce.js";
 
 const ENCODED_FILE_URL_SEPARATOR_RE = /%(?:2f|5c)/i;
+const FILE_URL_PREFIX_RE = /^file:\/\//i;
+
+export function isFileUrl(input: string): boolean {
+  return FILE_URL_PREFIX_RE.test(input);
+}
 
 function isLocalFileUrlHost(hostname: string): boolean {
   const normalized = normalizeLowercaseStringOrEmpty(hostname);
@@ -46,7 +51,10 @@ export function assertNoWindowsNetworkPath(filePath: string, label = "Path"): vo
   }
 }
 
-export function safeFileURLToPath(fileUrl: string): string {
+export function safeFileURLToPath(
+  fileUrl: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
   let parsed: URL;
   try {
     parsed = new URL(fileUrl);
@@ -62,14 +70,19 @@ export function safeFileURLToPath(fileUrl: string): string {
   if (hasEncodedFileUrlSeparator(parsed.pathname)) {
     throw new Error(`file:// URLs cannot encode path separators: ${fileUrl}`);
   }
-  const filePath = fileURLToPath(parsed);
-  assertNoWindowsNetworkPath(filePath, "Local file URL");
+  const filePath = fileURLToPath(parsed, { windows: platform === "win32" });
+  if (isWindowsNetworkPath(filePath, platform)) {
+    throw new Error(`Local file URL cannot use Windows network paths: ${filePath}`);
+  }
   return filePath;
 }
 
-export function trySafeFileURLToPath(fileUrl: string): string | undefined {
+export function trySafeFileURLToPath(
+  fileUrl: string,
+  platform: NodeJS.Platform = process.platform,
+): string | undefined {
   try {
-    return safeFileURLToPath(fileUrl);
+    return safeFileURLToPath(fileUrl, platform);
   } catch {
     return undefined;
   }
@@ -79,7 +92,7 @@ export function basenameFromMediaSource(source?: string): string | undefined {
   if (!source) {
     return undefined;
   }
-  if (source.startsWith("file://")) {
+  if (isFileUrl(source)) {
     const filePath = trySafeFileURLToPath(source);
     return filePath ? path.basename(filePath) || undefined : undefined;
   }

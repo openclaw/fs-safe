@@ -211,4 +211,24 @@ describe("jsonStore mutation serialization", () => {
     });
     await expect(store.readRequired()).resolves.toEqual({ count: 0 });
   });
+
+  it("allows callback-scheduled mutations after the outer update has finished", async () => {
+    const root = await tempRoot("fs-safe-json-store-deferred-");
+    const filePath = path.join(root, "state.json");
+    const store = jsonStore<State>({ filePath, lock: true });
+    await store.write({ count: 0 });
+    const startDeferredMutation = deferred();
+    let deferredMutation!: Promise<void>;
+
+    await store.update(() => {
+      deferredMutation = startDeferredMutation.promise.then(async () => {
+        await store.write({ count: 2 });
+      });
+      return { count: 1 };
+    });
+    startDeferredMutation.resolve();
+
+    await expect(deferredMutation).resolves.toBeUndefined();
+    await expect(store.readRequired()).resolves.toEqual({ count: 2 });
+  });
 });

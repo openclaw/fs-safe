@@ -7,7 +7,11 @@ import { createSidecarLockManager } from "./sidecar-lock.js";
 import type { SidecarLockStaleRecovery } from "./sidecar-lock.js";
 import { serializePathWrite } from "./write-queue.js";
 
-const activeStoreMutations = new AsyncLocalStorage<ReadonlySet<string>>();
+type StoreMutationToken = { active: boolean };
+
+const activeStoreMutations = new AsyncLocalStorage<
+  ReadonlyMap<string, StoreMutationToken>
+>();
 
 export type JsonStoreLockOptions = {
   staleMs?: number;
@@ -89,30 +93,37 @@ export function createJsonStore<T>(
   async function withSerializedMutation<R>(run: () => Promise<R>): Promise<R> {
     const canonicalPath = await canonicalPathFromExistingAncestor(adapter.filePath);
     const activePaths = activeStoreMutations.getStore();
-    if (activePaths?.has(canonicalPath)) {
+    if (activePaths?.get(canonicalPath)?.active) {
       throw new FsSafeError(
         "store-reentrant-update",
         `jsonStore cannot write or update ${canonicalPath} from inside its active update callback; return the complete next value from the outer update instead`,
       );
     }
     return await serializePathWrite(`json-store:${canonicalPath}`, async () => {
-      const mutationPaths = new Set(activePaths);
-      mutationPaths.add(canonicalPath);
+      const mutationPaths = new Map(
+        [...(activePaths ?? [])].filter(([, token]) => token.active),
+      );
+      const token: StoreMutationToken = { active: true };
+      mutationPaths.set(canonicalPath, token);
       return await activeStoreMutations.run(mutationPaths, async () => {
-        if (!locks || !lockOptions) {
-          return await run();
+        try {
+          if (!locks || !lockOptions) {
+            return await run();
+          }
+          return await locks.withLock(
+            {
+              targetPath: adapter.filePath,
+              staleMs: lockOptions.staleMs,
+              timeoutMs: lockOptions.timeoutMs,
+              retry: lockOptions.retry,
+              staleRecovery: lockOptions.staleRecovery,
+              payload: () => ({ pid: process.pid, createdAt: new Date().toISOString() }),
+            },
+            run,
+          );
+        } finally {
+          token.active = false;
         }
-        return await locks.withLock(
-          {
-            targetPath: adapter.filePath,
-            staleMs: lockOptions.staleMs,
-            timeoutMs: lockOptions.timeoutMs,
-            retry: lockOptions.retry,
-            staleRecovery: lockOptions.staleRecovery,
-            payload: () => ({ pid: process.pid, createdAt: new Date().toISOString() }),
-          },
-          run,
-        );
       });
     });
   }

@@ -445,12 +445,12 @@ describe("secure file reads", () => {
     expect(formatPermissionDetail(target, posix)).toContain("mode=");
     expect(
       formatPermissionRemediation({
-        targetPath: target,
+        targetPath: "/tmp/acl-target.txt",
         perms: posix,
         isDir: false,
         posixMode: 0o600,
       }),
-    ).toBe(`chmod 600 ${target}`);
+    ).toBe("chmod 600 /tmp/acl-target.txt");
 
     const entries = parseIcaclsOutput(
       [

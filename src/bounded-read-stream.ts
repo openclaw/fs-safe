@@ -1,4 +1,4 @@
-import { Transform } from "node:stream";
+import { pipeline, Transform } from "node:stream";
 import { FsSafeError } from "./errors.js";
 
 export function createMaxBytesTransform(maxBytes: number): Transform {
@@ -32,5 +32,13 @@ export function createBoundedReadStream(
   maxBytes: number | undefined,
 ): NodeJS.ReadableStream {
   const stream = opened.handle.createReadStream();
-  return maxBytes === undefined ? stream : stream.pipe(createMaxBytesTransform(maxBytes));
+  if (maxBytes === undefined) {
+    return stream;
+  }
+
+  const bounded = createMaxBytesTransform(maxBytes);
+  // pipeline couples teardown in both directions: source failures reach the
+  // returned stream, and an early consumer close destroys the file stream.
+  pipeline(stream, bounded, () => undefined);
+  return bounded;
 }

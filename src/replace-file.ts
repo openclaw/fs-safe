@@ -22,6 +22,7 @@ import {
 } from "./replace-file-descriptor.js";
 import { assertSafePathPrefix } from "./safe-path-segment.js";
 import { registerTempPathForExit } from "./temp-cleanup.js";
+import { sleep, sleepSync } from "./timing.js";
 import { serializePathWrite } from "./write-queue.js";
 
 export type ReplaceFileAtomicFileSystem = {
@@ -114,10 +115,6 @@ function isPermissionRenameError(error: unknown): boolean {
   return code === "EPERM" || code === "EEXIST";
 }
 
-async function sleep(ms: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 async function renameWithRetry(params: {
   fsModule: ReplaceFileAtomicFileSystem["promises"];
   src: string;
@@ -155,13 +152,6 @@ async function renameWithRetry(params: {
     }
   }
   throw new Error("Atomic rename retry loop exhausted.");
-}
-
-function sleepSync(ms: number): void {
-  if (ms <= 0) {
-    return;
-  }
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 function renameWithRetrySync(params: {
@@ -305,16 +295,21 @@ async function cleanupTempFile(params: {
   tempPath: string;
   originalError?: unknown;
   throwOnCleanupError: boolean;
-}): Promise<void> {
+}): Promise<boolean> {
   const cleanupError = await params.fsModule
     .rm(params.tempPath, { force: true })
     .catch((error) => error);
-  if (cleanupError && params.throwOnCleanupError && params.originalError !== undefined) {
-    throw new Error(
-      `Atomic file replace failed (${String(params.originalError)}); cleanup also failed (${String(cleanupError)})`,
-      { cause: params.originalError },
-    );
+  if (!cleanupError) return true;
+  if (params.throwOnCleanupError) {
+    if (params.originalError !== undefined) {
+      throw new Error(
+        `Atomic file replace failed (${String(params.originalError)}); cleanup also failed (${String(cleanupError)})`,
+        { cause: params.originalError },
+      );
+    }
+    throw cleanupError;
   }
+  return false;
 }
 
 export async function replaceFileAtomic(
@@ -367,8 +362,10 @@ async function replaceFileAtomicUnserialized(
       destinationHardlinks: options.destinationHardlinks,
       syncFallback: options.syncTempFile === true,
     });
-    tempExists = false;
-    unregisterTempPath();
+    if (result.method === "rename") {
+      tempExists = false;
+      unregisterTempPath();
+    }
     if (options.syncParentDir) {
       await syncDirectoryBestEffort(fsModule, dir);
     }
@@ -377,15 +374,16 @@ async function replaceFileAtomicUnserialized(
     originalError = error;
     throw error;
   } finally {
+    let tempRemoved = !tempExists;
     if (tempExists) {
-      await cleanupTempFile({
+      tempRemoved = await cleanupTempFile({
         fsModule,
         tempPath,
         originalError,
         throwOnCleanupError: options.throwOnCleanupError === true,
       });
     }
-    unregisterTempPath();
+    if (tempRemoved) unregisterTempPath();
   }
 }
 
@@ -443,8 +441,10 @@ export function replaceFileAtomicSync(
       fchmodSync,
       syncFallback: options.syncTempFile === true,
     });
-    tempExists = false;
-    unregisterTempPath();
+    if (result.method === "rename") {
+      tempExists = false;
+      unregisterTempPath();
+    }
     if (options.syncParentDir) {
       syncDirectoryBestEffortSync(fsModule, dir);
     }
@@ -453,19 +453,24 @@ export function replaceFileAtomicSync(
     originalError = error;
     throw error;
   } finally {
+    let tempRemoved = !tempExists;
     if (tempExists) {
       try {
         fsModule.rmSync(tempPath, { force: true });
+        tempRemoved = true;
       } catch (cleanupError) {
-        if (options.throwOnCleanupError && originalError !== undefined) {
-          throw new Error(
-            `Atomic file replace failed (${String(originalError)}); cleanup also failed (${String(cleanupError)})`,
-            { cause: originalError },
-          );
+        if (options.throwOnCleanupError) {
+          if (originalError !== undefined) {
+            throw new Error(
+              `Atomic file replace failed (${String(originalError)}); cleanup also failed (${String(cleanupError)})`,
+              { cause: originalError },
+            );
+          }
+          throw cleanupError;
         }
         // The temp file is best-effort cleanup after write failure.
       }
     }
-    unregisterTempPath();
+    if (tempRemoved) unregisterTempPath();
   }
 }

@@ -62,6 +62,23 @@ export async function* walkRoot(
   relativePath: string,
   options: RootWalkOptions,
 ): AsyncGenerator<RootWalkEntry> {
+  if (!(["skip", "follow-within-root"] as const).includes(options.symlinkPolicy)) {
+    throw new TypeError(`invalid root walk symlink policy: ${String(options.symlinkPolicy)}`);
+  }
+  if (
+    options.limitBehavior !== undefined &&
+    !(["truncate", "throw"] as const).includes(options.limitBehavior)
+  ) {
+    throw new TypeError(`invalid root walk limit behavior: ${String(options.limitBehavior)}`);
+  }
+  if (
+    options.onDirectoryError !== undefined &&
+    !(["throw", "skip-and-report"] as const).includes(options.onDirectoryError)
+  ) {
+    throw new TypeError(
+      `invalid root walk directory error behavior: ${String(options.onDirectoryError)}`,
+    );
+  }
   const maxDepth = validateBudget("maxDepth", options.maxDepth);
   const maxEntries = validateBudget("maxEntries", options.maxEntries);
   const visitedDirectories = new Set<string>();
@@ -95,16 +112,21 @@ export async function* walkRoot(
       }
       visitedDirectories.add(resolvedDirectory.canonicalPath);
 
+      options.signal?.throwIfAborted();
+
       const listingDirectory = path
         .relative(root.rootReal, resolvedDirectory.canonicalPath)
         .split(path.sep)
         .join(path.posix.sep);
       entries = await root.list(listingDirectory, { withFileTypes: true });
     } catch (error) {
+      // Cancellation is never a recoverable directory read failure.
+      options.signal?.throwIfAborted();
       if ((options.onDirectoryError ?? "throw") === "throw") throw error;
       yield { relativePath: directory, kind: "directory-error", size: 0, error };
       return;
     }
+    options.signal?.throwIfAborted();
     for (const entry of entries) {
       options.signal?.throwIfAborted();
       const child = directory

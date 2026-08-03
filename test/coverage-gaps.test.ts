@@ -216,12 +216,27 @@ describe("absolute path helpers", () => {
     await fs.mkdir(realDir);
     await fs.writeFile(path.join(realDir, "file.txt"), "ok", "utf8");
     await fs.symlink(realDir, linkDir);
+    const linkFile = path.join(root, "link-file.txt");
+    await fs.symlink(path.join(realDir, "file.txt"), linkFile);
 
     await expectFsSafeError(resolveAbsolutePathForRead(path.join(linkDir, "file.txt")), "symlink");
     await expect(
       resolveAbsolutePathForRead(path.join(linkDir, "file.txt"), { symlinks: "follow" }),
     ).resolves.toMatchObject({ canonicalPath: await fs.realpath(path.join(realDir, "file.txt")) });
     await expectFsSafeError(resolveAbsolutePathForWrite(path.join(linkDir, "new.txt")), "symlink");
+    await expectFsSafeError(resolveAbsolutePathForWrite(linkFile), "symlink");
+    await expect(resolveAbsolutePathForWrite(linkFile, { symlinks: "follow" }))
+      .resolves.toMatchObject({ canonicalPath: await fs.realpath(linkFile) });
+  });
+
+  it("rejects unknown absolute-path symlink policies", async () => {
+    const root = await fs.realpath(await tempRoot("fs-safe-absolute-policy-"));
+    const filePath = path.join(root, "file.txt");
+    await fs.writeFile(filePath, "ok", "utf8");
+    const options = { symlinks: "unexpected" } as never;
+
+    await expect(resolveAbsolutePathForRead(filePath, options)).rejects.toThrow(TypeError);
+    await expect(resolveAbsolutePathForWrite(filePath, options)).rejects.toThrow(TypeError);
   });
 
 });

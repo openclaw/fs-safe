@@ -130,6 +130,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
         continue;
       }
       let handle: SidecarFileHandle | null = null;
+      let createdSnapshot: SidecarLockSnapshot | null = null;
       let lockFileCreateDenied = false;
       try {
         const payload = await options.payload();
@@ -144,6 +145,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
             }
             throw error;
           }
+          createdSnapshot = { raw, payload, ownershipToken };
           handle = (await options.lockRoot.open(relativeLockPath)).handle;
         } else {
           try {
@@ -205,15 +207,15 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
           if (current?.handle === handle) {
             context.held.delete(normalizedTargetPath);
           }
-          // If payload serialization/write fails, the file may be empty or
-          // partial JSON, so remove while our exclusive handle is still open.
-          if (!options.lockRoot) {
-            await fs.rm(lockPath, { force: true }).catch(() => undefined);
-          }
           await handle.close().catch(() => undefined);
-          // Windows can refuse removing an open file; retry after close but
-          // only if the path still points at the file identity we created.
+          // The file may be empty or partial JSON, so remove by the identity
+          // captured from our exclusive handle rather than by pathname alone.
           await removeSidecarLockIfUnchanged(lockPath, failedSnapshot, {
+            lockRoot: options.lockRoot,
+            parsePayload: options.parsePayload,
+          });
+        } else if (createdSnapshot) {
+          await removeSidecarLockIfUnchanged(lockPath, createdSnapshot, {
             lockRoot: options.lockRoot,
             parsePayload: options.parsePayload,
           });

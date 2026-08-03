@@ -7,6 +7,7 @@ import { stringifyJsonDocument } from "./json-stringify.js";
 import { readRegularFile, readRegularFileSync, statRegularFile } from "./regular-file.js";
 import { openRootFileSync, type RootFileOpenFailure } from "./root-file.js";
 import { writeTextAtomic, type WriteTextAtomicOptions } from "./text-atomic.js";
+import { sleep } from "./timing.js";
 
 const READ_RETRY_MAX_ATTEMPTS = 5;
 const READ_RETRY_BASE_DELAY_MS = 50;
@@ -23,10 +24,6 @@ function isRetryableReadError(
   }
   const code = getErrorCode(err);
   return code === "ENOENT" || code === "EPERM";
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function readRegularFileWithRetry(
