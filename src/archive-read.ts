@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import { Readable } from "node:stream";
 import { readFileHandleBounded } from "./bounded-read.js";
 import { ArchiveFormatError, ArchiveSecurityError } from "./archive-errors.js";
+import { formatErrorDetail } from "./error-detail.js";
 import {
   normalizeArchiveEntryPath,
   validateArchiveEntryPath,
@@ -33,7 +34,7 @@ function normalizedRequestedEntry(entryPath: string): string {
   validateArchiveEntryPath(entryPath, { escapeLabel: "archive root" });
   const normalized = normalizeArchiveEntryPath(entryPath).replace(/^\.\//, "");
   if (!normalized || normalized.endsWith("/")) {
-    throw new Error(`archive entry is not a file: ${entryPath}`);
+    throw new Error(`archive entry is not a file: ${formatErrorDetail(entryPath)}`);
   }
   return normalized;
 }
@@ -124,13 +125,13 @@ async function readZipEntry(buffer: Buffer, entryPath: string, maxBytes: number)
   });
   const entry = (archive.files as Record<string, ZipEntry>)[entryPath];
   if (!entry || entry.dir) {
-    throw new Error(`archive entry not found: ${entryPath}`);
+    throw new Error(`archive entry not found: ${formatErrorDetail(entryPath)}`);
   }
   if (
     typeof entry.unixPermissions === "number" &&
     (entry.unixPermissions & ZIP_UNIX_FILE_TYPE_MASK) === ZIP_UNIX_SYMLINK_TYPE
   ) {
-    throw new Error(`archive entry is a link: ${entryPath}`);
+    throw new Error(`archive entry is a link: ${formatErrorDetail(entryPath)}`);
   }
   const stream =
     typeof entry.nodeStream === "function"
@@ -159,7 +160,7 @@ async function readTarEntry(archivePath: string, entryPath: string, maxBytes: nu
       if (seenPaths.has(normalized)) {
         entryError ??= new ArchiveSecurityError(
           "entry-path",
-          `archive contains duplicate entry path: ${normalized}`,
+          `archive contains duplicate entry path: ${formatErrorDetail(normalized)}`,
         );
         entry.resume();
         return;
@@ -170,7 +171,9 @@ async function readTarEntry(archivePath: string, entryPath: string, maxBytes: nu
         return;
       }
       if (info.type !== "File" && info.type !== "OldFile" && info.type !== "ContiguousFile") {
-        entryError ??= new Error(`archive entry is not a file: ${entryPath}`);
+        entryError ??= new Error(
+          `archive entry is not a file: ${formatErrorDetail(entryPath)}`,
+        );
         entry.resume();
         return;
       }
@@ -188,7 +191,7 @@ async function readTarEntry(archivePath: string, entryPath: string, maxBytes: nu
     throw entryError;
   }
   if (!matched) {
-    throw new Error(`archive entry not found: ${entryPath}`);
+    throw new Error(`archive entry not found: ${formatErrorDetail(entryPath)}`);
   }
   return await matched;
 }
@@ -228,18 +231,22 @@ export async function readArchiveEntry(
           if (seenPaths.has(normalized)) {
             throw new ArchiveSecurityError(
               "entry-path",
-              `archive contains duplicate entry path: ${normalized}`,
+              `archive contains duplicate entry path: ${formatErrorDetail(normalized)}`,
             );
           }
           seenPaths.add(normalized);
           if (normalized === requestedEntry) {
             if (entry.kind !== "file") {
-              throw new Error(`archive entry is not a file: ${entryPath}`);
+              throw new Error(
+                `archive entry is not a file: ${formatErrorDetail(entryPath)}`,
+              );
             }
             rawEntryPath = entry.path;
           }
         }
-        if (!rawEntryPath) throw new Error(`archive entry not found: ${entryPath}`);
+        if (!rawEntryPath) {
+          throw new Error(`archive entry not found: ${formatErrorDetail(entryPath)}`);
+        }
         return await native.readArchiveEntryNative(
           staged.path,
           kind,

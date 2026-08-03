@@ -81,6 +81,7 @@ try {
   const paths = new Set(files.map((file) => file.path));
   const expected = new Set([
     "CHANGELOG.md",
+    "docs/assets/readme-banner.jpg",
     "LICENSE",
     "README.md",
     "SECURITY.md",

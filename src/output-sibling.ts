@@ -81,16 +81,15 @@ async function syncFile(handle: FileHandle): Promise<void> {
 async function cleanupTempPath(
   tempPath: string,
   identity?: Awaited<ReturnType<FileHandle["stat"]>>,
-): Promise<void> {
+): Promise<boolean> {
   try {
     const current = await fs.lstat(tempPath);
     if (!identity || (!current.isSymbolicLink() && sameFileIdentity(current, identity))) {
       await fs.rm(tempPath, { force: true });
     }
+    return true;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      // Cleanup is best-effort; the randomized path remains inside the writable boundary.
-    }
+    return (error as NodeJS.ErrnoException).code === "ENOENT";
   }
 }
 
@@ -140,9 +139,10 @@ export async function writeExternalFileViaSibling<T>(params: {
     }
     return result;
   } finally {
+    let cleanupComplete = renamed;
     if (!renamed) {
-      await cleanupTempPath(tempPath, stagedIdentity);
+      cleanupComplete = await cleanupTempPath(tempPath, stagedIdentity);
     }
-    unregisterTempPath();
+    if (cleanupComplete) unregisterTempPath();
   }
 }

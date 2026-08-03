@@ -1,8 +1,10 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { formatErrorDetail } from "./error-detail.js";
 import { FsSafeError } from "./errors.js";
 import {
+  assertNoNulPathInput,
   isNotFoundPathError,
   isPathInside,
   isPathRelativeEscape,
@@ -12,6 +14,7 @@ import {
   resolvePathViaExistingAncestorSync,
 } from "./root-path-existing.js";
 import { resolveSymlinkHopPath, resolveSymlinkHopPathSync } from "./root-path-symlink.js";
+import { assertNoDriveRelativePathSegments } from "./safe-path-segment.js";
 import { shortPath } from "./short-path.js";
 
 export { resolvePathViaExistingAncestorSync } from "./root-path-existing.js";
@@ -60,6 +63,17 @@ export type ResolvedRootPath = {
 export async function resolveRootPath(
   params: ResolveRootPathParams,
 ): Promise<ResolvedRootPath> {
+  try {
+    return await resolveRootPathInternal(params);
+  } catch (error) {
+    throw sanitizeRootPathError(error);
+  }
+}
+
+async function resolveRootPathInternal(
+  params: ResolveRootPathParams,
+): Promise<ResolvedRootPath> {
+  assertValidRootPathInputs(params);
   const rootPath = path.resolve(params.rootPath);
   const absolutePath = path.resolve(params.absolutePath);
   const rootCanonicalPath = params.rootCanonicalPath
@@ -93,6 +107,15 @@ export async function resolveRootPath(
 }
 
 export function resolveRootPathSync(params: ResolveRootPathParams): ResolvedRootPath {
+  try {
+    return resolveRootPathSyncInternal(params);
+  } catch (error) {
+    throw sanitizeRootPathError(error);
+  }
+}
+
+function resolveRootPathSyncInternal(params: ResolveRootPathParams): ResolvedRootPath {
+  assertValidRootPathInputs(params);
   const rootPath = path.resolve(params.rootPath);
   const absolutePath = path.resolve(params.absolutePath);
   const rootCanonicalPath = params.rootCanonicalPath
@@ -123,6 +146,35 @@ export function resolveRootPathSync(params: ResolveRootPathParams): ResolvedRoot
     rootPath: context.rootPath,
     rootCanonicalPath: context.rootCanonicalPath,
   });
+}
+
+function sanitizeRootPathError(error: unknown): unknown {
+  if (error instanceof Error) {
+    error.message = formatErrorDetail(error.message);
+  }
+  return error;
+}
+
+function assertValidRootPathInputs(params: ResolveRootPathParams): void {
+  assertNoNulPathInput(params.rootPath, "root path contains a NUL byte");
+  assertNoNulPathInput(params.absolutePath, "absolute path contains a NUL byte");
+  assertNoEmbeddedDriveRelativeSegment(params.rootPath, "root path");
+  assertNoEmbeddedDriveRelativeSegment(params.absolutePath, "absolute path");
+  if (params.rootCanonicalPath !== undefined) {
+    assertNoNulPathInput(params.rootCanonicalPath, "canonical root path contains a NUL byte");
+    assertNoEmbeddedDriveRelativeSegment(params.rootCanonicalPath, "canonical root path");
+  }
+}
+
+function assertNoEmbeddedDriveRelativeSegment(filePath: string, label: string): void {
+  if (process.platform !== "win32") {
+    return;
+  }
+  const root = path.parse(filePath).root;
+  assertNoDriveRelativePathSegments(
+    filePath.slice(root.length).replaceAll("\\", "/"),
+    label,
+  );
 }
 
 type LexicalTraversalState = {

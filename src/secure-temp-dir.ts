@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { tmpdir as getOsTmpDir } from "node:os";
 import path from "node:path";
+import { assertSafePathSegment } from "./safe-path-segment.js";
 
 type MaybeNodeError = { code?: string };
 
@@ -37,6 +38,10 @@ function isNodeErrorWithCode(err: unknown, code: string): err is MaybeNodeError 
 }
 
 export function resolveSecureTempRoot(options: ResolveSecureTempRootOptions): string {
+  const fallbackPrefix = assertSafePathSegment(options.fallbackPrefix, {
+    allowDotPrefix: true,
+    label: "fallback temp prefix",
+  });
   const TMP_DIR_ACCESS_MODE = fs.constants.W_OK | fs.constants.X_OK;
   const accessSync = options.accessSync ?? fs.accessSync;
   const chmodSync = options.chmodSync ?? fs.chmodSync;
@@ -73,7 +78,7 @@ export function resolveSecureTempRoot(options: ResolveSecureTempRootOptions): st
 
   const fallback = (): string => {
     const base = tmpdir();
-    const suffix = uid === undefined ? options.fallbackPrefix : `${options.fallbackPrefix}-${uid}`;
+    const suffix = uid === undefined ? fallbackPrefix : `${fallbackPrefix}-${uid}`;
     const joiner = platform === "win32" ? path.win32.join : path.join;
     return joiner(base, suffix);
   };

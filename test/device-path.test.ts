@@ -37,6 +37,11 @@ describe("unsafe device read paths", () => {
     }
   });
 
+  it("matches case-insensitive file URL schemes that target devices", () => {
+    expect(isUnsafeDeviceReadPath("FILE:///dev/zero", { platform: "linux" })).toBe(true);
+    expect(isUnsafeDeviceReadPath("FiLe:///proc/self/fd/0", { platform: "linux" })).toBe(true);
+  });
+
   it("does not match ordinary POSIX paths that merely contain device-like names", () => {
     expect(isUnsafeDeviceReadPath("/tmp/dev/zero", { platform: "linux" })).toBe(false);
     expect(isUnsafeDeviceReadPath("dev/zero", { cwd: "/tmp/work", platform: "linux" })).toBe(

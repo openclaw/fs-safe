@@ -101,6 +101,51 @@ describe("native helper configuration", () => {
     expect(unavailable).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ["missing", Object.assign(new Error("missing binding"), { code: "MODULE_NOT_FOUND" })],
+    ["corrupt", Object.assign(new Error("file too short"), { code: "ERR_DLOPEN_FAILED" })],
+    ["wrong architecture", Object.assign(new Error("incompatible architecture"), { code: "ERR_DLOPEN_FAILED" })],
+  ])("applies every mode consistently to a %s helper", (_variant, loadFailure) => {
+    const loader = vi.fn(() => {
+      throw loadFailure;
+    });
+    __setNativeLoaderForTest(loader);
+
+    configureFsSafeNative({ mode: "off" });
+    expect(getNativeBinding()).toBeUndefined();
+    expect(loader).not.toHaveBeenCalled();
+
+    configureFsSafeNative({ mode: "auto" });
+    expect(getNativeBinding()).toBeUndefined();
+    expect(loader).toHaveBeenCalledOnce();
+
+    configureFsSafeNative({ mode: "require" });
+    expect(() => getNativeBinding()).toThrow(
+      expect.objectContaining({ code: "helper-unavailable", cause: loadFailure }),
+    );
+    expect(loader).toHaveBeenCalledOnce();
+  });
+
+  it("keeps loader and configuration resets isolated and deterministic", () => {
+    const first = vi.fn(() => {
+      throw new Error("first load failed");
+    });
+    __setNativeLoaderForTest(first);
+    configureFsSafeNative({ mode: "auto" });
+    expect(getNativeBinding()).toBeUndefined();
+
+    __resetFsSafeNativeConfigForTest();
+    configureFsSafeNative({ mode: "require" });
+    expectFsSafeErrorSync(() => getNativeBinding(), "helper-unavailable");
+    expect(first).toHaveBeenCalledOnce();
+
+    const present = {} as NativeBinding;
+    const second = vi.fn(() => present);
+    __setNativeLoaderForTest(second);
+    expect(getNativeBinding()).toBe(present);
+    expect(second).toHaveBeenCalledOnce();
+  });
+
   it("does not attempt to load the binding in off mode", () => {
     const loader = vi.fn(() => ({}) as NativeBinding);
     __setNativeLoaderForTest(loader);

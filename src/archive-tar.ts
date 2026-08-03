@@ -18,6 +18,7 @@ import {
   type ArchiveFilteredEntryPolicy,
 } from "./archive-policy.js";
 import { ArchiveSecurityError } from "./archive-errors.js";
+import { formatErrorDetail } from "./error-detail.js";
 
 export type TarEntryInfo = { path: string; type: string; size: number; mode?: number };
 
@@ -102,7 +103,10 @@ export function createTarEntryPreflightChecker(params: {
     }
 
     if (BLOCKED_TAR_ENTRY_TYPES.has(entry.type)) {
-      throw new ArchiveSecurityError("entry-link", `tar entry is a link: ${entry.path}`);
+      throw new ArchiveSecurityError(
+        "entry-link",
+        `tar entry is a link: ${formatErrorDetail(entry.path)}`,
+      );
     }
 
     budget.addEntrySize(entry.size);

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { canonicalPathFromExistingAncestor } from "./absolute-path.js";
 import { readFileDescriptorBoundedSync } from "./bounded-read.js";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, type AsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError, type FsSafeErrorCode } from "./errors.js";
@@ -8,6 +9,7 @@ import { sameFileIdentity, type FileIdentityStat } from "./file-identity.js";
 import { resolveHomeRelativePath } from "./home-dir.js";
 import { openPinnedFileSync } from "./pinned-open.js";
 import { runPinnedWriteHelper } from "./pinned-write.js";
+import { serializePathWrite } from "./write-queue.js";
 
 export const DEFAULT_SECRET_FILE_MAX_BYTES = 16 * 1024;
 export const PRIVATE_SECRET_DIR_MODE = 0o700;
@@ -109,7 +111,6 @@ function readSecretFileOutcomeSync(
     filePath: resolvedPath,
     rejectPathSymlink: options.rejectSymlink,
     rejectHardlinks: options.rejectHardlinks !== false,
-    maxBytes,
   });
   if (!opened.ok) {
     const error = normalizeSecretReadError(
@@ -322,6 +323,15 @@ type SecretFileWriteParams = {
   dirMode?: number;
 };
 
+async function secretFileWriteQueueKey(filePath: string): Promise<string> {
+  try {
+    return await canonicalPathFromExistingAncestor(filePath);
+  } catch {
+    // Keep validation and its public error shape owned by the write path below.
+    return path.resolve(filePath);
+  }
+}
+
 async function materializeSecretFileAtomic(
   params: SecretFileWriteParams,
   createOnly: boolean,
@@ -378,12 +388,18 @@ async function materializeSecretFileAtomic(
 }
 
 export async function writeSecretFileAtomic(params: SecretFileWriteParams): Promise<void> {
-  await materializeSecretFileAtomic(params, false);
+  const canonicalPath = await secretFileWriteQueueKey(params.filePath);
+  await serializePathWrite(canonicalPath, async () => {
+    await materializeSecretFileAtomic(params, false);
+  });
 }
 
 export async function createSecretFileAtomic(params: SecretFileWriteParams): Promise<void> {
   try {
-    await materializeSecretFileAtomic(params, true);
+    const canonicalPath = await secretFileWriteQueueKey(params.filePath);
+    await serializePathWrite(canonicalPath, async () => {
+      await materializeSecretFileAtomic(params, true);
+    });
   } catch (error) {
     if (
       (error instanceof FsSafeError && error.code === "already-exists") ||

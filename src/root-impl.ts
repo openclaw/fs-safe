@@ -36,6 +36,7 @@ import {
 import { readOpenedFileSafely, type ReadResult } from "./read-opened-file.js";
 import { resolveRootPath } from "./root-path.js";
 import {
+  assertRootIdentityCurrent,
   assertValidRootDestinationPath,
   assertValidRootRelativePath,
   ensureTrailingSep,
@@ -929,8 +930,12 @@ async function openWritableFileInRoot(
   }
 
   let realPathForCleanup: string | null = null;
+  let createdIdentity: Stats | null = null;
   try {
     const stat = await handle.stat();
+    if (createdForWrite) {
+      createdIdentity = stat;
+    }
     if (!stat.isFile()) {
       throw new FsSafeError("invalid-path", "path is not a regular file under root");
     }
@@ -985,8 +990,8 @@ async function openWritableFileInRoot(
     const cleanupCreatedPath = createdForWrite && err instanceof FsSafeError;
     const cleanupPath = realPathForCleanup ?? ioPath;
     await handle.close().catch(() => {});
-    if (cleanupCreatedPath) {
-      await fs.rm(cleanupPath, { force: true }).catch(() => {});
+    if (cleanupCreatedPath && createdIdentity) {
+      await removePathIfIdentityUnchanged(cleanupPath, createdIdentity).catch(() => {});
     }
     throw err;
   }
@@ -1082,25 +1087,25 @@ async function writeFileInRoot(
   root: RootContext,
   params: RootWriteOptions & { relativePath: string; data: string | Buffer },
 ): Promise<void> {
-  if (
-    process.platform === "win32" &&
-    (params.renameIdentity === "verify-content-with-lock" || !getNativeBinding())
-  ) {
-    await serializePathWrite(rootWriteQueueKey(root, params.relativePath), async () => {
+  await serializePathWrite(rootWriteQueueKey(root, params.relativePath), async () => {
+    if (
+      process.platform === "win32" &&
+      (params.renameIdentity === "verify-content-with-lock" || !getNativeBinding())
+    ) {
       await writeFileFallback(root, params);
+      return;
+    }
+
+    const pinned = await resolvePinnedWriteTargetInRoot(
+      root,
+      params.relativePath,
+      params.mode,
+      params.denyMutations,
+    );
+
+    await serializePathWrite(pinned.targetPath, async () => {
+      await commitPinnedWriteInRoot(root, pinned, params);
     });
-    return;
-  }
-
-  const pinned = await resolvePinnedWriteTargetInRoot(
-    root,
-    params.relativePath,
-    params.mode,
-    params.denyMutations,
-  );
-
-  await serializePathWrite(pinned.targetPath, async () => {
-    await commitPinnedWriteInRoot(root, pinned, params);
   });
 }
 
@@ -1174,36 +1179,38 @@ async function copyFileInRoot(
   }
 
   try {
-    const pinned = await resolvePinnedWriteTargetInRoot(
-      root,
-      params.relativePath,
-      params.mode,
-      params.denyMutations,
-    );
-    await serializePathWrite(pinned.targetPath, async () => {
-      await assertCopySourceCurrent(source);
-      let identity: FileIdentityStat;
-      try {
-        identity = await runPinnedWriteHelper({
-          rootPath: pinned.rootReal,
-          relativeParentPath: pinned.relativeParentPath,
-          basename: pinned.basename,
-          mkdir: params.mkdir !== false,
-          mode: pinned.mode,
-          overwrite: true,
-          maxBytes: params.maxBytes,
-          input: { kind: "stream", stream: source.handle.createReadStream() },
-          rootIdentity: root.rootIdentity,
-        });
-      } catch (error) {
-        throw normalizePinnedWriteError(error);
-      }
-      try {
-        await assertCopySourcePathCurrent(source);
-      } catch (error) {
-        await removeCopyTargetIfUnchanged(pinned.targetPath, identity).catch(() => undefined);
-        throw error;
-      }
+    await serializePathWrite(rootWriteQueueKey(root, params.relativePath), async () => {
+      const pinned = await resolvePinnedWriteTargetInRoot(
+        root,
+        params.relativePath,
+        params.mode,
+        params.denyMutations,
+      );
+      await serializePathWrite(pinned.targetPath, async () => {
+        await assertCopySourceCurrent(source);
+        let identity: FileIdentityStat;
+        try {
+          identity = await runPinnedWriteHelper({
+            rootPath: pinned.rootReal,
+            relativeParentPath: pinned.relativeParentPath,
+            basename: pinned.basename,
+            mkdir: params.mkdir !== false,
+            mode: pinned.mode,
+            overwrite: true,
+            maxBytes: params.maxBytes,
+            input: { kind: "stream", stream: source.handle.createReadStream() },
+            rootIdentity: root.rootIdentity,
+          });
+        } catch (error) {
+          throw normalizePinnedWriteError(error);
+        }
+        try {
+          await assertCopySourcePathCurrent(source);
+        } catch (error) {
+          await removePathIfIdentityUnchanged(pinned.targetPath, identity).catch(() => undefined);
+          throw error;
+        }
+      });
     });
   } finally {
     await source.handle.close().catch(() => {});
@@ -1225,7 +1232,7 @@ async function assertCopySourcePathCurrent(source: OpenResult): Promise<void> {
   }
 }
 
-async function removeCopyTargetIfUnchanged(
+async function removePathIfIdentityUnchanged(
   targetPath: string,
   identity: FileIdentityStat,
 ): Promise<void> {
@@ -1359,6 +1366,7 @@ async function resolvePinnedRootPathInRoot(
     policy: (typeof PATH_ALIAS_POLICIES)[keyof typeof PATH_ALIAS_POLICIES];
   },
 ): Promise<{ rootReal: string; rootWithSep: string; canonicalPath: string }> {
+  await assertRootIdentityCurrent(root);
   const rootReal = root.rootReal;
   let resolved;
   try {
@@ -1414,7 +1422,9 @@ async function mkdirPathFallback(resolved: { rootReal: string; resolved: string 
 async function statPathFallback(root: RootContext, relativePath: string): Promise<PathStat> {
   const resolved = await resolvePinnedPathInRoot(root, { relativePath, allowRoot: true });
   try {
-    return pathStatFromStats(await fs.lstat(resolved.resolved));
+    const stat = pathStatFromStats(await fs.lstat(resolved.resolved));
+    await assertRootIdentityCurrent(root);
+    return stat;
   } catch (error) {
     if (isNotFoundPathError(error)) {
       throw fileNotFoundError(error instanceof Error ? error : undefined);
@@ -1433,6 +1443,7 @@ async function listPathFallback(
     const names = await fs.readdir(resolved.resolved);
     const sortedNames = names.toSorted();
     if (!withFileTypes) {
+      await assertRootIdentityCurrent(root);
       return sortedNames;
     }
     const entries: DirEntry[] = [];
@@ -1442,6 +1453,7 @@ async function listPathFallback(
         ...pathStatFromStats(await fs.lstat(path.join(resolved.resolved, name))),
       });
     }
+    await assertRootIdentityCurrent(root);
     return entries;
   } catch (error) {
     if (isNotFoundPathError(error)) {

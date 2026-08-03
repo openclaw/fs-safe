@@ -11,6 +11,7 @@ import {
   type ArchiveSecurityErrorCode,
 } from "./archive-errors.js";
 import { FsSafeError } from "./errors.js";
+import { formatErrorDetail } from "./error-detail.js";
 import { resolveOpenedFileRealPathForHandle, root } from "./root.js";
 import { isNotFoundPathError, isPathInside } from "./path.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
@@ -24,7 +25,7 @@ export { ArchiveSecurityError, type ArchiveSecurityErrorCode } from "./archive-e
 function symlinkTraversalError(originalPath: string): ArchiveSecurityError {
   return new ArchiveSecurityError(
     "destination-symlink-traversal",
-    `${ERROR_ARCHIVE_ENTRY_TRAVERSES_SYMLINK}: ${originalPath}`,
+    `${ERROR_ARCHIVE_ENTRY_TRAVERSES_SYMLINK}: ${formatErrorDetail(originalPath)}`,
   );
 }
 
@@ -389,7 +390,9 @@ export async function mergeExtractedTreeIntoDestination(params: {
       }
 
       if (!sourceStat.isFile()) {
-        throw new Error(`archive staging contains unsupported entry: ${originalPath}`);
+        throw new Error(
+          `archive staging contains unsupported entry: ${formatErrorDetail(originalPath)}`,
+        );
       }
 
       await prepareArchiveOutputPath({

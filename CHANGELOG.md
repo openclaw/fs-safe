@@ -5,6 +5,20 @@
 ### Security and Correctness
 
 - Reject negative, malformed, and oversized base-256 TAR sizes using the full encoded field, preventing high-order size bytes from bypassing archive metadata metering.
+- Serialize same-target `Root.write()` and `Root.copyIn()` calls before inspecting the existing destination, so ordinary overlapping writers do not race the mode-preservation open against another writer's atomic replacement.
+- Serialize same-target directory replacements, confine their randomized backup names to the target parent, retain identity-bound exit cleanup after transient atomic/output/move staging cleanup failures, and refuse to publish EXDEV move copies when descriptor-bound mode application fails.
+- Stream native pinned-write inputs only after create-only collision checks, avoiding backend-dependent eager buffering, and preserve explicit zero file modes instead of replacing them with `0o600`.
+- Verify synchronous file-store publication by inode after rename and avoid pathname-based post-publication mode changes, so a raced symlink or hardlink swap fails closed without changing an unrelated target's permissions.
+- Track live JSON-store mutation ownership separately from inherited async context, so continuations scheduled by an update can mutate the store after that update finishes while genuinely nested mutations remain rejected.
+- Serialize private secret and file-store publications by canonical destination, preventing ordinary overlapping writers from tripping the fallback's post-rename identity fence while retaining atomic last-writer-wins replacement.
+- Preserve replacement sidecars when asynchronous lock setup fails, remove an identity-matching `Root`-backed sidecar when its post-create open fails, and clean up synchronous sidecars on normal process exit.
+- Pin each `Root` handle to the canonical root directory identity so root-path replacement cannot expose outside metadata through `stat()`, `exists()`, `list()`, or `walk()`, and preserve a swapped-in writable leaf when failed-open cleanup no longer owns its inode.
+- Fail closed on invalid walk and absolute-path policies, keep standalone walk budgets bounded at runtime, reject final symlinks from absolute writable paths, and observe aborts that arrive during directory listing.
+- Canonicalize configured local-root symlinks, recognize case-insensitive `file:` URL schemes (including unsafe device targets) using the requested platform's path semantics, validate every configured root, confine secure-temp fallback prefixes to one segment, preserve replaced temp-file directories during cleanup, return absolute install paths, and avoid splitting Unicode surrogate pairs while truncating filenames.
+- Reject archive output names that collide after case or Unicode normalization, keeping extraction deterministic across JavaScript/native backends and case-insensitive filesystems.
+- Escape control characters in archive-entry and root-path diagnostics, and reject NUL inputs plus embedded Windows drive-relative segments in the direct sync and async root resolvers before Node can echo raw attacker-controlled paths from a syscall error or resolve the two variants differently.
+- Shell-quote POSIX permission-remediation paths, and report a secret file that grows past the synchronous read limit as `too-large` just like the asynchronous reader.
+- Fence pathname SHA-256 hashing against pre-open identity replacement, propagate bounded-stream source failures while tearing down file streams on early consumer close, and report synchronous regular-file disappearance races as `path-mismatch` consistently with the async reader.
 - Pin synchronous file-store roots across every parent-walk segment, so private and non-private writes reject a store root replaced during directory creation, and route deny-mutation ancestor canonicalization through the shared root resolver on Windows and POSIX.
 - Keep the POSIX parent-directory no-follow identity check active for synchronous atomic-replacement adapters that omit `fchmodSync`, preventing the documented default adapter path from writing through a symlinked parent.
 - Synchronize the actual destination after descriptor-bound mode application when atomic rename uses copy fallback, and include both bytes and mode in bounded fallback restoration.
@@ -43,6 +57,7 @@
 
 ### Docs and Tooling
 
+- Include the README banner in the npm tarball and require it during pack checks so the published README does not reference a missing package asset; sanitize pnpm-only npm configuration from package-smoke subprocesses so the documented release check stays warning-free on newer npm versions.
 - Audit every public export and documented default against generated declarations and real filesystem behavior, add executable documentation-contract coverage, and correct stale examples and security guarantees across root writes, local roots, shared types, paths, temp roots, archives, errors, and filename portability.
 
 - Create GitHub Releases as drafts before npm publication, then attach immutable verification proof and promote them only after the published package passes the shared registry verifier, avoiding stranded releases during registry propagation incidents (#81).

@@ -1,5 +1,6 @@
 import path from "node:path";
 import { ArchiveSecurityError } from "./archive-errors.js";
+import { formatErrorDetail } from "./error-detail.js";
 import { resolveSafeBaseDir } from "./path.js";
 
 export function isWindowsDrivePath(value: string): boolean {
@@ -20,12 +21,15 @@ export function validateArchiveEntryPath(
     return;
   }
   if (isWindowsDrivePath(entryPath)) {
-    throw new ArchiveSecurityError("entry-path", `archive entry uses a drive path: ${entryPath}`);
+    throw new ArchiveSecurityError(
+      "entry-path",
+      `archive entry uses a drive path: ${formatErrorDetail(entryPath)}`,
+    );
   }
   if (entryPath.includes("\0")) {
     throw new ArchiveSecurityError(
       "entry-path",
-      `archive entry contains a NUL byte: ${entryPath}`,
+      `archive entry contains a NUL byte: ${formatErrorDetail(entryPath)}`,
     );
   }
   const normalized = path.posix.normalize(normalizeArchiveEntryPath(entryPath));
@@ -33,11 +37,14 @@ export function validateArchiveEntryPath(
   if (normalized === ".." || normalized.startsWith("../")) {
     throw new ArchiveSecurityError(
       "entry-path",
-      `archive entry escapes ${escapeLabel}: ${entryPath}`,
+      `archive entry escapes ${escapeLabel}: ${formatErrorDetail(entryPath)}`,
     );
   }
   if (path.posix.isAbsolute(normalized) || normalized.startsWith("//")) {
-    throw new ArchiveSecurityError("entry-path", `archive entry is absolute: ${entryPath}`);
+    throw new ArchiveSecurityError(
+      "entry-path",
+      `archive entry is absolute: ${formatErrorDetail(entryPath)}`,
+    );
   }
 }
 
@@ -61,13 +68,17 @@ export function createArchiveOutputPathTracker(): (entryPath: string, originalPa
   const seen = new Set<string>();
   return (entryPath, originalPath) => {
     const normalized = path.posix.normalize(normalizeArchiveEntryPath(entryPath));
-    if (seen.has(normalized)) {
+    // Archive policy must not depend on the destination volume's case or
+    // Unicode-normalization behavior. Otherwise the JavaScript and native
+    // writers can disagree about which of two colliding entries wins.
+    const collisionKey = normalized.normalize("NFC").toLowerCase().normalize("NFC");
+    if (seen.has(collisionKey)) {
       throw new ArchiveSecurityError(
         "entry-path",
-        `archive entries collide at output path ${normalized}: ${originalPath}`,
+        `archive entries collide at output path ${formatErrorDetail(normalized)}: ${formatErrorDetail(originalPath)}`,
       );
     }
-    seen.add(normalized);
+    seen.add(collisionKey);
   };
 }
 
@@ -83,7 +94,7 @@ export function resolveArchiveOutputPath(params: {
   if (!outPath.startsWith(safeBase)) {
     throw new ArchiveSecurityError(
       "entry-path",
-      `archive entry escapes ${escapeLabel}: ${params.originalPath}`,
+      `archive entry escapes ${escapeLabel}: ${formatErrorDetail(params.originalPath)}`,
     );
   }
   return outPath;

@@ -76,6 +76,20 @@ describe("additional helper boundary bypass attempts", () => {
     await expect(fsp.stat(target.dir)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("does not clean up a replacement at a temp file directory path", async () => {
+    const layout = await makeTempLayout("fs-safe-temp-replacement", tempDirs);
+    const target = await tempFile({ rootDir: layout.root, prefix: "download" });
+    const original = `${target.dir}.original`;
+    await fsp.rename(target.dir, original);
+    await fsp.mkdir(target.dir);
+    await fsp.writeFile(path.join(target.dir, "replacement.txt"), "keep");
+
+    await target.cleanup();
+
+    await expect(fsp.readFile(path.join(target.dir, "replacement.txt"), "utf8"))
+      .resolves.toBe("keep");
+  });
+
   it("rejects remote or encoded-separator file URLs while accepting local file URLs", () => {
     const local = pathToFileURL(path.join(os.tmpdir(), "safe.txt")).toString();
     expect(safeFileURLToPath(local)).toBe(path.join(os.tmpdir(), "safe.txt"));
@@ -123,6 +137,24 @@ describe("additional helper boundary bypass attempts", () => {
 
     const syncFollowed = walkDirectorySync(layout.root, { symlinks: "follow", maxEntries: 20 });
     expect(syncFollowed.entries.length).toBeLessThanOrEqual(20);
+  });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, -1, 1.5])(
+    "rejects an invalid walk budget instead of silently becoming unbounded: %s",
+    async (budget) => {
+      const layout = await makeTempLayout("fs-safe-walk-budget", tempDirs);
+      expect(() => walkDirectorySync(layout.root, { maxEntries: budget })).toThrow(RangeError);
+      expect(() => walkDirectorySync(layout.root, { maxDepth: budget })).toThrow(RangeError);
+      await expect(walkDirectory(layout.root, { maxEntries: budget })).rejects.toThrow(RangeError);
+      await expect(walkDirectory(layout.root, { maxDepth: budget })).rejects.toThrow(RangeError);
+    },
+  );
+
+  it("rejects an unknown standalone symlink policy instead of following it", async () => {
+    const layout = await makeTempLayout("fs-safe-walk-policy", tempDirs);
+    const invalidOptions = { symlinks: "unexpected" } as never;
+    expect(() => walkDirectorySync(layout.root, invalidOptions)).toThrow(TypeError);
+    await expect(walkDirectory(layout.root, invalidOptions)).rejects.toThrow(TypeError);
   });
 
   it("refuses to trash targets outside explicit allowed roots and does not move them", async () => {

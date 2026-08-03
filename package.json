@@ -29,6 +29,7 @@
     "dist/**/*.d.ts.map",
     "dist/native/**/*.node",
     "docs/**/*.md",
+    "docs/assets/readme-banner.jpg",
     "README.md",
     "CHANGELOG.md",
     "SECURITY.md",

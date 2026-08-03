@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
+import { sameFileIdentity } from "./file-identity.js";
 import { expandHomePrefix } from "./home-dir.js";
 import {
   assertNoNulPathInput,
@@ -79,6 +80,24 @@ export async function resolveRootContext(rootDir: string): Promise<RootContext> 
   };
 }
 
+export async function assertRootIdentityCurrent(root: RootContext): Promise<void> {
+  let current: Awaited<ReturnType<typeof fs.lstat>>;
+  try {
+    current = await fs.lstat(root.rootReal);
+  } catch (error) {
+    throw new FsSafeError("path-mismatch", "root path changed during operation", {
+      cause: error instanceof Error ? error : undefined,
+    });
+  }
+  if (
+    current.isSymbolicLink() ||
+    !current.isDirectory() ||
+    !sameFileIdentity(current, root.rootIdentity)
+  ) {
+    throw new FsSafeError("path-mismatch", "root path changed during operation");
+  }
+}
+
 export async function resolvePathInRoot(
   root: RootContext,
   relativePath: string,
@@ -90,6 +109,7 @@ export async function resolvePathInRoot(
   },
 ): Promise<{ rootReal: string; rootWithSep: string; resolved: string }> {
   assertValidRootRelativePath(relativePath);
+  await assertRootIdentityCurrent(root);
   const expanded = await expandRelativePathWithHome(relativePath);
   const resolved = path.resolve(root.rootWithSep, expanded);
   if (!isPathInside(root.rootWithSep, resolved)) {

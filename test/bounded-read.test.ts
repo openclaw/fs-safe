@@ -2,6 +2,7 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { expectFsSafeErrorSync } from "./helpers/security.js";
 import * as advanced from "../src/advanced.js";
@@ -10,7 +11,10 @@ import {
   readFileDescriptorBoundedSync,
   readFileHandleBounded,
 } from "../src/bounded-read.js";
-import { createMaxBytesTransform } from "../src/bounded-read-stream.js";
+import {
+  createBoundedReadStream,
+  createMaxBytesTransform,
+} from "../src/bounded-read-stream.js";
 import { FsSafeError } from "../src/errors.js";
 import { readJson, readJsonSync } from "../src/json.js";
 import { root } from "../src/root.js";
@@ -171,4 +175,48 @@ describe("bounded descriptor reads", () => {
       }
     },
   );
+});
+
+describe("bounded read streams", () => {
+  it("propagates source errors through the returned stream", async () => {
+    const failure = new Error("source failed");
+    const source = new Readable({
+      read() {
+        this.destroy(failure);
+      },
+    });
+    const bounded = createBoundedReadStream(
+      { handle: { createReadStream: () => source } },
+      8,
+    );
+
+    await expect((async () => {
+      for await (const _chunk of bounded) {
+        // Drain the stream so its terminal error surfaces.
+      }
+    })()).rejects.toBe(failure);
+  });
+
+  it("destroys the source when a consumer closes early", async () => {
+    let destroyed = false;
+    const source = new Readable({
+      read() {
+        this.push(Buffer.alloc(64));
+      },
+      destroy(error, callback) {
+        destroyed = true;
+        callback(error);
+      },
+    });
+    const bounded = createBoundedReadStream(
+      { handle: { createReadStream: () => source } },
+      Number.POSITIVE_INFINITY,
+    );
+
+    for await (const _chunk of bounded) {
+      break;
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(destroyed).toBe(true);
+  });
 });

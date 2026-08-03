@@ -73,8 +73,18 @@ describe("install path helpers", () => {
       }),
     ).toEqual({
       ok: true,
-      path: path.join("/tmp/plugins", "@openclaw__matrix"),
+      path: path.resolve("/tmp/plugins", "@openclaw__matrix"),
     });
+  });
+
+  it("returns an absolute install path for a relative base", () => {
+    expect(
+      resolveSafeInstallDir({
+        baseDir: "plugins",
+        id: "matrix",
+        invalidNameMessage: "invalid plugin name",
+      }),
+    ).toEqual({ ok: true, path: path.resolve("plugins", "matrix") });
   });
 
   it("validates canonical paths under a base directory", async () => {

@@ -76,6 +76,12 @@ describe("sanitizeUntrustedFileName", () => {
     expect(sanitizeUntrustedFileName(input, "fallback.bin")).toBe(expected);
   });
 
+  it("does not split a Unicode surrogate pair at the length limit", () => {
+    const sanitized = sanitizeUntrustedFileName(`${"a".repeat(199)}😀`, "fallback.bin");
+    expect(sanitized.isWellFormed()).toBe(true);
+    expect(sanitized).toBe("a".repeat(199));
+  });
+
   it.each(["CON", "nul.txt", "CoNiN$.log", "COM¹.dat", "CON_"])(
     "is idempotent for reserved-name result %s",
     (input) => {

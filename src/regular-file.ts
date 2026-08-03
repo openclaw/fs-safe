@@ -177,9 +177,18 @@ function readOpenedRegularFileSync(params: {
   maxBytes?: number;
 }): { buffer: Buffer; stat: Stats } {
   const stat = fsSync.fstatSync(params.fd);
+  let pathStat: Stats;
+  try {
+    pathStat = fsSync.lstatSync(params.filePath);
+  } catch (error) {
+    if (isNotFoundPathError(error)) {
+      throw new FsSafeError("path-mismatch", `File changed during read: ${params.filePath}`);
+    }
+    throw error;
+  }
   verifyStableReadTarget({
     filePath: params.filePath,
-    pathStat: fsSync.lstatSync(params.filePath),
+    pathStat,
     postOpenStat: stat,
     preOpenStat: params.preOpenStat,
   });
@@ -216,7 +225,15 @@ export function readRegularFileSync(params: { filePath: string; maxBytes?: numbe
     throw regularFileTooLargeError(params.filePath, params.maxBytes);
   }
 
-  const fd = fsSync.openSync(params.filePath, resolveRegularFileReadFlags());
+  let fd: number;
+  try {
+    fd = fsSync.openSync(params.filePath, resolveRegularFileReadFlags());
+  } catch (error) {
+    if (isNotFoundPathError(error)) {
+      throw new FsSafeError("path-mismatch", `File changed during read: ${params.filePath}`);
+    }
+    throw error;
+  }
   try {
     return readOpenedRegularFileSync({
       fd,

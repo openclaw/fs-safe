@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
+import { sameFileIdentity } from "./file-identity.js";
 import {
   assertSyncDirectoryGuard,
   ensureParentSync,
@@ -69,6 +70,7 @@ export function writeFileSyncAtomic(params: {
     } catch {
       // Best-effort on platforms that do not enforce POSIX modes.
     }
+    const tempStat = fs.lstatSync(tempPath);
     if (parentGuard) {
       assertSyncDirectoryGuard(parentGuard);
     }
@@ -78,9 +80,22 @@ export function writeFileSyncAtomic(params: {
       assertSyncDirectoryGuard(parentGuard);
     }
     try {
-      fs.chmodSync(filePath, params.mode);
-    } catch {
-      // Best-effort on platforms that do not enforce POSIX modes.
+      const publishedStat = fs.lstatSync(filePath);
+      if (
+        publishedStat.isSymbolicLink() ||
+        !publishedStat.isFile() ||
+        publishedStat.nlink > 1 ||
+        !sameFileIdentity(tempStat, publishedStat)
+      ) {
+        throw new FsSafeError("path-mismatch", "store target changed after write");
+      }
+    } catch (error) {
+      if (error instanceof FsSafeError) {
+        throw error;
+      }
+      throw new FsSafeError("path-mismatch", "store target changed after write", {
+        cause: error instanceof Error ? error : undefined,
+      });
     }
     return filePath;
   } finally {
