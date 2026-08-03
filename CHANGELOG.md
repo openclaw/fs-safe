@@ -73,6 +73,7 @@
 
 ### Docs and Tooling
 
+- Measure coverage once per operating system and merge the platform reports before enforcing thresholds, so coverage reflects existing cross-platform execution rather than implying new test coverage.
 - Refresh the native package build CLI to `@napi-rs/cli` 3.8.2.
 - Give parallel native archive tests collision-free temporary paths so one fixture cannot remove another test's file on coarse-resolution clocks.
 - Include the README banner in the npm tarball and require it during pack checks so the published README does not reference a missing package asset; sanitize pnpm-only npm configuration from package-smoke subprocesses so the documented release check stays warning-free on newer npm versions.
