@@ -151,7 +151,7 @@
     "tar": "7.5.22"
   },
   "devDependencies": {
-    "@napi-rs/cli": "3.8.1",
+    "@napi-rs/cli": "3.8.2",
     "@types/node": "^26.1.2",
     "@vitest/coverage-v8": "4.1.10",
     "sigstore": "5.0.0",

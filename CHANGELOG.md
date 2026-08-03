@@ -59,6 +59,7 @@
 
 ### Docs and Tooling
 
+- Refresh the native package build CLI to `@napi-rs/cli` 3.8.2.
 - Include the README banner in the npm tarball and require it during pack checks so the published README does not reference a missing package asset; sanitize pnpm-only npm configuration from package-smoke subprocesses so the documented release check stays warning-free on newer npm versions.
 - Audit every public export and documented default against generated declarations and real filesystem behavior, add executable documentation-contract coverage, and correct stale examples and security guarantees across root writes, local roots, shared types, paths, temp roots, archives, errors, and filename portability.
 
