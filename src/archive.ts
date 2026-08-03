@@ -44,7 +44,10 @@ import {
   zipEntryMode,
   type ZipEntry,
 } from "./archive-zip-entry.js";
-import { createZipIntegrityTransform } from "./archive-zip-integrity.js";
+import {
+  createZipIntegrityTransform,
+  normalizeZipIntegrityError,
+} from "./archive-zip-integrity.js";
 import { FsSafeError } from "./errors.js";
 import { ArchiveSecurityError } from "./archive-errors.js";
 import { extractNativeArchive } from "./archive-native.js";
@@ -187,7 +190,7 @@ async function writeZipFileEntry(params: {
             { signal: params.deadline.signal },
           );
         } catch (err) {
-          throw createPipelineTimeoutError(err, params.deadline);
+          throw normalizeZipIntegrityError(createPipelineTimeoutError(err, params.deadline));
         }
         params.deadline.check();
         if (!handleClosedByStream) {

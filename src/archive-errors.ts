@@ -27,3 +27,10 @@ export class ArchiveFormatError extends Error {
     this.code = "archive-header-invalid";
   }
 }
+
+export function isArchiveFormatErrorMessage(message: string): boolean {
+  return (
+    message.includes("archive-header-invalid") ||
+    message.includes("archive entry size did not match its manifest")
+  );
+}

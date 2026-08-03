@@ -12,11 +12,13 @@ import {
   adversarialPath,
   archiveAliasingPathPair,
   propertyParameters,
+  WINDOWS_ARCHIVE_PORTABILITY_NAMES,
 } from "./helpers/property.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 import {
   ARCHIVE_LIMIT_ERROR_CODE,
   extractArchive,
+  readArchiveEntry,
   type ArchiveExtractLimits,
   type ArchiveKind,
 } from "../src/archive.js";
@@ -35,6 +37,7 @@ import { isPathInside } from "../src/path.js";
 const { tempRoot } = useRealTempDirs();
 const DOCUMENTED_REJECTION_CODES = new Set([
   "archive-header-invalid",
+  "device-path",
   "entry-path",
   ...Object.values(ARCHIVE_LIMIT_ERROR_CODE),
 ]);
@@ -197,6 +200,36 @@ describe("structured ZIP fuzz properties", () => {
   });
 });
 
+describe.each(["tar", "zip"] as const)("%s Windows-name portability", (kind) => {
+  it.each(backends)(
+    "pins reserved devices, ADS, and trailing aliases with %s",
+    async (backend) => {
+      const observed: Array<{ name: string; outcome: ArchiveOutcome }> = [];
+      for (const name of WINDOWS_ARCHIVE_PORTABILITY_NAMES) {
+        const bytes = kind === "tar"
+          ? tarBytes({ name, body: Buffer.from("x") })
+          : await zipBytes({ names: [name], body: Buffer.from("x") });
+        const outcome = await extractOutcome({ bytes, kind, backend });
+        observed.push({ name, outcome });
+        if (process.platform === "win32") {
+          expect(outcome, JSON.stringify({ kind, backend, name })).toMatchObject({
+            accepted: false,
+          });
+        } else {
+          expect(outcome, JSON.stringify({ kind, backend, name })).toEqual({ accepted: true });
+        }
+      }
+      if (
+        process.platform === "win32" ||
+        process.env.FS_SAFE_PRINT_ARCHIVE_PORTABILITY === "1"
+      ) {
+        console.info(JSON.stringify({ platform: process.platform, kind, backend, observed }));
+      }
+    },
+    30_000,
+  );
+});
+
 describe("minimized parser fuzz regressions", () => {
   it.each(backends)("rejects full-width base-256 overflow with %s", async (backend) => {
     await expect(extractOutcome({
@@ -246,6 +279,23 @@ describe("minimized parser fuzz regressions", () => {
       backend,
       limits: { maxEntryBytes: 0, maxExtractedBytes: 0 },
     })).resolves.toEqual({ accepted: true });
+  });
+
+  it("types JSZip stream size mismatches for extraction and bounded reads", async () => {
+    const bytes = await zipBytes({
+      names: ["payload"],
+      body: Buffer.alloc(0),
+      declaredSizeDelta: 1,
+    });
+    await expect(extractOutcome({ bytes, kind: "zip", backend: "javascript" }))
+      .resolves.toEqual({ accepted: false, code: "archive-header-invalid" });
+
+    configureFsSafeNative({ mode: "off" });
+    const base = await tempRoot("fs-safe-zip-size-mismatch-");
+    const archivePath = path.join(base, "payload.zip");
+    await fs.writeFile(archivePath, bytes);
+    await expect(readArchiveEntry(archivePath, "payload", { maxBytes: 1, kind: "zip" }))
+      .rejects.toMatchObject({ code: "archive-header-invalid" });
   });
 
   it.each(backends)("types truncated and overlong ZIP inputs with %s", async (backend) => {

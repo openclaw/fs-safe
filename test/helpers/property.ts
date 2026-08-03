@@ -2,6 +2,33 @@ import fc, { type Parameters } from "fast-check";
 
 export const PROPERTY_SEED = 0x5eed_c0de;
 
+const WINDOWS_RESERVED_ARCHIVE_NAMES = [
+  "CON",
+  "PRN",
+  "AUX",
+  "NUL",
+  ...Array.from({ length: 9 }, (_, index) => `COM${index + 1}`),
+  ...Array.from({ length: 9 }, (_, index) => `LPT${index + 1}`),
+] as const;
+
+export const WINDOWS_ARCHIVE_PORTABILITY_NAMES = [
+  ...WINDOWS_RESERVED_ARCHIVE_NAMES.flatMap((name) => [name, `${name}.txt`]),
+  "NUL.",
+  "NUL ",
+  "CON.txt.",
+  "CON.txt ",
+  "COM1.",
+  "COM1 ",
+  "LPT9.txt.",
+  "LPT9.txt ",
+  "file:stream",
+  "file.txt:stream",
+] as const;
+
+export const windowsArchivePortabilityName = fc.constantFrom(
+  ...WINDOWS_ARCHIVE_PORTABILITY_NAMES,
+);
+
 export function propertyParameters(numRuns: number): Parameters<unknown> {
   return {
     numRuns,
@@ -45,6 +72,7 @@ const tokenPath = fc
 export const adversarialPath = fc.oneof(
   { depthIdentifier: "path-kind" },
   tokenPath,
+  windowsArchivePortabilityName,
   fc.constantFrom(
     "",
     ".",

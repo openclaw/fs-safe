@@ -22,6 +22,16 @@ function updateCrc32(previous: number, buffer: Buffer): number {
   return (crc ^ -1) >>> 0;
 }
 
+export function normalizeZipIntegrityError(error: unknown): Error {
+  if (
+    error instanceof Error &&
+    error.message.includes("uncompressed data size mismatch")
+  ) {
+    return new ArchiveFormatError(`invalid ZIP entry data: ${error.message}`, { cause: error });
+  }
+  return error instanceof Error ? error : new Error(String(error));
+}
+
 export function createZipIntegrityTransform(entry: ZipEntry): Transform {
   const metadata = zipEntryIntegrityMetadata(entry);
   const deferredEmpty = hasDeferredEmptyZipData(entry);

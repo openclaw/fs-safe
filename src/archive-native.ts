@@ -1,6 +1,10 @@
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
-import { ArchiveFormatError, ArchiveSecurityError } from "./archive-errors.js";
+import {
+  ArchiveFormatError,
+  ArchiveSecurityError,
+  isArchiveFormatErrorMessage,
+} from "./archive-errors.js";
 import { formatErrorDetail } from "./error-detail.js";
 import {
   createArchiveOutputPathTracker,
@@ -40,7 +44,7 @@ function throwMappedNativeError(error: unknown): never {
     for (const code of Object.values(ARCHIVE_LIMIT_ERROR_CODE)) {
       if (error.message.includes(code)) throw new ArchiveLimitError(code);
     }
-    if (error.message.includes("archive-header-invalid")) {
+    if (isArchiveFormatErrorMessage(error.message)) {
       throw new ArchiveFormatError(error.message, { cause: error });
     }
     if ((error as Error & { code?: unknown }).code === "InvalidArg") {
@@ -166,7 +170,7 @@ export async function extractNativeArchive(params: {
             plan,
             limits.maxMetaEntryBytes,
             params.deadline.signal,
-          );
+          ).catch(throwMappedNativeError);
         } finally {
           await directory.close().catch(() => undefined);
         }
