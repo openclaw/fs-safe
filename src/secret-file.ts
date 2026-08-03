@@ -123,8 +123,16 @@ function readSecretFileOutcomeSync(
       message: `Failed to read ${label} file at ${resolvedPath}: ${String(error)}`,
     };
   }
-
   try {
+    if (!sameFileIdentity(previewStat, opened.stat)) {
+      const error = new FsSafeError("path-mismatch", "security validation failed");
+      return {
+        ok: false,
+        code: "path-mismatch",
+        error,
+        message: `Failed to read ${label} file at ${resolvedPath}: ${String(error)}`,
+      };
+    }
     const raw = readFileDescriptorBoundedSync(opened.fd, maxBytes).toString("utf8");
     const secret = raw.trim();
     if (!secret) {

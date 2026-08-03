@@ -2,12 +2,14 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { expectFsSafeError, expectFsSafeErrorSync } from "./helpers/security.js";
 import { itPosix, itWin32, useTempDirs } from "./helpers/vitest.js";
 import {
   readSecretFileSync,
   tryReadSecretFileSync,
   writeSecretFileAtomic,
 } from "../src/secret-file.js";
+import { readSecretFile } from "../src/secret-read-async.js";
 
 const { tempRoot } = useTempDirs();
 
@@ -124,6 +126,34 @@ describe("secret file refusal paths", () => {
     expect(() => readSecretFileSync(filePath, "token")).toThrow(
       expect.objectContaining({ code: "not-found" }),
     );
+  });
+
+  itPosix("rejects a secret path retargeted after the preview in sync and async readers", async () => {
+    const root = await tempRoot("fs-safe-secret-preview-retarget-");
+    const originalPath = path.join(root, "original");
+    const replacementPath = path.join(root, "replacement");
+    const syncLink = path.join(root, "sync-token");
+    const asyncLink = path.join(root, "async-token");
+    await fs.writeFile(originalPath, "original");
+    await fs.writeFile(replacementPath, "replacement");
+    await fs.symlink(originalPath, syncLink);
+    await fs.symlink(originalPath, asyncLink);
+
+    const realpathSync = fsSync.realpathSync.bind(fsSync);
+    vi.spyOn(fsSync, "realpathSync").mockImplementationOnce((candidate, options) => {
+      fsSync.unlinkSync(syncLink);
+      fsSync.symlinkSync(replacementPath, syncLink);
+      return realpathSync(candidate, options as never);
+    });
+    expectFsSafeErrorSync(() => readSecretFileSync(syncLink, "sync token"), "path-mismatch");
+
+    const realpath = fs.realpath.bind(fs);
+    vi.spyOn(fs, "realpath").mockImplementationOnce(async (candidate, options) => {
+      await fs.unlink(asyncLink);
+      await fs.symlink(replacementPath, asyncLink);
+      return await realpath(candidate, options as never);
+    });
+    await expectFsSafeError(readSecretFile(asyncLink, "async token"), "path-mismatch");
   });
 
   it("rejects a different descriptor identity during post-write verification", async () => {
