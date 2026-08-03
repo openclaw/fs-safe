@@ -38,7 +38,6 @@ const { tempRoot } = useRealTempDirs();
 const DOCUMENTED_REJECTION_CODES = new Set([
   "archive-header-invalid",
   "device-path",
-  "ENOENT",
   "entry-path",
   ...Object.values(ARCHIVE_LIMIT_ERROR_CODE),
 ]);
@@ -81,6 +80,7 @@ async function extractOutcome(params: {
   kind: ArchiveKind;
   backend: Backend;
   limits?: ArchiveExtractLimits;
+  allowedSystemCodes?: readonly string[];
 }): Promise<ArchiveOutcome> {
   useBackend(params.backend);
   const base = await tempRoot(`fs-safe-${params.kind}-${params.backend}-property-`);
@@ -104,7 +104,11 @@ async function extractOutcome(params: {
   } catch (error) {
     const code = (error as { code?: unknown }).code;
     expect(typeof code, String(error)).toBe("string");
-    expect(DOCUMENTED_REJECTION_CODES, String(error)).toContain(code);
+    const acceptedCodes = new Set([
+      ...DOCUMENTED_REJECTION_CODES,
+      ...(params.allowedSystemCodes ?? []),
+    ]);
+    expect(acceptedCodes, String(error)).toContain(code);
     expect(await fs.readdir(destination), String(error)).toEqual([]);
     return { accepted: false, code: code as string };
   }
@@ -125,6 +129,15 @@ const tarEncoding = fc.constantFrom<TarSizeEncoding>(
   "invalid-octal",
 );
 
+function windowsPortabilitySystemCodes(name: string): readonly string[] | undefined {
+  // PR #118 deliberately left Windows ADS policy open; pin its raw errno only
+  // for that explicit corpus without weakening the general rejection property.
+  return process.platform === "win32" &&
+    (name === "file:stream" || name === "file.txt:stream")
+    ? ["ENOENT"]
+    : undefined;
+}
+
 describe("structured TAR fuzz properties", () => {
   it("classifies malformed headers and hostile names without a third outcome", async () => {
     await fc.assert(
@@ -142,7 +155,12 @@ describe("structured TAR fuzz properties", () => {
             sizeEncoding,
             truncateTo,
           });
-          const javascript = await extractOutcome({ bytes, kind: "tar", backend: "javascript" });
+          const javascript = await extractOutcome({
+            bytes,
+            kind: "tar",
+            backend: "javascript",
+            allowedSystemCodes: windowsPortabilitySystemCodes(name),
+          });
           expect(javascript).toEqual(expect.objectContaining({ accepted: expect.any(Boolean) }));
         },
       ),
@@ -164,8 +182,19 @@ describe("structured TAR fuzz properties", () => {
             declaredSize,
             sizeEncoding,
           });
-          const javascript = await extractOutcome({ bytes, kind: "tar", backend: "javascript" });
-          const nativeResult = await extractOutcome({ bytes, kind: "tar", backend: "native" });
+          const allowedSystemCodes = windowsPortabilitySystemCodes(name);
+          const javascript = await extractOutcome({
+            bytes,
+            kind: "tar",
+            backend: "javascript",
+            allowedSystemCodes,
+          });
+          const nativeResult = await extractOutcome({
+            bytes,
+            kind: "tar",
+            backend: "native",
+            allowedSystemCodes,
+          });
           expect(nativeResult.accepted, JSON.stringify({ name, sizeEncoding, bodyLength, declaredSize }))
             .toBe(javascript.accepted);
         },
@@ -190,8 +219,19 @@ describe("structured ZIP fuzz properties", () => {
             truncateBy,
             declaredSizeDelta,
           });
-          const javascript = await extractOutcome({ bytes, kind: "zip", backend: "javascript" });
-          const nativeResult = await extractOutcome({ bytes, kind: "zip", backend: "native" });
+          const allowedSystemCodes = windowsPortabilitySystemCodes(name);
+          const javascript = await extractOutcome({
+            bytes,
+            kind: "zip",
+            backend: "javascript",
+            allowedSystemCodes,
+          });
+          const nativeResult = await extractOutcome({
+            bytes,
+            kind: "zip",
+            backend: "native",
+            allowedSystemCodes,
+          });
           expect(nativeResult.accepted, JSON.stringify({ name, bodyLength, truncateBy, declaredSizeDelta }))
             .toBe(javascript.accepted);
         },
@@ -210,7 +250,12 @@ describe.each(["tar", "zip"] as const)("%s Windows-name portability", (kind) => 
         const bytes = kind === "tar"
           ? tarBytes({ name, body: Buffer.from("x") })
           : await zipBytes({ names: [name], body: Buffer.from("x") });
-        const outcome = await extractOutcome({ bytes, kind, backend });
+        const outcome = await extractOutcome({
+          bytes,
+          kind,
+          backend,
+          allowedSystemCodes: windowsPortabilitySystemCodes(name),
+        });
         observed.push({ name, outcome });
         if (process.platform === "win32") {
           expect(outcome, JSON.stringify({ kind, backend, name })).toEqual({
