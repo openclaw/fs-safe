@@ -9,7 +9,7 @@ import {
   withExtractionDeadline,
   type ExtractionDeadline,
 } from "../src/archive-deadline.js";
-import { writeFileHandleFully } from "../src/archive-file-io.js";
+import { writeFileHandleFully } from "../src/archive-input.js";
 import { stageArchiveFileForExtraction } from "../src/archive-input.js";
 import { resolveExtractLimits } from "../src/archive-limits.js";
 import { archiveEntryKindFromTarType, resolveArchiveEntryMode } from "../src/archive-policy.js";

@@ -17,7 +17,7 @@ async function closeFileHandle(handle: FileHandle | undefined): Promise<void> {
   if (handle) await handle.close().catch(() => undefined);
 }
 
-async function writeFileHandleFully(params: {
+export async function writeFileHandleFully(params: {
   handle: FileHandle;
   buffer: Buffer;
   bytes: number;
