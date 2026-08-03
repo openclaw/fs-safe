@@ -14,7 +14,7 @@ import {
 import { writeFileSyncAtomic } from "./file-store-sync-write.js";
 import { createJsonStore, type JsonFileStoreOptions, type JsonStore } from "./json-document-store.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
-import { resolveSafeRelativePath } from "./path.js";
+import { isNodeError, resolveSafeRelativePath } from "./path.js";
 import { root, type OpenResult, type ReadResult, type Root, type RootReadOptions } from "./root.js";
 import { DEFAULT_ROOT_MAX_BYTES } from "./root-impl.js";
 import { readRegularFile } from "./regular-file.js";
@@ -129,6 +129,16 @@ function isNotFound(error: unknown): boolean {
         (error as NodeJS.ErrnoException).code === "ENOTDIR";
 }
 
+function throwFileStoreReadError(error: unknown): never {
+  if (error instanceof FsSafeError) {
+    throw error;
+  }
+  if (isNodeError(error)) {
+    throw new FsSafeError("read-failed", "store target could not be read", { cause: error });
+  }
+  throw error;
+}
+
 function handleSyncStoreReadOpenFailure(opened: RootFileOpenFailure): null {
   return matchRootFileOpenFailure<null>(opened, {
     path: (failure) => {
@@ -140,12 +150,16 @@ function handleSyncStoreReadOpenFailure(opened: RootFileOpenFailure): null {
       });
     },
     validation: (failure) => {
+      if (failure.error instanceof FsSafeError) {
+        throw failure.error;
+      }
       // Validation failures mean the path existed but violated store policy
       // (directory, hardlink, symlink race). Do not report them as missing.
       throw new FsSafeError("path-mismatch", "store target failed read validation", {
         cause: failure.error instanceof Error ? failure.error : undefined,
       });
     },
+    io: (failure) => throwFileStoreReadError(failure.error),
     fallback: (failure) => {
       throw new FsSafeError("path-mismatch", "store target changed during read", {
         cause: failure.error instanceof Error ? failure.error : undefined,
@@ -343,7 +357,7 @@ export function fileStore(options: FileStoreOptions): FileStore {
         if (isNotFound(error)) {
           return null;
         }
-        throw error;
+        throwFileStoreReadError(error);
       }
     },
     readJson: async <T = unknown>(relativePath: string, readOptions?: FileStoreReadOptions) => {
@@ -363,7 +377,7 @@ export function fileStore(options: FileStoreOptions): FileStore {
         if (isNotFound(error)) {
           return null;
         }
-        throw error;
+        throwFileStoreReadError(error);
       }
     },
     remove: async (relativePath) => {
@@ -455,11 +469,13 @@ export function fileStoreSync(options: FileStoreOptions): FileStoreSync {
       try {
         assertMaxBytes(opened.stat.size, readOptions?.maxBytes ?? maxBytes);
         const limit = readOptions?.maxBytes ?? maxBytes;
-        const raw =
-          limit === undefined
+        try {
+          return limit === undefined
             ? syncFs.readFileSync(opened.fd, "utf8")
             : readFileDescriptorBoundedSync(opened.fd, limit).toString("utf8");
-        return raw;
+        } catch (error) {
+          throwFileStoreReadError(error);
+        }
       } finally {
         syncFs.closeSync(opened.fd);
       }

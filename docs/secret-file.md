@@ -89,6 +89,10 @@ credential must also fail on broad permissions or unexpected ownership.
 the same pinned-handle validation, byte cap, trimming, error codes, and strict
 versus missing-is-undefined naming semantics.
 
+If an already validated descriptor fails while reading, both readers throw an
+operational `FsSafeError` with `code: "read-failed"`; inspect `cause` for the
+underlying Node filesystem code such as `EIO`.
+
 Use the async strict reader when a service cannot start safely without the
 credential:
 

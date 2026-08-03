@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { isUnsafeDeviceReadPath } from "./device-path.js";
+import { FsSafeError } from "./errors.js";
 import { sameFileIdentity as hasSameFileIdentity } from "./file-identity.js";
 
 export type PinnedOpenSyncFailureReason = "path" | "validation" | "io";
@@ -57,10 +58,18 @@ export function openPinnedFileSync(params: {
     }
     const preOpenStat = ioFs.lstatSync(realPath);
     if (!isAllowedType(preOpenStat, allowedType)) {
-      return { ok: false, reason: "validation" };
+      return {
+        ok: false,
+        reason: "validation",
+        error: new FsSafeError("not-file", "path does not have the required file type"),
+      };
     }
     if (params.rejectHardlinks && preOpenStat.isFile() && preOpenStat.nlink > 1) {
-      return { ok: false, reason: "validation" };
+      return {
+        ok: false,
+        reason: "validation",
+        error: new FsSafeError("hardlink", "path must not be hardlinked"),
+      };
     }
     if (
       params.maxBytes !== undefined &&
@@ -73,10 +82,18 @@ export function openPinnedFileSync(params: {
     fd = ioFs.openSync(realPath, openReadFlags);
     const openedStat = ioFs.fstatSync(fd);
     if (!isAllowedType(openedStat, allowedType)) {
-      return { ok: false, reason: "validation" };
+      return {
+        ok: false,
+        reason: "validation",
+        error: new FsSafeError("not-file", "path does not have the required file type"),
+      };
     }
     if (params.rejectHardlinks && openedStat.isFile() && openedStat.nlink > 1) {
-      return { ok: false, reason: "validation" };
+      return {
+        ok: false,
+        reason: "validation",
+        error: new FsSafeError("hardlink", "path must not be hardlinked"),
+      };
     }
     if (params.maxBytes !== undefined && openedStat.isFile() && openedStat.size > params.maxBytes) {
       return { ok: false, reason: "validation" };

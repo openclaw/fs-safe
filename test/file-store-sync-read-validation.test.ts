@@ -16,7 +16,7 @@ describe("sync file-store read validation failures", () => {
     await fs.mkdir(path.join(root, "not-a-file"));
     const store = fileStoreSync({ rootDir: root, private: true });
 
-    expectFsSafeErrorSync(() => store.readTextIfExists("not-a-file"), "path-mismatch");
+    expectFsSafeErrorSync(() => store.readTextIfExists("not-a-file"), "not-file");
   });
 
   itPosix("surfaces hardlinks as filesystem safety errors", async () => {
@@ -26,6 +26,6 @@ describe("sync file-store read validation failures", () => {
     fsSync.linkSync(filePath, path.join(root, "alias.txt"));
     const store = fileStoreSync({ rootDir: root, private: true });
 
-    expectFsSafeErrorSync(() => store.readTextIfExists("value.txt"), "path-mismatch");
+    expectFsSafeErrorSync(() => store.readTextIfExists("value.txt"), "hardlink");
   });
 });

@@ -80,7 +80,7 @@ describe("clawpatch regression coverage", () => {
     await fs.writeFile(filePath, "secret");
     await fs.link(filePath, path.join(rootDir, "alias.txt"));
 
-    expectFsSafeErrorSync(() => fileStoreSync({ rootDir }).readTextIfExists("alias.txt"), "path-mismatch");
+    expectFsSafeErrorSync(() => fileStoreSync({ rootDir }).readTextIfExists("alias.txt"), "hardlink");
   });
 
   itPosix("rejects archive destinations swapped before realpath settles", async () => {

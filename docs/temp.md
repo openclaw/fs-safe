@@ -45,6 +45,11 @@ await runBuild(workspace.dir, inputPath);
 ```
 
 `write` writes at `mode` (default `0o600`); `writeText` and `writeJson` are convenience wrappers for the common scratch-file shapes; `copyIn` ingests an absolute source path through the same atomic-rename machinery as `Root.copyIn`. `read` is a small accessor that reads back any file you wrote into the workspace.
+Both the async and sync `read` methods throw `FsSafeError("not-file")` when the
+named leaf is a directory or another non-regular target, and preserve the
+`not-found`, `hardlink`, or `symlink` code for those stable target states.
+Operational filesystem read failures use `read-failed` with the Node error in
+`cause`.
 
 `store` is a `fileStore({ rootDir: workspace.dir, private: true })` handle. Use
 it when you want the richer store surface, including `writeStream`, `exists`,

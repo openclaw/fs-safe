@@ -16,6 +16,7 @@ export type FsSafeErrorCode =
   | "path-alias"
   | "path-mismatch"
   | "permission-unverified"
+  | "read-failed"
   | "secret-exists"
   | "store-reentrant-update"
   | "symlink"
@@ -33,6 +34,7 @@ const OPERATIONAL_CODES: ReadonlySet<FsSafeErrorCode> = new Set([
   "not-found",
   "not-removable",
   "permission-unverified",
+  "read-failed",
   "timeout",
   "unsupported-platform",
 ]);

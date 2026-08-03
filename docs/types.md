@@ -171,14 +171,14 @@ type FsSafeErrorCode =
   | "helper-unavailable" | "insecure-permissions" | "invalid-path"
   | "not-empty" | "not-file" | "not-found" | "not-owned"
   | "not-removable" | "outside-workspace" | "path-alias"
-  | "path-mismatch" | "permission-unverified" | "secret-exists"
+  | "path-mismatch" | "permission-unverified" | "read-failed" | "secret-exists"
   | "store-reentrant-update" | "symlink"
   | "timeout" | "too-large" | "unsupported-platform";
 ```
 
 Closed union you switch on. See the [Errors](errors.md) reference for what each one means.
 
-`FsSafeError.category` is `"policy"` for unsafe input or target state rejected by a safety policy and `"operational"` for routine filesystem outcomes or environment/runtime failures. `not-found`, `not-empty`, and `not-removable` are operational.
+`FsSafeError.category` is `"policy"` for unsafe input or target state rejected by a safety policy and `"operational"` for routine filesystem outcomes or environment/runtime failures. `not-found`, `not-empty`, `not-removable`, and `read-failed` are operational.
 
 ## See also
 

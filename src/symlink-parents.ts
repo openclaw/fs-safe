@@ -1,7 +1,7 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { isNotFoundPathError, isPathRelativeEscape } from "./path.js";
+import { hasNodeErrorCode, isPathRelativeEscape } from "./path.js";
 
 export type AssertNoSymlinkParentsOptions = {
   rootDir: string;
@@ -58,7 +58,7 @@ export async function assertNoSymlinkParents(
         throw new Error(`${params.messagePrefix ?? "Path"} must traverse directories: ${current}`);
       }
     } catch (err) {
-      if (isNotFoundPathError(err) && params.allowMissing !== false) {
+      if (hasNodeErrorCode(err, "ENOENT") && params.allowMissing !== false) {
         return;
       }
       throw err;

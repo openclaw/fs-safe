@@ -138,6 +138,10 @@ type FileStoreWriteOptions = {
 ## Reads
 
 `open`, `read`, `readBytes`, `readText`, and `readJson` delegate to a fresh `Root` with `hardlinks: "reject"` and the store's `maxBytes`. Same return shapes as `Root`.
+Async and sync reads both report `not-file` when the key names a directory;
+stable hardlinks and symlinks retain `hardlink` and `symlink`. The `IfExists`
+methods return their nullish result only for `not-found`. Operational filesystem
+read failures use `read-failed` with the Node error retained in `cause`.
 
 ## `remove(rel)` / `exists(rel)`
 

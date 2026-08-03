@@ -82,7 +82,7 @@ describe("path stress regressions", () => {
     ).resolves.toBe("inside");
 
     const syncStore = fileStoreSync({ rootDir });
-    expectFsSafeErrorSync(() => syncStore.readTextIfExists("alias/value.txt"), "path-mismatch");
+    expectFsSafeErrorSync(() => syncStore.readTextIfExists("alias/value.txt"), "symlink");
   });
 
   itPosix("reports an intermediate symlink loop as a symlink failure when following", async () => {

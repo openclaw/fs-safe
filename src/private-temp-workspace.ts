@@ -8,8 +8,14 @@ import {
   type FileStore,
   type FileStoreSync,
 } from "./file-store.js";
-import { openRootFileSync } from "./root-file.js";
+import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
+import { isNodeError, isNotFoundPathError } from "./path.js";
+import {
+  matchRootFileOpenFailure,
+  openRootFileSync,
+  type RootFileOpenFailure,
+} from "./root-file.js";
 import {
   registerTempPathForExit,
   type TempPathIdentityReceipt,
@@ -81,6 +87,45 @@ function assertWorkspaceFileName(fileName: string): string {
     throw new Error(`Invalid temp workspace file name: ${JSON.stringify(fileName)}`);
   }
   return value;
+}
+
+function throwTempWorkspaceReadError(error: unknown): never {
+  if (error instanceof FsSafeError) {
+    throw error;
+  }
+  if (isNodeError(error)) {
+    throw new FsSafeError("read-failed", "temp workspace target could not be read", {
+      cause: error,
+    });
+  }
+  throw error;
+}
+
+function throwTempWorkspaceOpenFailure(failure: RootFileOpenFailure): never {
+  return matchRootFileOpenFailure<never>(failure, {
+    path: ({ error }) => {
+      if (isNotFoundPathError(error)) {
+        throw new FsSafeError("not-found", "temp workspace file not found", { cause: error });
+      }
+      throw new FsSafeError("path-mismatch", "temp workspace target changed during read", {
+        cause: error,
+      });
+    },
+    validation: ({ error }) => {
+      if (error instanceof FsSafeError) {
+        throw error;
+      }
+      throw new FsSafeError("path-mismatch", "temp workspace target failed read validation", {
+        cause: error,
+      });
+    },
+    io: ({ error }) => throwTempWorkspaceReadError(error),
+    fallback: ({ error }) => {
+      throw new FsSafeError("path-mismatch", "temp workspace target changed during read", {
+        cause: error,
+      });
+    },
+  });
 }
 
 async function ensurePrivateDirectory(dir: string, mode: number): Promise<void> {
@@ -173,7 +218,13 @@ async function createTempWorkspace(
       }),
     copyIn: async (fileName, sourcePath) =>
       await store.copyIn(assertWorkspaceFileName(fileName), sourcePath, { mode }),
-    read: async (fileName) => await store.readBytes(assertWorkspaceFileName(fileName)),
+    read: async (fileName) => {
+      try {
+        return await store.readBytes(assertWorkspaceFileName(fileName));
+      } catch (error) {
+        throwTempWorkspaceReadError(error);
+      }
+    },
     cleanup: async () => {
       try {
         return await cleanupWorkspace(dir, identity);
@@ -261,10 +312,14 @@ export function tempWorkspaceSync(
         rejectHardlinks: true,
       });
       if (!opened.ok) {
-        throw Object.assign(new Error(`File not found: ${fileName}`), { code: "ENOENT" });
+        throwTempWorkspaceOpenFailure(opened);
       }
       try {
-        return fsSync.readFileSync(opened.fd);
+        try {
+          return fsSync.readFileSync(opened.fd);
+        } catch (error) {
+          throwTempWorkspaceReadError(error);
+        }
       } finally {
         fsSync.closeSync(opened.fd);
       }

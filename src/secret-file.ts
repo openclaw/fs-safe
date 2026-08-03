@@ -147,10 +147,7 @@ function readSecretFileOutcomeSync(
     const normalized = normalizeSecretReadError(error);
     return {
       ok: false,
-      code:
-        error instanceof FsSafeError && error.code === "too-large"
-          ? "too-large"
-          : "invalid-path",
+      code: error instanceof FsSafeError ? error.code : "read-failed",
       error: normalized,
       message: `Failed to read ${label} file at ${resolvedPath}: ${String(normalized)}`,
     };

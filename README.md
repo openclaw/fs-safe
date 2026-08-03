@@ -522,10 +522,11 @@ if (err instanceof FsSafeError) {
 ```
 
 Routine filesystem outcomes such as `not-found`, `not-empty`, and
-`not-removable` are operational; they do not indicate that a filesystem
+`not-removable`, plus runtime failures such as `read-failed`, are operational;
+they do not indicate that a filesystem
 boundary policy was violated.
 
-Current `FsSafeErrorCode` values are `already-exists`, `denied-path`, `device-path`, `hardlink`, `helper-failed`, `helper-unavailable`, `invalid-path`, `insecure-permissions`, `not-empty`, `not-file`, `not-found`, `not-owned`, `not-removable`, `outside-workspace`, `path-alias`, `path-mismatch`, `permission-unverified`, `secret-exists`, `store-reentrant-update`, `symlink`, `timeout`, `too-large`, and `unsupported-platform`.
+Current `FsSafeErrorCode` values are `already-exists`, `denied-path`, `device-path`, `hardlink`, `helper-failed`, `helper-unavailable`, `invalid-path`, `insecure-permissions`, `not-empty`, `not-file`, `not-found`, `not-owned`, `not-removable`, `outside-workspace`, `path-alias`, `path-mismatch`, `permission-unverified`, `read-failed`, `secret-exists`, `store-reentrant-update`, `symlink`, `timeout`, `too-large`, and `unsupported-platform`.
 
 ## Safety model
 

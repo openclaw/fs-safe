@@ -83,7 +83,12 @@ async function readSecretFileOutcome(
     const normalized = error instanceof Error ? error : new Error(String(error));
     return {
       ok: false,
-      code: error instanceof FsSafeError ? error.code : pathErrorCode(error) === "not-found" ? "not-found" : "path-mismatch",
+      code:
+        error instanceof FsSafeError
+          ? error.code
+          : pathErrorCode(error) === "not-found"
+            ? "not-found"
+            : "read-failed",
       error: normalized,
       message: `Failed to read ${label} file at ${resolvedPath}: ${String(normalized)}`,
     };
