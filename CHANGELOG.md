@@ -5,6 +5,7 @@
 ### Security and Correctness
 
 - Reject synchronous secret reads when the path is retargeted after the preview check, matching the asynchronous reader's `path-mismatch` contract instead of returning bytes from the replacement file.
+- Preserve dangling symlinks when trash moves cross filesystems instead of failing while following their missing targets.
 
 ## 0.5.2 - 2026-08-02
 

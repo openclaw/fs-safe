@@ -325,9 +325,10 @@ describe("clawpatch regression coverage", () => {
     await fs.mkdir(path.join(outsideDir, "queue"), { mode: 0o755, recursive: true });
     await fs.mkdir(failedDir);
     await fs.symlink(outsideDir, queueParent, "dir");
+    const originalMode = (await fs.stat(path.join(outsideDir, "queue"))).mode & 0o777;
 
     await expect(ensureJsonDurableQueueDirs({ queueDir, failedDir })).rejects.toBeTruthy();
-    expect((await fs.stat(path.join(outsideDir, "queue"))).mode & 0o777).toBe(0o755);
+    expect((await fs.stat(path.join(outsideDir, "queue"))).mode & 0o777).toBe(originalMode);
   });
 
   itPosix("rejects shared existing durable queue dirs under symlinked parents", async () => {
@@ -339,10 +340,12 @@ describe("clawpatch regression coverage", () => {
     await fs.mkdir(path.join(outsideDir, "state", "queue"), { mode: 0o755, recursive: true });
     await fs.mkdir(path.join(outsideDir, "state", "failed"), { mode: 0o755, recursive: true });
     await fs.symlink(outsideDir, queueParent, "dir");
+    const originalQueueMode = (await fs.stat(path.join(outsideDir, "state", "queue"))).mode & 0o777;
+    const originalFailedMode = (await fs.stat(path.join(outsideDir, "state", "failed"))).mode & 0o777;
 
     await expect(ensureJsonDurableQueueDirs({ queueDir, failedDir })).rejects.toBeTruthy();
-    expect((await fs.stat(path.join(outsideDir, "state", "queue"))).mode & 0o777).toBe(0o755);
-    expect((await fs.stat(path.join(outsideDir, "state", "failed"))).mode & 0o777).toBe(0o755);
+    expect((await fs.stat(path.join(outsideDir, "state", "queue"))).mode & 0o777).toBe(originalQueueMode);
+    expect((await fs.stat(path.join(outsideDir, "state", "failed"))).mode & 0o777).toBe(originalFailedMode);
   });
 
   itPosix("rejects symlinked durable queue failed directories during moves", async () => {

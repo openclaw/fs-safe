@@ -283,11 +283,18 @@ describe("trash edge paths", () => {
     const linkPath = path.join(root, "broken-link");
     const missingTarget = path.join(root, "missing-target");
     await fs.symlink(missingTarget, linkPath);
+    const realRename = fsSync.renameSync.bind(fsSync);
+    vi.spyOn(fsSync, "renameSync").mockImplementation((from, to) => {
+      if (from === linkPath) {
+        throw Object.assign(new Error("cross-device"), { code: "EXDEV" });
+      }
+      return realRename(from, to);
+    });
 
     const dest = await movePathToTrash(linkPath, { allowedRoots: [root] });
     try {
-      // Broken links cannot be realpathed; the guard keeps lstat identity and
-      // renames the link itself instead of requiring the target to exist.
+      // Broken links cannot be realpathed; the copy fallback keeps lstat
+      // identity and recreates the link without requiring its target to exist.
       await expect(fs.readlink(dest)).resolves.toBe(missingTarget);
       await expect(fs.lstat(linkPath)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {

@@ -146,6 +146,16 @@ function reserveTrashDestination(trashDir: string, base: string, timestamp: numb
   return resolveContainedPath(container, base);
 }
 
+function copyTrashTargetSync(target: TrashTargetGuard, dest: string): void {
+  if (target.stat.isSymbolicLink()) {
+    const linkTarget = fs.readlinkSync(target.path);
+    assertTrashTargetGuard(target);
+    fs.symlinkSync(linkTarget, dest);
+    return;
+  }
+  fs.cpSync(target.path, dest, { recursive: true, force: false, errorOnExist: true });
+}
+
 function movePathToDestination(target: TrashTargetGuard, dest: string): boolean {
   getFsSafeTestHooks()?.beforeTrashMove?.(target.path, dest);
   assertTrashTargetGuard(target);
@@ -163,7 +173,7 @@ function movePathToDestination(target: TrashTargetGuard, dest: string): boolean 
 
   try {
     assertTrashTargetGuard(target);
-    fs.cpSync(target.path, dest, { recursive: true, force: false, errorOnExist: true });
+    copyTrashTargetSync(target, dest);
     assertTrashTargetGuard(target);
     guardedRmSync({ target: target.path, recursive: true, force: false, verifyAfter: false });
     return true;
