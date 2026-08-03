@@ -52,6 +52,14 @@ class TarMetadataMeter extends Transform {
       this.state = { kind: "header" };
       return;
     }
+    const nameEnd = this.block.subarray(0, 100).indexOf(0);
+    const name = this.block.subarray(0, nameEnd < 0 ? 100 : nameEnd);
+    if (name.length === 0) {
+      throw this.invalid("entry path is empty");
+    }
+    if (this.block[156] !== 0x35 && name.at(-1) === 0x2f) {
+      throw this.invalid("non-directory entry path ends with a separator");
+    }
     const size = this.parseSize();
     const type = this.block[156];
     if ([0x78, 0x67, 0x4c, 0x4b, 0x58].includes(type ?? -1) && size > this.maxMetaEntryBytes) {

@@ -52,6 +52,9 @@ impl<R> TarMetadataMeter<R> {
 
     fn parse_size(field: &[u8; 12]) -> io::Result<u64> {
         if field[0] & 0x80 != 0 {
+            if field[0] != 0x80 || field[1..4].iter().any(|byte| *byte != 0) {
+                return Err(Self::invalid("base-256 size is negative or overflows u64"));
+            }
             let mut value = 0_u64;
             for byte in &field[4..] {
                 value = value
@@ -79,6 +82,18 @@ impl<R> TarMetadataMeter<R> {
             self.state = MeterState::Header;
             self.block_len = 0;
             return Ok(());
+        }
+        let name_end = self.block[..100]
+            .iter()
+            .position(|byte| *byte == 0)
+            .unwrap_or(100);
+        if name_end == 0 {
+            return Err(Self::invalid("entry path is empty"));
+        }
+        if self.block[156] != b'5' && self.block[..name_end].last() == Some(&b'/') {
+            return Err(Self::invalid(
+                "non-directory entry path ends with a separator",
+            ));
         }
         let size = Self::parse_size(self.block[124..136].try_into().unwrap())?;
         let padded = Self::padded_size(size)?;
@@ -262,5 +277,25 @@ mod tests {
                 .to_string()
                 .contains(INVALID_HEADER)
         );
+    }
+
+    #[test]
+    fn rejects_base_256_sizes_with_nonzero_high_order_bytes() {
+        for offset in 1..4 {
+            let mut block = header(b'0', 0, true);
+            block[124 + offset] = 1;
+            let error = consume(block.to_vec(), 1024).unwrap_err();
+            assert!(error.to_string().contains(INVALID_HEADER));
+            assert!(error.to_string().contains("overflows u64"));
+        }
+    }
+
+    #[test]
+    fn rejects_an_empty_entry_path() {
+        let mut block = header(b'0', 0, false);
+        block[..100].fill(0);
+        let error = consume(block.to_vec(), 1024).unwrap_err();
+        assert!(error.to_string().contains(INVALID_HEADER));
+        assert!(error.to_string().contains("entry path is empty"));
     }
 }

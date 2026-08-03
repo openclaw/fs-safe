@@ -6,6 +6,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import {
   createArchiveOutputPathTracker,
+  normalizeArchiveEntryPath,
   resolveArchiveOutputPath,
   stripArchivePath,
   validateArchiveEntryPath,
@@ -53,7 +54,7 @@ import {
   resolveArchiveEntryMode,
   shouldExtractArchiveEntry,
 } from "./archive-policy.js";
-import { importOptionalTar } from "./archive-tar-runtime.js";
+import { importOptionalTar, normalizeTarParserError } from "./archive-tar-runtime.js";
 import { preflightTarMetadata } from "./archive-tar-meta.js";
 import type { ExtractArchiveOptions } from "./archive-options.js";
 import { writeSiblingTempFile } from "./sibling-temp.js";
@@ -390,6 +391,7 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
                   const info = readTarEntryInfo(entry);
                   const accepted = checkTarEntrySafety(info);
                   if (accepted) {
+                    (entry as { path: string }).path = normalizeArchiveEntryPath(info.path);
                     const relPath = stripArchivePath(
                       info.path,
                       Math.max(0, Math.floor(params.stripComponents ?? 0)),
@@ -434,7 +436,7 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
                 signal: deadline.signal,
               });
             } catch (error) {
-              throw createPipelineTimeoutError(error, deadline);
+              throw normalizeTarParserError(createPipelineTimeoutError(error, deadline));
             }
             for (const accepted of acceptedEntries) {
               const outputPath = resolveArchiveOutputPath({

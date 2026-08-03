@@ -18,7 +18,7 @@ import {
 } from "./archive-limits.js";
 import { readTarEntryInfo } from "./archive-tar.js";
 import { preflightTarMetadata } from "./archive-tar-meta.js";
-import { importOptionalTar } from "./archive-tar-runtime.js";
+import { importOptionalTar, normalizeTarParserError } from "./archive-tar-runtime.js";
 import { loadZipArchiveWithPreflight } from "./archive-zip-preflight.js";
 import { createZipIntegrityTransform } from "./archive-zip-integrity.js";
 import type { ZipEntry } from "./archive-zip-entry.js";
@@ -149,44 +149,48 @@ async function readTarEntry(archivePath: string, entryPath: string, maxBytes: nu
   let matched: Promise<Buffer> | undefined;
   let entryError: Error | undefined;
   const seenPaths = new Set<string>();
-  await tar.t({
-    file: archivePath,
-    strict: true,
-    maxMetaEntrySize: DEFAULT_MAX_META_ENTRY_BYTES,
-    onReadEntry(entry) {
-      const info = readTarEntryInfo(entry);
-      validateArchiveEntryPath(info.path, { escapeLabel: "archive root" });
-      const normalized = normalizeArchiveEntryPath(info.path).replace(/^\.\//, "");
-      if (seenPaths.has(normalized)) {
-        entryError ??= new ArchiveSecurityError(
-          "entry-path",
-          `archive contains duplicate entry path: ${formatErrorDetail(normalized)}`,
-        );
-        entry.resume();
-        return;
-      }
-      seenPaths.add(normalized);
-      if (normalized !== entryPath) {
-        entry.resume();
-        return;
-      }
-      if (info.type !== "File" && info.type !== "OldFile" && info.type !== "ContiguousFile") {
-        entryError ??= new Error(
-          `archive entry is not a file: ${formatErrorDetail(entryPath)}`,
-        );
-        entry.resume();
-        return;
-      }
-      if (info.size > maxBytes) {
-        entryError ??= new ArchiveLimitError(
-          ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT,
-        );
-        entry.resume();
-        return;
-      }
-      matched = readStreamBounded(entry, maxBytes);
-    },
-  });
+  try {
+    await tar.t({
+      file: archivePath,
+      strict: true,
+      maxMetaEntrySize: DEFAULT_MAX_META_ENTRY_BYTES,
+      onReadEntry(entry) {
+        const info = readTarEntryInfo(entry);
+        validateArchiveEntryPath(info.path, { escapeLabel: "archive root" });
+        const normalized = normalizeArchiveEntryPath(info.path).replace(/^\.\//, "");
+        if (seenPaths.has(normalized)) {
+          entryError ??= new ArchiveSecurityError(
+            "entry-path",
+            `archive contains duplicate entry path: ${formatErrorDetail(normalized)}`,
+          );
+          entry.resume();
+          return;
+        }
+        seenPaths.add(normalized);
+        if (normalized !== entryPath) {
+          entry.resume();
+          return;
+        }
+        if (info.type !== "File" && info.type !== "OldFile" && info.type !== "ContiguousFile") {
+          entryError ??= new Error(
+            `archive entry is not a file: ${formatErrorDetail(entryPath)}`,
+          );
+          entry.resume();
+          return;
+        }
+        if (info.size > maxBytes) {
+          entryError ??= new ArchiveLimitError(
+            ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT,
+          );
+          entry.resume();
+          return;
+        }
+        matched = readStreamBounded(entry, maxBytes);
+      },
+    });
+  } catch (error) {
+    throw normalizeTarParserError(error);
+  }
   if (entryError) {
     throw entryError;
   }

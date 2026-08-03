@@ -33,6 +33,19 @@ export function validateArchiveEntryPath(
     );
   }
   const normalized = path.posix.normalize(normalizeArchiveEntryPath(entryPath));
+  if (
+    normalized.split("/").some((segment) =>
+      Math.max(
+        Buffer.byteLength(segment.normalize("NFC")),
+        Buffer.byteLength(segment.normalize("NFD")),
+      ) > 255
+    )
+  ) {
+    throw new ArchiveSecurityError(
+      "entry-path",
+      `archive entry has an overlong path component: ${formatErrorDetail(entryPath)}`,
+    );
+  }
   const escapeLabel = params?.escapeLabel ?? "destination";
   if (normalized === ".." || normalized.startsWith("../")) {
     throw new ArchiveSecurityError(

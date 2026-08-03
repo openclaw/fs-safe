@@ -106,7 +106,20 @@ function assertRelativePath(relativePath: string): string {
   if (!raw || raw !== relativePath) {
     throw new FsSafeError("invalid-path", "store key must be non-empty and unpadded");
   }
-  return assertNoDriveRelativePathSegments(raw.replaceAll("\\", "/"), "store key");
+  assertNoDriveRelativePathSegments(raw.replaceAll("\\", "/"), "store key");
+  const segments = raw.split("/");
+  const delegated = segments.includes("..") || raw.includes("\\") ||
+    path.posix.isAbsolute(raw) || path.win32.isAbsolute(raw) || raw.startsWith("//");
+  if (delegated) return raw;
+  if (
+    segments.every((segment) => segment.length === 0 || segment === ".") ||
+    segments.some((segment) => segment.length === 0 || segment === ".") ||
+    raw.normalize("NFC") !== raw ||
+    segments.some((segment) => /[ .]$/u.test(segment))
+  ) {
+    throw new FsSafeError("invalid-path", "store key must use one canonical relative spelling");
+  }
+  return raw;
 }
 
 function resolveStorePath(rootDir: string, relativePath: string): string {

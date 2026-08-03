@@ -1,6 +1,10 @@
 import { Transform } from "node:stream";
 import { ArchiveFormatError } from "./archive-errors.js";
-import type { ZipEntry } from "./archive-zip-entry.js";
+import {
+  hasDeferredEmptyZipData,
+  zipEntryIntegrityMetadata,
+  type ZipEntry,
+} from "./archive-zip-entry.js";
 
 const CRC32_TABLE = Array.from({ length: 256 }, (_, index) => {
   let value = index;
@@ -19,8 +23,10 @@ function updateCrc32(previous: number, buffer: Buffer): number {
 }
 
 export function createZipIntegrityTransform(entry: ZipEntry): Transform {
-  const expectedCrc32 = entry._data?.crc32;
-  const expectedSize = entry._data?.uncompressedSize;
+  const metadata = zipEntryIntegrityMetadata(entry);
+  const deferredEmpty = hasDeferredEmptyZipData(entry);
+  const expectedCrc32 = deferredEmpty ? 0 : metadata?.crc32;
+  const expectedSize = deferredEmpty ? 0 : metadata?.uncompressedSize;
   if (
     typeof expectedCrc32 !== "number" ||
     !Number.isInteger(expectedCrc32) ||

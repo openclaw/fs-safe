@@ -6,6 +6,7 @@
 
 - Reject synchronous secret reads when the path is retargeted after the preview check, matching the asynchronous reader's `path-mismatch` contract instead of returning bytes from the replacement file.
 - Preserve dangling symlinks when trash moves cross filesystems instead of failing while following their missing targets.
+- Reject non-canonical FileStore keys and malformed archive names before filesystem access, keep JavaScript/native TAR and ZIP rejection semantics aligned (including full-width base-256 sizes and empty ZIP files), and add deterministic property-based regression coverage for path aliasing, parser boundaries, collisions, truncation, and extraction limits.
 
 ## 0.5.2 - 2026-08-02
 

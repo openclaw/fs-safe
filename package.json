@@ -154,6 +154,7 @@
     "@napi-rs/cli": "3.8.2",
     "@types/node": "^26.1.2",
     "@vitest/coverage-v8": "4.1.10",
+    "fast-check": "^4.9.0",
     "sigstore": "5.0.0",
     "typescript": "^7.0.2",
     "vite": "8.2.0",

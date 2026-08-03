@@ -1,3 +1,5 @@
+import { ArchiveFormatError } from "./archive-errors.js";
+
 export type TarParserEntry = {
   meta?: boolean;
   size: number;
@@ -46,4 +48,15 @@ export async function importOptionalTar(): Promise<TarModule> {
       { cause },
     );
   }
+}
+
+export function normalizeTarParserError(error: unknown): unknown {
+  const code = (error as { code?: unknown } | null)?.code;
+  if (typeof code !== "string" || !code.startsWith("TAR_")) {
+    return error;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return new ArchiveFormatError(`invalid TAR archive: ${message}`, {
+    cause: error instanceof Error ? error : undefined,
+  });
 }

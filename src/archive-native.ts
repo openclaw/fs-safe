@@ -43,6 +43,9 @@ function throwMappedNativeError(error: unknown): never {
     if (error.message.includes("archive-header-invalid")) {
       throw new ArchiveFormatError(error.message, { cause: error });
     }
+    if ((error as Error & { code?: unknown }).code === "InvalidArg") {
+      throw new ArchiveFormatError(`invalid archive: ${error.message}`, { cause: error });
+    }
   }
   throw error;
 }
