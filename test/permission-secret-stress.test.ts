@@ -37,6 +37,7 @@ describe("permission and secret stress matrix", () => {
     [0o600, false, true],
     [0o700, false, true],
     [0o440, false, false],
+    [0o404, false, false],
     [0o440, true, true],
     [0o404, true, true],
     [0o620, true, false],

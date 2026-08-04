@@ -2,8 +2,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
-import { useTempDirs } from "./helpers/vitest.js";
-import { fileStore } from "../src/file-store.js";
+import { itPosix, useTempDirs } from "./helpers/vitest.js";
+import { fileStore, fileStoreSync } from "../src/file-store.js";
 import {
   ensureJsonDurableQueueDirs,
   readJsonDurableQueueEntry,
@@ -22,12 +22,17 @@ function circularValue(): Record<string, unknown> {
 
 describe("store stress matrix", () => {
   it.each([false, true])(
-    "keeps targets intact across stream failures (private=%s)",
+    "keeps async and sync targets intact across serializer and stream failures (private=%s)",
     async (privateMode) => {
       const root = await tempRoot("fs-safe-store-failures-");
       const asyncStore = fileStore({ rootDir: root, private: privateMode });
+      const syncStore = fileStoreSync({ rootDir: root, private: privateMode });
+      await asyncStore.writeJson("async.json", { version: 1 });
+      syncStore.writeJson("sync.json", { version: 1 });
       await asyncStore.writeText("stream.txt", "complete");
 
+      await expect(asyncStore.writeJson("async.json", circularValue())).rejects.toThrow(TypeError);
+      expect(() => syncStore.writeJson("sync.json", circularValue())).toThrow(TypeError);
       const brokenStream = Readable.from(
         (async function* () {
           yield "partial";
@@ -38,6 +43,8 @@ describe("store stress matrix", () => {
         "stream failed",
       );
 
+      await expect(asyncStore.readJson("async.json")).resolves.toEqual({ version: 1 });
+      expect(syncStore.readJsonIfExists("sync.json")).toEqual({ version: 1 });
       await expect(asyncStore.readText("stream.txt")).resolves.toBe("complete");
       expect((await fs.readdir(root)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
     },
@@ -155,4 +162,19 @@ describe("store stress matrix", () => {
     await expect(store.readText("one/fresh.txt")).resolves.toBe("fresh");
   });
 
+  itPosix("keeps exact private and queue modes across repeated atomic replacement", async () => {
+    const root = await tempRoot("fs-safe-store-modes-");
+    const privateStore = fileStore({ rootDir: path.join(root, "private"), private: true });
+    await privateStore.writeText("nested/value.txt", "one");
+    await privateStore.writeText("nested/value.txt", "two");
+    const queueDir = path.join(root, "queue");
+    const failedDir = path.join(root, "failed");
+    await ensureJsonDurableQueueDirs({ queueDir, failedDir });
+    const paths = resolveJsonDurableQueueEntryPaths(queueDir, "job");
+    await writeJsonDurableQueueEntry({ filePath: paths.jsonPath, entry: {}, tempPrefix: "queue" });
+
+    expect((await fs.stat(privateStore.path("nested/value.txt"))).mode & 0o777).toBe(0o600);
+    expect((await fs.stat(path.join(root, "private", "nested"))).mode & 0o777).toBe(0o700);
+    expect((await fs.stat(paths.jsonPath)).mode & 0o777).toBe(0o600);
+  });
 });
