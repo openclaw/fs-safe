@@ -428,7 +428,7 @@ fn set_rename_information(
 ) -> NativeResult<()> {
     let name = wide_relative(target_path)?;
     let name_bytes = std::mem::size_of_val(name.as_slice());
-    let byte_len = FILE_NAME_OFFSET + name_bytes;
+    let byte_len = (FILE_NAME_OFFSET + name_bytes).max(size_of::<FileNameInfoHeader>());
     let mut buffer = aligned_name_buffer(byte_len);
     // SAFETY: the zeroed usize storage is suitably aligned, the fixed fields
     // end at offset 20 on the supported Windows x64 ABI, and the allocation is
@@ -480,7 +480,7 @@ fn set_link_information(
 ) -> NativeResult<()> {
     let name = wide_relative(target_path)?;
     let name_bytes = std::mem::size_of_val(name.as_slice());
-    let byte_len = FILE_NAME_OFFSET + name_bytes;
+    let byte_len = (FILE_NAME_OFFSET + name_bytes).max(size_of::<FileLinkInfoHeader>());
     let mut buffer = aligned_name_buffer(byte_len);
     // SAFETY: FILE_LINK_INFORMATION uses the same x64 filename offset.
     unsafe {
@@ -781,6 +781,46 @@ mod tests {
         .unwrap();
         assert_eq!(fs::read(root.join("target")).unwrap(), b"replacement");
         drop(replacement);
+
+        for (index, target_name) in ["a", "é"].into_iter().enumerate() {
+            let source_name = format!("short-source-{index}");
+            fs::write(root.join(&source_name), target_name.as_bytes()).unwrap();
+            let source = nt_open_relative(
+                root_handle.as_raw_handle() as HANDLE,
+                &source_name,
+                FILE_READ_ATTRIBUTES | DELETE_ACCESS,
+                FILE_OPEN,
+                FILE_NON_DIRECTORY_FILE,
+            )
+            .unwrap();
+            set_rename_information(
+                source.0,
+                root_handle.as_raw_handle() as HANDLE,
+                target_name,
+                false,
+                "rename short target",
+            )
+            .unwrap();
+            drop(source);
+            assert_eq!(
+                fs::read(root.join(target_name)).unwrap(),
+                target_name.as_bytes()
+            );
+        }
+
+        fs::write(root.join("link-source"), b"linked").unwrap();
+        let link_source = nt_open_relative(
+            root_handle.as_raw_handle() as HANDLE,
+            "link-source",
+            FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES,
+            FILE_OPEN,
+            FILE_NON_DIRECTORY_FILE,
+        )
+        .unwrap();
+        set_link_information(link_source.0, root_handle.as_raw_handle() as HANDLE, "l").unwrap();
+        drop(link_source);
+        assert_eq!(fs::read(root.join("l")).unwrap(), b"linked");
+
         fs::remove_dir_all(root).unwrap();
     }
 }

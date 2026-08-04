@@ -33,6 +33,15 @@ export function validateArchiveEntryPath(
     );
   }
   const slashNormalized = normalizeArchiveEntryPath(entryPath);
+  if (
+    process.platform === "win32" &&
+    slashNormalized.split("/").some((segment) => segment.includes(":"))
+  ) {
+    throw new ArchiveSecurityError(
+      "entry-path",
+      `archive entry uses a Windows alternate data stream path: ${formatErrorDetail(entryPath)}`,
+    );
+  }
   const normalized = path.posix.normalize(slashNormalized);
   if (
     normalized.split("/").some((segment) =>

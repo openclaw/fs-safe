@@ -80,7 +80,6 @@ async function extractOutcome(params: {
   kind: ArchiveKind;
   backend: Backend;
   limits?: ArchiveExtractLimits;
-  allowedSystemCodes?: readonly string[];
 }): Promise<ArchiveOutcome> {
   useBackend(params.backend);
   const base = await tempRoot(`fs-safe-${params.kind}-${params.backend}-property-`);
@@ -104,11 +103,7 @@ async function extractOutcome(params: {
   } catch (error) {
     const code = (error as { code?: unknown }).code;
     expect(typeof code, String(error)).toBe("string");
-    const acceptedCodes = new Set([
-      ...DOCUMENTED_REJECTION_CODES,
-      ...(params.allowedSystemCodes ?? []),
-    ]);
-    expect(acceptedCodes, String(error)).toContain(code);
+    expect(DOCUMENTED_REJECTION_CODES, String(error)).toContain(code);
     expect(await fs.readdir(destination), String(error)).toEqual([]);
     return { accepted: false, code: code as string };
   }
@@ -128,15 +123,6 @@ const tarEncoding = fc.constantFrom<TarSizeEncoding>(
   "base256-negative",
   "invalid-octal",
 );
-
-function windowsPortabilitySystemCodes(name: string): readonly string[] | undefined {
-  // PR #118 deliberately left Windows ADS policy open; pin its raw errno only
-  // for that explicit corpus without weakening the general rejection property.
-  return process.platform === "win32" &&
-    (name === "file:stream" || name === "file.txt:stream")
-    ? ["ENOENT"]
-    : undefined;
-}
 
 describe("structured TAR fuzz properties", () => {
   it("classifies malformed headers and hostile names without a third outcome", async () => {
@@ -159,7 +145,6 @@ describe("structured TAR fuzz properties", () => {
             bytes,
             kind: "tar",
             backend: "javascript",
-            allowedSystemCodes: windowsPortabilitySystemCodes(name),
           });
           expect(javascript).toEqual(expect.objectContaining({ accepted: expect.any(Boolean) }));
         },
@@ -182,18 +167,15 @@ describe("structured TAR fuzz properties", () => {
             declaredSize,
             sizeEncoding,
           });
-          const allowedSystemCodes = windowsPortabilitySystemCodes(name);
           const javascript = await extractOutcome({
             bytes,
             kind: "tar",
             backend: "javascript",
-            allowedSystemCodes,
           });
           const nativeResult = await extractOutcome({
             bytes,
             kind: "tar",
             backend: "native",
-            allowedSystemCodes,
           });
           expect(nativeResult.accepted, JSON.stringify({ name, sizeEncoding, bodyLength, declaredSize }))
             .toBe(javascript.accepted);
@@ -219,18 +201,15 @@ describe("structured ZIP fuzz properties", () => {
             truncateBy,
             declaredSizeDelta,
           });
-          const allowedSystemCodes = windowsPortabilitySystemCodes(name);
           const javascript = await extractOutcome({
             bytes,
             kind: "zip",
             backend: "javascript",
-            allowedSystemCodes,
           });
           const nativeResult = await extractOutcome({
             bytes,
             kind: "zip",
             backend: "native",
-            allowedSystemCodes,
           });
           expect(nativeResult.accepted, JSON.stringify({ name, bodyLength, truncateBy, declaredSizeDelta }))
             .toBe(javascript.accepted);
@@ -254,13 +233,12 @@ describe.each(["tar", "zip"] as const)("%s Windows-name portability", (kind) => 
           bytes,
           kind,
           backend,
-          allowedSystemCodes: windowsPortabilitySystemCodes(name),
         });
         observed.push({ name, outcome });
         if (process.platform === "win32") {
           expect(outcome, JSON.stringify({ kind, backend, name })).toEqual({
             accepted: false,
-            code: name.includes(":") ? "ENOENT" : "device-path",
+            code: name.includes(":") ? "entry-path" : "device-path",
           });
         } else {
           expect(outcome, JSON.stringify({ kind, backend, name })).toEqual({ accepted: true });
@@ -317,6 +295,21 @@ describe("minimized parser fuzz regressions", () => {
       kind: "tar",
       backend,
     })).resolves.toEqual({ accepted: true });
+  });
+
+  it.each(backends)("extracts one-code-unit names with %s", async (backend) => {
+    for (const name of ["a", "é"]) {
+      await expect(extractOutcome({
+        bytes: tarBytes({ name, body: Buffer.from("x") }),
+        kind: "tar",
+        backend,
+      })).resolves.toEqual({ accepted: true });
+      await expect(extractOutcome({
+        bytes: await zipBytes({ names: [name], body: Buffer.from("x") }),
+        kind: "zip",
+        backend,
+      })).resolves.toEqual({ accepted: true });
+    }
   });
 
   it.each(backends)("accepts a valid empty ZIP file with %s", async (backend) => {

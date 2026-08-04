@@ -23,6 +23,8 @@ export const WINDOWS_ARCHIVE_PORTABILITY_NAMES = [
   "LPT9.txt ",
   "file:stream",
   "file.txt:stream",
+  "nested/file:stream",
+  "éc:relative",
 ] as const;
 
 export const windowsArchivePortabilityName = fc.constantFrom(

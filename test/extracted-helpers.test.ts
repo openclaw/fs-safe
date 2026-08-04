@@ -139,6 +139,13 @@ describe("archive entry helpers", () => {
     expect(() => validateArchiveEntryPath("nested/secret\0.txt")).toThrow(
       "archive entry contains a NUL byte",
     );
+    if (process.platform === "win32") {
+      expect(() => validateArchiveEntryPath("nested/file:stream")).toThrow(
+        "archive entry uses a Windows alternate data stream path",
+      );
+    } else {
+      expect(() => validateArchiveEntryPath("nested/file:stream")).not.toThrow();
+    }
   });
 
   it("resolves archive output paths under the destination root", () => {
