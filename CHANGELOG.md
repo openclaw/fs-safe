@@ -14,6 +14,10 @@
 - Preserve semantic path and validation codes in synchronous `FileStore` and temp-workspace reads: missing temp leaves now report `not-found`, stable directories report `not-file`, and hardlinks and symlinks report `hardlink` and `symlink`, replacing `path-mismatch` and fabricated raw `ENOENT` respectively to match their asynchronous twins; consumers treating either old result as absence or identity drift should match the specific path-state code instead.
 - Report an existing non-directory ancestor as `not-file` from both `assertNoSymlinkParents()` variants, replacing asynchronous success and the synchronous helper's platform-dependent success or raw `ENOTDIR` under default `allowMissing`; callers relying on that acceptance should ensure every existing prefix component is a directory or handle `not-file`.
 
+### Docs and Tooling
+
+- Measure coverage once per operating system and merge the platform reports before enforcing thresholds, so coverage reflects existing cross-platform execution rather than implying new test coverage.
+
 ## 0.5.2 - 2026-08-02
 
 ### Security and Correctness
@@ -73,7 +77,6 @@
 
 ### Docs and Tooling
 
-- Measure coverage once per operating system and merge the platform reports before enforcing thresholds, so coverage reflects existing cross-platform execution rather than implying new test coverage.
 - Refresh the native package build CLI to `@napi-rs/cli` 3.8.2.
 - Give parallel native archive tests collision-free temporary paths so one fixture cannot remove another test's file on coarse-resolution clocks.
 - Include the README banner in the npm tarball and require it during pack checks so the published README does not reference a missing package asset; sanitize pnpm-only npm configuration from package-smoke subprocesses so the documented release check stays warning-free on newer npm versions.

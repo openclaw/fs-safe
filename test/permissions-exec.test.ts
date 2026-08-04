@@ -1,18 +1,27 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { expectFsSafeError } from "./helpers/security.js";
 import {
   DEFAULT_PERMISSION_EXEC_TIMEOUT_MS,
   executePermissionCommand,
 } from "../src/permission-exec.js";
+import {
+  __resetFsSafeNativeConfigForTest,
+  configureFsSafeNative,
+} from "../src/native-config.js";
 import { inspectPathPermissions } from "../src/permissions.js";
 import { readSecureFile } from "../src/secure-file.js";
 
 const tempDirs: string[] = [];
 
+beforeEach(() => {
+  configureFsSafeNative({ mode: "off" });
+});
+
 afterEach(async () => {
+  __resetFsSafeNativeConfigForTest();
   await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
 });
 

@@ -33,6 +33,10 @@ import { acquireFileLock, createFileLockManager, withFileLock } from "../src/fil
 import { fileStore, fileStoreSync } from "../src/file-store.js";
 import { jsonStore } from "../src/json-store.js";
 import {
+  __resetFsSafeNativeConfigForTest,
+  configureFsSafeNative,
+} from "../src/native-config.js";
+import {
   createIcaclsResetCommand,
   formatIcaclsResetCommand,
   formatPermissionDetail,
@@ -54,6 +58,10 @@ import {
 
 let root: string;
 const execFileAsync = promisify(execFile);
+
+function useWindowsPermissionFallback(): void {
+  configureFsSafeNative({ mode: "off" });
+}
 
 async function secureWindowsTestFile(filePath: string): Promise<void> {
   const username = os.userInfo().username;
@@ -78,6 +86,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.unstubAllEnvs();
+  __resetFsSafeNativeConfigForTest();
   await fs.rm(root, { recursive: true, force: true });
 });
 
@@ -313,6 +322,7 @@ describe("secure file reads", () => {
   });
 
   it("uses Windows ACL permission checks for secure reads when requested", async () => {
+    useWindowsPermissionFallback();
     const filePath = path.join(root, "windows-secret.txt");
     await fs.writeFile(filePath, "secret", { mode: 0o600 });
     const exec = vi
@@ -520,6 +530,7 @@ describe("secure file reads", () => {
   });
 
   it("reports broad Windows SID writes as world-writable", async () => {
+    useWindowsPermissionFallback();
     const target = path.join(root, "windows-acl-token.txt");
     await fs.writeFile(target, "secret", { mode: 0o600 });
     const exec = vi.fn(async (command: string) => {
@@ -549,6 +560,7 @@ describe("secure file reads", () => {
   });
 
   it("reports a foreign Windows owner even when the visible ACL is read-only", async () => {
+    useWindowsPermissionFallback();
     const target = path.join(root, "windows-foreign-owner.txt");
     await fs.writeFile(target, "secret", { mode: 0o600 });
     const exec = vi.fn(async (command: string) => {
@@ -586,6 +598,7 @@ describe("secure file reads", () => {
   it.each(["S-1-5-21-42", "S-1-5-18", "S-1-5-32-544"])(
     "trusts the supported Windows owner SID %s",
     async (ownerSid) => {
+      useWindowsPermissionFallback();
       const target = path.join(root, `windows-trusted-owner-${ownerSid}.txt`);
       await fs.writeFile(target, "secret", { mode: 0o600 });
       const exec = vi.fn(async (command: string) => {
@@ -617,6 +630,7 @@ describe("secure file reads", () => {
   );
 
   it("queries the canonical Windows owner SID without a friendly-name round trip", async () => {
+    useWindowsPermissionFallback();
     const target = path.join(root, "windows-canonical-owner.txt");
     await fs.writeFile(target, "secret", { mode: 0o600 });
     const exec = vi.fn(async (command: string, _args: string[]) => {
@@ -652,6 +666,7 @@ describe("secure file reads", () => {
   });
 
   it("leaves Windows ownership unverified when the owner query fails", async () => {
+    useWindowsPermissionFallback();
     const target = path.join(root, "windows-owner-query-failure.txt");
     await fs.writeFile(target, "secret", { mode: 0o600 });
     const exec = vi.fn(async (command: string) => {
@@ -679,6 +694,7 @@ describe("secure file reads", () => {
   });
 
   it("fails Windows ACL verification closed when a principal SID cannot be translated", async () => {
+    useWindowsPermissionFallback();
     const target = path.join(root, "windows-untranslated-principal.txt");
     await fs.writeFile(target, "secret", { mode: 0o600 });
     const exec = vi.fn(async () => ({
@@ -705,6 +721,7 @@ describe("secure file reads", () => {
   });
 
   it("does not trust well-known local owners on remote Windows filesystems", async () => {
+    useWindowsPermissionFallback();
     const target = path.join(root, "windows-remote-owner.txt");
     await fs.writeFile(target, "secret", { mode: 0o600 });
     const exec = vi.fn(async (command: string) => {
