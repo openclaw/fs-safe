@@ -11,6 +11,23 @@ import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 
 const { tempRoot } = useTempDirs();
 
+async function renameForRace(from: string, to: string): Promise<void> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await fs.rename(from, to);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      const transientWindowsDenial =
+        process.platform === "win32" &&
+        (code === "EACCES" || code === "EBUSY" || code === "EPERM");
+      if (!transientWindowsDenial || attempt === 9) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10 * (attempt + 1)));
+    }
+  }
+}
 
 async function createFifo(filePath: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
@@ -112,8 +129,8 @@ describe("path stress regressions", () => {
           return;
         }
         swapped = true;
-        await fs.rename(targetDir, displacedDir);
-        await fs.rename(replacementDir, targetDir);
+        await renameForRace(targetDir, displacedDir);
+        await renameForRace(replacementDir, targetDir);
       },
     });
 
@@ -121,6 +138,23 @@ describe("path stress regressions", () => {
     await expect(fs.readFile(path.join(displacedDir, "value.txt"), "utf8")).resolves.toBe(
       "trusted",
     );
+  });
+
+  it("propagates a race-hook failure after the pre-open inspection", async () => {
+    const rootDir = await tempRoot("fs-safe-parent-swap-hook-");
+    await fs.writeFile(path.join(rootDir, "value.txt"), "trusted");
+    const scoped = await openRoot(rootDir);
+    const targetFile = path.join(scoped.rootReal, "value.txt");
+    const failure = new Error("race setup failed");
+    __setFsSafeTestHooksForTest({
+      afterPreOpenLstat(filePath) {
+        if (filePath === targetFile) {
+          throw failure;
+        }
+      },
+    });
+
+    await expect(scoped.readText("value.txt")).rejects.toBe(failure);
   });
 
   itPosix("rejects advisory access after the root pathname is replaced", async () => {

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { createAsyncLock } from "../src/async-lock.js";
 import { writeTextAtomic } from "../src/atomic.js";
+import { FsSafeError } from "../src/errors.js";
 import {
   JsonFileReadError,
   readRootJsonObjectSync,
@@ -314,17 +315,18 @@ describe("json file helpers", () => {
     const openSpy = vi.spyOn(fs, "open").mockImplementation(async (...args) => {
       if (args[0] === filePath) {
         racesInjected += 1;
-        await writeTextAtomic(filePath, `{"v":${racesInjected}}`);
+        throw new FsSafeError("path-mismatch", "injected read race");
       }
-      return originalOpen(...args);
+      return await originalOpen(...args);
     });
 
     try {
       await expect(readJson(filePath)).rejects.toMatchObject({
         name: "JsonFileReadError",
         reason: "read",
+        cause: expect.objectContaining({ code: "path-mismatch" }),
       } satisfies Partial<JsonFileReadError>);
-      expect(racesInjected).toBeGreaterThanOrEqual(5);
+      expect(racesInjected).toBe(5);
     } finally {
       openSpy.mockRestore();
     }

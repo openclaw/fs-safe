@@ -219,12 +219,14 @@ async function openVerifiedLocalFile(
     if (!preOpenStat.isFile() && !preOpenStat.isSymbolicLink()) {
       throw new FsSafeError("not-file", "not a file");
     }
-    await fsSafeTestHooks?.afterPreOpenLstat?.(filePath);
   } catch (err) {
     if (err instanceof FsSafeError) {
       throw err;
     }
     // ENOENT and other lstat errors: fall through and let fs.open handle.
+  }
+  if (preOpenStat) {
+    await fsSafeTestHooks?.afterPreOpenLstat?.(filePath);
   }
 
   let handle: FileHandle;
