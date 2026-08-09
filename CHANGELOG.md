@@ -18,6 +18,7 @@
 ### Docs and Tooling
 
 - Measure coverage once per operating system and merge the platform reports before enforcing thresholds, so coverage reflects existing cross-platform execution rather than implying new test coverage.
+- Refresh Vite and its Rolldown toolchain, and declare the native build CLI's Emscripten runtime peer explicitly.
 
 ## 0.5.2 - 2026-08-02
 
