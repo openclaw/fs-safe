@@ -5,6 +5,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { guardedRename } from "./guarded-mutation.js";
+import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { registerTempPathForExit } from "./temp-cleanup.js";
 
 export type MovePathWithCopyFallbackOptions = {
@@ -158,18 +159,6 @@ async function assertSourceStillMatches(
   }
 }
 
-function regularReadFlags(): number {
-  return (
-    fsConstants.O_RDONLY |
-    (typeof fsConstants.O_NOFOLLOW === "number" && process.platform !== "win32"
-      ? fsConstants.O_NOFOLLOW
-      : 0) |
-    (typeof fsConstants.O_NONBLOCK === "number" && process.platform !== "win32"
-      ? fsConstants.O_NONBLOCK
-      : 0)
-  );
-}
-
 async function chmodDirectoryPinned(directoryPath: string, mode: number): Promise<void> {
   if (process.platform === "win32") {
     // Node cannot portably open a Windows directory for descriptor-bound
@@ -206,7 +195,7 @@ async function copyRegularFilePinned(params: {
   let destinationCreated = false;
   let sourceHandle: FileHandle;
   try {
-    sourceHandle = await fs.open(params.from, regularReadFlags());
+    sourceHandle = await fs.open(params.from, resolveReadOpenFlags());
   } catch (error) {
     const code = (error as NodeJS.ErrnoException | null)?.code;
     if (code === "ELOOP" || code === "ENOENT" || code === "ENOTDIR") {

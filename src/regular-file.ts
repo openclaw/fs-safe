@@ -8,6 +8,7 @@ import { assertNoUnsafeDeviceReadPath } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { isNotFoundPathError } from "./path.js";
+import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { assertNoSymlinkParents, assertNoSymlinkParentsSync } from "./symlink-parents.js";
 
 export type RegularFileStatResult = { missing: true } | { missing: false; stat: Stats };
@@ -36,15 +37,6 @@ export function resolveRegularFileAppendFlags(
     constants.O_APPEND |
     constants.O_WRONLY |
     (typeof noFollow === "number" ? noFollow : 0)
-  );
-}
-
-function resolveRegularFileReadFlags(): number {
-  return (
-    fsSync.constants.O_RDONLY |
-    (typeof fsSync.constants.O_NOFOLLOW === "number" && process.platform !== "win32"
-      ? fsSync.constants.O_NOFOLLOW
-      : 0)
   );
 }
 
@@ -106,7 +98,7 @@ export async function readRegularFile(params: {
 
   let handle: FileHandle;
   try {
-    handle = await fs.open(params.filePath, resolveRegularFileReadFlags());
+    handle = await fs.open(params.filePath, resolveReadOpenFlags());
   } catch (err) {
     if (isNotFoundPathError(err)) {
       throw new FsSafeError("path-mismatch", `File changed during read: ${params.filePath}`);
@@ -227,7 +219,7 @@ export function readRegularFileSync(params: { filePath: string; maxBytes?: numbe
 
   let fd: number;
   try {
-    fd = fsSync.openSync(params.filePath, resolveRegularFileReadFlags());
+    fd = fsSync.openSync(params.filePath, resolveReadOpenFlags());
   } catch (error) {
     if (isNotFoundPathError(error)) {
       throw new FsSafeError("path-mismatch", `File changed during read: ${params.filePath}`);

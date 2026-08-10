@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { isUnsafeDeviceReadPath } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity as hasSameFileIdentity } from "./file-identity.js";
+import { resolveReadOpenFlags } from "./read-open-flags.js";
 
 export type PinnedOpenSyncFailureReason = "path" | "validation" | "io";
 
@@ -37,9 +38,7 @@ export function openPinnedFileSync(params: {
 }): PinnedOpenSyncResult {
   const ioFs = params.ioFs ?? fs;
   const allowedType = params.allowedType ?? "file";
-  const openReadFlags =
-    ioFs.constants.O_RDONLY |
-    (typeof ioFs.constants.O_NOFOLLOW === "number" ? ioFs.constants.O_NOFOLLOW : 0);
+  const openReadFlags = resolveReadOpenFlags({ constants: ioFs.constants });
   let fd: number | null = null;
   try {
     if (isUnsafeDeviceReadPath(params.filePath)) {

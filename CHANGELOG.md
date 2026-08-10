@@ -4,6 +4,7 @@
 
 ### Security and Correctness
 
+- Open pinned and standalone regular-file reads nonblocking on POSIX before descriptor type validation, so a raced FIFO or device cannot stall the worker; share the same read-open flags with root reads, hashing, and move-copy fallbacks.
 - Compare exact bigint filesystem identities during exclusive publication and rollback cleanup, so rounded Windows file indexes cannot hide replaced source or target paths or authorize deletion of an attacker replacement.
 
 ## 0.5.3 - 2026-08-08

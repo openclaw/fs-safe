@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
-import fsSync from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { getNativeBinding, type NativeBinding } from "./native.js";
+import { resolveReadOpenFlags } from "./read-open-flags.js";
 
 export type Sha256FileInput = string | FileHandle;
 
@@ -12,18 +12,6 @@ export type Sha256FileResult = {
   bytes: number;
   digest: string;
 };
-
-function readFlags(): number {
-  return (
-    fsSync.constants.O_RDONLY |
-    (process.platform !== "win32" && typeof fsSync.constants.O_NOFOLLOW === "number"
-      ? fsSync.constants.O_NOFOLLOW
-      : 0) |
-    (process.platform !== "win32" && typeof fsSync.constants.O_NONBLOCK === "number"
-      ? fsSync.constants.O_NONBLOCK
-      : 0)
-  );
-}
 
 export async function hashFileHandle(
   handle: FileHandle,
@@ -61,7 +49,7 @@ async function hashPath(filePath: string): Promise<Sha256FileResult> {
 
   let handle: FileHandle;
   try {
-    handle = await fs.open(filePath, readFlags());
+    handle = await fs.open(filePath, resolveReadOpenFlags());
   } catch (error) {
     if ((error as NodeJS.ErrnoException | null)?.code === "ELOOP") {
       throw new FsSafeError("symlink", "SHA-256 path must not be a symbolic link", {

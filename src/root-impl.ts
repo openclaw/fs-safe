@@ -34,6 +34,7 @@ import {
   isSymlinkOpenError,
 } from "./path.js";
 import { readOpenedFileSafely, type ReadResult } from "./read-opened-file.js";
+import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { resolveRootPath } from "./root-path.js";
 import {
   assertRootIdentityCurrent,
@@ -143,13 +144,8 @@ function logWarn(message: string): void {
 }
 
 const SUPPORTS_NOFOLLOW = process.platform !== "win32" && "O_NOFOLLOW" in fsConstants;
-const NONBLOCK_OPEN_FLAG =
-  process.platform !== "win32" && "O_NONBLOCK" in fsConstants ? fsConstants.O_NONBLOCK : 0;
-const OPEN_READ_FLAGS =
-  fsConstants.O_RDONLY |
-  (SUPPORTS_NOFOLLOW ? fsConstants.O_NOFOLLOW : 0) |
-  NONBLOCK_OPEN_FLAG;
-const OPEN_READ_FOLLOW_FLAGS = fsConstants.O_RDONLY | NONBLOCK_OPEN_FLAG;
+const OPEN_READ_FLAGS = resolveReadOpenFlags();
+const OPEN_READ_FOLLOW_FLAGS = resolveReadOpenFlags({ followSymlinks: true });
 const OPEN_WRITE_EXISTING_FLAGS =
   fsConstants.O_WRONLY | (SUPPORTS_NOFOLLOW ? fsConstants.O_NOFOLLOW : 0);
 const OPEN_WRITE_CREATE_FLAGS =

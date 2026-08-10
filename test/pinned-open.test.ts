@@ -1,9 +1,11 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { openPinnedFileSync } from "../src/pinned-open.js";
+import { itPosix } from "./helpers/vitest.js";
 
 type PinnedOpenSyncFs = NonNullable<Parameters<typeof openPinnedFileSync>[0]["ioFs"]>;
 type PinnedOpenSyncLstatSync = PinnedOpenSyncFs["lstatSync"];
@@ -190,5 +192,34 @@ describe("openPinnedFileSync", () => {
       ioFs,
     });
     expectOpenReason(opened, "io");
+  });
+
+  itPosix("rejects a raced FIFO without blocking the descriptor open", async () => {
+    await withTempDir("fs-safe-open-fifo-", async (root) => {
+      const filePath = path.join(root, "value");
+      const displacedPath = path.join(root, "value.displaced");
+      await fsp.writeFile(filePath, "regular");
+      let swapped = false;
+      const ioFs: PinnedOpenSyncFs = {
+        constants: fs.constants,
+        lstatSync: fs.lstatSync,
+        realpathSync: fs.realpathSync,
+        openSync: (candidate, flags, mode) => {
+          expect(typeof flags).toBe("number");
+          expect((flags as number) & fs.constants.O_NONBLOCK).toBe(fs.constants.O_NONBLOCK);
+          fs.renameSync(filePath, displacedPath);
+          expect(spawnSync("mkfifo", [filePath]).status).toBe(0);
+          swapped = true;
+          return fs.openSync(candidate, flags, mode);
+        },
+        fstatSync: fs.fstatSync,
+        closeSync: fs.closeSync,
+      };
+
+      const opened = openPinnedFileSync({ filePath, ioFs });
+
+      expectOpenReason(opened, "validation");
+      expect(swapped).toBe(true);
+    });
   });
 });

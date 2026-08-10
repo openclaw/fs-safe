@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -50,6 +51,41 @@ describe("regular file refusal and race handling", () => {
     await expect(readRegularFile({ filePath: missing })).rejects.toMatchObject({ code: "ENOENT" });
     expect(() => readRegularFileSync({ filePath: missing })).toThrow(
       expect.objectContaining({ code: "ENOENT" }),
+    );
+  });
+
+  itPosix("rejects FIFO swaps without blocking async or sync reads", async () => {
+    const root = await tempRoot("fs-safe-regular-fifo-");
+    const asyncPath = path.join(root, "async");
+    const asyncDisplaced = path.join(root, "async.displaced");
+    await fs.writeFile(asyncPath, "regular");
+    const realOpen = fs.open.bind(fs);
+    vi.spyOn(fs, "open").mockImplementationOnce(async (candidate, flags, mode) => {
+      expect(typeof flags).toBe("number");
+      expect((flags as number) & fsSync.constants.O_NONBLOCK).toBe(fsSync.constants.O_NONBLOCK);
+      await fs.rename(asyncPath, asyncDisplaced);
+      expect(spawnSync("mkfifo", [asyncPath]).status).toBe(0);
+      return await realOpen(candidate, flags, mode);
+    });
+
+    await expect(readRegularFile({ filePath: asyncPath })).rejects.toThrow(
+      "File is not a regular file",
+    );
+
+    const syncPath = path.join(root, "sync");
+    const syncDisplaced = path.join(root, "sync.displaced");
+    await fs.writeFile(syncPath, "regular");
+    const realOpenSync = fsSync.openSync.bind(fsSync);
+    vi.spyOn(fsSync, "openSync").mockImplementationOnce((candidate, flags, mode) => {
+      expect(typeof flags).toBe("number");
+      expect((flags as number) & fsSync.constants.O_NONBLOCK).toBe(fsSync.constants.O_NONBLOCK);
+      fsSync.renameSync(syncPath, syncDisplaced);
+      expect(spawnSync("mkfifo", [syncPath]).status).toBe(0);
+      return realOpenSync(candidate, flags, mode);
+    });
+
+    expect(() => readRegularFileSync({ filePath: syncPath })).toThrow(
+      "File is not a regular file",
     );
   });
 
