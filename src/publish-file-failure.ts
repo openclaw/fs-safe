@@ -27,6 +27,7 @@ export type PublishFailureState = {
   phase: PublishFileExclusiveFailurePhase;
   targetCreated: boolean;
   targetIdentity?: FileIdentityStat;
+  targetCleanupIdentity?: FileIdentityStat;
   preserveTarget: boolean;
   directorySync?: PublishFileExclusiveDirectorySyncFailure;
 };
@@ -37,7 +38,8 @@ export function rememberCreatedTarget(
   phase: PublishFileExclusiveFailurePhase,
 ): void {
   state.targetCreated = true;
-  state.targetIdentity = { dev: identity.dev, ino: identity.ino };
+  state.targetIdentity = { dev: Number(identity.dev), ino: Number(identity.ino) };
+  state.targetCleanupIdentity = { dev: identity.dev, ino: identity.ino };
   state.phase = phase;
 }
 

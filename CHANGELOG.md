@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Security and Correctness
+
+- Compare exact bigint filesystem identities during exclusive publication and rollback cleanup, so rounded Windows file indexes cannot hide replaced source or target paths or authorize deletion of an attacker replacement.
+
 ## 0.5.3 - 2026-08-08
 
 ### Security and Correctness

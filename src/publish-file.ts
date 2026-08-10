@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import fsSync, { type Stats } from "node:fs";
+import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -78,15 +78,15 @@ function directoryOpenFlags(): number {
   );
 }
 
-async function openNativeParent(binding: NativeBinding, filePath: string): Promise<{
+async function openNativeParent(filePath: string): Promise<{
   basename: string;
   handle: FileHandle;
 }> {
   const parentPath = path.dirname(filePath);
   const handle = await fs.open(parentPath, directoryOpenFlags());
   try {
-    const pathname = await fs.lstat(parentPath);
-    const opened = binding.fstatIdentity(handle.fd);
+    const pathname = await fs.lstat(parentPath, { bigint: true });
+    const opened = await handle.stat({ bigint: true });
     if (pathname.isSymbolicLink() || !sameFileIdentity(pathname, opened)) {
       throw new FsSafeError("path-mismatch", "publication parent changed while opening");
     }
@@ -100,10 +100,12 @@ async function openNativeParent(binding: NativeBinding, filePath: string): Promi
 async function assertPinnedSourceCurrent(params: {
   sourcePath: string;
   handle: FileHandle;
-  identity: Stats;
+  identity: BigIntStats;
 }): Promise<void> {
-  const opened = await params.handle.stat();
-  const current = await fs.lstat(params.sourcePath);
+  // Windows file indexes can exceed Number.MAX_SAFE_INTEGER, so publication
+  // fences must compare bigint stats instead of rounded numeric identities.
+  const opened = await params.handle.stat({ bigint: true });
+  const current = await fs.lstat(params.sourcePath, { bigint: true });
   if (
     !opened.isFile() ||
     current.isSymbolicLink() ||
@@ -121,7 +123,12 @@ async function copyPinnedSource(params: {
   native?: NativeBinding;
   targetNativeParent?: Awaited<ReturnType<typeof openNativeParent>>;
   failure: PublishFailureState;
-}): Promise<{ handle: FileHandle; stat: Stats; digest: string; bytes: number }> {
+}): Promise<{
+  handle: FileHandle;
+  exactIdentity: BigIntStats;
+  digest: string;
+  bytes: number;
+}> {
   if (params.native && params.targetNativeParent) {
     for (const method of ["clone", "copy-file-range"] as const) {
       let nativeFd: number | undefined;
@@ -153,7 +160,7 @@ async function copyPinnedSource(params: {
       }
 
       let target: FileHandle | undefined;
-      const createdIdentity = params.native.fstatIdentity(nativeFd);
+      const createdIdentity = fsSync.fstatSync(nativeFd, { bigint: true });
       rememberCreatedTarget(params.failure, createdIdentity, "copy-verify");
       try {
         await getFsSafeTestHooks()?.afterPublishTargetCreated?.(
@@ -161,9 +168,9 @@ async function copyPinnedSource(params: {
           params.targetPath,
           createdIdentity,
         );
-        const identity = await fs.lstat(params.targetPath);
+        const identity = await fs.lstat(params.targetPath, { bigint: true });
         target = await fs.open(params.targetPath, sourceOpenFlags());
-        const opened = await target.stat();
+        const opened = await target.stat({ bigint: true });
         if (
           identity.isSymbolicLink() ||
           !identity.isFile() ||
@@ -177,7 +184,7 @@ async function copyPinnedSource(params: {
         nativeFd = undefined;
         return {
           handle: target,
-          stat: await target.stat(),
+          exactIdentity: opened,
           digest: hashed.digest,
           bytes: hashed.bytes,
         };
@@ -191,13 +198,13 @@ async function copyPinnedSource(params: {
   }
 
   const target = await fs.open(params.targetPath, "wx+", 0o600);
-  const identity = await target.stat();
-  rememberCreatedTarget(params.failure, identity, "copy-verify");
+  const exactIdentity = await target.stat({ bigint: true });
+  rememberCreatedTarget(params.failure, exactIdentity, "copy-verify");
   try {
     await getFsSafeTestHooks()?.afterPublishTargetCreated?.(
       "exclusive-copy",
       params.targetPath,
-      identity,
+      exactIdentity,
     );
     const hash = createHash("sha256");
     const buffer = Buffer.allocUnsafe(64 * 1024);
@@ -224,7 +231,7 @@ async function copyPinnedSource(params: {
       position += bytesRead;
     }
     await target.sync();
-    return { handle: target, stat: identity, digest: hash.digest("hex"), bytes: position };
+    return { handle: target, exactIdentity, digest: hash.digest("hex"), bytes: position };
   } catch (error) {
     await target.close().catch(() => undefined);
     throw error;
@@ -239,7 +246,7 @@ async function removeCreatedTargetIfUnchanged(
     return "unknown";
   }
   try {
-    const current = await fs.lstat(targetPath);
+    const current = await fs.lstat(targetPath, { bigint: true });
     if (!current.isSymbolicLink() && sameFileIdentity(current, identity)) {
       await fs.rm(targetPath);
       return "removed";
@@ -305,22 +312,32 @@ export async function publishFileExclusive(params: {
       label: "publication parent",
     });
     const sourceIdentity = await source.stat();
+    const sourceExactIdentity = await source.stat({ bigint: true });
+    const sourcePathExactIdentity = await fs.lstat(sourcePath, { bigint: true });
     if (
-      !sameFileIdentity(sourcePathStat, sourceIdentity) ||
+      sourcePathExactIdentity.isSymbolicLink() ||
+      !sourcePathExactIdentity.isFile() ||
+      !sameFileIdentity(sourcePathExactIdentity, sourceExactIdentity) ||
       (params.expectedSourceIdentity &&
-        !sameFileIdentity(params.expectedSourceIdentity, sourceIdentity))
+        !sameFileIdentity(
+          params.expectedSourceIdentity,
+          typeof params.expectedSourceIdentity.dev === "bigint" ||
+            typeof params.expectedSourceIdentity.ino === "bigint"
+            ? sourceExactIdentity
+            : sourceIdentity,
+        ))
     ) {
       throw new FsSafeError("path-mismatch", "publication source identity did not match");
     }
     await parent.assertCurrent();
-    await assertPinnedSourceCurrent({ sourcePath, handle: source, identity: sourceIdentity });
+    await assertPinnedSourceCurrent({ sourcePath, handle: source, identity: sourceExactIdentity });
 
     const native = params.strategy === "rename-noreplace"
       ? requireNativeBinding()
       : getNativeBinding();
     if (native) {
-      sourceNativeParent = await openNativeParent(native, sourcePath);
-      targetNativeParent = await openNativeParent(native, targetPath);
+      sourceNativeParent = await openNativeParent(sourcePath);
+      targetNativeParent = await openNativeParent(targetPath);
     }
 
     if (params.strategy === "rename-noreplace") {
@@ -331,19 +348,19 @@ export async function publishFileExclusive(params: {
         targetNativeParent!.handle.fd,
         targetNativeParent!.basename,
       );
-      rememberCreatedTarget(failure, sourceIdentity, "rename-verify");
+      rememberCreatedTarget(failure, sourceExactIdentity, "rename-verify");
       // A failed post-rename fence must not delete the only remaining name.
       failure.preserveTarget = true;
       await getFsSafeTestHooks()?.afterPublishTargetCreated?.(
         "rename-noreplace",
         targetPath,
-        sourceIdentity,
+        sourceExactIdentity,
       );
-      const targetIdentity = await fs.lstat(targetPath);
+      const targetExactIdentity = await fs.lstat(targetPath, { bigint: true });
       if (
-        targetIdentity.isSymbolicLink() ||
-        !targetIdentity.isFile() ||
-        !sameFileIdentity(targetIdentity, sourceIdentity)
+        targetExactIdentity.isSymbolicLink() ||
+        !targetExactIdentity.isFile() ||
+        !sameFileIdentity(targetExactIdentity, sourceExactIdentity)
       ) {
         throw new FsSafeError("path-mismatch", "no-replace publication target changed");
       }
@@ -356,6 +373,7 @@ export async function publishFileExclusive(params: {
         }
       }
       syncNativeFileBestEffort(sourceNativeParent!.handle.fd);
+      const targetIdentity = await fs.lstat(targetPath);
       return {
         method: "rename-noreplace",
         identity: targetIdentity,
@@ -379,21 +397,22 @@ export async function publishFileExclusive(params: {
       } else {
         await fs.link(sourcePath, targetPath);
       }
-      rememberCreatedTarget(failure, sourceIdentity, "hardlink-verify");
+      rememberCreatedTarget(failure, sourceExactIdentity, "hardlink-verify");
       await getFsSafeTestHooks()?.afterPublishTargetCreated?.(
         "hardlink",
         targetPath,
-        sourceIdentity,
+        sourceExactIdentity,
       );
-      const targetIdentity = await fs.lstat(targetPath);
+      const targetExactIdentity = await fs.lstat(targetPath, { bigint: true });
       if (
-        targetIdentity.isSymbolicLink() ||
-        !targetIdentity.isFile() ||
-        !sameFileIdentity(targetIdentity, sourceIdentity)
+        targetExactIdentity.isSymbolicLink() ||
+        !targetExactIdentity.isFile() ||
+        !sameFileIdentity(targetExactIdentity, sourceExactIdentity)
       ) {
         throw new FsSafeError("path-mismatch", "hardlink publication target changed");
       }
-      await assertPinnedSourceCurrent({ sourcePath, handle: source, identity: sourceIdentity });
+      await assertPinnedSourceCurrent({ sourcePath, handle: source, identity: sourceExactIdentity });
+      const targetIdentity = await fs.lstat(targetPath);
       return {
         method: "hardlink",
         identity: targetIdentity,
@@ -426,13 +445,15 @@ export async function publishFileExclusive(params: {
         failure,
       });
       target = copied.handle;
-      targetIdentity = copied.stat;
+      targetIdentity = await target.stat();
       const targetPathStat = await fs.lstat(targetPath);
+      const targetPathExactStat = await fs.lstat(targetPath, { bigint: true });
       const copiedBack = await hashFileHandle(target, native);
       const sourceAfter = await hashFileHandle(source, native);
       if (
         targetPathStat.isSymbolicLink() ||
-        !sameFileIdentity(targetPathStat, targetIdentity) ||
+        targetPathExactStat.isSymbolicLink() ||
+        !sameFileIdentity(targetPathExactStat, copied.exactIdentity) ||
         copiedBack.bytes !== copied.bytes ||
         copiedBack.digest !== copied.digest ||
         sourceAfter.bytes !== copied.bytes ||
@@ -440,7 +461,7 @@ export async function publishFileExclusive(params: {
       ) {
         throw new FsSafeError("path-mismatch", "exclusive publication copy failed content fencing");
       }
-      await assertPinnedSourceCurrent({ sourcePath, handle: source, identity: sourceIdentity });
+      await assertPinnedSourceCurrent({ sourcePath, handle: source, identity: sourceExactIdentity });
       const directorySync = await syncPublishedParent({
         parent,
         failure,
@@ -461,7 +482,7 @@ export async function publishFileExclusive(params: {
       failure.phase === "directory-sync" && params.onSyncFailure === "preserve";
     const cleanup = failure.preserveTarget || preserveSyncFailure
       ? "preserved"
-      : await removeCreatedTargetIfUnchanged(targetPath, failure.targetIdentity);
+      : await removeCreatedTargetIfUnchanged(targetPath, failure.targetCleanupIdentity);
     throw publicationFailure(error, failure, cleanup);
   } finally {
     await sourceNativeParent?.handle.close().catch(() => undefined);
