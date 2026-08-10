@@ -155,7 +155,7 @@
   "devDependencies": {
     "@emnapi/runtime": "2.0.0-alpha.3",
     "@napi-rs/cli": "3.8.2",
-    "@types/node": "^26.1.2",
+    "@types/node": "^26.2.0",
     "@vitest/coverage-v8": "4.1.10",
     "fast-check": "^4.9.0",
     "istanbul-lib-coverage": "3.2.2",
