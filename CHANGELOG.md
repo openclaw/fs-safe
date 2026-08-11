@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Security and Correctness
+
+- Prevent nondeterministic Windows read failures with `path-mismatch` when path-based stat reports zero file identity through libuv's FindFirstFile fallback under antivirus or indexer contention; zero Windows inodes are now treated as unknown identity like zero device serials.
+
 ## 0.5.4 - 2026-08-10
 
 **Highlight:** two security fixes in the publication path. If you run fs-safe on
