@@ -154,7 +154,7 @@
   },
   "devDependencies": {
     "@emnapi/runtime": "2.0.0-alpha.3",
-    "@napi-rs/cli": "3.8.2",
+    "@napi-rs/cli": "3.8.3",
     "@types/node": "^26.2.0",
     "@vitest/coverage-v8": "4.1.10",
     "fast-check": "^4.9.0",
