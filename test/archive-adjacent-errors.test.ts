@@ -140,7 +140,9 @@ describe("archive input staging failures", () => {
     const changedStat = new Proxy(originalStat, {
       get(target, property) {
         if (property === "ino") {
-          return typeof target.ino === "bigint" ? target.ino + 1n : target.ino === 0 ? 1 : 0;
+          // Keep the swapped identity nonzero: zero win32 inodes are "unknown identity" by
+          // design, and float precision makes `+ 1` a no-op for indexes above 2^53.
+          return typeof target.ino === "bigint" ? target.ino + 1n : target.ino === 12345 ? 54321 : 12345;
         }
         const value = Reflect.get(target, property, target);
         return typeof value === "function" ? value.bind(target) : value;
