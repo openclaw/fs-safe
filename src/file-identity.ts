@@ -43,3 +43,20 @@ export function sameFileIdentity(
     !isStatValueProvablyDifferent(left.ino, right.ino, platform)
   );
 }
+
+export function sameFileIdentityForCleanup(
+  left: FileIdentityStat,
+  right: FileIdentityStat,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  // A zero Windows device or inode is unknown, not proof that a pathname still
+  // names the object we created. Cleanup must fail closed rather than delete a
+  // replacement that happens to share the known half of the identity.
+  if (
+    platform === "win32" &&
+    (isZero(left.dev) || isZero(left.ino) || isZero(right.dev) || isZero(right.ino))
+  ) {
+    return false;
+  }
+  return sameStatValue(left.dev, right.dev) && sameStatValue(left.ino, right.ino);
+}

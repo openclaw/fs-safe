@@ -9,7 +9,7 @@ import {
   type FileStoreSync,
 } from "./file-store.js";
 import { FsSafeError } from "./errors.js";
-import { sameFileIdentity } from "./file-identity.js";
+import { sameFileIdentityForCleanup } from "./file-identity.js";
 import { isNotFoundPathError } from "./path.js";
 import { throwFsSafeReadError } from "./read-error.js";
 import {
@@ -149,7 +149,7 @@ async function cleanupWorkspace(
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "identity-mismatch";
   }
-  if (!sameFileIdentity(current, identity)) {
+  if (!sameFileIdentityForCleanup(current, identity)) {
     return "identity-mismatch";
   }
   await fs.rm(dir, { recursive: true, force: true });
@@ -166,7 +166,7 @@ function cleanupWorkspaceSync(
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "identity-mismatch";
   }
-  if (!sameFileIdentity(current, identity)) {
+  if (!sameFileIdentityForCleanup(current, identity)) {
     return "identity-mismatch";
   }
   fsSync.rmSync(dir, { recursive: true, force: true });

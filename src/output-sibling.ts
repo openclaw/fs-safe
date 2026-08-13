@@ -5,7 +5,7 @@ import path from "node:path";
 import { createAsyncDirectoryGuard } from "./directory-guard.js";
 import { syncDirectoryBestEffort } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
-import { sameFileIdentity } from "./file-identity.js";
+import { sameFileIdentity, sameFileIdentityForCleanup } from "./file-identity.js";
 import { withAsyncDirectoryGuards } from "./guarded-mutation.js";
 import { sanitizeUntrustedFileName } from "./filename.js";
 import { registerTempPathForExit } from "./temp-cleanup.js";
@@ -84,7 +84,7 @@ async function cleanupTempPath(
 ): Promise<boolean> {
   try {
     const current = await fs.lstat(tempPath);
-    if (!identity || (!current.isSymbolicLink() && sameFileIdentity(current, identity))) {
+    if (!identity || (!current.isSymbolicLink() && sameFileIdentityForCleanup(current, identity))) {
       await fs.rm(tempPath, { force: true });
     }
     return true;

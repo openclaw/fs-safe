@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Security and Correctness
+
+- Preserve replaced temporary paths during Windows cleanup when libuv reports a zero device or inode, treating unknown identity as fail-closed instead of authorizing recursive deletion.
+
 ## 0.5.5 - 2026-08-12
 
 ### Security and Correctness

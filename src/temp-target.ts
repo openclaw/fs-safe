@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { lstat, mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
-import { sameFileIdentity, type FileIdentityStat } from "./file-identity.js";
+import { sameFileIdentityForCleanup, type FileIdentityStat } from "./file-identity.js";
 import { assertSafePathSegment, sanitizeSafePathSegment } from "./safe-path-segment.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
 import { registerTempPathForExit } from "./temp-cleanup.js";
@@ -134,7 +134,7 @@ async function cleanupTempDir(
       }
       throw error;
     });
-    if (!current || !sameFileIdentity(current, identity)) {
+    if (!current || !sameFileIdentityForCleanup(current, identity)) {
       return;
     }
     await rm(dir, { recursive: true, force: true });

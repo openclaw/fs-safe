@@ -8,7 +8,11 @@ import type { ContainmentGuarantee } from "./containment.js";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, createNearestExistingDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { syncDirectoryBestEffort } from "./fsync.js";
-import { sameFileIdentity, type FileIdentityStat } from "./file-identity.js";
+import {
+  sameFileIdentity,
+  sameFileIdentityForCleanup,
+  type FileIdentityStat,
+} from "./file-identity.js";
 import { mkdirPathComponentsWithGuards } from "./guarded-mkdir.js";
 import { withAsyncDirectoryGuards } from "./guarded-mutation.js";
 import {
@@ -1236,7 +1240,7 @@ async function removePathIfIdentityUnchanged(
 ): Promise<void> {
   const parentGuard = await createAsyncDirectoryGuard(path.dirname(targetPath));
   const current = await fs.lstat(targetPath);
-  if (current.isSymbolicLink() || !sameFileIdentity(current, identity)) {
+  if (current.isSymbolicLink() || !sameFileIdentityForCleanup(current, identity)) {
     return;
   }
   await withAsyncDirectoryGuards([parentGuard], async () => {

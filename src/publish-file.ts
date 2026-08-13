@@ -10,7 +10,11 @@ import {
 } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
 import { hashFileHandle } from "./file-hash.js";
-import { sameFileIdentity, type FileIdentityStat } from "./file-identity.js";
+import {
+  sameFileIdentity,
+  sameFileIdentityForCleanup,
+  type FileIdentityStat,
+} from "./file-identity.js";
 import { syncNativeFileBestEffort } from "./native-operations.js";
 import { getNativeBinding, requireNativeBinding, type NativeBinding } from "./native.js";
 import {
@@ -247,7 +251,7 @@ async function removeCreatedTargetIfUnchanged(
   }
   try {
     const current = await fs.lstat(targetPath, { bigint: true });
-    if (!current.isSymbolicLink() && sameFileIdentity(current, identity)) {
+    if (!current.isSymbolicLink() && sameFileIdentityForCleanup(current, identity)) {
       await fs.rm(targetPath);
       return "removed";
     }

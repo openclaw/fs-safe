@@ -105,6 +105,25 @@ describe("atomic helpers", () => {
     await expect(fs.access(tempDir)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("preserves registered temp paths when Windows identity is unknown", async () => {
+    const root = await tempRoot("fs-safe-temp-cleanup-unknown-");
+    const tempPath = path.join(root, "leftover.tmp");
+    await fs.writeFile(tempPath, "replacement", "utf8");
+    const identity = await fs.lstat(tempPath);
+    registerTempPathForExit(tempPath, {
+      identity: { dev: identity.dev, ino: 0 },
+    });
+    const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+    Object.defineProperty(process, "platform", { ...platformDescriptor, value: "win32" });
+    try {
+      __cleanupRegisteredTempPathForTest(tempPath);
+    } finally {
+      Object.defineProperty(process, "platform", platformDescriptor!);
+    }
+
+    await expect(fs.readFile(tempPath, "utf8")).resolves.toBe("replacement");
+  });
+
   it("uses the permission-error copy fallback when requested", async () => {
     const root = await tempRoot("fs-safe-atomic-");
     const filePath = path.join(root, "state.txt");

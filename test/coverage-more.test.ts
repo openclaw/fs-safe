@@ -15,7 +15,7 @@ import {
   createSyncDirectoryGuard,
 } from "../src/directory-guard.js";
 import { drainFileLockManagerForTest, resetFileLockManagerForTest } from "../src/file-lock.js";
-import { sameFileIdentity } from "../src/file-identity.js";
+import { sameFileIdentity, sameFileIdentityForCleanup } from "../src/file-identity.js";
 import { readLocalFileFromRoots, resolveLocalPathFromRootsSync } from "../src/local-roots.js";
 import { resolveSecureTempRoot, type ResolveSecureTempRootOptions } from "../src/secure-temp-dir.js";
 import { writeSiblingTempFile, writeViaSiblingTempPath } from "../src/sibling-temp.js";
@@ -146,6 +146,13 @@ describe("small identity and lock wrappers", () => {
     for (const [platform, left, right, expected] of cases) {
       expect(sameFileIdentity(left, right, platform)).toBe(expected);
     }
+
+    expect(sameFileIdentityForCleanup({ dev: 1, ino: 2 }, { dev: 1, ino: 2 }, "win32"))
+      .toBe(true);
+    expect(sameFileIdentityForCleanup({ dev: 1, ino: 0 }, { dev: 1, ino: 2 }, "win32"))
+      .toBe(false);
+    expect(sameFileIdentityForCleanup({ dev: 0, ino: 2 }, { dev: 1, ino: 2 }, "win32"))
+      .toBe(false);
 
     const root = await tempRoot("fs-safe-file-lock-wrapper-");
     const targetPath = path.join(root, "state.json");

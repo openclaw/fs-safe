@@ -2,7 +2,7 @@ import fsSync, { type Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { ContainmentGuarantee } from "./containment.js";
-import { sameFileIdentity } from "./file-identity.js";
+import { sameFileIdentityForCleanup } from "./file-identity.js";
 import { getNativeBinding, type NativeBinding } from "./native.js";
 
 export type NativeFileHandle = {
@@ -73,7 +73,7 @@ export function removeNativeCreatedFileIfStillPinned(params: {
       parentPathStat.dev === parentFdStat.dev &&
       parentPathStat.ino === parentFdStat.ino &&
       !target.isSymbolicLink() &&
-      sameFileIdentity(target, params.created)
+      sameFileIdentityForCleanup(target, params.created)
     ) {
       fsSync.rmSync(targetPath);
     }

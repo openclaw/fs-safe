@@ -1,5 +1,5 @@
 import fsSync from "node:fs";
-import { sameFileIdentity, type FileIdentityStat } from "./file-identity.js";
+import { sameFileIdentityForCleanup, type FileIdentityStat } from "./file-identity.js";
 
 export type TempPathIdentityReceipt = FileIdentityStat;
 
@@ -21,7 +21,7 @@ function pathStillMatchesReceipt(entry: TempCleanupEntry): boolean {
     return false;
   }
   try {
-    return sameFileIdentity(fsSync.lstatSync(entry.path), entry.identity);
+    return sameFileIdentityForCleanup(fsSync.lstatSync(entry.path), entry.identity);
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "ENOENT";
   }
