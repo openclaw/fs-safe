@@ -6,6 +6,10 @@
 
 - Preserve replaced temporary paths during Windows cleanup when libuv reports a zero device or inode or a file index exceeds JavaScript's safe integer range, treating unknown or rounded identity as fail-closed instead of authorizing deletion.
 
+### Docs and Tooling
+
+- Set up Node before pnpm when hydrating Crabbox runners so minimal images without a preinstalled npm can prepare the workspace.
+
 ## 0.5.5 - 2026-08-12
 
 ### Security and Correctness
