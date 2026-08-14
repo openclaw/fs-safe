@@ -21,7 +21,10 @@ function pathStillMatchesReceipt(entry: TempCleanupEntry): boolean {
     return false;
   }
   try {
-    return sameFileIdentityForCleanup(fsSync.lstatSync(entry.path), entry.identity);
+    return sameFileIdentityForCleanup(
+      fsSync.lstatSync(entry.path, { bigint: true }),
+      entry.identity,
+    );
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "ENOENT";
   }

@@ -128,7 +128,7 @@ async function cleanupTempDir(
   onCleanupError?: (error: unknown) => void,
 ) {
   try {
-    const current = await lstat(dir).catch((error: unknown) => {
+    const current = await lstat(dir, { bigint: true }).catch((error: unknown) => {
       if (isNodeErrorWithCode(error, "ENOENT")) {
         return undefined;
       }
@@ -158,7 +158,9 @@ export async function tempFile(params: {
   const rootDir = resolveTempRoot(params.rootDir);
   const prefix = `${sanitizePrefix(params.prefix)}-`;
   const dir = await mkdtemp(path.join(rootDir, prefix));
-  const identity = await lstat(dir);
+  // Windows file indexes can exceed Number.MAX_SAFE_INTEGER. Cleanup receipts
+  // must retain the exact identity or adjacent directories can compare equal.
+  const identity = await lstat(dir, { bigint: true });
   const unregisterTempDir = registerTempPathForExit(dir, { recursive: true, identity });
   const file = (fileName?: string) =>
     path.join(dir, sanitizeTempFileName(fileName ?? params.fileName ?? "download.bin"));

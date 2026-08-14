@@ -145,7 +145,7 @@ async function cleanupWorkspace(
 ): Promise<TempWorkspaceCleanupResult> {
   let current;
   try {
-    current = await fs.lstat(dir);
+    current = await fs.lstat(dir, { bigint: true });
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "identity-mismatch";
   }
@@ -162,7 +162,7 @@ function cleanupWorkspaceSync(
 ): TempWorkspaceCleanupResult {
   let current;
   try {
-    current = fsSync.lstatSync(dir);
+    current = fsSync.lstatSync(dir, { bigint: true });
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "identity-mismatch";
   }
@@ -183,12 +183,16 @@ async function createTempWorkspace(
   await ensurePrivateDirectory(root, dirMode);
   const dir = await fs.mkdtemp(path.join(root, sanitizeTempPrefix(options.prefix)));
   await fs.chmod(dir, dirMode).catch(() => undefined);
-  const stat = await fs.lstat(dir);
+  const stat = await fs.lstat(dir, { bigint: true });
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw new Error(`Temp workspace must be a directory: ${dir}`);
   }
-  const identity = { dev: stat.dev, ino: stat.ino };
-  const unregisterTempDir = registerTempPathForExit(dir, { recursive: true, identity });
+  const identity = { dev: Number(stat.dev), ino: Number(stat.ino) };
+  const cleanupIdentity = { dev: stat.dev, ino: stat.ino };
+  const unregisterTempDir = registerTempPathForExit(dir, {
+    recursive: true,
+    identity: cleanupIdentity,
+  });
   const store = fileStore({ rootDir: dir, private: true, dirMode, mode });
 
   return {
@@ -216,14 +220,14 @@ async function createTempWorkspace(
     },
     cleanup: async () => {
       try {
-        return await cleanupWorkspace(dir, identity);
+        return await cleanupWorkspace(dir, cleanupIdentity);
       } finally {
         unregisterTempDir();
       }
     },
     [Symbol.asyncDispose]: async () => {
       try {
-        await cleanupWorkspace(dir, identity);
+        await cleanupWorkspace(dir, cleanupIdentity);
       } finally {
         unregisterTempDir();
       }
@@ -271,12 +275,16 @@ export function tempWorkspaceSync(
   } catch {
     // Best-effort on platforms that do not enforce POSIX modes.
   }
-  const stat = fsSync.lstatSync(dir);
+  const stat = fsSync.lstatSync(dir, { bigint: true });
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw new Error(`Temp workspace must be a directory: ${dir}`);
   }
-  const identity = { dev: stat.dev, ino: stat.ino };
-  const unregisterTempDir = registerTempPathForExit(dir, { recursive: true, identity });
+  const identity = { dev: Number(stat.dev), ino: Number(stat.ino) };
+  const cleanupIdentity = { dev: stat.dev, ino: stat.ino };
+  const unregisterTempDir = registerTempPathForExit(dir, {
+    recursive: true,
+    identity: cleanupIdentity,
+  });
   const store = fileStoreSync({ rootDir: dir, private: true, dirMode, mode });
 
   return {
@@ -315,14 +323,14 @@ export function tempWorkspaceSync(
     },
     cleanup: () => {
       try {
-        return cleanupWorkspaceSync(dir, identity);
+        return cleanupWorkspaceSync(dir, cleanupIdentity);
       } finally {
         unregisterTempDir();
       }
     },
     [Symbol.dispose]: () => {
       try {
-        cleanupWorkspaceSync(dir, identity);
+        cleanupWorkspaceSync(dir, cleanupIdentity);
       } finally {
         unregisterTempDir();
       }

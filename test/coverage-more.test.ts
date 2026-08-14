@@ -153,6 +153,14 @@ describe("small identity and lock wrappers", () => {
       .toBe(false);
     expect(sameFileIdentityForCleanup({ dev: 0, ino: 2 }, { dev: 1, ino: 2 }, "win32"))
       .toBe(false);
+    const roundedOriginal = Number(9_007_199_254_740_992n);
+    const roundedReplacement = Number(9_007_199_254_740_993n);
+    expect(roundedReplacement).toBe(roundedOriginal);
+    expect(sameFileIdentityForCleanup(
+      { dev: 1n, ino: 9_007_199_254_740_992n },
+      { dev: 1n, ino: 9_007_199_254_740_993n },
+      "win32",
+    )).toBe(false);
 
     const root = await tempRoot("fs-safe-file-lock-wrapper-");
     const targetPath = path.join(root, "state.json");

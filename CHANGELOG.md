@@ -4,7 +4,7 @@
 
 ### Security and Correctness
 
-- Preserve replaced temporary paths during Windows cleanup when libuv reports a zero device or inode, treating unknown identity as fail-closed instead of authorizing recursive deletion.
+- Preserve replaced temporary paths during Windows cleanup when libuv reports a zero device or inode or a file index exceeds JavaScript's safe integer range, treating unknown or rounded identity as fail-closed instead of authorizing deletion.
 
 ## 0.5.5 - 2026-08-12
 
