@@ -72,7 +72,7 @@ export async function writeSiblingTempFile<T>(
   try {
     tempExists = true;
     const result = await options.writeTemp(tempPath);
-    unregisterTempPath.setIdentity(await fs.lstat(tempPath));
+    unregisterTempPath.setIdentity(await fs.lstat(tempPath, { bigint: true }));
     if (options.mode !== undefined) {
       await fs.chmod(tempPath, options.mode).catch(() => undefined);
     }

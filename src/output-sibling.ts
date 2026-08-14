@@ -112,7 +112,7 @@ export async function writeExternalFileViaSibling<T>(params: {
     const result = await params.write(tempPath);
     const pinned = await openPinnedStagedFile(tempPath, params.maxBytes);
     stagedIdentity = pinned.identity;
-    unregisterTempPath.setIdentity(stagedIdentity);
+    unregisterTempPath.setIdentity(await pinned.handle.stat({ bigint: true }));
     try {
       if (params.mode !== undefined) {
         await pinned.handle.chmod(params.mode);

@@ -399,7 +399,7 @@ export async function movePathWithCopyFallback(
       sourceHardlinks: options.sourceHardlinks ?? "allow",
       ...(rejectHardlinks ? { budget: { discovered: 1 } } : {}),
     });
-    unregisterStaged.setIdentity(await fs.lstat(staged));
+    unregisterStaged.setIdentity(await fs.lstat(staged, { bigint: true }));
     await assertCopyDestinationOutsideSource(sourcePath, targetPath);
     await guardedRename({ from: staged, to: targetPath });
     stagedCommitted = true;
@@ -411,7 +411,7 @@ export async function movePathWithCopyFallback(
   } finally {
     if (!stagedCommitted) {
       try {
-        const stagedIdentity = await fs.lstat(staged);
+        const stagedIdentity = await fs.lstat(staged, { bigint: true });
         if (!stagedIdentity.isSymbolicLink()) unregisterStaged.setIdentity(stagedIdentity);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") {

@@ -58,7 +58,7 @@ export function registerTempPathForExit(
   };
   if (!entry.identity) {
     try {
-      entry.identity = fsSync.lstatSync(tempPath);
+      entry.identity = fsSync.lstatSync(tempPath, { bigint: true });
     } catch {
       // Callers that register before creation set the identity after opening.
     }

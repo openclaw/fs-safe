@@ -84,7 +84,9 @@ describe("atomic helpers", () => {
     const root = await tempRoot("fs-safe-temp-cleanup-");
     const tempPath = path.join(root, "leftover.tmp");
     await fs.writeFile(tempPath, "temp", "utf8");
+    const lstat = vi.spyOn(fsSync, "lstatSync");
     const unregister = registerTempPathForExit(tempPath);
+    expect(lstat).toHaveBeenCalledWith(tempPath, { bigint: true });
 
     __cleanupRegisteredTempPathForTest(tempPath);
 

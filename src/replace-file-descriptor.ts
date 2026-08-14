@@ -1,4 +1,4 @@
-import syncFs, { type Stats } from "node:fs";
+import syncFs, { type BigIntStats, type Stats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
@@ -86,7 +86,7 @@ export async function writeTempFile(params: {
   content: string | Uint8Array;
   mode: number;
   sync: boolean;
-}): Promise<Stats> {
+}): Promise<BigIntStats> {
   const handle = await params.fsModule.open(params.tempPath, "wx", params.mode);
   try {
     await params.fsModule.writeFile(handle, params.content);
@@ -100,7 +100,7 @@ export async function writeTempFile(params: {
         }
       }
     }
-    return await handle.stat();
+    return await handle.stat({ bigint: true });
   } finally {
     await handle.close();
   }
@@ -113,7 +113,7 @@ export function writeTempFileSync(params: {
   mode: number;
   fchmodSync?: SyncFchmod;
   sync: boolean;
-}): Stats {
+}): BigIntStats {
   const fd = params.fsModule.openSync(params.tempPath, "wx", params.mode);
   try {
     params.fsModule.writeFileSync(fd, params.content);
@@ -127,7 +127,7 @@ export function writeTempFileSync(params: {
         }
       }
     }
-    return params.fsModule.fstatSync(fd);
+    return params.fsModule.fstatSync(fd, { bigint: true });
   } finally {
     params.fsModule.closeSync(fd);
   }

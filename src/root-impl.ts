@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Stats } from "node:fs";
+import type { BigIntStats, Stats } from "node:fs";
 import { constants as fsConstants } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
@@ -800,7 +800,7 @@ async function writeTempFileForAtomicReplace(params: {
   data: string | Buffer;
   encoding?: BufferEncoding;
   mode: number;
-}): Promise<Stats> {
+}): Promise<{ identity: Stats; cleanupIdentity: BigIntStats }> {
   const tempHandle = await fs.open(params.tempPath, OPEN_WRITE_CREATE_FLAGS, params.mode);
   try {
     if (typeof params.data === "string") {
@@ -808,7 +808,10 @@ async function writeTempFileForAtomicReplace(params: {
     } else {
       await tempHandle.writeFile(params.data);
     }
-    return await tempHandle.stat();
+    return {
+      identity: await tempHandle.stat(),
+      cleanupIdentity: await tempHandle.stat({ bigint: true }),
+    };
   } finally {
     await tempHandle.close().catch(() => {});
   }
@@ -1612,13 +1615,13 @@ async function writeFileFallback(
   try {
     tempPath = buildAtomicWriteTempPath(destinationPath);
     unregisterTempPath = registerTempPathForExit(tempPath);
-    const writtenStat = await writeTempFileForAtomicReplace({
+    const written = await writeTempFileForAtomicReplace({
       tempPath,
       data: params.data,
       encoding: params.encoding,
       mode: mode || 0o600,
     });
-    unregisterTempPath.setIdentity(writtenStat);
+    unregisterTempPath.setIdentity(written.cleanupIdentity);
     const commitTempPath = tempPath;
     await withAsyncDirectoryGuards([destinationGuard], async () => {
       await fs.rename(commitTempPath, destinationPath);
@@ -1630,7 +1633,7 @@ async function writeFileFallback(
       await verifyAtomicWriteResult({
         root,
         targetPath: destinationPath,
-        expectedIdentity: writtenStat,
+        expectedIdentity: written.identity,
       });
     } catch (err) {
       emitWriteBoundaryWarning(`post-write verification failed: ${String(err)}`);
