@@ -1,7 +1,7 @@
 import fsSync from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { expectFsSafeError, expectFsSafeErrorSync } from "./helpers/security.js";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import {
@@ -90,6 +90,21 @@ describe("atomic helpers", () => {
 
     await expect(fs.access(tempPath)).rejects.toMatchObject({ code: "ENOENT" });
     unregister();
+  });
+
+  it("compares exact identities during exit cleanup", async () => {
+    const root = await tempRoot("fs-safe-temp-cleanup-exact-");
+    const tempPath = path.join(root, "leftover.tmp");
+    await fs.writeFile(tempPath, "temp", "utf8");
+    const identity = await fs.lstat(tempPath, { bigint: true });
+    registerTempPathForExit(tempPath, { identity });
+    const lstat = vi.spyOn(fsSync, "lstatSync");
+    try {
+      __cleanupRegisteredTempPathForTest(tempPath);
+      expect(lstat).toHaveBeenCalledWith(tempPath, { bigint: true });
+    } finally {
+      lstat.mockRestore();
+    }
   });
 
   it("cleans registered temp directories and ignores missing entries", async () => {

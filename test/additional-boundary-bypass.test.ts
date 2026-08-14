@@ -90,6 +90,17 @@ describe("additional helper boundary bypass attempts", () => {
       .resolves.toBe("keep");
   });
 
+  it("captures exact directory identities for temp file cleanup", async () => {
+    const layout = await makeTempLayout("fs-safe-temp-exact-identity", tempDirs);
+    const lstat = vi.spyOn(fsp, "lstat");
+    const target = await tempFile({ rootDir: layout.root, prefix: "download" });
+    expect(lstat).toHaveBeenCalledWith(target.dir, { bigint: true });
+
+    lstat.mockClear();
+    await target.cleanup();
+    expect(lstat).toHaveBeenCalledWith(target.dir, { bigint: true });
+  });
+
   it("rejects remote or encoded-separator file URLs while accepting local file URLs", () => {
     const local = pathToFileURL(path.join(os.tmpdir(), "safe.txt")).toString();
     expect(safeFileURLToPath(local)).toBe(path.join(os.tmpdir(), "safe.txt"));

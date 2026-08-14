@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { lstat, mkdtemp, rm } from "node:fs/promises";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { sameFileIdentityForCleanup, type FileIdentityStat } from "./file-identity.js";
 import { assertSafePathSegment, sanitizeSafePathSegment } from "./safe-path-segment.js";
@@ -128,7 +128,7 @@ async function cleanupTempDir(
   onCleanupError?: (error: unknown) => void,
 ) {
   try {
-    const current = await lstat(dir, { bigint: true }).catch((error: unknown) => {
+    const current = await fs.lstat(dir, { bigint: true }).catch((error: unknown) => {
       if (isNodeErrorWithCode(error, "ENOENT")) {
         return undefined;
       }
@@ -137,7 +137,7 @@ async function cleanupTempDir(
     if (!current || !sameFileIdentityForCleanup(current, identity)) {
       return;
     }
-    await rm(dir, { recursive: true, force: true });
+    await fs.rm(dir, { recursive: true, force: true });
   } catch (err) {
     if (!isNodeErrorWithCode(err, "ENOENT")) {
       onCleanupError?.(err);
@@ -157,10 +157,10 @@ export async function tempFile(params: {
 }): Promise<TempFile> {
   const rootDir = resolveTempRoot(params.rootDir);
   const prefix = `${sanitizePrefix(params.prefix)}-`;
-  const dir = await mkdtemp(path.join(rootDir, prefix));
+  const dir = await fs.mkdtemp(path.join(rootDir, prefix));
   // Windows file indexes can exceed Number.MAX_SAFE_INTEGER. Cleanup receipts
   // must retain the exact identity or adjacent directories can compare equal.
-  const identity = await lstat(dir, { bigint: true });
+  const identity = await fs.lstat(dir, { bigint: true });
   const unregisterTempDir = registerTempPathForExit(dir, { recursive: true, identity });
   const file = (fileName?: string) =>
     path.join(dir, sanitizeTempFileName(fileName ?? params.fileName ?? "download.bin"));
