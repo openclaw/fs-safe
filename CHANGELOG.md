@@ -4,6 +4,7 @@
 
 ### Security and Correctness
 
+- Treat asynchronous sidecar compromise-check I/O failures as a lost lock and invoke `onCompromised` once, instead of leaking an unhandled rejection from the interval.
 - Preserve replaced temporary paths during Windows cleanup when libuv reports a zero device or inode or a file index exceeds JavaScript's safe integer range, treating unknown or rounded identity as fail-closed instead of authorizing deletion.
 
 ## 0.5.5 - 2026-08-12

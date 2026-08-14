@@ -167,8 +167,8 @@ type FileLockHandle = {
 `verifyStillHeld()` compares the current sidecar with the ownership snapshot
 captured at acquisition. Set `compromiseCheckIntervalMs` together with
 `onCompromised` for a cheap periodic check; the callback fires once after the
-sidecar no longer matches. This is detection, not revocation of work already in
-progress.
+sidecar no longer matches or after a verification I/O failure. This is
+detection, not revocation of work already in progress.
 
 ## Synchronous locks
 

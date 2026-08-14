@@ -5,11 +5,13 @@ import { useTempDirs } from "./helpers/vitest.js";
 import { configureFsSafeNative } from "../src/native-config.js";
 import { root } from "../src/root.js";
 import { createSidecarLockManager, withSidecarLock } from "../src/sidecar-lock.js";
+import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 
 const { tempRoot } = useTempDirs();
 
 afterEach(() => {
   configureFsSafeNative({ mode: "auto" });
+  __setFsSafeTestHooksForTest(undefined);
   vi.restoreAllMocks();
 });
 
@@ -216,6 +218,48 @@ describe("asynchronous sidecar lock acquisition failures", () => {
     });
     await lock.release();
     expect(compromised).not.toHaveBeenCalled();
+  });
+
+  it("treats a rejected compromise check as a lost lock instead of an unhandled rejection", async () => {
+    configureFsSafeNative({ mode: "off" });
+    const directory = await tempRoot("fs-safe-sidecar-timer-reject-");
+    const manager = createSidecarLockManager(`timer-reject-${Date.now()}-${Math.random()}`);
+    const compromised = vi.fn();
+    const rejections: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      rejections.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const lock = await manager.acquire({
+        targetPath: path.join(directory, "state.json"),
+        payload: async () => ({}),
+        compromiseCheckIntervalMs: 10,
+        onCompromised: compromised,
+      });
+      const failure = Object.assign(new Error("lock snapshot failed"), { code: "EIO" });
+      __setFsSafeTestHooksForTest({
+        beforeSidecarLockSnapshotOpen: async () => {
+          throw failure;
+        },
+      });
+      await vi.waitFor(() => {
+        expect(compromised).toHaveBeenCalledTimes(1);
+      });
+      expect(compromised).toHaveBeenCalledWith({
+        lockPath: lock.lockPath,
+        normalizedTargetPath: lock.normalizedTargetPath,
+      });
+      await new Promise((resolve) => {
+        setTimeout(resolve, 40);
+      });
+      expect(compromised).toHaveBeenCalledTimes(1);
+      expect(rejections).toEqual([]);
+      __setFsSafeTestHooksForTest(undefined);
+      await lock.release();
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
   });
 
   it("reset fails closed across malformed held-lock snapshots and reclaim guards", async () => {

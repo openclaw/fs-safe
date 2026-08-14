@@ -184,13 +184,16 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
         const interval = options.compromiseCheckIntervalMs;
         if (options.onCompromised && interval !== undefined && interval > 0) {
           createdHeld.compromiseTimer = setInterval(() => {
-            void returnedHandle.verifyStillHeld().then((stillHeld) => {
-              if (!stillHeld && createdHeld.compromiseTimer) {
-                clearInterval(createdHeld.compromiseTimer);
-                createdHeld.compromiseTimer = undefined;
-                options.onCompromised?.({ lockPath, normalizedTargetPath });
-              }
-            });
+            void returnedHandle
+              .verifyStillHeld()
+              .catch(() => false)
+              .then((stillHeld) => {
+                if (!stillHeld && createdHeld.compromiseTimer) {
+                  clearInterval(createdHeld.compromiseTimer);
+                  createdHeld.compromiseTimer = undefined;
+                  options.onCompromised?.({ lockPath, normalizedTargetPath });
+                }
+              });
           }, interval);
           createdHeld.compromiseTimer.unref();
         }
