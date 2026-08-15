@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Security and Correctness
+
+- Treat synchronous sidecar compromise-check I/O failures as a lost lock and invoke `onCompromised` once, instead of throwing from the interval and never notifying the holder.
+
 ## 0.5.6 - 2026-08-14
 
 ### Security and Correctness

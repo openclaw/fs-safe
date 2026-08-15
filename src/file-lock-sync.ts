@@ -265,8 +265,14 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
       const returnedHandle = createSyncHeldLockHandle(createdHeld);
       if (options.onCompromised && (options.compromiseCheckIntervalMs ?? 0) > 0) {
         createdHeld.timer = setInterval(() => {
-          if (!returnedHandle.verifyStillHeld()) {
-            if (createdHeld.timer) clearInterval(createdHeld.timer);
+          let stillHeld: boolean;
+          try {
+            stillHeld = returnedHandle.verifyStillHeld();
+          } catch {
+            stillHeld = false;
+          }
+          if (!stillHeld && createdHeld.timer) {
+            clearInterval(createdHeld.timer);
             createdHeld.timer = undefined;
             options.onCompromised?.({ lockPath, normalizedTargetPath });
           }

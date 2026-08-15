@@ -176,7 +176,10 @@ detection, not revocation of work already in progress.
 retry, payload parsing, stale policy, owner-scoped reentrancy, guarded
 identity-conditioned reclaim, verification, and compromise monitoring. They do
 not use the async manager queue or support async callbacks. Retry waits block
-the calling thread; use the async API in request-serving code.
+the calling thread; use the async API in request-serving code. The sync
+compromise interval treats a thrown verification I/O error as a lost lock and
+invokes `onCompromised` once, matching the asynchronous `.catch(() => false)`
+contract. An explicit `verifyStillHeld()` call still propagates that I/O error.
 
 Always release in a `finally`:
 

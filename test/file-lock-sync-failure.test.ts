@@ -156,6 +156,50 @@ describe("synchronous file-lock failure handling", () => {
     await expect(fs.readFile(lock.lockPath, "utf8")).resolves.toBe("replacement");
   });
 
+  it("treats a thrown compromise check as a lost lock instead of an uncaught exception", async () => {
+    const root = await tempRoot("fs-safe-sync-lock-timer-throw-");
+    const targetPath = path.join(root, "state.json");
+    const compromised = vi.fn();
+    const exceptions: unknown[] = [];
+    const onUncaught = (error: unknown) => {
+      exceptions.push(error);
+    };
+    process.on("uncaughtException", onUncaught);
+    let lock: ReturnType<typeof acquireFileLockSync> | undefined;
+    try {
+      lock = acquireFileLockSync(targetPath, {
+        ...lockOptions(),
+        compromiseCheckIntervalMs: 10,
+        onCompromised: compromised,
+      });
+      const failure = Object.assign(new Error("lock snapshot failed"), { code: "EIO" });
+      const realLstat = fsSync.lstatSync.bind(fsSync);
+      vi.spyOn(fsSync, "lstatSync").mockImplementation((filePath, options) => {
+        if (String(filePath) === lock.lockPath) {
+          throw failure;
+        }
+        return realLstat(filePath, options as never);
+      });
+      await vi.waitFor(() => {
+        expect(compromised).toHaveBeenCalledTimes(1);
+      });
+      expect(compromised).toHaveBeenCalledWith({
+        lockPath: lock.lockPath,
+        normalizedTargetPath: lock.normalizedTargetPath,
+      });
+      await new Promise((resolve) => {
+        setTimeout(resolve, 40);
+      });
+      expect(compromised).toHaveBeenCalledTimes(1);
+      expect(exceptions).toEqual([]);
+      expect(() => lock.verifyStillHeld()).toThrow(failure);
+    } finally {
+      process.off("uncaughtException", onUncaught);
+      vi.restoreAllMocks();
+      lock?.release();
+    }
+  });
+
   it("falls back to the resolved target when parent realpath lookup fails", async () => {
     const root = await tempRoot("fs-safe-sync-lock-realpath-failure-");
     const targetPath = path.join(root, "state.json");
