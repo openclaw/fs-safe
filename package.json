@@ -153,7 +153,7 @@
     "tar": "7.5.22"
   },
   "devDependencies": {
-    "@emnapi/runtime": "2.0.0-alpha.3",
+    "@emnapi/runtime": "2.0.0-alpha.4",
     "@napi-rs/cli": "3.8.6",
     "@types/node": "^26.2.0",
     "@vitest/coverage-v8": "4.1.10",
