@@ -6,6 +6,10 @@
 
 - Fail closed when synchronous sidecar compromise checks hit I/O errors and invoke `onCompromised` once instead of throwing from the interval. Thanks @SebTardif.
 
+### Docs and Tooling
+
+- Register `walk`, `durability`, `permissions`, `secure-file`, `public-api`, and `migrating-to-0.5` in the documentation site navigation, and drop the `pinned-open` entry that no longer has a page. Those six pages built without a sidebar entry, without previous/next links, and under a fallback section label. The site build and a regression test now fail when a page is missing from the navigation or an entry points at a page that does not exist.
+
 ## 0.5.6 - 2026-08-14
 
 ### Security and Correctness
