@@ -5,6 +5,7 @@
 ### Security and Correctness
 
 - Fail closed when synchronous sidecar compromise checks hit I/O errors and invoke `onCompromised` once instead of throwing from the interval. Thanks @SebTardif.
+- Apply `stripComponents` once during JavaScript TAR extraction. node-tar counted the `.` and empty path components that `stripArchivePath()` drops, so an archive whose members are `./`-prefixed (what `tar cf pkg.tar .` writes) extracted with `stripComponents` landed on a path fs-safe never validated and then failed with `ENOENT` while applying entry modes, and produced a different tree than the native backend.
 
 ## 0.5.6 - 2026-08-14
 

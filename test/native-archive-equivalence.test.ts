@@ -237,6 +237,35 @@ describe.each(archiveBackends)("%s archive path", (backend) => {
     await expect(fs.readdir(destination)).resolves.toEqual([]);
   });
 
+  it("strips leading dot components once and applies modes to the extracted path", async () => {
+    useBackend(backend);
+    const root = await tempRoot();
+    const archivePath = path.join(root, "dot-strip.tar");
+    const destination = path.join(root, "destination");
+    await fs.writeFile(
+      archivePath,
+      tarFixture([
+        { path: "./pkg/", type: "5" },
+        { path: "./pkg/hello.txt", body: "hi", mode: 0o755 },
+      ]),
+    );
+    await fs.mkdir(destination);
+
+    await extractArchive({
+      archivePath,
+      destDir: destination,
+      timeoutMs: 10_000,
+      stripComponents: 1,
+    });
+
+    await expect(fs.readdir(destination)).resolves.toEqual(["hello.txt"]);
+    await expect(fs.readFile(path.join(destination, "hello.txt"), "utf8")).resolves.toBe("hi");
+    if (process.platform !== "win32") {
+      const stat = await fs.stat(path.join(destination, "hello.txt"));
+      expect(stat.mode & 0o7777).toBe(0o755);
+    }
+  });
+
   it("rejects duplicate TAR names during bounded reads", async () => {
     useBackend(backend);
     const root = await tempRoot();

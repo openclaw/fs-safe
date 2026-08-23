@@ -72,6 +72,8 @@ accepted-entry plan back to Rust. Rust only performs decompression and the
 fd-relative `mkdirBeneath`/exclusive-open writes. This keeps policy identical
 between native and JavaScript paths rather than reimplementing it in Rust.
 
+`stripComponents` counts real path components: empty and `.` components are dropped before the leading directories are removed, so `./pkg/hello.txt` with `stripComponents: 1` extracts to `hello.txt` on both backends. JavaScript TAR extraction hands node-tar the already-stripped path rather than letting it strip again, so the path that is validated, limited, collision-checked, and given its mode is the path that is written.
+
 An `entryFilter` sees the validated archive path, entry kind, and declared
 size. Returning `"skip"` rejects the whole archive unless `onFiltered` is
 explicitly `"skip-entry"`. Path traversal and archive-wide entry-count checks
