@@ -27,12 +27,12 @@ const installCmd = "pnpm add @openclaw/fs-safe";
 
 const sections = [
   ["Start", ["index.md", "install.md", "quickstart.md", "security-model.md", "native-helper.md", "native.md", "config.md"]],
-  ["Root API", ["root.md", "reading.md", "writing.md", "path-scope.md"]],
-  ["Atomic & temp", ["atomic.md", "staged-file.md", "output.md", "json.md", "temp.md", "archive.md"]],
+  ["Root API", ["root.md", "reading.md", "writing.md", "walk.md", "path-scope.md"]],
+  ["Atomic & temp", ["atomic.md", "staged-file.md", "durability.md", "output.md", "json.md", "temp.md", "archive.md"]],
   ["Stores", ["store.md", "json-store.md", "file-store.md", "private-file-store.md"]],
-  ["Specialized", ["secret-file.md", "regular-file.md", "sidecar-lock.md", "pinned-open.md", "local-roots.md"]],
+  ["Specialized", ["secret-file.md", "secure-file.md", "permissions.md", "regular-file.md", "sidecar-lock.md", "local-roots.md"]],
   ["Path & filename", ["path.md", "filename.md", "install-path.md"]],
-  ["Reference", ["errors.md", "types.md", "testing.md", "timing.md", "advanced.md", "test-hooks.md", "contributing.md"]],
+  ["Reference", ["errors.md", "types.md", "public-api.md", "testing.md", "timing.md", "advanced.md", "test-hooks.md", "migrating-to-0.5.md", "contributing.md"]],
 ];
 
 const buildExcludes = [];
@@ -57,6 +57,8 @@ for (const page of pages) {
     permalinkMap.set(normalizePermalink(page.frontmatter.permalink), page);
   }
 }
+
+assertNavigationCoversDocs();
 
 const nav = sections
   .map(([name, rels]) => ({
@@ -89,6 +91,24 @@ if (cname) fs.writeFileSync(path.join(outDir, "CNAME"), cname, "utf8");
 validateLinks(outDir);
 fs.writeFileSync(path.join(outDir, "llms.txt"), llmsTxt(), "utf8");
 console.log(`built docs site: ${path.relative(root, outDir)}`);
+
+function assertNavigationCoversDocs() {
+  const listed = sections.flatMap(([, rels]) => rels);
+  const problems = [
+    ...listed
+      .filter((rel) => !pageMap.has(rel))
+      .map((rel) => `sections lists ${rel}, which no longer exists in docs/`),
+    ...pages
+      .map((page) => page.rel)
+      .filter((rel) => !listed.includes(rel))
+      .map((rel) => `docs/${rel} is not listed in any section, so it would build without navigation`),
+  ];
+  if (problems.length > 0) {
+    throw new Error(
+      `docs site navigation is out of sync with docs/:\n${problems.map((line) => `- ${line}`).join("\n")}`,
+    );
+  }
+}
 
 function llmsTxt() {
   const origin = docsOrigin();

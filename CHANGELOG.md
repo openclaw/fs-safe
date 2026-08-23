@@ -18,6 +18,7 @@
 
 - Fix the standalone native smoke script to use the numeric descriptor returned by `openBeneath()` for identity checks and cleanup.
 - Accept npm 11 array and npm 12 package-name-keyed pack results while validating the intended package and its file metadata.
+- Register `walk`, `durability`, `permissions`, `secure-file`, `public-api`, and `migrating-to-0.5` in the documentation site navigation, and drop the `pinned-open` entry that no longer has a page. Those six pages built without a sidebar entry, without previous/next links, and under a fallback section label. The site build and a regression test now fail when a page is missing from the navigation or an entry points at a page that does not exist.
 
 ### Dependencies and maintenance
 
