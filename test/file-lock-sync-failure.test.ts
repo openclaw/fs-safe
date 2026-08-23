@@ -4,12 +4,19 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { itPosix, itWin32, useTempDirs } from "./helpers/vitest.js";
 import { acquireFileLockSync } from "../src/file-lock.js";
+import { configureFsSafeLocks } from "../src/lock-config.js";
 import { root } from "../src/root.js";
 
 const { tempRoot } = useTempDirs();
 
 afterEach(() => {
   vi.restoreAllMocks();
+  configureFsSafeLocks({
+    retry: undefined,
+    staleMs: undefined,
+    staleRecovery: "fail-closed",
+    timeoutMs: undefined,
+  });
 });
 
 function lockOptions() {
@@ -301,4 +308,62 @@ describe("synchronous file-lock failure handling", () => {
       code: "ENOENT",
     });
   });
+
+  it("applies the configured stale threshold to synchronous acquires", async () => {
+    const base = await tempRoot("fs-safe-sync-lock-config-stale-ms-");
+    const targetPath = path.join(await fs.realpath(base), "state.json");
+    const lockPath = `${targetPath}.lock`;
+    const createdAt = new Date(Date.now() - 5_000).toISOString();
+    await fs.writeFile(lockPath, JSON.stringify({ createdAt }));
+    configureFsSafeLocks({ staleMs: 1_000 });
+
+    expect(() => acquireFileLockSync(targetPath, lockOptions())).toThrow(
+      expect.objectContaining({ code: "file_lock_stale" }),
+    );
+  });
+
+  it("applies the configured stale recovery mode to synchronous acquires", async () => {
+    const base = await tempRoot("fs-safe-sync-lock-config-recovery-");
+    const targetPath = path.join(await fs.realpath(base), "state.json");
+    const lockPath = `${targetPath}.lock`;
+    await fs.writeFile(lockPath, JSON.stringify({ createdAt: "2000-01-01T00:00:00.000Z" }));
+    configureFsSafeLocks({ staleMs: 1, staleRecovery: "remove-if-unchanged" });
+
+    const lock = acquireFileLockSync(targetPath, {
+      ...lockOptions(),
+      shouldRemoveStaleLock: (snapshot) => snapshot.raw.includes("2000"),
+    });
+    expect(lock.verifyStillHeld()).toBe(true);
+    lock.release();
+    expect(fsSync.existsSync(lockPath)).toBe(false);
+  });
+
+  it("applies the configured retry budget to synchronous acquires", async () => {
+    const base = await tempRoot("fs-safe-sync-lock-config-retry-");
+    const targetPath = path.join(await fs.realpath(base), "state.json");
+    const lockPath = `${targetPath}.lock`;
+    await fs.writeFile(lockPath, JSON.stringify({ createdAt: new Date().toISOString() }));
+    configureFsSafeLocks({ retry: { retries: 0 } });
+    let exclusiveCreates = 0;
+    const openSync = fsSync.openSync.bind(fsSync);
+    vi.spyOn(fsSync, "openSync").mockImplementation((file, flags, mode) => {
+      if (
+        String(file) === lockPath &&
+        typeof flags === "number" &&
+        (flags & fsSync.constants.O_EXCL) !== 0
+      ) {
+        exclusiveCreates += 1;
+      }
+      return openSync(file, flags as never, mode as never);
+    });
+
+    expect(() =>
+      acquireFileLockSync(targetPath, {
+        payload: () => ({ createdAt: new Date().toISOString() }),
+        timeoutMs: 250,
+      }),
+    ).toThrow(expect.objectContaining({ code: "file_lock_timeout" }));
+    expect(exclusiveCreates).toBe(1);
+  });
+
 });

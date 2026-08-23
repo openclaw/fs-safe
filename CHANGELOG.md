@@ -5,6 +5,7 @@
 ### Security and Correctness
 
 - Fail closed when synchronous sidecar compromise checks hit I/O errors and invoke `onCompromised` once instead of throwing from the interval. Thanks @SebTardif.
+- Apply `configureFsSafeLocks()` process defaults to `acquireFileLockSync()` and `withFileLockSync()`. The synchronous acquirer read only its per-call options, so a process that configured `timeoutMs` or `retry` still waited without a deadline, and a configured `staleMs` or `staleRecovery` never reached it. Stale removal still requires the caller's own `shouldRemoveStaleLock` proof.
 
 ## 0.5.6 - 2026-08-14
 
