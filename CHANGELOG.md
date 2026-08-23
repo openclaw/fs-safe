@@ -5,6 +5,7 @@
 ### Security and Correctness
 
 - Fail closed when synchronous sidecar compromise checks hit I/O errors and invoke `onCompromised` once instead of throwing from the interval. Thanks @SebTardif.
+- Reject ZIP link entries that also carry the directory bit during extraction. The JavaScript backend took its directory branch before the link check, so an entry whose archived mode says symlink but whose name ends in a slash (or whose MS-DOS attributes set the directory bit) was silently materialized as a directory instead of being rejected, diverging from the native backend, which classifies by mode first.
 
 ## 0.5.6 - 2026-08-14
 
