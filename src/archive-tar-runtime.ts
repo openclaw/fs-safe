@@ -26,6 +26,7 @@ export type TarModule = {
     preservePaths: false;
     noChmod: true;
     preserveOwner: false;
+    noMtime: true;
     strict: true;
     maxMetaEntrySize: number;
     filter?(this: TarParser, entryPath: string, entry: unknown): boolean;

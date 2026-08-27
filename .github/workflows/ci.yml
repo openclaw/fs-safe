@@ -111,7 +111,9 @@ jobs:
         run: node scripts/native-mode-smoke.mjs off
 
       - name: Test native security and path equivalence
-        run: pnpm test test/native-integration.test.ts test/native-write-containment.test.ts test/native-archive-equivalence.test.ts test/native-publish-equivalence.test.ts test/private-directory.test.ts
+        env:
+          FS_SAFE_PAX_REQUIRE_NATIVE: "1"
+        run: pnpm test test/native-integration.test.ts test/native-write-containment.test.ts test/native-archive-equivalence.test.ts test/native-publish-equivalence.test.ts test/private-directory.test.ts test/archive-pax.test.ts test/archive-pax-security.test.ts test/archive-pax-compressed.test.ts
 
   native-musl:
     name: Native check (linux-x64-musl)
@@ -133,7 +135,7 @@ jobs:
             node scripts/native-mode-smoke.mjs auto
             node scripts/native-mode-smoke.mjs require
             node scripts/native-mode-smoke.mjs off
-            pnpm test test/native-write-containment.test.ts test/native-archive-equivalence.test.ts test/native-publish-equivalence.test.ts
+            FS_SAFE_PAX_REQUIRE_NATIVE=1 pnpm test test/native-write-containment.test.ts test/native-archive-equivalence.test.ts test/native-publish-equivalence.test.ts test/archive-pax.test.ts test/archive-pax-security.test.ts test/archive-pax-compressed.test.ts
           '
 
   cargo-quality:

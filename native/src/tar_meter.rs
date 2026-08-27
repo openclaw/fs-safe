@@ -1,3 +1,4 @@
+use crate::tar_pax::{LocalPax, parse_local_pax};
 use std::io::{self, Read};
 
 pub const INVALID_HEADER: &str = "archive-header-invalid";
@@ -7,6 +8,11 @@ enum MeterState {
     Header,
     Data {
         remaining: u64,
+    },
+    Pax {
+        body: Vec<u8>,
+        used: usize,
+        padding: u64,
     },
     SparseHeader {
         data_remaining: u64,
@@ -20,6 +26,8 @@ pub struct TarMetadataMeter<R> {
     state: MeterState,
     block: [u8; 512],
     block_len: usize,
+    pending_pax: Option<LocalPax>,
+    pending_gnu: bool,
 }
 
 impl<R> TarMetadataMeter<R> {
@@ -30,6 +38,8 @@ impl<R> TarMetadataMeter<R> {
             state: MeterState::Header,
             block: [0; 512],
             block_len: 0,
+            pending_pax: None,
+            pending_gnu: false,
         }
     }
 
@@ -79,6 +89,10 @@ impl<R> TarMetadataMeter<R> {
 
     fn finish_header(&mut self) -> io::Result<()> {
         if self.block.iter().all(|byte| *byte == 0) {
+            if self.pending_pax.is_some() {
+                return Err(Self::invalid("dangling PAX metadata"));
+            }
+            self.pending_gnu = false;
             self.state = MeterState::Header;
             self.block_len = 0;
             return Ok(());
@@ -95,19 +109,51 @@ impl<R> TarMetadataMeter<R> {
                 "non-directory entry path ends with a separator",
             ));
         }
-        let size = Self::parse_size(self.block[124..136].try_into().unwrap())?;
-        let padded = Self::padded_size(size)?;
+        let mut size = Self::parse_size(self.block[124..136].try_into().unwrap())?;
         let entry_type = self.block[156];
-        if matches!(entry_type, b'x' | b'g' | b'L' | b'K' | b'X')
+        if matches!(entry_type, b'x' | b'g' | b'L' | b'K' | b'X' | b'N')
             && size > self.max_meta_entry_bytes
         {
             return Err(Self::meta_limit());
         }
-        if matches!(entry_type, b'x' | b'g' | b'X') {
+        if matches!(entry_type, b'g' | b'X' | b'N') {
             return Err(Self::invalid(
-                "PAX metadata is unmeterable without interpreting content",
+                "global/old PAX and old GNU metadata are not supported",
             ));
         }
+        if entry_type == b'x' {
+            if self.pending_pax.is_some() || self.pending_gnu || size == 0 {
+                return Err(Self::invalid("empty, repeated or mixed PAX metadata"));
+            }
+            let magic = &self.block[257..265];
+            if magic != b"ustar\x0000" && magic != b"ustar  \0" {
+                return Err(Self::invalid("unrecognized PAX header format"));
+            }
+            let padded = Self::padded_size(size)?;
+            let length = usize::try_from(size).map_err(|_| Self::meta_limit())?;
+            let mut body = Vec::new();
+            body.try_reserve_exact(length)
+                .map_err(|_| Self::meta_limit())?;
+            body.resize(length, 0);
+            self.state = MeterState::Pax {
+                body,
+                used: 0,
+                padding: padded - size,
+            };
+            self.block_len = 0;
+            return Ok(());
+        }
+        // Preserve sparse extension metering before reporting unsupported PAX.
+        if entry_type != b'S'
+            && let Some(pax) = self.pending_pax.take()
+        {
+            size = pax.member_size(entry_type, size, &self.block)?;
+            if Self::padded_size(size)? > 9_007_199_254_740_991 {
+                return Err(Self::invalid("entry padding exceeds the safe integer range"));
+            }
+        }
+        self.pending_gnu = matches!(entry_type, b'L' | b'K');
+        let padded = Self::padded_size(size)?;
         self.state = if entry_type == b'S' {
             match self.block[482] {
                 0 => return Err(Self::invalid("GNU sparse entries are not supported")),
@@ -148,6 +194,24 @@ impl<R> TarMetadataMeter<R> {
         let mut offset = 0;
         while offset < bytes.len() {
             match self.state {
+                MeterState::Pax {
+                    ref mut body,
+                    ref mut used,
+                    padding,
+                } => {
+                    let take = (body.len() - *used).min(bytes.len() - offset);
+                    body[*used..*used + take].copy_from_slice(&bytes[offset..offset + take]);
+                    *used += take;
+                    offset += take;
+                    if *used == body.len() {
+                        self.pending_pax = Some(parse_local_pax(body)?);
+                        self.state = if padding == 0 {
+                            MeterState::Header
+                        } else {
+                            MeterState::Data { remaining: padding }
+                        };
+                    }
+                }
                 MeterState::Header => {
                     let take = (512 - self.block_len).min(bytes.len() - offset);
                     self.block[self.block_len..self.block_len + take]
@@ -187,10 +251,14 @@ impl<R> TarMetadataMeter<R> {
     }
 
     fn check_eof(&self) -> io::Result<()> {
+        if self.pending_pax.is_some() {
+            return Err(Self::invalid("dangling PAX metadata"));
+        }
         match self.state {
             MeterState::Header if self.block_len == 0 => Ok(()),
             MeterState::Header => Err(Self::invalid("truncated TAR header")),
             MeterState::Data { .. } => Err(Self::invalid("truncated TAR entry data")),
+            MeterState::Pax { .. } => Err(Self::invalid("truncated PAX metadata")),
             MeterState::SparseHeader { .. } => Err(Self::invalid("truncated GNU sparse header")),
         }
     }
@@ -209,6 +277,10 @@ impl<R: Read> Read for TarMetadataMeter<R> {
 }
 
 #[cfg(test)]
+#[path = "tar_meter_tests.rs"]
+mod pax_tests;
+
+#[cfg(test)]
 mod tests {
     use std::io::{Cursor, Read};
 
@@ -218,6 +290,7 @@ mod tests {
         let mut header = [0_u8; 512];
         header[0] = b'x';
         header[156] = entry_type;
+        header[257..265].copy_from_slice(b"ustar\x0000");
         if base_256 {
             header[124] = 0x80;
             header[128..136].copy_from_slice(&size.to_be_bytes());
@@ -244,7 +317,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_in_limit_pax_without_interpreting_size_overrides() {
+    fn rejects_malformed_in_limit_pax() {
         let bytes = [header(b'x', 8, false).as_slice(), &vec![0; 512]].concat();
         let error = consume(bytes, 1024).unwrap_err();
         assert!(error.to_string().contains(INVALID_HEADER));

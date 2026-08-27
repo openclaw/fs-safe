@@ -165,7 +165,14 @@ async function readTarEntry(archivePath: string, entryPath: string, maxBytes: nu
       maxMetaEntrySize: DEFAULT_MAX_META_ENTRY_BYTES,
       onReadEntry(entry) {
         const info = readTarEntryInfo(entry);
-        validateArchiveEntryPath(info.path, { escapeLabel: "archive root" });
+        try {
+          validateArchiveEntryPath(info.path, { escapeLabel: "archive root" });
+        } catch (error) {
+          // Throws escaping node-tar's callback do not reject its promise.
+          entryError ??= error instanceof Error ? error : new Error(String(error));
+          entry.resume();
+          return;
+        }
         const normalized = normalizeArchiveEntryPath(info.path).replace(/^\.\//, "");
         if (seenPaths.has(normalized)) {
           entryError ??= new ArchiveSecurityError(
@@ -270,13 +277,10 @@ export async function readArchiveEntry(
           signal,
         );
       } catch (error) {
-        if (
-          error instanceof Error &&
-          error.message.includes(ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT)
-        ) {
-          throw new ArchiveLimitError(
-            ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT,
-          );
+        if (error instanceof Error) {
+          for (const code of Object.values(ARCHIVE_LIMIT_ERROR_CODE)) {
+            if (error.message.includes(code)) throw new ArchiveLimitError(code);
+          }
         }
         if (error instanceof Error && isArchiveFormatErrorMessage(error.message)) {
           throw new ArchiveFormatError(error.message, { cause: error });

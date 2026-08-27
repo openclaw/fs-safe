@@ -4,6 +4,7 @@
 
 ### Security and Correctness
 
+- Accept bounded local PAX paths, sizes, and descriptive metadata, including inert binary macOS provenance xattrs, consistently in JavaScript and native TAR extraction/reads; reject ambiguous records, extension chains, and sparse semantics while retaining byte/count limits and guarded staging. Return TAR read traversal failures through the public promise instead of escaping the parser callback.
 - Fail closed when synchronous sidecar compromise checks hit I/O errors and invoke `onCompromised` once instead of throwing from the interval. Thanks @SebTardif.
 
 ## 0.5.6 - 2026-08-14

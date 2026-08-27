@@ -6,6 +6,7 @@ use napi_derive::napi;
 mod archive;
 mod fast_file;
 mod tar_meter;
+mod tar_pax;
 #[cfg(unix)]
 mod unix;
 #[cfg(windows)]
