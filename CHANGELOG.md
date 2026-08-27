@@ -6,6 +6,10 @@
 
 - Fail closed when synchronous sidecar compromise checks hit I/O errors and invoke `onCompromised` once instead of throwing from the interval. Thanks @SebTardif.
 
+### Docs and Tooling
+
+- Accept npm 11 array and npm 12 package-name-keyed pack results while validating the intended package and its file metadata.
+
 ## 0.5.6 - 2026-08-14
 
 ### Security and Correctness

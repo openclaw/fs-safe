@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { normalizePackResult } from "./npm-pack-result.mjs";
 import {
   assertPublicApi,
   inspectPublicApi,
@@ -75,9 +76,7 @@ try {
     cwd: process.cwd(),
     encoding: "utf8",
   });
-  /** @type {Array<{ filename: string; files: Array<{ path: string }> }>} */
-  const pack = JSON.parse(output);
-  const [{ filename, files }] = pack;
+  const { filename, files } = normalizePackResult(JSON.parse(output), pkg.name);
   const paths = new Set(files.map((file) => file.path));
   const expected = new Set([
     "CHANGELOG.md",
