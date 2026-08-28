@@ -264,7 +264,13 @@ describe.runIf(nativeAvailable)("retained-directory staging", () => {
     try {
       await unrelated.writeFile("untouched");
       await expect(staged.assertCurrent()).rejects.toMatchObject({ code: "helper-failed" });
-      await expect(staged.publish("unrelated", { overwrite: true })).rejects.toMatchObject({ code: "helper-failed" });
+      const publication = order === "publish-first"
+        ? { status: "published", basename: "final" }
+        : { status: "not-published" };
+      await expect(staged.publish("unrelated", { overwrite: true })).rejects.toMatchObject({
+        code: "helper-failed", cause: { code: "helper-failed" },
+        details: { phase: "publish", publication },
+      });
       await staged[Symbol.asyncDispose]();
       expect(await fs.readFile(path.join(directory, "unrelated"), "utf8")).toBe("untouched");
       expect(await fs.readdir(directory)).toEqual(order === "publish-first" ? ["final", "unrelated"] : ["unrelated"]);

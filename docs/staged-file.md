@@ -89,9 +89,11 @@ descriptors are exposed.
 staged name against the retained file. A failed check does not disable cleanup.
 After successful publication there is no staged name to check, so further
 checks or publication reject. Cleanup closes the lifecycle; later checks and
-publication reject before descriptor use. Concurrent calls are serialized in
-invocation order, including cleanup and disposal. Repeated cleanup returns the
-recorded outcome, or repeats the recorded error, without touching descriptors.
+publication reject before descriptor use. Rejected publication still carries its
+phase, cause, and recorded publication outcome after closure. Concurrent calls
+are serialized in invocation order, including cleanup and disposal. Repeated
+cleanup returns the recorded outcome, or repeats the recorded error, without
+touching descriptors.
 
 ## Publication and failure evidence
 

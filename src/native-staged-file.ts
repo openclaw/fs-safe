@@ -232,8 +232,8 @@ class NativeStagedFile implements StagedFile {
   publish(basename: string, options: { overwrite: boolean }): Promise<PublishedFileReceipt> {
     const overwrite = options?.overwrite;
     return this.#lock(async () => {
-      const state = this.#open();
       try {
+        const state = this.#open();
         assertBasename(basename, this.#portableNames);
         if (basename === this.#name || typeof overwrite !== "boolean") {
           throw new FsSafeError("invalid-path", "publication needs a distinct basename and explicit overwrite policy");
@@ -273,7 +273,11 @@ class NativeStagedFile implements StagedFile {
         assertStagedDirectoryCurrent(this.#directory);
         return receipt;
       } catch (error) {
-        throw failure(error, { phase: "publish", publication: state.publication });
+        // Closure rejects further use, not the recorded outcome of an earlier publication.
+        const publication = this.#state.status === "closed"
+          ? this.#state.receipt.publication
+          : this.#state.publication;
+        throw failure(error, { phase: "publish", publication });
       }
     });
   }
