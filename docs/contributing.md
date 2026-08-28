@@ -48,21 +48,21 @@ tarball/import validation.
 
 ## Docs
 
-The docs site is rendered from `docs/*.md` by `scripts/build-docs-site.mjs`. Build locally to preview:
+The docs site is rendered recursively from Markdown files under `docs/` by `scripts/build-docs-site.mjs`. Build locally to preview:
 
 ```bash
-node scripts/build-docs-site.mjs
+pnpm docs:site
 open dist/docs-site/index.html
 ```
 
-The build validates internal links and embedded anchors. Broken links fail the build — fix them before pushing.
+The build validates internal links and embedded anchors. Broken links fail the build — fix them before pushing. Navigation must list every non-excluded Markdown page exactly once: missing, nonexistent, and duplicate entries fail before the build replaces existing site output. The builder and navigation tests share discovery and validation in `scripts/docs-site-navigation.mjs`.
 
 Adding a new doc page:
 
 1. Create `docs/<page>.md`. Use a leading `# Title` heading.
-2. Add the page to the appropriate section in `scripts/build-docs-site.mjs` (`sections` array near the top).
+2. Add the page to the appropriate section in `scripts/docs-site-navigation.mjs` (`sections` array near the top). Nested pages use slash-separated paths relative to `docs/`, such as `guides/example.md`.
 3. Cross-link from `docs/index.md` if it's a major surface.
-4. Re-run the local build.
+4. Run `pnpm test test/docs-site-navigation.test.ts` and re-run the local build.
 
 Internal links use relative `*.md` paths — the builder rewrites them to the rendered HTML. Code fences support GitHub-flavored markdown.
 

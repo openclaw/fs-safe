@@ -108,4 +108,31 @@ describe("permission inspection failure modes", () => {
     });
     expect(exec).toHaveBeenCalledTimes(1);
   });
+
+  it("attributes an injected principal translation failure to PowerShell, not icacls", async () => {
+    const original = Object.assign(new Error("translation denied"), {
+      code: 9, signal: null, stderr: "SID translation failed\n",
+    });
+    const exec = vi.fn(async (command: string) => {
+      if (command.endsWith("icacls.exe")) return { stdout: "DOMAIN\\user:(R)\n", stderr: "" };
+      throw original;
+    });
+    const result = await inspectWindowsAcl("C:\\secret", {
+      exec, env: { SystemRoot: "C:\\Windows" },
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: "Error: translation denied",
+      errorDetail: {
+        command: expect.stringContaining("powershell.exe"),
+        durationMs: expect.any(Number), timedOut: false, exitCode: 9, signal: null,
+        stderr: "SID translation failed\\u000a",
+      },
+    });
+    expect(result.errorCause).toBe(original);
+    expect(exec.mock.calls.map(([command]) => path.win32.basename(command))).toEqual([
+      "icacls.exe", "powershell.exe",
+    ]);
+  });
 });

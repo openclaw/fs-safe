@@ -4,16 +4,20 @@ import { pipeline } from "node:stream/promises";
 import { createGunzip } from "node:zlib";
 import { ArchiveFormatError } from "./archive-errors.js";
 import { ARCHIVE_LIMIT_ERROR_CODE, ArchiveLimitError } from "./archive-limits.js";
+import { parseLocalPax, paxMemberSize, type LocalPax } from "./archive-tar-pax.js";
 
 type MeterState =
   | { kind: "header" }
   | { kind: "data"; remaining: number }
+  | { kind: "pax"; body: Buffer; used: number; padding: number }
   | { kind: "sparse"; dataRemaining: number; metaBytes: number };
 
 class TarMetadataMeter extends Transform {
   private readonly block = Buffer.alloc(512);
   private blockLength = 0;
   private state: MeterState = { kind: "header" };
+  private pendingPax: LocalPax | undefined;
+  private pendingGnu = false;
 
   constructor(private readonly maxMetaEntryBytes: number) {
     super();
@@ -39,7 +43,9 @@ class TarMetadataMeter extends Transform {
       return Number(value);
     }
     const zero = field.indexOf(0);
-    const text = field.subarray(0, zero < 0 ? field.length : zero).toString("ascii").trim();
+    const bytes = field.subarray(0, zero < 0 ? field.length : zero);
+    if (bytes.some((byte) => byte > 0x7f)) throw this.invalid("size is not ASCII octal");
+    const text = bytes.toString("ascii").trim();
     if (!text || !/^[0-7]+$/.test(text)) throw this.invalid("size is not valid octal");
     const value = Number.parseInt(text, 8);
     if (!Number.isSafeInteger(value)) throw this.invalid("octal size exceeds the safe integer range");
@@ -48,6 +54,8 @@ class TarMetadataMeter extends Transform {
 
   private finishHeader(): void {
     if (this.block.every((byte) => byte === 0)) {
+      if (this.pendingPax) throw this.invalid("dangling PAX metadata");
+      this.pendingGnu = false;
       this.blockLength = 0;
       this.state = { kind: "header" };
       return;
@@ -60,13 +68,33 @@ class TarMetadataMeter extends Transform {
     if (this.block[156] !== 0x35 && name.at(-1) === 0x2f) {
       throw this.invalid("non-directory entry path ends with a separator");
     }
-    const size = this.parseSize();
-    const type = this.block[156];
-    if ([0x78, 0x67, 0x4c, 0x4b, 0x58].includes(type ?? -1) && size > this.maxMetaEntryBytes) {
+    let size = this.parseSize();
+    const type = this.block[156]!;
+    if ([0x78, 0x67, 0x4c, 0x4b, 0x58, 0x4e].includes(type) && size > this.maxMetaEntryBytes) {
       throw new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.META_ENTRY_SIZE_EXCEEDS_LIMIT);
     }
-    if (type === 0x78 || type === 0x67 || type === 0x58) {
-      throw this.invalid("PAX metadata is unmeterable without interpreting content");
+    if (type === 0x67 || type === 0x58 || type === 0x4e) {
+      throw this.invalid("global/old PAX and old GNU metadata are not supported");
+    }
+    if (type === 0x78) {
+      if (this.pendingPax || this.pendingGnu || size === 0) throw this.invalid("empty, repeated or mixed PAX metadata");
+      const magic = this.block.subarray(257, 265).toString("latin1");
+      if (magic !== "ustar\0" + "00" && magic !== "ustar  \0") throw this.invalid("unrecognized PAX header format");
+      const padded = Math.ceil(size / 512) * 512;
+      if (!Number.isSafeInteger(padded)) throw this.invalid("entry padding exceeds the safe integer range");
+      this.state = { kind: "pax", body: Buffer.alloc(size), used: 0, padding: padded - size };
+      this.blockLength = 0;
+      return;
+    }
+    // Sparse headers retain their metadata-limit-before-format-error ordering.
+    if (this.pendingPax && type !== 0x53) {
+      size = paxMemberSize(this.pendingPax, type, size, this.block);
+      this.pendingPax = undefined;
+    }
+    if (type === 0x4c || type === 0x4b) {
+      this.pendingGnu = true;
+    } else {
+      this.pendingGnu = false;
     }
     const padded = Math.ceil(size / 512) * 512;
     if (!Number.isSafeInteger(padded)) throw this.invalid("entry padding exceeds the safe integer range");
@@ -103,6 +131,18 @@ class TarMetadataMeter extends Transform {
   private meter(chunk: Buffer): void {
     let offset = 0;
     while (offset < chunk.length) {
+      if (this.state.kind === "pax") {
+        const state = this.state;
+        const take = Math.min(state.body.length - state.used, chunk.length - offset);
+        chunk.copy(state.body, state.used, offset, offset + take);
+        state.used += take;
+        offset += take;
+        if (state.used === state.body.length) {
+          this.pendingPax = parseLocalPax(state.body);
+          this.state = state.padding === 0 ? { kind: "header" } : { kind: "data", remaining: state.padding };
+        }
+        continue;
+      }
       if (this.state.kind === "data") {
         const take = Math.min(this.state.remaining, chunk.length - offset);
         offset += take;
@@ -131,7 +171,8 @@ class TarMetadataMeter extends Transform {
   }
 
   override _flush(callback: (error?: Error | null) => void): void {
-    if (this.state.kind === "header" && this.blockLength === 0) callback();
+    if (this.pendingPax) callback(this.invalid("dangling PAX metadata"));
+    else if (this.state.kind === "header" && this.blockLength === 0) callback();
     else callback(this.invalid(this.state.kind === "header" ? "truncated TAR header" : "truncated TAR entry"));
   }
 }

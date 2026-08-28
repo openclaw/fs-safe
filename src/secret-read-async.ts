@@ -1,62 +1,53 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import { readFileHandleBounded } from "./bounded-read.js";
-import { FsSafeError, type FsSafeErrorCode } from "./errors.js";
-import { sameFileIdentity } from "./file-identity.js";
+import { FsSafeError } from "./errors.js";
 import { resolveHomeRelativePath } from "./home-dir.js";
+import { inspectFileIdentity } from "./strict-file-identity.js";
 import {
+  assertSecretFilePreview,
   DEFAULT_SECRET_FILE_MAX_BYTES,
+  secretPathErrorCode,
+  secretReadError,
+  trimSecretFileContent,
   type SecretFileReadOptions,
-} from "./secret-file.js";
+} from "./secret-read-policy.js";
 
-type SecretFileReadOutcome =
-  | { ok: true; secret: string }
-  | { ok: false; code: FsSafeErrorCode; message: string; error?: unknown };
-
-function pathErrorCode(error: unknown): FsSafeErrorCode {
-  const code = (error as NodeJS.ErrnoException).code;
-  return code === "ENOENT" || code === "ENOTDIR" ? "not-found" : "invalid-path";
-}
-
-async function readSecretFileOutcome(
+export async function readSecretFile(
   filePath: string,
   label: string,
-  options: SecretFileReadOptions,
-): Promise<SecretFileReadOutcome> {
+  options: SecretFileReadOptions = {},
+): Promise<string> {
   const resolvedPath = resolveHomeRelativePath(filePath.trim());
   if (!resolvedPath) {
-    return { ok: false, code: "invalid-path", message: `${label} file path is empty.` };
+    throw new FsSafeError("invalid-path", `${label} file path is empty.`, { cause: undefined });
   }
   const maxBytes = options.maxBytes ?? DEFAULT_SECRET_FILE_MAX_BYTES;
-  let previewStat;
-  try {
-    previewStat = await fs.lstat(resolvedPath);
-    if (previewStat.isSymbolicLink()) {
-      if (options.rejectSymlink) {
-        return { ok: false, code: "symlink", message: `${label} file at ${resolvedPath} must not be a symlink.` };
-      }
-      previewStat = await fs.stat(resolvedPath);
+  async function inspectInput(symlinkMessage: string): Promise<fsSync.BigIntStats> {
+    const stat = options.rejectSymlink
+      ? await fs.lstat(resolvedPath, { bigint: true })
+      : await fs.stat(resolvedPath, { bigint: true });
+    if (options.rejectSymlink && stat.isSymbolicLink()) {
+      throw new FsSafeError("symlink", symlinkMessage);
     }
-  } catch (error) {
-    const normalized = error instanceof Error ? error : new Error(String(error));
-    return {
-      ok: false,
-      code: pathErrorCode(error),
-      error: normalized,
-      message: `Failed to inspect ${label} file at ${resolvedPath}: ${String(normalized)}`,
-    };
-  }
-  if (!previewStat.isFile()) {
-    return { ok: false, code: "not-file", message: `${label} file at ${resolvedPath} must be a regular file.` };
-  }
-  if (options.rejectHardlinks !== false && previewStat.nlink > 1) {
-    return { ok: false, code: "hardlink", message: `${label} file at ${resolvedPath} must not be hardlinked.` };
-  }
-  if (previewStat.size > maxBytes) {
-    return { ok: false, code: "too-large", message: `${label} file at ${resolvedPath} exceeds ${maxBytes} bytes.` };
+    return stat;
   }
 
+  let previewStat;
+  try {
+    previewStat = await inspectFileIdentity(() =>
+      inspectInput(`${label} file at ${resolvedPath} must not be a symlink.`),
+    );
+  } catch (error) {
+    throw secretReadError(
+      error instanceof FsSafeError ? error.code : secretPathErrorCode(error),
+      "inspect", label, resolvedPath, error,
+    );
+  }
+  assertSecretFilePreview(previewStat, label, resolvedPath, maxBytes, options.rejectHardlinks !== false);
+
   let handle: fs.FileHandle | undefined;
+  let raw: string;
   try {
     const realPath = await fs.realpath(resolvedPath);
     const noFollow =
@@ -64,47 +55,32 @@ async function readSecretFileOutcome(
         ? fsSync.constants.O_NOFOLLOW
         : 0;
     handle = await fs.open(realPath, fsSync.constants.O_RDONLY | noFollow);
-    const openedStat = await handle.stat();
-    const pathStat = await fs.lstat(realPath);
-    if (
-      !openedStat.isFile() ||
-      !pathStat.isFile() ||
-      !sameFileIdentity(previewStat, openedStat) ||
-      !sameFileIdentity(pathStat, openedStat) ||
-      (options.rejectHardlinks !== false && openedStat.nlink > 1)
-    ) {
-      throw new FsSafeError("path-mismatch", "security validation failed");
-    }
-    const secret = (await readFileHandleBounded(handle, maxBytes)).toString("utf8").trim();
-    return secret
-      ? { ok: true, secret }
-      : { ok: false, code: "invalid-path", message: `${label} file at ${resolvedPath} is empty.` };
+    const openedHandle = handle;
+    const openedStat = await inspectFileIdentity(async () => {
+      const stat = await openedHandle.stat({ bigint: true });
+      if (!stat.isFile() || (options.rejectHardlinks !== false && stat.nlink > 1n)) {
+        throw new FsSafeError("path-mismatch", "security validation failed");
+      }
+      return stat;
+    }, previewStat);
+    await inspectFileIdentity(async () => {
+      const stat = await fs.lstat(realPath, { bigint: true });
+      if (!stat.isFile()) throw new FsSafeError("path-mismatch", "security validation failed");
+      return stat;
+    }, openedStat);
+    await inspectFileIdentity(() => inspectInput("secret path became a symlink"), openedStat);
+    raw = (await readFileHandleBounded(handle, maxBytes)).toString("utf8");
   } catch (error) {
-    const normalized = error instanceof Error ? error : new Error(String(error));
-    return {
-      ok: false,
-      code:
-        error instanceof FsSafeError
-          ? error.code
-          : pathErrorCode(error) === "not-found"
-            ? "not-found"
-            : "read-failed",
-      error: normalized,
-      message: `Failed to read ${label} file at ${resolvedPath}: ${String(normalized)}`,
-    };
+    throw secretReadError(
+      error instanceof FsSafeError
+        ? error.code
+        : secretPathErrorCode(error) === "not-found" ? "not-found" : "read-failed",
+      "read", label, resolvedPath, error,
+    );
   } finally {
     await handle?.close().catch(() => undefined);
   }
-}
-
-export async function readSecretFile(
-  filePath: string,
-  label: string,
-  options: SecretFileReadOptions = {},
-): Promise<string> {
-  const result = await readSecretFileOutcome(filePath, label, options);
-  if (result.ok) return result.secret;
-  throw new FsSafeError(result.code, result.message, { cause: result.error });
+  return trimSecretFileContent(raw, label, resolvedPath);
 }
 
 export async function tryReadSecretFile(
@@ -113,8 +89,10 @@ export async function tryReadSecretFile(
   options: SecretFileReadOptions = {},
 ): Promise<string | undefined> {
   if (!filePath?.trim()) return undefined;
-  const result = await readSecretFileOutcome(filePath, label, options);
-  if (result.ok) return result.secret;
-  if (result.code === "not-found") return undefined;
-  throw new FsSafeError(result.code, result.message, { cause: result.error });
+  try {
+    return await readSecretFile(filePath, label, options);
+  } catch (error) {
+    if (error instanceof FsSafeError && error.code === "not-found") return undefined;
+    throw error;
+  }
 }

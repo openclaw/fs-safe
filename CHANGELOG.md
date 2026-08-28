@@ -4,11 +4,25 @@
 
 ### Security and Correctness
 
+- Preserve underlying command diagnostics (command, timing, timeout flag, exit code/signal, and sanitized stderr) and cause on Windows ACL `permission-unverified` errors without changing verification semantics.
+- Verify secure and secret read identities with lossless bigint stats, reject replaced paths and retargeted aliases, and fail closed on unknown Windows identities after one bounded re-inspection; preserve the secure reader's numeric `Stats` receipt and permission options without letting them bypass identity checks.
+- Apply the same exact identity checks to guarded root reads, rejecting parent-directory replacements even when distinct Windows file IDs round to the same number; retain numeric read receipts and keep Windows write reopens anchored to the writer's exact retained identity.
+- Verify `Root.write()` and `create()` through retained descriptors and exact bigint identities for restrictive final modes, retaining guarded Windows path opens when pathname identity is unavailable; preserve explicit mode zero in `copyIn()`.
+- Preserve filesystem failures from `ensureDirectoryWithinRoot()` and `pathScope().ensureDir()` in an optional operational `FsSafeError` diagnostic with the original cause and bounded, escaped display text, instead of misreporting them as containment violations; keep nonthrowing string results and directory safety checks.
+- Accept bounded local PAX paths, sizes, and descriptive metadata, including inert binary macOS provenance xattrs, consistently in JavaScript and native TAR extraction/reads; reject ambiguous records, extension chains, and sparse semantics while retaining byte/count limits and guarded staging. Return TAR read traversal failures through the public promise instead of escaping the parser callback.
+- Add native-required Linux/macOS `stageFileInDirectory()` under `advanced` with retained-directory abort cleanup, private `0600` staging until publication is identity-checked, exact identity checks, explicit publication/cleanup receipts, and async disposal; share that ownership with POSIX native streaming writes so parent moves no longer strand their unpublished temps.
+- Share native writer admission and direct-child cleanup mechanisms; preserve combined POSIX coordinator operation/disposal failures with `SuppressedError` while keeping staged preparation/cleanup receipts and Windows close policy unchanged.
 - Fail closed when synchronous sidecar compromise checks hit I/O errors and invoke `onCompromised` once instead of throwing from the interval. Thanks @SebTardif.
 
 ### Docs and Tooling
 
-- Register `walk`, `durability`, `permissions`, `secure-file`, `public-api`, and `migrating-to-0.5` in the documentation site navigation, and drop the `pinned-open` entry that no longer has a page. Those six pages built without a sidebar entry, without previous/next links, and under a fallback section label. The site build and a regression test now fail when a page is missing from the navigation or an entry points at a page that does not exist.
+- Restore six missing documentation navigation entries, remove the dangling page, and reject missing, nonexistent, or duplicate registrations before replacing site output. Thanks @Yigtwxx.
+- Fix the standalone native smoke script to use the numeric descriptor returned by `openBeneath()` for identity checks and cleanup.
+- Accept npm 11 array and npm 12 package-name-keyed pack results while validating the intended package and its file metadata.
+
+### Dependencies and maintenance
+
+- Refresh the Node and Rust dependency graphs, align development and CI on pnpm 11.24.0, and update the CodeQL, npm, and cargo-zigbuild pins while preserving the two-day dependency cooldown.
 
 ## 0.5.6 - 2026-08-14
 

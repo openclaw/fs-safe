@@ -14,8 +14,8 @@ concurrency:
 
 env:
   NODE_VERSION: 24
-  NPM_VERSION: 12.0.1
-  PNPM_VERSION: 10.34.5
+  NPM_VERSION: 12.0.2
+  PNPM_VERSION: 11.24.0
 
 jobs:
   validate:
@@ -156,7 +156,7 @@ jobs:
 
       - name: Install cargo-zigbuild
         if: matrix.cross == 'zig'
-        run: cargo install cargo-zigbuild --version 0.23.0 --locked
+        run: cargo install cargo-zigbuild --version 0.23.3 --locked
 
       - name: Build native binding
         if: matrix.cross == 'none'

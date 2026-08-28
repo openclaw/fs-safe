@@ -43,7 +43,7 @@ jobs:
       - name: Set up pnpm
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
-          version: 10.34.5
+          version: 11.24.0
           run_install: false
 
       - name: Set up Node
@@ -79,7 +79,7 @@ jobs:
       - name: Set up pnpm
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
-          version: 10.34.5
+          version: 11.24.0
           run_install: false
 
       - name: Set up Node
@@ -111,7 +111,14 @@ jobs:
         run: node scripts/native-mode-smoke.mjs off
 
       - name: Test native security and path equivalence
-        run: pnpm test test/native-integration.test.ts test/native-write-containment.test.ts test/native-archive-equivalence.test.ts test/native-publish-equivalence.test.ts test/private-directory.test.ts
+        env:
+          FS_SAFE_PAX_REQUIRE_NATIVE: "1"
+        run: pnpm test test/native-integration.test.ts test/native-write-containment.test.ts test/native-staging-regression.test.ts test/staged-file.test.ts test/staged-file-failures.test.ts test/native-archive-equivalence.test.ts test/native-publish-equivalence.test.ts test/private-directory.test.ts test/archive-pax.test.ts test/archive-pax-security.test.ts test/archive-pax-compressed.test.ts
+
+      - name: Test native Root publication verification
+        env:
+          FS_SAFE_NATIVE_MODE: require
+        run: pnpm test test/root-write-mode.test.ts test/root-write-verification.test.ts test/root-write-lifetime.test.ts test/root-write-exact-identity.test.ts
 
   native-musl:
     name: Native check (linux-x64-musl)
@@ -125,7 +132,7 @@ jobs:
         run: |
           docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work node:24-alpine sh -euxc '
             apk add --no-cache cargo rust musl-dev build-base python3
-            npm install --global pnpm@10.34.5
+            npm install --global pnpm@11.24.0
             pnpm install --frozen-lockfile
             cargo test --workspace --locked
             pnpm build
@@ -133,7 +140,8 @@ jobs:
             node scripts/native-mode-smoke.mjs auto
             node scripts/native-mode-smoke.mjs require
             node scripts/native-mode-smoke.mjs off
-            pnpm test test/native-write-containment.test.ts test/native-archive-equivalence.test.ts test/native-publish-equivalence.test.ts
+            FS_SAFE_PAX_REQUIRE_NATIVE=1 pnpm test test/native-write-containment.test.ts test/native-staging-regression.test.ts test/staged-file.test.ts test/staged-file-failures.test.ts test/native-archive-equivalence.test.ts test/native-publish-equivalence.test.ts test/archive-pax.test.ts test/archive-pax-security.test.ts test/archive-pax-compressed.test.ts
+            FS_SAFE_NATIVE_MODE=require pnpm test test/root-write-mode.test.ts test/root-write-verification.test.ts test/root-write-lifetime.test.ts test/root-write-exact-identity.test.ts
           '
 
   cargo-quality:
@@ -180,7 +188,7 @@ jobs:
       - name: Set up pnpm
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
-          version: 10.34.5
+          version: 11.24.0
           run_install: false
 
       - name: Set up Node

@@ -4,108 +4,59 @@ import path from "node:path";
 import { canonicalPathFromExistingAncestor } from "./absolute-path.js";
 import { readFileDescriptorBoundedSync } from "./bounded-read.js";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, type AsyncDirectoryGuard } from "./directory-guard.js";
-import { FsSafeError, type FsSafeErrorCode } from "./errors.js";
+import { FsSafeError } from "./errors.js";
 import { sameFileIdentity, type FileIdentityStat } from "./file-identity.js";
 import { resolveHomeRelativePath } from "./home-dir.js";
 import { openPinnedFileSync } from "./pinned-open.js";
 import { runPinnedWriteHelper } from "./pinned-write.js";
+import {
+  assertSecretFilePreview,
+  DEFAULT_SECRET_FILE_MAX_BYTES,
+  secretPathErrorCode,
+  secretReadError,
+  trimSecretFileContent,
+  type SecretFileReadOptions,
+} from "./secret-read-policy.js";
+import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { serializePathWrite } from "./write-queue.js";
 
-export const DEFAULT_SECRET_FILE_MAX_BYTES = 16 * 1024;
 export const PRIVATE_SECRET_DIR_MODE = 0o700;
 export const PRIVATE_SECRET_FILE_MODE = 0o600;
 
-export type SecretFileReadOptions = {
-  maxBytes?: number;
-  rejectSymlink?: boolean;
-  rejectHardlinks?: boolean;
-};
-
-type SecretFileReadOutcome =
-  | { ok: true; secret: string }
-  | { ok: false; code: FsSafeErrorCode; message: string; error?: unknown };
-
-function normalizeSecretReadError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
-}
-
-function secretPathErrorCode(error: unknown): FsSafeErrorCode {
-  const code = (error as NodeJS.ErrnoException).code;
-  return code === "ENOENT" || code === "ENOTDIR" ? "not-found" : "invalid-path";
-}
-
-function resolveUserPath(input: string): string {
-  return resolveHomeRelativePath(input);
-}
-
-function readSecretFileOutcomeSync(
+export function readSecretFileSync(
   filePath: string,
   label: string,
   options: SecretFileReadOptions = {},
-): SecretFileReadOutcome {
-  const trimmedPath = filePath.trim();
-  const resolvedPath = resolveUserPath(trimmedPath);
+): string {
+  const resolvedPath = resolveHomeRelativePath(filePath.trim());
   if (!resolvedPath) {
-    return { ok: false, code: "invalid-path", message: `${label} file path is empty.` };
+    throw new FsSafeError("invalid-path", `${label} file path is empty.`, { cause: undefined });
   }
 
   const maxBytes = options.maxBytes ?? DEFAULT_SECRET_FILE_MAX_BYTES;
-
-  let previewStat: fs.Stats;
-  try {
-    previewStat = fs.lstatSync(resolvedPath);
-  } catch (error) {
-    const normalized = normalizeSecretReadError(error);
-    return {
-      ok: false,
-      code: secretPathErrorCode(error),
-      error: normalized,
-      message: `Failed to inspect ${label} file at ${resolvedPath}: ${String(normalized)}`,
-    };
-  }
-
-  if (previewStat.isSymbolicLink()) {
-    if (!options.rejectSymlink) {
-      try {
-        previewStat = fs.statSync(resolvedPath);
-      } catch (error) {
-        const normalized = normalizeSecretReadError(error);
-        return {
-          ok: false,
-          code: secretPathErrorCode(error),
-          error: normalized,
-          message: `Failed to inspect ${label} file at ${resolvedPath}: ${String(normalized)}`,
-        };
-      }
-    } else {
-      return {
-        ok: false,
-        code: "symlink",
-        message: `${label} file at ${resolvedPath} must not be a symlink.`,
-      };
+  function inspectInput(symlinkMessage: string): fs.BigIntStats {
+    const stat = options.rejectSymlink
+      ? fs.lstatSync(resolvedPath, { bigint: true })
+      : fs.statSync(resolvedPath, { bigint: true });
+    if (options.rejectSymlink && stat.isSymbolicLink()) {
+      throw new FsSafeError("symlink", symlinkMessage);
     }
+    return stat;
   }
-  if (!previewStat.isFile()) {
-    return {
-      ok: false,
-      code: "not-file",
-      message: `${label} file at ${resolvedPath} must be a regular file.`,
-    };
+
+  let previewStat: fs.BigIntStats;
+  try {
+    previewStat = inspectFileIdentitySync(() =>
+      inspectInput(`${label} file at ${resolvedPath} must not be a symlink.`),
+    );
+  } catch (error) {
+    throw secretReadError(
+      error instanceof FsSafeError ? error.code : secretPathErrorCode(error),
+      "inspect", label, resolvedPath, error,
+    );
   }
-  if (options.rejectHardlinks !== false && previewStat.nlink > 1) {
-    return {
-      ok: false,
-      code: "hardlink",
-      message: `${label} file at ${resolvedPath} must not be hardlinked.`,
-    };
-  }
-  if (previewStat.size > maxBytes) {
-    return {
-      ok: false,
-      code: "too-large",
-      message: `${label} file at ${resolvedPath} exceeds ${maxBytes} bytes.`,
-    };
-  }
+
+  assertSecretFilePreview(previewStat, label, resolvedPath, maxBytes, options.rejectHardlinks !== false);
 
   const opened = openPinnedFileSync({
     filePath: resolvedPath,
@@ -113,61 +64,39 @@ function readSecretFileOutcomeSync(
     rejectHardlinks: options.rejectHardlinks !== false,
   });
   if (!opened.ok) {
-    const error = normalizeSecretReadError(
+    throw secretReadError(
+      opened.reason === "path" ? "not-found" : "path-mismatch",
+      "read", label, resolvedPath,
       opened.reason === "validation" ? new Error("security validation failed") : opened.error,
     );
-    return {
-      ok: false,
-      code: opened.reason === "path" ? "not-found" : "path-mismatch",
-      error,
-      message: `Failed to read ${label} file at ${resolvedPath}: ${String(error)}`,
-    };
   }
+  let raw: string;
   try {
-    if (!sameFileIdentity(previewStat, opened.stat)) {
-      const error = new FsSafeError("path-mismatch", "security validation failed");
-      return {
-        ok: false,
-        code: "path-mismatch",
-        error,
-        message: `Failed to read ${label} file at ${resolvedPath}: ${String(error)}`,
-      };
-    }
-    const raw = readFileDescriptorBoundedSync(opened.fd, maxBytes).toString("utf8");
-    const secret = raw.trim();
-    if (!secret) {
-      return {
-        ok: false,
-        code: "invalid-path",
-        message: `${label} file at ${resolvedPath} is empty.`,
-      };
-    }
-    return { ok: true, secret };
+    const openedIdentity = inspectFileIdentitySync(() => {
+      const stat = fs.fstatSync(opened.fd, { bigint: true });
+      if (!stat.isFile() || (options.rejectHardlinks !== false && stat.nlink > 1n)) {
+        throw new FsSafeError("path-mismatch", "security validation failed");
+      }
+      return stat;
+    }, previewStat);
+    inspectFileIdentitySync(() => {
+      const stat = fs.lstatSync(opened.path, { bigint: true });
+      if (!stat.isFile() || (options.rejectHardlinks !== false && stat.nlink > 1n)) {
+        throw new FsSafeError("path-mismatch", "security validation failed");
+      }
+      return stat;
+    }, openedIdentity);
+    inspectFileIdentitySync(() => inspectInput("secret path became a symlink"), openedIdentity);
+    raw = readFileDescriptorBoundedSync(opened.fd, maxBytes).toString("utf8");
   } catch (error) {
-    const normalized = normalizeSecretReadError(error);
-    return {
-      ok: false,
-      code: error instanceof FsSafeError ? error.code : "read-failed",
-      error: normalized,
-      message: `Failed to read ${label} file at ${resolvedPath}: ${String(normalized)}`,
-    };
+    throw secretReadError(
+      error instanceof FsSafeError ? error.code : "read-failed",
+      "read", label, resolvedPath, error,
+    );
   } finally {
     fs.closeSync(opened.fd);
   }
-}
-
-export function readSecretFileSync(
-  filePath: string,
-  label: string,
-  options: SecretFileReadOptions = {},
-): string {
-  const result = readSecretFileOutcomeSync(filePath, label, options);
-  if (result.ok) {
-    return result.secret;
-  }
-  throw new FsSafeError(result.code, result.message, {
-    cause: result.error,
-  });
+  return trimSecretFileContent(raw, label, resolvedPath);
 }
 
 export function tryReadSecretFileSync(
@@ -178,16 +107,12 @@ export function tryReadSecretFileSync(
   if (!filePath?.trim()) {
     return undefined;
   }
-  const result = readSecretFileOutcomeSync(filePath, label, options);
-  if (result.ok) {
-    return result.secret;
+  try {
+    return readSecretFileSync(filePath, label, options);
+  } catch (error) {
+    if (error instanceof FsSafeError && error.code === "not-found") return undefined;
+    throw error;
   }
-  if (result.code === "not-found") {
-    return undefined;
-  }
-  throw new FsSafeError(result.code, result.message, {
-    cause: result.error,
-  });
 }
 
 function isRelativeEscape(relativePath: string): boolean {

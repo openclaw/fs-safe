@@ -1,64 +1,124 @@
-import { readFile, readdir } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { assertNavigationCoversDocs, readDocPages, sections } from "../scripts/docs-site-navigation.mjs";
 
-async function readNavigationEntries(): Promise<string[]> {
-  const script = await readFile("scripts/build-docs-site.mjs", "utf8");
-  const block = /const sections = \[([\s\S]*?)\n\];/.exec(script);
-  expect(block, "build-docs-site.mjs no longer declares a sections array").not.toBeNull();
-  return [...block![1].matchAll(/"([^"]+\.md)"/g)].map((match) => match[1]!);
+const docsDir = path.resolve("docs");
+const builder = path.resolve("scripts/build-docs-site.mjs");
+const tempDirs: string[] = [];
+
+function scratchDir() {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "fs-safe-docs-"));
+  tempDirs.push(dir);
+  return dir;
 }
 
-// Mirrors allMarkdown() in scripts/build-docs-site.mjs: the builder discovers pages
-// recursively and keys them by their slash-separated path under docs/. A flat read
-// would let a nested page pass here and then fail the production build after merge.
-async function readDocPages(dir = "docs"): Promise<string[]> {
-  const entries = await readdir(dir, { withFileTypes: true });
-  const nested = await Promise.all(
-    entries.map(async (entry) => {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) return await readDocPages(full);
-      if (!entry.name.endsWith(".md")) return [];
-      return [path.relative("docs", full).split(path.sep).join("/")];
-    }),
-  );
-  return nested.flat().sort();
+function nestedFixture() {
+  const dir = scratchDir();
+  mkdirSync(path.join(dir, "guides", "nested"), { recursive: true });
+  for (const rel of ["index.md", "guides/example.md", "guides/nested/detail.md", "notes.txt", "guides/image.svg"]) {
+    writeFileSync(path.join(dir, rel), "# Example\n");
+  }
+  return dir;
 }
+
+function siteFixture() {
+  const root = scratchDir();
+  cpSync(docsDir, path.join(root, "docs"), { recursive: true });
+  const output = path.join(root, "dist", "docs-site");
+  mkdirSync(output, { recursive: true });
+  writeFileSync(path.join(output, "keep.txt"), "previous site");
+  return { root, output };
+}
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 
 describe("docs site navigation", () => {
-  it("lists every documentation page in a sidebar section", async () => {
-    const listed = await readNavigationEntries();
-    const orphans = (await readDocPages()).filter((page) => !listed.includes(page));
-
-    // An unlisted page still builds and still resolves from the index table, so
-    // validateLinks() cannot see the drift: it renders without a sidebar entry,
-    // without a previous/next pager, and under a fallback section label.
-    expect(orphans).toEqual([]);
+  it("discovers flat and nested Markdown pages, ignoring other files", () => {
+    expect(readDocPages(nestedFixture())).toEqual(["guides/example.md", "guides/nested/detail.md", "index.md"]);
   });
 
-  it("does not list a navigation entry that no longer exists", async () => {
-    const pages = await readDocPages();
-    const dangling = (await readNavigationEntries()).filter((entry) => !pages.includes(entry));
-
-    // build-docs-site.mjs drops unknown entries with .filter(Boolean), so a
-    // renamed or removed page leaves a silent hole in the sidebar.
-    expect(dangling).toEqual([]);
+  it("applies exclusions to slash-separated paths relative to docs", () => {
+    const pages = readDocPages(nestedFixture(), [/^guides\//]);
+    expect(pages).toEqual(["index.md"]);
+    expect(() => assertNavigationCoversDocs(pages, [["Start", ["index.md"]]])).not.toThrow();
+    expect(() => assertNavigationCoversDocs(pages, [["Start", ["index.md", "guides/example.md"]]]))
+      .toThrow("guides/example.md, which does not exist in docs/ or is excluded");
   });
 
-  it("lists each page exactly once", async () => {
-    const listed = await readNavigationEntries();
-    const duplicates = listed.filter((page, index) => listed.indexOf(page) !== index);
-
-    expect(duplicates).toEqual([]);
+  it("reports missing nested registrations by their full relative filename", () => {
+    expect(() => assertNavigationCoversDocs(readDocPages(nestedFixture()), [["Start", ["index.md"]]]))
+      .toThrow("docs/guides/example.md is not listed in any section");
   });
 
-  it("discovers nested pages the way the builder does", async () => {
-    // Guards the guard: docs/ is flat today, so a non-recursive read would agree
-    // with the builder right now and only diverge once someone adds a subdirectory.
-    const pages = await readDocPages();
-    const flat = (await readdir("docs")).filter((entry) => entry.endsWith(".md"));
+  it("reports nonexistent navigation targets", () => {
+    expect(() => assertNavigationCoversDocs(["index.md"], [["Start", ["index.md", "ghost.md"]]]))
+      .toThrow('section "Start" lists ghost.md, which does not exist');
+  });
 
-    expect(pages).toEqual(expect.arrayContaining(flat));
-    expect(pages.length).toBeGreaterThanOrEqual(flat.length);
+  it.each([
+    [["Start", ["index.md", "index.md"]]],
+    [["Start", ["index.md"]], ["Other", ["index.md"]]],
+  ])("rejects duplicate targets within or across sections: %j", (...navigation) => {
+    expect(() => assertNavigationCoversDocs(["index.md"], navigation))
+      .toThrow("docs/index.md is listed more than once");
+  });
+
+  it("accepts complete flat and nested registrations", () => {
+    expect(() => assertNavigationCoversDocs(readDocPages(nestedFixture()), [
+      ["Start", ["index.md"]],
+      ["Guides", ["guides/example.md", "guides/nested/detail.md"]],
+    ])).not.toThrow();
+  });
+
+  it("covers the full repository inventory and retains staged-file in Atomic & temp", () => {
+    expect(() => assertNavigationCoversDocs(readDocPages(docsDir))).not.toThrow();
+    expect(sections.find(([name]) => name === "Atomic & temp")?.[1])
+      .toEqual(["atomic.md", "staged-file.md", "durability.md", "output.md", "json.md", "temp.md", "archive.md"]);
+  });
+
+  it.each(["missing nested registration", "nonexistent target"])("the builder rejects %s before replacing output", (problem) => {
+    const { root, output } = siteFixture();
+    if (problem === "missing nested registration") {
+      mkdirSync(path.join(root, "docs", "guides"));
+      writeFileSync(path.join(root, "docs", "guides", "example.md"), "# Example\n");
+    } else {
+      rmSync(path.join(root, "docs", "durability.md"));
+    }
+    const result = spawnSync(process.execPath, [builder], { cwd: root, encoding: "utf8" });
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(problem === "missing nested registration"
+      ? "docs/guides/example.md is not listed in any section"
+      : "lists durability.md, which does not exist");
+    expect(readFileSync(path.join(output, "keep.txt"), "utf8")).toBe("previous site");
+  });
+
+  it("builds the real docs with sidebar, section, and pager links for repaired pages and staging", () => {
+    const { root, output } = siteFixture();
+    const result = spawnSync(process.execPath, [builder], { cwd: root, encoding: "utf8" });
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("built docs site:");
+    for (const [page, section, prev, next] of [
+      ["walk", "Root API", "writing", "path-scope"],
+      ["staged-file", "Atomic &amp; temp", "atomic", "durability"],
+      ["durability", "Atomic &amp; temp", "staged-file", "output"],
+      ["secure-file", "Specialized", "secret-file", "permissions"],
+      ["permissions", "Specialized", "secure-file", "regular-file"],
+      ["public-api", "Reference", "types", "testing"],
+      ["migrating-to-0.5", "Reference", "test-hooks", "contributing"],
+    ]) {
+      const html = readFileSync(path.join(output, `${page}.html`), "utf8");
+      expect(html).toContain(`<a class="nav-link active" href="${page}.html">`);
+      expect(html).toContain(`<p class="eyebrow">${section}</p>`);
+      expect(html).toContain(`<a class="page-nav-prev" href="${prev}.html">`);
+      expect(html).toContain(`<a class="page-nav-next" href="${next}.html">`);
+      expect(html).not.toContain('href="pinned-open.html"');
+    }
   });
 });

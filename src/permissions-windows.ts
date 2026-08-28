@@ -1,6 +1,11 @@
 import os from "node:os";
 import { getNativeBinding } from "./native.js";
-import { executePermissionCommand } from "./permission-exec.js";
+import {
+  executePermissionCommand,
+  formatPermissionErrorDetail,
+  getPermissionCommandFailure,
+  type PermissionCommandFailure,
+} from "./permission-exec.js";
 import type { PermissionCheck, PermissionCheckOptions, SafeStatResult } from "./permissions.js";
 import { normalizeLowercaseStringOrEmpty } from "./string-coerce.js";
 import { resolveWindowsSystemCommand } from "./windows-command.js";
@@ -32,6 +37,8 @@ export type WindowsAclSummary = {
   untrustedGroup: WindowsAclEntry[];
   trusted: WindowsAclEntry[];
   error?: string;
+  errorDetail?: PermissionCommandFailure;
+  errorCause?: unknown;
 };
 
 export type WindowsUserInfoProvider = () => { username?: string | null };
@@ -142,7 +149,7 @@ export async function inspectWindowsPermissions(params: {
   });
   if (owner.error) {
     const error = `Windows owner inspection failed: ${owner.error}`;
-    return { ...unverified, ownerError: owner.error, error };
+    return { ...unverified, ownerError: owner.error, error, errorDetail: owner.errorDetail, errorCause: owner.errorCause };
   }
   const acl = await inspectWindowsAcl(params.targetPath, {
     env: params.opts?.env,
@@ -156,7 +163,7 @@ export async function inspectWindowsPermissions(params: {
     ...(owner.trusted !== undefined ? { ownerTrusted: owner.trusted } : {}),
     ...(owner.error ? { ownerError: owner.error } : {}),
   };
-  if (!acl.ok) return { ...unverified, ...ownerFields, error: acl.error };
+  if (!acl.ok) return { ...unverified, ...ownerFields, error: acl.error, errorDetail: acl.errorDetail, errorCause: acl.errorCause };
   return {
     ok: true,
     isSymlink: params.stat.isSymlink,
@@ -276,7 +283,13 @@ export function summarizeWindowsAcl(entries: WindowsAclEntry[], env?: NodeJS.Pro
 }
 
 export async function inspectWindowsAcl(targetPath: string, opts?: { env?: NodeJS.ProcessEnv; exec?: PermissionExec; currentUserSid?: string; principalSids?: Record<string, string>; principalTranslationFailed?: boolean }): Promise<WindowsAclSummary> {
-  const exec = opts?.exec ?? defaultPermissionExec;
+  let command = "";
+  let startedAt = performance.now();
+  const exec: PermissionExec = async (file, args) => {
+    command = file;
+    startedAt = performance.now();
+    return await (opts?.exec ?? defaultPermissionExec)(file, args);
+  };
   try {
     if (opts?.principalTranslationFailed) throw new Error("Windows ACL principal SID translation failed");
     const { stdout, stderr } = await exec(resolveWindowsSystemCommand("icacls.exe", opts?.env), [targetPath]);
@@ -301,7 +314,12 @@ export async function inspectWindowsAcl(targetPath: string, opts?: { env?: NodeJ
     }
     return { ok: true, entries, trusted, untrustedWorld, untrustedGroup };
   } catch (err) {
-    return { ok: false, entries: [], trusted: [], untrustedWorld: [], untrustedGroup: [], error: String(err) };
+    return {
+      ok: false, entries: [], trusted: [], untrustedWorld: [], untrustedGroup: [],
+      error: formatPermissionErrorDetail(String(err)),
+      errorDetail: getPermissionCommandFailure(err, command, performance.now() - startedAt),
+      errorCause: err,
+    };
   }
 }
 
