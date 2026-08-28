@@ -273,6 +273,9 @@ async function extractZip(params: {
           ) {
             continue;
           }
+          if (isSymlink) {
+            throw new ArchiveSecurityError("entry-link", `zip entry is a link: ${entry.name}`);
+          }
           const mode = zipEntryMode(entry, params.entryModes);
 
           await prepareZipOutputPath({
@@ -286,9 +289,6 @@ async function extractZip(params: {
           if (entry.dir) {
             await fs.chmod(output.outPath, mode);
             continue;
-          }
-          if (isSymlink) {
-            throw new ArchiveSecurityError("entry-link", `zip entry is a link: ${entry.name}`);
           }
 
           await writeZipFileEntry({

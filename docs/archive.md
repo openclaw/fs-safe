@@ -158,7 +158,7 @@ codes remain `"destination-not-directory"`, `"destination-symlink"`, and
 ## What it defends against
 
 - **Path traversal:** entries with `..`, absolute paths, NUL bytes, or Windows drive-relative segments such as `C:secret` and `nested/C:secret` are rejected (`ArchiveSecurityError`). On Windows, path segments containing `:` are also rejected as alternate data stream names before either backend writes to the filesystem.
-- **Symlink/hardlink entries:** rejected by default. Some archives ship symlink/hardlink entries that point outside the destination once resolved; `extractArchive` does not follow them.
+- **Symlink/hardlink entries:** rejected by default, including ZIP entries whose Unix mode says symlink while their name ends in a slash or their DOS directory bit is set. An explicit `entryFilter` with `onFiltered: "skip-entry"` can omit these entries. Some archives ship symlink/hardlink entries that point outside the destination once resolved; `extractArchive` does not follow them.
 - **Ambiguous output names:** duplicate names and distinct names that collide after `stripComponents`, case normalization, or Unicode normalization are rejected instead of relying on backend- or volume-specific overwrite order.
 - **TOCTOU during merge:** extraction first writes to a private temp dir, then merges into `destDir` using the same boundary checks as `root().write()`. Destination symlink swaps are checked with the selected platform mechanism; non-Linux routes retain the best-effort race window documented in the [security model](security-model.md#containment-guarantees-by-platform).
 - **Zip bombs:** `maxExtractedBytes` and `maxEntryBytes` apply to *post-decompression* bytes, so highly-compressed payloads hit the cap before they exhaust disk.
