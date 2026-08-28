@@ -2,8 +2,10 @@ import fsSync, { type Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { ContainmentGuarantee } from "./containment.js";
+import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup } from "./file-identity.js";
 import { getNativeBinding, type NativeBinding } from "./native.js";
+import type { PinnedWriteInput } from "./pinned-write.js";
 
 export type NativeFileHandle = {
   readonly fd: number;
@@ -13,7 +15,7 @@ export type NativeFileHandle = {
   writeFile(data: string | Buffer, encoding?: BufferEncoding): Promise<void>;
 };
 
-function nativeOpenFlags(flags: number): number {
+export function nativeOpenFlags(flags: number): number {
   const closeOnExec = (fsSync.constants as typeof fsSync.constants & { O_CLOEXEC?: number }).O_CLOEXEC;
   return (
     flags |
@@ -22,7 +24,7 @@ function nativeOpenFlags(flags: number): number {
   );
 }
 
-function writeAll(fd: number, data: Buffer): void {
+export function writeNativeFd(fd: number, data: Buffer): void {
   let offset = 0;
   while (offset < data.byteLength) {
     const written = fsSync.writeSync(fd, data, offset, data.byteLength - offset);
@@ -30,6 +32,28 @@ function writeAll(fd: number, data: Buffer): void {
       throw Object.assign(new Error("native file write made no progress"), { code: "EIO" });
     }
     offset += written;
+  }
+}
+
+export async function writeNativeInput(
+  fd: number,
+  input: PinnedWriteInput,
+  maxBytes?: number,
+): Promise<void> {
+  let bytes = 0;
+  const write = (data: Buffer) => {
+    bytes += data.byteLength;
+    if (maxBytes !== undefined && bytes > maxBytes) {
+      throw new FsSafeError("too-large", `file exceeds limit of ${maxBytes} bytes (got at least ${bytes})`);
+    }
+    writeNativeFd(fd, data);
+  };
+  if (input.kind === "buffer") {
+    write(typeof input.data === "string" ? Buffer.from(input.data, input.encoding ?? "utf8") : input.data);
+  } else {
+    for await (const chunk of input.stream) {
+      write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array));
+    }
   }
 }
 
@@ -48,7 +72,7 @@ function wrapNativeFd(fd: number, containment: ContainmentGuarantee): NativeFile
       return fsSync.fstatSync(fd);
     },
     async writeFile(data, encoding) {
-      writeAll(fd, Buffer.isBuffer(data) ? data : Buffer.from(data, encoding ?? "utf8"));
+      writeNativeFd(fd, Buffer.isBuffer(data) ? data : Buffer.from(data, encoding ?? "utf8"));
     },
   };
 }
@@ -153,8 +177,4 @@ export function syncNativeFileBestEffort(fd: number): void {
       throw error;
     }
   }
-}
-
-export function writeNativeFd(fd: number, data: Buffer): void {
-  writeAll(fd, data);
 }

@@ -80,7 +80,11 @@ describe("secure file inspection failures", () => {
     });
     await expect(
       readSecureFile({ filePath, inject: { platform: "win32" } }),
-    ).rejects.toMatchObject({ code: "permission-unverified" });
+    ).rejects.toMatchObject({
+      code: "permission-unverified",
+      category: "operational",
+      message: expect.stringContaining("Error: permission inspection denied"),
+    });
   });
 
   it("times out a stalled read and closes its pinned handle", async () => {
@@ -118,14 +122,12 @@ describe("secure file inspection failures", () => {
     const otherPath = path.join(root, "other");
     await fs.writeFile(filePath, "secret", { mode: 0o600 });
     await fs.writeFile(otherPath, "other", { mode: 0o600 });
-    const otherStat = await fs.stat(otherPath);
     const realStat = fs.stat.bind(fs);
-    let calls = 0;
-    vi.spyOn(fs, "stat").mockImplementation(async (...args) => {
-      if (++calls === 1) return otherStat;
-      return await realStat(...args);
+    const changedIdentity = vi.spyOn(fs, "stat").mockImplementationOnce(async (...args) => {
+      return await realStat(otherPath, args[1]);
     });
     await expect(readSecureFile({ filePath })).rejects.toMatchObject({ code: "path-mismatch" });
+    expect(changedIdentity).toHaveBeenCalledTimes(1);
   });
 
   itPosix("rejects a descriptor reported as owned by another uid", async () => {

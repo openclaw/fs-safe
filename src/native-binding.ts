@@ -69,6 +69,10 @@ export interface NativeWindowsSecurityFacts {
 }
 
 export interface NativeBinding {
+  // POSIX-only direct-child staging; the matching Windows binary omits these methods.
+  createStagedFile?(parentFd: number, basename: string): number;
+  stagedFileMatches?(parentFd: number, basename: string, fileFd: number): boolean;
+  removeStagedFile?(parentFd: number, basename: string, fileFd: number): "removed" | "name-absent" | "preserved";
   cloneFileExclusive(sourceFd: number, targetRootFd: number, targetRelPath: string): number;
   copyFileRangeExclusive(
     sourceFd: number,

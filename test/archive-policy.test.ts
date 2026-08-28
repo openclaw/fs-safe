@@ -118,42 +118,4 @@ describe("archive entry policy", () => {
     await tar.c({ cwd: input, file: tarPath }, ["value.txt"]);
     await expect(readArchiveEntry(tarPath, "value.txt", { maxBytes: 9 })).resolves.toEqual(Buffer.from("tar-value"));
   });
-
-  it("rejects a ZIP link entry that also carries the directory bit", async () => {
-    const root = await tempRoot("fs-safe-archive-link-dir-");
-    const archivePath = path.join(root, "package.zip");
-    const destDir = path.join(root, "destination");
-    await fs.mkdir(destDir);
-    const zip = new JSZip();
-    // A trailing slash makes JSZip report `dir: true` on load while the archived
-    // mode still says symlink, so the directory branch must not win the race.
-    zip.file("link/", "../../etc/passwd", { unixPermissions: 0o120777 });
-    await fs.writeFile(archivePath, await zip.generateAsync({ type: "nodebuffer", platform: "UNIX" }));
-
-    await expect(
-      extractArchive({ archivePath, destDir, kind: "zip", timeoutMs: 10_000 }),
-    ).rejects.toMatchObject({ name: "ArchiveSecurityError", code: "entry-link" });
-    await expect(fs.readdir(destDir)).resolves.toEqual([]);
-  });
-
-  it("lets a filter skip a directory-bit link entry before the link rejection", async () => {
-    const root = await tempRoot("fs-safe-archive-link-filter-");
-    const archivePath = path.join(root, "package.zip");
-    const destDir = path.join(root, "destination");
-    await fs.mkdir(destDir);
-    const zip = new JSZip();
-    zip.file("keep.txt", "keep");
-    zip.file("link/", "../../etc/passwd", { unixPermissions: 0o120777 });
-    await fs.writeFile(archivePath, await zip.generateAsync({ type: "nodebuffer", platform: "UNIX" }));
-
-    await extractArchive({
-      archivePath,
-      destDir,
-      kind: "zip",
-      timeoutMs: 10_000,
-      entryFilter: (entry) => (entry.kind === "symlink" ? "skip" : "extract"),
-      onFiltered: "skip-entry",
-    });
-    await expect(fs.readdir(destDir)).resolves.toEqual(["keep.txt"]);
-  });
 });

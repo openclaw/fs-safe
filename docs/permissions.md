@@ -75,6 +75,17 @@ Built-in PowerShell, `icacls.exe`, and `whoami.exe` invocations have a fixed
 30-second per-process deadline. A command failure or timeout returns an
 unverified result (`source: "unknown"`) so callers fail closed. Advanced callers
 that inject a custom `exec` implementation own that executor's deadline.
+Failed owner and ACL inspections retain `error` text and an optional
+`errorDetail: PermissionCommandFailure` with `command`, integer `durationMs`,
+`timedOut`, `exitCode`, `signal`, and `stderr`. The type is exported from both
+`@openclaw/fs-safe/permissions` and `@openclaw/fs-safe/advanced`. Built-in
+execution measures elapsed time; injected execFile-shaped failures receive
+best-effort command diagnostics. Plain errors have no `errorDetail`.
+Display reasons and stderr escape control characters and are limited to 400
+characters, including a trailing `…` when truncated. Diagnostics do not copy
+stdout or read target file contents. The separate `errorCause` retains the
+original exception for restricted local diagnosis; do not serialize or expose
+it as display text.
 The parser is on the advanced surface so tests and CLIs can process captured
 `icacls` output without spawning a process.
 

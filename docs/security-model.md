@@ -49,9 +49,15 @@ Every path is resolved against the canonicalized real path of the root, then che
 
 ### Symlinks (read side)
 
-`open()` and `read()` use `fs.open` with `O_NOFOLLOW` on POSIX where available. The library then `fstat`s the open fd and `realpath`s the original input, asserting the two refer to the same inode (`sameFileIdentity`). A symlink swap that happens between resolve and open will fail at the identity check rather than silently following the new target.
+`open()` and `read()` use `fs.open` with `O_NOFOLLOW` on POSIX where available. The library then `fstat`s the open fd and `realpath`s the original input, asserting the two refer to the same inode. A symlink swap that happens between resolve and open will fail at the identity check rather than silently following the new target.
 
 Per-call `symlinks: "follow-within-root"` allows symlinks whose final target is still inside the root. The default is `"reject"`.
+
+Guarded root reads compare lossless bigint identities from before open, the opened
+descriptor, the input path, and the canonical target; numeric public `Stats`
+receipts are not used as identity evidence. Unknown Windows device/inode values
+receive one re-inspection without reopening the file. A definite mismatch or
+persistent unknown identity rejects with `path-mismatch` before reading bytes.
 
 ### Symlinks (write side)
 
@@ -69,6 +75,14 @@ swaps, but detection occurs after the kernel may already have followed a new
 parent symlink. A same-privilege peer with write access to the parent can
 therefore cause an out-of-root side effect before the operation throws. Use
 native `require` mode when concurrent hostile mutation is in scope.
+
+The separate [retained-directory staging lifecycle](staged-file.md) keeps abort
+cleanup anchored to the original directory after a parent or ancestor move.
+It preserves observed substituted temporary entries and never cleans a recorded
+publication. Directory anchoring is not expected-inode/CAS replacement, and
+identity-check-then-unlink is not atomic conditional unlink. The guarantee
+requires the temporary name to remain owned and removal to remain permitted;
+application authorization and cooperative coordination remain necessary.
 
 ### Hardlink aliasing
 

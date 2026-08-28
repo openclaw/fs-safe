@@ -63,6 +63,12 @@ into proof for a different directory.
 
 Call `close()` in `finally`. Closing is idempotent; using a closed pin fails.
 
+These checks intentionally reject a moved or replaced pathname. For one file's
+abort cleanup through its original directory after a move, use the separate
+[retained-directory staging lifecycle](staged-file.md). Its cleanup authority
+does not weaken `pinDirectory().assertCurrent()` or `.sync()`, and namespace
+cleanup is not proof of crash durability.
+
 ## Durable directory creation
 
 `ensureDurableDirectory()` finds and pins the nearest existing ancestor,

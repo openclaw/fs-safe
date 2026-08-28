@@ -64,10 +64,8 @@ struct CancellationReader<R> {
 impl<R: Read> Read for CancellationReader<R> {
     fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
         if self.cancelled.load(Ordering::Relaxed) {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Interrupted,
-                "archive operation aborted",
-            ));
+            // Cancellation is terminal; read_to_end retries Interrupted forever.
+            return Err(std::io::Error::other("archive operation aborted"));
         }
         self.inner.read(buffer)
     }
@@ -159,6 +157,15 @@ fn checked_path(path: std::borrow::Cow<'_, std::path::Path>) -> Result<String> {
         .map_err(|_| Error::new(Status::InvalidArg, "archive entry path is not valid UTF-8"))
 }
 
+fn drain_tar_metadata(reader: &mut impl Read) -> std::io::Result<()> {
+    let mut buffer = [0_u8; 8 * 1024];
+    loop {
+        if reader.read(&mut buffer)? == 0 {
+            return Ok(());
+        }
+    }
+}
+
 fn inspect_tar(
     path: &str,
     format: ArchiveFormat,
@@ -197,6 +204,10 @@ fn inspect_tar(
             mode: header.mode().unwrap_or(0),
         });
     }
+    // tar stops at its end marker; finish the same full-input metadata check
+    // as JS preflight before accepting a manifest for extraction or reading.
+    drain_tar_metadata(&mut archive.into_inner())
+        .map_err(|error| io_error("finish tar metadata", error))?;
     Ok(result)
 }
 
@@ -968,8 +979,63 @@ mod tests {
         };
         assert_eq!(
             reader.read(&mut [0_u8; 8]).unwrap_err().kind(),
-            std::io::ErrorKind::Interrupted
+            std::io::ErrorKind::Other
         );
+    }
+
+    #[test]
+    fn metadata_reads_propagate_cancellation_without_retrying() {
+        struct CancelAfterRead {
+            inner: CancellationReader<Cursor<Vec<u8>>>,
+            reads: usize,
+        }
+
+        impl Read for CancelAfterRead {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                self.reads += 1;
+                assert!(self.reads <= 2, "metadata drain retried cancellation");
+                let result = self.inner.read(buffer);
+                self.inner.cancelled.store(true, Ordering::Relaxed);
+                result
+            }
+        }
+
+        for buffered in [false, true] {
+            let mut reader = CancelAfterRead {
+                inner: CancellationReader {
+                    inner: Cursor::new(vec![0_u8; 16 * 1024]),
+                    cancelled: Arc::new(AtomicBool::new(false)),
+                },
+                reads: 0,
+            };
+            let result = if buffered {
+                // tar buffers PAX bodies through read_to_end, unlike our drain.
+                reader.read_to_end(&mut Vec::new()).map(|_| ())
+            } else {
+                drain_tar_metadata(&mut reader)
+            };
+            let error = result.unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::Other);
+            assert_eq!(error.to_string(), "archive operation aborted");
+            assert_eq!(reader.reads, 2);
+        }
+    }
+
+    #[test]
+    fn metadata_drain_reaches_eof_and_preserves_trailer_validation() {
+        for extra_byte in [false, true] {
+            let length = 16 * 1024 + usize::from(extra_byte);
+            let mut input = Cursor::new(vec![0_u8; length]);
+            let result = drain_tar_metadata(&mut TarMetadataMeter::new(&mut input, 1024));
+            assert_eq!(input.position(), length as u64);
+            if extra_byte {
+                let error = result.unwrap_err();
+                assert!(error.to_string().contains("archive-header-invalid"));
+                assert!(error.to_string().contains("truncated TAR header"));
+            } else {
+                result.unwrap();
+            }
+        }
     }
 
     #[test]

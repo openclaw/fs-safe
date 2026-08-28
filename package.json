@@ -153,21 +153,21 @@
     "tar": "7.5.22"
   },
   "devDependencies": {
-    "@emnapi/runtime": "2.0.0-alpha.3",
+    "@emnapi/runtime": "2.0.0-alpha.4",
     "@napi-rs/cli": "3.8.6",
-    "@types/node": "^26.2.0",
-    "@vitest/coverage-v8": "4.1.10",
+    "@types/node": "^26.3.0",
+    "@vitest/coverage-v8": "4.1.11",
     "fast-check": "^4.9.0",
     "istanbul-lib-coverage": "3.2.2",
     "istanbul-lib-report": "3.0.1",
     "istanbul-reports": "3.2.0",
     "sigstore": "5.0.0",
     "typescript": "^7.0.2",
-    "vite": "8.2.1",
-    "vitest": "^4.1.10"
+    "vite": "8.2.2",
+    "vitest": "^4.1.11"
   },
   "engines": {
     "node": ">=22"
   },
-  "packageManager": "pnpm@10.34.5"
+  "packageManager": "pnpm@11.24.0"
 }

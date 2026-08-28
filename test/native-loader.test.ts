@@ -180,6 +180,8 @@ describe("bundled native loader", () => {
     expect(__nativeTargetForTest("linux", "ppc64")).toBeUndefined();
   });
 
+  // Node's full getReport() resolves native stacks via DbgHelp on Windows;
+  // the live probe took 8s in CI even though it never spawns a process.
   it("runs only non-executing libc probes", () => {
     const detected = __nativeLoaderDetectorsForTest();
     expect([true, false, undefined]).toContain(detected.report);
@@ -188,7 +190,7 @@ describe("bundled native loader", () => {
     if (process.platform === "linux") {
       expect(detected.elfInterpreter).toBeTypeOf("boolean");
     }
-  });
+  }, process.platform === "win32" ? 30_000 : undefined);
 
   it("contains no import-time process execution path", () => {
     const loader = readFileSync(fileURLToPath(new URL("../src/native.ts", import.meta.url)), "utf8");

@@ -1,9 +1,11 @@
 import fs from "node:fs/promises";
+import type { PermissionCommandFailure } from "./permission-exec.js";
 import {
   formatIcaclsResetCommand,
   inspectWindowsPermissions,
   type PermissionExec,
 } from "./permissions-windows.js";
+export type { PermissionCommandFailure } from "./permission-exec.js";
 export {
   createIcaclsResetCommand,
   formatIcaclsResetCommand,
@@ -40,6 +42,9 @@ export type PermissionCheck = {
   ownerError?: string;
   aclSummary?: string;
   error?: string;
+  errorDetail?: PermissionCommandFailure;
+  /** Original inspection failure, retained separately from serializable diagnostics. */
+  errorCause?: unknown;
 };
 
 export type PermissionCheckOptions = {
