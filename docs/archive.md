@@ -72,8 +72,17 @@ accepted-entry plan back to Rust. Rust only performs decompression and the
 fd-relative `mkdirBeneath`/exclusive-open writes. This keeps policy identical
 between native and JavaScript paths rather than reimplementing it in Rust.
 
-An `entryFilter` sees the validated archive path, entry kind, and declared
-size. Returning `"skip"` rejects the whole archive unless `onFiltered` is
+`stripComponents` removes leading nonempty, non-`.` path components after
+normalizing separators. For example, `./pkg/hello.txt` with
+`stripComponents: 1` extracts to `hello.txt` on both backends. Entries with no
+remaining components are skipped before the filter callback, but still count
+toward `maxEntries` and undergo traversal validation. JavaScript TAR extraction
+passes node-tar this accepted output path with its own stripping disabled, so
+depth checks, collision checks, writes, and mode application agree.
+
+An `entryFilter` sees the validated effective archive path **before stripping**
+(including a local PAX `path` override), entry kind, and declared size.
+Returning `"skip"` rejects the whole archive unless `onFiltered` is
 explicitly `"skip-entry"`. Path traversal and archive-wide entry-count checks
 still apply to skipped entries.
 
@@ -149,7 +158,7 @@ codes remain `"destination-not-directory"`, `"destination-symlink"`, and
 ## What it defends against
 
 - **Path traversal:** entries with `..`, absolute paths, NUL bytes, or Windows drive-relative segments such as `C:secret` and `nested/C:secret` are rejected (`ArchiveSecurityError`). On Windows, path segments containing `:` are also rejected as alternate data stream names before either backend writes to the filesystem.
-- **Symlink/hardlink entries:** rejected by default. Some archives ship symlink/hardlink entries that point outside the destination once resolved; `extractArchive` does not follow them.
+- **Symlink/hardlink entries:** rejected by default, including ZIP entries whose Unix mode says symlink while their name ends in a slash or their DOS directory bit is set. An explicit `entryFilter` with `onFiltered: "skip-entry"` can omit these entries. Some archives ship symlink/hardlink entries that point outside the destination once resolved; `extractArchive` does not follow them.
 - **Ambiguous output names:** duplicate names and distinct names that collide after `stripComponents`, case normalization, or Unicode normalization are rejected instead of relying on backend- or volume-specific overwrite order.
 - **TOCTOU during merge:** extraction first writes to a private temp dir, then merges into `destDir` using the same boundary checks as `root().write()`. Destination symlink swaps are checked with the selected platform mechanism; non-Linux routes retain the best-effort race window documented in the [security model](security-model.md#containment-guarantees-by-platform).
 - **Zip bombs:** `maxExtractedBytes` and `maxEntryBytes` apply to *post-decompression* bytes, so highly-compressed payloads hit the cap before they exhaust disk.
@@ -163,7 +172,8 @@ Extraction and single-entry reads accept one nonempty local POSIX `x` header
 (USTAR or GNU header format) immediately before one regular/contiguous file,
 directory, symlink, or hardlink. `path`, `linkpath`, and `size` override that
 member only. Effective paths still pass traversal validation before stripping,
-then depth, collision, filter, and link policy checks. PAX never permits link
+then the output paths pass depth and collision checks. The filter receives the
+effective pre-strip path, followed by link policy checks. PAX never permits link
 creation. Effective sizes drive framing, filters, and the existing output-byte
 budgets; `maxEntries` still counts members, not their metadata headers.
 
@@ -292,7 +302,7 @@ import {
 
 - `validateArchiveEntryPath(raw, opts)` — throws `ArchiveSecurityError` for `..`, absolute, NUL-containing, drive-relative, or otherwise unsafe entry paths, including alternate data stream names on Windows.
 - `normalizeArchiveEntryPath(raw)` — converts backslashes in the entry path to forward slashes.
-- `stripArchivePath(entryPath, n)` — strip the leading N path components, returning `null` if not enough remain.
+- `stripArchivePath(entryPath, n)` — normalize separators, drop empty and `.` components, then strip the leading N components, returning `null` if none remain.
 - `resolveArchiveOutputPath({ destDir, entryPath })` — combines the entry path with the destination, after validation.
 - `isWindowsDrivePath(value)` — detects drive-relative segments such as `C:secret` or `nested/C:secret` that should be rejected.
 
