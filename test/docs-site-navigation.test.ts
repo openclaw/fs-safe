@@ -7,6 +7,7 @@ import { assertNavigationCoversDocs, readDocPages, sections } from "../scripts/d
 
 const docsDir = path.resolve("docs");
 const builder = path.resolve("scripts/build-docs-site.mjs");
+const fixtureDocs = path.resolve("test/fixtures/docs-site-navigation/docs");
 const tempDirs: string[] = [];
 
 function scratchDir() {
@@ -17,16 +18,17 @@ function scratchDir() {
 
 function nestedFixture() {
   const dir = scratchDir();
+  cpSync(fixtureDocs, dir, { recursive: true });
   mkdirSync(path.join(dir, "guides", "nested"), { recursive: true });
-  for (const rel of ["index.md", "guides/example.md", "guides/nested/detail.md", "notes.txt", "guides/image.svg"]) {
+  for (const rel of ["guides/nested/detail.md", "notes.txt", "guides/image.svg"]) {
     writeFileSync(path.join(dir, rel), "# Example\n");
   }
   return dir;
 }
 
-function siteFixture() {
+function siteFixture(sourceDocs = docsDir) {
   const root = scratchDir();
-  cpSync(docsDir, path.join(root, "docs"), { recursive: true });
+  cpSync(sourceDocs, path.join(root, "docs"), { recursive: true });
   const output = path.join(root, "dist", "docs-site");
   mkdirSync(output, { recursive: true });
   writeFileSync(path.join(output, "keep.txt"), "previous site");
@@ -38,6 +40,10 @@ afterEach(() => {
 });
 
 describe("docs site navigation", () => {
+  it("discovers the committed fixture under exact root-relative keys", () => {
+    expect(readDocPages(fixtureDocs)).toEqual(["guides/example.md", "index.md"]);
+  });
+
   it("discovers flat and nested Markdown pages, ignoring other files", () => {
     expect(readDocPages(nestedFixture())).toEqual(["guides/example.md", "guides/nested/detail.md", "index.md"]);
   });
@@ -82,11 +88,8 @@ describe("docs site navigation", () => {
   });
 
   it.each(["missing nested registration", "nonexistent target"])("the builder rejects %s before replacing output", (problem) => {
-    const { root, output } = siteFixture();
-    if (problem === "missing nested registration") {
-      mkdirSync(path.join(root, "docs", "guides"));
-      writeFileSync(path.join(root, "docs", "guides", "example.md"), "# Example\n");
-    } else {
+    const { root, output } = siteFixture(problem === "missing nested registration" ? fixtureDocs : docsDir);
+    if (problem === "nonexistent target") {
       rmSync(path.join(root, "docs", "durability.md"));
     }
     const result = spawnSync(process.execPath, [builder], { cwd: root, encoding: "utf8" });
