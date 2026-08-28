@@ -113,7 +113,7 @@ jobs:
       - name: Test native security and path equivalence
         env:
           FS_SAFE_PAX_REQUIRE_NATIVE: "1"
-        run: pnpm test test/native-integration.test.ts test/native-write-containment.test.ts test/native-staging-regression.test.ts test/staged-file.test.ts test/staged-file-failures.test.ts test/native-archive-equivalence.test.ts test/native-publish-equivalence.test.ts test/private-directory.test.ts test/archive-pax.test.ts test/archive-pax-security.test.ts test/archive-pax-compressed.test.ts
+        run: pnpm test test/native-integration.test.ts test/native-write-containment.test.ts test/native-staging-regression.test.ts test/staged-file.test.ts test/staged-file-failures.test.ts test/native-archive-equivalence.test.ts test/native-publish-equivalence.test.ts test/private-directory.test.ts test/archive-pax.test.ts test/archive-pax-security.test.ts test/archive-pax-compressed.test.ts test/archive-tar-strip.test.ts
 
       - name: Test native Root publication verification
         env:
@@ -140,7 +140,7 @@ jobs:
             node scripts/native-mode-smoke.mjs auto
             node scripts/native-mode-smoke.mjs require
             node scripts/native-mode-smoke.mjs off
-            FS_SAFE_PAX_REQUIRE_NATIVE=1 pnpm test test/native-write-containment.test.ts test/native-staging-regression.test.ts test/staged-file.test.ts test/staged-file-failures.test.ts test/native-archive-equivalence.test.ts test/native-publish-equivalence.test.ts test/archive-pax.test.ts test/archive-pax-security.test.ts test/archive-pax-compressed.test.ts
+            FS_SAFE_PAX_REQUIRE_NATIVE=1 pnpm test test/native-write-containment.test.ts test/native-staging-regression.test.ts test/staged-file.test.ts test/staged-file-failures.test.ts test/native-archive-equivalence.test.ts test/native-publish-equivalence.test.ts test/archive-pax.test.ts test/archive-pax-security.test.ts test/archive-pax-compressed.test.ts test/archive-tar-strip.test.ts
             FS_SAFE_NATIVE_MODE=require pnpm test test/root-write-mode.test.ts test/root-write-verification.test.ts test/root-write-lifetime.test.ts test/root-write-exact-identity.test.ts
           '
 

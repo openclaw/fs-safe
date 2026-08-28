@@ -6,7 +6,6 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import {
   createArchiveOutputPathTracker,
-  normalizeArchiveEntryPath,
   resolveArchiveOutputPath,
   stripArchivePath,
   validateArchiveEntryPath,
@@ -274,6 +273,9 @@ async function extractZip(params: {
           ) {
             continue;
           }
+          if (isSymlink) {
+            throw new ArchiveSecurityError("entry-link", `zip entry is a link: ${entry.name}`);
+          }
           const mode = zipEntryMode(entry, params.entryModes);
 
           await prepareZipOutputPath({
@@ -287,9 +289,6 @@ async function extractZip(params: {
           if (entry.dir) {
             await fs.chmod(output.outPath, mode);
             continue;
-          }
-          if (isSymlink) {
-            throw new ArchiveSecurityError("entry-link", `zip entry is a link: ${entry.name}`);
           }
 
           await writeZipFileEntry({
@@ -367,6 +366,7 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
           destinationRealDir,
           run: async (stagingDir) => {
             deadline.check();
+            const strip = Math.max(0, Math.floor(params.stripComponents ?? 0));
             const checkTarEntrySafety = createTarEntryPreflightChecker({
               rootDir: destinationRealDir,
               stripComponents: params.stripComponents,
@@ -381,7 +381,9 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
             // the same safe-open boundary checks used by direct file writes.
             const extractor = tar.x({
               cwd: stagingDir,
-              strip: Math.max(0, Math.floor(params.stripComponents ?? 0)),
+              // fs-safe owns stripping: node-tar counts the `.` and empty path
+              // components that stripArchivePath() drops, so the two disagree.
+              strip: 0,
               gzip: params.tarGzip,
               signal: deadline.signal,
               preservePaths: false,
@@ -393,28 +395,29 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
               filter(this: { abort(error: Error): void }, _entryPath, entry) {
                 try {
                   const info = readTarEntryInfo(entry);
-                  const accepted = checkTarEntrySafety(info);
-                  if (accepted) {
-                    (entry as { path: string }).path = normalizeArchiveEntryPath(info.path);
-                    const relPath = stripArchivePath(
-                      info.path,
-                      Math.max(0, Math.floor(params.stripComponents ?? 0)),
-                    );
-                    if (relPath) {
-                      acceptedEntries.push({
-                        path: relPath,
-                        mode: resolveArchiveEntryMode({
-                          kind:
-                            info.type === "Directory" || info.type === "GNUDumpDir"
-                              ? "directory"
-                              : "file",
-                          archivedMode: info.mode,
-                          policy: params.entryModes,
-                        }),
-                      });
-                    }
+                  if (!checkTarEntrySafety(info)) {
+                    return false;
                   }
-                  return accepted;
+                  const relPath = stripArchivePath(info.path, strip);
+                  if (!relPath) {
+                    return false;
+                  }
+                  // Hand node-tar the exact path this entry was validated,
+                  // limited and collision-checked under, and that the mode
+                  // pass below resolves after extraction.
+                  (entry as { path: string }).path = relPath;
+                  acceptedEntries.push({
+                    path: relPath,
+                    mode: resolveArchiveEntryMode({
+                      kind:
+                        info.type === "Directory" || info.type === "GNUDumpDir"
+                          ? "directory"
+                          : "file",
+                      archivedMode: info.mode,
+                      policy: params.entryModes,
+                    }),
+                  });
+                  return true;
                 } catch (error) {
                   // Abort through the parser so pipeline tears down both the
                   // archive reader and unpacker instead of leaving a paused

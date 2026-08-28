@@ -3,6 +3,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { expectFsSafeErrorSync } from "./helpers/security.js";
 import { tarFixture, type TarFixtureEntry } from "./helpers/archive-fuzz.js";
+import { zipDirectoryLinkFixture } from "./helpers/archive-zip-link.js";
 import { useTempDirs } from "./helpers/vitest.js";
 import {
   ARCHIVE_LIMIT_ERROR_CODE,
@@ -23,7 +24,8 @@ import {
 let native: NativeBinding | undefined;
 try {
   native = __loadBundledNativeForTest();
-} catch {
+} catch (error) {
+  if (process.env.FS_SAFE_NATIVE_MODE === "require") throw error;
   // JS-only jobs intentionally exercise the fallback without a built binding.
 }
 const { tempRoot: createTempRoot } = useTempDirs();
@@ -65,6 +67,58 @@ const archiveBackends = native
   : (["javascript"] as const);
 
 describe.each(archiveBackends)("%s archive path", (backend) => {
+  describe.each(["trailing-slash", "dos-directory"] as const)("ZIP symlink with %s", (form) => {
+    it.each(["reject-link", "extract-link", "reject-filtered", "skip-link"] as const)(
+      "%s preserves entry policy and destination contents",
+      async (policy) => {
+        useBackend(backend);
+        const fixture = await zipDirectoryLinkFixture(form);
+        const root = await tempRoot();
+        const archivePath = path.join(root, "fixture.zip");
+        const destination = path.join(root, "destination");
+        await fs.writeFile(archivePath, fixture.bytes);
+        await fs.mkdir(destination);
+        await fs.writeFile(path.join(destination, "sentinel.txt"), "unchanged");
+        const seen: Array<{ path: string; kind: string; size: number }> = [];
+        const extraction = extractArchive({
+          archivePath,
+          destDir: destination,
+          timeoutMs: 10_000,
+          entryFilter: policy === "reject-link"
+            ? undefined
+            : (entry) => {
+              seen.push(entry);
+              return entry.kind === "symlink" && policy !== "extract-link" ? "skip" : "extract";
+            },
+          onFiltered: policy === "skip-link" ? "skip-entry" : undefined,
+        });
+        if (policy === "skip-link") {
+          await extraction;
+          await expect(fs.readdir(destination)).resolves.toEqual(["keep.txt", "sentinel.txt"]);
+          await expect(fs.readFile(path.join(destination, "keep.txt"), "utf8")).resolves.toBe("keep");
+        } else {
+          await expect(extraction).rejects.toMatchObject({
+            name: "ArchiveSecurityError",
+            code: policy === "reject-filtered" ? "entry-filtered" : "entry-link",
+          });
+          await expect(fs.readdir(destination)).resolves.toEqual(["sentinel.txt"]);
+        }
+        await expect(fs.readFile(path.join(destination, "sentinel.txt"), "utf8")).resolves.toBe("unchanged");
+        if (policy !== "reject-link") {
+          expect(seen).toEqual([
+            { path: "keep.txt", kind: "file", size: 4 },
+            // Preserve JSZip's existing directory normalization; Rust reports raw ZIP metadata.
+            {
+              path: backend === "native" ? fixture.name : "link/",
+              kind: "symlink",
+              size: backend === "native" ? fixture.size : 0,
+            },
+          ]);
+        }
+      },
+    );
+  });
+
   it("extracts and reads the same clamped regular file", async () => {
     useBackend(backend);
     const root = await tempRoot();

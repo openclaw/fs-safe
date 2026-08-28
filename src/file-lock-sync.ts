@@ -20,6 +20,7 @@ import type {
   SidecarLockRetryOptions,
   SidecarLockStaleRecovery,
 } from "./sidecar-lock-types.js";
+import { getFsSafeLockConfig } from "./lock-config.js";
 import { sleepSync } from "./timing.js";
 
 export type FileLockSyncAcquireOptions<TPayload extends Record<string, unknown>> = {
@@ -206,14 +207,19 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
     held.refCount += 1;
     return createSyncHeldLockHandle(held);
   }
-  const staleMs = options.staleMs ?? 30_000;
-  const retry = options.retry ?? {};
+  // Process defaults fill the same fields here as withLockDefaults() fills for
+  // the asynchronous manager, so both acquirers honor configureFsSafeLocks().
+  const defaults = getFsSafeLockConfig();
+  const staleMs = options.staleMs ?? defaults.staleMs ?? 30_000;
+  const retry = options.retry ?? defaults.retry ?? {};
+  const timeoutMs = options.timeoutMs ?? defaults.timeoutMs;
+  const staleRecovery = options.staleRecovery ?? defaults.staleRecovery;
   const startedAt = Date.now();
   let attempt = 0;
   const reclaimGuardPath = `${lockPath}.reclaim`;
   const waitForRetry = (): void => {
     const elapsed = Date.now() - startedAt;
-    const timedOut = options.timeoutMs !== undefined && elapsed >= options.timeoutMs;
+    const timedOut = timeoutMs !== undefined && elapsed >= timeoutMs;
     if (timedOut || (retry.retries !== undefined && attempt >= retry.retries)) {
       throw Object.assign(new Error(`file lock timeout for ${normalizedTargetPath}`), {
         code: "file_lock_timeout",
@@ -310,7 +316,7 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
         : defaultShouldReclaim(snapshot.payload, lockPath, staleMs, nowMs);
       if (reclaim) {
         if (
-          options.staleRecovery === "remove-if-unchanged" &&
+          staleRecovery === "remove-if-unchanged" &&
           snapshot.raw !== undefined &&
           options.shouldRemoveStaleLock?.({
             lockPath,

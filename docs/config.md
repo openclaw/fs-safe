@@ -78,6 +78,13 @@ configureFsSafeLocks({
 });
 ```
 
+These defaults apply to both `acquireFileLock()` / `withFileLock()` and
+`acquireFileLockSync()` / `withFileLockSync()`. Each acquisition resolves
+`retry`, `staleMs`, `staleRecovery`, and `timeoutMs` from the per-call option
+first, then the process configuration, then the package default. Explicit zero
+values are preserved. A per-call `retry` object replaces the configured object
+as a whole; omitted retry fields use package defaults, not configured fields.
+
 Individual lock calls can override any default. Switching the global stale
 recovery mode does not provide the application-owned liveness proof required
 by `shouldRemoveStaleLock`.
