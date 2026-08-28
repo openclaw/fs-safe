@@ -18,6 +18,7 @@ async function importRootForPlatform(platform: NodeJS.Platform) {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   vi.doUnmock("node:fs/promises");
   if (platformDescriptor) {
     Object.defineProperty(process, "platform", platformDescriptor);
@@ -188,7 +189,8 @@ describe("platform fallback coverage", () => {
 
   itPosix("does not remove an attacker file after a missing-write verification race", async () => {
     const { root: openRoot } = await importRootForPlatform("win32");
-    const { __setFsSafeTestHooksForTest } = await import("../src/test-hooks.js");
+    const verification = await import("../src/root-write-verification.js");
+    const verifyPublished = verification.verifyAtomicWriteResult;
     const rootDir = await fs.realpath(await tempRoot("fs-safe-win-create-cleanup-"));
     const outsideDir = await fs.realpath(await tempRoot("fs-safe-win-create-cleanup-outside-"));
     const parent = path.join(rootDir, "nested");
@@ -198,23 +200,18 @@ describe("platform fallback coverage", () => {
     await fs.writeFile(outsideTarget, "attacker");
     const scoped = await openRoot(rootDir, { mkdir: false });
     let swapped = false;
-    __setFsSafeTestHooksForTest({
-      async afterPreOpenLstat(filePath) {
-        if (swapped || filePath !== target) return;
-        swapped = true;
-        await fs.rename(parent, `${parent}-original`);
-        await fs.symlink(outsideDir, parent, "dir");
-      },
+    vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params, reopenVerified) => {
+      expect(params.targetPath).toBe(target);
+      swapped = true;
+      await fs.rename(parent, `${parent}-original`);
+      await fs.symlink(outsideDir, parent, "dir");
+      await verifyPublished(params, reopenVerified);
     });
 
-    try {
-      await expect(scoped.create("nested/created.txt", "library", {
-        renameIdentity: "verify-content-with-lock",
-      }))
-        .rejects.toMatchObject({ code: "path-mismatch" });
-    } finally {
-      __setFsSafeTestHooksForTest(undefined);
-    }
+    await expect(scoped.create("nested/created.txt", "library", {
+      renameIdentity: "verify-content-with-lock",
+    })).rejects.toMatchObject({ code: "path-mismatch" });
+    expect(swapped).toBe(true);
     await expect(fs.readFile(outsideTarget, "utf8")).resolves.toBe("attacker");
     await expect(fs.readFile(path.join(`${parent}-original`, "created.txt"), "utf8"))
       .resolves.toBe("library");
@@ -222,7 +219,8 @@ describe("platform fallback coverage", () => {
 
   itPosix("warns when overwrite verification detects a parent swap", async () => {
     const { root: openRoot } = await importRootForPlatform("win32");
-    const { __setFsSafeTestHooksForTest } = await import("../src/test-hooks.js");
+    const verification = await import("../src/root-write-verification.js");
+    const verifyPublished = verification.verifyAtomicWriteResult;
     const rootDir = await fs.realpath(await tempRoot("fs-safe-win-overwrite-warning-"));
     const outsideDir = await fs.realpath(await tempRoot("fs-safe-win-overwrite-warning-outside-"));
     const parent = path.join(rootDir, "nested");
@@ -236,13 +234,12 @@ describe("platform fallback coverage", () => {
     process.env.FS_SAFE_DEBUG_WARNINGS = "1";
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     let swapped = false;
-    __setFsSafeTestHooksForTest({
-      async afterPreOpenLstat(filePath) {
-        if (swapped || filePath !== target) return;
-        swapped = true;
-        await fs.rename(parent, `${parent}-original`);
-        await fs.symlink(outsideDir, parent, "dir");
-      },
+    vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params, reopenVerified) => {
+      expect(params.targetPath).toBe(target);
+      swapped = true;
+      await fs.rename(parent, `${parent}-original`);
+      await fs.symlink(outsideDir, parent, "dir");
+      await verifyPublished(params, reopenVerified);
     });
 
     try {
@@ -250,13 +247,13 @@ describe("platform fallback coverage", () => {
         renameIdentity: "verify-content-with-lock",
       })).rejects.toMatchObject({ code: "path-mismatch" });
     } finally {
-      __setFsSafeTestHooksForTest(undefined);
       if (priorWarnings === undefined) {
         delete process.env.FS_SAFE_DEBUG_WARNINGS;
       } else {
         process.env.FS_SAFE_DEBUG_WARNINGS = priorWarnings;
       }
     }
+    expect(swapped).toBe(true);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("post-write verification failed"));
     await expect(fs.readFile(outsideTarget, "utf8")).resolves.toBe("attacker");
     await expect(fs.readFile(path.join(`${parent}-original`, "value.txt"), "utf8"))

@@ -104,6 +104,18 @@ Native writers share root and parent admission, but keep their platform identity
 checks and leaf ownership. POSIX coordinator disposal uses `SuppressedError` to
 retain both an operation failure and a disposal failure, including their receipts;
 stage preparation and cleanup keep their documented error mappings.
+Root replacement verification borrows the published descriptor after final mode
+application, while a private coordinator retains the staged owner until the
+asynchronous check finishes. The owner never escapes that coordinator; public
+staging methods and receipts expose no descriptor or verification callback.
+Verification failures preserve the published name, and disposal still retains
+both verification and cleanup errors when both fail.
+The private verification channel carries exact bigint identity from the original
+owned descriptor (or the content-accepted FUSE descriptor). Root compares it
+against exact fd and pathname metadata; legacy helper return facts and public
+read metadata behavior are unchanged. Missing Windows pathname identity still
+requires a guarded path reopen and comparison with the original retained file;
+that fallback does not apply to POSIX no-read modes.
 
 ## JavaScript fallback guarantees and delta
 

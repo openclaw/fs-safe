@@ -66,6 +66,7 @@ import type { DirEntry, PathStat } from "./types.js";
 import { walkRoot, type RootWalkEntry, type RootWalkOptions } from "./root-walk.js";
 import { registerTempPathForExit, type TempPathRegistration } from "./temp-cleanup.js";
 import { serializePathWrite } from "./write-queue.js";
+import { verifyAtomicWriteResult } from "./root-write-verification.js";
 
 export type { DenyMutationPolicy } from "./deny-mutations.js";
 export type { RenameIdentityPolicy } from "./pinned-write.js";
@@ -800,7 +801,7 @@ async function writeTempFileForAtomicReplace(params: {
   data: string | Buffer;
   encoding?: BufferEncoding;
   mode: number;
-}): Promise<{ identity: Stats; cleanupIdentity: BigIntStats }> {
+}): Promise<{ handle: FileHandle; identity: BigIntStats }> {
   const tempHandle = await fs.open(params.tempPath, OPEN_WRITE_CREATE_FLAGS, params.mode);
   try {
     if (typeof params.data === "string") {
@@ -809,29 +810,12 @@ async function writeTempFileForAtomicReplace(params: {
       await tempHandle.writeFile(params.data);
     }
     return {
-      identity: await tempHandle.stat(),
-      cleanupIdentity: await tempHandle.stat({ bigint: true }),
+      handle: tempHandle,
+      identity: await tempHandle.stat({ bigint: true }),
     };
-  } finally {
+  } catch (error) {
     await tempHandle.close().catch(() => {});
-  }
-}
-
-async function verifyAtomicWriteResult(params: {
-  root: RootContext;
-  targetPath: string;
-  expectedIdentity: { dev: number | bigint; ino: number | bigint };
-}): Promise<void> {
-  const opened = await openVerifiedLocalFile(params.targetPath, { hardlinks: "reject" });
-  try {
-    if (!sameFileIdentity(opened.stat, params.expectedIdentity)) {
-      throw new FsSafeError("path-mismatch", "path changed during write");
-    }
-    if (!isPathInside(params.root.rootWithSep, opened.realPath)) {
-      throw outsideWorkspaceError();
-    }
-  } finally {
-    await opened.handle.close().catch(() => {});
+    throw error;
   }
 }
 
@@ -1119,9 +1103,9 @@ async function commitPinnedWriteInRoot(
   pinned: PinnedWriteTarget,
   params: RootWriteOptions & { data: string | Buffer },
 ): Promise<void> {
-  let identity;
+  let verifyingPublication = false;
   try {
-    identity = await runPinnedWriteWithRenamePolicy({
+    await runPinnedWriteWithRenamePolicy({
       rootPath: pinned.rootReal,
       relativeParentPath: pinned.relativeParentPath,
       basename: pinned.basename,
@@ -1132,8 +1116,24 @@ async function commitPinnedWriteInRoot(
       overwrite: params.overwrite,
       input: { kind: "buffer", data: params.data, encoding: params.encoding },
       rootIdentity: root.rootIdentity,
+      verifyPublished: async (fd, expectedIdentity, parentGuard) => {
+        verifyingPublication = true;
+        try {
+          await verifyAtomicWriteResult({
+            root,
+            targetPath: pinned.targetPath,
+            fd,
+            expectedIdentity,
+            parentGuard,
+          }, openVerifiedLocalFile);
+        } catch (error) {
+          emitWriteBoundaryWarning(`post-write verification failed: ${String(error)}`);
+          throw error;
+        }
+      },
     });
   } catch (error) {
+    if (verifyingPublication) throw error;
     const errorCode = (error as { code?: unknown })?.code;
     if (errorCode === "file_lock_stale" || errorCode === "file_lock_timeout") {
       throw error;
@@ -1144,17 +1144,6 @@ async function commitPinnedWriteInRoot(
       });
     }
     throw normalizePinnedWriteError(error);
-  }
-
-  try {
-    await verifyAtomicWriteResult({
-      root,
-      targetPath: pinned.targetPath,
-      expectedIdentity: identity,
-    });
-  } catch (err) {
-    emitWriteBoundaryWarning(`post-write verification failed: ${String(err)}`);
-    throw err;
   }
 }
 
@@ -1303,7 +1292,7 @@ async function resolvePinnedWriteTargetInRoot(
     relativeParentPath:
       path.posix.dirname(relativePosix) === "." ? "" : path.posix.dirname(relativePosix),
     basename,
-    mode: mode || 0o600,
+    mode,
   };
 }
 
@@ -1612,6 +1601,7 @@ async function writeFileFallback(
   const destinationGuard = await createAsyncDirectoryGuard(path.dirname(destinationPath));
   let tempPath: string | null = null;
   let unregisterTempPath: TempPathRegistration | null = null;
+  let writtenHandle: FileHandle | undefined;
   try {
     tempPath = buildAtomicWriteTempPath(destinationPath);
     unregisterTempPath = registerTempPathForExit(tempPath);
@@ -1619,14 +1609,15 @@ async function writeFileFallback(
       tempPath,
       data: params.data,
       encoding: params.encoding,
-      mode: mode || 0o600,
+      mode,
     });
-    unregisterTempPath.setIdentity(written.cleanupIdentity);
+    writtenHandle = written.handle;
+    unregisterTempPath.setIdentity(written.identity);
     const commitTempPath = tempPath;
     await withAsyncDirectoryGuards([destinationGuard], async () => {
       await fs.rename(commitTempPath, destinationPath);
+      tempPath = null;
     });
-    tempPath = null;
     unregisterTempPath();
     unregisterTempPath = null;
     try {
@@ -1634,12 +1625,15 @@ async function writeFileFallback(
         root,
         targetPath: destinationPath,
         expectedIdentity: written.identity,
-      });
+        fd: written.handle.fd,
+        parentGuard: destinationGuard,
+      }, openVerifiedLocalFile);
     } catch (err) {
       emitWriteBoundaryWarning(`post-write verification failed: ${String(err)}`);
       throw err;
     }
   } finally {
+    await writtenHandle?.close().catch(() => undefined);
     if (tempPath) {
       await fs.rm(tempPath, { force: true }).catch(() => {});
     }
@@ -1668,6 +1662,8 @@ async function writeMissingFileFallback(
   const parentGuard = await createAsyncDirectoryGuard(path.dirname(targetPath));
   let created = false;
   let createdIdentity: FileIdentityStat | undefined;
+  let writtenHandle: FileHandle | undefined;
+  let verifyingPublication = false;
   try {
     const { handle, writtenStat } = await withAsyncDirectoryGuards(
       [parentGuard],
@@ -1676,12 +1672,13 @@ async function writeMissingFileFallback(
         created = true;
         try {
           createdIdentity = await handle.stat();
+          const writtenStat = await handle.stat({ bigint: true });
           if (typeof params.data === "string") {
             await handle.writeFile(params.data, params.encoding ?? "utf8");
           } else {
             await handle.writeFile(params.data);
           }
-          return { handle, writtenStat: await handle.stat() };
+          return { handle, writtenStat };
         } catch (error) {
           await handle.close().catch(() => undefined);
           throw error;
@@ -1694,14 +1691,18 @@ async function writeMissingFileFallback(
         },
       },
     );
-    await handle.close();
+    writtenHandle = handle;
+    created = false;
+    verifyingPublication = true;
     await verifyAtomicWriteResult({
       root,
       targetPath,
       expectedIdentity: writtenStat,
-    });
-    created = false;
+      fd: handle.fd,
+      parentGuard,
+    }, openVerifiedLocalFile);
   } catch (err) {
+    if (verifyingPublication) throw err;
     if (hasNodeErrorCode(err, "EEXIST")) {
       throw new FsSafeError("already-exists", "file already exists", {
         cause: err instanceof Error ? err : undefined,
@@ -1709,6 +1710,7 @@ async function writeMissingFileFallback(
     }
     throw err;
   } finally {
+    await writtenHandle?.close().catch(() => undefined);
     if (created && createdIdentity) {
       await removePathIfIdentityUnchanged(targetPath, createdIdentity).catch(() => undefined);
     }

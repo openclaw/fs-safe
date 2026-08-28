@@ -4,7 +4,7 @@ import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import type { FileIdentityStat } from "./file-identity.js";
 import { runPinnedWriteWindows, sameNativeIdentity } from "./native-pinned-write-windows.js";
-import { assertNativeStaging, createNativeStage, type NativeStagingBinding } from "./native-staged-file.js";
+import { assertNativeStaging, writeNativeStage, type NativeStagingBinding } from "./native-staged-file.js";
 import type { NativeBinding } from "./native.js";
 import type { PinnedWriteParams } from "./pinned-write.js";
 import { describeStagedDirectory, exactIdentityMatches } from "./staged-directory.js";
@@ -54,13 +54,16 @@ export async function runPinnedWriteNative(binding: NativeBinding, params: Pinne
         : params.rootPath,
     );
     const directory = windows ? undefined : describeStagedDirectory(parentFd, parentPath);
+    const parentPathStat = await fs.lstat(parentPath);
     if (windows) {
-      const parentPathStat = await fs.lstat(parentPath);
       const parentIdentity = binding.fstatIdentity(parentFd);
       if (parentPathStat.isSymbolicLink() || !sameNativeIdentity(parentPathStat, parentIdentity)) {
         throw new FsSafeError("path-mismatch", "native write parent changed during resolution");
       }
+    } else if (parentPathStat.isSymbolicLink() || !exactIdentityMatches(parentPathStat, directory!.identity)) {
+      throw new FsSafeError("path-mismatch", "native write parent changed during resolution");
     }
+    const verificationGuard = { dir: parentPath, realPath: parentPath, stat: parentPathStat };
     if (params.overwrite === false) {
       try {
         await fs.lstat(path.join(parentPath, params.basename));
@@ -72,17 +75,15 @@ export async function runPinnedWriteNative(binding: NativeBinding, params: Pinne
       }
     }
     if (windows) {
-      // Keep the released Windows leaf/parent/root close sequence and policy.
+      // The Windows leaf owns both directories after admission.
       windowsOwnsDirectories = true;
-      return await runPinnedWriteWindows(binding, params, root, parentFd, parentPath);
+      return await runPinnedWriteWindows(binding, params, root, parentFd, verificationGuard);
     }
     const ownedParent = parentFd;
     parentFd = undefined;
-    await using staged = await createNativeStage(
-      binding as NativeStagingBinding, ownedParent, directory!, params.input, params.mode, params.maxBytes, false,
+    return await writeNativeStage(
+      binding as NativeStagingBinding, ownedParent, directory!, params, verificationGuard,
     );
-    const published = await staged.publish(params.basename, { overwrite: params.overwrite !== false });
-    return { dev: published.staged.identity.dev, ino: published.staged.identity.ino };
   } finally {
     if (windows && !windowsOwnsDirectories) {
       if (parentFd !== undefined) {

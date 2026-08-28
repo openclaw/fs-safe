@@ -33,6 +33,10 @@ old-or-new guarantee does not apply to `append()` or `openWritable()`, which
 write in place, or to lower-level atomic helpers when their explicitly
 non-atomic permission-error copy fallback is enabled.
 
+Post-publication verification can still reject after a complete replacement has
+been committed. Rejection does not promise that a successful rename was rolled
+back; the published file or a raced replacement may remain at the destination.
+
 ## Denying mutations
 
 All mutation verbs accept `denyMutations?: DenyMutationPolicy`, either as a root default or per-call option:
@@ -63,6 +67,20 @@ await fs.write("notes/today.txt", "hello\n", { encoding: "utf8" });
 ```
 
 `data` accepts `string | Buffer`. `options` are `{ denyMutations?: DenyMutationPolicy; encoding?: BufferEncoding; mkdir?: boolean; mode?: number; overwrite?: boolean; renameIdentity?: RenameIdentityPolicy }`. `mode` sets the file's POSIX mode. If neither the call nor `RootDefaults` supplies it, a replacement preserves the existing file mode and a new file uses `0o600`. `mkdir` and `overwrite` both default to `true`; set `overwrite: false` for the same no-clobber behavior as `create()`.
+
+POSIX modes without read permission, including `0o000` and `0o200`, succeed:
+final verification uses a descriptor retained by the writer rather than reopening
+the published file. The requested mode is not relaxed for verification.
+Publication verification compares exact bigint descriptor and pathname identities,
+including large file indexes that cannot be represented by a JavaScript number.
+Later reads still obey OS permissions, and access checks on a pre-existing
+destination are unchanged. The explicit FUSE compatibility policy still requires
+a readable destination to prove matching content when rename changes its identity.
+
+When Windows cannot report a pathname's identity, verification retains the guarded
+reader fallback: reopen the name and compare that descriptor's exact identity with
+the original retained file. Unknown pathname metadata is not proof that the name
+still refers to the published file.
 
 ### `fs.create(rel, data, options?)`
 
