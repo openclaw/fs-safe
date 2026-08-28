@@ -11,6 +11,10 @@
 
 - Accept npm 11 array and npm 12 package-name-keyed pack results while validating the intended package and its file metadata.
 
+### Dependencies and maintenance
+
+- Refresh the Node and Rust dependency graphs, align development and CI on pnpm 11.24.0, and update the CodeQL, npm, and cargo-zigbuild pins while preserving the two-day dependency cooldown.
+
 ## 0.5.6 - 2026-08-14
 
 ### Security and Correctness
