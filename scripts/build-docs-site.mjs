@@ -28,7 +28,7 @@ const installCmd = "pnpm add @openclaw/fs-safe";
 const sections = [
   ["Start", ["index.md", "install.md", "quickstart.md", "security-model.md", "native-helper.md", "native.md", "config.md"]],
   ["Root API", ["root.md", "reading.md", "writing.md", "path-scope.md"]],
-  ["Atomic & temp", ["atomic.md", "output.md", "json.md", "temp.md", "archive.md"]],
+  ["Atomic & temp", ["atomic.md", "staged-file.md", "output.md", "json.md", "temp.md", "archive.md"]],
   ["Stores", ["store.md", "json-store.md", "file-store.md", "private-file-store.md"]],
   ["Specialized", ["secret-file.md", "regular-file.md", "sidecar-lock.md", "pinned-open.md", "local-roots.md"]],
   ["Path & filename", ["path.md", "filename.md", "install-path.md"]],

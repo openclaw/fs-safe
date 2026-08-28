@@ -89,6 +89,14 @@ credential must also fail on broad permissions or unexpected ownership.
 the same pinned-handle validation, byte cap, trimming, error codes, and strict
 versus missing-is-undefined naming semantics.
 
+Both sync and async readers compare lossless bigint identities from the preview,
+opened descriptor, resolved target, and current input path before reading. An
+allowed symlink must still point to the opened file. On Windows, a zero device
+or inode is unverified: that inspection is retried once without reopening the
+file, preserving known identity components and link checks. Definite mismatches
+and persistent ambiguity fail with `path-mismatch`; optional reads do not treat
+these failures as missing files.
+
 If an already validated descriptor fails while reading, both readers throw an
 operational `FsSafeError` with `code: "read-failed"`; inspect `cause` for the
 underlying Node filesystem code such as `EIO`.

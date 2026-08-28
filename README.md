@@ -284,6 +284,12 @@ publication policy, creation callback, and platform contract.
 
 ## Atomic writes
 
+For preparation that must survive a parent rename until abort cleanup, use
+[`stageFileInDirectory()`](docs/staged-file.md) from `advanced`. It retains the
+original directory on Linux/macOS and requires native support for this operation.
+It offers atomic replace/no-replace publication, not expected-inode replacement
+or a crash-durability promise; application checks and coordination remain yours.
+
 `replaceFileAtomic()` writes a sibling temp file, applies its exact mode through the still-open descriptor, optionally fsyncs it, and renames it over the destination. It never follows the published destination path to set file permissions. Mode preservation, pinned-destination hardlink rejection, rename retry / copy fallback on `EPERM`, bounded original-content restoration after a torn fallback, parent-directory fsync, and a `beforeRename` hook for backup or observer flows are all opt-in. `movePathWithCopyFallback()` stages cross-device moves before commit and removes only the copied source entries, so concurrent source additions or replacements are preserved.
 
 ```ts

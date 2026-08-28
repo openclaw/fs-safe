@@ -363,7 +363,7 @@ describe.each(archiveBackends)("%s archive path", (backend) => {
   });
 
   it.each([
-    ["PAX size overrides", { path: "PaxHeader", type: "x" as const, body: "10 path=a\n" }],
+    ["dangling PAX metadata", { path: "PaxHeader", type: "x" as const, body: "10 path=a\n" }],
     ["GNU sparse entries", { path: "sparse", type: "S" as const }],
   ])("rejects unmeterable %s with the same typed format error", async (_label, entry) => {
     useBackend(backend);

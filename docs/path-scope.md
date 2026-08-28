@@ -24,6 +24,8 @@ await sharp(photo.path).resize(800).toFile(/* … */);
 ## Signature
 
 ```ts
+import type { FsSafeError } from "@openclaw/fs-safe/errors";
+
 function pathScope(rootDir: string, options: PathScopeOptions): PathScope;
 
 type PathScopeOptions = {
@@ -36,6 +38,10 @@ type PathScopeResolveOptions = {
 
 type PathResult = { ok: true; path: string } | { ok: false; error: string };
 type PathsResult = { ok: true; paths: string[] } | { ok: false; error: string };
+// Illustrative result alias, not a named package export.
+type DirectoryResult =
+  | { ok: true; path: string }
+  | { ok: false; error: string; diagnostic?: FsSafeError };
 
 type PathScope = {
   rootDir: string;
@@ -45,7 +51,7 @@ type PathScope = {
   existing(requestedPaths: string[]): Promise<PathsResult>;
   files(requestedPaths: string[]): Promise<PathsResult>;
   writable(requestedPath: string, options?: PathScopeResolveOptions): Promise<PathResult>;
-  ensureDir(requestedPath: string, options?: PathScopeResolveOptions & { mode?: number }): Promise<PathResult>;
+  ensureDir(requestedPath: string, options?: PathScopeResolveOptions & { mode?: number }): Promise<DirectoryResult>;
 };
 ```
 
@@ -92,9 +98,29 @@ await fs.writeFile(t.path, body);
 
 Async. `mkdir -p` inside the scope. Walks each segment, refuses any symlink in the path, creates missing directories. Optional `mode` sets the directory mode.
 
+Failures remain nonthrowing results with `error: string`. Policy rejections
+(including traversal, NUL input, symlinks and non-directory segments) omit
+`diagnostic`. Operational failures from `lstat`, `realpath` or `mkdir` include
+an `FsSafeError` with `code: "helper-failed"`, `category: "operational"`, and
+the exact original error in `cause`, including its native `code`, `errno` and
+`syscall` when available. Only `ensureDir()` adds this diagnostic; other scope
+methods retain their existing result shapes.
+
+`error` equals `diagnostic.message` for operational failures, for example
+`"Could not prepare uploads directory: ENAMETOOLONG during lstat"`. Display
+text bounds and escapes the label and native code/syscall, without copying
+the requested path or native error message. Treat the raw cause as sensitive
+local diagnostic data, not as text to return to an untrusted caller. A failure
+can leave already-created parent directories; it does not roll them back or
+retry through an unchecked filesystem path.
+
 ```ts
 const dir = await uploads.ensureDir("inbox", { mode: 0o755 });
-if (!dir.ok) return reply(500, dir.error);
+if (!dir.ok) {
+  // Pass the cause only to an appropriately restricted local diagnostic sink.
+  if (dir.diagnostic) recordLocalFailure(dir.diagnostic.cause);
+  return reply(dir.diagnostic ? 500 : 400, dir.error);
+}
 ```
 
 ## Result type vs throwing

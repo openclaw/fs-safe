@@ -1,11 +1,20 @@
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { itPosix } from "./helpers/vitest.js";
 import { fileStore, fileStoreSync } from "../src/file-store.js";
 import { configureFsSafeNative, root as openRoot } from "../src/index.js";
+import { __loadBundledNativeForTest, __resetNativeLoaderForTest, getNativeBinding } from "../src/native.js";
 import { ESCAPING_DIRECTORY_PAYLOADS, ESCAPING_WRITE_PAYLOADS, expectFsSafeCode, expectNoOutsideWrite, LITERAL_SUSPICIOUS_DIRECTORY_PAYLOADS, LITERAL_SUSPICIOUS_WRITE_PAYLOADS, makeTempLayout as makeSecurityTempLayout, POSIX_LITERAL_SUSPICIOUS_WRITE_PAYLOADS, SAFE_REJECTED_SUSPICIOUS_DIRECTORY_PAYLOADS, WINDOWS_REJECTED_SUSPICIOUS_DIRECTORY_PAYLOADS, expectFsSafeError } from "./helpers/security.js";
+
+let bundledNativeAvailable = false;
+try {
+  __loadBundledNativeForTest();
+  bundledNativeAvailable = true;
+} catch {
+  // JavaScript-only test runs intentionally have no host binding.
+}
 
 const tempDirs: string[] = [];
 
@@ -14,7 +23,9 @@ async function makeTempLayout(prefix: string) {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   configureFsSafeNative({ mode: "auto" });
+  __resetNativeLoaderForTest();
   await Promise.all(tempDirs.splice(0).map((dir) => fsp.rm(dir, { force: true, recursive: true })));
 });
 
@@ -247,88 +258,76 @@ describe("write, move, and delete boundary bypass attempts", () => {
     await expectNoOutsideWrite(layout);
   });
 
-  itPosix("does not create directories outside the root when append races a parent symlink swap", async () => {
-    const layout = await makeTempLayout("fs-safe-append-mkdir-swap");
-    const safeRoot = await openRoot(layout.root);
-    const swapPath = path.join(layout.root, "data");
-    let stopSwapping = false;
-    const swapper = (async () => {
-      while (!stopSwapping) {
-        await fsp.mkdir(swapPath).catch(() => {});
-        await fsp.rm(swapPath, { force: true, recursive: true }).catch(() => {});
-        await fsp.symlink(layout.outside, swapPath, "dir").catch(() => {});
-        await fsp.rm(swapPath, { force: true }).catch(() => {});
+  describe.each(["missing", "existing"] as const)("parent swap with %s outside destination", (destination) => {
+    itPosix.each([
+      { operation: "append", mode: "off" },
+      { operation: "append", mode: "auto" },
+      { operation: "openWritable", mode: "off" },
+      { operation: "openWritable", mode: "auto" },
+      { operation: "copyIn", mode: "off" },
+    ] as const)("$operation ($mode) rejects after the bounded mkdir side effect", async ({ operation, mode }) => {
+      configureFsSafeNative({ mode });
+      // Load the real host binding in auto mode when available; parent preparation stays in JS.
+      expect(Boolean(getNativeBinding())).toBe(mode === "auto" && bundledNativeAvailable);
+      const layout = await makeTempLayout("fs-safe-write-mkdir-swap");
+      const safeRoot = await openRoot(layout.root);
+      const parent = path.join(safeRoot.rootReal, "data");
+      const originalParent = path.join(safeRoot.rootReal, "data-original");
+      const swapTarget = path.join(parent, "logs");
+      const source = path.join(layout.root, "source.txt");
+      const outsideLogs = path.join(layout.outside, "logs");
+      const outsideTarget = path.join(outsideLogs, "nested", "app.log");
+      const originalBytes = Buffer.from("existing outside target\n");
+      await fsp.mkdir(parent);
+      await fsp.writeFile(source, "payload");
+      if (destination === "existing") {
+        await fsp.mkdir(path.dirname(outsideTarget), { recursive: true });
+        await fsp.writeFile(outsideTarget, originalBytes);
       }
-    })();
 
-    try {
-      for (let attempt = 0; attempt < 400; attempt++) {
-        await safeRoot.append("data/logs/2026/07/app.log", "entry\n").catch(() => {});
-        expect(await fsp.readdir(layout.outside)).toEqual(["secret.txt"]);
-      }
-    } finally {
-      stopSwapping = true;
-      await swapper;
-      await fsp.rm(swapPath, { force: true, recursive: true }).catch(() => {});
-    }
-    await expectNoOutsideWrite(layout);
-  }, 30000);
+      const realMkdir = fsp.mkdir.bind(fsp);
+      let swapCount = 0;
+      vi.spyOn(fsp, "mkdir").mockImplementation(async (candidate, options) => {
+        // Swap after the parent guard, immediately before the real pathname syscall.
+        if (String(candidate) === swapTarget && ++swapCount === 1) {
+          await fsp.rename(parent, originalParent);
+          await fsp.symlink(layout.outside, parent, "dir");
+        }
+        return await realMkdir(candidate, options);
+      });
 
-  itPosix("does not create directories outside the root when openWritable races a parent symlink swap", async () => {
-    const layout = await makeTempLayout("fs-safe-open-writable-mkdir-swap");
-    const safeRoot = await openRoot(layout.root);
-    const swapPath = path.join(layout.root, "data");
-    let stopSwapping = false;
-    const swapper = (async () => {
-      while (!stopSwapping) {
-        await fsp.mkdir(swapPath).catch(() => {});
-        await fsp.rm(swapPath, { force: true, recursive: true }).catch(() => {});
-        await fsp.symlink(layout.outside, swapPath, "dir").catch(() => {});
-        await fsp.rm(swapPath, { force: true }).catch(() => {});
-      }
-    })();
+      const run = async () => {
+        const target = "data/logs/nested/app.log";
+        if (operation === "append") {
+          return await safeRoot.append(target, "payload");
+        }
+        if (operation === "copyIn") {
+          return await safeRoot.copyIn(target, source);
+        }
+        const opened = await safeRoot.openWritable(target);
+        await opened.handle.close();
+      };
+      await expect(run()).rejects.toSatisfy((error: unknown) => {
+        expectFsSafeCode(error, ["outside-workspace"]);
+        expect(error).toHaveProperty("message", "directory escaped workspace root");
+        return true;
+      });
+      expect(swapCount).toBe(1);
 
-    try {
-      for (let attempt = 0; attempt < 400; attempt++) {
-        const opened = await safeRoot.openWritable("data/logs/2026/07/app.log").catch(() => undefined);
-        await opened?.handle.close().catch(() => {});
-        expect(await fsp.readdir(layout.outside)).toEqual(["secret.txt"]);
+      const logsStat = await fsp.lstat(outsideLogs);
+      expect(logsStat.isDirectory()).toBe(true);
+      expect(logsStat.isSymbolicLink()).toBe(false);
+      const expectedOutside = destination === "existing"
+        ? ["logs", "logs/nested", "logs/nested/app.log", "secret.txt"]
+        : ["logs", "secret.txt"];
+      expect((await fsp.readdir(layout.outside, { recursive: true })).sort()).toEqual(expectedOutside);
+      if (destination === "existing") {
+        await expect(fsp.readFile(outsideTarget)).resolves.toEqual(originalBytes);
+      } else {
+        await expect(fsp.readdir(outsideLogs)).resolves.toEqual([]);
       }
-    } finally {
-      stopSwapping = true;
-      await swapper;
-      await fsp.rm(swapPath, { force: true, recursive: true }).catch(() => {});
-    }
-    await expectNoOutsideWrite(layout);
-  }, 30000);
-
-  itPosix("does not create directories outside the root when copyIn fallback races a parent symlink swap", async () => {
-    configureFsSafeNative({ mode: "off" });
-    const layout = await makeTempLayout("fs-safe-copy-in-mkdir-swap");
-    const safeRoot = await openRoot(layout.root);
-    const source = path.join(layout.root, "source.txt");
-    await fsp.writeFile(source, "source");
-    const swapPath = path.join(layout.root, "data");
-    let stopSwapping = false;
-    const swapper = (async () => {
-      while (!stopSwapping) {
-        await fsp.mkdir(swapPath).catch(() => {});
-        await fsp.rm(swapPath, { force: true, recursive: true }).catch(() => {});
-        await fsp.symlink(layout.outside, swapPath, "dir").catch(() => {});
-        await fsp.rm(swapPath, { force: true }).catch(() => {});
-      }
-    })();
-
-    try {
-      for (let attempt = 0; attempt < 400; attempt++) {
-        await safeRoot.copyIn("data/logs/2026/07/app.log", source).catch(() => {});
-        expect(await fsp.readdir(layout.outside)).toEqual(["secret.txt"]);
-      }
-    } finally {
-      stopSwapping = true;
-      await swapper;
-      await fsp.rm(swapPath, { force: true, recursive: true }).catch(() => {});
-    }
-    await expectNoOutsideWrite(layout);
-  }, 60000);
+      await expect(fsp.readdir(originalParent)).resolves.toEqual([]);
+      await expectNoOutsideWrite(layout);
+    });
+  });
 });

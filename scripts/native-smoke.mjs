@@ -18,7 +18,7 @@ try {
   console.log("native smoke: write fixture");
   fs.writeFileSync(path.join(root, "nested", "source"), "source");
   console.log("native smoke: open");
-  const fd = native.openBeneath(rootFd, "nested/source", fs.constants.O_RDONLY);
+  const { fd } = native.openBeneath(rootFd, "nested/source", fs.constants.O_RDONLY);
   try {
     console.log("native smoke: fstat");
     const identity = native.fstatIdentity(fd);

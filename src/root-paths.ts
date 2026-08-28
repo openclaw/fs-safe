@@ -1,10 +1,21 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { formatErrorDetail } from "./error-detail.js";
 import { FsSafeError } from "./errors.js";
-import { isNotFoundPathError, isPathInside, isPathRelativeEscape } from "./path.js";
+import {
+  assertNoNulPathInput,
+  hasNodeErrorCode,
+  isNodeError,
+  isNotFoundPathError,
+  isPathInside,
+  isPathRelativeEscape,
+} from "./path.js";
 import { root as openRoot } from "./root.js";
 
 type InvalidPathResult = { ok: false; error: string };
+type DirectoryResult =
+  | { ok: true; path: string }
+  | { ok: false; error: string; diagnostic?: FsSafeError };
 type ResolvePathsWithinRootParams = {
   rootDir: string;
   requestedPaths: string[];
@@ -34,7 +45,7 @@ export type PathScope = {
   ensureDir(
     requestedPath: string,
     options?: PathScopeResolveOptions & { mode?: number },
-  ): Promise<{ ok: true; path: string } | { ok: false; error: string }>;
+  ): Promise<DirectoryResult>;
 };
 
 function invalidPath(scopeLabel: string): InvalidPathResult {
@@ -186,7 +197,7 @@ async function assertNoSymlinkSegments(params: {
 }): Promise<void> {
   const relative = path.relative(params.rootDir, params.targetPath);
   if (isPathRelativeEscape(relative)) {
-    throw new Error(`Invalid path: must stay within ${params.scopeLabel}`);
+    throw new FsSafeError("outside-workspace", `Invalid path: must stay within ${params.scopeLabel}`);
   }
   let current = params.rootDir;
   for (const segment of relative.split(path.sep).filter(Boolean)) {
@@ -194,10 +205,13 @@ async function assertNoSymlinkSegments(params: {
     try {
       const stat = await fs.lstat(current);
       if (stat.isSymbolicLink()) {
-        throw new Error(`Invalid path: must not traverse symlinks within ${params.scopeLabel}`);
+        throw new FsSafeError(
+          "symlink", `Invalid path: must not traverse symlinks within ${params.scopeLabel}`,
+        );
       }
       if (!stat.isDirectory()) {
-        throw new Error(
+        throw new FsSafeError(
+          "not-file",
           `Invalid path: existing segment must be a directory within ${params.scopeLabel}`,
         );
       }
@@ -216,30 +230,28 @@ export async function ensureDirectoryWithinRoot(params: {
   scopeLabel: string;
   defaultDirName?: string;
   mode?: number;
-}): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
-  const lexical = resolvePathWithinRoot({
-    rootDir: params.rootDir,
-    requestedPath: params.requestedPath,
-    scopeLabel: params.scopeLabel,
-    defaultFileName: params.defaultDirName,
-  });
-  if (!lexical.ok) {
-    return lexical;
-  }
-
-  const rootDir = path.resolve(params.rootDir);
-  const targetPath = path.resolve(lexical.path);
+}): Promise<DirectoryResult> {
+  const scopeLabel = formatErrorDetail(params.scopeLabel.slice(0, 80));
   try {
+    assertNoNulPathInput(params.rootDir);
+    assertNoNulPathInput(params.requestedPath);
+    if (!params.requestedPath.trim()) assertNoNulPathInput(params.defaultDirName ?? "");
+    const lexical = resolvePathWithinRoot({
+      ...params, scopeLabel, defaultFileName: params.defaultDirName,
+    });
+    if (!lexical.ok) return lexical;
+    const rootDir = path.resolve(params.rootDir);
+    const targetPath = lexical.path;
     const rootStat = await fs.lstat(rootDir);
     if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
-      return invalidPath(params.scopeLabel);
+      return invalidPath(scopeLabel);
     }
-    await assertNoSymlinkSegments({ rootDir, targetPath, scopeLabel: params.scopeLabel });
+    await assertNoSymlinkSegments({ rootDir, targetPath, scopeLabel });
     const rootReal = await fs.realpath(rootDir);
     const nearestExistingPath = await resolveNearestExistingPath(targetPath);
     const nearestExistingReal = await fs.realpath(nearestExistingPath);
     if (!isPathInside(rootReal, nearestExistingReal)) {
-      return invalidPath(params.scopeLabel);
+      return invalidPath(scopeLabel);
     }
     const relative = path.relative(rootDir, targetPath);
     let current = rootDir;
@@ -249,7 +261,7 @@ export async function ensureDirectoryWithinRoot(params: {
         try {
           const stat = await fs.lstat(current);
           if (stat.isSymbolicLink() || !stat.isDirectory()) {
-            return invalidPath(params.scopeLabel);
+            return invalidPath(scopeLabel);
           }
           break;
         } catch (err) {
@@ -259,10 +271,7 @@ export async function ensureDirectoryWithinRoot(params: {
           try {
             await fs.mkdir(current, { mode: params.mode });
           } catch (mkdirErr) {
-            if (isNotFoundPathError(mkdirErr)) {
-              throw mkdirErr;
-            }
-            if ((mkdirErr as NodeJS.ErrnoException).code === "EEXIST") {
+            if (hasNodeErrorCode(mkdirErr, "EEXIST")) {
               continue;
             }
             throw mkdirErr;
@@ -271,16 +280,30 @@ export async function ensureDirectoryWithinRoot(params: {
       }
       const currentReal = await fs.realpath(current);
       if (!isPathInside(rootReal, currentReal)) {
-        return invalidPath(params.scopeLabel);
+        return invalidPath(scopeLabel);
       }
     }
     const targetReal = await fs.realpath(targetPath);
     if (!isPathInside(rootReal, targetReal)) {
-      return invalidPath(params.scopeLabel);
+      return invalidPath(scopeLabel);
     }
     return { ok: true, path: targetPath };
-  } catch {
-    return invalidPath(params.scopeLabel);
+  } catch (cause) {
+    if (
+      (cause instanceof FsSafeError && cause.category === "policy") ||
+      hasNodeErrorCode(cause, "ENOTDIR")
+    ) {
+      return invalidPath(scopeLabel);
+    }
+    // Native messages include unbounded paths; display only bounded errno metadata.
+    const code = isNodeError(cause) && typeof cause.code === "string"
+      ? formatErrorDetail(cause.code.slice(0, 40)) : "filesystem operation failed";
+    const syscall = isNodeError(cause) && typeof cause.syscall === "string"
+      ? ` during ${formatErrorDetail(cause.syscall.slice(0, 40))}` : "";
+    const diagnostic = new FsSafeError(
+      "helper-failed", `Could not prepare ${scopeLabel}: ${code}${syscall}`, { cause },
+    );
+    return { ok: false, error: diagnostic.message, diagnostic };
   }
 }
 
