@@ -139,6 +139,7 @@ export {
   resolveWindowsUserPrincipal,
   summarizeWindowsAcl,
   type IcaclsResetCommandOptions,
+  type PermissionCommandFailure,
   type PermissionExec,
   type WindowsAclEntry,
   type WindowsAclSummary,

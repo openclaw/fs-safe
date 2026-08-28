@@ -80,7 +80,11 @@ describe("secure file inspection failures", () => {
     });
     await expect(
       readSecureFile({ filePath, inject: { platform: "win32" } }),
-    ).rejects.toMatchObject({ code: "permission-unverified" });
+    ).rejects.toMatchObject({
+      code: "permission-unverified",
+      category: "operational",
+      message: expect.stringContaining("Error: permission inspection denied"),
+    });
   });
 
   it("times out a stalled read and closes its pinned handle", async () => {

@@ -286,6 +286,7 @@
         "PathScope",
         "PathScopeOptions",
         "PathScopeResolveOptions",
+        "PermissionCommandFailure",
         "PermissionExec",
         "ReadLocalFileFromRootsOptions",
         "RegularFileStatResult",
@@ -402,6 +403,7 @@
         "OwnerAndDaclResult",
         "PermissionCheck",
         "PermissionCheckOptions",
+        "PermissionCommandFailure",
         "SafeStatResult",
         "WindowsAccessControlEntry",
         "WindowsAceFlags"

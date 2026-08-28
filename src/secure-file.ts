@@ -10,6 +10,7 @@ import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { isWindowsDriveLetterPath, isWindowsNetworkPath } from "./local-file-access.js";
 import { isPathInside, isSymlinkOpenError } from "./path.js";
+import { formatPermissionErrorDetail } from "./permission-exec.js";
 import {
   inspectPathPermissions,
   isGroupReadable,
@@ -177,13 +178,24 @@ async function assertSecurePermissions(
   const permissions = platform === "win32"
     ? await inspectPathPermissions(realPath, options.inject)
     : inspectOpenedPermissions(stat, platform);
+  const reason = permissions.error ? `: ${formatPermissionErrorDetail(permissions.error)}` : "";
+  const diagnostics = {
+    ...(permissions.errorCause !== undefined ? { cause: permissions.errorCause } : {}),
+    ...(permissions.ownerError || permissions.errorDetail ? {
+      details: {
+        ...(permissions.ownerError ? { ownerError: formatPermissionErrorDetail(permissions.ownerError) } : {}),
+        ...permissions.errorDetail,
+      },
+    } : {}),
+  };
   if (!permissions.ok) {
-    throw new FsSafeError("permission-unverified", `${label(options)} permissions could not be verified: ${realPath}`);
+    throw new FsSafeError("permission-unverified", `${label(options)} permissions could not be verified: ${realPath}${reason}`, diagnostics);
   }
   if (platform === "win32" && permissions.source === "unknown") {
     throw new FsSafeError(
       "permission-unverified",
-      `${label(options)} ACL verification unavailable on Windows for ${realPath}.`,
+      `${label(options)} ACL verification unavailable on Windows for ${realPath}${reason || "."}`,
+      diagnostics,
     );
   }
   if (platform === "win32" && permissions.ownerTrusted !== true) {

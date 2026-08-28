@@ -75,6 +75,18 @@ type SecureFileReadOptions = {
 | `too-large` | File size or bytes read exceeded `maxBytes`. |
 | `timeout` | `timeoutMs` elapsed while reading. |
 
+Windows inspection failures remain operational `permission-unverified` errors
+and still refuse the read. Their message includes the underlying reason when
+available. `details` includes `ownerError` for owner-query failures and, when
+command diagnostics are available, `command`, `durationMs`, `timedOut`,
+`exitCode`, `signal`, and `stderr`. Reasons and stderr are control-character
+escaped and limited to 400 characters each (including a truncation marker).
+No stdout or target file contents are copied into these display diagnostics.
+The original inspection exception is retained as `cause`; built-in command
+errors also retain their original execFile exception in the cause chain.
+Treat causes as restricted local diagnostic data. No retries are performed,
+and verification order and rejection conditions are unchanged.
+
 ## See also
 
 - [Permissions](permissions.md) — standalone POSIX mode and Windows ACL checks.
