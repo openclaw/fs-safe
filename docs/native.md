@@ -100,6 +100,10 @@ post-open checks; non-following `statat` compares against that descriptor with
 exact native identities, and cleanup uses `unlinkat` in the retained parent.
 The separate checks and unlink are not atomic conditional deletion. Windows
 pinned writes and other fallback-capable APIs retain their existing mechanisms.
+Native writers share root and parent admission, but keep their platform identity
+checks and leaf ownership. POSIX coordinator disposal uses `SuppressedError` to
+retain both an operation failure and a disposal failure, including their receipts;
+stage preparation and cleanup keep their documented error mappings.
 
 ## JavaScript fallback guarantees and delta
 

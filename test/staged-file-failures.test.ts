@@ -10,6 +10,7 @@ import {
   __setNativeLoaderForTest,
   type NativeBinding,
 } from "../src/native.js";
+import { runPinnedWriteHelper } from "../src/pinned-write.js";
 import { useTempDirs } from "./helpers/vitest.js";
 
 let native: NativeBinding | undefined;
@@ -203,13 +204,61 @@ describe.runIf(native)("staged ownership failure boundaries", () => {
     expect(causes.errors[1]).toMatchObject({ cause: unlinkFailure });
   });
 
-  it("preserves an indeterminate rename outcome without treating it as an unpublished temp", async () => {
+  it.each(["unlink", "close"])("retains publication evidence and a coordinator %s failure", async (fault) => {
+    const directory = await tempRoot("fs-safe-writer-double-failure-");
+    const writeFailure = Object.assign(new Error("publication failed"), { code: "EACCES" });
+    const cleanupFailure = new Error(`${fault} failed`);
+    const close = fsSync.closeSync;
+    __setNativeLoaderForTest(() => ({
+      ...native!,
+      renameReplace(...args) {
+        if (fault === "close") {
+          native!.renameReplace(...args);
+          vi.spyOn(fsSync, "closeSync").mockImplementationOnce((fd) => {
+            close(fd);
+            throw cleanupFailure;
+          });
+          vi.spyOn(fsSync, "fchmodSync").mockImplementationOnce(() => {
+            throw writeFailure;
+          });
+        } else {
+          throw writeFailure;
+        }
+      },
+      removeStagedFile() {
+        throw cleanupFailure;
+      },
+    }));
+    const publication = { status: fault === "close" ? "published" : "not-published" };
+    await expect(runPinnedWriteHelper({
+      rootPath: directory, relativeParentPath: "", basename: "final", mkdir: false,
+      mode: 0o666, overwrite: true, input: { kind: "buffer", data: "retained" },
+    })).rejects.toMatchObject({
+      name: "SuppressedError",
+      suppressed: { cause: writeFailure, details: { phase: "publish", publication } },
+      error: {
+        cause: cleanupFailure,
+        details: { phase: "cleanup", publication, cleanup: {
+          status: fault === "close" ? "not-needed" : "failed",
+          resources: fault === "close" ? "close-failed" : "closed",
+        } },
+      },
+    });
+    const names = await fs.readdir(directory);
+    expect(names).toHaveLength(1);
+    expect(names[0] === "final").toBe(fault === "close");
+    const retained = path.join(directory, names[0]!);
+    expect(await fs.readFile(retained, "utf8")).toBe("retained");
+    expect((await fs.lstat(retained)).mode & 0o777).toBe(0o600);
+  });
+
+  it.each(["io-error", "empty-error"])("preserves an indeterminate %s without treating it as an unpublished temp", async (kind) => {
     const directory = await tempRoot("fs-safe-stage-indeterminate-");
     __setNativeLoaderForTest(() => ({
       ...native!,
       renameNoReplace(...args) {
         native!.renameNoReplace(...args);
-        throw Object.assign(new Error("reply lost after rename"), { code: "EIO" });
+        throw kind === "empty-error" ? undefined : Object.assign(new Error("reply lost after rename"), { code: "EIO" });
       },
     }));
     const staged = await stageFileInDirectory({ directory, content: "published" });

@@ -7,6 +7,7 @@
 - Preserve filesystem failures from `ensureDirectoryWithinRoot()` and `pathScope().ensureDir()` in an optional operational `FsSafeError` diagnostic with the original cause and bounded, escaped display text, instead of misreporting them as containment violations; keep nonthrowing string results and directory safety checks.
 - Accept bounded local PAX paths, sizes, and descriptive metadata, including inert binary macOS provenance xattrs, consistently in JavaScript and native TAR extraction/reads; reject ambiguous records, extension chains, and sparse semantics while retaining byte/count limits and guarded staging. Return TAR read traversal failures through the public promise instead of escaping the parser callback.
 - Add native-required Linux/macOS `stageFileInDirectory()` under `advanced` with retained-directory abort cleanup, private `0600` staging until publication is identity-checked, exact identity checks, explicit publication/cleanup receipts, and async disposal; share that ownership with POSIX native streaming writes so parent moves no longer strand their unpublished temps.
+- Share native writer admission and direct-child cleanup mechanisms; preserve combined POSIX coordinator operation/disposal failures with `SuppressedError` while keeping staged preparation/cleanup receipts and Windows close policy unchanged.
 - Fail closed when synchronous sidecar compromise checks hit I/O errors and invoke `onCompromised` once instead of throwing from the interval. Thanks @SebTardif.
 
 ### Docs and Tooling

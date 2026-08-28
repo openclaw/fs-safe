@@ -1,27 +1,18 @@
 import { randomUUID } from "node:crypto";
 import fsSync, { type Stats } from "node:fs";
-import fs from "node:fs/promises";
-import path from "node:path";
+import type { FileHandle } from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
 import type { FileIdentityStat } from "./file-identity.js";
 import {
+  nativeOpenFlags,
   removeNativeCreatedFileIfStillPinned,
   syncNativeFileBestEffort,
+  writeNativeInput,
 } from "./native-operations.js";
-import { writeNativeInput } from "./native-staged-file.js";
 import type { NativeBinding } from "./native.js";
 import type { PinnedWriteParams } from "./pinned-write.js";
 
-function nativeOpenFlags(flags: number): number {
-  const closeOnExec = (fsSync.constants as typeof fsSync.constants & { O_CLOEXEC?: number }).O_CLOEXEC;
-  return (
-    flags |
-    (closeOnExec ?? 0) |
-    (typeof fsSync.constants.O_NOFOLLOW === "number" ? fsSync.constants.O_NOFOLLOW : 0)
-  );
-}
-
-function sameNativeIdentity(
+export function sameNativeIdentity(
   left: Pick<FileIdentityStat, "dev" | "ino">,
   right: Pick<FileIdentityStat, "dev" | "ino">,
 ): boolean {
@@ -31,54 +22,17 @@ function sameNativeIdentity(
 export async function runPinnedWriteWindows(
   binding: NativeBinding,
   params: PinnedWriteParams,
+  root: FileHandle,
+  parentFd: number,
+  parentPath: string,
 ): Promise<FileIdentityStat> {
-  const root = await fs.open(
-    params.rootPath,
-    fsSync.constants.O_RDONLY |
-      (typeof fsSync.constants.O_DIRECTORY === "number" ? fsSync.constants.O_DIRECTORY : 0),
-  );
-  let parentFd: number | undefined;
   let tempFd: number | undefined;
   let targetFd: number | undefined;
   let tempIdentity: Stats | undefined;
-  let parentPath = params.rootPath;
-  const tempName = `.${params.basename}.${randomUUID()}.native.tmp`;
+  let tempName = "";
   let renamed = false;
   try {
-    const rootIdentity = binding.fstatIdentity(root.fd);
-    if (params.rootIdentity && !sameNativeIdentity(params.rootIdentity, rootIdentity)) {
-      throw new FsSafeError("path-mismatch", "root path changed during native write");
-    }
-    if (params.mkdir) {
-      binding.mkdirBeneath(root.fd, params.relativeParentPath, 0o777);
-    }
-    const parentFlags =
-      fsSync.constants.O_RDONLY |
-      (typeof fsSync.constants.O_DIRECTORY === "number" ? fsSync.constants.O_DIRECTORY : 0);
-    parentFd = binding.openBeneath(root.fd, params.relativeParentPath, parentFlags).fd;
-    parentPath = await fs.realpath(
-      params.relativeParentPath
-        ? path.join(params.rootPath, ...params.relativeParentPath.split("/"))
-        : params.rootPath,
-    );
-    const parentPathStat = await fs.lstat(parentPath);
-    const parentIdentity = binding.fstatIdentity(parentFd);
-    if (
-      parentPathStat.isSymbolicLink() ||
-      !sameNativeIdentity(parentPathStat, parentIdentity)
-    ) {
-      throw new FsSafeError("path-mismatch", "native write parent changed during resolution");
-    }
-    if (params.overwrite === false) {
-      try {
-        await fs.lstat(path.join(parentPath, params.basename));
-        throw Object.assign(new Error("destination already exists"), { code: "EEXIST" });
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-          throw error;
-        }
-      }
-    }
+    tempName = `.${params.basename}.${randomUUID()}.native.tmp`;
     tempFd = binding.openBeneath(
       parentFd,
       tempName,
@@ -135,7 +89,7 @@ export async function runPinnedWriteWindows(
     if (tempFd !== undefined) {
       fsSync.closeSync(tempFd);
     }
-    if (!renamed && parentFd !== undefined) {
+    if (!renamed) {
       removeNativeCreatedFileIfStillPinned({
         binding,
         parentPath,
@@ -144,9 +98,7 @@ export async function runPinnedWriteWindows(
         created: tempIdentity,
       });
     }
-    if (parentFd !== undefined) {
-      fsSync.closeSync(parentFd);
-    }
+    fsSync.closeSync(parentFd);
     await root.close().catch(() => undefined);
   }
 }

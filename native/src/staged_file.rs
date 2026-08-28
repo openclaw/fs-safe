@@ -2,23 +2,16 @@ use std::os::fd::IntoRawFd;
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
-use rustix::fs::{AtFlags, FileType, Mode, OFlags};
+use rustix::fs::{Mode, OFlags};
 
-use crate::unix::{borrowed, os_error};
-use crate::{NativeResult, into_napi, native_error};
-
-fn validate_basename(name: &str) -> NativeResult<()> {
-    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\0']) {
-        return Err(native_error(
-            "EINVAL",
-            "staging requires one direct-child basename",
-        ));
-    }
-    Ok(())
-}
+use crate::unix::{
+    borrowed, file_matches_child as matches, os_error, remove_matching_child as remove,
+    validate_child_basename,
+};
+use crate::{NativeResult, into_napi};
 
 fn create(parent_fd: i32, name: &str) -> NativeResult<i32> {
-    validate_basename(name)?;
+    validate_child_basename(name)?;
     // Direct children need no F_GETPATH post-open traversal check. Hand off the
     // fd immediately: the TS owner records cleanup authority before any fstat,
     // chmod, write, or pathname verification can fail.
@@ -30,34 +23,6 @@ fn create(parent_fd: i32, name: &str) -> NativeResult<i32> {
     )
     .map(IntoRawFd::into_raw_fd)
     .map_err(|error| os_error(error, "create staged child"))
-}
-
-fn matches(parent_fd: i32, name: &str, file_fd: i32) -> NativeResult<bool> {
-    validate_basename(name)?;
-    let created = rustix::fs::fstat(borrowed(file_fd))
-        .map_err(|error| os_error(error, "inspect staged descriptor"))?;
-    let current = rustix::fs::statat(borrowed(parent_fd), name, AtFlags::SYMLINK_NOFOLLOW)
-        .map_err(|error| os_error(error, "inspect staged child"))?;
-    Ok(FileType::from_raw_mode(created.st_mode).is_file()
-        && FileType::from_raw_mode(current.st_mode).is_file()
-        && created.st_dev == current.st_dev
-        && created.st_ino == current.st_ino)
-}
-
-pub(crate) fn remove(parent_fd: i32, name: &str, file_fd: i32) -> NativeResult<&'static str> {
-    match matches(parent_fd, name, file_fd) {
-        Ok(false) => return Ok("preserved"),
-        Err(error) if error.status == "ENOENT" => return Ok("name-absent"),
-        Err(error) => return Err(error),
-        Ok(true) => {}
-    }
-    // This is not atomic conditional unlink. Preserve observed substitutions;
-    // a peer able to replace the leaf in this final gap still needs coordination.
-    match rustix::fs::unlinkat(borrowed(parent_fd), name, AtFlags::empty()) {
-        Ok(()) => Ok("removed"),
-        Err(rustix::io::Errno::NOENT) => Ok("name-absent"),
-        Err(error) => Err(os_error(error, "remove staged child")),
-    }
 }
 
 #[napi(js_name = "createStagedFile")]

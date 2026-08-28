@@ -271,23 +271,56 @@ fn create_exclusive_target(root_fd: i32, rel_path: &str) -> NativeResult<OwnedFd
     Ok(unsafe { OwnedFd::from_raw_fd(fd) })
 }
 
+pub(crate) fn validate_child_basename(name: &str) -> NativeResult<()> {
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\0']) {
+        return Err(native_error(
+            "EINVAL",
+            "staging requires one direct-child basename",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn file_matches_child(parent_fd: i32, name: &str, file_fd: i32) -> NativeResult<bool> {
+    validate_child_basename(name)?;
+    let created = rustix::fs::fstat(borrowed(file_fd))
+        .map_err(|error| os_error(error, "inspect staged descriptor"))?;
+    let current = rustix::fs::statat(borrowed(parent_fd), name, AtFlags::SYMLINK_NOFOLLOW)
+        .map_err(|error| os_error(error, "inspect staged child"))?;
+    Ok(FileType::from_raw_mode(created.st_mode).is_file()
+        && FileType::from_raw_mode(current.st_mode).is_file()
+        && created.st_dev == current.st_dev
+        && created.st_ino == current.st_ino)
+}
+
+pub(crate) fn remove_matching_child(
+    parent_fd: i32,
+    name: &str,
+    file_fd: i32,
+) -> NativeResult<&'static str> {
+    match file_matches_child(parent_fd, name, file_fd) {
+        Ok(false) => return Ok("preserved"),
+        Err(error) if error.status == "ENOENT" => return Ok("name-absent"),
+        Err(error) => return Err(error),
+        Ok(true) => {}
+    }
+    // This is not atomic conditional unlink. Preserve observed substitutions;
+    // a peer able to replace the leaf in this final gap still needs coordination.
+    match rustix::fs::unlinkat(borrowed(parent_fd), name, AtFlags::empty()) {
+        Ok(()) => Ok("removed"),
+        Err(rustix::io::Errno::NOENT) => Ok("name-absent"),
+        Err(error) => Err(os_error(error, "remove staged child")),
+    }
+}
+
 fn remove_created_target(root_fd: i32, rel_path: &str, target: &OwnedFd) {
     #[cfg(target_os = "macos")]
     // SAFETY: target is an open descriptor owned by the caller.
     unsafe {
         libc::fchflags(target.as_raw_fd(), 0);
     }
-    let Ok(target_stat) = rustix::fs::fstat(target.as_fd()) else {
-        return;
-    };
-    let Ok((parent, name)) = open_parent(root_fd, rel_path) else {
-        return;
-    };
-    let Ok(path_stat) = rustix::fs::statat(parent.as_fd(), name, AtFlags::SYMLINK_NOFOLLOW) else {
-        return;
-    };
-    if target_stat.st_dev == path_stat.st_dev && target_stat.st_ino == path_stat.st_ino {
-        let _ = rustix::fs::unlinkat(parent.as_fd(), name, AtFlags::empty());
+    if let Ok((parent, name)) = open_parent(root_fd, rel_path) {
+        let _ = remove_matching_child(parent.as_raw_fd(), name, target.as_raw_fd());
     }
 }
 
@@ -919,6 +952,30 @@ mod tests {
             .is_err()
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn copy_cleanup_removes_only_its_owned_nested_child() {
+        for substituted in [false, true] {
+            let root = temp_root("copy-cleanup");
+            fs::create_dir(root.join("nested")).unwrap();
+            let target_path = root.join("nested/target");
+            fs::write(&target_path, b"owned").unwrap();
+            let target = OwnedFd::from(std::fs::File::open(&target_path).unwrap());
+            let parent = std::fs::File::open(&root).unwrap();
+            if substituted {
+                fs::rename(&target_path, root.join("nested/original")).unwrap();
+                fs::write(&target_path, b"substitute").unwrap();
+            }
+            remove_created_target(parent.as_raw_fd(), "nested/target", &target);
+            if substituted {
+                assert_eq!(fs::read(&target_path).unwrap(), b"substitute");
+                assert_eq!(fs::read(root.join("nested/original")).unwrap(), b"owned");
+            } else {
+                assert!(!target_path.exists());
+            }
+            fs::remove_dir_all(root).unwrap();
+        }
     }
 
     #[test]
