@@ -26,12 +26,21 @@ The exports group into a handful of themes. Each documented helper has its own p
 | Export | Page | Notes |
 |---|---|---|
 | `pathScope`, `PathScope`, `PathScopeOptions`, `PathScopeResolveOptions` | [path-scope.md](path-scope.md) | Absolute-path boundary helper with `Result`-shaped returns. |
-| `ensureDirectoryWithinRoot` | – | Create a directory while enforcing the root boundary. |
+| `ensureDirectoryWithinRoot` | [path-scope.md](path-scope.md#ensuredir-rel-options) | Create a directory while enforcing the root boundary; same result contract as `pathScope().ensureDir()`. |
 | `resolvePathWithinRoot`, `resolvePathsWithinRoot` | – | Resolve one or many relative paths against a trusted root. |
 | `resolveExistingPathsWithinRoot`, `resolveStrictExistingPathsWithinRoot` | – | Same, but require the targets to exist. |
 | `resolveWritablePathWithinRoot` | – | Resolve a write target inside a root. |
 | `resolveRootPath`, `resolveRootPathSync`, `ResolvedRootPath`, `ROOT_PATH_ALIAS_POLICIES`, `RootPathAliasPolicy` | – | Resolve a root directory honoring alias policy. |
 | `resolvePathViaExistingAncestorSync` | – | Walk to an existing ancestor for paths whose tail does not yet exist. |
+
+`ensureDirectoryWithinRoot({ rootDir, requestedPath, scopeLabel, defaultDirName?, mode? })`
+returns `{ ok: true, path }` or `{ ok: false, error: string, diagnostic?: FsSafeError }`.
+It does not throw filesystem failures: operational failures carry a
+`helper-failed` diagnostic with the original `cause` and a bounded, escaped
+message naming the native code/syscall when available. Policy failures omit
+`diagnostic`. Missing parents already created before a failure remain in place.
+The diagnostic contract is specific to directory preparation, not the other
+root-path result helpers.
 
 ### Absolute path helpers
 

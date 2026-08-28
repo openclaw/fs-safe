@@ -2,6 +2,15 @@
 
 Every failure that's the library's job to surface lands as an `FsSafeError` with a closed `code` union you can branch on. Catch by code, not by message text — messages may change, codes will not.
 
+Result-based APIs are an exception to throwing: [`pathScope().ensureDir()`](path-scope.md#ensuredir-rel-options)
+and `ensureDirectoryWithinRoot()` return operational failures as
+`{ ok: false, error: string, diagnostic: FsSafeError }`. The diagnostic uses
+`helper-failed` / `operational`, retains the exact native error in `cause`, and
+has the same message as `error`. Its display text names the native code/syscall
+when available but omits raw paths and native messages. Policy failures keep
+the string-only result without `diagnostic`; other `pathScope` methods do not
+gain this field. Directory preparation can partially complete before failing.
+
 Path and archive-entry details embedded in diagnostics escape control characters
 as `\\uXXXX` sequences. This keeps attacker-controlled names on one log line;
 the escaped message is for diagnosis, not for reconstructing the original path.
