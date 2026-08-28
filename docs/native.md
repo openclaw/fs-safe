@@ -86,9 +86,20 @@ workers rather than the JavaScript event loop.
 | `require` | Try once, cache the result | Throw `FsSafeError("helper-unavailable")` |
 | `off` | Never attempt a binding load | Always use guarded JavaScript |
 
-The one exception is functionality with no safe JavaScript implementation:
-zstd/bzip2 TAR and Windows private-directory creation fail with
-`helper-unavailable` when native support is absent or off.
+Features without a safe JavaScript implementation, including zstd/bzip2 TAR,
+Windows private-directory creation, and [retained-directory staging](staged-file.md),
+fail with `helper-unavailable` when native support is absent or off. Staging
+is currently Linux/macOS only and rejects Windows with `unsupported-platform`.
+
+The staged-file owner also serves POSIX native pinned writes, including streaming.
+Unpublished files remain at `0600`; requested modes are applied through the
+owned file descriptor only after rename and published-entry identity validation.
+Post-rename chmod or sync failures retain the publication receipt and final name.
+Its direct-child exclusive `openat` hands off the descriptor before any fallible
+post-open checks; non-following `statat` compares against that descriptor with
+exact native identities, and cleanup uses `unlinkat` in the retained parent.
+The separate checks and unlink are not atomic conditional deletion. Windows
+pinned writes and other fallback-capable APIs retain their existing mechanisms.
 
 ## JavaScript fallback guarantees and delta
 

@@ -70,6 +70,14 @@ parent symlink. A same-privilege peer with write access to the parent can
 therefore cause an out-of-root side effect before the operation throws. Use
 native `require` mode when concurrent hostile mutation is in scope.
 
+The separate [retained-directory staging lifecycle](staged-file.md) keeps abort
+cleanup anchored to the original directory after a parent or ancestor move.
+It preserves observed substituted temporary entries and never cleans a recorded
+publication. Directory anchoring is not expected-inode/CAS replacement, and
+identity-check-then-unlink is not atomic conditional unlink. The guarantee
+requires the temporary name to remain owned and removal to remain permitted;
+application authorization and cooperative coordination remain necessary.
+
 ### Hardlink aliasing
 
 When `hardlinks: "reject"` is set, reads stat the target and refuse if `nlink > 1`, on the conservative assumption that a hardlinked file might alias an out-of-tree inode. This is defense-in-depth: the link count check is best-effort and platform-dependent. Treat it as a tripwire, not authorization.

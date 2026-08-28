@@ -9,13 +9,15 @@ use rustix::fs::{AtFlags, FileType, Mode, OFlags, RenameFlags};
 
 use crate::{FileIdentity, NativeResult, native_error};
 
-fn borrowed(fd: i32) -> BorrowedFd<'static> {
+pub(crate) fn borrowed(fd: i32) -> BorrowedFd<'static> {
     // SAFETY: Every public operation borrows the descriptor only for the
     // duration of the call. Ownership stays with Node.js.
     unsafe { BorrowedFd::borrow_raw(fd) }
 }
 
-fn os_error(error: rustix::io::Errno, operation: &str) -> napi::Error<String> {
+pub(crate) fn os_error(error: rustix::io::Errno, operation: &str) -> napi::Error<String> {
+    // Collapsing a known namespace rejection into EIO makes callers preserve an
+    // unpublished stage as though the rename might have committed.
     let code = match error {
         rustix::io::Errno::EXIST => "EEXIST",
         rustix::io::Errno::NOENT => "ENOENT",
@@ -25,6 +27,19 @@ fn os_error(error: rustix::io::Errno, operation: &str) -> napi::Error<String> {
         rustix::io::Errno::PERM => "EPERM",
         rustix::io::Errno::XDEV => "EXDEV",
         rustix::io::Errno::NOTEMPTY => "ENOTEMPTY",
+        rustix::io::Errno::BADF => "EBADF",
+        rustix::io::Errno::BUSY => "EBUSY",
+        rustix::io::Errno::INVAL => "EINVAL",
+        rustix::io::Errno::ISDIR => "EISDIR",
+        rustix::io::Errno::MLINK => "EMLINK",
+        rustix::io::Errno::NAMETOOLONG => "ENAMETOOLONG",
+        rustix::io::Errno::NOSPC => "ENOSPC",
+        rustix::io::Errno::NOSYS => "ENOSYS",
+        rustix::io::Errno::ROFS => "EROFS",
+        rustix::io::Errno::TXTBSY => "ETXTBSY",
+        error if error == rustix::io::Errno::NOTSUP || error == rustix::io::Errno::OPNOTSUPP => {
+            "ENOTSUP"
+        }
         _ => "EIO",
     };
     native_error(code, format!("{operation}: {error}"))
@@ -158,14 +173,9 @@ pub fn rename_no_replace(
     );
     match result {
         Ok(()) => Ok(()),
-        Err(_error)
-            if rustix::fs::statat(
-                target_parent.as_fd(),
-                target_name,
-                AtFlags::SYMLINK_NOFOLLOW,
-            )
-            .is_ok() =>
-        {
+        // A target observed after an arbitrary I/O error does not prove a
+        // collision: a remote filesystem may have committed the rename.
+        Err(rustix::io::Errno::EXIST | rustix::io::Errno::NOTEMPTY) => {
             Err(native_error("EEXIST", "rename destination already exists"))
         }
         Err(error) => Err(os_error(error, "rename without replacement")),

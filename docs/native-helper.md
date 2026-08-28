@@ -27,6 +27,11 @@ The equivalent environment variables are `FS_SAFE_NATIVE_MODE` and `OPENCLAW_FS_
 
 Configure the mode once during startup. Loading is lazy and cached; changing from `auto` to `require` after a failed load changes failure policy but does not repeatedly probe the binary.
 
+[`stageFileInDirectory()`](staged-file.md) always requires native support on
+Linux/macOS and rejects before creation when off, unavailable, or missing the
+required capability. Windows is unsupported for this lifecycle. This does not
+change the mode policy of existing fallback-capable APIs.
+
 ## Native boundary
 
 The bundled native layer exposes policy-free filesystem mechanisms: beneath-root

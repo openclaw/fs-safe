@@ -5,6 +5,8 @@ use napi_derive::napi;
 
 mod archive;
 mod fast_file;
+#[cfg(unix)]
+mod staged_file;
 mod tar_meter;
 mod tar_pax;
 #[cfg(unix)]
@@ -80,7 +82,7 @@ pub(crate) fn validate_portable_relative_path(path: &str, allow_root: bool) -> N
     validate_relative_path_with_separators(path, allow_root, true)
 }
 
-fn into_napi<T>(env: Env, result: NativeResult<T>) -> Result<T> {
+pub(crate) fn into_napi<T>(env: Env, result: NativeResult<T>) -> Result<T> {
     match result {
         Ok(value) => Ok(value),
         Err(error) => {
@@ -201,6 +203,8 @@ pub use archive::{
 pub use fast_file::{
     FileHash, NativeCopyResult, clone_file_exclusive, copy_file_range_exclusive, sha256_file,
 };
+#[cfg(unix)]
+pub use staged_file::{create_staged_file, remove_staged_file, staged_file_matches};
 pub use windows_security::{
     WindowsAccessControlEntry, WindowsAceFlags, WindowsSecurityFacts, create_private_directory,
     read_owner_and_dacl,

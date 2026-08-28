@@ -3,6 +3,15 @@
 // higher-level primitive.
 export { createAsyncLock } from "./async-lock.js";
 export {
+  stageFileInDirectory,
+  type StagedFile,
+  type StagedFileReceipt,
+  type PublishedFileReceipt,
+  type StagedFilePublication,
+  type StagedFileCleanupReceipt,
+  type StagedFileFailureDetails,
+} from "./staged-file.js";
+export {
   readFileDescriptorBounded,
   readFileDescriptorBoundedSync,
   readFileHandleBounded,
