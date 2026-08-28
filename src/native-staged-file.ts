@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
+import type { AsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
+import type { FileIdentityStat } from "./file-identity.js";
 import type { NativeBinding } from "./native-binding.js";
 import { syncNativeFileBestEffort, writeNativeInput } from "./native-operations.js";
-import type { PinnedWriteInput } from "./pinned-write.js";
+import type { PinnedWriteInput, PinnedWriteParams } from "./pinned-write.js";
 import { assertStagedDirectoryCurrent } from "./staged-directory.js";
 import type {
   PublishedFileReceipt,
@@ -92,7 +94,7 @@ class NativeStagedFile implements StagedFile {
     maxBytes?: number,
     // Public staging uses portable names; existing POSIX writes accept literal names.
     portableNames = true,
-  ): Promise<StagedFile> {
+  ): Promise<NativeStagedFile> {
     let staged: NativeStagedFile;
     try {
       staged = new NativeStagedFile(binding, parentFd, directory, portableNames, mode);
@@ -106,6 +108,24 @@ class NativeStagedFile implements StagedFile {
     }
     await staged.#prepare(input, maxBytes);
     return staged;
+  }
+
+  static async write(
+    binding: NativeStagingBinding,
+    parentFd: number,
+    directory: StagedFileReceipt["directory"],
+    params: PinnedWriteParams,
+    parentGuard: AsyncDirectoryGuard,
+  ): Promise<FileIdentityStat> {
+    // This owner never escapes. Only the internal verifier borrows its fd;
+    // public descriptor methods remain await-free and cannot race disposal.
+    await using staged = await NativeStagedFile.create(
+      binding, parentFd, directory, params.input, params.mode, params.maxBytes, false,
+    );
+    const published = await staged.publish(params.basename, { overwrite: params.overwrite !== false });
+    const identity = published.staged.identity;
+    await params.verifyPublished?.(staged.#file(), identity, parentGuard);
+    return { dev: identity.dev, ino: identity.ino };
   }
 
   get receipt(): StagedFileReceipt {
@@ -312,4 +332,6 @@ class NativeStagedFile implements StagedFile {
   }
 }
 
-export const createNativeStage = NativeStagedFile.create;
+export const createNativeStage: (...args: Parameters<typeof NativeStagedFile.create>) => Promise<StagedFile> =
+  NativeStagedFile.create;
+export const writeNativeStage = NativeStagedFile.write;

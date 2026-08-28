@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import fsSync, { type Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
+import type { AsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import type { FileIdentityStat } from "./file-identity.js";
 import {
@@ -19,18 +20,29 @@ export function sameNativeIdentity(
   return left.dev === right.dev && left.ino === right.ino;
 }
 
+function closeWriteFd(fd: number | undefined): unknown {
+  if (fd === undefined) return;
+  try {
+    fsSync.closeSync(fd);
+  } catch (error) {
+    return error;
+  }
+}
+
 export async function runPinnedWriteWindows(
   binding: NativeBinding,
   params: PinnedWriteParams,
   root: FileHandle,
   parentFd: number,
-  parentPath: string,
+  parentGuard: AsyncDirectoryGuard,
 ): Promise<FileIdentityStat> {
+  const parentPath = parentGuard.realPath;
   let tempFd: number | undefined;
   let targetFd: number | undefined;
   let tempIdentity: Stats | undefined;
   let tempName = "";
   let renamed = false;
+  let completed = false;
   try {
     tempName = `.${params.basename}.${randomUUID()}.native.tmp`;
     tempFd = binding.openBeneath(
@@ -41,6 +53,7 @@ export async function runPinnedWriteWindows(
       ),
     ).fd;
     tempIdentity = fsSync.fstatSync(tempFd);
+    const verificationIdentity = fsSync.fstatSync(tempFd, { bigint: true });
     // Creation is requested at 0600 in the binding, but a restrictive umask
     // can remove owner access. Keep the unpublished inode private and
     // reopenable until the published name has been identity-fenced.
@@ -69,7 +82,7 @@ export async function runPinnedWriteWindows(
       fsSync.fchmodSync(targetFd, params.mode);
       syncNativeFileBestEffort(targetFd);
     } catch (error) {
-      fsSync.closeSync(targetFd);
+      closeWriteFd(targetFd);
       targetFd = undefined;
       removeNativeCreatedFileIfStillPinned({
         binding,
@@ -81,14 +94,13 @@ export async function runPinnedWriteWindows(
       throw error;
     }
     syncNativeFileBestEffort(parentFd);
+    // Verification follows publication and final chmod, outside rollback handling.
+    await params.verifyPublished?.(targetFd, verificationIdentity, parentGuard);
+    completed = true;
     return { dev: targetIdentity.dev, ino: targetIdentity.ino };
   } finally {
-    if (targetFd !== undefined) {
-      fsSync.closeSync(targetFd);
-    }
-    if (tempFd !== undefined) {
-      fsSync.closeSync(tempFd);
-    }
+    const targetCloseError = closeWriteFd(targetFd);
+    const tempCloseError = closeWriteFd(tempFd);
     if (!renamed) {
       removeNativeCreatedFileIfStillPinned({
         binding,
@@ -98,7 +110,9 @@ export async function runPinnedWriteWindows(
         created: tempIdentity,
       });
     }
-    fsSync.closeSync(parentFd);
+    const parentCloseError = closeWriteFd(parentFd);
     await root.close().catch(() => undefined);
+    const closeError = targetCloseError ?? tempCloseError ?? parentCloseError;
+    if (completed && closeError !== undefined) throw closeError;
   }
 }

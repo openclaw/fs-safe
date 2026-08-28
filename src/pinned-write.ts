@@ -4,7 +4,7 @@ import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Readable } from "node:stream";
-import { createAsyncDirectoryGuard, createNearestExistingDirectoryGuard } from "./directory-guard.js";
+import { createAsyncDirectoryGuard, createNearestExistingDirectoryGuard, type AsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { syncDirectoryBestEffort } from "./fsync.js";
 import type { FileIdentityStat } from "./file-identity.js";
@@ -87,6 +87,8 @@ export type RenameIdentityMismatchPolicy = "throw" | "verify-content";
 
 export type RenameIdentityPolicy = "strict" | "verify-content-with-lock";
 
+export type PublishedWriteIdentity = Readonly<{ dev: bigint; ino: bigint }>;
+
 export type PinnedWriteParams = {
   rootPath: string;
   relativeParentPath: string;
@@ -98,6 +100,12 @@ export type PinnedWriteParams = {
   input: PinnedWriteInput;
   rootIdentity?: FileIdentityStat;
   onRenameIdentityMismatch?: RenameIdentityMismatchPolicy;
+  // Borrowed only for this callback; the writer closes every descriptor in finally.
+  verifyPublished?: (
+    fd: number,
+    identity: PublishedWriteIdentity,
+    parentGuard: AsyncDirectoryGuard,
+  ) => Promise<void>;
 };
 
 export async function runPinnedWriteHelper(params: PinnedWriteParams): Promise<FileIdentityStat> {
@@ -151,17 +159,7 @@ export async function runPinnedWriteWithRenamePolicy(
   );
 }
 
-async function runPinnedWriteFallback(params: {
-  rootPath: string;
-  relativeParentPath: string;
-  basename: string;
-  mkdir: boolean;
-  mode: number;
-  overwrite?: boolean;
-  maxBytes?: number;
-  input: PinnedWriteInput;
-  onRenameIdentityMismatch?: RenameIdentityMismatchPolicy;
-}): Promise<FileIdentityStat> {
+async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileIdentityStat> {
   let parentPath = params.relativeParentPath
     ? path.join(params.rootPath, ...params.relativeParentPath.split("/"))
     : params.rootPath;
@@ -182,7 +180,7 @@ async function runPinnedWriteFallback(params: {
     : await createNearestExistingDirectoryGuard(params.rootPath, parentPath);
   const targetPath = path.join(parentPath, params.basename);
   if (params.overwrite === false) {
-    let handle = await withAsyncDirectoryGuards(
+    const handle = await withAsyncDirectoryGuards(
       [parentGuard],
       async () =>
         await fs.open(
@@ -200,6 +198,7 @@ async function runPinnedWriteFallback(params: {
     );
     let created = true;
     try {
+      const verificationIdentity = await handle.stat({ bigint: true });
       await handle.chmod(params.mode);
       if (params.input.kind === "buffer") {
         assertWithinMaxBytes(
@@ -216,9 +215,10 @@ async function runPinnedWriteFallback(params: {
       }
       await syncFileBestEffort(handle);
       const stat = await handle.stat();
-      await handle.close().catch(() => undefined);
       await syncDirectoryBestEffort(parentPath);
+      // Publication is complete. A failed outer check must not remove its target.
       created = false;
+      await params.verifyPublished?.(handle.fd, verificationIdentity, parentGuard);
       return { dev: stat.dev, ino: stat.ino };
     } finally {
       await handle.close().catch(() => undefined);
@@ -238,10 +238,11 @@ async function runPinnedWriteFallback(params: {
       : 0);
   let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
   let tempStat: Awaited<ReturnType<NonNullable<typeof handle>["stat"]>> | undefined;
-  let targetStat: Awaited<ReturnType<typeof fs.lstat>> | undefined;
+  let readHandle: FileHandle | undefined;
   let renamed = false;
   try {
     handle = await fs.open(tempPath, tempFlags, params.mode);
+    let verificationIdentity = await handle.stat({ bigint: true });
     await handle.chmod(params.mode);
     if (params.input.kind === "buffer") {
       assertWithinMaxBytes(
@@ -263,14 +264,13 @@ async function runPinnedWriteFallback(params: {
     }
     const expectedTempStat = tempStat;
     await syncFileBestEffort(handle);
-    await handle.close().catch(() => undefined);
-    handle = undefined;
+    let verifiedIdentity: FileIdentityStat = expectedTempStat;
     await withAsyncDirectoryGuards([parentGuard], async () => {
       await fs.rename(tempPath, targetPath);
       renamed = true;
       await getFsSafeTestHooks()?.afterPinnedWriteFallbackRename?.(targetPath);
       await syncDirectoryBestEffort(parentPath);
-      targetStat = await fs.lstat(targetPath);
+      const targetStat = await fs.lstat(targetPath);
       if (targetStat.isSymbolicLink()) {
         throw new FsSafeError("path-mismatch", "fallback target changed during write");
       }
@@ -291,36 +291,25 @@ async function runPinnedWriteFallback(params: {
           (process.platform !== "win32" && "O_NOFOLLOW" in fsSync.constants
             ? fsSync.constants.O_NOFOLLOW
             : 0);
-        const readHandle = await fs.open(targetPath, readFlags);
-        let actualHash: string;
-        let readHandleStat: Awaited<ReturnType<typeof readHandle.stat>>;
-        try {
-          // Capture fd-based identity before reading — this is stable across all
-          // subsequent lookups (on FUSE and locally), unlike the lstat-based
-          // targetStat that triggered this fallback.
-          readHandleStat = await readHandle.stat();
-          actualHash = sha256Hex(await readHandle.readFile());
-        } finally {
-          await readHandle.close().catch(() => undefined);
-        }
+        readHandle = await fs.open(targetPath, readFlags);
+        const readHandleStat = await readHandle.stat({ bigint: true });
+        const actualHash = sha256Hex(await readHandle.readFile());
         if (actualHash !== expectedHash) {
           throw new FsSafeError("path-mismatch", "fallback target changed during write");
         }
-        // Replace the unreliable lstat-based targetStat with the fd-based stat so
-        // the returned identity is consistent with what subsequent verifications
-        // (e.g. verifyAtomicWriteResult) will obtain by opening the same file.
-        targetStat = readHandleStat;
+        // The content-verified destination, not the old temp inode, is now pinned.
+        verificationIdentity = readHandleStat;
+        // Preserve the helper's legacy numeric return facts, not the private proof.
+        verifiedIdentity = { dev: Number(readHandleStat.dev), ino: Number(readHandleStat.ino) };
       }
     });
-  } catch (error) {
+    await params.verifyPublished?.((readHandle ?? handle).fd, verificationIdentity, parentGuard);
+    return { dev: verifiedIdentity.dev, ino: verifiedIdentity.ino };
+  } finally {
+    await readHandle?.close().catch(() => undefined);
     await handle?.close().catch(() => undefined);
     if (!renamed) {
       await fs.rm(tempPath, { force: true }).catch(() => undefined);
     }
-    throw error;
   }
-  if (!targetStat) {
-    throw new FsSafeError("path-mismatch", "fallback target was not verified");
-  }
-  return { dev: targetStat.dev, ino: targetStat.ino };
 }
