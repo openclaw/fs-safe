@@ -81,6 +81,7 @@ describe.runIf(Boolean(native))("native publication primitives", () => {
         expect.objectContaining({ code: "EEXIST" }),
       );
       await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("clone-payload");
+      expect((await fs.readdir(root)).sort()).toEqual(["source", "target"]);
     } finally {
       await source.close();
       await directory.close();

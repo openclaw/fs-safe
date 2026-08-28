@@ -1,3 +1,8 @@
+import {
+  formatPermissionErrorDetail,
+  getPermissionCommandFailure,
+  type PermissionCommandFailure,
+} from "./permission-exec.js";
 import { resolveWindowsSystemCommand } from "./windows-command.js";
 
 export type WindowsOwnerExec = (
@@ -13,6 +18,8 @@ export type WindowsOwnerSummary = {
   remote?: boolean;
   trusted?: boolean;
   error?: string;
+  errorDetail?: PermissionCommandFailure;
+  errorCause?: unknown;
 };
 
 const SID_RE = /^\*?s-\d+-\d+(-\d+)+$/i;
@@ -126,11 +133,14 @@ export async function inspectWindowsOwner(params: {
   env?: NodeJS.ProcessEnv;
   exec: WindowsOwnerExec;
 }): Promise<WindowsOwnerSummary> {
+  let command = "";
+  let startedAt = performance.now();
   try {
-    const command = resolveWindowsSystemCommand(
+    command = resolveWindowsSystemCommand(
       String.raw`WindowsPowerShell\v1.0\powershell.exe`,
       params.env,
     );
+    startedAt = performance.now();
     const { stdout } = await params.exec(command, [
       "-NoLogo",
       "-NoProfile",
@@ -166,6 +176,10 @@ export async function inspectWindowsOwner(params: {
       trusted: !remote && (ownerSid === currentUserSid || TRUSTED_OWNER_SIDS.has(ownerSid)),
     };
   } catch (err) {
-    return { error: String(err) };
+    return {
+      error: formatPermissionErrorDetail(String(err)),
+      errorDetail: getPermissionCommandFailure(err, command, performance.now() - startedAt),
+      errorCause: err,
+    };
   }
 }

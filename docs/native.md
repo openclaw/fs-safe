@@ -86,9 +86,36 @@ workers rather than the JavaScript event loop.
 | `require` | Try once, cache the result | Throw `FsSafeError("helper-unavailable")` |
 | `off` | Never attempt a binding load | Always use guarded JavaScript |
 
-The one exception is functionality with no safe JavaScript implementation:
-zstd/bzip2 TAR and Windows private-directory creation fail with
-`helper-unavailable` when native support is absent or off.
+Features without a safe JavaScript implementation, including zstd/bzip2 TAR,
+Windows private-directory creation, and [retained-directory staging](staged-file.md),
+fail with `helper-unavailable` when native support is absent or off. Staging
+is currently Linux/macOS only and rejects Windows with `unsupported-platform`.
+
+The staged-file owner also serves POSIX native pinned writes, including streaming.
+Unpublished files remain at `0600`; requested modes are applied through the
+owned file descriptor only after rename and published-entry identity validation.
+Post-rename chmod or sync failures retain the publication receipt and final name.
+Its direct-child exclusive `openat` hands off the descriptor before any fallible
+post-open checks; non-following `statat` compares against that descriptor with
+exact native identities, and cleanup uses `unlinkat` in the retained parent.
+The separate checks and unlink are not atomic conditional deletion. Windows
+pinned writes and other fallback-capable APIs retain their existing mechanisms.
+Native writers share root and parent admission, but keep their platform identity
+checks and leaf ownership. POSIX coordinator disposal uses `SuppressedError` to
+retain both an operation failure and a disposal failure, including their receipts;
+stage preparation and cleanup keep their documented error mappings.
+Root replacement verification borrows the published descriptor after final mode
+application, while a private coordinator retains the staged owner until the
+asynchronous check finishes. The owner never escapes that coordinator; public
+staging methods and receipts expose no descriptor or verification callback.
+Verification failures preserve the published name, and disposal still retains
+both verification and cleanup errors when both fail.
+The private verification channel carries exact bigint identity from the original
+owned descriptor (or the content-accepted FUSE descriptor). Root compares it
+against exact fd and pathname metadata; legacy helper return facts and public
+read metadata behavior are unchanged. Missing Windows pathname identity still
+requires a guarded path reopen and comparison with the original retained file;
+that fallback does not apply to POSIX no-read modes.
 
 ## JavaScript fallback guarantees and delta
 

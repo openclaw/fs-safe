@@ -11,6 +11,7 @@ export {
   safeStat,
   type PermissionCheck,
   type PermissionCheckOptions,
+  type PermissionCommandFailure,
   type SafeStatResult,
 } from "./permissions.js";
 export {

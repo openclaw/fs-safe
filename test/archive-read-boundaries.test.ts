@@ -100,7 +100,7 @@ describe("TAR metadata preflight boundaries", () => {
       .rejects.toThrow("base-256 size is negative or malformed");
   });
 
-  it("rejects PAX and malformed GNU sparse metadata before a parser can buffer it", async () => {
+  it("rejects dangling PAX and malformed GNU sparse metadata", async () => {
     const root = await tempRoot("fs-safe-tar-meta-malformed-");
     const paxPath = path.join(root, "pax.tar");
     const sparseFlagPath = path.join(root, "sparse-flag.tar");
@@ -126,7 +126,7 @@ describe("TAR metadata preflight boundaries", () => {
     );
 
     await expect(preflightTarMetadata({ archivePath: paxPath, maxMetaEntryBytes: 1024 }))
-      .rejects.toThrow("PAX metadata is unmeterable");
+      .rejects.toThrow("dangling PAX metadata");
     await expect(preflightTarMetadata({ archivePath: sparseFlagPath, maxMetaEntryBytes: 1024 }))
       .rejects.toThrow("GNU sparse extension flag is not 0 or 1");
     await expect(preflightTarMetadata({ archivePath: sparseExtensionPath, maxMetaEntryBytes: 1024 }))

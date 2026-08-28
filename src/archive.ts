@@ -389,6 +389,7 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
               preservePaths: false,
               noChmod: true,
               preserveOwner: false,
+              noMtime: true,
               strict: true,
               maxMetaEntrySize: limits.maxMetaEntryBytes,
               filter(this: { abort(error: Error): void }, _entryPath, entry) {

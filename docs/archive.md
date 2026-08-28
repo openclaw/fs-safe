@@ -72,10 +72,17 @@ accepted-entry plan back to Rust. Rust only performs decompression and the
 fd-relative `mkdirBeneath`/exclusive-open writes. This keeps policy identical
 between native and JavaScript paths rather than reimplementing it in Rust.
 
-`stripComponents` counts real path components: empty and `.` components are dropped before the leading directories are removed, so `./pkg/hello.txt` with `stripComponents: 1` extracts to `hello.txt` on both backends. JavaScript TAR extraction hands node-tar the already-stripped path rather than letting it strip again, so the path that is validated, limited, collision-checked, and given its mode is the path that is written.
+`stripComponents` removes leading nonempty, non-`.` path components after
+normalizing separators. For example, `./pkg/hello.txt` with
+`stripComponents: 1` extracts to `hello.txt` on both backends. Entries with no
+remaining components are skipped before the filter callback, but still count
+toward `maxEntries` and undergo traversal validation. JavaScript TAR extraction
+passes node-tar this accepted output path with its own stripping disabled, so
+depth checks, collision checks, writes, and mode application agree.
 
-An `entryFilter` sees the validated archive path, entry kind, and declared
-size. Returning `"skip"` rejects the whole archive unless `onFiltered` is
+An `entryFilter` sees the validated effective archive path **before stripping**
+(including a local PAX `path` override), entry kind, and declared size.
+Returning `"skip"` rejects the whole archive unless `onFiltered` is
 explicitly `"skip-entry"`. Path traversal and archive-wide entry-count checks
 still apply to skipped entries.
 
@@ -157,16 +164,52 @@ codes remain `"destination-not-directory"`, `"destination-symlink"`, and
 - **Zip bombs:** `maxExtractedBytes` and `maxEntryBytes` apply to *post-decompression* bytes, so highly-compressed payloads hit the cap before they exhaust disk.
 - **Corrupt ZIP payloads:** streamed output must match both the central-directory CRC and declared uncompressed size before it can leave private staging.
 - **Slow-loris archives:** `timeoutMs` is a hard wall-clock budget. Extraction is aborted on overrun.
-- **Metadata bombs:** a fixed-header pass-through reader rejects oversized PAX, GNU long-name, and GNU long-link bodies before either TAR implementation buffers them. It understands octal and base-256 size fields without interpreting metadata content.
+- **Metadata bombs:** a streaming pass-through reader rejects oversized PAX, GNU long-name, and GNU long-link bodies before either TAR implementation buffers them. It understands octal and base-256 fixed sizes and validates bounded local PAX bodies before using their size overrides for member framing. Original archive bytes remain unchanged.
 
-PAX headers can override the next entry's size from inside their content. The
-fixed-header meter deliberately never interprets that content, so PAX and GNU
-sparse entries are rejected with
-`ArchiveFormatError("archive-header-invalid")` rather than guessing. GNU sparse
-extension blocks are still metered in 512-byte units before rejection, ensuring
-malformed or excessive chains cannot bypass the metadata ceiling. GNU long-name
-and long-link entries remain supported because their fixed header size fully
-determines their layout.
+### Bounded local PAX support
+
+Extraction and single-entry reads accept one nonempty local POSIX `x` header
+(USTAR or GNU header format) immediately before one regular/contiguous file,
+directory, symlink, or hardlink. `path`, `linkpath`, and `size` override that
+member only. Effective paths still pass traversal validation before stripping,
+then the output paths pass depth and collision checks. The filter receives the
+effective pre-strip path, followed by link policy checks. PAX never permits link
+creation. Effective sizes drive framing, filters, and the existing output-byte
+budgets; `maxEntries` still counts members, not their metadata headers.
+
+Records must have exact byte lengths, ASCII keys, a final newline, and no
+duplicate keys, embedded newlines, or unconsumed bytes. Structural `path` and
+`linkpath` values and ownership names must be nonempty printable ASCII. A PAX
+member's raw name, USTAR prefix, and raw link target must also be printable
+ASCII; raw link targets must be present only on links, even when overridden.
+Unicode
+PAX structural text is deliberately unsupported because the underlying parsers
+do not agree when UTF-8 is split across input chunks. `size`, `uid`, and `gid`
+must be canonical unsigned decimal safe integers (zero is valid; signs, leading
+zeros, fractions, and exponents are not). Padded member sizes must also fit the
+safe integer range. Raw and effective directory/link sizes must both be zero;
+non-directory paths ending with a separator and `linkpath` on non-links are
+rejected rather than allowing parser-specific type or framing changes.
+
+The descriptive allowlist is `mtime`, `atime`, `ctime` (signed decimal seconds
+with optional fractional digits, within JavaScript's Date range), `uid`, `gid`,
+`uname`, and `gname`. These attributes are accepted but not restored to the
+destination. `LIBARCHIVE.xattr.*` and `SCHILY.xattr.*` with nonempty ASCII
+alphanumeric/dot/underscore/hyphen suffixes are also accepted as inert metadata,
+never restored as extended attributes. Their values are byte-counted and may
+contain NUL or non-UTF8 bytes, including macOS provenance metadata; embedded
+newlines are rejected because they can disrupt downstream record parsing.
+
+Global `g`, old `X`, old GNU `N`, empty/dangling/repeated local headers, mixed
+PAX/GNU extension chains, unknown keys, charset declarations, ACL extensions,
+and all sparse extensions (including `GNU.sparse.*`, `SCHILY.filetype`,
+`SCHILY.realsize`, and `SCHILY.size`) fail closed with
+`ArchiveFormatError("archive-header-invalid")`. Standalone GNU long-name `L`
+and long-link `K` support is unchanged. GNU sparse extension blocks are still
+metered in 512-byte units before rejection, preserving metadata-limit errors
+for excessive chains. The per-body `maxMetaEntryBytes` limit bounds PAX storage
+and duplicate-key state; one local header per member prevents local metadata
+chains without introducing a new limit or changing defaults.
 
 ## `resolveArchiveKind`
 
@@ -259,7 +302,7 @@ import {
 
 - `validateArchiveEntryPath(raw, opts)` — throws `ArchiveSecurityError` for `..`, absolute, NUL-containing, drive-relative, or otherwise unsafe entry paths, including alternate data stream names on Windows.
 - `normalizeArchiveEntryPath(raw)` — converts backslashes in the entry path to forward slashes.
-- `stripArchivePath(entryPath, n)` — strip the leading N path components, returning `null` if not enough remain.
+- `stripArchivePath(entryPath, n)` — normalize separators, drop empty and `.` components, then strip the leading N components, returning `null` if none remain.
 - `resolveArchiveOutputPath({ destDir, entryPath })` — combines the entry path with the destination, after validation.
 - `isWindowsDrivePath(value)` — detects drive-relative segments such as `C:secret` or `nested/C:secret` that should be rejected.
 
