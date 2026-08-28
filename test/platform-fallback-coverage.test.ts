@@ -200,12 +200,12 @@ describe("platform fallback coverage", () => {
     await fs.writeFile(outsideTarget, "attacker");
     const scoped = await openRoot(rootDir, { mkdir: false });
     let swapped = false;
-    vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params, reopenVerified) => {
+    vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params) => {
       expect(params.targetPath).toBe(target);
       swapped = true;
       await fs.rename(parent, `${parent}-original`);
       await fs.symlink(outsideDir, parent, "dir");
-      await verifyPublished(params, reopenVerified);
+      await verifyPublished(params);
     });
 
     await expect(scoped.create("nested/created.txt", "library", {
@@ -234,12 +234,12 @@ describe("platform fallback coverage", () => {
     process.env.FS_SAFE_DEBUG_WARNINGS = "1";
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     let swapped = false;
-    vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params, reopenVerified) => {
+    vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params) => {
       expect(params.targetPath).toBe(target);
       swapped = true;
       await fs.rename(parent, `${parent}-original`);
       await fs.symlink(outsideDir, parent, "dir");
-      await verifyPublished(params, reopenVerified);
+      await verifyPublished(params);
     });
 
     try {

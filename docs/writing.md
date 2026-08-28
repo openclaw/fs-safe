@@ -77,10 +77,11 @@ Later reads still obey OS permissions, and access checks on a pre-existing
 destination are unchanged. The explicit FUSE compatibility policy still requires
 a readable destination to prove matching content when rename changes its identity.
 
-When Windows cannot report a pathname's identity, verification retains the guarded
-reader fallback: reopen the name and compare that descriptor's exact identity with
-the original retained file. Unknown pathname metadata is not proof that the name
-still refers to the published file.
+When Windows cannot report a pathname's identity, the publication verifier reopens
+the name and compares that descriptor's exact identity with the original retained
+file, without reading bytes. It also rechecks links and root/parent containment.
+This write-specific proof does not relax ordinary reads: unknown pathname metadata
+alone is never proof that the name still refers to the expected file.
 
 ### `fs.create(rel, data, options?)`
 

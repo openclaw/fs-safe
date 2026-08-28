@@ -1,11 +1,12 @@
 import fsSync, { type BigIntStats } from "node:fs";
-import fs, { type FileHandle } from "node:fs/promises";
+import fs from "node:fs/promises";
 import { assertAsyncDirectoryGuard, type AsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { resolveOpenedFileRealPathForFd } from "./opened-realpath.js";
-import { isNotFoundPathError, isPathInside } from "./path.js";
+import { assertNoUnsafeDeviceReadPath, hasNodeErrorCode, isNotFoundPathError, isPathInside, isSymlinkOpenError } from "./path.js";
 import type { PublishedWriteIdentity } from "./pinned-write.js";
+import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { assertRootIdentityCurrent, type RootContext } from "./root-context.js";
 import { fileNotFoundError, hardlinkedPathNotAllowedError, outsideWorkspaceError } from "./root-errors.js";
 
@@ -15,10 +16,7 @@ export async function verifyAtomicWriteResult(params: {
   fd: number;
   expectedIdentity: PublishedWriteIdentity;
   parentGuard: AsyncDirectoryGuard;
-}, reopenVerified: (
-  filePath: string,
-  options: { hardlinks: "reject" },
-) => Promise<{ handle: FileHandle; realPath: string }>): Promise<void> {
+}): Promise<void> {
   let needsPathOpen = false;
   const assertFile = (stat: BigIntStats) => {
     if (stat.isSymbolicLink()) {
@@ -63,17 +61,32 @@ export async function verifyAtomicWriteResult(params: {
     assertDescriptor();
     if (needsPathOpen) {
       // A retained fd cannot prove that an opaque Windows pathname still names it.
-      // Keep the guarded reader fallback; POSIX no-read modes never take this path.
-      const opened = await reopenVerified(params.targetPath, { hardlinks: "reject" });
+      // Reopen only for publication verification: the writer's exact identity is
+      // independent proof unavailable to ordinary readers. Never read any bytes.
+      assertNoUnsafeDeviceReadPath(params.targetPath);
+      const opened = await fs.open(params.targetPath, resolveReadOpenFlags()).catch((error: unknown) => {
+        if (isSymlinkOpenError(error)) {
+          throw new FsSafeError("symlink", "symlink open blocked", { cause: error });
+        }
+        if (hasNodeErrorCode(error, "EISDIR")) {
+          throw new FsSafeError("not-file", "not a file");
+        }
+        throw error;
+      });
       try {
-        if (!isPathInside(params.root.rootWithSep, opened.realPath)) {
+        const reopenedStat = assertDescriptor(opened.fd);
+        assertPath(await fs.lstat(params.targetPath, { bigint: true }));
+        const reopenedPath = await resolveOpenedFileRealPathForFd(opened.fd, reopenedStat, params.targetPath);
+        assertPath(await fs.stat(reopenedPath, { bigint: true }));
+        if (!isPathInside(params.root.rootWithSep, reopenedPath)) {
           throw outsideWorkspaceError();
         }
         await assertAsyncDirectoryGuard(params.parentGuard);
         await assertRootIdentityCurrent(params.root);
-        assertDescriptor(opened.handle.fd);
+        assertPath(await fs.lstat(params.targetPath, { bigint: true }));
+        assertDescriptor(opened.fd);
       } finally {
-        await opened.handle.close().catch(() => undefined);
+        await opened.close().catch(() => undefined);
       }
     }
   } catch (error) {

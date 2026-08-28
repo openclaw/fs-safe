@@ -55,7 +55,7 @@ describe.skipIf(process.platform === "win32")("FUSE accepted descriptor lifetime
       });
       let retainedFd: number | undefined;
       const sentinel = Object.assign(new Error("outer verification failed"), { code: "EIO" });
-      const verifier = vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params, reopenVerified) => {
+      const verifier = vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params) => {
         retainedFd = params.fd;
         expect(fsSync.fstatSync(params.fd).ino).toBe((await fs.stat(target)).ino);
         expect(fsSync.fstatSync(params.fd).ino).not.toBe((await fs.stat(original)).ino);
@@ -70,7 +70,7 @@ describe.skipIf(process.platform === "win32")("FUSE accepted descriptor lifetime
             return await realLstat(...args);
           }) as typeof fs.lstat);
         }
-        await verifyPublished(params, reopenVerified);
+        await verifyPublished(params);
       });
       const safe = await root(directory, { renameIdentity: "verify-content-with-lock" });
       const pending = safe.write("target", "payload", { mode });
@@ -130,8 +130,8 @@ for (const backend of ["javascript", "native", "windows fallback branch"] as con
         const safe = await root(directory);
         const sentinel = Object.assign(new Error("close failed after publication"), { code: "EIO" });
         let closed = false;
-        vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params, reopenVerified) => {
-          await verifyPublished(params, reopenVerified);
+        vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params) => {
+          await verifyPublished(params);
           const realClose = fsSync.closeSync.bind(fsSync);
           vi.spyOn(fsSync, "closeSync").mockImplementation((fd) => {
             realClose(fd);
@@ -170,7 +170,7 @@ for (const backend of ["javascript", "native", "windows fallback branch"] as con
         let retainedFd: number | undefined;
         let fdChecks = 0;
         let unknownPathChecked = false;
-        vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params, reopenVerified) => {
+        vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params) => {
           retainedFd = params.fd;
           const realFstat = fsSync.fstatSync.bind(fsSync);
           vi.spyOn(fsSync, "fstatSync").mockImplementation(((...args: Parameters<typeof fsSync.fstatSync>) => {
@@ -191,7 +191,7 @@ for (const backend of ["javascript", "native", "windows fallback branch"] as con
               return Object.assign(Object.create(stat), { dev: 0, ino: 0 });
             }) as typeof fs.lstat);
           }
-          await verifyPublished(params, reopenVerified);
+          await verifyPublished(params);
         });
         await expect(safe.write("target", "payload", { mode: 0 })).rejects.toMatchObject({
           code: change === "type" ? "not-file" : "path-mismatch",
@@ -285,9 +285,9 @@ describe.skipIf(process.platform === "win32" || !nativeAvailable)("private nativ
     const failure = new Error("verification failed after awaiting");
     let retainedFd: number | undefined;
     let completed = false;
-    vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params, reopenVerified) => {
+    vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params) => {
       retainedFd = params.fd;
-      await verifyPublished(params, reopenVerified);
+      await verifyPublished(params);
       entered.resolve();
       await release.promise;
       expect(fsSync.fstatSync(params.fd).mode & 0o777).toBe(0);
