@@ -1125,7 +1125,7 @@ async function commitPinnedWriteInRoot(
             fd,
             expectedIdentity,
             parentGuard,
-          });
+          }, openVerifiedLocalFile);
         } catch (error) {
           emitWriteBoundaryWarning(`post-write verification failed: ${String(error)}`);
           throw error;
@@ -1627,7 +1627,7 @@ async function writeFileFallback(
         expectedIdentity: written.identity,
         fd: written.handle.fd,
         parentGuard: destinationGuard,
-      });
+      }, openVerifiedLocalFile);
     } catch (err) {
       emitWriteBoundaryWarning(`post-write verification failed: ${String(err)}`);
       throw err;
@@ -1700,7 +1700,7 @@ async function writeMissingFileFallback(
       expectedIdentity: writtenStat,
       fd: handle.fd,
       parentGuard,
-    });
+    }, openVerifiedLocalFile);
   } catch (err) {
     if (verifyingPublication) throw err;
     if (hasNodeErrorCode(err, "EEXIST")) {

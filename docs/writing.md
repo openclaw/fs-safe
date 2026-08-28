@@ -68,14 +68,19 @@ await fs.write("notes/today.txt", "hello\n", { encoding: "utf8" });
 
 `data` accepts `string | Buffer`. `options` are `{ denyMutations?: DenyMutationPolicy; encoding?: BufferEncoding; mkdir?: boolean; mode?: number; overwrite?: boolean; renameIdentity?: RenameIdentityPolicy }`. `mode` sets the file's POSIX mode. If neither the call nor `RootDefaults` supplies it, a replacement preserves the existing file mode and a new file uses `0o600`. `mkdir` and `overwrite` both default to `true`; set `overwrite: false` for the same no-clobber behavior as `create()`.
 
-Modes without read permission, including `0o000` and `0o200`, succeed: final
-verification uses a descriptor retained by the writer rather than reopening the
-published file. The requested mode is not relaxed for verification. Publication verification compares
-exact bigint descriptor and pathname identities, including large file indexes
-that cannot be represented by a JavaScript number. Later reads
-still obey OS permissions, and access checks on a pre-existing destination are
-unchanged. The explicit FUSE compatibility policy still requires a readable
-destination to prove matching content when rename changes its identity.
+POSIX modes without read permission, including `0o000` and `0o200`, succeed:
+final verification uses a descriptor retained by the writer rather than reopening
+the published file. The requested mode is not relaxed for verification.
+Publication verification compares exact bigint descriptor and pathname identities,
+including large file indexes that cannot be represented by a JavaScript number.
+Later reads still obey OS permissions, and access checks on a pre-existing
+destination are unchanged. The explicit FUSE compatibility policy still requires
+a readable destination to prove matching content when rename changes its identity.
+
+When Windows cannot report a pathname's identity, verification retains the guarded
+reader fallback: reopen the name and compare that descriptor's exact identity with
+the original retained file. Unknown pathname metadata is not proof that the name
+still refers to the published file.
 
 ### `fs.create(rel, data, options?)`
 

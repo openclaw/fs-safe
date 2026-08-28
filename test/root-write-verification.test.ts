@@ -100,7 +100,7 @@ for (const backend of ["javascript", "native", "windows fallback branch"] as con
             }
           }
         };
-        const verifier = vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params) => {
+        const verifier = vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params, reopenVerified) => {
           retainedFd = params.fd;
           expect(fsSync.fstatSync(params.fd).mode & 0o777).toBe(mode);
           expect(fsSync.fstatSync(params.fd).isFile()).toBe(true);
@@ -121,7 +121,7 @@ for (const backend of ["javascript", "native", "windows fallback branch"] as con
           } else {
             await inject(attack);
           }
-          return await verifyPublished(params);
+          return await verifyPublished(params, reopenVerified);
         });
 
         const pending = operation === "create"

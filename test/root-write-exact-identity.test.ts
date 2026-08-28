@@ -8,6 +8,7 @@ import { __loadBundledNativeForTest, __resetNativeLoaderForTest, __setNativeLoad
 import { resolveOpenedFileRealPathForFd, resolveOpenedFileRealPathForHandle } from "../src/opened-realpath.js";
 import { runPinnedWriteHelper } from "../src/pinned-write.js";
 import { resolveRootContext } from "../src/root-context.js";
+import { openLocalFileSafely } from "../src/root.js";
 import * as verification from "../src/root-write-verification.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
@@ -15,6 +16,7 @@ import { useRealTempDirs } from "./helpers/vitest.js";
 const { tempRoot } = useRealTempDirs();
 const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
 const verify = verification.verifyAtomicWriteResult;
+const reopenForTest = async (filePath: string) => await openLocalFileSafely({ filePath });
 const inode = 9007199254740993n;
 const device = 9007199254740995n;
 let nativeAvailable = false;
@@ -61,7 +63,7 @@ describe("Root exact publication identity", () => {
       const stat = fs.stat.bind(fs);
       vi.spyOn(fsSync, "fstatSync").mockImplementation(((...args: Parameters<typeof fsSync.fstatSync>) => {
         const actual = fstat(...args);
-        return args[0] === handle.fd ? project(actual, scenario === "fd mismatch" ? inode : expectedInode, expectedDevice) : actual;
+        return actual.isFile() ? project(actual, scenario === "fd mismatch" ? inode : expectedInode, expectedDevice) : actual;
       }) as typeof fsSync.fstatSync);
       vi.spyOn(fs, "lstat").mockImplementation((async (...args: Parameters<typeof fs.lstat>) => {
         const actual = await lstat(...args);
@@ -77,7 +79,7 @@ describe("Root exact publication identity", () => {
       }) as typeof fs.stat);
       try {
         const pending = verify({ root: context, targetPath: target, fd: handle.fd,
-          expectedIdentity: { dev: expectedDevice, ino: expectedInode }, parentGuard });
+          expectedIdentity: { dev: expectedDevice, ino: expectedInode }, parentGuard }, reopenForTest);
         if (scenario.includes("mismatch")) await expect(pending).rejects.toMatchObject({ code: "path-mismatch" });
         else await expect(pending).resolves.toBeUndefined();
       } finally {
@@ -191,13 +193,13 @@ for (const route of routes) {
         configureFsSafeNative({ mode: route.includes("native") ? "require" : "off" });
         let callbacks = 0;
         let fd: number | undefined;
-        const check: typeof verify = async (params) => {
+        const check: typeof verify = async (params, reopenVerified) => {
           callbacks++;
           fd = params.fd;
           expect(params.expectedIdentity).toMatchObject({ dev: device, ino: inode });
           // Direct-create paths have no rename; mutate only after their expected snapshot.
           published = true;
-          await verify(params);
+          await verify(params, reopenVerified);
         };
         let pending: Promise<unknown>;
         if (route === "windows fallback") {
@@ -208,7 +210,7 @@ for (const route of routes) {
             rootPath: directory, relativeParentPath: "", basename: "target", mkdir: false,
             mode: 0o600, overwrite: operation === "write", input: { kind: "buffer", data: "payload" },
             verifyPublished: async (fd, expectedIdentity, parentGuard) =>
-              await check({ root: context, targetPath: target, fd, expectedIdentity, parentGuard }),
+              await check({ root: context, targetPath: target, fd, expectedIdentity, parentGuard }, reopenForTest),
           });
         }
         if (changed) await expect(pending).rejects.toMatchObject({ code: "path-mismatch" });
@@ -237,13 +239,87 @@ it.skipIf(process.platform === "win32")("passes the exact content-accepted FUSE 
     await fs.rename(target, original);
     await fs.writeFile(target, "payload");
   } });
-  const check = vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params) => {
+  const check = vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params, reopenVerified) => {
     const accepted = fsSync.fstatSync(params.fd, { bigint: true });
     expect(params.expectedIdentity).toMatchObject({ dev: accepted.dev, ino: accepted.ino });
     expect(accepted.ino).not.toBe((await fs.stat(original, { bigint: true })).ino);
-    await verify(params);
+    await verify(params, reopenVerified);
   });
   const capability = await root(directory, { renameIdentity: "verify-content-with-lock" });
   await expect(capability.write("target", "payload")).resolves.toBeUndefined();
   expect(check).toHaveBeenCalledTimes(1);
 });
+
+for (const backend of ["fallback", "native"] as const) {
+  describe.skipIf(backend === "native" && !nativeAvailable)(
+    `Windows opaque pathname identity with ${backend}`,
+    () => {
+      it.each(["write", "create"].flatMap((operation) =>
+        ["known identity", "unchanged", "same bytes", "different bytes", "read error"].map(
+          (behavior) => ({ operation, behavior }),
+        ),
+      ))("$operation: $behavior", async ({ operation, behavior }) => {
+        const directory = await tempRoot("fs-safe-windows-opaque-write-");
+        const target = path.join(directory, "target");
+        const published = path.join(directory, "published");
+        const payload = "mode-zero-proof";
+        const swapped = behavior === "same bytes" || behavior === "different bytes";
+        if (operation === "write") await fs.writeFile(target, "old", { mode: 0o600 });
+        const binding = backend === "native" ? __loadBundledNativeForTest() : undefined;
+        if (binding) __setNativeLoaderForTest(() => binding);
+        configureFsSafeNative({ mode: backend === "native" ? "require" : "off" });
+        // POSIX hosts exercise the Windows branch; Windows CI runs its real mechanism.
+        Object.defineProperty(process, "platform", { value: "win32" });
+        const capability = await root(directory);
+        const failure = Object.assign(new Error("opaque pathname cannot be opened"), { code: "EACCES" });
+        let opaque = false;
+        let retainedFd: number | undefined;
+        let reopens = 0;
+        const reopened: Array<{ fd: number }> = [];
+        for (const method of ["stat", "lstat"] as const) {
+          const original = fs[method].bind(fs);
+          vi.spyOn(fs, method).mockImplementation((async (...args: Parameters<typeof fs.stat>) => {
+            const stat = await original(...args);
+            if (!opaque || String(args[0]) !== target) return stat;
+            return Object.assign(Object.create(stat), {
+              dev: typeof stat.dev === "bigint" ? 0n : 0,
+              ino: typeof stat.ino === "bigint" ? 0n : 0,
+            });
+          }) as typeof fs.stat);
+        }
+        const verifier = vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(
+          async (params, openVerified) => {
+            expect(params.targetPath).toBe(target);
+            retainedFd = params.fd;
+            if (swapped) {
+              await fs.rename(target, published);
+              await fs.writeFile(target, behavior === "same bytes" ? payload : "replacement", { mode: 0o600 });
+            }
+            opaque = behavior !== "known identity";
+            await verify(params, async (...args) => {
+              reopens++;
+              if (behavior === "read error") throw failure;
+              const opened = await openVerified(...args);
+              reopened.push(opened.handle);
+              return opened;
+            });
+          },
+        );
+        const pending = operation === "create"
+          ? capability.create("target", payload, { mode: 0o600 })
+          : capability.write("target", payload, { mode: 0o600 });
+        if (swapped) await expect(pending).rejects.toMatchObject({ code: "path-mismatch" });
+        else if (behavior === "read error") await expect(pending).rejects.toBe(failure);
+        else await expect(pending).resolves.toBeUndefined();
+        expect(verifier).toHaveBeenCalledTimes(1);
+        expect(reopens).toBe(behavior === "known identity" ? 0 : 1);
+        expect(reopened.every((handle) => handle.fd === -1)).toBe(true);
+        expect(() => fsSync.fstatSync(retainedFd!)).toThrowError(expect.objectContaining({ code: "EBADF" }));
+        vi.restoreAllMocks();
+        expect(await fs.readFile(swapped ? published : target, "utf8")).toBe(payload);
+        if (swapped) expect(await fs.readFile(target, "utf8")).toBe(behavior === "same bytes" ? payload : "replacement");
+        expect((await fs.readdir(directory)).sort()).toEqual(swapped ? ["published", "target"] : ["target"]);
+      });
+    },
+  );
+}

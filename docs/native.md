@@ -113,7 +113,9 @@ both verification and cleanup errors when both fail.
 The private verification channel carries exact bigint identity from the original
 owned descriptor (or the content-accepted FUSE descriptor). Root compares it
 against exact fd and pathname metadata; legacy helper return facts and public
-read metadata behavior are unchanged.
+read metadata behavior are unchanged. Missing Windows pathname identity still
+requires a guarded path reopen and comparison with the original retained file;
+that fallback does not apply to POSIX no-read modes.
 
 ## JavaScript fallback guarantees and delta
 
