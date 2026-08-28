@@ -159,20 +159,23 @@ describe("secret file refusal paths", () => {
   it("rejects a different descriptor identity during post-write verification", async () => {
     const root = await tempRoot("fs-safe-secret-write-identity-");
     const filePath = path.join(root, "token");
-    const otherPath = path.join(root, "other");
-    await fs.writeFile(otherPath, "other");
-    const otherStat = await fs.stat(otherPath);
     const realOpen = fs.open.bind(fs);
+    const changedIdentity = vi.fn<() => Promise<fsSync.Stats>>();
     vi.spyOn(fs, "open").mockImplementation(async (...args) => {
       const handle = await realOpen(...args);
       if (path.basename(String(args[0])) === "token" && typeof args[1] === "number") {
-        vi.spyOn(handle, "stat").mockResolvedValueOnce(otherStat);
+        const stat = await handle.stat();
+        // Numeric Windows file IDs can round together; inject a distinct nonzero ID.
+        stat.ino = stat.ino === 12345 ? 54321 : 12345;
+        changedIdentity.mockResolvedValueOnce(stat);
+        vi.spyOn(handle, "stat").mockImplementationOnce(changedIdentity);
       }
       return handle;
     });
     await expect(
       writeSecretFileAtomic({ rootDir: root, filePath, content: "secret" }),
     ).rejects.toMatchObject({ code: "path-mismatch" });
+    expect(changedIdentity).toHaveBeenCalledTimes(1);
   });
 
   itPosix("rejects an insecure mode reported after post-write chmod", async () => {

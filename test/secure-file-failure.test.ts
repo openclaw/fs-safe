@@ -115,17 +115,16 @@ describe("secure file inspection failures", () => {
   it("rejects a realpath identity that differs from the opened descriptor", async () => {
     const root = await tempRoot("fs-safe-secure-realpath-identity-");
     const filePath = path.join(root, "secret");
-    const otherPath = path.join(root, "other");
     await fs.writeFile(filePath, "secret", { mode: 0o600 });
-    await fs.writeFile(otherPath, "other", { mode: 0o600 });
-    const otherStat = await fs.stat(otherPath);
     const realStat = fs.stat.bind(fs);
-    let calls = 0;
-    vi.spyOn(fs, "stat").mockImplementation(async (...args) => {
-      if (++calls === 1) return otherStat;
-      return await realStat(...args);
+    const changedIdentity = vi.spyOn(fs, "stat").mockImplementationOnce(async (...args) => {
+      const stat = await realStat(...args);
+      // Keep the injected identity distinct even when numeric file IDs lose precision.
+      stat.ino = stat.ino === 12345 ? 54321 : 12345;
+      return stat;
     });
     await expect(readSecureFile({ filePath })).rejects.toMatchObject({ code: "path-mismatch" });
+    expect(changedIdentity).toHaveBeenCalledTimes(1);
   });
 
   itPosix("rejects a descriptor reported as owned by another uid", async () => {
