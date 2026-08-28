@@ -7,7 +7,6 @@ import path from "node:path";
 import { readFileHandleBounded } from "./bounded-read.js";
 import { assertNoUnsafeDeviceReadPath } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
-import { sameFileIdentity } from "./file-identity.js";
 import { isWindowsDriveLetterPath, isWindowsNetworkPath } from "./local-file-access.js";
 import { isPathInside, isSymlinkOpenError } from "./path.js";
 import { formatPermissionErrorDetail } from "./permission-exec.js";
@@ -21,6 +20,7 @@ import {
   type PermissionCheck,
   type PermissionCheckOptions,
 } from "./permissions.js";
+import { inspectFileIdentity } from "./strict-file-identity.js";
 
 const SUPPORTS_NOFOLLOW = process.platform !== "win32" && "O_NOFOLLOW" in fsConstants;
 const OPEN_READ_FLAGS = fsConstants.O_RDONLY | (SUPPORTS_NOFOLLOW ? fsConstants.O_NOFOLLOW : 0);
@@ -111,20 +111,18 @@ async function openSecureHandle(options: SecureFileReadOptions): Promise<{
     if (!openedStat.isFile()) {
       throw new FsSafeError("not-file", `${label(options)} must be a file: ${options.filePath}`);
     }
-    const pathStat = options.trust?.allowSymlink
-      ? await fs.stat(options.filePath)
-      : await fs.lstat(options.filePath);
-    if (!options.trust?.allowSymlink && pathStat.isSymbolicLink()) {
-      throw new FsSafeError("symlink", `${label(options)} must not be a symlink: ${options.filePath}`);
-    }
-    if (!sameFileIdentity(pathStat, openedStat)) {
-      throw new FsSafeError("path-mismatch", `${label(options)} changed during open.`);
-    }
+    const openedIdentity = await inspectFileIdentity(() => handle.stat({ bigint: true }));
+    await inspectFileIdentity(async () => {
+      const pathStat = options.trust?.allowSymlink
+        ? await fs.stat(options.filePath, { bigint: true })
+        : await fs.lstat(options.filePath, { bigint: true });
+      if (!options.trust?.allowSymlink && pathStat.isSymbolicLink()) {
+        throw new FsSafeError("symlink", `${label(options)} must not be a symlink: ${options.filePath}`);
+      }
+      return pathStat;
+    }, openedIdentity);
     const realPath = await fs.realpath(options.filePath);
-    const realStat = await fs.stat(realPath);
-    if (!sameFileIdentity(realStat, openedStat)) {
-      throw new FsSafeError("path-mismatch", `${label(options)} real path changed during open.`);
-    }
+    await inspectFileIdentity(() => fs.stat(realPath, { bigint: true }), openedIdentity);
     if (options.io?.maxBytes !== undefined && openedStat.size > options.io.maxBytes) {
       throw new FsSafeError("too-large", `${label(options)} exceeded maxBytes (${options.io.maxBytes}).`);
     }

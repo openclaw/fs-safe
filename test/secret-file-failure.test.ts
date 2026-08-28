@@ -23,7 +23,7 @@ describe("secret file refusal paths", () => {
     const filePath = path.join(root, "token");
     await fs.writeFile(filePath, "secret");
     const denied = Object.assign(new Error("inspection denied"), { code: "EACCES" });
-    vi.spyOn(fsSync, "lstatSync").mockImplementation(() => {
+    vi.spyOn(fsSync, "statSync").mockImplementation(() => {
       throw denied;
     });
 

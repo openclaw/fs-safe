@@ -119,13 +119,12 @@ describe("secure file inspection failures", () => {
   it("rejects a realpath identity that differs from the opened descriptor", async () => {
     const root = await tempRoot("fs-safe-secure-realpath-identity-");
     const filePath = path.join(root, "secret");
+    const otherPath = path.join(root, "other");
     await fs.writeFile(filePath, "secret", { mode: 0o600 });
+    await fs.writeFile(otherPath, "other", { mode: 0o600 });
     const realStat = fs.stat.bind(fs);
     const changedIdentity = vi.spyOn(fs, "stat").mockImplementationOnce(async (...args) => {
-      const stat = await realStat(...args);
-      // Keep the injected identity distinct even when numeric file IDs lose precision.
-      stat.ino = stat.ino === 12345 ? 54321 : 12345;
-      return stat;
+      return await realStat(otherPath, args[1]);
     });
     await expect(readSecureFile({ filePath })).rejects.toMatchObject({ code: "path-mismatch" });
     expect(changedIdentity).toHaveBeenCalledTimes(1);

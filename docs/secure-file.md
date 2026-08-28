@@ -28,6 +28,8 @@ The helper:
 
 On POSIX, unsafe permissions mean group/world writable, and group/world readable unless `permissions.allowReadableByOthers` is true. On Windows, the helper uses the ACL inspection helpers from [`permissions`](permissions.md) and refuses the read if ACLs cannot be verified.
 
+Descriptor, pathname, and realpath identity checks use lossless bigint stats internally. The returned `stat` remains a normal Node `Stats` object with numeric fields. A zero Windows device or inode is unverified, never a match: the helper re-inspects that identity once using the same descriptor or pathname, then rejects persistent ambiguity with `path-mismatch`. A definite mismatch rejects immediately; retries retain known identity components and still enforce symlink policy.
+
 ## Options
 
 ```ts
@@ -57,6 +59,8 @@ type SecureFileReadOptions = {
 
 `permissions.allowInsecure` is a migration escape hatch. Prefer fixing permissions and using [`formatPermissionRemediation`](permissions.md) to show the user what to run. `trust.allowNetworkPath` is off by default because UNC paths are remote authority, not local filesystem input. `inject` is for tests and platform adapters; production callers usually leave it unset.
 
+`permissions.allowInsecure` bypasses only permission checks. Neither it nor `inject.platform` changes filesystem identity verification, which always uses the actual process platform. `trust.allowSymlink` permits an alias but still requires its target and realpath to match the opened descriptor.
+
 ## Errors
 
 `readSecureFile()` throws `FsSafeError` with codes such as:
@@ -67,7 +71,7 @@ type SecureFileReadOptions = {
 | `not-found` | The path could not be stat'd before open. |
 | `not-file` | The opened target is not a regular file. |
 | `symlink` | The path is a symlink and `trust.allowSymlink` is false. |
-| `path-mismatch` | The path or realpath changed between open and verification. |
+| `path-mismatch` | The path or realpath changed between open and verification, or filesystem identity could not be verified after bounded re-inspection. |
 | `outside-workspace` | `realPath` is outside `trust.trustedDirs`. |
 | `permission-unverified` | Required mode/ACL checks could not be completed. |
 | `insecure-permissions` | Mode bits or ACLs grant broader access than allowed. |

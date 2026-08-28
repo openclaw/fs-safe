@@ -20,13 +20,13 @@ import { formatPosixMode } from "../src/mode.js";
 import { isPathInside, isWithinDir, resolveSafeBaseDir } from "../src/path.js";
 import { tryReadJson, tryReadJsonSync, writeJson, writeJsonSync } from "../src/json.js";
 import {
-  DEFAULT_SECRET_FILE_MAX_BYTES,
   PRIVATE_SECRET_DIR_MODE,
   PRIVATE_SECRET_FILE_MODE,
   readSecretFileSync,
   tryReadSecretFileSync,
   writeSecretFileAtomic,
 } from "../src/secret-file.js";
+import { DEFAULT_SECRET_FILE_MAX_BYTES } from "../src/secret-read-policy.js";
 
 const { tempRoot } = useTempDirs();
 
