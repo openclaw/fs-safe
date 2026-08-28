@@ -94,20 +94,27 @@ for (const mode of ["off", "require"] as const) {
       await reject(Buffer.concat([tarFixture([member]), tarFixture([paxHeader([["path", "dangling"]])])]));
     });
 
-    it("rejects raw and effective non-file sizes and separator/type coercions", async () => {
-      for (const type of ["1", "2", "5"]) {
-        for (const [rawSize, effectiveSize] of [[1, 0], [0, 1], [1, 1]]) {
-          await reject(tarFixture([paxHeader([["size", String(effectiveSize)]]), {
-            path: "raw", type, linkPath: "target",
-            mutateHeader: (header) => header.write(`${rawSize!.toString(8).padStart(11, "0")}\0`, 124, "ascii"),
-          }]));
-        }
-      }
-      for (const type of ["0", "7", "1", "2"]) {
-        await reject(tarFixture([paxHeader([["path", "dir/"]]), { ...member, type }]));
-        await reject(tarFixture([paxHeader([["path", "safe"]]), { path: "raw/", type }]));
-      }
+    it.each([
+      ["1", 1, 0], ["1", 0, 1], ["1", 1, 1],
+      ["2", 1, 0], ["2", 0, 1], ["2", 1, 1],
+      ["5", 1, 0], ["5", 0, 1], ["5", 1, 1],
+    ] as const)("rejects non-file type %s with raw size %i and effective size %i", async (type, rawSize, effectiveSize) => {
+      await reject(tarFixture([paxHeader([["size", String(effectiveSize)]]), {
+        path: "raw", type, linkPath: "target",
+        mutateHeader: (header) => header.write(`${rawSize.toString(8).padStart(11, "0")}\0`, 124, "ascii"),
+      }]));
+    });
+
+    it.each(["0", "7", "1", "2"])("rejects separator coercions for type %s", async (type) => {
+      await reject(tarFixture([paxHeader([["path", "dir/"]]), { ...member, type }]));
+      await reject(tarFixture([paxHeader([["path", "safe"]]), { path: "raw/", type }]));
+    });
+
+    it("rejects linkpath overrides on non-link members", async () => {
       await reject(paxArchive([["linkpath", "target"]]));
+    });
+
+    it("rejects backslash directory coercion", async () => {
       await reject(paxArchive([["path", "dir\\"]]));
     });
 

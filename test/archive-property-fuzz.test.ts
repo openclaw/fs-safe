@@ -52,6 +52,8 @@ try {
 type Backend = "javascript" | "native";
 type ArchiveOutcome = { accepted: true } | { accepted: false; code: string };
 const backends = native ? (["javascript", "native"] as const) : (["javascript"] as const);
+// Each sample extracts twice; allow coverage overhead without relaxing the per-extraction limit.
+const nativeEquivalenceTimeoutMs = 60_000;
 
 function useBackend(backend: Backend): void {
   if (backend === "native") {
@@ -183,7 +185,7 @@ describe("structured TAR fuzz properties", () => {
       ),
       propertyParameters(60),
     );
-  }, 15_000);
+  }, nativeEquivalenceTimeoutMs);
 });
 
 describe("structured ZIP fuzz properties", () => {
@@ -217,7 +219,7 @@ describe("structured ZIP fuzz properties", () => {
       ),
       propertyParameters(50),
     );
-  });
+  }, nativeEquivalenceTimeoutMs);
 });
 
 describe.each(["tar", "zip"] as const)("%s Windows-name portability", (kind) => {
