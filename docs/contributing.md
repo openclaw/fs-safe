@@ -79,8 +79,14 @@ Small, focused PRs land faster. The general shape:
 
 Maintainers publish from a protected `vX.Y.Z` tag on `main` through
 `.github/workflows/release.yml`. The workflow requires the package version and a
-dated `CHANGELOG.md` section to match the tag, then publishes with npm trusted
-publishing and provenance before creating the GitHub release.
+dated `CHANGELOG.md` section to match the tag. It builds and publishes all seven
+platform packages before publishing `@openclaw/fs-safe`, verifies every registry
+artifact and provenance statement, and then creates the GitHub release.
+
+Each package needs its own npm trusted-publisher configuration for
+`openclaw/fs-safe` and `release.yml`. A new platform package must be created and
+configured on npm before the first tag that references it; npm trust is
+package-specific and cannot be bootstrapped by the tag workflow itself.
 
 External contributors do not need to do anything beyond getting the pull
 request merged. Maintainers must not publish locally or add npm automation

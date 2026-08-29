@@ -27,7 +27,6 @@
     "dist/**/*.js",
     "dist/**/*.d.ts",
     "dist/**/*.d.ts.map",
-    "dist/native/**/*.node",
     "docs/**/*.md",
     "docs/assets/readme-banner.jpg",
     "README.md",
@@ -149,6 +148,13 @@
     "crabbox:warmup": "crabbox warmup"
   },
   "optionalDependencies": {
+    "@openclaw/fs-safe-darwin-arm64": "0.5.6",
+    "@openclaw/fs-safe-darwin-x64": "0.5.6",
+    "@openclaw/fs-safe-linux-arm64-gnu": "0.5.6",
+    "@openclaw/fs-safe-linux-arm64-musl": "0.5.6",
+    "@openclaw/fs-safe-linux-x64-gnu": "0.5.6",
+    "@openclaw/fs-safe-linux-x64-musl": "0.5.6",
+    "@openclaw/fs-safe-win32-x64-msvc": "0.5.6",
     "jszip": "^3.10.1",
     "tar": "7.5.22"
   },

@@ -1,11 +1,11 @@
 ---
 title: Native architecture
-description: "The bundled native bindings, fd-relative beneath model, platform mechanisms, loader security, and JavaScript fallback contract."
+description: "The platform-specific native bindings, fd-relative beneath model, platform mechanisms, loader security, and JavaScript fallback contract."
 ---
 
 # Native architecture
 
-`@openclaw/fs-safe` bundles native bindings that supply mechanisms Node does
+`@openclaw/fs-safe` uses native bindings that supply mechanisms Node does
 not expose directly. The Rust layer is deliberately not a second policy engine.
 TypeScript owns trusted-root selection, path validation, archive filtering,
 budgets, modes, identity fencing, cleanup decisions, and error normalization.
@@ -14,8 +14,9 @@ platform syscall sequence that can preserve the boundary.
 
 Every operation that has an equivalent safe Node implementation keeps that
 guarded JavaScript path. Native loading is lazy; installs do not compile Rust,
-run postinstall code, or fetch binaries. The npm tarball carries all seven
-supported targets, so it is larger than a per-platform package by design.
+run postinstall code, or fetch binaries at runtime. Seven exact-version optional
+packages are filtered by OS, CPU, and Linux libc, so an installation receives
+only its matching prebuilt binding.
 Native-only formats and creation-time Windows DACL guarantees fail explicitly
 instead of substituting a weaker implementation.
 
@@ -143,10 +144,10 @@ infer native loading from timing.
 Importing fs-safe never executes a child process. Linux libc selection uses
 the Node process report, conventional musl library filenames, and the ELF
 `PT_INTERP` field of `process.execPath`. If all probes are inconclusive, the
-loader conservatively attempts the bundled glibc binary and lets normal module
-loading fail into `auto` fallback. The loader requires only
-`dist/native/<target>/fs-safe-native.node`; it never probes optional packages,
-downloads code, or runs a postinstall step. A missing or incompatible binary
+loader conservatively attempts the glibc package and lets normal module loading
+fail into `auto` fallback. The loader requires only the package selected from
+the detected target; it never probes unrelated packages, downloads code, or
+runs a postinstall step. A missing or incompatible binary
 silently selects the JavaScript fallback in `auto`, throws typed
 `helper-unavailable` in `require`, and is never inspected in `off`. Tests reject
 `child_process`, `exec`, or `spawn` usage in the loader.

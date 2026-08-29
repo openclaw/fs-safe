@@ -6,14 +6,13 @@ import {
   statSync,
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { nativeTargets } from "./native-targets.mjs";
+import { fileURLToPath } from "node:url";
+import { nativePackageDirectory, nativeTargets } from "./native-targets.mjs";
 
 const sourceIndex = process.argv.indexOf("--source");
 const destinationIndex = process.argv.indexOf("--destination");
 const sourceRoot = resolve(sourceIndex >= 0 ? process.argv[sourceIndex + 1] : "artifacts");
-const destinationRoot = resolve(
-  destinationIndex >= 0 ? process.argv[destinationIndex + 1] : "dist/native",
-);
+const destinationRoot = destinationIndex >= 0 ? resolve(process.argv[destinationIndex + 1]) : undefined;
 
 function filesBelow(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -23,7 +22,6 @@ function filesBelow(directory) {
 }
 
 const artifacts = filesBelow(sourceRoot);
-rmSync(destinationRoot, { recursive: true, force: true });
 for (const target of nativeTargets) {
   const matches = artifacts.filter((path) => basename(path) === target.artifact);
   if (matches.length !== 1) {
@@ -33,7 +31,11 @@ for (const target of nativeTargets) {
   }
   const [source] = matches;
   if (statSync(source).size === 0) throw new Error(`${target.artifact} is empty`);
-  const destination = join(destinationRoot, target.label, "fs-safe-native.node");
+  const packageDirectory = fileURLToPath(nativePackageDirectory(target));
+  const destination = destinationRoot
+    ? join(destinationRoot, target.label, "fs-safe-native.node")
+    : join(packageDirectory, "fs-safe-native.node");
+  rmSync(destination, { force: true });
   mkdirSync(dirname(destination), { recursive: true });
   copyFileSync(source, destination);
   if (statSync(destination).size === 0) throw new Error(`${destination} is empty after copy`);

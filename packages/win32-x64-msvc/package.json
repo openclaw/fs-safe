@@ -1,0 +1,29 @@
+{
+  "name": "@openclaw/fs-safe-win32-x64-msvc",
+  "version": "0.5.6",
+  "description": "Windows x64 MSVC native binding for @openclaw/fs-safe.",
+  "license": "MIT",
+  "author": "OpenClaw Team <dev@openclaw.ai>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/openclaw/fs-safe.git",
+    "directory": "packages/win32-x64-msvc"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "fs-safe-native.node",
+  "files": [
+    "fs-safe-native.node"
+  ],
+  "engines": {
+    "node": ">=22"
+  }
+}

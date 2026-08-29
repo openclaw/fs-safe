@@ -1,11 +1,15 @@
 ---
 title: Native helper policy
-description: "How fs-safe loads its bundled native filesystem primitives and how auto, require, and off affect guarded fallbacks."
+description: "How fs-safe loads its platform-specific native filesystem primitives and how auto, require, and off affect guarded fallbacks."
 ---
 
 # Native helper policy
 
-`@openclaw/fs-safe` itself contains seven prebuilt binaries for Linux x64/arm64 (glibc or musl), macOS x64/arm64, and Windows x64. The loader selects `dist/native/<target>/fs-safe-native.node` without optional platform packages, downloads, postinstall scripts, or a consumer Rust build. Carrying every target makes the npm tarball larger, but every installation receives the same complete artifact.
+`@openclaw/fs-safe` declares seven exact-version optional packages for Linux
+x64/arm64 (glibc or musl), macOS x64/arm64, and Windows x64. Package-manager
+OS, CPU, and libc filters install only the matching package. The loader requires
+that package lazily, without runtime downloads, postinstall scripts, or a
+consumer Rust build.
 
 ```ts
 import { configureFsSafeNative } from "@openclaw/fs-safe/config";
@@ -21,8 +25,8 @@ The equivalent environment variables are `FS_SAFE_NATIVE_MODE` and `OPENCLAW_FS_
 
 | Mode | Behavior |
 |---|---|
-| `auto` | Prefer native primitives when the current bundled binary loads; otherwise silently use the guarded JavaScript path. |
-| `off` | Do not load a bundled binary. Use the guarded JavaScript path deterministically. |
+| `auto` | Prefer native primitives when the current platform package loads; otherwise silently use the guarded JavaScript path. |
+| `off` | Do not load a native package. Use the guarded JavaScript path deterministically. |
 | `require` | Throw `FsSafeError("helper-unavailable")` instead of falling back when an operation needs the native binding and it cannot load. |
 
 Configure the mode once during startup. Loading is lazy and cached; changing from `auto` to `require` after a failed load changes failure policy but does not repeatedly probe the binary.
@@ -34,7 +38,7 @@ change the mode policy of existing fallback-capable APIs.
 
 ## Native boundary
 
-The bundled native layer exposes policy-free filesystem mechanisms: beneath-root
+The native layer exposes policy-free filesystem mechanisms: beneath-root
 open/mkdir/link, replace and no-replace rename, identity reads, archive decode/execution,
 clone/copy/hash workers, and Windows security descriptor calls. The TypeScript
 layer owns policy, retries, filters, budgets, modes, cleanup, error

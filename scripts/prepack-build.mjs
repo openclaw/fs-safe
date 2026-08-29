@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
@@ -24,21 +24,9 @@ if (!tscBin || !existsSync(tscBin)) {
   throw new Error("TypeScript compiler is unavailable; run pnpm install before packing");
 }
 
-const nativeDirectory = resolve("dist/native");
-const heldNativeDirectory = resolve(".fs-safe-prepack-native");
-rmSync(heldNativeDirectory, { recursive: true, force: true });
-if (existsSync(nativeDirectory)) renameSync(nativeDirectory, heldNativeDirectory);
-
-try {
-  rmSync("dist", { recursive: true, force: true });
-  const result = spawnSync(process.execPath, [tscBin, "-p", "tsconfig.json"], {
-    stdio: "inherit",
-    env: process.env,
-  });
-  if (result.status !== 0) process.exitCode = result.status ?? 1;
-} finally {
-  if (existsSync(heldNativeDirectory)) {
-    mkdirSync("dist", { recursive: true });
-    renameSync(heldNativeDirectory, nativeDirectory);
-  }
-}
+rmSync("dist", { recursive: true, force: true });
+const result = spawnSync(process.execPath, [tscBin, "-p", "tsconfig.json"], {
+  stdio: "inherit",
+  env: process.env,
+});
+if (result.status !== 0) process.exitCode = result.status ?? 1;

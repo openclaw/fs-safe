@@ -59,7 +59,7 @@ pnpm add @openclaw/fs-safe
 
 Node 22 or newer. Core root/path/json/temp helpers avoid framework dependencies. Archive helpers use optional `jszip` and `tar` dependencies for ZIP/TAR support; installs that omit optional dependencies can still use every non-archive subpath.
 
-The package bundles prebuilt native bindings for seven supported targets. They
+The package installs one prebuilt native binding for the current supported target. It
 supply fd-relative and atomic no-replace primitives that Node does not expose
 directly. Configure the lazy loader before first use when you need a strict
 environment policy:
@@ -80,11 +80,11 @@ replace a writable parent between its identity check and Node's pathname
 mutation can redirect that mutation outside the root before the post-check
 reports the escape. Use `require` when hostile concurrent mutation is in scope.
 
-Equivalent env var: `FS_SAFE_NATIVE_MODE=auto|off|require`. All seven binaries
-ship inside `@openclaw/fs-safe`; there are no platform packages, postinstall
-steps, downloads, or consumer Rust builds. This makes the tarball larger than
-a per-platform package, but makes installation deterministic. On a platform
-without a bundled binary, `auto` silently retains lexical and canonical root
+Equivalent env var: `FS_SAFE_NATIVE_MODE=auto|off|require`. The seven bindings
+ship as exact-version optional packages filtered by OS, CPU, and Linux libc, so
+a normal install receives only its matching binary. There are no postinstall
+steps, runtime downloads, or consumer Rust builds. On a platform without a
+published binding, or when optional dependencies are omitted, `auto` silently retains lexical and canonical root
 checks, no-follow opens, guarded temp+rename writes, and post-write identity
 verification. See the [native
 helper policy](docs/native-helper.md) for the exact boundary and deployment
@@ -97,7 +97,7 @@ and guarded JavaScript results are best-effort. See the [security model](docs/se
 
 ## Migrating from the Python helper
 
-Version 0.5 replaces the persistent Python worker with bundled prebuilt native
+Version 0.5 replaces the persistent Python worker with prebuilt native
 bindings. The modes map directly: `configureFsSafePython({ mode: "auto" })`
 becomes `configureFsSafeNative({ mode: "auto" })`, and likewise for `off` and
 `require`. Replace `FS_SAFE_PYTHON_MODE` with `FS_SAFE_NATIVE_MODE`; remove

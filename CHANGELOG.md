@@ -19,6 +19,7 @@
 
 ### Docs and Tooling
 
+- Publish native bindings as platform-filtered optional packages and load only the matching package, avoiding installation of binaries for six unrelated targets.
 - Restore six missing documentation navigation entries, remove the dangling page, correct the lock-config link, and reject missing, nonexistent, or duplicate registrations before replacing site output. Thanks @Yigtwxx.
 - Fix the standalone native smoke script to use the numeric descriptor returned by `openBeneath()` for identity checks and cleanup.
 - Accept npm 11 array and npm 12 package-name-keyed pack results while validating the intended package and its file metadata.

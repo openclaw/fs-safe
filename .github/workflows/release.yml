@@ -76,6 +76,16 @@ jobs:
           if (!cargo.match(new RegExp(`^version = "${version.replaceAll(".", "\\.")}"$`, "m"))) {
             throw new Error(`native/Cargo.toml does not declare ${version}`);
           }
+          const nativePackages = require("node:fs").readdirSync("packages");
+          if (nativePackages.length !== 7) {
+            throw new Error(`expected seven native packages, found ${nativePackages.length}`);
+          }
+          for (const directory of nativePackages) {
+            const platformPkg = JSON.parse(readFileSync(`packages/${directory}/package.json`, "utf8"));
+            if (platformPkg.version !== version || pkg.optionalDependencies?.[platformPkg.name] !== version) {
+              throw new Error(`${platformPkg.name} and its root optional dependency must declare ${version}`);
+            }
+          }
           NODE
           package_version="$(node -p "require('./package.json').version")"
           [ "${RELEASE_TAG}" = "v${package_version}" ]
@@ -179,7 +189,7 @@ jobs:
           retention-days: 1
 
   collect:
-    name: Assemble and validate @openclaw/fs-safe
+    name: Assemble and validate release packages
     if: github.ref_protected
     needs: prebuild
     runs-on: ubuntu-latest
@@ -214,10 +224,10 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Assemble bundled bindings
-        run: node scripts/assemble-native-binaries.mjs --source artifacts --destination dist/native
+      - name: Assemble platform packages
+        run: node scripts/assemble-native-binaries.mjs --source artifacts
 
-      - name: Pack and smoke test the single package
+      - name: Pack and smoke test all packages
         run: node scripts/check-release-packages.mjs --output release-artifacts
 
       - name: Upload release package
@@ -265,7 +275,7 @@ jobs:
             --notes-file release-notes.md
 
   publish:
-    name: Publish @openclaw/fs-safe
+    name: Publish npm packages
     if: github.ref_protected
     needs: draft-release
     runs-on: ubuntu-latest
@@ -303,8 +313,8 @@ jobs:
           name: release-package
           path: release-artifacts
 
-      - name: Publish validated artifact or verify
-        run: node scripts/publish-or-verify.mjs --package "@openclaw/fs-safe" --artifacts release-artifacts
+      - name: Publish platform packages, then root package
+        run: node scripts/publish-release-packages.mjs release-artifacts
 
   release:
     name: Verify and promote GitHub Release

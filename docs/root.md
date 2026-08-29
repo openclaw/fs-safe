@@ -140,7 +140,7 @@ new destination name is subject to the portable guard.
 
 ## Native helper mode
 
-Create-only writes prefer the bundled native helper for fd-relative opens and
+Create-only writes prefer the platform native helper for fd-relative opens and
 atomic no-replace rename. Operations without native wiring retain their guarded
 JavaScript implementations.
 
