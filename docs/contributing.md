@@ -46,6 +46,34 @@ pnpm check
 This runs the filesystem boundary checks, build, tests, and package
 tarball/import validation.
 
+### Native consumer installs
+
+After `pnpm build` and a fresh `pnpm native:build`, run `pnpm package:smoke`.
+It packs the real root and host binding, then runs root-only npm and the
+declared pnpm version against a disposable loopback registry. The root's exact
+optional dependencies stay unchanged. Each consumer lives outside the workspace
+with isolated configuration, caches, and stores; the registry never proxies to
+the Internet. The smoke verifies root integrity, consumer-local resolution,
+OS/CPU/libc selection, a native-required SHA-256 operation, and fresh-process
+`auto`/`off` fallbacks and `require` failures for missing bindings and omitted
+optionals. Omitted-optionals installs also verify that all public subpaths can
+be imported, without implying every operation remains available.
+
+Host-only smoke supplies the six foreign packages using their unchanged real
+manifests and clearly marked synthetic, non-executable payloads. Every foreign
+metadata/tarball endpoint is checked before installation, so a missing fixture
+cannot masquerade as successful platform filtering. These temporary fixtures
+never enter `packages/`, release artifacts, or the publish manifest. They prove
+installer filtering, not foreign native compilation or execution. Full release
+collection uses the actual seven collected native tarballs instead. Archive
+codecs and their dependencies are packed from the installed dependency graph.
+
+PR CI builds and executes four host targets: Linux x64 glibc, Linux x64 musl
+(Alpine), macOS arm64, and Windows x64. The root-only smoke runs on each. The
+seven-target source build matrix runs on release tags; packaging all seven is
+not execution proof for every architecture. The smoke writes manager versions,
+cases, and synthetic-fixture scope to `release-artifacts/consumer-proof.json`.
+
 ## Docs
 
 The docs site is rendered recursively from Markdown files under `docs/` by `scripts/build-docs-site.mjs`. Build locally to preview:

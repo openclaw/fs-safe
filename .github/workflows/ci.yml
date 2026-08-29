@@ -137,12 +137,22 @@ jobs:
             cargo test --workspace --locked
             pnpm build
             pnpm native:build
+            pnpm package:smoke
             node scripts/native-mode-smoke.mjs auto
             node scripts/native-mode-smoke.mjs require
             node scripts/native-mode-smoke.mjs off
             FS_SAFE_PAX_REQUIRE_NATIVE=1 pnpm test test/native-write-containment.test.ts test/native-staging-regression.test.ts test/staged-file.test.ts test/staged-file-failures.test.ts test/native-archive-equivalence.test.ts test/native-publish-equivalence.test.ts test/archive-pax.test.ts test/archive-pax-security.test.ts test/archive-pax-compressed.test.ts test/archive-tar-strip.test.ts
             FS_SAFE_NATIVE_MODE=require pnpm test test/root-write-mode.test.ts test/root-write-verification.test.ts test/root-write-lifetime.test.ts test/root-write-exact-identity.test.ts
           '
+
+      - name: Upload musl consumer proof
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: platform-package-proof-linux-x64-musl
+          path: |
+            release-artifacts/manifest.json
+            release-artifacts/consumer-proof.json
+          if-no-files-found: error
 
   cargo-quality:
     name: Cargo clippy and audit
@@ -207,12 +217,14 @@ jobs:
       - name: Build and stage host binding
         run: pnpm native:build
 
-      - name: Pack and smoke test root and host packages
+      - name: Verify root-only npm and pnpm consumer installs
         run: pnpm package:smoke
 
       - name: Upload behavior proof
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: platform-package-proof-${{ runner.os }}-${{ runner.arch }}
-          path: release-artifacts/manifest.json
+          path: |
+            release-artifacts/manifest.json
+            release-artifacts/consumer-proof.json
           if-no-files-found: error

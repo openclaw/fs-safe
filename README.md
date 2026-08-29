@@ -57,10 +57,10 @@ This is a **library-level guardrail**, not OS-level isolation. It does not repla
 pnpm add @openclaw/fs-safe
 ```
 
-Node 22 or newer. Core root/path/json/temp helpers avoid framework dependencies. Archive helpers use optional `jszip` and `tar` dependencies for ZIP/TAR support; installs that omit optional dependencies can still use every non-archive subpath.
+Node 22 or newer. Core root/path/json/temp helpers avoid framework dependencies. With all optional dependencies omitted, public subpaths remain safe to import and non-archive fallback-capable operations work in `auto` or `off`. Native-only features remain unavailable, and operations needing the binding in `require` mode fail with `helper-unavailable`. JavaScript ZIP/TAR fallback also needs the optional `jszip`/`tar` codecs. See the [0.6 migration guide](docs/migrating-to-0.6.md).
 
 The package installs one prebuilt native binding for the current supported target. It
-supply fd-relative and atomic no-replace primitives that Node does not expose
+supplies fd-relative and atomic no-replace primitives that Node does not expose
 directly. Configure the lazy loader before first use when you need a strict
 environment policy:
 
