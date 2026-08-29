@@ -7,9 +7,11 @@
 - Install only the matching native platform package; deployments using native mode `require` or native-only features must keep optional dependencies enabled. See the [0.6 migration guide](https://fs-safe.io/migrating-to-0.6.html).
 - Strengthen root, secure, secret, and pathname-hash identity checks with lossless bigint comparisons and fail-closed handling of unknown Windows identities.
 - Add native-required Linux/macOS `stageFileInDirectory()` with retained-directory cleanup, private staging, identity-checked publication, and async disposal.
-- Align JavaScript and native archive handling for bounded local PAX metadata and stripped TAR paths, and reject ZIP symlinks disguised as directories.
+- Validate physical ZIP metadata and names before decoder normalization or collapse, align bounded TAR/PAX and stripped-path handling, and reject ZIP symlinks disguised as directories.
 
 ### Security and Correctness
+
+- Validate physical ZIP local/central and Unicode name metadata before decoding, rejecting traversal, hidden duplicates, and conflicting interpretations consistently in extraction and bounded reads.
 
 - Verify pathname SHA-256 hashing with lossless pre-open, descriptor, and current-path identities; fail closed on unknown Windows identities after one bounded retry without reopening the file.
 - Preserve underlying command diagnostics (command, timing, timeout flag, exit code/signal, and sanitized stderr) and cause on Windows ACL `permission-unverified` errors without changing verification semantics.
