@@ -1,10 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 - 2026-08-29
 
-This will be released as 0.6.0. Native bindings now install through optional
-platform packages; deployments that omit optional dependencies must enable them
-before selecting native mode `require` or using native-only features.
+### Highlights
+
+- Install only the matching native platform package; deployments using native mode `require` or native-only features must keep optional dependencies enabled. See the [0.6 migration guide](https://fs-safe.io/migrating-to-0.6.html).
+- Strengthen root, secure, secret, and pathname-hash identity checks with lossless bigint comparisons and fail-closed handling of unknown Windows identities.
+- Add native-required Linux/macOS `stageFileInDirectory()` with retained-directory cleanup, private staging, identity-checked publication, and async disposal.
+- Align JavaScript and native archive handling for bounded local PAX metadata and stripped TAR paths, and reject ZIP symlinks disguised as directories.
 
 ### Security and Correctness
 
