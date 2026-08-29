@@ -32,6 +32,7 @@ import {
   withStagedArchiveDestination,
 } from "./archive-staging.js";
 import type { NativeBinding } from "./native.js";
+import { admitZipFile } from "./archive-zip-admission.js";
 
 function policyKind(kind: string): "file" | "directory" | "symlink" | "other" {
   if (kind === "file" || kind === "directory") return kind;
@@ -73,6 +74,9 @@ export async function extractNativeArchive(params: {
     deadline: params.deadline,
   });
   try {
+    const physicalCount = params.kind === "zip"
+      ? await admitZipFile(stagedArchive.path, limits, params.deadline)
+      : undefined;
     const destinationRealDir = await prepareArchiveDestinationDir(params.destDir);
     await withStagedArchiveDestination({
       destinationRealDir,
@@ -90,6 +94,9 @@ export async function extractNativeArchive(params: {
           .catch(throwMappedNativeError);
         params.deadline.check();
         assertArchiveEntryCountWithinLimit(manifest.length, limits);
+        if (physicalCount !== undefined && manifest.length !== physicalCount) {
+          throw new ArchiveSecurityError("entry-path", "zip decoder collapsed entry names");
+        }
         const strip = Math.max(0, Math.floor(params.stripComponents ?? 0));
         const budget = createByteBudgetTracker(limits);
         const trackOutputPath = createArchiveOutputPathTracker();

@@ -8,6 +8,8 @@ before selecting native mode `require` or using native-only features.
 
 ### Security and Correctness
 
+- Validate physical ZIP local/central and Unicode name metadata before decoding, rejecting traversal, hidden duplicates, and conflicting interpretations consistently in extraction and bounded reads.
+
 - Verify pathname SHA-256 hashing with lossless pre-open, descriptor, and current-path identities; fail closed on unknown Windows identities after one bounded retry without reopening the file.
 - Preserve underlying command diagnostics (command, timing, timeout flag, exit code/signal, and sanitized stderr) and cause on Windows ACL `permission-unverified` errors without changing verification semantics.
 - Verify secure and secret read identities with lossless bigint stats, reject replaced paths and retargeted aliases, and fail closed on unknown Windows identities after one bounded re-inspection; preserve the secure reader's numeric `Stats` receipt and permission options without letting them bypass identity checks.
