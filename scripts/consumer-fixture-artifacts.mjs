@@ -1,12 +1,24 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { create as createTar } from "tar";
 import { nativePackageDirectory, nativeTargets } from "./native-targets.mjs";
 import { normalizePackResult } from "./npm-pack-result.mjs";
 
 const readPackage = (directory) => JSON.parse(readFileSync(join(directory, "package.json"), "utf8"));
+
+export async function snapshotConsumerDependency(directory, fixtureDir) {
+  const pkg = readPackage(directory);
+  assert.ok(!pkg.bundleDependencies && !pkg.bundledDependencies, "fixture dependency bundles need explicit collection");
+  const tarball = join(fixtureDir, `${pkg.name.replaceAll("/", "-")}-${pkg.version}.tgz`);
+  // These are installed published files, not a source tree to repack through
+  // npm lifecycle/packlist rules (repacking installed tar fails on CI hosts).
+  await createTar({ cwd: directory, file: tarball, gzip: true, prefix: "package/", portable: true },
+    readdirSync(directory).filter((name) => name !== "node_modules"));
+  return { pkg, tarball };
+}
 
 function dependencyDirectory(name, directory) {
   const require = createRequire(join(directory, "package.json"));
@@ -70,7 +82,7 @@ export async function consumerFixtureArtifacts({ rootPkg, manifest, outputDir, f
     const key = `${pkg.name}@${pkg.version}`;
     if (seen.has(key)) return;
     seen.add(key);
-    await pack(directory);
+    artifacts.push(await snapshotConsumerDependency(directory, fixtureDir));
     for (const dependency of Object.keys({ ...pkg.dependencies, ...pkg.optionalDependencies })) {
       await collect(dependency, directory);
     }
