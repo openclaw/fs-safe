@@ -30,9 +30,14 @@ export async function consumerFixtureArtifacts({ rootPkg, manifest, outputDir, f
   const synthetic = [];
   async function pack(directory) {
     const pkg = readPackage(directory);
-    const parsed = JSON.parse(await runNpm([
-      "pack", "--json", "--ignore-scripts", "--pack-destination", fixtureDir,
-    ], directory));
+    let parsed;
+    try {
+      parsed = JSON.parse(await runNpm([
+        "pack", "--json", "--ignore-scripts", "--loglevel=verbose", "--pack-destination", fixtureDir,
+      ], directory));
+    } catch (cause) {
+      throw new Error(`could not pack consumer fixture ${pkg.name}@${pkg.version}`, { cause });
+    }
     const { filename } = normalizePackResult(parsed, pkg.name);
     artifacts.push({ pkg, tarball: join(fixtureDir, filename) });
   }
