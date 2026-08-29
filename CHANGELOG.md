@@ -19,6 +19,7 @@
 
 ### Docs and Tooling
 
+- Raise the Crabbox AWS root volume to 400 GiB to meet the runner image's snapshot minimum and avoid allocation failures before checks run.
 - Restore six missing documentation navigation entries, remove the dangling page, correct the lock-config link, and reject missing, nonexistent, or duplicate registrations before replacing site output. Thanks @Yigtwxx.
 - Fix the standalone native smoke script to use the numeric descriptor returned by `openBeneath()` for identity checks and cleanup.
 - Accept npm 11 array and npm 12 package-name-keyed pack results while validating the intended package and its file metadata.
