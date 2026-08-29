@@ -1,0 +1,166 @@
+name: hash identity Windows proof
+
+on:
+  pull_request:
+    paths:
+      - src/file-hash.ts
+      - test/file-hash.test.ts
+      - test/file-hash-identity.test.ts
+      - test/helpers/file-hash-identity.ts
+      - scripts/hash-identity-proof.mjs
+      - scripts/hash-identity-proof-windows.ps1
+      - .github/workflows/hash-identity-proof.yml
+
+permissions:
+  contents: read
+
+jobs:
+  windows-proof:
+    name: Windows Node ${{ matrix.node }} hash proof
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22.23.2", "24.20.0"]
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 11.24.0
+          run_install: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          architecture: x64
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Create isolated proof directories
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP ('hash-identity-proof-' + [guid]::NewGuid().ToString('N'))
+          [void](New-Item -ItemType Directory -Path $root)
+          [void](New-Item -ItemType Directory -Path (Join-Path $root 'receipts'))
+          [void](New-Item -ItemType Directory -Path (Join-Path $root 'baseline'))
+          "HASH_PROOF_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Build candidate and immutable baseline archive
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $baseline = 'f8876aab64bca29d2a4f742c816ddd33ea8555cb'
+          $baselineRepo = Join-Path $env:HASH_PROOF_ROOT 'baseline'
+          $archive = Join-Path $env:HASH_PROOF_ROOT 'baseline.tar'
+          $receipt = [ordered]@{ baselineCommit = $baseline; passed = $false; commands = @() }
+          function Run-Checked([string]$Program, [string[]]$Arguments) {
+            & $Program @Arguments
+            $code = $LASTEXITCODE
+            $receipt.commands += @{ program = $Program; arguments = $Arguments; exitCode = $code }
+            if ($code -ne 0) { throw "$Program failed with exit $code" }
+          }
+          try {
+            $candidate = & git rev-parse HEAD
+            if ($LASTEXITCODE -ne 0 -or $candidate -notmatch '^[a-f0-9]{40}$') { throw 'Missing candidate commit.' }
+            $receipt.candidateCommit = $candidate
+            $receipt.candidateIsPullRequestMergeCommit = $true
+            Run-Checked 'pnpm' @('install', '--frozen-lockfile')
+            Run-Checked 'pnpm' @('build')
+            # Git archive honors EOL conversion; keep the baseline's committed bytes.
+            Run-Checked 'git' @('-c', 'core.autocrlf=false', '-c', 'core.eol=lf', 'archive', '--format=tar', "--output=$archive", $baseline)
+            $receipt.baselineArchiveSha256 = (Get-FileHash -LiteralPath $archive).Hash.ToLowerInvariant()
+            Run-Checked 'tar' @('-xf', $archive, '-C', $baselineRepo)
+            Push-Location $baselineRepo
+            try {
+              Run-Checked 'pnpm' @('install', '--frozen-lockfile')
+              Run-Checked 'pnpm' @('build')
+            } finally { Pop-Location }
+            $receipt.fingerprints = @{}
+            foreach ($variant in @('baseline', 'patched')) {
+              $repo = if ($variant -eq 'baseline') { $baselineRepo } else { $env:GITHUB_WORKSPACE }
+              $files = @{}
+              foreach ($file in @('src/file-hash.ts', 'dist/file-hash.js', 'pnpm-lock.yaml', 'vitest.config.ts')) {
+                $files[$file] = (Get-FileHash -LiteralPath (Join-Path $repo $file)).Hash.ToLowerInvariant()
+              }
+              $receipt.fingerprints[$variant] = $files
+            }
+            $receipt.passed = $true
+            "HASH_PROOF_CANDIDATE=$candidate" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          } catch { $receipt.error = $_.Exception.Message; throw }
+          finally {
+            $receipt | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $env:HASH_PROOF_ROOT 'receipts/build-provenance.json')
+          }
+
+      - name: Serialized diagnostic and focused test gates
+        env:
+          HASH_PROOF_NODE: ${{ matrix.node }}
+        run: |
+          & ./scripts/hash-identity-proof-windows.ps1 `
+            -BaselineRepo (Join-Path $env:HASH_PROOF_ROOT 'baseline') `
+            -PatchedRepo $env:GITHUB_WORKSPACE `
+            -Output (Join-Path $env:HASH_PROOF_ROOT 'receipts/diagnostics') `
+            -Work (Join-Path $env:HASH_PROOF_ROOT 'work') `
+            -NodeVersion $env:HASH_PROOF_NODE -PatchedCommit $env:HASH_PROOF_CANDIDATE
+          exit $LASTEXITCODE
+
+      - name: Upload curated proof receipts
+        id: proof-artifact
+        if: always() && env.HASH_PROOF_ROOT != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hash-identity-windows-node-${{ matrix.node }}-${{ github.run_id }}-${{ github.run_attempt }}
+          # No workspace, dependencies, baseline archive, raw V8 directory, or test temp tree.
+          # Fixture bytes/identities are already embedded in the scenario JSON receipts.
+          path: |
+            ${{ env.HASH_PROOF_ROOT }}/receipts/build-provenance.json
+            ${{ env.HASH_PROOF_ROOT }}/receipts/diagnostics/*.json
+            ${{ env.HASH_PROOF_ROOT }}/receipts/diagnostics/*/*.json
+            ${{ env.HASH_PROOF_ROOT }}/receipts/diagnostics/*/*.txt
+          if-no-files-found: error
+
+      - name: Summarize proof boundaries and outcome
+        if: always()
+        env:
+          PROOF_ARTIFACT_URL: ${{ steps.proof-artifact.outputs.artifact-url }}
+          PROOF_JOB_STATUS: ${{ job.status }}
+        run: |
+          $lines = @(
+            '## Pathname hash Windows proof', '',
+            "Job status: $env:PROOF_JOB_STATUS", '',
+            'Baseline lanes are observations. Replacement admission is NOT a security pass.',
+            'Patched lanes require rejection before hash creation/read/native dispatch and exactly one owned close.',
+            'Stable controls must hash original bytes. The unscoped injection is a controlled hazard, not a coverage attribution.',
+            'Original historical event remains unattributed. Companion stats are separate, non-atomic observations.',
+            'Raw V8 module presence is distinct from focused Vitest threshold evidence.',
+            'Focused coverage: src/file-hash.ts only; lines 85, functions 84.9, statements 85, branches 76.',
+            'Mock-native tests prove dispatch only; no real native-binding proof is claimed.',
+            'General CI and coverage workflows provide the separate full-suite proof.', ''
+          )
+          if ($env:PROOF_ARTIFACT_URL) { $lines += "[Curated diagnostic and focused coverage receipts]($env:PROOF_ARTIFACT_URL)" }
+          if ($env:HASH_PROOF_ROOT) {
+            foreach ($variant in @('baseline', 'patched')) {
+              foreach ($mode in @('plain', 'raw-v8')) {
+                $file = Join-Path $env:HASH_PROOF_ROOT "receipts/diagnostics/$variant-$mode-receipts/summary.json"
+                if (Test-Path -LiteralPath $file) {
+                  $receipt = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json
+                  $lines += "${variant}/${mode}: diagnostic invariants met = $($receipt.passed)"
+                  foreach ($case in $receipt.cases) { $lines += "- $($case.name): $($case.classification); invariants met = $($case.passed)" }
+                } else { $lines += "${variant}/${mode}: incomplete; no normal summary receipt." }
+              }
+            }
+            $auditPath = Join-Path $env:HASH_PROOF_ROOT 'receipts/diagnostics/focused-coverage-audit.json'
+            if (Test-Path -LiteralPath $auditPath) {
+              $audit = Get-Content -LiteralPath $auditPath -Raw | ConvertFrom-Json
+              $lines += "Focused Vitest coverage audit passed = $($audit.passed)"
+            } else { $lines += 'Focused Vitest coverage: incomplete; no audit receipt.' }
+          }
+          $lines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
