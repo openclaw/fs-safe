@@ -4,6 +4,7 @@
 
 ### Security and Correctness
 
+- Verify pathname SHA-256 hashing with lossless pre-open, descriptor, and current-path identities; fail closed on unknown Windows identities after one bounded retry without reopening the file.
 - Preserve underlying command diagnostics (command, timing, timeout flag, exit code/signal, and sanitized stderr) and cause on Windows ACL `permission-unverified` errors without changing verification semantics.
 - Verify secure and secret read identities with lossless bigint stats, reject replaced paths and retargeted aliases, and fail closed on unknown Windows identities after one bounded re-inspection; preserve the secure reader's numeric `Stats` receipt and permission options without letting them bypass identity checks.
 - Apply the same exact identity checks to guarded root reads, rejecting parent-directory replacements even when distinct Windows file IDs round to the same number; retain numeric read receipts and keep Windows write reopens anchored to the writer's exact retained identity.

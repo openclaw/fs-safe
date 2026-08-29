@@ -210,10 +210,17 @@ try {
 The result is `{ bytes, digest }`, where `digest` is lowercase hexadecimal.
 The handle overload never closes the caller's descriptor and uses positioned
 reads, so it does not alter the descriptor's current offset. The path overload
-rejects symbolic links and non-regular files, verifies the opened descriptor
-still names the requested path, and closes its own handle. POSIX opens are
-nonblocking, so a raced FIFO or device is rejected after descriptor inspection
-rather than waiting for a writer.
+rejects symbolic links and non-regular files, compares lossless bigint identities
+from the pre-open pathname inspection to the opened descriptor and from that
+descriptor to the current pathname, and closes its own handle. All identity
+checks complete before any JavaScript or native hashing. Each inspection allows
+one bounded retry for unknown Windows identity components, retaining known
+components and rejecting known differences immediately. Persistent unknown
+identity fails closed with `path-mismatch`, even for benign files: this trades
+availability for verifiable identity. Retries inspect the same descriptor or
+pathname without reopening the file and repeat the symlink and file-type checks.
+POSIX opens are nonblocking, so a raced FIFO or device is rejected after
+descriptor inspection rather than waiting for a writer.
 
 When the optional binding is active, hashing runs as an async native task and
 does not occupy the JavaScript event loop with digest updates. With native mode
