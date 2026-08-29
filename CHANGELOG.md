@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Security and Correctness
+
+- Verify durable JSON queue reads with lossless bigint identities and reject persistent unknown Windows identities before reading entry bytes.
+
 ## 0.6.0 - 2026-08-29
 
 ### Highlights

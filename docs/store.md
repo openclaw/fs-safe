@@ -68,6 +68,12 @@ Use `ackJsonDurableQueueEntry()` after durable processing succeeds and
 `moveJsonDurableQueueEntryToFailed()` when the caller wants to quarantine an
 entry for inspection.
 
+Queue entry reads verify lossless file identities before opening, on the opened
+descriptor, and at the current pathname before reading bytes. On Windows, an
+unknown identity gets one bounded reinspection; persistent ambiguity or a
+mismatch rejects with `queue entry changed during read`. Each inspection still
+rejects non-files, symlinks, hardlinks, and entries over the byte limit.
+
 ## Related pages
 
 - [`fileStore`](file-store.md) — full API for the multi-file store.

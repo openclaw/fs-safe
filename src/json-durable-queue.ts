@@ -1,7 +1,7 @@
-import fs from "node:fs";
+import fs, { type BigIntStats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
-import { sameFileIdentity } from "./file-identity.js";
+import { inspectFileIdentity } from "./strict-file-identity.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
 import { replaceFileAtomic } from "./replace-file.js";
 import { assertSafePathSegment } from "./safe-path-segment.js";
@@ -280,39 +280,50 @@ export async function writeJsonDurableQueueEntry(params: {
   });
 }
 
+async function inspectQueueEntry(
+  inspect: () => Promise<BigIntStats>,
+  maxBytes: number,
+  expected?: BigIntStats,
+): Promise<BigIntStats> {
+  let inspectionFailed = false;
+  try {
+    return await inspectFileIdentity(async () => {
+      try {
+        const stat = await inspect();
+        if (stat.isSymbolicLink() || !stat.isFile()) {
+          throw new Error("queue entry is not a regular file");
+        }
+        if (stat.nlink > 1n) throw new Error("queue entry hardlinks are not allowed");
+        if (stat.size > maxBytes) throw new Error(`queue entry exceeds ${maxBytes} bytes`);
+        return stat;
+      } catch (error) {
+        inspectionFailed = true;
+        throw error;
+      }
+    }, expected);
+  } catch (error) {
+    // Translate only the identity helper's rejection, never inspection errors.
+    if (inspectionFailed) throw error;
+    throw new Error("queue entry changed during read", { cause: error });
+  }
+}
+
 async function readBoundedUtf8File(params: {
   filePath: string;
   maxBytes: number;
 }): Promise<string> {
-  const initialStat = await fs.promises.lstat(params.filePath);
-  if (initialStat.isSymbolicLink() || !initialStat.isFile()) {
-    throw new Error("queue entry is not a regular file");
-  }
-  if (initialStat.nlink > 1) {
-    throw new Error("queue entry hardlinks are not allowed");
-  }
-  if (initialStat.size > params.maxBytes) {
-    throw new Error(`queue entry exceeds ${params.maxBytes} bytes`);
-  }
+  const inspectPath = () => fs.promises.lstat(params.filePath, { bigint: true });
+  const initialStat = await inspectQueueEntry(inspectPath, params.maxBytes);
   const noFollow =
     typeof fs.constants.O_NOFOLLOW === "number" && process.platform !== "win32"
       ? fs.constants.O_NOFOLLOW
       : 0;
   const handle = await fs.promises.open(params.filePath, fs.constants.O_RDONLY | noFollow);
   try {
-    const openedStat = await handle.stat();
-    const pathStat = await fs.promises.lstat(params.filePath);
-    if (
-      !openedStat.isFile() ||
-      pathStat.isSymbolicLink() ||
-      !pathStat.isFile() ||
-      openedStat.nlink > 1 ||
-      pathStat.nlink > 1 ||
-      !sameFileIdentity(initialStat, openedStat) ||
-      !sameFileIdentity(pathStat, openedStat)
-    ) {
-      throw new Error("queue entry changed during read");
-    }
+    const openedStat = await inspectQueueEntry(
+      () => handle.stat({ bigint: true }), params.maxBytes, initialStat,
+    );
+    await inspectQueueEntry(inspectPath, params.maxBytes, openedStat);
     const chunks: Buffer[] = [];
     const scratch = Buffer.allocUnsafe(Math.min(64 * 1024, params.maxBytes + 1));
     let total = 0;
