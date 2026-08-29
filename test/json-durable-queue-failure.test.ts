@@ -117,6 +117,29 @@ describe("durable JSON queue failure recovery", () => {
     );
   });
 
+  it("bounds growth after all identity inspections and closes the descriptor", async () => {
+    const root = await tempRoot("fs-safe-queue-growth-after-inspection-");
+    const filePath = path.join(root, "entry.json");
+    await fs.writeFile(filePath, "{}");
+    const realOpen = fs.open.bind(fs);
+    let opened: fs.FileHandle | undefined;
+    vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+      const handle = await realOpen(...args);
+      if (args[0] !== filePath) return handle;
+      opened = handle;
+      const read = handle.read.bind(handle);
+      vi.spyOn(handle, "read").mockImplementationOnce(async (...readArgs) => {
+        await fs.appendFile(filePath, "1234");
+        return await read(...readArgs);
+      });
+      return handle;
+    });
+    await expect(readJsonDurableQueueEntry(filePath, { maxBytes: 3 })).rejects.toThrow(
+      "queue entry exceeds 3 bytes",
+    );
+    expect(opened?.fd).toBe(-1);
+  });
+
   itPosix("rejects symlink and hardlink queue entries without reading their contents", async () => {
     const root = await tempRoot("fs-safe-queue-links-");
     const target = path.join(root, "target.json");
@@ -199,16 +222,38 @@ describe("durable JSON queue failure recovery", () => {
     const root = await tempRoot("fs-safe-queue-read-swap-");
     const filePath = path.join(root, "entry.json");
     const oldPath = path.join(root, "old.json");
-    await fs.writeFile(filePath, "{}");
+    const unrelatedPath = path.join(root, "unrelated.json");
+    await fs.writeFile(filePath, '{"entry":"original"}');
+    await fs.writeFile(unrelatedPath, "{}");
+    const events: string[] = [];
+    let targetOpens = 0;
     const realOpen = fs.open.bind(fs);
-    vi.spyOn(fs, "open").mockImplementationOnce(async (...args) => {
+    const open = vi.spyOn(fs, "open").mockImplementation(async (...args) => {
       const handle = await realOpen(...args);
+      if (args[0] !== filePath) return handle;
+      expect(++targetOpens).toBe(1);
+      events.push("opened original");
       await fs.rename(filePath, oldPath);
-      await fs.writeFile(filePath, "{}");
+      events.push("retained original");
+      await fs.writeFile(filePath, '{"entry":"replacement"}');
+      events.push("wrote replacement");
       return handle;
     });
+    const unrelated = await fs.open(unrelatedPath, "r");
+    await unrelated.close();
+    expect(targetOpens).toBe(0);
     await expect(readJsonDurableQueueEntry(filePath)).rejects.toThrow(
       "queue entry changed during read",
     );
+    expect(targetOpens).toBe(1);
+    expect(open.mock.calls.filter(([target]) => target === filePath)).toHaveLength(1);
+    expect(events).toEqual(["opened original", "retained original", "wrote replacement"]);
+    expect(fsSync.readFileSync(oldPath, "utf8")).toBe('{"entry":"original"}');
+    expect(fsSync.readFileSync(filePath, "utf8")).toBe('{"entry":"replacement"}');
+    const originalStat = await fs.lstat(oldPath, { bigint: true });
+    const replacementStat = await fs.lstat(filePath, { bigint: true });
+    if (originalStat.ino !== 0n && replacementStat.ino !== 0n) {
+      expect(originalStat.ino).not.toBe(replacementStat.ino);
+    }
   });
 });
