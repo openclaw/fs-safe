@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,11 +13,17 @@ export async function snapshotConsumerDependency(directory, fixtureDir) {
   const pkg = readPackage(directory);
   assert.ok(!pkg.bundleDependencies && !pkg.bundledDependencies, "fixture dependency bundles need explicit collection");
   const tarball = join(fixtureDir, `${pkg.name.replaceAll("/", "-")}-${pkg.version}.tgz`);
-  // These are installed published files, not a source tree to repack through
-  // npm lifecycle/packlist rules (repacking installed tar fails on CI hosts).
-  await createTar({ cwd: directory, file: tarball, gzip: true, prefix: "package/", portable: true },
-    readdirSync(directory).filter((name) => name !== "node_modules"));
-  return { pkg, tarball };
+  const staging = mkdtempSync(join(fixtureDir, "dependency-"));
+  try {
+    // Snapshot published bytes, not source packing rules or pnpm's hardlink
+    // topology. Tar packing can stall on those shared-store hardlinks.
+    const entries = readdirSync(directory).filter((name) => name !== "node_modules");
+    for (const name of entries) cpSync(join(directory, name), join(staging, name), { recursive: true });
+    await createTar({ cwd: staging, file: tarball, gzip: true, prefix: "package/", portable: true }, entries);
+    return { pkg, tarball };
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
 }
 
 function dependencyDirectory(name, directory) {
