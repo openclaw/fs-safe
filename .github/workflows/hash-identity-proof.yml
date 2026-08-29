@@ -75,7 +75,8 @@ jobs:
             $receipt.candidateIsPullRequestMergeCommit = $true
             Run-Checked 'pnpm' @('install', '--frozen-lockfile')
             Run-Checked 'pnpm' @('build')
-            Run-Checked 'git' @('archive', '--format=tar', "--output=$archive", $baseline)
+            # Git archive honors EOL conversion; keep the baseline's committed bytes.
+            Run-Checked 'git' @('-c', 'core.autocrlf=false', '-c', 'core.eol=lf', 'archive', '--format=tar', "--output=$archive", $baseline)
             $receipt.baselineArchiveSha256 = (Get-FileHash -LiteralPath $archive).Hash.ToLowerInvariant()
             Run-Checked 'tar' @('-xf', $archive, '-C', $baselineRepo)
             Push-Location $baselineRepo
