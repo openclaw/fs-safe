@@ -205,6 +205,41 @@ try {
   rmSync(smoke, { recursive: true, force: true });
 }
 
+const omittedOptionalSmoke = mkdtempSync(join(tmpdir(), "fs-safe-omitted-optional-smoke-"));
+try {
+  writeFileSync(join(omittedOptionalSmoke, "package.json"), '{"private":true,"type":"module"}\n');
+  runNpm(
+    [
+      "install",
+      "--ignore-scripts",
+      "--omit=optional",
+      "--no-audit",
+      "--no-fund",
+      "--no-package-lock",
+      join(outputDir, rootArtifact.filename),
+    ],
+    { cwd: omittedOptionalSmoke, stdio: "pipe" },
+  );
+  const omittedFixture = join(omittedOptionalSmoke, "fixture.txt");
+  writeFileSync(omittedFixture, "abc");
+  const omittedProof = execFileSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      "import {configureFsSafeNative} from '@openclaw/fs-safe';" +
+        "import {sha256File} from '@openclaw/fs-safe/durability';" +
+        "configureFsSafeNative({mode:'require'});" +
+        `try{await sha256File(${JSON.stringify(omittedFixture)});throw new Error('native binding unexpectedly loaded')}` +
+        "catch(error){if(error.code!=='helper-unavailable')throw error;console.log(error.code)}",
+    ],
+    { cwd: omittedOptionalSmoke, encoding: "utf8" },
+  ).trim();
+  console.log(`required mode with --omit=optional: ${omittedProof}`);
+} finally {
+  rmSync(omittedOptionalSmoke, { recursive: true, force: true });
+}
+
 for (const artifact of manifest) {
   console.log(`${artifact.name}: ${artifact.size} bytes gzipped, ${artifact.unpackedSize} bytes unpacked`);
 }

@@ -114,7 +114,8 @@ describe("docs site navigation", () => {
       ["secure-file", "Specialized", "secret-file", "permissions"],
       ["permissions", "Specialized", "secure-file", "regular-file"],
       ["public-api", "Reference", "types", "testing"],
-      ["migrating-to-0.5", "Reference", "test-hooks", "contributing"],
+      ["migrating-to-0.5", "Reference", "test-hooks", "migrating-to-0.6"],
+      ["migrating-to-0.6", "Reference", "migrating-to-0.5", "contributing"],
     ]) {
       const html = readFileSync(path.join(output, `${page}.html`), "utf8");
       expect(html).toContain(`<a class="nav-link active" href="${page}.html">`);

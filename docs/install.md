@@ -93,8 +93,8 @@ the matching binary. Consumers do not run a native build, download code at
 runtime, or execute a postinstall step. Omitting optional dependencies keeps the
 guarded JavaScript fallback but disables native-only features.
 
-Upgrading an existing consumer? Follow [Migrating to 0.5](migrating-to-0.5.md)
-before choosing a native mode or accepting the new archive clamp default.
+Upgrading an existing 0.5 consumer? Follow [Migrating to 0.6](migrating-to-0.6.md)
+before deploying with native mode `require` or native-only features.
 
 ## Native helper policy
 

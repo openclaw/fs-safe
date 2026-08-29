@@ -26,7 +26,7 @@ Full docs and reference at **[fs-safe.io](https://fs-safe.io)**.
 
 ## Contents
 
-[Why this exists](#why-this-exists) · [Not a sandbox](#not-a-sandbox) · [Install](#install) · [0.5 migration](docs/migrating-to-0.5.md) · [Python migration](#migrating-from-the-python-helper) · [Quick start](#quick-start) · [Reading](#reading) · [Subpaths](#subpaths) · [Failure semantics](#failure-semantics-in-the-name) · [Directory durability](#directory-durability) · [Atomic writes](#atomic-writes) · [External outputs](#external-outputs) · [Stores](#stores) · [Secure absolute reads](#secure-absolute-file-reads) · [Walking](#directory-walking) · [Archive extraction](#archive-extraction) · [Path scopes](#advanced-path-scopes) · [Errors](#errors) · [Safety model](#safety-model) · [Limitations](#limitations)
+[Why this exists](#why-this-exists) · [Not a sandbox](#not-a-sandbox) · [Install](#install) · [0.6 migration](docs/migrating-to-0.6.md) · [Python migration](#migrating-from-the-python-helper) · [Quick start](#quick-start) · [Reading](#reading) · [Subpaths](#subpaths) · [Failure semantics](#failure-semantics-in-the-name) · [Directory durability](#directory-durability) · [Atomic writes](#atomic-writes) · [External outputs](#external-outputs) · [Stores](#stores) · [Secure absolute reads](#secure-absolute-file-reads) · [Walking](#directory-walking) · [Archive extraction](#archive-extraction) · [Path scopes](#advanced-path-scopes) · [Errors](#errors) · [Safety model](#safety-model) · [Limitations](#limitations)
 
 ## Why this exists
 

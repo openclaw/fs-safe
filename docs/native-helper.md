@@ -98,3 +98,4 @@ consumer performs its 0.5 upgrade.
 - [File locks](sidecar-lock.md)
 - [Durability](durability.md)
 - [Migrating to 0.5](migrating-to-0.5.md)
+- [Migrating to 0.6](migrating-to-0.6.md)

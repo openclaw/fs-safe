@@ -160,3 +160,4 @@ silently selects the JavaScript fallback in `auto`, throws typed
 - [Durability](durability.md)
 - [Permissions](permissions.md)
 - [Migrating to 0.5](migrating-to-0.5.md)
+- [Migrating to 0.6](migrating-to-0.6.md)

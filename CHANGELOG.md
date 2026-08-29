@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+This will be released as 0.6.0. Native bindings now install through optional
+platform packages; deployments that omit optional dependencies must enable them
+before selecting native mode `require` or using native-only features.
+
 ### Security and Correctness
 
 - Preserve underlying command diagnostics (command, timing, timeout flag, exit code/signal, and sanitized stderr) and cause on Windows ACL `permission-unverified` errors without changing verification semantics.
