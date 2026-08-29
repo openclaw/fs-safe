@@ -26,7 +26,7 @@ Full docs and reference at **[fs-safe.io](https://fs-safe.io)**.
 
 ## Contents
 
-[Why this exists](#why-this-exists) · [Not a sandbox](#not-a-sandbox) · [Install](#install) · [0.5 migration](docs/migrating-to-0.5.md) · [Python migration](#migrating-from-the-python-helper) · [Quick start](#quick-start) · [Reading](#reading) · [Subpaths](#subpaths) · [Failure semantics](#failure-semantics-in-the-name) · [Directory durability](#directory-durability) · [Atomic writes](#atomic-writes) · [External outputs](#external-outputs) · [Stores](#stores) · [Secure absolute reads](#secure-absolute-file-reads) · [Walking](#directory-walking) · [Archive extraction](#archive-extraction) · [Path scopes](#advanced-path-scopes) · [Errors](#errors) · [Safety model](#safety-model) · [Limitations](#limitations)
+[Why this exists](#why-this-exists) · [Not a sandbox](#not-a-sandbox) · [Install](#install) · [0.6 migration](docs/migrating-to-0.6.md) · [Python migration](#migrating-from-the-python-helper) · [Quick start](#quick-start) · [Reading](#reading) · [Subpaths](#subpaths) · [Failure semantics](#failure-semantics-in-the-name) · [Directory durability](#directory-durability) · [Atomic writes](#atomic-writes) · [External outputs](#external-outputs) · [Stores](#stores) · [Secure absolute reads](#secure-absolute-file-reads) · [Walking](#directory-walking) · [Archive extraction](#archive-extraction) · [Path scopes](#advanced-path-scopes) · [Errors](#errors) · [Safety model](#safety-model) · [Limitations](#limitations)
 
 ## Why this exists
 
@@ -57,10 +57,10 @@ This is a **library-level guardrail**, not OS-level isolation. It does not repla
 pnpm add @openclaw/fs-safe
 ```
 
-Node 22 or newer. Core root/path/json/temp helpers avoid framework dependencies. Archive helpers use optional `jszip` and `tar` dependencies for ZIP/TAR support; installs that omit optional dependencies can still use every non-archive subpath.
+Node 22 or newer. Core root/path/json/temp helpers avoid framework dependencies. With all optional dependencies omitted, public subpaths remain safe to import and non-archive fallback-capable operations work in `auto` or `off`. Native-only features remain unavailable, and operations needing the binding in `require` mode fail with `helper-unavailable`. JavaScript ZIP/TAR fallback also needs the optional `jszip`/`tar` codecs. See the [0.6 migration guide](docs/migrating-to-0.6.md).
 
-The package bundles prebuilt native bindings for seven supported targets. They
-supply fd-relative and atomic no-replace primitives that Node does not expose
+The package installs one prebuilt native binding for the current supported target. It
+supplies fd-relative and atomic no-replace primitives that Node does not expose
 directly. Configure the lazy loader before first use when you need a strict
 environment policy:
 
@@ -80,11 +80,11 @@ replace a writable parent between its identity check and Node's pathname
 mutation can redirect that mutation outside the root before the post-check
 reports the escape. Use `require` when hostile concurrent mutation is in scope.
 
-Equivalent env var: `FS_SAFE_NATIVE_MODE=auto|off|require`. All seven binaries
-ship inside `@openclaw/fs-safe`; there are no platform packages, postinstall
-steps, downloads, or consumer Rust builds. This makes the tarball larger than
-a per-platform package, but makes installation deterministic. On a platform
-without a bundled binary, `auto` silently retains lexical and canonical root
+Equivalent env var: `FS_SAFE_NATIVE_MODE=auto|off|require`. The seven bindings
+ship as exact-version optional packages filtered by OS, CPU, and Linux libc, so
+a normal install receives only its matching binary. There are no postinstall
+steps, runtime downloads, or consumer Rust builds. On a platform without a
+published binding, or when optional dependencies are omitted, `auto` silently retains lexical and canonical root
 checks, no-follow opens, guarded temp+rename writes, and post-write identity
 verification. See the [native
 helper policy](docs/native-helper.md) for the exact boundary and deployment
@@ -97,7 +97,7 @@ and guarded JavaScript results are best-effort. See the [security model](docs/se
 
 ## Migrating from the Python helper
 
-Version 0.5 replaces the persistent Python worker with bundled prebuilt native
+Version 0.5 replaces the persistent Python worker with prebuilt native
 bindings. The modes map directly: `configureFsSafePython({ mode: "auto" })`
 becomes `configureFsSafeNative({ mode: "auto" })`, and likewise for `off` and
 `require`. Replace `FS_SAFE_PYTHON_MODE` with `FS_SAFE_NATIVE_MODE`; remove

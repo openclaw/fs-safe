@@ -342,7 +342,8 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
   if (kind === "tar-zstd" || kind === "tar-bzip2") {
     throw new FsSafeError(
       "helper-unavailable",
-      `${kind} archives require a supported bundled native binding`,
+      `${kind} archives require the matching optional native platform package; ` +
+        "install @openclaw/fs-safe with optional dependencies enabled on a supported platform and use FS_SAFE_NATIVE_MODE=auto or require",
     );
   }
   if (kind === "tar") {

@@ -1,0 +1,29 @@
+{
+  "name": "@openclaw/fs-safe-darwin-x64",
+  "version": "0.6.0",
+  "description": "macOS x64 native binding for @openclaw/fs-safe.",
+  "license": "MIT",
+  "author": "OpenClaw Team <dev@openclaw.ai>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/openclaw/fs-safe.git",
+    "directory": "packages/darwin-x64"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "fs-safe-native.node",
+  "files": [
+    "fs-safe-native.node"
+  ],
+  "engines": {
+    "node": ">=22"
+  }
+}

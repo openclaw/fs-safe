@@ -85,19 +85,27 @@ Use the main entry for the common surface, or the focused subpaths when you want
 
 ## Runtime dependencies
 
-`@openclaw/fs-safe` lists `jszip` and `tar` as optional dependencies for [archive extraction](archive.md). They are loaded lazily and only required when ZIP/TAR helpers run. Installs that omit optional dependencies can still import and use every non-archive subpath; archive calls fail with a clear missing-optional-dependency message.
+`@openclaw/fs-safe` lists `jszip` and `tar` as optional dependencies for JavaScript ZIP/TAR [archive extraction](archive.md). They are loaded lazily; the JavaScript archive fallback requires the corresponding codec and reports a missing-optional-dependency error without it. Public subpaths remain safe to import with all optional dependencies omitted, but imports do not prove native availability.
 
-There are no peer dependencies. The single npm package bundles all seven native binaries, so consumers do not run a native build, download platform code, or execute a postinstall step. Shipping every target increases the tarball size compared with per-platform packages, intentionally trading bandwidth for deterministic installation.
+There are no peer dependencies. Exact-version optional packages carry the seven
+native targets and npm-compatible OS, CPU, and Linux libc filters install only
+the matching binary. Consumers do not run a native build, download code at
+runtime, or execute a postinstall step. Omitting optional dependencies keeps
+non-archive fallback-capable operations working in `auto` or `off`. Native-only
+features, including retained-directory staging, atomic `rename-noreplace`,
+zstd/bzip2 TAR handling, and Windows private-directory creation, remain
+unavailable. Operations needing the binding in `require` mode fail with
+`helper-unavailable` when the matching package is absent or incompatible.
 
-Upgrading an existing consumer? Follow [Migrating to 0.5](migrating-to-0.5.md)
-before choosing a native mode or accepting the new archive clamp default.
+Upgrading an existing 0.5 consumer? Follow [Migrating to 0.6](migrating-to-0.6.md)
+before deploying with native mode `require` or native-only features.
 
 ## Native helper policy
 
-The bundled native binaries provide fd-relative open/link/mkdir primitives,
+The platform native binaries provide fd-relative open/link/mkdir primitives,
 atomic no-replace rename, and file identity checks. The default is `auto`: use
 the matching binary when it loads, otherwise silently keep the guarded
-JavaScript path. Platforms without one of the seven bundled targets therefore
+JavaScript path. Platforms without one of the seven published targets therefore
 continue through the documented fallback in `auto` mode.
 
 ```ts
@@ -116,7 +124,7 @@ FS_SAFE_NATIVE_MODE=off      # auto | off | require
 
 `OPENCLAW_FS_SAFE_NATIVE_MODE` is also accepted.
 
-Disabling native loading keeps the public API working through Node path
+Disabling native loading keeps fallback-capable operations working through Node path
 operations guarded by lexical and canonical checks plus identity verification.
 Use `require` when native-backed operations must fail instead of falling back.
 The exact boundary is documented in [native helper policy](native-helper.md).

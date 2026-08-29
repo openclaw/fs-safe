@@ -39,6 +39,7 @@ await fs.remove("notes/archive/today.txt");
 
 - **First time?** [Install](install.md), then walk through the [Quickstart](quickstart.md). Five minutes from `pnpm add` to a working root.
 - **Upgrading from 0.4?** Follow [Migrating to 0.5](migrating-to-0.5.md) in order, including the archive clamp-default audit.
+- **Upgrading from 0.5?** Follow [Migrating to 0.6](migrating-to-0.6.md) to adopt platform-native optional packages.
 - **Designing a workspace feature.** Read the [Security model](security-model.md) before you trust the boundary, the [native helper policy](native-helper.md) before you pick deployment defaults, and the [Errors](errors.md) reference so you know what to catch.
 - **Replacing ad-hoc atomic writes.** Jump to [Atomic writes](atomic.md) or, for keyed JSON state, [JSON files](json.md).
 - **Extracting an upload.** Start at [Archive extraction](archive.md) — handles ZIP and TAR with traversal, link, count, and byte limits.
@@ -51,7 +52,7 @@ await fs.remove("notes/archive/today.txt");
 |---|---|
 | [`root()`](root.md) | One boundary for read/write/move/remove and bounded recursive walking inside a trusted directory. |
 | [`@openclaw/fs-safe/config`](config.md) | Process-global native helper and lock-option defaults. |
-| [Native helper policy](native-helper.md) | Choose `auto`, `off`, or `require` for bundled native primitives. |
+| [Native helper policy](native-helper.md) | Choose `auto`, `off`, or `require` for platform-native primitives. |
 | [Native architecture](native.md) | Understand the thin syscall layer, beneath model, platform mechanisms, and fallback boundary. |
 | [`replaceFileAtomic`](atomic.md) | Sibling-temp + rename, fsync hooks, mode preservation, copy fallback. |
 | [`@openclaw/fs-safe/durability`](durability.md) | Pinned directory identities, durable creation, exclusive publication, streaming SHA-256, provenance receipts, and sync-failure policy. |
@@ -74,6 +75,7 @@ await fs.remove("notes/archive/today.txt");
 | [`@openclaw/fs-safe/advanced`](advanced.md) | Directory of lower-level composition helpers (path scopes, regular-file I/O, install paths, sibling-temp writes, …). |
 | [`@openclaw/fs-safe/test-hooks`](test-hooks.md) | Test-only injection hooks for reproducing open/lstat races. |
 | [Migrating to 0.5](migrating-to-0.5.md) | End-to-end checklist for Python removal and 0.4 API behavior changes. |
+| [Migrating to 0.6](migrating-to-0.6.md) | Installer-policy checklist for the platform-native package split. |
 
 ## Status
 

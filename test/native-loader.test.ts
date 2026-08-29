@@ -155,7 +155,7 @@ describe("native helper configuration", () => {
   });
 });
 
-describe("bundled native loader", () => {
+describe("platform native loader", () => {
   let hostBinding: NativeBinding | undefined;
   try {
     hostBinding = __loadBundledNativeForTest();
@@ -163,12 +163,12 @@ describe("bundled native loader", () => {
     // Ordinary JavaScript-only jobs intentionally run without a built binding.
   }
 
-  it.runIf(Boolean(hostBinding))("loads the bundled binary for the host target", () => {
+  it.runIf(Boolean(hostBinding))("loads the platform binary for the host target", () => {
     expect(hostBinding?.openBeneath).toBeTypeOf("function");
     expect(hostBinding?.sha256File).toBeTypeOf("function");
   });
 
-  it("maps every bundled target without probing the host", () => {
+  it("maps every platform target without probing the host", () => {
     expect(__nativeTargetForTest("linux", "x64")).toBe("linux-x64-gnu");
     expect(__nativeTargetForTest("linux", "x64", true)).toBe("linux-x64-musl");
     expect(__nativeTargetForTest("linux", "arm64")).toBe("linux-arm64-gnu");
@@ -197,7 +197,7 @@ describe("bundled native loader", () => {
     expect(loader).not.toMatch(/(?:child_process|execSync|execFileSync|spawnSync|\bspawn\s*\()/);
     expect(loader).toContain("isMuslFromElfInterpreter");
     expect(loader).toContain("Unknown Linux libc: try the glibc binary");
-    expect(loader).toContain('"fs-safe-native.node"');
-    expect(loader).not.toContain("@openclaw/fs-safe-native");
+    expect(loader).toContain("@openclaw/fs-safe-");
+    expect(loader).not.toContain("dist/native");
   });
 });

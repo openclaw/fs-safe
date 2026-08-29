@@ -5,8 +5,6 @@ import {
   readdirSync,
 } from "node:fs";
 import { createRequire } from "node:module";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { FsSafeError } from "./errors.js";
 import type { NativeBinding } from "./native-binding.js";
 import { getFsSafeNativeConfig } from "./native-config.js";
@@ -14,7 +12,6 @@ import { getFsSafeNativeConfig } from "./native-config.js";
 export type { NativeBinding } from "./native-binding.js";
 
 const require = createRequire(import.meta.url);
-const bundledNativeDirectory = fileURLToPath(new URL("../dist/native/", import.meta.url));
 let binding: NativeBinding | undefined;
 let loadError: unknown;
 let attempted = false;
@@ -166,12 +163,16 @@ function bundledTarget(): string | undefined {
   return targetFor(process.platform, process.arch, isMusl());
 }
 
+function nativePackageForTarget(target: string): string {
+  return `@openclaw/fs-safe-${target}`;
+}
+
 function loadBundledBinding(): NativeBinding {
   const target = bundledTarget();
   if (!target) {
     throw new Error(`Unsupported OS or architecture: ${process.platform}-${process.arch}`);
   }
-  return require(join(bundledNativeDirectory, target, "fs-safe-native.node")) as NativeBinding;
+  return require(nativePackageForTarget(target)) as NativeBinding;
 }
 
 export function __loadBundledNativeForTest(): NativeBinding {

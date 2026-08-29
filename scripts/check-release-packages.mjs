@@ -5,23 +5,25 @@ import {
   mkdirSync,
   readFileSync,
   realpathSync,
-  renameSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { hostNativeTarget, nativeTargets } from "./native-targets.mjs";
+import { fileURLToPath } from "node:url";
+import { hostNativeTarget, nativePackageDirectory, nativeTargets } from "./native-targets.mjs";
+import { normalizePackResult } from "./npm-pack-result.mjs";
+import { consumerInstallSmoke, isolatedConsumerEnv, resolvePnpmCli } from "./consumer-install-smoke.mjs";
 
+const pnpmCli = resolvePnpmCli();
 const outputIndex = process.argv.indexOf("--output");
 const outputDir = resolve(outputIndex >= 0 ? process.argv[outputIndex + 1] : "release-artifacts");
 const allowHostOnly = process.argv.includes("--allow-host-only");
 mkdirSync(outputDir, { recursive: true });
 const npmCli = resolveNpmCli();
-const npmEnv = Object.fromEntries(
-  Object.entries(process.env).filter(([key]) => !key.toLowerCase().startsWith("npm_config_")),
-);
+const packingConfig = mkdtempSync(join(tmpdir(), "fs-safe-pack-config-"));
+const npmEnv = isolatedConsumerEnv(packingConfig);
 
 function resolveNpmCli() {
   const candidates = [
@@ -45,149 +47,108 @@ function resolveNpmCli() {
 
 function runNpm(args, options) {
   return execFileSync(process.execPath, [npmCli, ...args], {
-    ...options,
-    env: npmEnv,
+    ...options, env: npmEnv, timeout: 120_000, killSignal: "SIGKILL",
   });
 }
 
-const pkg = JSON.parse(readFileSync("package.json", "utf8"));
-if (pkg.name !== "@openclaw/fs-safe") throw new Error(`unexpected package name ${pkg.name}`);
-if (pkg.author !== "OpenClaw Team <dev@openclaw.ai>") {
-  throw new Error("root package has unexpected author metadata");
-}
-if (pkg.publishConfig?.access !== "public" || pkg.publishConfig?.provenance !== true) {
-  throw new Error("root package must publish publicly with provenance");
-}
-if (pkg.optionalDependencies?.["@openclaw/fs-safe-native"]) {
-  throw new Error("root package must not depend on the retired native loader package");
+function readPackage(directory = ".") {
+  return JSON.parse(readFileSync(join(directory, "package.json"), "utf8"));
 }
 
-const expectedTargets = allowHostOnly ? [hostNativeTarget()].filter(Boolean) : nativeTargets;
-if (expectedTargets.length === 0) {
-  throw new Error(`no bundled native target for ${process.platform}-${process.arch}`);
-}
-for (const target of expectedTargets) {
-  const binary = join("dist", "native", target.label, "fs-safe-native.node");
-  if (!existsSync(binary) || statSync(binary).size === 0) {
-    throw new Error(`missing or empty bundled binary ${binary}`);
-  }
-}
-
-const packed = JSON.parse(
-  runNpm(
+function packPackage(directory, expectedName) {
+  const output = runNpm(
     ["pack", "--json", "--ignore-scripts", "--pack-destination", outputDir],
-    { encoding: "utf8" },
-  ),
-);
-const [artifact] = packed;
-if (!artifact?.filename || !artifact?.integrity || artifact.version !== pkg.version) {
-  throw new Error("npm pack returned incomplete root-package metadata");
-}
-const paths = new Set(artifact.files.map((file) => file.path));
-for (const expected of ["dist/index.js", "dist/index.d.ts", "package.json"]) {
-  if (!paths.has(expected)) throw new Error(`packed root package is missing ${expected}`);
-}
-for (const target of expectedTargets) {
-  const binary = `dist/native/${target.label}/fs-safe-native.node`;
-  if (!paths.has(binary)) throw new Error(`packed root package is missing ${binary}`);
-}
-if (!allowHostOnly) {
-  const packedNativePaths = [...paths].filter((path) => path.endsWith("/fs-safe-native.node"));
-  if (packedNativePaths.length !== nativeTargets.length) {
-    throw new Error(`packed root package has ${packedNativePaths.length} native binaries, expected 7`);
+    { cwd: directory, encoding: "utf8" },
+  );
+  const parsed = JSON.parse(output);
+  const normalized = normalizePackResult(parsed, expectedName);
+  const entry = Array.isArray(parsed) ? parsed[0] : parsed[expectedName];
+  const artifact = { ...entry, ...normalized };
+  if (!artifact.filename || !artifact.integrity) {
+    throw new Error(`npm pack returned incomplete metadata for ${expectedName}`);
   }
+  return artifact;
 }
 
-const manifest = [
-  {
+function manifestEntry(pkg, artifact) {
+  return {
     name: pkg.name,
     version: pkg.version,
     filename: artifact.filename,
     integrity: artifact.integrity,
     size: artifact.size,
     unpackedSize: artifact.unpackedSize,
-  },
-];
-writeFileSync(join(outputDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
-
-const smoke = mkdtempSync(join(tmpdir(), "fs-safe-release-smoke-"));
-try {
-  writeFileSync(join(smoke, "package.json"), '{"private":true,"type":"module"}\n');
-  runNpm(
-    [
-      "install",
-      "--ignore-scripts",
-      "--no-audit",
-      "--no-fund",
-      "--no-package-lock",
-      join(outputDir, artifact.filename),
-    ],
-    { cwd: smoke, stdio: "pipe" },
-  );
-  execFileSync(
-    process.execPath,
-    [
-      "--input-type=module",
-      "--eval",
-      "await import('@openclaw/fs-safe'); await import('@openclaw/fs-safe/config');",
-    ],
-    { cwd: smoke, stdio: "pipe" },
-  );
-
-  const fixture = join(smoke, "fixture.txt");
-  writeFileSync(fixture, "abc");
-  const nativeProof = execFileSync(
-    process.execPath,
-    [
-      "--input-type=module",
-      "--eval",
-      "import {configureFsSafeNative} from '@openclaw/fs-safe';" +
-        "import {sha256File} from '@openclaw/fs-safe/durability';" +
-        "configureFsSafeNative({mode:'require'});" +
-        `const result=await sha256File(${JSON.stringify(fixture)});` +
-        "if(result.digest!=='ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')throw new Error('native hash mismatch');" +
-        "console.log(JSON.stringify(result));",
-    ],
-    { cwd: smoke, encoding: "utf8" },
-  ).trim();
-
-  const installedNative = join(smoke, "node_modules", "@openclaw", "fs-safe", "dist", "native");
-  const hiddenNative = `${installedNative}.removed`;
-  renameSync(installedNative, hiddenNative);
-  const fallbackProof = execFileSync(
-    process.execPath,
-    [
-      "--input-type=module",
-      "--eval",
-      "import {configureFsSafeNative} from '@openclaw/fs-safe';" +
-        "import {sha256File} from '@openclaw/fs-safe/durability';" +
-        "configureFsSafeNative({mode:'auto'});" +
-        `const result=await sha256File(${JSON.stringify(fixture)});` +
-        "if(result.digest!=='ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')throw new Error('fallback hash mismatch');" +
-        "console.log(JSON.stringify(result));",
-    ],
-    { cwd: smoke, encoding: "utf8" },
-  ).trim();
-  const requiredProof = execFileSync(
-    process.execPath,
-    [
-      "--input-type=module",
-      "--eval",
-      "import {configureFsSafeNative} from '@openclaw/fs-safe';" +
-        "import {sha256File} from '@openclaw/fs-safe/durability';" +
-        "configureFsSafeNative({mode:'require'});" +
-        `try{await sha256File(${JSON.stringify(fixture)});throw new Error('native binding unexpectedly loaded')}` +
-        "catch(error){if(error.code!=='helper-unavailable')throw error;console.log(error.code)}",
-    ],
-    { cwd: smoke, encoding: "utf8" },
-  ).trim();
-  console.log(`native binding: ${nativeProof}`);
-  console.log(`auto fallback without bundled directory: ${fallbackProof}`);
-  console.log(`required mode without bundled directory: ${requiredProof}`);
-} finally {
-  rmSync(smoke, { recursive: true, force: true });
+  };
 }
 
-console.log(`packed tarball: ${artifact.filename}`);
-console.log(`gzipped size: ${artifact.size} bytes`);
-console.log(`unpacked size: ${artifact.unpackedSize} bytes`);
+async function main() {
+  const rootPkg = readPackage();
+  if (rootPkg.name !== "@openclaw/fs-safe") throw new Error(`unexpected package name ${rootPkg.name}`);
+  if (rootPkg.author !== "OpenClaw Team <dev@openclaw.ai>") {
+    throw new Error("root package has unexpected author metadata");
+  }
+  if (rootPkg.publishConfig?.access !== "public" || rootPkg.publishConfig?.provenance !== true) {
+    throw new Error("root package must publish publicly with provenance");
+  }
+
+  const targets = allowHostOnly ? [hostNativeTarget()].filter(Boolean) : nativeTargets;
+  if (targets.length === 0) throw new Error(`no native target for ${process.platform}-${process.arch}`);
+
+  const manifest = [];
+  for (const target of targets) {
+    const directory = fileURLToPath(nativePackageDirectory(target));
+    const pkg = readPackage(directory);
+    const binary = join(directory, "fs-safe-native.node");
+    if (!existsSync(binary) || statSync(binary).size === 0) {
+      throw new Error(`missing or empty native package binary ${binary}`);
+    }
+    if (
+      pkg.name !== target.package ||
+      pkg.version !== rootPkg.version ||
+      pkg.main !== "fs-safe-native.node" ||
+      pkg.os?.[0] !== target.os ||
+      pkg.cpu?.[0] !== target.cpu ||
+      (target.libc && pkg.libc?.[0] !== target.libc) ||
+      pkg.publishConfig?.access !== "public" ||
+      pkg.publishConfig?.provenance !== true
+    ) {
+      throw new Error(`${target.package} metadata does not match its native target`);
+    }
+    if (rootPkg.optionalDependencies?.[target.package] !== rootPkg.version) {
+      throw new Error(`root package must pin ${target.package}@${rootPkg.version}`);
+    }
+    const artifact = packPackage(directory, pkg.name);
+    const paths = new Set(artifact.files.map((file) => file.path));
+    if (!paths.has("fs-safe-native.node") || !paths.has("package.json") || paths.size !== 2) {
+      throw new Error(`${pkg.name} must contain only package.json and fs-safe-native.node`);
+    }
+    manifest.push(manifestEntry(pkg, artifact));
+  }
+
+  const rootArtifact = packPackage(process.cwd(), rootPkg.name);
+  const rootPaths = new Set(rootArtifact.files.map((file) => file.path));
+  for (const expected of ["dist/index.js", "dist/index.d.ts", "package.json"]) {
+    if (!rootPaths.has(expected)) throw new Error(`packed root package is missing ${expected}`);
+  }
+  if ([...rootPaths].some((path) => path.endsWith(".node"))) {
+    throw new Error("packed root package must not contain native binaries");
+  }
+  manifest.push(manifestEntry(rootPkg, rootArtifact));
+  writeFileSync(join(outputDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+
+  const host = hostNativeTarget();
+  if (!host || !targets.some((target) => target.label === host.label)) {
+    throw new Error(`release smoke requires the host target ${host?.label ?? "unknown"}`);
+  }
+  await consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCli, pnpmCli, allowHostOnly });
+
+  for (const artifact of manifest) {
+    console.log(`${artifact.name}: ${artifact.size} bytes gzipped, ${artifact.unpackedSize} bytes unpacked`);
+  }
+}
+
+try {
+  await main();
+} finally {
+  rmSync(packingConfig, { recursive: true, force: true });
+}

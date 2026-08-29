@@ -16,8 +16,8 @@ function requireNativeArchiveKind(kind: "tar-bzip2" | "tar-zstd"): ArchiveKind {
   if (!getNativeBinding()) {
     throw new FsSafeError(
       "helper-unavailable",
-      `${kind} archives require a supported bundled native binding; ` +
-        "use FS_SAFE_NATIVE_MODE=auto or require on a supported platform",
+      `${kind} archives require the matching optional native platform package; ` +
+        "install @openclaw/fs-safe with optional dependencies enabled on a supported platform and use FS_SAFE_NATIVE_MODE=auto or require",
     );
   }
   return kind;

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+This will be released as 0.6.0. Native bindings now install through optional
+platform packages; deployments that omit optional dependencies must enable them
+before selecting native mode `require` or using native-only features.
+
 ### Security and Correctness
 
 - Verify pathname SHA-256 hashing with lossless pre-open, descriptor, and current-path identities; fail closed on unknown Windows identities after one bounded retry without reopening the file.
@@ -20,6 +24,7 @@
 
 ### Docs and Tooling
 
+- Publish native bindings as platform-filtered optional packages and load only the matching package, avoiding installation of binaries for six unrelated targets; verify root-only npm/pnpm resolution and document omitted-optionals limits and native-only recovery guidance. Thanks @RomneyDa.
 - Raise the Crabbox AWS root volume to 400 GiB to meet the runner image's snapshot minimum and avoid allocation failures before checks run.
 - Restore six missing documentation navigation entries, remove the dangling page, correct the lock-config link, and reject missing, nonexistent, or duplicate registrations before replacing site output. Thanks @Yigtwxx.
 - Fix the standalone native smoke script to use the numeric descriptor returned by `openBeneath()` for identity checks and cleanup.

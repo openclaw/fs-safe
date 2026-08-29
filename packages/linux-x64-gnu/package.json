@@ -1,0 +1,32 @@
+{
+  "name": "@openclaw/fs-safe-linux-x64-gnu",
+  "version": "0.6.0",
+  "description": "Linux x64 glibc native binding for @openclaw/fs-safe.",
+  "license": "MIT",
+  "author": "OpenClaw Team <dev@openclaw.ai>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/openclaw/fs-safe.git",
+    "directory": "packages/linux-x64-gnu"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "libc": [
+    "glibc"
+  ],
+  "main": "fs-safe-native.node",
+  "files": [
+    "fs-safe-native.node"
+  ],
+  "engines": {
+    "node": ">=22"
+  }
+}
