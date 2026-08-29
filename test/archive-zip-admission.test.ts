@@ -96,5 +96,14 @@ for (const mode of ["off", "require", "auto-native", "auto-missing"] as const) {
       expect(await fs.readFile(path.join(input.destDir, "é"), "utf8")).toBe("payload");
       expect((await readArchiveEntry(input.archivePath, "é", { maxBytes: 32 })).toString()).toBe("payload");
     });
+    it("preserves the selected decoder's supported optional end framing", async () => {
+      const nativeMode = mode === "require" || mode === "auto-native";
+      const input = await fixture(zipRecords([{ name: "good", zip64: nativeMode }], nativeMode
+        ? { zip64: true, zip64ExtensibleData: Buffer.from([1, 0, 0, 0, 0, 0]) }
+        : { directorySignature: Buffer.from("signature") }));
+      await extractArchive({ ...input, kind: "zip" });
+      expect(await fs.readFile(path.join(input.destDir, "good"), "utf8")).toBe("payload");
+      expect((await readArchiveEntry(input.archivePath, "good", { maxBytes: 32 })).toString()).toBe("payload");
+    });
   });
 }

@@ -28,6 +28,25 @@ function endOffset(tail: Buffer): number {
   return found;
 }
 
+function* zip64End(locator: Buffer, locatorAt: number, size: number): Generator<ZipRead, { at: number; record: Buffer }, Buffer> {
+  const advertised = zipUInt64(locator, 8);
+  // Seek the advertised record, or the fixed ordinary record for a prefixed
+  // archive. Never hunt through payload bytes for a ZIP64 signature.
+  const candidates = new Set([advertised, locatorAt - 56]);
+  let found: { at: number; record: Buffer } | undefined;
+  for (const at of candidates) {
+    if (at < 0 || at > locatorAt - 56) continue;
+    const record = yield* read(at, 56, size);
+    if (record.readUInt32LE(0) !== 0x06064b50) continue;
+    const bodySize = zipUInt64(record, 4);
+    if (bodySize < 44 || bodySize !== locatorAt - at - 12) continue;
+    if (found) zipFormat("ambiguous ZIP64 end records");
+    found = { at, record };
+  }
+  if (!found) zipFormat("unsupported ZIP64 end record");
+  return found;
+}
+
 function* layout(size: number): Generator<ZipRead, { count: number; start: number; end: number; base: number }, Buffer> {
   const tailStart = Math.max(0, size - 65_557);
   const tail = yield* read(tailStart, size - tailStart, size);
@@ -45,13 +64,10 @@ function* layout(size: number): Generator<ZipRead, { count: number; start: numbe
     if (locator.readUInt32LE(0) !== 0x07064b50 || locator.readUInt32LE(4) || locator.readUInt32LE(16) !== 1) {
       zipFormat("invalid ZIP64 locator");
     }
-    // Ordinary ZIP64 has a fixed 44-byte body. Do not hunt through payloads for
-    // a signature or accept extensible sectors the fallback decoder cannot handle.
-    directoryEnd = physicalEnd - 76;
-    const record = yield* read(directoryEnd, 56, size);
-    if (record.readUInt32LE(0) !== 0x06064b50 || zipUInt64(record, 4) !== 44 || record.readUInt32LE(16) || record.readUInt32LE(20)) {
-      zipFormat("unsupported ZIP64 end record");
-    }
+    const wideEnd = yield* zip64End(locator, physicalEnd - 20, size);
+    directoryEnd = wideEnd.at;
+    const record = wideEnd.record;
+    if (record.readUInt32LE(16) || record.readUInt32LE(20)) zipFormat("multi-disk ZIP64 archive");
     count = zipUInt64(record, 32);
     directorySize = zipUInt64(record, 40);
     offset = zipUInt64(record, 48);
@@ -128,9 +144,16 @@ export function* scanZipDirectory(size: number, limits: ResolvedArchiveExtractLi
   let at = directory.start;
   let count = 0;
   while (at < directory.end) {
+    const central = yield* read(at, Math.min(46, directory.end - at), directory.end);
+    if (central.length >= 6 && central.readUInt32LE(0) === 0x05054b50) {
+      // The optional digital signature belongs to the directory size, not its
+      // entry count. It is opaque metadata, not an authenticity guarantee.
+      if (central.readUInt16LE(4) !== directory.end - at - 6) zipFormat("invalid directory signature length");
+      at = directory.end;
+      break;
+    }
     assertArchiveEntryCountWithinLimit(++count, limits);
-    const central = yield* read(at, 46, directory.end);
-    if (central.readUInt32LE(0) !== 0x02014b50) zipFormat("invalid central header");
+    if (central.length < 46 || central.readUInt32LE(0) !== 0x02014b50) zipFormat("invalid central header");
     const nameLength = central.readUInt16LE(28);
     const extraLength = central.readUInt16LE(30);
     const next = at + 46 + nameLength + extraLength + central.readUInt16LE(32);

@@ -42,6 +42,17 @@ describe("ZIP metadata framing and encoding", () => {
       expect(Object.keys((await loadZipArchiveWithPreflight(bytes)).files)).toEqual(["first", "second"]);
     }
   });
+  it("bounds optional directory signatures and ZIP64 extensible records", () => {
+    const signed = zipRecords([{ name: "good" }], { directorySignature: Buffer.from("signature") });
+    expect(admit(signed)).toBe(1);
+    const signatureAt = signed.length - 22 - 15;
+    signed.writeUInt16LE(10, signatureAt + 4);
+    malformed(signed);
+    const wide = zipRecords([{ name: "good", zip64: true }], { zip64: true, zip64ExtensibleData: Buffer.from([1, 0, 0, 0, 0, 0]) });
+    expect(admit(wide)).toBe(1);
+    wide.writeBigUInt64LE(49n, wide.length - 100);
+    malformed(wide);
+  });
   it.each(["crc", "version", "short", "utf8", "duplicate", "local-only"])("rejects invalid Unicode metadata: %s", (variant) => {
     let extra = Buffer.from(unicode); let localExtra: Buffer | undefined;
     if (variant === "crc") extra[5] ^= 1;

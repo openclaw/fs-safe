@@ -37,6 +37,7 @@ export type ZipRecord = {
 
 export function zipRecords(entries: ZipRecord[], options: {
   prefix?: Buffer; comment?: Buffer; zip64?: boolean; declaredCount?: number;
+  directorySignature?: Buffer; zip64ExtensibleData?: Buffer;
 } = {}): Buffer {
   const localParts: Buffer[] = []; const centralParts: Buffer[] = [];
   let offset = 0;
@@ -80,6 +81,11 @@ export function zipRecords(entries: ZipRecord[], options: {
     centralParts.push(central, name, extra);
     offset += local.length + localName.length + localExtra.length + compressed.length + descriptor.length;
   }
+  if (options.directorySignature) {
+    const header = Buffer.alloc(6); header.writeUInt32LE(0x05054b50);
+    header.writeUInt16LE(options.directorySignature.length, 4);
+    centralParts.push(header, options.directorySignature);
+  }
   const directory = Buffer.concat(centralParts); const count = options.declaredCount ?? entries.length;
   const comment = options.comment ?? Buffer.alloc(0);
   const end = Buffer.alloc(22); end.writeUInt32LE(0x06054b50);
@@ -94,6 +100,10 @@ export function zipRecords(entries: ZipRecord[], options: {
     wideEnd.writeBigUInt64LE(BigInt(directory.length), 40); wideEnd.writeBigUInt64LE(BigInt(offset), 48);
     wideEnd.writeUInt32LE(0x07064b50, 56); wideEnd.writeBigUInt64LE(BigInt(offset + directory.length), 64);
     wideEnd.writeUInt32LE(1, 72);
+    if (options.zip64ExtensibleData) {
+      wideEnd.writeBigUInt64LE(44n + BigInt(options.zip64ExtensibleData.length), 4);
+      wideEnd = Buffer.concat([wideEnd.subarray(0, 56), options.zip64ExtensibleData, wideEnd.subarray(56)]);
+    }
   }
   return Buffer.concat([options.prefix ?? Buffer.alloc(0), ...localParts, directory, wideEnd, end, comment]);
 }
