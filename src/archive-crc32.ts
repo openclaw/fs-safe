@@ -13,4 +13,3 @@ export function updateCrc32(previous: number, buffer: Buffer): number {
   }
   return (crc ^ -1) >>> 0;
 }
-

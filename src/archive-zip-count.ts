@@ -181,4 +181,3 @@ export function readZipCentralDirectoryEntryCount(buffer: Buffer | Uint8Array): 
     ? info.declaredEntryCount
     : Math.max(info.declaredEntryCount, countedEntryCount);
 }
-
