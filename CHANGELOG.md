@@ -8,6 +8,7 @@ before selecting native mode `require` or using native-only features.
 
 ### Security and Correctness
 
+- Verify pathname SHA-256 hashing with lossless pre-open, descriptor, and current-path identities; fail closed on unknown Windows identities after one bounded retry without reopening the file.
 - Preserve underlying command diagnostics (command, timing, timeout flag, exit code/signal, and sanitized stderr) and cause on Windows ACL `permission-unverified` errors without changing verification semantics.
 - Verify secure and secret read identities with lossless bigint stats, reject replaced paths and retargeted aliases, and fail closed on unknown Windows identities after one bounded re-inspection; preserve the secure reader's numeric `Stats` receipt and permission options without letting them bypass identity checks.
 - Apply the same exact identity checks to guarded root reads, rejecting parent-directory replacements even when distinct Windows file IDs round to the same number; retain numeric read receipts and keep Windows write reopens anchored to the writer's exact retained identity.
@@ -24,6 +25,7 @@ before selecting native mode `require` or using native-only features.
 ### Docs and Tooling
 
 - Publish native bindings as platform-filtered optional packages and load only the matching package, avoiding installation of binaries for six unrelated targets; verify root-only npm/pnpm resolution and document omitted-optionals limits and native-only recovery guidance. Thanks @RomneyDa.
+- Raise the Crabbox AWS root volume to 400 GiB to meet the runner image's snapshot minimum and avoid allocation failures before checks run.
 - Restore six missing documentation navigation entries, remove the dangling page, correct the lock-config link, and reject missing, nonexistent, or duplicate registrations before replacing site output. Thanks @Yigtwxx.
 - Fix the standalone native smoke script to use the numeric descriptor returned by `openBeneath()` for identity checks and cleanup.
 - Accept npm 11 array and npm 12 package-name-keyed pack results while validating the intended package and its file metadata.

@@ -24,7 +24,8 @@ actions:
   ephemeral: true
 aws:
   region: eu-west-1
-  rootGB: 160
+  # Keep this at least as large as the configured AWS image's root snapshot.
+  rootGB: 400
 sync:
   delete: true
   checksum: false
