@@ -228,7 +228,7 @@ jobs:
         run: node scripts/assemble-native-binaries.mjs --source artifacts
 
       - name: Pack and smoke test all packages
-        run: node scripts/check-release-packages.mjs --output release-artifacts
+        run: pnpm package:collect
 
       - name: Upload release package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

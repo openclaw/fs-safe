@@ -13,7 +13,7 @@ export async function createPrivateDirectory(
   if (platform !== "win32") {
     throw new FsSafeError(
       "helper-unavailable",
-      "private-directory creation is available only on Windows through the bundled native binding",
+      "private-directory creation is supported only on Windows",
     );
   }
 
@@ -21,7 +21,8 @@ export async function createPrivateDirectory(
   if (!native) {
     throw new FsSafeError(
       "helper-unavailable",
-      "private Windows directory creation requires the bundled native binding",
+      "private Windows directory creation requires the matching optional native platform package; " +
+        "install @openclaw/fs-safe with optional dependencies enabled on a supported platform and use FS_SAFE_NATIVE_MODE=auto or require",
     );
   }
   native.createPrivateDirectory(targetPath);

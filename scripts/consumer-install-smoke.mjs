@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { execFile, execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 import { consumerFixtureArtifacts } from "./consumer-fixture-artifacts.mjs";
 import { startConsumerRegistry } from "./consumer-registry.mjs";
@@ -41,11 +41,11 @@ async function run(cli, args, cwd, env) {
   return stdout.trim();
 }
 
-function pnpmCli() {
-  if (process.env.npm_execpath && /pnpm\.(?:c?js|mjs)$/.test(process.env.npm_execpath)) return process.env.npm_execpath;
-  const command = process.platform === "win32" ? "where.exe" : "which";
-  const found = execFileSync(command, ["pnpm"], { encoding: "utf8", timeout: 10_000 }).trim().split(/\r?\n/)[0];
-  return realpathSync(found);
+export function resolvePnpmCli(cli = process.env.npm_execpath) {
+  const resolved = cli && isAbsolute(cli) && statSync(cli, { throwIfNoEntry: false })?.isFile()
+    ? realpathSync(cli) : undefined;
+  if (resolved && /^pnpm\.(?:c?js|mjs)$/.test(basename(resolved))) return resolved;
+  throw new Error("package collection requires a pnpm lifecycle CLI; run pnpm package:collect or pnpm package:smoke");
 }
 
 const hashScript = `
@@ -63,7 +63,7 @@ const hashScript = `
   }
 `;
 
-export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCli, allowHostOnly }) {
+export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCli, pnpmCli, allowHostOnly }) {
   const temporary = mkdtempSync(join(tmpdir(), "fs-safe-consumer-proof-"));
   let server;
   try {
@@ -95,7 +95,7 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
       root: manifest.find((artifact) => artifact.name === rootPkg.name),
       syntheticForeignPackages: synthetic, managers: [],
     };
-    for (const [manager, cli] of [["npm", npmCli], ["pnpm", pnpmCli()]]) {
+    for (const [manager, cli] of [["npm", npmCli], ["pnpm", pnpmCli]]) {
       const managerProof = { manager, cases: [] };
       for (const omitted of [false, true]) {
         const directory = join(temporary, `${manager}-${omitted ? "omitted" : "normal"}`);

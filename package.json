@@ -138,6 +138,7 @@
     "native:test": "cargo test --manifest-path native/Cargo.toml",
     "pack:check": "pnpm build && node scripts/check-pack.mjs",
     "public-api:update": "pnpm build && node scripts/check-pack.mjs --update-public-api",
+    "package:collect": "node scripts/check-release-packages.mjs --output release-artifacts",
     "package:smoke": "node scripts/check-release-packages.mjs --allow-host-only --output release-artifacts",
     "check:changed": "pnpm run check",
     "release:notes": "node scripts/release-notes.mjs",

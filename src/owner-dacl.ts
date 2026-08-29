@@ -44,7 +44,8 @@ export function readOwnerAndDacl(targetPath: string): OwnerAndDaclResult {
   if (!native) {
     throw new FsSafeError(
       "helper-unavailable",
-      "Windows owner and DACL facts require the bundled native binding",
+      "Windows owner and DACL facts require the matching optional native platform package; " +
+        "install @openclaw/fs-safe with optional dependencies enabled on a supported platform and use FS_SAFE_NATIVE_MODE=auto or require",
     );
   }
   const facts = native.readOwnerAndDacl(targetPath);

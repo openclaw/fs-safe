@@ -65,7 +65,11 @@ metadata/tarball endpoint is checked before installation, so a missing fixture
 cannot masquerade as successful platform filtering. These temporary fixtures
 never enter `packages/`, release artifacts, or the publish manifest. They prove
 installer filtering, not foreign native compilation or execution. Full release
-collection uses the actual seven collected native tarballs instead. Archive
+collection uses the actual seven collected native tarballs instead. Run it with
+`pnpm package:collect` after assembling all seven real bindings; missing targets
+fail collection. `pnpm package:collect --allow-host-only` exercises the same
+lifecycle boundary locally but proves only the host. Both collection commands
+require the pnpm lifecycle CLI path; direct `node` invocation is unsupported. Archive
 codecs and their dependencies are packed from the installed dependency graph.
 
 PR CI builds and executes four host targets: Linux x64 glibc, Linux x64 musl
