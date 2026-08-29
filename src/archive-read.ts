@@ -32,6 +32,8 @@ import type { ZipEntry } from "./archive-zip-entry.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { getNativeBinding } from "./native.js";
+import { admitZipBuffer } from "./archive-zip-admission.js";
+import { resolveExtractLimits } from "./archive-limits.js";
 import { tempFile } from "./temp-target.js";
 
 const ZIP_UNIX_FILE_TYPE_MASK = 0o170000;
@@ -231,6 +233,9 @@ export async function readArchiveEntry(
   const requestedEntry = normalizedRequestedEntry(entryPath);
   const staged = await stageArchiveInput(archivePath);
   try {
+    const physicalCount = kind === "zip"
+      ? admitZipBuffer(staged.buffer, resolveExtractLimits())
+      : undefined;
     const native = getNativeBinding();
     if (native) {
       try {
@@ -244,6 +249,9 @@ export async function readArchiveEntry(
           signal,
         );
         let rawEntryPath: string | undefined;
+        if (physicalCount !== undefined && manifest.length !== physicalCount) {
+          throw new ArchiveSecurityError("entry-path", "zip decoder collapsed entry names");
+        }
         const seenPaths = new Set<string>();
         for (const entry of manifest) {
           validateArchiveEntryPath(entry.path, { escapeLabel: "archive root" });

@@ -72,6 +72,8 @@ accepted-entry plan back to Rust. Rust only performs decompression and the
 fd-relative `mkdirBeneath`/exclusive-open writes. This keeps policy identical
 between native and JavaScript paths rather than reimplementing it in Rust.
 
+ZIP extraction and bounded reads admit every physical central-directory record and its referenced local header before either decoder can normalize or collapse names. Raw names and valid Unicode Path names must pass traversal checks before stripping, filtering, or selecting a requested member; duplicate or colliding names reject with `entry-path`, even in unrelated or skipped members. Materially conflicting local/central or Unicode interpretations, malformed critical metadata, and ambiguous framing reject with `ArchiveFormatError`. Harmless separator and dot-component equivalence is allowed only after validation. Ordinary legacy filename decoding remains backend-selected.
+
 `stripComponents` removes leading nonempty, non-`.` path components after
 normalizing separators. For example, `./pkg/hello.txt` with
 `stripComponents: 1` extracts to `hello.txt` on both backends. Entries with no
