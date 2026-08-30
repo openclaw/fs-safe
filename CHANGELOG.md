@@ -4,6 +4,7 @@
 
 ### Security and Correctness
 
+- Propagate asynchronous sidecar-lock release and failed-acquire deletion failures, preserving callback/acquire errors instead of reporting success or hiding the original failure with an owned lock stranded on disk.
 - Stop archive destination publication at the timeout boundary and join only an in-flight destination mutation and rollback before rejecting, preserving prompt deadlines for non-mutating work.
 - Verify durable JSON queue reads with lossless bigint identities and reject persistent unknown Windows identities before reading entry bytes.
 

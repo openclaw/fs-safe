@@ -245,9 +245,9 @@ export async function removeSidecarLockIfUnchanged(
     return false;
   }
   if (options.lockRoot) {
-    await options.lockRoot.remove(relativeSidecarLockPath(options.lockRoot, lockPath)).catch(() => undefined);
+    await options.lockRoot.remove(relativeSidecarLockPath(options.lockRoot, lockPath));
   } else {
-    await fs.rm(lockPath, { force: true }).catch(() => undefined);
+    await fs.rm(lockPath, { force: true });
   }
   return true;
 }

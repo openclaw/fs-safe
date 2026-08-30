@@ -199,29 +199,37 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
         }
         return returnedHandle;
       } catch (err) {
-        if (handle) {
-          const failedSnapshot: SidecarLockSnapshot = { payload: null };
-          try {
-            failedSnapshot.stat = await handle.stat();
-          } catch {
-            // Best-effort cleanup of a failed exclusive create.
+        try {
+          if (handle) {
+            const failedSnapshot: SidecarLockSnapshot = { payload: null };
+            try {
+              failedSnapshot.stat = await handle.stat();
+            } catch {
+              // Best-effort cleanup of a failed exclusive create.
+            }
+            const current = context.held.get(normalizedTargetPath);
+            if (current?.handle === handle) {
+              context.held.delete(normalizedTargetPath);
+            }
+            await handle.close().catch(() => undefined);
+            // The file may be empty or partial JSON, so remove by the identity
+            // captured from our exclusive handle rather than by pathname alone.
+            await removeSidecarLockIfUnchanged(lockPath, failedSnapshot, {
+              lockRoot: options.lockRoot,
+              parsePayload: options.parsePayload,
+            });
+          } else if (createdSnapshot) {
+            await removeSidecarLockIfUnchanged(lockPath, createdSnapshot, {
+              lockRoot: options.lockRoot,
+              parsePayload: options.parsePayload,
+            });
           }
-          const current = context.held.get(normalizedTargetPath);
-          if (current?.handle === handle) {
-            context.held.delete(normalizedTargetPath);
-          }
-          await handle.close().catch(() => undefined);
-          // The file may be empty or partial JSON, so remove by the identity
-          // captured from our exclusive handle rather than by pathname alone.
-          await removeSidecarLockIfUnchanged(lockPath, failedSnapshot, {
-            lockRoot: options.lockRoot,
-            parsePayload: options.parsePayload,
-          });
-        } else if (createdSnapshot) {
-          await removeSidecarLockIfUnchanged(lockPath, createdSnapshot, {
-            lockRoot: options.lockRoot,
-            parsePayload: options.parsePayload,
-          });
+        } catch (cleanupError) {
+          throw new SuppressedError(
+            cleanupError,
+            err,
+            "file lock acquisition and cleanup both failed",
+          );
         }
         if (lockFileCreateDenied && withinDenialBudget()) {
           await retryOrRethrowDenial(err);

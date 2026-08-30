@@ -166,7 +166,7 @@ async function releaseHeldLock(
     }
   }
   if (held.releasePromise) {
-    await held.releasePromise.catch(() => undefined);
+    await held.releasePromise;
     return true;
   }
   state.held.delete(normalizedTargetPath);
@@ -229,11 +229,23 @@ export function createSidecarLockManager(key: string) {
     fn: () => Promise<T>,
   ): Promise<T> {
     const lock = await acquire(options);
+    let result: T;
     try {
-      return await fn();
-    } finally {
-      await lock.release();
+      result = await fn();
+    } catch (bodyError) {
+      try {
+        await lock.release();
+      } catch (releaseError) {
+        throw new SuppressedError(
+          releaseError,
+          bodyError,
+          "file lock callback and release both failed",
+        );
+      }
+      throw bodyError;
     }
+    await lock.release();
+    return result;
   }
 
   async function drain(): Promise<void> {

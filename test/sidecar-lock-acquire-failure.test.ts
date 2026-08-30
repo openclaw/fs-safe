@@ -36,6 +36,41 @@ describe("asynchronous sidecar lock acquisition failures", () => {
     expect(manager.heldEntries()).toEqual([]);
   });
 
+  it("preserves acquisition and cleanup failures when partial-lock removal fails", async () => {
+    configureFsSafeNative({ mode: "off" });
+    const directory = await tempRoot("fs-safe-sidecar-write-cleanup-failure-");
+    const targetPath = path.join(directory, "state.json");
+    const lockPath = `${targetPath}.lock`;
+    const realOpen = fs.open.bind(fs);
+    const realRm = fs.rm.bind(fs);
+    const acquisitionError = Object.assign(new Error("lock write failed"), { code: "EIO" });
+    const cleanupError = Object.assign(new Error("lock cleanup failed"), { code: "EACCES" });
+    vi.spyOn(fs, "open").mockImplementationOnce(async (...args) => {
+      const handle = await realOpen(...args);
+      vi.spyOn(handle, "writeFile").mockRejectedValueOnce(acquisitionError);
+      return handle;
+    });
+    const rm = vi.spyOn(fs, "rm").mockImplementation(async (target, ...args) => {
+      if (path.basename(String(target)) === path.basename(lockPath)) throw cleanupError;
+      return await realRm(target, ...args);
+    });
+
+    const manager = createSidecarLockManager(`write-cleanup-failure-${Date.now()}-${Math.random()}`);
+    const error = await manager
+      .acquire({ targetPath, payload: async () => ({ owner: "one" }) })
+      .catch((caught: unknown) => caught);
+    expect(error).toMatchObject({
+      name: "SuppressedError",
+      error: cleanupError,
+      suppressed: acquisitionError,
+    });
+    await expect(fs.access(lockPath)).resolves.toBeUndefined();
+    expect(manager.heldEntries()).toEqual([]);
+
+    rm.mockRestore();
+    await fs.rm(lockPath, { force: true });
+  });
+
   it("preserves a replacement lock when payload persistence fails", async () => {
     configureFsSafeNative({ mode: "off" });
     const directory = await tempRoot("fs-safe-sidecar-write-failure-swap-");
