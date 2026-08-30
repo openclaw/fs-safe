@@ -31,6 +31,7 @@ async function inspectStage(inspect: () => Promise<BigIntStats>, expected?: BigI
 
 // Callback paths are not owned until all three admission observations agree.
 // Keep one descriptor and one exact identity through mode, sync, rename and cleanup.
+// Read/write access is needed only when the caller requests file synchronization.
 export async function writeCallbackSibling<T>(params: {
   tempPath: string;
   write: (tempPath: string) => Promise<T>;
@@ -74,7 +75,8 @@ export async function writeCallbackSibling<T>(params: {
     const before = await inspectPath(params.tempPath);
     try {
       // No create/truncate flags; O_NONBLOCK also bounds a FIFO swap during open.
-      handle = await fs.open(params.tempPath, fsSync.constants.O_RDWR | resolveReadOpenFlags());
+      const access = params.syncTempFile ? fsSync.constants.O_RDWR : fsSync.constants.O_RDONLY;
+      handle = await fs.open(params.tempPath, access | resolveReadOpenFlags());
     } catch (error) {
       if ((error as NodeJS.ErrnoException)?.code === "ELOOP") {
         throw new FsSafeError("symlink", "symlink sibling temp not allowed", { cause: error });
