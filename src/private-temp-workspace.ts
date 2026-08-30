@@ -20,7 +20,7 @@ import {
   registerTempPathForExit,
   type TempPathIdentityReceipt,
 } from "./temp-cleanup.js";
-import { TempWorkspaceCleanupOwner, type TempWorkspaceCleanupResult } from "./temp-workspace-owner.js";
+import { TempWorkspaceCleanupCapability, TempWorkspaceCleanupOwner, type TempWorkspaceCleanupResult } from "./temp-workspace-owner.js";
 
 export type { TempWorkspaceCleanupResult } from "./temp-workspace-owner.js";
 
@@ -147,18 +147,29 @@ async function createTempWorkspace(
   const requestedRoot = path.resolve(options.rootDir);
   const root = await fs.realpath(requestedRoot).catch(() => requestedRoot);
   await ensurePrivateDirectory(root, dirMode);
-  const dir = await fs.mkdtemp(path.join(root, sanitizeTempPrefix(options.prefix)));
-  await fs.chmod(dir, dirMode).catch(() => undefined);
-  const stat = await fs.lstat(dir, { bigint: true });
-  if (stat.isSymbolicLink() || !stat.isDirectory()) {
-    throw new Error(`Temp workspace must be a directory: ${dir}`);
+  const capability = new TempWorkspaceCleanupCapability(root);
+  let dir: string;
+  let stat: fsSync.BigIntStats;
+  let cleanupOwner: TempWorkspaceCleanupOwner;
+  let unregisterTempDir: () => void;
+  try {
+    dir = await fs.mkdtemp(path.join(root, sanitizeTempPrefix(options.prefix)));
+    await fs.chmod(dir, dirMode).catch(() => undefined);
+    stat = await fs.lstat(dir, { bigint: true });
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      throw new Error(`Temp workspace must be a directory: ${dir}`);
+    }
+    capability.assertCurrent();
+    cleanupOwner = new TempWorkspaceCleanupOwner(dir, stat, capability);
+    unregisterTempDir = registerTempPathForExit(dir, {
+      cleanupSync: () => cleanupOwner.cleanupSync(),
+    });
+  } catch (error) {
+    capability.close();
+    throw error;
   }
   const identity = { dev: Number(stat.dev), ino: Number(stat.ino) };
-  const cleanupIdentity = { dev: stat.dev, ino: stat.ino };
-  const cleanupOwner = new TempWorkspaceCleanupOwner(dir, cleanupIdentity);
-  const unregisterTempDir = registerTempPathForExit(dir, {
-    cleanupSync: () => cleanupOwner.cleanupSync(),
-  });
+  // Once registered, even a store-construction failure remains exit-cleanable.
   const store = fileStore({ rootDir: dir, private: true, dirMode, mode });
 
   return {
@@ -235,22 +246,33 @@ export function tempWorkspaceSync(
     root = requestedRoot;
   }
   ensurePrivateDirectorySync(root, dirMode);
-  const dir = fsSync.mkdtempSync(path.join(root, sanitizeTempPrefix(options.prefix)));
+  const capability = new TempWorkspaceCleanupCapability(root);
+  let dir: string;
+  let stat: fsSync.BigIntStats;
+  let cleanupOwner: TempWorkspaceCleanupOwner;
+  let unregisterTempDir: () => void;
   try {
-    fsSync.chmodSync(dir, dirMode);
-  } catch {
-    // Best-effort on platforms that do not enforce POSIX modes.
-  }
-  const stat = fsSync.lstatSync(dir, { bigint: true });
-  if (stat.isSymbolicLink() || !stat.isDirectory()) {
-    throw new Error(`Temp workspace must be a directory: ${dir}`);
+    dir = fsSync.mkdtempSync(path.join(root, sanitizeTempPrefix(options.prefix)));
+    try {
+      fsSync.chmodSync(dir, dirMode);
+    } catch {
+      // Best-effort on platforms that do not enforce POSIX modes.
+    }
+    stat = fsSync.lstatSync(dir, { bigint: true });
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      throw new Error(`Temp workspace must be a directory: ${dir}`);
+    }
+    capability.assertCurrent();
+    cleanupOwner = new TempWorkspaceCleanupOwner(dir, stat, capability);
+    unregisterTempDir = registerTempPathForExit(dir, {
+      cleanupSync: () => cleanupOwner.cleanupSync(),
+    });
+  } catch (error) {
+    capability.close();
+    throw error;
   }
   const identity = { dev: Number(stat.dev), ino: Number(stat.ino) };
-  const cleanupIdentity = { dev: stat.dev, ino: stat.ino };
-  const cleanupOwner = new TempWorkspaceCleanupOwner(dir, cleanupIdentity);
-  const unregisterTempDir = registerTempPathForExit(dir, {
-    cleanupSync: () => cleanupOwner.cleanupSync(),
-  });
+  // Once registered, even a store-construction failure remains exit-cleanable.
   const store = fileStoreSync({ rootDir: dir, private: true, dirMode, mode });
 
   return {

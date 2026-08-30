@@ -23,7 +23,7 @@ afterEach(() => {
 });
 
 describe.each(["async", "sync"] as const)("%s workspace cleanup admission", (variant) => {
-  describe.runIf(process.platform !== "win32").each(["require", "off"] as const)("native %s retained parent", (mode) => {
+  describe.runIf(nativeAvailable && process.platform !== "win32").each(["require"] as const)("native %s retained parent", (mode) => {
     it.each(
       (["before-cleanup", "during-lstat", "after-lstat"] as const).flatMap((when) =>
         (["missing", "replacement"] as const).map((leaf) => ({ when, leaf }))),
@@ -104,8 +104,8 @@ describe.each(["async", "sync"] as const)("%s workspace cleanup admission", (var
       .toBe("owned");
   });
 
-  describe.each(["require", "off"] as const)("native %s store-construction failure", (mode) => {
-    it.runIf(mode === "off" || nativeAvailable).each(["owned", "replacement"])(
+  describe.each(["require"] as const)("native %s store-construction failure", (mode) => {
+    it.runIf(nativeAvailable && process.platform !== "win32").each(["owned", "replacement"])(
       "retains exit cleanup authority for the %s path",
       async (state) => {
         configureFsSafeNative({ mode });

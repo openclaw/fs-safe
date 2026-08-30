@@ -14,7 +14,7 @@ import {
 
 ## Private temp workspaces
 
-A private workspace is a directory created at mode `0o700` under a caller-provided temp root. It is unique per call (random suffix). Calling `cleanup()` or leaving an `await using` scope removes an unchanged workspace through ownership-checked quarantine, including with native mode `off`. Attacked or ambiguous entries are preserved.
+A private workspace is a directory created at mode `0o700` under a caller-provided temp root. It is unique per call (random suffix). Calling `cleanup()` or leaving an `await using` scope removes an unchanged workspace through ownership-checked quarantine. Attacked or ambiguous entries are preserved.
 
 ### `tempWorkspace`
 
@@ -64,60 +64,50 @@ await state.write({ ready: true });
 The workspace owns cleanup; the store is only a view over the workspace
 directory.
 
-The identity receipt is captured when the workspace is created. The workspace
-also retains an opened parent directory until cleanup when the host supports
-it, and always captures the parent pathname identity. Manual, disposal, and
-process-exit cleanup share that owner, registered before store construction.
-After initial identity inspection, native no-replace rename moves the direct
-child through the retained parent into a fresh
-`.fs-safe-workspace-cleanup-<uuid>` sibling when both capabilities are available.
-Cleanup verifies the quarantined identity before recursive removal; it never
-recursively removes the public workspace name.
+**Compatibility and security:** `tempWorkspace`, `withTempWorkspace`, and both
+sync variants require native collision-safe directory no-replace rename and a
+safely retained parent descriptor. After ensuring the caller-provided root,
+creation acquires both capabilities **before** `mkdtemp` creates a child.
+Native mode `off`, an unavailable binding, a missing rename capability, or
+parent-descriptor admission failure throws `FsSafeError("helper-unavailable")`;
+no workspace child is created and a `withTempWorkspace` callback is not called.
+There is no JavaScript rename fallback. Windows native rename supports directory
+sources and rejects reparse points, but workspace creation still rejects if
+Node cannot retain a safe parent descriptor on that host.
 
-On this native path, if a replacement arrives between inspection and rename,
-cleanup attempts to restore it using no-replace rename and returns
-`"identity-mismatch"` on successful restoration. Restoration never
-overwrites a newer public entry. A collision, failed restoration, uncertain
-rename outcome, or changed parent preserves remaining entries and returns
+The workspace captures its identity and retains the admitted native binding and
+parent descriptor until cleanup. Later process-global mode changes or loader
+resets do not revoke this cleanup authority. Manual, disposal, and process-exit
+cleanup share the owner, registered before store construction; a construction
+failure after registration remains exit-cleanable. Earlier creation failures
+close the capability once, without deleting an unverified child.
+
+After checking the parent and public workspace identity, native no-replace
+rename moves the direct child through the retained parent into a fresh
+`.fs-safe-workspace-cleanup-<uuid>` sibling. Cleanup verifies that quarantine
+still belongs to the workspace before recursive removal; it never recursively
+removes the public workspace name and never overwrites a quarantine collision.
+
+If a replacement arrives between inspection and rename, cleanup attempts to
+restore it with no-replace rename and returns `"identity-mismatch"` after
+verifying successful restoration. Restoration never overwrites a newer public
+entry. A collision, failed restoration, uncertain rename outcome, changed
+parent, or quarantine mutation preserves remaining entries and returns
 `"indeterminate"`; a quarantine artifact may remain beside the workspace or
 under a moved parent. Recover such artifacts only after excluding competing
 mutators and establishing ownership.
 
-Without a retained parent descriptor or native no-replace rename, cleanup uses
-real filesystem rename under the shared directory guards to move the public
-workspace to a fresh, private, same-parent
-`.fs-safe-workspace-cleanup-<uuid>` name. This covers native mode `off`, missing
-capabilities, unavailable bindings (even in `require` mode during cleanup),
-and hosts where Node cannot open a directory descriptor. An unchanged workspace
-is verified under quarantine and removed normally, returning `"removed"`.
-Windows native rename supports file and directory sources while rejecting
-reparse points; Windows uses the guarded fallback when it cannot retain a Node
-directory descriptor.
-
-If a replacement arrives between fallback admission and rename, cleanup may
-**relocate that replacement to the named quarantine artifact**. It preserves
-the artifact for operator inspection and returns `"indeterminate"`, without
-recursive deletion or an overwrite-prone pathname restore. Any newer public
-entry remains untouched. An ambiguous rename outcome, parent identity, or
-quarantine identity also preserves all remaining entries and returns
-`"indeterminate"`. Inspect both the public name and quarantine artifacts;
-exclude competing mutators and establish ownership before recovery.
-
-On either path, a missing workspace returns `"missing"`, and a replacement
-observed before rename returns `"identity-mismatch"`, provided the parent is
-stable. A changed or ambiguous parent takes precedence and returns
-`"indeterminate"`, including when the workspace remains under a moved parent.
-Ordinary native-off cleanup does not return `"indeterminate"` or retain temp
-data. There is no check-then-remove fallback at the public workspace name.
+A missing workspace returns `"missing"`, and a replacement observed before
+rename returns `"identity-mismatch"`, provided the parent is stable. A changed
+or ambiguous parent takes precedence and returns `"indeterminate"`, including
+when the workspace remains under a moved parent.
 
 Recursive removal is confined to the private quarantine name and revalidates
-the parent's creation-time pathname identity immediately before removal. This is
-not atomic conditional recursive deletion: callers must protect the parent
-and quarantine from hostile mutation during rename and deletion. Fallback
-rename uses a fresh UUID name, but cannot enforce no-replace against a peer
-that discovers and creates that destination during the operation. A peer that
-can discover and replace the private quarantine or its ancestors can still race pathname
-removal. Use OS isolation when that threat is in scope.
+the parent's creation-time pathname identity immediately before removal. This
+is not atomic conditional recursive deletion: callers must protect the parent
+and quarantine from hostile mutation during rename and deletion. A peer that
+can discover and replace the private quarantine or its ancestors can still
+race pathname removal. Use OS isolation when that threat is in scope.
 
 Cleanup closes the retained descriptor once. After successful removal, repeated
 cleanup returns `"missing"` without inspecting or touching a recreated public

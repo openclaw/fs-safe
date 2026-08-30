@@ -145,7 +145,7 @@ await withTempWorkspace({ rootDir: "/srv/jobs/tmp", prefix: "build-" }, async (w
 });
 ```
 
-The directory is mode `0700`, sits under a per-user secure temp root, and is cleaned up when the callback returns or throws, including in native-off mode. Cleanup verifies ownership under a private quarantine name before removal; raced or ambiguous entries are preserved, and fallback cleanup may relocate a replacement to a `.fs-safe-workspace-cleanup-<uuid>` artifact for operator inspection. See [Temp workspaces](temp.md).
+The directory is mode `0700` under the caller-provided root, and cleanup runs when the callback returns or throws. Creation requires native no-replace directory rename and a retained parent descriptor; mode `off` or unavailable cleanup support throws `FsSafeError("helper-unavailable")` before creating a workspace child or calling the callback. Cleanup verifies ownership under a private quarantine name; raced or ambiguous entries are preserved. See the [temp workspace compatibility and security contract](temp.md#private-temp-workspaces).
 
 ## Where to next
 

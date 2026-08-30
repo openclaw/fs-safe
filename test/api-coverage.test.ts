@@ -7,6 +7,7 @@ import * as tar from "tar";
 import { describe, expect, it, vi } from "vitest";
 import { expectFsSafeError } from "./helpers/security.js";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
+import { expectTempWorkspaceUnavailable } from "./helpers/temp-workspace.js";
 import { extractArchive } from "../src/archive.js";
 import { loadZipArchiveWithPreflight, readZipCentralDirectoryEntryCount } from "../src/archive-zip-preflight.js";
 import { createAsyncLock } from "../src/async-lock.js";
@@ -616,9 +617,9 @@ describe("JSON and regular-file helpers", () => {
 describe("temporary workspace and symlink parent helpers", () => {
   it("covers async and sync temporary workspace operations", async () => {
     const root = await tempRoot("fs-safe-workspace-extra-");
+    if (await expectTempWorkspaceUnavailable(root)) return;
     const source = path.join(root, "source.txt");
     await fs.writeFile(source, "copy", "utf8");
-
     const workspace = await tempWorkspace({ rootDir: root, prefix: "bad prefix!" });
     expect(() => workspace.path("../bad")).toThrow("Invalid temp workspace");
     const privateFile = await workspace.write("private.bin", Buffer.from("private"));
@@ -634,7 +635,6 @@ describe("temporary workspace and symlink parent helpers", () => {
     expect(path.basename(textFile)).toBe("text.txt");
     await expect(fs.readFile(jsonFile, "utf8")).resolves.toBe('{\n  "ok": true\n}');
     await workspace.cleanup();
-
     await expect(
       withTempWorkspace({ rootDir: root, prefix: "." }, async (scoped) => {
         await scoped.writeText("value.txt", "value");

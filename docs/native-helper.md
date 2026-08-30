@@ -31,6 +31,12 @@ The equivalent environment variables are `FS_SAFE_NATIVE_MODE` and `OPENCLAW_FS_
 
 Configure the mode once during startup. Loading is lazy and cached; changing from `auto` to `require` after a failed load changes failure policy but does not repeatedly probe the binary.
 
+[`tempWorkspace()` and its scoped/sync variants](temp.md#private-temp-workspaces)
+require native no-replace directory rename and a safely retained parent
+descriptor before child creation. They throw `helper-unavailable` when off or
+when either capability is unavailable, with no JavaScript cleanup fallback.
+Already-created workspaces retain their binding for cleanup across mode changes.
+
 [`stageFileInDirectory()`](staged-file.md) always requires native support on
 Linux/macOS and rejects before creation when off, unavailable, or missing the
 required capability. Windows is unsupported for this lifecycle. This does not

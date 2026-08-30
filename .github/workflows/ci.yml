@@ -113,7 +113,7 @@ jobs:
       - name: Test native security and path equivalence
         env:
           FS_SAFE_PAX_REQUIRE_NATIVE: "1"
-        run: pnpm test test/native-integration.test.ts test/native-write-containment.test.ts test/native-staging-regression.test.ts test/staged-file.test.ts test/staged-file-failures.test.ts test/native-archive-equivalence.test.ts test/native-publish-equivalence.test.ts test/private-directory.test.ts test/archive-pax.test.ts test/archive-pax-security.test.ts test/archive-pax-compressed.test.ts test/archive-tar-strip.test.ts test/temp-workspace-cleanup-ownership.test.ts test/temp-workspace-cleanup-admission.test.ts test/temp-workspace-cleanup-fallback.test.ts
+        run: pnpm test test/native-integration.test.ts test/native-write-containment.test.ts test/native-staging-regression.test.ts test/staged-file.test.ts test/staged-file-failures.test.ts test/native-archive-equivalence.test.ts test/native-publish-equivalence.test.ts test/private-directory.test.ts test/archive-pax.test.ts test/archive-pax-security.test.ts test/archive-pax-compressed.test.ts test/archive-tar-strip.test.ts test/temp-workspace-cleanup-ownership.test.ts test/temp-workspace-cleanup-admission.test.ts test/temp-workspace-cleanup-capability.test.ts
 
       - name: Test native Root publication verification
         env:

@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { expectFsSafeError } from "./helpers/security.js";
 import { itPosix, itWin32 } from "./helpers/vitest.js";
+import { expectTempWorkspaceUnavailable } from "./helpers/temp-workspace.js";
 import {
   appendRegularFile,
   appendRegularFileSync,
@@ -92,6 +93,7 @@ afterEach(async () => {
 
 describe("private temp workspaces", () => {
   it("writes private files and removes the workspace", async () => {
+    if (await expectTempWorkspaceUnavailable(root)) return;
     let workspaceDir = "";
     const content = await withTempWorkspace({ rootDir: root, prefix: "work-" }, async (tmp) => {
       workspaceDir = tmp.dir;
@@ -105,6 +107,7 @@ describe("private temp workspaces", () => {
   });
 
   it("rejects path-like file names", async () => {
+    if (await expectTempWorkspaceUnavailable(root)) return;
     const tmp = await tempWorkspace({ rootDir: root, prefix: "work-" });
     try {
       await expect(tmp.write("../escape.txt", "nope")).rejects.toThrow(/Invalid/);
@@ -114,6 +117,7 @@ describe("private temp workspaces", () => {
   });
 
   it("supports sync temp workspaces", async () => {
+    if (await expectTempWorkspaceUnavailable(root)) return;
     let workspaceDir = "";
     const result = withTempWorkspaceSync({ rootDir: root, prefix: "sync-" }, (tmp) => {
       workspaceDir = tmp.dir;
@@ -133,6 +137,7 @@ describe("private temp workspaces", () => {
   });
 
   it("supports the compact tempWorkspace factory and await using cleanup", async () => {
+    if (await expectTempWorkspaceUnavailable(root)) return;
     let workspaceDir = "";
     {
       await using tmp = await tempWorkspace({ rootDir: root, prefix: "compact-" });
@@ -148,6 +153,7 @@ describe("private temp workspaces", () => {
   });
 
   it("writes JSON and copies files through temp workspace helpers", async () => {
+    if (await expectTempWorkspaceUnavailable(root)) return;
     await using tmp = await tempWorkspace({ rootDir: root, prefix: "helpers-" });
     const source = path.join(root, "source.txt");
     await fs.writeFile(source, "copied", "utf8");

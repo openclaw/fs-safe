@@ -18,6 +18,7 @@ try {
 const { tempRoot } = useRealTempDirs();
 afterEach(() => {
   vi.restoreAllMocks();
+  __cleanupRegisteredTempPathsForTest();
   __resetNativeLoaderForTest();
   __resetFsSafeNativeConfigForTest();
 });
@@ -54,7 +55,16 @@ function assertReplacementPreserved(
 }
 
 describe.runIf(native && process.platform !== "win32").each(["async", "sync"] as const)("%s temp workspace cleanup ownership", (variant) => {
-  beforeEach(() => configureFsSafeNative({ mode: "require" }));
+  let renameNoReplace: NativeBinding["renameNoReplace"];
+  beforeEach(() => {
+    configureFsSafeNative({ mode: "require" });
+    renameNoReplace = (...args) => native!.renameNoReplace(...args);
+    // Capture the binding before creation; each test arms a race at its real rename.
+    __setNativeLoaderForTest(() => ({
+      ...native!,
+      renameNoReplace: (...args) => renameNoReplace(...args),
+    }));
+  });
 
   async function setup() {
     const rootDir = await tempRoot("fs-safe-temp-owner-");
@@ -97,19 +107,16 @@ describe.runIf(native && process.platform !== "win32").each(["async", "sync"] as
       let quarantine = "";
       let replacement: BigIntStats | undefined;
       let renames = 0;
-      __setNativeLoaderForTest(() => ({
-        ...native!,
-        renameNoReplace(...args) {
-          if (renames++ === 0) {
-            replacement = installReplacement(workspace.dir, outside, kind);
-            quarantine = path.join(rootDir, args[3]);
-          } else {
-            fsSync.mkdirSync(workspace.dir);
-            fsSync.writeFileSync(path.join(workspace.dir, "newer.txt"), "newer");
-          }
-          native!.renameNoReplace(...args);
-        },
-      }));
+      renameNoReplace = (...args) => {
+        if (renames++ === 0) {
+          replacement = installReplacement(workspace.dir, outside, kind);
+          quarantine = path.join(rootDir, args[3]);
+        } else {
+          fsSync.mkdirSync(workspace.dir);
+          fsSync.writeFileSync(path.join(workspace.dir, "newer.txt"), "newer");
+        }
+        native!.renameNoReplace(...args);
+      };
       expect(await workspace.cleanup()).toBe("indeterminate");
       expect(renames).toBe(2);
       expect(await workspace.cleanup()).toBe("indeterminate");
@@ -123,23 +130,20 @@ describe.runIf(native && process.platform !== "win32").each(["async", "sync"] as
     const { workspace, rootDir } = await setup();
     const moved = path.join(await tempRoot("fs-safe-temp-owner-moved-"), "parent");
     let quarantineName = "";
-    __setNativeLoaderForTest(() => ({
-      ...native!,
-      renameNoReplace(...args) {
-        quarantineName = args[3];
-        const move = () => {
-          fsSync.renameSync(rootDir, moved);
-          fsSync.mkdirSync(rootDir);
-          fsSync.mkdirSync(workspace.dir);
-          fsSync.writeFileSync(path.join(workspace.dir, "newer.txt"), "newer");
-          fsSync.mkdirSync(path.join(rootDir, quarantineName));
-          fsSync.writeFileSync(path.join(rootDir, quarantineName, "keep.txt"), "keep");
-        };
-        if (when === "before-quarantine") move();
-        native!.renameNoReplace(...args);
-        if (when === "after-quarantine") move();
-      },
-    }));
+    renameNoReplace = (...args) => {
+      quarantineName = args[3];
+      const move = () => {
+        fsSync.renameSync(rootDir, moved);
+        fsSync.mkdirSync(rootDir);
+        fsSync.mkdirSync(workspace.dir);
+        fsSync.writeFileSync(path.join(workspace.dir, "newer.txt"), "newer");
+        fsSync.mkdirSync(path.join(rootDir, quarantineName));
+        fsSync.writeFileSync(path.join(rootDir, quarantineName, "keep.txt"), "keep");
+      };
+      if (when === "before-quarantine") move();
+      native!.renameNoReplace(...args);
+      if (when === "after-quarantine") move();
+    };
     expect(await workspace.cleanup()).toBe("indeterminate");
     expect(await workspace.cleanup()).toBe("indeterminate");
     expect(await fs.readFile(path.join(moved, quarantineName, "owned.txt"), "utf8")).toBe("owned");
@@ -151,37 +155,97 @@ describe.runIf(native && process.platform !== "win32").each(["async", "sync"] as
     const { workspace, outside, rootDir } = await setup();
     let replacement: BigIntStats | undefined;
     let quarantineName = "";
-    __setNativeLoaderForTest(() => ({
-      ...native!,
-      renameNoReplace(...args) {
-        native!.renameNoReplace(...args);
-        quarantineName = args[3];
-        fsSync.mkdirSync(workspace.dir);
-        fsSync.writeFileSync(path.join(workspace.dir, "keep.txt"), "replacement");
-        replacement = fsSync.lstatSync(workspace.dir, { bigint: true });
-      },
-    }));
+    renameNoReplace = (...args) => {
+      native!.renameNoReplace(...args);
+      quarantineName = args[3];
+      fsSync.mkdirSync(workspace.dir);
+      fsSync.writeFileSync(path.join(workspace.dir, "keep.txt"), "replacement");
+      replacement = fsSync.lstatSync(workspace.dir, { bigint: true });
+    };
     expect(await workspace.cleanup()).toBe("removed");
     expect(await workspace.cleanup()).toBe("missing");
     assertReplacementPreserved(workspace.dir, outside, "directory", replacement!);
     await expect(fs.lstat(path.join(rootDir, quarantineName))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("fails closed on a quarantine-name collision without touching either directory", async () => {
+  it.each(["file", "empty-directory", "nonempty-directory"])("preserves a %s quarantine collision without overwriting it", async (kind) => {
     const { workspace, rootDir } = await setup();
     let quarantine = "";
-    __setNativeLoaderForTest(() => ({
-      ...native!,
-      renameNoReplace(...args) {
-        quarantine = path.join(rootDir, args[3]);
+    let collision: BigIntStats | undefined;
+    renameNoReplace = (...args) => {
+      quarantine = path.join(rootDir, args[3]);
+      if (kind === "file") fsSync.writeFileSync(quarantine, "collision");
+      else {
         fsSync.mkdirSync(quarantine);
-        fsSync.writeFileSync(path.join(quarantine, "keep.txt"), "collision");
-        native!.renameNoReplace(...args);
-      },
-    }));
+        if (kind === "nonempty-directory") fsSync.writeFileSync(path.join(quarantine, "keep.txt"), "collision");
+      }
+      collision = fsSync.lstatSync(quarantine, { bigint: true });
+      native!.renameNoReplace(...args);
+    };
+    const rm = vi.spyOn(fs, "rm");
+    const rmSync = vi.spyOn(fsSync, "rmSync");
+    expect(await workspace.cleanup()).toBe("indeterminate");
     expect(await workspace.cleanup()).toBe("indeterminate");
     expect(await fs.readFile(path.join(workspace.dir, "owned.txt"), "utf8")).toBe("owned");
-    expect(await fs.readFile(path.join(quarantine, "keep.txt"), "utf8")).toBe("collision");
+    expect(await fs.lstat(quarantine, { bigint: true })).toMatchObject({ dev: collision!.dev, ino: collision!.ino });
+    if (kind === "empty-directory") expect(await fs.readdir(quarantine)).toEqual([]);
+    else expect(await fs.readFile(kind === "file" ? quarantine : path.join(quarantine, "keep.txt"), "utf8")).toBe("collision");
+    expect(rm).not.toHaveBeenCalled();
+    expect(rmSync).not.toHaveBeenCalled();
+  });
+
+  it.each(["before-rename", "after-rename"])("preserves entries after an ambiguous native error %s", async (when) => {
+    const { workspace, rootDir } = await setup();
+    let quarantine = "";
+    renameNoReplace = (...args) => {
+      quarantine = path.join(rootDir, args[3]);
+      if (when === "after-rename") native!.renameNoReplace(...args);
+      throw Object.assign(new Error("rename outcome unknown"), { code: "EIO" });
+    };
+    const rm = vi.spyOn(fs, "rm");
+    const rmSync = vi.spyOn(fsSync, "rmSync");
+    expect(await workspace.cleanup()).toBe("indeterminate");
+    expect(await workspace.cleanup()).toBe("indeterminate");
+    expect(await fs.readFile(path.join(when === "before-rename" ? workspace.dir : quarantine, "owned.txt"), "utf8"))
+      .toBe("owned");
+    expect(rm).not.toHaveBeenCalled();
+    expect(rmSync).not.toHaveBeenCalled();
+  });
+
+  it("preserves quarantine mutation detected before recursive removal", async () => {
+    const { workspace, rootDir } = await setup();
+    let quarantine = "";
+    renameNoReplace = (...args) => {
+      native!.renameNoReplace(...args);
+      quarantine = path.join(rootDir, args[3]);
+    };
+    const lstat = fsSync.lstatSync;
+    let inspections = 0;
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((candidate, options) => {
+      const inspected = lstat(candidate, options);
+      if (candidate === quarantine && ++inspections === 1) {
+        fsSync.renameSync(quarantine, `${quarantine}.owned`);
+        fsSync.mkdirSync(quarantine);
+        fsSync.writeFileSync(path.join(quarantine, "keep.txt"), "replacement");
+      }
+      return inspected;
+    });
+    const rm = vi.spyOn(fs, "rm");
+    const rmSync = vi.spyOn(fsSync, "rmSync");
+    expect(await workspace.cleanup()).toBe("indeterminate");
+    expect(inspections).toBe(2);
+    expect(await fs.readFile(path.join(quarantine, "keep.txt"), "utf8")).toBe("replacement");
+    expect(await fs.readFile(path.join(`${quarantine}.owned`, "owned.txt"), "utf8")).toBe("owned");
+    expect(rm).not.toHaveBeenCalled();
+    expect(rmSync).not.toHaveBeenCalled();
+  });
+
+  it("reports a missing public name without following the renamed workspace", async () => {
+    const { workspace } = await setup();
+    await fs.rename(workspace.dir, `${workspace.dir}.owned`);
+    expect(await workspace.cleanup()).toBe("missing");
+    expect(await workspace.cleanup()).toBe("missing");
+    expect(await fs.readFile(path.join(`${workspace.dir}.owned`, "owned.txt"), "utf8")).toBe("owned");
   });
 
   it.each<Cleanup>(["manual", "dispose", "exit"])("closes the retained parent exactly once after %s cleanup", async (method) => {
@@ -200,21 +264,25 @@ describe.runIf(native && process.platform !== "win32").each(["async", "sync"] as
 
   it("serializes concurrent cleanup calls", async () => {
     const { workspace } = await setup();
+    const rm = vi.spyOn(fs, "rm");
+    const rmSync = vi.spyOn(fsSync, "rmSync");
     expect(await Promise.all([workspace.cleanup(), workspace.cleanup(), workspace.cleanup()]))
       .toEqual(["removed", "missing", "missing"]);
+    const calls = [...rm.mock.calls, ...rmSync.mock.calls];
+    expect(calls).toHaveLength(1);
+    expect(calls[0]![0]).not.toBe(workspace.dir);
+    expect(path.basename(String(calls[0]![0]))).toMatch(/^\.fs-safe-workspace-cleanup-[\da-f-]+$/);
+    expect(calls[0]![1]).toEqual({ recursive: true, force: true });
   });
 
   it("revalidates the retained parent after quarantine inspection and before removal", async () => {
     const { workspace, rootDir } = await setup();
     const moved = path.join(await tempRoot("fs-safe-temp-owner-late-move-"), "parent");
     let quarantine = "";
-    __setNativeLoaderForTest(() => ({
-      ...native!,
-      renameNoReplace(...args) {
-        native!.renameNoReplace(...args);
-        quarantine = path.join(rootDir, args[3]);
-      },
-    }));
+    renameNoReplace = (...args) => {
+      native!.renameNoReplace(...args);
+      quarantine = path.join(rootDir, args[3]);
+    };
     const lstat = fsSync.lstatSync;
     let inspections = 0;
     vi.spyOn(fsSync, "lstatSync").mockImplementation((candidate, options) => {
@@ -237,13 +305,10 @@ describe.runIf(native && process.platform !== "win32").each(["async", "sync"] as
     it("closes once and preserves quarantine when exit interrupts async cleanup before removal", async () => {
       const { workspace, rootDir } = await setup();
       let quarantine = "";
-      __setNativeLoaderForTest(() => ({
-        ...native!,
-        renameNoReplace(...args) {
-          native!.renameNoReplace(...args);
-          quarantine = path.join(rootDir, args[3]);
-        },
-      }));
+      renameNoReplace = (...args) => {
+        native!.renameNoReplace(...args);
+        quarantine = path.join(rootDir, args[3]);
+      };
       const lstat = fs.lstat;
       let exited = false;
       vi.spyOn(fs, "lstat").mockImplementation(async (candidate, options) => {
@@ -266,14 +331,11 @@ describe.runIf(native && process.platform !== "win32").each(["async", "sync"] as
   it.runIf(process.getuid?.() !== 0)("propagates real removal errors and closes without retrying deletion", async () => {
     const { workspace, rootDir } = await setup();
     let quarantine = "";
-    __setNativeLoaderForTest(() => ({
-      ...native!,
-      renameNoReplace(...args) {
-        native!.renameNoReplace(...args);
-        quarantine = path.join(rootDir, args[3]);
-        fsSync.chmodSync(quarantine, 0);
-      },
-    }));
+    renameNoReplace = (...args) => {
+      native!.renameNoReplace(...args);
+      quarantine = path.join(rootDir, args[3]);
+      fsSync.chmodSync(quarantine, 0);
+    };
     const closed = vi.spyOn(fsSync, "closeSync");
     try {
       await expect(async () => await workspace.cleanup()).rejects.toMatchObject({ code: "EACCES" });
@@ -302,13 +364,10 @@ describe.runIf(native && process.platform !== "win32").each(["async", "sync"] as
         // Interpose at the real no-replace rename, after identity admission.
         // Both rename calls and recursive deletion still execute on real disk.
         let renames = 0;
-        __setNativeLoaderForTest(() => ({
-          ...native!,
-          renameNoReplace(...args) {
-            if (renames++ === 0) swap();
-            native!.renameNoReplace(...args);
-          },
-        }));
+        renameNoReplace = (...args) => {
+          if (renames++ === 0) swap();
+          native!.renameNoReplace(...args);
+        };
 
         try {
           const result = await cleanup(workspace, method);

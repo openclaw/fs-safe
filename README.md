@@ -393,6 +393,9 @@ cleanup. Retry, dedupe, and transport semantics stay with the caller.
 `tempWorkspace()` exposes `write()`, `writeText()`, `writeJson()`, `copyIn()`, and `read()` for
 single-file scratch workflows without hand-rolled path joins, plus a `store: FileStore` view of
 the workspace dir for the richer cases (`writeStream`, `readJsonIfExists`, `store.json<T>(rel)`).
+Creation requires native no-replace directory rename and a retained parent
+descriptor; native mode `off` or unavailable cleanup support throws
+`helper-unavailable` before creating a child. See the [temp workspace contract](docs/temp.md).
 
 `tempFile()` is the smaller one-file temp helper. It is intentionally an
 advanced primitive: use `tempWorkspace()` for the stable temp surface and reach

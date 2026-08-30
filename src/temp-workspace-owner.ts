@@ -6,7 +6,7 @@ import { createAsyncDirectoryGuard, createSyncDirectoryGuard } from "./directory
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup, type FileIdentityStat } from "./file-identity.js";
 import { withAsyncDirectoryGuards, withSyncDirectoryGuards } from "./guarded-mutation.js";
-import { getNativeBinding, type NativeBinding } from "./native.js";
+import { requireNativeBinding, type NativeBinding } from "./native.js";
 import { assertStagedDirectoryCurrent, openStagedDirectory } from "./staged-directory.js";
 
 export type TempWorkspaceCleanupResult = "removed" | "missing" | "identity-mismatch" | "indeterminate";
@@ -14,32 +14,67 @@ export type TempWorkspaceCleanupResult = "removed" | "missing" | "identity-misma
 type Parent = ReturnType<typeof openStagedDirectory>;
 type Quarantine = { path: string };
 
+export class TempWorkspaceCleanupCapability {
+  readonly binding: NativeBinding;
+  readonly parent: Parent;
+  #closed = false;
+
+  constructor(root: string) {
+    this.binding = requireNativeBinding();
+    if (typeof this.binding.renameNoReplace !== "function") {
+      throw new FsSafeError("helper-unavailable", "temp workspaces require native no-replace directory rename");
+    }
+    try {
+      this.parent = openStagedDirectory(root);
+    } catch (cause) {
+      throw new FsSafeError("helper-unavailable", "temp workspaces require a retained parent descriptor", { cause });
+    }
+    try {
+      this.assertCurrent();
+    } catch (cause) {
+      try {
+        this.close();
+      } catch (closeError) {
+        cause = new AggregateError([cause, closeError], "temp workspace parent admission and close failed");
+      }
+      throw new FsSafeError("helper-unavailable", "temp workspace parent cannot be safely retained", { cause });
+    }
+  }
+
+  assertCurrent(): void {
+    if (this.#closed) {
+      throw new FsSafeError("path-mismatch", "temp workspace cleanup parent is closed");
+    }
+    assertStagedDirectoryCurrent(this.parent.receipt);
+    const current = fsSync.fstatSync(this.parent.fd, { bigint: true });
+    if (!sameFileIdentityForCleanup(current, this.parent.receipt.identity)) {
+      throw new FsSafeError("path-mismatch", "temp workspace cleanup parent changed");
+    }
+  }
+
+  close(): void {
+    if (this.#closed) return;
+    this.#closed = true;
+    fsSync.closeSync(this.parent.fd);
+  }
+}
+
 export class TempWorkspaceCleanupOwner {
   readonly #dir: string;
   readonly #identity: FileIdentityStat;
-  readonly #parent?: Parent;
-  readonly #parentReceipt?: Parent["receipt"];
-  #closed = false;
+  readonly #capability: TempWorkspaceCleanupCapability;
+  readonly #parent: Parent;
+  readonly #parentReceipt: Parent["receipt"];
   #running = false;
   #result?: TempWorkspaceCleanupResult;
   #pending?: Promise<TempWorkspaceCleanupResult>;
 
-  constructor(dir: string, identity: FileIdentityStat) {
+  constructor(dir: string, identity: FileIdentityStat, capability: TempWorkspaceCleanupCapability) {
     this.#dir = dir;
     this.#identity = { dev: identity.dev, ino: identity.ino };
-    try {
-      const parentPath = path.dirname(dir);
-      this.#parentReceipt = {
-        path: parentPath,
-        realPath: fsSync.realpathSync(parentPath),
-        identity: fsSync.lstatSync(parentPath, { bigint: true }),
-      };
-      assertStagedDirectoryCurrent(this.#parentReceipt);
-      this.#parent = openStagedDirectory(parentPath);
-    } catch {
-      // Some hosts cannot open Node directory descriptors. Keep the original
-      // pathname receipt for guarded cleanup; never re-admit a changed parent.
-    }
+    this.#capability = capability;
+    this.#parent = capability.parent;
+    this.#parentReceipt = capability.parent.receipt;
   }
 
   #repeat(): TempWorkspaceCleanupResult {
@@ -48,37 +83,24 @@ export class TempWorkspaceCleanupOwner {
 
   #finish(result: TempWorkspaceCleanupResult): TempWorkspaceCleanupResult {
     this.#result ??= result;
-    if (!this.#closed) {
-      this.#closed = true;
-      try {
-        if (this.#parent) fsSync.closeSync(this.#parent.fd);
-      } catch (error) {
-        this.#result = "indeterminate";
-        throw error;
-      }
+    try {
+      this.#capability.close();
+    } catch (error) {
+      this.#result = "indeterminate";
+      throw error;
     }
     return this.#result;
   }
 
   #assertParent(): void {
-    if (this.#closed || !this.#parentReceipt ||
-      !sameFileIdentityForCleanup(this.#parentReceipt.identity, this.#parentReceipt.identity)) {
-      throw new FsSafeError("path-mismatch", "temp workspace cleanup parent is unavailable");
-    }
-    assertStagedDirectoryCurrent(this.#parentReceipt);
-    if (this.#parent) {
-      const current = fsSync.fstatSync(this.#parent.fd, { bigint: true });
-      if (!sameFileIdentityForCleanup(current, this.#parentReceipt.identity)) {
-        throw new FsSafeError("path-mismatch", "temp workspace cleanup parent changed");
-      }
-    }
+    this.#capability.assertCurrent();
   }
 
-  #restore(binding: NativeBinding, name: string, identity: FileIdentityStat): TempWorkspaceCleanupResult {
+  #restore(name: string, identity: FileIdentityStat): TempWorkspaceCleanupResult {
     try {
       this.#assertParent();
-      const parent = this.#parent!;
-      binding.renameNoReplace(parent.fd, name, parent.fd, path.basename(this.#dir));
+      const parent = this.#parent;
+      this.#capability.binding.renameNoReplace(parent.fd, name, parent.fd, path.basename(this.#dir));
       this.#assertParent();
       const restored = fsSync.lstatSync(this.#dir, { bigint: true });
       this.#assertParent();
@@ -105,31 +127,15 @@ export class TempWorkspaceCleanupOwner {
       if (!current.isDirectory() || current.isSymbolicLink() || !sameFileIdentityForCleanup(current, this.#identity)) {
         return "identity-mismatch";
       }
-      let binding;
-      try {
-        binding = getNativeBinding();
-      } catch {
-        // Cleanup must also work when a required binding becomes unavailable.
-      }
-      const nativeRename = this.#parent && typeof binding?.renameNoReplace === "function";
       this.#assertParent();
       const name = `.fs-safe-workspace-cleanup-${randomUUID()}`;
-      const quarantinePath = path.join(this.#parentReceipt!.path, name);
-      if (nativeRename) {
-        binding!.renameNoReplace(this.#parent!.fd, path.basename(this.#dir), this.#parent!.fd, name);
-      } else {
-        const guard = createSyncDirectoryGuard(this.#parentReceipt!.path);
-        withSyncDirectoryGuards([guard], () => {
-          this.#assertParent();
-          fsSync.renameSync(this.#dir, quarantinePath);
-        });
-      }
+      const quarantinePath = path.join(this.#parentReceipt.path, name);
+      this.#capability.binding.renameNoReplace(this.#parent.fd, path.basename(this.#dir), this.#parent.fd, name);
       this.#assertParent();
       const quarantined = fsSync.lstatSync(quarantinePath, { bigint: true });
       this.#assertParent();
       if (!quarantined.isDirectory() || quarantined.isSymbolicLink() || !sameFileIdentityForCleanup(quarantined, this.#identity)) {
-        // Pathname rename cannot safely restore over a newer public entry.
-        return nativeRename ? this.#restore(binding!, name, quarantined) : "indeterminate";
+        return this.#restore(name, quarantined);
       }
       return { path: quarantinePath };
     } catch {
@@ -149,7 +155,7 @@ export class TempWorkspaceCleanupOwner {
   async #remove(quarantine: Quarantine): Promise<TempWorkspaceCleanupResult> {
     let removalError: unknown;
     try {
-      const guard = await createAsyncDirectoryGuard(this.#parentReceipt!.path);
+      const guard = await createAsyncDirectoryGuard(this.#parentReceipt.path);
       await withAsyncDirectoryGuards([guard], async () => {
         this.#assertQuarantine(quarantine);
         try {
@@ -169,7 +175,7 @@ export class TempWorkspaceCleanupOwner {
   #removeSync(quarantine: Quarantine): TempWorkspaceCleanupResult {
     let removalError: unknown;
     try {
-      const guard = createSyncDirectoryGuard(this.#parentReceipt!.path);
+      const guard = createSyncDirectoryGuard(this.#parentReceipt.path);
       withSyncDirectoryGuards([guard], () => {
         this.#assertQuarantine(quarantine);
         try {

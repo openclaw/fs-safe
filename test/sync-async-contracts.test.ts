@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
+import { expectTempWorkspaceUnavailable } from "./helpers/temp-workspace.js";
 import { FsSafeError, type FsSafeErrorCode } from "../src/errors.js";
 import { fileStore, fileStoreSync } from "../src/file-store.js";
 import {
@@ -182,6 +183,7 @@ describe("sync and async public contracts", () => {
 
   it("reports temp-workspace directory reads as not-file", async () => {
     const root = await tempRoot("fs-safe-workspace-directory-read-");
+    if (await expectTempWorkspaceUnavailable(root)) return;
     const asyncWorkspace = await tempWorkspace({ rootDir: root, prefix: "async-" });
     const syncWorkspace = tempWorkspaceSync({ rootDir: root, prefix: "sync-" });
     try {
@@ -202,6 +204,7 @@ describe("sync and async public contracts", () => {
 
   it("reports missing temp-workspace reads as not-found", async () => {
     const root = await tempRoot("fs-safe-workspace-missing-read-");
+    if (await expectTempWorkspaceUnavailable(root)) return;
     const asyncWorkspace = await tempWorkspace({ rootDir: root, prefix: "async-" });
     const syncWorkspace = tempWorkspaceSync({ rootDir: root, prefix: "sync-" });
     try {
@@ -219,6 +222,7 @@ describe("sync and async public contracts", () => {
 
   it("reports temp-workspace I/O failures as operational read failures", async () => {
     const root = await tempRoot("fs-safe-workspace-read-io-");
+    if (await expectTempWorkspaceUnavailable(root)) return;
     const asyncWorkspace = await tempWorkspace({ rootDir: root, prefix: "async-" });
     const syncWorkspace = tempWorkspaceSync({ rootDir: root, prefix: "sync-" });
     const failure = Object.assign(new Error("read failed"), { code: "EIO" });
@@ -245,6 +249,7 @@ describe("sync and async public contracts", () => {
 
   itPosix("preserves temp-workspace hardlink and symlink validation codes", async () => {
     const root = await tempRoot("fs-safe-workspace-link-read-");
+    if (await expectTempWorkspaceUnavailable(root)) return;
     const asyncWorkspace = await tempWorkspace({ rootDir: root, prefix: "async-" });
     const syncWorkspace = tempWorkspaceSync({ rootDir: root, prefix: "sync-" });
     try {

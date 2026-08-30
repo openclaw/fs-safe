@@ -71,7 +71,10 @@ manager controls; production code should not use them as lock recovery.
 Standalone walkers use the `WalkEntryKind` and `WalkSymlinkPolicy` unions.
 Private workspaces expose `TempPathIdentityReceipt` and the
 `TempWorkspaceCleanupResult` union so callers can distinguish removal,
-absence, and identity mismatch.
+absence, identity mismatch, and `indeterminate` post-creation ambiguity.
+All workspace factories require native no-replace directory rename and a
+retained parent descriptor before creating a child; see the
+[creation and cleanup contract](temp.md#private-temp-workspaces).
 
 ## Atomic replacement and durability
 

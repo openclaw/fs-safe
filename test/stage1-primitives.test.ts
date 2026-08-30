@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { expectFsSafeError } from "./helpers/security.js";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
+import { expectTempWorkspaceUnavailable } from "./helpers/temp-workspace.js";
 import {
   isHardlinkFallbackError,
   publishFileExclusive,
@@ -20,7 +21,7 @@ import {
   tryReadSecretFile,
 } from "../src/secret.js";
 import { tempWorkspace } from "../src/temp.js";
-import { configureFsSafeNative } from "../src/native-config.js";
+import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { FsSafeError } from "../src/errors.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 
@@ -28,7 +29,7 @@ const { tempDirs, tempRoot } = useTempDirs();
 
 
 afterEach(async () => {
-  configureFsSafeNative({ mode: "auto" });
+  __resetFsSafeNativeConfigForTest();
   __setFsSafeTestHooksForTest();
   vi.restoreAllMocks();
 });
@@ -404,6 +405,7 @@ describe("root walk and temp receipts", () => {
 
   it("does not dispose a replacement temp workspace", async () => {
     const directory = await tempRoot("fs-safe-temp-receipt-");
+    if (await expectTempWorkspaceUnavailable(directory)) return;
     const workspace = await tempWorkspace({ rootDir: directory, prefix: "work-" });
     expect(workspace.identity).toMatchObject({ dev: expect.any(Number), ino: expect.any(Number) });
     const original = `${workspace.dir}.original`;

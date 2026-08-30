@@ -92,7 +92,7 @@ native targets and npm-compatible OS, CPU, and Linux libc filters install only
 the matching binary. Consumers do not run a native build, download code at
 runtime, or execute a postinstall step. Omitting optional dependencies keeps
 non-archive fallback-capable operations working in `auto` or `off`. Native-only
-features, including retained-directory staging, atomic `rename-noreplace`,
+features, including temp workspaces, retained-directory staging, atomic `rename-noreplace`,
 zstd/bzip2 TAR handling, and Windows private-directory creation, remain
 unavailable. Operations needing the binding in `require` mode fail with
 `helper-unavailable` when the matching package is absent or incompatible.
@@ -127,7 +127,11 @@ FS_SAFE_NATIVE_MODE=off      # auto | off | require
 Disabling native loading keeps fallback-capable operations working through Node path
 operations guarded by lexical and canonical checks plus identity verification.
 Use `require` when native-backed operations must fail instead of falling back.
-The exact boundary is documented in [native helper policy](native-helper.md).
+Temp workspaces require native no-replace directory rename and a safely retained
+parent descriptor in every mode: `off` or unavailable cleanup support throws
+`FsSafeError("helper-unavailable")` before creating a workspace child. See the
+[temp workspace contract](temp.md#private-temp-workspaces). The exact boundary
+for other operations is documented in [native helper policy](native-helper.md).
 
 ## Verify the install
 

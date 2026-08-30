@@ -4,6 +4,8 @@ import path from "node:path";
 import JSZip from "jszip";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
+import { expectTempWorkspaceUnavailable } from "./helpers/temp-workspace.js";
+import { __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { extractArchive } from "../src/archive.js";
 import { configureFsSafeNative, root as openRoot } from "../src/index.js";
 import { prepareArchiveDestinationDir, prepareArchiveOutputPath, mergeExtractedTreeIntoDestination } from "../src/archive-staging.js";
@@ -35,7 +37,7 @@ async function writeOldFile(filePath: string, content = "old"): Promise<void> {
 afterEach(async () => {
   vi.restoreAllMocks();
   Object.defineProperty(process, "platform", originalPlatformDescriptor);
-  configureFsSafeNative({ mode: "auto" });
+  __resetFsSafeNativeConfigForTest();
   __setFsSafeTestHooksForTest(undefined);
 });
 
@@ -398,8 +400,10 @@ describe("security finding regressions", () => {
   });
 
   it("accepts safe temp workspace leaf names with spaces and dot prefixes", async () => {
+    const rootDir = await tempRoot("fs-safe-workspace-leaf-");
+    if (await expectTempWorkspaceUnavailable(rootDir)) return;
     await using workspace = await tempWorkspace({
-      rootDir: await tempRoot("fs-safe-workspace-leaf-"),
+      rootDir,
       prefix: "work-",
     });
 
@@ -412,6 +416,7 @@ describe("security finding regressions", () => {
 
   itPosix("pins sync temp workspace reads against final symlink swaps", async () => {
     const base = await tempRoot("fs-safe-temp-workspace-sync-read-");
+    if (await expectTempWorkspaceUnavailable(base)) return;
     const outside = await tempRoot("fs-safe-temp-workspace-sync-outside-");
     const workspace = tempWorkspaceSync({ rootDir: base, prefix: "ws-" });
     try {
