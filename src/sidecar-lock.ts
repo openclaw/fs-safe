@@ -158,22 +158,17 @@ async function releaseHeldLock(
   if (current !== held) {
     return false;
   }
-  if (options.force) {
-    held.refCount = 0;
-  } else {
-    held.refCount -= 1;
-    if (held.refCount > 0) {
-      return false;
-    }
-  }
   if (held.releasePromise) {
     await held.releasePromise;
     return true;
   }
-  state.held.delete(normalizedTargetPath);
-  if (held.compromiseTimer) {
-    clearInterval(held.compromiseTimer);
-    held.compromiseTimer = undefined;
+  if (options.force) {
+    held.refCount = 0;
+  } else if (held.refCount > 0) {
+    held.refCount -= 1;
+    if (held.refCount > 0) {
+      return false;
+    }
   }
   held.releasePromise = (async () => {
     await held.handle.close().catch(() => undefined);
@@ -184,6 +179,11 @@ async function releaseHeldLock(
   })();
   try {
     await held.releasePromise;
+    state.held.delete(normalizedTargetPath);
+    if (held.compromiseTimer) {
+      clearInterval(held.compromiseTimer);
+      held.compromiseTimer = undefined;
+    }
     return true;
   } finally {
     held.releasePromise = undefined;

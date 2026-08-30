@@ -45,10 +45,12 @@ describe("asynchronous sidecar lock release failures", () => {
 
     await expect(lock.release()).rejects.toBe(failure);
     await expect(fs.access(lock.lockPath)).resolves.toBeUndefined();
-    expect(manager.heldEntries()).toEqual([]);
+    expect(manager.heldEntries()).toHaveLength(1);
 
     rm.mockRestore();
-    await fs.rm(lock.lockPath, { force: true });
+    await lock.release();
+    await expect(fs.access(lock.lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(manager.heldEntries()).toEqual([]);
   });
 
   it("rejects when Root-backed sidecar deletion fails", async () => {
@@ -66,10 +68,13 @@ describe("asynchronous sidecar lock release failures", () => {
 
     await expect(lock.release()).rejects.toBe(failure);
     await expect(fs.access(lock.lockPath)).resolves.toBeUndefined();
-    expect(manager.heldEntries()).toEqual([]);
+    const [entry] = manager.heldEntries();
+    expect(entry).toBeDefined();
 
     remove.mockRestore();
-    await fs.rm(lock.lockPath, { force: true });
+    await entry?.forceRelease();
+    await expect(fs.access(lock.lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(manager.heldEntries()).toEqual([]);
   });
 
   it("preserves callback and release failures from withFileLock", async () => {

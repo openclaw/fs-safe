@@ -12,10 +12,20 @@ export function createSidecarLockHandle(params: {
   release: () => Promise<unknown>;
 }): SidecarLockHandle {
   let released = false;
+  let releasePromise: Promise<void> | undefined;
   const release = async (): Promise<void> => {
     if (released) return;
-    released = true;
-    await params.release();
+    if (!releasePromise) {
+      releasePromise = (async () => {
+        await params.release();
+        released = true;
+      })();
+    }
+    try {
+      await releasePromise;
+    } finally {
+      releasePromise = undefined;
+    }
   };
   return {
     lockPath: params.lockPath,
