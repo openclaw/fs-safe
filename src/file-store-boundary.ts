@@ -2,6 +2,7 @@ import syncFs from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Transform, type Readable } from "node:stream";
+import { normalizeMaxBytes } from "./byte-budget.js";
 import { pipeline } from "node:stream/promises";
 import {
   assertSyncDirectoryGuard as assertDirectoryGuardSync,
@@ -39,9 +40,10 @@ export async function openWritableStoreRoot(params: {
   dirMode: number;
   maxBytes?: number;
 }): Promise<Root> {
+  const maxBytes = normalizeMaxBytes(params.maxBytes);
   await fs.mkdir(params.rootDir, { recursive: true, mode: params.dirMode });
   await fs.chmod(params.rootDir, params.dirMode).catch(() => undefined);
-  return await root(params.rootDir, { hardlinks: "reject", maxBytes: params.maxBytes });
+  return await root(params.rootDir, { hardlinks: "reject", maxBytes });
 }
 
 async function chmodDirectoryInRootBestEffort(
@@ -72,7 +74,8 @@ async function chmodDirectoryInRootBestEffort(
 }
 
 function createMaxBytesTransform(maxBytes: number | undefined): Transform | undefined {
-  if (maxBytes === undefined) {
+  const limit = normalizeMaxBytes(maxBytes);
+  if (limit === undefined) {
     return undefined;
   }
   let total = 0;
@@ -80,8 +83,8 @@ function createMaxBytesTransform(maxBytes: number | undefined): Transform | unde
     transform(chunk: Buffer | string, _encoding, callback) {
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       total += buffer.byteLength;
-      if (total > maxBytes) {
-        callback(new FsSafeError("too-large", `file exceeds maximum size of ${maxBytes} bytes`));
+      if (total > limit) {
+        callback(new FsSafeError("too-large", `file exceeds maximum size of ${limit} bytes`));
         return;
       }
       callback(null, buffer);
@@ -94,6 +97,7 @@ export async function writeStreamToTempSource(params: {
   maxBytes?: number;
   mode: number;
 }): Promise<{ path: string; cleanup: () => Promise<void> }> {
+  const maxBytes = normalizeMaxBytes(params.maxBytes);
   const tempRoot = resolveSecureTempRoot({
     fallbackPrefix: "fs-safe-file-store",
     unsafeFallbackLabel: "file store temp dir",
@@ -109,7 +113,7 @@ export async function writeStreamToTempSource(params: {
     writable.once("close", () => {
       handleClosedByStream = true;
     });
-    const limiter = createMaxBytesTransform(params.maxBytes);
+    const limiter = createMaxBytesTransform(maxBytes);
     if (limiter) {
       await pipeline(params.stream, limiter, writable);
     } else {

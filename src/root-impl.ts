@@ -4,6 +4,7 @@ import { constants as fsConstants } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { normalizeMaxBytes } from "./byte-budget.js";
 import type { ContainmentGuarantee } from "./containment.js";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, createNearestExistingDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
@@ -429,8 +430,7 @@ class RootHandle implements Root {
   ): Promise<ReadResult> {
     return await readFileInRoot(this.context, {
       relativePath,
-      ...readDefaults(this.defaults),
-      ...options,
+      ...mergeReadOptions(this.defaults, options),
     });
   }
 
@@ -459,8 +459,7 @@ class RootHandle implements Root {
   ): Promise<ReadResult> {
     return await readPathInRoot(this.context, {
       filePath,
-      ...readDefaults(this.defaults),
-      ...options,
+      ...mergeReadOptions(this.defaults, options),
     });
   }
 
@@ -579,13 +578,14 @@ class RootHandle implements Root {
     options: RootCopyOptions = {},
   ): Promise<void> {
     assertValidRootDestinationPath(relativePath);
+    const { maxBytes, ...copyOptions } = this.mutationOptions(options);
     await copyFileInRoot(this.context, {
       sourcePath,
       relativePath,
-      maxBytes: this.defaults.maxBytes,
+      maxBytes: normalizeMaxBytes(maxBytes, { defaultValue: this.defaults.maxBytes }),
       mkdir: this.defaults.mkdir,
       mode: this.defaults.mode,
-      ...this.mutationOptions(options),
+      ...copyOptions,
     });
   }
 
@@ -647,16 +647,26 @@ class RootHandle implements Root {
 function readDefaults(defaults: RootDefaults): RootReadParams {
   return {
     hardlinks: defaults.hardlinks,
-    maxBytes: defaults.maxBytes ?? DEFAULT_ROOT_MAX_BYTES,
+    maxBytes: normalizeMaxBytes(defaults.maxBytes, { defaultValue: DEFAULT_ROOT_MAX_BYTES }),
     nonBlockingRead: defaults.nonBlockingRead,
     symlinks: defaults.symlinks,
   };
+}
+
+function mergeReadOptions(defaults: RootDefaults, options: RootReadOptions): RootReadParams {
+  const merged = readDefaults(defaults);
+  if (options.hardlinks !== undefined) merged.hardlinks = options.hardlinks;
+  merged.maxBytes = normalizeMaxBytes(options.maxBytes, { defaultValue: merged.maxBytes });
+  if (options.nonBlockingRead !== undefined) merged.nonBlockingRead = options.nonBlockingRead;
+  if (options.symlinks !== undefined) merged.symlinks = options.symlinks;
+  return merged;
 }
 
 export async function root(
   rootDir: string,
   defaults: RootDefaults = {},
 ): Promise<Root> {
+  normalizeMaxBytes(defaults.maxBytes);
   return new RootHandle(await resolveRootContext(rootDir), defaults);
 }
 
@@ -747,9 +757,10 @@ export async function readLocalFileSafely(params: {
   filePath: string;
   maxBytes?: number;
 }): Promise<ReadResult> {
+  const maxBytes = normalizeMaxBytes(params.maxBytes);
   const opened = await openLocalFileSafely({ filePath: params.filePath });
   try {
-    return await readOpenedFileSafely({ opened, maxBytes: params.maxBytes });
+    return await readOpenedFileSafely({ opened, maxBytes });
   } finally {
     await opened.handle.close().catch(() => {});
   }

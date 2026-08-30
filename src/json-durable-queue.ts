@@ -1,6 +1,7 @@
 import fs, { type BigIntStats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
+import { normalizeMaxBytes } from "./byte-budget.js";
 import { syncQueueDirectoryCreation } from "./json-durable-queue-directory.js";
 import {
   acknowledgeDurableQueueEntry,
@@ -374,7 +375,9 @@ export async function readJsonDurableQueueEntry<T>(
   return JSON.parse(
     await readBoundedUtf8File({
       filePath,
-      maxBytes: options.maxBytes ?? DEFAULT_JSON_DURABLE_QUEUE_ENTRY_MAX_BYTES,
+      maxBytes: normalizeMaxBytes(options.maxBytes, {
+        defaultValue: DEFAULT_JSON_DURABLE_QUEUE_ENTRY_MAX_BYTES,
+      })!,
     }),
   ) as T;
 }

@@ -4,6 +4,7 @@ import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Readable } from "node:stream";
+import { normalizeMaxBytes } from "./byte-budget.js";
 import { createAsyncDirectoryGuard, createNearestExistingDirectoryGuard, type AsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { syncDirectoryBestEffort } from "./fsync.js";
@@ -110,20 +111,21 @@ export type PinnedWriteParams = {
 };
 
 export async function runPinnedWriteHelper(params: PinnedWriteParams): Promise<FileIdentityStat> {
+  const normalizedParams = { ...params, maxBytes: normalizeMaxBytes(params.maxBytes) };
   assertSafeBasename(params.basename);
   validatePinnedOperationPayload({
     relativeParentPath: params.relativeParentPath,
   });
   // The explicit compatibility policy uses the guarded Node fallback, where
   // content verification can replace the strict post-rename inode check.
-  if (params.onRenameIdentityMismatch === "verify-content") {
-    return await runPinnedWriteFallback(params);
+  if (normalizedParams.onRenameIdentityMismatch === "verify-content") {
+    return await runPinnedWriteFallback(normalizedParams);
   }
   const native = getNativeBinding();
   if (native) {
-    return await runPinnedWriteNative(native, params);
+    return await runPinnedWriteNative(native, normalizedParams);
   }
-  return await runPinnedWriteFallback(params);
+  return await runPinnedWriteFallback(normalizedParams);
 }
 
 export async function runPinnedWriteWithRenamePolicy(

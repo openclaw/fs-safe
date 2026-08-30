@@ -89,7 +89,7 @@ type RootReadOptions = {
 };
 ```
 
-`maxBytes` is enforced eagerly: the library reads up to `maxBytes + 1` and throws `too-large` if there is more, so a hostile target cannot silently exhaust memory.
+`maxBytes` is enforced eagerly: the library reads up to `maxBytes + 1` and throws `too-large` if there is more, so a hostile target cannot silently exhaust memory. Values must be non-negative safe integers or positive `Infinity`; zero is an active cap, while `Infinity` disables it. Explicitly forwarding `undefined` preserves the Root default.
 
 `nonBlockingRead` remains as a compatibility hint. Safe reads always add the platform's nonblocking open flag where available so a raced FIFO cannot pin a worker indefinitely; regular-file descriptor reads retain normal Node behavior.
 

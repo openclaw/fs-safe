@@ -57,6 +57,8 @@ type SecureFileReadOptions = {
 };
 ```
 
+`io.maxBytes` must be a non-negative safe integer or positive `Infinity`; zero is an active cap and `Infinity` disables the cap. Invalid limits reject before filesystem admission.
+
 `permissions.allowInsecure` is a migration escape hatch. Prefer fixing permissions and using [`formatPermissionRemediation`](permissions.md) to show the user what to run. `trust.allowNetworkPath` is off by default because UNC paths are remote authority, not local filesystem input. `inject` is for tests and platform adapters; production callers usually leave it unset.
 
 `permissions.allowInsecure` bypasses only permission checks. Neither it nor `inject.platform` changes filesystem identity verification, which always uses the actual process platform. `trust.allowSymlink` permits an alias but still requires its target and realpath to match the opened descriptor.

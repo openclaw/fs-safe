@@ -48,6 +48,8 @@ The requested `path` must name a file. Missing destination parents are created
 by the helper because the operation is "produce this output file under the
 root"; callers should choose the filename before calling this API.
 
+`maxBytes` must be a non-negative safe integer or positive `Infinity`; zero is an active cap and `Infinity` disables it. Invalid values reject before the producer or filesystem staging runs.
+
 Use `maxBytes` when the external producer can create arbitrarily large files,
 and `mode` when the finalized file needs a specific POSIX mode. Both staging
 modes enforce them after the producer returns and before committing the target.

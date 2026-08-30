@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { readFileHandleBounded } from "./bounded-read.js";
+import { normalizeMaxBytes } from "./byte-budget.js";
 import { assertNoUnsafeDeviceReadPath } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
 import { isWindowsDriveLetterPath, isWindowsNetworkPath } from "./local-file-access.js";
@@ -68,7 +69,7 @@ function label(options: SecureFileReadOptions): string {
   return options.label ?? "Secure file";
 }
 
-async function openSecureHandle(options: SecureFileReadOptions): Promise<{
+async function openSecureHandle(options: SecureFileReadOptions, maxBytes: number | undefined): Promise<{
   handle: FileHandle;
   pathStat: Stats;
   realPath: string;
@@ -123,8 +124,8 @@ async function openSecureHandle(options: SecureFileReadOptions): Promise<{
     }, openedIdentity);
     const realPath = await fs.realpath(options.filePath);
     await inspectFileIdentity(() => fs.stat(realPath, { bigint: true }), openedIdentity);
-    if (options.io?.maxBytes !== undefined && openedStat.size > options.io.maxBytes) {
-      throw new FsSafeError("too-large", `${label(options)} exceeded maxBytes (${options.io.maxBytes}).`);
+    if (maxBytes !== undefined && openedStat.size > maxBytes) {
+      throw new FsSafeError("too-large", `${label(options)} exceeded maxBytes (${maxBytes}).`);
     }
     return { handle, pathStat: openedStat, realPath };
   } catch (err) {
@@ -245,14 +246,15 @@ async function readHandleWithTimeout(
 export async function readSecureFile(
   options: SecureFileReadOptions,
 ): Promise<SecureFileReadResult> {
-  const opened = await openSecureHandle(options);
+  const maxBytes = normalizeMaxBytes(options.io?.maxBytes);
+  const opened = await openSecureHandle(options, maxBytes);
   try {
     await assertTrustedDirs(options, opened.realPath);
     const permissions = await assertSecurePermissions(options, opened.pathStat, opened.realPath);
     const buffer = await readHandleWithTimeout(
       opened.handle,
       options.io?.timeoutMs,
-      options.io?.maxBytes,
+      maxBytes,
     );
     return { buffer, realPath: opened.realPath, stat: opened.pathStat, permissions };
   } finally {
