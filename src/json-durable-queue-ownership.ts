@@ -156,7 +156,31 @@ export async function moveDurableQueueEntryToFailed(params: {
 }): Promise<void> {
   await withQueueEntryLock(params.paths, async () => {
     const processingPath = durableQueueProcessingPath(params.paths);
-    const sourcePath = (await regularQueueFileIdentity(processingPath))
+    const processing = await regularQueueFileIdentity(processingPath);
+    const existingFailed = await regularQueueFileIdentity(params.failedPath);
+    if (!processing && existingFailed) {
+      await syncDirectory(path.dirname(params.failedPath));
+      await syncDirectory(path.dirname(processingPath));
+      const recoveredFailed = await regularQueueFileIdentity(params.failedPath);
+      if (
+        !recoveredFailed ||
+        !sameFileIdentityForCleanup(existingFailed, recoveredFailed)
+      ) {
+        throw new FsSafeError(
+          "path-mismatch",
+          "failed queue destination changed during recovery",
+        );
+      }
+      if (await regularQueueFileIdentity(params.paths.jsonPath)) {
+        throw new FsSafeError(
+          "already-exists",
+          "failed queue destination already exists",
+        );
+      }
+      return;
+    }
+
+    const sourcePath = processing
       ? processingPath
       : await claimDurableQueueEntryUnlocked(params.paths);
     if (!sourcePath) {

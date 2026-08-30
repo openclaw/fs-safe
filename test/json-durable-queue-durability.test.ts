@@ -54,11 +54,14 @@ function failDirectorySyncOnce(
   occurrence = 1,
 ): void {
   const target = path.resolve(directoryPath);
+  const targetReal = fs.realpath(directoryPath).catch(() => target);
   const realOpen = fs.open.bind(fs);
   let syncCalls = 0;
   vi.spyOn(fs, "open").mockImplementation(async (...args) => {
     const handle = await realOpen(...args);
-    if (path.resolve(args[0].toString()) !== target) return handle;
+    const openedPath = path.resolve(args[0].toString());
+    const openedReal = await fs.realpath(args[0].toString()).catch(() => openedPath);
+    if (openedPath !== target && openedReal !== await targetReal) return handle;
     const realSync = handle.sync.bind(handle);
     vi.spyOn(handle, "sync").mockImplementation(async () => {
       syncCalls += 1;
@@ -234,6 +237,7 @@ describe("durable JSON queue transition durability", () => {
     failDirectorySyncOnce(
       failedDir,
       Object.assign(new Error("failed directory sync failed"), { code: "EIO" }),
+      2,
     );
 
     await expect(
@@ -249,6 +253,7 @@ describe("durable JSON queue transition durability", () => {
     failDirectorySyncOnce(
       failedDir,
       Object.assign(new Error("failed retry sync failed"), { code: "EIO" }),
+      2,
     );
     await expect(
       moveJsonDurableQueueEntryToFailed({ queueDir, failedDir, id: "job" }),
@@ -263,6 +268,97 @@ describe("durable JSON queue transition durability", () => {
     ).resolves.toBeUndefined();
     await expect(fs.access(paths.processingPath!)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(fs.lstat(failedPath, { bigint: true })).resolves.toMatchObject({ nlink: 1n });
+  });
+
+  it("retries quarantine source-removal sync after the source path is gone", async () => {
+    const { queueDir, failedDir, paths } = await fixture();
+    await writeGeneration(paths.jsonPath, 1);
+    await loadJsonDurableQueueEntry({ paths, tempPrefix: "queue" });
+    failDirectorySyncOnce(
+      queueDir,
+      Object.assign(new Error("queue removal sync failed"), { code: "EIO" }),
+    );
+
+    await expect(
+      moveJsonDurableQueueEntryToFailed({ queueDir, failedDir, id: "job" }),
+    ).rejects.toThrow("queue removal sync failed");
+    const failedPath = path.join(failedDir, "job.json");
+    await expect(fs.access(paths.processingPath!)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.lstat(failedPath, { bigint: true })).resolves.toMatchObject({ nlink: 1n });
+
+    vi.restoreAllMocks();
+    failDirectorySyncOnce(
+      queueDir,
+      Object.assign(new Error("queue removal retry sync failed"), { code: "EIO" }),
+    );
+    await expect(
+      moveJsonDurableQueueEntryToFailed({ queueDir, failedDir, id: "job" }),
+    ).rejects.toThrow("queue removal retry sync failed");
+    await expect(fs.access(paths.processingPath!)).rejects.toMatchObject({ code: "ENOENT" });
+
+    vi.restoreAllMocks();
+    await expect(
+      moveJsonDurableQueueEntryToFailed({ queueDir, failedDir, id: "job" }),
+    ).resolves.toBeUndefined();
+    await expect(fs.readFile(failedPath, "utf8")).resolves.toContain('"generation": 1');
+  });
+
+  it("repairs failed-directory creation sync before quarantining on retry", async () => {
+    const root = await tempRoot("fs-safe-queue-failed-directory-retry-");
+    const queueDir = path.join(root, "queue");
+    const failedDir = path.join(root, "a", "failed");
+    await fs.mkdir(queueDir);
+    const paths = resolveJsonDurableQueueEntryPaths(queueDir, "job");
+    await writeGeneration(paths.jsonPath, 1);
+    await loadJsonDurableQueueEntry({ paths, tempPrefix: "queue" });
+    const failedParent = path.join(await fs.realpath(root), "a");
+    failDirectorySyncOnce(
+      failedParent,
+      Object.assign(new Error("failed parent creation sync failed"), { code: "EIO" }),
+    );
+
+    await expect(
+      moveJsonDurableQueueEntryToFailed({ queueDir, failedDir, id: "job" }),
+    ).rejects.toThrow("failed parent creation sync failed");
+    const failedPath = path.join(failedDir, "job.json");
+    await expect(fs.access(failedPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.lstat(paths.processingPath!, { bigint: true })).resolves.toMatchObject({
+      nlink: 1n,
+    });
+
+    vi.restoreAllMocks();
+    failDirectorySyncOnce(
+      failedParent,
+      Object.assign(new Error("failed parent creation retry failed"), { code: "EIO" }),
+    );
+    await expect(
+      moveJsonDurableQueueEntryToFailed({ queueDir, failedDir, id: "job" }),
+    ).rejects.toThrow("failed parent creation retry failed");
+    await expect(fs.access(failedPath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    vi.restoreAllMocks();
+    await expect(
+      moveJsonDurableQueueEntryToFailed({ queueDir, failedDir, id: "job" }),
+    ).resolves.toBeUndefined();
+    await expect(fs.readFile(failedPath, "utf8")).resolves.toContain('"generation": 1');
+  });
+
+  it("syncs nested directory creation from the leaf to the trusted root", async () => {
+    const root = await tempRoot("fs-safe-queue-directory-order-");
+    const rootReal = await fs.realpath(root);
+    const queueDir = path.join(root, "a", "b", "queue");
+    const failedDir = path.join(root, "c", "failed");
+    const events: string[] = [];
+    observeDirectorySyncs(events);
+
+    await ensureJsonDurableQueueDirs({ queueDir, failedDir });
+
+    expect(events.slice(0, 4)).toEqual([
+      `sync:${path.join(rootReal, "a", "b", "queue")}`,
+      `sync:${path.join(rootReal, "a", "b")}`,
+      `sync:${path.join(rootReal, "a")}`,
+      `sync:${rootReal}`,
+    ]);
   });
 
   it("resyncs every nested ancestor edge after creation failure", async () => {

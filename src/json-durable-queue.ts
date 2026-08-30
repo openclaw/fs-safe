@@ -106,16 +106,15 @@ export async function ensureJsonDurableQueueDirs(params: {
 async function ensureJsonDurableQueueDir(
   dir: string,
   validationRoot?: QueueValidationRoot,
-  syncExisting = true,
 ): Promise<void> {
   const root = validationRoot
     ? validationRoot
     : queueValidationRoot(dir);
   await assertNoSymlinkDirectorySegments(root, dir, true);
-  const createdDir = await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
+  await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
   await assertNoSymlinkDirectorySegments(root, dir, false);
   await chmodQueueDirectory(dir);
-  await syncQueueDirectoryCreation(dir, root.path, createdDir, syncExisting);
+  await syncQueueDirectoryCreation(dir, root.path);
 }
 
 async function assertJsonDurableQueueDir(
@@ -488,7 +487,7 @@ export async function moveJsonDurableQueueEntryToFailed(params: {
   assertSafeQueueEntryId(params.id);
   const roots = await queueValidationRoots(params.queueDir, params.failedDir);
   await assertJsonDurableQueueDir(params.queueDir, roots.queueRoot);
-  await ensureJsonDurableQueueDir(params.failedDir, roots.failedRoot, false);
+  await ensureJsonDurableQueueDir(params.failedDir, roots.failedRoot);
   await moveDurableQueueEntryToFailed({
     paths: resolveJsonDurableQueueEntryPaths(params.queueDir, params.id),
     failedPath: path.join(params.failedDir, `${params.id}.json`),
