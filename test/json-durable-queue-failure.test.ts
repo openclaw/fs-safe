@@ -14,10 +14,12 @@ import {
   resolveJsonDurableQueueEntryPaths,
   unlinkBestEffort,
 } from "../src/json-durable-queue.js";
+import { configureFsSafeNative } from "../src/native-config.js";
 
 const { tempRoot } = useTempDirs();
 
 afterEach(() => {
+  configureFsSafeNative({ mode: "auto" });
   vi.restoreAllMocks();
 });
 
@@ -43,14 +45,14 @@ describe("durable JSON queue failure recovery", () => {
         read: async (entry) => ({ entry: { version: entry.version + 1 }, migrated: true }),
       }),
     ).resolves.toEqual([{ version: 2 }]);
-    await expect(fs.readFile(path.join(queueDir, "ready.json"), "utf8")).resolves.toContain(
+    await expect(fs.readFile(path.join(queueDir, "ready.processing"), "utf8")).resolves.toContain(
       "\"version\": 2",
     );
     await expect(fs.access(path.join(queueDir, "already.delivered"))).rejects.toMatchObject({
       code: "ENOENT",
     });
     await expect(fs.readFile(freshTmp, "utf8")).resolves.toBe("incomplete");
-    await expect(fs.readFile(path.join(queueDir, "truncated.json"), "utf8")).resolves.toBe(
+    await expect(fs.readFile(path.join(queueDir, "truncated.processing"), "utf8")).resolves.toBe(
       "{\"version\":",
     );
   });
@@ -195,10 +197,11 @@ describe("durable JSON queue failure recovery", () => {
     const root = await tempRoot("fs-safe-queue-ack-error-");
     const paths = resolveJsonDurableQueueEntryPaths(root, "job");
     await fs.writeFile(paths.jsonPath, "{}");
-    const denied = Object.assign(new Error("rename denied"), { code: "EACCES" });
+    await loadJsonDurableQueueEntry({ paths, tempPrefix: "queue" });
+    const denied = Object.assign(new Error("publication denied"), { code: "EACCES" });
     vi.spyOn(fs, "rename").mockRejectedValueOnce(denied);
     await expect(ackJsonDurableQueueEntry(paths)).rejects.toBe(denied);
-    expect(fsSync.existsSync(paths.jsonPath)).toBe(true);
+    expect(fsSync.existsSync(paths.processingPath!)).toBe(true);
   });
 
   it("ignores missing best-effort cleanup but propagates stale-temp inspection failures", async () => {

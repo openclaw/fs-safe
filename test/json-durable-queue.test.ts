@@ -45,7 +45,7 @@ describe("durable JSON queues", () => {
         read: async (entry) => ({ entry: { ...entry, version: 2 }, migrated: true }),
       }),
     ).resolves.toEqual({ id: "entry-1", version: 2 });
-    await expect(fs.readFile(paths.jsonPath, "utf8")).resolves.toContain("\"version\": 2");
+    await expect(fs.readFile(paths.processingPath!, "utf8")).resolves.toContain("\"version\": 2");
 
     await expect(
       loadPendingJsonDurableQueueEntries<{ id: string; version: number }>({

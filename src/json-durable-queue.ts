@@ -1,14 +1,21 @@
 import fs, { type BigIntStats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
-import { inspectFileIdentity } from "./strict-file-identity.js";
+import {
+  acknowledgeDurableQueueEntry,
+  claimDurableQueueEntry,
+  completeDeliveredQueueEntry,
+  moveDurableQueueEntryToFailed,
+} from "./json-durable-queue-ownership.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
 import { replaceFileAtomic } from "./replace-file.js";
 import { assertSafePathSegment } from "./safe-path-segment.js";
+import { inspectFileIdentity } from "./strict-file-identity.js";
 
 export type JsonDurableQueueEntryPaths = {
   jsonPath: string;
   deliveredPath: string;
+  processingPath?: string;
 };
 
 export type JsonDurableQueueReadResult<T> = {
@@ -82,6 +89,7 @@ export function resolveJsonDurableQueueEntryPaths(
   return {
     jsonPath: path.join(queueDir, `${id}.json`),
     deliveredPath: path.join(queueDir, `${id}.delivered`),
+    processingPath: path.join(queueDir, `${id}.processing`),
   };
 }
 
@@ -277,6 +285,23 @@ export async function writeJsonDurableQueueEntry(params: {
     content: stringifyJsonDocument(params.entry, null, 2),
     mode: 0o600,
     tempPrefix: params.tempPrefix,
+    syncTempFile: true,
+    syncParentDir: true,
+  });
+}
+
+async function replaceJsonDurableQueueEntry(params: {
+  filePath: string;
+  entry: unknown;
+  tempPrefix: string;
+}): Promise<void> {
+  await replaceFileAtomic({
+    filePath: params.filePath,
+    content: stringifyJsonDocument(params.entry, null, 2),
+    mode: 0o600,
+    tempPrefix: params.tempPrefix,
+    syncTempFile: true,
+    syncParentDir: true,
   });
 }
 
@@ -356,16 +381,7 @@ export async function readJsonDurableQueueEntry<T>(
 }
 
 export async function ackJsonDurableQueueEntry(paths: JsonDurableQueueEntryPaths): Promise<void> {
-  try {
-    await fs.promises.rename(paths.jsonPath, paths.deliveredPath);
-  } catch (error) {
-    if (getErrnoCode(error) === "ENOENT") {
-      await unlinkBestEffort(paths.deliveredPath);
-      return;
-    }
-    throw error;
-  }
-  await unlinkBestEffort(paths.deliveredPath);
+  await acknowledgeDurableQueueEntry(paths);
 }
 
 export async function loadJsonDurableQueueEntry<T>(params: {
@@ -375,17 +391,15 @@ export async function loadJsonDurableQueueEntry<T>(params: {
   maxBytes?: number;
 }): Promise<T | null> {
   try {
-    const stat = await fs.promises.lstat(params.paths.jsonPath);
-    if (!stat.isFile()) {
-      return null;
-    }
-    const raw = await readJsonDurableQueueEntry<T>(params.paths.jsonPath, {
+    const claimedPath = await claimDurableQueueEntry(params.paths);
+    if (!claimedPath) return null;
+    const raw = await readJsonDurableQueueEntry<T>(claimedPath, {
       maxBytes: params.maxBytes,
     });
     const result = params.read ? await params.read(raw, params.paths.jsonPath) : { entry: raw };
     if (result.migrated) {
-      await writeJsonDurableQueueEntry({
-        filePath: params.paths.jsonPath,
+      await replaceJsonDurableQueueEntry({
+        filePath: claimedPath,
         entry: result.entry,
         tempPrefix: params.tempPrefix,
       });
@@ -415,7 +429,8 @@ export async function loadPendingJsonDurableQueueEntries<T>(
   const now = Date.now();
   for (const file of files) {
     if (file.endsWith(".delivered")) {
-      await unlinkBestEffort(path.join(options.queueDir, file));
+      const id = file.slice(0, -".delivered".length);
+      await completeDeliveredQueueEntry(resolveJsonDurableQueueEntryPaths(options.queueDir, id));
     } else if (options.cleanupTmpMaxAgeMs !== undefined && file.endsWith(".tmp")) {
       await unlinkStaleTmpBestEffort(
         path.join(options.queueDir, file),
@@ -424,23 +439,32 @@ export async function loadPendingJsonDurableQueueEntries<T>(
       );
     }
   }
+  const ids: string[] = [];
+  const seenIds = new Set<string>();
+  for (const file of files) {
+    const suffix = file.endsWith(".processing")
+      ? ".processing"
+      : file.endsWith(".json")
+        ? ".json"
+        : null;
+    if (!suffix) continue;
+    const id = file.slice(0, -suffix.length);
+    if (seenIds.has(id)) continue;
+    seenIds.add(id);
+    ids.push(id);
+  }
 
   const entries: T[] = [];
-  for (const file of files) {
-    if (!file.endsWith(".json")) {
-      continue;
-    }
-    const filePath = path.join(options.queueDir, file);
+  for (const id of ids) {
     try {
-      const stat = await fs.promises.lstat(filePath);
-      if (!stat.isFile()) {
-        continue;
-      }
-      const raw = await readJsonDurableQueueEntry<T>(filePath, { maxBytes: options.maxBytes });
-      const result = options.read ? await options.read(raw, filePath) : { entry: raw };
+      const paths = resolveJsonDurableQueueEntryPaths(options.queueDir, id);
+      const claimedPath = await claimDurableQueueEntry(paths);
+      if (!claimedPath) continue;
+      const raw = await readJsonDurableQueueEntry<T>(claimedPath, { maxBytes: options.maxBytes });
+      const result = options.read ? await options.read(raw, paths.jsonPath) : { entry: raw };
       if (result.migrated) {
-        await writeJsonDurableQueueEntry({
-          filePath,
+        await replaceJsonDurableQueueEntry({
+          filePath: claimedPath,
           entry: result.entry,
           tempPrefix: options.tempPrefix,
         });
@@ -462,8 +486,8 @@ export async function moveJsonDurableQueueEntryToFailed(params: {
   const roots = await queueValidationRoots(params.queueDir, params.failedDir);
   await assertJsonDurableQueueDir(params.queueDir, roots.queueRoot);
   await ensureJsonDurableQueueDir(params.failedDir, roots.failedRoot);
-  await fs.promises.rename(
-    path.join(params.queueDir, `${params.id}.json`),
-    path.join(params.failedDir, `${params.id}.json`),
-  );
+  await moveDurableQueueEntryToFailed({
+    paths: resolveJsonDurableQueueEntryPaths(params.queueDir, params.id),
+    failedPath: path.join(params.failedDir, `${params.id}.json`),
+  });
 }
