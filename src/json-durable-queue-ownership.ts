@@ -4,7 +4,6 @@ import { syncDirectoryBestEffort } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { publishFileExclusive } from "./publish-file.js";
-import { getFsSafeTestHooks } from "./test-hooks.js";
 import { serializePathWrite } from "./write-queue.js";
 
 export type DurableQueueEntryPathsLike = {
@@ -52,68 +51,58 @@ async function unlinkIfCurrent(filePath: string, expected: Awaited<ReturnType<ty
   await syncDirectoryBestEffort(path.dirname(filePath));
 }
 
+async function moveDurableQueueFileExclusiveUnchecked(
+  sourcePath: string,
+  targetPath: string,
+): Promise<void> {
+  const sourceIdentity = await fs.lstat(sourcePath, { bigint: true });
+  if (
+    sourceIdentity.isSymbolicLink() ||
+    !sourceIdentity.isFile() ||
+    sourceIdentity.nlink > 1n
+  ) {
+    throw new Error("queue entry is not an owned regular file");
+  }
+  await publishFileExclusive({
+    sourcePath,
+    targetPath,
+    expectedSourceIdentity: sourceIdentity,
+    strategy: "link-or-copy",
+  });
+  await unlinkIfCurrent(sourcePath, sourceIdentity);
+}
+
 export async function claimDurableQueueEntry(
   paths: DurableQueueEntryPathsLike,
 ): Promise<string | null> {
   const processingPath = durableQueueProcessingPath(paths);
   return await serializePathWrite(paths.jsonPath, async () => {
     if (await regularQueueFileExists(processingPath)) return processingPath;
-    let sourceIdentity: Awaited<ReturnType<typeof fs.lstat>>;
     try {
-      sourceIdentity = await fs.lstat(paths.jsonPath, { bigint: true });
+      const source = await fs.lstat(paths.jsonPath);
+      if (source.isSymbolicLink() || !source.isFile()) return null;
+      await moveDurableQueueFileExclusiveUnchecked(paths.jsonPath, processingPath);
+      return processingPath;
     } catch (error) {
-      if (getErrorCode(error) === "ENOENT") return null;
-      throw error;
-    }
-    if (
-      sourceIdentity.isSymbolicLink() ||
-      !sourceIdentity.isFile() ||
-      sourceIdentity.nlink > 1n
-    ) {
-      return null;
-    }
-    await getFsSafeTestHooks()?.beforeDurableQueueClaimPublish?.(
-      paths.jsonPath,
-      processingPath,
-    );
-    try {
-      await publishFileExclusive({
-        sourcePath: paths.jsonPath,
-        targetPath: processingPath,
-        expectedSourceIdentity: sourceIdentity,
-        strategy: "link-or-copy",
-      });
-    } catch (error) {
+      if (getErrorCode(error) === "ENOENT") {
+        return (await regularQueueFileExists(processingPath)) ? processingPath : null;
+      }
       if (
-        getErrorCode(error) === "EEXIST" ||
-        (error instanceof FsSafeError && error.code === "already-exists")
+        (getErrorCode(error) === "EEXIST" ||
+          getErrorCode(error) === "EPERM" ||
+          (error instanceof FsSafeError && error.code === "already-exists")) &&
+        (await regularQueueFileExists(processingPath))
       ) {
-        if (await regularQueueFileExists(processingPath)) return processingPath;
+        return processingPath;
       }
       throw error;
     }
-    await unlinkIfCurrent(paths.jsonPath, sourceIdentity);
-    return processingPath;
   });
 }
 
 async function moveDurableQueueFileExclusive(sourcePath: string, targetPath: string): Promise<void> {
   await serializePathWrite(sourcePath, async () => {
-    const sourceIdentity = await fs.lstat(sourcePath, { bigint: true });
-    if (
-      sourceIdentity.isSymbolicLink() ||
-      !sourceIdentity.isFile() ||
-      sourceIdentity.nlink > 1n
-    ) {
-      throw new Error("queue entry is not an owned regular file");
-    }
-    await publishFileExclusive({
-      sourcePath,
-      targetPath,
-      expectedSourceIdentity: sourceIdentity,
-      strategy: "link-or-copy",
-    });
-    await unlinkIfCurrent(sourcePath, sourceIdentity);
+    await moveDurableQueueFileExclusiveUnchecked(sourcePath, targetPath);
   });
 }
 

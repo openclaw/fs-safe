@@ -14,10 +14,12 @@ import {
   resolveJsonDurableQueueEntryPaths,
   unlinkBestEffort,
 } from "../src/json-durable-queue.js";
+import { configureFsSafeNative } from "../src/native-config.js";
 
 const { tempRoot } = useTempDirs();
 
 afterEach(() => {
+  configureFsSafeNative({ mode: "auto" });
   vi.restoreAllMocks();
 });
 
@@ -195,14 +197,11 @@ describe("durable JSON queue failure recovery", () => {
     const root = await tempRoot("fs-safe-queue-ack-error-");
     const paths = resolveJsonDurableQueueEntryPaths(root, "job");
     await fs.writeFile(paths.jsonPath, "{}");
-    const denied = Object.assign(new Error("delivered cleanup denied"), { code: "EACCES" });
-    const realUnlink = fs.unlink.bind(fs);
-    vi.spyOn(fs, "unlink").mockImplementation(async (filePath) => {
-      if (String(filePath) === paths.deliveredPath) throw denied;
-      return await realUnlink(filePath);
-    });
+    const denied = Object.assign(new Error("publication denied"), { code: "EACCES" });
+    configureFsSafeNative({ mode: "off" });
+    vi.spyOn(fs, "link").mockRejectedValueOnce(denied);
     await expect(ackJsonDurableQueueEntry(paths)).rejects.toBe(denied);
-    expect(fsSync.existsSync(paths.processingPath!)).toBe(true);
+    expect(fsSync.existsSync(paths.jsonPath)).toBe(true);
   });
 
   it("ignores missing best-effort cleanup but propagates stale-temp inspection failures", async () => {
