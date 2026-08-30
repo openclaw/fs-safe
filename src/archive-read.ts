@@ -29,7 +29,7 @@ import {
 } from "./archive-zip-integrity.js";
 import type { ZipEntry } from "./archive-zip-entry.js";
 import { FsSafeError } from "./errors.js";
-import { sameFileIdentity } from "./file-identity.js";
+import { inspectFileIdentity } from "./strict-file-identity.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { getNativeBinding } from "./native.js";
 import { admitZipBuffer } from "./archive-zip-admission.js";
@@ -94,28 +94,35 @@ async function stageArchiveInput(archivePath: string): Promise<{
   cleanup(): Promise<void>;
 }> {
   const resolved = await fs.realpath(archivePath);
-  const before = await fs.lstat(archivePath);
-  if (before.isSymbolicLink() || !before.isFile()) {
-    throw new Error(`archive is not a regular file: ${archivePath}`);
-  }
+  const before = await inspectFileIdentity(async () => {
+    const stat = await fs.lstat(archivePath, { bigint: true });
+    if (stat.isSymbolicLink() || !stat.isFile()) {
+      throw new Error(`archive is not a regular file: ${archivePath}`);
+    }
+    return stat;
+  });
   const handle = await fs.open(resolved, resolveReadOpenFlags());
   const staged = await tempFile({ prefix: "fs-safe-archive-read", fileName: "archive.bin" });
   try {
-    const opened = await handle.stat();
-    const current = await fs.lstat(resolved);
-    if (
-      !opened.isFile() ||
-      !current.isFile() ||
-      !sameFileIdentity(before, opened) ||
-      !sameFileIdentity(current, opened)
-    ) {
-      throw new Error("archive changed during validation");
-    }
+    const opened = await inspectFileIdentity(async () => {
+      const stat = await handle.stat({ bigint: true });
+      if (!stat.isFile()) throw new Error("archive changed during validation");
+      return stat;
+    }, before);
+    await inspectFileIdentity(async () => {
+      const stat = await fs.lstat(resolved, { bigint: true });
+      if (stat.isSymbolicLink() || !stat.isFile()) throw new Error("archive changed during validation");
+      return stat;
+    }, opened);
+
     const buffer = await readFileHandleBounded(handle, DEFAULT_MAX_ARCHIVE_BYTES_ZIP);
     await fs.writeFile(staged.path, buffer, { flag: "wx", mode: 0o600 });
     return { path: staged.path, buffer, cleanup: staged.cleanup };
   } catch (error) {
     await staged.cleanup().catch(() => undefined);
+    if (error instanceof FsSafeError && error.code === "path-mismatch") {
+      throw new FsSafeError("path-mismatch", "archive changed during validation", { cause: error });
+    }
     throw error;
   } finally {
     await handle.close().catch(() => undefined);

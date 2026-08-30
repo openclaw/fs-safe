@@ -4,6 +4,7 @@
 
 ### Security and Correctness
 
+- Verify regular-file reads, root-file adapters, archive input staging, and `Root.copyIn()` source checks with exact bigint identities; reject rounded-equal replacements and unresolved Windows identities without changing numeric public `Stats` receipts.
 - Normalize public `maxBytes` budgets across Root, FileStore, secure/secret/regular reads, durable queues, and external output: reject invalid values, preserve explicit zero and positive `Infinity`, and keep configured defaults when callers forward `undefined`.
 - Bind `writeJsonSync()` best-effort file-mode tightening to the staged bigint identity and a reopened single-link regular descriptor, preserving swapped paths without chmodding them.
 - Open attacker-raceable secure, secret, archive, queue, publication, fallback, and lock-file read paths nonblocking on POSIX, rejecting FIFO substitutions before reads, deadlines, or cleanup verification can stall.

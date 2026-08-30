@@ -58,6 +58,9 @@ descriptor, the input path, and the canonical target; numeric public `Stats`
 receipts are not used as identity evidence. Unknown Windows device/inode values
 receive one re-inspection without reopening the file. A definite mismatch or
 persistent unknown identity rejects with `path-mismatch` before reading bytes.
+Regular-file readers, root-file adapters, and archive input staging use the same
+exact admission policy. `copyIn()` retains the admitted source identity for its
+checks before and after copying, independently of its numeric metadata receipt.
 
 ### Symlinks (write side)
 
