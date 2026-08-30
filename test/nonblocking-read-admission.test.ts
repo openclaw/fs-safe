@@ -173,6 +173,67 @@ describe("nonblocking regular-file admission", () => {
     await expect(fs.lstat(targetPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  itPosix("does not chmod a FIFO swapped into a synchronous JSON target", async () => {
+    const root = await tempRoot("fs-safe-json-fifo-");
+    const filePath = path.join(root, "state.json");
+    const displaced = `${filePath}.displaced`;
+    const openSync = fsSync.openSync.bind(fsSync);
+    const fchmodSync = fsSync.fchmodSync.bind(fsSync);
+    let fifoFd = -1;
+    let fifoChmods = 0;
+    vi.spyOn(fsSync, "openSync").mockImplementation((candidate, flags, mode) => {
+      if (String(candidate) === filePath && typeof flags === "number") {
+        expectNonblocking(flags);
+        fsSync.renameSync(filePath, displaced);
+        makeFifo(filePath);
+        fifoFd = openSync(candidate, flags, mode);
+        return fifoFd;
+      }
+      return openSync(candidate, flags, mode);
+    });
+    vi.spyOn(fsSync, "fchmodSync").mockImplementation((fd, mode) => {
+      if (fd === fifoFd) fifoChmods += 1;
+      return fchmodSync(fd, mode);
+    });
+
+    writeJsonSync(filePath, { ok: true });
+
+    expect(fifoChmods).toBe(0);
+    expect(fsSync.lstatSync(filePath).isFIFO()).toBe(true);
+    expect(JSON.parse(fsSync.readFileSync(displaced, "utf8"))).toEqual({ ok: true });
+  });
+
+  itPosix("does not chmod a regular file swapped into a synchronous JSON target", async () => {
+    const root = await tempRoot("fs-safe-json-regular-swap-");
+    const filePath = path.join(root, "state.json");
+    const displaced = `${filePath}.displaced`;
+    const openSync = fsSync.openSync.bind(fsSync);
+    const fchmodSync = fsSync.fchmodSync.bind(fsSync);
+    let replacementFd = -1;
+    let replacementChmods = 0;
+    vi.spyOn(fsSync, "openSync").mockImplementation((candidate, flags, mode) => {
+      if (String(candidate) === filePath && typeof flags === "number") {
+        fsSync.renameSync(filePath, displaced);
+        fsSync.writeFileSync(filePath, "foreign", { mode: 0o644 });
+        fsSync.chmodSync(filePath, 0o644);
+        replacementFd = openSync(candidate, flags, mode);
+        return replacementFd;
+      }
+      return openSync(candidate, flags, mode);
+    });
+    vi.spyOn(fsSync, "fchmodSync").mockImplementation((fd, mode) => {
+      if (fd === replacementFd) replacementChmods += 1;
+      return fchmodSync(fd, mode);
+    });
+
+    writeJsonSync(filePath, { ok: true });
+
+    expect(replacementChmods).toBe(0);
+    expect(fsSync.readFileSync(filePath, "utf8")).toBe("foreign");
+    expect(fsSync.statSync(filePath).mode & 0o777).toBe(0o644);
+    expect(JSON.parse(fsSync.readFileSync(displaced, "utf8"))).toEqual({ ok: true });
+  });
+
   itPosix("rejects a synchronous sidecar-lock FIFO swap without blocking", async () => {
     const root = await tempRoot("fs-safe-sidecar-fifo-");
     const lockPath = path.join(root, "entry.lock");
@@ -186,27 +247,5 @@ describe("nonblocking regular-file admission", () => {
     });
     expect(() => readSidecarLockSnapshotSync(lockPath, undefined, { rejectNonFile: true }))
       .toThrow(expect.objectContaining({ code: "not-file" }));
-  });
-
-  itPosix("does not chmod a FIFO swapped into synchronous JSON mode enforcement", async () => {
-    const root = await tempRoot("fs-safe-json-mode-fifo-");
-    const filePath = path.join(root, "state.json");
-    const openSync = fsSync.openSync.bind(fsSync);
-    const fchmodSync = fsSync.fchmodSync.bind(fsSync);
-    vi.spyOn(fsSync, "openSync").mockImplementation((candidate, flags, mode) => {
-      if (candidate === filePath) {
-        expectNonblocking(flags);
-        fsSync.renameSync(filePath, `${filePath}.displaced`);
-        makeFifo(filePath);
-      }
-      return openSync(candidate, flags, mode);
-    });
-    vi.spyOn(fsSync, "fchmodSync").mockImplementation((fd, mode) => {
-      expect(fsSync.fstatSync(fd).isFile()).toBe(true);
-      fchmodSync(fd, mode);
-    });
-
-    writeJsonSync(filePath, { ok: true });
-    expect(fsSync.lstatSync(filePath).isFIFO()).toBe(true);
   });
 });

@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -197,6 +198,31 @@ describe("json file helpers", () => {
     await expect(fs.readFile(outsidePath, "utf8")).resolves.toBe("{\"secret\":true}\n");
     await expect(fs.readFile(linkPath, "utf8")).resolves.toBe("{\n  \"ok\": true\n}\n");
     expect((await fs.lstat(linkPath)).isSymbolicLink()).toBe(false);
+  });
+
+  itPosix("keeps mode 0600 on the EPERM remove-and-retry fallback", async () => {
+    const root = await tempRoot("fs-safe-json-fallback-mode-");
+    const filePath = path.join(root, "state.json");
+    await fs.writeFile(filePath, "{\"old\":true}\n", { mode: 0o644 });
+    await fs.chmod(filePath, 0o644);
+    const renameSync = fsSync.renameSync.bind(fsSync);
+    let renames = 0;
+    const rename = vi.spyOn(fsSync, "renameSync").mockImplementation((source, destination) => {
+      renames += 1;
+      if (renames === 1) {
+        throw Object.assign(new Error("rename denied"), { code: "EPERM" });
+      }
+      renameSync(source, destination);
+    });
+    try {
+      writeJsonSync(filePath, { ok: true });
+    } finally {
+      rename.mockRestore();
+    }
+
+    expect(renames).toBe(2);
+    expect((await fs.stat(filePath)).mode & 0o777).toBe(0o600);
+    expect(JSON.parse(await fs.readFile(filePath, "utf8"))).toEqual({ ok: true });
   });
 
   it("serializes work through createAsyncLock", async () => {
