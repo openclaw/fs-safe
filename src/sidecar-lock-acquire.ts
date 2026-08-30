@@ -73,7 +73,6 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
   let held = context.held.get(normalizedTargetPath);
   if (
     held &&
-    held.refCount > 0 &&
     options.reentrantOwner !== undefined &&
     held.reentrantOwner !== undefined &&
     options.reentrantOwner === held.reentrantOwner
