@@ -85,8 +85,10 @@ depth checks, collision checks, writes, and mode application agree.
 An `entryFilter` sees the validated effective archive path **before stripping**
 (including a local PAX `path` override), entry kind, and declared size.
 Returning `"skip"` rejects the whole archive unless `onFiltered` is
-explicitly `"skip-entry"`. Path traversal and archive-wide entry-count checks
-still apply to skipped entries.
+explicitly `"skip-entry"`. Runtime values other than `"reject-archive"` and
+`"skip-entry"` reject before extraction starts instead of falling through to
+skip behavior. Path traversal and archive-wide entry-count checks still apply
+to skipped entries.
 
 For example, a fleet restore can omit regenerated cache entries while rejecting
 any other policy mismatch by default:

@@ -4,6 +4,7 @@
 
 ### Security and Correctness
 
+- Reject invalid runtime archive `onFiltered` policies before extraction instead of treating unknown values as entry-skipping opt-in.
 - Claim durable queue generations under a fail-closed cross-process lock with no-replace hardlinks and recoverable source retirement so acknowledgement and quarantine cannot delete or move a newer same-ID replacement; acknowledgement now requires a processing claim, and quarantine preserves existing failed-entry evidence on collisions.
 - Validate async/sync lock retry and deadline numbers and clamp synchronous backoff to the remaining finite deadline instead of overshooting or blocking forever.
 - Propagate asynchronous sidecar-lock release and failed-acquire deletion failures, preserve paired errors, and retain failed release state for safe retry through the same handle or manager drain.
