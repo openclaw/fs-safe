@@ -134,6 +134,12 @@ export async function acknowledgeDurableQueueEntry(
         await fs.unlink(paths.deliveredPath);
         await syncDirectoryBestEffort(path.dirname(paths.deliveredPath));
       }
+      if (await regularQueueFileIdentity(paths.jsonPath)) {
+        throw new FsSafeError(
+          "path-mismatch",
+          "queue acknowledgement requires a processing claim",
+        );
+      }
       return;
     }
     if (delivered) await fs.unlink(paths.deliveredPath);

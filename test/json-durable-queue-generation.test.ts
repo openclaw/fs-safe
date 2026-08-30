@@ -7,6 +7,7 @@ import {
   loadJsonDurableQueueEntry,
   loadPendingJsonDurableQueueEntries,
   moveJsonDurableQueueEntryToFailed,
+  readJsonDurableQueueEntry,
   resolveJsonDurableQueueEntryPaths,
   writeJsonDurableQueueEntry,
 } from "../src/json-durable-queue.js";
@@ -216,6 +217,21 @@ describe("durable queue generation ownership", () => {
     await expect(fs.readFile(paths.processingPath!, "utf8")).resolves.toContain(
       '"generation": 2',
     );
+  });
+
+  it("rejects direct-read acknowledgement without a processing claim", async () => {
+    const { paths } = await queueFixture();
+    await writeGeneration(paths.jsonPath, 1);
+    await expect(readJsonDurableQueueEntry<{ generation: number }>(paths.jsonPath)).resolves.toEqual({
+      generation: 1,
+    });
+
+    await expect(ackJsonDurableQueueEntry(paths)).rejects.toThrow(
+      "queue acknowledgement requires a processing claim",
+    );
+
+    await expect(fs.readFile(paths.jsonPath, "utf8")).resolves.toContain('"generation": 1');
+    await expect(fs.access(paths.deliveredPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("acknowledges only the generation claimed by load", async () => {
