@@ -6,7 +6,10 @@ import { isPathRelativeEscape } from "./path.js";
 export async function syncQueueDirectoryCreation(
   dir: string,
   validationBase: string,
+  createdDir: string | undefined,
+  syncExisting: boolean,
 ): Promise<void> {
+  if (!syncExisting && createdDir === undefined) return;
   const baseReal = await fs.realpath(validationBase);
   const targetReal = await fs.realpath(dir);
   const relative = path.relative(baseReal, targetReal);
