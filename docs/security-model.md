@@ -124,6 +124,21 @@ durability guarantee.
 
 `extractArchive` first stages into a private temp directory (mode 0700) outside the destination, validates each entry path against `..` and absolute prefixes, refuses link-type entries by default, enforces entry count and byte budgets, and only then merges the staged tree into the destination through the same boundary checks used by direct writes.
 
+TAR extraction and bounded reads validate the complete decompressed raw framing
+before parser normalization: directory/link sizes must be zero, EOF must contain
+two consecutive zero blocks, and only zero padding may follow EOF. This rejects
+hidden headers and body/header smuggling consistently across the JavaScript and
+native backends. The meter checks logical member count before consuming bodies,
+even for unrequested or filtered members. Per-entry/cumulative payload budgets
+apply only to entries accepted after strip/filter policy, outside the raw meter.
+A separate absolute decoded cap includes every member body, headers, metadata,
+all padding, and EOF, closing cumulative-metadata and zero-tail bypasses. Native
+extraction/read passes drain through physical EOF before publication or
+returning selected bytes, even when the TAR parser stops earlier. Bounded
+reads use default archive admission limits and keep `maxBytes` scoped to the
+requested output. Metadata retains its per-record bound. See [archive framing](archive.md#raw-tar-framing) for supported
+metadata and compression formats.
+
 ## What "library-level" means
 
 A library cannot revoke its own caller's authority. If your code chooses to bypass `fs-safe` and call `fs.writeFile` directly with the same path, you bypass the defenses too. The contract `fs-safe` enforces is: *every filesystem operation that touches caller-controlled input goes through the boundary*. That contract is yours to keep.

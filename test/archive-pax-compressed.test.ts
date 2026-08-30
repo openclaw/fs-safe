@@ -20,9 +20,9 @@ afterEach(() => {
   __resetNativeLoaderForTest();
 });
 
-describe.skipIf(!paxNative)("PAX compressed native mode=require", () => {
+describe.skipIf(!paxNative).each(["auto", "require"] as const)("PAX compressed native mode=%s", (mode) => {
   beforeEach(() => {
-    configureFsSafeNative({ mode: "require" });
+    configureFsSafeNative({ mode });
     __setNativeLoaderForTest(() => paxNative!);
   });
 
@@ -41,10 +41,31 @@ describe.skipIf(!paxNative)("PAX compressed native mode=require", () => {
     for (const [limits, code] of [
       [{ maxMetaEntryBytes: 163 }, "archive-meta-entry-size-exceeds-limit"],
       [{ maxEntryBytes: 699 }, "archive-entry-extracted-size-exceeds-limit"],
+      [{ maxExtractedBytes: 702 }, "archive-extracted-size-exceeds-limit"],
     ] as const) {
       const rejectedDir = await fs.mkdtemp(path.join(root, "rejected-"));
       await expect(extractArchive({ archivePath, destDir: rejectedDir, kind, timeoutMs: 10_000, limits })).rejects.toMatchObject({ code });
       expect(await fs.readdir(rejectedDir)).toEqual([]);
     }
+  });
+
+  it.each(["tar-bzip2", "tar-zstd"] as const)("charges only accepted %s payloads while bounding complete decoding", async (kind) => {
+    const root = await tempRoot("fs-safe-pax-compressed-filter-");
+    const archivePath = path.join(root, "fixture.bin");
+    const destDir = path.join(root, "out");
+    await fs.mkdir(destDir);
+    await fs.writeFile(archivePath, Buffer.from(fixtures[kind], "base64"));
+    const options = { archivePath, destDir, kind, timeoutMs: 10_000, limits: { maxEntryBytes: 3, maxExtractedBytes: 3 } };
+    await extractArchive({ ...options, entryFilter: (entry) => entry.path === "renamed" ? "skip" : "extract", onFiltered: "skip-entry" });
+    expect(await fs.readdir(destDir)).toEqual(["sentinel"]);
+    expect(await fs.readFile(path.join(destDir, "sentinel"), "utf8")).toBe("end");
+    const stripped = await fs.mkdtemp(path.join(root, "stripped-"));
+    await extractArchive({ ...options, destDir: stripped, stripComponents: 9 });
+    expect(await fs.readdir(stripped)).toEqual([]);
+    await expect(extractArchive({ ...options, destDir: stripped, stripComponents: 9, limits: { ...options.limits, maxEntries: 1 } }))
+      .rejects.toMatchObject({ code: "archive-entry-count-exceeds-limit" });
+    await expect(extractArchive({ ...options, destDir: stripped, limits: { ...options.limits, maxArchiveBytes: 1024 }, entryFilter: () => "skip", onFiltered: "skip-entry" }))
+      .rejects.toMatchObject({ code: "archive-decoded-size-exceeds-limit" });
+    expect(await fs.readdir(stripped)).toEqual([]);
   });
 });

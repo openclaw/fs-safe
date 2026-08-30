@@ -1,3 +1,5 @@
+import type { TarMeterLimits } from "./archive-limits.js";
+
 export interface NativeFileHash {
   bytes: number;
   digest: string;
@@ -85,15 +87,14 @@ export interface NativeBinding {
     kind: string,
     rootFd: number,
     plan: NativeArchivePlanEntry[],
-    maxMetaEntryBytes: number,
+    limits: TarMeterLimits,
     signal: AbortSignal,
   ): Promise<void>;
   fstatIdentity(fd: number): NativeFileIdentity;
   inspectArchiveNative(
     path: string,
     kind: string,
-    maxEntries: number,
-    maxMetaEntryBytes: number,
+    limits: TarMeterLimits,
     maxManifestBytes: number,
     signal: AbortSignal,
   ): Promise<NativeArchiveEntry[]>;
@@ -110,8 +111,7 @@ export interface NativeBinding {
     kind: string,
     requested: string,
     maxBytes: number,
-    maxEntries: number,
-    maxMetaEntryBytes: number,
+    limits: TarMeterLimits,
     signal: AbortSignal,
   ): Promise<Buffer>;
   readOwnerAndDacl(path: string): NativeWindowsSecurityFacts;

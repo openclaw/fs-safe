@@ -277,7 +277,12 @@ describe("minimized parser fuzz regressions", () => {
         bytes: tarBytes({ name: "value", sizeEncoding }),
         kind: "tar",
         backend,
-      })).resolves.toEqual({ accepted: false, code: "archive-header-invalid" });
+      })).resolves.toEqual({
+        accepted: false,
+        // Missing bodies and malformed/overflowing numeric fields fail raw
+        // framing before the accepted-entry payload policy can run.
+        code: "archive-header-invalid",
+      });
     }
   });
 

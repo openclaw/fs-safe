@@ -3,9 +3,19 @@ use std::io::{self, Read};
 
 pub const INVALID_HEADER: &str = "archive-header-invalid";
 pub const META_LIMIT: &str = "archive-meta-entry-size-exceeds-limit";
+pub const DECODED_LIMIT: &str = "archive-decoded-size-exceeds-limit";
+pub const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+
+#[derive(Clone, Copy)]
+pub struct TarMeterLimits {
+    pub max_entries: usize,
+    pub max_meta_entry_bytes: u64,
+    pub max_decoded_bytes: u64,
+}
 
 enum MeterState {
     Header,
+    Eof,
     Data {
         remaining: u64,
     },
@@ -20,26 +30,33 @@ enum MeterState {
     },
 }
 
+// Keep raw framing aligned with src/archive-tar-meta.ts, before either parser.
 pub struct TarMetadataMeter<R> {
     inner: R,
-    max_meta_entry_bytes: u64,
+    limits: TarMeterLimits,
+    entries: usize,
+    remaining_decoded_bytes: u64,
     state: MeterState,
     block: [u8; 512],
     block_len: usize,
     pending_pax: Option<LocalPax>,
     pending_gnu: bool,
+    zero_blocks: u8,
 }
 
 impl<R> TarMetadataMeter<R> {
-    pub fn new(inner: R, max_meta_entry_bytes: u64) -> Self {
+    pub fn new(inner: R, limits: TarMeterLimits) -> Self {
         Self {
             inner,
-            max_meta_entry_bytes,
+            limits,
+            entries: 0,
+            remaining_decoded_bytes: limits.max_decoded_bytes,
             state: MeterState::Header,
             block: [0; 512],
             block_len: 0,
             pending_pax: None,
             pending_gnu: false,
+            zero_blocks: 0,
         }
     }
 
@@ -54,10 +71,22 @@ impl<R> TarMetadataMeter<R> {
         io::Error::new(io::ErrorKind::InvalidData, META_LIMIT)
     }
 
+    fn count_member(&mut self) -> io::Result<()> {
+        if self.entries >= self.limits.max_entries {
+            return Err(io::Error::other("archive-entry-count-exceeds-limit"));
+        }
+        self.entries += 1;
+        Ok(())
+    }
+
     fn padded_size(size: u64) -> io::Result<u64> {
-        size.checked_add(511)
+        let padded = size.checked_add(511)
             .map(|value| value / 512 * 512)
-            .ok_or_else(|| Self::invalid("entry size overflows TAR padding"))
+            .ok_or_else(|| Self::invalid("entry size overflows TAR padding"))?;
+        if padded > MAX_SAFE_INTEGER {
+            return Err(Self::invalid("entry padding exceeds the safe integer range"));
+        }
+        Ok(padded)
     }
 
     fn parse_size(field: &[u8; 12]) -> io::Result<u64> {
@@ -72,19 +101,29 @@ impl<R> TarMetadataMeter<R> {
                     .ok_or_else(|| Self::invalid("base-256 size overflow"))?;
                 value |= *byte as u64;
             }
+            if value > MAX_SAFE_INTEGER {
+                return Err(Self::invalid("base-256 size exceeds the safe integer range"));
+            }
             return Ok(value);
         }
         let end = field
             .iter()
             .position(|byte| *byte == 0)
             .unwrap_or(field.len());
+        if field[end..].iter().any(|byte| *byte != 0 && *byte != b' ') {
+            return Err(Self::invalid("size has non-padding bytes after NUL"));
+        }
         let text = std::str::from_utf8(&field[..end])
             .map_err(|_| Self::invalid("size is not ASCII octal"))?
-            .trim();
+            .trim_matches(' ');
         if text.is_empty() || !text.bytes().all(|byte| (b'0'..=b'7').contains(&byte)) {
             return Err(Self::invalid("size is not valid octal"));
         }
-        u64::from_str_radix(text, 8).map_err(|_| Self::invalid("octal size overflow"))
+        let value = u64::from_str_radix(text, 8).map_err(|_| Self::invalid("octal size overflow"))?;
+        if value > MAX_SAFE_INTEGER {
+            return Err(Self::invalid("octal size exceeds the safe integer range"));
+        }
+        Ok(value)
     }
 
     fn finish_header(&mut self) -> io::Result<()> {
@@ -93,9 +132,13 @@ impl<R> TarMetadataMeter<R> {
                 return Err(Self::invalid("dangling PAX metadata"));
             }
             self.pending_gnu = false;
-            self.state = MeterState::Header;
+            self.zero_blocks += 1;
+            self.state = if self.zero_blocks == 2 { MeterState::Eof } else { MeterState::Header };
             self.block_len = 0;
             return Ok(());
+        }
+        if self.zero_blocks != 0 {
+            return Err(Self::invalid("nonzero header after one TAR zero block"));
         }
         let name_end = self.block[..100]
             .iter()
@@ -110,9 +153,14 @@ impl<R> TarMetadataMeter<R> {
             ));
         }
         let mut size = Self::parse_size(self.block[124..136].try_into().unwrap())?;
+        Self::padded_size(size)?;
         let entry_type = self.block[156];
+        // Directory/link headers cannot carry bodies; PAX/GNU metadata can.
+        if matches!(entry_type, b'1' | b'2' | b'5') && size != 0 {
+            return Err(Self::invalid("directory or link has a nonzero body size"));
+        }
         if matches!(entry_type, b'x' | b'g' | b'L' | b'K' | b'X' | b'N')
-            && size > self.max_meta_entry_bytes
+            && size > self.limits.max_meta_entry_bytes
         {
             return Err(Self::meta_limit());
         }
@@ -148,9 +196,6 @@ impl<R> TarMetadataMeter<R> {
             && let Some(pax) = self.pending_pax.take()
         {
             size = pax.member_size(entry_type, size, &self.block)?;
-            if Self::padded_size(size)? > 9_007_199_254_740_991 {
-                return Err(Self::invalid("entry padding exceeds the safe integer range"));
-            }
         }
         self.pending_gnu = matches!(entry_type, b'L' | b'K');
         let padded = Self::padded_size(size)?;
@@ -164,6 +209,9 @@ impl<R> TarMetadataMeter<R> {
                 _ => return Err(Self::invalid("GNU sparse extension flag is not 0 or 1")),
             }
         } else {
+            if !self.pending_gnu {
+                self.count_member()?;
+            }
             MeterState::Data { remaining: padded }
         };
         self.block_len = 0;
@@ -175,7 +223,7 @@ impl<R> TarMetadataMeter<R> {
 
     fn finish_sparse_header(&mut self, data_remaining: u64, meta_bytes: u64) -> io::Result<()> {
         let metered = meta_bytes.checked_add(512).ok_or_else(Self::meta_limit)?;
-        if metered > self.max_meta_entry_bytes {
+        if metered > self.limits.max_meta_entry_bytes {
             return Err(Self::meta_limit());
         }
         self.state = match self.block[504] {
@@ -194,6 +242,12 @@ impl<R> TarMetadataMeter<R> {
         let mut offset = 0;
         while offset < bytes.len() {
             match self.state {
+                MeterState::Eof => {
+                    if bytes[offset..].iter().any(|byte| *byte != 0) {
+                        return Err(Self::invalid("nonzero data after TAR EOF"));
+                    }
+                    return Ok(());
+                }
                 MeterState::Pax {
                     ref mut body,
                     ref mut used,
@@ -255,7 +309,8 @@ impl<R> TarMetadataMeter<R> {
             return Err(Self::invalid("dangling PAX metadata"));
         }
         match self.state {
-            MeterState::Header if self.block_len == 0 => Ok(()),
+            MeterState::Eof => Ok(()),
+            MeterState::Header if self.block_len == 0 => Err(Self::invalid("missing two-block TAR EOF")),
             MeterState::Header => Err(Self::invalid("truncated TAR header")),
             MeterState::Data { .. } => Err(Self::invalid("truncated TAR entry data")),
             MeterState::Pax { .. } => Err(Self::invalid("truncated PAX metadata")),
@@ -266,12 +321,32 @@ impl<R> TarMetadataMeter<R> {
 
 impl<R: Read> Read for TarMetadataMeter<R> {
     fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
-        let read = self.inner.read(output)?;
+        if output.is_empty() {
+            return Ok(0);
+        }
+        // Never ask the decoder for body bytes until its header is admitted.
+        let boundary = match &self.state {
+            MeterState::Header | MeterState::SparseHeader { .. } => 512 - self.block_len,
+            MeterState::Pax { body, used, .. } => body.len() - used,
+            MeterState::Data { remaining } => (*remaining).min(output.len() as u64) as usize,
+            MeterState::Eof => output.len(),
+        };
+        // At the ceiling, read at most one byte to distinguish EOF from overflow.
+        let decoded_boundary = self.remaining_decoded_bytes.max(1).min(output.len() as u64) as usize;
+        let length = output.len().min(boundary).min(decoded_boundary);
+        let read = self.inner.read(&mut output[..length])?;
         if read == 0 {
             self.check_eof()?;
             return Ok(0);
         }
+        if read as u64 > self.remaining_decoded_bytes {
+            if matches!(self.state, MeterState::Eof) && output[0] != 0 {
+                return Err(Self::invalid("nonzero data after TAR EOF"));
+            }
+            return Err(io::Error::other(DECODED_LIMIT));
+        }
         self.meter(&output[..read])?;
+        self.remaining_decoded_bytes -= read as u64;
         Ok(read)
     }
 }
@@ -303,7 +378,7 @@ mod tests {
 
     fn consume(bytes: Vec<u8>, limit: u64) -> io::Result<Vec<u8>> {
         let mut output = Vec::new();
-        TarMetadataMeter::new(Cursor::new(bytes), limit).read_to_end(&mut output)?;
+        TarMetadataMeter::new(Cursor::new(bytes), pax_tests::test_limits(limit)).read_to_end(&mut output)?;
         Ok(output)
     }
 

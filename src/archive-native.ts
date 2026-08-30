@@ -21,8 +21,8 @@ import {
   assertArchiveEntryCountWithinLimit,
   assertArchiveEntryPathComponentsWithinLimit,
   createByteBudgetTracker,
-  resolveExtractLimits,
-  type ArchiveExtractLimits,
+  type ResolvedArchiveExtractLimits,
+  type TarMeterLimits,
 } from "./archive-limits.js";
 import type { ExtractArchiveOptions } from "./archive-options.js";
 import { resolveArchiveEntryMode, shouldExtractArchiveEntry } from "./archive-policy.js";
@@ -61,13 +61,14 @@ export async function extractNativeArchive(params: {
   destDir: string;
   kind: ArchiveKind;
   stripComponents?: number;
-  limits?: ArchiveExtractLimits;
+  limits: ResolvedArchiveExtractLimits;
+  tarLimits: TarMeterLimits;
   deadline: ExtractionDeadline;
   entryModes?: ExtractArchiveOptions["entryModes"];
   entryFilter?: ExtractArchiveOptions["entryFilter"];
   onFiltered?: ExtractArchiveOptions["onFiltered"];
 }): Promise<void> {
-  const limits = resolveExtractLimits(params.limits);
+  const { limits, tarLimits } = params;
   const stagedArchive = await stageArchiveFileForExtraction({
     archivePath: params.archivePath,
     limits,
@@ -86,8 +87,7 @@ export async function extractNativeArchive(params: {
           .inspectArchiveNative(
             stagedArchive.path,
             params.kind,
-            limits.maxEntries,
-            limits.maxMetaEntryBytes,
+            tarLimits,
             limits.maxArchiveBytes,
             params.deadline.signal,
           )
@@ -175,7 +175,7 @@ export async function extractNativeArchive(params: {
             params.kind,
             directory.fd,
             plan,
-            limits.maxMetaEntryBytes,
+            tarLimits,
             params.deadline.signal,
           ).catch(throwMappedNativeError);
         } finally {

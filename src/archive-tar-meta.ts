@@ -3,28 +3,50 @@ import { Transform, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGunzip } from "node:zlib";
 import { ArchiveFormatError } from "./archive-errors.js";
-import { ARCHIVE_LIMIT_ERROR_CODE, ArchiveLimitError } from "./archive-limits.js";
+import { ARCHIVE_LIMIT_ERROR_CODE, ArchiveLimitError, type TarMeterLimits } from "./archive-limits.js";
 import { parseLocalPax, paxMemberSize, type LocalPax } from "./archive-tar-pax.js";
 
 type MeterState =
   | { kind: "header" }
+  | { kind: "eof" }
   | { kind: "data"; remaining: number }
   | { kind: "pax"; body: Buffer; used: number; padding: number }
   | { kind: "sparse"; dataRemaining: number; metaBytes: number };
 
-class TarMetadataMeter extends Transform {
+// Keep raw framing aligned with native/src/tar_meter.rs, before either parser.
+export class TarMetadataMeter extends Transform {
   private readonly block = Buffer.alloc(512);
   private blockLength = 0;
   private state: MeterState = { kind: "header" };
   private pendingPax: LocalPax | undefined;
   private pendingGnu = false;
+  private zeroBlocks = 0;
+  private entries = 0;
+  private remainingDecodedBytes: number;
 
-  constructor(private readonly maxMetaEntryBytes: number) {
+  constructor(private readonly limits: TarMeterLimits) {
     super();
+    if (!Number.isSafeInteger(limits.maxDecodedBytes) || limits.maxDecodedBytes < 0) {
+      throw new RangeError("maxDecodedBytes must be a non-negative safe integer");
+    }
+    this.remainingDecodedBytes = limits.maxDecodedBytes;
+  }
+
+  private countMember(): void {
+    if (this.entries >= this.limits.maxEntries) {
+      throw new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.ENTRY_COUNT_EXCEEDS_LIMIT);
+    }
+    this.entries += 1;
   }
 
   private invalid(message: string): ArchiveFormatError {
     return new ArchiveFormatError(`invalid TAR header: ${message}`);
+  }
+
+  private paddedSize(size: number): number {
+    const padded = Math.ceil(size / 512) * 512;
+    if (!Number.isSafeInteger(padded)) throw this.invalid("entry padding exceeds the safe integer range");
+    return padded;
   }
 
   private parseSize(): number {
@@ -43,9 +65,12 @@ class TarMetadataMeter extends Transform {
       return Number(value);
     }
     const zero = field.indexOf(0);
+    if (zero >= 0 && field.subarray(zero).some((byte) => byte !== 0 && byte !== 0x20)) {
+      throw this.invalid("size has non-padding bytes after NUL");
+    }
     const bytes = field.subarray(0, zero < 0 ? field.length : zero);
     if (bytes.some((byte) => byte > 0x7f)) throw this.invalid("size is not ASCII octal");
-    const text = bytes.toString("ascii").trim();
+    const text = bytes.toString("ascii").replace(/^ +| +$/g, "");
     if (!text || !/^[0-7]+$/.test(text)) throw this.invalid("size is not valid octal");
     const value = Number.parseInt(text, 8);
     if (!Number.isSafeInteger(value)) throw this.invalid("octal size exceeds the safe integer range");
@@ -57,9 +82,11 @@ class TarMetadataMeter extends Transform {
       if (this.pendingPax) throw this.invalid("dangling PAX metadata");
       this.pendingGnu = false;
       this.blockLength = 0;
-      this.state = { kind: "header" };
+      this.zeroBlocks += 1;
+      this.state = { kind: this.zeroBlocks === 2 ? "eof" : "header" };
       return;
     }
+    if (this.zeroBlocks !== 0) throw this.invalid("nonzero header after one TAR zero block");
     const nameEnd = this.block.subarray(0, 100).indexOf(0);
     const name = this.block.subarray(0, nameEnd < 0 ? 100 : nameEnd);
     if (name.length === 0) {
@@ -69,8 +96,13 @@ class TarMetadataMeter extends Transform {
       throw this.invalid("non-directory entry path ends with a separator");
     }
     let size = this.parseSize();
+    let padded = this.paddedSize(size);
     const type = this.block[156]!;
-    if ([0x78, 0x67, 0x4c, 0x4b, 0x58, 0x4e].includes(type) && size > this.maxMetaEntryBytes) {
+    // Directory/link headers cannot carry bodies; PAX/GNU metadata can.
+    if ([0x31, 0x32, 0x35].includes(type) && size !== 0) {
+      throw this.invalid("directory or link has a nonzero body size");
+    }
+    if ([0x78, 0x67, 0x4c, 0x4b, 0x58, 0x4e].includes(type) && size > this.limits.maxMetaEntryBytes) {
       throw new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.META_ENTRY_SIZE_EXCEEDS_LIMIT);
     }
     if (type === 0x67 || type === 0x58 || type === 0x4e) {
@@ -80,8 +112,6 @@ class TarMetadataMeter extends Transform {
       if (this.pendingPax || this.pendingGnu || size === 0) throw this.invalid("empty, repeated or mixed PAX metadata");
       const magic = this.block.subarray(257, 265).toString("latin1");
       if (magic !== "ustar\0" + "00" && magic !== "ustar  \0") throw this.invalid("unrecognized PAX header format");
-      const padded = Math.ceil(size / 512) * 512;
-      if (!Number.isSafeInteger(padded)) throw this.invalid("entry padding exceeds the safe integer range");
       this.state = { kind: "pax", body: Buffer.alloc(size), used: 0, padding: padded - size };
       this.blockLength = 0;
       return;
@@ -96,8 +126,7 @@ class TarMetadataMeter extends Transform {
     } else {
       this.pendingGnu = false;
     }
-    const padded = Math.ceil(size / 512) * 512;
-    if (!Number.isSafeInteger(padded)) throw this.invalid("entry padding exceeds the safe integer range");
+    padded = this.paddedSize(size);
     if (type === 0x53) {
       if (this.block[482] !== 0 && this.block[482] !== 1) {
         throw this.invalid("GNU sparse extension flag is not 0 or 1");
@@ -107,6 +136,7 @@ class TarMetadataMeter extends Transform {
       }
       this.state = { kind: "sparse", dataRemaining: padded, metaBytes: 0 };
     } else {
+      if (!this.pendingGnu) this.countMember();
       this.state = padded === 0 ? { kind: "header" } : { kind: "data", remaining: padded };
     }
     this.blockLength = 0;
@@ -114,7 +144,7 @@ class TarMetadataMeter extends Transform {
 
   private finishSparseHeader(state: Extract<MeterState, { kind: "sparse" }>): void {
     const metaBytes = state.metaBytes + 512;
-    if (metaBytes > this.maxMetaEntryBytes) {
+    if (metaBytes > this.limits.maxMetaEntryBytes) {
       throw new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.META_ENTRY_SIZE_EXCEEDS_LIMIT);
     }
     if (this.block[504] !== 0 && this.block[504] !== 1) {
@@ -131,6 +161,10 @@ class TarMetadataMeter extends Transform {
   private meter(chunk: Buffer): void {
     let offset = 0;
     while (offset < chunk.length) {
+      if (this.state.kind === "eof") {
+        if (chunk.subarray(offset).some((byte) => byte !== 0)) throw this.invalid("nonzero data after TAR EOF");
+        return;
+      }
       if (this.state.kind === "pax") {
         const state = this.state;
         const take = Math.min(state.body.length - state.used, chunk.length - offset);
@@ -163,7 +197,14 @@ class TarMetadataMeter extends Transform {
 
   override _transform(chunk: Buffer, _encoding: BufferEncoding, callback: (error?: Error | null, data?: Buffer) => void): void {
     try {
-      this.meter(chunk);
+      const admitted = Math.min(chunk.length, this.remainingDecodedBytes);
+      this.meter(chunk.subarray(0, admitted));
+      this.remainingDecodedBytes -= admitted;
+      if (admitted < chunk.length) {
+        // Inspect only the overflow probe, never scan an unbounded tail.
+        if (this.state.kind === "eof" && chunk[admitted] !== 0) throw this.invalid("nonzero data after TAR EOF");
+        throw new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.DECODED_SIZE_EXCEEDS_LIMIT);
+      }
       callback(null, chunk);
     } catch (error) {
       callback(error instanceof Error ? error : new Error(String(error)));
@@ -172,7 +213,8 @@ class TarMetadataMeter extends Transform {
 
   override _flush(callback: (error?: Error | null) => void): void {
     if (this.pendingPax) callback(this.invalid("dangling PAX metadata"));
-    else if (this.state.kind === "header" && this.blockLength === 0) callback();
+    else if (this.state.kind === "eof") callback();
+    else if (this.state.kind === "header" && this.blockLength === 0) callback(this.invalid("missing two-block TAR EOF"));
     else callback(this.invalid(this.state.kind === "header" ? "truncated TAR header" : "truncated TAR entry"));
   }
 }
@@ -190,11 +232,11 @@ async function isGzip(filePath: string): Promise<boolean> {
 
 export async function preflightTarMetadata(params: {
   archivePath: string;
-  maxMetaEntryBytes: number;
+  limits: TarMeterLimits;
   signal?: AbortSignal;
 }): Promise<void> {
   const input = fs.createReadStream(params.archivePath);
-  const meter = new TarMetadataMeter(params.maxMetaEntryBytes);
+  const meter = new TarMetadataMeter(params.limits);
   const sink = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
   if (await isGzip(params.archivePath)) {
     await pipeline(input, createGunzip(), meter, sink, { signal: params.signal });

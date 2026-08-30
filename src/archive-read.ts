@@ -14,7 +14,6 @@ import {
 import { resolveArchiveKind, type ArchiveKind } from "./archive-kind.js";
 import {
   DEFAULT_MAX_ARCHIVE_BYTES_ZIP,
-  DEFAULT_MAX_ENTRIES,
   DEFAULT_MAX_META_ENTRY_BYTES,
   ArchiveLimitError,
   ARCHIVE_LIMIT_ERROR_CODE,
@@ -33,7 +32,7 @@ import { inspectFileIdentity } from "./strict-file-identity.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { getNativeBinding } from "./native.js";
 import { admitZipBuffer } from "./archive-zip-admission.js";
-import { resolveExtractLimits } from "./archive-limits.js";
+import { resolveExtractLimits, resolveTarMeterLimits } from "./archive-limits.js";
 import { tempFile } from "./temp-target.js";
 
 const ZIP_UNIX_FILE_TYPE_MASK = 0o170000;
@@ -158,7 +157,7 @@ async function readTarEntry(archivePath: string, entryPath: string, maxBytes: nu
   const tar = await importOptionalTar();
   await preflightTarMetadata({
     archivePath,
-    maxMetaEntryBytes: DEFAULT_MAX_META_ENTRY_BYTES,
+    limits: resolveTarMeterLimits(),
   });
   let matched: Promise<Buffer> | undefined;
   let entryError: Error | undefined;
@@ -243,11 +242,11 @@ export async function readArchiveEntry(
     if (native) {
       try {
         const signal = new AbortController().signal;
+        const limits = resolveTarMeterLimits();
         const manifest = await native.inspectArchiveNative(
           staged.path,
           kind,
-          DEFAULT_MAX_ENTRIES,
-          DEFAULT_MAX_META_ENTRY_BYTES,
+          limits,
           DEFAULT_MAX_ARCHIVE_BYTES_ZIP,
           signal,
         );
@@ -283,8 +282,7 @@ export async function readArchiveEntry(
           kind,
           rawEntryPath,
           options.maxBytes,
-          DEFAULT_MAX_ENTRIES,
-          DEFAULT_MAX_META_ENTRY_BYTES,
+          limits,
           signal,
         );
       } catch (error) {

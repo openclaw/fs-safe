@@ -64,12 +64,39 @@ returns a bounded manifest. TypeScript applies the shared path, filter, strip,
 mode, and byte policies and returns an index-bound extraction plan. Rust then
 creates only those planned entries beneath a private staging descriptor.
 
-A fixed-512-byte pass-through meter sits between decompression and the TAR
-crate. It reads only header type and octal/base-256 size fields. It never parses
-metadata content. Oversized GNU long-name/link metadata is rejected before
-buffering; PAX size overrides and GNU sparse entries are rejected as
-unmeterable rather than guessed. The JavaScript node-tar path receives the same
-`maxMetaEntryBytes` value and a matching fixed-header preflight.
+A raw meter sits between decompression and the TAR crate, with matching
+TypeScript admission before node-tar. It parses 512-byte headers and bounded
+local PAX `x` metadata, using supported effective sizes to locate the following
+member body. GNU long-name/link `L`/`K` payloads remain
+supported. `maxMetaEntryBytes` bounds each metadata body before allocation;
+unsupported global/old metadata and sparse forms fail closed rather than being
+interpreted as ordinary members. See [bounded local PAX support](archive.md#bounded-local-pax-support).
+
+Every raw pass receives only TypeScript's resolved `maxEntries`,
+`maxMetaEntryBytes`, and `maxDecodedBytes`. Shared resolution caps metadata and
+decoded byte fields at JavaScript's safe-integer maximum and entry counts at
+`2^32 - 1` before backend selection. Large finite limits remain accepted;
+native conversion mirrors those caps and rejects malformed non-finite or
+negative direct-call values before casting. Logical member headers count
+before filtering/stripping; metadata records do not. `maxEntryBytes` and
+`maxExtractedBytes` remain exclusively in TypeScript's accepted-plan builder,
+after strip/filter policy, and are absent from the raw meter's interface.
+Bounded reads use the default count/metadata/decoded bounds; public `maxBytes`
+bounds only the requested output. TypeScript derives the internal decoded cap
+by safely adding `maxExtractedBytes` and `maxArchiveBytes`, clamped to the safe
+integer maximum. Every native pass receives that same cap and charges headers,
+metadata, bodies, padding, EOF blocks, and trailing zeros. It rejects overflow
+with `archive-decoded-size-exceeds-limit`; no ratio policy is implied.
+Extraction and entry reads drain the metered reader through physical EOF after
+TAR iteration. Trailing framing or decoded-limit failures propagate before
+directory modes are finalized, staging is published, or selected bytes return.
+Native reads stop at framing boundaries so a rejected header does not request
+its body from the decoder; codec buffering can still read ahead internally.
+Inspection finishes the complete bounded framing pass before parsing. Directory
+and link bodies, missing two-block EOF, and nonzero trailers reject on both
+backends, as detailed in [raw TAR framing](archive.md#raw-tar-framing). Raw and
+padded sizes above JavaScript's safe-integer maximum reject as invalid framing
+before applying member budgets, including when local PAX overrides the size.
 
 ## Publication and hashing
 

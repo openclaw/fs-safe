@@ -89,6 +89,10 @@ explicitly `"skip-entry"`. Runtime values other than `"reject-archive"` and
 `"skip-entry"` reject before extraction starts instead of falling through to
 skip behavior. Path traversal and archive-wide entry-count checks still apply
 to skipped entries.
+`maxEntryBytes` and `maxExtractedBytes` charge only entries accepted after
+stripping and filtering. Skipping a large member does not consume these payload
+budgets. The separate complete-stream decoded limit still applies to all TAR
+content, including skipped or fully stripped members.
 
 For example, a fleet restore can omit regenerated cache entries while rejecting
 any other policy mismatch by default:
@@ -128,8 +132,8 @@ If `kind` is omitted, the helper calls `resolveArchiveKind(archivePath)` and thr
 type ArchiveExtractLimits = {
   maxArchiveBytes?: number;     // refuse if archivePath stat'd size exceeds this
   maxEntries?: number;          // refuse before extracting if entry count > this
-  maxExtractedBytes?: number;   // refuse mid-stream if total extracted bytes > this
-  maxEntryBytes?: number;       // refuse a single entry larger than this
+  maxExtractedBytes?: number;   // cap total payload bytes accepted after strip/filter
+  maxEntryBytes?: number;       // cap one accepted entry after strip/filter
   maxMetaEntryBytes?: number;   // refuse one PAX/GNU metadata body above this
   maxEntryPathComponents?: number; // bound output path depth after stripComponents
 };
@@ -144,6 +148,7 @@ A limit violation throws `ArchiveLimitError`. Its constant and string code are:
 | `ARCHIVE_SIZE_EXCEEDS_LIMIT` | `archive-size-exceeds-limit` |
 | `ENTRY_COUNT_EXCEEDS_LIMIT` | `archive-entry-count-exceeds-limit` |
 | `EXTRACTED_SIZE_EXCEEDS_LIMIT` | `archive-extracted-size-exceeds-limit` |
+| `DECODED_SIZE_EXCEEDS_LIMIT` | `archive-decoded-size-exceeds-limit` |
 | `ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT` | `archive-entry-extracted-size-exceeds-limit` |
 | `META_ENTRY_SIZE_EXCEEDS_LIMIT` | `archive-meta-entry-size-exceeds-limit` |
 | `ENTRY_PATH_COMPONENTS_EXCEEDS_LIMIT` | `archive-entry-path-components-exceeds-limit` |
@@ -169,6 +174,66 @@ codes remain `"destination-not-directory"`, `"destination-symlink"`, and
 - **Corrupt ZIP payloads:** streamed output must match both the central-directory CRC and declared uncompressed size before it can leave private staging.
 - **Slow-loris archives:** `timeoutMs` is a hard wall-clock budget for non-mutating work. Extraction is aborted on overrun; if a destination mutation is already in flight, that mutation and rollback are joined before rejection so archive-controlled publication cannot continue afterward.
 - **Metadata bombs:** a streaming pass-through reader rejects oversized PAX, GNU long-name, and GNU long-link bodies before either TAR implementation buffers them. It understands octal and base-256 fixed sizes and validates bounded local PAX bodies before using their size overrides for member framing. Original archive bytes remain unchanged.
+
+### Raw TAR framing
+
+Extraction and bounded reads admit the complete decoded TAR stream through the
+raw meter before either backend's TAR parser runs. This applies to plain TAR,
+gzip, and native-supported zstd/bzip2, without changing native-mode availability
+or fallback policy. The existing TypeScript and Rust meters enforce the same
+framing rules before parser normalization:
+
+- Directory (`5`), hardlink (`1`), and symlink (`2`) raw headers must declare
+  zero body bytes, whether or not local PAX metadata is present. Valid zero-size
+  links remain subject to the existing link/filter policy.
+- EOF requires two consecutive, complete 512-byte zero blocks at a header
+  boundary. A header after just one zero block, a missing/partial EOF marker,
+  and any nonzero bytes after EOF reject. Additional zero padding after EOF may
+  have any byte length within the decoded ceiling; zero blocks inside a declared
+  member body are payload.
+- Headers and padded bodies must be complete. Size fields accept unsigned
+  octal with ASCII-space/NUL padding or supported positive base-256 encoding;
+  malformed numbers and non-padding bytes after a NUL reject. Raw sizes and
+  padded sizes must fit `Number.MAX_SAFE_INTEGER`, even with PAX overrides,
+  before member budgets are considered.
+
+Framing failures use `ArchiveFormatError("archive-header-invalid")`. PAX `x`
+and GNU long-name/long-link `L`/`K` payloads retain their existing support and
+metadata limits; the zero-body rule is not applied to all non-regular types.
+PAX effective sizes still determine regular-member framing. Admission preserves
+the input bytes, and all entry/path/byte limits and extraction deadlines remain
+in force. Native inspection now completes this admission pass before parsing,
+requiring one additional streaming read/decompression pass.
+Native extraction and entry reads also drain their metered readers through
+physical EOF after parser traversal, before completing directory modes,
+publishing staged files, or returning the requested bytes. Finding the requested
+member or reaching the parser's logical EOF cannot bypass trailing validation.
+
+The raw meter enforces `maxEntries` before consuming each logical member's body,
+including members later skipped by filtering or stripping. PAX/GNU metadata
+headers do not count as members; their payloads use `maxMetaEntryBytes`.
+The meter does not receive `maxEntryBytes` or `maxExtractedBytes`: those payload
+budgets apply only after strip/filter acceptance, using declared effective
+sizes and excluding block padding. JavaScript's entry checker and the native
+accepted-plan builder retain this shared policy. Every TAR admission/parser
+pass has a separate absolute decoded ceiling:
+`maxExtractedBytes + maxArchiveBytes`, safely clamped to
+`Number.MAX_SAFE_INTEGER` (768 MiB with defaults). It counts every admitted
+decoded byte: headers, bodies, metadata, all block padding, both EOF blocks,
+and zero padding after EOF. It bounds complete decoding before parser policy,
+including all filtered/stripped content; cumulative metadata and zero tails
+cannot bypass this bound. Exceeding this ceiling throws
+`ArchiveLimitError("archive-decoded-size-exceeds-limit")`.
+
+The same TypeScript helper derives the ceiling for JavaScript and every native
+TAR pass. Before selecting a backend, it caps internal metadata/decoded limits at
+`Number.MAX_SAFE_INTEGER` and logical entry counts at `2^32 - 1`. Larger finite
+options such as `Number.MAX_VALUE` remain valid; high-level payload budgets keep
+their large values. The decoded ceiling uses clamped `maxExtractedBytes` and
+archive overhead with safe addition. Ordinary limits, including
+zero and the existing defaulting/rounding rules, retain their behavior.
+There is no new public option. This is an absolute decoded admission
+cap, not a decompression-ratio policy; bounded stream/codec read-ahead remains.
 
 ### Bounded local PAX support
 
@@ -261,7 +326,12 @@ await extractArchive({
 regular-file entry into a bounded `Buffer` without extracting a tree. It pins
 and privately stages the archive input, rejects link, directory, and duplicate
 entries, verifies ZIP CRC and declared size,
-and throws `ArchiveLimitError` if decompressed bytes exceed `maxBytes`. ZIP
+and throws `ArchiveLimitError` if the requested entry's output exceeds
+`maxBytes`. For TAR, `maxBytes` applies only to that requested entry: a larger
+unrequested member remains valid within the default archive admission limits.
+TAR traversal uses default entry-count, compressed-input, and metadata limits,
+plus the 768 MiB decoded ceiling derived from default extracted/archive byte
+limits. It does not apply payload budgets to unrequested members. ZIP
 inputs retain the archive subpath's 256 MiB compressed-input ceiling.
 With a native binding it uses the same Rust decoders as extraction, including
 zstd and bzip2 TAR. Without native it retains the JS ZIP/TAR/gzip implementation.

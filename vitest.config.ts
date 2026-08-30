@@ -4,9 +4,10 @@ export default defineConfig({
   test: {
     include: ["test/**/*.test.ts"],
     pool: "forks",
-    // Windows hosted runners become nondeterministic when the filesystem stress
-    // suites compete across worker processes. Keep that platform serialized.
-    maxWorkers: process.platform === "win32" ? 1 : undefined,
+    // Windows hosted runners become nondeterministic when filesystem stress
+    // suites compete. Other CI hosts stay bounded so high-core machines do not
+    // make the stress and property suites time out under process contention.
+    maxWorkers: process.platform === "win32" ? 1 : process.env.CI ? 4 : undefined,
     expect: {
       requireAssertions: true,
     },
