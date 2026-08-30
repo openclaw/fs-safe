@@ -9,6 +9,7 @@ import {
   moveDurableQueueEntryToFailed,
 } from "./json-durable-queue-ownership.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
+import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { replaceFileAtomic } from "./replace-file.js";
 import { assertSafePathSegment } from "./safe-path-segment.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
@@ -341,11 +342,7 @@ async function readBoundedUtf8File(params: {
 }): Promise<string> {
   const inspectPath = () => fs.promises.lstat(params.filePath, { bigint: true });
   const initialStat = await inspectQueueEntry(inspectPath, params.maxBytes);
-  const noFollow =
-    typeof fs.constants.O_NOFOLLOW === "number" && process.platform !== "win32"
-      ? fs.constants.O_NOFOLLOW
-      : 0;
-  const handle = await fs.promises.open(params.filePath, fs.constants.O_RDONLY | noFollow);
+  const handle = await fs.promises.open(params.filePath, resolveReadOpenFlags());
   try {
     const openedStat = await inspectQueueEntry(
       () => handle.stat({ bigint: true }), params.maxBytes, initialStat,

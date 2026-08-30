@@ -3,6 +3,7 @@ import type { FileHandle } from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { readOwnedCopySource, readOwnedCopySourceSync } from "./replace-file-copy-source.js";
+import { resolveReadOpenFlags } from "./read-open-flags.js";
 
 export type ReplaceFileDestinationHardlinkPolicy = "reject";
 export type ReplaceFileCopyFallbackRestorePolicy = "restore-original" | "none";
@@ -34,7 +35,7 @@ type SyncFallbackFs = Pick<
 
 const SUPPORTS_NOFOLLOW = process.platform !== "win32" && "O_NOFOLLOW" in syncFs.constants;
 const NOFOLLOW = SUPPORTS_NOFOLLOW ? syncFs.constants.O_NOFOLLOW : 0;
-const OPEN_READ_FLAGS = syncFs.constants.O_RDONLY | NOFOLLOW;
+const OPEN_READ_FLAGS = resolveReadOpenFlags();
 const OPEN_READ_WRITE_FLAGS = syncFs.constants.O_RDWR | NOFOLLOW;
 const OPEN_WRITE_EXCLUSIVE_FLAGS =
   syncFs.constants.O_WRONLY | syncFs.constants.O_CREAT | syncFs.constants.O_EXCL | NOFOLLOW;

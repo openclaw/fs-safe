@@ -18,8 +18,8 @@ const { buffer, realPath, permissions } = await readSecureFile({
 The helper:
 
 - requires a local absolute path and rejects UNC/network paths by default
-- rejects directories and, by default, symlink paths
-- opens the file before reading and verifies the opened fd still matches the path and realpath
+- rejects every non-regular preview and, by default, symlink paths
+- opens POSIX paths no-follow and nonblocking before reading, then verifies the opened fd still matches the path and realpath; a FIFO swap cannot block before `timeoutMs` owns the byte read
 - optionally requires the real path to live under one of `trust.trustedDirs`
 - rejects hard-to-verify or unsafe permissions unless `permissions.allowInsecure` is set
 - rejects files owned by another POSIX uid

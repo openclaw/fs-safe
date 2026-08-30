@@ -4,6 +4,7 @@
 
 ### Security and Correctness
 
+- Open attacker-raceable secure, secret, archive, queue, publication, fallback, and lock-file read paths nonblocking on POSIX, rejecting FIFO substitutions before reads, deadlines, or cleanup verification can stall.
 - Retain async and sync atomic replacement temp descriptors across `beforeRename`, retries, copy fallback, and final publication; reject substituted, non-regular, or hardlinked stages, preserve unowned cleanup paths, and add explicit locked content verification for rename-unstable FUSE mounts.
 - Pin callback-produced sibling temps through requested mode application, opt-in fsync, rename, and exact publication checks; reject symlink, non-regular, hardlinked, and replaced stages and preserve unverified cleanup paths while retaining producer modes, disabled sync defaults, best-effort file and directory chmod, and read-only descriptor admission unless file sync is requested in `writeSiblingTempFile`.
 - Make durable queue directory creation, claims, acknowledgement, quarantine, marker cleanup, and retirement transitions fsync affected directories and propagate durability failures.

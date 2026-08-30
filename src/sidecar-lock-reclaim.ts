@@ -5,6 +5,7 @@ import path from "node:path";
 import { readFileDescriptorBoundedSync, readFileHandleBounded } from "./bounded-read.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
+import { resolveReadOpenFlags } from "./read-open-flags.js";
 import type { Root } from "./root-impl.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
@@ -176,12 +177,14 @@ export function readSidecarLockSnapshotSync(
       }
       return null;
     }
-    const noFollow =
-      process.platform !== "win32" && typeof fsSync.constants.O_NOFOLLOW === "number"
-        ? fsSync.constants.O_NOFOLLOW
-        : 0;
-    fd = fsSync.openSync(lockPath, fsSync.constants.O_RDONLY | noFollow);
+    fd = fsSync.openSync(lockPath, resolveReadOpenFlags());
     const opened = fsSync.fstatSync(fd);
+    if (!opened.isFile()) {
+      if (options.rejectNonFile) {
+        throw new FsSafeError("not-file", `sidecar lock is not a regular file: ${lockPath}`);
+      }
+      return null;
+    }
     const raw = readFileDescriptorBoundedSync(fd, MAX_LOCK_PAYLOAD_BYTES).toString("utf8");
     const after = fsSync.lstatSync(lockPath);
     if (!sameFileIdentity(before, opened) || !sameFileIdentity(opened, after)) return null;

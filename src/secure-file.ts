@@ -1,5 +1,4 @@
 import type { Stats } from "node:fs";
-import { constants as fsConstants } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -10,6 +9,7 @@ import { FsSafeError } from "./errors.js";
 import { isWindowsDriveLetterPath, isWindowsNetworkPath } from "./local-file-access.js";
 import { isPathInside, isSymlinkOpenError } from "./path.js";
 import { formatPermissionErrorDetail } from "./permission-exec.js";
+import { resolveReadOpenFlags } from "./read-open-flags.js";
 import {
   inspectPathPermissions,
   isGroupReadable,
@@ -21,9 +21,6 @@ import {
   type PermissionCheckOptions,
 } from "./permissions.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
-
-const SUPPORTS_NOFOLLOW = process.platform !== "win32" && "O_NOFOLLOW" in fsConstants;
-const OPEN_READ_FLAGS = fsConstants.O_RDONLY | (SUPPORTS_NOFOLLOW ? fsConstants.O_NOFOLLOW : 0);
 
 export type SecureFileReadOptions = {
   filePath: string;
@@ -89,16 +86,19 @@ async function openSecureHandle(options: SecureFileReadOptions): Promise<{
       cause: err,
     });
   });
-  if (preStat.isDirectory()) {
+  if (preStat.isSymbolicLink()) {
+    if (!options.trust?.allowSymlink) {
+      throw new FsSafeError("symlink", `${label(options)} must not be a symlink: ${options.filePath}`);
+    }
+  } else if (!preStat.isFile()) {
     throw new FsSafeError("not-file", `${label(options)} must be a file: ${options.filePath}`);
-  }
-  if (preStat.isSymbolicLink() && !options.trust?.allowSymlink) {
-    throw new FsSafeError("symlink", `${label(options)} must not be a symlink: ${options.filePath}`);
   }
 
   let handle: FileHandle;
   try {
-    handle = await fs.open(options.filePath, options.trust?.allowSymlink ? fsConstants.O_RDONLY : OPEN_READ_FLAGS);
+    handle = await fs.open(options.filePath, resolveReadOpenFlags({
+      followSymlinks: options.trust?.allowSymlink === true,
+    }));
   } catch (err) {
     if (isSymlinkOpenError(err)) {
       throw new FsSafeError("symlink", `${label(options)} symlink open blocked`, { cause: err });

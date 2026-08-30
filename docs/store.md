@@ -75,7 +75,8 @@ Queue and failed directory creation fsyncs every newly-created parent edge from 
 Failed destinations are create-only. Quarantine publishes the claimed file by hardlink, so the queue and failed directories must share a filesystem with hardlink support. If `failed/<id>.json` already exists, quarantine rejects while preserving both that earlier evidence and the current claimed entry instead of overwriting either file. The `read` callback continues to receive the logical `.json` path even though bytes are read and migrations are written through the claimed path.
 
 Queue entry reads verify lossless file identities before opening, on the opened
-descriptor, and at the current pathname before reading bytes. On Windows, an
+descriptor, and at the current pathname before reading bytes. POSIX opens are
+nonblocking, so a raced FIFO is rejected rather than stalling a consumer. On Windows, an
 unknown identity gets one bounded reinspection; persistent ambiguity or a
 mismatch rejects with `queue entry changed during read`. Each inspection still
 rejects non-files, symlinks, hardlinks, and entries over the byte limit.

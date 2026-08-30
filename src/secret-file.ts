@@ -8,6 +8,7 @@ import { FsSafeError } from "./errors.js";
 import { sameFileIdentity, type FileIdentityStat } from "./file-identity.js";
 import { resolveHomeRelativePath } from "./home-dir.js";
 import { openPinnedFileSync } from "./pinned-open.js";
+import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { runPinnedWriteHelper } from "./pinned-write.js";
 import {
   assertSecretFilePreview,
@@ -156,9 +157,7 @@ async function enforcePrivateFileIdentityAndMode(
   expectedIdentity: FileIdentityStat,
   expectedMode: number,
 ): Promise<void> {
-  const noFollowFlag =
-    process.platform !== "win32" && "O_NOFOLLOW" in fs.constants ? fs.constants.O_NOFOLLOW : 0;
-  const handle = await fsp.open(resolvedPath, fs.constants.O_RDONLY | noFollowFlag);
+  const handle = await fsp.open(resolvedPath, resolveReadOpenFlags());
   try {
     const openedStat = await handle.stat();
     if (!openedStat.isFile() || !sameFileIdentity(openedStat, expectedIdentity)) {
