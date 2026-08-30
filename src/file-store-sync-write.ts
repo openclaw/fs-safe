@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { syncDirectorySync } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import {
@@ -63,14 +64,35 @@ export function writeFileSyncAtomic(params: {
     if (parentGuard) {
       assertSyncDirectoryGuard(parentGuard);
     }
-    fs.writeFileSync(tempPath, params.content, { flag: "wx", mode: params.mode });
-    tempExists = true;
-    try {
-      fs.chmodSync(tempPath, params.mode);
-    } catch {
-      // Best-effort on platforms that do not enforce POSIX modes.
+    const tempStat = (() => {
+      const descriptor = fs.openSync(tempPath, "wx", params.mode);
+      tempExists = true;
+      try {
+        fs.writeFileSync(descriptor, params.content);
+        try {
+          fs.fchmodSync(descriptor, params.mode);
+        } catch {
+          // Best-effort on platforms that do not enforce POSIX modes.
+        }
+        const opened = fs.fstatSync(descriptor);
+        if (!opened.isFile() || opened.nlink > 1) {
+          throw new FsSafeError("path-mismatch", "store temp is not an owned regular file");
+        }
+        fs.fsyncSync(descriptor);
+        return opened;
+      } finally {
+        fs.closeSync(descriptor);
+      }
+    })();
+    const tempPathStat = fs.lstatSync(tempPath);
+    if (
+      tempPathStat.isSymbolicLink() ||
+      !tempPathStat.isFile() ||
+      tempPathStat.nlink > 1 ||
+      !sameFileIdentity(tempPathStat, tempStat)
+    ) {
+      throw new FsSafeError("path-mismatch", "store temp changed before publication");
     }
-    const tempStat = fs.lstatSync(tempPath);
     if (parentGuard) {
       assertSyncDirectoryGuard(parentGuard);
     }
@@ -96,6 +118,15 @@ export function writeFileSyncAtomic(params: {
       throw new FsSafeError("path-mismatch", "store target changed after write", {
         cause: error instanceof Error ? error : undefined,
       });
+    }
+    if (parentGuard) {
+      assertSyncDirectoryGuard(parentGuard);
+      syncDirectorySync({
+        path: parentGuard.dir,
+        realPath: parentGuard.realPath,
+        identity: parentGuard.stat,
+      }, { label: "store parent" });
+      assertSyncDirectoryGuard(parentGuard);
     }
     return filePath;
   } finally {

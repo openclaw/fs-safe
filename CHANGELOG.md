@@ -4,6 +4,7 @@
 
 ### Security and Correctness
 
+- Fsync synchronous file-store temps before rename and parent directories after publication, matching the documented durability contract.
 - Reject invalid runtime archive `onFiltered` policies before extraction instead of treating unknown values as entry-skipping opt-in.
 - Claim durable queue generations under a fail-closed cross-process lock with no-replace hardlinks and recoverable source retirement so acknowledgement and quarantine cannot delete or move a newer same-ID replacement; acknowledgement now requires a processing claim, and quarantine preserves existing failed-entry evidence on collisions.
 - Validate async/sync lock retry and deadline numbers and clamp synchronous backoff to the remaining finite deadline instead of overshooting or blocking forever.
