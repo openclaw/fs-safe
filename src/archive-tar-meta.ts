@@ -5,12 +5,13 @@ import { createGunzip } from "node:zlib";
 import { ArchiveFormatError } from "./archive-errors.js";
 import { ARCHIVE_LIMIT_ERROR_CODE, ArchiveLimitError, type TarMeterLimits } from "./archive-limits.js";
 import { parseLocalPax, paxMemberSize, type LocalPax } from "./archive-tar-pax.js";
+import { validateGnuMetadata } from "./archive-tar-gnu.js";
 
 type MeterState =
   | { kind: "header" }
   | { kind: "eof" }
   | { kind: "data"; remaining: number }
-  | { kind: "pax"; body: Buffer; used: number; padding: number }
+  | { kind: "metadata"; type: "pax" | "L" | "K"; body: Buffer; used: number; padding: number }
   | { kind: "sparse"; dataRemaining: number; metaBytes: number };
 
 // Keep raw framing aligned with native/src/tar_meter.rs, before either parser.
@@ -19,7 +20,7 @@ export class TarMetadataMeter extends Transform {
   private blockLength = 0;
   private state: MeterState = { kind: "header" };
   private pendingPax: LocalPax | undefined;
-  private pendingGnu = false;
+  private readonly pendingGnu = new Set<"L" | "K">();
   private zeroBlocks = 0;
   private entries = 0;
   private remainingDecodedBytes: number;
@@ -80,7 +81,7 @@ export class TarMetadataMeter extends Transform {
   private finishHeader(): void {
     if (this.block.every((byte) => byte === 0)) {
       if (this.pendingPax) throw this.invalid("dangling PAX metadata");
-      this.pendingGnu = false;
+      if (this.pendingGnu.size) throw this.invalid("dangling GNU metadata");
       this.blockLength = 0;
       this.zeroBlocks += 1;
       this.state = { kind: this.zeroBlocks === 2 ? "eof" : "header" };
@@ -92,7 +93,7 @@ export class TarMetadataMeter extends Transform {
     if (name.length === 0) {
       throw this.invalid("entry path is empty");
     }
-    if (this.block[156] !== 0x35 && name.at(-1) === 0x2f) {
+    if (![0x35, 0x44].includes(this.block[156]!) && name.at(-1) === 0x2f) {
       throw this.invalid("non-directory entry path ends with a separator");
     }
     let size = this.parseSize();
@@ -108,23 +109,21 @@ export class TarMetadataMeter extends Transform {
     if (type === 0x67 || type === 0x58 || type === 0x4e) {
       throw this.invalid("global/old PAX and old GNU metadata are not supported");
     }
-    if (type === 0x78) {
-      if (this.pendingPax || this.pendingGnu || size === 0) throw this.invalid("empty, repeated or mixed PAX metadata");
+    if (type === 0x78 || type === 0x4c || type === 0x4b) {
+      const metadataType = type === 0x78 ? "pax" : type === 0x4c ? "L" : "K";
+      if (this.pendingPax || size === 0 || (metadataType === "pax" ? this.pendingGnu.size : this.pendingGnu.has(metadataType))) {
+        throw this.invalid("empty, repeated or mixed PAX/GNU metadata");
+      }
       const magic = this.block.subarray(257, 265).toString("latin1");
-      if (magic !== "ustar\0" + "00" && magic !== "ustar  \0") throw this.invalid("unrecognized PAX header format");
-      this.state = { kind: "pax", body: Buffer.alloc(size), used: 0, padding: padded - size };
+      if (magic !== "ustar\0" + "00" && magic !== "ustar  \0") throw this.invalid("unrecognized PAX/GNU header format");
+      if (metadataType !== "pax") this.pendingGnu.add(metadataType);
+      this.state = { kind: "metadata", type: metadataType, body: Buffer.alloc(size), used: 0, padding: padded - size };
       this.blockLength = 0;
       return;
     }
     // Sparse headers retain their metadata-limit-before-format-error ordering.
     if (this.pendingPax && type !== 0x53) {
       size = paxMemberSize(this.pendingPax, type, size, this.block);
-      this.pendingPax = undefined;
-    }
-    if (type === 0x4c || type === 0x4b) {
-      this.pendingGnu = true;
-    } else {
-      this.pendingGnu = false;
     }
     padded = this.paddedSize(size);
     if (type === 0x53) {
@@ -136,7 +135,9 @@ export class TarMetadataMeter extends Transform {
       }
       this.state = { kind: "sparse", dataRemaining: padded, metaBytes: 0 };
     } else {
-      if (!this.pendingGnu) this.countMember();
+      this.countMember();
+      this.pendingPax = undefined;
+      this.pendingGnu.clear();
       this.state = padded === 0 ? { kind: "header" } : { kind: "data", remaining: padded };
     }
     this.blockLength = 0;
@@ -165,14 +166,15 @@ export class TarMetadataMeter extends Transform {
         if (chunk.subarray(offset).some((byte) => byte !== 0)) throw this.invalid("nonzero data after TAR EOF");
         return;
       }
-      if (this.state.kind === "pax") {
+      if (this.state.kind === "metadata") {
         const state = this.state;
         const take = Math.min(state.body.length - state.used, chunk.length - offset);
         chunk.copy(state.body, state.used, offset, offset + take);
         state.used += take;
         offset += take;
         if (state.used === state.body.length) {
-          this.pendingPax = parseLocalPax(state.body);
+          if (state.type === "pax") this.pendingPax = parseLocalPax(state.body);
+          else validateGnuMetadata(state.body, state.type);
           this.state = state.padding === 0 ? { kind: "header" } : { kind: "data", remaining: state.padding };
         }
         continue;
@@ -213,6 +215,7 @@ export class TarMetadataMeter extends Transform {
 
   override _flush(callback: (error?: Error | null) => void): void {
     if (this.pendingPax) callback(this.invalid("dangling PAX metadata"));
+    else if (this.pendingGnu.size) callback(this.invalid("dangling GNU metadata"));
     else if (this.state.kind === "eof") callback();
     else if (this.state.kind === "header" && this.blockLength === 0) callback(this.invalid("missing two-block TAR EOF"));
     else callback(this.invalid(this.state.kind === "header" ? "truncated TAR header" : "truncated TAR entry"));

@@ -5,6 +5,7 @@ pub const INVALID_HEADER: &str = "archive-header-invalid";
 pub const META_LIMIT: &str = "archive-meta-entry-size-exceeds-limit";
 pub const DECODED_LIMIT: &str = "archive-decoded-size-exceeds-limit";
 pub const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+pub const INVALID_GNU_PATH: &str = "archive-gnu-path-invalid";
 
 #[derive(Clone, Copy)]
 pub struct TarMeterLimits {
@@ -19,7 +20,8 @@ enum MeterState {
     Data {
         remaining: u64,
     },
-    Pax {
+    Metadata {
+        kind: u8,
         body: Vec<u8>,
         used: usize,
         padding: u64,
@@ -40,7 +42,7 @@ pub struct TarMetadataMeter<R> {
     block: [u8; 512],
     block_len: usize,
     pending_pax: Option<LocalPax>,
-    pending_gnu: bool,
+    pending_gnu: [bool; 2],
     zero_blocks: u8,
 }
 
@@ -55,7 +57,7 @@ impl<R> TarMetadataMeter<R> {
             block: [0; 512],
             block_len: 0,
             pending_pax: None,
-            pending_gnu: false,
+            pending_gnu: [false; 2],
             zero_blocks: 0,
         }
     }
@@ -69,6 +71,29 @@ impl<R> TarMetadataMeter<R> {
 
     fn meta_limit() -> io::Error {
         io::Error::new(io::ErrorKind::InvalidData, META_LIMIT)
+    }
+
+    fn validate_gnu_body(body: &[u8], kind: u8) -> io::Result<()> {
+        let value = body.strip_suffix(&[0]).unwrap_or(body);
+        if value.is_empty() || value.contains(&0) {
+            return Err(Self::invalid("empty GNU name or embedded NUL"));
+        }
+        let name = std::str::from_utf8(value)
+            .map_err(|_| Self::invalid("GNU name is not valid UTF-8"))?;
+        if kind == b'L' {
+            // Reuse the raw portable path guard; archive drive/ADS syntax must
+            // also be rejected before tar's platform-specific path conversion.
+            crate::validate_portable_relative_path(name, true)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, INVALID_GNU_PATH))?;
+            if name.split(['/', '\\']).any(|part| {
+                let bytes = part.as_bytes();
+                (bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':')
+                    || (cfg!(windows) && part.contains(':'))
+            }) {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, INVALID_GNU_PATH));
+            }
+        }
+        Ok(())
     }
 
     fn count_member(&mut self) -> io::Result<()> {
@@ -131,7 +156,9 @@ impl<R> TarMetadataMeter<R> {
             if self.pending_pax.is_some() {
                 return Err(Self::invalid("dangling PAX metadata"));
             }
-            self.pending_gnu = false;
+            if self.pending_gnu.iter().any(|pending| *pending) {
+                return Err(Self::invalid("dangling GNU metadata"));
+            }
             self.zero_blocks += 1;
             self.state = if self.zero_blocks == 2 { MeterState::Eof } else { MeterState::Header };
             self.block_len = 0;
@@ -147,7 +174,7 @@ impl<R> TarMetadataMeter<R> {
         if name_end == 0 {
             return Err(Self::invalid("entry path is empty"));
         }
-        if self.block[156] != b'5' && self.block[..name_end].last() == Some(&b'/') {
+        if !matches!(self.block[156], b'5' | b'D') && self.block[..name_end].last() == Some(&b'/') {
             return Err(Self::invalid(
                 "non-directory entry path ends with a separator",
             ));
@@ -169,13 +196,19 @@ impl<R> TarMetadataMeter<R> {
                 "global/old PAX and old GNU metadata are not supported",
             ));
         }
-        if entry_type == b'x' {
-            if self.pending_pax.is_some() || self.pending_gnu || size == 0 {
-                return Err(Self::invalid("empty, repeated or mixed PAX metadata"));
+        if matches!(entry_type, b'x' | b'L' | b'K') {
+            let gnu_index = usize::from(entry_type == b'K');
+            let repeated_or_mixed = if entry_type == b'x' {
+                self.pending_gnu.iter().any(|pending| *pending)
+            } else {
+                self.pending_gnu[gnu_index]
+            };
+            if self.pending_pax.is_some() || repeated_or_mixed || size == 0 {
+                return Err(Self::invalid("empty, repeated or mixed PAX/GNU metadata"));
             }
             let magic = &self.block[257..265];
             if magic != b"ustar\x0000" && magic != b"ustar  \0" {
-                return Err(Self::invalid("unrecognized PAX header format"));
+                return Err(Self::invalid("unrecognized PAX/GNU header format"));
             }
             let padded = Self::padded_size(size)?;
             let length = usize::try_from(size).map_err(|_| Self::meta_limit())?;
@@ -183,7 +216,11 @@ impl<R> TarMetadataMeter<R> {
             body.try_reserve_exact(length)
                 .map_err(|_| Self::meta_limit())?;
             body.resize(length, 0);
-            self.state = MeterState::Pax {
+            if entry_type != b'x' {
+                self.pending_gnu[gnu_index] = true;
+            }
+            self.state = MeterState::Metadata {
+                kind: entry_type,
                 body,
                 used: 0,
                 padding: padded - size,
@@ -193,11 +230,10 @@ impl<R> TarMetadataMeter<R> {
         }
         // Preserve sparse extension metering before reporting unsupported PAX.
         if entry_type != b'S'
-            && let Some(pax) = self.pending_pax.take()
+            && let Some(pax) = &self.pending_pax
         {
             size = pax.member_size(entry_type, size, &self.block)?;
         }
-        self.pending_gnu = matches!(entry_type, b'L' | b'K');
         let padded = Self::padded_size(size)?;
         self.state = if entry_type == b'S' {
             match self.block[482] {
@@ -209,9 +245,9 @@ impl<R> TarMetadataMeter<R> {
                 _ => return Err(Self::invalid("GNU sparse extension flag is not 0 or 1")),
             }
         } else {
-            if !self.pending_gnu {
-                self.count_member()?;
-            }
+            self.count_member()?;
+            self.pending_pax = None;
+            self.pending_gnu = [false; 2];
             MeterState::Data { remaining: padded }
         };
         self.block_len = 0;
@@ -248,7 +284,8 @@ impl<R> TarMetadataMeter<R> {
                     }
                     return Ok(());
                 }
-                MeterState::Pax {
+                MeterState::Metadata {
+                    kind,
                     ref mut body,
                     ref mut used,
                     padding,
@@ -258,7 +295,11 @@ impl<R> TarMetadataMeter<R> {
                     *used += take;
                     offset += take;
                     if *used == body.len() {
-                        self.pending_pax = Some(parse_local_pax(body)?);
+                        if kind == b'x' {
+                            self.pending_pax = Some(parse_local_pax(body)?);
+                        } else {
+                            Self::validate_gnu_body(body, kind)?;
+                        }
                         self.state = if padding == 0 {
                             MeterState::Header
                         } else {
@@ -308,12 +349,15 @@ impl<R> TarMetadataMeter<R> {
         if self.pending_pax.is_some() {
             return Err(Self::invalid("dangling PAX metadata"));
         }
+        if self.pending_gnu.iter().any(|pending| *pending) {
+            return Err(Self::invalid("dangling GNU metadata"));
+        }
         match self.state {
             MeterState::Eof => Ok(()),
             MeterState::Header if self.block_len == 0 => Err(Self::invalid("missing two-block TAR EOF")),
             MeterState::Header => Err(Self::invalid("truncated TAR header")),
             MeterState::Data { .. } => Err(Self::invalid("truncated TAR entry data")),
-            MeterState::Pax { .. } => Err(Self::invalid("truncated PAX metadata")),
+            MeterState::Metadata { .. } => Err(Self::invalid("truncated PAX/GNU metadata")),
             MeterState::SparseHeader { .. } => Err(Self::invalid("truncated GNU sparse header")),
         }
     }
@@ -327,7 +371,7 @@ impl<R: Read> Read for TarMetadataMeter<R> {
         // Never ask the decoder for body bytes until its header is admitted.
         let boundary = match &self.state {
             MeterState::Header | MeterState::SparseHeader { .. } => 512 - self.block_len,
-            MeterState::Pax { body, used, .. } => body.len() - used,
+            MeterState::Metadata { body, used, .. } => body.len() - used,
             MeterState::Data { remaining } => (*remaining).min(output.len() as u64) as usize,
             MeterState::Eof => output.len(),
         };

@@ -107,9 +107,9 @@ describe.each(archiveBackends)("%s archive path", (backend) => {
         if (policy !== "reject-link") {
           expect(seen).toEqual([
             { path: "keep.txt", kind: "file", size: 4 },
-            // Preserve JSZip's existing directory normalization; Rust reports raw ZIP metadata.
+            // Paths agree; preserve each decoder's existing declared-size behavior.
             {
-              path: backend === "native" ? fixture.name : "link/",
+              path: "link",
               kind: "symlink",
               size: backend === "native" ? fixture.size : 0,
             },

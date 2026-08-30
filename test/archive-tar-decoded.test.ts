@@ -56,7 +56,7 @@ describe("absolute decoded TAR admission", () => {
 
   it.each([
     ["EOF zero padding", Buffer.alloc(512)],
-    ["GNU metadata", tarFixture([{ path: "LongName", type: "L", body: "name\0" }], false)],
+    ["GNU metadata", tarFixture([{ path: "LongName", type: "L", body: "name\0" }, { path: "empty" }], false)],
     ["PAX metadata", tarFixture([paxHeader([["size", "0"]]), { path: "empty" }], false)],
   ] as const)("stops an unbounded %s tail at the ceiling plus one probe", async (_label, pattern) => {
     const ceiling = pattern.length * 4;

@@ -44,8 +44,8 @@ describe("TAR metadata preflight boundaries", () => {
     const root = await tempRoot("fs-safe-tar-meta-limit-");
     const atLimit = path.join(root, "at-limit.tar");
     const pastLimit = path.join(root, "past-limit.tar");
-    await fs.writeFile(atLimit, tarFixture([{ path: "long-name", type: "L", body: "x".repeat(16) }]));
-    await fs.writeFile(pastLimit, tarFixture([{ path: "long-name", type: "L", body: "x".repeat(17) }]));
+    await fs.writeFile(atLimit, tarFixture([{ path: "long-name", type: "L", body: "x".repeat(16) }, { path: "raw" }]));
+    await fs.writeFile(pastLimit, tarFixture([{ path: "long-name", type: "L", body: "x".repeat(17) }, { path: "raw" }]));
 
     await expect(preflightTarMetadata({ archivePath: atLimit, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 16 }) }))
       .resolves.toBeUndefined();

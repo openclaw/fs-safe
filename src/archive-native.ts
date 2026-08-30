@@ -4,6 +4,7 @@ import {
   ArchiveFormatError,
   ArchiveSecurityError,
   isArchiveFormatErrorMessage,
+  isArchiveGnuPathErrorMessage,
 } from "./archive-errors.js";
 import { formatErrorDetail } from "./error-detail.js";
 import {
@@ -42,6 +43,9 @@ function policyKind(kind: string): "file" | "directory" | "symlink" | "other" {
 
 function throwMappedNativeError(error: unknown): never {
   if (error instanceof Error) {
+    if (isArchiveGnuPathErrorMessage(error.message)) {
+      throw new ArchiveSecurityError("entry-path", error.message, { cause: error });
+    }
     for (const code of Object.values(ARCHIVE_LIMIT_ERROR_CODE)) {
       if (error.message.includes(code)) throw new ArchiveLimitError(code);
     }
@@ -111,7 +115,9 @@ export async function extractNativeArchive(params: {
         for (const entry of manifest) {
           params.deadline.check();
           validateArchiveEntryPath(entry.path);
-          const relPath = stripArchivePath(entry.path, strip);
+          const canonicalPath = stripArchivePath(entry.path, 0);
+          if (!canonicalPath) continue;
+          const relPath = stripArchivePath(canonicalPath, strip);
           if (!relPath) continue;
           validateArchiveEntryPath(relPath);
           assertArchiveEntryPathComponentsWithinLimit(relPath, limits);
@@ -122,7 +128,7 @@ export async function extractNativeArchive(params: {
             !shouldExtractArchiveEntry({
               filter: params.entryFilter,
               onFiltered: params.onFiltered,
-              entry: { path: entry.path, kind, size: entry.size },
+              entry: { path: canonicalPath, kind, size: entry.size },
             })
           ) {
             continue;
@@ -132,7 +138,7 @@ export async function extractNativeArchive(params: {
               `GNU sparse archive entry is not supported: ${formatErrorDetail(entry.path)}`,
             );
           }
-          if (kind === "symlink") {
+          if (kind === "symlink" || entry.kind === "blocked") {
             const label = params.kind === "zip" ? "zip" : "tar";
             throw new ArchiveSecurityError(
               "entry-link",
@@ -144,7 +150,8 @@ export async function extractNativeArchive(params: {
               ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT,
             );
           }
-          if (kind === "file") {
+          // GNUDumpDir can carry a body; charge accepted TAR sizes as JS does.
+          if (kind === "file" || (kind === "directory" && params.kind !== "zip")) {
             budget.startEntry();
             budget.addEntrySize(entry.size);
           }

@@ -126,14 +126,17 @@ function resolveZipOutputPath(params: {
   entryPath: string;
   strip: number;
   destinationDir: string;
-}): { relPath: string; outPath: string } | null {
+}): { canonicalPath: string; relPath: string; outPath: string } | null {
   validateArchiveEntryPath(params.entryPath);
-  const relPath = stripArchivePath(params.entryPath, params.strip);
+  const canonicalPath = stripArchivePath(params.entryPath, 0);
+  if (!canonicalPath) return null;
+  const relPath = stripArchivePath(canonicalPath, params.strip);
   if (!relPath) {
     return null;
   }
   validateArchiveEntryPath(relPath);
   return {
+    canonicalPath,
     relPath,
     outPath: resolveArchiveOutputPath({
       rootDir: params.destinationDir,
@@ -271,7 +274,7 @@ async function extractZip(params: {
             !shouldExtractArchiveEntry({
               filter: params.entryFilter,
               onFiltered: params.onFiltered,
-              entry: { path: entry.name, kind: entryKind, size: entrySize },
+              entry: { path: output.canonicalPath, kind: entryKind, size: entrySize },
             })
           ) {
             continue;

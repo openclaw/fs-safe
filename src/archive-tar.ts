@@ -77,7 +77,9 @@ export function createTarEntryPreflightChecker(params: {
     assertArchiveEntryCountWithinLimit(entryCount, limits);
     validateArchiveEntryPath(entry.path, { escapeLabel: params.escapeLabel });
 
-    const relPath = stripArchivePath(entry.path, strip);
+    const canonicalPath = stripArchivePath(entry.path, 0);
+    if (!canonicalPath) return false;
+    const relPath = stripArchivePath(canonicalPath, strip);
     if (!relPath) {
       return false;
     }
@@ -96,7 +98,7 @@ export function createTarEntryPreflightChecker(params: {
       !shouldExtractArchiveEntry({
         filter: params.entryFilter,
         onFiltered: params.onFiltered,
-        entry: { path: entry.path, kind, size: entry.size },
+        entry: { path: canonicalPath, kind, size: entry.size },
       })
     ) {
       return false;

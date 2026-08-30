@@ -49,6 +49,78 @@ fn reader(bytes: Vec<u8>, chunk: usize, limit: u64) -> TarMetadataMeter<Chunked>
 }
 
 #[test]
+fn gnu_bodies_and_chains_reject_before_parser_normalization() {
+    let file = member("raw", b'0', 0, b"");
+    let mut invalid = Vec::new();
+    for kind in [b'L', b'K'] {
+        for body in [b"".as_slice(), b"\0", b"safe\0../hidden\0", b"safe\0\0", b"safe\0suffix", b"\xc3\x28", b"\xe2\x82"] {
+            invalid.push([member("metadata", kind, body.len() as u64, body), file.clone(), vec![0; 1024]].concat());
+        }
+        let extension = member("metadata", kind, 5, b"name\0");
+        let other = member("metadata", if kind == b'L' { b'K' } else { b'L' }, 4, b"name");
+        for prefix in [
+            extension.clone(), extension[..514].to_vec(),
+            [extension.clone(), vec![0; 1024]].concat(),
+            [extension.clone(), extension.clone(), file.clone()].concat(),
+            [extension.clone(), other, extension.clone(), file.clone()].concat(),
+            [extension.clone(), pax(&record("path", b"safe")), file.clone()].concat(),
+            [pax(&record("path", b"safe")), extension, file.clone()].concat(),
+        ] {
+            invalid.push(prefix);
+        }
+    }
+    for bytes in invalid {
+        for chunk in [1, 7, 511, 513, 4096] {
+            let error = reader(bytes.clone(), chunk, 1024).read_to_end(&mut Vec::new()).unwrap_err();
+            assert!(error.to_string().contains(INVALID_HEADER), "{error}");
+        }
+    }
+}
+
+#[test]
+fn gnu_effective_names_reject_raw_traversal_and_drives_but_link_targets_remain_policy_owned() {
+    for name in ["pkg/../hidden", "pkg\\..\\hidden", "/hidden", "\\hidden", "C:hidden", "pkg/C:hidden"] {
+        for kind in [b'L', b'K'] {
+            let bytes = [member("metadata", kind, name.len() as u64, name.as_bytes()), member("raw", b'2', 0, b""), vec![0; 1024]].concat();
+            for chunk in [1, 511, 4096] {
+                let mut output = Vec::new();
+                let result = reader(bytes.clone(), chunk, 1024).read_to_end(&mut output);
+                if kind == b'L' {
+                    assert_eq!(result.unwrap_err().to_string(), INVALID_GNU_PATH);
+                } else {
+                    result.unwrap();
+                    assert_eq!(output, bytes);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn gnu_valid_utf8_terminators_pairs_and_state_reset_preserve_every_byte() {
+    for nul in [false, true] {
+        let name = format!("./pkg//caf\u{e9}{}", if nul { "\0" } else { "" });
+        let long_name = member("metadata", b'L', name.len() as u64, name.as_bytes());
+        let long_link = member("metadata", b'K', name.len() as u64, name.as_bytes());
+        let file = member("raw", b'0', 5, b"value");
+        for extensions in [
+            long_name.clone(), long_link.clone(),
+            [long_name.clone(), long_link.clone()].concat(),
+            [long_link, long_name].concat(),
+        ] {
+            let bytes = [extensions.clone(), file.clone(), extensions, file.clone(), vec![0; 1024]].concat();
+            for chunk in [1, 7, 511, 512, 513, 4096] {
+                let mut output = Vec::new();
+                reader(bytes.clone(), chunk, name.len() as u64).read_to_end(&mut output).unwrap();
+                assert_eq!(output, bytes);
+                let error = reader(bytes.clone(), chunk, name.len() as u64 - 1).read_to_end(&mut Vec::new()).unwrap_err();
+                assert_eq!(error.to_string(), META_LIMIT);
+            }
+        }
+    }
+}
+
+#[test]
 fn pax_framing_matches_tar_across_chunk_boundaries_and_size_directions() {
     for (raw, size) in [(1, 700), (700, 1), (700, 0)] {
         let metadata = [
@@ -170,8 +242,11 @@ fn raw_framing_keeps_member_metadata_and_trailing_zero_bytes_unchanged() {
     let hidden = member("hidden", b'0', 0, b"");
     let body = [vec![0; 1024], hidden].concat();
     let mut accepted = vec![Vec::new()];
-    for kind in [0, b'0', b'7', b'L', b'K', b'D'] {
+    for kind in [0, b'0', b'7', b'D'] {
         accepted.push(member("value", kind, body.len() as u64, &body));
+    }
+    for kind in [b'L', b'K'] {
+        accepted.push([member("metadata", kind, 5, b"name\0"), member("value", b'0', 0, b"")].concat());
     }
     for kind in [b'1', b'2', b'5'] {
         accepted.push(member("non-file", kind, 0, b""));
@@ -248,7 +323,7 @@ fn decoded_ceiling_stops_unbounded_zero_and_metadata_tails() {
     }
     for pattern in [
         vec![0; 512],
-        member("LongName", b'L', 5, b"name\0"),
+        [member("LongName", b'L', 5, b"name\0"), member("empty", b'0', 0, b"")].concat(),
         [pax(&record("size", b"0")), member("empty", b'0', 0, b"")].concat(),
     ] {
         let ceiling = pattern.len() * 4;

@@ -5,6 +5,7 @@ export type ArchiveEntryKind = "file" | "directory" | "symlink" | "other";
 export type ArchiveEntryModePolicy = "clamp" | "preserve";
 export type ArchiveFilteredEntryPolicy = "reject-archive" | "skip-entry";
 export type ArchiveEntryFilter = (entry: {
+  /** Validated canonical archive path before stripping: / separators, no empty or . components. */
   path: string;
   kind: ArchiveEntryKind;
   size: number;
