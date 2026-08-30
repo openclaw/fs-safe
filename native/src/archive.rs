@@ -160,7 +160,7 @@ fn open_tar_reader(
 }
 
 fn tar_kind(entry_type: tar::EntryType) -> &'static str {
-    if entry_type.is_dir() {
+    if entry_type.is_dir() || entry_type.as_byte() == b'D' {
         "directory"
     } else if entry_type.is_file() || entry_type.is_contiguous() {
         "file"
@@ -170,6 +170,8 @@ fn tar_kind(entry_type: tar::EntryType) -> &'static str {
         "symlink"
     } else if entry_type.is_hard_link() {
         "hardlink"
+    } else if entry_type.is_character_special() || entry_type.is_block_special() || entry_type.is_fifo() {
+        "blocked"
     } else {
         "other"
     }
@@ -911,6 +913,14 @@ mod tests {
     use super::*;
 
     static TEMP_PATH_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    #[test]
+    fn tar_manifest_preserves_blocked_and_dump_directory_kinds() {
+        for kind in [b'3', b'4', b'6'] {
+            assert_eq!(tar_kind(tar::EntryType::new(kind)), "blocked");
+        }
+        assert_eq!(tar_kind(tar::EntryType::new(b'D')), "directory");
+    }
 
     fn fixture_tar() -> Vec<u8> {
         let mut bytes = Vec::new();

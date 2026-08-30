@@ -4,6 +4,8 @@
 
 ### Security and Correctness
 
+- Pass canonical pre-strip archive paths to `entryFilter` across JavaScript/native ZIP and TAR, including gzip/zstd/bzip2 and effective metadata names, so backslash, dot-component, and repeated-separator aliases cannot bypass excluded subtrees; preserve raw-path validation, stripping, collision checks, and filter rejection policy.
+- Admit bounded GNU long-name/link bodies before TAR parsing on both backends: reject malformed UTF-8/NUL structure, repeated or dangling metadata, mixed PAX/GNU chains, and unsafe effective names while preserving original bytes and valid L+K pairs; align native character-device/block-device/FIFO filter rejection and GNUDumpDir directory handling with JavaScript.
 - Restore TAR payload budgets to entries accepted after strip/filter policy; the raw meter owns framing, logical entry counts, metadata limits, and the separate absolute decoded ceiling, so skipped or fully stripped members no longer consume `maxEntryBytes` or `maxExtractedBytes`.
 - Preserve large finite TAR limits such as `Number.MAX_VALUE` in native auto/require modes by sharing internal metadata/decoded-byte and u32 entry-count clamping before backend selection; retain high-level payload budgets and reject malformed direct native limits.
 - Reject raw TAR directory/link bodies, ambiguous EOF framing, and unsafe numeric sizes consistently before JavaScript or native parsing, including gzip/zstd/bzip2; enforce an absolute decoded ceiling covering every member, metadata, and zero padding through physical EOF before extraction publication or entry-read success (`archive-decoded-size-exceeds-limit`), while preserving bounded PAX/GNU payloads and requested-entry-only read `maxBytes`.

@@ -68,8 +68,8 @@ private staging tree; ZIP applies the same policy to `unixPermissions`.
 Native extraction is deliberately split into two phases. Rust first reports an
 entry manifest without creating paths. TypeScript validates paths, applies
 `stripComponents`, filters, limits, and mode policy, then passes an explicit
-accepted-entry plan back to Rust. Rust only performs decompression and the
-fd-relative `mkdirBeneath`/exclusive-open writes. This keeps policy identical
+accepted-entry plan back to Rust. Rust owns raw-stream admission, decompression,
+and fd-relative `mkdirBeneath`/exclusive-open writes. This keeps filter policy identical
 between native and JavaScript paths rather than reimplementing it in Rust.
 
 ZIP extraction and bounded reads admit every physical central-directory record and its referenced local header before either decoder can normalize or collapse names. Raw names and valid Unicode Path names must pass traversal checks before stripping, filtering, or selecting a requested member; duplicate or colliding names reject with `entry-path`, even in unrelated or skipped members. Materially conflicting local/central or Unicode interpretations, malformed critical metadata, and ambiguous framing reject with `ArchiveFormatError`. Harmless separator and dot-component equivalence is allowed only after validation. Ordinary legacy filename decoding remains backend-selected.
@@ -82,8 +82,20 @@ toward `maxEntries` and undergo traversal validation. JavaScript TAR extraction
 passes node-tar this accepted output path with its own stripping disabled, so
 depth checks, collision checks, writes, and mode application agree.
 
-An `entryFilter` sees the validated effective archive path **before stripping**
-(including a local PAX `path` override), entry kind, and declared size.
+An `entryFilter` sees the validated **canonical effective archive path before
+stripping**, entry kind, and declared size. On every JavaScript and native
+ZIP/TAR backend (including gzip and native zstd/bzip2), backslashes become `/`,
+empty and `.` components are removed, and trailing separators are removed from
+directory paths. For example, `./pkg//state\cache/value` is presented as
+`pkg/state/cache/value`, even with `stripComponents: 1`. Case and Unicode
+spelling are preserved. Local PAX `path`, GNU long-name, and supported ZIP
+Unicode Path names use the same canonicalization.
+
+Raw paths undergo traversal, absolute/drive-path, and NUL validation **before**
+canonicalization; normalization cannot turn an unsafe path into an accepted
+one. Stripping and output collision checks use this same canonical identity.
+Filters that compare exact strings should use canonical pre-strip paths,
+including directory names without a trailing `/`.
 Returning `"skip"` rejects the whole archive unless `onFiltered` is
 explicitly `"skip-entry"`. Runtime values other than `"reject-archive"` and
 `"skip-entry"` reject before extraction starts instead of falling through to
@@ -123,6 +135,14 @@ link, limit, validation, or timeout failure, which destroys both ends instead
 of leaving a paused parser to drain indefinitely. The native path finishes its
 bounded manifest read before TypeScript policy evaluation, so a rejected plan
 never starts the extraction worker.
+
+TAR character devices, block devices, and FIFOs are presented to the filter as
+`kind: "other"`. Accepted entries of these types reject with
+`ArchiveSecurityError("entry-link")`; an explicit `"skip-entry"` filter can omit
+them. GNU typeflag `D` (`GNUDumpDir`) is a directory on both backends, including
+its filter kind, canonical path, and directory creation policy. Its declared
+body size follows the existing TAR strip/filter payload budgets; dump contents
+are not restored as files.
 
 If `kind` is omitted, the helper calls `resolveArchiveKind(archivePath)` and throws if the extension is not recognized. Pass `kind` explicitly when the archive name doesn't carry the type (e.g. content-addressed names). Archive inputs must remain regular files from preview through descriptor admission; POSIX opens are no-follow and nonblocking, so a FIFO swap cannot stall before deadline checks resume. A positive finite `timeoutMs` is a wall-clock budget; zero, negative, `NaN`, and infinity disable the deadline. Non-mutating work rejects promptly when the budget expires. If a live destination mutation is already in flight, rejection waits only for that mutation and any rollback to finish; no later destination mutation can begin.
 
@@ -242,8 +262,8 @@ Extraction and single-entry reads accept one nonempty local POSIX `x` header
 directory, symlink, or hardlink. `path`, `linkpath`, and `size` override that
 member only. Effective paths still pass traversal validation before stripping,
 then the output paths pass depth and collision checks. The filter receives the
-effective pre-strip path, followed by link policy checks. PAX never permits link
-creation. Effective sizes drive framing, filters, and the existing output-byte
+canonical effective pre-strip path, followed by link policy checks. PAX never
+permits link creation. Effective sizes drive framing, filters, and the existing output-byte
 budgets; `maxEntries` still counts members, not their metadata headers.
 
 Records must have exact byte lengths, ASCII keys, a final newline, and no
@@ -273,12 +293,33 @@ Global `g`, old `X`, old GNU `N`, empty/dangling/repeated local headers, mixed
 PAX/GNU extension chains, unknown keys, charset declarations, ACL extensions,
 and all sparse extensions (including `GNU.sparse.*`, `SCHILY.filetype`,
 `SCHILY.realsize`, and `SCHILY.size`) fail closed with
-`ArchiveFormatError("archive-header-invalid")`. Standalone GNU long-name `L`
-and long-link `K` support is unchanged. GNU sparse extension blocks are still
+`ArchiveFormatError("archive-header-invalid")`. GNU sparse extension blocks are still
 metered in 512-byte units before rejection, preserving metadata-limit errors
 for excessive chains. The per-body `maxMetaEntryBytes` limit bounds PAX storage
 and duplicate-key state; one local header per member prevents local metadata
 chains without introducing a new limit or changing defaults.
+
+### Bounded GNU long names and links
+
+Both raw meters buffer GNU long-name `L` and long-link `K` bodies within
+`maxMetaEntryBytes` before either TAR parser runs. A body must contain a nonempty
+UTF-8 name, with either no NUL or exactly one terminal NUL. Embedded NULs,
+additional terminal NULs, bytes after a NUL, and invalid UTF-8 reject with
+`ArchiveFormatError("archive-header-invalid")`. The meters preserve original
+archive bytes, including the optional terminator and block padding.
+
+One logical member may have at most one `L` and one `K`, in either order.
+Repeated metadata of either kind, mixed PAX/GNU chains in either direction,
+and GNU metadata without a following member reject with the same format error.
+Pending metadata is cleared only when its described member is admitted;
+metadata records do not count toward `maxEntries`.
+
+An `L` name undergoes raw-path validation before parser normalization, stripping,
+or filtering; unsafe paths reject with `ArchiveSecurityError("entry-path")`.
+`K` validates encoding and NUL structure without authorizing link creation.
+Normal link/filter policy still governs the described member. Canonical
+pre-strip filter paths, decoded-stream ceilings, and physical EOF checks apply
+to plain/gzip TAR and native zstd/bzip2 alike.
 
 ## `resolveArchiveKind`
 
@@ -379,6 +420,10 @@ import {
 - `stripArchivePath(entryPath, n)` — normalize separators, drop empty and `.` components, then strip the leading N components, returning `null` if none remain.
 - `resolveArchiveOutputPath({ destDir, entryPath })` — combines the entry path with the destination, after validation.
 - `isWindowsDrivePath(value)` — detects drive-relative segments such as `C:secret` or `nested/C:secret` that should be rejected.
+
+Validate attacker-controlled paths before calling normalization or stripping
+helpers. After validation, `stripArchivePath(entryPath, 0)` returns the canonical
+pre-strip identity used by extraction filters (or `null` for an empty path).
 
 ## Common patterns
 

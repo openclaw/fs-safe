@@ -74,20 +74,20 @@ for (const mode of ["off", "require"] as const) {
         limits: { maxEntryPathComponents: 1 },
       });
 
-      expect(entryFilter.mock.calls).toEqual([[{ path: entryPath, kind: "file", size: 2 }]]);
+      expect(entryFilter.mock.calls).toEqual([[{ path: "pkg/hello.txt", kind: "file", size: 2 }]]);
       await expectOutput(fixture.destDir, "hello.txt", "hi", 0o755);
     });
 
     it.each([
-      { entryPath: "package/hello.txt", strip: 1 },
-      { entryPath: "pkg//./nested/hello.txt", strip: 2 },
-      { entryPath: "./hello.txt", strip: 0 },
-    ])("preserves ordinary and normalized paths: $entryPath, strip=$strip", async ({ entryPath, strip }) => {
+      { entryPath: "package/hello.txt", canonicalPath: "package/hello.txt", strip: 1 },
+      { entryPath: "pkg//./nested/hello.txt", canonicalPath: "pkg/nested/hello.txt", strip: 2 },
+      { entryPath: "./hello.txt", canonicalPath: "hello.txt", strip: 0 },
+    ])("preserves ordinary and normalized paths: $entryPath, strip=$strip", async ({ entryPath, canonicalPath, strip }) => {
       const fixture = await setup([{ path: entryPath, body: "preserved", mode: 0o7764 }]);
       const entryFilter = vi.fn(() => "extract" as const);
       await extractArchive({ ...fixture, stripComponents: strip, entryModes: "preserve", entryFilter });
 
-      expect(entryFilter.mock.calls).toEqual([[{ path: entryPath, kind: "file", size: 9 }]]);
+      expect(entryFilter.mock.calls).toEqual([[{ path: canonicalPath, kind: "file", size: 9 }]]);
       await expectOutput(fixture.destDir, "hello.txt", "preserved", 0o764);
     });
 
@@ -136,7 +136,7 @@ for (const mode of ["off", "require"] as const) {
         { path: "pkg/hello.txt", body: "hi", mode: 0o755 },
       ]);
       const entryFilter = vi.fn<NonNullable<ExtractArchiveOptions["entryFilter"]>>(
-        (entry) => entry.path === "./pkg/link" ? "skip" : "extract",
+        (entry) => entry.path === "pkg/link" ? "skip" : "extract",
       );
       const extraction = extractArchive({ ...fixture, stripComponents: 1, entryFilter, onFiltered });
       if (onFiltered === "skip-entry") {
@@ -149,7 +149,7 @@ for (const mode of ["off", "require"] as const) {
         expect(entryFilter).toHaveBeenCalledTimes(1);
         if (mode === "require") expect(extractNative).not.toHaveBeenCalled();
       }
-      expect(entryFilter).toHaveBeenNthCalledWith(1, { path: "./pkg/link", kind: "symlink", size: 0 });
+      expect(entryFilter).toHaveBeenNthCalledWith(1, { path: "pkg/link", kind: "symlink", size: 0 });
     });
   });
 }

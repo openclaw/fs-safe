@@ -1,5 +1,5 @@
 import { ArchiveFormatError, ArchiveSecurityError } from "./archive-errors.js";
-import { validateArchiveEntryPath } from "./archive-entry.js";
+import { stripArchivePath, validateArchiveEntryPath } from "./archive-entry.js";
 import { updateCrc32 } from "./archive-crc32.js";
 
 export function zipFormat(message: string): never {
@@ -35,7 +35,7 @@ function utf8(bytes: Buffer): string {
 }
 
 function key(name: string): string {
-  return name.replaceAll("\\", "/").split("/").filter((part) => part && part !== ".").join("/");
+  return stripArchivePath(name, 0) ?? "";
 }
 
 function originalName(name: Buffer, flags: number): string | undefined {

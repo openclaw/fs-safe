@@ -34,3 +34,7 @@ export function isArchiveFormatErrorMessage(message: string): boolean {
     message.includes("archive entry size did not match its manifest")
   );
 }
+
+export function isArchiveGnuPathErrorMessage(message: string): boolean {
+  return message.includes("archive-gnu-path-invalid");
+}

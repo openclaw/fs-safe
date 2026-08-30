@@ -5,6 +5,7 @@ import {
   ArchiveFormatError,
   ArchiveSecurityError,
   isArchiveFormatErrorMessage,
+  isArchiveGnuPathErrorMessage,
 } from "./archive-errors.js";
 import { formatErrorDetail } from "./error-detail.js";
 import {
@@ -286,6 +287,9 @@ export async function readArchiveEntry(
           signal,
         );
       } catch (error) {
+        if (error instanceof Error && isArchiveGnuPathErrorMessage(error.message)) {
+          throw new ArchiveSecurityError("entry-path", error.message, { cause: error });
+        }
         if (error instanceof Error) {
           for (const code of Object.values(ARCHIVE_LIMIT_ERROR_CODE)) {
             if (error.message.includes(code)) throw new ArchiveLimitError(code);

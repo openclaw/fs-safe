@@ -77,6 +77,7 @@ export function validateArchiveEntryPath(
   }
 }
 
+// Validate raw paths first. Zero stripping gives the canonical policy identity.
 export function stripArchivePath(entryPath: string, stripComponents: number): string | null {
   const raw = normalizeArchiveEntryPath(entryPath);
   if (!raw || raw === "." || raw === "./") {
