@@ -180,18 +180,18 @@ describe("atomic publication stress regressions", () => {
     let tempPath = "";
     let cleanupAttempts = 0;
     const realRename = fs.rename.bind(fs);
-    const realRm = fs.rm.bind(fs);
+    const realUnlink = fs.unlink.bind(fs);
     vi.spyOn(fs, "rename").mockImplementation(async (from, to) => {
       if (from === tempPath) {
         throw Object.assign(new Error("publish denied"), { code: "EACCES" });
       }
       await realRename(from, to);
     });
-    vi.spyOn(fs, "rm").mockImplementation(async (candidate, options) => {
+    vi.spyOn(fs, "unlink").mockImplementation(async (candidate) => {
       if (candidate === tempPath && cleanupAttempts++ === 0) {
         throw Object.assign(new Error("temp busy"), { code: "EBUSY" });
       }
-      await realRm(candidate, options);
+      await realUnlink(candidate);
     });
 
     await expect(writeExternalFileWithinRoot({

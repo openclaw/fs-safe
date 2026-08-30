@@ -11,6 +11,7 @@ type TempCleanupEntry = {
   path: string;
   recursive: boolean;
   identity?: FileIdentityStat;
+  singleLinkFile?: boolean;
 };
 
 const tempCleanupEntries = new Map<string, TempCleanupEntry>();
@@ -21,12 +22,11 @@ function pathStillMatchesReceipt(entry: TempCleanupEntry): boolean {
     return false;
   }
   try {
-    return sameFileIdentityForCleanup(
-      fsSync.lstatSync(entry.path, { bigint: true }),
-      entry.identity,
-    );
+    const current = fsSync.lstatSync(entry.path, { bigint: true });
+    return (!entry.singleLinkFile || (current.isFile() && current.nlink === 1n)) &&
+      sameFileIdentityForCleanup(current, entry.identity);
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "ENOENT";
+    return !entry.singleLinkFile && (error as NodeJS.ErrnoException).code === "ENOENT";
   }
 }
 
@@ -34,7 +34,7 @@ function cleanupRegisteredTempPathsSync(): void {
   for (const entry of tempCleanupEntries.values()) {
     try {
       if (pathStillMatchesReceipt(entry)) {
-        fsSync.rmSync(entry.path, { force: true, recursive: entry.recursive });
+        removeRegisteredPathSync(entry);
       }
     } catch {
       // Process-exit cleanup is best-effort.
@@ -43,9 +43,14 @@ function cleanupRegisteredTempPathsSync(): void {
   tempCleanupEntries.clear();
 }
 
+function removeRegisteredPathSync(entry: TempCleanupEntry): void {
+  if (entry.singleLinkFile) fsSync.unlinkSync(entry.path);
+  else fsSync.rmSync(entry.path, { force: true, recursive: entry.recursive });
+}
+
 export function registerTempPathForExit(
   tempPath: string,
-  options?: { recursive?: boolean; identity?: FileIdentityStat },
+  options?: { recursive?: boolean; identity?: FileIdentityStat; singleLinkFile?: boolean },
 ): TempPathRegistration {
   if (!cleanupRegistered) {
     cleanupRegistered = true;
@@ -55,6 +60,7 @@ export function registerTempPathForExit(
     path: tempPath,
     recursive: options?.recursive === true,
     identity: options?.identity,
+    singleLinkFile: options?.singleLinkFile,
   };
   if (!entry.identity) {
     try {
@@ -84,7 +90,7 @@ export function __cleanupRegisteredTempPathForTest(tempPath: string): void {
   }
   try {
     if (pathStillMatchesReceipt(entry)) {
-      fsSync.rmSync(entry.path, { force: true, recursive: entry.recursive });
+      removeRegisteredPathSync(entry);
     }
   } finally {
     tempCleanupEntries.delete(tempPath);

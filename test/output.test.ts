@@ -98,7 +98,7 @@ describe("writeExternalFileWithinRoot", () => {
       .toEqual([]);
   });
 
-  it("cleans a sibling partial when the external writer fails", async () => {
+  it("preserves an unverified sibling partial when the external writer fails", async () => {
     const rootDir = await tempRoot("fs-safe-output-sibling-fail-");
     let stagedPath = "";
 
@@ -115,7 +115,7 @@ describe("writeExternalFileWithinRoot", () => {
       }),
     ).rejects.toThrow("producer failed");
 
-    await expect(fs.stat(stagedPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.readFile(stagedPath, "utf8")).resolves.toBe("partial");
     await expect(fs.stat(path.join(rootDir, "output.bin"))).rejects.toMatchObject({
       code: "ENOENT",
     });

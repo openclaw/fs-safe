@@ -40,6 +40,8 @@ export async function applyDirectoryMode(params: {
   fsModule: AsyncTempFileSystem;
   dirPath: string;
   mode: number;
+  /** Compatibility for best-effort directory modes; admission and close still fail closed. */
+  ignoreChmodError?: boolean;
 }): Promise<void> {
   // Node does not enforce POSIX directory modes on Windows, and its directory
   // descriptors are not consistently openable. mkdir(mode) remains the only
@@ -53,7 +55,11 @@ export async function applyDirectoryMode(params: {
   const handle = await params.fsModule.open(params.dirPath, directoryOpenFlags());
   try {
     assertSameDirectory(expected, await handle.stat(), params.dirPath);
-    await handle.chmod(params.mode);
+    try {
+      await handle.chmod(params.mode);
+    } catch (error) {
+      if (params.ignoreChmodError !== true) throw error;
+    }
   } finally {
     await handle.close();
   }
