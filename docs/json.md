@@ -135,10 +135,14 @@ where lower latency matters more than crash-durability.
 
 Synchronous variant. It pretty-prints with two spaces, appends a newline,
 creates parents at `0o700`, writes at `0o600`, and synchronizes the parent
-directory best-effort. It has no options bag. On `EPERM`/`EEXIST`, its legacy
-compatibility path may replace by copy rather than atomic rename; use the async
-`writeJson()`/`replaceFileAtomic()` surfaces when fallback policy must be
-explicit.
+directory best-effort. File-mode tightening carries the staged bigint identity
+through rename and applies `fchmod` only when the reopened descriptor and current
+pathname still name that same single-link regular file; a swap is preserved and
+skips this best-effort step. It has no options bag. On `EPERM`/`EEXIST`, its legacy
+compatibility path removes the existing destination and retries the staged-file
+rename, so that fallback is temporarily non-atomic while retaining the staged
+file's `0600` mode; use the async `writeJson()`/`replaceFileAtomic()` surfaces
+when fallback policy must be explicit.
 
 ```ts
 writeJsonSync("./prefs.json", { theme: "dark" });
