@@ -90,7 +90,7 @@ itPosix.each(["lstat", "open", "pathname-type", "stat", "descriptor-type", "iden
   },
 );
 
-itPosix("still propagates an explicit staged-file mode error after tolerating directory chmod", async () => {
+itPosix("tolerates explicit staged-file mode errors after directory chmod", async () => {
   const f = await fixture();
   const open = fs.open.bind(fs);
   const fileFailure = new Error("staged chmod failed");
@@ -101,10 +101,10 @@ itPosix("still propagates an explicit staged-file mode error after tolerating di
     else vi.spyOn(handle, "chmod").mockRejectedValue(fileFailure);
     return handle;
   });
-  await expect(writeSiblingTempFile({ ...f.options, mode: 0o600 })).rejects.toBe(fileFailure);
+  await writeSiblingTempFile({ ...f.options, mode: 0o600 });
   expect(directoryChmod).toHaveBeenCalledOnce();
   expect(f.options.writeTemp).toHaveBeenCalledOnce();
-  expect(await fs.readFile(f.final, "utf8")).toBe("old");
+  expect(await fs.readFile(f.final, "utf8")).toBe("new");
   expect(await fs.readdir(f.dir)).toEqual(["final"]);
 });
 

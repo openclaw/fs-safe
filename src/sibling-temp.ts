@@ -56,6 +56,7 @@ export async function writeSiblingTempFile<T>(
     write: options.writeTemp,
     resolveFinalPath: options.resolveFinalPath,
     mode: options.mode,
+    ignoreModeError: true,
     syncTempFile: options.syncTempFile === true,
     syncParentDir: options.syncParentDir === true,
   });

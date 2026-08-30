@@ -164,20 +164,20 @@ itPosix.each(["file", "parent"] as const)("enables only the explicitly requested
   expect(await fs.readFile(f.final, "utf8")).toBe("new");
 });
 
-it.each(["chmod", "sync"] as const)("propagates descriptor %s failures before publication and cleans the admitted stage", async (operation) => {
+it("propagates descriptor sync failures before publication and cleans the admitted stage", async () => {
   const f = await fixture();
   const open = fs.open.bind(fs);
-  const failure = Object.assign(new Error(`${operation} failed`), { code: "EIO" });
+  const failure = Object.assign(new Error("sync failed"), { code: "EIO" });
   let handle: FileHandle | undefined;
   vi.spyOn(fs, "open").mockImplementation(async (...args) => {
     const opened = await open(...args);
     if (args[0] === f.temp()) {
       handle = opened;
-      vi.spyOn(opened, operation).mockRejectedValue(failure);
+      vi.spyOn(opened, "sync").mockRejectedValue(failure);
     }
     return opened;
   });
-  await expect(writeSiblingTempFile({ ...f.options, mode: 0o600, syncTempFile: true })).rejects.toBe(failure);
+  await expect(writeSiblingTempFile({ ...f.options, syncTempFile: true })).rejects.toBe(failure);
   expect(await fs.readFile(f.final, "utf8")).toBe("old");
   await expect(fs.lstat(f.temp())).rejects.toMatchObject({ code: "ENOENT" });
   expect(handle?.fd).toBe(-1);

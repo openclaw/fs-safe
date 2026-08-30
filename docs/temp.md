@@ -215,7 +215,8 @@ writer before returning. Its return value is preserved as `result`.
 The helper retains one write-capable descriptor through requested mode application,
 opt-in file synchronization, rename, and publication verification. Omitting
 `mode` preserves the callback-produced mode without chmod; explicit modes,
-including `0`, are applied through that descriptor and file-mode errors propagate.
+including `0`, are applied through that descriptor. File-mode errors are
+tolerated for compatibility with the helper's historical best-effort behavior.
 No chmod, content read, or reopen follows
 the staged or published pathname. `resolveFinalPath(result)` must resolve to a
 distinct direct child of the same directory. Final-path writes are serialized

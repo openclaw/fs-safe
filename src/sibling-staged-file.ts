@@ -36,6 +36,8 @@ export async function writeCallbackSibling<T>(params: {
   write: (tempPath: string) => Promise<T>;
   resolveFinalPath: (result: T) => string;
   mode?: number;
+  /** Preserve the caller's historical best-effort mode behavior. */
+  ignoreModeError?: boolean;
   maxBytes?: number;
   syncTempFile: boolean;
   syncParentDir: boolean;
@@ -94,7 +96,13 @@ export async function writeCallbackSibling<T>(params: {
     }
     await serializePathWrite(filePath, async () => {
       await assertCurrent(params.tempPath);
-      if (params.mode !== undefined) await handle!.chmod(params.mode);
+      if (params.mode !== undefined) {
+        try {
+          await handle!.chmod(params.mode);
+        } catch (error) {
+          if (!params.ignoreModeError) throw error;
+        }
+      }
       if (params.syncTempFile) {
         await assertCurrent(params.tempPath);
         try {
