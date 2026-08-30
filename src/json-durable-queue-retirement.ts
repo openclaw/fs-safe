@@ -1,7 +1,7 @@
 import type { BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { syncDirectoryBestEffort } from "./directory-durability.js";
+import { syncDirectory } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup } from "./file-identity.js";
 
@@ -59,18 +59,12 @@ async function inspectRetirementRoot(jsonPath: string): Promise<string | null> {
 async function ensureRetirementRoot(jsonPath: string): Promise<string> {
   const parentPath = path.dirname(jsonPath);
   const rootPath = retirementPaths(jsonPath).rootPath;
-  let created = false;
-  await fs.mkdir(rootPath, { mode: 0o700 }).then(
-    () => {
-      created = true;
-    },
-    (error) => {
-      if (getErrorCode(error) !== "EEXIST") throw error;
-    },
-  );
+  await fs.mkdir(rootPath, { mode: 0o700 }).catch((error) => {
+    if (getErrorCode(error) !== "EEXIST") throw error;
+  });
   const root = await fs.lstat(rootPath, { bigint: true });
   assertDirectory(root, "queue retirement root");
-  if (created) await syncDirectoryBestEffort(parentPath);
+  await syncDirectory(parentPath);
   return rootPath;
 }
 
@@ -81,7 +75,7 @@ async function removeRetirementRecord(params: {
   await fs.rmdir(params.dirPath).catch((error) => {
     if (getErrorCode(error) !== "ENOENT") throw error;
   });
-  await syncDirectoryBestEffort(params.rootPath);
+  await syncDirectory(params.rootPath);
 }
 
 export async function recoverDurableQueueRetirement(params: {
@@ -112,16 +106,15 @@ export async function recoverDurableQueueRetirement(params: {
     const pending = await regularFileIdentity(params.jsonPath);
     if (!pending) {
       await fs.link(entryPath, params.jsonPath);
-      await syncDirectoryBestEffort(path.dirname(params.jsonPath));
-    } else if (
-      !sameFileIdentityForCleanup(pending, entry) &&
-      pending.nlink > 1n
-    ) {
+      await syncDirectory(path.dirname(params.jsonPath));
+    } else if (sameFileIdentityForCleanup(pending, entry)) {
+      await syncDirectory(path.dirname(params.jsonPath));
+    } else if (pending.nlink > 1n) {
       throw new FsSafeError("path-mismatch", "queue replacement identity is ambiguous");
     }
   }
   await fs.unlink(entryPath);
-  await syncDirectoryBestEffort(dirPath);
+  await syncDirectory(dirPath);
   await removeRetirementRecord({ dirPath, rootPath });
 }
 
@@ -133,7 +126,7 @@ export async function retireDurableQueueSource(params: {
   const rootPath = await ensureRetirementRoot(params.jsonPath);
   const { dirPath, entryPath } = retirementPaths(params.jsonPath);
   await fs.mkdir(dirPath, { mode: 0o700 });
-  await syncDirectoryBestEffort(rootPath);
+  await syncDirectory(rootPath);
   try {
     await fs.rename(params.jsonPath, entryPath);
   } catch (error) {
@@ -141,7 +134,7 @@ export async function retireDurableQueueSource(params: {
     await removeRetirementRecord({ dirPath, rootPath });
     return;
   }
-  await syncDirectoryBestEffort(path.dirname(params.jsonPath));
-  await syncDirectoryBestEffort(dirPath);
+  await syncDirectory(dirPath);
+  await syncDirectory(path.dirname(params.jsonPath));
   await recoverDurableQueueRetirement(params);
 }

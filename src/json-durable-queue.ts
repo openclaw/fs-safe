@@ -1,6 +1,7 @@
 import fs, { type BigIntStats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
+import { syncQueueDirectoryCreation } from "./json-durable-queue-directory.js";
 import {
   acknowledgeDurableQueueEntry,
   claimDurableQueueEntry,
@@ -113,6 +114,7 @@ async function ensureJsonDurableQueueDir(
   await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
   await assertNoSymlinkDirectorySegments(root, dir, false);
   await chmodQueueDirectory(dir);
+  await syncQueueDirectoryCreation(dir, root.path);
 }
 
 async function assertJsonDurableQueueDir(
