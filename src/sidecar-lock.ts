@@ -160,7 +160,7 @@ async function releaseHeldLock(
   }
   if (options.force) {
     held.refCount = 0;
-  } else {
+  } else if (held.refCount > 0) {
     held.refCount -= 1;
     if (held.refCount > 0) {
       return false;
@@ -170,7 +170,6 @@ async function releaseHeldLock(
     await held.releasePromise;
     return true;
   }
-  state.held.delete(normalizedTargetPath);
   if (held.compromiseTimer) {
     clearInterval(held.compromiseTimer);
     held.compromiseTimer = undefined;
@@ -181,6 +180,9 @@ async function releaseHeldLock(
       lockRoot: held.lockRoot,
       parsePayload: held.parsePayload,
     });
+    if (state.held.get(normalizedTargetPath) === held) {
+      state.held.delete(normalizedTargetPath);
+    }
   })();
   try {
     await held.releasePromise;
