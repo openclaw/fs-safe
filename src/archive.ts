@@ -327,6 +327,8 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
   }
 
   const label = kind === "zip" ? "extract zip" : "extract tar";
+  const limits = resolveExtractLimits(params.limits);
+  const tarLimits = resolveTarMeterLimits(limits);
   const native = getNativeBinding();
   if (native) {
     await withExtractionDeadline(params.timeoutMs, label, async (deadline) =>
@@ -336,7 +338,8 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
         destDir: params.destDir,
         kind,
         stripComponents: params.stripComponents,
-        limits: params.limits,
+        limits,
+        tarLimits,
         deadline,
         entryModes: params.entryModes,
         entryFilter: params.entryFilter,
@@ -355,7 +358,6 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
   if (kind === "tar") {
     await withExtractionDeadline(params.timeoutMs, label, async (deadline) => {
       const tar = await importOptionalTar();
-      const limits = resolveExtractLimits(params.limits);
       const stagedArchive = await stageArchiveFileForExtraction({
         archivePath: params.archivePath,
         limits,
@@ -364,7 +366,7 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
       try {
         await preflightTarMetadata({
           archivePath: stagedArchive.path,
-          limits: resolveTarMeterLimits(limits),
+          limits: tarLimits,
           signal: deadline.signal,
         });
         deadline.check();
@@ -398,7 +400,7 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
               preserveOwner: false,
               noMtime: true,
               strict: true,
-              maxMetaEntrySize: limits.maxMetaEntryBytes,
+              maxMetaEntrySize: tarLimits.maxMetaEntryBytes,
               filter(this: { abort(error: Error): void }, _entryPath, entry) {
                 try {
                   const info = readTarEntryInfo(entry);
@@ -484,7 +486,7 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
       archivePath: params.archivePath,
       destDir: params.destDir,
       stripComponents: params.stripComponents,
-      limits: params.limits,
+      limits,
       deadline,
       entryModes: params.entryModes,
       entryFilter: params.entryFilter,

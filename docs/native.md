@@ -73,7 +73,11 @@ unsupported global/old metadata and sparse forms fail closed rather than being
 interpreted as ordinary members. See [bounded local PAX support](archive.md#bounded-local-pax-support).
 
 Every pass receives TypeScript's resolved `maxEntries`, `maxEntryBytes`, and
-`maxExtractedBytes`. Logical member headers count before filtering/stripping;
+`maxExtractedBytes`. Shared TAR resolution caps byte fields at JavaScript's
+safe-integer maximum and entry counts at `2^32 - 1` before backend selection.
+Large finite limits remain accepted; native conversion mirrors those caps and
+rejects malformed non-finite or negative direct-call values before casting.
+Logical member headers count before filtering/stripping;
 metadata records do not. Raw/effective declared member sizes must fit the
 per-entry and cumulative budgets before the meter consumes the body. Bounded
 reads traverse with the default archive limits; public `maxBytes` bounds only

@@ -1,7 +1,7 @@
 import { Readable, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { describe, expect, it } from "vitest";
-import { resolveTarMeterLimits } from "../src/archive-limits.js";
+import { resolveExtractLimits, resolveTarMeterLimits } from "../src/archive-limits.js";
 import { TarMetadataMeter } from "../src/archive-tar-meta.js";
 import { tarFixture } from "./helpers/archive-fuzz.js";
 import { paxHeader } from "./helpers/archive-pax.js";
@@ -20,6 +20,29 @@ async function admit(bytes: Buffer, maxDecodedBytes: number, chunkSize = 511): P
 }
 
 describe("absolute decoded TAR admission", () => {
+  it.each([
+    [0, 0, 0], [1.9, 1, 1],
+    [0xffff_ffff, 0xffff_ffff, 0xffff_ffff],
+    [0x1_0000_0000, 0x1_0000_0000, 0xffff_ffff],
+    [Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, 0xffff_ffff],
+    [Number.MAX_SAFE_INTEGER + 1, Number.MAX_SAFE_INTEGER, 0xffff_ffff],
+    [Number.MAX_VALUE, Number.MAX_SAFE_INTEGER, 0xffff_ffff],
+  ])("clamps every internal TAR limit for finite value=%s", (value, bytes, entries) => {
+    const options = { maxEntries: value, maxEntryBytes: value, maxExtractedBytes: value, maxMetaEntryBytes: value, maxArchiveBytes: 0 };
+    expect(resolveTarMeterLimits(options)).toEqual({
+      maxEntries: entries,
+      maxEntryBytes: bytes, maxExtractedBytes: bytes, maxMetaEntryBytes: bytes, maxDecodedBytes: bytes,
+    });
+    // Only the internal TAR representation is capped; public resolution keeps
+    // its existing finite-number semantics for other archive policies.
+    expect(resolveExtractLimits(options).maxEntryBytes).toBe(Math.floor(value));
+  });
+
+  it.each([NaN, Infinity, -Infinity, -1, -0.5])("retains public defaulting for malformed value=%s", (value) => {
+    expect(resolveTarMeterLimits({ maxEntries: value, maxEntryBytes: value, maxExtractedBytes: value, maxMetaEntryBytes: value, maxArchiveBytes: value }))
+      .toEqual(resolveTarMeterLimits());
+  });
+
   it.each([
     [{}, 768 * 1024 * 1024],
     [{ maxArchiveBytes: 0, maxExtractedBytes: 0 }, 0],

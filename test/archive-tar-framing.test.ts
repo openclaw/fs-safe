@@ -93,6 +93,24 @@ for (const backend of ["off", "auto-missing", "auto", "require"] as const) {
     });
 
     describe.each([false, true])("gzip=%s", (gzip) => {
+      it.each([
+        ["maxEntryBytes", "archive-entry-extracted-size-exceeds-limit"],
+        ["maxExtractedBytes", "archive-extracted-size-exceeds-limit"],
+        ["maxMetaEntryBytes", "archive-meta-entry-size-exceeds-limit"],
+        ["maxEntries", "archive-entry-count-exceeds-limit"],
+      ] as const)("preserves effectively unbounded finite %s without weakening ordinary limits", async (field, code) => {
+        const fixture = await setup(tarFixture([paxHeader([["size", "7"]]), member]), gzip);
+        const limits = { [field]: Number.MAX_VALUE };
+        await extractArchive({ ...fixture, limits });
+        expect(await fs.readFile(path.join(fixture.destDir, "value"), "utf8")).toBe("payload");
+        if (backend === "auto" || backend === "require") {
+          expect(inspect.mock.calls[0][2]).toEqual(resolveTarMeterLimits(limits));
+          expect(extract.mock.calls[0][4]).toBe(inspect.mock.calls[0][2]);
+        }
+        expect(await readArchiveEntry(fixture.archivePath, "value", { maxBytes: 7 })).toEqual(Buffer.from("payload"));
+        await expect(extractArchive({ ...fixture, limits: { [field]: 0 } })).rejects.toMatchObject({ name: "ArchiveLimitError", code });
+      });
+
       it.skipIf(backend === "off" || backend === "auto-missing").each(physicalEofCases)("drains native inspect/extract/read through physical EOF: $label", async ({ bytes, code }) => {
         const fixture = await setup(bytes, gzip);
         const limits = { ...resolveTarMeterLimits(), maxDecodedBytes: canonical.length };
@@ -108,6 +126,32 @@ for (const backend of ["off", "auto-missing", "auto", "require"] as const) {
           await directory.close();
         }
         expect(await fs.readdir(fixture.destDir)).toEqual(["sentinel"]);
+      });
+
+      it.skipIf(backend === "off" || backend === "auto-missing")("defensively clamps direct native limits and rejects malformed numbers", async () => {
+        const fixture = await setup(canonical, gzip);
+        const limits = {
+          maxEntries: Number.MAX_VALUE, maxEntryBytes: Number.MAX_VALUE,
+          maxExtractedBytes: Number.MAX_VALUE, maxMetaEntryBytes: Number.MAX_VALUE, maxDecodedBytes: Number.MAX_VALUE,
+        };
+        const signal = new AbortController().signal;
+        const directory = await fs.open(fixture.destDir, "r");
+        try {
+          expect(await paxNative!.inspectArchiveNative(fixture.archivePath, "tar", limits, 1024, signal)).toMatchObject([{ path: "value", size: 7 }]);
+          await expect(paxNative!.extractArchiveNative(fixture.archivePath, "tar", directory.fd, [], limits, signal)).resolves.toBeUndefined();
+          expect(await paxNative!.readArchiveEntryNative(fixture.archivePath, "tar", "value", 7, limits, signal)).toEqual(Buffer.from("payload"));
+          for (const field of Object.keys(limits)) {
+            for (const value of [NaN, Infinity, -Infinity, -1, -0.5]) {
+              const malformed = { ...resolveTarMeterLimits(), [field]: value };
+              const error = { code: "InvalidArg", message: `${field} is out of range` };
+              await expect(Promise.resolve().then(() => paxNative!.inspectArchiveNative(fixture.archivePath, "tar", malformed, 1024, signal))).rejects.toMatchObject(error);
+              await expect(Promise.resolve().then(() => paxNative!.extractArchiveNative(fixture.archivePath, "tar", directory.fd, [], malformed, signal))).rejects.toMatchObject(error);
+              await expect(Promise.resolve().then(() => paxNative!.readArchiveEntryNative(fixture.archivePath, "tar", "value", 7, malformed, signal))).rejects.toMatchObject(error);
+            }
+          }
+        } finally {
+          await directory.close();
+        }
       });
 
       it.skipIf(backend === "off" || backend === "auto-missing").each(physicalEofCases)("does not publish a native plan after a late $label", async ({ bytes, code }) => {

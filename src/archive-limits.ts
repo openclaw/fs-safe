@@ -72,11 +72,12 @@ export function resolveTarMeterLimits(options?: ArchiveExtractLimits): TarMeterL
   const limits = resolveExtractLimits(options);
   const payload = Math.min(limits.maxExtractedBytes, Number.MAX_SAFE_INTEGER);
   const overhead = Math.min(limits.maxArchiveBytes, Number.MAX_SAFE_INTEGER);
+  // TAR sizes are safe integers; native logical entry counts use u32.
   return {
-    maxEntries: limits.maxEntries,
-    maxEntryBytes: limits.maxEntryBytes,
-    maxExtractedBytes: limits.maxExtractedBytes,
-    maxMetaEntryBytes: limits.maxMetaEntryBytes,
+    maxEntries: Math.min(limits.maxEntries, 0xffff_ffff),
+    maxEntryBytes: Math.min(limits.maxEntryBytes, Number.MAX_SAFE_INTEGER),
+    maxExtractedBytes: payload,
+    maxMetaEntryBytes: Math.min(limits.maxMetaEntryBytes, Number.MAX_SAFE_INTEGER),
     maxDecodedBytes: payload > Number.MAX_SAFE_INTEGER - overhead
       ? Number.MAX_SAFE_INTEGER : payload + overhead,
   };

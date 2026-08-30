@@ -219,7 +219,13 @@ bypass the byte budgets. Exceeding this ceiling throws
 `ArchiveLimitError("archive-decoded-size-exceeds-limit")`.
 
 The same TypeScript helper derives the ceiling for JavaScript and every native
-TAR pass. There is no new public option. This is an absolute decoded admission
+TAR pass. Before selecting a backend, it caps internal TAR byte limits at
+`Number.MAX_SAFE_INTEGER` and logical entry counts at `2^32 - 1`. Larger finite
+options such as `Number.MAX_VALUE` remain valid and effectively unbounded within
+these representable framing limits. The decoded ceiling uses the clamped
+payload and archive overhead with safe addition. Ordinary limits, including
+zero and the existing defaulting/rounding rules, retain their behavior.
+There is no new public option. This is an absolute decoded admission
 cap, not a decompression-ratio policy; bounded stream/codec read-ahead remains.
 
 ### Bounded local PAX support

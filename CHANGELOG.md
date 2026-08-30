@@ -4,6 +4,7 @@
 
 ### Security and Correctness
 
+- Preserve large finite TAR limits such as `Number.MAX_VALUE` in native auto/require modes by sharing safe-integer byte and u32 entry-count clamping before backend selection; retain ordinary limit enforcement and reject malformed direct native limits.
 - Reject raw TAR directory/link bodies, ambiguous EOF framing, and unsafe numeric sizes consistently before JavaScript or native parsing, including gzip/zstd/bzip2; enforce member budgets and an absolute decoded ceiling covering metadata and zero padding through physical EOF before extraction publication or entry-read success (`archive-decoded-size-exceeds-limit`), while preserving bounded PAX/GNU payloads and requested-entry-only read `maxBytes`.
 - Verify regular-file reads, root-file adapters, archive input staging, and `Root.copyIn()` source checks with exact bigint identities; reject rounded-equal replacements and unresolved Windows identities without changing numeric public `Stats` receipts.
 - Normalize public `maxBytes` budgets across Root, FileStore, secure/secret/regular reads, durable queues, and external output: reject invalid values, preserve explicit zero and positive `Infinity`, and keep configured defaults when callers forward `undefined`.

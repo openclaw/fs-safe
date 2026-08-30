@@ -57,7 +57,7 @@ struct InspectLimits {
 
 #[napi(object)]
 pub struct NativeTarLimits {
-    pub max_entries: u32,
+    pub max_entries: f64,
     pub max_entry_bytes: f64,
     pub max_extracted_bytes: f64,
     pub max_meta_entry_bytes: f64,
@@ -67,13 +67,22 @@ pub struct NativeTarLimits {
 impl NativeTarLimits {
     fn checked(self) -> Result<TarMeterLimits> {
         Ok(TarMeterLimits {
-            max_entries: self.max_entries as usize,
-            max_entry_bytes: checked_limit(self.max_entry_bytes, "maxEntryBytes")?,
-            max_extracted_bytes: checked_limit(self.max_extracted_bytes, "maxExtractedBytes")?,
-            max_meta_entry_bytes: checked_limit(self.max_meta_entry_bytes, "maxMetaEntryBytes")?,
-            max_decoded_bytes: checked_limit(self.max_decoded_bytes, "maxDecodedBytes")?.min(MAX_SAFE_INTEGER),
+            max_entries: checked_tar_limit(self.max_entries, "maxEntries", u32::MAX as u64)? as usize,
+            max_entry_bytes: checked_tar_limit(self.max_entry_bytes, "maxEntryBytes", MAX_SAFE_INTEGER)?,
+            max_extracted_bytes: checked_tar_limit(self.max_extracted_bytes, "maxExtractedBytes", MAX_SAFE_INTEGER)?,
+            max_meta_entry_bytes: checked_tar_limit(self.max_meta_entry_bytes, "maxMetaEntryBytes", MAX_SAFE_INTEGER)?,
+            max_decoded_bytes: checked_tar_limit(self.max_decoded_bytes, "maxDecodedBytes", MAX_SAFE_INTEGER)?,
         })
     }
+}
+
+fn checked_tar_limit(value: f64, label: &str, maximum: u64) -> Result<u64> {
+    // Validate before min/casting: f64::min would otherwise hide NaN, and N-API
+    // integer conversion would discard an oversized logical entry count.
+    if !value.is_finite() || value < 0.0 {
+        return Err(Error::new(Status::InvalidArg, format!("{label} is out of range")));
+    }
+    Ok(value.min(maximum as f64) as u64)
 }
 
 struct CancellationReader<R> {
@@ -955,6 +964,56 @@ mod tests {
         let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
         encoder.write_all(part).unwrap();
         encoder.finish().unwrap()
+    }
+
+    fn native_limits(value: f64) -> NativeTarLimits {
+        NativeTarLimits {
+            max_entries: value,
+            max_entry_bytes: value,
+            max_extracted_bytes: value,
+            max_meta_entry_bytes: value,
+            max_decoded_bytes: value,
+        }
+    }
+
+    #[test]
+    fn native_tar_limits_clamp_finite_values_before_integer_conversion() {
+        for (value, expected_bytes, expected_entries) in [
+            (0.0, 0, 0),
+            (1.9, 1, 1),
+            (u32::MAX as f64, u32::MAX as u64, u32::MAX as usize),
+            (u32::MAX as f64 + 1.0, u32::MAX as u64 + 1, u32::MAX as usize),
+            (MAX_SAFE_INTEGER as f64, MAX_SAFE_INTEGER, u32::MAX as usize),
+            (MAX_SAFE_INTEGER as f64 + 1.0, MAX_SAFE_INTEGER, u32::MAX as usize),
+            (f64::MAX, MAX_SAFE_INTEGER, u32::MAX as usize),
+        ] {
+            let limits = native_limits(value).checked().unwrap();
+            assert_eq!(limits.max_entries, expected_entries);
+            assert_eq!(limits.max_entry_bytes, expected_bytes);
+            assert_eq!(limits.max_extracted_bytes, expected_bytes);
+            assert_eq!(limits.max_meta_entry_bytes, expected_bytes);
+            assert_eq!(limits.max_decoded_bytes, expected_bytes);
+        }
+    }
+
+    #[test]
+    fn native_tar_limits_reject_malformed_fields_before_clamping() {
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -1.0, -0.5] {
+            for field in ["maxEntries", "maxEntryBytes", "maxExtractedBytes", "maxMetaEntryBytes", "maxDecodedBytes"] {
+                let mut limits = native_limits(1024.0);
+                match field {
+                    "maxEntries" => limits.max_entries = value,
+                    "maxEntryBytes" => limits.max_entry_bytes = value,
+                    "maxExtractedBytes" => limits.max_extracted_bytes = value,
+                    "maxMetaEntryBytes" => limits.max_meta_entry_bytes = value,
+                    "maxDecodedBytes" => limits.max_decoded_bytes = value,
+                    _ => unreachable!(),
+                }
+                let error = limits.checked().err().expect("malformed limit was accepted");
+                assert_eq!(error.status, Status::InvalidArg);
+                assert_eq!(error.reason, format!("{field} is out of range"));
+            }
+        }
     }
 
     fn bzip(part: &[u8]) -> Vec<u8> {

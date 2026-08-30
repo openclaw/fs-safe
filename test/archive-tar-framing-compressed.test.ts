@@ -22,6 +22,18 @@ describe.each(["auto", "require"] as const)("compressed TAR framing mode=%s", (m
       __setNativeLoaderForTest(() => paxNative!);
     });
 
+    it("accepts effectively unbounded finite limits with compressed metadata", async () => {
+      const root = await tempRoot("fs-safe-tar-compressed-large-limits-");
+      const archivePath = path.join(root, "fixture.bin");
+      const destDir = path.join(root, "out");
+      await fs.mkdir(destDir);
+      await fs.writeFile(archivePath, Buffer.from(compressedTarFraming[0][kind], "base64"));
+      const limits = { maxEntries: Number.MAX_VALUE, maxEntryBytes: Number.MAX_VALUE, maxExtractedBytes: Number.MAX_VALUE, maxMetaEntryBytes: Number.MAX_VALUE };
+      await extractArchive({ archivePath, destDir, kind, limits, timeoutMs: 10_000 });
+      expect(await fs.readFile(path.join(destDir, "value"), "utf8")).toBe("payload");
+      expect(await fs.readFile(path.join(destDir, "directory", "x".repeat(120)), "utf8")).toBe("gnu");
+    });
+
     it.each([
       [{ maxEntries: 2 }, "archive-entry-count-exceeds-limit"],
       [{ maxEntries: 0 }, "archive-entry-count-exceeds-limit"],
