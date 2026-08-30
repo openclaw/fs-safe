@@ -15,15 +15,17 @@ export function createSidecarLockHandle(params: {
   let releasePromise: Promise<void> | undefined;
   const release = async (): Promise<void> => {
     if (released) return;
-    releasePromise ??= Promise.resolve()
-      .then(async () => await params.release())
-      .then(() => {
+    if (!releasePromise) {
+      releasePromise = (async () => {
+        await params.release();
         released = true;
-      })
-      .finally(() => {
-        releasePromise = undefined;
-      });
-    await releasePromise;
+      })();
+    }
+    try {
+      await releasePromise;
+    } finally {
+      releasePromise = undefined;
+    }
   };
   return {
     lockPath: params.lockPath,
