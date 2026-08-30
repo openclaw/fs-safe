@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import JSZip from "jszip";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { extractArchive } from "../src/archive.js";
 import { withExtractionDeadline } from "../src/archive-deadline.js";
 import { __resetFsSafeNativeConfigForTest, configureFsSafeNative } from "../src/native-config.js";
@@ -38,19 +38,41 @@ afterEach(() => {
   __setFsSafeTestHooksForTest(undefined);
   __resetFsSafeNativeConfigForTest();
   __resetNativeLoaderForTest();
+  vi.restoreAllMocks();
 });
 
 describe("archive timeout lifetime", () => {
-  it("waits for non-cooperative owned work to quiesce after the deadline", async () => {
-    let release: (() => void) | undefined;
+  it("preserves prompt deadlines around non-mutating work", async () => {
     let finished = false;
+    const startedAt = Date.now();
+
+    await expect(
+      withExtractionDeadline(1, "extract tar", async () => {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        finished = true;
+      }),
+    ).rejects.toThrow("extract tar timed out after 1ms");
+
+    expect(Date.now() - startedAt).toBeLessThan(75);
+    expect(finished).toBe(false);
+  });
+
+  it("joins a destination mutation already in flight at the deadline", async () => {
+    let enterMutation: (() => void) | undefined;
+    let releaseMutation: (() => void) | undefined;
     let settled = false;
-    const blocked = new Promise<void>((resolve) => {
-      release = resolve;
+    const mutationEntered = new Promise<void>((resolve) => {
+      enterMutation = resolve;
     });
-    const operation = withExtractionDeadline(1, "extract tar", async () => {
-      await blocked;
-      finished = true;
+    const mutationRelease = new Promise<void>((resolve) => {
+      releaseMutation = resolve;
+    });
+    const operation = withExtractionDeadline(10, "extract tar", async (deadline) => {
+      await deadline.ownDestinationMutation(async () => {
+        enterMutation?.();
+        await mutationRelease;
+        deadline.check();
+      });
     });
     void operation.then(
       () => {
@@ -61,13 +83,11 @@ describe("archive timeout lifetime", () => {
       },
     );
 
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await mutationEntered;
+    await new Promise((resolve) => setTimeout(resolve, 25));
     expect(settled).toBe(false);
-    expect(finished).toBe(false);
-
-    release?.();
-    await expect(operation).rejects.toThrow("extract tar timed out after 1ms");
-    expect(finished).toBe(true);
+    releaseMutation?.();
+    await expect(operation).rejects.toThrow("extract tar timed out after 10ms");
   });
 
   describe.each(backends)("%s extraction", (backend) => {
@@ -80,6 +100,15 @@ describe("archive timeout lifetime", () => {
         const destination = path.join(root, "destination");
         const outputDir = path.join(destination, "package");
         const outputPath = path.join(outputDir, "hello.txt");
+        const stagedDirs: string[] = [];
+        const realMkdtemp = fs.mkdtemp.bind(fs);
+        vi.spyOn(fs, "mkdtemp").mockImplementation(
+          async (...args: Parameters<typeof fs.mkdtemp>) => {
+            const dir = await realMkdtemp(...args);
+            if (String(args[0]).includes("fs-safe-archive")) stagedDirs.push(dir);
+            return dir;
+          },
+        );
         if (kind === "zip") {
           const zip = new JSZip();
           zip.file("package/hello.txt", "archive-content");
@@ -111,30 +140,30 @@ describe("archive timeout lifetime", () => {
           },
         });
 
-        let settled = false;
         const extraction = extractArchive({
           archivePath,
           destDir: destination,
           kind,
           timeoutMs: 1_000,
         });
-        void extraction.then(
-          () => {
-            settled = true;
-          },
-          () => {
-            settled = true;
-          },
-        );
         await mergeEntered;
-        await new Promise((resolve) => setTimeout(resolve, 1_050));
-        expect(settled).toBe(false);
+        await expect(extraction).rejects.toThrow(`extract ${kind} timed out after 1000ms`);
         await fs.mkdir(outputDir, { recursive: true });
         await fs.writeFile(outputPath, "trusted-recovery");
 
         releaseMerge?.();
-        await expect(extraction).rejects.toThrow(`extract ${kind} timed out after 1000ms`);
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(stagedDirs.length).toBeGreaterThan(0);
+        await expect
+          .poll(async () => {
+            const existing = await Promise.all(
+              stagedDirs.map(async (dir) => await fs.access(dir).then(
+                () => true,
+                () => false,
+              )),
+            );
+            return existing.every((value) => !value);
+          })
+          .toBe(true);
         await expect(fs.readFile(outputPath, "utf8")).resolves.toBe("trusted-recovery");
       },
       10_000,

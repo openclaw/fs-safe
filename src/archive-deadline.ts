@@ -1,8 +1,17 @@
 export type ExtractionDeadline = {
   signal: AbortSignal;
   check: () => void;
+  ownDestinationMutation: <T>(run: () => Promise<T>) => Promise<T>;
+  waitForDestinationMutations: () => Promise<void>;
   dispose: () => void;
 };
+
+export async function ownExtractionDestinationMutation<T>(
+  deadline: ExtractionDeadline | undefined,
+  run: () => Promise<T>,
+): Promise<T> {
+  return deadline ? await deadline.ownDestinationMutation(run) : await run();
+}
 
 function signalReason(signal: AbortSignal, fallback?: Error): Error {
   const reason = signal.reason;
@@ -48,26 +57,55 @@ export async function waitForDeadline<T>(
   ]);
 }
 
+function createDestinationMutationOwner(check: () => void): Pick<
+  ExtractionDeadline,
+  "ownDestinationMutation" | "waitForDestinationMutations"
+> {
+  const active = new Set<Promise<void>>();
+  return {
+    ownDestinationMutation: async <T>(run: () => Promise<T>): Promise<T> => {
+      check();
+      const operation = Promise.resolve().then(run);
+      const tracked = operation.then(
+        () => undefined,
+        () => undefined,
+      );
+      active.add(tracked);
+      void tracked.finally(() => active.delete(tracked));
+      return await operation;
+    },
+    waitForDestinationMutations: async (): Promise<void> => {
+      while (active.size > 0) {
+        await Promise.all(active);
+      }
+    },
+  };
+}
+
 function createExtractionDeadline(timeoutMs: number, label: string): ExtractionDeadline {
   const controller = new AbortController();
+  const timeoutError = new Error(`${label} timed out after ${timeoutMs}ms`);
+  const check = (): void => {
+    if (controller.signal.aborted) {
+      throw signalReason(controller.signal, timeoutError);
+    }
+  };
+  const mutationOwner = createDestinationMutationOwner(check);
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     return {
       signal: controller.signal,
-      check: () => undefined,
+      check,
+      ...mutationOwner,
       dispose: () => undefined,
     };
   }
-  const timeoutError = new Error(`${label} timed out after ${timeoutMs}ms`);
   const timeoutId = setTimeout(() => {
     controller.abort(timeoutError);
   }, timeoutMs);
   return {
     signal: controller.signal,
-    check: () => {
-      if (controller.signal.aborted) {
-        throw signalReason(controller.signal, timeoutError);
-      }
-    },
+    check,
+    ...mutationOwner,
     dispose: () => {
       clearTimeout(timeoutId);
     },
@@ -87,9 +125,9 @@ export async function withExtractionDeadline<T>(
       return await waitForDeadline(operation, deadline);
     } catch (error) {
       if (deadline.signal.aborted && error === deadlineReason(deadline)) {
-        // The deadline requests cancellation, but extraction still owns staging,
-        // descriptors, and destination mutations until the operation unwinds.
-        await operation.catch(() => undefined);
+        // Preserve prompt timeout settlement for non-mutating work, but never
+        // return while live destination publication or rollback is still owned.
+        await deadline.waitForDestinationMutations();
       }
       throw error;
     }
