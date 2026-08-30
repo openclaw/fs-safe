@@ -94,6 +94,7 @@ type FileLockRetryOptions = {
 ```
 
 `payload` is a function so you can re-evaluate it on each retry (e.g. timestamp, PID).
+Retry counts must be non-negative safe integers. Retry factors and delays must be finite and non-negative, and when both delay bounds are provided `minTimeout` cannot exceed `maxTimeout`. `timeoutMs` accepts a finite non-negative deadline or positive infinity for an unbounded wait; invalid numeric values reject before filesystem acquisition starts.
 `parsePayload` replaces JSON parsing for legacy or custom sidecars. Its `unknown`
 result is passed to `shouldReclaim` and `shouldRemoveStaleLock`, allowing PID,
 process-start, argv, or role schemas to remain application-owned.
@@ -184,6 +185,7 @@ invokes `onCompromised` once, matching the asynchronous `.catch(() => false)`
 contract. An explicit `verifyStillHeld()` call still propagates that I/O error.
 
 Both synchronous helpers consume the [process-wide lock defaults](config.md#configurefssafelocks-config).
+A synchronous retry sleep is clamped to the remaining finite deadline, so a long or jittered backoff cannot extend the configured timeout or block forever.
 Per-call options take precedence, including zero values; a per-call `retry`
 object replaces the entire configured retry object. A configured
 `staleRecovery: "remove-if-unchanged"` still needs per-call
