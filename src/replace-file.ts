@@ -19,6 +19,13 @@ import {
   writeTempFile,
   writeTempFileSync,
 } from "./replace-file-descriptor.js";
+import {
+  atomicExpectedContentHash,
+  type RenameIdentityPolicy,
+  validateRenameIdentity,
+  withAtomicRenameIdentityLock,
+  withAtomicRenameIdentityLockSync,
+} from "./replace-file-rename-policy.js";
 import { AsyncAtomicTempOwner, SyncAtomicTempOwner } from "./replace-file-temp-owner.js";
 import { assertSafePathPrefix } from "./safe-path-segment.js";
 import { sleep, sleepSync } from "./timing.js";
@@ -67,6 +74,7 @@ export type ReplaceFileAtomicSyncFileSystem = Pick<
 };
 
 export type {
+  RenameIdentityPolicy,
   ReplaceFileAtomicRestoreCleanup,
   ReplaceFileAtomicRestoreFailureDetails,
   ReplaceFileCopyFallbackRestorePolicy,
@@ -86,6 +94,8 @@ type ReplaceFileAtomicBaseOptions = {
   copyFallbackRestore?: ReplaceFileCopyFallbackRestorePolicy;
   maxRestoreBytes?: number;
   destinationHardlinks?: ReplaceFileDestinationHardlinkPolicy;
+  /** Strict by default; locked content verification is an explicit FUSE compatibility policy. */
+  renameIdentity?: RenameIdentityPolicy;
   syncTempFile?: boolean;
   syncParentDir?: boolean;
   throwOnCleanupError?: boolean;
@@ -305,8 +315,17 @@ export async function replaceFileAtomic(
   const filePath = options.filePath;
   validateReplaceFilePath(filePath);
   validateRestoreOptions(options);
+  validateRenameIdentity(options.renameIdentity);
   return await serializePathWrite(path.resolve(filePath), async () => {
-    return await replaceFileAtomicUnserialized(options);
+    if (options.renameIdentity !== "verify-content-with-lock") {
+      return await replaceFileAtomicUnserialized(options);
+    }
+    await (options.fileSystem?.promises ?? fs).mkdir(path.dirname(filePath), {
+      recursive: true,
+      mode: options.dirMode ?? 0o700,
+    });
+    return await withAtomicRenameIdentityLock(filePath, async () =>
+      await replaceFileAtomicUnserialized(options));
   });
 }
 
@@ -318,6 +337,7 @@ async function replaceFileAtomicUnserialized(
   const dir = path.dirname(filePath);
   const dirMode = options.dirMode ?? 0o700;
   const mode = await resolveMode(options);
+  const expectedHash = atomicExpectedContentHash(options.renameIdentity, options.content);
   const tempPath = buildReplaceTempPath(filePath, options.tempPrefix);
   const tempOwner = new AsyncAtomicTempOwner(tempPath);
   let originalError: unknown;
@@ -355,7 +375,7 @@ async function replaceFileAtomicUnserialized(
     });
     if (result.method === "rename") {
       tempOwner.markRenamed();
-      await tempOwner.assertCurrent(fsModule, filePath);
+      await tempOwner.assertPublished(fsModule, filePath, expectedHash);
     } else {
       await tempOwner.assertCurrent(fsModule);
     }
@@ -363,7 +383,7 @@ async function replaceFileAtomicUnserialized(
       await syncDirectoryBestEffort(fsModule, dir);
     }
     if (result.method === "rename") {
-      await tempOwner.assertCurrent(fsModule, filePath);
+      await tempOwner.assertPublished(fsModule, filePath, expectedHash);
     }
     return result;
   } catch (error) {
@@ -384,10 +404,27 @@ export function replaceFileAtomicSync(
   const filePath = options.filePath;
   validateReplaceFilePath(filePath);
   validateRestoreOptions(options);
+  validateRenameIdentity(options.renameIdentity);
+  if (options.renameIdentity !== "verify-content-with-lock") {
+    return replaceFileAtomicSyncUnserialized(options);
+  }
+  (options.fileSystem ?? syncFs).mkdirSync(path.dirname(filePath), {
+    recursive: true,
+    mode: options.dirMode ?? 0o700,
+  });
+  return withAtomicRenameIdentityLockSync(filePath, () =>
+    replaceFileAtomicSyncUnserialized(options));
+}
+
+function replaceFileAtomicSyncUnserialized(
+  options: ReplaceFileAtomicSyncOptions,
+): ReplaceFileAtomicResult {
+  const filePath = options.filePath;
   const fsModule = options.fileSystem ?? syncFs;
   const dir = path.dirname(filePath);
   const dirMode = options.dirMode ?? 0o700;
   const mode = resolveModeSync(options);
+  const expectedHash = atomicExpectedContentHash(options.renameIdentity, options.content);
   const fchmodSync = options.fileSystem?.fchmodSync ?? (
     options.fileSystem === undefined ? syncFs.fchmodSync : undefined
   );
@@ -438,7 +475,7 @@ export function replaceFileAtomicSync(
     });
     if (result.method === "rename") {
       tempOwner.markRenamed();
-      tempOwner.assertCurrent(fsModule, filePath);
+      tempOwner.assertPublished(fsModule, filePath, expectedHash);
     } else {
       tempOwner.assertCurrent(fsModule);
     }
@@ -446,7 +483,7 @@ export function replaceFileAtomicSync(
       syncDirectoryBestEffortSync(fsModule, dir);
     }
     if (result.method === "rename") {
-      tempOwner.assertCurrent(fsModule, filePath);
+      tempOwner.assertPublished(fsModule, filePath, expectedHash);
     }
     return result;
   } catch (error) {

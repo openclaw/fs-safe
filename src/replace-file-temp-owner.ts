@@ -1,15 +1,24 @@
 import syncFs, { type BigIntStats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
-import { sameFileIdentityForCleanup } from "./file-identity.js";
+import { sameFileIdentityForCleanup, sha256Hex } from "./file-identity.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import { registerTempPathForExit, type TempPathRegistration } from "./temp-cleanup.js";
 
-type AsyncOwnerFileSystem = Pick<typeof fs, "lstat" | "unlink">;
+type AsyncOwnerFileSystem = Pick<typeof fs, "lstat" | "open" | "unlink">;
 type SyncOwnerFileSystem = Pick<
   typeof syncFs,
-  "closeSync" | "fstatSync" | "lstatSync" | "unlinkSync"
+  "closeSync" | "fstatSync" | "lstatSync" | "openSync" | "readFileSync" | "unlinkSync"
 >;
+
+const PUBLISHED_READ_FLAGS =
+  syncFs.constants.O_RDONLY |
+  (process.platform !== "win32" && typeof syncFs.constants.O_NOFOLLOW === "number"
+    ? syncFs.constants.O_NOFOLLOW
+    : 0) |
+  (process.platform !== "win32" && typeof syncFs.constants.O_NONBLOCK === "number"
+    ? syncFs.constants.O_NONBLOCK
+    : 0);
 
 function assertOwnedFile(stat: BigIntStats, pathname: string, pathnameEntry: boolean): void {
   if (stat.isSymbolicLink()) {
@@ -148,6 +157,54 @@ export class AsyncAtomicTempOwner {
     }
   }
 
+  async assertPublished(
+    fsModule: AsyncOwnerFileSystem,
+    pathname: string,
+    expectedHash?: string,
+  ): Promise<void> {
+    try {
+      await this.assertCurrent(fsModule, pathname);
+      return;
+    } catch (error) {
+      if (!(error instanceof FsSafeError) || error.code !== "path-mismatch" || !expectedHash) {
+        throw error;
+      }
+    }
+
+    let published: FileHandle | undefined;
+    try {
+      try {
+        published = await fsModule.open(pathname, PUBLISHED_READ_FLAGS);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+          throw new FsSafeError("symlink", `Atomic replace published file became a symlink: ${pathname}`, {
+            cause: error,
+          });
+        }
+        throw error;
+      }
+      const identity = await inspectFileIdentity(async () => {
+        const stat = await published!.stat({ bigint: true });
+        assertOwnedFile(stat, pathname, false);
+        return stat;
+      });
+      await inspectFileIdentity(async () => {
+        const stat = await fsModule.lstat(pathname, { bigint: true });
+        assertOwnedFile(stat, pathname, true);
+        return stat;
+      }, identity);
+      if (sha256Hex(await published.readFile()) !== expectedHash) {
+        throw new FsSafeError("path-mismatch", `Atomic replace published content changed: ${pathname}`);
+      }
+      await this.#handle?.close();
+      this.#handle = published;
+      this.#identity = identity;
+      published = undefined;
+    } finally {
+      await published?.close().catch(() => undefined);
+    }
+  }
+
   markRenamed(): void {
     this.#exists = false;
     this.#unregister();
@@ -238,6 +295,60 @@ export class SyncAtomicTempOwner {
         throw missingOwnedFile(pathname, error);
       }
       throw error;
+    }
+  }
+
+  assertPublished(
+    fsModule: SyncOwnerFileSystem,
+    pathname: string,
+    expectedHash?: string,
+  ): void {
+    try {
+      this.assertCurrent(fsModule, pathname);
+      return;
+    } catch (error) {
+      if (!(error instanceof FsSafeError) || error.code !== "path-mismatch" || !expectedHash) {
+        throw error;
+      }
+    }
+
+    let publishedFd: number | undefined;
+    try {
+      try {
+        publishedFd = fsModule.openSync(pathname, PUBLISHED_READ_FLAGS);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+          throw new FsSafeError("symlink", `Atomic replace published file became a symlink: ${pathname}`, {
+            cause: error,
+          });
+        }
+        throw error;
+      }
+      const identity = inspectFileIdentitySync(() => {
+        const stat = fsModule.fstatSync(publishedFd!, { bigint: true });
+        assertOwnedFile(stat, pathname, false);
+        return stat;
+      });
+      inspectFileIdentitySync(() => {
+        const stat = fsModule.lstatSync(pathname, { bigint: true });
+        assertOwnedFile(stat, pathname, true);
+        return stat;
+      }, identity);
+      if (sha256Hex(fsModule.readFileSync(publishedFd)) !== expectedHash) {
+        throw new FsSafeError("path-mismatch", `Atomic replace published content changed: ${pathname}`);
+      }
+      fsModule.closeSync(this.#fd!);
+      this.#fd = publishedFd;
+      this.#identity = identity;
+      publishedFd = undefined;
+    } finally {
+      if (publishedFd !== undefined) {
+        try {
+          fsModule.closeSync(publishedFd);
+        } catch {
+          // Best-effort close after a rejected content verification.
+        }
+      }
     }
   }
 

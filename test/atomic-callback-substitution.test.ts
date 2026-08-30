@@ -244,6 +244,124 @@ describe("atomic beforeRename ownership", () => {
     expect(fsSync.readFileSync(movedPath, "utf8")).toBe("new");
   });
 
+  it("keeps strict async identity checks on rename-unstable filesystems", async () => {
+    const root = await tempRoot("fs-safe-atomic-fuse-strict-async-");
+    const filePath = path.join(root, "target");
+    await fs.writeFile(filePath, "old");
+    await expect(replaceFileAtomic({
+      filePath,
+      content: "new",
+      fileSystem: {
+        promises: {
+          ...fs,
+          rename: async (source, destination) => {
+            await fs.copyFile(source, destination);
+            await fs.unlink(source);
+          },
+        },
+      },
+    })).rejects.toMatchObject({ code: "path-mismatch" });
+    expect(await fs.readFile(filePath, "utf8")).toBe("new");
+  });
+
+  it("keeps strict sync identity checks on rename-unstable filesystems", async () => {
+    const root = await tempRoot("fs-safe-atomic-fuse-strict-sync-");
+    const filePath = path.join(root, "target");
+    fsSync.writeFileSync(filePath, "old");
+    expect(() => replaceFileAtomicSync({
+      filePath,
+      content: "new",
+      fileSystem: {
+        ...fsSync,
+        renameSync: (source, destination) => {
+          fsSync.copyFileSync(source, destination);
+          fsSync.unlinkSync(source);
+        },
+      },
+    })).toThrow(expect.objectContaining({ code: "path-mismatch" }));
+    expect(fsSync.readFileSync(filePath, "utf8")).toBe("new");
+  });
+
+  it("accepts async rename-unstable publication only with locked content verification", async () => {
+    const root = await tempRoot("fs-safe-atomic-fuse-async-");
+    const filePath = path.join(root, "target");
+    await fs.writeFile(filePath, "old");
+    await expect(replaceFileAtomic({
+      filePath,
+      content: "new",
+      renameIdentity: "verify-content-with-lock",
+      syncParentDir: true,
+      fileSystem: {
+        promises: {
+          ...fs,
+          rename: async (source, destination) => {
+            await fs.copyFile(source, destination);
+            await fs.unlink(source);
+          },
+        },
+      },
+    })).resolves.toEqual({ method: "rename" });
+    expect(await fs.readFile(filePath, "utf8")).toBe("new");
+    expect((await fs.readdir(root)).filter((name) => name.startsWith(".fs-safe-atomic-")))
+      .toEqual([]);
+  });
+
+  it("accepts sync rename-unstable publication only with locked content verification", async () => {
+    const root = await tempRoot("fs-safe-atomic-fuse-sync-");
+    const filePath = path.join(root, "target");
+    fsSync.writeFileSync(filePath, "old");
+    expect(replaceFileAtomicSync({
+      filePath,
+      content: "new",
+      renameIdentity: "verify-content-with-lock",
+      syncParentDir: true,
+      fileSystem: {
+        ...fsSync,
+        renameSync: (source, destination) => {
+          fsSync.copyFileSync(source, destination);
+          fsSync.unlinkSync(source);
+        },
+      },
+    })).toEqual({ method: "rename" });
+    expect(fsSync.readFileSync(filePath, "utf8")).toBe("new");
+    expect(fsSync.readdirSync(root).filter((name) => name.startsWith(".fs-safe-atomic-")))
+      .toEqual([]);
+  });
+
+  it("rejects mismatched content under the rename-unstable compatibility policy", async () => {
+    const root = await tempRoot("fs-safe-atomic-fuse-tampered-");
+    const filePath = path.join(root, "target");
+    await fs.writeFile(filePath, "old");
+    await expect(replaceFileAtomic({
+      filePath,
+      content: "new",
+      renameIdentity: "verify-content-with-lock",
+      fileSystem: {
+        promises: {
+          ...fs,
+          rename: async (source, destination) => {
+            await fs.writeFile(destination, "tampered");
+            await fs.unlink(source);
+          },
+        },
+      },
+    })).rejects.toMatchObject({ code: "path-mismatch" });
+    expect(await fs.readFile(filePath, "utf8")).toBe("tampered");
+    expect((await fs.readdir(root)).filter((name) => name.startsWith(".fs-safe-atomic-")))
+      .toEqual([]);
+  });
+
+  it("rejects an invalid rename identity policy before mutation", async () => {
+    const root = await tempRoot("fs-safe-atomic-fuse-policy-");
+    const filePath = path.join(root, "target");
+    await expect(replaceFileAtomic({
+      filePath,
+      content: "new",
+      renameIdentity: "unknown" as "strict",
+    })).rejects.toThrow("renameIdentity must be strict or verify-content-with-lock");
+    await expect(fs.lstat(filePath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("rejects an async source replacement entering copy fallback", async () => {
     const root = await tempRoot("fs-safe-atomic-fallback-source-async-");
     const filePath = path.join(root, "target");
