@@ -7,6 +7,7 @@ import { stageArchiveFileForExtraction } from "../src/archive-input.js";
 import { resolveExtractLimits } from "../src/archive-limits.js";
 import { readArchiveEntry } from "../src/archive-read.js";
 import { readJsonDurableQueueEntry } from "../src/json-durable-queue.js";
+import { writeJsonSync } from "../src/json.js";
 import { publishFileExclusive } from "../src/publish-file.js";
 import { readSecureFile } from "../src/secure-file.js";
 import { readSecretFile } from "../src/secret-read-async.js";
@@ -170,6 +171,36 @@ describe("nonblocking regular-file admission", () => {
       strategy: "link-required",
     })).rejects.toMatchObject({ code: "path-mismatch" });
     await expect(fs.lstat(targetPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  itPosix("does not chmod a FIFO swapped into a synchronous JSON target", async () => {
+    const root = await tempRoot("fs-safe-json-fifo-");
+    const filePath = path.join(root, "state.json");
+    const displaced = `${filePath}.displaced`;
+    const openSync = fsSync.openSync.bind(fsSync);
+    const fchmodSync = fsSync.fchmodSync.bind(fsSync);
+    let fifoFd = -1;
+    let fifoChmods = 0;
+    vi.spyOn(fsSync, "openSync").mockImplementation((candidate, flags, mode) => {
+      if (String(candidate) === filePath && typeof flags === "number") {
+        expectNonblocking(flags);
+        fsSync.renameSync(filePath, displaced);
+        makeFifo(filePath);
+        fifoFd = openSync(candidate, flags, mode);
+        return fifoFd;
+      }
+      return openSync(candidate, flags, mode);
+    });
+    vi.spyOn(fsSync, "fchmodSync").mockImplementation((fd, mode) => {
+      if (fd === fifoFd) fifoChmods += 1;
+      return fchmodSync(fd, mode);
+    });
+
+    writeJsonSync(filePath, { ok: true });
+
+    expect(fifoChmods).toBe(0);
+    expect(fsSync.lstatSync(filePath).isFIFO()).toBe(true);
+    expect(JSON.parse(fsSync.readFileSync(displaced, "utf8"))).toEqual({ ok: true });
   });
 
   itPosix("rejects a synchronous sidecar-lock FIFO swap without blocking", async () => {

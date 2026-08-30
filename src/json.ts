@@ -3,6 +3,7 @@ import fsSync from "node:fs";
 import path from "node:path";
 import { readFileDescriptorBoundedSync } from "./bounded-read.js";
 import { FsSafeError } from "./errors.js";
+import { sameFileIdentityForCleanup, type FileIdentityStat } from "./file-identity.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
 import { readRegularFile, readRegularFileSync, statRegularFile } from "./regular-file.js";
 import { openRootFileSync, type RootFileOpenFailure } from "./root-file.js";
@@ -66,13 +67,35 @@ function getErrorCode(err: unknown): string | undefined {
   return err instanceof Error ? (err as NodeJS.ErrnoException).code : undefined;
 }
 
-function trySetSecureMode(pathname: string) {
+function trySetSecureMode(pathname: string, expectedIdentity: FileIdentityStat): void {
   let fd: number | undefined;
   try {
+    const before = fsSync.lstatSync(pathname, { bigint: true });
+    if (
+      before.isSymbolicLink() ||
+      !before.isFile() ||
+      before.nlink !== 1n ||
+      !sameFileIdentityForCleanup(before, expectedIdentity)
+    ) {
+      return;
+    }
     fd = fsSync.openSync(pathname, resolveReadOpenFlags());
+    const opened = fsSync.fstatSync(fd, { bigint: true });
+    const current = fsSync.lstatSync(pathname, { bigint: true });
+    if (
+      !opened.isFile() ||
+      opened.nlink !== 1n ||
+      current.isSymbolicLink() ||
+      !current.isFile() ||
+      current.nlink !== 1n ||
+      !sameFileIdentityForCleanup(opened, expectedIdentity) ||
+      !sameFileIdentityForCleanup(current, opened)
+    ) {
+      return;
+    }
     fsSync.fchmodSync(fd, JSON_FILE_MODE);
   } catch {
-    // best-effort on platforms without chmod support
+    // Best-effort mode application never falls back to a mutable pathname.
   } finally {
     if (fd !== undefined) {
       try {
@@ -132,11 +155,12 @@ function renameJsonFileWithFallback(tmpPath: string, pathname: string) {
   }
 }
 
-function writeTempJsonFile(pathname: string, payload: string) {
+function writeTempJsonFile(pathname: string, payload: string): fsSync.BigIntStats {
   const fd = fsSync.openSync(pathname, "wx", JSON_FILE_MODE);
   try {
     fsSync.writeFileSync(fd, payload, "utf8");
     fsSync.fsyncSync(fd);
+    return fsSync.fstatSync(fd, { bigint: true });
   } finally {
     fsSync.closeSync(fd);
   }
@@ -168,10 +192,10 @@ export function writeJsonSync(pathname: string, data: unknown) {
 
   fsSync.mkdirSync(path.dirname(targetPath), { recursive: true, mode: JSON_DIR_MODE });
   try {
-    writeTempJsonFile(tmpPath, payload);
-    trySetSecureMode(tmpPath);
+    const tempIdentity = writeTempJsonFile(tmpPath, payload);
+    trySetSecureMode(tmpPath, tempIdentity);
     renameJsonFileWithFallback(tmpPath, targetPath);
-    trySetSecureMode(targetPath);
+    trySetSecureMode(targetPath, tempIdentity);
     trySyncDirectory(targetPath);
   } finally {
     try {
