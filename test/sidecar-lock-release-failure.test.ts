@@ -77,6 +77,38 @@ describe("asynchronous sidecar lock release failures", () => {
     expect(manager.heldEntries()).toEqual([]);
   });
 
+  it("does not release a reentrant acquisition when retrying failed cleanup", async () => {
+    const directory = await tempRoot("fs-safe-lock-release-reentrant-retry-");
+    const targetPath = path.join(directory, "state.json");
+    const manager = createSidecarLockManager(`release-reentrant-${Date.now()}-${Math.random()}`);
+    const options = {
+      targetPath,
+      reentrantOwner: "owner",
+      payload: async () => ({}),
+    };
+    const first = await manager.acquire(options);
+    const second = await manager.acquire(options);
+    await first.release();
+
+    const failure = Object.assign(new Error("release deletion failed"), { code: "EIO" });
+    const realRm = fs.rm.bind(fs);
+    const rm = vi.spyOn(fs, "rm").mockImplementationOnce(async (target, ...args) => {
+      if (path.resolve(String(target)) === path.resolve(second.lockPath)) throw failure;
+      return await realRm(target, ...args);
+    });
+    await expect(second.release()).rejects.toBe(failure);
+
+    const third = await manager.acquire(options);
+    await second.release();
+    await expect(fs.access(third.lockPath)).resolves.toBeUndefined();
+    expect(manager.heldEntries()).toHaveLength(1);
+
+    rm.mockRestore();
+    await third.release();
+    await expect(fs.access(third.lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(manager.heldEntries()).toEqual([]);
+  });
+
   it("preserves callback and release failures from withFileLock", async () => {
     const directory = await tempRoot("fs-safe-lock-release-combined-");
     const targetPath = path.join(directory, "state.json");
