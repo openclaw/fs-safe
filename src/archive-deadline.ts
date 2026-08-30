@@ -80,9 +80,19 @@ export async function withExtractionDeadline<T>(
   run: (deadline: ExtractionDeadline) => Promise<T>,
 ): Promise<T> {
   const deadline = createExtractionDeadline(timeoutMs, label);
+  const operation = Promise.resolve().then(async () => await run(deadline));
   try {
     deadline.check();
-    return await waitForDeadline(run(deadline), deadline);
+    try {
+      return await waitForDeadline(operation, deadline);
+    } catch (error) {
+      if (deadline.signal.aborted && error === deadlineReason(deadline)) {
+        // The deadline requests cancellation, but extraction still owns staging,
+        // descriptors, and destination mutations until the operation unwinds.
+        await operation.catch(() => undefined);
+      }
+      throw error;
+    }
   } finally {
     deadline.dispose();
   }

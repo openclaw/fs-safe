@@ -23,7 +23,7 @@ await extractArchive({
   archivePath: "/srv/uploads/plugin.zip",
   destDir: "/srv/workspace/plugins/plugin",
   kind: "zip",                        // optional; resolveArchiveKind() can infer
-  timeoutMs: 15_000,                  // hard ceiling for the whole extraction
+  timeoutMs: 15_000,                  // cancellation budget; rejection waits for cleanup
   stripComponents: 0,                 // tar-style strip-leading-dirs
   entryModes: "clamp",                // default; use "preserve" for archive rwx bits
   entryFilter: ({ path, kind, size }) => "extract",
@@ -45,7 +45,7 @@ await extractArchive({
 type ExtractArchiveOptions = {
   archivePath: string;          // absolute path to the archive
   destDir: string;              // absolute destination directory; must already exist
-  timeoutMs: number;            // positive wall-clock cap; <= 0/non-finite disables it
+  timeoutMs: number;            // positive cancellation budget; <= 0/non-finite disables it
   kind?: ArchiveKind;           // "zip" | "tar" | "tar-zstd" | "tar-bzip2"
   stripComponents?: number;     // strip N leading dirs from entry paths
   tarGzip?: boolean;            // when archive is .tar.gz/.tgz
@@ -118,7 +118,7 @@ of leaving a paused parser to drain indefinitely. The native path finishes its
 bounded manifest read before TypeScript policy evaluation, so a rejected plan
 never starts the extraction worker.
 
-If `kind` is omitted, the helper calls `resolveArchiveKind(archivePath)` and throws if the extension is not recognized. Pass `kind` explicitly when the archive name doesn't carry the type (e.g. content-addressed names). A positive finite `timeoutMs` is a wall-clock budget; zero, negative, `NaN`, and infinity disable the deadline.
+If `kind` is omitted, the helper calls `resolveArchiveKind(archivePath)` and throws if the extension is not recognized. Pass `kind` explicitly when the archive name doesn't carry the type (e.g. content-addressed names). A positive finite `timeoutMs` starts cancellation when the wall-clock budget expires; the promise rejects only after in-flight filesystem work has unwound and staging/input cleanup is complete, so settlement can follow the deadline when a filesystem operation cannot be interrupted. Zero, negative, `NaN`, and infinity disable the deadline.
 
 ### Limits
 
@@ -165,7 +165,7 @@ codes remain `"destination-not-directory"`, `"destination-symlink"`, and
 - **TOCTOU during merge:** extraction first writes to a private temp dir, then merges into `destDir` using the same boundary checks as `root().write()`. Destination symlink swaps are checked with the selected platform mechanism; non-Linux routes retain the best-effort race window documented in the [security model](security-model.md#containment-guarantees-by-platform).
 - **Zip bombs:** `maxExtractedBytes` and `maxEntryBytes` apply to *post-decompression* bytes, so highly-compressed payloads hit the cap before they exhaust disk.
 - **Corrupt ZIP payloads:** streamed output must match both the central-directory CRC and declared uncompressed size before it can leave private staging.
-- **Slow-loris archives:** `timeoutMs` is a hard wall-clock budget. Extraction is aborted on overrun.
+- **Slow-loris archives:** `timeoutMs` starts cancellation on overrun. No new destination mutation begins after the deadline, and the promise waits for owned filesystem work and cleanup to quiesce before rejecting.
 - **Metadata bombs:** a streaming pass-through reader rejects oversized PAX, GNU long-name, and GNU long-link bodies before either TAR implementation buffers them. It understands octal and base-256 fixed sizes and validates bounded local PAX bodies before using their size overrides for member framing. Original archive bytes remain unchanged.
 
 ### Bounded local PAX support

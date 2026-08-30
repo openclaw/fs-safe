@@ -6,6 +6,7 @@ import {
   createAsyncDirectoryGuard,
   type AsyncDirectoryGuard,
 } from "./directory-guard.js";
+import type { ExtractionDeadline } from "./archive-deadline.js";
 import {
   ArchiveSecurityError,
   type ArchiveSecurityErrorCode,
@@ -19,6 +20,10 @@ import { getFsSafeTestHooks } from "./test-hooks.js";
 
 const ERROR_ARCHIVE_ENTRY_TRAVERSES_SYMLINK = "archive entry traverses symlink in destination";
 const ARCHIVE_STAGING_MODE = 0o700;
+
+function checkExtractionDeadline(deadline?: ExtractionDeadline): void {
+  deadline?.check();
+}
 
 export { ArchiveSecurityError, type ArchiveSecurityErrorCode } from "./archive-errors.js";
 
@@ -149,45 +154,60 @@ export async function prepareArchiveOutputPath(params: {
   outPath: string;
   originalPath: string;
   isDirectory: boolean;
+  deadline?: ExtractionDeadline;
 }): Promise<void> {
+  checkExtractionDeadline(params.deadline);
   const targetRoot = await root(params.destinationRealDir);
+  checkExtractionDeadline(params.deadline);
   const destinationGuard = await createDirectoryIdentityGuard(params.destinationRealDir);
+  checkExtractionDeadline(params.deadline);
   const relPath = params.relPath.split(path.sep).join(path.posix.sep);
   await assertNoSymlinkTraversal({
     rootDir: params.destinationDir,
     relPath,
     originalPath: params.originalPath,
   });
+  checkExtractionDeadline(params.deadline);
 
   if (params.isDirectory) {
     await getFsSafeTestHooks()?.beforeArchiveOutputMutation?.("mkdir", params.outPath);
+    checkExtractionDeadline(params.deadline);
     await assertDirectoryIdentityGuard(destinationGuard);
+    checkExtractionDeadline(params.deadline);
     await mkdirArchiveOutput({ targetRoot, relativePath: relPath, originalPath: params.originalPath });
+    checkExtractionDeadline(params.deadline);
     await assertDirectoryIdentityGuard(destinationGuard);
+    checkExtractionDeadline(params.deadline);
     await assertResolvedInsideDestination({
       destinationRealDir: params.destinationRealDir,
       targetPath: params.outPath,
       originalPath: params.originalPath,
     });
+    checkExtractionDeadline(params.deadline);
     return;
   }
 
   const parentRel = path.posix.dirname(relPath);
   if (parentRel !== ".") {
     await getFsSafeTestHooks()?.beforeArchiveOutputMutation?.("mkdir", path.dirname(params.outPath));
+    checkExtractionDeadline(params.deadline);
     await assertDirectoryIdentityGuard(destinationGuard);
+    checkExtractionDeadline(params.deadline);
     await mkdirArchiveOutput({
       targetRoot,
       relativePath: parentRel,
       originalPath: params.originalPath,
     });
+    checkExtractionDeadline(params.deadline);
     await assertDirectoryIdentityGuard(destinationGuard);
+    checkExtractionDeadline(params.deadline);
   }
   await assertResolvedInsideDestination({
     destinationRealDir: params.destinationRealDir,
     targetPath: path.dirname(params.outPath),
     originalPath: params.originalPath,
   });
+  checkExtractionDeadline(params.deadline);
 }
 
 async function chmodInsideDestinationBestEffort(params: {
@@ -195,10 +215,14 @@ async function chmodInsideDestinationBestEffort(params: {
   destinationPath: string;
   mode: number;
   originalPath: string;
+  deadline?: ExtractionDeadline;
 }): Promise<void> {
   await getFsSafeTestHooks()?.beforeArchiveOutputMutation?.("chmod", params.destinationPath);
+  checkExtractionDeadline(params.deadline);
   const destinationGuard = await createDirectoryIdentityGuard(params.destinationRealDir);
+  checkExtractionDeadline(params.deadline);
   await assertDirectoryIdentityGuard(destinationGuard);
+  checkExtractionDeadline(params.deadline);
   const noFollowFlag =
     process.platform !== "win32" && "O_NOFOLLOW" in fsSync.constants
       ? fsSync.constants.O_NOFOLLOW
@@ -206,8 +230,10 @@ async function chmodInsideDestinationBestEffort(params: {
   const handle = await fs
     .open(params.destinationPath, fsSync.constants.O_RDONLY | noFollowFlag)
     .catch(() => null);
+  checkExtractionDeadline(params.deadline);
   if (!handle) {
     const stat = await fs.lstat(params.destinationPath).catch(() => null);
+    checkExtractionDeadline(params.deadline);
     if (stat?.isSymbolicLink()) {
       throw symlinkTraversalError(params.originalPath);
     }
@@ -215,15 +241,19 @@ async function chmodInsideDestinationBestEffort(params: {
   }
   try {
     const stat = await handle.stat();
+    checkExtractionDeadline(params.deadline);
     if (!stat.isDirectory() && !stat.isFile()) {
       return;
     }
     const realPath = await resolveOpenedFileRealPathForHandle(handle, params.destinationPath);
+    checkExtractionDeadline(params.deadline);
     if (!isPathInside(params.destinationRealDir, realPath)) {
       throw symlinkTraversalError(params.originalPath);
     }
     await handle.chmod(params.mode).catch(() => undefined);
+    checkExtractionDeadline(params.deadline);
     await assertDirectoryIdentityGuard(destinationGuard);
+    checkExtractionDeadline(params.deadline);
   } finally {
     await handle.close().catch(() => undefined);
   }
@@ -234,21 +264,26 @@ async function applyStagedEntryMode(params: {
   relPath: string;
   mode: number;
   originalPath: string;
+  deadline?: ExtractionDeadline;
 }): Promise<void> {
+  checkExtractionDeadline(params.deadline);
   const destinationPath = path.join(params.destinationRealDir, params.relPath);
   await assertResolvedInsideDestination({
     destinationRealDir: params.destinationRealDir,
     targetPath: destinationPath,
     originalPath: params.originalPath,
   });
+  checkExtractionDeadline(params.deadline);
   if (params.mode !== 0) {
     await chmodInsideDestinationBestEffort({
       destinationRealDir: params.destinationRealDir,
       destinationPath,
       mode: params.mode,
       originalPath: params.originalPath,
+      deadline: params.deadline,
     });
   }
+  checkExtractionDeadline(params.deadline);
 }
 
 async function assertExtractedFileHasNoHardlinkAlias(params: {
@@ -348,24 +383,35 @@ export async function mergeExtractedTreeIntoDestination(params: {
   sourceDir: string;
   destinationDir: string;
   destinationRealDir: string;
+  deadline?: ExtractionDeadline;
 }): Promise<void> {
+  checkExtractionDeadline(params.deadline);
   const targetRoot = await root(params.destinationRealDir);
+  checkExtractionDeadline(params.deadline);
   const sourceRootGuard = await createDirectoryIdentityGuard(params.sourceDir);
+  checkExtractionDeadline(params.deadline);
   const sourceRootReal = sourceRootGuard.realPath;
   const walk = async (currentSourceDir: string): Promise<void> => {
+    checkExtractionDeadline(params.deadline);
     await assertDirectoryIdentityGuard(sourceRootGuard);
+    checkExtractionDeadline(params.deadline);
     const entries = await fs.readdir(currentSourceDir, { withFileTypes: true });
+    checkExtractionDeadline(params.deadline);
     for (const entry of entries) {
+      checkExtractionDeadline(params.deadline);
       await assertDirectoryIdentityGuard(sourceRootGuard);
+      checkExtractionDeadline(params.deadline);
       const sourcePath = path.join(currentSourceDir, entry.name);
       const relPath = path.relative(params.sourceDir, sourcePath);
       const originalPath = relPath.split(path.sep).join("/");
       const destinationPath = path.join(params.destinationDir, relPath);
       const sourceStat = await fs.lstat(sourcePath);
+      checkExtractionDeadline(params.deadline);
       if (sourceStat.isSymbolicLink()) {
         throw symlinkTraversalError(originalPath);
       }
       const sourceReal = await fs.realpath(sourcePath);
+      checkExtractionDeadline(params.deadline);
       if (!isPathInside(sourceRootReal, sourceReal)) {
         throw symlinkTraversalError(originalPath);
       }
@@ -378,14 +424,19 @@ export async function mergeExtractedTreeIntoDestination(params: {
           outPath: destinationPath,
           originalPath,
           isDirectory: true,
+          deadline: params.deadline,
         });
+        checkExtractionDeadline(params.deadline);
         await walk(sourcePath);
+        checkExtractionDeadline(params.deadline);
         await applyStagedEntryMode({
           destinationRealDir: params.destinationRealDir,
           relPath,
           mode: sourceStat.mode & 0o777,
           originalPath,
+          deadline: params.deadline,
         });
+        checkExtractionDeadline(params.deadline);
         continue;
       }
 
@@ -402,20 +453,26 @@ export async function mergeExtractedTreeIntoDestination(params: {
         outPath: destinationPath,
         originalPath,
         isDirectory: false,
+        deadline: params.deadline,
       });
+      checkExtractionDeadline(params.deadline);
       try {
         await targetRoot.copyIn(relPath, sourcePath, { mkdir: true });
+        checkExtractionDeadline(params.deadline);
         await assertExtractedFileHasNoHardlinkAlias({
           destinationRealDir: params.destinationRealDir,
           relPath,
           originalPath,
         });
+        checkExtractionDeadline(params.deadline);
         await applyStagedEntryMode({
           destinationRealDir: params.destinationRealDir,
           relPath,
           mode: sourceStat.mode & 0o777,
           originalPath,
+          deadline: params.deadline,
         });
+        checkExtractionDeadline(params.deadline);
       } catch (err) {
         await removeExtractedDestinationFile({
           destinationRealDir: params.destinationRealDir,
@@ -430,6 +487,7 @@ export async function mergeExtractedTreeIntoDestination(params: {
   };
 
   await walk(params.sourceDir);
+  checkExtractionDeadline(params.deadline);
 }
 
 export function createArchiveSymlinkTraversalError(originalPath: string): ArchiveSecurityError {

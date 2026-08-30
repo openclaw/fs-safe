@@ -4,6 +4,7 @@
 
 ### Security and Correctness
 
+- Keep archive timeout failures joined to extraction ownership, stopping new destination mutations at the deadline and waiting for in-flight publication and staging cleanup before rejecting.
 - Verify durable JSON queue reads with lossless bigint identities and reject persistent unknown Windows identities before reading entry bytes.
 
 ## 0.6.0 - 2026-08-29

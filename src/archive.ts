@@ -148,6 +148,7 @@ async function prepareZipOutputPath(params: {
   outPath: string;
   originalPath: string;
   isDirectory: boolean;
+  deadline: ExtractionDeadline;
 }): Promise<void> {
   await prepareArchiveOutputPath(params);
 }
@@ -285,6 +286,7 @@ async function extractZip(params: {
             outPath: output.outPath,
             originalPath: entry.name,
             isDirectory: entry.dir,
+            deadline: params.deadline,
           });
           if (entry.dir) {
             await fs.chmod(output.outPath, mode);
@@ -305,6 +307,7 @@ async function extractZip(params: {
           sourceDir: stagingRealDir,
           destinationDir: params.destDir,
           destinationRealDir,
+          deadline: params.deadline,
         });
         params.deadline.check();
       },
@@ -447,18 +450,21 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
               throw normalizeTarParserError(createPipelineTimeoutError(error, deadline));
             }
             for (const accepted of acceptedEntries) {
+              deadline.check();
               const outputPath = resolveArchiveOutputPath({
                 rootDir: stagingDir,
                 relPath: accepted.path,
                 originalPath: accepted.path,
               });
               await fs.chmod(outputPath, accepted.mode);
+              deadline.check();
             }
             deadline.check();
             await mergeExtractedTreeIntoDestination({
               sourceDir: stagingDir,
               destinationDir: params.destDir,
               destinationRealDir,
+              deadline,
             });
             deadline.check();
           },
