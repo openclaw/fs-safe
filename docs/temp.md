@@ -14,7 +14,7 @@ import {
 
 ## Private temp workspaces
 
-A private workspace is a directory created at mode `0o700` under a caller-provided temp root. It is unique per call (random suffix) and cleaned up when you call `cleanup()` or leave an `await using` scope.
+A private workspace is a directory created at mode `0o700` under a caller-provided temp root. It is unique per call (random suffix). Calling `cleanup()` or leaving an `await using` scope removes an unchanged workspace through ownership-checked quarantine, including with native mode `off`. Attacked or ambiguous entries are preserved.
 
 ### `tempWorkspace`
 
@@ -31,7 +31,7 @@ type TempWorkspace = {
   writeJson(fileName: string, data: unknown, options?: { trailingNewline?: boolean }): Promise<string>;
   copyIn(fileName: string, sourcePath: string): Promise<string>;
   read(fileName: string): Promise<Buffer>;
-  cleanup(): Promise<"removed" | "missing" | "identity-mismatch">;
+  cleanup(): Promise<"removed" | "missing" | "identity-mismatch" | "indeterminate">;
   [Symbol.asyncDispose](): Promise<void>;
 };
 ```
@@ -64,12 +64,68 @@ await state.write({ ready: true });
 The workspace owns cleanup; the store is only a view over the workspace
 directory.
 
-The identity receipt is captured when the workspace is created. Manual,
-disposal, and process-exit cleanup remove the path only while `lstat` still
-matches that receipt. If another actor renames the workspace away and places a
-new directory at the old name, cleanup returns `"identity-mismatch"` and leaves
-the replacement untouched. Disposal hooks perform the same check and ignore
-the returned status.
+The identity receipt is captured when the workspace is created. The workspace
+also retains an opened parent directory until cleanup when the host supports
+it, and always captures the parent pathname identity. Manual, disposal, and
+process-exit cleanup share that owner, registered before store construction.
+After initial identity inspection, native no-replace rename moves the direct
+child through the retained parent into a fresh
+`.fs-safe-workspace-cleanup-<uuid>` sibling when both capabilities are available.
+Cleanup verifies the quarantined identity before recursive removal; it never
+recursively removes the public workspace name.
+
+On this native path, if a replacement arrives between inspection and rename,
+cleanup attempts to restore it using no-replace rename and returns
+`"identity-mismatch"` on successful restoration. Restoration never
+overwrites a newer public entry. A collision, failed restoration, uncertain
+rename outcome, or changed parent preserves remaining entries and returns
+`"indeterminate"`; a quarantine artifact may remain beside the workspace or
+under a moved parent. Recover such artifacts only after excluding competing
+mutators and establishing ownership.
+
+Without a retained parent descriptor or native no-replace rename, cleanup uses
+real filesystem rename under the shared directory guards to move the public
+workspace to a fresh, private, same-parent
+`.fs-safe-workspace-cleanup-<uuid>` name. This covers native mode `off`, missing
+capabilities, unavailable bindings (even in `require` mode during cleanup),
+and hosts where Node cannot open a directory descriptor. An unchanged workspace
+is verified under quarantine and removed normally, returning `"removed"`.
+Windows native rename supports file and directory sources while rejecting
+reparse points; Windows uses the guarded fallback when it cannot retain a Node
+directory descriptor.
+
+If a replacement arrives between fallback admission and rename, cleanup may
+**relocate that replacement to the named quarantine artifact**. It preserves
+the artifact for operator inspection and returns `"indeterminate"`, without
+recursive deletion or an overwrite-prone pathname restore. Any newer public
+entry remains untouched. An ambiguous rename outcome, parent identity, or
+quarantine identity also preserves all remaining entries and returns
+`"indeterminate"`. Inspect both the public name and quarantine artifacts;
+exclude competing mutators and establish ownership before recovery.
+
+On either path, a missing workspace returns `"missing"`, and a replacement
+observed before rename returns `"identity-mismatch"`, provided the parent is
+stable. A changed or ambiguous parent takes precedence and returns
+`"indeterminate"`, including when the workspace remains under a moved parent.
+Ordinary native-off cleanup does not return `"indeterminate"` or retain temp
+data. There is no check-then-remove fallback at the public workspace name.
+
+Recursive removal is confined to the private quarantine name and revalidates
+the parent's creation-time pathname identity immediately before removal. This is
+not atomic conditional recursive deletion: callers must protect the parent
+and quarantine from hostile mutation during rename and deletion. Fallback
+rename uses a fresh UUID name, but cannot enforce no-replace against a peer
+that discovers and creates that destination during the operation. A peer that
+can discover and replace the private quarantine or its ancestors can still race pathname
+removal. Use OS isolation when that threat is in scope.
+
+Cleanup closes the retained descriptor once. After successful removal, repeated
+cleanup returns `"missing"` without inspecting or touching a recreated public
+name. Other returned statuses remain stable on subsequent calls. Filesystem
+removal errors still propagate; subsequent cleanup returns `"indeterminate"`
+without retrying deletion. Disposal and `withTempWorkspace` ignore returned
+statuses, and process-exit cleanup is best-effort; manual cleanup is the way to
+observe whether removal completed.
 
 When cleanup is part of a retention or audit decision, inspect the receipt
 instead of treating cleanup as fire-and-forget:
@@ -82,6 +138,8 @@ try {
   const cleanup = await workspace.cleanup();
   if (cleanup === "identity-mismatch") {
     alertOperator("restore workspace path was replaced; replacement preserved");
+  } else if (cleanup === "indeterminate") {
+    alertOperator("restore workspace cleanup could not establish safe completion; inspect retained entries");
   }
 }
 ```
@@ -91,7 +149,7 @@ types and a `FileStoreSync` at `workspace.store`.
 
 ### `withTempWorkspace`
 
-The recommended shape. Auto-cleanup on every exit path:
+The recommended shape. Attempts cleanup on every exit path:
 
 ```ts
 import { withTempWorkspace } from "@openclaw/fs-safe/temp";

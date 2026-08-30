@@ -9,7 +9,6 @@ import {
   type FileStoreSync,
 } from "./file-store.js";
 import { FsSafeError } from "./errors.js";
-import { sameFileIdentityForCleanup } from "./file-identity.js";
 import { isNotFoundPathError } from "./path.js";
 import { throwFsSafeReadError } from "./read-error.js";
 import {
@@ -21,8 +20,9 @@ import {
   registerTempPathForExit,
   type TempPathIdentityReceipt,
 } from "./temp-cleanup.js";
+import { TempWorkspaceCleanupOwner, type TempWorkspaceCleanupResult } from "./temp-workspace-owner.js";
 
-export type TempWorkspaceCleanupResult = "removed" | "missing" | "identity-mismatch";
+export type { TempWorkspaceCleanupResult } from "./temp-workspace-owner.js";
 
 export type TempWorkspaceOptions = {
   rootDir: string;
@@ -139,40 +139,6 @@ function ensurePrivateDirectorySync(dir: string, mode: number): void {
   }
 }
 
-async function cleanupWorkspace(
-  dir: string,
-  identity: TempPathIdentityReceipt,
-): Promise<TempWorkspaceCleanupResult> {
-  let current;
-  try {
-    current = await fs.lstat(dir, { bigint: true });
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "identity-mismatch";
-  }
-  if (!sameFileIdentityForCleanup(current, identity)) {
-    return "identity-mismatch";
-  }
-  await fs.rm(dir, { recursive: true, force: true });
-  return "removed";
-}
-
-function cleanupWorkspaceSync(
-  dir: string,
-  identity: TempPathIdentityReceipt,
-): TempWorkspaceCleanupResult {
-  let current;
-  try {
-    current = fsSync.lstatSync(dir, { bigint: true });
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "identity-mismatch";
-  }
-  if (!sameFileIdentityForCleanup(current, identity)) {
-    return "identity-mismatch";
-  }
-  fsSync.rmSync(dir, { recursive: true, force: true });
-  return "removed";
-}
-
 async function createTempWorkspace(
   options: TempWorkspaceOptions,
 ): Promise<TempWorkspace> {
@@ -189,9 +155,9 @@ async function createTempWorkspace(
   }
   const identity = { dev: Number(stat.dev), ino: Number(stat.ino) };
   const cleanupIdentity = { dev: stat.dev, ino: stat.ino };
+  const cleanupOwner = new TempWorkspaceCleanupOwner(dir, cleanupIdentity);
   const unregisterTempDir = registerTempPathForExit(dir, {
-    recursive: true,
-    identity: cleanupIdentity,
+    cleanupSync: () => cleanupOwner.cleanupSync(),
   });
   const store = fileStore({ rootDir: dir, private: true, dirMode, mode });
 
@@ -220,14 +186,14 @@ async function createTempWorkspace(
     },
     cleanup: async () => {
       try {
-        return await cleanupWorkspace(dir, cleanupIdentity);
+        return await cleanupOwner.cleanup();
       } finally {
         unregisterTempDir();
       }
     },
     [Symbol.asyncDispose]: async () => {
       try {
-        await cleanupWorkspace(dir, cleanupIdentity);
+        await cleanupOwner.cleanup();
       } finally {
         unregisterTempDir();
       }
@@ -281,9 +247,9 @@ export function tempWorkspaceSync(
   }
   const identity = { dev: Number(stat.dev), ino: Number(stat.ino) };
   const cleanupIdentity = { dev: stat.dev, ino: stat.ino };
+  const cleanupOwner = new TempWorkspaceCleanupOwner(dir, cleanupIdentity);
   const unregisterTempDir = registerTempPathForExit(dir, {
-    recursive: true,
-    identity: cleanupIdentity,
+    cleanupSync: () => cleanupOwner.cleanupSync(),
   });
   const store = fileStoreSync({ rootDir: dir, private: true, dirMode, mode });
 
@@ -323,14 +289,14 @@ export function tempWorkspaceSync(
     },
     cleanup: () => {
       try {
-        return cleanupWorkspaceSync(dir, cleanupIdentity);
+        return cleanupOwner.cleanupSync();
       } finally {
         unregisterTempDir();
       }
     },
     [Symbol.dispose]: () => {
       try {
-        cleanupWorkspaceSync(dir, cleanupIdentity);
+        cleanupOwner.cleanupSync();
       } finally {
         unregisterTempDir();
       }

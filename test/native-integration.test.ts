@@ -15,6 +15,7 @@ import {
 } from "../src/native.js";
 import { publishFileExclusive } from "../src/publish-file.js";
 import { runPinnedWriteHelper } from "../src/pinned-write.js";
+import { tempWorkspace, tempWorkspaceSync } from "../src/temp.js";
 
 let native: NativeBinding | undefined;
 try {
@@ -41,6 +42,18 @@ async function pinnedWriteRoot(
 }
 
 describe.runIf(native)("native filesystem primitives", () => {
+  it.each(["async", "sync"] as const)("removes an unchanged %s workspace in native require mode", async (variant) => {
+    __setNativeLoaderForTest(() => native!);
+    configureFsSafeNative({ mode: "require" });
+    const rootDir = await tempRoot("fs-safe-native-workspace-");
+    const options = { rootDir, prefix: "workspace-" };
+    const workspace = variant === "async" ? await tempWorkspace(options) : tempWorkspaceSync(options);
+    await fs.writeFile(path.join(workspace.dir, "owned.txt"), "owned");
+    expect(await workspace.cleanup()).toBe("removed");
+    expect(await workspace.cleanup()).toBe("missing");
+    expect(await fs.readdir(rootDir)).toEqual([]);
+  });
+
   it("opens beneath a directory descriptor and reports containment and fd identity", async () => {
     const root = await tempRoot("fs-safe-native-open-");
     await fs.mkdir(path.join(root, "nested"));
@@ -90,6 +103,54 @@ describe.runIf(native)("native filesystem primitives", () => {
     }
     await expect(fs.lstat(path.join(root, "source"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(fs.readFile(path.join(root, "target"), "utf8")).resolves.toBe("source");
+  });
+
+  it("renames directories without replacement and preserves existing destinations", async () => {
+    const root = await tempRoot("fs-safe-native-directory-rename-");
+    await fs.mkdir(path.join(root, "source"));
+    await fs.writeFile(path.join(root, "source", "owned.txt"), "owned");
+    await fs.mkdir(path.join(root, "target"));
+    await fs.writeFile(path.join(root, "target", "keep.txt"), "keep");
+    await fs.mkdir(path.join(root, "empty"));
+    const rootFd = fsSync.openSync(root, fsSync.constants.O_RDONLY);
+    try {
+      for (const target of ["target", "empty"]) {
+        expect(() => native!.renameNoReplace(rootFd, "source", rootFd, target)).toThrowError(
+          expect.objectContaining({ code: "EEXIST" }),
+        );
+      }
+      expect(await fs.readFile(path.join(root, "source", "owned.txt"), "utf8")).toBe("owned");
+      expect(await fs.readFile(path.join(root, "target", "keep.txt"), "utf8")).toBe("keep");
+      expect(await fs.readdir(path.join(root, "empty"))).toEqual([]);
+      native!.renameNoReplace(rootFd, "source", rootFd, "quarantine");
+      await expect(fs.lstat(path.join(root, "source"))).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await fs.readFile(path.join(root, "quarantine", "owned.txt"), "utf8")).toBe("owned");
+      native!.renameReplace(rootFd, "quarantine", rootFd, "renamed");
+      await expect(fs.lstat(path.join(root, "quarantine"))).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await fs.readFile(path.join(root, "renamed", "owned.txt"), "utf8")).toBe("owned");
+      expect(() => native!.linkBeneath(rootFd, "renamed", rootFd, "hardlink")).toThrow();
+      await expect(fs.lstat(path.join(root, "hardlink"))).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      fsSync.closeSync(rootFd);
+    }
+  });
+
+  itWin32("rejects junction sources for both native rename variants", async () => {
+    const root = await tempRoot("fs-safe-native-rename-junction-");
+    await fs.mkdir(path.join(root, "real"));
+    await fs.writeFile(path.join(root, "real", "keep.txt"), "keep");
+    await fs.symlink(path.join(root, "real"), path.join(root, "alias"), "junction");
+    const rootFd = fsSync.openSync(root, fsSync.constants.O_RDONLY);
+    try {
+      for (const rename of [native!.renameNoReplace, native!.renameReplace]) {
+        expect(() => rename(rootFd, "alias", rootFd, "renamed")).toThrow();
+      }
+      expect((await fs.lstat(path.join(root, "alias"))).isSymbolicLink()).toBe(true);
+      expect(await fs.readFile(path.join(root, "real", "keep.txt"), "utf8")).toBe("keep");
+      await expect(fs.lstat(path.join(root, "renamed"))).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      fsSync.closeSync(rootFd);
+    }
   });
 
   itWin32("rejects reparse-point directory components", async () => {

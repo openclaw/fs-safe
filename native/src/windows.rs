@@ -536,13 +536,19 @@ pub fn link_beneath(
     set_link_information(source.0, root_handle(target_root_fd)?, target_rel_path)
 }
 
+fn open_source_for_rename(root: HANDLE, path: &str) -> NativeResult<OwnedHandle> {
+    // Omitting both directory type flags admits files and directories, while
+    // nt_open_relative still rejects reparse points and requests delete access.
+    nt_open_relative(root, path, FILE_READ_ATTRIBUTES | DELETE_ACCESS, FILE_OPEN, 0)
+}
+
 pub fn rename_no_replace(
     source_root_fd: i32,
     source_rel_path: &str,
     target_root_fd: i32,
     target_rel_path: &str,
 ) -> NativeResult<()> {
-    let source = open_source_for_metadata(source_root_fd, source_rel_path, DELETE_ACCESS)?;
+    let source = open_source_for_rename(root_handle(source_root_fd)?, source_rel_path)?;
     set_rename_information(
         source.0,
         root_handle(target_root_fd)?,
@@ -558,7 +564,7 @@ pub fn rename_replace(
     target_root_fd: i32,
     target_rel_path: &str,
 ) -> NativeResult<()> {
-    let source = open_source_for_metadata(source_root_fd, source_rel_path, DELETE_ACCESS)?;
+    let source = open_source_for_rename(root_handle(source_root_fd)?, source_rel_path)?;
     set_rename_information(
         source.0,
         root_handle(target_root_fd)?,
@@ -712,6 +718,59 @@ mod tests {
     #[test]
     fn maps_access_denied_to_node_filesystem_eperm() {
         assert_eq!(win_error(ERROR_ACCESS_DENIED, "test").status, "EPERM");
+    }
+
+    #[test]
+    fn renames_directory_sources_without_replacing_destinations() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir()
+            .join(format!("fs-safe-native-win-dir-{}-{nonce}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(root.join("source")).unwrap();
+        fs::write(root.join("source/owned.txt"), b"owned").unwrap();
+        fs::create_dir(root.join("target")).unwrap();
+        fs::write(root.join("target/keep.txt"), b"keep").unwrap();
+        fs::create_dir(root.join("empty")).unwrap();
+        let parent = OpenOptions::new()
+            .read(true)
+            .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS)
+            .open(&root)
+            .unwrap();
+        let parent_handle = parent.as_raw_handle() as HANDLE;
+        let source = open_source_for_rename(parent_handle, "source").unwrap();
+        for target in ["target", "empty"] {
+            let error =
+                set_rename_information(source.0, parent_handle, target, false, "rename directory")
+                    .unwrap_err();
+            assert_eq!(error.status, "EEXIST");
+        }
+        assert_eq!(fs::read(root.join("source/owned.txt")).unwrap(), b"owned");
+        assert_eq!(fs::read(root.join("target/keep.txt")).unwrap(), b"keep");
+        assert_eq!(fs::read_dir(root.join("empty")).unwrap().count(), 0);
+        set_rename_information(source.0, parent_handle, "quarantine", false, "rename directory")
+            .unwrap();
+        assert!(!root.join("source").exists());
+        assert_eq!(fs::read(root.join("quarantine/owned.txt")).unwrap(), b"owned");
+        drop(source);
+        let quarantined = open_source_for_rename(parent_handle, "quarantine").unwrap();
+        set_rename_information(quarantined.0, parent_handle, "renamed", true, "rename directory")
+            .unwrap();
+        drop(quarantined);
+        assert!(!root.join("quarantine").exists());
+        assert_eq!(fs::read(root.join("renamed/owned.txt")).unwrap(), b"owned");
+        // Hard-link metadata opens must remain file-only.
+        assert!(nt_open_relative(
+            parent_handle,
+            "renamed",
+            FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES,
+            FILE_OPEN,
+            FILE_NON_DIRECTORY_FILE,
+        ).is_err());
+        drop(parent);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

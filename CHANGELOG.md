@@ -4,6 +4,7 @@
 
 ### Security and Correctness
 
+- Quarantine async/sync temp workspaces before ownership-checked recursive cleanup, support Windows native directory rename, remove unchanged native-off workspaces through guarded fallback rename, and preserve raced replacements (under a named quarantine artifact on fallback) with `indeterminate` for ambiguous cleanup; retain owners through store-construction failures and exit cleanup.
 - Make durable queue directory creation, claims, acknowledgement, quarantine, marker cleanup, and retirement transitions fsync affected directories and propagate durability failures.
 - Fsync synchronous file-store temps before rename and parent directories after publication, matching the documented durability contract.
 - Reject invalid runtime archive `onFiltered` policies before extraction instead of treating unknown values as entry-skipping opt-in.
