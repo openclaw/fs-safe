@@ -54,6 +54,7 @@ import { stageArchiveFileForExtraction } from "./archive-input.js";
 import { getNativeBinding } from "./native.js";
 import {
   resolveArchiveEntryMode,
+  resolveArchiveFilteredEntryPolicy,
   shouldExtractArchiveEntry,
 } from "./archive-policy.js";
 import { importOptionalTar, normalizeTarParserError } from "./archive-tar-runtime.js";
@@ -318,6 +319,7 @@ async function extractZip(params: {
 }
 
 export async function extractArchive(params: ExtractArchiveOptions): Promise<void> {
+  const onFiltered = resolveArchiveFilteredEntryPolicy(params.onFiltered);
   const kind = params.kind ?? resolveArchiveKind(params.archivePath);
   if (!kind) {
     throw new Error(`unsupported archive: ${params.archivePath}`);
@@ -337,7 +339,7 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
         deadline,
         entryModes: params.entryModes,
         entryFilter: params.entryFilter,
-        onFiltered: params.onFiltered,
+        onFiltered,
       }),
     );
     return;
@@ -376,7 +378,7 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
               stripComponents: params.stripComponents,
               limits,
               entryFilter: params.entryFilter,
-              onFiltered: params.onFiltered,
+              onFiltered,
             });
             const acceptedEntries: Array<{ path: string; mode: number }> = [];
             // A canonical cwd is not enough here: tar can still follow
@@ -485,7 +487,7 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
       deadline,
       entryModes: params.entryModes,
       entryFilter: params.entryFilter,
-      onFiltered: params.onFiltered,
+      onFiltered,
     }),
   );
 }

@@ -12,7 +12,12 @@ import {
 import { writeFileHandleFully } from "../src/archive-input.js";
 import { stageArchiveFileForExtraction } from "../src/archive-input.js";
 import { resolveExtractLimits } from "../src/archive-limits.js";
-import { archiveEntryKindFromTarType, resolveArchiveEntryMode } from "../src/archive-policy.js";
+import {
+  archiveEntryKindFromTarType,
+  resolveArchiveEntryMode,
+  resolveArchiveFilteredEntryPolicy,
+  shouldExtractArchiveEntry,
+} from "../src/archive-policy.js";
 import { readZipCentralDirectoryEntryCount } from "../src/archive-zip-preflight.js";
 
 const { tempRoot } = useTempDirs();
@@ -248,5 +253,15 @@ describe("malformed ZIP central directories", () => {
     expect(archiveEntryKindFromTarType("CharacterDevice")).toBe("other");
     expect(resolveArchiveEntryMode({ kind: "directory", policy: "preserve" })).toBe(0o755);
     expect(resolveArchiveEntryMode({ kind: "file", policy: "preserve" })).toBe(0o644);
+  });
+
+  it.each(["", "unknown-policy"])("rejects invalid filtered-entry policy %j", (onFiltered) => {
+    expect(() => resolveArchiveFilteredEntryPolicy(onFiltered)).toThrow(
+      'archive onFiltered must be "reject-archive" or "skip-entry"',
+    );
+    expect(() => shouldExtractArchiveEntry({
+      entry: { path: "entry", kind: "file", size: 1 },
+      onFiltered: onFiltered as never,
+    })).toThrow(RangeError);
   });
 });

@@ -32,15 +32,26 @@ export function resolveArchiveEntryMode(params: {
   return archivedMode & 0o100 ? 0o755 : 0o644;
 }
 
+export function resolveArchiveFilteredEntryPolicy(
+  value: unknown,
+): ArchiveFilteredEntryPolicy {
+  if (value === undefined || value === "reject-archive") return "reject-archive";
+  if (value === "skip-entry") return "skip-entry";
+  throw new RangeError(
+    'archive onFiltered must be "reject-archive" or "skip-entry"',
+  );
+}
+
 export function shouldExtractArchiveEntry(params: {
   filter?: ArchiveEntryFilter;
   onFiltered?: ArchiveFilteredEntryPolicy;
   entry: Parameters<ArchiveEntryFilter>[0];
 }): boolean {
+  const onFiltered = resolveArchiveFilteredEntryPolicy(params.onFiltered);
   if (!params.filter || params.filter(params.entry) === "extract") {
     return true;
   }
-  if ((params.onFiltered ?? "reject-archive") === "reject-archive") {
+  if (onFiltered === "reject-archive") {
     throw new ArchiveSecurityError(
       "entry-filtered",
       `archive entry rejected by filter: ${formatErrorDetail(params.entry.path)}`,

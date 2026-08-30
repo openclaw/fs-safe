@@ -78,6 +78,33 @@ describe("archive entry policy", () => {
     await expect(fs.access(path.join(skipped, "skip.txt"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it.each(["off", "require"] as const)(
+    "rejects invalid runtime filter policy before extraction in %s mode",
+    async (mode) => {
+      configureFsSafeNative({ mode });
+      const root = await tempRoot(`fs-safe-archive-filter-policy-${mode}-`);
+      const archivePath = path.join(root, "package.zip");
+      const zip = new JSZip();
+      zip.file("skip.txt", "skip");
+      await fs.writeFile(archivePath, await zip.generateAsync({ type: "nodebuffer" }));
+
+      for (const [index, onFiltered] of ["", "unknown-policy"].entries()) {
+        const destination = path.join(root, `destination-${index}`);
+        await fs.mkdir(destination);
+        await expect(extractArchive({
+          archivePath,
+          destDir: destination,
+          timeoutMs: 10_000,
+          entryFilter: () => "skip",
+          onFiltered: onFiltered as never,
+        })).rejects.toThrow(
+          'archive onFiltered must be "reject-archive" or "skip-entry"',
+        );
+        await expect(fs.readdir(destination)).resolves.toEqual([]);
+      }
+    },
+  );
+
   itPosix("applies TAR mode and filtering policy in staging", async () => {
     const root = await tempRoot("fs-safe-tar-policy-");
     const input = path.join(root, "input");
