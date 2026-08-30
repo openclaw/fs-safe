@@ -331,7 +331,7 @@ describe.each(archiveBackends)("%s archive path", (backend) => {
     await expect(fs.readdir(destination)).resolves.toEqual([]);
   });
 
-  it("applies byte budgets after explicitly skipped entries", async () => {
+  it("admits skipped TAR bytes before applying the entry filter", async () => {
     useBackend(backend);
     const root = await tempRoot();
     const archivePath = path.join(root, "filtered-limits.tar");
@@ -345,14 +345,17 @@ describe.each(archiveBackends)("%s archive path", (backend) => {
     );
     await fs.mkdir(destination);
 
-    await extractArchive({
+    const options = {
       archivePath,
       destDir: destination,
       timeoutMs: 10_000,
-      limits: { maxEntryBytes: 1, maxExtractedBytes: 1 },
-      entryFilter: (entry) => (entry.path === "skip" ? "skip" : "extract"),
-      onFiltered: "skip-entry",
-    });
+      entryFilter: (entry: { path: string }) => (entry.path === "skip" ? "skip" as const : "extract" as const),
+      onFiltered: "skip-entry" as const,
+    };
+    await expect(extractArchive({ ...options, limits: { maxEntryBytes: 1, maxExtractedBytes: 1 } }))
+      .rejects.toMatchObject({ code: ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT });
+    await expect(fs.readdir(destination)).resolves.toEqual([]);
+    await extractArchive({ ...options, limits: { maxEntryBytes: 9, maxExtractedBytes: 10 } });
     await expect(fs.readFile(path.join(destination, "keep"), "utf8")).resolves.toBe("k");
   });
 

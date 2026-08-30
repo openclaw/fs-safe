@@ -4,6 +4,7 @@
 
 ### Security and Correctness
 
+- Reject raw TAR directory/link bodies, ambiguous EOF framing, and unsafe numeric sizes consistently before JavaScript or native parsing, including gzip/zstd/bzip2; enforce member budgets and an absolute decoded ceiling covering metadata and zero padding through physical EOF before extraction publication or entry-read success (`archive-decoded-size-exceeds-limit`), while preserving bounded PAX/GNU payloads and requested-entry-only read `maxBytes`.
 - Verify regular-file reads, root-file adapters, archive input staging, and `Root.copyIn()` source checks with exact bigint identities; reject rounded-equal replacements and unresolved Windows identities without changing numeric public `Stats` receipts.
 - Normalize public `maxBytes` budgets across Root, FileStore, secure/secret/regular reads, durable queues, and external output: reject invalid values, preserve explicit zero and positive `Infinity`, and keep configured defaults when callers forward `undefined`.
 - Bind `writeJsonSync()` best-effort file-mode tightening to the staged bigint identity and a reopened single-link regular descriptor, preserving swapped paths without chmodding them.

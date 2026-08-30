@@ -64,12 +64,34 @@ returns a bounded manifest. TypeScript applies the shared path, filter, strip,
 mode, and byte policies and returns an index-bound extraction plan. Rust then
 creates only those planned entries beneath a private staging descriptor.
 
-A fixed-512-byte pass-through meter sits between decompression and the TAR
-crate. It reads only header type and octal/base-256 size fields. It never parses
-metadata content. Oversized GNU long-name/link metadata is rejected before
-buffering; PAX size overrides and GNU sparse entries are rejected as
-unmeterable rather than guessed. The JavaScript node-tar path receives the same
-`maxMetaEntryBytes` value and a matching fixed-header preflight.
+A raw meter sits between decompression and the TAR crate, with matching
+TypeScript admission before node-tar. It parses 512-byte headers and bounded
+local PAX `x` metadata, applying supported effective sizes when framing and
+budgeting the following member. GNU long-name/link `L`/`K` payloads remain
+supported. `maxMetaEntryBytes` bounds each metadata body before allocation;
+unsupported global/old metadata and sparse forms fail closed rather than being
+interpreted as ordinary members. See [bounded local PAX support](archive.md#bounded-local-pax-support).
+
+Every pass receives TypeScript's resolved `maxEntries`, `maxEntryBytes`, and
+`maxExtractedBytes`. Logical member headers count before filtering/stripping;
+metadata records do not. Raw/effective declared member sizes must fit the
+per-entry and cumulative budgets before the meter consumes the body. Bounded
+reads traverse with the default archive limits; public `maxBytes` bounds only
+the requested entry's output. TypeScript also derives an internal decoded cap
+by safely adding `maxExtractedBytes` and `maxArchiveBytes`, clamped to the safe
+integer maximum. Every native pass receives that same cap and charges headers,
+metadata, bodies, padding, EOF blocks, and trailing zeros. It rejects overflow
+with `archive-decoded-size-exceeds-limit`; no ratio policy is implied.
+Extraction and entry reads drain the metered reader through physical EOF after
+TAR iteration. Trailing framing or decoded-limit failures propagate before
+directory modes are finalized, staging is published, or selected bytes return.
+Native reads stop at framing boundaries so a rejected header does not request
+its body from the decoder; codec buffering can still read ahead internally.
+Inspection finishes the complete bounded framing pass before parsing. Directory
+and link bodies, missing two-block EOF, and nonzero trailers reject on both
+backends, as detailed in [raw TAR framing](archive.md#raw-tar-framing). Raw and
+padded sizes above JavaScript's safe-integer maximum reject as invalid framing
+before applying member budgets, including when local PAX overrides the size.
 
 ## Publication and hashing
 

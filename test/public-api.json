@@ -595,6 +595,7 @@
           "archive-header-invalid"
         ],
         "ArchiveLimitErrorCode": [
+          "archive-decoded-size-exceeds-limit",
           "archive-entry-count-exceeds-limit",
           "archive-entry-extracted-size-exceeds-limit",
           "archive-entry-path-components-exceeds-limit",

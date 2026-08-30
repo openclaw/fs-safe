@@ -22,6 +22,7 @@ import {
   assertArchiveEntryPathComponentsWithinLimit,
   createByteBudgetTracker,
   resolveExtractLimits,
+  resolveTarMeterLimits,
   type ArchiveExtractLimits,
 } from "./archive-limits.js";
 import type { ExtractArchiveOptions } from "./archive-options.js";
@@ -86,8 +87,7 @@ export async function extractNativeArchive(params: {
           .inspectArchiveNative(
             stagedArchive.path,
             params.kind,
-            limits.maxEntries,
-            limits.maxMetaEntryBytes,
+            resolveTarMeterLimits(limits),
             limits.maxArchiveBytes,
             params.deadline.signal,
           )
@@ -175,7 +175,7 @@ export async function extractNativeArchive(params: {
             params.kind,
             directory.fd,
             plan,
-            limits.maxMetaEntryBytes,
+            resolveTarMeterLimits(limits),
             params.deadline.signal,
           ).catch(throwMappedNativeError);
         } finally {

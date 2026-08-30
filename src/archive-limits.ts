@@ -5,11 +5,11 @@ export type ArchiveExtractLimits = {
    * Max archive file bytes (compressed).
    */
   maxArchiveBytes?: number;
-  /** Max number of extracted entries (files + dirs). */
+  /** Max logical archive entries, including skipped/stripped members. */
   maxEntries?: number;
-  /** Max extracted bytes (sum of all files). */
+  /** Max extracted bytes; TAR admits all declared member bytes before filtering. */
   maxExtractedBytes?: number;
-  /** Max extracted bytes for a single file entry. */
+  /** Max entry bytes; TAR checks each declared member size before filtering. */
   maxEntryBytes?: number;
   /** Max bytes in one PAX, GNU long-name, or related TAR metadata entry. */
   maxMetaEntryBytes?: number;
@@ -29,6 +29,7 @@ export const ARCHIVE_LIMIT_ERROR_CODE = {
   ENTRY_COUNT_EXCEEDS_LIMIT: "archive-entry-count-exceeds-limit",
   ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT: "archive-entry-extracted-size-exceeds-limit",
   EXTRACTED_SIZE_EXCEEDS_LIMIT: "archive-extracted-size-exceeds-limit",
+  DECODED_SIZE_EXCEEDS_LIMIT: "archive-decoded-size-exceeds-limit",
   META_ENTRY_SIZE_EXCEEDS_LIMIT: "archive-meta-entry-size-exceeds-limit",
   MANIFEST_SIZE_EXCEEDS_LIMIT: "archive-manifest-size-exceeds-limit",
   ENTRY_PATH_COMPONENTS_EXCEEDS_LIMIT: "archive-entry-path-components-exceeds-limit",
@@ -43,6 +44,7 @@ const ARCHIVE_LIMIT_ERROR_MESSAGE = {
   [ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT]:
     "archive entry extracted size exceeds limit",
   [ARCHIVE_LIMIT_ERROR_CODE.EXTRACTED_SIZE_EXCEEDS_LIMIT]: "archive extracted size exceeds limit",
+  [ARCHIVE_LIMIT_ERROR_CODE.DECODED_SIZE_EXCEEDS_LIMIT]: "archive decoded size exceeds limit",
   [ARCHIVE_LIMIT_ERROR_CODE.META_ENTRY_SIZE_EXCEEDS_LIMIT]:
     "archive metadata entry size exceeds limit",
   [ARCHIVE_LIMIT_ERROR_CODE.MANIFEST_SIZE_EXCEEDS_LIMIT]:
@@ -62,6 +64,23 @@ export class ArchiveLimitError extends Error {
 }
 
 export type ResolvedArchiveExtractLimits = Required<ArchiveExtractLimits>;
+
+export type TarMeterLimits = Pick<ResolvedArchiveExtractLimits,
+  "maxEntries" | "maxEntryBytes" | "maxExtractedBytes" | "maxMetaEntryBytes"> & { maxDecodedBytes: number };
+
+export function resolveTarMeterLimits(options?: ArchiveExtractLimits): TarMeterLimits {
+  const limits = resolveExtractLimits(options);
+  const payload = Math.min(limits.maxExtractedBytes, Number.MAX_SAFE_INTEGER);
+  const overhead = Math.min(limits.maxArchiveBytes, Number.MAX_SAFE_INTEGER);
+  return {
+    maxEntries: limits.maxEntries,
+    maxEntryBytes: limits.maxEntryBytes,
+    maxExtractedBytes: limits.maxExtractedBytes,
+    maxMetaEntryBytes: limits.maxMetaEntryBytes,
+    maxDecodedBytes: payload > Number.MAX_SAFE_INTEGER - overhead
+      ? Number.MAX_SAFE_INTEGER : payload + overhead,
+  };
+}
 
 function clampLimit(value: number | undefined): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value)) {

@@ -22,6 +22,7 @@ import {
   createByteBudgetTracker,
   createExtractBudgetTransform,
   resolveExtractLimits,
+  resolveTarMeterLimits,
   type ArchiveExtractLimits,
 } from "./archive-limits.js";
 import { resolveArchiveKind } from "./archive-kind.js";
@@ -363,7 +364,7 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
       try {
         await preflightTarMetadata({
           archivePath: stagedArchive.path,
-          maxMetaEntryBytes: limits.maxMetaEntryBytes,
+          limits: resolveTarMeterLimits(limits),
           signal: deadline.signal,
         });
         deadline.check();

@@ -10,7 +10,7 @@ function loadNative(): NativeBinding | undefined {
     if (!target) throw new Error("no native target for PAX tests");
     return createRequire(import.meta.url)(`../../native/${target.artifact}`) as NativeBinding;
   } catch (error) {
-    if (process.env.FS_SAFE_PAX_REQUIRE_NATIVE === "1") throw error;
+    if (process.env.FS_SAFE_PAX_REQUIRE_NATIVE === "1" || process.env.FS_SAFE_NATIVE_MODE === "require") throw error;
     return undefined; // Like the existing native suite, JS-only CI can omit Rust.
   }
 }
