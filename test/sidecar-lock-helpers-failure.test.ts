@@ -82,8 +82,10 @@ describe("sidecar lock helper failure handling", () => {
     const second = path.join(root, "second");
     await fs.writeFile(first, "one");
     await fs.writeFile(second, "two");
-    const firstStat = await fs.stat(first);
-    const secondStat = await fs.stat(second);
+    // Windows can report zero as an unknown file identity, so use known,
+    // distinct receipts for this pure snapshot-comparison unit test.
+    const firstStat = Object.assign(await fs.stat(first), { dev: 1, ino: 1 });
+    const secondStat = Object.assign(await fs.stat(second), { dev: 2, ino: 2 });
     expect(sidecarLockSnapshotMatches({ payload: null, stat: secondStat }, { payload: null, stat: firstStat })).toBe(false);
     expect(sidecarLockSnapshotMatches({ payload: null, raw: "one" }, { payload: null, raw: "one" })).toBe(true);
     expect(sidecarLockSnapshotMatches({ payload: null, raw: "two" }, { payload: null, raw: "one" })).toBe(false);

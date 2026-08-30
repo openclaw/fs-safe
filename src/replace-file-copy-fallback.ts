@@ -1,7 +1,8 @@
-import syncFs, { type Stats } from "node:fs";
+import syncFs, { type BigIntStats, type Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
+import { readOwnedCopySource, readOwnedCopySourceSync } from "./replace-file-copy-source.js";
 
 export type ReplaceFileDestinationHardlinkPolicy = "reject";
 export type ReplaceFileCopyFallbackRestorePolicy = "restore-original" | "none";
@@ -309,22 +310,17 @@ export async function copyFallbackReplace(params: {
   destinationHardlinks?: ReplaceFileDestinationHardlinkPolicy;
   restore: ReplaceFileCopyFallbackRestorePolicy;
   maxRestoreBytes?: number;
+  expectedSourceIdentity?: BigIntStats;
   sync: boolean;
 }): Promise<void> {
-  const sourcePreview = await params.fsModule.lstat(params.src);
-  if (sourcePreview.isSymbolicLink() || !sourcePreview.isFile()) {
-    throw new Error(`Refusing copy fallback from non-file source: ${params.src}`);
-  }
-  const sourceHandle = await params.fsModule.open(params.src, OPEN_READ_FLAGS);
+  const source = await readOwnedCopySource({
+    fsModule: params.fsModule,
+    src: params.src,
+    expectedIdentity: params.expectedSourceIdentity,
+  });
+  const { replacement } = source;
   let destHandle: FileHandle | null = null;
   try {
-    const sourceStat = await sourceHandle.stat();
-    const sourceCurrent = await params.fsModule.lstat(params.src);
-    if (!sourceStat.isFile() || sourceCurrent.isSymbolicLink() || !sameFileIdentity(sourceStat, sourceCurrent)) {
-      throw new FsSafeError("path-mismatch", `Copy fallback source changed while opening: ${params.src}`);
-    }
-    const replacement = await sourceHandle.readFile();
-
     if (params.restore === "restore-original") {
       const pinned = await openPinnedDestination(
         params.fsModule,
@@ -337,7 +333,7 @@ export async function copyFallbackReplace(params: {
           destHandle,
           replacement,
           params.maxRestoreBytes!,
-          sourceStat.mode,
+          source.mode,
         );
       }
     }
@@ -361,17 +357,16 @@ export async function copyFallbackReplace(params: {
       destHandle = await params.fsModule.open(
         params.dest,
         OPEN_WRITE_EXCLUSIVE_FLAGS,
-        sourceStat.mode & 0o777,
+        source.mode & 0o777,
       );
       await destHandle.writeFile(replacement);
-      await destHandle.chmod(sourceStat.mode);
+      await destHandle.chmod(source.mode);
       if (params.sync) {
         await destHandle.sync();
       }
     }
   } finally {
     await destHandle?.close().catch(() => undefined);
-    await sourceHandle.close().catch(() => undefined);
   }
 }
 
@@ -382,23 +377,18 @@ export function copyFallbackReplaceSync(params: {
   destinationHardlinks?: ReplaceFileDestinationHardlinkPolicy;
   restore: ReplaceFileCopyFallbackRestorePolicy;
   maxRestoreBytes?: number;
+  expectedSourceIdentity?: BigIntStats;
   fchmodSync?: (fd: number, mode: number) => void;
   sync: boolean;
 }): void {
-  const sourcePreview = params.fsModule.lstatSync(params.src);
-  if (sourcePreview.isSymbolicLink() || !sourcePreview.isFile()) {
-    throw new Error(`Refusing copy fallback from non-file source: ${params.src}`);
-  }
-  const sourceFd = params.fsModule.openSync(params.src, OPEN_READ_FLAGS);
+  const source = readOwnedCopySourceSync({
+    fsModule: params.fsModule,
+    src: params.src,
+    expectedIdentity: params.expectedSourceIdentity,
+  });
+  const { replacement } = source;
   let destFd: number | undefined;
   try {
-    const sourceStat = params.fsModule.fstatSync(sourceFd);
-    const sourceCurrent = params.fsModule.lstatSync(params.src);
-    if (!sourceStat.isFile() || sourceCurrent.isSymbolicLink() || !sameFileIdentity(sourceStat, sourceCurrent)) {
-      throw new FsSafeError("path-mismatch", `Copy fallback source changed while opening: ${params.src}`);
-    }
-    const replacement = readBoundedSync(params.fsModule, sourceFd, Number.MAX_SAFE_INTEGER);
-
     if (params.restore === "restore-original") {
       const pinned = openPinnedDestinationSync(
         params.fsModule,
@@ -412,7 +402,7 @@ export function copyFallbackReplaceSync(params: {
           destFd,
           replacement,
           params.maxRestoreBytes!,
-          sourceStat.mode,
+          source.mode,
           params.fchmodSync,
         );
       }
@@ -439,10 +429,10 @@ export function copyFallbackReplaceSync(params: {
       destFd = params.fsModule.openSync(
         params.dest,
         OPEN_WRITE_EXCLUSIVE_FLAGS,
-        sourceStat.mode & 0o777,
+        source.mode & 0o777,
       );
       writeAllSync(params.fsModule, destFd, replacement);
-      params.fchmodSync?.(destFd, sourceStat.mode);
+      params.fchmodSync?.(destFd, source.mode);
       if (params.sync) {
         params.fsModule.fsyncSync(destFd);
       }
@@ -454,11 +444,6 @@ export function copyFallbackReplaceSync(params: {
       } catch {
         // Best-effort close after fallback replacement.
       }
-    }
-    try {
-      params.fsModule.closeSync(sourceFd);
-    } catch {
-      // Best-effort close after fallback replacement.
     }
   }
 }

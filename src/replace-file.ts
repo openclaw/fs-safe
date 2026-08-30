@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
-import syncFs from "node:fs";
-import type { Stats } from "node:fs";
+import syncFs, { type BigIntStats, type Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
@@ -20,8 +19,15 @@ import {
   writeTempFile,
   writeTempFileSync,
 } from "./replace-file-descriptor.js";
+import {
+  atomicExpectedContentHash,
+  type RenameIdentityPolicy,
+  validateRenameIdentity,
+  withAtomicRenameIdentityLock,
+  withAtomicRenameIdentityLockSync,
+} from "./replace-file-rename-policy.js";
+import { AsyncAtomicTempOwner, SyncAtomicTempOwner } from "./replace-file-temp-owner.js";
 import { assertSafePathPrefix } from "./safe-path-segment.js";
-import { registerTempPathForExit } from "./temp-cleanup.js";
 import { sleep, sleepSync } from "./timing.js";
 import { serializePathWrite } from "./write-queue.js";
 
@@ -68,6 +74,7 @@ export type ReplaceFileAtomicSyncFileSystem = Pick<
 };
 
 export type {
+  RenameIdentityPolicy,
   ReplaceFileAtomicRestoreCleanup,
   ReplaceFileAtomicRestoreFailureDetails,
   ReplaceFileCopyFallbackRestorePolicy,
@@ -87,6 +94,8 @@ type ReplaceFileAtomicBaseOptions = {
   copyFallbackRestore?: ReplaceFileCopyFallbackRestorePolicy;
   maxRestoreBytes?: number;
   destinationHardlinks?: ReplaceFileDestinationHardlinkPolicy;
+  /** Strict by default; locked content verification is an explicit FUSE compatibility policy. */
+  renameIdentity?: RenameIdentityPolicy;
   syncTempFile?: boolean;
   syncParentDir?: boolean;
   throwOnCleanupError?: boolean;
@@ -94,11 +103,13 @@ type ReplaceFileAtomicBaseOptions = {
 
 export type ReplaceFileAtomicOptions = ReplaceFileAtomicBaseOptions & {
   fileSystem?: ReplaceFileAtomicFileSystem;
+  /** Runs while the exact staged file is retained; replacing or hardlinking it is rejected. */
   beforeRename?: (params: { filePath: string; tempPath: string }) => Promise<void>;
 };
 
 export type ReplaceFileAtomicSyncOptions = ReplaceFileAtomicBaseOptions & {
   fileSystem?: ReplaceFileAtomicSyncFileSystem;
+  /** Runs while the exact staged file is retained; replacing or hardlinking it is rejected. */
   beforeRename?: (params: { filePath: string; tempPath: string }) => void;
 };
 
@@ -125,9 +136,12 @@ async function renameWithRetry(params: {
   copyFallbackRestore: ReplaceFileCopyFallbackRestorePolicy;
   maxRestoreBytes?: number;
   destinationHardlinks?: ReplaceFileDestinationHardlinkPolicy;
+  sourceIdentity: BigIntStats;
+  assertSourceCurrent: () => Promise<void>;
   syncFallback: boolean;
 }): Promise<ReplaceFileAtomicResult> {
   for (let attempt = 0; attempt <= params.maxRetries; attempt++) {
+    await params.assertSourceCurrent();
     try {
       await params.fsModule.rename(params.src, params.dest);
       return { method: "rename" };
@@ -144,6 +158,7 @@ async function renameWithRetry(params: {
           destinationHardlinks: params.destinationHardlinks,
           restore: params.copyFallbackRestore,
           maxRestoreBytes: params.maxRestoreBytes,
+          expectedSourceIdentity: params.sourceIdentity,
           sync: params.syncFallback,
         });
         return { method: "copy-fallback" };
@@ -164,10 +179,13 @@ function renameWithRetrySync(params: {
   copyFallbackRestore: ReplaceFileCopyFallbackRestorePolicy;
   maxRestoreBytes?: number;
   destinationHardlinks?: ReplaceFileDestinationHardlinkPolicy;
+  sourceIdentity: BigIntStats;
+  assertSourceCurrent: () => void;
   fchmodSync?: SyncFchmod;
   syncFallback: boolean;
 }): ReplaceFileAtomicResult {
   for (let attempt = 0; attempt <= params.maxRetries; attempt++) {
+    params.assertSourceCurrent();
     try {
       params.fsModule.renameSync(params.src, params.dest);
       return { method: "rename" };
@@ -184,6 +202,7 @@ function renameWithRetrySync(params: {
           destinationHardlinks: params.destinationHardlinks,
           restore: params.copyFallbackRestore,
           maxRestoreBytes: params.maxRestoreBytes,
+          expectedSourceIdentity: params.sourceIdentity,
           fchmodSync: params.fchmodSync,
           sync: params.syncFallback,
         });
@@ -290,36 +309,23 @@ function syncDirectoryBestEffortSync(
   }
 }
 
-async function cleanupTempFile(params: {
-  fsModule: ReplaceFileAtomicFileSystem["promises"];
-  tempPath: string;
-  originalError?: unknown;
-  throwOnCleanupError: boolean;
-}): Promise<boolean> {
-  const cleanupError = await params.fsModule
-    .rm(params.tempPath, { force: true })
-    .catch((error) => error);
-  if (!cleanupError) return true;
-  if (params.throwOnCleanupError) {
-    if (params.originalError !== undefined) {
-      throw new Error(
-        `Atomic file replace failed (${String(params.originalError)}); cleanup also failed (${String(cleanupError)})`,
-        { cause: params.originalError },
-      );
-    }
-    throw cleanupError;
-  }
-  return false;
-}
-
 export async function replaceFileAtomic(
   options: ReplaceFileAtomicOptions,
 ): Promise<ReplaceFileAtomicResult> {
   const filePath = options.filePath;
   validateReplaceFilePath(filePath);
   validateRestoreOptions(options);
+  validateRenameIdentity(options.renameIdentity);
   return await serializePathWrite(path.resolve(filePath), async () => {
-    return await replaceFileAtomicUnserialized(options);
+    if (options.renameIdentity !== "verify-content-with-lock") {
+      return await replaceFileAtomicUnserialized(options);
+    }
+    await (options.fileSystem?.promises ?? fs).mkdir(path.dirname(filePath), {
+      recursive: true,
+      mode: options.dirMode ?? 0o700,
+    });
+    return await withAtomicRenameIdentityLock(filePath, async () =>
+      await replaceFileAtomicUnserialized(options));
   });
 }
 
@@ -331,24 +337,27 @@ async function replaceFileAtomicUnserialized(
   const dir = path.dirname(filePath);
   const dirMode = options.dirMode ?? 0o700;
   const mode = await resolveMode(options);
+  const expectedHash = atomicExpectedContentHash(options.renameIdentity, options.content);
   const tempPath = buildReplaceTempPath(filePath, options.tempPrefix);
-  const unregisterTempPath = registerTempPathForExit(tempPath);
-  let tempExists = false;
+  const tempOwner = new AsyncAtomicTempOwner(tempPath);
   let originalError: unknown;
   try {
     await fsModule.mkdir(dir, { recursive: true, mode: dirMode });
     await applyDirectoryMode({ fsModule, dirPath: dir, mode: dirMode });
-    tempExists = true;
-    unregisterTempPath.setIdentity(await writeTempFile({
+    tempOwner.start();
+    tempOwner.adopt(await writeTempFile({
       fsModule,
       tempPath,
       content: options.content,
       mode,
       sync: options.syncTempFile === true,
+      onIdentity: tempOwner.onIdentity,
     }));
+    await tempOwner.assertCurrent(fsModule);
     if (options.beforeRename) {
       await options.beforeRename({ filePath, tempPath });
     }
+    await tempOwner.assertCurrent(fsModule);
     await assertDestinationHardlinkPolicy(fsModule, filePath, options.destinationHardlinks);
     const result = await renameWithRetry({
       fsModule,
@@ -360,30 +369,32 @@ async function replaceFileAtomicUnserialized(
       copyFallbackRestore: options.copyFallbackRestore ?? "none",
       maxRestoreBytes: options.maxRestoreBytes,
       destinationHardlinks: options.destinationHardlinks,
+      sourceIdentity: tempOwner.identity,
+      assertSourceCurrent: () => tempOwner.assertCurrent(fsModule),
       syncFallback: options.syncTempFile === true,
     });
     if (result.method === "rename") {
-      tempExists = false;
-      unregisterTempPath();
+      tempOwner.markRenamed();
+      await tempOwner.assertPublished(fsModule, filePath, expectedHash);
+    } else {
+      await tempOwner.assertCurrent(fsModule);
     }
     if (options.syncParentDir) {
       await syncDirectoryBestEffort(fsModule, dir);
+    }
+    if (result.method === "rename") {
+      await tempOwner.assertPublished(fsModule, filePath, expectedHash);
     }
     return result;
   } catch (error) {
     originalError = error;
     throw error;
   } finally {
-    let tempRemoved = !tempExists;
-    if (tempExists) {
-      tempRemoved = await cleanupTempFile({
-        fsModule,
-        tempPath,
-        originalError,
-        throwOnCleanupError: options.throwOnCleanupError === true,
-      });
-    }
-    if (tempRemoved) unregisterTempPath();
+    await tempOwner.finish({
+      fsModule,
+      originalError,
+      throwOnCleanupError: options.throwOnCleanupError === true,
+    });
   }
 }
 
@@ -393,10 +404,27 @@ export function replaceFileAtomicSync(
   const filePath = options.filePath;
   validateReplaceFilePath(filePath);
   validateRestoreOptions(options);
+  validateRenameIdentity(options.renameIdentity);
+  if (options.renameIdentity !== "verify-content-with-lock") {
+    return replaceFileAtomicSyncUnserialized(options);
+  }
+  (options.fileSystem ?? syncFs).mkdirSync(path.dirname(filePath), {
+    recursive: true,
+    mode: options.dirMode ?? 0o700,
+  });
+  return withAtomicRenameIdentityLockSync(filePath, () =>
+    replaceFileAtomicSyncUnserialized(options));
+}
+
+function replaceFileAtomicSyncUnserialized(
+  options: ReplaceFileAtomicSyncOptions,
+): ReplaceFileAtomicResult {
+  const filePath = options.filePath;
   const fsModule = options.fileSystem ?? syncFs;
   const dir = path.dirname(filePath);
   const dirMode = options.dirMode ?? 0o700;
   const mode = resolveModeSync(options);
+  const expectedHash = atomicExpectedContentHash(options.renameIdentity, options.content);
   const fchmodSync = options.fileSystem?.fchmodSync ?? (
     options.fileSystem === undefined ? syncFs.fchmodSync : undefined
   );
@@ -409,24 +437,26 @@ export function replaceFileAtomicSync(
     throw missingFchmodSyncError();
   }
   const tempPath = buildReplaceTempPath(filePath, options.tempPrefix);
-  const unregisterTempPath = registerTempPathForExit(tempPath);
-  let tempExists = false;
+  const tempOwner = new SyncAtomicTempOwner(tempPath);
   let originalError: unknown;
   try {
     fsModule.mkdirSync(dir, { recursive: true, mode: dirMode });
     applyDirectoryModeSync({ fsModule, dirPath: dir, mode: dirMode, fchmodSync });
-    tempExists = true;
-    unregisterTempPath.setIdentity(writeTempFileSync({
+    tempOwner.start();
+    tempOwner.adopt(writeTempFileSync({
       fsModule,
       tempPath,
       content: options.content,
       mode,
       fchmodSync,
       sync: options.syncTempFile === true,
+      onIdentity: tempOwner.onIdentity,
     }));
+    tempOwner.assertCurrent(fsModule);
     if (options.beforeRename) {
       options.beforeRename({ filePath, tempPath });
     }
+    tempOwner.assertCurrent(fsModule);
     assertDestinationHardlinkPolicySync(fsModule, filePath, options.destinationHardlinks);
     const result = renameWithRetrySync({
       fsModule,
@@ -438,39 +468,32 @@ export function replaceFileAtomicSync(
       copyFallbackRestore: options.copyFallbackRestore ?? "none",
       maxRestoreBytes: options.maxRestoreBytes,
       destinationHardlinks: options.destinationHardlinks,
+      sourceIdentity: tempOwner.identity,
+      assertSourceCurrent: () => tempOwner.assertCurrent(fsModule),
       fchmodSync,
       syncFallback: options.syncTempFile === true,
     });
     if (result.method === "rename") {
-      tempExists = false;
-      unregisterTempPath();
+      tempOwner.markRenamed();
+      tempOwner.assertPublished(fsModule, filePath, expectedHash);
+    } else {
+      tempOwner.assertCurrent(fsModule);
     }
     if (options.syncParentDir) {
       syncDirectoryBestEffortSync(fsModule, dir);
+    }
+    if (result.method === "rename") {
+      tempOwner.assertPublished(fsModule, filePath, expectedHash);
     }
     return result;
   } catch (error) {
     originalError = error;
     throw error;
   } finally {
-    let tempRemoved = !tempExists;
-    if (tempExists) {
-      try {
-        fsModule.rmSync(tempPath, { force: true });
-        tempRemoved = true;
-      } catch (cleanupError) {
-        if (options.throwOnCleanupError) {
-          if (originalError !== undefined) {
-            throw new Error(
-              `Atomic file replace failed (${String(originalError)}); cleanup also failed (${String(cleanupError)})`,
-              { cause: originalError },
-            );
-          }
-          throw cleanupError;
-        }
-        // The temp file is best-effort cleanup after write failure.
-      }
-    }
-    if (tempRemoved) unregisterTempPath();
+    tempOwner.finish({
+      fsModule,
+      originalError,
+      throwOnCleanupError: options.throwOnCleanupError === true,
+    });
   }
 }

@@ -48,6 +48,7 @@ type ReplaceFileAtomicOptions = {
   copyFallbackRestore?: "restore-original" | "none"; // default: "none"
   maxRestoreBytes?: number;          // required with "restore-original"
   destinationHardlinks?: "reject"; // default unset (no destination nlink policy)
+  renameIdentity?: "strict" | "verify-content-with-lock"; // default "strict"
   syncTempFile?: boolean;           // fsync(temp) before rename, or the final file after copy fallback; default false
   syncParentDir?: boolean;          // fsync(parent) after rename, POSIX only; default false
   throwOnCleanupError?: boolean;    // report temp cleanup failure; default false
@@ -58,7 +59,7 @@ type ReplaceFileAtomicOptions = {
 
 ### `beforeRename`
 
-Runs after the temp file is fully written and before the rename. Use it to take a backup snapshot, capture the about-to-be-replaced contents, or notify an observer:
+Runs after the temp file is fully written and before the rename. Use it to take a backup snapshot, capture the about-to-be-replaced contents, or notify an observer. The helper retains the staged descriptor and exact bigint identity across the hook; replacing, deleting, hardlinking, or changing the temp entry to a non-regular file is rejected before publication:
 
 ```ts
 await replaceFileAtomic({
@@ -70,7 +71,15 @@ await replaceFileAtomic({
 });
 ```
 
-If `beforeRename` throws, the rename is skipped and the temp file is removed — the destination is unchanged.
+If `beforeRename` throws, the rename is skipped and the owned temp file is removed — the destination is unchanged. Cleanup unlinks only the exact admitted single-link file; a substitute observed at the temp name is preserved and removed from cleanup authority. The same identity is rechecked before every rename retry, when entering copy fallback, and at the final name after rename. A post-rename verification failure reports the race without rolling back or deleting the published name.
+
+Identity checks and pathname rename/unlink remain separate syscalls, not atomic conditional mutations. Use an approved writable parent plus cooperative locking or OS isolation when arbitrary concurrent namespace mutation is in scope.
+
+### FUSE mounts and unstable rename identity
+
+Strict source-to-destination identity is the default. Some FUSE mounts assign a different inode to the destination during rename even without concurrency. Set `renameIdentity: "verify-content-with-lock"` to accept that boundary only when the re-opened no-follow destination has the exact requested SHA-256 content under an exclusive hashed sidecar lock in the destination parent. The newly accepted descriptor and identity remain pinned through parent sync and final verification. The synchronous helper provides the same policy with the synchronous lock implementation.
+
+This is the same explicit weaker contract available on `Root` writes: cooperating writers are serialized, stale locks fail closed, and mismatched content is rejected after publication without rollback. A same-authority actor that ignores the advisory lock can still substitute another file with identical bytes, so do not use this compatibility policy in directories writable by untrusted same-UID processes.
 
 ### `EPERM` and copy fallback
 

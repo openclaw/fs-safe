@@ -1,6 +1,7 @@
 export {
   replaceFileAtomic,
   replaceFileAtomicSync,
+  type RenameIdentityPolicy,
   type ReplaceFileAtomicFileSystem,
   type ReplaceFileAtomicOptions,
   type ReplaceFileAtomicRestoreCleanup,
