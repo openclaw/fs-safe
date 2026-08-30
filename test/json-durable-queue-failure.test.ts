@@ -14,10 +14,12 @@ import {
   resolveJsonDurableQueueEntryPaths,
   unlinkBestEffort,
 } from "../src/json-durable-queue.js";
+import { configureFsSafeNative } from "../src/native-config.js";
 
 const { tempRoot } = useTempDirs();
 
 afterEach(() => {
+  configureFsSafeNative({ mode: "auto" });
   vi.restoreAllMocks();
 });
 
@@ -195,8 +197,9 @@ describe("durable JSON queue failure recovery", () => {
     const root = await tempRoot("fs-safe-queue-ack-error-");
     const paths = resolveJsonDurableQueueEntryPaths(root, "job");
     await fs.writeFile(paths.jsonPath, "{}");
-    const denied = Object.assign(new Error("rename denied"), { code: "EACCES" });
-    vi.spyOn(fs, "rename").mockRejectedValueOnce(denied);
+    const denied = Object.assign(new Error("publication denied"), { code: "EACCES" });
+    configureFsSafeNative({ mode: "off" });
+    vi.spyOn(fs, "link").mockRejectedValueOnce(denied);
     await expect(ackJsonDurableQueueEntry(paths)).rejects.toBe(denied);
     expect(fsSync.existsSync(paths.jsonPath)).toBe(true);
   });

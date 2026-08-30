@@ -51,6 +51,27 @@ async function unlinkIfCurrent(filePath: string, expected: Awaited<ReturnType<ty
   await syncDirectoryBestEffort(path.dirname(filePath));
 }
 
+async function moveDurableQueueFileExclusiveUnchecked(
+  sourcePath: string,
+  targetPath: string,
+): Promise<void> {
+  const sourceIdentity = await fs.lstat(sourcePath, { bigint: true });
+  if (
+    sourceIdentity.isSymbolicLink() ||
+    !sourceIdentity.isFile() ||
+    sourceIdentity.nlink > 1n
+  ) {
+    throw new Error("queue entry is not an owned regular file");
+  }
+  await publishFileExclusive({
+    sourcePath,
+    targetPath,
+    expectedSourceIdentity: sourceIdentity,
+    strategy: "link-or-copy",
+  });
+  await unlinkIfCurrent(sourcePath, sourceIdentity);
+}
+
 export async function claimDurableQueueEntry(
   paths: DurableQueueEntryPathsLike,
 ): Promise<string | null> {
@@ -59,9 +80,8 @@ export async function claimDurableQueueEntry(
     if (await regularQueueFileExists(processingPath)) return processingPath;
     try {
       const source = await fs.lstat(paths.jsonPath);
-      if (!source.isFile() || source.isSymbolicLink()) return null;
-      await fs.rename(paths.jsonPath, processingPath);
-      await syncDirectoryBestEffort(path.dirname(paths.jsonPath));
+      if (source.isSymbolicLink() || !source.isFile()) return null;
+      await moveDurableQueueFileExclusiveUnchecked(paths.jsonPath, processingPath);
       return processingPath;
     } catch (error) {
       if (getErrorCode(error) === "ENOENT") {
@@ -80,21 +100,7 @@ export async function claimDurableQueueEntry(
 
 async function moveDurableQueueFileExclusive(sourcePath: string, targetPath: string): Promise<void> {
   await serializePathWrite(sourcePath, async () => {
-    const sourceIdentity = await fs.lstat(sourcePath, { bigint: true });
-    if (
-      sourceIdentity.isSymbolicLink() ||
-      !sourceIdentity.isFile() ||
-      sourceIdentity.nlink > 1n
-    ) {
-      throw new Error("queue entry is not an owned regular file");
-    }
-    await publishFileExclusive({
-      sourcePath,
-      targetPath,
-      expectedSourceIdentity: sourceIdentity,
-      strategy: "link-or-copy",
-    });
-    await unlinkIfCurrent(sourcePath, sourceIdentity);
+    await moveDurableQueueFileExclusiveUnchecked(sourcePath, targetPath);
   });
 }
 

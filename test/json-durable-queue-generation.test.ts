@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ackJsonDurableQueueEntry,
   ensureJsonDurableQueueDirs,
@@ -10,9 +10,15 @@ import {
   resolveJsonDurableQueueEntryPaths,
   writeJsonDurableQueueEntry,
 } from "../src/json-durable-queue.js";
+import { configureFsSafeNative } from "../src/native-config.js";
 import { useTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useTempDirs();
+
+afterEach(() => {
+  configureFsSafeNative({ mode: "auto" });
+  vi.restoreAllMocks();
+});
 
 async function queueFixture() {
   const root = await tempRoot("fs-safe-queue-generation-");
@@ -32,6 +38,22 @@ async function writeGeneration(filePath: string, generation: number): Promise<vo
 }
 
 describe("durable queue generation ownership", () => {
+  it("does not overwrite a concurrent processing claim", async () => {
+    const { paths } = await queueFixture();
+    await writeGeneration(paths.jsonPath, 2);
+    configureFsSafeNative({ mode: "off" });
+    const link = fs.link.bind(fs);
+    vi.spyOn(fs, "link").mockImplementationOnce(async (sourcePath, targetPath) => {
+      await writeGeneration(targetPath.toString(), 1);
+      return await link(sourcePath, targetPath);
+    });
+
+    await expect(loadJsonDurableQueueEntry({ paths, tempPrefix: "queue" })).resolves.toEqual({ generation: 1 });
+
+    await expect(fs.readFile(paths.jsonPath, "utf8")).resolves.toContain('"generation": 2');
+    await expect(fs.readFile(paths.processingPath!, "utf8")).resolves.toContain('"generation": 1');
+  });
+
   it("acknowledges only the generation claimed by load", async () => {
     const { paths } = await queueFixture();
     await writeGeneration(paths.jsonPath, 1);
