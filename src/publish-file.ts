@@ -17,6 +17,7 @@ import {
 } from "./file-identity.js";
 import { syncNativeFileBestEffort } from "./native-operations.js";
 import { getNativeBinding, requireNativeBinding, type NativeBinding } from "./native.js";
+import { resolveReadOpenFlags } from "./read-open-flags.js";
 import {
   directorySyncFailure,
   publicationFailure,
@@ -67,12 +68,7 @@ export function isHardlinkFallbackError(error: unknown): boolean {
 }
 
 function sourceOpenFlags(): number {
-  return (
-    fsSync.constants.O_RDONLY |
-    (process.platform !== "win32" && typeof fsSync.constants.O_NOFOLLOW === "number"
-      ? fsSync.constants.O_NOFOLLOW
-      : 0)
-  );
+  return resolveReadOpenFlags();
 }
 
 function directoryOpenFlags(): number {

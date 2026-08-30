@@ -90,7 +90,7 @@ target fails with `FsSafeError("path-mismatch")`.
 ## Exclusive file publication
 
 `publishFileExclusive()` materializes one file without clobbering an existing
-target. It pins the source with `O_NOFOLLOW`, optionally verifies
+target. It pins the source with nonblocking `O_NOFOLLOW`, optionally verifies
 `expectedSourceIdentity`, tries a hardlink first, then synchronizes the target
 parent directory.
 

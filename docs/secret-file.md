@@ -90,7 +90,9 @@ the same pinned-handle validation, byte cap, trimming, error codes, and strict
 versus missing-is-undefined naming semantics.
 
 Both sync and async readers compare lossless bigint identities from the preview,
-opened descriptor, resolved target, and current input path before reading. An
+opened descriptor, resolved target, and current input path before reading. POSIX
+opens are nonblocking, so a raced FIFO is rejected by descriptor type instead of
+waiting for a writer. An
 allowed symlink must still point to the opened file. On Windows, a zero device
 or inode is unverified: that inspection is retried once without reopening the
 file, preserving known identity components and link checks. Definite mismatches

@@ -1,4 +1,3 @@
-import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import { Readable } from "node:stream";
 import { readFileHandleBounded } from "./bounded-read.js";
@@ -31,6 +30,7 @@ import {
 import type { ZipEntry } from "./archive-zip-entry.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
+import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { getNativeBinding } from "./native.js";
 import { admitZipBuffer } from "./archive-zip-admission.js";
 import { resolveExtractLimits } from "./archive-limits.js";
@@ -98,11 +98,7 @@ async function stageArchiveInput(archivePath: string): Promise<{
   if (before.isSymbolicLink() || !before.isFile()) {
     throw new Error(`archive is not a regular file: ${archivePath}`);
   }
-  const noFollow =
-    process.platform !== "win32" && typeof fsSync.constants.O_NOFOLLOW === "number"
-      ? fsSync.constants.O_NOFOLLOW
-      : 0;
-  const handle = await fs.open(resolved, fsSync.constants.O_RDONLY | noFollow);
+  const handle = await fs.open(resolved, resolveReadOpenFlags());
   const staged = await tempFile({ prefix: "fs-safe-archive-read", fileName: "archive.bin" });
   try {
     const opened = await handle.stat();

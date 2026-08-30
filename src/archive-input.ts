@@ -9,6 +9,7 @@ import {
   type ResolvedArchiveExtractLimits,
 } from "./archive-limits.js";
 import { sameFileIdentity } from "./file-identity.js";
+import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { tempFile } from "./temp-target.js";
 
 export type StagedArchiveFile = { path: string; cleanup: () => Promise<void> };
@@ -52,9 +53,7 @@ export async function stageArchiveFileForExtraction(params: {
   if (initialStat.size > params.limits.maxArchiveBytes) {
     throw new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.ARCHIVE_SIZE_EXCEEDS_LIMIT);
   }
-  const noFollow =
-    process.platform !== "win32" && "O_NOFOLLOW" in fsConstants ? fsConstants.O_NOFOLLOW : 0;
-  const handle = await fs.open(sourcePath, fsConstants.O_RDONLY | noFollow);
+  const handle = await fs.open(sourcePath, resolveReadOpenFlags());
   let staged: StagedArchiveFile | undefined;
   let output: FileHandle | undefined;
   try {

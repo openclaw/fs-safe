@@ -14,6 +14,7 @@ import { mkdirPathComponentsWithGuards } from "./guarded-mkdir.js";
 import { runPinnedWriteNative } from "./native-pinned-write.js";
 import { getNativeBinding } from "./native.js";
 import { validatePinnedOperationPayload } from "./pinned-operation.js";
+import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { withSidecarLock } from "./sidecar-lock.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
@@ -286,12 +287,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
           throw new FsSafeError("path-mismatch", "fallback target changed during write");
         }
         const expectedHash = sha256Hex(params.input.data, params.input.encoding);
-        const readFlags =
-          fsSync.constants.O_RDONLY |
-          (process.platform !== "win32" && "O_NOFOLLOW" in fsSync.constants
-            ? fsSync.constants.O_NOFOLLOW
-            : 0);
-        readHandle = await fs.open(targetPath, readFlags);
+        readHandle = await fs.open(targetPath, resolveReadOpenFlags());
         const readHandleStat = await readHandle.stat({ bigint: true });
         const actualHash = sha256Hex(await readHandle.readFile());
         if (actualHash !== expectedHash) {

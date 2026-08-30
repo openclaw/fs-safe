@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import { readFileHandleBounded } from "./bounded-read.js";
 import { FsSafeError } from "./errors.js";
 import { resolveHomeRelativePath } from "./home-dir.js";
+import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 import {
   assertSecretFilePreview,
@@ -50,11 +51,7 @@ export async function readSecretFile(
   let raw: string;
   try {
     const realPath = await fs.realpath(resolvedPath);
-    const noFollow =
-      process.platform !== "win32" && "O_NOFOLLOW" in fsSync.constants
-        ? fsSync.constants.O_NOFOLLOW
-        : 0;
-    handle = await fs.open(realPath, fsSync.constants.O_RDONLY | noFollow);
+    handle = await fs.open(realPath, resolveReadOpenFlags());
     const openedHandle = handle;
     const openedStat = await inspectFileIdentity(async () => {
       const stat = await openedHandle.stat({ bigint: true });

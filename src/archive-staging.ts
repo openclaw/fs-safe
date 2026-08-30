@@ -1,5 +1,4 @@
 import fs from "node:fs/promises";
-import fsSync from "node:fs";
 import path from "node:path";
 import {
   assertAsyncDirectoryGuard,
@@ -18,6 +17,7 @@ import { FsSafeError } from "./errors.js";
 import { formatErrorDetail } from "./error-detail.js";
 import { resolveOpenedFileRealPathForHandle, root } from "./root.js";
 import { isNotFoundPathError, isPathInside } from "./path.js";
+import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
@@ -234,12 +234,8 @@ async function chmodInsideDestinationBestEffort(params: {
   checkExtractionDeadline(params.deadline);
   await assertDirectoryIdentityGuard(destinationGuard);
   checkExtractionDeadline(params.deadline);
-  const noFollowFlag =
-    process.platform !== "win32" && "O_NOFOLLOW" in fsSync.constants
-      ? fsSync.constants.O_NOFOLLOW
-      : 0;
   const handle = await fs
-    .open(params.destinationPath, fsSync.constants.O_RDONLY | noFollowFlag)
+    .open(params.destinationPath, resolveReadOpenFlags())
     .catch(() => null);
   checkExtractionDeadline(params.deadline);
   if (!handle) {

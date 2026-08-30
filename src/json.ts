@@ -6,6 +6,7 @@ import { FsSafeError } from "./errors.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
 import { readRegularFile, readRegularFileSync, statRegularFile } from "./regular-file.js";
 import { openRootFileSync, type RootFileOpenFailure } from "./root-file.js";
+import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { writeTextAtomic, type WriteTextAtomicOptions } from "./text-atomic.js";
 import { sleep } from "./timing.js";
 
@@ -61,8 +62,6 @@ async function readRegularFileIfExistsWithRetry(
 
 const JSON_FILE_MODE = 0o600;
 const JSON_DIR_MODE = 0o700;
-const SUPPORTS_SYNC_NOFOLLOW = process.platform !== "win32" && "O_NOFOLLOW" in fsSync.constants;
-
 function getErrorCode(err: unknown): string | undefined {
   return err instanceof Error ? (err as NodeJS.ErrnoException).code : undefined;
 }
@@ -70,11 +69,10 @@ function getErrorCode(err: unknown): string | undefined {
 function trySetSecureMode(pathname: string) {
   let fd: number | undefined;
   try {
-    fd = fsSync.openSync(
-      pathname,
-      fsSync.constants.O_RDONLY |
-        (SUPPORTS_SYNC_NOFOLLOW ? fsSync.constants.O_NOFOLLOW : 0),
-    );
+    fd = fsSync.openSync(pathname, resolveReadOpenFlags());
+    if (!fsSync.fstatSync(fd).isFile()) {
+      return;
+    }
     fsSync.fchmodSync(fd, JSON_FILE_MODE);
   } catch {
     // best-effort on platforms without chmod support
