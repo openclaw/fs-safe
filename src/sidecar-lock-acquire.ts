@@ -22,6 +22,7 @@ import {
   type SidecarLockSnapshot,
 } from "./sidecar-lock-reclaim.js";
 import type { SidecarLockAcquireOptions, SidecarLockHandle } from "./sidecar-lock-types.js";
+import { createSuppressedError } from "./suppressed-error.js";
 
 type SidecarFileHandle = Pick<NativeFileHandle, "close" | "stat" | "writeFile">;
 
@@ -225,7 +226,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
             });
           }
         } catch (cleanupError) {
-          throw new SuppressedError(
+          throw createSuppressedError(
             cleanupError,
             err,
             "file lock acquisition and cleanup both failed",

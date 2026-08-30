@@ -7,6 +7,7 @@ import {
 } from "./sidecar-lock-reclaim.js";
 import { acquireSidecarLock, type HeldSidecarLock } from "./sidecar-lock-acquire.js";
 import { createHeldSidecarLockHandle } from "./sidecar-lock-handle.js";
+import { createSuppressedError } from "./suppressed-error.js";
 import type {
   SidecarLockAcquireOptions,
   SidecarLockHandle,
@@ -236,7 +237,7 @@ export function createSidecarLockManager(key: string) {
       try {
         await lock.release();
       } catch (releaseError) {
-        throw new SuppressedError(
+        throw createSuppressedError(
           releaseError,
           bodyError,
           "file lock callback and release both failed",
