@@ -7,6 +7,7 @@ import { stageArchiveFileForExtraction } from "../src/archive-input.js";
 import { resolveExtractLimits } from "../src/archive-limits.js";
 import { readArchiveEntry } from "../src/archive-read.js";
 import { readJsonDurableQueueEntry } from "../src/json-durable-queue.js";
+import { writeJsonSync } from "../src/json.js";
 import { publishFileExclusive } from "../src/publish-file.js";
 import { readSecureFile } from "../src/secure-file.js";
 import { readSecretFile } from "../src/secret-read-async.js";
@@ -185,5 +186,27 @@ describe("nonblocking regular-file admission", () => {
     });
     expect(() => readSidecarLockSnapshotSync(lockPath, undefined, { rejectNonFile: true }))
       .toThrow(expect.objectContaining({ code: "not-file" }));
+  });
+
+  itPosix("does not chmod a FIFO swapped into synchronous JSON mode enforcement", async () => {
+    const root = await tempRoot("fs-safe-json-mode-fifo-");
+    const filePath = path.join(root, "state.json");
+    const openSync = fsSync.openSync.bind(fsSync);
+    const fchmodSync = fsSync.fchmodSync.bind(fsSync);
+    vi.spyOn(fsSync, "openSync").mockImplementation((candidate, flags, mode) => {
+      if (candidate === filePath) {
+        expectNonblocking(flags);
+        fsSync.renameSync(filePath, `${filePath}.displaced`);
+        makeFifo(filePath);
+      }
+      return openSync(candidate, flags, mode);
+    });
+    vi.spyOn(fsSync, "fchmodSync").mockImplementation((fd, mode) => {
+      expect(fsSync.fstatSync(fd).isFile()).toBe(true);
+      fchmodSync(fd, mode);
+    });
+
+    writeJsonSync(filePath, { ok: true });
+    expect(fsSync.lstatSync(filePath).isFIFO()).toBe(true);
   });
 });

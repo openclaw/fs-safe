@@ -70,6 +70,9 @@ function trySetSecureMode(pathname: string) {
   let fd: number | undefined;
   try {
     fd = fsSync.openSync(pathname, resolveReadOpenFlags());
+    if (!fsSync.fstatSync(fd).isFile()) {
+      return;
+    }
     fsSync.fchmodSync(fd, JSON_FILE_MODE);
   } catch {
     // best-effort on platforms without chmod support
