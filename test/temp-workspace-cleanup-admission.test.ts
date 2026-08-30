@@ -74,34 +74,42 @@ describe.each(["async", "sync"] as const)("%s workspace cleanup admission", (var
     });
   });
 
-  it.runIf(nativeAvailable && process.platform !== "win32")("reports indeterminate if the parent moves during restored-leaf inspection", async () => {
+  it.runIf(nativeAvailable && process.platform !== "win32")("preserves a mismatched quarantine if the parent moves during inspection", async () => {
     configureFsSafeNative({ mode: "require" });
-    const base = await tempRoot("fs-safe-temp-restore-parent-");
+    const base = await tempRoot("fs-safe-temp-quarantine-parent-");
     const rootDir = path.join(base, "parent");
     const moved = path.join(base, "moved");
     const options = { rootDir, prefix: "workspace-" };
     const workspace = variant === "async" ? await tempWorkspace(options) : tempWorkspaceSync(options);
     await fs.writeFile(path.join(workspace.dir, "owned.txt"), "owned");
     const lstat = fsSync.lstatSync;
-    let inspections = 0;
+    let quarantineName = "";
+    let replacement: fsSync.BigIntStats | undefined;
     vi.spyOn(fsSync, "lstatSync").mockImplementation((candidate, options) => {
       const inspected = lstat(candidate, options);
       if (candidate === workspace.dir) {
-        if (++inspections === 1) {
-          fsSync.renameSync(workspace.dir, `${workspace.dir}.owned`);
-          fsSync.writeFileSync(workspace.dir, "replacement");
-        } else if (inspections === 2) {
-          fsSync.renameSync(rootDir, moved);
-        }
+        fsSync.renameSync(workspace.dir, `${workspace.dir}.owned`);
+        fsSync.writeFileSync(workspace.dir, "replacement");
+        replacement = lstat(workspace.dir, { bigint: true });
+      } else if (path.basename(String(candidate)).startsWith(".fs-safe-workspace-cleanup-")) {
+        quarantineName = path.basename(String(candidate));
+        fsSync.renameSync(rootDir, moved);
       }
       return inspected;
     });
+    const rm = vi.spyOn(fs, "rm");
+    const rmSync = vi.spyOn(fsSync, "rmSync");
     expect(await workspace.cleanup()).toBe("indeterminate");
-    expect(inspections).toBe(2);
+    expect(quarantineName).not.toBe("");
     expect(await workspace.cleanup()).toBe("indeterminate");
-    expect(await fs.readFile(path.join(moved, path.basename(workspace.dir)), "utf8")).toBe("replacement");
+    expect(await fs.readFile(path.join(moved, quarantineName))).toEqual(Buffer.from("replacement"));
+    expect(await fs.lstat(path.join(moved, quarantineName), { bigint: true }))
+      .toMatchObject({ dev: replacement!.dev, ino: replacement!.ino });
+    await expect(fs.lstat(path.join(moved, path.basename(workspace.dir)))).rejects.toMatchObject({ code: "ENOENT" });
     expect(await fs.readFile(path.join(moved, `${path.basename(workspace.dir)}.owned`, "owned.txt"), "utf8"))
       .toBe("owned");
+    expect(rm).not.toHaveBeenCalled();
+    expect(rmSync).not.toHaveBeenCalled();
   });
 
   describe.each(["require"] as const)("native %s store-construction failure", (mode) => {

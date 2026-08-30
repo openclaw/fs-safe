@@ -88,18 +88,23 @@ rename moves the direct child through the retained parent into a fresh
 still belongs to the workspace before recursive removal; it never recursively
 removes the public workspace name and never overwrites a quarantine collision.
 
-If a replacement arrives between inspection and rename, cleanup attempts to
-restore it with no-replace rename and returns `"identity-mismatch"` after
-verifying successful restoration. Restoration never overwrites a newer public
-entry. A collision, failed restoration, uncertain rename outcome, changed
-parent, or quarantine mutation preserves remaining entries and returns
-`"indeterminate"`; a quarantine artifact may remain beside the workspace or
-under a moved parent. Recover such artifacts only after excluding competing
-mutators and establishing ownership.
+If the quarantine identity does not exactly match the workspace creation
+receipt, cleanup leaves that entry in place without renaming or recursively
+deleting it and returns `"indeterminate"`. A public replacement installed after
+initial identity admission but before rename is indistinguishable from a
+quarantine swap after a successful owned rename. Neither is restored to the
+public workspace name; that name may intentionally remain absent. The named
+`.fs-safe-workspace-cleanup-<uuid>` artifact is operator evidence.
 
-A missing workspace returns `"missing"`, and a replacement observed before
-rename returns `"identity-mismatch"`, provided the parent is stable. A changed
-or ambiguous parent takes precedence and returns `"indeterminate"`, including
+A collision, uncertain rename outcome, changed parent, or quarantine mutation
+also preserves remaining entries and returns `"indeterminate"`; a quarantine
+artifact may remain beside the workspace or under a moved parent. Recover such
+artifacts only after excluding competing mutators and establishing ownership.
+
+A missing workspace returns `"missing"`, and only a replacement observed at the
+public name before the quarantine operation starts returns `"identity-mismatch"`,
+provided the parent is stable. A changed or ambiguous parent takes precedence
+and returns `"indeterminate"`, including
 when the workspace remains under a moved parent.
 
 Recursive removal is confined to the private quarantine name and revalidates

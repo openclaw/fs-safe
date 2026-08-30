@@ -50,8 +50,10 @@ function assertReplacementPreserved(
   const current = fsSync.lstatSync(dir, { bigint: true });
   expect({ dev: current.dev, ino: current.ino }).toEqual({ dev: identity.dev, ino: identity.ino });
   expect(current.isSymbolicLink()).toBe(kind === "symlink");
-  expect(fsSync.readFileSync(kind === "file" ? dir : path.join(dir, "keep.txt"), "utf8"))
-    .toBe(kind === "symlink" ? "outside" : "replacement");
+  if (kind === "directory") expect(fsSync.readdirSync(dir)).toEqual(["keep.txt"]);
+  expect(fsSync.readFileSync(kind === "file" ? dir : path.join(dir, "keep.txt")))
+    .toEqual(Buffer.from(kind === "symlink" ? "outside" : "replacement"));
+  if (kind === "symlink") expect(fsSync.readlinkSync(dir)).toBe(outside);
 }
 
 describe.runIf(native && process.platform !== "win32").each(["async", "sync"] as const)("%s temp workspace cleanup ownership", (variant) => {
@@ -95,34 +97,44 @@ describe.runIf(native && process.platform !== "win32").each(["async", "sync"] as
     async (kind) => {
       const { workspace, outside } = await setup();
       const replacement = installReplacement(workspace.dir, outside, kind);
+      const rename = vi.fn<NativeBinding["renameNoReplace"]>((...args) => native!.renameNoReplace(...args));
+      renameNoReplace = rename;
+      const rm = vi.spyOn(fs, "rm");
+      const rmSync = vi.spyOn(fsSync, "rmSync");
+      expect(await workspace.cleanup()).toBe("identity-mismatch");
       expect(await workspace.cleanup()).toBe("identity-mismatch");
       assertReplacementPreserved(workspace.dir, outside, kind, replacement);
+      expect(rename).not.toHaveBeenCalled();
+      expect(rm).not.toHaveBeenCalled();
+      expect(rmSync).not.toHaveBeenCalled();
     },
   );
 
   it.each<Replacement>(["directory", "file", "symlink"])(
-    "preserves both the quarantined %s and a newer public entry during restore",
+    "preserves both a mismatched quarantine %s and a newer public entry without renaming either",
     async (kind) => {
       const { workspace, outside, rootDir } = await setup();
       let quarantine = "";
       let replacement: BigIntStats | undefined;
-      let renames = 0;
-      renameNoReplace = (...args) => {
-        if (renames++ === 0) {
-          replacement = installReplacement(workspace.dir, outside, kind);
-          quarantine = path.join(rootDir, args[3]);
-        } else {
-          fsSync.mkdirSync(workspace.dir);
-          fsSync.writeFileSync(path.join(workspace.dir, "newer.txt"), "newer");
-        }
+      const rename = vi.fn<NativeBinding["renameNoReplace"]>((...args) => {
+        if (args[1] !== path.basename(workspace.dir)) return native!.renameNoReplace(...args);
+        replacement = installReplacement(workspace.dir, outside, kind);
+        quarantine = path.join(rootDir, args[3]);
         native!.renameNoReplace(...args);
-      };
+        fsSync.mkdirSync(workspace.dir);
+        fsSync.writeFileSync(path.join(workspace.dir, "newer.txt"), "newer");
+      });
+      renameNoReplace = rename;
+      const rm = vi.spyOn(fs, "rm");
+      const rmSync = vi.spyOn(fsSync, "rmSync");
       expect(await workspace.cleanup()).toBe("indeterminate");
-      expect(renames).toBe(2);
       expect(await workspace.cleanup()).toBe("indeterminate");
+      expect(rename).toHaveBeenCalledTimes(1);
       assertReplacementPreserved(quarantine, outside, kind, replacement!);
       expect(await fs.readFile(path.join(workspace.dir, "newer.txt"), "utf8")).toBe("newer");
       expect(await fs.readFile(path.join(`${workspace.dir}.original`, "owned.txt"), "utf8")).toBe("owned");
+      expect(rm).not.toHaveBeenCalled();
+      expect(rmSync).not.toHaveBeenCalled();
     },
   );
 
@@ -348,35 +360,49 @@ describe.runIf(native && process.platform !== "win32").each(["async", "sync"] as
   });
 
   describe.each<Cleanup>(["manual", "dispose", "exit"])("%s cleanup", (method) => {
-    it.each<Replacement>(["directory", "file", "symlink"])(
-      "preserves a %s replacement installed after identity inspection",
-      async (kind) => {
-        const { workspace, outside } = await setup();
+    it.each(
+      (["before-rename", "after-rename"] as const).flatMap((when) =>
+        (["directory", "file", "symlink"] as const).map((kind) => ({ when, kind }))),
+    )(
+      "preserves a mismatched quarantine $kind installed $when without restoring the public name",
+      async ({ when, kind }) => {
+        const { workspace, outside, rootDir } = await setup();
+        const owned = fsSync.lstatSync(workspace.dir, { bigint: true });
+        let quarantine = "";
+        let movedOriginal = "";
         let replacement: BigIntStats | undefined;
-        let swapped = false;
-        const swap = () => {
-          swapped = true;
-          replacement = installReplacement(workspace.dir, outside, kind);
-          expect(fsSync.readFileSync(path.join(`${workspace.dir}.original`, "owned.txt"), "utf8"))
-            .toBe("owned");
-        };
 
-        // Interpose at the real no-replace rename, after identity admission.
-        // Both rename calls and recursive deletion still execute on real disk.
-        let renames = 0;
-        renameNoReplace = (...args) => {
-          if (renames++ === 0) swap();
+        // Both schedules use the real native rename after public identity admission:
+        // a raced public replacement and a later quarantine swap are indistinguishable.
+        const rename = vi.fn<NativeBinding["renameNoReplace"]>((...args) => {
+          // Do not inject another race if cleanup wrongly attempts restoration.
+          if (args[1] !== path.basename(workspace.dir)) return native!.renameNoReplace(...args);
+          quarantine = path.join(rootDir, args[3]);
+          if (when === "before-rename") replacement = installReplacement(workspace.dir, outside, kind);
           native!.renameNoReplace(...args);
-        };
+          if (when === "after-rename") {
+            expect(fsSync.lstatSync(quarantine, { bigint: true })).toMatchObject({ dev: owned.dev, ino: owned.ino });
+            replacement = installReplacement(quarantine, outside, kind);
+          }
+          movedOriginal = `${when === "before-rename" ? workspace.dir : quarantine}.original`;
+        });
+        renameNoReplace = rename;
+        const rm = vi.spyOn(fs, "rm");
+        const rmSync = vi.spyOn(fsSync, "rmSync");
 
         try {
           const result = await cleanup(workspace, method);
-          if (method === "manual") expect(result).toBe("identity-mismatch");
-          expect(renames).toBe(2);
-          expect(await workspace.cleanup()).toBe("identity-mismatch");
-          expect(swapped).toBe(true);
+          if (method === "manual") expect(result).toBe("indeterminate");
+          expect(await workspace.cleanup()).toBe("indeterminate");
+          expect(rename).toHaveBeenCalledTimes(1);
           expect(replacement).toBeDefined();
-          assertReplacementPreserved(workspace.dir, outside, kind, replacement!);
+          expect(path.basename(quarantine)).toMatch(/^\.fs-safe-workspace-cleanup-[\da-f-]+$/);
+          assertReplacementPreserved(quarantine, outside, kind, replacement!);
+          await expect(fs.lstat(workspace.dir)).rejects.toMatchObject({ code: "ENOENT" });
+          expect(await fs.lstat(movedOriginal, { bigint: true })).toMatchObject({ dev: owned.dev, ino: owned.ino });
+          expect(await fs.readFile(path.join(movedOriginal, "owned.txt"))).toEqual(Buffer.from("owned"));
+          expect(rm).not.toHaveBeenCalled();
+          expect(rmSync).not.toHaveBeenCalled();
         } finally {
           vi.restoreAllMocks();
           // Unregister even when an assertion fails; never leave this fixture

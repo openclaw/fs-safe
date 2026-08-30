@@ -4,7 +4,7 @@
 
 ### Security and Correctness
 
-- Require native collision-safe directory no-replace rename and a retained parent descriptor before temp workspace creation (`helper-unavailable` in native-off or unsupported environments); retain cleanup authority across mode changes and store-construction failures, quarantine and verify ownership without overwriting peer entries, preserve `indeterminate` cleanup outcomes, and support Windows native directory rename.
+- Require native collision-safe directory no-replace rename and a retained parent descriptor before temp workspace creation (`helper-unavailable` in native-off or unsupported environments); retain cleanup authority across mode changes and store-construction failures, preserve mismatched quarantine entries in place as `indeterminate` without restoring the public name, remove only verified owned quarantine, and support Windows native directory rename.
 - Make durable queue directory creation, claims, acknowledgement, quarantine, marker cleanup, and retirement transitions fsync affected directories and propagate durability failures.
 - Fsync synchronous file-store temps before rename and parent directories after publication, matching the documented durability contract.
 - Reject invalid runtime archive `onFiltered` policies before extraction instead of treating unknown values as entry-skipping opt-in.

@@ -96,22 +96,6 @@ export class TempWorkspaceCleanupOwner {
     this.#capability.assertCurrent();
   }
 
-  #restore(name: string, identity: FileIdentityStat): TempWorkspaceCleanupResult {
-    try {
-      this.#assertParent();
-      const parent = this.#parent;
-      this.#capability.binding.renameNoReplace(parent.fd, name, parent.fd, path.basename(this.#dir));
-      this.#assertParent();
-      const restored = fsSync.lstatSync(this.#dir, { bigint: true });
-      this.#assertParent();
-      return sameFileIdentityForCleanup(restored, identity) ? "identity-mismatch" : "indeterminate";
-    } catch {
-      // A newer public entry, failed rename, or ambiguous parent leaves every
-      // remaining name alone. Never overwrite the public name to repair a race.
-      return "indeterminate";
-    }
-  }
-
   #prepare(): Quarantine | TempWorkspaceCleanupResult {
     try {
       this.#assertParent();
@@ -135,7 +119,9 @@ export class TempWorkspaceCleanupOwner {
       const quarantined = fsSync.lstatSync(quarantinePath, { bigint: true });
       this.#assertParent();
       if (!quarantined.isDirectory() || quarantined.isSymbolicLink() || !sameFileIdentityForCleanup(quarantined, this.#identity)) {
-        return this.#restore(name, quarantined);
+        // A raced public replacement and a post-rename quarantine swap look alike.
+        // Preserve the unowned entry here; never move it back to the public name.
+        return "indeterminate";
       }
       return { path: quarantinePath };
     } catch {
