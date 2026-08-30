@@ -70,15 +70,30 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
   context.ensureExitCleanupRegistered();
   const normalizedTargetPath = await resolveNormalizedTargetPath(options.targetPath);
   const lockPath = options.lockPath ?? `${normalizedTargetPath}.lock`;
-  const held = context.held.get(normalizedTargetPath);
+  let held = context.held.get(normalizedTargetPath);
   if (
     held &&
     options.reentrantOwner !== undefined &&
     held.reentrantOwner !== undefined &&
     options.reentrantOwner === held.reentrantOwner
   ) {
-    held.refCount += 1;
-    return context.handleForHeldLock(normalizedTargetPath, held);
+    // A final release may already have decremented the count to zero and be
+    // removing the sidecar. Do not admit a new reentrant handle until that
+    // cleanup settles: successful cleanup requires a fresh acquisition, while
+    // failed cleanup leaves the existing sidecar held for a retry.
+    if (held.releasePromise) {
+      await held.releasePromise.catch(() => undefined);
+      held = context.held.get(normalizedTargetPath);
+    }
+    if (
+      held &&
+      options.reentrantOwner !== undefined &&
+      held.reentrantOwner !== undefined &&
+      options.reentrantOwner === held.reentrantOwner
+    ) {
+      held.refCount += 1;
+      return context.handleForHeldLock(normalizedTargetPath, held);
+    }
   }
 
   const startedAt = Date.now();

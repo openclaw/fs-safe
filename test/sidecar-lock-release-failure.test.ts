@@ -109,6 +109,63 @@ describe("asynchronous sidecar lock release failures", () => {
     expect(manager.heldEntries()).toEqual([]);
   });
 
+  it("does not admit a reentrant acquisition while final cleanup is in flight", async () => {
+    const directory = await tempRoot("fs-safe-lock-release-reentrant-in-flight-");
+    const targetPath = path.join(directory, "state.json");
+    const manager = createSidecarLockManager(`release-reentrant-in-flight-${Date.now()}-${Math.random()}`);
+    const otherManager = createSidecarLockManager(
+      `release-reentrant-in-flight-other-${Date.now()}-${Math.random()}`,
+    );
+    const options = {
+      targetPath,
+      reentrantOwner: "owner",
+      payload: async () => ({}),
+    };
+    const first = await manager.acquire(options);
+    const realRm = fs.rm.bind(fs);
+    let cleanupStarted!: () => void;
+    const cleanupInFlight = new Promise<void>((resolve) => {
+      cleanupStarted = resolve;
+    });
+    let finishCleanup!: () => void;
+    const allowCleanup = new Promise<void>((resolve) => {
+      finishCleanup = resolve;
+    });
+    const rm = vi.spyOn(fs, "rm").mockImplementation(async (target, ...args) => {
+      if (path.resolve(String(target)) === path.resolve(first.lockPath)) {
+        cleanupStarted();
+        await allowCleanup;
+      }
+      return await realRm(target, ...args);
+    });
+
+    const release = first.release();
+    await cleanupInFlight;
+    let reentrantAcquired = false;
+    const secondPromise = manager.acquire(options).then((lock) => {
+      reentrantAcquired = true;
+      return lock;
+    });
+    await Promise.resolve();
+    expect(reentrantAcquired).toBe(false);
+
+    finishCleanup();
+    await release;
+    const second = await secondPromise;
+    await expect(
+      otherManager.acquire({
+        targetPath,
+        timeoutMs: 0,
+        retry: { retries: 0 },
+        payload: async () => ({}),
+      }),
+    ).rejects.toMatchObject({ code: "file_lock_timeout" });
+
+    rm.mockRestore();
+    await second.release();
+    expect(manager.heldEntries()).toEqual([]);
+  });
+
   it("preserves callback and release failures from withFileLock", async () => {
     const directory = await tempRoot("fs-safe-lock-release-combined-");
     const targetPath = path.join(directory, "state.json");
