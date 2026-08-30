@@ -212,8 +212,10 @@ files, hardlinks, and changes between the pre-open pathname, opened descriptor,
 and current pathname are rejected. The callback must finish and close its
 writer before returning. Its return value is preserved as `result`.
 
-The helper retains one write-capable descriptor through requested mode application,
-opt-in file synchronization, rename, and publication verification. Omitting
+The helper retains one descriptor through requested mode application, opt-in
+file synchronization, rename, and publication verification. It opens read-only
+unless file synchronization is requested, so closed read-only producer output
+remains publishable under the historical default. Omitting
 `mode` preserves the callback-produced mode without chmod; explicit modes,
 including `0`, are applied through that descriptor. File-mode errors are
 tolerated for compatibility with the helper's historical best-effort behavior.

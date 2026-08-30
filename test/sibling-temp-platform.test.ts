@@ -43,7 +43,7 @@ it.each(["known", "transient-unknown", "unknown", "rounded-replacement"] as cons
       if (candidate === dir) throw Object.assign(new Error("directory open unsupported"), { code: "EISDIR" });
       const handle = await open(candidate, flags, mode);
       if (candidate === temporary) {
-        expect(flags).toBe(fsSync.constants.O_RDWR);
+        expect(flags).toBe(fsSync.constants.O_RDONLY);
         opened = true;
         const stat = handle.stat.bind(handle);
         vi.spyOn(handle, "stat").mockImplementation(async (options) => {

@@ -119,6 +119,32 @@ it.each([undefined, false] as const)("skips both syncs when options are %s", asy
   expect(await fs.readFile(f.final, "utf8")).toBe("new");
 });
 
+itPosix.each([
+  ["omitted", undefined],
+  ["explicit", 0o600],
+] as const)("publishes closed read-only producer output with %s mode", async (_label, mode) => {
+  const f = await fixture();
+  const open = fs.open.bind(fs);
+  let retainedFlags: number | undefined;
+  vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+    const handle = await open(...args);
+    if (args[0] === f.temp()) retainedFlags = Number(args[1]);
+    return handle;
+  });
+  await writeSiblingTempFile({
+    ...f.options,
+    writeTemp: async (candidate) => {
+      const result = await f.options.writeTemp(candidate);
+      await fs.chmod(candidate, 0o444);
+      return result;
+    },
+    ...(mode === undefined ? {} : { mode }),
+  });
+  expect(retainedFlags! & (fsSync.constants.O_WRONLY | fsSync.constants.O_RDWR)).toBe(0);
+  expect((await fs.stat(f.final)).mode & 0o777).toBe(mode ?? 0o444);
+  expect(await fs.readFile(f.final, "utf8")).toBe("new");
+});
+
 itPosix("preserves group-readable producer mode when output-sibling mode is omitted", async () => {
   const f = await fixture();
   await writeExternalFileViaSibling({ finalPath: f.final, write: f.options.writeTemp });
