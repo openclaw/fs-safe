@@ -118,7 +118,7 @@ component is followed by another segment, both helpers throw
 |---|---|---|
 | `stageFileInDirectory`, `StagedFile`, `StagedFileReceipt`, `PublishedFileReceipt`, `StagedFilePublication`, `StagedFileCleanupReceipt`, `StagedFileFailureDetails` | [staged-file.md](staged-file.md) | Native-required Linux/macOS lifecycle retaining the original directory for abort cleanup. |
 | `tempFile`, `withTempFile`, `TempFile`, `buildRandomTempFilePath`, `sanitizeTempFileName` | [temp.md](temp.md) | One-file temp primitive; prefer `tempWorkspace` from `@openclaw/fs-safe/temp` for the stable surface. |
-| `writeSiblingTempFile`, `writeViaSiblingTempPath`, `WriteSiblingTempFileOptions`, `WriteSiblingTempFileResult` | – | Sibling-temp write building block used by `replaceFileAtomic`. |
+| `writeSiblingTempFile`, `writeViaSiblingTempPath`, `WriteSiblingTempFileOptions`, `WriteSiblingTempFileResult` | – | Callback-produced file staging: verified sibling publication or private-workspace copy through a root. |
 
 ### Permissions
 

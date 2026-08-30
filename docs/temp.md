@@ -205,11 +205,57 @@ const result = await writeSiblingTempFile<string>({
 // result.filePath, result.result (returned by writeTemp)
 ```
 
-`writeSiblingTempFile` chooses a random sibling name in `dir`, calls your `writeTemp()` callback, validates that `resolveFinalPath(result)` is still inside that same directory, and renames the temp file there.
+`writeSiblingTempFile` chooses a random, initially absent sibling name in `dir`
+and calls `writeTemp()`. After the callback succeeds, it validates the produced
+regular file before taking ownership: symlinks, directories, other non-regular
+files, hardlinks, and changes between the pre-open pathname, opened descriptor,
+and current pathname are rejected. The callback must finish and close its
+writer before returning. Its return value is preserved as `result`.
 
-By default it preserves the historical private-helper behavior of chmodding
-`dir` to `dirMode` (default `0o700`). Pass `chmodDir: false` when the directory
-is a public staging/output path whose existing mode must be preserved.
+The helper retains one write-capable descriptor through mode application,
+file synchronization, rename, and publication verification. The file mode
+defaults to `0o600`; explicit modes, including `0`, are applied through that
+descriptor and mode errors propagate. No chmod, content read, or reopen follows
+the staged or published pathname. `resolveFinalPath(result)` must resolve to a
+distinct direct child of the same directory. Final-path writes are serialized
+within the process, and the retained descriptor and current name must still
+have the admitted exact bigint identity and exactly one link before rename and
+after publication. A verification failure after rename does not roll back or
+delete the final name.
+
+`syncTempFile` defaults to `true`, synchronizing the descriptor before rename;
+file-sync errors propagate except for the existing `EPERM` compatibility case.
+`syncParentDir` defaults to `true`, requesting best-effort parent sync after
+rename. Explicit `false` skips the corresponding sync, never the identity
+checks. Parent synchronization can be unsupported or fail without rejecting
+the write, so success is not a strict crash-durability receipt.
+
+Cleanup only unlinks an admitted file while the parent, pathname identity, and
+single-link regular-file checks still agree. Observed substitutes are preserved,
+including during process-exit cleanup. Operational cleanup failures retain an
+identity-bound exit retry. If the callback throws or admission fails, no file
+has been adopted: even a regular partial file is left for caller-directed
+recovery. The helper never recursively removes a sibling temp.
+
+On POSIX, admission uses no-follow and nonblocking open flags, so a FIFO swap
+does not block the helper. Windows retains Node's guarded pathname-open behavior
+because Node has no portable no-follow flag there; metadata is checked before
+and after opening, and unknown Windows identities fail closed after one bounded
+re-inspection without reopening. These helpers remain available with native
+mode `off`; they do not acquire the native-required retained-directory contract
+of [`stageFileInDirectory`](staged-file.md).
+
+Identity checks and pathname rename/unlink are separate syscalls, not atomic
+conditional mutations. A hostile process can still replace a leaf or parent in
+the final syscall gap or mutate an open file's contents. Use an approved writable
+directory and cooperative locking or OS isolation; a moved parent can leave an
+unpublished original temp behind. Observed replacements are preserved, but
+arbitrary concurrent namespace changes cannot be prevented by these helpers.
+
+By default `dir` is set to `dirMode` (default `0o700`) through the shared verified
+POSIX directory-descriptor helper; errors propagate with no pathname chmod
+fallback. Windows only passes the directory mode to `mkdir`. Pass
+`chmodDir: false` when an existing staging/output directory mode must be preserved.
 
 ### `writeViaSiblingTempPath`
 
@@ -232,6 +278,9 @@ await writeViaSiblingTempPath({
 If `replaceFileAtomic` does what you need, prefer that. Use
 `writeViaSiblingTempPath` when the producer needs a concrete temp pathname but
 the final destination still needs root-boundary checks.
+Its private workspace uses the same identity-aware directory cleanup as
+`tempFile()`: moving and replacing the workspace preserves the replacement.
+This workspace owns its contents, unlike the unadmitted sibling pathname above.
 
 ## Secure temp root
 

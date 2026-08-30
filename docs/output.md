@@ -80,6 +80,14 @@ rename. If an error leaves the sibling temp in place and immediate cleanup
 fails, its verified identity remains registered for a best-effort process-exit
 cleanup retry.
 
+Sibling staging shares the [callback sibling owner](temp.md#sibling-temp-writes):
+it checks exact pre-open, descriptor, and current-path identities, retains the
+descriptor through publication, and never chmods or reads a replacement by path.
+Cleanup preserves unverified paths, including partial output when the callback
+throws before admission. Native-off and Windows operation remain supported with
+the platform limits and non-atomic rename/unlink identity checks described there.
+When `mode` is omitted, output-sibling staging preserves the producer's mode.
+
 ## Why not pass the final path to the library?
 
 If a target parent can be swapped after validation, handing an external library
