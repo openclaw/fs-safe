@@ -1,9 +1,14 @@
+import type { BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { syncDirectoryBestEffort } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
-import { sameFileIdentity } from "./file-identity.js";
-import { publishFileExclusive } from "./publish-file.js";
+import { sameFileIdentityForCleanup } from "./file-identity.js";
+import {
+  recoverDurableQueueRetirement,
+  retireDurableQueueSource,
+} from "./json-durable-queue-retirement.js";
+import { withQueueTransferLock } from "./json-durable-queue-transfer-lock.js";
 import { serializePathWrite } from "./write-queue.js";
 
 export type DurableQueueEntryPathsLike = {
@@ -25,100 +30,115 @@ export function durableQueueProcessingPath(paths: DurableQueueEntryPathsLike): s
     : `${paths.jsonPath}.processing`;
 }
 
-async function regularQueueFileExists(filePath: string): Promise<boolean> {
+async function lstatOrNull(filePath: string): Promise<BigIntStats | null> {
   try {
-    const stat = await fs.lstat(filePath);
-    if (stat.isSymbolicLink() || !stat.isFile()) {
-      throw new Error(`queue entry is not a regular file: ${filePath}`);
-    }
-    return true;
+    return await fs.lstat(filePath, { bigint: true });
   } catch (error) {
-    if (getErrorCode(error) === "ENOENT") return false;
-    throw error;
-  }
-}
-
-async function unlinkIfCurrent(filePath: string, expected: Awaited<ReturnType<typeof fs.lstat>>): Promise<void> {
-  const current = await fs.lstat(filePath, { bigint: true }).catch((error) => {
     if (getErrorCode(error) === "ENOENT") return null;
     throw error;
-  });
-  if (!current) return;
-  if (current.isSymbolicLink() || !current.isFile() || !sameFileIdentity(current, expected)) {
-    throw new FsSafeError("path-mismatch", "queue entry changed during ownership transfer");
   }
-  await fs.unlink(filePath);
-  await syncDirectoryBestEffort(path.dirname(filePath));
 }
 
-async function moveDurableQueueFileExclusiveUnchecked(
-  sourcePath: string,
-  targetPath: string,
-): Promise<void> {
-  const sourceIdentity = await fs.lstat(sourcePath, { bigint: true });
-  if (
-    sourceIdentity.isSymbolicLink() ||
-    !sourceIdentity.isFile() ||
-    sourceIdentity.nlink > 1n
-  ) {
-    throw new Error("queue entry is not an owned regular file");
+async function regularQueueFileIdentity(filePath: string): Promise<BigIntStats | null> {
+  const identity = await lstatOrNull(filePath);
+  if (!identity) return null;
+  if (identity.isSymbolicLink() || !identity.isFile()) {
+    throw new Error(`queue entry is not a regular file: ${filePath}`);
   }
-  await publishFileExclusive({
-    sourcePath,
-    targetPath,
-    expectedSourceIdentity: sourceIdentity,
-    strategy: "link-or-copy",
-  });
-  await unlinkIfCurrent(sourcePath, sourceIdentity);
+  return identity;
+}
+
+async function withQueueEntryLock<T>(
+  paths: DurableQueueEntryPathsLike,
+  run: () => Promise<T>,
+): Promise<T> {
+  return await serializePathWrite(paths.jsonPath, async () =>
+    await withQueueTransferLock(path.resolve(paths.jsonPath), run));
+}
+
+async function claimDurableQueueEntryUnlocked(
+  paths: DurableQueueEntryPathsLike,
+): Promise<string | null> {
+  const processingPath = durableQueueProcessingPath(paths);
+  await recoverDurableQueueRetirement({ jsonPath: paths.jsonPath, processingPath });
+  const existingProcessing = await regularQueueFileIdentity(processingPath);
+  if (existingProcessing) {
+    const pending = await lstatOrNull(paths.jsonPath);
+    if (
+      pending &&
+      !pending.isSymbolicLink() &&
+      pending.isFile() &&
+      sameFileIdentityForCleanup(pending, existingProcessing)
+    ) {
+      await retireDurableQueueSource({ jsonPath: paths.jsonPath, processingPath });
+    }
+    return processingPath;
+  }
+  const pending = await lstatOrNull(paths.jsonPath);
+  if (!pending || pending.isSymbolicLink() || !pending.isFile()) return null;
+  if (pending.nlink > 1n || !sameFileIdentityForCleanup(pending, pending)) {
+    throw new FsSafeError("path-mismatch", "queue entry is not exclusively owned");
+  }
+  try {
+    await fs.link(paths.jsonPath, processingPath);
+  } catch (error) {
+    if (getErrorCode(error) === "EEXIST") {
+      return (await regularQueueFileIdentity(processingPath)) ? processingPath : null;
+    }
+    if (getErrorCode(error) === "ENOENT") return null;
+    throw error;
+  }
+  await syncDirectoryBestEffort(path.dirname(processingPath));
+  const claimed = await regularQueueFileIdentity(processingPath);
+  if (!claimed || claimed.nlink > 2n) {
+    throw new FsSafeError("path-mismatch", "queue claim is not an owned regular file");
+  }
+  await retireDurableQueueSource({ jsonPath: paths.jsonPath, processingPath });
+  return processingPath;
 }
 
 export async function claimDurableQueueEntry(
   paths: DurableQueueEntryPathsLike,
 ): Promise<string | null> {
-  const processingPath = durableQueueProcessingPath(paths);
-  return await serializePathWrite(paths.jsonPath, async () => {
-    if (await regularQueueFileExists(processingPath)) return processingPath;
-    try {
-      const source = await fs.lstat(paths.jsonPath);
-      if (source.isSymbolicLink() || !source.isFile()) return null;
-      await moveDurableQueueFileExclusiveUnchecked(paths.jsonPath, processingPath);
-      return processingPath;
-    } catch (error) {
-      if (getErrorCode(error) === "ENOENT") {
-        return (await regularQueueFileExists(processingPath)) ? processingPath : null;
-      }
-      if (
-        (getErrorCode(error) === "EEXIST" ||
-          getErrorCode(error) === "EPERM" ||
-          (error instanceof FsSafeError && error.code === "already-exists")) &&
-        (await regularQueueFileExists(processingPath))
-      ) {
-        return processingPath;
-      }
-      throw error;
-    }
-  });
+  if (!(await lstatOrNull(path.dirname(paths.jsonPath)))) return null;
+  return await withQueueEntryLock(paths, async () => await claimDurableQueueEntryUnlocked(paths));
 }
 
-async function moveDurableQueueFileExclusive(sourcePath: string, targetPath: string): Promise<void> {
-  await serializePathWrite(sourcePath, async () => {
-    await moveDurableQueueFileExclusiveUnchecked(sourcePath, targetPath);
+export async function completeDeliveredQueueEntry(
+  paths: DurableQueueEntryPathsLike,
+): Promise<boolean> {
+  if (!(await lstatOrNull(path.dirname(paths.deliveredPath)))) return false;
+  return await withQueueEntryLock(paths, async () => {
+    if (!(await regularQueueFileIdentity(paths.deliveredPath))) return false;
+    if (await regularQueueFileIdentity(durableQueueProcessingPath(paths))) {
+      await fs.unlink(paths.deliveredPath);
+      await syncDirectoryBestEffort(path.dirname(paths.deliveredPath));
+      return false;
+    }
+    await fs.unlink(paths.deliveredPath);
+    await syncDirectoryBestEffort(path.dirname(paths.deliveredPath));
+    return true;
   });
 }
 
 export async function acknowledgeDurableQueueEntry(
   paths: DurableQueueEntryPathsLike,
 ): Promise<void> {
-  const sourcePath = await claimDurableQueueEntry(paths);
-  if (!sourcePath) {
-    await fs.unlink(paths.deliveredPath).catch(() => undefined);
-    return;
-  }
-  await serializePathWrite(paths.deliveredPath, async () => {
-    await fs.unlink(paths.deliveredPath).catch((error) => {
-      if (getErrorCode(error) !== "ENOENT") throw error;
-    });
-    await moveDurableQueueFileExclusive(sourcePath, paths.deliveredPath);
+  if (!(await lstatOrNull(path.dirname(paths.jsonPath)))) return;
+  await withQueueEntryLock(paths, async () => {
+    const processingPath = durableQueueProcessingPath(paths);
+    const processing = await regularQueueFileIdentity(processingPath);
+    const delivered = await regularQueueFileIdentity(paths.deliveredPath);
+    if (!processing) {
+      if (delivered) {
+        await fs.unlink(paths.deliveredPath);
+        await syncDirectoryBestEffort(path.dirname(paths.deliveredPath));
+      }
+      return;
+    }
+    if (delivered) await fs.unlink(paths.deliveredPath);
+    await fs.rename(processingPath, paths.deliveredPath);
+    await syncDirectoryBestEffort(path.dirname(paths.deliveredPath));
     await fs.unlink(paths.deliveredPath);
     await syncDirectoryBestEffort(path.dirname(paths.deliveredPath));
   });
@@ -128,9 +148,27 @@ export async function moveDurableQueueEntryToFailed(params: {
   paths: DurableQueueEntryPathsLike;
   failedPath: string;
 }): Promise<void> {
-  const processingPath = durableQueueProcessingPath(params.paths);
-  const sourcePath = (await regularQueueFileExists(processingPath))
-    ? processingPath
-    : params.paths.jsonPath;
-  await moveDurableQueueFileExclusive(sourcePath, params.failedPath);
+  await withQueueEntryLock(params.paths, async () => {
+    const processingPath = durableQueueProcessingPath(params.paths);
+    const sourcePath = (await regularQueueFileIdentity(processingPath))
+      ? processingPath
+      : await claimDurableQueueEntryUnlocked(params.paths);
+    if (!sourcePath) {
+      throw Object.assign(new Error("queue entry does not exist"), { code: "ENOENT" });
+    }
+    const source = await regularQueueFileIdentity(sourcePath);
+    const failed = await regularQueueFileIdentity(params.failedPath);
+    if (failed) {
+      if (source && sameFileIdentityForCleanup(source, failed)) {
+        await fs.unlink(sourcePath);
+        await syncDirectoryBestEffort(path.dirname(sourcePath));
+        return;
+      }
+      throw new FsSafeError("already-exists", "failed queue destination already exists");
+    }
+    await fs.link(sourcePath, params.failedPath);
+    await syncDirectoryBestEffort(path.dirname(params.failedPath));
+    await fs.unlink(sourcePath);
+    await syncDirectoryBestEffort(path.dirname(sourcePath));
+  });
 }

@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   acknowledgeDurableQueueEntry,
   claimDurableQueueEntry,
+  completeDeliveredQueueEntry,
   moveDurableQueueEntryToFailed,
 } from "./json-durable-queue-ownership.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
@@ -428,7 +429,8 @@ export async function loadPendingJsonDurableQueueEntries<T>(
   const now = Date.now();
   for (const file of files) {
     if (file.endsWith(".delivered")) {
-      await unlinkBestEffort(path.join(options.queueDir, file));
+      const id = file.slice(0, -".delivered".length);
+      await completeDeliveredQueueEntry(resolveJsonDurableQueueEntryPaths(options.queueDir, id));
     } else if (options.cleanupTmpMaxAgeMs !== undefined && file.endsWith(".tmp")) {
       await unlinkStaleTmpBestEffort(
         path.join(options.queueDir, file),
@@ -437,7 +439,6 @@ export async function loadPendingJsonDurableQueueEntries<T>(
       );
     }
   }
-
   const ids: string[] = [];
   const seenIds = new Set<string>();
   for (const file of files) {
@@ -448,10 +449,9 @@ export async function loadPendingJsonDurableQueueEntries<T>(
         : null;
     if (!suffix) continue;
     const id = file.slice(0, -suffix.length);
-    if (!seenIds.has(id)) {
-      seenIds.add(id);
-      ids.push(id);
-    }
+    if (seenIds.has(id)) continue;
+    seenIds.add(id);
+    ids.push(id);
   }
 
   const entries: T[] = [];
