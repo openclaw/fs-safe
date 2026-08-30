@@ -4,6 +4,7 @@
 
 ### Security and Correctness
 
+- Make durable queue directory creation, claims, acknowledgement, quarantine, marker cleanup, and retirement transitions fsync affected directories and propagate durability failures.
 - Fsync synchronous file-store temps before rename and parent directories after publication, matching the documented durability contract.
 - Reject invalid runtime archive `onFiltered` policies before extraction instead of treating unknown values as entry-skipping opt-in.
 - Claim durable queue generations under a fail-closed cross-process lock with no-replace hardlinks and recoverable source retirement so acknowledgement and quarantine cannot delete or move a newer same-ID replacement; acknowledgement now requires a processing claim, and quarantine preserves existing failed-entry evidence on collisions.

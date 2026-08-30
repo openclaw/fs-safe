@@ -1,7 +1,7 @@
 import type { BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { syncDirectoryBestEffort } from "./directory-durability.js";
+import { syncDirectory } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup } from "./file-identity.js";
 import {
@@ -88,7 +88,7 @@ async function claimDurableQueueEntryUnlocked(
     if (getErrorCode(error) === "ENOENT") return null;
     throw error;
   }
-  await syncDirectoryBestEffort(path.dirname(processingPath));
+  await syncDirectory(path.dirname(processingPath));
   const claimed = await regularQueueFileIdentity(processingPath);
   if (!claimed || claimed.nlink > 2n) {
     throw new FsSafeError("path-mismatch", "queue claim is not an owned regular file");
@@ -112,11 +112,11 @@ export async function completeDeliveredQueueEntry(
     if (!(await regularQueueFileIdentity(paths.deliveredPath))) return false;
     if (await regularQueueFileIdentity(durableQueueProcessingPath(paths))) {
       await fs.unlink(paths.deliveredPath);
-      await syncDirectoryBestEffort(path.dirname(paths.deliveredPath));
+      await syncDirectory(path.dirname(paths.deliveredPath));
       return false;
     }
     await fs.unlink(paths.deliveredPath);
-    await syncDirectoryBestEffort(path.dirname(paths.deliveredPath));
+    await syncDirectory(path.dirname(paths.deliveredPath));
     return true;
   });
 }
@@ -132,7 +132,7 @@ export async function acknowledgeDurableQueueEntry(
     if (!processing) {
       if (delivered) {
         await fs.unlink(paths.deliveredPath);
-        await syncDirectoryBestEffort(path.dirname(paths.deliveredPath));
+        await syncDirectory(path.dirname(paths.deliveredPath));
       }
       if (await regularQueueFileIdentity(paths.jsonPath)) {
         throw new FsSafeError(
@@ -144,9 +144,9 @@ export async function acknowledgeDurableQueueEntry(
     }
     if (delivered) await fs.unlink(paths.deliveredPath);
     await fs.rename(processingPath, paths.deliveredPath);
-    await syncDirectoryBestEffort(path.dirname(paths.deliveredPath));
+    await syncDirectory(path.dirname(paths.deliveredPath));
     await fs.unlink(paths.deliveredPath);
-    await syncDirectoryBestEffort(path.dirname(paths.deliveredPath));
+    await syncDirectory(path.dirname(paths.deliveredPath));
   });
 }
 
@@ -156,7 +156,31 @@ export async function moveDurableQueueEntryToFailed(params: {
 }): Promise<void> {
   await withQueueEntryLock(params.paths, async () => {
     const processingPath = durableQueueProcessingPath(params.paths);
-    const sourcePath = (await regularQueueFileIdentity(processingPath))
+    const processing = await regularQueueFileIdentity(processingPath);
+    const existingFailed = await regularQueueFileIdentity(params.failedPath);
+    if (!processing && existingFailed) {
+      await syncDirectory(path.dirname(params.failedPath));
+      await syncDirectory(path.dirname(processingPath));
+      const recoveredFailed = await regularQueueFileIdentity(params.failedPath);
+      if (
+        !recoveredFailed ||
+        !sameFileIdentityForCleanup(existingFailed, recoveredFailed)
+      ) {
+        throw new FsSafeError(
+          "path-mismatch",
+          "failed queue destination changed during recovery",
+        );
+      }
+      if (await regularQueueFileIdentity(params.paths.jsonPath)) {
+        throw new FsSafeError(
+          "already-exists",
+          "failed queue destination already exists",
+        );
+      }
+      return;
+    }
+
+    const sourcePath = processing
       ? processingPath
       : await claimDurableQueueEntryUnlocked(params.paths);
     if (!sourcePath) {
@@ -166,15 +190,16 @@ export async function moveDurableQueueEntryToFailed(params: {
     const failed = await regularQueueFileIdentity(params.failedPath);
     if (failed) {
       if (source && sameFileIdentityForCleanup(source, failed)) {
+        await syncDirectory(path.dirname(params.failedPath));
         await fs.unlink(sourcePath);
-        await syncDirectoryBestEffort(path.dirname(sourcePath));
+        await syncDirectory(path.dirname(sourcePath));
         return;
       }
       throw new FsSafeError("already-exists", "failed queue destination already exists");
     }
     await fs.link(sourcePath, params.failedPath);
-    await syncDirectoryBestEffort(path.dirname(params.failedPath));
+    await syncDirectory(path.dirname(params.failedPath));
     await fs.unlink(sourcePath);
-    await syncDirectoryBestEffort(path.dirname(sourcePath));
+    await syncDirectory(path.dirname(sourcePath));
   });
 }
