@@ -4,6 +4,7 @@
 
 ### Security and Correctness
 
+- Stop archive destination publication at the timeout boundary and join only an in-flight destination mutation and rollback before rejecting, preserving prompt deadlines for non-mutating work.
 - Verify durable JSON queue reads with lossless bigint identities and reject persistent unknown Windows identities before reading entry bytes.
 
 ## 0.6.0 - 2026-08-29

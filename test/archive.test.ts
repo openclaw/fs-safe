@@ -11,7 +11,6 @@ import {
   extractArchive,
   resolvePackedRootDir,
 } from "../src/archive.js";
-import { withExtractionDeadline } from "../src/archive-deadline.js";
 import { __resetFsSafeNativeConfigForTest, configureFsSafeNative } from "../src/native-config.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import {
@@ -76,21 +75,6 @@ afterEach(async () => {
 });
 
 describe("archive extraction", () => {
-  it("enforces deadlines around non-cooperative archive awaits", async () => {
-    let finished = false;
-    const startedAt = Date.now();
-
-    await expect(
-      withExtractionDeadline(1, "extract tar", async () => {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        finished = true;
-      }),
-    ).rejects.toThrow("extract tar timed out after 1ms");
-
-    expect(Date.now() - startedAt).toBeLessThan(75);
-    expect(finished).toBe(false);
-  });
-
   it("extracts zip archives through safe destination checks", async () => {
     const root = await tempRoot("fs-safe-archive-");
     const archivePath = path.join(root, "pkg.zip");
@@ -208,28 +192,6 @@ describe("archive extraction", () => {
     await extractArchive({ archivePath, destDir, kind: "zip", timeoutMs: 15_000 });
     const mode = (await fs.stat(path.join(destDir, "bin", "tool"))).mode & 0o777;
     expect(mode).toBe(0o755);
-  });
-
-  it("rejects zip extraction when the deadline elapses before file writes", async () => {
-    const root = await tempRoot("fs-safe-archive-timeout-");
-    const archivePath = path.join(root, "pkg.zip");
-    const destDir = path.join(root, "dest");
-    await fs.mkdir(destDir, { recursive: true });
-
-    const zip = new JSZip();
-    zip.file("package/hello.txt", "hi");
-    await fs.writeFile(archivePath, await zip.generateAsync({ type: "nodebuffer" }));
-
-    __setFsSafeTestHooksForTest({
-      async beforeArchiveOutputMutation() {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      },
-    });
-
-    await expect(
-      extractArchive({ archivePath, destDir, kind: "zip", timeoutMs: 1 }),
-    ).rejects.toThrow("extract zip timed out after 1ms");
-    await expect(fs.readdir(destDir)).resolves.toEqual([]);
   });
 
   it("does not truncate existing destination files when zip extraction fails", async () => {

@@ -186,7 +186,9 @@ export async function extractNativeArchive(params: {
           sourceDir: stagingDir,
           destinationDir: params.destDir,
           destinationRealDir,
+          deadline: params.deadline,
         });
+        params.deadline.check();
       },
     });
   } finally {
