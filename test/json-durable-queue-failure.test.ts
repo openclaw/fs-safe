@@ -195,10 +195,14 @@ describe("durable JSON queue failure recovery", () => {
     const root = await tempRoot("fs-safe-queue-ack-error-");
     const paths = resolveJsonDurableQueueEntryPaths(root, "job");
     await fs.writeFile(paths.jsonPath, "{}");
-    const denied = Object.assign(new Error("rename denied"), { code: "EACCES" });
-    vi.spyOn(fs, "rename").mockRejectedValueOnce(denied);
+    const denied = Object.assign(new Error("delivered cleanup denied"), { code: "EACCES" });
+    const realUnlink = fs.unlink.bind(fs);
+    vi.spyOn(fs, "unlink").mockImplementation(async (filePath) => {
+      if (String(filePath) === paths.deliveredPath) throw denied;
+      return await realUnlink(filePath);
+    });
     await expect(ackJsonDurableQueueEntry(paths)).rejects.toBe(denied);
-    expect(fsSync.existsSync(paths.jsonPath)).toBe(true);
+    expect(fsSync.existsSync(paths.processingPath!)).toBe(true);
   });
 
   it("ignores missing best-effort cleanup but propagates stale-temp inspection failures", async () => {

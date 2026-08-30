@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   ackJsonDurableQueueEntry,
   ensureJsonDurableQueueDirs,
@@ -10,9 +10,14 @@ import {
   resolveJsonDurableQueueEntryPaths,
   writeJsonDurableQueueEntry,
 } from "../src/json-durable-queue.js";
+import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useTempDirs();
+
+afterEach(() => {
+  __setFsSafeTestHooksForTest(undefined);
+});
 
 async function queueFixture() {
   const root = await tempRoot("fs-safe-queue-generation-");
@@ -50,6 +55,28 @@ describe("durable queue generation ownership", () => {
       paths,
       tempPrefix: "queue",
     })).resolves.toEqual({ generation: 2 });
+  });
+
+  it("fails closed when another consumer claims after the absence check", async () => {
+    const { paths } = await queueFixture();
+    await writeGeneration(paths.jsonPath, 1);
+    let intercepted = false;
+    __setFsSafeTestHooksForTest({
+      async beforeDurableQueueClaimPublish(jsonPath, processingPath) {
+        if (intercepted) return;
+        intercepted = true;
+        await fs.rename(jsonPath, processingPath);
+        await fs.writeFile(jsonPath, JSON.stringify({ generation: 2 }));
+      },
+    });
+
+    await expect(
+      loadJsonDurableQueueEntry({ paths, tempPrefix: "queue" }),
+    ).rejects.toMatchObject({ code: "path-mismatch" });
+    await expect(fs.readFile(paths.processingPath!, "utf8")).resolves.toContain(
+      '"generation": 1',
+    );
+    await expect(fs.readFile(paths.jsonPath, "utf8")).resolves.toContain('"generation":2');
   });
 
   it("quarantines the claimed generation without moving its replacement", async () => {

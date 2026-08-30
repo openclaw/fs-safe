@@ -4,6 +4,7 @@ import { syncDirectoryBestEffort } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { publishFileExclusive } from "./publish-file.js";
+import { getFsSafeTestHooks } from "./test-hooks.js";
 import { serializePathWrite } from "./write-queue.js";
 
 export type DurableQueueEntryPathsLike = {
@@ -57,24 +58,42 @@ export async function claimDurableQueueEntry(
   const processingPath = durableQueueProcessingPath(paths);
   return await serializePathWrite(paths.jsonPath, async () => {
     if (await regularQueueFileExists(processingPath)) return processingPath;
+    let sourceIdentity: Awaited<ReturnType<typeof fs.lstat>>;
     try {
-      const source = await fs.lstat(paths.jsonPath);
-      if (!source.isFile() || source.isSymbolicLink()) return null;
-      await fs.rename(paths.jsonPath, processingPath);
-      await syncDirectoryBestEffort(path.dirname(paths.jsonPath));
-      return processingPath;
+      sourceIdentity = await fs.lstat(paths.jsonPath, { bigint: true });
     } catch (error) {
-      if (getErrorCode(error) === "ENOENT") {
-        return (await regularQueueFileExists(processingPath)) ? processingPath : null;
-      }
+      if (getErrorCode(error) === "ENOENT") return null;
+      throw error;
+    }
+    if (
+      sourceIdentity.isSymbolicLink() ||
+      !sourceIdentity.isFile() ||
+      sourceIdentity.nlink > 1n
+    ) {
+      return null;
+    }
+    await getFsSafeTestHooks()?.beforeDurableQueueClaimPublish?.(
+      paths.jsonPath,
+      processingPath,
+    );
+    try {
+      await publishFileExclusive({
+        sourcePath: paths.jsonPath,
+        targetPath: processingPath,
+        expectedSourceIdentity: sourceIdentity,
+        strategy: "link-or-copy",
+      });
+    } catch (error) {
       if (
-        (getErrorCode(error) === "EEXIST" || getErrorCode(error) === "EPERM") &&
-        (await regularQueueFileExists(processingPath))
+        getErrorCode(error) === "EEXIST" ||
+        (error instanceof FsSafeError && error.code === "already-exists")
       ) {
-        return processingPath;
+        if (await regularQueueFileExists(processingPath)) return processingPath;
       }
       throw error;
     }
+    await unlinkIfCurrent(paths.jsonPath, sourceIdentity);
+    return processingPath;
   });
 }
 

@@ -9,6 +9,10 @@ export type FsSafeTestHooks = {
     operation: "mkdir" | "chmod",
     targetPath: string,
   ) => Promise<void> | void;
+  beforeDurableQueueClaimPublish?: (
+    jsonPath: string,
+    processingPath: string,
+  ) => Promise<void> | void;
   beforeFileStorePruneDescend?: (dirPath: string) => Promise<void> | void;
   beforeFileStoreSyncPrivateWrite?: (filePath: string) => void;
   beforeRootFallbackMutation?: (
