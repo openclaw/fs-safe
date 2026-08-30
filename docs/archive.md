@@ -89,6 +89,10 @@ explicitly `"skip-entry"`. Runtime values other than `"reject-archive"` and
 `"skip-entry"` reject before extraction starts instead of falling through to
 skip behavior. Path traversal and archive-wide entry-count checks still apply
 to skipped entries.
+`maxEntryBytes` and `maxExtractedBytes` charge only entries accepted after
+stripping and filtering. Skipping a large member does not consume these payload
+budgets. The separate complete-stream decoded limit still applies to all TAR
+content, including skipped or fully stripped members.
 
 For example, a fleet restore can omit regenerated cache entries while rejecting
 any other policy mismatch by default:
@@ -128,8 +132,8 @@ If `kind` is omitted, the helper calls `resolveArchiveKind(archivePath)` and thr
 type ArchiveExtractLimits = {
   maxArchiveBytes?: number;     // refuse if archivePath stat'd size exceeds this
   maxEntries?: number;          // refuse before extracting if entry count > this
-  maxExtractedBytes?: number;   // refuse mid-stream if total extracted bytes > this
-  maxEntryBytes?: number;       // refuse a single entry larger than this
+  maxExtractedBytes?: number;   // cap total payload bytes accepted after strip/filter
+  maxEntryBytes?: number;       // cap one accepted entry after strip/filter
   maxMetaEntryBytes?: number;   // refuse one PAX/GNU metadata body above this
   maxEntryPathComponents?: number; // bound output path depth after stripComponents
 };
@@ -205,25 +209,28 @@ physical EOF after parser traversal, before completing directory modes,
 publishing staged files, or returning the requested bytes. Finding the requested
 member or reaching the parser's logical EOF cannot bypass trailing validation.
 
-The raw meter enforces `maxEntries`, `maxEntryBytes`, and `maxExtractedBytes`
-before consuming each logical member's body, including members later skipped
-by filtering or stripping. PAX/GNU metadata headers do not count as members;
-their payloads use the separate `maxMetaEntryBytes` limit. Member budgets use
-declared effective sizes, exclude block padding, and apply before parser policy
-callbacks. Every TAR admission/parser pass also has an internal decoded ceiling:
+The raw meter enforces `maxEntries` before consuming each logical member's body,
+including members later skipped by filtering or stripping. PAX/GNU metadata
+headers do not count as members; their payloads use `maxMetaEntryBytes`.
+The meter does not receive `maxEntryBytes` or `maxExtractedBytes`: those payload
+budgets apply only after strip/filter acceptance, using declared effective
+sizes and excluding block padding. JavaScript's entry checker and the native
+accepted-plan builder retain this shared policy. Every TAR admission/parser
+pass has a separate absolute decoded ceiling:
 `maxExtractedBytes + maxArchiveBytes`, safely clamped to
 `Number.MAX_SAFE_INTEGER` (768 MiB with defaults). It counts every admitted
 decoded byte: headers, bodies, metadata, all block padding, both EOF blocks,
-and zero padding after EOF. Cumulative metadata and zero tails therefore cannot
-bypass the byte budgets. Exceeding this ceiling throws
+and zero padding after EOF. It bounds complete decoding before parser policy,
+including all filtered/stripped content; cumulative metadata and zero tails
+cannot bypass this bound. Exceeding this ceiling throws
 `ArchiveLimitError("archive-decoded-size-exceeds-limit")`.
 
 The same TypeScript helper derives the ceiling for JavaScript and every native
-TAR pass. Before selecting a backend, it caps internal TAR byte limits at
+TAR pass. Before selecting a backend, it caps internal metadata/decoded limits at
 `Number.MAX_SAFE_INTEGER` and logical entry counts at `2^32 - 1`. Larger finite
-options such as `Number.MAX_VALUE` remain valid and effectively unbounded within
-these representable framing limits. The decoded ceiling uses the clamped
-payload and archive overhead with safe addition. Ordinary limits, including
+options such as `Number.MAX_VALUE` remain valid; high-level payload budgets keep
+their large values. The decoded ceiling uses clamped `maxExtractedBytes` and
+archive overhead with safe addition. Ordinary limits, including
 zero and the existing defaulting/rounding rules, retain their behavior.
 There is no new public option. This is an absolute decoded admission
 cap, not a decompression-ratio policy; bounded stream/codec read-ahead remains.
@@ -322,9 +329,9 @@ entries, verifies ZIP CRC and declared size,
 and throws `ArchiveLimitError` if the requested entry's output exceeds
 `maxBytes`. For TAR, `maxBytes` applies only to that requested entry: a larger
 unrequested member remains valid within the default archive admission limits.
-TAR traversal uses the default entry-count, per-member, cumulative member,
-compressed-input, and metadata limits, plus their derived 768 MiB decoded
-ceiling. ZIP
+TAR traversal uses default entry-count, compressed-input, and metadata limits,
+plus the 768 MiB decoded ceiling derived from default extracted/archive byte
+limits. It does not apply payload budgets to unrequested members. ZIP
 inputs retain the archive subpath's 256 MiB compressed-input ceiling.
 With a native binding it uses the same Rust decoders as extraction, including
 zstd and bzip2 TAR. Without native it retains the JS ZIP/TAR/gzip implementation.

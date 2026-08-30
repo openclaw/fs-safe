@@ -31,11 +31,11 @@ describe("absolute decoded TAR admission", () => {
     const options = { maxEntries: value, maxEntryBytes: value, maxExtractedBytes: value, maxMetaEntryBytes: value, maxArchiveBytes: 0 };
     expect(resolveTarMeterLimits(options)).toEqual({
       maxEntries: entries,
-      maxEntryBytes: bytes, maxExtractedBytes: bytes, maxMetaEntryBytes: bytes, maxDecodedBytes: bytes,
+      maxMetaEntryBytes: bytes, maxDecodedBytes: bytes,
     });
-    // Only the internal TAR representation is capped; public resolution keeps
-    // its existing finite-number semantics for other archive policies.
+    // Payload limits remain exclusively in the accepted-entry policy.
     expect(resolveExtractLimits(options).maxEntryBytes).toBe(Math.floor(value));
+    expect(resolveExtractLimits(options).maxExtractedBytes).toBe(Math.floor(value));
   });
 
   it.each([NaN, Infinity, -Infinity, -1, -0.5])("retains public defaulting for malformed value=%s", (value) => {

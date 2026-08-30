@@ -5,8 +5,6 @@ pub(super) fn test_limits(max_meta_entry_bytes: u64) -> TarMeterLimits {
     TarMeterLimits {
         max_meta_entry_bytes,
         max_entries: 50_000,
-        max_entry_bytes: 256 * 1024 * 1024,
-        max_extracted_bytes: 512 * 1024 * 1024,
         max_decoded_bytes: 768 * 1024 * 1024,
     }
 }
@@ -196,7 +194,7 @@ fn raw_framing_keeps_member_metadata_and_trailing_zero_bytes_unchanged() {
 }
 
 #[test]
-fn member_budgets_stop_before_requesting_the_rejected_body() {
+fn logical_count_stops_before_requesting_the_rejected_body() {
     struct GuardTail(Cursor<Vec<u8>>);
     impl Read for GuardTail {
         fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
@@ -205,16 +203,12 @@ fn member_budgets_stop_before_requesting_the_rejected_body() {
             self.0.read(output)
         }
     }
-    let base = TarMeterLimits { max_entries: 1, max_entry_bytes: 7, max_extracted_bytes: 7, ..test_limits(1024) };
+    let base = TarMeterLimits { max_entries: 1, ..test_limits(1024) };
     let file = member("first", b'0', 7, b"payload");
     let cases = [
-        (member("large", b'0', 8, b""), base, "archive-entry-extracted-size-exceeds-limit"),
         (member("empty", b'0', 0, b""), TarMeterLimits { max_entries: 0, ..base }, "archive-entry-count-exceeds-limit"),
         ([file.clone(), member("second", b'0', 1, b"")].concat(), base, "archive-entry-count-exceeds-limit"),
-        ([file.clone(), member("second", b'0', 1, b"")].concat(), TarMeterLimits { max_entries: 2, ..base }, "archive-extracted-size-exceeds-limit"),
-        ([pax(&record("size", b"8")), member("raw", b'0', 0, b"")].concat(), base, "archive-entry-extracted-size-exceeds-limit"),
         ([pax(&record("size", b"0")), member("raw", b'0', 700, b""), member("second", b'0', 1, b"")].concat(), base, "archive-entry-count-exceeds-limit"),
-        ([pax(&record("size", b"7")), member("raw", b'0', 0, b"payload"), pax(&record("size", b"1")), member("second", b'0', 0, b"")].concat(), TarMeterLimits { max_entries: 2, ..base }, "archive-extracted-size-exceeds-limit"),
     ];
     for (bytes, limits, code) in cases {
         let error = TarMetadataMeter::new(GuardTail(Cursor::new(bytes)), limits).read_to_end(&mut Vec::new()).unwrap_err();
@@ -223,13 +217,13 @@ fn member_budgets_stop_before_requesting_the_rejected_body() {
 }
 
 #[test]
-fn member_budgets_exclude_metadata_and_padding_and_use_effective_sizes() {
+fn logical_count_excludes_metadata_and_padding_and_uses_effective_framing() {
     let bytes = [
         pax(&record("size", b"0")), member("raw", b'0', 700, b""),
         member("LongName", b'L', 5, b"name\0"), member("LongLink", b'K', 5, b"link\0"),
         member("value", b'0', 7, b"payload"), vec![0; 1024],
     ].concat();
-    let limits = TarMeterLimits { max_entries: 2, max_entry_bytes: 7, max_extracted_bytes: 7, ..test_limits(1024) };
+    let limits = TarMeterLimits { max_entries: 2, ..test_limits(1024) };
     let mut output = Vec::new();
     TarMetadataMeter::new(Cursor::new(bytes.clone()), limits).read_to_end(&mut output).unwrap();
     assert_eq!(output, bytes);
@@ -288,14 +282,14 @@ fn decoded_ceiling_charges_all_framing_and_retains_nonzero_trailer_errors() {
 }
 
 #[test]
-fn unsafe_raw_sizes_and_padding_precede_member_budgets_even_with_pax() {
+fn unsafe_raw_sizes_and_padding_precede_counts_even_with_pax() {
     for size in [MAX_SAFE_INTEGER + 1, MAX_SAFE_INTEGER, MAX_SAFE_INTEGER - 510] {
         let mut header = member("value", b'0', 0, b"");
         header[124..136].fill(0);
         header[124] = 0x80;
         header[128..136].copy_from_slice(&size.to_be_bytes());
         for prefix in [Vec::new(), pax(&record("size", b"0"))] {
-            let limits = TarMeterLimits { max_entry_bytes: 0, max_extracted_bytes: 0, ..test_limits(1024) };
+            let limits = TarMeterLimits { max_entries: 0, ..test_limits(1024) };
             let error = TarMetadataMeter::new(Cursor::new([prefix, header.clone()].concat()), limits).read_to_end(&mut Vec::new()).unwrap_err();
             assert!(error.to_string().contains(INVALID_HEADER), "{error}");
         }

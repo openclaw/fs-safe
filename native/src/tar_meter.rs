@@ -9,8 +9,6 @@ pub const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 #[derive(Clone, Copy)]
 pub struct TarMeterLimits {
     pub max_entries: usize,
-    pub max_entry_bytes: u64,
-    pub max_extracted_bytes: u64,
     pub max_meta_entry_bytes: u64,
     pub max_decoded_bytes: u64,
 }
@@ -37,7 +35,6 @@ pub struct TarMetadataMeter<R> {
     inner: R,
     limits: TarMeterLimits,
     entries: usize,
-    remaining_bytes: u64,
     remaining_decoded_bytes: u64,
     state: MeterState,
     block: [u8; 512],
@@ -53,7 +50,6 @@ impl<R> TarMetadataMeter<R> {
             inner,
             limits,
             entries: 0,
-            remaining_bytes: limits.max_extracted_bytes,
             remaining_decoded_bytes: limits.max_decoded_bytes,
             state: MeterState::Header,
             block: [0; 512],
@@ -75,18 +71,11 @@ impl<R> TarMetadataMeter<R> {
         io::Error::new(io::ErrorKind::InvalidData, META_LIMIT)
     }
 
-    fn admit_member(&mut self, size: u64) -> io::Result<()> {
+    fn count_member(&mut self) -> io::Result<()> {
         if self.entries >= self.limits.max_entries {
             return Err(io::Error::other("archive-entry-count-exceeds-limit"));
         }
         self.entries += 1;
-        if size > self.limits.max_entry_bytes {
-            return Err(io::Error::other("archive-entry-extracted-size-exceeds-limit"));
-        }
-        if size > self.remaining_bytes {
-            return Err(io::Error::other("archive-extracted-size-exceeds-limit"));
-        }
-        self.remaining_bytes -= size;
         Ok(())
     }
 
@@ -221,7 +210,7 @@ impl<R> TarMetadataMeter<R> {
             }
         } else {
             if !self.pending_gnu {
-                self.admit_member(size)?;
+                self.count_member()?;
             }
             MeterState::Data { remaining: padded }
         };

@@ -37,8 +37,6 @@ describe.each(["auto", "require"] as const)("compressed TAR framing mode=%s", (m
     it.each([
       [{ maxEntries: 2 }, "archive-entry-count-exceeds-limit"],
       [{ maxEntries: 0 }, "archive-entry-count-exceeds-limit"],
-      [{ maxEntryBytes: 6 }, "archive-entry-extracted-size-exceeds-limit"],
-      [{ maxExtractedBytes: 9 }, "archive-extracted-size-exceeds-limit"],
       [{ maxArchiveBytes: 2048, maxExtractedBytes: 10 }, "archive-decoded-size-exceeds-limit"],
     ] as const)("enforces %j in admission and later native passes", async (overrides, code) => {
       const root = await tempRoot("fs-safe-tar-compressed-budget-");

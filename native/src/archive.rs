@@ -58,8 +58,6 @@ struct InspectLimits {
 #[napi(object)]
 pub struct NativeTarLimits {
     pub max_entries: f64,
-    pub max_entry_bytes: f64,
-    pub max_extracted_bytes: f64,
     pub max_meta_entry_bytes: f64,
     pub max_decoded_bytes: f64,
 }
@@ -68,8 +66,6 @@ impl NativeTarLimits {
     fn checked(self) -> Result<TarMeterLimits> {
         Ok(TarMeterLimits {
             max_entries: checked_tar_limit(self.max_entries, "maxEntries", u32::MAX as u64)? as usize,
-            max_entry_bytes: checked_tar_limit(self.max_entry_bytes, "maxEntryBytes", MAX_SAFE_INTEGER)?,
-            max_extracted_bytes: checked_tar_limit(self.max_extracted_bytes, "maxExtractedBytes", MAX_SAFE_INTEGER)?,
             max_meta_entry_bytes: checked_tar_limit(self.max_meta_entry_bytes, "maxMetaEntryBytes", MAX_SAFE_INTEGER)?,
             max_decoded_bytes: checked_tar_limit(self.max_decoded_bytes, "maxDecodedBytes", MAX_SAFE_INTEGER)?,
         })
@@ -952,8 +948,6 @@ mod tests {
             tar: TarMeterLimits {
                 max_entries,
                 max_meta_entry_bytes: 1024 * 1024,
-                max_entry_bytes: 256 * 1024 * 1024,
-                max_extracted_bytes: 512 * 1024 * 1024,
                 max_decoded_bytes: 768 * 1024 * 1024,
             },
             max_manifest_bytes: 16 * 1024 * 1024,
@@ -969,8 +963,6 @@ mod tests {
     fn native_limits(value: f64) -> NativeTarLimits {
         NativeTarLimits {
             max_entries: value,
-            max_entry_bytes: value,
-            max_extracted_bytes: value,
             max_meta_entry_bytes: value,
             max_decoded_bytes: value,
         }
@@ -989,8 +981,6 @@ mod tests {
         ] {
             let limits = native_limits(value).checked().unwrap();
             assert_eq!(limits.max_entries, expected_entries);
-            assert_eq!(limits.max_entry_bytes, expected_bytes);
-            assert_eq!(limits.max_extracted_bytes, expected_bytes);
             assert_eq!(limits.max_meta_entry_bytes, expected_bytes);
             assert_eq!(limits.max_decoded_bytes, expected_bytes);
         }
@@ -999,12 +989,10 @@ mod tests {
     #[test]
     fn native_tar_limits_reject_malformed_fields_before_clamping() {
         for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -1.0, -0.5] {
-            for field in ["maxEntries", "maxEntryBytes", "maxExtractedBytes", "maxMetaEntryBytes", "maxDecodedBytes"] {
+            for field in ["maxEntries", "maxMetaEntryBytes", "maxDecodedBytes"] {
                 let mut limits = native_limits(1024.0);
                 match field {
                     "maxEntries" => limits.max_entries = value,
-                    "maxEntryBytes" => limits.max_entry_bytes = value,
-                    "maxExtractedBytes" => limits.max_extracted_bytes = value,
                     "maxMetaEntryBytes" => limits.max_meta_entry_bytes = value,
                     "maxDecodedBytes" => limits.max_decoded_bytes = value,
                     _ => unreachable!(),
@@ -1159,7 +1147,7 @@ mod tests {
     }
 
     #[test]
-    fn every_tar_pass_rejects_over_budget_headers_without_a_body_for_all_codecs() {
+    fn every_tar_pass_rejects_over_count_headers_without_a_body_for_all_codecs() {
         let regular = fixture_tar();
         let mut pax = tar::Header::new_ustar();
         pax.set_path("PaxHeader").unwrap();
@@ -1167,14 +1155,14 @@ mod tests {
         pax.set_mode(0o644);
         pax.set_size(10);
         pax.set_cksum();
-        let pax_prefix = [pax.as_bytes().as_slice(), b"10 size=8\n", &[0; 502]].concat();
+        let pax_prefix = [pax.as_bytes().as_slice(), b"10 size=3\n", &[0; 502]].concat();
         let fixtures = [
-            (regular[..512].to_vec(), 2, 2, "archive-entry-extracted-size-exceeds-limit"),
-            (regular[..1536].to_vec(), 1, 7, "archive-entry-count-exceeds-limit"),
-            (regular[..1536].to_vec(), 2, 5, "archive-extracted-size-exceeds-limit"),
-            ([pax_prefix, regular[..512].to_vec()].concat(), 2, 7, "archive-entry-extracted-size-exceeds-limit"),
+            (regular[..512].to_vec(), 0),
+            (regular[..1536].to_vec(), 1),
+            ([pax_prefix, regular[..1536].to_vec()].concat(), 1),
         ];
-        for (tar, max_entries, max_bytes, code) in fixtures {
+        let code = "archive-entry-count-exceeds-limit";
+        for (tar, max_entries) in fixtures {
             let encoded = [
                 (ArchiveFormat::Tar, tar.clone()),
                 (ArchiveFormat::Tar, gzip(&tar)),
@@ -1184,9 +1172,7 @@ mod tests {
             for (format, bytes) in encoded {
                 let path = temp_path("tar-budget");
                 std::fs::write(&path, bytes).unwrap();
-                let mut limits = limits(max_entries);
-                limits.tar.max_entry_bytes = max_bytes;
-                limits.tar.max_extracted_bytes = max_bytes;
+                let limits = limits(max_entries);
                 let cancelled = Arc::new(AtomicBool::new(false));
                 let error = inspect_tar(path.to_str().unwrap(), format, limits, Arc::clone(&cancelled)).unwrap_err();
                 assert!(error.reason.contains(code), "{error}");
@@ -1194,7 +1180,7 @@ mod tests {
                 // must still propagate rather than disappear with the plan.
                 let error = extract_tar(path.to_str().unwrap(), format, -1, HashMap::new(), Arc::clone(&cancelled), limits.tar).unwrap_err();
                 assert!(error.reason.contains(code), "{error}");
-                let error = read_tar_entry(path.to_str().unwrap(), format, "absent", max_bytes, cancelled, limits.tar).unwrap_err();
+                let error = read_tar_entry(path.to_str().unwrap(), format, "absent", 1, cancelled, limits.tar).unwrap_err();
                 assert!(error.reason.contains(code), "{error}");
                 std::fs::remove_file(path).unwrap();
             }

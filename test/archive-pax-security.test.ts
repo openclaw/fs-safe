@@ -181,11 +181,11 @@ for (const mode of ["off", "require"] as const) {
       await reject(tarFixture([paxHeader([["path", "a/value"]]), member, { path: "b/value" }]), "entry-path", { stripComponents: 1 }, false);
     });
 
-    it("filters using effective path/size only after admitting stripped/skipped bytes", async () => {
+    it("filters using effective path/size before charging accepted payload bytes", async () => {
       const bytes = paxArchive([["path", "package/renamed"], ["size", "700"]], Buffer.alloc(700), 1);
       const seen: Array<{ path: string; size: number }> = [];
       const fixture = await setup(bytes);
-      await extractArchive({ ...fixture, limits: { maxEntryBytes: 700, maxExtractedBytes: 703 }, onFiltered: "skip-entry", entryFilter: (entry) => {
+      await extractArchive({ ...fixture, limits: { maxEntryBytes: 3, maxExtractedBytes: 3 }, onFiltered: "skip-entry", entryFilter: (entry) => {
         seen.push(entry);
         return entry.path === "package/renamed" ? "skip" : "extract";
       } });
@@ -193,9 +193,8 @@ for (const mode of ["off", "require"] as const) {
       expect(await fs.readdir(fixture.destDir)).toEqual(["sentinel"]);
       await reject(bytes, "entry-filtered", { entryFilter: () => "skip" }, false);
       await reject(bytes, "archive-entry-count-exceeds-limit", { limits: { maxEntries: 1 }, stripComponents: 9 }, false);
-      await reject(bytes, "archive-entry-extracted-size-exceeds-limit", { limits: { maxEntryBytes: 3 }, entryFilter: () => "skip", onFiltered: "skip-entry" }, false);
-      await reject(bytes, "archive-extracted-size-exceeds-limit", { limits: { maxExtractedBytes: 702 }, stripComponents: 9 }, false);
-      await extractArchive({ ...await setup(bytes), stripComponents: 9, limits: { maxEntryBytes: 700, maxExtractedBytes: 703 } });
+      await extractArchive({ ...await setup(bytes), limits: { maxEntryBytes: 0, maxExtractedBytes: 0 }, entryFilter: () => "skip", onFiltered: "skip-entry" });
+      await extractArchive({ ...await setup(bytes), stripComponents: 9, limits: { maxEntryBytes: 3, maxExtractedBytes: 3 } });
     });
 
     it("accepts descriptive metadata and zero-size directories without restoring ownership", async () => {

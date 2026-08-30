@@ -6,7 +6,7 @@ import { extractArchive, readArchiveEntry } from "../src/archive.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
 import { tarFixture } from "./helpers/archive-fuzz.js";
-import { malformedTarFraming, numericTarFraming, tarBudgetCases } from "./helpers/archive-tar-framing.js";
+import { malformedTarFraming, numericTarFraming, tarCountCases } from "./helpers/archive-tar-framing.js";
 import { paxArchive, paxHeader } from "./helpers/archive-pax.js";
 import { DEFAULT_MAX_ENTRY_BYTES, resolveTarMeterLimits } from "../src/archive-limits.js";
 import { paxNative } from "./helpers/archive-pax-native.js";
@@ -84,8 +84,8 @@ for (const backend of ["off", "auto-missing", "auto", "require"] as const) {
       const fixture = await setup(bytes, true);
       const limits = { maxArchiveBytes: 4096, maxExtractedBytes: 7 };
       expect((await fs.stat(fixture.archivePath)).size).toBeLessThan(limits.maxArchiveBytes);
-      const entryFilter = vi.fn(() => "extract" as const);
-      await expect(extractArchive({ ...fixture, limits, entryFilter })).rejects.toMatchObject({
+      const entryFilter = vi.fn(() => "skip" as const);
+      await expect(extractArchive({ ...fixture, limits, entryFilter, onFiltered: "skip-entry" })).rejects.toMatchObject({
         name: "ArchiveLimitError", code: "archive-decoded-size-exceeds-limit",
       });
       expect(entryFilter).not.toHaveBeenCalled();
@@ -93,6 +93,29 @@ for (const backend of ["off", "auto-missing", "auto", "require"] as const) {
     });
 
     describe.each([false, true])("gzip=%s", (gzip) => {
+      it.each([false, true])("charges payload budgets only after strip/filter acceptance (PAX=%s)", async (pax) => {
+        const bytes = pax ? paxArchive([["path", "skip"], ["size", "700"]], Buffer.alloc(700), 1)
+          : tarFixture([{ path: "skip", body: Buffer.alloc(700) }, { path: "sentinel", body: "end" }]);
+        const limits = { maxEntryBytes: 3, maxExtractedBytes: 3 };
+        const fixture = await setup(bytes, gzip);
+        const entryFilter = vi.fn((entry: { path: string }) => entry.path === "skip" ? "skip" as const : "extract" as const);
+        await extractArchive({ ...fixture, limits, entryFilter, onFiltered: "skip-entry" });
+        expect(entryFilter).toHaveBeenCalledWith(expect.objectContaining({ path: "skip", size: 700 }));
+        expect(await fs.readdir(fixture.destDir)).toEqual(["sentinel"]);
+        expect(await fs.readFile(path.join(fixture.destDir, "sentinel"), "utf8")).toBe("end");
+
+        const stripped = await setup(bytes, gzip);
+        entryFilter.mockClear();
+        await extractArchive({ ...stripped, limits, stripComponents: 9, entryFilter });
+        expect(entryFilter).not.toHaveBeenCalled();
+        expect(await fs.readFile(path.join(stripped.destDir, "sentinel"), "utf8")).toBe("unchanged");
+        await expect(extractArchive({ ...stripped, stripComponents: 9, limits: { ...limits, maxEntries: 1 } }))
+          .rejects.toMatchObject({ code: "archive-entry-count-exceeds-limit" });
+        await expect(extractArchive({ ...stripped, limits })).rejects.toMatchObject({ code: "archive-entry-extracted-size-exceeds-limit" });
+        await expect(extractArchive({ ...stripped, limits: { maxEntryBytes: 700, maxExtractedBytes: 702 } }))
+          .rejects.toMatchObject({ code: "archive-extracted-size-exceeds-limit" });
+      });
+
       it.each([
         ["maxEntryBytes", "archive-entry-extracted-size-exceeds-limit"],
         ["maxExtractedBytes", "archive-extracted-size-exceeds-limit"],
@@ -131,8 +154,7 @@ for (const backend of ["off", "auto-missing", "auto", "require"] as const) {
       it.skipIf(backend === "off" || backend === "auto-missing")("defensively clamps direct native limits and rejects malformed numbers", async () => {
         const fixture = await setup(canonical, gzip);
         const limits = {
-          maxEntries: Number.MAX_VALUE, maxEntryBytes: Number.MAX_VALUE,
-          maxExtractedBytes: Number.MAX_VALUE, maxMetaEntryBytes: Number.MAX_VALUE, maxDecodedBytes: Number.MAX_VALUE,
+          maxEntries: Number.MAX_VALUE, maxMetaEntryBytes: Number.MAX_VALUE, maxDecodedBytes: Number.MAX_VALUE,
         };
         const signal = new AbortController().signal;
         const directory = await fs.open(fixture.destDir, "r");
@@ -231,7 +253,19 @@ for (const backend of ["off", "auto-missing", "auto", "require"] as const) {
         expect(await readArchiveEntry(fixture.archivePath, "value", { maxBytes: 0 }).then(() => "accepted", outcome)).toEqual(expected);
       });
 
-      it.each(tarBudgetCases)("stops at $name before filters, stripping, or a body", async ({ bytes, limits, code }) => {
+      it.each([false, true])("accepts safe large raw sizes overridden by PAX size=0 (base256=%s)", async (base256) => {
+        const fixture = await setup(tarFixture([paxHeader([["size", "0"]]), {
+          path: "value", mutateHeader: (header) => {
+            if (base256) {
+              header.fill(0, 124, 136); header[124] = 0x80; header.writeBigUInt64BE(9_007_199_254_740_480n, 128);
+            } else header.write("777777777777", 124, "ascii");
+          },
+        }]), gzip);
+        await extractArchive({ ...fixture, limits: { maxEntryBytes: 0, maxExtractedBytes: 0 } });
+        expect(await readArchiveEntry(fixture.archivePath, "value", { maxBytes: 0 })).toEqual(Buffer.alloc(0));
+      });
+
+      it.each(tarCountCases)("stops at $name before filters, stripping, or a body", async ({ bytes, limits, code }) => {
         const fixture = await setup(bytes, gzip);
         const entryFilter = vi.fn(() => "skip" as const);
         await expect(extractArchive({ ...fixture, limits, stripComponents: 10, entryFilter, onFiltered: "skip-entry" }))
@@ -257,16 +291,16 @@ for (const backend of ["off", "auto-missing", "auto", "require"] as const) {
         }
         const smallFirst = await setup(tarFixture([member, { path: "large", body: Buffer.alloc(1000) }]), gzip);
         expect(await readArchiveEntry(smallFirst.archivePath, "value", { maxBytes: 7 })).toEqual(Buffer.from("payload"));
-        const overDefault = await setup(tarFixture([member, { path: "large", mutateHeader: (header) => {
+        const truncated = await setup(tarFixture([member, { path: "large", mutateHeader: (header) => {
           header.write(`${(DEFAULT_MAX_ENTRY_BYTES + 1).toString(8).padStart(11, "0")}\0`, 124, "ascii");
         } }]), gzip);
-        await expect(readArchiveEntry(overDefault.archivePath, "value", { maxBytes: 7 })).rejects.toMatchObject({
-          name: "ArchiveLimitError", code: "archive-entry-extracted-size-exceeds-limit",
+        await expect(readArchiveEntry(truncated.archivePath, "value", { maxBytes: 7 })).rejects.toMatchObject({
+          name: "ArchiveFormatError", code: "archive-header-invalid",
         });
       });
 
-      it.skipIf(backend === "off" || backend === "auto-missing")("enforces budgets again in native extract/read passes with no accepted plan", async () => {
-        for (const { bytes, limits, code } of tarBudgetCases) {
+      it.skipIf(backend === "off" || backend === "auto-missing")("enforces logical counts again in native extract/read passes with no accepted plan", async () => {
+        for (const { bytes, limits, code } of tarCountCases) {
           const fixture = await setup(bytes, gzip);
           const directory = await fs.open(fixture.destDir, "r");
           try {

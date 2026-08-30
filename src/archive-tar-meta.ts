@@ -22,7 +22,6 @@ export class TarMetadataMeter extends Transform {
   private pendingGnu = false;
   private zeroBlocks = 0;
   private entries = 0;
-  private remainingBytes: number;
   private remainingDecodedBytes: number;
 
   constructor(private readonly limits: TarMeterLimits) {
@@ -30,22 +29,14 @@ export class TarMetadataMeter extends Transform {
     if (!Number.isSafeInteger(limits.maxDecodedBytes) || limits.maxDecodedBytes < 0) {
       throw new RangeError("maxDecodedBytes must be a non-negative safe integer");
     }
-    this.remainingBytes = limits.maxExtractedBytes;
     this.remainingDecodedBytes = limits.maxDecodedBytes;
   }
 
-  private admitMember(size: number): void {
+  private countMember(): void {
     if (this.entries >= this.limits.maxEntries) {
       throw new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.ENTRY_COUNT_EXCEEDS_LIMIT);
     }
     this.entries += 1;
-    if (size > this.limits.maxEntryBytes) {
-      throw new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT);
-    }
-    if (size > this.remainingBytes) {
-      throw new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.EXTRACTED_SIZE_EXCEEDS_LIMIT);
-    }
-    this.remainingBytes -= size;
   }
 
   private invalid(message: string): ArchiveFormatError {
@@ -145,7 +136,7 @@ export class TarMetadataMeter extends Transform {
       }
       this.state = { kind: "sparse", dataRemaining: padded, metaBytes: 0 };
     } else {
-      if (!this.pendingGnu) this.admitMember(size);
+      if (!this.pendingGnu) this.countMember();
       this.state = padded === 0 ? { kind: "header" } : { kind: "data", remaining: padded };
     }
     this.blockLength = 0;

@@ -58,20 +58,16 @@ describe.each([1, 7, 511, 512, 513, 1023, 4096])("raw TAR meter chunks=%i", (chu
   });
 });
 
-describe("raw TAR admission budgets", () => {
+describe("raw TAR logical entry counts", () => {
   const member = { path: "first", body: "payload" };
   const header = (size: number) => tarFixture([{
     path: "second", mutateHeader: (block) => { block.write(`${size.toString(8).padStart(11, "0")}\0`, 124, "ascii"); },
   }], false);
-  const limits = { maxEntries: 1, maxEntryBytes: 7, maxExtractedBytes: 7 };
+  const limits = { maxEntries: 1 };
   const cases: Array<[string, Buffer, ArchiveExtractLimits, string]> = [
-    ["oversized member", header(8), limits, "archive-entry-extracted-size-exceeds-limit"],
     ["zero count", header(0), { ...limits, maxEntries: 0 }, "archive-entry-count-exceeds-limit"],
     ["second member", Buffer.concat([tarFixture([member], false), header(1)]), limits, "archive-entry-count-exceeds-limit"],
-    ["cumulative bytes", Buffer.concat([tarFixture([member], false), header(1)]), { ...limits, maxEntries: 2 }, "archive-extracted-size-exceeds-limit"],
-    ["larger PAX size", Buffer.concat([tarFixture([paxHeader([["size", "8"]])], false), header(0)]), limits, "archive-entry-extracted-size-exceeds-limit"],
     ["smaller PAX size still counts", Buffer.concat([tarFixture([paxHeader([["size", "0"]])], false), header(700), header(1)]), limits, "archive-entry-count-exceeds-limit"],
-    ["cumulative PAX size", Buffer.concat([tarFixture([paxHeader([["size", "7"]]), member, paxHeader([["size", "1"]])], false), header(0)]), { ...limits, maxEntries: 2 }, "archive-extracted-size-exceeds-limit"],
   ];
 
   it.each(cases)("rejects %s before asking its producer for body bytes", async (_label, prefix, options, code) => {
@@ -89,7 +85,7 @@ describe("raw TAR admission budgets", () => {
     expect(bodyRequested).toBe(false);
   });
 
-  it("excludes PAX/GNU records and padding from member budgets", async () => {
+  it("excludes PAX/GNU records and padding from logical counts", async () => {
     const bytes = Buffer.concat([
       tarFixture([paxHeader([["size", "0"]])], false), header(700),
       tarFixture([{ path: "LongName", type: "L", body: "name\0" }, { path: "LongLink", type: "K", body: "link\0" }, member]),

@@ -128,9 +128,10 @@ TAR extraction and bounded reads validate the complete decompressed raw framing
 before parser normalization: directory/link sizes must be zero, EOF must contain
 two consecutive zero blocks, and only zero padding may follow EOF. This rejects
 hidden headers and body/header smuggling consistently across the JavaScript and
-native backends. The meter checks logical member count and per-member/cumulative
-effective declared sizes before consuming bodies, even for unrequested or
-filtered members. A separate absolute decoded cap includes headers, metadata,
+native backends. The meter checks logical member count before consuming bodies,
+even for unrequested or filtered members. Per-entry/cumulative payload budgets
+apply only to entries accepted after strip/filter policy, outside the raw meter.
+A separate absolute decoded cap includes every member body, headers, metadata,
 all padding, and EOF, closing cumulative-metadata and zero-tail bypasses. Native
 extraction/read passes drain through physical EOF before publication or
 returning selected bytes, even when the TAR parser stops earlier. Bounded

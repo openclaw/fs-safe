@@ -66,22 +66,23 @@ creates only those planned entries beneath a private staging descriptor.
 
 A raw meter sits between decompression and the TAR crate, with matching
 TypeScript admission before node-tar. It parses 512-byte headers and bounded
-local PAX `x` metadata, applying supported effective sizes when framing and
-budgeting the following member. GNU long-name/link `L`/`K` payloads remain
+local PAX `x` metadata, using supported effective sizes to locate the following
+member body. GNU long-name/link `L`/`K` payloads remain
 supported. `maxMetaEntryBytes` bounds each metadata body before allocation;
 unsupported global/old metadata and sparse forms fail closed rather than being
 interpreted as ordinary members. See [bounded local PAX support](archive.md#bounded-local-pax-support).
 
-Every pass receives TypeScript's resolved `maxEntries`, `maxEntryBytes`, and
-`maxExtractedBytes`. Shared TAR resolution caps byte fields at JavaScript's
-safe-integer maximum and entry counts at `2^32 - 1` before backend selection.
-Large finite limits remain accepted; native conversion mirrors those caps and
-rejects malformed non-finite or negative direct-call values before casting.
-Logical member headers count before filtering/stripping;
-metadata records do not. Raw/effective declared member sizes must fit the
-per-entry and cumulative budgets before the meter consumes the body. Bounded
-reads traverse with the default archive limits; public `maxBytes` bounds only
-the requested entry's output. TypeScript also derives an internal decoded cap
+Every raw pass receives only TypeScript's resolved `maxEntries`,
+`maxMetaEntryBytes`, and `maxDecodedBytes`. Shared resolution caps metadata and
+decoded byte fields at JavaScript's safe-integer maximum and entry counts at
+`2^32 - 1` before backend selection. Large finite limits remain accepted;
+native conversion mirrors those caps and rejects malformed non-finite or
+negative direct-call values before casting. Logical member headers count
+before filtering/stripping; metadata records do not. `maxEntryBytes` and
+`maxExtractedBytes` remain exclusively in TypeScript's accepted-plan builder,
+after strip/filter policy, and are absent from the raw meter's interface.
+Bounded reads use the default count/metadata/decoded bounds; public `maxBytes`
+bounds only the requested output. TypeScript derives the internal decoded cap
 by safely adding `maxExtractedBytes` and `maxArchiveBytes`, clamped to the safe
 integer maximum. Every native pass receives that same cap and charges headers,
 metadata, bodies, padding, EOF blocks, and trailing zeros. It rejects overflow

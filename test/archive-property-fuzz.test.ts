@@ -279,11 +279,9 @@ describe("minimized parser fuzz regressions", () => {
         backend,
       })).resolves.toEqual({
         accepted: false,
-        // Valid oversized octal headers now fail before their missing body;
-        // malformed/overflowing encodings still fail as invalid framing.
-        code: sizeEncoding === "octal-max"
-          ? ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT
-          : "archive-header-invalid",
+        // Missing bodies and malformed/overflowing numeric fields fail raw
+        // framing before the accepted-entry payload policy can run.
+        code: "archive-header-invalid",
       });
     }
   });

@@ -7,9 +7,9 @@ export type ArchiveExtractLimits = {
   maxArchiveBytes?: number;
   /** Max logical archive entries, including skipped/stripped members. */
   maxEntries?: number;
-  /** Max extracted bytes; TAR admits all declared member bytes before filtering. */
+  /** Max extracted bytes across entries accepted after strip/filter policy. */
   maxExtractedBytes?: number;
-  /** Max entry bytes; TAR checks each declared member size before filtering. */
+  /** Max bytes in an entry accepted after strip/filter policy. */
   maxEntryBytes?: number;
   /** Max bytes in one PAX, GNU long-name, or related TAR metadata entry. */
   maxMetaEntryBytes?: number;
@@ -66,7 +66,7 @@ export class ArchiveLimitError extends Error {
 export type ResolvedArchiveExtractLimits = Required<ArchiveExtractLimits>;
 
 export type TarMeterLimits = Pick<ResolvedArchiveExtractLimits,
-  "maxEntries" | "maxEntryBytes" | "maxExtractedBytes" | "maxMetaEntryBytes"> & { maxDecodedBytes: number };
+  "maxEntries" | "maxMetaEntryBytes"> & { maxDecodedBytes: number };
 
 export function resolveTarMeterLimits(options?: ArchiveExtractLimits): TarMeterLimits {
   const limits = resolveExtractLimits(options);
@@ -75,8 +75,6 @@ export function resolveTarMeterLimits(options?: ArchiveExtractLimits): TarMeterL
   // TAR sizes are safe integers; native logical entry counts use u32.
   return {
     maxEntries: Math.min(limits.maxEntries, 0xffff_ffff),
-    maxEntryBytes: Math.min(limits.maxEntryBytes, Number.MAX_SAFE_INTEGER),
-    maxExtractedBytes: payload,
     maxMetaEntryBytes: Math.min(limits.maxMetaEntryBytes, Number.MAX_SAFE_INTEGER),
     maxDecodedBytes: payload > Number.MAX_SAFE_INTEGER - overhead
       ? Number.MAX_SAFE_INTEGER : payload + overhead,
