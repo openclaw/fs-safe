@@ -130,6 +130,16 @@ describe.runIf(native)("native filesystem primitives", () => {
       expect(await fs.readFile(path.join(root, "renamed", "owned.txt"), "utf8")).toBe("owned");
       expect(() => native!.linkBeneath(rootFd, "renamed", rootFd, "hardlink")).toThrow();
       await expect(fs.lstat(path.join(root, "hardlink"))).rejects.toMatchObject({ code: "ENOENT" });
+      if (process.platform === "win32") {
+        console.log(JSON.stringify({
+          proof: "windows-native-directory-rename",
+          directoryNoReplace: "renamed",
+          directoryReplace: "renamed",
+          emptyDestination: "preserved",
+          nonemptyDestination: "preserved",
+          directoryHardlink: "rejected",
+        }));
+      }
     } finally {
       fsSync.closeSync(rootFd);
     }
@@ -148,6 +158,12 @@ describe.runIf(native)("native filesystem primitives", () => {
       expect((await fs.lstat(path.join(root, "alias"))).isSymbolicLink()).toBe(true);
       expect(await fs.readFile(path.join(root, "real", "keep.txt"), "utf8")).toBe("keep");
       await expect(fs.lstat(path.join(root, "renamed"))).rejects.toMatchObject({ code: "ENOENT" });
+      console.log(JSON.stringify({
+        proof: "windows-native-directory-rename",
+        junctionNoReplace: "rejected",
+        junctionReplace: "rejected",
+        junctionPreserved: true,
+      }));
     } finally {
       fsSync.closeSync(rootFd);
     }
