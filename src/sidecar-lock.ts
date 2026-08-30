@@ -152,7 +152,7 @@ async function releaseHeldLock(
   state: SidecarLockManagerState,
   normalizedTargetPath: string,
   held: HeldSidecarLock,
-  options: { force?: boolean } = {},
+  options: { force?: boolean; retry?: boolean } = {},
 ): Promise<boolean> {
   const current = state.held.get(normalizedTargetPath);
   if (current !== held) {
@@ -164,11 +164,11 @@ async function releaseHeldLock(
   }
   if (options.force) {
     held.refCount = 0;
-  } else if (held.refCount > 0) {
+  } else if (!options.retry && held.refCount > 0) {
     held.refCount -= 1;
-    if (held.refCount > 0) {
-      return false;
-    }
+  }
+  if (held.refCount > 0) {
+    return false;
   }
   held.releasePromise = (async () => {
     await held.handle.close().catch(() => undefined);
@@ -200,7 +200,8 @@ function handleForHeldLock(
   return createHeldSidecarLockHandle({
     normalizedTargetPath,
     held,
-    release: async () => await releaseHeldLock(state, normalizedTargetPath, held),
+    release: async (options) =>
+      await releaseHeldLock(state, normalizedTargetPath, held, { retry: options?.retry }),
   });
 }
 

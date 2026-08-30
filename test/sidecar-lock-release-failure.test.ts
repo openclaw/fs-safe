@@ -78,6 +78,95 @@ describe("asynchronous sidecar lock release failures", () => {
     remove.mockRestore();
   });
 
+  it("does not release a reentrant acquisition when retrying failed cleanup", async () => {
+    const directory = await tempRoot("fs-safe-lock-release-reentrant-retry-");
+    const targetPath = path.join(directory, "state.json");
+    const manager = createSidecarLockManager(`release-reentrant-${Date.now()}-${Math.random()}`);
+    const options = {
+      targetPath,
+      reentrantOwner: "owner",
+      payload: async () => ({}),
+    };
+    const first = await manager.acquire(options);
+    const second = await manager.acquire(options);
+    await first.release();
+
+    const failure = Object.assign(new Error("release deletion failed"), { code: "EIO" });
+    const realRm = fs.rm.bind(fs);
+    const rm = vi.spyOn(fs, "rm").mockImplementationOnce(async (target, ...args) => {
+      if (path.resolve(String(target)) === path.resolve(second.lockPath)) throw failure;
+      return await realRm(target, ...args);
+    });
+    await expect(second.release()).rejects.toBe(failure);
+
+    const third = await manager.acquire(options);
+    await second.release();
+    await expect(fs.access(third.lockPath)).resolves.toBeUndefined();
+    expect(manager.heldEntries()).toHaveLength(1);
+
+    rm.mockRestore();
+    await third.release();
+    await expect(fs.access(third.lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(manager.heldEntries()).toEqual([]);
+  });
+
+  it("does not admit a reentrant acquisition while final cleanup is in flight", async () => {
+    const directory = await tempRoot("fs-safe-lock-release-reentrant-in-flight-");
+    const targetPath = path.join(directory, "state.json");
+    const manager = createSidecarLockManager(`release-reentrant-in-flight-${Date.now()}-${Math.random()}`);
+    const otherManager = createSidecarLockManager(
+      `release-reentrant-in-flight-other-${Date.now()}-${Math.random()}`,
+    );
+    const options = {
+      targetPath,
+      reentrantOwner: "owner",
+      payload: async () => ({}),
+    };
+    const first = await manager.acquire(options);
+    const realRm = fs.rm.bind(fs);
+    let cleanupStarted!: () => void;
+    const cleanupInFlight = new Promise<void>((resolve) => {
+      cleanupStarted = resolve;
+    });
+    let finishCleanup!: () => void;
+    const allowCleanup = new Promise<void>((resolve) => {
+      finishCleanup = resolve;
+    });
+    const rm = vi.spyOn(fs, "rm").mockImplementation(async (target, ...args) => {
+      if (path.resolve(String(target)) === path.resolve(first.lockPath)) {
+        cleanupStarted();
+        await allowCleanup;
+      }
+      return await realRm(target, ...args);
+    });
+
+    const release = first.release();
+    await cleanupInFlight;
+    let reentrantAcquired = false;
+    const secondPromise = manager.acquire(options).then((lock) => {
+      reentrantAcquired = true;
+      return lock;
+    });
+    await Promise.resolve();
+    expect(reentrantAcquired).toBe(false);
+
+    finishCleanup();
+    await release;
+    const second = await secondPromise;
+    await expect(
+      otherManager.acquire({
+        targetPath,
+        timeoutMs: 0,
+        retry: { retries: 0 },
+        payload: async () => ({}),
+      }),
+    ).rejects.toMatchObject({ code: "file_lock_timeout" });
+
+    rm.mockRestore();
+    await second.release();
+    expect(manager.heldEntries()).toEqual([]);
+  });
+
   it("preserves callback and release failures from withFileLock", async () => {
     const directory = await tempRoot("fs-safe-lock-release-combined-");
     const targetPath = path.join(directory, "state.json");
