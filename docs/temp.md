@@ -212,10 +212,11 @@ files, hardlinks, and changes between the pre-open pathname, opened descriptor,
 and current pathname are rejected. The callback must finish and close its
 writer before returning. Its return value is preserved as `result`.
 
-The helper retains one write-capable descriptor through mode application,
-file synchronization, rename, and publication verification. The file mode
-defaults to `0o600`; explicit modes, including `0`, are applied through that
-descriptor and mode errors propagate. No chmod, content read, or reopen follows
+The helper retains one write-capable descriptor through requested mode application,
+opt-in file synchronization, rename, and publication verification. Omitting
+`mode` preserves the callback-produced mode without chmod; explicit modes,
+including `0`, are applied through that descriptor and file-mode errors propagate.
+No chmod, content read, or reopen follows
 the staged or published pathname. `resolveFinalPath(result)` must resolve to a
 distinct direct child of the same directory. Final-path writes are serialized
 within the process, and the retained descriptor and current name must still
@@ -223,10 +224,11 @@ have the admitted exact bigint identity and exactly one link before rename and
 after publication. A verification failure after rename does not roll back or
 delete the final name.
 
-`syncTempFile` defaults to `true`, synchronizing the descriptor before rename;
+`syncTempFile` and `syncParentDir` retain their historical `false` defaults.
+Explicit `syncTempFile: true` synchronizes the descriptor before rename;
 file-sync errors propagate except for the existing `EPERM` compatibility case.
-`syncParentDir` defaults to `true`, requesting best-effort parent sync after
-rename. Explicit `false` skips the corresponding sync, never the identity
+Explicit `syncParentDir: true` requests best-effort parent sync after rename.
+Omitting either option or passing `false` skips that sync, never the identity
 checks. Parent synchronization can be unsupported or fail without rejecting
 the write, so success is not a strict crash-durability receipt.
 
@@ -252,9 +254,12 @@ directory and cooperative locking or OS isolation; a moved parent can leave an
 unpublished original temp behind. Observed replacements are preserved, but
 arbitrary concurrent namespace changes cannot be prevented by these helpers.
 
-By default `dir` is set to `dirMode` (default `0o700`) through the shared verified
-POSIX directory-descriptor helper; errors propagate with no pathname chmod
-fallback. Windows only passes the directory mode to `mkdir`. Pass
+By default the helper attempts to set `dir` to `dirMode` (default `0o700`)
+through the shared verified POSIX directory-descriptor helper. Only the actual
+descriptor chmod error is tolerated, preserving the historical best-effort
+directory-mode behavior. Directory lstat, open, type, identity, and close errors
+still propagate; there is no pathname chmod fallback. Windows only passes the
+directory mode to `mkdir`. Pass
 `chmodDir: false` when an existing staging/output directory mode must be preserved.
 
 ### `writeViaSiblingTempPath`

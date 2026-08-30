@@ -18,11 +18,11 @@ export type WriteSiblingTempFileOptions<T> = {
   tempPrefix?: string;
   dirMode?: number;
   chmodDir?: boolean;
-  /** Final file mode; defaults to 0o600. Applied through the retained descriptor. */
+  /** Final file mode; omitted preserves the producer's mode. Applied through the retained descriptor. */
   mode?: number;
-  /** Sync the staged descriptor before rename; defaults to true. */
+  /** Sync the staged descriptor before rename; defaults to false. */
   syncTempFile?: boolean;
-  /** Best-effort parent directory sync after rename; defaults to true. */
+  /** Best-effort parent directory sync after rename; defaults to false. */
   syncParentDir?: boolean;
 };
 
@@ -44,15 +44,20 @@ export async function writeSiblingTempFile<T>(
   const dir = path.resolve(options.dir);
   await fs.mkdir(dir, { recursive: true, mode: options.dirMode ?? 0o700 });
   if (options.chmodDir !== false) {
-    await applyDirectoryMode({ fsModule: fs, dirPath: dir, mode: options.dirMode ?? 0o700 });
+    await applyDirectoryMode({
+      fsModule: fs,
+      dirPath: dir,
+      mode: options.dirMode ?? 0o700,
+      ignoreChmodError: true,
+    });
   }
   return await writeCallbackSibling({
     tempPath: buildTempPath(dir, options.tempPrefix),
     write: options.writeTemp,
     resolveFinalPath: options.resolveFinalPath,
-    mode: options.mode ?? 0o600,
-    syncTempFile: options.syncTempFile !== false,
-    syncParentDir: options.syncParentDir !== false,
+    mode: options.mode,
+    syncTempFile: options.syncTempFile === true,
+    syncParentDir: options.syncParentDir === true,
   });
 }
 

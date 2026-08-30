@@ -2,6 +2,7 @@ import fsSync from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { writeExternalFileViaSibling } from "../src/output-sibling.js";
 import { writeSiblingTempFile } from "../src/sibling-temp.js";
 import { __cleanupRegisteredTempPathsForTest } from "../src/temp-cleanup.js";
 import { itPosix, useRealTempDirs } from "./helpers/vitest.js";
@@ -21,8 +22,14 @@ async function fixture() {
   const options = {
     dir, chmodDir: false,
     writeTemp: async (candidate: string) => {
+      const producer = await fs.open(candidate, "wx");
+      try {
+        await producer.writeFile("new");
+        await producer.chmod(0o640);
+      } finally {
+        await producer.close();
+      }
       temporary = candidate;
-      await fs.writeFile(candidate, "new", { mode: 0o644 });
       return result;
     },
     resolveFinalPath: (value: typeof result) => path.join(dir, value.filename),
@@ -30,7 +37,7 @@ async function fixture() {
   return { dir, final, options, result, temp: () => temporary };
 }
 
-itPosix.each([undefined, 0, 0o640])("retains one writable descriptor for mode %s, fsync, rename and verification", async (mode) => {
+itPosix.each([undefined, 0, 0o600])("retains producer mode or applies explicit mode %s with opt-in fsync", async (mode) => {
   const f = await fixture();
   const operations: string[] = [];
   const open = fs.open.bind(fs);
@@ -75,20 +82,27 @@ itPosix.each([undefined, 0, 0o640])("retains one writable descriptor for mode %s
     operations.push("rename");
     const descriptor = fsSync.fstatSync(retained, { bigint: true });
     expect((await fs.lstat(from, { bigint: true })).ino).toBe(descriptor.ino);
-    expect(Number(descriptor.mode & 0o777n)).toBe(mode ?? 0o600);
+    expect(Number(descriptor.mode & 0o777n)).toBe(mode ?? 0o640);
     await rename(from, to);
   });
-  const actual = await writeSiblingTempFile({ ...f.options, mode });
+  const actual = await writeSiblingTempFile({
+    ...f.options,
+    ...(mode === undefined ? {} : { mode }),
+    syncTempFile: true,
+    syncParentDir: true,
+  });
   expect(actual.result).toBe(f.result);
   expect(actual.filePath).toBe(f.final);
-  expect(operations).toEqual(["chmod", "file-sync", "rename", "parent-sync", "close"]);
+  expect(operations).toEqual([
+    ...(mode === undefined ? [] : ["chmod"]), "file-sync", "rename", "parent-sync", "close",
+  ]);
   expect(stageOpens).toBe(1);
   expect(closed).toBe(1);
-  expect((await fs.stat(f.final)).mode & 0o777).toBe(mode ?? 0o600);
+  expect((await fs.stat(f.final)).mode & 0o777).toBe(mode ?? 0o640);
   expect(() => fsSync.fstatSync(retained)).toThrow(expect.objectContaining({ code: "EBADF" }));
 });
 
-it("honors explicit sync opt-outs without opting out of identity or mode checks", async () => {
+it.each([undefined, false] as const)("skips both syncs when options are %s", async (sync) => {
   const f = await fixture();
   const open = fs.open.bind(fs);
   const syncs = vi.fn();
@@ -97,8 +111,56 @@ it("honors explicit sync opt-outs without opting out of identity or mode checks"
     vi.spyOn(handle, "sync").mockImplementation(async () => { syncs(); });
     return handle;
   });
-  await writeSiblingTempFile({ ...f.options, syncTempFile: false, syncParentDir: false });
+  await writeSiblingTempFile({
+    ...f.options,
+    ...(sync === undefined ? {} : { syncTempFile: sync, syncParentDir: sync }),
+  });
   expect(syncs).not.toHaveBeenCalled();
+  expect(await fs.readFile(f.final, "utf8")).toBe("new");
+});
+
+itPosix("preserves group-readable producer mode when output-sibling mode is omitted", async () => {
+  const f = await fixture();
+  await writeExternalFileViaSibling({ finalPath: f.final, write: f.options.writeTemp });
+  expect((await fs.stat(f.final)).mode & 0o777).toBe(0o640);
+  expect(await fs.readFile(f.final, "utf8")).toBe("new");
+});
+
+it.each([undefined, false] as const)("still rejects an identity swap when sync options are %s", async (sync) => {
+  const f = await fixture();
+  const open = fs.open.bind(fs);
+  vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+    const handle = await open(...args);
+    if (args[0] === f.temp()) {
+      await fs.rename(f.temp(), path.join(f.dir, "moved"));
+      await fs.writeFile(f.temp(), "replacement");
+    }
+    return handle;
+  });
+  await expect(writeSiblingTempFile({
+    ...f.options,
+    ...(sync === undefined ? {} : { syncTempFile: sync, syncParentDir: sync }),
+  })).rejects.toMatchObject({ code: "path-mismatch" });
+  expect(await fs.readFile(f.temp(), "utf8")).toBe("replacement");
+  expect(await fs.readFile(f.final, "utf8")).toBe("old");
+});
+
+itPosix.each(["file", "parent"] as const)("enables only the explicitly requested %s sync", async (requested) => {
+  const f = await fixture();
+  const open = fs.open.bind(fs);
+  const synced: string[] = [];
+  vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+    const handle = await open(...args);
+    vi.spyOn(handle, "sync").mockImplementation(async () => {
+      synced.push(args[0] === f.dir ? "parent" : "file");
+    });
+    return handle;
+  });
+  await writeSiblingTempFile({
+    ...f.options,
+    ...(requested === "file" ? { syncTempFile: true } : { syncParentDir: true }),
+  });
+  expect(synced).toEqual([requested]);
   expect(await fs.readFile(f.final, "utf8")).toBe("new");
 });
 
@@ -115,7 +177,7 @@ it.each(["chmod", "sync"] as const)("propagates descriptor %s failures before pu
     }
     return opened;
   });
-  await expect(writeSiblingTempFile(f.options)).rejects.toBe(failure);
+  await expect(writeSiblingTempFile({ ...f.options, mode: 0o600, syncTempFile: true })).rejects.toBe(failure);
   expect(await fs.readFile(f.final, "utf8")).toBe("old");
   await expect(fs.lstat(f.temp())).rejects.toMatchObject({ code: "ENOENT" });
   expect(handle?.fd).toBe(-1);
@@ -129,7 +191,7 @@ it("retains the existing EPERM file-sync exception", async () => {
     if (args[0] === f.temp()) vi.spyOn(handle, "sync").mockRejectedValue(Object.assign(new Error("unsupported"), { code: "EPERM" }));
     return handle;
   });
-  await writeSiblingTempFile(f.options);
+  await writeSiblingTempFile({ ...f.options, syncTempFile: true });
   expect(await fs.readFile(f.final, "utf8")).toBe("new");
 });
 
@@ -141,7 +203,7 @@ itPosix("keeps parent sync best-effort but still verifies the published name aft
     if (args[0] === f.dir) vi.spyOn(handle, "sync").mockRejectedValue(Object.assign(new Error("sync failed"), { code: "EIO" }));
     return handle;
   });
-  await writeSiblingTempFile(f.options);
+  await writeSiblingTempFile({ ...f.options, syncParentDir: true });
   expect(await fs.readFile(f.final, "utf8")).toBe("new");
 });
 
@@ -156,7 +218,7 @@ itPosix("detects a published replacement during parent fsync without chmod or ro
     });
     return handle;
   });
-  await expect(writeSiblingTempFile(f.options)).rejects.toMatchObject({ code: "path-mismatch" });
+  await expect(writeSiblingTempFile({ ...f.options, syncParentDir: true })).rejects.toMatchObject({ code: "path-mismatch" });
   expect(await fs.readFile(f.final, "utf8")).toBe("replacement");
   expect((await fs.stat(f.final)).mode & 0o777).toBe(0o644);
 });
@@ -236,7 +298,7 @@ it("preserves both an operation error and a descriptor-close error", async () =>
     }
     return handle;
   });
-  await expect(writeSiblingTempFile(f.options)).rejects.toMatchObject({ errors: [failure, closeFailure] });
+  await expect(writeSiblingTempFile({ ...f.options, syncTempFile: true })).rejects.toMatchObject({ errors: [failure, closeFailure] });
   expect(await fs.readFile(f.final, "utf8")).toBe("old");
   await expect(fs.lstat(f.temp())).rejects.toMatchObject({ code: "ENOENT" });
 });

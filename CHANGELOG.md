@@ -4,7 +4,7 @@
 
 ### Security and Correctness
 
-- Pin callback-produced sibling temps through mode application, fsync, rename, and exact publication checks; reject symlink, non-regular, hardlinked, and replaced stages, preserve unverified cleanup paths, and default `writeSiblingTempFile` to mode `0600` with file and best-effort parent sync.
+- Pin callback-produced sibling temps through requested mode application, opt-in fsync, rename, and exact publication checks; reject symlink, non-regular, hardlinked, and replaced stages and preserve unverified cleanup paths while retaining producer modes, disabled sync defaults, and best-effort directory chmod in `writeSiblingTempFile`.
 - Make durable queue directory creation, claims, acknowledgement, quarantine, marker cleanup, and retirement transitions fsync affected directories and propagate durability failures.
 - Fsync synchronous file-store temps before rename and parent directories after publication, matching the documented durability contract.
 - Reject invalid runtime archive `onFiltered` policies before extraction instead of treating unknown values as entry-skipping opt-in.

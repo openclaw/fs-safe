@@ -35,7 +35,7 @@ for (const api of ["temp", "output"] as const) {
           return await write(candidate);
         };
         return api === "temp"
-          ? writeSiblingTempFile({ dir, chmodDir: false, mode: 0o600,
+          ? writeSiblingTempFile({ dir, chmodDir: false, mode: 0o600, syncTempFile: true, syncParentDir: true,
               writeTemp: produce, resolveFinalPath: () => final })
           : writeExternalFileViaSibling({ finalPath: final, mode: 0o600, write: produce });
       };
