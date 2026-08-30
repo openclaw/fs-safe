@@ -14,6 +14,8 @@ import {
 import {
   computeSidecarLockDelayMs,
   sidecarLockPayloadCreatedAtMs,
+  validateSidecarLockRetryOptions,
+  validateSidecarLockTimeoutMs,
 } from "./sidecar-lock-policy.js";
 import type {
   SidecarLockCompromisedInfo,
@@ -194,6 +196,11 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
   targetPath: string,
   options: FileLockSyncAcquireOptions<TPayload>,
 ): FileLockSyncHandle {
+  const defaults = getFsSafeLockConfig();
+  const retry = options.retry ?? defaults.retry ?? {};
+  const timeoutMs = options.timeoutMs ?? defaults.timeoutMs;
+  validateSidecarLockRetryOptions(retry);
+  validateSidecarLockTimeoutMs(timeoutMs);
   const normalizedTargetPath = normalizeTargetPath(targetPath);
   const lockPath = boundedLockPath(options.lockPath ?? `${normalizedTargetPath}.lock`, options.lockRoot);
   const heldLocks = getSyncHeldLocks();
@@ -209,10 +216,7 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
   }
   // Process defaults fill the same fields here as withLockDefaults() fills for
   // the asynchronous manager, so both acquirers honor configureFsSafeLocks().
-  const defaults = getFsSafeLockConfig();
   const staleMs = options.staleMs ?? defaults.staleMs ?? 30_000;
-  const retry = options.retry ?? defaults.retry ?? {};
-  const timeoutMs = options.timeoutMs ?? defaults.timeoutMs;
   const staleRecovery = options.staleRecovery ?? defaults.staleRecovery;
   const startedAt = Date.now();
   let attempt = 0;
@@ -227,7 +231,11 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
         normalizedTargetPath,
       });
     }
-    sleepSync(computeSidecarLockDelayMs(retry, attempt));
+    const remaining =
+      timeoutMs === undefined || timeoutMs === Number.POSITIVE_INFINITY
+        ? Number.POSITIVE_INFINITY
+        : Math.max(0, timeoutMs - elapsed);
+    sleepSync(Math.min(computeSidecarLockDelayMs(retry, attempt), remaining));
     attempt += 1;
   };
 

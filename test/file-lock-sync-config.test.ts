@@ -72,8 +72,7 @@ describe("synchronous file-lock process defaults", () => {
             acquireFileLockSync(targetPath, { payload });
           }
         }).toThrow(expect.objectContaining({ code: "file_lock_timeout" }));
-        // Keep the existing sync behavior: sleeps are not clamped to the deadline.
-        expect(delays).toEqual([50]);
+        expect(delays).toEqual([20]);
         expect(work).not.toHaveBeenCalled();
         if (held) expect(held.verifyStillHeld()).toBe(true);
         else expect(fs.readFileSync(lockPath, "utf8")).toBe(raw);
@@ -87,7 +86,7 @@ describe("synchronous file-lock process defaults", () => {
   it.each([
     { configured: 0, perCall: undefined, expectedDelays: [] },
     { configured: 100, perCall: 0, expectedDelays: [] },
-    { configured: 0, perCall: 20, expectedDelays: [50] },
+    { configured: 0, perCall: 20, expectedDelays: [20] },
   ])("resolves timeout $configured with per-call $perCall", async ({ configured, perCall, expectedDelays }) => {
     const { targetPath } = await fixture();
     configureFsSafeLocks({ timeoutMs: configured });
@@ -117,7 +116,7 @@ describe("synchronous file-lock process defaults", () => {
 
   it.each([
     { retry: { retries: 2 }, expectedDelays: [50, 50] },
-    { retry: {}, expectedDelays: [50, 50, 50] },
+    { retry: {}, expectedDelays: [50, 50, 25] },
     { retry: { retries: 0 }, expectedDelays: [] },
     { retry: { retries: 2, minTimeout: 0, maxTimeout: 0, factor: 0, randomize: false }, expectedDelays: [0, 0] },
   ])("replaces the entire configured retry object with $retry", async ({ retry, expectedDelays }) => {

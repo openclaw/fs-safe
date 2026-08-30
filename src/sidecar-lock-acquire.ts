@@ -8,6 +8,8 @@ import {
   defaultSidecarLockShouldReclaim,
   isTransientLockFileDenial,
   maxTransientLockDenials,
+  validateSidecarLockRetryOptions,
+  validateSidecarLockTimeoutMs,
 } from "./sidecar-lock-policy.js";
 import {
   readSidecarLockSnapshot,
@@ -67,6 +69,9 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
   options: SidecarLockAcquireOptions<TPayload>,
   context: SidecarLockAcquisitionContext,
 ): Promise<SidecarLockHandle> {
+  const retry = options.retry ?? {};
+  validateSidecarLockRetryOptions(retry);
+  validateSidecarLockTimeoutMs(options.timeoutMs);
   context.ensureExitCleanupRegistered();
   const normalizedTargetPath = await resolveNormalizedTargetPath(options.targetPath);
   const lockPath = options.lockPath ?? `${normalizedTargetPath}.lock`;
@@ -97,7 +102,6 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
   }
 
   const startedAt = Date.now();
-  const retry = options.retry ?? {};
   const maxRetries = options.timeoutMs === Number.POSITIVE_INFINITY ? undefined : retry.retries;
   const reclaimGuardPath = `${lockPath}.reclaim`;
   let ownsReclaimGuard = false;

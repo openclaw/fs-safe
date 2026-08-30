@@ -1,7 +1,39 @@
 import fs from "node:fs/promises";
 import type { SidecarLockRetryOptions } from "./sidecar-lock-types.js";
 
+function assertFiniteNonNegative(value: number, label: string): void {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new RangeError(`${label} must be a finite non-negative number`);
+  }
+}
+
+export function validateSidecarLockRetryOptions(retry: SidecarLockRetryOptions): void {
+  if (retry.retries !== undefined && (!Number.isSafeInteger(retry.retries) || retry.retries < 0)) {
+    throw new RangeError("lock retry.retries must be a non-negative safe integer");
+  }
+  if (retry.factor !== undefined) assertFiniteNonNegative(retry.factor, "lock retry.factor");
+  if (retry.minTimeout !== undefined) {
+    assertFiniteNonNegative(retry.minTimeout, "lock retry.minTimeout");
+  }
+  if (retry.maxTimeout !== undefined) {
+    assertFiniteNonNegative(retry.maxTimeout, "lock retry.maxTimeout");
+  }
+  if (
+    retry.minTimeout !== undefined &&
+    retry.maxTimeout !== undefined &&
+    retry.minTimeout > retry.maxTimeout
+  ) {
+    throw new RangeError("lock retry.minTimeout must not exceed retry.maxTimeout");
+  }
+}
+
+export function validateSidecarLockTimeoutMs(timeoutMs: number | undefined): void {
+  if (timeoutMs === undefined || timeoutMs === Number.POSITIVE_INFINITY) return;
+  assertFiniteNonNegative(timeoutMs, "lock timeoutMs");
+}
+
 export function computeSidecarLockDelayMs(retry: SidecarLockRetryOptions, attempt: number): number {
+  validateSidecarLockRetryOptions(retry);
   const minTimeout = retry.minTimeout ?? 50;
   const maxTimeout = retry.maxTimeout ?? 1000;
   const factor = retry.factor ?? 1;
