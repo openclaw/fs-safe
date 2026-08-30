@@ -50,11 +50,19 @@ function mockRealpathSync(result: string): PinnedOpenSyncRealpathSync {
 }
 
 function mockLstatSync(read: (filePath: fs.PathLike) => fs.Stats): PinnedOpenSyncLstatSync {
-  return ((filePath: fs.PathLike) => read(filePath)) as unknown as PinnedOpenSyncLstatSync;
+  return ((filePath: fs.PathLike, options?: { bigint?: boolean }) =>
+    projectStat(read(filePath), options?.bigint)) as PinnedOpenSyncLstatSync;
 }
 
 function mockFstatSync(stat: fs.Stats): PinnedOpenSyncFstatSync {
-  return ((_: number) => stat) as unknown as PinnedOpenSyncFstatSync;
+  return ((_: number, options?: { bigint?: boolean }) =>
+    projectStat(stat, options?.bigint)) as PinnedOpenSyncFstatSync;
+}
+
+function projectStat(stat: fs.Stats, bigint = false): fs.Stats | fs.BigIntStats {
+  if (!bigint) return stat;
+  return { ...stat, dev: BigInt(stat.dev), ino: BigInt(stat.ino),
+    nlink: BigInt(stat.nlink), size: BigInt(stat.size) } as fs.BigIntStats;
 }
 
 async function expectOpenFailure(params: {

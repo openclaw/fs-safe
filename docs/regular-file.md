@@ -64,7 +64,11 @@ processLog(result.buffer);
 ```
 
 The result is `{ buffer, stat }`. Missing files preserve the normal `ENOENT`
-shape; non-regular targets throw.
+shape; non-regular targets throw. Reads compare exact bigint identities from the
+preview, opened descriptor, and current path before consuming bytes; the returned
+`stat` remains numeric Node `Stats`. Unknown Windows identities receive one
+re-inspection without reopening; persistent unknowns or replacements throw
+`FsSafeError("path-mismatch")`.
 
 Throws `FsSafeError` with code `too-large` if the file exceeds `maxBytes`. Other I/O errors propagate as `NodeJS.ErrnoException`.
 

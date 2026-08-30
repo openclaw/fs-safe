@@ -1,4 +1,4 @@
-import type { Stats } from "node:fs";
+import type { BigIntStats, Stats } from "node:fs";
 import fsSync from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
@@ -7,7 +7,7 @@ import { readFileDescriptorBoundedSync, readFileHandleBounded } from "./bounded-
 import { normalizeMaxBytes } from "./byte-budget.js";
 import { assertNoUnsafeDeviceReadPath } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
-import { sameFileIdentity } from "./file-identity.js";
+import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import { isNotFoundPathError } from "./path.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { assertNoSymlinkParents, assertNoSymlinkParentsSync } from "./symlink-parents.js";
@@ -90,11 +90,12 @@ export async function readRegularFile(params: {
 }): Promise<{ buffer: Buffer; stat: Stats }> {
   const maxBytes = normalizeMaxBytes(params.maxBytes);
   assertNoUnsafeDeviceReadPath(params.filePath);
-  const result = await statRegularFile(params.filePath);
-  if (result.missing) {
-    throw Object.assign(new Error(`File not found: ${params.filePath}`), { code: "ENOENT" });
-  }
-  if (maxBytes !== undefined && result.stat.size > maxBytes) {
+  const before = await inspectFileIdentity(async () => {
+    const stat = await fs.lstat(params.filePath, { bigint: true });
+    assertRegularReadStat(stat, params.filePath, true);
+    return stat;
+  }).catch((error) => throwReadPreviewError(error, params.filePath));
+  if (maxBytes !== undefined && before.size > maxBytes) {
     throw regularFileTooLargeError(params.filePath, maxBytes);
   }
 
@@ -109,21 +110,23 @@ export async function readRegularFile(params: {
   }
   try {
     const stat = await handle.stat();
-    let pathStat: Stats;
+    const identity = await inspectFileIdentity(async () => {
+      const exact = await handle.stat({ bigint: true });
+      assertRegularReadStat(exact, params.filePath);
+      return exact;
+    }, before);
     try {
-      pathStat = await fs.lstat(params.filePath);
+      await inspectFileIdentity(async () => {
+        const current = await fs.lstat(params.filePath, { bigint: true });
+        assertRegularReadStat(current, params.filePath);
+        return current;
+      }, identity);
     } catch (err) {
       if (isNotFoundPathError(err)) {
         throw new FsSafeError("path-mismatch", `File changed during read: ${params.filePath}`);
       }
       throw err;
     }
-    verifyStableReadTarget({
-      filePath: params.filePath,
-      pathStat,
-      postOpenStat: stat,
-      preOpenStat: result.stat,
-    });
     if (maxBytes !== undefined && stat.size > maxBytes) {
       throw regularFileTooLargeError(params.filePath, maxBytes);
     }
@@ -147,45 +150,43 @@ export async function readRegularFile(params: {
   }
 }
 
-function verifyStableReadTarget(params: {
-  preOpenStat: Stats;
-  postOpenStat: Stats;
-  pathStat: Stats;
-  filePath: string;
-}): void {
-  if (!params.postOpenStat.isFile() || params.pathStat.isSymbolicLink() || !params.pathStat.isFile()) {
-    throw new Error(`File is not a regular file: ${params.filePath}`);
+function throwReadPreviewError(error: unknown, filePath: string): never {
+  if (isNotFoundPathError(error)) {
+    throw Object.assign(new Error(`File not found: ${filePath}`), { code: "ENOENT" });
   }
-  if (
-    !sameFileIdentity(params.preOpenStat, params.postOpenStat) ||
-    !sameFileIdentity(params.pathStat, params.postOpenStat)
-  ) {
-    throw new FsSafeError("path-mismatch", `File changed during read: ${params.filePath}`);
+  throw error;
+}
+
+function assertRegularReadStat(stat: BigIntStats, filePath: string, preview = false): void {
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    throw new Error(preview ? "path must be a regular file" : `File is not a regular file: ${filePath}`);
   }
 }
 
 function readOpenedRegularFileSync(params: {
   fd: number;
   filePath: string;
-  preOpenStat: Stats;
+  preOpenStat: BigIntStats;
   maxBytes?: number;
 }): { buffer: Buffer; stat: Stats } {
   const stat = fsSync.fstatSync(params.fd);
-  let pathStat: Stats;
+  const identity = inspectFileIdentitySync(() => {
+    const exact = fsSync.fstatSync(params.fd, { bigint: true });
+    assertRegularReadStat(exact, params.filePath);
+    return exact;
+  }, params.preOpenStat);
   try {
-    pathStat = fsSync.lstatSync(params.filePath);
+    inspectFileIdentitySync(() => {
+      const current = fsSync.lstatSync(params.filePath, { bigint: true });
+      assertRegularReadStat(current, params.filePath);
+      return current;
+    }, identity);
   } catch (error) {
     if (isNotFoundPathError(error)) {
       throw new FsSafeError("path-mismatch", `File changed during read: ${params.filePath}`);
     }
     throw error;
   }
-  verifyStableReadTarget({
-    filePath: params.filePath,
-    pathStat,
-    postOpenStat: stat,
-    preOpenStat: params.preOpenStat,
-  });
   if (params.maxBytes !== undefined && stat.size > params.maxBytes) {
     throw regularFileTooLargeError(params.filePath, params.maxBytes);
   }
@@ -212,11 +213,17 @@ export function readRegularFileSync(params: { filePath: string; maxBytes?: numbe
 } {
   const maxBytes = normalizeMaxBytes(params.maxBytes);
   assertNoUnsafeDeviceReadPath(params.filePath);
-  const result = statRegularFileSync(params.filePath);
-  if (result.missing) {
-    throw Object.assign(new Error(`File not found: ${params.filePath}`), { code: "ENOENT" });
+  let before: BigIntStats;
+  try {
+    before = inspectFileIdentitySync(() => {
+      const stat = fsSync.lstatSync(params.filePath, { bigint: true });
+      assertRegularReadStat(stat, params.filePath, true);
+      return stat;
+    });
+  } catch (error) {
+    throwReadPreviewError(error, params.filePath);
   }
-  if (maxBytes !== undefined && result.stat.size > maxBytes) {
+  if (maxBytes !== undefined && before.size > maxBytes) {
     throw regularFileTooLargeError(params.filePath, maxBytes);
   }
 
@@ -233,7 +240,7 @@ export function readRegularFileSync(params: { filePath: string; maxBytes?: numbe
     return readOpenedRegularFileSync({
       fd,
       filePath: params.filePath,
-      preOpenStat: result.stat,
+      preOpenStat: before,
       maxBytes,
     });
   } finally {

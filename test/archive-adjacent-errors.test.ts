@@ -141,7 +141,7 @@ describe("archive input staging failures", () => {
     const archivePath = path.join(root, "archive");
     await fs.writeFile(archivePath, "archive");
     const realLstat = fs.lstat.bind(fs);
-    const originalStat = await realLstat(archivePath);
+    const originalStat = await realLstat(archivePath, { bigint: true });
     const changedStat = new Proxy(originalStat, {
       get(target, property) {
         if (property === "ino") {
@@ -154,9 +154,9 @@ describe("archive input staging failures", () => {
       },
     });
     let archiveLstats = 0;
-    vi.spyOn(fs, "lstat").mockImplementation(async (candidate) => {
-      if (String(candidate) === archivePath && ++archiveLstats === 2) return changedStat;
-      return await realLstat(candidate);
+    vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+      if (String(args[0]) === archivePath && ++archiveLstats === 2) return changedStat;
+      return await realLstat(...args);
     });
 
     await expect(stageArchiveFileForExtraction({

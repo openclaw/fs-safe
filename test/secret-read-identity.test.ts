@@ -50,7 +50,8 @@ describe.each(["sync", "async"] as const)("%s secret identity", (kind) => {
     }
     await expect(read(filePath, rejectSymlink)).resolves.toBe("secret");
     const inputOperation = rejectSymlink ? "lstat" : "stat";
-    expect(inspections).toEqual([inputOperation, "fstat", "lstat", inputOperation]);
+    const pinnedInspections = kind === "sync" ? ["lstat", "fstat", "lstat"] : [];
+    expect(inspections).toEqual([inputOperation, ...pinnedInspections, "fstat", "lstat", inputOperation]);
   });
 
   it.each([false, true])("refuses a real replacement after opening (rejectSymlink=%s)", async (rejectSymlink) => {

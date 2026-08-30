@@ -208,7 +208,7 @@ async function openVerifiedLocalFile(
     nonBlockingRead?: boolean;
     symlinks?: SymlinkPolicy;
   },
-): Promise<OpenResult> {
+): Promise<{ opened: OpenResult; identity: BigIntStats }> {
   assertNoUnsafeDeviceReadPath(filePath);
   const fsSafeTestHooks = getFsSafeTestHooks();
   let preOpenStat: BigIntStats | undefined;
@@ -297,7 +297,7 @@ async function openVerifiedLocalFile(
       return realStat;
     }, identity);
 
-    return openResult({ handle, realPath, stat });
+    return { opened: openResult({ handle, realPath, stat }), identity };
   } catch (err) {
     await handle.close().catch(() => {});
     if (err instanceof FsSafeError) {
@@ -687,10 +687,10 @@ async function openFileInRoot(
 
   let opened: OpenResult;
   try {
-    opened = await openVerifiedLocalFile(resolved, {
+    ({ opened } = await openVerifiedLocalFile(resolved, {
       nonBlockingRead: params.nonBlockingRead,
       symlinks: params.symlinks,
-    });
+    }));
   } catch (err) {
     if (err instanceof FsSafeError) {
       throw err;
@@ -768,7 +768,7 @@ export async function readLocalFileSafely(params: {
 
 export async function openLocalFileSafely(params: { filePath: string }): Promise<OpenResult> {
   assertNoNulPathInput(params.filePath, "file path contains a NUL byte");
-  return await openVerifiedLocalFile(params.filePath);
+  return (await openVerifiedLocalFile(params.filePath)).opened;
 }
 
 export type WritableOpenResult = {
@@ -1171,7 +1171,7 @@ async function copyFileInRoot(
 ): Promise<void> {
   assertValidRootRelativePath(params.relativePath);
   assertNoNulPathInput(params.sourcePath, "source path contains a NUL byte");
-  const source = await openVerifiedLocalFile(params.sourcePath, {
+  const { opened: source, identity: sourceIdentity } = await openVerifiedLocalFile(params.sourcePath, {
     hardlinks: params.sourceHardlinks,
   });
   if (params.maxBytes !== undefined && source.stat.size > params.maxBytes) {
@@ -1191,7 +1191,7 @@ async function copyFileInRoot(
         params.denyMutations,
       );
       await serializePathWrite(pinned.targetPath, async () => {
-        await assertCopySourceCurrent(source);
+        await assertCopySourceCurrent(source, sourceIdentity);
         let identity: FileIdentityStat;
         try {
           identity = await runPinnedWriteHelper({
@@ -1209,7 +1209,7 @@ async function copyFileInRoot(
           throw normalizePinnedWriteError(error);
         }
         try {
-          await assertCopySourcePathCurrent(source);
+          await assertCopySourcePathCurrent(source, sourceIdentity);
         } catch (error) {
           await removePathIfIdentityUnchanged(pinned.targetPath, identity).catch(() => undefined);
           throw error;
@@ -1221,19 +1221,19 @@ async function copyFileInRoot(
   }
 }
 
-async function assertCopySourceCurrent(source: OpenResult): Promise<void> {
-  const opened = await source.handle.stat();
-  if (!sameFileIdentity(opened, source.stat)) {
-    throw new FsSafeError("path-mismatch", "copy source descriptor changed");
-  }
-  await assertCopySourcePathCurrent(source);
+async function assertCopySourceCurrent(source: OpenResult, identity: BigIntStats): Promise<void> {
+  await inspectFileIdentity(() => source.handle.stat({ bigint: true }), identity);
+  await assertCopySourcePathCurrent(source, identity);
 }
 
-async function assertCopySourcePathCurrent(source: OpenResult): Promise<void> {
-  const current = await fs.lstat(source.realPath);
-  if (current.isSymbolicLink() || !current.isFile() || !sameFileIdentity(current, source.stat)) {
-    throw new FsSafeError("path-mismatch", "copy source path changed");
-  }
+async function assertCopySourcePathCurrent(source: OpenResult, identity: BigIntStats): Promise<void> {
+  await inspectFileIdentity(async () => {
+    const current = await fs.lstat(source.realPath, { bigint: true });
+    if (current.isSymbolicLink() || !current.isFile()) {
+      throw new FsSafeError("path-mismatch", "copy source path changed");
+    }
+    return current;
+  }, identity);
 }
 
 async function removePathIfIdentityUnchanged(

@@ -8,7 +8,8 @@ import {
   ArchiveLimitError,
   type ResolvedArchiveExtractLimits,
 } from "./archive-limits.js";
-import { sameFileIdentity } from "./file-identity.js";
+import { FsSafeError } from "./errors.js";
+import { inspectFileIdentity } from "./strict-file-identity.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { tempFile } from "./temp-target.js";
 
@@ -46,10 +47,13 @@ export async function stageArchiveFileForExtraction(params: {
 }): Promise<StagedArchiveFile> {
   params.deadline.check();
   const sourcePath = path.resolve(params.archivePath);
-  const initialStat = await fs.lstat(sourcePath);
-  if (initialStat.isSymbolicLink() || !initialStat.isFile()) {
-    throw new Error(`archive is not a regular file: ${params.archivePath}`);
-  }
+  const initialStat = await inspectFileIdentity(async () => {
+    const stat = await fs.lstat(sourcePath, { bigint: true });
+    if (stat.isSymbolicLink() || !stat.isFile()) {
+      throw new Error(`archive is not a regular file: ${params.archivePath}`);
+    }
+    return stat;
+  });
   if (initialStat.size > params.limits.maxArchiveBytes) {
     throw new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.ARCHIVE_SIZE_EXCEEDS_LIMIT);
   }
@@ -61,17 +65,16 @@ export async function stageArchiveFileForExtraction(params: {
       prefix: "fs-safe-archive-input",
       fileName: path.basename(sourcePath),
     });
-    const openedStat = await handle.stat();
-    const pathStat = await fs.lstat(sourcePath);
-    if (
-      !openedStat.isFile() ||
-      pathStat.isSymbolicLink() ||
-      !pathStat.isFile() ||
-      !sameFileIdentity(initialStat, openedStat) ||
-      !sameFileIdentity(pathStat, openedStat)
-    ) {
-      throw new Error("archive changed during validation");
-    }
+    const opened = await inspectFileIdentity(async () => {
+      const stat = await handle.stat({ bigint: true });
+      if (!stat.isFile()) throw new Error("archive changed during validation");
+      return stat;
+    }, initialStat);
+    await inspectFileIdentity(async () => {
+      const stat = await fs.lstat(sourcePath, { bigint: true });
+      if (stat.isSymbolicLink() || !stat.isFile()) throw new Error("archive changed during validation");
+      return stat;
+    }, opened);
 
     const flags =
       fsConstants.O_WRONLY |
@@ -99,6 +102,9 @@ export async function stageArchiveFileForExtraction(params: {
   } catch (error) {
     await closeFileHandle(output);
     await staged?.cleanup().catch(() => undefined);
+    if (error instanceof FsSafeError && error.code === "path-mismatch") {
+      throw new FsSafeError("path-mismatch", "archive changed during validation", { cause: error });
+    }
     throw error;
   } finally {
     await closeFileHandle(handle);

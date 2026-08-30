@@ -72,6 +72,13 @@ Operational filesystem failures such as permissions or I/O errors are rethrown.
 | `assertNoSymlinkParents`, `assertNoSymlinkParentsSync`, `AssertNoSymlinkParentsOptions` | – | Reject paths whose ancestor chain contains symlinks. |
 | `assertNoHardlinkedFinalPath`, `assertNoPathAliasEscape`, `PATH_ALIAS_POLICIES`, `PathAliasPolicy` | – | Hardlink/alias defense building blocks. |
 
+`openRootFile()` and `openRootFileSync()` compare exact bigint identities before
+open, on the retained descriptor, and on the current resolved path. Their `stat`
+receipts remain numeric. Custom `ioFs` adapters must honor `{ bigint: true }` for
+`lstatSync` and `fstatSync`; numeric identity responses fail validation. Unknown
+Windows identities receive one re-inspection without reopening, then fail
+validation if still unknown.
+
 The bounded descriptor helpers start at the descriptor's current offset and
 leave ownership with the caller. They are intended for the second half of a
 safe read: first open and validate the path using the boundary appropriate to
