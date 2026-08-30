@@ -180,8 +180,8 @@ describe("atomic helpers", () => {
         fileSystem: {
           promises: {
             ...fs,
-            lstat: async (candidate) => {
-              const stat = await fs.lstat(candidate);
+            lstat: async (candidate, options) => {
+              const stat = await fs.lstat(candidate, options as never);
               return candidate === filePath
                 ? new Proxy(stat, { get: (target, property) => property === "nlink" ? 1 : Reflect.get(target, property) })
                 : stat;
