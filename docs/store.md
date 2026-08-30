@@ -68,6 +68,10 @@ Use `ackJsonDurableQueueEntry()` after durable processing succeeds and
 `moveJsonDurableQueueEntryToFailed()` when the caller wants to quarantine an
 entry for inspection.
 
+Loading claims the current `.json` generation by moving it to the path returned as `processingPath`. A producer can then publish one replacement generation at `.json` without changing the bytes owned by the active consumer. Acknowledgement moves only the claimed generation through the short-lived `.delivered` marker; quarantine likewise prefers the claimed generation and leaves a queued replacement untouched. After a crash, `.processing` is retried before the same ID's `.json` replacement. Existing `.delivered` markers remain completed acknowledgements and are cleaned during batch loading.
+
+Failed destinations are create-only. If `failed/<id>.json` already exists, quarantine rejects while preserving both that earlier evidence and the current claimed entry instead of overwriting either file. The `read` callback continues to receive the logical `.json` path even though bytes are read and migrations are written through the claimed path.
+
 Queue entry reads verify lossless file identities before opening, on the opened
 descriptor, and at the current pathname before reading bytes. On Windows, an
 unknown identity gets one bounded reinspection; persistent ambiguity or a

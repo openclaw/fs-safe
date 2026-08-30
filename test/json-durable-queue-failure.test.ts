@@ -43,14 +43,14 @@ describe("durable JSON queue failure recovery", () => {
         read: async (entry) => ({ entry: { version: entry.version + 1 }, migrated: true }),
       }),
     ).resolves.toEqual([{ version: 2 }]);
-    await expect(fs.readFile(path.join(queueDir, "ready.json"), "utf8")).resolves.toContain(
+    await expect(fs.readFile(path.join(queueDir, "ready.processing"), "utf8")).resolves.toContain(
       "\"version\": 2",
     );
     await expect(fs.access(path.join(queueDir, "already.delivered"))).rejects.toMatchObject({
       code: "ENOENT",
     });
     await expect(fs.readFile(freshTmp, "utf8")).resolves.toBe("incomplete");
-    await expect(fs.readFile(path.join(queueDir, "truncated.json"), "utf8")).resolves.toBe(
+    await expect(fs.readFile(path.join(queueDir, "truncated.processing"), "utf8")).resolves.toBe(
       "{\"version\":",
     );
   });
