@@ -2,8 +2,10 @@ import syncFs from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Readable } from "node:stream";
+import { normalizeMaxBytes } from "./byte-budget.js";
 import { readFileDescriptorBoundedSync } from "./bounded-read.js";
 import { FsSafeError } from "./errors.js";
+import { assertFileStoreMaxBytes } from "./file-store-limit.js";
 import { pruneExpiredStoreEntries, type FileStorePruneOptions } from "./file-store-prune.js";
 export type { FileStorePruneOptions } from "./file-store-prune.js";
 import {
@@ -127,16 +129,8 @@ function resolveStorePath(rootDir: string, relativePath: string): string {
   return resolveSafeRelativePath(rootDir, assertRelativePath(relativePath));
 }
 
-function assertMaxBytes(size: number, maxBytes?: number): void {
-  if (maxBytes !== undefined && size > maxBytes) {
-    throw new FsSafeError("too-large", `file exceeds maximum size of ${maxBytes} bytes`);
-  }
-}
-
 function isNotFound(error: unknown): boolean {
-  return error instanceof FsSafeError
-    ? error.code === "not-found"
-    : isNotFoundPathError(error);
+  return error instanceof FsSafeError ? error.code === "not-found" : isNotFoundPathError(error);
 }
 
 function handleSyncStoreReadOpenFailure(opened: RootFileOpenFailure): null {
@@ -176,7 +170,7 @@ async function readFileStoreCopySource(params: {
   if (sourceStat.isSymbolicLink() || !sourceStat.isFile()) {
     throw new FsSafeError("not-file", "source path is not a file");
   }
-  assertMaxBytes(sourceStat.size, params.maxBytes);
+  assertFileStoreMaxBytes(sourceStat.size, params.maxBytes);
   try {
     return (await readRegularFile({ filePath: params.sourcePath, maxBytes: params.maxBytes }))
       .buffer;
@@ -211,7 +205,7 @@ async function copyIntoRoot(params: {
   if (sourceStat.isSymbolicLink() || !sourceStat.isFile()) {
     throw new FsSafeError("not-file", "source path is not a file");
   }
-  assertMaxBytes(sourceStat.size, params.maxBytes);
+  assertFileStoreMaxBytes(sourceStat.size, params.maxBytes);
   const dirMode = params.dirMode ?? 0o700;
   const scopedRoot = await openWritableStoreRoot({
     rootDir: params.rootDir,
@@ -232,7 +226,7 @@ export function fileStore(options: FileStoreOptions): FileStore {
   const privateMode = options.private ?? false;
   const dirMode = options.dirMode ?? 0o700;
   const mode = options.mode ?? 0o600;
-  const maxBytes = options.maxBytes;
+  const maxBytes = normalizeMaxBytes(options.maxBytes);
 
   async function openRoot(): Promise<Root> {
     return await root(rootDir, { hardlinks: "reject", maxBytes });
@@ -246,7 +240,8 @@ export function fileStore(options: FileStoreOptions): FileStore {
     const safeRelativePath = assertRelativePath(relativePath);
     const destination = resolveStorePath(rootDir, safeRelativePath);
     const content = Buffer.isBuffer(data) ? data : Buffer.from(data);
-    assertMaxBytes(content.byteLength, writeOptions?.maxBytes ?? maxBytes);
+    const writeMaxBytes = normalizeMaxBytes(writeOptions?.maxBytes, { defaultValue: maxBytes });
+    assertFileStoreMaxBytes(content.byteLength, writeMaxBytes);
     if (privateMode) {
       await writeSecretFileAtomic({
         rootDir,
@@ -261,7 +256,7 @@ export function fileStore(options: FileStoreOptions): FileStore {
     const scopedRoot = await openWritableStoreRoot({
       rootDir,
       dirMode: writeDirMode,
-      maxBytes: writeOptions?.maxBytes ?? maxBytes,
+      maxBytes: writeMaxBytes,
     });
     await ensureParentInRoot(scopedRoot, safeRelativePath, writeDirMode);
     await scopedRoot.write(safeRelativePath, content, {
@@ -279,7 +274,8 @@ export function fileStore(options: FileStoreOptions): FileStore {
     writeStream: async (relativePath, stream, writeOptions) => {
       const safeRelativePath = assertRelativePath(relativePath);
       const destination = resolveStorePath(rootDir, safeRelativePath);
-      const limit = writeOptions?.maxBytes ?? maxBytes ?? (privateMode ? DEFAULT_ROOT_MAX_BYTES : undefined);
+      const configuredLimit = normalizeMaxBytes(writeOptions?.maxBytes, { defaultValue: maxBytes });
+      const limit = configuredLimit ?? (privateMode ? DEFAULT_ROOT_MAX_BYTES : undefined);
       if (privateMode) {
         const chunks: Buffer[] = [];
         let total = 0;
@@ -287,7 +283,7 @@ export function fileStore(options: FileStoreOptions): FileStore {
           const buffer =
             typeof chunk === "string" ? Buffer.from(chunk) : Buffer.from(chunk as Uint8Array);
           total += buffer.byteLength;
-          assertMaxBytes(total, limit);
+          assertFileStoreMaxBytes(total, limit);
           chunks.push(buffer);
         }
         await writeSecretFileAtomic({
@@ -319,24 +315,25 @@ export function fileStore(options: FileStoreOptions): FileStore {
       }
       return destination;
     },
-    copyIn: async (relativePath, sourcePath, writeOptions) =>
-      privateMode
-        ? await (async () => {
-            const buffer = await readFileStoreCopySource({
-              sourcePath,
-              maxBytes: writeOptions?.maxBytes ?? maxBytes ?? DEFAULT_ROOT_MAX_BYTES,
-            });
-            return await write(relativePath, buffer, writeOptions);
-          })()
-        : await copyIntoRoot({
-            rootDir,
-            relativePath,
-            sourcePath,
-            dirMode: writeOptions?.dirMode ?? dirMode,
-            maxBytes: writeOptions?.maxBytes ?? maxBytes,
-            mode: writeOptions?.mode ?? mode,
-            tempPrefix: writeOptions?.tempPrefix,
-          }),
+    copyIn: async (relativePath, sourcePath, writeOptions) => {
+      const configuredLimit = normalizeMaxBytes(writeOptions?.maxBytes, { defaultValue: maxBytes });
+      if (privateMode) {
+        const buffer = await readFileStoreCopySource({
+          sourcePath,
+          maxBytes: configuredLimit ?? DEFAULT_ROOT_MAX_BYTES,
+        });
+        return await write(relativePath, buffer, writeOptions);
+      }
+      return await copyIntoRoot({
+        rootDir,
+        relativePath,
+        sourcePath,
+        dirMode: writeOptions?.dirMode ?? dirMode,
+        maxBytes: configuredLimit,
+        mode: writeOptions?.mode ?? mode,
+        tempPrefix: writeOptions?.tempPrefix,
+      });
+    },
     open: async (relativePath, readOptions) =>
       await (await openRoot()).open(assertRelativePath(relativePath), readOptions),
     read: async (relativePath, readOptions) =>
@@ -430,7 +427,7 @@ export function fileStoreSync(options: FileStoreOptions): FileStoreSync {
   const privateMode = options.private ?? false;
   const dirMode = options.dirMode ?? 0o700;
   const mode = options.mode ?? 0o600;
-  const maxBytes = options.maxBytes;
+  const maxBytes = normalizeMaxBytes(options.maxBytes);
 
   function write(
     relativePath: string,
@@ -439,7 +436,8 @@ export function fileStoreSync(options: FileStoreOptions): FileStoreSync {
   ): string {
     const destination = resolveStorePath(rootDir, relativePath);
     const content = Buffer.isBuffer(data) ? data : Buffer.from(data);
-    assertMaxBytes(content.byteLength, writeOptions?.maxBytes ?? maxBytes);
+    const writeMaxBytes = normalizeMaxBytes(writeOptions?.maxBytes, { defaultValue: maxBytes });
+    assertFileStoreMaxBytes(content.byteLength, writeMaxBytes);
     return writeFileSyncAtomic({
       rootDir,
       filePath: destination,
@@ -454,6 +452,7 @@ export function fileStoreSync(options: FileStoreOptions): FileStoreSync {
     rootDir,
     path: (relativePath) => resolveStorePath(rootDir, relativePath),
     readTextIfExists: (relativePath, readOptions) => {
+      const limit = normalizeMaxBytes(readOptions?.maxBytes, { defaultValue: maxBytes });
       const targetPath = resolveStorePath(rootDir, relativePath);
       const opened = openRootFileSync({
         absolutePath: targetPath,
@@ -465,8 +464,7 @@ export function fileStoreSync(options: FileStoreOptions): FileStoreSync {
         return handleSyncStoreReadOpenFailure(opened);
       }
       try {
-        assertMaxBytes(opened.stat.size, readOptions?.maxBytes ?? maxBytes);
-        const limit = readOptions?.maxBytes ?? maxBytes;
+        assertFileStoreMaxBytes(opened.stat.size, limit);
         try {
           return limit === undefined
             ? syncFs.readFileSync(opened.fd, "utf8")

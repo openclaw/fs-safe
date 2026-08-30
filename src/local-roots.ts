@@ -1,5 +1,6 @@
 import fsSync from "node:fs";
 import path from "node:path";
+import { normalizeMaxBytes } from "./byte-budget.js";
 import { FsSafeError } from "./errors.js";
 import { expandHomePrefix, resolveUserPath } from "./home-dir.js";
 import { isFileUrl, safeFileURLToPath } from "./local-file-access.js";
@@ -168,6 +169,7 @@ export function resolveLocalPathFromRootsSync(
 export async function readLocalFileFromRoots(
   options: ReadLocalFileFromRootsOptions,
 ): Promise<LocalRootsReadResult | null> {
+  const maxBytes = normalizeMaxBytes(options.maxBytes);
   const label = options.label ?? "local roots";
   const requestedPath = path.resolve(resolveLocalPathInput(options.filePath, "file path"));
   const rootDirs = options.roots.map((rootEntry) => resolveLocalRootInput(rootEntry, label));
@@ -187,8 +189,8 @@ export async function readLocalFileFromRoots(
     };
     // Leave maxBytes absent when the caller omits it so Root's own default
     // cap remains in force instead of being overwritten by undefined.
-    if (options.maxBytes !== undefined) {
-      readOptions.maxBytes = options.maxBytes;
+    if (maxBytes !== undefined) {
+      readOptions.maxBytes = maxBytes;
     }
 
     // A trusted root symlink has two valid spellings. Preserve the caller's

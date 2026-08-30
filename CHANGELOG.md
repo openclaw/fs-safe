@@ -4,6 +4,7 @@
 
 ### Security and Correctness
 
+- Normalize public `maxBytes` budgets across Root, FileStore, secure/secret/regular reads, durable queues, and external output: reject invalid values, preserve explicit zero and positive `Infinity`, and keep configured defaults when callers forward `undefined`.
 - Bind `writeJsonSync()` best-effort file-mode tightening to the staged bigint identity and a reopened single-link regular descriptor, preserving swapped paths without chmodding them.
 - Open attacker-raceable secure, secret, archive, queue, publication, fallback, and lock-file read paths nonblocking on POSIX, rejecting FIFO substitutions before reads, deadlines, or cleanup verification can stall.
 - Retain async and sync atomic replacement temp descriptors across `beforeRename`, retries, copy fallback, and final publication; reject substituted, non-regular, or hardlinked stages, preserve unowned cleanup paths, and add explicit locked content verification for rename-unstable FUSE mounts.

@@ -1,19 +1,11 @@
 import fs from "node:fs";
 import type { FileHandle } from "node:fs/promises";
+import { normalizeMaxBytes } from "./byte-budget.js";
 import { FsSafeError } from "./errors.js";
 
 const READ_CHUNK_BYTES = 64 * 1024;
 
 type ReadableFileHandle = Pick<FileHandle, "read">;
-
-function assertMaxBytes(maxBytes: number): void {
-  if (maxBytes === Number.POSITIVE_INFINITY) {
-    return;
-  }
-  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
-    throw new RangeError("maxBytes must be a non-negative safe integer or Infinity");
-  }
-}
 
 function createScratchBuffer(maxBytes: number): Buffer {
   const initialReadBytes = Number.isFinite(maxBytes)
@@ -50,7 +42,7 @@ async function readBoundedAsync(
   maxBytes: number,
   readChunk: (scratch: Buffer, length: number) => Promise<number>,
 ): Promise<Buffer> {
-  assertMaxBytes(maxBytes);
+  normalizeMaxBytes(maxBytes);
   const chunks: Buffer[] = [];
   const scratch = createScratchBuffer(maxBytes);
   let total = 0;
@@ -99,7 +91,7 @@ export async function readFileDescriptorBounded(fd: number, maxBytes: number): P
 
 /** Sync bounded read from a numeric descriptor. The caller owns the descriptor. */
 export function readFileDescriptorBoundedSync(fd: number, maxBytes: number): Buffer {
-  assertMaxBytes(maxBytes);
+  normalizeMaxBytes(maxBytes);
   const chunks: Buffer[] = [];
   const scratch = createScratchBuffer(maxBytes);
   let total = 0;

@@ -31,6 +31,8 @@ const cache = fileStore({
 });
 ```
 
+Store and per-call `maxBytes` values must be non-negative safe integers or positive `Infinity`. Zero is an active zero-byte cap; `Infinity` disables the cap. An omitted or explicitly `undefined` per-call value preserves the store-level limit. The same rule applies to buffer writes, streams, copies, async reads, and synchronous reads/writes.
+
 Use `private: true` for credentials, auth profiles, tokens, and other private
 state. Private mode keeps the same `FileStore` shape but routes writes through
 the secret-file atomic path, refusing symlink parent components and re-asserting

@@ -73,6 +73,8 @@ type SecretFileReadOptions = {
 };
 ```
 
+`maxBytes` must be a non-negative safe integer or positive `Infinity`; zero is an active cap, `Infinity` disables it, and omitted or explicitly `undefined` values preserve the 16 KiB default.
+
 The reader trims the file content and rejects empty results. Symlink paths are
 followed and pinned by default; set `rejectSymlink: true` when the pathname
 itself must not be an alias. Hardlinks are rejected by default so another

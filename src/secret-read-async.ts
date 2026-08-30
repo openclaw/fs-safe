@@ -1,6 +1,7 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import { readFileHandleBounded } from "./bounded-read.js";
+import { normalizeMaxBytes } from "./byte-budget.js";
 import { FsSafeError } from "./errors.js";
 import { resolveHomeRelativePath } from "./home-dir.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
@@ -23,7 +24,9 @@ export async function readSecretFile(
   if (!resolvedPath) {
     throw new FsSafeError("invalid-path", `${label} file path is empty.`, { cause: undefined });
   }
-  const maxBytes = options.maxBytes ?? DEFAULT_SECRET_FILE_MAX_BYTES;
+  const maxBytes = normalizeMaxBytes(options.maxBytes, {
+    defaultValue: DEFAULT_SECRET_FILE_MAX_BYTES,
+  })!;
   async function inspectInput(symlinkMessage: string): Promise<fsSync.BigIntStats> {
     const stat = options.rejectSymlink
       ? await fs.lstat(resolvedPath, { bigint: true })

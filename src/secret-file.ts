@@ -3,6 +3,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { canonicalPathFromExistingAncestor } from "./absolute-path.js";
 import { readFileDescriptorBoundedSync } from "./bounded-read.js";
+import { normalizeMaxBytes } from "./byte-budget.js";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, type AsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity, type FileIdentityStat } from "./file-identity.js";
@@ -34,7 +35,9 @@ export function readSecretFileSync(
     throw new FsSafeError("invalid-path", `${label} file path is empty.`, { cause: undefined });
   }
 
-  const maxBytes = options.maxBytes ?? DEFAULT_SECRET_FILE_MAX_BYTES;
+  const maxBytes = normalizeMaxBytes(options.maxBytes, {
+    defaultValue: DEFAULT_SECRET_FILE_MAX_BYTES,
+  })!;
   function inspectInput(symlinkMessage: string): fs.BigIntStats {
     const stat = options.rejectSymlink
       ? fs.lstatSync(resolvedPath, { bigint: true })

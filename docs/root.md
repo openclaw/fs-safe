@@ -38,6 +38,8 @@ type DenyMutationPolicy = {
 
 `defaults` apply to every method on the returned handle. Per-call options on individual methods override the defaults for that call only, except `denyMutations`: root and per-call deny entries are merged so a call cannot clear a root-level deny.
 
+Every `maxBytes` value must be a non-negative safe integer or positive `Infinity`. Zero is an active zero-byte cap; `Infinity` explicitly disables the cap. An omitted or explicitly `undefined` per-call value preserves the configured Root default instead of clearing it.
+
 ## The `Root` interface
 
 Every method on the returned handle accepts paths relative to the root and rejects anything that would escape it.

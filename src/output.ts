@@ -1,4 +1,5 @@
 import path from "node:path";
+import { normalizeMaxBytes } from "./byte-budget.js";
 import { FsSafeError } from "./errors.js";
 import { sanitizeUntrustedFileName } from "./filename.js";
 import { isPathInside } from "./path.js";
@@ -79,6 +80,7 @@ function assertFileTargetPath(targetPath: string): void {
 export async function writeExternalFileWithinRoot<T = void>(
   options: ExternalFileWriteOptions<T>,
 ): Promise<ExternalFileWriteResult<T>> {
+  const maxBytes = normalizeMaxBytes(options.maxBytes);
   const targetRoot = await root(options.rootDir);
   const requestedTargetPath = options.path;
   if (requestedTargetPath.length === 0) {
@@ -103,7 +105,7 @@ export async function writeExternalFileWithinRoot<T = void>(
       finalPath: siblingFinalPath,
       write: options.write,
       fallbackFileName: options.fallbackFileName,
-      maxBytes: options.maxBytes,
+      maxBytes,
       mode: options.mode,
     });
     return { path: siblingFinalPath, result };
@@ -116,7 +118,7 @@ export async function writeExternalFileWithinRoot<T = void>(
   try {
     const result = await options.write(staged.path);
     await targetRoot.copyIn(targetPath, staged.path, {
-      maxBytes: options.maxBytes,
+      maxBytes,
       mode: options.mode,
       mkdir: true,
       sourceHardlinks: "reject",
