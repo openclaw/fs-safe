@@ -22,6 +22,7 @@ import {
   type SidecarLockSnapshot,
 } from "./sidecar-lock-reclaim.js";
 import type { SidecarLockAcquireOptions, SidecarLockHandle } from "./sidecar-lock-types.js";
+import { createSuppressedError } from "./suppressed-error.js";
 
 type SidecarFileHandle = Pick<NativeFileHandle, "close" | "stat" | "writeFile">;
 
@@ -69,15 +70,30 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
   context.ensureExitCleanupRegistered();
   const normalizedTargetPath = await resolveNormalizedTargetPath(options.targetPath);
   const lockPath = options.lockPath ?? `${normalizedTargetPath}.lock`;
-  const held = context.held.get(normalizedTargetPath);
+  let held = context.held.get(normalizedTargetPath);
   if (
     held &&
     options.reentrantOwner !== undefined &&
     held.reentrantOwner !== undefined &&
     options.reentrantOwner === held.reentrantOwner
   ) {
-    held.refCount += 1;
-    return context.handleForHeldLock(normalizedTargetPath, held);
+    // A final release may already have decremented the count to zero and be
+    // removing the sidecar. Do not admit a new reentrant handle until that
+    // cleanup settles: successful cleanup requires a fresh acquisition, while
+    // failed cleanup leaves the existing sidecar held for a retry.
+    if (held.releasePromise) {
+      await held.releasePromise.catch(() => undefined);
+      held = context.held.get(normalizedTargetPath);
+    }
+    if (
+      held &&
+      options.reentrantOwner !== undefined &&
+      held.reentrantOwner !== undefined &&
+      options.reentrantOwner === held.reentrantOwner
+    ) {
+      held.refCount += 1;
+      return context.handleForHeldLock(normalizedTargetPath, held);
+    }
   }
 
   const startedAt = Date.now();
@@ -199,29 +215,37 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
         }
         return returnedHandle;
       } catch (err) {
-        if (handle) {
-          const failedSnapshot: SidecarLockSnapshot = { payload: null };
-          try {
-            failedSnapshot.stat = await handle.stat();
-          } catch {
-            // Best-effort cleanup of a failed exclusive create.
+        try {
+          if (handle) {
+            const failedSnapshot: SidecarLockSnapshot = { payload: null };
+            try {
+              failedSnapshot.stat = await handle.stat();
+            } catch {
+              // Best-effort cleanup of a failed exclusive create.
+            }
+            const current = context.held.get(normalizedTargetPath);
+            if (current?.handle === handle) {
+              context.held.delete(normalizedTargetPath);
+            }
+            await handle.close().catch(() => undefined);
+            // The file may be empty or partial JSON, so remove by the identity
+            // captured from our exclusive handle rather than by pathname alone.
+            await removeSidecarLockIfUnchanged(lockPath, failedSnapshot, {
+              lockRoot: options.lockRoot,
+              parsePayload: options.parsePayload,
+            });
+          } else if (createdSnapshot) {
+            await removeSidecarLockIfUnchanged(lockPath, createdSnapshot, {
+              lockRoot: options.lockRoot,
+              parsePayload: options.parsePayload,
+            });
           }
-          const current = context.held.get(normalizedTargetPath);
-          if (current?.handle === handle) {
-            context.held.delete(normalizedTargetPath);
-          }
-          await handle.close().catch(() => undefined);
-          // The file may be empty or partial JSON, so remove by the identity
-          // captured from our exclusive handle rather than by pathname alone.
-          await removeSidecarLockIfUnchanged(lockPath, failedSnapshot, {
-            lockRoot: options.lockRoot,
-            parsePayload: options.parsePayload,
-          });
-        } else if (createdSnapshot) {
-          await removeSidecarLockIfUnchanged(lockPath, createdSnapshot, {
-            lockRoot: options.lockRoot,
-            parsePayload: options.parsePayload,
-          });
+        } catch (cleanupError) {
+          throw createSuppressedError(
+            cleanupError,
+            err,
+            "file lock acquisition and cleanup both failed",
+          );
         }
         if (lockFileCreateDenied && withinDenialBudget()) {
           await retryOrRethrowDenial(err);

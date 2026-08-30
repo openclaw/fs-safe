@@ -7,6 +7,7 @@ import {
 } from "./sidecar-lock-reclaim.js";
 import { acquireSidecarLock, type HeldSidecarLock } from "./sidecar-lock-acquire.js";
 import { createHeldSidecarLockHandle } from "./sidecar-lock-handle.js";
+import { createSuppressedError } from "./suppressed-error.js";
 import type {
   SidecarLockAcquireOptions,
   SidecarLockHandle,
@@ -151,28 +152,23 @@ async function releaseHeldLock(
   state: SidecarLockManagerState,
   normalizedTargetPath: string,
   held: HeldSidecarLock,
-  options: { force?: boolean } = {},
+  options: { force?: boolean; retry?: boolean } = {},
 ): Promise<boolean> {
   const current = state.held.get(normalizedTargetPath);
   if (current !== held) {
     return false;
   }
-  if (options.force) {
-    held.refCount = 0;
-  } else {
-    held.refCount -= 1;
-    if (held.refCount > 0) {
-      return false;
-    }
-  }
   if (held.releasePromise) {
-    await held.releasePromise.catch(() => undefined);
+    await held.releasePromise;
     return true;
   }
-  state.held.delete(normalizedTargetPath);
-  if (held.compromiseTimer) {
-    clearInterval(held.compromiseTimer);
-    held.compromiseTimer = undefined;
+  if (options.force) {
+    held.refCount = 0;
+  } else if (!options.retry && held.refCount > 0) {
+    held.refCount -= 1;
+  }
+  if (held.refCount > 0) {
+    return false;
   }
   held.releasePromise = (async () => {
     await held.handle.close().catch(() => undefined);
@@ -180,6 +176,13 @@ async function releaseHeldLock(
       lockRoot: held.lockRoot,
       parsePayload: held.parsePayload,
     });
+    if (state.held.get(normalizedTargetPath) === held) {
+      state.held.delete(normalizedTargetPath);
+    }
+    if (held.compromiseTimer) {
+      clearInterval(held.compromiseTimer);
+      held.compromiseTimer = undefined;
+    }
   })();
   try {
     await held.releasePromise;
@@ -197,7 +200,8 @@ function handleForHeldLock(
   return createHeldSidecarLockHandle({
     normalizedTargetPath,
     held,
-    release: async () => await releaseHeldLock(state, normalizedTargetPath, held),
+    release: async (options) =>
+      await releaseHeldLock(state, normalizedTargetPath, held, { retry: options?.retry }),
   });
 }
 
@@ -229,11 +233,23 @@ export function createSidecarLockManager(key: string) {
     fn: () => Promise<T>,
   ): Promise<T> {
     const lock = await acquire(options);
+    let result: T;
     try {
-      return await fn();
-    } finally {
-      await lock.release();
+      result = await fn();
+    } catch (bodyError) {
+      try {
+        await lock.release();
+      } catch (releaseError) {
+        throw createSuppressedError(
+          releaseError,
+          bodyError,
+          "file lock callback and release both failed",
+        );
+      }
+      throw bodyError;
     }
+    await lock.release();
+    return result;
   }
 
   async function drain(): Promise<void> {

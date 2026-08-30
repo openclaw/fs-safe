@@ -9,13 +9,26 @@ export function createSidecarLockHandle(params: {
   lockPath: string;
   normalizedTargetPath: string;
   verifyStillHeld: () => Promise<boolean>;
-  release: () => Promise<unknown>;
+  release: (options?: { retry?: boolean }) => Promise<unknown>;
 }): SidecarLockHandle {
   let released = false;
+  let releasePromise: Promise<void> | undefined;
+  let releaseStarted = false;
   const release = async (): Promise<void> => {
     if (released) return;
-    released = true;
-    await params.release();
+    if (!releasePromise) {
+      const retry = releaseStarted;
+      releaseStarted = true;
+      releasePromise = (async () => {
+        await params.release({ retry });
+        released = true;
+      })();
+    }
+    try {
+      await releasePromise;
+    } finally {
+      releasePromise = undefined;
+    }
   };
   return {
     lockPath: params.lockPath,
@@ -34,7 +47,7 @@ export function createHeldSidecarLockHandle(params: {
     lockRoot?: Root;
     parsePayload?: (raw: string) => unknown;
   };
-  release: () => Promise<unknown>;
+  release: (options?: { retry?: boolean }) => Promise<unknown>;
 }): SidecarLockHandle {
   return createSidecarLockHandle({
     lockPath: params.held.lockPath,
@@ -44,6 +57,6 @@ export function createHeldSidecarLockHandle(params: {
         lockRoot: params.held.lockRoot,
         parsePayload: params.held.parsePayload,
       }),
-    release: params.release,
+    release: (options) => params.release(options),
   });
 }
