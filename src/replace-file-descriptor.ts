@@ -2,6 +2,7 @@ import syncFs, { type BigIntStats, type Stats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
+import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 
 type AsyncTempFileSystem = Pick<typeof fs, "lstat" | "open" | "writeFile">;
 type SyncTempFileSystem = Pick<
@@ -92,9 +93,12 @@ export async function writeTempFile(params: {
   content: string | Uint8Array;
   mode: number;
   sync: boolean;
-}): Promise<BigIntStats> {
+  onIdentity?: (identity: BigIntStats) => void;
+}): Promise<{ handle: FileHandle; identity: BigIntStats }> {
   const handle = await params.fsModule.open(params.tempPath, "wx", params.mode);
   try {
+    const identity = await inspectFileIdentity(() => handle.stat({ bigint: true }));
+    params.onIdentity?.(identity);
     await params.fsModule.writeFile(handle, params.content);
     await handle.chmod(params.mode);
     if (params.sync) {
@@ -106,9 +110,15 @@ export async function writeTempFile(params: {
         }
       }
     }
-    return await handle.stat({ bigint: true });
-  } finally {
-    await handle.close();
+    await inspectFileIdentity(() => handle.stat({ bigint: true }), identity);
+    return { handle, identity };
+  } catch (error) {
+    try {
+      await handle.close();
+    } catch (closeError) {
+      throw new AggregateError([error, closeError], "Atomic temp write and close failed");
+    }
+    throw error;
   }
 }
 
@@ -119,9 +129,12 @@ export function writeTempFileSync(params: {
   mode: number;
   fchmodSync?: SyncFchmod;
   sync: boolean;
-}): BigIntStats {
+  onIdentity?: (identity: BigIntStats) => void;
+}): { fd: number; identity: BigIntStats } {
   const fd = params.fsModule.openSync(params.tempPath, "wx", params.mode);
   try {
+    const identity = inspectFileIdentitySync(() => params.fsModule.fstatSync(fd, { bigint: true }));
+    params.onIdentity?.(identity);
     params.fsModule.writeFileSync(fd, params.content);
     params.fchmodSync?.(fd, params.mode);
     if (params.sync) {
@@ -133,8 +146,14 @@ export function writeTempFileSync(params: {
         }
       }
     }
-    return params.fsModule.fstatSync(fd, { bigint: true });
-  } finally {
-    params.fsModule.closeSync(fd);
+    inspectFileIdentitySync(() => params.fsModule.fstatSync(fd, { bigint: true }), identity);
+    return { fd, identity };
+  } catch (error) {
+    try {
+      params.fsModule.closeSync(fd);
+    } catch (closeError) {
+      throw new AggregateError([error, closeError], "Atomic temp write and close failed");
+    }
+    throw error;
   }
 }

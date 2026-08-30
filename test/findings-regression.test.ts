@@ -307,8 +307,8 @@ describe("security finding regressions", () => {
           rename: async () => {
             throw Object.assign(new Error("forced EPERM"), { code: "EPERM" });
           },
-          lstat: async (candidate) => {
-            const stat = await originalLstat(candidate);
+          lstat: async (candidate, options) => {
+            const stat = await originalLstat(candidate, options as never);
             if (!swapped && candidate === target) {
               swapped = true;
               await fsp.rm(target);

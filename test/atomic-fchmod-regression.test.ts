@@ -103,7 +103,7 @@ describe("atomic descriptor modes", () => {
 
     const previousUmask = process.umask(0o077);
     try {
-      await replaceFileAtomic({
+      await expect(replaceFileAtomic({
         filePath,
         content: "new",
         mode: 0o600,
@@ -122,7 +122,7 @@ describe("atomic descriptor modes", () => {
             },
           },
         },
-      });
+      })).rejects.toMatchObject({ code: "symlink" });
     } finally {
       process.umask(previousUmask);
     }
@@ -132,6 +132,7 @@ describe("atomic descriptor modes", () => {
       publishedMode,
       victimMode: (await fs.stat(victimPath)).mode & 0o777,
     }).toEqual({ chmodPaths: [], publishedMode: 0o600, victimMode: 0o644 });
+    expect((await fs.lstat(filePath)).isSymbolicLink()).toBe(true);
   });
 
   itPosix("does not chmod a sync destination swapped for a symlink after rename", async () => {
@@ -158,7 +159,12 @@ describe("atomic descriptor modes", () => {
 
     const previousUmask = process.umask(0o077);
     try {
-      replaceFileAtomicSync({ filePath, content: "new", mode: 0o600, fileSystem });
+      expect(() => replaceFileAtomicSync({
+        filePath,
+        content: "new",
+        mode: 0o600,
+        fileSystem,
+      })).toThrow(expect.objectContaining({ code: "symlink" }));
     } finally {
       process.umask(previousUmask);
     }
@@ -168,6 +174,7 @@ describe("atomic descriptor modes", () => {
       publishedMode,
       victimMode: fsSync.statSync(victimPath).mode & 0o777,
     }).toEqual({ chmodPaths: [], publishedMode: 0o600, victimMode: 0o644 });
+    expect(fsSync.lstatSync(filePath).isSymbolicLink()).toBe(true);
   });
 
   itPosix("applies exact async and sync modes through temp descriptors despite umask", async () => {

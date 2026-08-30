@@ -58,7 +58,7 @@ type ReplaceFileAtomicOptions = {
 
 ### `beforeRename`
 
-Runs after the temp file is fully written and before the rename. Use it to take a backup snapshot, capture the about-to-be-replaced contents, or notify an observer:
+Runs after the temp file is fully written and before the rename. Use it to take a backup snapshot, capture the about-to-be-replaced contents, or notify an observer. The helper retains the staged descriptor and exact bigint identity across the hook; replacing, deleting, hardlinking, or changing the temp entry to a non-regular file is rejected before publication:
 
 ```ts
 await replaceFileAtomic({
@@ -70,7 +70,9 @@ await replaceFileAtomic({
 });
 ```
 
-If `beforeRename` throws, the rename is skipped and the temp file is removed — the destination is unchanged.
+If `beforeRename` throws, the rename is skipped and the owned temp file is removed — the destination is unchanged. Cleanup unlinks only the exact admitted single-link file; a substitute observed at the temp name is preserved and removed from cleanup authority. The same identity is rechecked before every rename retry, when entering copy fallback, and at the final name after rename. A post-rename verification failure reports the race without rolling back or deleting the published name.
+
+Identity checks and pathname rename/unlink remain separate syscalls, not atomic conditional mutations. Use an approved writable parent plus cooperative locking or OS isolation when arbitrary concurrent namespace mutation is in scope.
 
 ### `EPERM` and copy fallback
 
