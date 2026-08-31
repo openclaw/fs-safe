@@ -95,7 +95,6 @@ export interface NativeBinding {
     path: string,
     kind: string,
     limits: TarMeterLimits,
-    maxManifestBytes: number,
     signal: AbortSignal,
   ): Promise<NativeArchiveEntry[]>;
   linkBeneath(

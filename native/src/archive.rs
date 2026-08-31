@@ -10,7 +10,7 @@ use napi::bindgen_prelude::{AbortSignal, AsyncTask, Buffer, Task};
 use napi::{Env, Error, Result, Status};
 use napi_derive::napi;
 
-use crate::tar_meter::{TarMetadataMeter, TarMeterLimits, MAX_SAFE_INTEGER};
+use crate::tar_meter::{TarMetadataMeter, TarMeterLimits, MAX_SAFE_INTEGER, MAX_MANIFEST_BYTES, charge_manifest_path};
 use crate::{NativeResult, native_error, platform, validate_portable_relative_path};
 
 #[napi(object)]
@@ -52,7 +52,6 @@ enum ArchiveFormat {
 #[derive(Clone, Copy)]
 struct InspectLimits {
     tar: TarMeterLimits,
-    max_manifest_bytes: u64,
 }
 
 #[napi(object)]
@@ -60,6 +59,7 @@ pub struct NativeTarLimits {
     pub max_entries: f64,
     pub max_meta_entry_bytes: f64,
     pub max_decoded_bytes: f64,
+    pub max_manifest_bytes: f64,
 }
 
 impl NativeTarLimits {
@@ -68,6 +68,7 @@ impl NativeTarLimits {
             max_entries: checked_tar_limit(self.max_entries, "maxEntries", u32::MAX as u64)? as usize,
             max_meta_entry_bytes: checked_tar_limit(self.max_meta_entry_bytes, "maxMetaEntryBytes", MAX_SAFE_INTEGER)?,
             max_decoded_bytes: checked_tar_limit(self.max_decoded_bytes, "maxDecodedBytes", MAX_SAFE_INTEGER)?,
+            max_manifest_bytes: checked_tar_limit(self.max_manifest_bytes, "maxManifestBytes", MAX_MANIFEST_BYTES)?,
         })
     }
 }
@@ -263,6 +264,11 @@ fn inspect_zip(
 ) -> Result<Vec<ArchiveEntryData>> {
     zip_entry_count(path, limits.tar.max_entries)?;
     let file = File::open(path).map_err(|error| io_error("open zip archive", error))?;
+    // ZIP names live uncompressed in its central directory. Bound retained
+    // UTF-8 names by input bytes (CP437 expands at most threefold), not TAR
+    // metadata/depth settings. The caller already caps the archive input.
+    let max_path_bytes = file.metadata().map_err(|error| io_error("stat zip archive", error))?
+        .len().saturating_mul(3);
     let mut archive =
         zip::ZipArchive::new(file).map_err(|error| io_error("read zip archive", error))?;
     let mut result = Vec::with_capacity(archive.len());
@@ -272,7 +278,9 @@ fn inspect_zip(
         let file = archive
             .by_index(index)
             .map_err(|error| io_error("read zip entry", error))?;
-        add_manifest_path_bytes(&mut manifest_bytes, file.name(), limits)?;
+        manifest_bytes = manifest_bytes.checked_add(file.name().len() as u64)
+            .filter(|total| *total <= max_path_bytes)
+            .ok_or_else(|| limit_error("archive-manifest-size-exceeds-limit"))?;
         result.push(ArchiveEntryData {
             index: u32::try_from(index)
                 .map_err(|_| Error::new(Status::InvalidArg, "too many archive entries"))?,
@@ -309,13 +317,8 @@ fn check_manifest_count(count: usize, limits: InspectLimits) -> Result<()> {
 }
 
 fn add_manifest_path_bytes(total: &mut u64, path: &str, limits: InspectLimits) -> Result<()> {
-    *total = total
-        .checked_add(path.len() as u64)
-        .ok_or_else(|| limit_error("archive-manifest-size-exceeds-limit"))?;
-    if *total > limits.max_manifest_bytes {
-        return Err(limit_error("archive-manifest-size-exceeds-limit"));
-    }
-    Ok(())
+    charge_manifest_path(total, path, limits.tar.max_manifest_bytes)
+        .map_err(|error| io_error("admit manifest path", error))
 }
 
 fn zip_entry_count(path: &str, max_entries: usize) -> Result<u64> {
@@ -484,14 +487,12 @@ pub fn inspect_archive_native(
     path: String,
     kind: String,
     limits: NativeTarLimits,
-    max_manifest_bytes: f64,
     signal: AbortSignal,
 ) -> Result<AsyncTask<InspectTask>> {
     let format =
         parse_format(&kind).map_err(|error| Error::new(Status::InvalidArg, error.reason))?;
     let limits = InspectLimits {
         tar: limits.checked()?,
-        max_manifest_bytes: checked_limit(max_manifest_bytes, "maxManifestBytes")?,
     };
     let cancelled = cancellation(&signal);
     Ok(AsyncTask::with_signal(
@@ -503,16 +504,6 @@ pub fn inspect_archive_native(
         },
         signal,
     ))
-}
-
-fn checked_limit(value: f64, label: &str) -> Result<u64> {
-    if !value.is_finite() || value < 0.0 || value > u64::MAX as f64 {
-        return Err(Error::new(
-            Status::InvalidArg,
-            format!("{label} is out of range"),
-        ));
-    }
-    Ok(value as u64)
 }
 
 fn plan_map(plan: Vec<NativeArchivePlanEntry>) -> Result<HashMap<usize, NativeArchivePlanEntry>> {
@@ -959,8 +950,8 @@ mod tests {
                 max_entries,
                 max_meta_entry_bytes: 1024 * 1024,
                 max_decoded_bytes: 768 * 1024 * 1024,
+                max_manifest_bytes: MAX_MANIFEST_BYTES,
             },
-            max_manifest_bytes: 16 * 1024 * 1024,
         }
     }
 
@@ -975,6 +966,7 @@ mod tests {
             max_entries: value,
             max_meta_entry_bytes: value,
             max_decoded_bytes: value,
+            max_manifest_bytes: value,
         }
     }
 
@@ -993,18 +985,20 @@ mod tests {
             assert_eq!(limits.max_entries, expected_entries);
             assert_eq!(limits.max_meta_entry_bytes, expected_bytes);
             assert_eq!(limits.max_decoded_bytes, expected_bytes);
+            assert_eq!(limits.max_manifest_bytes, expected_bytes.min(MAX_MANIFEST_BYTES));
         }
     }
 
     #[test]
     fn native_tar_limits_reject_malformed_fields_before_clamping() {
         for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -1.0, -0.5] {
-            for field in ["maxEntries", "maxMetaEntryBytes", "maxDecodedBytes"] {
+            for field in ["maxEntries", "maxMetaEntryBytes", "maxDecodedBytes", "maxManifestBytes"] {
                 let mut limits = native_limits(1024.0);
                 match field {
                     "maxEntries" => limits.max_entries = value,
                     "maxMetaEntryBytes" => limits.max_meta_entry_bytes = value,
                     "maxDecodedBytes" => limits.max_decoded_bytes = value,
+                    "maxManifestBytes" => limits.max_manifest_bytes = value,
                     _ => unreachable!(),
                 }
                 let error = limits.checked().err().expect("malformed limit was accepted");
@@ -1040,7 +1034,7 @@ mod tests {
         let path = temp_path("tar");
         std::fs::write(&path, fixture_tar()).unwrap();
         let mut bounded = limits(10);
-        bounded.max_manifest_bytes = 3;
+        bounded.tar.max_manifest_bytes = 3;
         let error = inspect_tar(
             path.to_str().unwrap(),
             ArchiveFormat::Tar,
@@ -1136,8 +1130,7 @@ mod tests {
     #[test]
     fn raw_framing_precedes_the_parser_for_every_codec() {
         let mut tar = fixture_tar();
-        // An invalid checksum would fail in tar::Archive, but raw admission
-        // must first reject the later nonzero trailer across the whole input.
+        // The first invalid raw header must fail before the later trailer.
         tar[148..156].fill(b'0');
         tar.push(1);
         let encoded = [
@@ -1151,7 +1144,7 @@ mod tests {
             std::fs::write(&path, bytes).unwrap();
             let error = inspect_tar(path.to_str().unwrap(), format, limits(10), Arc::new(AtomicBool::new(false))).unwrap_err();
             assert!(error.reason.contains("preflight tar metadata"), "{error}");
-            assert!(error.reason.contains("nonzero data after TAR EOF"), "{error}");
+            assert!(error.reason.contains("checksum failure"), "{error}");
             std::fs::remove_file(path).unwrap();
         }
     }

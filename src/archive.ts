@@ -60,6 +60,7 @@ import {
 } from "./archive-policy.js";
 import { importOptionalTar, normalizeTarParserError } from "./archive-tar-runtime.js";
 import { preflightTarMetadata } from "./archive-tar-meta.js";
+import { createTarAdmissionPlan } from "./archive-tar-admission.js";
 import type { ExtractArchiveOptions } from "./archive-options.js";
 import { writeSiblingTempFile } from "./sibling-temp.js";
 export type { ArchiveLogger, ExtractArchiveOptions } from "./archive-options.js";
@@ -367,10 +368,12 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
         deadline,
       });
       try {
+        const manifest: TarEntryInfo[] = [];
         await preflightTarMetadata({
           archivePath: stagedArchive.path,
           limits: tarLimits,
           signal: deadline.signal,
+          onMember: (entry) => { manifest.push(entry); },
         });
         deadline.check();
         const destinationRealDir = await prepareArchiveDestinationDir(params.destDir);
@@ -386,11 +389,12 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
               entryFilter: params.entryFilter,
               onFiltered,
             });
+            const admission = createTarAdmissionPlan(manifest, (entry) => {
+              deadline.check();
+              return checkTarEntrySafety(entry);
+            }, strip);
             const acceptedEntries: Array<{ path: string; mode: number }> = [];
-            // A canonical cwd is not enough here: tar can still follow
-            // pre-existing child symlinks in the live destination tree.
-            // Extract into a private staging dir first, then merge through
-            // the same safe-open boundary checks used by direct file writes.
+            // Extract privately, then merge through the safe-open boundary.
             const extractor = tar.x({
               cwd: stagingDir,
               // fs-safe owns stripping: node-tar counts the `.` and empty path
@@ -407,16 +411,11 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
               filter(this: { abort(error: Error): void }, _entryPath, entry) {
                 try {
                   const info = readTarEntryInfo(entry);
-                  if (!checkTarEntrySafety(info)) {
-                    return false;
-                  }
-                  const relPath = stripArchivePath(info.path, strip);
+                  const relPath = admission.consume(info);
                   if (!relPath) {
                     return false;
                   }
-                  // Hand node-tar the exact path this entry was validated,
-                  // limited and collision-checked under, and that the mode
-                  // pass below resolves after extraction.
+                  // Writes and the mode pass use the admitted output identity.
                   (entry as { path: string }).path = relPath;
                   acceptedEntries.push({
                     path: relPath,
@@ -443,8 +442,7 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
                   deadline.check();
                 } catch (err) {
                   const error = err instanceof Error ? err : new Error(String(err));
-                  // Node's EventEmitter calls listeners with `this` bound to the
-                  // emitter (tar.Unpack), which exposes Parser.abort().
+                  // EventEmitter binds `this` to tar.Unpack, exposing abort().
                   const emitter = this as unknown as { abort?: (error: Error) => void };
                   emitter.abort?.(error);
                 }
@@ -457,6 +455,7 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
             } catch (error) {
               throw normalizeTarParserError(createPipelineTimeoutError(error, deadline));
             }
+            admission.finish();
             for (const accepted of acceptedEntries) {
               deadline.check();
               const outputPath = resolveArchiveOutputPath({

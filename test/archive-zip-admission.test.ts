@@ -78,6 +78,15 @@ for (const mode of ["off", "require", "auto-native", "auto-missing"] as const) {
       expect(entryFilter).not.toHaveBeenCalled();
       await expect(extractArchive({ ...input, kind: "zip", stripComponents: 99, limits: { maxEntries: 1 } })).rejects.toMatchObject({ code: "archive-entry-count-exceeds-limit" });
     });
+    it("keeps ZIP names independent of the internal TAR metadata budget", async () => {
+      const name = `${"a".repeat(255)}/${"b".repeat(255)}`;
+      const input = await fixture(zipRecords([{ name }]));
+      const entryFilter = vi.fn(() => "skip" as const);
+      await extractArchive({ ...input, kind: "zip", entryFilter, onFiltered: "skip-entry",
+        limits: { maxEntries: 1, maxMetaEntryBytes: 0, maxEntryPathComponents: 2 } });
+      expect(entryFilter.mock.calls).toEqual([[{ path: name, kind: "file", size: 7 }]]);
+      expect(await fs.readdir(input.destDir)).toEqual(["sentinel"]);
+    });
     it.each([false, true])("preserves payload decoding and ZIP64=%s with comments/descriptors", async (wide) => {
       const input = await fixture(zipRecords([
         { name: "stored", body: "stored", zip64: wide },

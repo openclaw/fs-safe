@@ -56,12 +56,12 @@ for (const backend of ["off", "auto-missing", "auto", "require"] as const) {
       return { archivePath, destDir, timeoutMs: 10_000 };
     }
 
-    it("finishes raw admission before a parser can reject an earlier checksum", async () => {
+    it("rejects an earlier raw checksum before invalid trailing data", async () => {
       const bytes = Buffer.concat([tarFixture([member]), Buffer.from([1])]);
       bytes.fill(0x30, 148, 156);
       const fixture = await setup(bytes, false);
-      await expect(extractArchive(fixture)).rejects.toThrow("nonzero data after TAR EOF");
-      await expect(readArchiveEntry(fixture.archivePath, "value", { maxBytes: 7 })).rejects.toThrow("nonzero data after TAR EOF");
+      await expect(extractArchive(fixture)).rejects.toThrow("checksum failure");
+      await expect(readArchiveEntry(fixture.archivePath, "value", { maxBytes: 7 })).rejects.toThrow("checksum failure");
     });
 
     it("meters concatenated gzip members as one decoded TAR stream", async () => {
@@ -142,7 +142,7 @@ for (const backend of ["off", "auto-missing", "auto", "require"] as const) {
         try {
           // Invoke each real N-API pass independently: preflight must not mask
           // an extractor or selected-entry reader that stops at logical EOF.
-          await expect(paxNative!.inspectArchiveNative(fixture.archivePath, "tar", limits, 1024 * 1024, signal)).rejects.toThrow(code);
+          await expect(paxNative!.inspectArchiveNative(fixture.archivePath, "tar", limits, signal)).rejects.toThrow(code);
           await expect(paxNative!.extractArchiveNative(fixture.archivePath, "tar", directory.fd, [], limits, signal)).rejects.toThrow(code);
           await expect(paxNative!.readArchiveEntryNative(fixture.archivePath, "tar", "value", 7, limits, signal)).rejects.toThrow(code);
         } finally {
@@ -154,19 +154,19 @@ for (const backend of ["off", "auto-missing", "auto", "require"] as const) {
       it.skipIf(backend === "off" || backend === "auto-missing")("defensively clamps direct native limits and rejects malformed numbers", async () => {
         const fixture = await setup(canonical, gzip);
         const limits = {
-          maxEntries: Number.MAX_VALUE, maxMetaEntryBytes: Number.MAX_VALUE, maxDecodedBytes: Number.MAX_VALUE,
+          maxEntries: Number.MAX_VALUE, maxMetaEntryBytes: Number.MAX_VALUE, maxDecodedBytes: Number.MAX_VALUE, maxManifestBytes: Number.MAX_VALUE,
         };
         const signal = new AbortController().signal;
         const directory = await fs.open(fixture.destDir, "r");
         try {
-          expect(await paxNative!.inspectArchiveNative(fixture.archivePath, "tar", limits, 1024, signal)).toMatchObject([{ path: "value", size: 7 }]);
+          expect(await paxNative!.inspectArchiveNative(fixture.archivePath, "tar", limits, signal)).toMatchObject([{ path: "value", size: 7 }]);
           await expect(paxNative!.extractArchiveNative(fixture.archivePath, "tar", directory.fd, [], limits, signal)).resolves.toBeUndefined();
           expect(await paxNative!.readArchiveEntryNative(fixture.archivePath, "tar", "value", 7, limits, signal)).toEqual(Buffer.from("payload"));
           for (const field of Object.keys(limits)) {
             for (const value of [NaN, Infinity, -Infinity, -1, -0.5]) {
               const malformed = { ...resolveTarMeterLimits(), [field]: value };
               const error = { code: "InvalidArg", message: `${field} is out of range` };
-              await expect(Promise.resolve().then(() => paxNative!.inspectArchiveNative(fixture.archivePath, "tar", malformed, 1024, signal))).rejects.toMatchObject(error);
+              await expect(Promise.resolve().then(() => paxNative!.inspectArchiveNative(fixture.archivePath, "tar", malformed, signal))).rejects.toMatchObject(error);
               await expect(Promise.resolve().then(() => paxNative!.extractArchiveNative(fixture.archivePath, "tar", directory.fd, [], malformed, signal))).rejects.toMatchObject(error);
               await expect(Promise.resolve().then(() => paxNative!.readArchiveEntryNative(fixture.archivePath, "tar", "value", 7, malformed, signal))).rejects.toMatchObject(error);
             }
@@ -273,7 +273,7 @@ for (const backend of ["off", "auto-missing", "auto", "require"] as const) {
         expect(entryFilter).not.toHaveBeenCalled();
         expect(await fs.readdir(fixture.destDir)).toEqual(["sentinel"]);
         if (backend === "auto" || backend === "require") {
-          expect(inspect).toHaveBeenCalledWith(expect.any(String), "tar", resolveTarMeterLimits(limits), expect.any(Number), expect.any(AbortSignal));
+          expect(inspect).toHaveBeenCalledWith(expect.any(String), "tar", resolveTarMeterLimits(limits), expect.any(AbortSignal));
           expect(extract).not.toHaveBeenCalled();
         }
       });
@@ -286,7 +286,7 @@ for (const backend of ["off", "auto-missing", "auto", "require"] as const) {
         });
         expect(await readArchiveEntry(fixture.archivePath, "raw", { maxBytes: 700 })).toEqual(Buffer.alloc(700, 0x61));
         if (backend === "auto" || backend === "require") {
-          expect(inspect).toHaveBeenLastCalledWith(expect.any(String), "tar", resolveTarMeterLimits(), expect.any(Number), expect.any(AbortSignal));
+          expect(inspect).toHaveBeenLastCalledWith(expect.any(String), "tar", resolveTarMeterLimits(), expect.any(AbortSignal));
           expect(read).toHaveBeenLastCalledWith(expect.any(String), "tar", "raw", 700, resolveTarMeterLimits(), expect.any(AbortSignal));
         }
         const smallFirst = await setup(tarFixture([member, { path: "large", body: Buffer.alloc(1000) }]), gzip);

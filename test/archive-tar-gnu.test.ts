@@ -82,39 +82,39 @@ for (const mode of ["off", "auto", "require"] as const) {
       await unchanged(options.destDir);
     });
 
-    it.each(tarKindFixtures)("applies filter policy to $name", async ({ name, entries }) => {
+    it.each(tarKindFixtures.flatMap((fixture) =>
+      (["default", "extract", "reject-filtered", "skip"] as const).map((policy) => ({ ...fixture, policy })),
+    ))("applies $policy filter policy to $name", async ({ name, entries, policy }) => {
       const directory = name.startsWith("GNUDumpDir");
       const size = name === "GNUDumpDir payload" ? 6 : 0;
-      for (const policy of ["default", "extract", "reject-filtered", "skip"] as const) {
-        const options = await setup(gnuFixture(entries), name);
-        const entryFilter = vi.fn<ArchiveEntryFilter>((entry) => entry.path === (directory ? "pkg/directory" : "pkg/special") && (policy === "skip" || policy === "reject-filtered") ? "skip" : "extract");
-        const extraction = extractArchive({ ...options,
-          entryFilter: policy === "default" ? undefined : entryFilter,
-          onFiltered: policy === "skip" ? "skip-entry" : undefined,
-          limits: policy === "skip" ? { maxEntryBytes: 4, maxExtractedBytes: 4 } : undefined,
-        });
-        if (policy === "skip" || (directory && policy !== "reject-filtered")) {
-          await extraction;
-          if (directory && policy !== "skip") expect((await fs.stat(path.join(options.destDir, "pkg", "directory"))).isDirectory()).toBe(true);
-          else expect(await fs.readdir(options.destDir)).toEqual(["keep", "sentinel"]);
-          expect(await fs.readFile(path.join(options.destDir, "keep"), "utf8")).toBe("keep");
-          if (mode !== "off") expect(extractNative).toHaveBeenCalledTimes(1);
-        } else {
-          await expect(extraction).rejects.toMatchObject({ name: "ArchiveSecurityError", code: policy === "reject-filtered" ? "entry-filtered" : "entry-link" });
-          await unchanged(options.destDir);
-        }
-        if (policy !== "default") expect(entryFilter.mock.calls).toEqual([
-          [{ path: "keep", kind: "file", size: 4 }],
-          [{ path: directory ? "pkg/directory" : "pkg/special", kind: directory ? "directory" : "other", size }],
-        ]);
-        vi.clearAllMocks();
-      }
-      if (size) {
-        const options = await setup(gnuFixture(entries), name);
-        await expect(extractArchive({ ...options, limits: { maxEntryBytes: 4 } }))
-          .rejects.toMatchObject({ name: "ArchiveLimitError", code: "archive-entry-extracted-size-exceeds-limit" });
+      const options = await setup(gnuFixture(entries), name);
+      const entryFilter = vi.fn<ArchiveEntryFilter>((entry) => entry.path === (directory ? "pkg/directory" : "pkg/special") && (policy === "skip" || policy === "reject-filtered") ? "skip" : "extract");
+      const extraction = extractArchive({ ...options,
+        entryFilter: policy === "default" ? undefined : entryFilter,
+        onFiltered: policy === "skip" ? "skip-entry" : undefined,
+        limits: policy === "skip" ? { maxEntryBytes: 4, maxExtractedBytes: 4 } : undefined,
+      });
+      if (policy === "skip" || (directory && policy !== "reject-filtered")) {
+        await extraction;
+        if (directory && policy !== "skip") expect((await fs.stat(path.join(options.destDir, "pkg", "directory"))).isDirectory()).toBe(true);
+        else expect(await fs.readdir(options.destDir)).toEqual(["keep", "sentinel"]);
+        expect(await fs.readFile(path.join(options.destDir, "keep"), "utf8")).toBe("keep");
+        if (mode !== "off") expect(extractNative).toHaveBeenCalledTimes(1);
+      } else {
+        await expect(extraction).rejects.toMatchObject({ name: "ArchiveSecurityError", code: policy === "reject-filtered" ? "entry-filtered" : "entry-link" });
         await unchanged(options.destDir);
       }
+      if (policy !== "default") expect(entryFilter.mock.calls).toEqual([
+        [{ path: "keep", kind: "file", size: 4 }],
+        [{ path: directory ? "pkg/directory" : "pkg/special", kind: directory ? "directory" : "other", size }],
+      ]);
+    });
+
+    it.each(tarKindFixtures.filter(({ name }) => name === "GNUDumpDir payload"))("bounds the payload of $name", async ({ name, entries }) => {
+      const options = await setup(gnuFixture(entries), name);
+      await expect(extractArchive({ ...options, limits: { maxEntryBytes: 4 } }))
+        .rejects.toMatchObject({ name: "ArchiveLimitError", code: "archive-entry-extracted-size-exceeds-limit" });
+      await unchanged(options.destDir);
     });
   });
 }

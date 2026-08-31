@@ -5,7 +5,7 @@ import {
   ArchiveFormatError,
   ArchiveSecurityError,
   isArchiveFormatErrorMessage,
-  isArchiveGnuPathErrorMessage,
+  isArchiveTarPathErrorMessage,
 } from "./archive-errors.js";
 import { formatErrorDetail } from "./error-detail.js";
 import {
@@ -156,13 +156,23 @@ async function readZipEntry(buffer: Buffer, entryPath: string, maxBytes: number)
 
 async function readTarEntry(archivePath: string, entryPath: string, maxBytes: number): Promise<Buffer> {
   const tar = await importOptionalTar();
+  const seenPaths = new Set<string>();
   await preflightTarMetadata({
     archivePath,
     limits: resolveTarMeterLimits(),
+    onMember(info) {
+      const normalized = normalizeArchiveEntryPath(info.path).replace(/^\.\//, "");
+      if (seenPaths.has(normalized)) {
+        throw new ArchiveSecurityError("entry-path", `archive contains duplicate entry path: ${formatErrorDetail(normalized)}`);
+      }
+      seenPaths.add(normalized);
+      if (normalized === entryPath && !["File", "OldFile", "ContiguousFile"].includes(info.type)) {
+        throw new Error(`archive entry is not a file: ${formatErrorDetail(entryPath)}`);
+      }
+    },
   });
   let matched: Promise<Buffer> | undefined;
   let entryError: Error | undefined;
-  const seenPaths = new Set<string>();
   try {
     await tar.t({
       file: archivePath,
@@ -179,15 +189,6 @@ async function readTarEntry(archivePath: string, entryPath: string, maxBytes: nu
           return;
         }
         const normalized = normalizeArchiveEntryPath(info.path).replace(/^\.\//, "");
-        if (seenPaths.has(normalized)) {
-          entryError ??= new ArchiveSecurityError(
-            "entry-path",
-            `archive contains duplicate entry path: ${formatErrorDetail(normalized)}`,
-          );
-          entry.resume();
-          return;
-        }
-        seenPaths.add(normalized);
         if (normalized !== entryPath) {
           entry.resume();
           return;
@@ -248,7 +249,6 @@ export async function readArchiveEntry(
           staged.path,
           kind,
           limits,
-          DEFAULT_MAX_ARCHIVE_BYTES_ZIP,
           signal,
         );
         let rawEntryPath: string | undefined;
@@ -287,7 +287,7 @@ export async function readArchiveEntry(
           signal,
         );
       } catch (error) {
-        if (error instanceof Error && isArchiveGnuPathErrorMessage(error.message)) {
+        if (error instanceof Error && isArchiveTarPathErrorMessage(error.message)) {
           throw new ArchiveSecurityError("entry-path", error.message, { cause: error });
         }
         if (error instanceof Error) {

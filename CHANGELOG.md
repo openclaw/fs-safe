@@ -4,6 +4,8 @@
 
 ### Security and Correctness
 
+- Bound TAR manifests with one shared 64 MiB-capped admission budget independent of compressed size; validate checksums, strict fixed-field UTF-8, NFC/NFD component lengths, and GNU effective trailing separators across JavaScript/native TAR and supported codecs; require raw linknames on links and forbid them on every other header, including metadata, before metadata handling or policy.
+- Admit ignored TAR records (`V`, `A`, `I`, `M`, and unknown typeflags) through ordered path, count, strip, depth, collision, and filter policy before parser suppression; omit accepted unsupported records safely, validate raw names hidden by metadata or NUL terminators, and preserve JavaScript/native TAR/gzip/zstd/bzip2 parity.
 - Pass canonical pre-strip archive paths to `entryFilter` across JavaScript/native ZIP and TAR, including gzip/zstd/bzip2 and effective metadata names, so backslash, dot-component, and repeated-separator aliases cannot bypass excluded subtrees; preserve raw-path validation, stripping, collision checks, and filter rejection policy.
 - Admit bounded GNU long-name/link bodies before TAR parsing on both backends: reject malformed UTF-8/NUL structure, repeated or dangling metadata, mixed PAX/GNU chains, and unsafe effective names while preserving original bytes and valid L+K pairs; align native character-device/block-device/FIFO filter rejection and GNUDumpDir directory handling with JavaScript.
 - Restore TAR payload budgets to entries accepted after strip/filter policy; the raw meter owns framing, logical entry counts, metadata limits, and the separate absolute decoded ceiling, so skipped or fully stripped members no longer consume `maxEntryBytes` or `maxExtractedBytes`.

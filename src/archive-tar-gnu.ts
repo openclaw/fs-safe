@@ -3,7 +3,7 @@ import { validateArchiveEntryPath } from "./archive-entry.js";
 
 // Keep the byte grammar aligned with native/src/tar_meter.rs. Parsers differ
 // on embedded NULs and malformed UTF-8, so validate before either sees a name.
-export function validateGnuMetadata(body: Buffer, type: "L" | "K"): void {
+export function validateGnuMetadata(body: Buffer, type: "L" | "K"): string {
   const value = body.at(-1) === 0 ? body.subarray(0, -1) : body;
   if (!value.length || value.includes(0)) {
     throw new ArchiveFormatError("invalid GNU metadata: empty name or embedded NUL");
@@ -15,4 +15,5 @@ export function validateGnuMetadata(body: Buffer, type: "L" | "K"): void {
     throw new ArchiveFormatError("invalid GNU metadata: name is not valid UTF-8");
   }
   if (type === "L") validateArchiveEntryPath(name);
+  return name;
 }

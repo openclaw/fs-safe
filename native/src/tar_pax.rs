@@ -5,6 +5,7 @@ const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 
 #[derive(Default)]
 pub struct LocalPax {
+    pub path: Option<String>,
     size: Option<u64>,
     path_trailing_separator: bool,
     linkpath: bool,
@@ -97,7 +98,7 @@ pub fn parse_local_pax(body: &[u8]) -> io::Result<LocalPax> {
         let value = &record[equals + 1..];
         match key {
             "path" => {
-                ascii(value)?;
+                result.path = Some(ascii(value)?.to_owned());
                 result.path_trailing_separator = matches!(value.last(), Some(b'/' | b'\\'));
             }
             "linkpath" => {

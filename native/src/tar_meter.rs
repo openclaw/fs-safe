@@ -6,12 +6,22 @@ pub const META_LIMIT: &str = "archive-meta-entry-size-exceeds-limit";
 pub const DECODED_LIMIT: &str = "archive-decoded-size-exceeds-limit";
 pub const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 pub const INVALID_GNU_PATH: &str = "archive-gnu-path-invalid";
+pub const MANIFEST_LIMIT: &str = "archive-manifest-size-exceeds-limit";
+pub const MAX_MANIFEST_BYTES: u64 = 64 * 1024 * 1024;
+
+pub fn charge_manifest_path(total: &mut u64, path: &str, limit: u64) -> io::Result<()> {
+    let cost = (path.len() as u64).checked_mul(2).and_then(|bytes| bytes.checked_add(64));
+    *total = cost.and_then(|cost| total.checked_add(cost)).filter(|sum| *sum <= limit)
+        .ok_or_else(|| io::Error::other(MANIFEST_LIMIT))?;
+    Ok(())
+}
 
 #[derive(Clone, Copy)]
 pub struct TarMeterLimits {
     pub max_entries: usize,
     pub max_meta_entry_bytes: u64,
     pub max_decoded_bytes: u64,
+    pub max_manifest_bytes: u64,
 }
 
 enum MeterState {
@@ -43,6 +53,8 @@ pub struct TarMetadataMeter<R> {
     block_len: usize,
     pending_pax: Option<LocalPax>,
     pending_gnu: [bool; 2],
+    pending_gnu_path: Option<String>,
+    manifest_bytes: u64,
     zero_blocks: u8,
 }
 
@@ -58,6 +70,8 @@ impl<R> TarMetadataMeter<R> {
             block_len: 0,
             pending_pax: None,
             pending_gnu: [false; 2],
+            pending_gnu_path: None,
+            manifest_bytes: 0,
             zero_blocks: 0,
         }
     }
@@ -73,7 +87,7 @@ impl<R> TarMetadataMeter<R> {
         io::Error::new(io::ErrorKind::InvalidData, META_LIMIT)
     }
 
-    fn validate_gnu_body(body: &[u8], kind: u8) -> io::Result<()> {
+    fn validate_gnu_body(body: &[u8], kind: u8) -> io::Result<&str> {
         let value = body.strip_suffix(&[0]).unwrap_or(body);
         if value.is_empty() || value.contains(&0) {
             return Err(Self::invalid("empty GNU name or embedded NUL"));
@@ -81,17 +95,24 @@ impl<R> TarMetadataMeter<R> {
         let name = std::str::from_utf8(value)
             .map_err(|_| Self::invalid("GNU name is not valid UTF-8"))?;
         if kind == b'L' {
-            // Reuse the raw portable path guard; archive drive/ADS syntax must
-            // also be rejected before tar's platform-specific path conversion.
-            crate::validate_portable_relative_path(name, true)
+            crate::tar_path::validate_path(name)
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, INVALID_GNU_PATH))?;
-            if name.split(['/', '\\']).any(|part| {
-                let bytes = part.as_bytes();
-                (bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':')
-                    || (cfg!(windows) && part.contains(':'))
-            }) {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, INVALID_GNU_PATH));
-            }
+        }
+        Ok(name)
+    }
+
+    fn validate_checksum(&self) -> io::Result<()> {
+        let field = &self.block[148..156];
+        let end = field.iter().position(|byte| *byte == 0).unwrap_or(field.len());
+        let text = std::str::from_utf8(&field[..end]).unwrap_or("").trim_matches(' ');
+        let sum: u64 = self.block.iter().enumerate()
+            .map(|(index, byte)| if (148..156).contains(&index) { 32 } else { *byte as u64 }).sum();
+        if text.is_empty() || !text.bytes().all(|byte| (b'0'..=b'7').contains(&byte))
+            || !matches!(field[7], 0 | b' ')
+            || field[end..].iter().any(|byte| *byte != 0 && *byte != b' ')
+            || u64::from_str_radix(text, 8).ok() != Some(sum)
+        {
+            return Err(Self::invalid("checksum failure"));
         }
         Ok(())
     }
@@ -167,6 +188,8 @@ impl<R> TarMetadataMeter<R> {
         if self.zero_blocks != 0 {
             return Err(Self::invalid("nonzero header after one TAR zero block"));
         }
+        self.validate_checksum()?;
+        crate::tar_path::validate_header_fields(&self.block)?;
         let name_end = self.block[..100]
             .iter()
             .position(|byte| *byte == 0)
@@ -246,8 +269,19 @@ impl<R> TarMetadataMeter<R> {
             }
         } else {
             self.count_member()?;
+            if self.pending_gnu_path.as_ref().is_some_and(|path| path.ends_with(['/', '\\']))
+                && !matches!(entry_type, b'5' | b'D')
+            {
+                return Err(Self::invalid("GNU effective non-directory path ends with a separator"));
+            }
+            let raw_path = crate::tar_path::validate_member(&self.block)?;
+            let path = self.pending_pax.as_ref().and_then(|pax| pax.path.as_deref())
+                .or(self.pending_gnu_path.as_deref()).unwrap_or(&raw_path);
+            crate::tar_path::validate_path(path)?;
+            charge_manifest_path(&mut self.manifest_bytes, path, self.limits.max_manifest_bytes)?;
             self.pending_pax = None;
             self.pending_gnu = [false; 2];
+            self.pending_gnu_path = None;
             MeterState::Data { remaining: padded }
         };
         self.block_len = 0;
@@ -298,7 +332,8 @@ impl<R> TarMetadataMeter<R> {
                         if kind == b'x' {
                             self.pending_pax = Some(parse_local_pax(body)?);
                         } else {
-                            Self::validate_gnu_body(body, kind)?;
+                            let name = Self::validate_gnu_body(body, kind)?;
+                            if kind == b'L' { self.pending_gnu_path = Some(name.to_owned()); }
                         }
                         self.state = if padding == 0 {
                             MeterState::Header
@@ -417,6 +452,7 @@ mod tests {
             let encoded = format!("{:011o}\0", size);
             header[124..136].copy_from_slice(encoded.as_bytes());
         }
+        pax_tests::checksum(&mut header);
         header
     }
 
@@ -447,6 +483,7 @@ mod tests {
     fn meters_chained_sparse_extension_blocks() {
         let mut main = header(b'S', 0, false);
         main[482] = 1;
+        pax_tests::checksum(&mut main);
         let mut first = [0_u8; 512];
         first[504] = 1;
         let second = [0_u8; 512];
@@ -461,6 +498,7 @@ mod tests {
             seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
             let mut block = header(b'0', 0, false);
             block[124..136].fill(((seed >> 32) as u8) | 0x08);
+            pax_tests::checksum(&mut block);
             assert!(consume(block.to_vec(), 1024).is_err());
         }
         assert!(
@@ -476,6 +514,7 @@ mod tests {
         for offset in 1..4 {
             let mut block = header(b'0', 0, true);
             block[124 + offset] = 1;
+            pax_tests::checksum(&mut block);
             let error = consume(block.to_vec(), 1024).unwrap_err();
             assert!(error.to_string().contains(INVALID_HEADER));
             assert!(error.to_string().contains("overflows u64"));
@@ -486,6 +525,7 @@ mod tests {
     fn rejects_an_empty_entry_path() {
         let mut block = header(b'0', 0, false);
         block[..100].fill(0);
+        pax_tests::checksum(&mut block);
         let error = consume(block.to_vec(), 1024).unwrap_err();
         assert!(error.to_string().contains(INVALID_HEADER));
         assert!(error.to_string().contains("entry path is empty"));

@@ -129,12 +129,11 @@ If skipping was not explicitly part of the restore contract, omit
 `onFiltered`; the first `"skip"` then rejects the complete archive with
 `ArchiveSecurityError("entry-filtered")`.
 
-Policy rejection is prompt on both implementations. The JavaScript TAR path
-owns the file stream and aborts node-tar through a pipeline on filter, path,
-link, limit, validation, or timeout failure, which destroys both ends instead
-of leaving a paused parser to drain indefinitely. The native path finishes its
-bounded manifest read before TypeScript policy evaluation, so a rejected plan
-never starts the extraction worker.
+Both TAR implementations finish bounded admission before TypeScript policy
+evaluation, so a rejected plan never starts extraction. The JavaScript path
+owns the extraction file stream and aborts node-tar through a pipeline on
+parser disagreement, validation, or timeout failure, destroying both ends
+instead of leaving a paused parser to drain indefinitely.
 
 TAR character devices, block devices, and FIFOs are presented to the filter as
 `kind: "other"`. Accepted entries of these types reject with
@@ -143,6 +142,18 @@ them. GNU typeflag `D` (`GNUDumpDir`) is a directory on both backends, including
 its filter kind, canonical path, and directory creation policy. Its declared
 body size follows the existing TAR strip/filter payload budgets; dump contents
 are not restored as files.
+
+Unsupported logical TAR records, including volume headers (`V`), Solaris ACL
+records (`A`), inodes (`I`), continuations (`M`), and unrecognized typeflags,
+still undergo entry counting, raw/effective path validation, stripping, depth
+and output collision checks in physical order. Each remaining record reaches
+`entryFilter` once with its canonical pre-strip path, `kind: "other"`, and
+declared effective size. A filter skip rejects with `"entry-filtered"` unless
+`onFiltered: "skip-entry"` is explicit. Accepted unsupported records are safely
+omitted and do not consume output payload budgets. This applies even when the
+underlying TAR parser suppresses the record. GNU long names describe one such
+record and are then cleared; local PAX on unsupported types and GNU sparse
+`S` records retain their existing fail-closed format policy.
 
 If `kind` is omitted, the helper calls `resolveArchiveKind(archivePath)` and throws if the extension is not recognized. Pass `kind` explicitly when the archive name doesn't carry the type (e.g. content-addressed names). Archive inputs must remain regular files from preview through descriptor admission; POSIX opens are no-follow and nonblocking, so a FIFO swap cannot stall before deadline checks resume. A positive finite `timeoutMs` is a wall-clock budget; zero, negative, `NaN`, and infinity disable the deadline. Non-mutating work rejects promptly when the budget expires. If a live destination mutation is already in flight, rejection waits only for that mutation and any rollback to finish; no later destination mutation can begin.
 
@@ -174,8 +185,18 @@ A limit violation throws `ArchiveLimitError`. Its constant and string code are:
 | `ENTRY_PATH_COMPONENTS_EXCEEDS_LIMIT` | `archive-entry-path-components-exceeds-limit` |
 | `MANIFEST_SIZE_EXCEEDS_LIMIT` | `archive-manifest-size-exceeds-limit` |
 
-`MANIFEST_SIZE_EXCEEDS_LIMIT` is retained in the public compatibility union;
-no current public extractor emits it.
+`MANIFEST_SIZE_EXCEEDS_LIMIT` is an active internal TAR admission limit, shared
+by JavaScript and native extraction and bounded reads. Each logical member,
+including ignored, filtered, and fully stripped members, charges
+`64 + 2 * UTF-8 byte length of its effective pre-strip path` before emission or
+retention. PAX/GNU metadata headers do not themselves charge a member cost.
+The allowance is independent of `maxArchiveBytes`: derive a per-member path
+allowance of `max(256, min(maxMetaEntryBytes, max(1, maxEntryPathComponents) * 256))`,
+apply the same 64-byte overhead and doubled path cost, multiply by `maxEntries`,
+and cap the total at 64 MiB using saturating arithmetic. Zero and very large
+public limits remain deterministic. There is no public `maxManifestBytes`
+option; this charged manifest budget supplements the decoded and metadata
+limits rather than bounding the complete process heap.
 
 Catch and branch on the code to surface a meaningful response to the caller.
 
@@ -203,6 +224,12 @@ gzip, and native-supported zstd/bzip2, without changing native-mode availability
 or fallback policy. The existing TypeScript and Rust meters enforce the same
 framing rules before parser normalization:
 
+- Every nonzero header must have a valid unsigned octal checksum, delimited
+  within its field. Checksum validation precedes metadata allocation and member
+  policy. Fixed name, prefix, and linkname fields require strict UTF-8 and NUL
+  padding. Raw hardlink (`1`) and symlink (`2`) headers require a nonempty
+  linkname; every other type, including PAX/GNU metadata, requires an empty
+  linkname. This check precedes metadata handling and member/filter policy.
 - Directory (`5`), hardlink (`1`), and symlink (`2`) raw headers must declare
   zero body bytes, whether or not local PAX metadata is present. Valid zero-size
   links remain subject to the existing link/filter policy.
@@ -224,6 +251,14 @@ PAX effective sizes still determine regular-member framing. Admission preserves
 the input bytes, and all entry/path/byte limits and extraction deadlines remain
 in force. Native inspection now completes this admission pass before parsing,
 requiring one additional streaming read/decompression pass.
+JavaScript admission reports an ordered logical-member manifest from the raw
+meter, bounded by entry-count, manifest, and decoded limits. Policy runs once
+over that manifest; extraction checks parser-visible members against the
+accepted decisions before writing. Original member names and USTAR prefixes
+are validated even when overridden, and non-padding bytes after a fixed path
+field's NUL terminator reject rather than hiding an unsafe suffix.
+Both meters enforce the 255-byte component ceiling under NFC and NFD before
+metadata replaces a raw path, including Hangul decomposition expansion.
 Native extraction and entry reads also drain their metered readers through
 physical EOF after parser traversal, before completing directory modes,
 publishing staged files, or returning the requested bytes. Finding the requested
@@ -316,6 +351,10 @@ metadata records do not count toward `maxEntries`.
 
 An `L` name undergoes raw-path validation before parser normalization, stripping,
 or filtering; unsafe paths reject with `ArchiveSecurityError("entry-path")`.
+The validated name remains pending until its described header arrives. An
+effective name ending in `/` or `\` requires raw directory type `5` or `D`;
+other types reject with `ArchiveFormatError` before filtering, preventing the
+parsers from disagreeing about a member's type.
 `K` validates encoding and NUL structure without authorizing link creation.
 Normal link/filter policy still governs the described member. Canonical
 pre-strip filter paths, decoded-stream ceilings, and physical EOF checks apply
