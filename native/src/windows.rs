@@ -605,7 +605,7 @@ fn list_directory_entries(directory: HANDLE) -> NativeResult<Vec<(String, u32, u
     let mut entries = Vec::new();
     let mut restart = true;
     loop {
-        let mut storage = vec![0_usize; (64 * 1024).div_ceil(size_of::<usize>())];
+        let mut storage = vec![0_usize; (64_usize * 1024).div_ceil(size_of::<usize>())];
         let class = if restart {
             FileIdBothDirectoryRestartInfo
         } else {
