@@ -12,10 +12,15 @@ async function prove() {
   const { __setFsSafeTestHooksForTest } = await import("../dist/test-hooks.js");
   configureFsSafeNative({ mode: "require" });
 
-  async function runCase(variant) {
+  async function runCase(variant, reparseRoot = false) {
     const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-quarantine-proof-"));
     let workspace;
     try {
+      const outside = path.join(rootDir, "outside");
+      if (reparseRoot) {
+        await fs.mkdir(outside);
+        await fs.writeFile(path.join(outside, "keep.txt"), "outside");
+      }
       const options = { rootDir, prefix: variant, cleanupSafety: "require-bounded" };
       workspace = variant === "async" ? await tempWorkspace(options) : tempWorkspaceSync(options);
       await fs.mkdir(path.join(workspace.dir, "nested"));
@@ -29,8 +34,12 @@ async function prove() {
           assert.equal(hookCalls, 1, "async removal hook ran more than once");
           quarantine = candidate;
           await fs.rename(quarantine, `${quarantine}.owned`);
-          await fs.mkdir(path.join(quarantine, "nested"), { recursive: true });
-          await fs.writeFile(path.join(quarantine, "nested", "keep.txt"), "replacement");
+          if (reparseRoot) {
+            await fs.symlink(outside, quarantine, process.platform === "win32" ? "junction" : "dir");
+          } else {
+            await fs.mkdir(path.join(quarantine, "nested"), { recursive: true });
+            await fs.writeFile(path.join(quarantine, "nested", "keep.txt"), "replacement");
+          }
         },
       } : {
         beforeTempWorkspaceNativeRemovalSync(candidate) {
@@ -38,8 +47,12 @@ async function prove() {
           assert.equal(hookCalls, 1, "sync removal hook ran more than once");
           quarantine = candidate;
           fsSync.renameSync(quarantine, `${quarantine}.owned`);
-          fsSync.mkdirSync(path.join(quarantine, "nested"), { recursive: true });
-          fsSync.writeFileSync(path.join(quarantine, "nested", "keep.txt"), "replacement");
+          if (reparseRoot) {
+            fsSync.symlinkSync(outside, quarantine, process.platform === "win32" ? "junction" : "dir");
+          } else {
+            fsSync.mkdirSync(path.join(quarantine, "nested"), { recursive: true });
+            fsSync.writeFileSync(path.join(quarantine, "nested", "keep.txt"), "replacement");
+          }
         },
       });
 
@@ -53,10 +66,20 @@ async function prove() {
         throw error;
       });
       assert.equal(publicExists, false, `${variant} public workspace still exists`);
-      const replacement = await fs.readFile(path.join(quarantine, "nested", "keep.txt"), "utf8");
       const original = await fs.readFile(path.join(`${quarantine}.owned`, "nested", "owned.txt"), "utf8");
-      assert.equal(replacement, "replacement", `${variant} replacement bytes changed`);
       assert.equal(original, "owned", `${variant} original owned bytes changed`);
+      if (reparseRoot) {
+        const reparsePreserved = (await fs.lstat(quarantine)).isSymbolicLink();
+        assert.equal(reparsePreserved, true, `${variant} quarantine reparse entry was not preserved`);
+        const outsideBytes = await fs.readFile(path.join(outside, "keep.txt"));
+        assert.deepEqual(outsideBytes, Buffer.from("outside"), `${variant} outside bytes changed`);
+        return {
+          hookCalls, result, repeatedResult, publicExists, reparsePreserved,
+          outside: outsideBytes.toString("utf8"), original,
+        };
+      }
+      const replacement = await fs.readFile(path.join(quarantine, "nested", "keep.txt"), "utf8");
+      assert.equal(replacement, "replacement", `${variant} replacement bytes changed`);
       return { hookCalls, result, repeatedResult, publicExists, replacement, original };
     } finally {
       __setFsSafeTestHooksForTest();
@@ -70,11 +93,16 @@ async function prove() {
 
   const asyncProof = await runCase("async");
   const syncProof = await runCase("sync");
+  const reparseRoot = {
+    async: await runCase("async", true),
+    sync: await runCase("sync", true),
+  };
   console.log(JSON.stringify({
     proof: "temp-workspace-quarantine-swap",
     platform: process.platform,
     async: asyncProof,
     sync: syncProof,
+    reparseRoot,
   }));
 }
 

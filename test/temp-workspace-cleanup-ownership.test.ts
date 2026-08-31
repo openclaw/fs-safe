@@ -150,6 +150,36 @@ describe.runIf(nativeCleanup).each(["async", "sync"] as const)("%s temp workspac
     await expect(fs.lstat(workspace.dir)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("preserves a quarantine reparse replacement installed at native removal", async () => {
+    __resetNativeLoaderForTest();
+    const { workspace, outside } = await setup();
+    const keep = Buffer.from([0x00, 0xff, 0x6b, 0x65, 0x65, 0x70, 0x0a]);
+    await fs.writeFile(path.join(outside, "keep.txt"), keep);
+    let quarantine = "";
+    let replacement: BigIntStats | undefined;
+    const swap = vi.fn((quarantinePath: string) => {
+      quarantine = quarantinePath;
+      fsSync.renameSync(quarantine, `${quarantine}.owned`);
+      fsSync.symlinkSync(outside, quarantine, process.platform === "win32" ? "junction" : "dir");
+      replacement = fsSync.lstatSync(quarantine, { bigint: true });
+    });
+    __setFsSafeTestHooksForTest(variant === "async"
+      ? { beforeTempWorkspaceNativeRemoval: swap }
+      : { beforeTempWorkspaceNativeRemovalSync: swap });
+
+    expect(await workspace.cleanup()).toBe("indeterminate");
+    expect(await workspace.cleanup()).toBe("indeterminate");
+    expect(swap).toHaveBeenCalledTimes(1);
+    await expect(fs.lstat(workspace.dir)).rejects.toMatchObject({ code: "ENOENT" });
+    const current = await fs.lstat(quarantine, { bigint: true });
+    expect(current.isSymbolicLink()).toBe(true);
+    expect({ dev: current.dev, ino: current.ino })
+      .toEqual({ dev: replacement!.dev, ino: replacement!.ino });
+    expect(await fs.readFile(path.join(outside, "keep.txt"))).toEqual(keep);
+    expect(await fs.readFile(path.join(`${quarantine}.owned`, "nested", "owned.txt")))
+      .toEqual(Buffer.from("owned"));
+  });
+
   it("removes the owned quarantine while preserving a newer public workspace", async () => {
     const { workspace, rootDir } = await setup();
     let publicIdentity: BigIntStats | undefined;

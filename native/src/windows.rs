@@ -793,18 +793,20 @@ fn remove_owned_tree_handles_with_hook(
     expected: HANDLE,
     before_root_delete: impl FnOnce(),
 ) -> NativeResult<String> {
-    let owned = match nt_open_relative(
+    let owned = match nt_open_relative_with_policy(
         parent,
         name,
         DELETE_ACCESS | FILE_WRITE_ATTRIBUTES | FILE_LIST_DIRECTORY,
         FILE_OPEN,
-        FILE_DIRECTORY_FILE,
+        // Classify a substituted quarantine entry without following or constraining its type.
+        0,
+        ReparsePolicy::AllowLeaf,
     ) {
         Ok(owned) => owned,
         Err(error) if error.status == "ENOENT" => return Ok("preserved".to_owned()),
         Err(error) => return Err(error),
     };
-    if !same_handle_identity(expected, owned.0)? {
+    if handle_is_reparse(owned.0)? || !same_handle_identity(expected, owned.0)? {
         return Ok("preserved".to_owned());
     }
     remove_directory_handle(owned.0)?;
@@ -1061,6 +1063,49 @@ mod tests {
         assert_eq!(fs::read(workspace.join("nested/keep")).unwrap(), b"replacement");
         assert_eq!(fs::read(workspace.join("original/owned")).unwrap(), b"owned");
         drop(directory);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn owned_tree_cleanup_preserves_a_root_replaced_by_a_file() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "fs-safe-native-win-owned-root-type-{}-{nonce}",
+            std::process::id()
+        ));
+        let workspace = root.join("workspace");
+        fs::create_dir_all(workspace.join("nested")).unwrap();
+        fs::write(workspace.join("nested/owned"), b"owned").unwrap();
+        let parent = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS)
+            .open(&root)
+            .unwrap();
+        let directory = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS)
+            .open(&workspace)
+            .unwrap();
+        fs::rename(&workspace, root.join("original")).unwrap();
+        fs::write(&workspace, b"replacement").unwrap();
+
+        let outcome = remove_owned_tree_handles_with_hook(
+            parent.as_raw_handle() as HANDLE,
+            "workspace",
+            directory.as_raw_handle() as HANDLE,
+            || panic!("a substituted root must not reach deletion"),
+        )
+        .unwrap();
+        assert_eq!(outcome, "preserved");
+        assert_eq!(fs::read(&workspace).unwrap(), b"replacement");
+        assert_eq!(fs::read(root.join("original/nested/owned")).unwrap(), b"owned");
+        drop(directory);
+        drop(parent);
         fs::remove_dir_all(root).unwrap();
     }
 
