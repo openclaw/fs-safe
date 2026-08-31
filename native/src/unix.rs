@@ -542,6 +542,45 @@ fn remove_directory_contents(directory_fd: i32, root_device: u64) -> NativeResul
     remove_directory_contents_with_hook(directory_fd, root_device, &mut |_| {})
 }
 
+fn remove_owned_tree_root_with_hook(
+    parent_fd: i32,
+    name: &str,
+    expected: &rustix::fs::Stat,
+    before_unlink: impl FnOnce() -> rustix::io::Result<()>,
+) -> NativeResult<String> {
+    // POSIX has no expected-identity unlink: a raced empty-directory replacement
+    // may still be removed successfully, the documented bounded residual. Only
+    // failed type-swap unlinks are normalized after no-follow reinspection.
+    match before_unlink().and_then(|()| {
+        rustix::fs::unlinkat(borrowed(parent_fd), name, AtFlags::REMOVEDIR)
+    }) {
+        Ok(()) => Ok("removed".to_owned()),
+        Err(rustix::io::Errno::NOENT | rustix::io::Errno::NOTEMPTY) => {
+            Ok("preserved".to_owned())
+        }
+        Err(error @ (rustix::io::Errno::NOTDIR | rustix::io::Errno::PERM)) => {
+            let current = match rustix::fs::statat(
+                borrowed(parent_fd),
+                name,
+                AtFlags::SYMLINK_NOFOLLOW,
+            ) {
+                Ok(current) => current,
+                Err(rustix::io::Errno::NOENT) => return Ok("preserved".to_owned()),
+                Err(error) => return Err(os_error(error, "reinspect owned tree root")),
+            };
+            let current_type = FileType::from_raw_mode(current.st_mode);
+            if !current_type.is_dir()
+                || current_type != FileType::from_raw_mode(expected.st_mode)
+                || !same_identity(expected, &current)
+            {
+                return Ok("preserved".to_owned());
+            }
+            Err(os_error(error, "remove owned tree root"))
+        }
+        Err(error) => Err(os_error(error, "remove owned tree root")),
+    }
+}
+
 fn remove_owned_tree_with_hook(
     parent_fd: i32,
     name: &str,
@@ -558,14 +597,10 @@ fn remove_owned_tree_with_hook(
     if !directory_name_matches_fd(parent_fd, name, directory_fd)? {
         return Ok("preserved".to_owned());
     }
-    before_root_unlink();
-    match rustix::fs::unlinkat(borrowed(parent_fd), name, AtFlags::REMOVEDIR) {
-        Ok(()) => Ok("removed".to_owned()),
-        Err(rustix::io::Errno::NOENT | rustix::io::Errno::NOTEMPTY) => {
-            Ok("preserved".to_owned())
-        }
-        Err(error) => Err(os_error(error, "remove owned tree root")),
-    }
+    remove_owned_tree_root_with_hook(parent_fd, name, &root, || {
+        before_root_unlink();
+        Ok(())
+    })
 }
 
 pub fn remove_owned_tree(
@@ -1434,6 +1469,187 @@ mod tests {
         assert_eq!(outcome, "preserved");
         assert_eq!(fs::read(workspace.join("nested/keep")).unwrap(), b"replacement");
         assert!(fs::read_dir(root.join("original")).unwrap().next().is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn owned_tree_cleanup_has_a_bounded_residual_for_a_final_empty_directory_swap() {
+        use std::os::unix::fs::DirBuilderExt;
+
+        let root = temp_root("owned-root-empty-residual");
+        let workspace = root.join("workspace");
+        let original = root.join("original");
+        let keep = b"outside\0\xff\n";
+        fs::create_dir(&workspace).unwrap();
+        fs::create_dir(workspace.join("nested")).unwrap();
+        fs::write(workspace.join("nested/owned"), b"owned").unwrap();
+        fs::create_dir(root.join("outside")).unwrap();
+        fs::write(root.join("outside/keep"), keep).unwrap();
+        std::os::unix::fs::symlink(root.join("outside"), workspace.join("nested/link")).unwrap();
+        let parent = fs::File::open(&root).unwrap();
+        let directory = fs::File::open(&workspace).unwrap();
+
+        let outcome = remove_owned_tree_with_hook(
+            parent.as_raw_fd(),
+            "workspace",
+            directory.as_raw_fd(),
+            || {
+                fs::rename(&workspace, &original).unwrap();
+                assert!(fs::read_dir(&original).unwrap().next().is_none());
+                // REMOVEDIR needs no read access or recursive traversal of the replacement.
+                fs::DirBuilder::new().mode(0o000).create(&workspace).unwrap();
+            },
+        )
+        .unwrap();
+
+        assert_eq!(outcome, "removed");
+        assert_eq!(
+            fs::symlink_metadata(&workspace).unwrap_err().kind(),
+            std::io::ErrorKind::NotFound
+        );
+        assert!(directory_name_matches_fd(
+            parent.as_raw_fd(),
+            "original",
+            directory.as_raw_fd(),
+        )
+        .unwrap());
+        assert!(fs::read_dir(&original).unwrap().next().is_none());
+        assert_eq!(fs::read(root.join("outside/keep")).unwrap(), keep);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn owned_tree_cleanup_preserves_a_final_root_type_replacement() {
+        for replacement in ["file", "symlink"] {
+            let root = temp_root("owned-root-type-race");
+            let workspace = root.join("workspace");
+            let keep = b"replacement\0\xfe\n";
+            fs::create_dir(&workspace).unwrap();
+            fs::write(workspace.join("owned"), b"owned\0\xff\n").unwrap();
+            fs::create_dir(root.join("outside")).unwrap();
+            fs::write(root.join("outside/keep"), keep).unwrap();
+            let parent = fs::File::open(&root).unwrap();
+            let directory = fs::File::open(&workspace).unwrap();
+
+            let outcome = remove_owned_tree_with_hook(
+                parent.as_raw_fd(),
+                "workspace",
+                directory.as_raw_fd(),
+                || {
+                    fs::rename(&workspace, root.join("original")).unwrap();
+                    if replacement == "file" {
+                        fs::write(&workspace, keep).unwrap();
+                    } else {
+                        std::os::unix::fs::symlink("outside", &workspace).unwrap();
+                    }
+                },
+            )
+            .unwrap();
+
+            assert_eq!(outcome, "preserved");
+            if replacement == "file" {
+                assert!(fs::symlink_metadata(&workspace).unwrap().is_file());
+                assert_eq!(fs::read(&workspace).unwrap(), keep);
+            } else {
+                assert!(fs::symlink_metadata(&workspace).unwrap().file_type().is_symlink());
+                assert_eq!(
+                    fs::read_link(&workspace).unwrap(),
+                    std::path::Path::new("outside")
+                );
+            }
+            assert_eq!(fs::read(root.join("outside/keep")).unwrap(), keep);
+            assert!(fs::read_dir(root.join("original")).unwrap().next().is_none());
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn owned_tree_root_unlink_reinspects_absence_and_replacements_without_following_links() {
+        for injected in [rustix::io::Errno::NOTDIR, rustix::io::Errno::PERM] {
+            for replacement in ["absent", "file", "directory", "symlink"] {
+                let root = temp_root("owned-root-unlink-reinspect");
+                let workspace = root.join("workspace");
+                let owned = b"owned\0\xff\n";
+                let keep = b"replacement\0\xfe\n";
+                fs::create_dir(&workspace).unwrap();
+                fs::write(workspace.join("owned"), owned).unwrap();
+                let parent = fs::File::open(&root).unwrap();
+                let directory = fs::File::open(&workspace).unwrap();
+                let expected = rustix::fs::fstat(directory.as_fd()).unwrap();
+
+                let outcome = remove_owned_tree_root_with_hook(
+                    parent.as_raw_fd(),
+                    "workspace",
+                    &expected,
+                    || {
+                        fs::rename(&workspace, root.join("original")).unwrap();
+                        match replacement {
+                            "file" => fs::write(&workspace, keep).unwrap(),
+                            "directory" => {
+                                fs::create_dir(&workspace).unwrap();
+                                fs::write(workspace.join("keep"), keep).unwrap();
+                            }
+                            "symlink" => {
+                                std::os::unix::fs::symlink("original", &workspace).unwrap();
+                            }
+                            _ => {}
+                        }
+                        Err(injected)
+                    },
+                )
+                .unwrap();
+
+                assert_eq!(outcome, "preserved");
+                match replacement {
+                    "absent" => assert_eq!(
+                        fs::symlink_metadata(&workspace).unwrap_err().kind(),
+                        std::io::ErrorKind::NotFound
+                    ),
+                    "file" => assert_eq!(fs::read(&workspace).unwrap(), keep),
+                    "directory" => assert_eq!(fs::read(workspace.join("keep")).unwrap(), keep),
+                    "symlink" => assert_eq!(
+                        fs::read_link(&workspace).unwrap(),
+                        std::path::Path::new("original")
+                    ),
+                    _ => unreachable!(),
+                }
+                assert_eq!(fs::read(root.join("original/owned")).unwrap(), owned);
+                fs::remove_dir_all(root).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn owned_tree_root_unlink_keeps_operational_errors_for_the_expected_directory() {
+        let root = temp_root("owned-root-unlink-denied");
+        let workspace = root.join("workspace");
+        fs::create_dir(&workspace).unwrap();
+        let parent = fs::File::open(&root).unwrap();
+        let directory = fs::File::open(&workspace).unwrap();
+        let expected = rustix::fs::fstat(directory.as_fd()).unwrap();
+        for denied in [
+            rustix::io::Errno::PERM,
+            rustix::io::Errno::NOTDIR,
+            rustix::io::Errno::ACCESS,
+        ] {
+            let error = remove_owned_tree_root_with_hook(
+                parent.as_raw_fd(),
+                "workspace",
+                &expected,
+                || Err(denied),
+            )
+            .unwrap_err();
+            let original = os_error(denied, "remove owned tree root");
+            assert_eq!(error.status, original.status);
+            assert_eq!(error.reason, original.reason);
+            assert!(directory_name_matches_fd(
+                parent.as_raw_fd(),
+                "workspace",
+                directory.as_raw_fd(),
+            )
+            .unwrap());
+            assert!(fs::read_dir(&workspace).unwrap().next().is_none());
+        }
         fs::remove_dir_all(root).unwrap();
     }
 

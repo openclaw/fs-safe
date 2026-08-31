@@ -256,6 +256,54 @@ describe.runIf(nativeCleanup).each(["async", "sync"] as const)("%s temp workspac
     expect(removeSync).toHaveBeenCalledTimes(variant === "sync" ? 1 : 0);
   });
 
+  it.each(["file", "symlink"] as const)(
+    "preserves a %s root replacement reported by native removal without retrying",
+    async (kind) => {
+      const { workspace, rootDir, outside } = await setup();
+      const owned = Buffer.from([0x6f, 0x77, 0x6e, 0x65, 0x64, 0x00, 0xff, 0x0a]);
+      const keep = Buffer.from([0x6b, 0x65, 0x65, 0x70, 0x00, 0xfe, 0x0a]);
+      await fs.writeFile(path.join(workspace.dir, "nested", "owned.txt"), owned);
+      await fs.writeFile(path.join(outside, "keep.txt"), keep);
+      let quarantine = "";
+      let linkTarget: string | undefined;
+      const replaceRoot = (name: string) => {
+        expect(name).toMatch(/^\.fs-safe-workspace-cleanup-/);
+        quarantine = path.join(rootDir, name);
+        fsSync.renameSync(quarantine, `${quarantine}.owned`);
+        if (kind === "file") {
+          fsSync.writeFileSync(quarantine, keep);
+        } else {
+          fsSync.symlinkSync(outside, quarantine, process.platform === "win32" ? "junction" : "dir");
+          linkTarget = fsSync.readlinkSync(quarantine);
+        }
+        // Rust owns the exact final-root gap; this boundary owns result mapping and lifetime.
+        return { outcome: "preserved" };
+      };
+      const remove = vi.fn<NonNullable<NativeBinding["removeOwnedTree"]>>(
+        async (_parentFd, name) => replaceRoot(name),
+      );
+      const removeSync = vi.fn<NonNullable<NativeBinding["removeOwnedTreeSync"]>>(
+        (_parentFd, name) => replaceRoot(name),
+      );
+      removeOwnedTree = remove;
+      removeOwnedTreeSync = removeSync;
+      expect(await workspace.cleanup()).toBe("indeterminate");
+      expect(await workspace.cleanup()).toBe("indeterminate");
+      await expect(fs.lstat(workspace.dir)).rejects.toMatchObject({ code: "ENOENT" });
+      if (kind === "file") {
+        expect((await fs.lstat(quarantine)).isFile()).toBe(true);
+        expect(await fs.readFile(quarantine)).toEqual(keep);
+      } else {
+        expect((await fs.lstat(quarantine)).isSymbolicLink()).toBe(true);
+        expect(await fs.readlink(quarantine)).toBe(linkTarget);
+      }
+      expect(await fs.readFile(path.join(outside, "keep.txt"))).toEqual(keep);
+      expect(await fs.readFile(path.join(`${quarantine}.owned`, "nested", "owned.txt"))).toEqual(owned);
+      expect(remove).toHaveBeenCalledTimes(variant === "async" ? 1 : 0);
+      expect(removeSync).toHaveBeenCalledTimes(variant === "sync" ? 1 : 0);
+    },
+  );
+
   it("propagates native operational failures and closes cleanup authority", async () => {
     const { workspace } = await setup();
     const failure = { errorCode: "EACCES", errorMessage: "injected removal denial" };
