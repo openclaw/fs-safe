@@ -18,6 +18,8 @@ export type FsSafeTestHooks = {
   afterPinnedWriteFallbackRename?: (targetPath: string) => Promise<void> | void;
   beforeSiblingTempWrite?: (tempPath: string) => Promise<void> | void;
   beforeSidecarLockSnapshotOpen?: (lockPath: string) => Promise<void> | void;
+  beforeRegularFileAppendOpen?: (filePath: string) => Promise<void> | void;
+  beforeRegularFileAppendOpenSync?: (filePath: string) => void;
   beforeTrashMove?: (targetPath: string, destPath: string) => void;
   afterPublishTargetCreated?: (
     method: "hardlink" | "exclusive-copy" | "rename-noreplace",

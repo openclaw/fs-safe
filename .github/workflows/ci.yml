@@ -61,6 +61,12 @@ jobs:
       - name: Check JavaScript fallback
         run: pnpm check
 
+      - name: Prove regular append identity on Windows
+        if: matrix.os == 'windows-latest'
+        env:
+          NODE_ENV: test
+        run: node scripts/regular-append-windows-proof.mjs
+
   native-check:
     name: Native check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
