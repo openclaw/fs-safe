@@ -5,6 +5,7 @@ export type FsSafeTestHooks = {
   afterPreOpenLstat?: (filePath: string) => Promise<void> | void;
   beforeOpen?: (filePath: string, flags: number) => Promise<void> | void;
   afterOpen?: (filePath: string, handle: FileHandle) => Promise<void> | void;
+  afterOpenedPathIdentityCheck?: (filePath: string, handle: FileHandle) => Promise<void> | void;
   beforeArchiveOutputMutation?: (
     operation: "mkdir" | "chmod",
     targetPath: string,

@@ -288,6 +288,7 @@ async function openVerifiedLocalFile(
       return pathStat;
     }, identity);
 
+    await fsSafeTestHooks?.afterOpenedPathIdentityCheck?.(filePath, handle);
     const realPath = await resolveOpenedFileRealPathForFd(handle.fd, identity, filePath);
     await inspectFileIdentity(async () => {
       const realStat = await fs.stat(realPath, { bigint: true });
