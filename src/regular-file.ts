@@ -11,6 +11,7 @@ import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-iden
 import { isNotFoundPathError } from "./path.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { assertNoSymlinkParents, assertNoSymlinkParentsSync } from "./symlink-parents.js";
+import { getFsSafeTestHooks } from "./test-hooks.js";
 
 export type RegularFileStatResult = { missing: true } | { missing: false; stat: Stats };
 
@@ -304,6 +305,7 @@ export async function appendRegularFile(options: AppendRegularFileOptions): Prom
     return;
   }
 
+  await getFsSafeTestHooks()?.beforeRegularFileAppendOpen?.(options.filePath);
   const handle = await fs.open(
     options.filePath,
     resolveRegularFileAppendFlags(),
@@ -378,6 +380,7 @@ export function appendRegularFileSync(options: AppendRegularFileOptions): void {
     return;
   }
 
+  getFsSafeTestHooks()?.beforeRegularFileAppendOpenSync?.(options.filePath);
   const fd = fsSync.openSync(
     options.filePath,
     resolveRegularFileAppendFlags(),
