@@ -35,6 +35,6 @@ export function isArchiveFormatErrorMessage(message: string): boolean {
   );
 }
 
-export function isArchiveGnuPathErrorMessage(message: string): boolean {
-  return message.includes("archive-gnu-path-invalid");
+export function isArchiveTarPathErrorMessage(message: string): boolean {
+  return message.includes("archive-gnu-path-invalid") || message.includes("archive-entry-path-invalid");
 }

@@ -66,16 +66,29 @@ export class ArchiveLimitError extends Error {
 export type ResolvedArchiveExtractLimits = Required<ArchiveExtractLimits>;
 
 export type TarMeterLimits = Pick<ResolvedArchiveExtractLimits,
-  "maxEntries" | "maxMetaEntryBytes"> & { maxDecodedBytes: number };
+  "maxEntries" | "maxMetaEntryBytes"> & { maxDecodedBytes: number; maxManifestBytes: number };
+
+export const MAX_TAR_MANIFEST_BYTES = 64 * 1024 * 1024;
+
+export function tarManifestEntryCost(path: string): number {
+  return 64 + 2 * Buffer.byteLength(path, "utf8");
+}
 
 export function resolveTarMeterLimits(options?: ArchiveExtractLimits): TarMeterLimits {
   const limits = resolveExtractLimits(options);
   const payload = Math.min(limits.maxExtractedBytes, Number.MAX_SAFE_INTEGER);
   const overhead = Math.min(limits.maxArchiveBytes, Number.MAX_SAFE_INTEGER);
+  // Saturate before multiplying, including when public limits approach MAX_VALUE.
+  const pathBytes = Math.max(256, Math.min(limits.maxMetaEntryBytes,
+    Math.min(Math.max(1, limits.maxEntryPathComponents), MAX_TAR_MANIFEST_BYTES / 256) * 256));
+  const perEntry = 64 + 2 * pathBytes;
+  const maxManifestBytes = limits.maxEntries > Math.floor(MAX_TAR_MANIFEST_BYTES / perEntry)
+    ? MAX_TAR_MANIFEST_BYTES : limits.maxEntries * perEntry;
   // TAR sizes are safe integers; native logical entry counts use u32.
   return {
     maxEntries: Math.min(limits.maxEntries, 0xffff_ffff),
     maxMetaEntryBytes: Math.min(limits.maxMetaEntryBytes, Number.MAX_SAFE_INTEGER),
+    maxManifestBytes,
     maxDecodedBytes: payload > Number.MAX_SAFE_INTEGER - overhead
       ? Number.MAX_SAFE_INTEGER : payload + overhead,
   };

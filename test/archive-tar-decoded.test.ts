@@ -32,6 +32,7 @@ describe("absolute decoded TAR admission", () => {
     expect(resolveTarMeterLimits(options)).toEqual({
       maxEntries: entries,
       maxMetaEntryBytes: bytes, maxDecodedBytes: bytes,
+      maxManifestBytes: value === 0 ? 0 : value < 2 ? 576 : 64 * 1024 * 1024,
     });
     // Payload limits remain exclusively in the accepted-entry policy.
     expect(resolveExtractLimits(options).maxEntryBytes).toBe(Math.floor(value));

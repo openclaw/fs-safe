@@ -3,7 +3,7 @@ import path from "node:path";
 import { gzipSync } from "node:zlib";
 import JSZip from "jszip";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { tarFixture } from "./helpers/archive-fuzz.js";
+import { tarFixture, updateTarChecksum } from "./helpers/archive-fuzz.js";
 import { useTempDirs } from "./helpers/vitest.js";
 import {
   ARCHIVE_LIMIT_ERROR_CODE,
@@ -86,6 +86,7 @@ describe("TAR metadata preflight boundaries", () => {
     padding.writeBigUInt64BE(BigInt(Number.MAX_SAFE_INTEGER), 128);
     const negative = rawHeader();
     negative.fill(0xff, 124, 136);
+    for (const header of [malformed, highBits, padding, negative]) updateTarChecksum(header);
     await fs.writeFile(malformedPath, malformed);
     await fs.writeFile(highBitsPath, highBits);
     await fs.writeFile(paddingPath, padding);
@@ -111,9 +112,11 @@ describe("TAR metadata preflight boundaries", () => {
     await fs.writeFile(paxPath, tarFixture([{ path: "pax", type: "x", body: "9 path=a\n" }]));
     const sparseFlag = rawHeader("S");
     sparseFlag[482] = 2;
+    updateTarChecksum(sparseFlag);
     await fs.writeFile(sparseFlagPath, sparseFlag);
     const sparseExtension = rawHeader("S");
     sparseExtension[482] = 1;
+    updateTarChecksum(sparseExtension);
     const invalidExtension = Buffer.alloc(512);
     invalidExtension[504] = 2;
     await fs.writeFile(sparseExtensionPath, Buffer.concat([sparseExtension, invalidExtension]));
@@ -145,6 +148,7 @@ describe("TAR metadata preflight boundaries", () => {
     const archivePath = path.join(root, "full-octal.tar");
     const header = rawHeader();
     header.write("000000000001", 124, "ascii");
+    updateTarChecksum(header);
     await fs.writeFile(archivePath, Buffer.concat([header, Buffer.alloc(512 + 1024)]));
 
     await expect(preflightTarMetadata({ archivePath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))

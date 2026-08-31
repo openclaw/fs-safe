@@ -111,6 +111,9 @@ export function createTarEntryPreflightChecker(params: {
       );
     }
 
+    // Accepted unsupported records remain omitted, as in the native plan.
+    if (kind === "other") return false;
+
     budget.startEntry();
     budget.addEntrySize(entry.size);
     return true;

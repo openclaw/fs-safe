@@ -27,7 +27,7 @@ function writeOctal(block: Buffer, offset: number, length: number, value: number
   writeString(block, offset, length, `${value.toString(8).padStart(length - 1, "0")}\0`);
 }
 
-function updateTarChecksum(header: Buffer): void {
+export function updateTarChecksum(header: Buffer): void {
   header.fill(0x20, 148, 156);
   const checksum = header.reduce((sum, byte) => sum + byte, 0);
   writeString(header, 148, 8, `${checksum.toString(8).padStart(6, "0")}\0 `);

@@ -4,7 +4,7 @@ import {
   ArchiveFormatError,
   ArchiveSecurityError,
   isArchiveFormatErrorMessage,
-  isArchiveGnuPathErrorMessage,
+  isArchiveTarPathErrorMessage,
 } from "./archive-errors.js";
 import { formatErrorDetail } from "./error-detail.js";
 import {
@@ -43,7 +43,7 @@ function policyKind(kind: string): "file" | "directory" | "symlink" | "other" {
 
 function throwMappedNativeError(error: unknown): never {
   if (error instanceof Error) {
-    if (isArchiveGnuPathErrorMessage(error.message)) {
+    if (isArchiveTarPathErrorMessage(error.message)) {
       throw new ArchiveSecurityError("entry-path", error.message, { cause: error });
     }
     for (const code of Object.values(ARCHIVE_LIMIT_ERROR_CODE)) {
@@ -92,7 +92,6 @@ export async function extractNativeArchive(params: {
             stagedArchive.path,
             params.kind,
             tarLimits,
-            limits.maxArchiveBytes,
             params.deadline.signal,
           )
           .catch(throwMappedNativeError);
@@ -100,6 +99,11 @@ export async function extractNativeArchive(params: {
         assertArchiveEntryCountWithinLimit(manifest.length, limits);
         if (physicalCount !== undefined && manifest.length !== physicalCount) {
           throw new ArchiveSecurityError("entry-path", "zip decoder collapsed entry names");
+        }
+        // Recheck the native manifest at the shared policy boundary before
+        // any caller callback observes an entry.
+        if (params.kind !== "zip") {
+          for (const entry of manifest) validateArchiveEntryPath(entry.path);
         }
         const strip = Math.max(0, Math.floor(params.stripComponents ?? 0));
         const budget = createByteBudgetTracker(limits);

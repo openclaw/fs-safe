@@ -3,9 +3,12 @@ import { Transform, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGunzip } from "node:zlib";
 import { ArchiveFormatError } from "./archive-errors.js";
-import { ARCHIVE_LIMIT_ERROR_CODE, ArchiveLimitError, type TarMeterLimits } from "./archive-limits.js";
+import { ARCHIVE_LIMIT_ERROR_CODE, ArchiveLimitError, tarManifestEntryCost, type TarMeterLimits } from "./archive-limits.js";
 import { parseLocalPax, paxMemberSize, type LocalPax } from "./archive-tar-pax.js";
 import { validateGnuMetadata } from "./archive-tar-gnu.js";
+import { rawTarMember } from "./archive-tar-admission.js";
+import type { TarEntryInfo } from "./archive-tar.js";
+import { validateTarHeader } from "./archive-tar-header.js";
 
 type MeterState =
   | { kind: "header" }
@@ -21,11 +24,13 @@ export class TarMetadataMeter extends Transform {
   private state: MeterState = { kind: "header" };
   private pendingPax: LocalPax | undefined;
   private readonly pendingGnu = new Set<"L" | "K">();
+  private pendingGnuPath: string | undefined;
   private zeroBlocks = 0;
   private entries = 0;
   private remainingDecodedBytes: number;
+  private manifestBytes = 0;
 
-  constructor(private readonly limits: TarMeterLimits) {
+  constructor(private readonly limits: TarMeterLimits, private readonly onMember?: (entry: TarEntryInfo) => void) {
     super();
     if (!Number.isSafeInteger(limits.maxDecodedBytes) || limits.maxDecodedBytes < 0) {
       throw new RangeError("maxDecodedBytes must be a non-negative safe integer");
@@ -88,6 +93,7 @@ export class TarMetadataMeter extends Transform {
       return;
     }
     if (this.zeroBlocks !== 0) throw this.invalid("nonzero header after one TAR zero block");
+    validateTarHeader(this.block);
     const nameEnd = this.block.subarray(0, 100).indexOf(0);
     const name = this.block.subarray(0, nameEnd < 0 ? 100 : nameEnd);
     if (name.length === 0) {
@@ -136,8 +142,19 @@ export class TarMetadataMeter extends Transform {
       this.state = { kind: "sparse", dataRemaining: padded, metaBytes: 0 };
     } else {
       this.countMember();
+      if (this.pendingGnuPath && /[\\/]$/.test(this.pendingGnuPath) && ![0x35, 0x44].includes(type)) {
+        throw this.invalid("GNU effective non-directory path ends with a separator");
+      }
+      const entry = rawTarMember(this.block, size, this.pendingPax?.path ?? this.pendingGnuPath);
+      const cost = tarManifestEntryCost(entry.path);
+      if (cost > this.limits.maxManifestBytes - this.manifestBytes) {
+        throw new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.MANIFEST_SIZE_EXCEEDS_LIMIT);
+      }
+      this.manifestBytes += cost;
+      this.onMember?.(entry);
       this.pendingPax = undefined;
       this.pendingGnu.clear();
+      this.pendingGnuPath = undefined;
       this.state = padded === 0 ? { kind: "header" } : { kind: "data", remaining: padded };
     }
     this.blockLength = 0;
@@ -174,7 +191,10 @@ export class TarMetadataMeter extends Transform {
         offset += take;
         if (state.used === state.body.length) {
           if (state.type === "pax") this.pendingPax = parseLocalPax(state.body);
-          else validateGnuMetadata(state.body, state.type);
+          else {
+            const name = validateGnuMetadata(state.body, state.type);
+            if (state.type === "L") this.pendingGnuPath = name;
+          }
           this.state = state.padding === 0 ? { kind: "header" } : { kind: "data", remaining: state.padding };
         }
         continue;
@@ -237,9 +257,10 @@ export async function preflightTarMetadata(params: {
   archivePath: string;
   limits: TarMeterLimits;
   signal?: AbortSignal;
+  onMember?: (entry: TarEntryInfo) => void;
 }): Promise<void> {
   const input = fs.createReadStream(params.archivePath);
-  const meter = new TarMetadataMeter(params.limits);
+  const meter = new TarMetadataMeter(params.limits, params.onMember);
   const sink = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
   if (await isGzip(params.archivePath)) {
     await pipeline(input, createGunzip(), meter, sink, { signal: params.signal });

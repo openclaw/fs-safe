@@ -51,6 +51,7 @@ try {
 
 type Backend = "javascript" | "native";
 type ArchiveOutcome = { accepted: true } | { accepted: false; code: string };
+type ArchiveWorkspace = { archivePath: string; destination: string };
 const backends = native ? (["javascript", "native"] as const) : (["javascript"] as const);
 // Each sample extracts twice; allow coverage overhead without relaxing the per-extraction limit.
 const nativeEquivalenceTimeoutMs = 60_000;
@@ -82,13 +83,29 @@ async function extractOutcome(params: {
   kind: ArchiveKind;
   backend: Backend;
   limits?: ArchiveExtractLimits;
-}): Promise<ArchiveOutcome> {
+}, workspace?: ArchiveWorkspace): Promise<ArchiveOutcome> {
   useBackend(params.backend);
-  const base = await tempRoot(`fs-safe-${params.kind}-${params.backend}-property-`);
-  const archivePath = path.join(base, `input.${params.kind === "zip" ? "zip" : "tar"}`);
-  const destination = path.join(base, "destination");
-  await fs.writeFile(archivePath, params.bytes);
-  await fs.mkdir(destination);
+  const reusable = workspace !== undefined;
+  if (!workspace) {
+    const base = await tempRoot(`fs-safe-${params.kind}-${params.backend}-property-`);
+    workspace = {
+      archivePath: path.join(base, `input.${params.kind === "zip" ? "zip" : "tar"}`),
+      destination: path.join(base, "destination"),
+    };
+  }
+  const { archivePath, destination } = workspace;
+  if (reusable) {
+    // Clear successful output before the next case or shrink; keep the empty
+    // canonical directory instead of deleting and recreating it for rejections.
+    await Promise.all([
+      fs.writeFile(archivePath, params.bytes),
+      fs.readdir(destination).then((names) => Promise.all(names.map((name) =>
+        fs.rm(path.join(destination, name), { recursive: true, force: true })))),
+    ]);
+  } else {
+    await fs.writeFile(archivePath, params.bytes);
+    await fs.mkdir(destination);
+  }
   try {
     await extractArchive({
       archivePath,
@@ -128,6 +145,12 @@ const tarEncoding = fc.constantFrom<TarSizeEncoding>(
 
 describe("structured TAR fuzz properties", () => {
   it("classifies malformed headers and hostile names without a third outcome", async () => {
+    const base = await tempRoot("fs-safe-tar-javascript-property-");
+    const workspace = {
+      archivePath: path.join(base, "input.tar"),
+      destination: path.join(base, "destination"),
+    };
+    await fs.mkdir(workspace.destination);
     await fc.assert(
       fc.asyncProperty(
         adversarialPath,
@@ -147,7 +170,7 @@ describe("structured TAR fuzz properties", () => {
             bytes,
             kind: "tar",
             backend: "javascript",
-          });
+          }, workspace);
           expect(javascript).toEqual(expect.objectContaining({ accepted: expect.any(Boolean) }));
         },
       ),
