@@ -11,6 +11,7 @@ import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-iden
 import { isNotFoundPathError } from "./path.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { assertNoSymlinkParents, assertNoSymlinkParentsSync } from "./symlink-parents.js";
+import { getFsSafeTestHooks } from "./test-hooks.js";
 
 export type RegularFileStatResult = { missing: true } | { missing: false; stat: Stats };
 
@@ -248,21 +249,21 @@ export function readRegularFileSync(params: { filePath: string; maxBytes?: numbe
   }
 }
 
-function verifyStableAppendTarget(params: {
-  preOpenStat?: Stats;
-  postOpenStat: Stats;
-  filePath: string;
-}): void {
-  if (!params.postOpenStat.isFile()) {
-    throw new Error(`Refusing to append to non-file: ${params.filePath}`);
+function assertRegularAppendStat(stat: BigIntStats, filePath: string): void {
+  if (!stat.isFile()) {
+    throw new Error(`Refusing to append to non-file: ${filePath}`);
   }
-  if (params.postOpenStat.nlink > 1) {
-    throw new Error(`Refusing to append to hardlinked file: ${params.filePath}`);
+  if (stat.nlink > 1n) {
+    throw new Error(`Refusing to append to hardlinked file: ${filePath}`);
   }
-  const pre = params.preOpenStat;
-  if (pre && (pre.dev !== params.postOpenStat.dev || pre.ino !== params.postOpenStat.ino)) {
-    throw new Error(`Refusing to append after file changed: ${params.filePath}`);
+}
+
+function throwAppendIdentityError(error: unknown, filePath: string): never {
+  if (isNotFoundPathError(error) ||
+    (error instanceof FsSafeError && error.code === "path-mismatch")) {
+    throw new Error(`Refusing to append after file changed: ${filePath}`, { cause: error });
   }
+  throw error;
 }
 
 export async function appendRegularFile(options: AppendRegularFileOptions): Promise<void> {
@@ -278,20 +279,20 @@ export async function appendRegularFile(options: AppendRegularFileOptions): Prom
     });
   }
 
-  let preOpenStat: Stats | undefined;
+  let preOpenStat: BigIntStats | undefined;
   try {
-    const stat = await fs.lstat(options.filePath);
-    if (stat.isSymbolicLink()) {
-      throw new Error(`Refusing to append through symlink: ${options.filePath}`);
-    }
-    if (!stat.isFile()) {
-      throw new Error(`Refusing to append to non-file: ${options.filePath}`);
-    }
-    preOpenStat = stat;
-  } catch (err) {
-    if (!isNotFoundPathError(err)) {
-      throw err;
-    }
+    preOpenStat = await inspectFileIdentity(async () => {
+      const stat = await fs.lstat(options.filePath, { bigint: true });
+      if (stat.isSymbolicLink()) {
+        throw new Error(`Refusing to append through symlink: ${options.filePath}`);
+      }
+      if (!stat.isFile()) {
+        throw new Error(`Refusing to append to non-file: ${options.filePath}`);
+      }
+      return stat;
+    });
+  } catch (error) {
+    if (!isNotFoundPathError(error)) throw error;
   }
 
   const contentBytes = Buffer.isBuffer(options.content)
@@ -299,20 +300,37 @@ export async function appendRegularFile(options: AppendRegularFileOptions): Prom
     : Buffer.byteLength(options.content, options.encoding ?? "utf8");
   if (
     options.maxFileBytes !== undefined &&
-    (preOpenStat?.size ?? 0) + contentBytes > options.maxFileBytes
+    Number(preOpenStat?.size ?? 0n) + contentBytes > options.maxFileBytes
   ) {
     return;
   }
 
+  await getFsSafeTestHooks()?.beforeRegularFileAppendOpen?.(options.filePath);
   const handle = await fs.open(
     options.filePath,
     resolveRegularFileAppendFlags(),
     options.mode ?? 0o600,
   );
   try {
-    const stat = await handle.stat();
-    verifyStableAppendTarget({ preOpenStat, postOpenStat: stat, filePath: options.filePath });
-    if (options.maxFileBytes !== undefined && stat.size + contentBytes > options.maxFileBytes) {
+    let identity: BigIntStats;
+    try {
+      identity = await inspectFileIdentity(async () => {
+        const stat = await handle.stat({ bigint: true });
+        assertRegularAppendStat(stat, options.filePath);
+        return stat;
+      }, preOpenStat);
+      await inspectFileIdentity(async () => {
+        const current = await fs.lstat(options.filePath, { bigint: true });
+        assertRegularAppendStat(current, options.filePath);
+        return current;
+      }, identity);
+    } catch (error) {
+      throwAppendIdentityError(error, options.filePath);
+    }
+    if (
+      options.maxFileBytes !== undefined &&
+      Number(identity.size) + contentBytes > options.maxFileBytes
+    ) {
       return;
     }
     await handle.chmod(options.mode ?? 0o600);
@@ -335,20 +353,20 @@ export function appendRegularFileSync(options: AppendRegularFileOptions): void {
     });
   }
 
-  let preOpenStat: Stats | undefined;
+  let preOpenStat: BigIntStats | undefined;
   try {
-    const stat = fsSync.lstatSync(options.filePath);
-    if (stat.isSymbolicLink()) {
-      throw new Error(`Refusing to append through symlink: ${options.filePath}`);
-    }
-    if (!stat.isFile()) {
-      throw new Error(`Refusing to append to non-file: ${options.filePath}`);
-    }
-    preOpenStat = stat;
-  } catch (err) {
-    if (!isNotFoundPathError(err)) {
-      throw err;
-    }
+    preOpenStat = inspectFileIdentitySync(() => {
+      const stat = fsSync.lstatSync(options.filePath, { bigint: true });
+      if (stat.isSymbolicLink()) {
+        throw new Error(`Refusing to append through symlink: ${options.filePath}`);
+      }
+      if (!stat.isFile()) {
+        throw new Error(`Refusing to append to non-file: ${options.filePath}`);
+      }
+      return stat;
+    });
+  } catch (error) {
+    if (!isNotFoundPathError(error)) throw error;
   }
 
   const contentBuffer =
@@ -357,22 +375,36 @@ export function appendRegularFileSync(options: AppendRegularFileOptions): void {
       : Buffer.from(options.content);
   if (
     options.maxFileBytes !== undefined &&
-    (preOpenStat?.size ?? 0) + contentBuffer.byteLength > options.maxFileBytes
+    Number(preOpenStat?.size ?? 0n) + contentBuffer.byteLength > options.maxFileBytes
   ) {
     return;
   }
 
+  getFsSafeTestHooks()?.beforeRegularFileAppendOpenSync?.(options.filePath);
   const fd = fsSync.openSync(
     options.filePath,
     resolveRegularFileAppendFlags(),
     options.mode ?? 0o600,
   );
   try {
-    const stat = fsSync.fstatSync(fd);
-    verifyStableAppendTarget({ preOpenStat, postOpenStat: stat, filePath: options.filePath });
+    let identity: BigIntStats;
+    try {
+      identity = inspectFileIdentitySync(() => {
+        const stat = fsSync.fstatSync(fd, { bigint: true });
+        assertRegularAppendStat(stat, options.filePath);
+        return stat;
+      }, preOpenStat);
+      inspectFileIdentitySync(() => {
+        const current = fsSync.lstatSync(options.filePath, { bigint: true });
+        assertRegularAppendStat(current, options.filePath);
+        return current;
+      }, identity);
+    } catch (error) {
+      throwAppendIdentityError(error, options.filePath);
+    }
     if (
       options.maxFileBytes !== undefined &&
-      stat.size + contentBuffer.byteLength > options.maxFileBytes
+      Number(identity.size) + contentBuffer.byteLength > options.maxFileBytes
     ) {
       return;
     }

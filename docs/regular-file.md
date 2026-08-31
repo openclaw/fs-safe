@@ -105,7 +105,10 @@ type AppendRegularFileOptions = {
 };
 ```
 
-The helper refuses symlink and hardlinked final targets. With
+The helper refuses symlink and hardlinked final targets. Preview, opened
+descriptor, and current pathname identities remain exact bigints through the
+append boundary; rounded-equal replacements and persistent unknown Windows
+identities reject before chmod or writing bytes. With
 `rejectSymlinkParents: true`, it also rejects symlinked ancestor directories.
 
 ### `appendRegularFileSync(options)`

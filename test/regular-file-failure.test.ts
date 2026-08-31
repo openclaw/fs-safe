@@ -1,9 +1,9 @@
 import { spawnSync } from "node:child_process";
-import fsSync from "node:fs";
+import fsSync, { type BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { itPosix, useTempDirs } from "./helpers/vitest.js";
+import { itPosix, itWin32, useTempDirs } from "./helpers/vitest.js";
 import {
   appendRegularFile,
   appendRegularFileSync,
@@ -19,6 +19,17 @@ const { tempRoot } = useTempDirs();
 afterEach(() => {
   vi.restoreAllMocks();
 });
+
+const roundedIdentityA = 9_007_199_254_740_992n;
+const roundedIdentityB = roundedIdentityA + 1n;
+
+function setIdentity(stat: BigIntStats, value: bigint): BigIntStats {
+  Object.defineProperties(stat, {
+    dev: { configurable: true, value },
+    ino: { configurable: true, value },
+  });
+  return stat;
+}
 
 describe("regular file refusal and race handling", () => {
   it("distinguishes missing paths from inspection errors and non-files", async () => {
@@ -191,24 +202,92 @@ describe("regular file refusal and race handling", () => {
     await expect(fs.readFile(target, "utf8")).resolves.toBe("original");
   });
 
-  it("refuses an async append if the path is replaced before open", async () => {
+  it("refuses an async append if a rounded-equal path is replaced before open", async () => {
     const root = await tempRoot("fs-safe-regular-append-swap-");
     const filePath = path.join(root, "value");
     const oldPath = path.join(root, "old");
     await fs.writeFile(filePath, "original");
+    const preview = setIdentity(await fs.lstat(filePath, { bigint: true }), roundedIdentityA);
+    vi.spyOn(fs, "lstat").mockResolvedValueOnce(preview);
     const realOpen = fs.open.bind(fs);
     vi.spyOn(fs, "open").mockImplementationOnce(async (...args) => {
       await fs.rename(filePath, oldPath);
       await fs.writeFile(filePath, "replacement");
-      return await realOpen(...args);
+      const handle = await realOpen(...args);
+      const opened = setIdentity(await handle.stat({ bigint: true }), roundedIdentityB);
+      return {
+        stat: async () => opened,
+        chmod: handle.chmod.bind(handle),
+        appendFile: handle.appendFile.bind(handle),
+        close: handle.close.bind(handle),
+      } as Awaited<ReturnType<typeof fs.open>>;
     });
 
+    expect(Number(roundedIdentityA)).toBe(Number(roundedIdentityB));
     await expect(appendRegularFile({ filePath, content: "x" })).rejects.toThrow(
       "Refusing to append after file changed",
     );
     await expect(fs.readFile(filePath, "utf8")).resolves.toBe("replacement");
     await expect(fs.readFile(oldPath, "utf8")).resolves.toBe("original");
   });
+
+  it("refuses a sync append if a rounded-equal path is replaced before open", async () => {
+    const root = await tempRoot("fs-safe-regular-append-sync-swap-");
+    const filePath = path.join(root, "value");
+    const oldPath = path.join(root, "old");
+    await fs.writeFile(filePath, "original");
+    const preview = setIdentity(fsSync.lstatSync(filePath, { bigint: true }), roundedIdentityA);
+    vi.spyOn(fsSync, "lstatSync").mockReturnValueOnce(preview);
+    const realOpen = fsSync.openSync.bind(fsSync);
+    const realFstat = fsSync.fstatSync.bind(fsSync);
+    let openedFd = -1;
+    vi.spyOn(fsSync, "openSync").mockImplementationOnce((...args) => {
+      fsSync.renameSync(filePath, oldPath);
+      fsSync.writeFileSync(filePath, "replacement");
+      openedFd = realOpen(...args);
+      return openedFd;
+    });
+    vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
+      const stat = realFstat(fd, options as never);
+      return fd === openedFd && options?.bigint === true
+        ? setIdentity(stat as BigIntStats, roundedIdentityB)
+        : stat as never;
+    });
+
+    expect(Number(roundedIdentityA)).toBe(Number(roundedIdentityB));
+    expect(() => appendRegularFileSync({ filePath, content: "x" })).toThrow(
+      "Refusing to append after file changed",
+    );
+    expect(fsSync.readFileSync(filePath, "utf8")).toBe("replacement");
+    expect(fsSync.readFileSync(oldPath, "utf8")).toBe("original");
+  });
+
+  itWin32.each(["async", "sync"] as const)(
+    "fails closed before %s append when Windows identity stays unknown",
+    async (variant) => {
+      const root = await tempRoot("fs-safe-regular-append-unknown-");
+      const filePath = path.join(root, "value");
+      await fs.writeFile(filePath, "original");
+      if (variant === "async") {
+        const unknown = setIdentity(await fs.lstat(filePath, { bigint: true }), 0n);
+        vi.spyOn(fs, "lstat").mockResolvedValue(unknown);
+        const open = vi.spyOn(fs, "open");
+        await expect(appendRegularFile({ filePath, content: "x" })).rejects.toThrow(
+          "file identity changed or could not be verified",
+        );
+        expect(open).not.toHaveBeenCalled();
+      } else {
+        const unknown = setIdentity(fsSync.lstatSync(filePath, { bigint: true }), 0n);
+        vi.spyOn(fsSync, "lstatSync").mockReturnValue(unknown);
+        const open = vi.spyOn(fsSync, "openSync");
+        expect(() => appendRegularFileSync({ filePath, content: "x" })).toThrow(
+          "file identity changed or could not be verified",
+        );
+        expect(open).not.toHaveBeenCalled();
+      }
+      expect(await fs.readFile(filePath, "utf8")).toBe("original");
+    },
+  );
 
   itPosix("rejects symlinked append parents when requested", async () => {
     const root = await tempRoot("fs-safe-regular-parent-");
