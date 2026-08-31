@@ -16,6 +16,10 @@ export type TarParser = NodeJS.WritableStream & {
   on(event: "end", listener: () => void): TarParser;
 };
 
+// Both callers parse an immutable staged stream only after fs-safe's complete
+// decoded-byte admission, so node-tar must not add backend-specific policy.
+export const NODE_TAR_RATIO_DISABLED = Number.POSITIVE_INFINITY;
+
 export type TarModule = {
   Parser: new (options: { strict: true; maxMetaEntrySize: number }) => TarParser;
   x(options: {
@@ -29,6 +33,7 @@ export type TarModule = {
     noMtime: true;
     strict: true;
     maxMetaEntrySize: number;
+    maxDecompressionRatio: number;
     filter?(this: TarParser, entryPath: string, entry: unknown): boolean;
     onReadEntry(this: unknown, entry: unknown): void;
   }): TarParser;
@@ -36,6 +41,7 @@ export type TarModule = {
     file: string;
     strict: true;
     maxMetaEntrySize: number;
+    maxDecompressionRatio: number;
     onReadEntry(entry: AsyncIterable<unknown> & { resume(): void }): void;
   }): Promise<unknown>;
 };
