@@ -289,6 +289,9 @@ archive overhead with safe addition. Ordinary limits, including
 zero and the existing defaulting/rounding rules, retain their behavior.
 There is no new public option. This is an absolute decoded admission
 cap, not a decompression-ratio policy; bounded stream/codec read-ahead remains.
+After this complete preflight, the JavaScript backend disables node-tar's
+independent ratio threshold so it cannot reject data that the native backend
+accepts within the same absolute limits.
 
 ### Bounded local PAX support
 

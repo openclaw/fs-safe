@@ -21,7 +21,7 @@ import {
 } from "./archive-limits.js";
 import { readTarEntryInfo } from "./archive-tar.js";
 import { preflightTarMetadata } from "./archive-tar-meta.js";
-import { importOptionalTar, normalizeTarParserError } from "./archive-tar-runtime.js";
+import { importOptionalTar, NODE_TAR_RATIO_DISABLED, normalizeTarParserError } from "./archive-tar-runtime.js";
 import { loadZipArchiveWithPreflight } from "./archive-zip-preflight.js";
 import {
   createZipIntegrityTransform,
@@ -191,6 +191,7 @@ async function readTarEntry(archivePath: string, entryPath: string, maxBytes: nu
       file: archivePath,
       strict: true,
       maxMetaEntrySize: DEFAULT_MAX_META_ENTRY_BYTES,
+      maxDecompressionRatio: NODE_TAR_RATIO_DISABLED,
       onReadEntry(entry) {
         const info = readTarEntryInfo(entry);
         let normalized: string;

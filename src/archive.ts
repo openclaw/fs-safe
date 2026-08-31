@@ -58,7 +58,7 @@ import {
   resolveArchiveFilteredEntryPolicy,
   shouldExtractArchiveEntry,
 } from "./archive-policy.js";
-import { importOptionalTar, normalizeTarParserError } from "./archive-tar-runtime.js";
+import { importOptionalTar, NODE_TAR_RATIO_DISABLED, normalizeTarParserError } from "./archive-tar-runtime.js";
 import { preflightTarMetadata } from "./archive-tar-meta.js";
 import { createTarAdmissionPlan } from "./archive-tar-admission.js";
 import type { ExtractArchiveOptions } from "./archive-options.js";
@@ -408,6 +408,7 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
               noMtime: true,
               strict: true,
               maxMetaEntrySize: tarLimits.maxMetaEntryBytes,
+              maxDecompressionRatio: NODE_TAR_RATIO_DISABLED,
               filter(this: { abort(error: Error): void }, _entryPath, entry) {
                 try {
                   const info = readTarEntryInfo(entry);
