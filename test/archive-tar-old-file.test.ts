@@ -121,7 +121,7 @@ describe.each(["tar", "gzip"] as const)("NUL-typeflag public JS %s", (format) =>
   });
 
   it("reads the NUL file bytes through the public entry reader", async () => {
-    const options = await setup([oldFile("./pkg/legacy.bin"), { path: "pkg/modern.bin", body: "modern" }]);
+    const options = await setup([oldFile("./pkg//legacy.bin"), { path: "pkg/modern.bin", body: "modern" }]);
     await expect(readArchiveEntry(options.archivePath, "pkg/legacy.bin", { maxBytes: payload.length }))
       .resolves.toEqual(payload);
     expect(await fs.readdir(options.destDir)).toEqual(["sentinel"]);

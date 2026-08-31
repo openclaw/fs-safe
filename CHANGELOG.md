@@ -4,6 +4,7 @@
 
 ### Security and Correctness
 
+- Match archive entry reads to extraction's validated canonical pre-strip paths across JavaScript/native ZIP, TAR, gzip, zstd, and bzip2; resolve separator/dot aliases and effective metadata names while retaining directory, link, collision, integrity, and byte-limit checks.
 - Bound TAR manifests with one shared 64 MiB-capped admission budget independent of compressed size; validate checksums, strict fixed-field UTF-8, NFC/NFD component lengths, and GNU effective trailing separators across JavaScript/native TAR and supported codecs; require raw linknames on links and forbid them on every other header, including metadata, before metadata handling or policy.
 - Admit ignored TAR records (`V`, `A`, `I`, `M`, and unknown typeflags) through ordered path, count, strip, depth, collision, and filter policy before parser suppression; omit accepted unsupported records safely, validate raw names hidden by metadata or NUL terminators, and preserve JavaScript/native TAR/gzip/zstd/bzip2 parity.
 - Pass canonical pre-strip archive paths to `entryFilter` across JavaScript/native ZIP and TAR, including gzip/zstd/bzip2 and effective metadata names, so backslash, dot-component, and repeated-separator aliases cannot bypass excluded subtrees; preserve raw-path validation, stripping, collision checks, and filter rejection policy.

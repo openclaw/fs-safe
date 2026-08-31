@@ -416,6 +416,14 @@ inputs retain the archive subpath's 256 MiB compressed-input ceiling.
 With a native binding it uses the same Rust decoders as extraction, including
 zstd and bzip2 TAR. Without native it retains the JS ZIP/TAR/gzip implementation.
 
+Requested paths and effective member names use extraction's canonical pre-strip
+identity: backslashes become `/`, and repeated separators and `.` components
+are removed after raw-path validation. For example, `./pkg//value` and
+`pkg\value` both address `pkg/value`, including supported GNU/PAX and ZIP
+Unicode Path names. Case and Unicode spelling are preserved. Requests ending
+in `/` or `\` still reject as non-files. Canonical duplicate members reject
+before an unrelated requested entry can be returned.
+
 ```ts
 const rawManifest = await readArchiveEntry(uploadPath, "package/manifest.json", {
   maxBytes: 64 * 1024,

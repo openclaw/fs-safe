@@ -9,7 +9,7 @@ import {
 } from "./archive-errors.js";
 import { formatErrorDetail } from "./error-detail.js";
 import {
-  normalizeArchiveEntryPath,
+  stripArchivePath,
   validateArchiveEntryPath,
 } from "./archive-entry.js";
 import { resolveArchiveKind, type ArchiveKind } from "./archive-kind.js";
@@ -39,10 +39,14 @@ import { tempFile } from "./temp-target.js";
 const ZIP_UNIX_FILE_TYPE_MASK = 0o170000;
 const ZIP_UNIX_SYMLINK_TYPE = 0o120000;
 
-function normalizedRequestedEntry(entryPath: string): string {
+function canonicalEntryPath(entryPath: string): string {
   validateArchiveEntryPath(entryPath, { escapeLabel: "archive root" });
-  const normalized = normalizeArchiveEntryPath(entryPath).replace(/^\.\//, "");
-  if (!normalized || normalized.endsWith("/")) {
+  return stripArchivePath(entryPath, 0) ?? "";
+}
+
+function normalizedRequestedEntry(entryPath: string): string {
+  const normalized = canonicalEntryPath(entryPath);
+  if (!normalized || /[/\\]$/.test(entryPath)) {
     throw new Error(`archive entry is not a file: ${formatErrorDetail(entryPath)}`);
   }
   return normalized;
@@ -135,7 +139,16 @@ async function readZipEntry(buffer: Buffer, entryPath: string, maxBytes: number)
     maxEntryBytes: maxBytes,
     maxExtractedBytes: maxBytes,
   });
-  const entry = (archive.files as Record<string, ZipEntry>)[entryPath];
+  let entry: ZipEntry | undefined;
+  // JSZip keys retain some aliases and may use Unicode Path metadata. Scan the
+  // effective entries once, after raw ZIP admission has rejected collisions.
+  for (const candidate of Object.values(archive.files) as ZipEntry[]) {
+    if (canonicalEntryPath(candidate.name) !== entryPath) continue;
+    if (entry) {
+      throw new ArchiveSecurityError("entry-path", `archive contains duplicate entry path: ${formatErrorDetail(entryPath)}`);
+    }
+    entry = candidate;
+  }
   if (!entry || entry.dir) {
     throw new Error(`archive entry not found: ${formatErrorDetail(entryPath)}`);
   }
@@ -161,7 +174,7 @@ async function readTarEntry(archivePath: string, entryPath: string, maxBytes: nu
     archivePath,
     limits: resolveTarMeterLimits(),
     onMember(info) {
-      const normalized = normalizeArchiveEntryPath(info.path).replace(/^\.\//, "");
+      const normalized = canonicalEntryPath(info.path);
       if (seenPaths.has(normalized)) {
         throw new ArchiveSecurityError("entry-path", `archive contains duplicate entry path: ${formatErrorDetail(normalized)}`);
       }
@@ -180,15 +193,15 @@ async function readTarEntry(archivePath: string, entryPath: string, maxBytes: nu
       maxMetaEntrySize: DEFAULT_MAX_META_ENTRY_BYTES,
       onReadEntry(entry) {
         const info = readTarEntryInfo(entry);
+        let normalized: string;
         try {
-          validateArchiveEntryPath(info.path, { escapeLabel: "archive root" });
+          normalized = canonicalEntryPath(info.path);
         } catch (error) {
           // Throws escaping node-tar's callback do not reject its promise.
           entryError ??= error instanceof Error ? error : new Error(String(error));
           entry.resume();
           return;
         }
-        const normalized = normalizeArchiveEntryPath(info.path).replace(/^\.\//, "");
         if (normalized !== entryPath) {
           entry.resume();
           return;
@@ -257,8 +270,7 @@ export async function readArchiveEntry(
         }
         const seenPaths = new Set<string>();
         for (const entry of manifest) {
-          validateArchiveEntryPath(entry.path, { escapeLabel: "archive root" });
-          const normalized = normalizeArchiveEntryPath(entry.path).replace(/^\.\//, "");
+          const normalized = canonicalEntryPath(entry.path);
           if (seenPaths.has(normalized)) {
             throw new ArchiveSecurityError(
               "entry-path",
