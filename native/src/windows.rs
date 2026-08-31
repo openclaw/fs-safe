@@ -801,7 +801,12 @@ fn remove_owned_tree_handles_with_hook(
         FILE_DIRECTORY_FILE,
     ) {
         Ok(owned) => owned,
-        Err(error) if error.status == "ENOENT" => return Ok("preserved".to_owned()),
+        // A reparse point at the direct child is a replacement, not a removal
+        // failure. Leave it untouched so the public workspace cleanup maps the
+        // ownership uncertainty to "indeterminate".
+        Err(error) if error.status == "ENOENT" || error.status == "ELOOP" => {
+            return Ok("preserved".to_owned());
+        }
         Err(error) => return Err(error),
     };
     if !same_handle_identity(expected, owned.0)? {
