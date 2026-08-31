@@ -120,6 +120,7 @@ export interface NativeBinding {
     signal: AbortSignal,
   ): Promise<Buffer>;
   readOwnerAndDacl(path: string): NativeWindowsSecurityFacts;
+  ownedTreeRemovalAvailable?(parentFd: number): boolean;
   removeOwnedTree?(
     parentFd: number,
     basename: string,

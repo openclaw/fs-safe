@@ -4,6 +4,11 @@ use napi_derive::napi;
 
 use crate::{NativeResult, platform, validate_relative_path};
 
+#[napi(js_name = "ownedTreeRemovalAvailable")]
+pub fn owned_tree_removal_available(parent_fd: i32) -> bool {
+    platform::owned_tree_removal_available(parent_fd)
+}
+
 #[napi(object)]
 pub struct NativeOwnedTreeRemovalResult {
     pub outcome: Option<String>,

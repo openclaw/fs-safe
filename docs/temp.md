@@ -76,19 +76,25 @@ verification can still redirect the final pathname removal.
 
 Set `cleanupSafety: "require-bounded"` when that concurrent attacker is in scope.
 Creation then requires native no-replace directory rename, native owned-tree
-removal, and retained parent/workspace descriptors **before** `mkdtemp` creates
+removal, and a retained parent descriptor **before** `mkdtemp` creates
 a child. If any capability is unavailable, creation throws
 `FsSafeError("helper-unavailable")`; no child is created and a scoped callback is
 not called. The compatible default retains its fallback even if process-global
 native mode is `require`; select `require-bounded` to make cleanup capability
 mandatory for this API.
 
+On Linux, bounded cleanup requires a successful runtime probe of the exact
+`openat2` child-directory flags, including `RESOLVE_NO_XDEV`, against the retained
+parent descriptor. If the kernel or seccomp policy denies that capability,
+compatible mode uses the guarded JavaScript fallback; `require-bounded` rejects
+before child creation. The probe runs once at creation, without filesystem mutation.
+
 Bounded cleanup checks the parent and public workspace identity, quarantines
 the direct child without replacement, and verifies the quarantine against the
 retained workspace descriptor. It binds every enumerated child to its native
 identity before opening it, rejects mount crossings, and traverses descendants
-only through opened directory handles; symlinks/reparse points are never
-followed. Windows marks the exact opened objects for deletion by handle.
+only through opened directory handles; symlinks/reparse entries are removed as
+leaves and never traversed. Windows marks the exact opened objects for deletion by handle.
 
 POSIX has no unlink-by-fd or expected-inode unlink for directory entries. After
 the final identity check, each `unlinkat` can still be raced; the possible side
@@ -107,7 +113,7 @@ without deleting an unverified child.
 If the quarantine does not match the creation descriptor, cleanup leaves it in
 place without restoring the public name or recursively deleting it and returns
 `"indeterminate"`. A collision, uncertain rename outcome, changed parent,
-mount/device crossing, reparse point, or detected concurrent mutation also
+mount/device crossing, changed reparse state, or detected concurrent mutation also
 preserves the remaining artifact. Recover `.fs-safe-workspace-cleanup-<uuid>` entries only
 after excluding competing mutators and re-establishing ownership.
 

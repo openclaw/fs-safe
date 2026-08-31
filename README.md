@@ -397,6 +397,9 @@ Compatible creation and cleanup remain available without native support.
 Set `cleanupSafety: "require-bounded"` to require collision-safe quarantine and
 descriptor-bounded recursive cleanup before creating a child. See the
 [temp workspace contract](docs/temp.md).
+Linux bounded cleanup requires the exact `openat2`/`RESOLVE_NO_XDEV` capability
+at runtime; compatible mode falls back when unavailable, while `require-bounded`
+rejects before child creation.
 
 `tempFile()` is the smaller one-file temp helper. It is intentionally an
 advanced primitive: use `tempWorkspace()` for the stable temp surface and reach

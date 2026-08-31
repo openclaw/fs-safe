@@ -29,6 +29,8 @@ export function isolatedConsumerEnv(directory) {
   }
   env.npm_config_cache = join(directory, "npm-cache");
   env.npm_config_update_notifier = "false";
+  // Disposable consumers cannot reuse the compile cache; avoid its exit-time I/O.
+  env.NODE_DISABLE_COMPILE_CACHE = "1";
   env.CI = "true";
   return env;
 }

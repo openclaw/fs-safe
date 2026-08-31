@@ -250,7 +250,7 @@ fn nt_error(status: i32, operation: &str) -> napi::Error<String> {
     win_error(unsafe { RtlNtStatusToDosError(status) }, operation)
 }
 
-fn assert_not_reparse(handle: HANDLE) -> NativeResult<()> {
+fn handle_is_reparse(handle: HANDLE) -> NativeResult<bool> {
     // SAFETY: info is a valid output buffer for the supplied class.
     let mut info: FILE_ATTRIBUTE_TAG_INFO = unsafe { zeroed() };
     let ok = unsafe {
@@ -265,13 +265,22 @@ fn assert_not_reparse(handle: HANDLE) -> NativeResult<()> {
         // SAFETY: GetLastError has no memory safety preconditions.
         return Err(win_error(unsafe { GetLastError() }, "inspect opened path"));
     }
-    if info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+    Ok(info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+}
+
+fn assert_not_reparse(handle: HANDLE) -> NativeResult<()> {
+    if handle_is_reparse(handle)? {
         return Err(native_error(
             "ELOOP",
             "reparse points are not allowed beneath root",
         ));
     }
     Ok(())
+}
+
+enum ReparsePolicy {
+    Reject,
+    AllowLeaf,
 }
 
 fn nt_open_relative(
@@ -281,6 +290,30 @@ fn nt_open_relative(
     disposition: u32,
     options: u32,
 ) -> NativeResult<OwnedHandle> {
+    nt_open_relative_with_policy(
+        root,
+        path,
+        desired_access,
+        disposition,
+        options,
+        ReparsePolicy::Reject,
+    )
+}
+
+fn nt_open_relative_with_policy(
+    root: HANDLE,
+    path: &str,
+    desired_access: u32,
+    disposition: u32,
+    options: u32,
+    reparse_policy: ReparsePolicy,
+) -> NativeResult<OwnedHandle> {
+    if matches!(reparse_policy, ReparsePolicy::AllowLeaf) {
+        crate::validate_relative_path(path, false)?;
+        if path.contains(['/', '\\']) {
+            return Err(native_error("EINVAL", "reparse leaf open requires a direct child"));
+        }
+    }
     let mut name = wide_relative(path)?;
     let mut unicode = UnicodeString {
         length: (name.len() * 2) as u16,
@@ -291,7 +324,11 @@ fn nt_open_relative(
         length: size_of::<ObjectAttributes>() as u32,
         root_directory: root,
         object_name: &mut unicode,
-        attributes: OBJ_CASE_INSENSITIVE | OBJ_DONT_REPARSE,
+        attributes: OBJ_CASE_INSENSITIVE | match reparse_policy {
+            ReparsePolicy::Reject => OBJ_DONT_REPARSE,
+            // Validated direct child: no intermediate components can reparse.
+            ReparsePolicy::AllowLeaf => 0,
+        },
         security_descriptor: null_mut(),
         security_quality_of_service: null_mut(),
     };
@@ -308,6 +345,7 @@ fn nt_open_relative(
             0,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             disposition,
+            // FILE_OPEN_REPARSE_POINT opens the final entry itself without reparsing.
             options | FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT,
             null(),
             0,
@@ -317,7 +355,9 @@ fn nt_open_relative(
         return Err(nt_error(status, "open path relative to root handle"));
     }
     let owned = OwnedHandle(handle);
-    assert_not_reparse(owned.0)?;
+    if matches!(reparse_policy, ReparsePolicy::Reject) {
+        assert_not_reparse(owned.0)?;
+    }
     Ok(owned)
 }
 
@@ -595,6 +635,16 @@ fn handle_identity(handle: HANDLE) -> NativeResult<(u32, u64, bool)> {
     ))
 }
 
+pub fn owned_tree_removal_available(parent_fd: i32) -> bool {
+    parent_fd >= 0
+        && root_handle(parent_fd)
+            .and_then(|handle| {
+                assert_not_reparse(handle)?;
+                handle_identity(handle)
+            })
+            .is_ok_and(|identity| identity.2)
+}
+
 fn same_handle_identity(left: HANDLE, right: HANDLE) -> NativeResult<bool> {
     let left = handle_identity(left)?;
     let right = handle_identity(right)?;
@@ -700,35 +750,32 @@ fn remove_directory_handle_with_hook(
 ) -> NativeResult<()> {
     let parent_volume = handle_identity(directory)?.0;
     for (name, attributes, file_id) in list_directory_entries(directory)? {
-        if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-            return Err(native_error(
-                "ELOOP",
-                "reparse points are not allowed in owned tree cleanup",
-            ));
-        }
+        let is_reparse = attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0;
         let is_directory = attributes & FILE_ATTRIBUTE_DIRECTORY != 0;
+        let traverse = is_directory && !is_reparse;
         before_child_open(&name);
-        let child = nt_open_relative(
+        let child = nt_open_relative_with_policy(
             directory,
             &name,
             DELETE_ACCESS
                 | FILE_WRITE_ATTRIBUTES
-                | if is_directory { FILE_LIST_DIRECTORY } else { 0 },
+                | if traverse { FILE_LIST_DIRECTORY } else { 0 },
             FILE_OPEN,
-            if is_directory {
-                FILE_DIRECTORY_FILE
-            } else {
-                FILE_NON_DIRECTORY_FILE
-            },
+            // Admit either type so substitutions reach the identity check.
+            0,
+            ReparsePolicy::AllowLeaf,
         )?;
         let opened = handle_identity(child.0)?;
-        if opened.0 != parent_volume || opened.1 != file_id || opened.2 != is_directory {
+        let opened_reparse = handle_is_reparse(child.0)?;
+        if opened.0 != parent_volume || opened.1 != file_id || opened.2 != is_directory
+            || opened_reparse != is_reparse
+        {
             return Err(native_error(
                 "path-mismatch",
                 "owned tree child changed while opening",
             ));
         }
-        if is_directory {
+        if traverse {
             remove_directory_handle_with_hook(child.0, before_child_open)?;
         }
         mark_handle_for_deletion(child.0)?;
@@ -932,6 +979,50 @@ mod tests {
     #[test]
     fn maps_access_denied_to_node_filesystem_eperm() {
         assert_eq!(win_error(ERROR_ACCESS_DENIED, "test").status, "EPERM");
+    }
+
+    #[test]
+    fn reparse_leaf_open_requires_a_direct_child() {
+        for name in ["", ".", "..", "nested/child", "nested\\child"] {
+            let result = nt_open_relative_with_policy(
+                null_mut(), name, DELETE_ACCESS, FILE_OPEN, 0, ReparsePolicy::AllowLeaf,
+            );
+            assert_eq!(result.err().unwrap().status, "EINVAL");
+        }
+    }
+
+    #[test]
+    fn owned_tree_cleanup_preserves_a_directory_replaced_by_a_file() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "fs-safe-native-win-owned-type-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("nested")).unwrap();
+        fs::write(root.join("nested/owned"), b"owned").unwrap();
+        let directory = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS)
+            .open(&root)
+            .unwrap();
+        let error = remove_directory_handle_with_hook(
+            directory.as_raw_handle() as HANDLE,
+            &mut |name| {
+                assert_eq!(name, "nested");
+                fs::rename(root.join("nested"), root.join("original")).unwrap();
+                fs::write(root.join("nested"), b"replacement").unwrap();
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.status, "path-mismatch");
+        assert_eq!(fs::read(root.join("nested")).unwrap(), b"replacement");
+        assert_eq!(fs::read(root.join("original/owned")).unwrap(), b"owned");
+        drop(directory);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

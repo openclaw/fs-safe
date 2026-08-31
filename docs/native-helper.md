@@ -36,6 +36,10 @@ remain available in every mode. Their default compatible cleanup uses guarded
 JavaScript quarantine when owned native tree removal is unavailable.
 `cleanupSafety: "require-bounded"` instead rejects before child creation unless
 no-replace quarantine plus descriptor-relative owned-tree removal are available.
+On Linux, admission probes the exact `openat2` child-directory flags, including
+`RESOLVE_NO_XDEV`, at runtime. An unavailable or denied probe selects compatible
+JavaScript cleanup even in global `require` mode; `require-bounded` rejects before
+child creation.
 Already-created strict workspaces retain their binding
 and descriptors across later mode changes.
 
@@ -54,7 +58,7 @@ normalization, and the decision to fall back.
 
 - Linux uses `openat2` with `RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS`, `renameat`, and `renameat2(RENAME_NOREPLACE)`. Owned-tree cleanup enumerates and unlinks through retained directory descriptors and rejects device crossings.
 - macOS 15.4 and newer prefer `O_RESOLVE_BENEATH`; older kernels resolve components with `O_NOFOLLOW` and restart in-root symlinks from the pinned root descriptor. Both routes use an `F_GETPATH` post-open escape detector and report `best-effort` because directory rename races are not atomic with that check. Publication uses `renameat` for replacement and `renameatx_np(RENAME_EXCL)` for no-replace; owned-tree cleanup uses descriptor-relative `openat`/`unlinkat`.
-- Windows uses handle-relative `NtCreateFile`, rejects reparse points, uses `FileRenameInfoEx` with replacement selected explicitly by the TypeScript policy layer, and deletes owned trees through exact opened handles with `FileDispositionInfoEx`.
+- Windows uses handle-relative `NtCreateFile`, rejects reparse points during root-bounded traversal, uses `FileRenameInfoEx` with replacement selected explicitly by the TypeScript policy layer, and deletes owned trees through exact opened handles with `FileDispositionInfoEx`; symlink/reparse entries in owned trees are removed as leaves and never traversed.
 
 Native primitives back create-only and replacing pinned writes, async sidecar creation,
 guarded publication, archive acceleration, and direct Windows ACL operations.

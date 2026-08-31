@@ -356,6 +356,28 @@ fn directory_entry_matches_fd(
         && same_identity(&opened, &current))
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn owned_tree_removal_available_with_probe(
+    parent_fd: i32,
+    probe: impl FnOnce(i32, &CStr) -> NativeResult<OwnedFd>,
+) -> bool {
+    parent_fd >= 0 && probe(parent_fd, c".").is_ok()
+}
+
+#[cfg(target_os = "linux")]
+pub fn owned_tree_removal_available(parent_fd: i32) -> bool {
+    // Probe the same openat2 flags as descent; never substitute openat.
+    owned_tree_removal_available_with_probe(parent_fd, open_cleanup_directory)
+}
+
+#[cfg(target_os = "macos")]
+pub fn owned_tree_removal_available(parent_fd: i32) -> bool {
+    parent_fd >= 0
+        && rustix::fs::fstat(borrowed(parent_fd))
+            .is_ok_and(|stat| FileType::from_raw_mode(stat.st_mode).is_dir())
+        && rustix::fs::fstatfs(borrowed(parent_fd)).is_ok()
+}
+
 #[cfg(target_os = "linux")]
 fn open_cleanup_directory(parent_fd: i32, name: &CStr) -> NativeResult<OwnedFd> {
     use rustix::fs::{ResolveFlags, openat2};
@@ -1156,6 +1178,36 @@ mod tests {
             .is_err()
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn owned_tree_probe_requires_a_successful_open() {
+        let root = temp_root("owned-probe");
+        let parent = fs::File::open(&root).unwrap();
+        let fd = parent.as_raw_fd();
+        assert!(owned_tree_removal_available_with_probe(
+            fd,
+            |actual, name| {
+                assert_eq!(actual, fd);
+                assert_eq!(name, c".");
+                Ok(parent.try_clone().unwrap().into())
+            }
+        ));
+        for error in [
+            rustix::io::Errno::NOSYS,
+            rustix::io::Errno::INVAL,
+            rustix::io::Errno::PERM,
+            rustix::io::Errno::BADF,
+            rustix::io::Errno::MFILE,
+        ] {
+            assert!(!owned_tree_removal_available_with_probe(fd, |_, _| {
+                Err(os_error(error, "injected openat2 failure"))
+            }));
+        }
+        assert!(!owned_tree_removal_available_with_probe(-1, |_, _| {
+            panic!("invalid descriptor must not be borrowed")
+        }));
+        fs::remove_dir(root).unwrap();
     }
 
     #[test]

@@ -14,10 +14,14 @@ try {
 const { tempRoot } = useTempDirs();
 
 describe.runIf(native)("native owned-tree removal", () => {
-  it("removes nested owned trees and preserves a mismatched replacement", async () => {
+  it("removes nested trees and link leaves while preserving outside targets and replacements", async () => {
     expect(native!.removeOwnedTree).toBeTypeOf("function");
     expect(native!.removeOwnedTreeSync).toBeTypeOf("function");
     const root = await tempRoot("fs-safe-native-owned-tree-");
+    const outside = path.join(root, "outside");
+    const keep = Buffer.from("outside keep bytes\u0000\u00ff\n", "utf8");
+    await fs.mkdir(outside);
+    await fs.writeFile(path.join(outside, "keep"), keep);
     const parentFd = fsSync.openSync(root, fsSync.constants.O_RDONLY);
     try {
       for (const mode of ["async", "sync"] as const) {
@@ -25,6 +29,9 @@ describe.runIf(native)("native owned-tree removal", () => {
         const dir = path.join(root, name);
         await fs.mkdir(path.join(dir, "nested"), { recursive: true });
         await fs.writeFile(path.join(dir, "nested", "value"), "owned");
+        const link = path.join(dir, "nested", "outside-link");
+        await fs.symlink(outside, link, process.platform === "win32" ? "junction" : "dir");
+        expect((await fs.lstat(link)).isSymbolicLink()).toBe(true);
         const dirFd = fsSync.openSync(dir, fsSync.constants.O_RDONLY);
         try {
           const result = mode === "async"
@@ -35,6 +42,9 @@ describe.runIf(native)("native owned-tree removal", () => {
           fsSync.closeSync(dirFd);
         }
         await expect(fs.lstat(dir)).rejects.toMatchObject({ code: "ENOENT" });
+        await expect(fs.lstat(link)).rejects.toMatchObject({ code: "ENOENT" });
+        expect(await fs.readdir(outside)).toEqual(["keep"]);
+        expect(await fs.readFile(path.join(outside, "keep"))).toEqual(keep);
       }
 
       const owned = path.join(root, "raced");
@@ -59,6 +69,8 @@ describe.runIf(native)("native owned-tree removal", () => {
           nestedAsync: "removed",
           nestedSync: "removed",
           replacementTree: "preserved",
+          reparseLeaves: "removed-async-sync",
+          outsideTarget: "preserved",
         }));
       }
     } finally {

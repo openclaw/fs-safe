@@ -20,10 +20,11 @@ type Quarantine = { name: string; path: string; nativeRemoval: boolean };
 function isNativeCleanupBinding(
   binding: NativeBinding | undefined,
 ): binding is NativeBinding & Required<Pick<NativeBinding,
-  "removeOwnedTree" | "removeOwnedTreeSync">> {
+  "renameNoReplace" | "removeOwnedTree" | "removeOwnedTreeSync" | "ownedTreeRemovalAvailable">> {
   return typeof binding?.renameNoReplace === "function" &&
     typeof binding.removeOwnedTree === "function" &&
-    typeof binding.removeOwnedTreeSync === "function";
+    typeof binding.removeOwnedTreeSync === "function" &&
+    typeof binding.ownedTreeRemovalAvailable === "function";
 }
 
 function nativeRemovalError(result: NativeOwnedTreeRemovalResult): Error | undefined {
@@ -36,6 +37,7 @@ function nativeRemovalError(result: NativeOwnedTreeRemovalResult): Error | undef
 export class TempWorkspaceCleanupCapability {
   readonly binding: NativeBinding | undefined;
   readonly parent: RetainedDirectory | undefined;
+  readonly #ownedTreeRemovalAvailable: boolean;
   #closed = false;
 
   constructor(root: string, safety: TempWorkspaceCleanupSafety) {
@@ -52,9 +54,19 @@ export class TempWorkspaceCleanupCapability {
       assertStagedDirectoryCurrent(parent.receipt);
     } catch {
       if (parent) fsSync.closeSync(parent.fd);
+      parent = undefined;
     }
     this.parent = parent;
-    if (safety === "require-bounded" && (!parent || !isNativeCleanupBinding(this.binding))) {
+    let available = false;
+    if (parent && isNativeCleanupBinding(binding)) {
+      try {
+        available = binding.ownedTreeRemovalAvailable(parent.fd) === true;
+      } catch {
+        // Runtime denial must select fallback or reject before child creation.
+      }
+    }
+    this.#ownedTreeRemovalAvailable = available;
+    if (safety === "require-bounded" && !this.canRemoveOwnedTree) {
       this.close();
       throw new FsSafeError(
         "helper-unavailable",
@@ -64,7 +76,7 @@ export class TempWorkspaceCleanupCapability {
   }
 
   get canRemoveOwnedTree(): boolean {
-    return !this.#closed && this.parent !== undefined && isNativeCleanupBinding(this.binding);
+    return !this.#closed && this.#ownedTreeRemovalAvailable;
   }
 
   assertCurrent(): void {
@@ -180,8 +192,8 @@ export class TempWorkspaceCleanupOwner {
       const name = `.fs-safe-workspace-cleanup-${randomUUID()}`;
       const quarantinePath = path.join(parent.receipt.path, name);
       const nativeRemoval = this.#capability.canRemoveOwnedTree && this.#directory !== undefined;
-      if (typeof this.#capability.binding?.renameNoReplace === "function") {
-        this.#capability.binding.renameNoReplace(
+      if (nativeRemoval) {
+        this.#capability.binding!.renameNoReplace(
           parent.fd,
           path.basename(this.#dir),
           parent.fd,
