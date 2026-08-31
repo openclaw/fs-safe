@@ -37,7 +37,7 @@ describe.runIf(nativeCleanup).each(["async", "sync"] as const)("%s workspace cle
     return variant === "async" ? await tempWorkspace(options) : tempWorkspaceSync(options);
   }
 
-  it.each(["missing", "replacement"] as const)(
+  it.runIf(process.platform !== "win32").each(["missing", "replacement"] as const)(
     "reports indeterminate when the retained parent moves before cleanup with a %s public leaf",
     async (leaf) => {
       configureFsSafeNative({ mode: "require" });
@@ -64,7 +64,9 @@ describe.runIf(nativeCleanup).each(["async", "sync"] as const)("%s workspace cle
     },
   );
 
-  it("continues through the retained parent if its pathname moves after quarantine", async () => {
+  it.runIf(process.platform !== "win32")(
+    "continues through the retained parent if its pathname moves after quarantine",
+    async () => {
     configureFsSafeNative({ mode: "require" });
     const base = await tempRoot("fs-safe-temp-parent-after-");
     const rootDir = path.join(base, "parent");
@@ -96,8 +98,9 @@ describe.runIf(nativeCleanup).each(["async", "sync"] as const)("%s workspace cle
     await fs.writeFile(path.join(workspace.dir, "nested", "owned.txt"), "owned");
     expect(await workspace.cleanup()).toBe("removed");
     expect(await fs.readFile(path.join(replacement, "keep.txt"), "utf8")).toBe("replacement");
-    expect(await fs.readdir(moved)).toEqual([]);
-  });
+      expect(await fs.readdir(moved)).toEqual([]);
+    },
+  );
 
   it.each(["owned", "replacement"] as const)(
     "retains exit cleanup authority after a store-construction failure with %s path state",
