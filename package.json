@@ -128,7 +128,7 @@
     "prepack": "node scripts/prepack-build.mjs",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "test:coverage:collect": "vitest run --coverage --coverage.reporter=json --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 --coverage.thresholds.statements=0 --coverage.thresholds.branches=0",
+    "test:coverage:collect": "pnpm build && vitest run --coverage --coverage.reporter=json --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 --coverage.thresholds.statements=0 --coverage.thresholds.branches=0",
     "test:coverage:merge": "node scripts/merge-coverage.mjs",
     "test:security": "vitest run test/fs-safe.test.ts test/read-boundary-bypass.test.ts test/write-boundary-bypass.test.ts test/additional-boundary-bypass.test.ts test/adversarial-boundary-payloads.test.ts",
     "check": "pnpm lint:file-size && pnpm lint:fs-boundary && pnpm build && pnpm docs:check && pnpm test && node scripts/check-pack.mjs",
