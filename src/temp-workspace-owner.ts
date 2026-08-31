@@ -9,6 +9,7 @@ import { withAsyncDirectoryGuards, withSyncDirectoryGuards } from "./guarded-mut
 import { getNativeBinding, type NativeBinding } from "./native.js";
 import type { NativeOwnedTreeRemovalResult } from "./native-binding.js";
 import { assertStagedDirectoryCurrent, openStagedDirectory } from "./staged-directory.js";
+import { getFsSafeTestHooks } from "./test-hooks.js";
 
 export type TempWorkspaceCleanupResult = "removed" | "missing" | "identity-mismatch" | "indeterminate";
 export type TempWorkspaceCleanupSafety = "compatible" | "require-bounded";
@@ -227,6 +228,8 @@ export class TempWorkspaceCleanupOwner {
 
   async #remove(quarantine: Quarantine): Promise<TempWorkspaceCleanupResult> {
     if (quarantine.nativeRemoval) {
+      const beforeNativeRemoval = getFsSafeTestHooks()?.beforeTempWorkspaceNativeRemoval;
+      if (beforeNativeRemoval) await beforeNativeRemoval(quarantine.path);
       return this.#mapRemoval(await this.#capability.binding!.removeOwnedTree!(
         this.#capability.parent!.fd,
         quarantine.name,
@@ -254,6 +257,7 @@ export class TempWorkspaceCleanupOwner {
 
   #removeSync(quarantine: Quarantine): TempWorkspaceCleanupResult {
     if (quarantine.nativeRemoval) {
+      getFsSafeTestHooks()?.beforeTempWorkspaceNativeRemovalSync?.(quarantine.path);
       return this.#mapRemoval(this.#capability.binding!.removeOwnedTreeSync!(
         this.#capability.parent!.fd,
         quarantine.name,

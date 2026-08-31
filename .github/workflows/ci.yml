@@ -107,6 +107,9 @@ jobs:
       - name: Build and stage host binding
         run: pnpm native:build
 
+      - name: Prove temp workspace quarantine swap at native removal
+        run: node scripts/temp-workspace-quarantine-swap-proof.mjs
+
       - name: Test native mode auto
         run: node scripts/native-mode-smoke.mjs auto
 
@@ -153,6 +156,7 @@ jobs:
             cargo test --workspace --locked
             pnpm build
             pnpm native:build
+            node scripts/temp-workspace-quarantine-swap-proof.mjs
             pnpm package:smoke
             node scripts/native-mode-smoke.mjs auto
             node scripts/native-mode-smoke.mjs require

@@ -20,6 +20,8 @@ export type FsSafeTestHooks = {
   beforeSidecarLockSnapshotOpen?: (lockPath: string) => Promise<void> | void;
   beforeRegularFileAppendOpen?: (filePath: string) => Promise<void> | void;
   beforeRegularFileAppendOpenSync?: (filePath: string) => void;
+  beforeTempWorkspaceNativeRemoval?: (quarantinePath: string) => Promise<void> | void;
+  beforeTempWorkspaceNativeRemovalSync?: (quarantinePath: string) => void;
   beforeTrashMove?: (targetPath: string, destPath: string) => void;
   afterPublishTargetCreated?: (
     method: "hardlink" | "exclusive-copy" | "rename-noreplace",

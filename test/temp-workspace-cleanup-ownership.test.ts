@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { tempWorkspace, tempWorkspaceSync } from "../src/temp.js";
 import { __cleanupRegisteredTempPathsForTest } from "../src/temp-cleanup.js";
+import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import {
   __loadBundledNativeForTest,
@@ -24,6 +25,7 @@ const nativeCleanup = native && typeof native.removeOwnedTree === "function" &&
 const { tempRoot } = useRealTempDirs();
 
 afterEach(() => {
+  __setFsSafeTestHooksForTest();
   vi.restoreAllMocks();
   __cleanupRegisteredTempPathsForTest();
   __resetNativeLoaderForTest();
@@ -125,26 +127,23 @@ describe.runIf(nativeCleanup).each(["async", "sync"] as const)("%s temp workspac
   );
 
   it("preserves a nonempty quarantine replacement installed at native removal", async () => {
-    const { workspace, rootDir } = await setup();
+    __resetNativeLoaderForTest();
+    const { workspace } = await setup();
     let quarantine = "";
-    const swap = (basename: string) => {
-      quarantine = path.join(rootDir, basename);
+    const swap = vi.fn((quarantinePath: string) => {
+      quarantine = quarantinePath;
       fsSync.renameSync(quarantine, `${quarantine}.owned`);
       fsSync.mkdirSync(quarantine);
       fsSync.mkdirSync(path.join(quarantine, "nested"));
       fsSync.writeFileSync(path.join(quarantine, "nested", "keep.txt"), "replacement");
-    };
-    removeOwnedTree = vi.fn(async (...args) => {
-      swap(args[1]);
-      return await native!.removeOwnedTree!(...args);
     });
-    removeOwnedTreeSync = vi.fn((...args) => {
-      swap(args[1]);
-      return native!.removeOwnedTreeSync!(...args);
-    });
+    __setFsSafeTestHooksForTest(variant === "async"
+      ? { beforeTempWorkspaceNativeRemoval: swap }
+      : { beforeTempWorkspaceNativeRemovalSync: swap });
 
     expect(await workspace.cleanup()).toBe("indeterminate");
     expect(await workspace.cleanup()).toBe("indeterminate");
+    expect(swap).toHaveBeenCalledTimes(1);
     expect(await fs.readFile(path.join(quarantine, "nested", "keep.txt"), "utf8")).toBe("replacement");
     expect(await fs.readFile(path.join(`${quarantine}.owned`, "nested", "owned.txt"), "utf8"))
       .toBe("owned");
