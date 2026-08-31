@@ -99,7 +99,23 @@ export async function readSidecarLockSnapshot(
   let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
   try {
     if (options.lockRoot) {
-      const opened = await options.lockRoot.open(relativeSidecarLockPath(options.lockRoot, lockPath));
+      const lockRoot = options.lockRoot;
+      const relative = relativeSidecarLockPath(lockRoot, lockPath);
+      const opened = await lockRoot.open(relative).catch(async (error: unknown) => {
+        if (error instanceof FsSafeError && error.code === "path-mismatch") {
+          // An owner can unlink after open. Prove absence through the same root;
+          // acquisition retries create-only, so a later replacement stays guarded.
+          try {
+            await lockRoot.stat(relative);
+          } catch (probeError) {
+            if (probeError instanceof FsSafeError && probeError.code === "not-found") {
+              return null;
+            }
+          }
+        }
+        throw error;
+      });
+      if (!opened) return null;
       try {
         const raw = (await readFileHandleBounded(opened.handle, MAX_LOCK_PAYLOAD_BYTES)).toString("utf8");
         return {

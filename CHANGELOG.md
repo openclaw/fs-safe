@@ -4,6 +4,7 @@
 
 ### Security and Correctness
 
+- Treat Root-backed sidecar ownership records unlinked after open as absent for retry only after capability-backed absence proof; keep replacements fail-closed.
 - Update native gzip/DEFLATE decoding to flate2 1.1.10 and miniz_oxide 0.9.1, including upstream incomplete-stream rejection fixes; verify corrupted and truncated gzip archives fail before extraction publication or entry-read success.
 - Disable node-tar's hidden 1000x decompression threshold after complete fs-safe decoded-byte admission, allowing highly compressible gzip TARs within explicit archive, decoded, entry, output, and deadline limits to behave consistently across JavaScript and native backends.
 - Match archive entry reads to extraction's validated canonical pre-strip paths across JavaScript/native ZIP, TAR, gzip, zstd, and bzip2; resolve separator/dot aliases and effective metadata names while retaining directory, link, collision, integrity, and byte-limit checks.

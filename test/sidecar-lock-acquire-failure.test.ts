@@ -1,7 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useTempDirs } from "./helpers/vitest.js";
+import { pauseSidecarSnapshotOpen } from "./helpers/sidecar-snapshot.js";
+import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { configureFsSafeNative } from "../src/native-config.js";
 import { root } from "../src/root.js";
 import { createSidecarLockManager, withSidecarLock } from "../src/sidecar-lock.js";
@@ -16,6 +17,67 @@ afterEach(() => {
 });
 
 describe("asynchronous sidecar lock acquisition failures", () => {
+  itPosix.each([false, true])(
+    "acquires after the owner unlinks a Root snapshot (after identity check: %s)",
+    async (afterIdentityCheck) => {
+      const capability = await root(await tempRoot("fs-safe-sidecar-root-contention-"));
+      const targetPath = path.join(capability.rootReal, "state.json");
+      const lockPath = path.join(capability.rootReal, "owner.json");
+      const ownerManager = createSidecarLockManager(`root-owner-${targetPath}`);
+      const waiterManager = createSidecarLockManager(`root-waiter-${targetPath}`);
+      const options = { targetPath, lockPath, lockRoot: capability };
+      const owner = await ownerManager.acquire({
+        ...options,
+        payload: () => ({ owner: "original" }),
+      });
+      const ownerRaw = await capability.readText("owner.json");
+      const payload = { owner: "waiter", createdAt: "2999-01-01T00:00:00.000Z" };
+      const create = vi.spyOn(capability, "create");
+      const reading = Promise.withResolvers<ReturnType<typeof pauseSidecarSnapshotOpen>>();
+      const rootOpen = capability.open.bind(capability);
+      // Arm only for the snapshot, after create's own existing-file checks.
+      const open = vi.spyOn(capability, "open").mockImplementationOnce((...args) => {
+        reading.resolve(pauseSidecarSnapshotOpen(lockPath, afterIdentityCheck));
+        return rootOpen(...args);
+      });
+      const acquiring = waiterManager.acquire({
+        ...options,
+        payload: () => payload,
+        retry: { retries: 3, minTimeout: 1, maxTimeout: 1 },
+      });
+      const acquired = expect(acquiring).resolves.toMatchObject({ lockPath });
+      const gate = await reading.promise;
+      const opened = await gate.opened;
+      try {
+        __setFsSafeTestHooksForTest();
+        await owner.release();
+        await expect(capability.stat("owner.json")).rejects.toMatchObject({ code: "not-found" });
+      } finally {
+        gate.resume();
+      }
+      try {
+        await acquired;
+        const waiter = await acquiring;
+        const raw = await capability.readText("owner.json");
+        expect(JSON.parse(raw)).toEqual(payload);
+        expect(raw).not.toBe(ownerRaw);
+        expect(create.mock.calls.at(-1)?.[1]).toBe(raw);
+        if (afterIdentityCheck) {
+          await expect(open.mock.results[0]?.value).rejects.toMatchObject({ code: "path-mismatch" });
+        }
+        expect(opened.fd).toBe(-1);
+        await expect(waiter.verifyStillHeld()).resolves.toBe(true);
+        await waiter.release();
+        await expect(capability.stat("owner.json")).rejects.toMatchObject({ code: "not-found" });
+        expect(ownerManager.heldEntries()).toEqual([]);
+        expect(waiterManager.heldEntries()).toEqual([]);
+      } finally {
+        await ownerManager.drain();
+        await waiterManager.drain();
+      }
+    },
+  );
+
   it("removes a partially-written lock when payload persistence fails", async () => {
     configureFsSafeNative({ mode: "off" });
     const directory = await tempRoot("fs-safe-sidecar-write-failure-");
