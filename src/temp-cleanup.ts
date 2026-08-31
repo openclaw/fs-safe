@@ -12,6 +12,7 @@ type TempCleanupEntry = {
   recursive: boolean;
   identity?: FileIdentityStat;
   singleLinkFile?: boolean;
+  cleanupSync?: () => unknown;
 };
 
 const tempCleanupEntries = new Map<string, TempCleanupEntry>();
@@ -30,12 +31,23 @@ function pathStillMatchesReceipt(entry: TempCleanupEntry): boolean {
   }
 }
 
+function removeRegisteredPathSync(entry: TempCleanupEntry): void {
+  if (entry.singleLinkFile) fsSync.unlinkSync(entry.path);
+  else fsSync.rmSync(entry.path, { force: true, recursive: entry.recursive });
+}
+
+function cleanupEntrySync(entry: TempCleanupEntry): void {
+  if (entry.cleanupSync) {
+    entry.cleanupSync();
+  } else if (pathStillMatchesReceipt(entry)) {
+    removeRegisteredPathSync(entry);
+  }
+}
+
 function cleanupRegisteredTempPathsSync(): void {
   for (const entry of tempCleanupEntries.values()) {
     try {
-      if (pathStillMatchesReceipt(entry)) {
-        removeRegisteredPathSync(entry);
-      }
+      cleanupEntrySync(entry);
     } catch {
       // Process-exit cleanup is best-effort.
     }
@@ -43,14 +55,14 @@ function cleanupRegisteredTempPathsSync(): void {
   tempCleanupEntries.clear();
 }
 
-function removeRegisteredPathSync(entry: TempCleanupEntry): void {
-  if (entry.singleLinkFile) fsSync.unlinkSync(entry.path);
-  else fsSync.rmSync(entry.path, { force: true, recursive: entry.recursive });
-}
-
 export function registerTempPathForExit(
   tempPath: string,
-  options?: { recursive?: boolean; identity?: FileIdentityStat; singleLinkFile?: boolean },
+  options?: {
+    recursive?: boolean;
+    identity?: FileIdentityStat;
+    singleLinkFile?: boolean;
+    cleanupSync?: () => unknown;
+  },
 ): TempPathRegistration {
   if (!cleanupRegistered) {
     cleanupRegistered = true;
@@ -61,8 +73,9 @@ export function registerTempPathForExit(
     recursive: options?.recursive === true,
     identity: options?.identity,
     singleLinkFile: options?.singleLinkFile,
+    cleanupSync: options?.cleanupSync,
   };
-  if (!entry.identity) {
+  if (!entry.identity && !entry.cleanupSync) {
     try {
       entry.identity = fsSync.lstatSync(tempPath, { bigint: true });
     } catch {
@@ -71,7 +84,7 @@ export function registerTempPathForExit(
   }
   tempCleanupEntries.set(tempPath, entry);
   const unregister = (() => {
-    tempCleanupEntries.delete(tempPath);
+    if (tempCleanupEntries.get(tempPath) === entry) tempCleanupEntries.delete(tempPath);
   }) as TempPathRegistration;
   unregister.setIdentity = (identity) => {
     entry.identity = identity;
@@ -89,9 +102,7 @@ export function __cleanupRegisteredTempPathForTest(tempPath: string): void {
     return;
   }
   try {
-    if (pathStillMatchesReceipt(entry)) {
-      removeRegisteredPathSync(entry);
-    }
+    cleanupEntrySync(entry);
   } finally {
     tempCleanupEntries.delete(tempPath);
   }

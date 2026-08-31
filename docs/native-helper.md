@@ -31,6 +31,14 @@ The equivalent environment variables are `FS_SAFE_NATIVE_MODE` and `OPENCLAW_FS_
 
 Configure the mode once during startup. Loading is lazy and cached; changing from `auto` to `require` after a failed load changes failure policy but does not repeatedly probe the binary.
 
+[`tempWorkspace()` and its scoped/sync variants](temp.md#private-temp-workspaces)
+remain available in every mode. Their default compatible cleanup uses guarded
+JavaScript quarantine when owned native tree removal is unavailable.
+`cleanupSafety: "require-bounded"` instead rejects before child creation unless
+no-replace quarantine plus descriptor-relative owned-tree removal are available.
+Already-created strict workspaces retain their binding
+and descriptors across later mode changes.
+
 [`stageFileInDirectory()`](staged-file.md) always requires native support on
 Linux/macOS and rejects before creation when off, unavailable, or missing the
 required capability. Windows is unsupported for this lifecycle. This does not
@@ -44,9 +52,9 @@ clone/copy/hash workers, and Windows security descriptor calls. The TypeScript
 layer owns policy, retries, filters, budgets, modes, cleanup, error
 normalization, and the decision to fall back.
 
-- Linux uses `openat2` with `RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS`, `renameat`, and `renameat2(RENAME_NOREPLACE)`.
-- macOS 15.4 and newer prefer `O_RESOLVE_BENEATH`; older kernels resolve components with `O_NOFOLLOW` and restart in-root symlinks from the pinned root descriptor. Both routes use an `F_GETPATH` post-open escape detector and report `best-effort` because directory rename races are not atomic with that check. Publication uses `renameat` for replacement and `renameatx_np(RENAME_EXCL)` for no-replace.
-- Windows uses handle-relative `NtCreateFile`, rejects reparse points, and uses `FileRenameInfoEx` with replacement selected explicitly by the TypeScript policy layer.
+- Linux uses `openat2` with `RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS`, `renameat`, and `renameat2(RENAME_NOREPLACE)`. Owned-tree cleanup enumerates and unlinks through retained directory descriptors and rejects device crossings.
+- macOS 15.4 and newer prefer `O_RESOLVE_BENEATH`; older kernels resolve components with `O_NOFOLLOW` and restart in-root symlinks from the pinned root descriptor. Both routes use an `F_GETPATH` post-open escape detector and report `best-effort` because directory rename races are not atomic with that check. Publication uses `renameat` for replacement and `renameatx_np(RENAME_EXCL)` for no-replace; owned-tree cleanup uses descriptor-relative `openat`/`unlinkat`.
+- Windows uses handle-relative `NtCreateFile`, rejects reparse points, uses `FileRenameInfoEx` with replacement selected explicitly by the TypeScript policy layer, and deletes owned trees through exact opened handles with `FileDispositionInfoEx`.
 
 Native primitives back create-only and replacing pinned writes, async sidecar creation,
 guarded publication, archive acceleration, and direct Windows ACL operations.

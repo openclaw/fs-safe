@@ -1,3 +1,4 @@
+use std::ffi::CStr;
 #[cfg(target_os = "macos")]
 use std::ffi::CString;
 #[cfg(target_os = "macos")]
@@ -5,7 +6,7 @@ use std::ffi::c_void;
 use std::io::{Read, Write};
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd};
 
-use rustix::fs::{AtFlags, FileType, Mode, OFlags, RenameFlags};
+use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, RenameFlags};
 
 use crate::{FileIdentity, NativeResult, native_error};
 
@@ -311,6 +312,209 @@ pub(crate) fn remove_matching_child(
         Err(rustix::io::Errno::NOENT) => Ok("name-absent"),
         Err(error) => Err(os_error(error, "remove staged child")),
     }
+}
+
+fn same_identity(left: &rustix::fs::Stat, right: &rustix::fs::Stat) -> bool {
+    left.st_dev == right.st_dev && left.st_ino == right.st_ino
+}
+
+fn directory_name_matches_fd(parent_fd: i32, name: &str, directory_fd: i32) -> NativeResult<bool> {
+    let opened = rustix::fs::fstat(borrowed(directory_fd))
+        .map_err(|error| os_error(error, "inspect owned directory descriptor"))?;
+    let current = match rustix::fs::statat(
+        borrowed(parent_fd),
+        name,
+        AtFlags::SYMLINK_NOFOLLOW,
+    ) {
+        Ok(current) => current,
+        Err(rustix::io::Errno::NOENT) => return Ok(false),
+        Err(error) => return Err(os_error(error, "inspect owned directory name")),
+    };
+    Ok(FileType::from_raw_mode(opened.st_mode).is_dir()
+        && FileType::from_raw_mode(current.st_mode).is_dir()
+        && same_identity(&opened, &current))
+}
+
+fn directory_entry_matches_fd(
+    parent_fd: i32,
+    name: &CStr,
+    directory_fd: i32,
+) -> NativeResult<bool> {
+    let opened = rustix::fs::fstat(borrowed(directory_fd))
+        .map_err(|error| os_error(error, "inspect opened cleanup child"))?;
+    let current = match rustix::fs::statat(
+        borrowed(parent_fd),
+        name,
+        AtFlags::SYMLINK_NOFOLLOW,
+    ) {
+        Ok(current) => current,
+        Err(rustix::io::Errno::NOENT) => return Ok(false),
+        Err(error) => return Err(os_error(error, "inspect cleanup child name")),
+    };
+    Ok(FileType::from_raw_mode(opened.st_mode).is_dir()
+        && FileType::from_raw_mode(current.st_mode).is_dir()
+        && same_identity(&opened, &current))
+}
+
+#[cfg(target_os = "linux")]
+fn open_cleanup_directory(parent_fd: i32, name: &CStr) -> NativeResult<OwnedFd> {
+    use rustix::fs::{ResolveFlags, openat2};
+
+    openat2(
+        borrowed(parent_fd),
+        name,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+        ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS | ResolveFlags::NO_XDEV,
+    )
+    .map_err(|error| os_error(error, "open owned cleanup child without mount crossing"))
+}
+
+#[cfg(target_os = "macos")]
+fn open_cleanup_directory(parent_fd: i32, name: &CStr) -> NativeResult<OwnedFd> {
+    let child = rustix::fs::openat(
+        borrowed(parent_fd),
+        name,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|error| os_error(error, "open owned cleanup child"))?;
+    let parent_fs = rustix::fs::fstatfs(borrowed(parent_fd))
+        .map_err(|error| os_error(error, "inspect owned cleanup parent mount"))?;
+    let child_fs = rustix::fs::fstatfs(child.as_fd())
+        .map_err(|error| os_error(error, "inspect owned cleanup child mount"))?;
+    // SAFETY: macOS fsid_t is exactly two initialized i32 values in statfs.
+    let same_mount = unsafe {
+        libc::memcmp(
+            (&parent_fs.f_fsid as *const libc::fsid_t).cast(),
+            (&child_fs.f_fsid as *const libc::fsid_t).cast(),
+            std::mem::size_of::<libc::fsid_t>(),
+        ) == 0
+    };
+    if !same_mount {
+        return Err(native_error("EXDEV", "owned tree cleanup cannot cross mounts"));
+    }
+    Ok(child)
+}
+
+fn remove_directory_contents_with_hook(
+    directory_fd: i32,
+    root_device: u64,
+    before_entry_stat: &mut impl FnMut(&CStr),
+) -> NativeResult<()> {
+    let mut directory = Dir::read_from(borrowed(directory_fd))
+        .map_err(|error| os_error(error, "open owned directory stream"))?;
+    let mut names = Vec::new();
+    for entry in &mut directory {
+        let entry = entry.map_err(|error| os_error(error, "read owned directory entry"))?;
+        if !matches!(entry.file_name().to_bytes(), b"." | b"..") {
+            names.push((entry.file_name().to_owned(), entry.ino()));
+        }
+    }
+    drop(directory);
+
+    for (name, enumerated_inode) in names {
+        before_entry_stat(name.as_c_str());
+        let current = match rustix::fs::statat(
+            borrowed(directory_fd),
+            name.as_c_str(),
+            AtFlags::SYMLINK_NOFOLLOW,
+        ) {
+            Ok(current) => current,
+            Err(rustix::io::Errno::NOENT) => continue,
+            Err(error) => return Err(os_error(error, "inspect owned tree entry")),
+        };
+        if current.st_dev as u64 != root_device || current.st_ino as u64 != enumerated_inode {
+            return Err(native_error(
+                "path-mismatch",
+                "owned tree entry changed after enumeration",
+            ));
+        }
+        if FileType::from_raw_mode(current.st_mode).is_dir() {
+            let child = open_cleanup_directory(directory_fd, name.as_c_str())?;
+            let opened = rustix::fs::fstat(child.as_fd())
+                .map_err(|error| os_error(error, "inspect owned cleanup child"))?;
+            if !same_identity(&opened, &current) {
+                return Err(native_error(
+                    "path-mismatch",
+                    "owned tree child changed while opening",
+                ));
+            }
+            remove_directory_contents_with_hook(
+                child.as_raw_fd(),
+                root_device,
+                before_entry_stat,
+            )?;
+            if !directory_entry_matches_fd(directory_fd, name.as_c_str(), child.as_raw_fd())? {
+                return Err(native_error(
+                    "path-mismatch",
+                    "owned tree child changed before removal",
+                ));
+            }
+            match rustix::fs::unlinkat(
+                borrowed(directory_fd),
+                name.as_c_str(),
+                AtFlags::REMOVEDIR,
+            ) {
+                Ok(()) => {}
+                Err(rustix::io::Errno::NOENT | rustix::io::Errno::NOTEMPTY) => {
+                    return Err(native_error(
+                        "path-mismatch",
+                        "owned tree child changed during removal",
+                    ));
+                }
+                Err(error) => return Err(os_error(error, "remove owned directory child")),
+            }
+        } else {
+            match rustix::fs::unlinkat(
+                borrowed(directory_fd),
+                name.as_c_str(),
+                AtFlags::empty(),
+            ) {
+                Ok(()) | Err(rustix::io::Errno::NOENT) => {}
+                Err(error) => return Err(os_error(error, "remove owned file child")),
+            }
+        }
+    }
+    Ok(())
+}
+
+fn remove_directory_contents(directory_fd: i32, root_device: u64) -> NativeResult<()> {
+    remove_directory_contents_with_hook(directory_fd, root_device, &mut |_| {})
+}
+
+fn remove_owned_tree_with_hook(
+    parent_fd: i32,
+    name: &str,
+    directory_fd: i32,
+    before_root_unlink: impl FnOnce(),
+) -> NativeResult<String> {
+    validate_child_basename(name)?;
+    if !directory_name_matches_fd(parent_fd, name, directory_fd)? {
+        return Ok("preserved".to_owned());
+    }
+    let root = rustix::fs::fstat(borrowed(directory_fd))
+        .map_err(|error| os_error(error, "inspect owned tree root"))?;
+    remove_directory_contents(directory_fd, root.st_dev as u64)?;
+    if !directory_name_matches_fd(parent_fd, name, directory_fd)? {
+        return Ok("preserved".to_owned());
+    }
+    before_root_unlink();
+    match rustix::fs::unlinkat(borrowed(parent_fd), name, AtFlags::REMOVEDIR) {
+        Ok(()) => Ok("removed".to_owned()),
+        Err(rustix::io::Errno::NOENT | rustix::io::Errno::NOTEMPTY) => {
+            Ok("preserved".to_owned())
+        }
+        Err(error) => Err(os_error(error, "remove owned tree root")),
+    }
+}
+
+pub fn remove_owned_tree(
+    parent_fd: i32,
+    name: &str,
+    directory_fd: i32,
+) -> NativeResult<String> {
+    remove_owned_tree_with_hook(parent_fd, name, directory_fd, || {})
 }
 
 fn remove_created_target(root_fd: i32, rel_path: &str, target: &OwnedFd) {
@@ -951,6 +1155,93 @@ mod tests {
             )
             .is_err()
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn owned_tree_cleanup_rejects_an_enumerated_child_replacement() {
+        let root = temp_root("owned-child-race");
+        let workspace = root.join("workspace");
+        fs::create_dir(&workspace).unwrap();
+        fs::create_dir(workspace.join("nested")).unwrap();
+        fs::write(workspace.join("nested/owned"), b"owned").unwrap();
+        let directory = OpenOptions::new().read(true).open(&workspace).unwrap();
+        let stat = rustix::fs::fstat(borrowed(directory.as_raw_fd())).unwrap();
+        let mut swapped = false;
+        let error = remove_directory_contents_with_hook(
+            directory.as_raw_fd(),
+            stat.st_dev as u64,
+            &mut |name| {
+                if name.to_bytes() == b"nested" && !swapped {
+                    swapped = true;
+                    fs::rename(workspace.join("nested"), workspace.join("original")).unwrap();
+                    fs::create_dir(workspace.join("nested")).unwrap();
+                    fs::write(workspace.join("nested/keep"), b"replacement").unwrap();
+                }
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.status, "path-mismatch");
+        assert_eq!(fs::read(workspace.join("nested/keep")).unwrap(), b"replacement");
+        assert_eq!(fs::read(workspace.join("original/owned")).unwrap(), b"owned");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn owned_tree_cleanup_rejects_mount_crossings() {
+        let mounted = if cfg!(target_os = "linux") { "/proc" } else { "/dev" };
+        if !std::path::Path::new(mounted).is_dir() {
+            return;
+        }
+        let root = OpenOptions::new().read(true).open("/").unwrap();
+        let name = std::ffi::CString::new(mounted.trim_start_matches('/')).unwrap();
+        let error = open_cleanup_directory(root.as_raw_fd(), name.as_c_str()).unwrap_err();
+        assert_eq!(error.status, "EXDEV");
+    }
+
+    #[test]
+    fn owned_tree_cleanup_is_descriptor_relative_and_preserves_a_final_replacement() {
+        let root = temp_root("owned-tree");
+        let workspace = root.join("workspace");
+        fs::create_dir(&workspace).unwrap();
+        fs::create_dir(workspace.join("nested")).unwrap();
+        fs::write(workspace.join("nested/owned"), b"owned").unwrap();
+        let parent = OpenOptions::new().read(true).open(&root).unwrap();
+        let directory = OpenOptions::new().read(true).open(&workspace).unwrap();
+
+        let outcome = remove_owned_tree_with_hook(
+            parent.as_raw_fd(),
+            "workspace",
+            directory.as_raw_fd(),
+            || {
+                fs::rename(&workspace, root.join("original")).unwrap();
+                fs::create_dir(&workspace).unwrap();
+                fs::create_dir(workspace.join("nested")).unwrap();
+                fs::write(workspace.join("nested/keep"), b"replacement").unwrap();
+            },
+        )
+        .unwrap();
+
+        assert_eq!(outcome, "preserved");
+        assert_eq!(fs::read(workspace.join("nested/keep")).unwrap(), b"replacement");
+        assert!(fs::read_dir(root.join("original")).unwrap().next().is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn owned_tree_cleanup_removes_nested_entries() {
+        let root = temp_root("owned-tree-remove");
+        let workspace = root.join("workspace");
+        fs::create_dir(&workspace).unwrap();
+        fs::create_dir(workspace.join("nested")).unwrap();
+        fs::write(workspace.join("nested/owned"), b"owned").unwrap();
+        let parent = OpenOptions::new().read(true).open(&root).unwrap();
+        let directory = OpenOptions::new().read(true).open(&workspace).unwrap();
+        assert_eq!(
+            remove_owned_tree(parent.as_raw_fd(), "workspace", directory.as_raw_fd()).unwrap(),
+            "removed"
+        );
+        assert!(!workspace.exists());
         fs::remove_dir_all(root).unwrap();
     }
 
