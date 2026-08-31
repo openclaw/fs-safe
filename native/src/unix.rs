@@ -419,6 +419,43 @@ fn open_cleanup_directory(parent_fd: i32, name: &CStr) -> NativeResult<OwnedFd> 
     Ok(child)
 }
 
+fn remove_owned_file_child_with_hook(
+    directory_fd: i32,
+    name: &CStr,
+    expected: &rustix::fs::Stat,
+    before_unlink: impl FnOnce() -> rustix::io::Result<()>,
+) -> NativeResult<()> {
+    // This remains a pathname unlink, not an atomic expected-identity unlink.
+    match before_unlink().and_then(|()| {
+        rustix::fs::unlinkat(borrowed(directory_fd), name, AtFlags::empty())
+    }) {
+        Ok(()) | Err(rustix::io::Errno::NOENT) => Ok(()),
+        Err(error @ (rustix::io::Errno::ISDIR | rustix::io::Errno::PERM)) => {
+            let current = match rustix::fs::statat(
+                borrowed(directory_fd),
+                name,
+                AtFlags::SYMLINK_NOFOLLOW,
+            ) {
+                Ok(current) => current,
+                Err(rustix::io::Errno::NOENT) => return Ok(()),
+                Err(error) => return Err(os_error(error, "reinspect owned file child")),
+            };
+            let current_type = FileType::from_raw_mode(current.st_mode);
+            if current_type.is_dir()
+                || current_type != FileType::from_raw_mode(expected.st_mode)
+                || !same_identity(expected, &current)
+            {
+                return Err(native_error(
+                    "path-mismatch",
+                    "owned tree file child changed during removal",
+                ));
+            }
+            Err(os_error(error, "remove owned file child"))
+        }
+        Err(error) => Err(os_error(error, "remove owned file child")),
+    }
+}
+
 fn remove_directory_contents_with_hook(
     directory_fd: i32,
     root_device: u64,
@@ -479,7 +516,9 @@ fn remove_directory_contents_with_hook(
                 AtFlags::REMOVEDIR,
             ) {
                 Ok(()) => {}
-                Err(rustix::io::Errno::NOENT | rustix::io::Errno::NOTEMPTY) => {
+                Err(
+                    rustix::io::Errno::NOENT | rustix::io::Errno::NOTEMPTY | rustix::io::Errno::NOTDIR,
+                ) => {
                     return Err(native_error(
                         "path-mismatch",
                         "owned tree child changed during removal",
@@ -488,14 +527,12 @@ fn remove_directory_contents_with_hook(
                 Err(error) => return Err(os_error(error, "remove owned directory child")),
             }
         } else {
-            match rustix::fs::unlinkat(
-                borrowed(directory_fd),
+            remove_owned_file_child_with_hook(
+                directory_fd,
                 name.as_c_str(),
-                AtFlags::empty(),
-            ) {
-                Ok(()) | Err(rustix::io::Errno::NOENT) => {}
-                Err(error) => return Err(os_error(error, "remove owned file child")),
-            }
+                &current,
+                || Ok(()),
+            )?;
         }
     }
     Ok(())
@@ -1237,6 +1274,126 @@ mod tests {
         assert_eq!(fs::read(workspace.join("nested/keep")).unwrap(), b"replacement");
         assert_eq!(fs::read(workspace.join("original/owned")).unwrap(), b"owned");
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn owned_tree_file_unlink_preserves_a_final_directory_replacement() {
+        for injected in [
+            None,
+            Some(rustix::io::Errno::ISDIR),
+            Some(rustix::io::Errno::PERM),
+        ] {
+            let root = temp_root("owned-file-unlink-race");
+            let owned = b"owned\0\xff\n";
+            let replacement = b"replacement\0\xfe\n";
+            fs::write(root.join("leaf"), owned).unwrap();
+            let directory = fs::File::open(&root).unwrap();
+            let expected = rustix::fs::statat(
+                directory.as_fd(),
+                c"leaf",
+                AtFlags::SYMLINK_NOFOLLOW,
+            )
+            .unwrap();
+
+            let error = remove_owned_file_child_with_hook(
+                directory.as_raw_fd(),
+                c"leaf",
+                &expected,
+                || {
+                    fs::rename(root.join("leaf"), root.join("original")).unwrap();
+                    fs::create_dir(root.join("leaf")).unwrap();
+                    fs::write(root.join("leaf/keep"), replacement).unwrap();
+                    injected.map_or(Ok(()), Err)
+                },
+            )
+            .unwrap_err();
+
+            assert_eq!(error.status, "path-mismatch");
+            assert!(fs::symlink_metadata(root.join("leaf")).unwrap().is_dir());
+            assert_eq!(fs::read(root.join("leaf/keep")).unwrap(), replacement);
+            assert_eq!(fs::read(root.join("original")).unwrap(), owned);
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn owned_tree_file_unlink_keeps_operational_errors_for_the_expected_leaf() {
+        let root = temp_root("owned-file-unlink-denied");
+        let owned = b"owned\0\xff\n";
+        fs::write(root.join("leaf"), owned).unwrap();
+        let directory = fs::File::open(&root).unwrap();
+        let expected = rustix::fs::statat(
+            directory.as_fd(),
+            c"leaf",
+            AtFlags::SYMLINK_NOFOLLOW,
+        )
+        .unwrap();
+        for denied in [
+            rustix::io::Errno::PERM,
+            rustix::io::Errno::ISDIR,
+            rustix::io::Errno::ACCESS,
+        ] {
+            let error = remove_owned_file_child_with_hook(
+                directory.as_raw_fd(),
+                c"leaf",
+                &expected,
+                || Err(denied),
+            )
+            .unwrap_err();
+            let original = os_error(denied, "remove owned file child");
+            assert_eq!(error.status, original.status);
+            assert_eq!(error.reason, original.reason);
+            assert_eq!(fs::read(root.join("leaf")).unwrap(), owned);
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn owned_tree_file_unlink_reinspects_absence_and_leaf_identity_without_following_links() {
+        for injected in [rustix::io::Errno::ISDIR, rustix::io::Errno::PERM] {
+            for replacement in ["absent", "file", "symlink"] {
+                let root = temp_root("owned-file-unlink-reinspect");
+                fs::write(root.join("leaf"), b"owned").unwrap();
+                let directory = fs::File::open(&root).unwrap();
+                let expected = rustix::fs::statat(
+                    directory.as_fd(),
+                    c"leaf",
+                    AtFlags::SYMLINK_NOFOLLOW,
+                )
+                .unwrap();
+                let result = remove_owned_file_child_with_hook(
+                    directory.as_raw_fd(),
+                    c"leaf",
+                    &expected,
+                    || {
+                        fs::rename(root.join("leaf"), root.join("original")).unwrap();
+                        match replacement {
+                            "file" => fs::write(root.join("leaf"), b"replacement").unwrap(),
+                            "symlink" => {
+                                std::os::unix::fs::symlink("original", root.join("leaf")).unwrap();
+                            }
+                            _ => {}
+                        }
+                        Err(injected)
+                    },
+                );
+                if replacement == "absent" {
+                    result.unwrap();
+                } else {
+                    assert_eq!(result.unwrap_err().status, "path-mismatch");
+                    if replacement == "file" {
+                        assert_eq!(fs::read(root.join("leaf")).unwrap(), b"replacement");
+                    } else {
+                        assert_eq!(
+                            fs::read_link(root.join("leaf")).unwrap(),
+                            std::path::Path::new("original")
+                        );
+                    }
+                }
+                assert_eq!(fs::read(root.join("original")).unwrap(), b"owned");
+                fs::remove_dir_all(root).unwrap();
+            }
+        }
     }
 
     #[test]

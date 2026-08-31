@@ -222,20 +222,38 @@ describe.runIf(nativeCleanup).each(["async", "sync"] as const)("%s temp workspac
     },
   );
 
-  it("maps native ownership uncertainty to indeterminate without retrying", async () => {
+  it("preserves a leaf-to-directory replacement reported by native removal without retrying", async () => {
     const { workspace, rootDir } = await setup();
+    const owned = Buffer.from([0x6f, 0x77, 0x6e, 0x65, 0x64, 0x00, 0xff, 0x0a]);
+    const keep = Buffer.from([0x6b, 0x65, 0x65, 0x70, 0x00, 0xfe, 0x0a]);
+    await fs.writeFile(path.join(workspace.dir, "nested", "owned.txt"), owned);
     let quarantine = "";
-    renameNoReplace = (...args) => {
-      native!.renameNoReplace(...args);
-      quarantine = path.join(rootDir, args[3]);
+    const replaceLeaf = (name: string) => {
+      quarantine = path.join(rootDir, name);
+      const leaf = path.join(quarantine, "nested", "owned.txt");
+      fsSync.renameSync(leaf, `${leaf}.original`);
+      fsSync.mkdirSync(leaf);
+      fsSync.writeFileSync(path.join(leaf, "keep.txt"), keep);
+      // Rust owns the real final-unlink race; this boundary owns result mapping and lifetime.
+      return { errorCode: "path-mismatch", errorMessage: "owned tree file child changed during removal" };
     };
-    const uncertain = { errorCode: "path-mismatch", errorMessage: "injected ownership drift" };
-    removeOwnedTree = vi.fn(async () => uncertain);
-    removeOwnedTreeSync = vi.fn(() => uncertain);
+    const remove = vi.fn<NonNullable<NativeBinding["removeOwnedTree"]>>(
+      async (_parentFd, name) => replaceLeaf(name),
+    );
+    const removeSync = vi.fn<NonNullable<NativeBinding["removeOwnedTreeSync"]>>(
+      (_parentFd, name) => replaceLeaf(name),
+    );
+    removeOwnedTree = remove;
+    removeOwnedTreeSync = removeSync;
     expect(await workspace.cleanup()).toBe("indeterminate");
     expect(await workspace.cleanup()).toBe("indeterminate");
-    expect(await fs.readFile(path.join(quarantine, "nested", "owned.txt"), "utf8"))
-      .toBe("owned");
+    await expect(fs.lstat(workspace.dir)).rejects.toMatchObject({ code: "ENOENT" });
+    const leaf = path.join(quarantine, "nested", "owned.txt");
+    expect((await fs.lstat(leaf)).isDirectory()).toBe(true);
+    expect(await fs.readFile(path.join(leaf, "keep.txt"))).toEqual(keep);
+    expect(await fs.readFile(`${leaf}.original`)).toEqual(owned);
+    expect(remove).toHaveBeenCalledTimes(variant === "async" ? 1 : 0);
+    expect(removeSync).toHaveBeenCalledTimes(variant === "sync" ? 1 : 0);
   });
 
   it("propagates native operational failures and closes cleanup authority", async () => {
