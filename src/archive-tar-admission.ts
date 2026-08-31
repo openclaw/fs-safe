@@ -5,6 +5,7 @@ import { readTarHeaderPaths } from "./archive-tar-header.js";
 
 // node-tar's normalFsTypes/ReadEntry switch. All other non-metadata types
 // bypass both its filter and entry event; they still belong to our manifest.
+// Header.decode normalizes NUL to "0" before choosing the emitted File type.
 const visibleTypes = new Map<number, string>([
   [0, "File"], [0x30, "File"], [0x31, "Link"], [0x32, "SymbolicLink"],
   [0x33, "CharacterDevice"], [0x34, "BlockDevice"], [0x35, "Directory"],
