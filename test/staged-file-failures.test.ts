@@ -1,7 +1,7 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { stageFileInDirectory } from "../src/advanced.js";
 import { configureFsSafeNative } from "../src/native-config.js";
 import {
@@ -29,6 +29,7 @@ afterEach(() => {
 });
 
 describe.runIf(native)("staged ownership failure boundaries", () => {
+  beforeEach(() => configureFsSafeNative({ mode: "require" }));
   it.each(["fstat", "chmod", "write", "sync"])("cleans a moved parent after %s fails during setup", async (operation) => {
     const directory = await tempRoot("fs-safe-stage-setup-");
     const moved = `${directory}-moved`;

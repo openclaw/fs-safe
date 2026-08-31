@@ -7,14 +7,18 @@ use std::ptr::{null, null_mut};
 
 use windows_sys::Win32::Foundation::{
     CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS,
-    ERROR_FILE_EXISTS, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, GENERIC_READ, GetLastError,
-    HANDLE, INVALID_HANDLE_VALUE,
+    ERROR_FILE_EXISTS, ERROR_FILE_NOT_FOUND, ERROR_NO_MORE_FILES, ERROR_PATH_NOT_FOUND, GENERIC_READ,
+    GetLastError, HANDLE, INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
-    FILE_ATTRIBUTE_TAG_INFO, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE,
-    FILE_SHARE_READ, FILE_SHARE_WRITE, FileAttributeTagInfo, GetFileInformationByHandle,
-    GetFileInformationByHandleEx, ReOpenFile,
+    FILE_ATTRIBUTE_TAG_INFO, FILE_DISPOSITION_FLAG_DELETE,
+    FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
+    FILE_DISPOSITION_INFO_EX, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_ID_BOTH_DIR_INFO,
+    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FileAttributeTagInfo,
+    FileDispositionInfoEx, FileIdBothDirectoryInfo, FileIdBothDirectoryRestartInfo,
+    GetFileInformationByHandle, GetFileInformationByHandleEx, ReOpenFile,
+    SetFileInformationByHandle,
 };
 use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
@@ -32,6 +36,7 @@ const O_BINARY: i32 = 0x8000;
 
 const DELETE_ACCESS: u32 = 0x0001_0000;
 const SYNCHRONIZE_ACCESS: u32 = 0x0010_0000;
+const FILE_LIST_DIRECTORY: u32 = 0x0000_0001;
 const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
 const FILE_WRITE_ATTRIBUTES: u32 = 0x0000_0100;
 const FILE_OPEN: u32 = 1;
@@ -245,7 +250,7 @@ fn nt_error(status: i32, operation: &str) -> napi::Error<String> {
     win_error(unsafe { RtlNtStatusToDosError(status) }, operation)
 }
 
-fn assert_not_reparse(handle: HANDLE) -> NativeResult<()> {
+fn handle_is_reparse(handle: HANDLE) -> NativeResult<bool> {
     // SAFETY: info is a valid output buffer for the supplied class.
     let mut info: FILE_ATTRIBUTE_TAG_INFO = unsafe { zeroed() };
     let ok = unsafe {
@@ -260,13 +265,22 @@ fn assert_not_reparse(handle: HANDLE) -> NativeResult<()> {
         // SAFETY: GetLastError has no memory safety preconditions.
         return Err(win_error(unsafe { GetLastError() }, "inspect opened path"));
     }
-    if info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+    Ok(info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+}
+
+fn assert_not_reparse(handle: HANDLE) -> NativeResult<()> {
+    if handle_is_reparse(handle)? {
         return Err(native_error(
             "ELOOP",
             "reparse points are not allowed beneath root",
         ));
     }
     Ok(())
+}
+
+enum ReparsePolicy {
+    Reject,
+    AllowLeaf,
 }
 
 fn nt_open_relative(
@@ -276,6 +290,30 @@ fn nt_open_relative(
     disposition: u32,
     options: u32,
 ) -> NativeResult<OwnedHandle> {
+    nt_open_relative_with_policy(
+        root,
+        path,
+        desired_access,
+        disposition,
+        options,
+        ReparsePolicy::Reject,
+    )
+}
+
+fn nt_open_relative_with_policy(
+    root: HANDLE,
+    path: &str,
+    desired_access: u32,
+    disposition: u32,
+    options: u32,
+    reparse_policy: ReparsePolicy,
+) -> NativeResult<OwnedHandle> {
+    if matches!(reparse_policy, ReparsePolicy::AllowLeaf) {
+        crate::validate_relative_path(path, false)?;
+        if path.contains(['/', '\\']) {
+            return Err(native_error("EINVAL", "reparse leaf open requires a direct child"));
+        }
+    }
     let mut name = wide_relative(path)?;
     let mut unicode = UnicodeString {
         length: (name.len() * 2) as u16,
@@ -286,7 +324,11 @@ fn nt_open_relative(
         length: size_of::<ObjectAttributes>() as u32,
         root_directory: root,
         object_name: &mut unicode,
-        attributes: OBJ_CASE_INSENSITIVE | OBJ_DONT_REPARSE,
+        attributes: OBJ_CASE_INSENSITIVE | match reparse_policy {
+            ReparsePolicy::Reject => OBJ_DONT_REPARSE,
+            // Validated direct child: no intermediate components can reparse.
+            ReparsePolicy::AllowLeaf => 0,
+        },
         security_descriptor: null_mut(),
         security_quality_of_service: null_mut(),
     };
@@ -303,6 +345,7 @@ fn nt_open_relative(
             0,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             disposition,
+            // FILE_OPEN_REPARSE_POINT opens the final entry itself without reparsing.
             options | FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT,
             null(),
             0,
@@ -312,7 +355,9 @@ fn nt_open_relative(
         return Err(nt_error(status, "open path relative to root handle"));
     }
     let owned = OwnedHandle(handle);
-    assert_not_reparse(owned.0)?;
+    if matches!(reparse_policy, ReparsePolicy::Reject) {
+        assert_not_reparse(owned.0)?;
+    }
     Ok(owned)
 }
 
@@ -536,13 +581,19 @@ pub fn link_beneath(
     set_link_information(source.0, root_handle(target_root_fd)?, target_rel_path)
 }
 
+fn open_source_for_rename(root: HANDLE, path: &str) -> NativeResult<OwnedHandle> {
+    // Omitting both directory type flags admits files and directories, while
+    // nt_open_relative still rejects reparse points and requests delete access.
+    nt_open_relative(root, path, FILE_READ_ATTRIBUTES | DELETE_ACCESS, FILE_OPEN, 0)
+}
+
 pub fn rename_no_replace(
     source_root_fd: i32,
     source_rel_path: &str,
     target_root_fd: i32,
     target_rel_path: &str,
 ) -> NativeResult<()> {
-    let source = open_source_for_metadata(source_root_fd, source_rel_path, DELETE_ACCESS)?;
+    let source = open_source_for_rename(root_handle(source_root_fd)?, source_rel_path)?;
     set_rename_information(
         source.0,
         root_handle(target_root_fd)?,
@@ -558,7 +609,7 @@ pub fn rename_replace(
     target_root_fd: i32,
     target_rel_path: &str,
 ) -> NativeResult<()> {
-    let source = open_source_for_metadata(source_root_fd, source_rel_path, DELETE_ACCESS)?;
+    let source = open_source_for_rename(root_handle(source_root_fd)?, source_rel_path)?;
     set_rename_information(
         source.0,
         root_handle(target_root_fd)?,
@@ -566,6 +617,224 @@ pub fn rename_replace(
         true,
         "rename with replacement",
     )
+}
+
+fn handle_identity(handle: HANDLE) -> NativeResult<(u32, u64, bool)> {
+    // SAFETY: info is a valid output buffer for this API.
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { zeroed() };
+    if unsafe { GetFileInformationByHandle(handle, &mut info) } == 0 {
+        return Err(win_error(
+            unsafe { GetLastError() },
+            "inspect owned directory identity",
+        ));
+    }
+    Ok((
+        info.dwVolumeSerialNumber,
+        ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64,
+        info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0,
+    ))
+}
+
+pub fn owned_tree_removal_available(parent_fd: i32) -> bool {
+    parent_fd >= 0
+        && root_handle(parent_fd)
+            .and_then(|handle| {
+                assert_not_reparse(handle)?;
+                handle_identity(handle)
+            })
+            .is_ok_and(|identity| identity.2)
+}
+
+fn same_handle_identity(left: HANDLE, right: HANDLE) -> NativeResult<bool> {
+    let left = handle_identity(left)?;
+    let right = handle_identity(right)?;
+    Ok(left.2 && right.2 && left.0 == right.0 && left.1 == right.1)
+}
+
+fn list_directory_entries(directory: HANDLE) -> NativeResult<Vec<(String, u32, u64)>> {
+    let mut entries = Vec::new();
+    let mut restart = true;
+    loop {
+        let mut storage = vec![0_usize; (64_usize * 1024).div_ceil(size_of::<usize>())];
+        let class = if restart {
+            FileIdBothDirectoryRestartInfo
+        } else {
+            FileIdBothDirectoryInfo
+        };
+        let ok = unsafe {
+            GetFileInformationByHandleEx(
+                directory,
+                class,
+                storage.as_mut_ptr().cast(),
+                (storage.len() * size_of::<usize>()) as u32,
+            )
+        };
+        if ok == 0 {
+            let error = unsafe { GetLastError() };
+            if error == ERROR_NO_MORE_FILES {
+                break;
+            }
+            return Err(win_error(error, "enumerate owned directory"));
+        }
+        restart = false;
+        let bytes = storage.len() * size_of::<usize>();
+        let mut offset = 0_usize;
+        loop {
+            if offset + size_of::<FILE_ID_BOTH_DIR_INFO>() > bytes {
+                return Err(native_error("EIO", "invalid owned directory entry buffer"));
+            }
+            let info = unsafe {
+                &*storage
+                    .as_ptr()
+                    .cast::<u8>()
+                    .add(offset)
+                    .cast::<FILE_ID_BOTH_DIR_INFO>()
+            };
+            let name_bytes = info.FileNameLength as usize;
+            let name_offset = std::mem::offset_of!(FILE_ID_BOTH_DIR_INFO, FileName);
+            if name_bytes % 2 != 0 || offset + name_offset + name_bytes > bytes {
+                return Err(native_error("EIO", "invalid owned directory entry name"));
+            }
+            let name = unsafe {
+                std::slice::from_raw_parts(
+                    storage
+                        .as_ptr()
+                        .cast::<u8>()
+                        .add(offset + name_offset)
+                        .cast::<u16>(),
+                    name_bytes / 2,
+                )
+            };
+            let name = String::from_utf16(name)
+                .map_err(|_| native_error("EINVAL", "owned directory entry is not valid UTF-16"))?;
+            if name != "." && name != ".." {
+                entries.push((name, info.FileAttributes, info.FileId as u64));
+            }
+            if info.NextEntryOffset == 0 {
+                break;
+            }
+            offset = offset
+                .checked_add(info.NextEntryOffset as usize)
+                .ok_or_else(|| native_error("EIO", "owned directory entry offset overflow"))?;
+        }
+    }
+    Ok(entries)
+}
+
+fn mark_handle_for_deletion(handle: HANDLE) -> NativeResult<()> {
+    let info = FILE_DISPOSITION_INFO_EX {
+        Flags: FILE_DISPOSITION_FLAG_DELETE
+            | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS
+            | FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE,
+    };
+    let ok = unsafe {
+        SetFileInformationByHandle(
+            handle,
+            FileDispositionInfoEx,
+            (&info as *const FILE_DISPOSITION_INFO_EX).cast(),
+            size_of::<FILE_DISPOSITION_INFO_EX>() as u32,
+        )
+    };
+    if ok == 0 {
+        return Err(win_error(
+            unsafe { GetLastError() },
+            "remove owned tree handle",
+        ));
+    }
+    Ok(())
+}
+
+fn remove_directory_handle_with_hook(
+    directory: HANDLE,
+    before_child_open: &mut impl FnMut(&str),
+) -> NativeResult<()> {
+    let parent_volume = handle_identity(directory)?.0;
+    for (name, attributes, file_id) in list_directory_entries(directory)? {
+        let is_reparse = attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0;
+        let is_directory = attributes & FILE_ATTRIBUTE_DIRECTORY != 0;
+        let traverse = is_directory && !is_reparse;
+        before_child_open(&name);
+        let child = nt_open_relative_with_policy(
+            directory,
+            &name,
+            DELETE_ACCESS
+                | FILE_WRITE_ATTRIBUTES
+                | if traverse { FILE_LIST_DIRECTORY } else { 0 },
+            FILE_OPEN,
+            // Admit either type so substitutions reach the identity check.
+            0,
+            ReparsePolicy::AllowLeaf,
+        )?;
+        let opened = handle_identity(child.0)?;
+        let opened_reparse = handle_is_reparse(child.0)?;
+        if opened.0 != parent_volume || opened.1 != file_id || opened.2 != is_directory
+            || opened_reparse != is_reparse
+        {
+            return Err(native_error(
+                "path-mismatch",
+                "owned tree child changed while opening",
+            ));
+        }
+        if traverse {
+            remove_directory_handle_with_hook(child.0, before_child_open)?;
+        }
+        mark_handle_for_deletion(child.0)?;
+    }
+    Ok(())
+}
+
+fn remove_directory_handle(directory: HANDLE) -> NativeResult<()> {
+    remove_directory_handle_with_hook(directory, &mut |_| {})
+}
+
+fn remove_owned_tree_handles_with_hook(
+    parent: HANDLE,
+    name: &str,
+    expected: HANDLE,
+    before_root_delete: impl FnOnce(),
+) -> NativeResult<String> {
+    let owned = match nt_open_relative_with_policy(
+        parent,
+        name,
+        DELETE_ACCESS | FILE_WRITE_ATTRIBUTES | FILE_LIST_DIRECTORY,
+        FILE_OPEN,
+        // Classify a substituted quarantine entry without following or constraining its type.
+        0,
+        ReparsePolicy::AllowLeaf,
+    ) {
+        Ok(owned) => owned,
+        Err(error) if error.status == "ENOENT" => return Ok("preserved".to_owned()),
+        Err(error) => return Err(error),
+    };
+    if handle_is_reparse(owned.0)? || !same_handle_identity(expected, owned.0)? {
+        return Ok("preserved".to_owned());
+    }
+    remove_directory_handle(owned.0)?;
+    before_root_delete();
+    mark_handle_for_deletion(owned.0)?;
+    Ok("removed".to_owned())
+}
+
+fn remove_owned_tree_with_hook(
+    parent_fd: i32,
+    name: &str,
+    directory_fd: i32,
+    before_root_delete: impl FnOnce(),
+) -> NativeResult<String> {
+    remove_owned_tree_handles_with_hook(
+        root_handle(parent_fd)?,
+        name,
+        root_handle(directory_fd)?,
+        before_root_delete,
+    )
+}
+
+pub fn remove_owned_tree(
+    parent_fd: i32,
+    name: &str,
+    directory_fd: i32,
+) -> NativeResult<String> {
+    remove_owned_tree_with_hook(parent_fd, name, directory_fd, || {})
 }
 
 pub fn fstat_identity(fd: i32) -> NativeResult<FileIdentity> {
@@ -712,6 +981,233 @@ mod tests {
     #[test]
     fn maps_access_denied_to_node_filesystem_eperm() {
         assert_eq!(win_error(ERROR_ACCESS_DENIED, "test").status, "EPERM");
+    }
+
+    #[test]
+    fn reparse_leaf_open_requires_a_direct_child() {
+        for name in ["", ".", "..", "nested/child", "nested\\child"] {
+            let result = nt_open_relative_with_policy(
+                null_mut(), name, DELETE_ACCESS, FILE_OPEN, 0, ReparsePolicy::AllowLeaf,
+            );
+            assert_eq!(result.err().unwrap().status, "EINVAL");
+        }
+    }
+
+    #[test]
+    fn owned_tree_cleanup_preserves_a_directory_replaced_by_a_file() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "fs-safe-native-win-owned-type-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("nested")).unwrap();
+        fs::write(root.join("nested/owned"), b"owned").unwrap();
+        let directory = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS)
+            .open(&root)
+            .unwrap();
+        let error = remove_directory_handle_with_hook(
+            directory.as_raw_handle() as HANDLE,
+            &mut |name| {
+                assert_eq!(name, "nested");
+                fs::rename(root.join("nested"), root.join("original")).unwrap();
+                fs::write(root.join("nested"), b"replacement").unwrap();
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.status, "path-mismatch");
+        assert_eq!(fs::read(root.join("nested")).unwrap(), b"replacement");
+        assert_eq!(fs::read(root.join("original/owned")).unwrap(), b"owned");
+        drop(directory);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn owned_tree_cleanup_rejects_an_enumerated_child_replacement() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "fs-safe-native-win-owned-child-{}-{nonce}",
+            std::process::id()
+        ));
+        let workspace = root.join("workspace");
+        fs::create_dir_all(workspace.join("nested")).unwrap();
+        fs::write(workspace.join("nested/owned"), b"owned").unwrap();
+        let directory = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS)
+            .open(&workspace)
+            .unwrap();
+        let mut swapped = false;
+        let error = remove_directory_handle_with_hook(
+            directory.as_raw_handle() as HANDLE,
+            &mut |name| {
+                if name == "nested" && !swapped {
+                    swapped = true;
+                    fs::rename(workspace.join("nested"), workspace.join("original")).unwrap();
+                    fs::create_dir(workspace.join("nested")).unwrap();
+                    fs::write(workspace.join("nested/keep"), b"replacement").unwrap();
+                }
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.status, "path-mismatch");
+        assert_eq!(fs::read(workspace.join("nested/keep")).unwrap(), b"replacement");
+        assert_eq!(fs::read(workspace.join("original/owned")).unwrap(), b"owned");
+        drop(directory);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn owned_tree_cleanup_preserves_a_root_replaced_by_a_file() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "fs-safe-native-win-owned-root-type-{}-{nonce}",
+            std::process::id()
+        ));
+        let workspace = root.join("workspace");
+        fs::create_dir_all(workspace.join("nested")).unwrap();
+        fs::write(workspace.join("nested/owned"), b"owned").unwrap();
+        let parent = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS)
+            .open(&root)
+            .unwrap();
+        let directory = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS)
+            .open(&workspace)
+            .unwrap();
+        fs::rename(&workspace, root.join("original")).unwrap();
+        fs::write(&workspace, b"replacement").unwrap();
+
+        let outcome = remove_owned_tree_handles_with_hook(
+            parent.as_raw_handle() as HANDLE,
+            "workspace",
+            directory.as_raw_handle() as HANDLE,
+            || panic!("a substituted root must not reach deletion"),
+        )
+        .unwrap();
+        assert_eq!(outcome, "preserved");
+        assert_eq!(fs::read(&workspace).unwrap(), b"replacement");
+        assert_eq!(fs::read(root.join("original/nested/owned")).unwrap(), b"owned");
+        drop(directory);
+        drop(parent);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn owned_tree_cleanup_deletes_the_opened_root_not_a_final_replacement() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "fs-safe-native-win-owned-tree-{}-{nonce}",
+            std::process::id()
+        ));
+        let workspace = root.join("workspace");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(&workspace).unwrap();
+        fs::create_dir(workspace.join("nested")).unwrap();
+        fs::write(workspace.join("nested/owned"), b"owned").unwrap();
+        let parent = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS)
+            .open(&root)
+            .unwrap();
+        let directory = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS)
+            .open(&workspace)
+            .unwrap();
+
+        let outcome = remove_owned_tree_handles_with_hook(
+            parent.as_raw_handle() as HANDLE,
+            "workspace",
+            directory.as_raw_handle() as HANDLE,
+            || {
+                fs::rename(&workspace, root.join("original")).unwrap();
+                fs::create_dir(&workspace).unwrap();
+                fs::create_dir(workspace.join("nested")).unwrap();
+                fs::write(workspace.join("nested/keep"), b"replacement").unwrap();
+            },
+        )
+        .unwrap();
+        assert_eq!(outcome, "removed");
+        drop(directory);
+        assert_eq!(fs::read(workspace.join("nested/keep")).unwrap(), b"replacement");
+        assert!(!root.join("original").exists());
+        drop(parent);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn renames_directory_sources_without_replacing_destinations() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir()
+            .join(format!("fs-safe-native-win-dir-{}-{nonce}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(root.join("source")).unwrap();
+        fs::write(root.join("source/owned.txt"), b"owned").unwrap();
+        fs::create_dir(root.join("target")).unwrap();
+        fs::write(root.join("target/keep.txt"), b"keep").unwrap();
+        fs::create_dir(root.join("empty")).unwrap();
+        let parent = OpenOptions::new()
+            .read(true)
+            .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS)
+            .open(&root)
+            .unwrap();
+        let parent_handle = parent.as_raw_handle() as HANDLE;
+        let source = open_source_for_rename(parent_handle, "source").unwrap();
+        for target in ["target", "empty"] {
+            let error =
+                set_rename_information(source.0, parent_handle, target, false, "rename directory")
+                    .unwrap_err();
+            assert_eq!(error.status, "EEXIST");
+        }
+        assert_eq!(fs::read(root.join("source/owned.txt")).unwrap(), b"owned");
+        assert_eq!(fs::read(root.join("target/keep.txt")).unwrap(), b"keep");
+        assert_eq!(fs::read_dir(root.join("empty")).unwrap().count(), 0);
+        set_rename_information(source.0, parent_handle, "quarantine", false, "rename directory")
+            .unwrap();
+        assert!(!root.join("source").exists());
+        assert_eq!(fs::read(root.join("quarantine/owned.txt")).unwrap(), b"owned");
+        drop(source);
+        let quarantined = open_source_for_rename(parent_handle, "quarantine").unwrap();
+        set_rename_information(quarantined.0, parent_handle, "renamed", true, "rename directory")
+            .unwrap();
+        drop(quarantined);
+        assert!(!root.join("quarantine").exists());
+        assert_eq!(fs::read(root.join("renamed/owned.txt")).unwrap(), b"owned");
+        // Hard-link metadata opens must remain file-only.
+        assert!(nt_open_relative(
+            parent_handle,
+            "renamed",
+            FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES,
+            FILE_OPEN,
+            FILE_NON_DIRECTORY_FILE,
+        ).is_err());
+        drop(parent);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

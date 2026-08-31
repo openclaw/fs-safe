@@ -5,6 +5,7 @@ use napi_derive::napi;
 
 mod archive;
 mod fast_file;
+mod owned_tree;
 #[cfg(unix)]
 mod staged_file;
 mod tar_meter;
@@ -203,6 +204,10 @@ pub use archive::{
 };
 pub use fast_file::{
     FileHash, NativeCopyResult, clone_file_exclusive, copy_file_range_exclusive, sha256_file,
+};
+pub use owned_tree::{
+    NativeOwnedTreeRemovalResult, owned_tree_removal_available, remove_owned_tree,
+    remove_owned_tree_sync,
 };
 #[cfg(unix)]
 pub use staged_file::{create_staged_file, remove_staged_file, staged_file_matches};

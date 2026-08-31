@@ -38,6 +38,12 @@ export interface NativeOpenBeneathResult {
   containment: "kernel-atomic" | "best-effort";
 }
 
+export interface NativeOwnedTreeRemovalResult {
+  outcome?: "removed" | "preserved";
+  errorCode?: string;
+  errorMessage?: string;
+}
+
 export interface NativeWindowsAccessControlEntry {
   sid: string;
   mask: number;
@@ -114,6 +120,17 @@ export interface NativeBinding {
     signal: AbortSignal,
   ): Promise<Buffer>;
   readOwnerAndDacl(path: string): NativeWindowsSecurityFacts;
+  ownedTreeRemovalAvailable?(parentFd: number): boolean;
+  removeOwnedTree?(
+    parentFd: number,
+    basename: string,
+    directoryFd: number,
+  ): Promise<NativeOwnedTreeRemovalResult>;
+  removeOwnedTreeSync?(
+    parentFd: number,
+    basename: string,
+    directoryFd: number,
+  ): NativeOwnedTreeRemovalResult;
   renameNoReplace(
     sourceRootFd: number,
     sourceRelPath: string,

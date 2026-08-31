@@ -14,7 +14,7 @@ import {
 
 ## Private temp workspaces
 
-A private workspace is a directory created at mode `0o700` under a caller-provided temp root. It is unique per call (random suffix) and cleaned up when you call `cleanup()` or leave an `await using` scope.
+A private workspace is a directory created at mode `0o700` under a caller-provided temp root. It is unique per call (random suffix). Calling `cleanup()` or leaving an `await using` scope moves an unchanged workspace through a private quarantine before removal. Descriptor-bounded cleanup prevents recursive traversal of substitutions; the compatible JavaScript fallback has the narrower race contract documented below.
 
 ### `tempWorkspace`
 
@@ -31,7 +31,7 @@ type TempWorkspace = {
   writeJson(fileName: string, data: unknown, options?: { trailingNewline?: boolean }): Promise<string>;
   copyIn(fileName: string, sourcePath: string): Promise<string>;
   read(fileName: string): Promise<Buffer>;
-  cleanup(): Promise<"removed" | "missing" | "identity-mismatch">;
+  cleanup(): Promise<"removed" | "missing" | "identity-mismatch" | "indeterminate">;
   [Symbol.asyncDispose](): Promise<void>;
 };
 ```
@@ -64,12 +64,66 @@ await state.write({ ready: true });
 The workspace owns cleanup; the store is only a view over the workspace
 directory.
 
-The identity receipt is captured when the workspace is created. Manual,
-disposal, and process-exit cleanup remove the path only while `lstat` still
-matches that receipt. If another actor renames the workspace away and places a
-new directory at the old name, cleanup returns `"identity-mismatch"` and leaves
-the replacement untouched. Disposal hooks perform the same check and ignore
-the returned status.
+**Compatibility and security:** workspace creation remains available in native
+`auto`, `off`, and unavailable-native environments. The default
+`cleanupSafety: "compatible"` preserves the JavaScript cleanup behavior from
+0.6: it verifies the workspace identity, moves the public name to a fresh
+`.fs-safe-workspace-cleanup-<uuid>` sibling, verifies that quarantine, and then
+uses guarded pathname-recursive removal. This fallback never recursively
+removes the public workspace name, but it is not atomic conditional deletion: a
+same-privilege peer that discovers and replaces the private quarantine after
+verification can still redirect the final pathname removal.
+
+Set `cleanupSafety: "require-bounded"` when that concurrent attacker is in scope.
+Creation then requires native no-replace directory rename, native owned-tree
+removal, and a retained parent descriptor **before** `mkdtemp` creates
+a child. If any capability is unavailable, creation throws
+`FsSafeError("helper-unavailable")`; no child is created and a scoped callback is
+not called. The compatible default retains its fallback even if process-global
+native mode is `require`; select `require-bounded` to make cleanup capability
+mandatory for this API.
+
+On Linux, bounded cleanup requires a successful runtime probe of the exact
+`openat2` child-directory flags, including `RESOLVE_NO_XDEV`, against the retained
+parent descriptor. If the kernel or seccomp policy denies that capability,
+compatible mode uses the guarded JavaScript fallback; `require-bounded` rejects
+before child creation. The probe runs once at creation, without filesystem mutation.
+
+Bounded cleanup checks the parent and public workspace identity, quarantines
+the direct child without replacement, and verifies the quarantine against the
+retained workspace descriptor. It binds every enumerated child to its native
+identity before opening it, rejects mount crossings, and traverses descendants
+only through opened directory handles; symlinks/reparse entries are removed as
+leaves and never traversed. Windows marks the exact opened objects for deletion by handle.
+
+POSIX has no unlink-by-fd or expected-inode unlink for directory entries. After
+the final identity check, each `unlinkat` can still be raced; the possible side
+effect is bounded to one substituted non-directory leaf or one empty directory
+entry per raced syscall. A substituted nonempty directory is never recursively
+traversed and is preserved as `"indeterminate"`, but a leaf replacement removed
+in that irreducible final gap cannot be distinguished after the syscall.
+
+The workspace captures its identity, binding, and descriptors until cleanup.
+Later process-global mode changes or loader resets do not revoke that authority.
+Manual, disposal, and process-exit cleanup share one serialized owner,
+registered before store construction; a construction failure after registration
+remains exit-cleanable. Earlier creation failures close retained descriptors
+without deleting an unverified child.
+
+If the quarantine does not match the creation descriptor, cleanup leaves it in
+place without restoring the public name or recursively deleting it and returns
+`"indeterminate"`. A collision, uncertain rename outcome, changed parent,
+mount/device crossing, changed reparse state, or detected concurrent mutation also
+preserves the remaining artifact. Recover `.fs-safe-workspace-cleanup-<uuid>` entries only
+after excluding competing mutators and re-establishing ownership.
+
+A missing workspace returns `"missing"`. A replacement observed at the public
+name before quarantine returns `"identity-mismatch"` when the parent is stable;
+an ambiguous parent returns `"indeterminate"`. After successful removal,
+repeated cleanup returns `"missing"` without touching a recreated public name.
+Other statuses remain stable. Operational removal errors propagate and later
+cleanup returns `"indeterminate"` without retrying. Disposal and scoped helpers
+ignore returned statuses, while manual cleanup exposes the result.
 
 When cleanup is part of a retention or audit decision, inspect the receipt
 instead of treating cleanup as fire-and-forget:
@@ -82,6 +136,8 @@ try {
   const cleanup = await workspace.cleanup();
   if (cleanup === "identity-mismatch") {
     alertOperator("restore workspace path was replaced; replacement preserved");
+  } else if (cleanup === "indeterminate") {
+    alertOperator("restore workspace cleanup could not establish safe completion; inspect retained entries");
   }
 }
 ```
@@ -91,7 +147,7 @@ types and a `FileStoreSync` at `workspace.store`.
 
 ### `withTempWorkspace`
 
-The recommended shape. Auto-cleanup on every exit path:
+The recommended shape. Attempts cleanup on every exit path:
 
 ```ts
 import { withTempWorkspace } from "@openclaw/fs-safe/temp";
@@ -129,6 +185,7 @@ type TempWorkspaceOptions = {
   prefix: string;           // dir prefix (sanitized)
   dirMode?: number;         // dir mode; default 0o700
   mode?: number;            // file write mode; default 0o600
+  cleanupSafety?: "compatible" | "require-bounded"; // default compatible
 };
 ```
 

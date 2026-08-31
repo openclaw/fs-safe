@@ -9,7 +9,6 @@ import {
   type FileStoreSync,
 } from "./file-store.js";
 import { FsSafeError } from "./errors.js";
-import { sameFileIdentityForCleanup } from "./file-identity.js";
 import { isNotFoundPathError } from "./path.js";
 import { throwFsSafeReadError } from "./read-error.js";
 import {
@@ -21,14 +20,24 @@ import {
   registerTempPathForExit,
   type TempPathIdentityReceipt,
 } from "./temp-cleanup.js";
+import {
+  TempWorkspaceCleanupCapability,
+  TempWorkspaceCleanupOwner,
+  type TempWorkspaceCleanupResult,
+  type TempWorkspaceCleanupSafety,
+} from "./temp-workspace-owner.js";
 
-export type TempWorkspaceCleanupResult = "removed" | "missing" | "identity-mismatch";
+export type {
+  TempWorkspaceCleanupResult,
+  TempWorkspaceCleanupSafety,
+} from "./temp-workspace-owner.js";
 
 export type TempWorkspaceOptions = {
   rootDir: string;
   prefix: string;
   dirMode?: number;
   mode?: number;
+  cleanupSafety?: TempWorkspaceCleanupSafety;
 };
 
 export type TempWorkspace = {
@@ -61,6 +70,14 @@ export type TempWorkspaceSync = {
   cleanup(): TempWorkspaceCleanupResult;
   [Symbol.dispose](): void;
 };
+
+function resolveTempWorkspaceCleanupSafety(
+  value: TempWorkspaceCleanupSafety | undefined,
+): TempWorkspaceCleanupSafety {
+  if (value === undefined || value === "compatible") return "compatible";
+  if (value === "require-bounded") return value;
+  throw new TypeError("cleanupSafety must be compatible or require-bounded");
+}
 
 function sanitizeTempPrefix(prefix: string): string {
   const sanitized = prefix.trim().replace(/[^a-zA-Z0-9._-]/g, "-");
@@ -139,60 +156,44 @@ function ensurePrivateDirectorySync(dir: string, mode: number): void {
   }
 }
 
-async function cleanupWorkspace(
-  dir: string,
-  identity: TempPathIdentityReceipt,
-): Promise<TempWorkspaceCleanupResult> {
-  let current;
-  try {
-    current = await fs.lstat(dir, { bigint: true });
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "identity-mismatch";
-  }
-  if (!sameFileIdentityForCleanup(current, identity)) {
-    return "identity-mismatch";
-  }
-  await fs.rm(dir, { recursive: true, force: true });
-  return "removed";
-}
-
-function cleanupWorkspaceSync(
-  dir: string,
-  identity: TempPathIdentityReceipt,
-): TempWorkspaceCleanupResult {
-  let current;
-  try {
-    current = fsSync.lstatSync(dir, { bigint: true });
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "identity-mismatch";
-  }
-  if (!sameFileIdentityForCleanup(current, identity)) {
-    return "identity-mismatch";
-  }
-  fsSync.rmSync(dir, { recursive: true, force: true });
-  return "removed";
-}
-
 async function createTempWorkspace(
   options: TempWorkspaceOptions,
 ): Promise<TempWorkspace> {
   const dirMode = options.dirMode ?? 0o700;
   const mode = options.mode ?? 0o600;
+  const cleanupSafety = resolveTempWorkspaceCleanupSafety(options.cleanupSafety);
   const requestedRoot = path.resolve(options.rootDir);
   const root = await fs.realpath(requestedRoot).catch(() => requestedRoot);
   await ensurePrivateDirectory(root, dirMode);
-  const dir = await fs.mkdtemp(path.join(root, sanitizeTempPrefix(options.prefix)));
-  await fs.chmod(dir, dirMode).catch(() => undefined);
-  const stat = await fs.lstat(dir, { bigint: true });
-  if (stat.isSymbolicLink() || !stat.isDirectory()) {
-    throw new Error(`Temp workspace must be a directory: ${dir}`);
+  const capability = new TempWorkspaceCleanupCapability(root, cleanupSafety);
+  let dir: string;
+  let stat: fsSync.BigIntStats;
+  let cleanupOwner: TempWorkspaceCleanupOwner | undefined;
+  let unregisterTempDir: () => void;
+  try {
+    dir = await fs.mkdtemp(path.join(root, sanitizeTempPrefix(options.prefix)));
+    await fs.chmod(dir, dirMode).catch(() => undefined);
+    stat = await fs.lstat(dir, { bigint: true });
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      throw new Error(`Temp workspace must be a directory: ${dir}`);
+    }
+    if (capability.parent) capability.assertCurrent();
+    cleanupOwner = new TempWorkspaceCleanupOwner(dir, stat, capability);
+    unregisterTempDir = registerTempPathForExit(dir, {
+      cleanupSync: () => cleanupOwner!.cleanupSync(),
+    });
+  } catch (error) {
+    try {
+      if (cleanupOwner) cleanupOwner.cleanupSync();
+      else capability.close();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "temp workspace creation and cleanup both failed");
+    }
+    throw error;
   }
+  const owner = cleanupOwner!;
   const identity = { dev: Number(stat.dev), ino: Number(stat.ino) };
-  const cleanupIdentity = { dev: stat.dev, ino: stat.ino };
-  const unregisterTempDir = registerTempPathForExit(dir, {
-    recursive: true,
-    identity: cleanupIdentity,
-  });
+  // Once registered, even a store-construction failure remains exit-cleanable.
   const store = fileStore({ rootDir: dir, private: true, dirMode, mode });
 
   return {
@@ -220,14 +221,14 @@ async function createTempWorkspace(
     },
     cleanup: async () => {
       try {
-        return await cleanupWorkspace(dir, cleanupIdentity);
+        return await owner.cleanup();
       } finally {
         unregisterTempDir();
       }
     },
     [Symbol.asyncDispose]: async () => {
       try {
-        await cleanupWorkspace(dir, cleanupIdentity);
+        await owner.cleanup();
       } finally {
         unregisterTempDir();
       }
@@ -261,6 +262,7 @@ export function tempWorkspaceSync(
 ): TempWorkspaceSync {
   const dirMode = options.dirMode ?? 0o700;
   const mode = options.mode ?? 0o600;
+  const cleanupSafety = resolveTempWorkspaceCleanupSafety(options.cleanupSafety);
   const requestedRoot = path.resolve(options.rootDir);
   let root = requestedRoot;
   try {
@@ -269,22 +271,39 @@ export function tempWorkspaceSync(
     root = requestedRoot;
   }
   ensurePrivateDirectorySync(root, dirMode);
-  const dir = fsSync.mkdtempSync(path.join(root, sanitizeTempPrefix(options.prefix)));
+  const capability = new TempWorkspaceCleanupCapability(root, cleanupSafety);
+  let dir: string;
+  let stat: fsSync.BigIntStats;
+  let cleanupOwner: TempWorkspaceCleanupOwner | undefined;
+  let unregisterTempDir: () => void;
   try {
-    fsSync.chmodSync(dir, dirMode);
-  } catch {
-    // Best-effort on platforms that do not enforce POSIX modes.
+    dir = fsSync.mkdtempSync(path.join(root, sanitizeTempPrefix(options.prefix)));
+    try {
+      fsSync.chmodSync(dir, dirMode);
+    } catch {
+      // Best-effort on platforms that do not enforce POSIX modes.
+    }
+    stat = fsSync.lstatSync(dir, { bigint: true });
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      throw new Error(`Temp workspace must be a directory: ${dir}`);
+    }
+    if (capability.parent) capability.assertCurrent();
+    cleanupOwner = new TempWorkspaceCleanupOwner(dir, stat, capability);
+    unregisterTempDir = registerTempPathForExit(dir, {
+      cleanupSync: () => cleanupOwner!.cleanupSync(),
+    });
+  } catch (error) {
+    try {
+      if (cleanupOwner) cleanupOwner.cleanupSync();
+      else capability.close();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "temp workspace creation and cleanup both failed");
+    }
+    throw error;
   }
-  const stat = fsSync.lstatSync(dir, { bigint: true });
-  if (stat.isSymbolicLink() || !stat.isDirectory()) {
-    throw new Error(`Temp workspace must be a directory: ${dir}`);
-  }
+  const owner = cleanupOwner!;
   const identity = { dev: Number(stat.dev), ino: Number(stat.ino) };
-  const cleanupIdentity = { dev: stat.dev, ino: stat.ino };
-  const unregisterTempDir = registerTempPathForExit(dir, {
-    recursive: true,
-    identity: cleanupIdentity,
-  });
+  // Once registered, even a store-construction failure remains exit-cleanable.
   const store = fileStoreSync({ rootDir: dir, private: true, dirMode, mode });
 
   return {
@@ -323,14 +342,14 @@ export function tempWorkspaceSync(
     },
     cleanup: () => {
       try {
-        return cleanupWorkspaceSync(dir, cleanupIdentity);
+        return owner.cleanupSync();
       } finally {
         unregisterTempDir();
       }
     },
     [Symbol.dispose]: () => {
       try {
-        cleanupWorkspaceSync(dir, cleanupIdentity);
+        owner.cleanupSync();
       } finally {
         unregisterTempDir();
       }

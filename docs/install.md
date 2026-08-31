@@ -92,9 +92,9 @@ native targets and npm-compatible OS, CPU, and Linux libc filters install only
 the matching binary. Consumers do not run a native build, download code at
 runtime, or execute a postinstall step. Omitting optional dependencies keeps
 non-archive fallback-capable operations working in `auto` or `off`. Native-only
-features, including retained-directory staging, atomic `rename-noreplace`,
-zstd/bzip2 TAR handling, and Windows private-directory creation, remain
-unavailable. Operations needing the binding in `require` mode fail with
+features, including strict owned-tree temp cleanup, retained-directory staging,
+atomic `rename-noreplace`, zstd/bzip2 TAR handling, and Windows private-directory
+creation, remain unavailable. Operations needing the binding in `require` mode fail with
 `helper-unavailable` when the matching package is absent or incompatible.
 
 Upgrading an existing 0.5 consumer? Follow [Migrating to 0.6](migrating-to-0.6.md)
@@ -127,7 +127,11 @@ FS_SAFE_NATIVE_MODE=off      # auto | off | require
 Disabling native loading keeps fallback-capable operations working through Node path
 operations guarded by lexical and canonical checks plus identity verification.
 Use `require` when native-backed operations must fail instead of falling back.
-The exact boundary is documented in [native helper policy](native-helper.md).
+Temp workspaces retain compatible JavaScript quarantine cleanup in `auto` and
+`off`. Set `cleanupSafety: "require-bounded"` to reject before child creation
+unless native no-replace quarantine and descriptor-bounded tree removal are
+available. See the [temp workspace contract](temp.md#private-temp-workspaces). The exact boundary
+for other operations is documented in [native helper policy](native-helper.md).
 
 ## Verify the install
 

@@ -618,7 +618,6 @@ describe("temporary workspace and symlink parent helpers", () => {
     const root = await tempRoot("fs-safe-workspace-extra-");
     const source = path.join(root, "source.txt");
     await fs.writeFile(source, "copy", "utf8");
-
     const workspace = await tempWorkspace({ rootDir: root, prefix: "bad prefix!" });
     expect(() => workspace.path("../bad")).toThrow("Invalid temp workspace");
     const privateFile = await workspace.write("private.bin", Buffer.from("private"));
@@ -634,7 +633,6 @@ describe("temporary workspace and symlink parent helpers", () => {
     expect(path.basename(textFile)).toBe("text.txt");
     await expect(fs.readFile(jsonFile, "utf8")).resolves.toBe('{\n  "ok": true\n}');
     await workspace.cleanup();
-
     await expect(
       withTempWorkspace({ rootDir: root, prefix: "." }, async (scoped) => {
         await scoped.writeText("value.txt", "value");

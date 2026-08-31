@@ -3,6 +3,7 @@ export {
   type TempWorkspace,
   type TempWorkspaceOptions,
   type TempWorkspaceCleanupResult,
+  type TempWorkspaceCleanupSafety,
   tempWorkspaceSync,
   type TempWorkspaceSync,
   withTempWorkspace,

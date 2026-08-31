@@ -20,7 +20,7 @@ import {
   tryReadSecretFile,
 } from "../src/secret.js";
 import { tempWorkspace } from "../src/temp.js";
-import { configureFsSafeNative } from "../src/native-config.js";
+import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { FsSafeError } from "../src/errors.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 
@@ -28,7 +28,7 @@ const { tempDirs, tempRoot } = useTempDirs();
 
 
 afterEach(async () => {
-  configureFsSafeNative({ mode: "auto" });
+  __resetFsSafeNativeConfigForTest();
   __setFsSafeTestHooksForTest();
   vi.restoreAllMocks();
 });

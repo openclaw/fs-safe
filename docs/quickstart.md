@@ -145,7 +145,7 @@ await withTempWorkspace({ rootDir: "/srv/jobs/tmp", prefix: "build-" }, async (w
 });
 ```
 
-The directory is mode `0700`, sits under a per-user secure temp root, and is removed when the callback returns or throws. See [Temp workspaces](temp.md).
+The directory is mode `0700` under the caller-provided root, and cleanup runs when the callback returns or throws. Compatible cleanup remains available without native support; pass `cleanupSafety: "require-bounded"` to require native no-replace quarantine and descriptor-bounded tree removal before creating a child. Cleanup preserves raced or ambiguous entries under a private quarantine name. See the [temp workspace compatibility and security contract](temp.md#private-temp-workspaces).
 
 ## Where to next
 

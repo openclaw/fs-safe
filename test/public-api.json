@@ -482,6 +482,7 @@
         "TempPathIdentityReceipt",
         "TempWorkspace",
         "TempWorkspaceCleanupResult",
+        "TempWorkspaceCleanupSafety",
         "TempWorkspaceOptions",
         "TempWorkspaceSync"
       ],
