@@ -12,7 +12,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 bzip2 = "0.6.1"
-flate2 = "1.1.9"
+flate2 = "1.1.10"
 napi = { version = "3.12.2", default-features = false, features = ["dyn-symbols", "napi8"] }
 napi-derive = "3.6.3"
 sha2 = "0.11.0"
