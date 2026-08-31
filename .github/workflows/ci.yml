@@ -61,6 +61,12 @@ jobs:
       - name: Check JavaScript fallback
         run: pnpm check
 
+      - name: Prove Root sidecar unlinked snapshot handoff and replacement rejection
+        if: matrix.node == 24 && (matrix.os == 'ubuntu-latest' || matrix.os == 'macos-15')
+        env:
+          NODE_ENV: test
+        run: node scripts/sidecar-unlinked-snapshot-proof.mjs
+
       - name: Prove regular append identity on Windows
         if: matrix.os == 'windows-latest'
         env:
