@@ -2,7 +2,7 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { itPosix, itWin32, useTempDirs } from "./helpers/vitest.js";
+import { itWin32, useTempDirs } from "./helpers/vitest.js";
 import { acquireFileLockSync } from "../src/file-lock.js";
 import { root } from "../src/root.js";
 
@@ -203,7 +203,9 @@ describe("synchronous file-lock failure handling", () => {
   it("falls back to the resolved target when parent realpath lookup fails", async () => {
     const root = await tempRoot("fs-safe-sync-lock-realpath-failure-");
     const targetPath = path.join(root, "state.json");
-    vi.spyOn(fsSync, "realpathSync").mockImplementationOnce(() => {
+    const realpath = process.platform === "win32"
+      ? vi.spyOn(fsSync.realpathSync, "native") : vi.spyOn(fsSync, "realpathSync");
+    realpath.mockImplementationOnce(() => {
       throw Object.assign(new Error("realpath unavailable"), { code: "EIO" });
     });
 
@@ -221,7 +223,7 @@ describe("synchronous file-lock failure handling", () => {
     expect(fsSync.existsSync(lock.lockPath)).toBe(false);
   });
 
-  itPosix("bounds synchronous lock paths through a Root capability", async () => {
+  it("bounds synchronous lock paths through a Root capability", async () => {
     const directory = await tempRoot("fs-safe-sync-lock-root-");
     const lockDirectory = path.join(directory, "locks");
     await fs.mkdir(lockDirectory);
@@ -240,19 +242,48 @@ describe("synchronous file-lock failure handling", () => {
     })).toThrow(expect.objectContaining({ code: "outside-workspace" }));
   });
 
-  itWin32("fails closed when a synchronous lock parent cannot match the Root canonical path", async () => {
+  itWin32.each([false, true])("canonicalizes Windows Root sync locks (explicit path: %s)", async (explicit) => {
     const directory = await tempRoot("fs-safe-sync-lock-root-win32-");
-    const lockDirectory = path.join(directory, "locks");
-    const lockPath = path.join(lockDirectory, "state.lock");
-    await fs.mkdir(lockDirectory);
-    const lockRoot = await root(lockDirectory);
+    const lockRoot = await root(directory);
+    const canonicalTarget = path.join(lockRoot.rootReal, "state.json");
+    const options = {
+      ...lockOptions(), lockRoot, reentrantOwner: "canonical-owner",
+      ...(explicit ? { lockPath: path.join(directory, "custom.lock") } : {}),
+    };
+    const realpath = vi.spyOn(fsSync.realpathSync, "native");
+    const first = acquireFileLockSync(path.join(directory, "state.json"), options);
+    let second: ReturnType<typeof acquireFileLockSync> | undefined;
+    try {
+      second = acquireFileLockSync(canonicalTarget, options);
+      expect(realpath).toHaveBeenCalledTimes(4);
+      expect(first.normalizedTargetPath).toBe(canonicalTarget);
+      expect(second.normalizedTargetPath).toBe(canonicalTarget);
+      expect(first.lockPath).toBe(path.join(lockRoot.rootReal, explicit ? "custom.lock" : "state.json.lock"));
+      expect(second.lockPath).toBe(first.lockPath);
+      expect(first.verifyStillHeld()).toBe(true);
+      expect(() => acquireFileLockSync(canonicalTarget, { ...options, reentrantOwner: "other-owner" }))
+        .toThrow(expect.objectContaining({ code: "file_lock_timeout" }));
+      first.release();
+      expect(second.verifyStillHeld()).toBe(true);
+    } finally {
+      first.release();
+      second?.release();
+    }
+    expect(fsSync.existsSync(first.lockPath)).toBe(false);
+  });
 
-    expect(() => acquireFileLockSync(path.join(directory, "state.json"), {
-      ...lockOptions(),
-      lockPath,
-      lockRoot,
-    })).toThrow(expect.objectContaining({ code: "outside-workspace" }));
-    expect(fsSync.existsSync(lockPath)).toBe(false);
+  it.each(["EPERM", "ENOENT", "EIO"])("does not bypass a Root parent realpath %s", async (code) => {
+    const directory = await tempRoot("fs-safe-sync-lock-root-realpath-");
+    const lockRoot = await root(directory);
+    const target = path.join(directory, "state.json");
+    const failure = Object.assign(new Error("canonical parent unavailable"), { code, path: `${target}.lock` });
+    const realpath = process.platform === "win32"
+      ? vi.spyOn(fsSync.realpathSync, "native") : vi.spyOn(fsSync, "realpathSync");
+    realpath.mockImplementation(() => { throw failure; });
+    const open = vi.spyOn(fsSync, "openSync");
+    expect(() => acquireFileLockSync(target, { ...lockOptions(), lockRoot })).toThrow(failure);
+    expect(open).not.toHaveBeenCalled();
+    expect(fsSync.existsSync(`${target}.lock`)).toBe(false);
   });
 
   it("sleeps for a bounded retry before timing out on an in-process holder", async () => {
@@ -282,14 +313,14 @@ describe("synchronous file-lock failure handling", () => {
     );
   });
 
-  itPosix("rejects a lexically-contained lock parent that resolves outside lockRoot", async () => {
+  it("rejects a lexically-contained lock parent that resolves outside lockRoot", async () => {
     const directory = await tempRoot("fs-safe-sync-lock-root-parent-swap-");
     const lockDirectory = path.join(directory, "locks");
     const outside = path.join(directory, "outside");
     const linkedParent = path.join(lockDirectory, "linked");
     await fs.mkdir(lockDirectory);
     await fs.mkdir(outside);
-    await fs.symlink(outside, linkedParent);
+    await fs.symlink(outside, linkedParent, process.platform === "win32" ? "junction" : "dir");
     const lockRoot = await root(lockDirectory);
 
     expect(() => acquireFileLockSync(path.join(directory, "state.json"), {

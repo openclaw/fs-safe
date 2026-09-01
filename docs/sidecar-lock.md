@@ -100,10 +100,12 @@ result is passed to `shouldReclaim` and `shouldRemoveStaleLock`, allowing PID,
 process-start, argv, or role schemas to remain application-owned.
 
 On Windows, a pathed `EPERM` from creating or opening the lock file can be a
-short teardown race after another holder unlinks it. The async lock retries that
-specific denial at most eight times. A parent-directory denial, a denial from a
-callback, or a ninth consecutive lock-file denial surfaces as the original
-`EPERM`; it is not converted to `file_lock_timeout`.
+short teardown race after another holder unlinks it. Both async and sync locks
+retry that specific open denial at most eight times per acquisition, within the
+caller's retry/deadline budget. A parent-directory denial, a callback/read/stat
+failure, or exhaustion of either budget surfaces the original error; a denied
+open is not converted to `file_lock_timeout`. Retrying always requires fresh
+exclusive creation and grants no ownership or removal authority.
 
 ## Owner-scoped reentrancy
 
@@ -209,6 +211,14 @@ the calling thread; use the async API in request-serving code. The sync
 compromise interval treats a thrown verification I/O error as a lost lock and
 invokes `onCompromised` once, matching the asynchronous `.catch(() => false)`
 contract. An explicit `verifyStillHeld()` call still propagates that I/O error.
+
+Windows synchronous lock parents use the same canonical path spelling as
+`root()`, including short-name expansion. With `lockRoot`, a failed parent
+canonicalization or an out-of-root parent still rejects. Missing-path observations from snapshot
+`lstat`/`open`, and identity-mismatched snapshots, consume the normal retry and
+deadline budget. Errors from descriptor reads/stats or parsing are not treated
+as missing snapshots, even when their code is `ENOENT`. Held verification,
+release, and reclaim do not retry open denials.
 
 Both synchronous helpers consume the [process-wide lock defaults](config.md#configurefssafelocks-config).
 A synchronous retry sleep is clamped to the remaining finite deadline, so a long or jittered backoff cannot extend the configured timeout or block forever.

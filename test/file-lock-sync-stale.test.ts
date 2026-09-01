@@ -3,7 +3,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { acquireFileLockSync } from "../src/file-lock.js";
 import { root } from "../src/root.js";
-import { itPosix, useRealTempDirs } from "./helpers/vitest.js";
+import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
 const now = Date.parse("2026-01-01T00:00:00.000Z");
@@ -44,7 +44,7 @@ describe("synchronous file-lock snapshot age", () => {
     },
   );
 
-  itPosix("retries the same snapshot/unlink handoff with lockRoot", async () => {
+  it("retries the same snapshot/unlink handoff with lockRoot", async () => {
     const directory = await tempRoot("fs-safe-sync-age-root-");
     const lockRoot = await root(directory);
     const targetPath = path.join(directory, "state.json");

@@ -169,6 +169,14 @@ export async function readSidecarLockSnapshot(
   }
 }
 
+function lstatSidecarLockSync(lockPath: string): Stats | null {
+  try {
+    return fsSync.lstatSync(lockPath);
+  } catch (error) {
+    return missingSnapshotPath(error);
+  }
+}
+
 export function readSidecarLockSnapshotSync(
   lockPath: string,
   parsePayload?: (raw: string) => unknown,
@@ -176,14 +184,20 @@ export function readSidecarLockSnapshotSync(
 ): SidecarLockSnapshot | null {
   let fd: number | undefined;
   try {
-    const before = fsSync.lstatSync(lockPath);
+    const before = lstatSidecarLockSync(lockPath);
+    if (!before) return null;
     if (!before.isFile() || before.isSymbolicLink()) {
       if (options.rejectNonFile) {
         throw new FsSafeError("not-file", `sidecar lock is not a regular file: ${lockPath}`);
       }
       return null;
     }
-    fd = fsSync.openSync(lockPath, resolveReadOpenFlags());
+    try {
+      fd = fsSync.openSync(lockPath, resolveReadOpenFlags());
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      recordFileOpenFailure(error, lockPath);
+    }
     const opened = fsSync.fstatSync(fd);
     if (!opened.isFile()) {
       if (options.rejectNonFile) {
@@ -192,17 +206,14 @@ export function readSidecarLockSnapshotSync(
       return null;
     }
     const raw = readFileDescriptorBoundedSync(fd, MAX_LOCK_PAYLOAD_BYTES).toString("utf8");
-    const after = fsSync.lstatSync(lockPath);
-    if (!sameFileIdentity(before, opened) || !sameFileIdentity(opened, after)) return null;
+    const after = lstatSidecarLockSync(lockPath);
+    if (!after || !sameFileIdentity(before, opened) || !sameFileIdentity(opened, after)) return null;
     return {
       raw,
       payload: parseSidecarLockPayload(raw, parsePayload),
       stat: after,
       ownershipToken: readSidecarLockOwnershipToken(raw),
     };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw error;
   } finally {
     if (fd !== undefined) fsSync.closeSync(fd);
   }
