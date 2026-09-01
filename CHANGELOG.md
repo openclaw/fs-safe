@@ -1,13 +1,32 @@
 # Changelog
 
-## 0.7.1 - Unreleased
+## 0.7.1 - 2026-09-01
 
-- Keep lock payload, serialization, and parsing failures outside acquisition retry handling, and scope Root failure receipts to each observation so historical errors cannot replay retry authority.
-- Retry Root-backed async lock handoffs with descriptor-proven, budgeted observation discard, including Windows unlink resolution failures; verify creator bytes before admission and preserve creator-token cleanup authority on failure.
-- Reject native selected ZIP entry reads whose decoded size differs from the declared uncompressed size, preserving byte caps and CRC verification.
-- Canonicalize Windows synchronous lock parents consistently with Root, bound lock-file open-denial and missing-snapshot retries, use captured snapshot age for staleness, and retain failed release cleanup for retry without double-decrementing references or re-closing a consumed descriptor.
-- Keep create-only Root writes from opening an existing target merely to inherit its mode, while preserving boundary, alias, hardlink, and type checks.
-- Clarify that invalid UTF-8 or NUL padding in fixed TAR path fields rejects with `ArchiveSecurityError("entry-path")`.
+### Highlights
+
+- **Make lock handoffs reliable:** recover from disappearing ownership records within retry budgets, preserve callback errors, and safely retry failed synchronous release cleanup.
+- **Reject corrupt native ZIP reads:** verify decoded entry length against the declared size before returning bytes, while retaining byte caps and CRC checks.
+- **Preserve long destination filenames:** use independent private staging names for Root writes and copies, ZIP extraction, and synchronous JSON writes instead of lengthening the destination basename.
+
+### File locks
+
+- Recover Root-backed asynchronous handoffs only with exact descriptor identity and unlink evidence, including Windows resolver `EPERM`/`EBADF` failures. Recheck canonical ancestors and charge discarded observations to retry/deadline budgets without granting release or reclaim authority. ([#189](https://github.com/openclaw/fs-safe/pull/189))
+- Verify reopened Root-created sidecars against the creator's exact serialized bytes and ownership token before admission. Reject replacements and unlinked descriptors, and retain the original creator receipt for failed-acquisition cleanup. ([#189](https://github.com/openclaw/fs-safe/pull/189))
+- Align Windows synchronous lock-parent canonicalization with Root, including short-name expansion, and bound lock-file create/open denials and missing or changed snapshot retries. Preserve the original `EPERM` when a retry budget is exhausted. ([#189](https://github.com/openclaw/fs-safe/pull/189))
+- Determine synchronous lock staleness from the captured payload timestamp or snapshot mtime, avoiding false stale decisions after unlink or replacement. ([#189](https://github.com/openclaw/fs-safe/pull/189))
+- Retain failed synchronous release cleanup for safe retries without double-decrementing references, re-closing a consumed or reused descriptor, or deleting a replacement sidecar. ([#189](https://github.com/openclaw/fs-safe/pull/189))
+- Propagate payload, JSON serialization, and parsing failures unchanged without retrying the failing callback. Scope Root failure evidence to each observation so historical errors cannot trigger retries in later, nested, or concurrent acquisitions. ([#190](https://github.com/openclaw/fs-safe/pull/190))
+
+### File writes and archives
+
+- Keep private staging names independent of destination basenames across guarded Root writes and copies, native Windows writes, ZIP extraction, and `writeJsonSync()`. Preserve public producer filenames, custom `tempPrefix`, and literal JSON parent-path and drive-relative semantics. ([#191](https://github.com/openclaw/fs-safe/pull/191))
+- Avoid opening an existing target merely to inherit its mode during create-only Root writes, while preserving boundary, alias, hardlink, and type checks. ([#189](https://github.com/openclaw/fs-safe/pull/189))
+- Reject native `readArchiveEntry()` ZIP payloads whose decoded length differs from the declared uncompressed size with `ArchiveFormatError("archive-header-invalid")`, matching JavaScript behavior while preserving `maxBytes` and CRC checks. ([#189](https://github.com/openclaw/fs-safe/pull/189))
+
+### Docs and validation
+
+- Clarify that invalid UTF-8 or nonzero bytes after NUL terminators in fixed TAR name, linkname, and USTAR prefix fields reject with `ArchiveSecurityError("entry-path")`; this documents existing behavior. ([#189](https://github.com/openclaw/fs-safe/pull/189))
+- Add cross-process contention and release-retry proofs, plus focused lock-admission and ZIP-integrity coverage in JavaScript-fallback and required-native CI paths. Refresh the release checklist for eight-package trusted publishing.
 
 ## 0.7.0 - 2026-08-31
 
