@@ -1,17 +1,12 @@
 import type { BigIntStats } from "node:fs";
 import { FsSafeError } from "./errors.js";
+import { recordFileObservationFailure } from "./file-observation.js";
 
 type ExactFileIdentity = Pick<BigIntStats, "dev" | "ino">;
 
-const identityMismatches = new WeakSet<Error>();
-
-export function isFileIdentityMismatch(error: unknown): error is Error {
-  return error instanceof Error && identityMismatches.has(error);
-}
-
 function identityMismatch(): FsSafeError {
   const error = new FsSafeError("path-mismatch", "file identity changed or could not be verified");
-  identityMismatches.add(error);
+  recordFileObservationFailure(error, "identity");
   return error;
 }
 
