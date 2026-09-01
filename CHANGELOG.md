@@ -10,7 +10,8 @@
 
 ### File locks
 
-- Recover Root-backed asynchronous handoffs only with exact descriptor identity and unlink evidence, including Windows resolver `EPERM`/`EBADF` failures. Recheck canonical ancestors and charge discarded observations to retry/deadline budgets without granting release or reclaim authority. ([#189](https://github.com/openclaw/fs-safe/pull/189))
+- Recover Root-backed asynchronous handoffs from unlinked opened records with exact descriptor identity and unlink evidence, including Windows resolver `EPERM`/`EBADF` failures. Recheck canonical ancestors and charge discarded observations to retry/deadline budgets without granting release or reclaim authority. ([#189](https://github.com/openclaw/fs-safe/pull/189))
+- Retry Root lock contention when a holder changes between pre-open inspection and opening the file. Discard only the verified stale observation, recheck canonical ancestors, and require fresh exclusive creation; generic reads, creator admission, and release/reclaim authority remain unchanged.
 - Verify reopened Root-created sidecars against the creator's exact serialized bytes and ownership token before admission. Reject replacements and unlinked descriptors, and retain the original creator receipt for failed-acquisition cleanup. ([#189](https://github.com/openclaw/fs-safe/pull/189))
 - Align Windows synchronous lock-parent canonicalization with Root, including short-name expansion, and bound lock-file create/open denials and missing or changed snapshot retries. Preserve the original `EPERM` when a retry budget is exhausted. ([#189](https://github.com/openclaw/fs-safe/pull/189))
 - Determine synchronous lock staleness from the captured payload timestamp or snapshot mtime, avoiding false stale decisions after unlink or replacement. ([#189](https://github.com/openclaw/fs-safe/pull/189))

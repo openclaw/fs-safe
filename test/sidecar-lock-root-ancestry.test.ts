@@ -28,7 +28,7 @@ it.skipIf(process.platform === "win32")("rechecks ancestors even when the immedi
     await fs.mkdir(ancestor);
     await fs.rename(`${ancestor}.old/parent`, `${ancestor}/parent`);
   } });
-  await expect(readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardUnlinked: true }))
+  await expect(readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardObservation: "unlinked" }))
     .rejects.toMatchObject({ code: "path-mismatch" });
 });
 
@@ -43,7 +43,7 @@ it.skipIf(process.platform === "win32")("permits an unchanged canonical parent r
     __setFsSafeTestHooksForTest();
     await fs.unlink(lockPath);
   } });
-  await expect(readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardUnlinked: true })).resolves.toBeNull();
+  await expect(readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardObservation: "unlinked" })).resolves.toBeNull();
   const manager = createFileLockManager(`alias:${lockPath}`);
   const held = await manager.acquire(path.join(capability.rootReal, "state"), {
     lockRoot: capability, lockPath, payload: () => ({}),
@@ -71,7 +71,7 @@ it.each(["numeric", "unknown", "changed", "EACCES", "EIO"])("rejects %s canonica
       return value;
     });
   } });
-  await expect(readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardUnlinked: true }))
+  await expect(readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardObservation: "unlinked" }))
     .rejects.toMatchObject({ code: "path-mismatch" });
 });
 
@@ -85,7 +85,7 @@ it.each(["EACCES", "EIO"])("does not treat initial directory %s as missing-paren
     if (String(args[0]) === capability.rootReal && typeof args[1] === "object" && args[1]?.bigint) throw failure;
     return await lstat(...args);
   });
-  await expect(readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardUnlinked: true })).rejects.toBe(failure);
+  await expect(readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardObservation: "unlinked" })).rejects.toBe(failure);
   expect(open).not.toHaveBeenCalled();
 });
 

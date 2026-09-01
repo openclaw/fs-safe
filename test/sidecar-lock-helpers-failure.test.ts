@@ -89,7 +89,7 @@ describe("sidecar lock helper failure handling", () => {
       await capability.create(relative, '{"owner":"original"}');
       const probe = vi.spyOn(capability, "stat");
       const gate = pauseSidecarSnapshotOpen(lockPath, afterIdentityCheck);
-      const snapshot = readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardUnlinked: true });
+      const snapshot = readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardObservation: "unlinked" });
       const result = expect(snapshot).resolves.toBeNull();
       const handle = await gate.opened;
       const close = vi.spyOn(handle, "close");
@@ -115,7 +115,7 @@ describe("sidecar lock helper failure handling", () => {
     await capability.create("owner.json", original);
     const probe = vi.spyOn(capability, "stat");
     const gate = pauseSidecarSnapshotOpen(lockPath, false);
-    const snapshot = readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardUnlinked: true });
+    const snapshot = readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardObservation: "unlinked" });
     const result = expect(snapshot).rejects.toMatchObject({ code: "path-mismatch" });
     const handle = await gate.opened;
     try {
@@ -159,7 +159,7 @@ describe("sidecar lock helper failure handling", () => {
     await capability.create("owner.json", '{"owner":"original"}');
     const probe = vi.spyOn(capability, "stat");
     const gate = pauseSidecarSnapshotOpen(lockPath, true);
-    const snapshot = readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardUnlinked: true });
+    const snapshot = readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardObservation: "unlinked" });
     const result = expect(snapshot).rejects.toMatchObject({ code: "path-mismatch" });
     const handle = await gate.opened;
     try {
@@ -305,7 +305,7 @@ describe("sidecar lock helper failure handling", () => {
     const capability = await root(rootDir);
     const lockPath = path.join(rootDir, "state.lock");
     await capability.create("state.lock", "old");
-    const snapshot = await readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardUnlinked: true });
+    const snapshot = await readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardObservation: "unlinked" });
     await expect(removeStaleSidecarLockIfAllowed({
       lockPath,
       normalizedTargetPath: path.join(rootDir, "state"),

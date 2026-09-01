@@ -103,7 +103,7 @@ it.each(["numeric", "unknown", "closed", "changed", "linked", "multiple-links"])
         });
       },
     });
-    await expect(readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardUnlinked: true })).rejects.toBe(failure);
+    await expect(readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardObservation: "unlinked" })).rejects.toBe(failure);
     expect(descriptor?.fd).toBe(-1);
   },
 );
@@ -124,7 +124,7 @@ it.each(["beforeOpen", "afterOpen", "afterOpenedPathIdentityCheck"] as const)(
         await fs.unlink(lockPath);
         throw failure;
       } });
-      await expect(readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardUnlinked: true }))
+      await expect(readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardObservation: "unlinked" }))
         .rejects.toBe(failure);
       if (descriptor) expect(descriptor.fd).toBe(-1);
     }
@@ -158,7 +158,7 @@ it.each([false, true])("parser ENOENT remains a caller error (Root: %s)", async 
   const failure = Object.assign(new Error("parser failure"), { code: "ENOENT" });
   await expect(readSidecarLockSnapshot(lockPath, {
     ...(bounded ? { lockRoot: capability } : {}),
-    discardUnlinked: true, parsePayload: () => { throw failure; },
+    discardObservation: "unlinked", parsePayload: () => { throw failure; },
   })).rejects.toBe(failure);
 });
 
@@ -207,7 +207,7 @@ it("does not replay a never-consumed Root open failure in a later observation", 
   await capability.create("state.lock", "foreign");
   const fail = vi.fn(() => { throw historical; });
   __setFsSafeTestHooksForTest({ beforeOpen: fail });
-  await expect(readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardUnlinked: true }))
+  await expect(readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardObservation: "unlinked" }))
     .rejects.toBe(historical);
   expect(fail).toHaveBeenCalledTimes(1);
   expect(await fs.readFile(lockPath, "utf8")).toBe("foreign");
@@ -245,14 +245,14 @@ it.each(["sequential", "nested", "interleaved"])(
     } });
     const observeFirst = async () => {
       observingFirst = true;
-      try { return await readSidecarLockSnapshot(firstPath, { lockRoot: capability, discardUnlinked: true }); }
+      try { return await readSidecarLockSnapshot(firstPath, { lockRoot: capability, discardObservation: "unlinked" }); }
       finally { observingFirst = false; }
     };
     if (order === "sequential") {
       await expect(observeFirst()).resolves.toBeNull();
       await capability.create("first.lock", "replacement");
     }
-    const second = expect(readSidecarLockSnapshot(secondPath, { lockRoot: capability, discardUnlinked: true }))
+    const second = expect(readSidecarLockSnapshot(secondPath, { lockRoot: capability, discardObservation: "unlinked" }))
       .rejects.toBe(failure);
     if (order === "interleaved") {
       await paused;

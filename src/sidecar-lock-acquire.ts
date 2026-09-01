@@ -170,7 +170,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
             throw error;
           }
           createdSnapshot = { raw, payload, ownershipToken };
-          const opened = await openSidecarRoot(lockRoot, relativeLockPath, true);
+          const opened = await openSidecarRoot(lockRoot, relativeLockPath, "unlinked");
           if (!opened) {
             await waitForRetry();
             continue;
@@ -296,7 +296,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
           rawSnapshot = await readSidecarLockRawSnapshot(lockPath, {
             lockRoot: options.lockRoot,
             rejectNonFile: true,
-            discardUnlinked: true,
+            discardObservation: "changed",
             onOpenFailure: (error) => { lockFileOpenDenied = isTransientLockFileDenial(error, lockPath); },
           });
         } catch (readErr) {

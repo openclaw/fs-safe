@@ -22,7 +22,7 @@ import {
   type DenyMutationPolicy,
 } from "./deny-mutations.js";
 import { resolveOpenedFileRealPathForFd, resolveOpenedFileRealPathForHandle } from "./opened-realpath.js";
-import { openedPathResolutionError, recordFileOpenFailure, recordOpenedFileFailure } from "./opened-file-failure.js";
+import { openedPathResolutionError, recordFileOpenFailure, recordOpenedFileFailure, recordPreOpenFileChange } from "./opened-file-failure.js";
 import {
   type RenameIdentityPolicy,
   runPinnedWriteHelper,
@@ -264,10 +264,16 @@ async function openVerifiedLocalFile(
       throw new FsSafeError("not-file", "not a file");
     }
     // Keep numeric Stats for the public receipt, never for identity verification.
+    let openedIdentity: BigIntStats | undefined;
     const identity = await inspectFileIdentity(
-      () => handle.stat({ bigint: true }),
+      async () => (openedIdentity = await handle.stat({ bigint: true })),
       preOpenStat && !preOpenStat.isSymbolicLink() ? preOpenStat : undefined,
-    );
+    ).catch(async (error: unknown) => {
+      if ([0, 1].includes(stat.nlink)) {
+        await recordPreOpenFileChange(error, handle, filePath, preOpenStat, openedIdentity);
+      }
+      throw error;
+    });
     if (options?.hardlinks === "reject" && stat.nlink > 1) {
       throw hardlinkedPathNotAllowedError();
     }
