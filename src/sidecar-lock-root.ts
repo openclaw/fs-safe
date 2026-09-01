@@ -1,7 +1,7 @@
 import path from "node:path";
 import { inspectDirectoryIdentity } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
-import { isFileOpenFailure, isUnlinkedFileFailure } from "./opened-file-failure.js";
+import { fileObservation } from "./file-observation.js";
 import { isNotFoundPathError } from "./path.js";
 import type { OpenResult, Root } from "./root-impl.js";
 import { resolveRootPath } from "./root-path.js";
@@ -10,6 +10,7 @@ export async function openSidecarRoot(
   lockRoot: Root,
   relative: string,
   discardUnlinked = false,
+  onOpenFailure?: (error: unknown) => void,
 ): Promise<OpenResult | null> {
   const resolved = await lockRoot.resolve(relative);
   const canonicalPath = async () => (await resolveRootPath({
@@ -34,17 +35,20 @@ export async function openSidecarRoot(
       if (dir === lockRoot.rootReal) break;
     }
   }
+  const observation = fileObservation();
   try {
-    const opened = await lockRoot.open(relative);
+    const opened = await observation.run(() => lockRoot.open(relative));
     if (opened.realPath !== expectedRealPath) {
       await opened.handle.close().catch(() => undefined);
       throw new FsSafeError("path-mismatch", "sidecar lock path changed during open");
     }
     return opened;
   } catch (error) {
-    const missing = isFileOpenFailure(error, resolved) && error instanceof FsSafeError && error.code === "not-found";
+    const openFailed = observation.has(error, `open:${resolved}`);
+    if (openFailed) onOpenFailure?.(error);
+    const missing = openFailed && error instanceof FsSafeError && error.code === "not-found";
     if (missing && !discardUnlinked) return null;
-    if (!discardUnlinked || (!missing && (!completeParents || !isUnlinkedFileFailure(error, resolved)))) throw error;
+    if (!discardUnlinked || (!missing && (!completeParents || !observation.has(error, `unlinked:${resolved}`)))) throw error;
     try {
       try {
         const current = await lockRoot.stat(relative);

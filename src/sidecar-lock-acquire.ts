@@ -1,6 +1,5 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { isFileOpenFailure } from "./opened-file-failure.js";
 import { FsSafeError } from "./errors.js";
 import { readFileHandleBounded } from "./bounded-read.js";
 import { openSidecarRoot } from "./sidecar-lock-root.js";
@@ -15,7 +14,8 @@ import {
   validateSidecarLockTimeoutMs,
 } from "./sidecar-lock-policy.js";
 import {
-  readSidecarLockSnapshot,
+  readSidecarLockRawSnapshot,
+  parseSidecarLockSnapshot,
   relativeSidecarLockPath,
   releaseSidecarReclaimGuard,
   removeSidecarLockIfUnchanged,
@@ -155,9 +155,9 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
       let handle: SidecarFileHandle | null = null;
       let createdSnapshot: SidecarLockSnapshot | null = null;
       let lockFileCreateDenied = false;
+      const payload = await options.payload();
+      const { raw, ownershipToken } = serializeSidecarLockPayload(payload);
       try {
-        const payload = await options.payload();
-        const { raw, ownershipToken } = serializeSidecarLockPayload(payload);
         if (options.lockRoot) {
           const lockRoot = options.lockRoot;
           const relativeLockPath = relativeSidecarLockPath(lockRoot, lockPath);
@@ -290,20 +290,21 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
           continue;
         }
         const nowMs = Date.now();
-        let snapshot: SidecarLockSnapshot | null;
+        let rawSnapshot: Awaited<ReturnType<typeof readSidecarLockRawSnapshot>>;
+        let lockFileOpenDenied = false;
         try {
-          snapshot = await readSidecarLockSnapshot(lockPath, {
+          rawSnapshot = await readSidecarLockRawSnapshot(lockPath, {
             lockRoot: options.lockRoot,
-            parsePayload: options.parsePayload,
             rejectNonFile: true,
             discardUnlinked: true,
+            onOpenFailure: (error) => { lockFileOpenDenied = isTransientLockFileDenial(error, lockPath); },
           });
         } catch (readErr) {
-          if (!isFileOpenFailure(readErr, lockPath) ||
-            !isTransientLockFileDenial(readErr, lockPath) || !withinDenialBudget()) throw readErr;
+          if (!lockFileOpenDenied || !withinDenialBudget()) throw readErr;
           await retryOrRethrowDenial(readErr);
           continue;
         }
+        const snapshot = parseSidecarLockSnapshot(rawSnapshot, options.parsePayload);
         if (!snapshot) {
           await waitForRetry();
           continue;

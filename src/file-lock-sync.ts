@@ -1,10 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
-import { isFileOpenFailure, recordFileOpenFailure } from "./opened-file-failure.js";
 import type { Root } from "./root-impl.js";
 import {
   readSidecarLockSnapshotSync,
+  readSidecarLockRawSnapshotSync,
+  parseSidecarLockSnapshot,
   relativeSidecarLockPath,
   removeSidecarLockIfUnchangedSync,
   serializeSidecarLockPayload,
@@ -253,7 +254,7 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
     attempt += 1;
   };
   const retryLockFileDenial = (error: unknown): boolean => {
-    if (!isFileOpenFailure(error, lockPath) || !isTransientLockFileDenial(error, lockPath) ||
+    if (!isTransientLockFileDenial(error, lockPath) ||
       ++transientDenials > maxTransientLockDenials) return false;
     try {
       waitForRetry();
@@ -271,9 +272,10 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
       continue;
     }
     let fd: number | undefined;
+    const payload = options.payload();
+    const { raw, ownershipToken } = serializeSidecarLockPayload(payload);
+    let lockFileCreateDenied = false;
     try {
-      const payload = options.payload();
-      const { raw, ownershipToken } = serializeSidecarLockPayload(payload);
       const noFollow =
         process.platform !== "win32" && typeof fs.constants.O_NOFOLLOW === "number"
           ? fs.constants.O_NOFOLLOW
@@ -285,7 +287,8 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
           0o600,
         );
       } catch (error) {
-        recordFileOpenFailure(error, lockPath);
+        lockFileCreateDenied = isTransientLockFileDenial(error, lockPath);
+        throw error;
       }
       fs.writeFileSync(fd, raw, "utf8");
       fs.fsyncSync(fd);
@@ -332,19 +335,24 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
         fd = undefined;
         removeSidecarLockIfUnchangedSync(lockPath, failed);
       }
-      if (retryLockFileDenial(error)) continue;
+      if (lockFileCreateDenied && retryLockFileDenial(error)) continue;
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       if (heldLocks.has(normalizedTargetPath)) {
         waitForRetry();
         continue;
       }
-      let snapshot: SidecarLockSnapshot | null;
+      let rawSnapshot: ReturnType<typeof readSidecarLockRawSnapshotSync>;
+      let lockFileOpenDenied = false;
       try {
-        snapshot = readSidecarLockSnapshotSync(lockPath, options.parsePayload, { rejectNonFile: true });
+        rawSnapshot = readSidecarLockRawSnapshotSync(lockPath, {
+          rejectNonFile: true,
+          onOpenFailure: (error) => { lockFileOpenDenied = isTransientLockFileDenial(error, lockPath); },
+        });
       } catch (readError) {
-        if (retryLockFileDenial(readError)) continue;
+        if (lockFileOpenDenied && retryLockFileDenial(readError)) continue;
         throw readError;
       }
+      const snapshot = parseSidecarLockSnapshot(rawSnapshot, options.parsePayload);
       if (!snapshot) {
         waitForRetry();
         continue;

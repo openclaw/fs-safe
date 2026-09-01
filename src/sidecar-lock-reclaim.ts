@@ -7,7 +7,6 @@ import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import type { Root } from "./root-impl.js";
-import { recordFileOpenFailure } from "./opened-file-failure.js";
 import { openSidecarRoot } from "./sidecar-lock-root.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
@@ -33,6 +32,15 @@ export type SidecarLockSnapshot = {
   stat?: Stats;
   ownershipToken?: string;
 };
+
+type SidecarLockRawSnapshot = Omit<SidecarLockSnapshot, "payload"> & { raw: string };
+
+export function parseSidecarLockSnapshot(
+  snapshot: SidecarLockRawSnapshot | null,
+  parser?: (raw: string) => unknown,
+): SidecarLockSnapshot | null {
+  return snapshot && { ...snapshot, payload: parseSidecarLockPayload(snapshot.raw, parser) };
+}
 
 function createSidecarLockOwnershipToken(): string {
   let token = SIDECAR_LOCK_OWNERSHIP_TOKEN_PREFIX;
@@ -96,27 +104,33 @@ function missingSnapshotPath(error: unknown): null {
 
 export async function readSidecarLockSnapshot(
   lockPath: string,
+  options: Parameters<typeof readSidecarLockRawSnapshot>[1] & { parsePayload?: (raw: string) => unknown } = {},
+): Promise<SidecarLockSnapshot | null> {
+  return parseSidecarLockSnapshot(await readSidecarLockRawSnapshot(lockPath, options), options.parsePayload);
+}
+
+export async function readSidecarLockRawSnapshot(
+  lockPath: string,
   options: {
     lockRoot?: Root;
-    parsePayload?: (raw: string) => unknown;
     rejectNonFile?: boolean;
     allowDescriptorIdentityDrift?: boolean;
     // Acquisition alone may discard a proven-unlinked observation, never delete from it.
     discardUnlinked?: boolean;
+    onOpenFailure?: (error: unknown) => void;
   } = {},
-): Promise<SidecarLockSnapshot | null> {
+): Promise<SidecarLockRawSnapshot | null> {
   let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
   try {
     if (options.lockRoot) {
       const lockRoot = options.lockRoot;
       const relative = relativeSidecarLockPath(lockRoot, lockPath);
-      const opened = await openSidecarRoot(lockRoot, relative, options.discardUnlinked);
+      const opened = await openSidecarRoot(lockRoot, relative, options.discardUnlinked, options.onOpenFailure);
       if (!opened) return null;
       try {
         const raw = (await readFileHandleBounded(opened.handle, MAX_LOCK_PAYLOAD_BYTES)).toString("utf8");
         return {
           raw,
-          payload: parseSidecarLockPayload(raw, options.parsePayload),
           stat: opened.stat,
         };
       } finally {
@@ -150,7 +164,8 @@ export async function readSidecarLockSnapshot(
           cause: error,
         });
       }
-      recordFileOpenFailure(error, lockPath);
+      options.onOpenFailure?.(error);
+      throw error;
     }
     const opened = await handle.stat();
     if (!opened.isFile()) {
@@ -163,7 +178,7 @@ export async function readSidecarLockSnapshot(
     const raw = (await readFileHandleBounded(handle, MAX_LOCK_PAYLOAD_BYTES)).toString("utf8");
     const after = await fs.lstat(lockPath).catch(missingSnapshotPath);
     if (!after || !after.isFile() || !sameFileIdentity(before, after)) return null;
-    return { raw, payload: parseSidecarLockPayload(raw, options.parsePayload), stat: after };
+    return { raw, stat: after };
   } finally {
     await handle?.close().catch(() => undefined);
   }
@@ -180,8 +195,15 @@ function lstatSidecarLockSync(lockPath: string): Stats | null {
 export function readSidecarLockSnapshotSync(
   lockPath: string,
   parsePayload?: (raw: string) => unknown,
-  options: { rejectNonFile?: boolean } = {},
+  options: Parameters<typeof readSidecarLockRawSnapshotSync>[1] = {},
 ): SidecarLockSnapshot | null {
+  return parseSidecarLockSnapshot(readSidecarLockRawSnapshotSync(lockPath, options), parsePayload);
+}
+
+export function readSidecarLockRawSnapshotSync(
+  lockPath: string,
+  options: { rejectNonFile?: boolean; onOpenFailure?: (error: unknown) => void } = {},
+): SidecarLockRawSnapshot | null {
   let fd: number | undefined;
   try {
     const before = lstatSidecarLockSync(lockPath);
@@ -196,7 +218,8 @@ export function readSidecarLockSnapshotSync(
       fd = fsSync.openSync(lockPath, resolveReadOpenFlags());
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-      recordFileOpenFailure(error, lockPath);
+      options.onOpenFailure?.(error);
+      throw error;
     }
     const opened = fsSync.fstatSync(fd);
     if (!opened.isFile()) {
@@ -210,7 +233,6 @@ export function readSidecarLockSnapshotSync(
     if (!after || !sameFileIdentity(before, opened) || !sameFileIdentity(opened, after)) return null;
     return {
       raw,
-      payload: parseSidecarLockPayload(raw, parsePayload),
       stat: after,
       ownershipToken: readSidecarLockOwnershipToken(raw),
     };

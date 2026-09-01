@@ -94,6 +94,9 @@ type FileLockRetryOptions = {
 ```
 
 `payload` is a function so you can re-evaluate it on each retry (e.g. timestamp, PID).
+Errors thrown by `payload`, its JSON serialization (including `toJSON`), or
+`parsePayload` propagate unchanged without retrying the callback. Rethrowing an
+error saved from an earlier filesystem operation does not grant retry authority.
 Retry counts must be non-negative safe integers. Retry factors and delays must be finite and non-negative, and when both delay bounds are provided `minTimeout` cannot exceed `maxTimeout`. `timeoutMs` accepts a finite non-negative deadline or positive infinity for an unbounded wait; invalid numeric values reject before filesystem acquisition starts.
 `parsePayload` replaces JSON parsing for legacy or custom sidecars. Its `unknown`
 result is passed to `shouldReclaim` and `shouldRemoveStaleLock`, allowing PID,
@@ -173,6 +176,9 @@ exclusive creation. It supplies no release, reclaim, or held-lock authority.
 Generic `Root.open()` and held-owner/reclaim reads still reject failed opens.
 Moved but linked records, unknown or inexact identities, retargeted ancestors,
 and unrelated filesystem or caller errors fail closed.
+Failure receipts belong only to the current Root observation, including during
+nested or concurrent acquisitions; historical error identity is not unlink or
+open-denial evidence.
 
 After creating a record, the async Root-backed acquirer checks the reopened
 bytes against its exact serialized payload and ownership token. A replacement

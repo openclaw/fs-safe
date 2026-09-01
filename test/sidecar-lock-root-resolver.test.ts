@@ -198,3 +198,68 @@ it("ordinary snapshot reads do not discard failed descriptor observations", asyn
     .rejects.toMatchObject({ code: "path-mismatch" });
   expect(parsePayload).not.toHaveBeenCalled();
 });
+
+it("does not replay a never-consumed Root open failure in a later observation", async () => {
+  const capability = await root(await tempRoot("sidecar-root-replay-"));
+  const lockPath = path.join(capability.rootReal, "state.lock");
+  const historical = await capability.open("state.lock").catch((error: unknown) => error);
+  expect(historical).toBeInstanceOf(FsSafeError);
+  await capability.create("state.lock", "foreign");
+  const fail = vi.fn(() => { throw historical; });
+  __setFsSafeTestHooksForTest({ beforeOpen: fail });
+  await expect(readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardUnlinked: true }))
+    .rejects.toBe(historical);
+  expect(fail).toHaveBeenCalledTimes(1);
+  expect(await fs.readFile(lockPath, "utf8")).toBe("foreign");
+});
+
+it.each(["sequential", "nested", "interleaved"])(
+  "isolates %s Root resolver receipts even when the same Error is thrown again", async (order) => {
+    const capability = await root(await tempRoot("sidecar-root-receipts-"));
+    const firstPath = path.join(capability.rootReal, "first.lock");
+    const secondPath = firstPath;
+    await capability.create("first.lock", "first");
+    // Synthetic Windows resolver EPERM; unlink and descriptor checks are real.
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const failure = Object.assign(new Error("synthetic resolver failure"), { code: "EPERM" });
+    const realpath = fs.realpath.bind(fs);
+    let deny = false, observingFirst = false;
+    vi.spyOn(fs, "realpath").mockImplementation(async (...args) => {
+      if (args[0] === firstPath && deny && observingFirst) throw failure;
+      return await realpath(...args);
+    });
+    let unblock!: () => void, entered!: () => void;
+    const paused = new Promise<void>((resolve) => { entered = resolve; });
+    const resume = new Promise<void>((resolve) => { unblock = resolve; });
+    const descriptors: FileHandle[] = [];
+    __setFsSafeTestHooksForTest({ async afterOpenedPathIdentityCheck(candidate, handle) {
+      descriptors.push(handle);
+      if (candidate === firstPath && observingFirst) {
+        await fs.unlink(firstPath);
+        deny = true;
+      } else if (candidate === secondPath) {
+        if (order === "nested") await expect(observeFirst()).resolves.toBeNull();
+        if (order === "interleaved") { entered(); await resume; }
+        throw failure;
+      }
+    } });
+    const observeFirst = async () => {
+      observingFirst = true;
+      try { return await readSidecarLockSnapshot(firstPath, { lockRoot: capability, discardUnlinked: true }); }
+      finally { observingFirst = false; }
+    };
+    if (order === "sequential") {
+      await expect(observeFirst()).resolves.toBeNull();
+      await capability.create("first.lock", "replacement");
+    }
+    const second = expect(readSidecarLockSnapshot(secondPath, { lockRoot: capability, discardUnlinked: true }))
+      .rejects.toBe(failure);
+    if (order === "interleaved") {
+      await paused;
+      try { await expect(observeFirst()).resolves.toBeNull(); } finally { unblock(); }
+    }
+    await second;
+    expect(descriptors).toHaveLength(2);
+    expect(descriptors.every((handle) => handle.fd === -1)).toBe(true);
+  },
+);

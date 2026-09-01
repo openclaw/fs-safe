@@ -2,6 +2,7 @@
 
 ## 0.7.1 - Unreleased
 
+- Keep lock payload, serialization, and parsing failures outside acquisition retry handling, and scope Root failure receipts to each observation so historical errors cannot replay retry authority.
 - Retry Root-backed async lock handoffs with descriptor-proven, budgeted observation discard, including Windows unlink resolution failures; verify creator bytes before admission and preserve creator-token cleanup authority on failure.
 - Reject native selected ZIP entry reads whose decoded size differs from the declared uncompressed size, preserving byte caps and CRC verification.
 - Canonicalize Windows synchronous lock parents consistently with Root, bound lock-file open-denial and missing-snapshot retries, use captured snapshot age for staleness, and retain failed release cleanup for retry without double-decrementing references or re-closing a consumed descriptor.
