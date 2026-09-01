@@ -44,7 +44,7 @@ export async function runPinnedWriteWindows(
   let renamed = false;
   let completed = false;
   try {
-    tempName = `.${params.basename}.${randomUUID()}.native.tmp`;
+    tempName = `.fs-safe-${randomUUID()}.tmp`;
     tempFd = binding.openBeneath(
       parentFd,
       tempName,

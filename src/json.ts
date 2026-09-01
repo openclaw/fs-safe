@@ -186,17 +186,17 @@ export function tryReadJsonSync<T = unknown>(
 }
 
 export function writeJsonSync(pathname: string, data: unknown) {
-  const targetPath = pathname;
-  const tmpPath = `${targetPath}.${randomUUID()}.tmp`;
+  // Keep literal parent segments so staging follows the same symlinks as the target.
+  const tmpPath = path.format({ ...path.parse(pathname), base: `.fs-safe-${randomUUID()}.tmp` });
   const payload = `${stringifyJsonDocument(data, null, 2)}\n`;
 
-  fsSync.mkdirSync(path.dirname(targetPath), { recursive: true, mode: JSON_DIR_MODE });
+  fsSync.mkdirSync(path.dirname(pathname), { recursive: true, mode: JSON_DIR_MODE });
   try {
     const tempIdentity = writeTempJsonFile(tmpPath, payload);
     trySetSecureMode(tmpPath, tempIdentity);
-    renameJsonFileWithFallback(tmpPath, targetPath);
-    trySetSecureMode(targetPath, tempIdentity);
-    trySyncDirectory(targetPath);
+    renameJsonFileWithFallback(tmpPath, pathname);
+    trySetSecureMode(pathname, tempIdentity);
+    trySyncDirectory(pathname);
   } finally {
     try {
       fsSync.rmSync(tmpPath, { force: true });
