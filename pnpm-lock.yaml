@@ -46,25 +46,25 @@ importers:
         version: 4.1.11(@types/node@26.4.0)(@vitest/coverage-v8@4.1.11)(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.1))
     optionalDependencies:
       '@openclaw/fs-safe-darwin-arm64':
-        specifier: 0.7.1
+        specifier: 0.7.2
         version: link:packages/darwin-arm64
       '@openclaw/fs-safe-darwin-x64':
-        specifier: 0.7.1
+        specifier: 0.7.2
         version: link:packages/darwin-x64
       '@openclaw/fs-safe-linux-arm64-gnu':
-        specifier: 0.7.1
+        specifier: 0.7.2
         version: link:packages/linux-arm64-gnu
       '@openclaw/fs-safe-linux-arm64-musl':
-        specifier: 0.7.1
+        specifier: 0.7.2
         version: link:packages/linux-arm64-musl
       '@openclaw/fs-safe-linux-x64-gnu':
-        specifier: 0.7.1
+        specifier: 0.7.2
         version: link:packages/linux-x64-gnu
       '@openclaw/fs-safe-linux-x64-musl':
-        specifier: 0.7.1
+        specifier: 0.7.2
         version: link:packages/linux-x64-musl
       '@openclaw/fs-safe-win32-x64-msvc':
-        specifier: 0.7.1
+        specifier: 0.7.2
         version: link:packages/win32-x64-msvc
       jszip:
         specifier: ^3.10.1

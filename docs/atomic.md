@@ -209,6 +209,40 @@ throws `ESTALE` before commit when possible. If the destination has already
 been committed, cleanup still preserves the changed source entries and throws
 `ESTALE`.
 
+### Final rename authorization
+
+Pass `assertBeforeRename` when a move depends on a revocable lease or another
+caller-owned authorization. The helper captures this callback when called and
+runs it synchronously after asynchronous preparation and directory checks,
+immediately before each rename is dispatched:
+
+```ts
+type MovePathWithCopyFallbackOptions = {
+  from: string;
+  sourceHardlinks?: "allow" | "reject";
+  to: string;
+  assertBeforeRename?: () => void;
+};
+```
+
+Throw to refuse publication. The original error is propagated, including errors
+with `EXDEV` or `EPERM` codes; an authorization failure never starts a copy
+fallback. A genuine rename failure may still require a second authorization
+check before publishing the staged copy.
+
+The callback must return `undefined` synchronously. Returning a Promise, thenable,
+or any other value refuses the rename with a `TypeError`; rejected asynchronous
+results are consumed without authorizing the operation. Perform asynchronous
+policy checks before calling the helper and use this callback to recheck the
+current owner at the mutation boundary.
+
+A refused rename leaves the source and destination unchanged; any private
+staged copy follows the helper's normal cleanup. The check does not cancel an
+already-dispatched rename or make an external lease store atomic with the
+filesystem. Cleanup after a successful move retains the existing source-identity
+checks. Omitting the
+callback preserves the usual move behavior.
+
 ## Difference from `root()`
 
 | `Root` methods | `atomic` helpers |

@@ -64,6 +64,7 @@ export function withSyncDirectoryGuards<T>(
 }
 
 export async function guardedRename(params: {
+  assertBeforeRename?: () => void;
   from: string;
   to: string;
   targetRoot?: string;
@@ -76,6 +77,8 @@ export async function guardedRename(params: {
   await withAsyncDirectoryGuards(
     [sourceGuard, targetGuard],
     async () => {
+      // Authority must survive all awaited guards; do not yield before rename dispatch.
+      params.assertBeforeRename?.();
       await fs.rename(params.from, params.to);
     },
     { verifyAfter: params.verifyAfter },

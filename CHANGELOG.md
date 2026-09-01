@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.2 - 2026-09-01
+
+- Add `movePathWithCopyFallback({ assertBeforeRename })` to synchronously recheck caller-owned authorization immediately before direct or staged rename, preserving refusal errors and rejecting asynchronous callbacks without publishing the move.
+
 ## 0.7.1 - 2026-09-01
 
 ### Highlights
