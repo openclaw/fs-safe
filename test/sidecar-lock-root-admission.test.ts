@@ -150,7 +150,7 @@ posix.each([
         }
       }
     }, afterIdentity);
-    const snapshot = readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardUnlinked: true });
+    const snapshot = readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardObservation: "unlinked" });
     const error = await snapshot.catch((caught: unknown) => caught);
     expect(error).toMatchObject({ name: "FsSafeError" });
     expect(["path-mismatch", "outside-workspace", "path-alias", "not-found"]).toContain((error as { code: string }).code);
@@ -217,7 +217,7 @@ posix.each([false, true])("rejects a snapshot replacement (after identity: %s)",
     await fs.rename(lockPath, `${lockPath}.displaced`);
     await fs.writeFile(lockPath, '{"owner":"replacement"}', { flag: "wx" });
   }, afterIdentity);
-  await expect(readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardUnlinked: true }))
+  await expect(readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardObservation: "unlinked" }))
     .rejects.toMatchObject({ code: "path-mismatch" });
   expect(opened()?.fd).toBe(-1);
   await expect(fs.readFile(lockPath, "utf8")).resolves.toBe('{"owner":"replacement"}');
@@ -243,7 +243,7 @@ posix("rejects a Root replaced after its absence probe", async () => {
       throw error;
     }
   });
-  await expect(readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardUnlinked: true }))
+  await expect(readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardObservation: "unlinked" }))
     .rejects.toMatchObject({ code: "path-mismatch" });
   expect(opened()?.fd).toBe(-1);
 });

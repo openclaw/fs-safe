@@ -162,23 +162,33 @@ path.
 
 An owner can finish releasing while another async acquirer inspects its record.
 Create-only Root writes do not open an existing record merely to inherit its
-mode. During acquisition, a failed snapshot can be discarded only when the
-original descriptor has exact identity, was not observed with multiple links,
-and proves it was unlinked (`nlink === 0`). This includes Windows resolver
+mode. Once a pathname sample and opened descriptor agree, a failed acquisition
+snapshot can be discarded only when the original descriptor has exact identity,
+was not observed with multiple links, and proves it was unlinked (`nlink === 0`).
+This includes Windows resolver
 `EPERM`/`EBADF` failures, with evidence captured at the failing operation before
 closing the descriptor. The canonical in-root ancestor chain and Root are
 rechecked; permitted in-root parent symlinks are resolved before those checks.
+
+A contending waiter may also encounter a new holder between its pre-open
+pathname inspection and opening the file. It may discard that stale observation
+only when the old sample and opened descriptor have different, strictly known
+regular-file identities, neither was observed with multiple links, and the
+opened descriptor and complete canonical ancestry pass reinspection. This does
+not prove the old pathname sample was unlinked rather than moved. The new
+holder's payload is not read or adopted. Post-create admission never opts into
+this pre-open-change policy.
 
 Discarding an acquisition observation is not proof that the pathname is absent:
 another owner may already have created the next record. Every discarded
 observation consumes the normal retry/deadline budget and requires fresh
 exclusive creation. It supplies no release, reclaim, or held-lock authority.
 Generic `Root.open()` and held-owner/reclaim reads still reject failed opens.
-Moved but linked records, unknown or inexact identities, retargeted ancestors,
-and unrelated filesystem or caller errors fail closed.
-Failure receipts belong only to the current Root observation, including during
-nested or concurrent acquisitions; historical error identity is not unlink or
-open-denial evidence.
+Moving an already-matched pinned descriptor without unlinking it, unknown or
+inexact identities, retargeted ancestors, and unrelated filesystem or caller
+errors fail closed. Failure receipts belong only to the current Root observation,
+including during nested or concurrent acquisitions; historical error identity
+is not changed-file, unlink, or open-denial evidence.
 
 After creating a record, the async Root-backed acquirer checks the reopened
 bytes against its exact serialized payload and ownership token. A replacement

@@ -115,8 +115,8 @@ export async function readSidecarLockRawSnapshot(
     lockRoot?: Root;
     rejectNonFile?: boolean;
     allowDescriptorIdentityDrift?: boolean;
-    // Acquisition alone may discard a proven-unlinked observation, never delete from it.
-    discardUnlinked?: boolean;
+    // Discarding acquisition evidence never grants ownership or removal authority.
+    discardObservation?: "unlinked" | "changed";
     onOpenFailure?: (error: unknown) => void;
   } = {},
 ): Promise<SidecarLockRawSnapshot | null> {
@@ -125,7 +125,7 @@ export async function readSidecarLockRawSnapshot(
     if (options.lockRoot) {
       const lockRoot = options.lockRoot;
       const relative = relativeSidecarLockPath(lockRoot, lockPath);
-      const opened = await openSidecarRoot(lockRoot, relative, options.discardUnlinked, options.onOpenFailure);
+      const opened = await openSidecarRoot(lockRoot, relative, options.discardObservation, options.onOpenFailure);
       if (!opened) return null;
       try {
         const raw = (await readFileHandleBounded(opened.handle, MAX_LOCK_PAYLOAD_BYTES)).toString("utf8");

@@ -9,7 +9,7 @@ import { resolveRootPath } from "./root-path.js";
 export async function openSidecarRoot(
   lockRoot: Root,
   relative: string,
-  discardUnlinked = false,
+  discardObservation?: "unlinked" | "changed",
   onOpenFailure?: (error: unknown) => void,
 ): Promise<OpenResult | null> {
   const resolved = await lockRoot.resolve(relative);
@@ -23,7 +23,7 @@ export async function openSidecarRoot(
   if (expectedRealPath === lockRoot.rootReal) throw new FsSafeError("not-file", "sidecar lock is a directory");
   const parents = [];
   let completeParents = true;
-  if (discardUnlinked) {
+  if (discardObservation) {
     // Follow permitted in-root aliases first; receipts cover canonical ancestry.
     for (let dir = path.dirname(expectedRealPath); ; dir = path.dirname(dir)) {
       try {
@@ -47,8 +47,10 @@ export async function openSidecarRoot(
     const openFailed = observation.has(error, `open:${resolved}`);
     if (openFailed) onOpenFailure?.(error);
     const missing = openFailed && error instanceof FsSafeError && error.code === "not-found";
-    if (missing && !discardUnlinked) return null;
-    if (!discardUnlinked || (!missing && (!completeParents || !observation.has(error, `unlinked:${resolved}`)))) throw error;
+    if (missing && !discardObservation) return null;
+    const discardable = observation.has(error, `unlinked:${resolved}`) ||
+      (discardObservation === "changed" && observation.has(error, `changed:${resolved}`));
+    if (!discardObservation || (!missing && (!completeParents || !discardable))) throw error;
     try {
       try {
         const current = await lockRoot.stat(relative);
