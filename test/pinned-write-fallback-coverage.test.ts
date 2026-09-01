@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
@@ -67,9 +68,10 @@ describe("pinned write fallback coverage", () => {
     ).rejects.toMatchObject({ code: "EEXIST" });
 
     const realOpen = fs.open;
+    let shortenedWrites = 0;
     vi.spyOn(fs, "open").mockImplementation(async (...args) => {
       const handle = await realOpen(...args);
-      if (String(args[0]).includes("streamed.txt")) {
+      if ((Number(args[1]) & fsConstants.O_WRONLY) !== 0) {
         const realWrite = handle.write.bind(handle);
         vi.spyOn(handle, "write").mockImplementation((async (
           buffer: Buffer,
@@ -78,6 +80,7 @@ describe("pinned write fallback coverage", () => {
           position?: number | null,
         ) => {
           const partialLength = Math.max(1, Math.ceil(length / 2));
+          if (partialLength < length) shortenedWrites += 1;
           const result = await realWrite(buffer, offset, partialLength, position);
           return { bytesWritten: result.bytesWritten, buffer };
         }) as typeof handle.write);
@@ -96,6 +99,7 @@ describe("pinned write fallback coverage", () => {
       input: { kind: "stream", stream: Readable.from(["stream", "ed"]) },
     });
     expect(streamed.dev).toBeGreaterThan(0);
+    expect(shortenedWrites).toBeGreaterThan(0);
     await expect(fs.readFile(path.join(root, "nested", "streamed.txt"), "utf8")).resolves.toBe(
       "streamed",
     );

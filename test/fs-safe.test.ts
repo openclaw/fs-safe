@@ -96,6 +96,29 @@ describe("@openclaw/fs-safe", () => {
     await expect(root.exists("nested/copied.txt")).resolves.toBe(false);
   });
 
+  it.each([12, 200, 240].flatMap((length) =>
+    (["write", "copyIn"] as const).map((operation) => ({ length, operation })),
+  ))("$operation preserves filesystem-admitted $length-byte basenames", async ({ length, operation }) => {
+    configureFsSafeNative({ mode: "off" });
+    const directory = await tempRoot("fs-safe-name-");
+    const basename = `${"a".repeat(length - 4)}.txt`;
+    const target = path.join(directory, basename);
+    await writeFile(target, "original");
+    await expect(readFile(target, "utf8")).resolves.toBe("original");
+    const scoped = await openRoot(directory);
+
+    if (operation === "write") {
+      await scoped.write(basename, "replacement");
+    } else {
+      const source = path.join(await tempRoot("fs-safe-name-source-"), "source.txt");
+      await writeFile(source, "replacement");
+      await scoped.copyIn(basename, source);
+    }
+
+    await expect(readFile(target, "utf8")).resolves.toBe("replacement");
+    await expect(readdir(directory)).resolves.toEqual([basename]);
+  });
+
   it.skipIf(skipOnWindows)("preserves concurrent append writes", async () => {
     const rootPath = await tempRoot("fs-safe-append-concurrent-");
     const root = await openRoot(rootPath);

@@ -231,7 +231,8 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
     }
   }
 
-  const tempPath = path.join(parentPath, `.${params.basename}.${randomUUID()}.fallback.tmp`);
+  // Private staging must not consume the destination basename's filename budget.
+  const tempPath = path.join(parentPath, `.fs-safe-${randomUUID()}.tmp`);
   const tempFlags =
     fsSync.constants.O_WRONLY |
     fsSync.constants.O_CREAT |

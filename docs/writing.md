@@ -27,6 +27,9 @@ await fs.mkdir("snapshots/2026/05");
 5. Atomically rename the temp file over the destination.
 6. Stat the resulting fd and verify identity.
 
+Private sibling temporary names are independent of the destination basename,
+so staging does not add a suffix to an otherwise valid long filename.
+
 A failure before the final rename leaves the destination at its previous
 contents. A successful rename publishes the complete replacement. This
 old-or-new guarantee does not apply to `append()` or `openWritable()`, which

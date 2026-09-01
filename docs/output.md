@@ -58,9 +58,12 @@ through the package's filename sanitizer; `fallbackFileName` supplies the name
 when nothing remains. This removes traversal, device-name, and invalid-character
 hazards but does not trim Windows-normalized trailing dots or spaces; reject or
 rewrite those when cross-platform filename uniqueness matters.
-The same sanitized basename is used for producer staging, guarded internal
-temps, the final rename target, and the returned `path`; raw and staged names
-never diverge.
+`staging: "workspace"` passes the sanitized basename to the producer.
+`staging: "sibling"` embeds that basename in its randomized temporary name.
+The final target and returned `path` use the destination basename, sanitized
+when needed as described above. Guarded temporary files used only inside
+fs-safe have independent names so their length does not grow with the
+destination basename.
 
 ## Choosing a staging mode
 

@@ -144,6 +144,9 @@ rename, so that fallback is temporarily non-atomic while retaining the staged
 file's `0600` mode; use the async `writeJson()`/`replaceFileAtomic()` surfaces
 when fallback policy must be explicit.
 
+Its private sibling temporary name is independent of the destination basename,
+so staging does not lengthen a valid destination filename.
+
 ```ts
 writeJsonSync("./prefs.json", { theme: "dark" });
 ```

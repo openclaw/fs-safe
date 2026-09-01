@@ -92,6 +92,24 @@ describe("archive extraction", () => {
     await expect(fs.readFile(path.join(packageDir, "my file.txt"), "utf8")).resolves.toBe("space");
   });
 
+  it.each([12, 200, 240])("extracts filesystem-admitted %i-byte ZIP basenames", async (length) => {
+    const directory = await tempRoot("fs-safe-zip-name-");
+    const destDir = path.join(directory, "dest");
+    await fs.mkdir(destDir);
+    const basename = `${"a".repeat(length - 4)}.txt`;
+    const target = path.join(destDir, basename);
+    await fs.writeFile(target, "original");
+    await expect(fs.readFile(target, "utf8")).resolves.toBe("original");
+    const zip = new JSZip().file(basename, "replacement");
+    const archivePath = path.join(directory, "fixture.zip");
+    await fs.writeFile(archivePath, await zip.generateAsync({ type: "nodebuffer" }));
+
+    await extractArchive({ archivePath, destDir, kind: "zip", timeoutMs: 15_000 });
+
+    await expect(fs.readFile(target, "utf8")).resolves.toBe("replacement");
+    await expect(fs.readdir(destDir)).resolves.toEqual([basename]);
+  });
+
   it("supports buffer-only ZIP entries while stripping the archive root", async () => {
     const root = await tempRoot("fs-safe-archive-buffer-only-");
     const archivePath = path.join(root, "pkg.zip");

@@ -783,9 +783,7 @@ function emitWriteBoundaryWarning(reason: string) {
 }
 
 function buildAtomicWriteTempPath(targetPath: string): string {
-  const dir = path.dirname(targetPath);
-  const base = path.basename(targetPath);
-  return path.join(dir, `.${base}.${process.pid}.${randomUUID()}.tmp`);
+  return path.join(path.dirname(targetPath), `.fs-safe-${randomUUID()}.tmp`);
 }
 
 function rootWriteQueueKey(root: RootContext, relativePath: string): string {

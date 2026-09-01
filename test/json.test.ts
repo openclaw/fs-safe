@@ -225,6 +225,19 @@ describe("json file helpers", () => {
     expect(JSON.parse(await fs.readFile(filePath, "utf8"))).toEqual({ ok: true });
   });
 
+  it.each([12, 240])("writes filesystem-admitted %i-byte JSON basenames synchronously", async (length) => {
+    const directory = await tempRoot("fs-safe-json-name-");
+    const basename = `${"a".repeat(length - 5)}.json`;
+    const filePath = path.join(directory, basename);
+    await fs.writeFile(filePath, "original");
+    await expect(fs.readFile(filePath, "utf8")).resolves.toBe("original");
+
+    writeJsonSync(filePath, { replacement: true });
+
+    await expect(fs.readFile(filePath, "utf8")).resolves.toBe('{\n  "replacement": true\n}\n');
+    await expect(fs.readdir(directory)).resolves.toEqual([basename]);
+  });
+
   it("serializes work through createAsyncLock", async () => {
     const lock = createAsyncLock();
     const events: string[] = [];

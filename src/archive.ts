@@ -177,7 +177,6 @@ async function writeZipFileEntry(params: {
   try {
     await writeSiblingTempFile({
       dir: path.dirname(destinationPath),
-      tempPrefix: `.${path.basename(destinationPath)}.fs-safe-archive`,
       chmodDir: false,
       mode: params.mode,
       writeTemp: async (tempPath) => {
