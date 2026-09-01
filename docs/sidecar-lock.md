@@ -155,6 +155,32 @@ an existing `Root` capability. `lockPath` must resolve inside that root.
 Identity-conditioned removal remains the only release and reclaim deletion
 path.
 
+An owner can finish releasing while another async acquirer inspects its record.
+Create-only Root writes do not open an existing record merely to inherit its
+mode. During acquisition, a failed snapshot can be discarded only when the
+original descriptor has exact identity, was not observed with multiple links,
+and proves it was unlinked (`nlink === 0`). This includes Windows resolver
+`EPERM`/`EBADF` failures, with evidence captured at the failing operation before
+closing the descriptor. The canonical in-root ancestor chain and Root are
+rechecked; permitted in-root parent symlinks are resolved before those checks.
+
+Discarding an acquisition observation is not proof that the pathname is absent:
+another owner may already have created the next record. Every discarded
+observation consumes the normal retry/deadline budget and requires fresh
+exclusive creation. It supplies no release, reclaim, or held-lock authority.
+Generic `Root.open()` and held-owner/reclaim reads still reject failed opens.
+Moved but linked records, unknown or inexact identities, retargeted ancestors,
+and unrelated filesystem or caller errors fail closed.
+
+After creating a record, the async Root-backed acquirer checks the reopened
+bytes against its exact serialized payload and ownership token. A replacement
+is never adopted; a descriptor observed unlinked at the end of admission is
+never registered as held. Failed admission cleanup retains the original creator
+receipt, so it cannot remove a replacement using a later stat alone. Native
+mode changes the create mechanism, not these Root-backed admission checks.
+Non-Root and synchronous snapshots retain their descriptor/read/path checks
+and do not use the Root opened-path resolver.
+
 ## Release handle
 
 ```ts

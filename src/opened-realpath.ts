@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
-import { FsSafeError } from "./errors.js";
+import { openedPathResolutionError } from "./opened-file-failure.js";
 import { sameFileIdentity, type FileIdentityStat } from "./file-identity.js";
 import { isNotFoundPathError } from "./path.js";
 
@@ -46,6 +46,12 @@ export async function resolveOpenedFileRealPathForFd(
     }
   } catch (err) {
     if (!isNotFoundPathError(err)) {
+      // Windows can fail here on a deleted-but-open file. Brand only this
+      // resolver operation; the caller must still prove unlink on the same fd.
+      if (process.platform === "win32" && err instanceof Error &&
+        ["EPERM", "EBADF"].includes((err as NodeJS.ErrnoException).code ?? "")) {
+        throw openedPathResolutionError(err);
+      }
       throw err;
     }
   }
@@ -53,7 +59,7 @@ export async function resolveOpenedFileRealPathForFd(
   if (parentResolved) {
     return parentResolved;
   }
-  throw new FsSafeError("path-mismatch", "unable to resolve opened file path");
+  throw openedPathResolutionError();
 }
 
 async function resolveOpenedFileRealPathFromParent(

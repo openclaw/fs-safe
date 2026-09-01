@@ -18,8 +18,8 @@ const mismatch = { name: "FsSafeError", code: "path-mismatch" };
 const errorShape = (error) => ({ name: error?.name, code: error?.code });
 const retry = { retries: 3, minTimeout: 1, maxTimeout: 1 };
 
-// Forward every call to this same real Root. Create's existing-file inspection
-// opens internally, so arm only at the public snapshot open after its collision.
+// Forward every call to this same real Root and arm the snapshot open after
+// create-only preflight reports the collision without opening the existing file.
 function observeSnapshot(capability, relative, hookName, mutate) {
   const original = { create: capability.create, open: capability.open, stat: capability.stat };
   const lockPath = path.join(capability.rootReal, relative);
@@ -163,7 +163,7 @@ async function proveReplacement(capability, ownerManager, waiterManager) {
   assert.equal(trace.hookCalls, 1);
   assert.equal(trace.opened?.fd, -1);
   assert.deepEqual(trace.error, mismatch);
-  assert.deepEqual(trace.probes, ["present"]);
+  assert.deepEqual(trace.probes, []);
   assert.deepEqual(trace.creates.map((call) => call.outcome), ["already-exists"]);
   assert.equal(waiterManager.heldEntries().length, 0);
   assert.equal((await fs.lstat(lockPath)).isFile(), true);

@@ -89,7 +89,7 @@ describe("sidecar lock helper failure handling", () => {
       await capability.create(relative, '{"owner":"original"}');
       const probe = vi.spyOn(capability, "stat");
       const gate = pauseSidecarSnapshotOpen(lockPath, afterIdentityCheck);
-      const snapshot = readSidecarLockSnapshot(lockPath, { lockRoot: capability });
+      const snapshot = readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardUnlinked: true });
       const result = expect(snapshot).resolves.toBeNull();
       const handle = await gate.opened;
       const close = vi.spyOn(handle, "close");
@@ -115,7 +115,7 @@ describe("sidecar lock helper failure handling", () => {
     await capability.create("owner.json", original);
     const probe = vi.spyOn(capability, "stat");
     const gate = pauseSidecarSnapshotOpen(lockPath, false);
-    const snapshot = readSidecarLockSnapshot(lockPath, { lockRoot: capability });
+    const snapshot = readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardUnlinked: true });
     const result = expect(snapshot).rejects.toMatchObject({ code: "path-mismatch" });
     const handle = await gate.opened;
     try {
@@ -126,7 +126,7 @@ describe("sidecar lock helper failure handling", () => {
       gate.resume();
     }
     await result;
-    expect(probe).toHaveBeenCalledExactlyOnceWith("owner.json");
+    expect(probe).not.toHaveBeenCalled();
     expect(handle.fd).toBe(-1);
     await expect(fs.readFile(displacedPath, "utf8")).resolves.toBe(original);
     await expect(fs.readFile(lockPath, "utf8")).resolves.toBe(replacement);
@@ -139,7 +139,7 @@ describe("sidecar lock helper failure handling", () => {
     new FsSafeError("hardlink", "hardlink blocked"),
     Object.assign(new Error("missing without capability proof"), { code: "ENOENT" }),
     Object.assign(new Error("probe denied"), { code: "EACCES" }),
-  ])("preserves the original mismatch when the Root absence probe rejects with $code", async (failure) => {
+  ])("does not probe an unproven mismatch even when stat would reject with $code", async (failure) => {
     const capability = await root(await tempRoot("fs-safe-sidecar-root-probe-"));
     const mismatch = new FsSafeError("path-mismatch", "opened path changed");
     vi.spyOn(capability, "open").mockRejectedValueOnce(mismatch);
@@ -147,7 +147,7 @@ describe("sidecar lock helper failure handling", () => {
     await expect(readSidecarLockSnapshot(path.join(capability.rootReal, "owner.json"), {
       lockRoot: capability,
     })).rejects.toBe(mismatch);
-    expect(probe).toHaveBeenCalledExactlyOnceWith("owner.json");
+    expect(probe).not.toHaveBeenCalled();
   });
 
   itPosix("rejects absence under a replaced Root after the ownership record is unlinked", async () => {
@@ -159,7 +159,7 @@ describe("sidecar lock helper failure handling", () => {
     await capability.create("owner.json", '{"owner":"original"}');
     const probe = vi.spyOn(capability, "stat");
     const gate = pauseSidecarSnapshotOpen(lockPath, true);
-    const snapshot = readSidecarLockSnapshot(lockPath, { lockRoot: capability });
+    const snapshot = readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardUnlinked: true });
     const result = expect(snapshot).rejects.toMatchObject({ code: "path-mismatch" });
     const handle = await gate.opened;
     try {
@@ -305,7 +305,7 @@ describe("sidecar lock helper failure handling", () => {
     const capability = await root(rootDir);
     const lockPath = path.join(rootDir, "state.lock");
     await capability.create("state.lock", "old");
-    const snapshot = await readSidecarLockSnapshot(lockPath, { lockRoot: capability });
+    const snapshot = await readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardUnlinked: true });
     await expect(removeStaleSidecarLockIfAllowed({
       lockPath,
       normalizedTargetPath: path.join(rootDir, "state"),

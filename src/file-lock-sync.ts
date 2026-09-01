@@ -57,7 +57,7 @@ export type FileLockSyncHandle = {
 };
 
 type SyncHeldLock = {
-  fd: number;
+  fd: number | undefined;
   lockPath: string;
   normalizedTargetPath: string;
   parsePayload?: (raw: string) => unknown;
@@ -89,7 +89,7 @@ function releaseAllSyncHeldLocks(): void {
       held.timer = undefined;
     }
     try {
-      fs.closeSync(held.fd);
+      if (held.fd !== undefined) fs.closeSync(held.fd);
     } catch {
       // Best-effort process-exit cleanup.
     }
@@ -121,15 +121,23 @@ function verifySyncHeldLock(held: SyncHeldLock): boolean {
 function releaseSyncHeldLock(held: SyncHeldLock): boolean {
   const heldLocks = getSyncHeldLocks();
   if (heldLocks.get(held.normalizedTargetPath) !== held) return false;
-  held.refCount -= 1;
-  if (held.refCount > 0) return false;
-  heldLocks.delete(held.normalizedTargetPath);
+  if (held.refCount > 1) {
+    held.refCount -= 1;
+    return false;
+  }
+  // Keep the final reference and cleanup receipt until deletion succeeds.
   if (held.timer) {
     clearInterval(held.timer);
     held.timer = undefined;
   }
-  fs.closeSync(held.fd);
+  if (held.fd !== undefined) {
+    const fd = held.fd;
+    // A close error may still free the number; consume ownership before closing.
+    held.fd = undefined;
+    fs.closeSync(fd);
+  }
   removeSidecarLockIfUnchangedSync(held.lockPath, held.snapshot);
+  heldLocks.delete(held.normalizedTargetPath);
   return true;
 }
 
@@ -137,8 +145,8 @@ function createSyncHeldLockHandle(held: SyncHeldLock): FileLockSyncHandle {
   let released = false;
   const release = () => {
     if (released) return;
-    released = true;
     releaseSyncHeldLock(held);
+    released = true;
   };
   return {
     lockPath: held.lockPath,
@@ -172,14 +180,11 @@ function boundedLockPath(lockPath: string, lockRoot?: Root): string {
   return path.join(parentReal, path.basename(resolved));
 }
 
-function defaultShouldReclaim(payload: unknown, lockPath: string, staleMs: number, nowMs: number): boolean {
-  const createdAtMs = sidecarLockPayloadCreatedAtMs(payload);
+function defaultShouldReclaim(snapshot: SidecarLockSnapshot, staleMs: number, nowMs: number): boolean {
+  const createdAtMs = sidecarLockPayloadCreatedAtMs(snapshot.payload);
   if (createdAtMs !== null) return nowMs - createdAtMs > staleMs;
-  try {
-    return nowMs - fs.statSync(lockPath).mtimeMs > staleMs;
-  } catch {
-    return true;
-  }
+  // A cooperating holder can unlink after the snapshot; use its observed age.
+  return !snapshot.stat || nowMs - snapshot.stat.mtimeMs > staleMs;
 }
 
 function reclaimGuardExists(reclaimGuardPath: string): boolean {
@@ -321,7 +326,7 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
             nowMs,
             heldByThisProcess: false,
           })
-        : defaultShouldReclaim(snapshot.payload, lockPath, staleMs, nowMs);
+        : defaultShouldReclaim(snapshot, staleMs, nowMs);
       if (reclaim) {
         if (
           staleRecovery === "remove-if-unchanged" &&

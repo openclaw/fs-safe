@@ -94,17 +94,17 @@ describe("synchronous file-lock failure handling", () => {
     const targetPath = path.join(await fs.realpath(root), "state.json");
     const lockPath = `${targetPath}.lock`;
     await fs.writeFile(lockPath, "{}");
-    const realStat = fsSync.statSync.bind(fsSync);
-    vi.spyOn(fsSync, "statSync").mockImplementation((filePath, options) => {
+    const realLstat = fsSync.lstatSync.bind(fsSync);
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((filePath, options) => {
       if (String(filePath) === lockPath) {
         throw Object.assign(new Error("inspection denied"), { code: "EACCES" });
       }
-      return realStat(filePath, options as never);
+      return realLstat(filePath, options as never);
     });
 
     expect(() =>
       acquireFileLockSync(targetPath, { ...lockOptions(), staleMs: 60_000 }),
-    ).toThrow(expect.objectContaining({ code: "file_lock_stale" }));
+    ).toThrow(expect.objectContaining({ code: "EACCES" }));
     await expect(fs.readFile(lockPath, "utf8")).resolves.toBe("{}");
   });
 
