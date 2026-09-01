@@ -227,11 +227,13 @@ describe("synchronous Windows lock-file open denials", () => {
           return open(file, flags, mode);
         });
       } else if (stage === "identity") {
-        const fstat = fs.fstatSync.bind(fs);
-        vi.spyOn(fs, "fstatSync").mockImplementation((fd) => {
-          const stat = fstat(fd);
-          return Object.assign(stat, { ino: stat.ino + 1 });
+        // Large Windows inode numbers can round away +1; use distinct known identities.
+        const lstat = fs.lstatSync.bind(fs), fstat = fs.fstatSync.bind(fs);
+        vi.spyOn(fs, "lstatSync").mockImplementation((file, opts) => {
+          const stat = lstat(file, opts as never);
+          return file === lockPath ? Object.assign(stat, { ino: 1 }) : stat;
         });
+        vi.spyOn(fs, "fstatSync").mockImplementation((fd) => Object.assign(fstat(fd), { ino: 2 }));
       } else {
         const lstat = fs.lstatSync.bind(fs);
         let calls = 0;
