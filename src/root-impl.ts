@@ -22,6 +22,7 @@ import {
   type DenyMutationPolicy,
 } from "./deny-mutations.js";
 import { resolveOpenedFileRealPathForFd, resolveOpenedFileRealPathForHandle } from "./opened-realpath.js";
+import { openedPathResolutionError, recordFileOpenFailure, recordOpenedFileFailure } from "./opened-file-failure.js";
 import {
   type RenameIdentityPolicy,
   runPinnedWriteHelper,
@@ -237,23 +238,15 @@ async function openVerifiedLocalFile(
     await fsSafeTestHooks?.afterPreOpenLstat?.(filePath);
   }
 
+  const openFlags = options?.symlinks === "follow-within-root"
+    ? OPEN_READ_FOLLOW_FLAGS
+    : OPEN_READ_FLAGS;
+  await fsSafeTestHooks?.beforeOpen?.(filePath, openFlags);
   let handle: FileHandle;
   try {
-    const openFlags = options?.symlinks === "follow-within-root"
-      ? OPEN_READ_FOLLOW_FLAGS
-      : OPEN_READ_FLAGS;
-    await fsSafeTestHooks?.beforeOpen?.(filePath, openFlags);
-    handle = await fs.open(filePath, openFlags);
-    try {
-      await fsSafeTestHooks?.afterOpen?.(filePath, handle);
-    } catch (err) {
-      await handle.close().catch(() => {});
-      throw err;
-    }
+    handle = await fs.open(filePath, openFlags).catch((error: unknown) =>
+      recordFileOpenFailure(isNotFoundPathError(error) ? fileNotFoundError() : error, filePath));
   } catch (err) {
-    if (isNotFoundPathError(err)) {
-      throw fileNotFoundError();
-    }
     if (isSymlinkOpenError(err)) {
       throw new FsSafeError("symlink", "symlink open blocked", { cause: err });
     }
@@ -265,6 +258,7 @@ async function openVerifiedLocalFile(
   }
 
   try {
+    await fsSafeTestHooks?.afterOpen?.(filePath, handle);
     const stat = await handle.stat();
     if (!stat.isFile()) {
       throw new FsSafeError("not-file", "not a file");
@@ -278,7 +272,18 @@ async function openVerifiedLocalFile(
       throw hardlinkedPathNotAllowedError();
     }
 
-    await inspectFileIdentity(async () => {
+    const inspectPathIdentity = async (inspect: () => Promise<BigIntStats>) => {
+      try {
+        return await inspectFileIdentity(inspect, identity);
+      } catch (error) {
+        const failure = isNotFoundPathError(error) ? openedPathResolutionError(fileNotFoundError()) : error;
+        if (stat.nlink <= 1 && (!preOpenStat || preOpenStat.nlink <= 1n)) {
+          await recordOpenedFileFailure(failure, handle, filePath, identity);
+        }
+        throw failure;
+      }
+    };
+    await inspectPathIdentity(async () => {
       const pathStat = options?.symlinks === "follow-within-root"
         ? await fs.stat(filePath, { bigint: true })
         : await fs.lstat(filePath, { bigint: true });
@@ -286,27 +291,27 @@ async function openVerifiedLocalFile(
         throw new FsSafeError("symlink", "symlink not allowed");
       }
       return pathStat;
-    }, identity);
+    });
 
     await fsSafeTestHooks?.afterOpenedPathIdentityCheck?.(filePath, handle);
-    const realPath = await resolveOpenedFileRealPathForFd(handle.fd, identity, filePath);
-    await inspectFileIdentity(async () => {
+    const realPath = await resolveOpenedFileRealPathForFd(handle.fd, identity, filePath)
+      .catch(async (error: unknown) => {
+        if (stat.nlink <= 1 && (!preOpenStat || preOpenStat.nlink <= 1n)) {
+          await recordOpenedFileFailure(error, handle, filePath, identity);
+        }
+        throw error;
+      });
+    await inspectPathIdentity(async () => {
       const realStat = await fs.stat(realPath, { bigint: true });
       if (options?.hardlinks === "reject" && realStat.nlink > 1n) {
         throw hardlinkedPathNotAllowedError();
       }
       return realStat;
-    }, identity);
+    });
 
     return { opened: openResult({ handle, realPath, stat }), identity };
   } catch (err) {
     await handle.close().catch(() => {});
-    if (err instanceof FsSafeError) {
-      throw err;
-    }
-    if (isNotFoundPathError(err)) {
-      throw fileNotFoundError();
-    }
     throw err;
   }
 }
@@ -686,18 +691,10 @@ async function openFileInRoot(
     rejectSymlinks: params.symlinks !== "follow-within-root",
   });
 
-  let opened: OpenResult;
-  try {
-    ({ opened } = await openVerifiedLocalFile(resolved, {
-      nonBlockingRead: params.nonBlockingRead,
-      symlinks: params.symlinks,
-    }));
-  } catch (err) {
-    if (err instanceof FsSafeError) {
-      throw err;
-    }
-    throw err;
-  }
+  const { opened } = await openVerifiedLocalFile(resolved, {
+    nonBlockingRead: params.nonBlockingRead,
+    symlinks: params.symlinks,
+  });
 
   if (params.hardlinks !== "allow" && opened.stat.nlink > 1) {
     await opened.handle.close().catch(() => {});
@@ -1101,6 +1098,7 @@ async function writeFileInRoot(
       params.relativePath,
       params.mode,
       params.denyMutations,
+      params.overwrite,
     );
 
     await serializePathWrite(pinned.targetPath, async () => {
@@ -1256,6 +1254,7 @@ async function resolvePinnedWriteTargetInRoot(
   relativePath: string,
   requestedMode?: number,
   denyMutations?: DenyMutationPolicy,
+  overwrite = true,
 ): Promise<PinnedWriteTarget> {
   const { rootReal, rootWithSep, resolved } = await resolveGuardedWritePathInRoot(root, {
     relativePath,
@@ -1275,21 +1274,35 @@ async function resolvePinnedWriteTargetInRoot(
   if (!basename || basename === "." || basename === "/") {
     throw new FsSafeError("invalid-path", "invalid target path");
   }
+  // Exclusive publication cannot inherit an existing file's mode. Keep type
+  // and alias checks, but never open a competing owner's record just to reject it.
+  if (!overwrite) {
+    try {
+      const existing = await fs.stat(resolved);
+      if (!existing.isFile()) throw new FsSafeError("not-file", "not a file");
+      if (existing.nlink > 1) throw hardlinkedPathNotAllowedError();
+      throw new FsSafeError("already-exists", "file already exists");
+    } catch (error) {
+      if (!isNotFoundPathError(error)) throw error;
+    }
+  }
   let mode = requestedMode ?? 0o600;
   try {
-    const opened = await openFileInRoot(root, {
-      relativePath,
-      hardlinks: "reject",
-      nonBlockingRead: true,
-      symlinks: "follow-within-root",
-    });
-    try {
-      mode = requestedMode ?? (opened.stat.mode & 0o777);
-      if (!isPathInside(rootWithSep, opened.realPath)) {
-        throw outsideWorkspaceError();
+    if (overwrite) {
+      const opened = await openFileInRoot(root, {
+        relativePath,
+        hardlinks: "reject",
+        nonBlockingRead: true,
+        symlinks: "follow-within-root",
+      });
+      try {
+        mode = requestedMode ?? (opened.stat.mode & 0o777);
+        if (!isPathInside(rootWithSep, opened.realPath)) {
+          throw outsideWorkspaceError();
+        }
+      } finally {
+        await opened.handle.close().catch(() => {});
       }
-    } finally {
-      await opened.handle.close().catch(() => {});
     }
   } catch (err) {
     if (!(err instanceof FsSafeError) || err.code !== "not-found") {

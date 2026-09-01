@@ -245,9 +245,13 @@ framing rules before parser normalization:
   padded sizes must fit `Number.MAX_SAFE_INTEGER`, even with PAX overrides,
   before member budgets are considered.
 
-Framing failures use `ArchiveFormatError("archive-header-invalid")`. PAX `x`
-and GNU long-name/long-link `L`/`K` payloads retain their existing support and
-metadata limits; the zero-body rule is not applied to all non-regular types.
+Framing failures use `ArchiveFormatError("archive-header-invalid")`, except
+invalid UTF-8 or nonzero bytes after the first NUL in fixed name, linkname,
+and USTAR prefix fields, which use `ArchiveSecurityError("entry-path")`.
+Missing linknames on links and nonempty linknames on non-links still use the
+format error. PAX `x` and GNU long-name/long-link `L`/`K` payloads retain their
+existing support and metadata limits; the zero-body rule is not applied to all
+non-regular types.
 PAX effective sizes still determine regular-member framing. Admission preserves
 the input bytes, and all entry/path/byte limits and extraction deadlines remain
 in force. Native inspection now completes this admission pass before parsing,
@@ -411,7 +415,11 @@ regular-file entry into a bounded `Buffer` without extracting a tree. It pins
 and privately stages the archive input, rejects link, directory, and duplicate
 entries, verifies ZIP CRC and declared size,
 and throws `ArchiveLimitError` if the requested entry's output exceeds
-`maxBytes`. For TAR, `maxBytes` applies only to that requested entry: a larger
+`maxBytes`. ZIP output within that cap must match the declared uncompressed
+size exactly; either a shorter or longer payload throws
+`ArchiveFormatError("archive-header-invalid")` before bytes are returned on
+both JavaScript and native backends.
+For TAR, `maxBytes` applies only to that requested entry: a larger
 unrequested member remains valid within the default archive admission limits.
 TAR traversal uses default entry-count, compressed-input, and metadata limits,
 plus the 768 MiB decoded ceiling derived from default extracted/archive byte

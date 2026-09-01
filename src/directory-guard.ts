@@ -1,9 +1,10 @@
-import type { Stats } from "node:fs";
+import type { BigIntStats, Stats } from "node:fs";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
+import { inspectFileIdentity } from "./strict-file-identity.js";
 import { isNotFoundPathError } from "./path.js";
 import { directoryComponentNotDirectoryError } from "./root-errors.js";
 
@@ -91,4 +92,13 @@ export function createNearestExistingSyncDirectoryGuard(
     }
   }
   return createSyncDirectoryGuard(root);
+}
+
+// Recovery receipts must retain every identity bit, including on Windows.
+export async function inspectDirectoryIdentity(dir: string, expected?: BigIntStats): Promise<BigIntStats> {
+  return await inspectFileIdentity(async () => {
+    const stat = await fs.lstat(dir, { bigint: true });
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw directoryComponentNotDirectoryError();
+    return stat;
+  }, expected);
 }

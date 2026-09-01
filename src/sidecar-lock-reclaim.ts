@@ -7,6 +7,8 @@ import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import type { Root } from "./root-impl.js";
+import { recordFileOpenFailure } from "./opened-file-failure.js";
+import { openSidecarRoot } from "./sidecar-lock-root.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
 const MAX_LOCK_PAYLOAD_BYTES = 1024 * 1024;
@@ -87,6 +89,11 @@ export function parseSidecarLockPayload(
   }
 }
 
+function missingSnapshotPath(error: unknown): null {
+  if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+  throw error;
+}
+
 export async function readSidecarLockSnapshot(
   lockPath: string,
   options: {
@@ -94,6 +101,8 @@ export async function readSidecarLockSnapshot(
     parsePayload?: (raw: string) => unknown;
     rejectNonFile?: boolean;
     allowDescriptorIdentityDrift?: boolean;
+    // Acquisition alone may discard a proven-unlinked observation, never delete from it.
+    discardUnlinked?: boolean;
   } = {},
 ): Promise<SidecarLockSnapshot | null> {
   let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
@@ -101,20 +110,7 @@ export async function readSidecarLockSnapshot(
     if (options.lockRoot) {
       const lockRoot = options.lockRoot;
       const relative = relativeSidecarLockPath(lockRoot, lockPath);
-      const opened = await lockRoot.open(relative).catch(async (error: unknown) => {
-        if (error instanceof FsSafeError && error.code === "path-mismatch") {
-          // An owner can unlink after open. Prove absence through the same root;
-          // acquisition retries create-only, so a later replacement stays guarded.
-          try {
-            await lockRoot.stat(relative);
-          } catch (probeError) {
-            if (probeError instanceof FsSafeError && probeError.code === "not-found") {
-              return null;
-            }
-          }
-        }
-        throw error;
-      });
+      const opened = await openSidecarRoot(lockRoot, relative, options.discardUnlinked);
       if (!opened) return null;
       try {
         const raw = (await readFileHandleBounded(opened.handle, MAX_LOCK_PAYLOAD_BYTES)).toString("utf8");
@@ -127,7 +123,8 @@ export async function readSidecarLockSnapshot(
         await opened.handle.close().catch(() => undefined);
       }
     }
-    const before = await fs.lstat(lockPath);
+    const before = await fs.lstat(lockPath).catch(missingSnapshotPath);
+    if (!before) return null;
     if (!before.isFile() || before.isSymbolicLink()) {
       if (options.rejectNonFile) {
         throw new FsSafeError("not-file", `sidecar lock is not a regular file: ${lockPath}`);
@@ -147,12 +144,13 @@ export async function readSidecarLockSnapshot(
           (typeof fsSync.constants.O_NONBLOCK === "number" ? fsSync.constants.O_NONBLOCK : 0),
       );
     } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
       if (options.rejectNonFile && (error as NodeJS.ErrnoException).code === "ELOOP") {
         throw new FsSafeError("not-file", `sidecar lock is not a regular file: ${lockPath}`, {
           cause: error,
         });
       }
-      throw error;
+      recordFileOpenFailure(error, lockPath);
     }
     const opened = await handle.stat();
     if (!opened.isFile()) {
@@ -163,19 +161,19 @@ export async function readSidecarLockSnapshot(
     }
     if (!options.allowDescriptorIdentityDrift && !sameFileIdentity(before, opened)) return null;
     const raw = (await readFileHandleBounded(handle, MAX_LOCK_PAYLOAD_BYTES)).toString("utf8");
-    const after = await fs.lstat(lockPath);
-    if (!after.isFile() || !sameFileIdentity(before, after)) return null;
+    const after = await fs.lstat(lockPath).catch(missingSnapshotPath);
+    if (!after || !after.isFile() || !sameFileIdentity(before, after)) return null;
     return { raw, payload: parseSidecarLockPayload(raw, options.parsePayload), stat: after };
-  } catch (err) {
-    if (
-      (err as NodeJS.ErrnoException).code === "ENOENT" ||
-      (err instanceof FsSafeError && err.code === "not-found")
-    ) {
-      return null;
-    }
-    throw err;
   } finally {
     await handle?.close().catch(() => undefined);
+  }
+}
+
+function lstatSidecarLockSync(lockPath: string): Stats | null {
+  try {
+    return fsSync.lstatSync(lockPath);
+  } catch (error) {
+    return missingSnapshotPath(error);
   }
 }
 
@@ -186,14 +184,20 @@ export function readSidecarLockSnapshotSync(
 ): SidecarLockSnapshot | null {
   let fd: number | undefined;
   try {
-    const before = fsSync.lstatSync(lockPath);
+    const before = lstatSidecarLockSync(lockPath);
+    if (!before) return null;
     if (!before.isFile() || before.isSymbolicLink()) {
       if (options.rejectNonFile) {
         throw new FsSafeError("not-file", `sidecar lock is not a regular file: ${lockPath}`);
       }
       return null;
     }
-    fd = fsSync.openSync(lockPath, resolveReadOpenFlags());
+    try {
+      fd = fsSync.openSync(lockPath, resolveReadOpenFlags());
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      recordFileOpenFailure(error, lockPath);
+    }
     const opened = fsSync.fstatSync(fd);
     if (!opened.isFile()) {
       if (options.rejectNonFile) {
@@ -202,17 +206,14 @@ export function readSidecarLockSnapshotSync(
       return null;
     }
     const raw = readFileDescriptorBoundedSync(fd, MAX_LOCK_PAYLOAD_BYTES).toString("utf8");
-    const after = fsSync.lstatSync(lockPath);
-    if (!sameFileIdentity(before, opened) || !sameFileIdentity(opened, after)) return null;
+    const after = lstatSidecarLockSync(lockPath);
+    if (!after || !sameFileIdentity(before, opened) || !sameFileIdentity(opened, after)) return null;
     return {
       raw,
       payload: parseSidecarLockPayload(raw, parsePayload),
       stat: after,
       ownershipToken: readSidecarLockOwnershipToken(raw),
     };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw error;
   } finally {
     if (fd !== undefined) fsSync.closeSync(fd);
   }

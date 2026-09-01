@@ -86,6 +86,9 @@ alone is never proof that the name still refers to the expected file.
 ### `fs.create(rel, data, options?)`
 
 Don't-clobber variant of `write()`. Throws `already-exists` if the target is there.
+Create-only preflight preserves boundary, alias, hardlink, and type checks without
+opening an existing target to inherit its mode; a fresh file uses the requested
+mode or the normal new-file default.
 
 ```ts
 try {

@@ -1,6 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { isFileOpenFailure } from "./opened-file-failure.js";
 import { FsSafeError } from "./errors.js";
+import { readFileHandleBounded } from "./bounded-read.js";
+import { openSidecarRoot } from "./sidecar-lock-root.js";
 import { createNativeExclusiveFile, type NativeFileHandle } from "./native-operations.js";
 import type { Root } from "./root-impl.js";
 import {
@@ -156,9 +159,10 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
         const payload = await options.payload();
         const { raw, ownershipToken } = serializeSidecarLockPayload(payload);
         if (options.lockRoot) {
-          const relativeLockPath = relativeSidecarLockPath(options.lockRoot, lockPath);
+          const lockRoot = options.lockRoot;
+          const relativeLockPath = relativeSidecarLockPath(lockRoot, lockPath);
           try {
-            await options.lockRoot.create(relativeLockPath, raw, { mkdir: true, mode: 0o600 });
+            await lockRoot.create(relativeLockPath, raw, { mkdir: true, mode: 0o600 });
           } catch (error) {
             if (error instanceof FsSafeError && error.code === "already-exists") {
               throw Object.assign(new Error("sidecar lock exists"), { code: "EEXIST" });
@@ -166,7 +170,22 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
             throw error;
           }
           createdSnapshot = { raw, payload, ownershipToken };
-          handle = (await options.lockRoot.open(relativeLockPath)).handle;
+          const opened = await openSidecarRoot(lockRoot, relativeLockPath, true);
+          if (!opened) {
+            await waitForRetry();
+            continue;
+          }
+          try {
+            // Root.open admits the current file, not necessarily the one we created.
+            const currentRaw = await readFileHandleBounded(opened.handle, Buffer.byteLength(raw));
+            if (!currentRaw.equals(Buffer.from(raw))) {
+              throw new FsSafeError("path-mismatch", "created sidecar lock changed before admission");
+            }
+          } catch (error) {
+            await opened.handle.close().catch(() => undefined);
+            throw error;
+          }
+          handle = opened.handle;
         } else {
           try {
             handle =
@@ -179,6 +198,12 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
           await handle.writeFile(raw, "utf8");
         }
         const snapshot = { raw, payload, stat: await handle.stat(), ownershipToken };
+        if (snapshot.stat.nlink === 0) {
+          await handle.close();
+          handle = null;
+          await waitForRetry();
+          continue;
+        }
         const createdHeld: HeldSidecarLock = {
           refCount: 1,
           reentrantOwner: options.reentrantOwner,
@@ -221,7 +246,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
       } catch (err) {
         try {
           if (handle) {
-            const failedSnapshot: SidecarLockSnapshot = { payload: null };
+            const failedSnapshot: SidecarLockSnapshot = createdSnapshot ?? { payload: null };
             try {
               failedSnapshot.stat = await handle.stat();
             } catch {
@@ -232,8 +257,8 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
               context.held.delete(normalizedTargetPath);
             }
             await handle.close().catch(() => undefined);
-            // The file may be empty or partial JSON, so remove by the identity
-            // captured from our exclusive handle rather than by pathname alone.
+            // Root-created records retain the creator's byte/token receipt;
+            // partial direct writes use the exclusive descriptor's identity.
             await removeSidecarLockIfUnchanged(lockPath, failedSnapshot, {
               lockRoot: options.lockRoot,
               parsePayload: options.parsePayload,
@@ -261,6 +286,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
         if (ownsReclaimGuard) {
           await releaseSidecarReclaimGuard(context.reclaimGuards, reclaimGuardPath);
           ownsReclaimGuard = false;
+          await waitForRetry();
           continue;
         }
         const nowMs = Date.now();
@@ -270,13 +296,16 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
             lockRoot: options.lockRoot,
             parsePayload: options.parsePayload,
             rejectNonFile: true,
+            discardUnlinked: true,
           });
         } catch (readErr) {
-          if (!isTransientLockFileDenial(readErr, lockPath) || !withinDenialBudget()) throw readErr;
+          if (!isFileOpenFailure(readErr, lockPath) ||
+            !isTransientLockFileDenial(readErr, lockPath) || !withinDenialBudget()) throw readErr;
           await retryOrRethrowDenial(readErr);
           continue;
         }
         if (!snapshot) {
+          await waitForRetry();
           continue;
         }
         if (context.held.has(normalizedTargetPath)) {
@@ -300,6 +329,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
               parsePayload: options.parsePayload,
             }))
           ) {
+            await waitForRetry();
             continue;
           }
           const staleRecovery = options.staleRecovery ?? "fail-closed";
@@ -318,6 +348,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
               parsePayload: options.parsePayload,
             });
             if (removal === "removed" || removal === "changed") {
+              if (removal === "changed") await waitForRetry();
               continue;
             }
             await releaseSidecarReclaimGuard(context.reclaimGuards, reclaimGuardPath);

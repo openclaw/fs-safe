@@ -3,8 +3,16 @@ import { FsSafeError } from "./errors.js";
 
 type ExactFileIdentity = Pick<BigIntStats, "dev" | "ino">;
 
+const identityMismatches = new WeakSet<Error>();
+
+export function isFileIdentityMismatch(error: unknown): error is Error {
+  return error instanceof Error && identityMismatches.has(error);
+}
+
 function identityMismatch(): FsSafeError {
-  return new FsSafeError("path-mismatch", "file identity changed or could not be verified");
+  const error = new FsSafeError("path-mismatch", "file identity changed or could not be verified");
+  identityMismatches.add(error);
+  return error;
 }
 
 function identityCheck(expected: ExactFileIdentity | undefined, platform: NodeJS.Platform) {

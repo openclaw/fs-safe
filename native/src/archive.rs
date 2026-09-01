@@ -801,7 +801,15 @@ fn read_zip_entry(
             format!("archive entry is not a file: {requested}"),
         ));
     }
-    read_bounded(&mut entry, max_bytes, cancelled)
+    let expected_size = entry.size();
+    let output = read_bounded(&mut entry, max_bytes, cancelled)?;
+    if output.len() as u64 != expected_size {
+        return Err(Error::new(
+            Status::InvalidArg,
+            "archive-header-invalid: ZIP entry size does not match declared uncompressed size",
+        ));
+    }
+    Ok(output)
 }
 
 fn read_bounded(

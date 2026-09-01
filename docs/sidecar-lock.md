@@ -100,10 +100,12 @@ result is passed to `shouldReclaim` and `shouldRemoveStaleLock`, allowing PID,
 process-start, argv, or role schemas to remain application-owned.
 
 On Windows, a pathed `EPERM` from creating or opening the lock file can be a
-short teardown race after another holder unlinks it. The async lock retries that
-specific denial at most eight times. A parent-directory denial, a denial from a
-callback, or a ninth consecutive lock-file denial surfaces as the original
-`EPERM`; it is not converted to `file_lock_timeout`.
+short teardown race after another holder unlinks it. Both async and sync locks
+retry that specific open denial at most eight times per acquisition, within the
+caller's retry/deadline budget. A parent-directory denial, a callback/read/stat
+failure, or exhaustion of either budget surfaces the original error; a denied
+open is not converted to `file_lock_timeout`. Retrying always requires fresh
+exclusive creation and grants no ownership or removal authority.
 
 ## Owner-scoped reentrancy
 
@@ -155,6 +157,32 @@ an existing `Root` capability. `lockPath` must resolve inside that root.
 Identity-conditioned removal remains the only release and reclaim deletion
 path.
 
+An owner can finish releasing while another async acquirer inspects its record.
+Create-only Root writes do not open an existing record merely to inherit its
+mode. During acquisition, a failed snapshot can be discarded only when the
+original descriptor has exact identity, was not observed with multiple links,
+and proves it was unlinked (`nlink === 0`). This includes Windows resolver
+`EPERM`/`EBADF` failures, with evidence captured at the failing operation before
+closing the descriptor. The canonical in-root ancestor chain and Root are
+rechecked; permitted in-root parent symlinks are resolved before those checks.
+
+Discarding an acquisition observation is not proof that the pathname is absent:
+another owner may already have created the next record. Every discarded
+observation consumes the normal retry/deadline budget and requires fresh
+exclusive creation. It supplies no release, reclaim, or held-lock authority.
+Generic `Root.open()` and held-owner/reclaim reads still reject failed opens.
+Moved but linked records, unknown or inexact identities, retargeted ancestors,
+and unrelated filesystem or caller errors fail closed.
+
+After creating a record, the async Root-backed acquirer checks the reopened
+bytes against its exact serialized payload and ownership token. A replacement
+is never adopted; a descriptor observed unlinked at the end of admission is
+never registered as held. Failed admission cleanup retains the original creator
+receipt, so it cannot remove a replacement using a later stat alone. Native
+mode changes the create mechanism, not these Root-backed admission checks.
+Non-Root and synchronous snapshots retain their descriptor/read/path checks
+and do not use the Root opened-path resolver.
+
 ## Release handle
 
 ```ts
@@ -183,6 +211,14 @@ the calling thread; use the async API in request-serving code. The sync
 compromise interval treats a thrown verification I/O error as a lost lock and
 invokes `onCompromised` once, matching the asynchronous `.catch(() => false)`
 contract. An explicit `verifyStillHeld()` call still propagates that I/O error.
+
+Windows synchronous lock parents use the same canonical path spelling as
+`root()`, including short-name expansion. With `lockRoot`, a failed parent
+canonicalization or an out-of-root parent still rejects. Missing-path observations from snapshot
+`lstat`/`open`, and identity-mismatched snapshots, consume the normal retry and
+deadline budget. Errors from descriptor reads/stats or parsing are not treated
+as missing snapshots, even when their code is `ENOENT`. Held verification,
+release, and reclaim do not retry open denials.
 
 Both synchronous helpers consume the [process-wide lock defaults](config.md#configurefssafelocks-config).
 A synchronous retry sleep is clamped to the remaining finite deadline, so a long or jittered backoff cannot extend the configured timeout or block forever.

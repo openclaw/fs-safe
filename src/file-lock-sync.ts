@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
+import { isFileOpenFailure, recordFileOpenFailure } from "./opened-file-failure.js";
 import type { Root } from "./root-impl.js";
 import {
   readSidecarLockSnapshotSync,
@@ -13,6 +14,8 @@ import {
 } from "./sidecar-lock-reclaim.js";
 import {
   computeSidecarLockDelayMs,
+  isTransientLockFileDenial,
+  maxTransientLockDenials,
   sidecarLockPayloadCreatedAtMs,
   validateSidecarLockRetryOptions,
   validateSidecarLockTimeoutMs,
@@ -57,7 +60,7 @@ export type FileLockSyncHandle = {
 };
 
 type SyncHeldLock = {
-  fd: number;
+  fd: number | undefined;
   lockPath: string;
   normalizedTargetPath: string;
   parsePayload?: (raw: string) => unknown;
@@ -89,7 +92,7 @@ function releaseAllSyncHeldLocks(): void {
       held.timer = undefined;
     }
     try {
-      fs.closeSync(held.fd);
+      if (held.fd !== undefined) fs.closeSync(held.fd);
     } catch {
       // Best-effort process-exit cleanup.
     }
@@ -121,15 +124,23 @@ function verifySyncHeldLock(held: SyncHeldLock): boolean {
 function releaseSyncHeldLock(held: SyncHeldLock): boolean {
   const heldLocks = getSyncHeldLocks();
   if (heldLocks.get(held.normalizedTargetPath) !== held) return false;
-  held.refCount -= 1;
-  if (held.refCount > 0) return false;
-  heldLocks.delete(held.normalizedTargetPath);
+  if (held.refCount > 1) {
+    held.refCount -= 1;
+    return false;
+  }
+  // Keep the final reference and cleanup receipt until deletion succeeds.
   if (held.timer) {
     clearInterval(held.timer);
     held.timer = undefined;
   }
-  fs.closeSync(held.fd);
+  if (held.fd !== undefined) {
+    const fd = held.fd;
+    // A close error may still free the number; consume ownership before closing.
+    held.fd = undefined;
+    fs.closeSync(fd);
+  }
   removeSidecarLockIfUnchangedSync(held.lockPath, held.snapshot);
+  heldLocks.delete(held.normalizedTargetPath);
   return true;
 }
 
@@ -137,8 +148,8 @@ function createSyncHeldLockHandle(held: SyncHeldLock): FileLockSyncHandle {
   let released = false;
   const release = () => {
     if (released) return;
-    released = true;
     releaseSyncHeldLock(held);
+    released = true;
   };
   return {
     lockPath: held.lockPath,
@@ -149,11 +160,16 @@ function createSyncHeldLockHandle(held: SyncHeldLock): FileLockSyncHandle {
   };
 }
 
+function canonicalLockParentSync(parent: string): string {
+  // Match Root's async realpath, including Windows short-name expansion.
+  return process.platform === "win32" ? fs.realpathSync.native(parent) : fs.realpathSync(parent);
+}
+
 function normalizeTargetPath(targetPath: string): string {
   const resolved = path.resolve(targetPath);
   fs.mkdirSync(path.dirname(resolved), { recursive: true });
   try {
-    return path.join(fs.realpathSync(path.dirname(resolved)), path.basename(resolved));
+    return path.join(canonicalLockParentSync(path.dirname(resolved)), path.basename(resolved));
   } catch {
     return resolved;
   }
@@ -164,7 +180,7 @@ function boundedLockPath(lockPath: string, lockRoot?: Root): string {
   if (!lockRoot) return resolved;
   relativeSidecarLockPath(lockRoot, resolved);
   const parent = path.dirname(resolved);
-  const parentReal = fs.realpathSync(parent);
+  const parentReal = canonicalLockParentSync(parent);
   const parentRelative = path.relative(lockRoot.rootReal, parentReal);
   if (parentRelative === ".." || parentRelative.startsWith(`..${path.sep}`) || path.isAbsolute(parentRelative)) {
     throw new FsSafeError("outside-workspace", "sidecar lock parent is outside lockRoot");
@@ -172,14 +188,11 @@ function boundedLockPath(lockPath: string, lockRoot?: Root): string {
   return path.join(parentReal, path.basename(resolved));
 }
 
-function defaultShouldReclaim(payload: unknown, lockPath: string, staleMs: number, nowMs: number): boolean {
-  const createdAtMs = sidecarLockPayloadCreatedAtMs(payload);
+function defaultShouldReclaim(snapshot: SidecarLockSnapshot, staleMs: number, nowMs: number): boolean {
+  const createdAtMs = sidecarLockPayloadCreatedAtMs(snapshot.payload);
   if (createdAtMs !== null) return nowMs - createdAtMs > staleMs;
-  try {
-    return nowMs - fs.statSync(lockPath).mtimeMs > staleMs;
-  } catch {
-    return true;
-  }
+  // A cooperating holder can unlink after the snapshot; use its observed age.
+  return !snapshot.stat || nowMs - snapshot.stat.mtimeMs > staleMs;
 }
 
 function reclaimGuardExists(reclaimGuardPath: string): boolean {
@@ -220,6 +233,7 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
   const staleRecovery = options.staleRecovery ?? defaults.staleRecovery;
   const startedAt = Date.now();
   let attempt = 0;
+  let transientDenials = 0;
   const reclaimGuardPath = `${lockPath}.reclaim`;
   const waitForRetry = (): void => {
     const elapsed = Date.now() - startedAt;
@@ -238,6 +252,18 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
     sleepSync(Math.min(computeSidecarLockDelayMs(retry, attempt), remaining));
     attempt += 1;
   };
+  const retryLockFileDenial = (error: unknown): boolean => {
+    if (!isFileOpenFailure(error, lockPath) || !isTransientLockFileDenial(error, lockPath) ||
+      ++transientDenials > maxTransientLockDenials) return false;
+    try {
+      waitForRetry();
+    } catch (waitError) {
+      // Preserve the filesystem diagnosis when the caller's budget runs out.
+      if ((waitError as NodeJS.ErrnoException).code === "file_lock_timeout") throw error;
+      throw waitError;
+    }
+    return true;
+  };
 
   while (true) {
     if (reclaimGuardExists(reclaimGuardPath)) {
@@ -252,11 +278,15 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
         process.platform !== "win32" && typeof fs.constants.O_NOFOLLOW === "number"
           ? fs.constants.O_NOFOLLOW
           : 0;
-      fd = fs.openSync(
-        lockPath,
-        fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollow,
-        0o600,
-      );
+      try {
+        fd = fs.openSync(
+          lockPath,
+          fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollow,
+          0o600,
+        );
+      } catch (error) {
+        recordFileOpenFailure(error, lockPath);
+      }
       fs.writeFileSync(fd, raw, "utf8");
       fs.fsyncSync(fd);
       const snapshot: SidecarLockSnapshot = {
@@ -302,15 +332,23 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
         fd = undefined;
         removeSidecarLockIfUnchangedSync(lockPath, failed);
       }
+      if (retryLockFileDenial(error)) continue;
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       if (heldLocks.has(normalizedTargetPath)) {
         waitForRetry();
         continue;
       }
-      const snapshot = readSidecarLockSnapshotSync(lockPath, options.parsePayload, {
-        rejectNonFile: true,
-      });
-      if (!snapshot) continue;
+      let snapshot: SidecarLockSnapshot | null;
+      try {
+        snapshot = readSidecarLockSnapshotSync(lockPath, options.parsePayload, { rejectNonFile: true });
+      } catch (readError) {
+        if (retryLockFileDenial(readError)) continue;
+        throw readError;
+      }
+      if (!snapshot) {
+        waitForRetry();
+        continue;
+      }
       const nowMs = Date.now();
       const reclaim = options.shouldReclaim
         ? options.shouldReclaim({
@@ -321,7 +359,7 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
             nowMs,
             heldByThisProcess: false,
           })
-        : defaultShouldReclaim(snapshot.payload, lockPath, staleMs, nowMs);
+        : defaultShouldReclaim(snapshot, staleMs, nowMs);
       if (reclaim) {
         if (
           staleRecovery === "remove-if-unchanged" &&

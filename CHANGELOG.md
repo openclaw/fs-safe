@@ -2,6 +2,12 @@
 
 ## 0.7.1 - Unreleased
 
+- Retry Root-backed async lock handoffs with descriptor-proven, budgeted observation discard, including Windows unlink resolution failures; verify creator bytes before admission and preserve creator-token cleanup authority on failure.
+- Reject native selected ZIP entry reads whose decoded size differs from the declared uncompressed size, preserving byte caps and CRC verification.
+- Canonicalize Windows synchronous lock parents consistently with Root, bound lock-file open-denial and missing-snapshot retries, use captured snapshot age for staleness, and retain failed release cleanup for retry without double-decrementing references or re-closing a consumed descriptor.
+- Keep create-only Root writes from opening an existing target merely to inherit its mode, while preserving boundary, alias, hardlink, and type checks.
+- Clarify that invalid UTF-8 or NUL padding in fixed TAR path fields rejects with `ArchiveSecurityError("entry-path")`.
+
 ## 0.7.0 - 2026-08-31
 
 ### Highlights
