@@ -358,6 +358,20 @@ const tempRoot = resolveSecureTempRoot({ fallbackPrefix: "my-app" });
 // e.g. /tmp/my-app-501
 ```
 
+Consumers that only need this resolver can use the narrow package subpath:
+
+```ts
+import {
+  resolveSecureTempRoot,
+  type ResolveSecureTempRootOptions,
+} from "@openclaw/fs-safe/secure-temp-root";
+```
+
+This entry excludes the temp workspace and store implementations from the
+module graph, keeping the import closure small for browser-aware builds that
+shim or exclude Node built-ins. The resolver remains a Node filesystem API; the
+narrow entry does not make it runnable in a browser.
+
 ### Options
 
 ```ts

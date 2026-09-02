@@ -488,6 +488,15 @@
       ],
       "errorCodes": {}
     },
+    "./secure-temp-root": {
+      "runtime": [
+        "resolveSecureTempRoot"
+      ],
+      "types": [
+        "ResolveSecureTempRootOptions"
+      ],
+      "errorCodes": {}
+    },
     "./atomic": {
       "runtime": [
         "movePathWithCopyFallback",
