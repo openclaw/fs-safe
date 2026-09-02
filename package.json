@@ -93,6 +93,10 @@
       "types": "./dist/temp.d.ts",
       "default": "./dist/temp.js"
     },
+    "./secure-temp-root": {
+      "types": "./dist/secure-temp-dir.d.ts",
+      "default": "./dist/secure-temp-dir.js"
+    },
     "./atomic": {
       "types": "./dist/atomic.d.ts",
       "default": "./dist/atomic.js"

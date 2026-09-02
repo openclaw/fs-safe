@@ -2,6 +2,8 @@
 
 ## 0.7.3 - Unreleased
 
+- Add the narrow `@openclaw/fs-safe/secure-temp-root` package subpath so consumers can import `resolveSecureTempRoot()` and its options type without loading the temp workspace implementation.
+
 ## 0.7.2 - 2026-09-01
 
 - Add `movePathWithCopyFallback({ assertBeforeRename })` to synchronously recheck caller-owned authorization immediately before direct or staged rename, preserving refusal errors and rejecting asynchronous callbacks without publishing the move.
