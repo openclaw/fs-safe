@@ -28,10 +28,10 @@ const safeLabel = (value) => typeof value === "string" && /^[a-zA-Z][a-zA-Z0-9_-
 // Never forward error messages, paths, stacks, sidecar bytes, or child output.
 const errorShape = (error) => ({ name: safeLabel(error?.name), code: safeLabel(error?.code) });
 const absent = (file) => assert.throws(() => fs.lstatSync(file), { code: "ENOENT" });
-const lockOptions = () => ({
+const lockOptions = (timeoutMs = 15_000) => ({
   staleMs: 60_000,
-  timeoutMs: 15_000,
-  retry: { retries: 15_000, factor: 1, minTimeout: 1, maxTimeout: 5, randomize: true },
+  timeoutMs,
+  retry: { factor: 1, minTimeout: 1, maxTimeout: 5, randomize: true },
   staleRecovery: "fail-closed",
   // Deliberately omit createdAt: contention must use the snapshot-mtime fallback.
   payload: () => ({ pid: process.pid }),
@@ -53,7 +53,8 @@ async function runWorker(test, directory) {
   const marker = path.join(directory, "critical");
   // Both APIs accept the documented Root capability; there is no RootSync API.
   const lockRoot = test.rooted ? await root(directory) : undefined;
-  const options = { ...lockOptions(), lockRoot };
+  // A per-acquisition deadline would mistake unfair but progressing contention for lock failure.
+  const options = { ...lockOptions(Infinity), lockRoot };
   phase = "start-barrier";
   await parentBarrier("ready", "start");
   const waitWord = new Int32Array(new SharedArrayBuffer(4));
