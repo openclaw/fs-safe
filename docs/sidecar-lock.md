@@ -21,7 +21,9 @@ try {
 
 The lock file sits next to the protected resource. If a process crashes mid-lock, the next acquirer notices the held entry, inspects its payload (PID, host, acquired-at timestamp), and decides — via `shouldReclaim` (defaulting to "is the lock older than `staleMs`?") — whether it should keep waiting or fail.
 
-The library installs a `process.on("exit")` handler that releases all currently-held locks synchronously, so well-behaved exits leave no stale sidecars. Crashed holders leave their sidecar behind; recover only after an application-owned liveness policy proves the holder cannot still be writing.
+On natural event-loop shutdown, a globally deduplicated `process.on("beforeExit")` handler attempts asynchronous cleanup of held Root-backed locks through their retained Root capability and ownership receipt. The synchronous `process.on("exit")` handler provides last-chance cleanup for raw locks and reclaim guards. Changed sidecars and failed Root cleanup remain in place; cleanup does not keep retrying during shutdown unless another acquisition re-arms it.
+
+Always release locks in a `finally` block. Application-managed graceful shutdown can await `release()` or `manager.drain()` before terminating. Explicit `process.exit()`, uncaught failures, crashes, default signal handling, and fatal termination (including `SIGKILL`) do not reliably run asynchronous Root cleanup and may leave sidecars. Recover only after an application-owned liveness policy proves the holder cannot still be writing.
 
 Each new sidecar also carries an internal random ownership token encoded as JSON trailing whitespace. `JSON.parse()` and every payload callback still see exactly the caller-provided object. Only the process that successfully created the sidecar keeps that token as release authority; merely reading token-shaped bytes from disk does not enable this mode. Release compares the in-memory token and exact serialized bytes, and requires the pathname to remain a regular file, instead of requiring an opened descriptor and pathname lookup to report the same inode identity. This preserves ownership checks on filesystems such as Docker Desktop VirtioFS where those two views can legitimately differ. Sidecars created by older releases have no token and retain the legacy identity-plus-content check.
 
@@ -280,7 +282,7 @@ The sync payload, reclaim, and parsing callbacks must also be synchronous. This
 shape is appropriate for a short boot migration; it is a poor fit for a server
 request because retry backoff uses a blocking wait.
 
-If your process dies before `release()` runs and skips the exit handler, the sidecar remains. Once `staleMs` elapses (or your `shouldReclaim` returns true), acquisition fails closed by default instead of deleting by path.
+If termination skips the relevant cleanup handler or cleanup fails, the sidecar remains. In particular, `process.exit()` skips asynchronous Root cleanup; await explicit release or drain during application-managed graceful shutdown. Once `staleMs` elapses (or your `shouldReclaim` returns true), acquisition fails closed by default instead of deleting by path.
 
 ## `withFileLock` — common shape made one-liner
 
