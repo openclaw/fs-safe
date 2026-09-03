@@ -94,6 +94,14 @@ type FileLockRetryOptions = {
 ```
 
 `payload` is a function so you can re-evaluate it on each retry (e.g. timestamp, PID).
+
+The complete serialized sidecar must fit within 1 MiB (1,048,576 UTF-8 bytes),
+including pretty-printed JSON, newlines, and the internal ownership token's
+trailing whitespace. The limit counts bytes, not string characters. Oversized
+payloads reject with `FsSafeError` code `too-large` before sidecar creation or
+acquisition, without retrying serialization or reclaiming an existing sidecar.
+This bound applies to raw and Root-backed locks, both async and sync.
+
 Errors thrown by `payload`, its JSON serialization (including `toJSON`), or
 `parsePayload` propagate unchanged without retrying the callback. Rethrowing an
 error saved from an earlier filesystem operation does not grant retry authority.

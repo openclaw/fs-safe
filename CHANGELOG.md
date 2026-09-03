@@ -2,6 +2,7 @@
 
 ## 0.7.3 - Unreleased
 
+- Reject serialized sidecar lock payloads above 1 MiB of UTF-8 bytes, including ownership overhead, with `too-large` before async or sync acquisition so admitted locks remain verifiable and releasable.
 - Honor explicit async file-lock retry counts independently of infinite deadlines, matching sync locks while preserving unlimited retries when the count is omitted.
 - Verify atomic secret writes through the writer's retained descriptor so restrictive POSIX modes such as `0o000` and `0o200` succeed without a readonly reopen or widened permissions.
 - Preserve pre-existing and substituted destination files when an archive merge fails, leaving guarded copy cleanup to the operation that owns publication.

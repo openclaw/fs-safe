@@ -61,10 +61,15 @@ export function serializeSidecarLockPayload(payload: Record<string, unknown>): {
   ownershipToken: string;
 } {
   const ownershipToken = createSidecarLockOwnershipToken();
-  return {
-    raw: `${JSON.stringify(payload, null, 2)}\n${ownershipToken}\n`,
-    ownershipToken,
-  };
+  const raw = `${JSON.stringify(payload, null, 2)}\n${ownershipToken}\n`;
+  const bytes = Buffer.byteLength(raw, "utf8");
+  if (bytes > MAX_LOCK_PAYLOAD_BYTES) {
+    throw new FsSafeError(
+      "too-large",
+      `sidecar lock payload exceeds limit of ${MAX_LOCK_PAYLOAD_BYTES} bytes (got ${bytes})`,
+    );
+  }
+  return { raw, ownershipToken };
 }
 
 export function relativeSidecarLockPath(lockRoot: Root, lockPath: string): string {
