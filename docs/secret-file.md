@@ -125,6 +125,11 @@ startWebhookVerifier(signingKey);
 
 Async. Creates the parent directory at `dirMode` (default `0o700`) if missing, writes content to a sibling temp file at `mode` (default `0o600`), atomically renames over the destination, and re-asserts the file mode after rename.
 
+Concurrent writes to distinct leaves may share creation of a missing parent.
+After a parent-creation race, the helper re-inspects the entry and requires a
+non-symlink directory, then revalidates root/parent guards, containment, and
+the requested directory mode before writing either leaf.
+
 Publication verification borrows the writer's still-open descriptor to check
 the exact file identity, regular-file and link policy, requested POSIX mode,
 and root/parent ancestry before the writer closes it. POSIX mode overrides such
@@ -163,6 +168,10 @@ post-write verification policy. Final materialization uses exclusive create;
 if anything already occupies the target path it throws
 `FsSafeError("secret-exists")` without modifying that entry. Use the distinct
 name when first-writer-wins is part of the credential protocol.
+
+Distinct leaves can share missing-parent creation without a `secret-exists`
+error. Concurrent creates at the same leaf still have exactly one winner;
+the loser receives `secret-exists` and leaves the winner's bytes intact.
 
 For example, two onboarding requests may race to install the first refresh
 token. Exactly one should win, and the loser must not overwrite it:

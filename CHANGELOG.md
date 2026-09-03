@@ -2,6 +2,7 @@
 
 ## 0.7.3 - Unreleased
 
+- Retry and fully revalidate raced secret-parent creation so concurrent writes to distinct leaves succeed without leaking `EEXIST` or reporting a false `secret-exists` collision.
 - Release asynchronously acquired Root-backed sidecar locks on natural event-loop shutdown through their retained ownership receipts, preserving changed sidecars and avoiding cleanup retry loops.
 - Prevent no-reader FIFOs from stalling POSIX `Root.openWritable()` and async/sync regular-file append admission, preserving regular-file write semantics and existing-target cleanup fencing.
 - Normalize every exclusive-copy target to mode `0o600` through its owned descriptor, including under restrictive umasks and native macOS clone staging.
