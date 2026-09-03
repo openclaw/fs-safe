@@ -452,6 +452,7 @@ export async function loadPendingJsonDurableQueueEntries<T>(
         : null;
     if (!suffix) continue;
     const id = file.slice(0, -suffix.length);
+    try { assertSafeQueueEntryId(id); } catch { continue; }
     if (seenIds.has(id)) continue;
     seenIds.add(id);
     ids.push(id);

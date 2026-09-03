@@ -310,6 +310,23 @@ describe("batch entry skip boundary", () => {
     await expect(fs.readFile(paths.jsonPath, "utf8")).resolves.toBe('{"version":99}');
   });
 
+  it("skips invalid listed IDs while returning a valid entry", async () => {
+    const { queueDir, paths, load } = await fixture();
+    const invalid = [".json", ".processing", ".hidden.json", "bad name.json"];
+    await Promise.all(invalid.map(async (name) => await fs.writeFile(path.join(queueDir, name), "invalid")));
+    const realReaddir = fs.readdir.bind(fs);
+    vi.spyOn(fs, "readdir").mockImplementation(async (...args) => {
+      if (args[0] === queueDir) return [...invalid, "job.json"];
+      return await realReaddir(...args);
+    });
+
+    await expect(load()).resolves.toEqual([{ version: 1 }]);
+    for (const name of invalid) {
+      await expect(fs.readFile(path.join(queueDir, name), "utf8")).resolves.toBe("invalid");
+    }
+    await expect(fs.access(paths.jsonPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   itPosix("skips a pending symlink without changing its target", async () => {
     const { queueDir, paths, load } = await fixture(true);
     const target = path.join(queueDir, "target");
