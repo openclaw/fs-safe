@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { gzipSync } from "node:zlib";
@@ -168,6 +169,43 @@ describe("TAR metadata preflight boundaries", () => {
       limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }),
       signal: controller.signal,
     })).rejects.toMatchObject({ code: "ABORT_ERR" });
+  });
+
+  it("finishes preflight setup before creating the archive stream", async () => {
+    const root = await tempRoot("fs-safe-tar-preflight-setup-");
+    const archivePath = path.join(root, "fixture.tar");
+    await fs.writeFile(archivePath, tarFixture([{ path: "value", body: "ok" }]));
+    const createReadStream = vi.spyOn(fsSync, "createReadStream");
+
+    await expect(preflightTarMetadata({
+      archivePath,
+      limits: { ...resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }), maxDecodedBytes: Number.NaN },
+    })).rejects.toThrow("maxDecodedBytes must be a non-negative safe integer");
+    await expect(preflightTarMetadata({
+      archivePath: path.join(root, "missing.tar"),
+      limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }),
+    })).rejects.toMatchObject({ code: "ENOENT" });
+    expect(createReadStream).not.toHaveBeenCalled();
+  });
+
+  it("destroys the archive stream after a pipeline failure", async () => {
+    const root = await tempRoot("fs-safe-tar-preflight-pipeline-");
+    const archivePath = path.join(root, "truncated.tar");
+    await fs.writeFile(archivePath, Buffer.alloc(511));
+    const realCreateReadStream = fsSync.createReadStream;
+    const streams: fsSync.ReadStream[] = [];
+    vi.spyOn(fsSync, "createReadStream").mockImplementation(((...args: unknown[]) => {
+      const stream = Reflect.apply(realCreateReadStream, fsSync, args) as fsSync.ReadStream;
+      streams.push(stream);
+      return stream;
+    }) as typeof fsSync.createReadStream);
+
+    await expect(preflightTarMetadata({
+      archivePath,
+      limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }),
+    })).rejects.toThrow("truncated TAR header");
+    expect(streams).toHaveLength(1);
+    expect(streams[0]?.destroyed).toBe(true);
   });
 });
 
