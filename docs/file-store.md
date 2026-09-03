@@ -66,14 +66,36 @@ type FileStore = {
 
 `path()` returns the absolute path the store would use, after asserting it stays inside `rootDir`. Useful for logging or for handing to other libraries.
 
-Every `relativePath` is a portable store key, including keys passed to reads,
-`exists`, and `remove`. A segment with a Windows drive-relative spelling such
-as `C:name` (including an embedded segment such as `a/C:name`) throws
-`invalid-path` on every platform. This prevents a key created on POSIX from
-aliasing a different file when the store is moved to Windows. Colons elsewhere,
-such as the timestamp in `logs/2026-08-02T10:30:00Z.log`, remain valid.
-Keys with surrounding whitespace also throw `invalid-path`; the store never
-silently trims one caller-supplied key onto another key.
+Every `relativePath` is a portable store key. The same lexical policy applies
+to every keyed async and sync method, including reads, `exists`, `remove`,
+`path()`, and `json()` construction, with either `private: false` or `true`.
+Keys must use their exact canonical spelling; the store never trims, normalizes,
+or converts one caller-supplied key onto another:
+
+- Keys are nonempty NFC Unicode strings without surrounding whitespace or NUL.
+- Segments are separated by a single forward slash. Empty segments, repeated or
+  trailing slashes, and complete `.` or `..` segments are rejected, including
+  `./b`, `a/./b`, and `a/../b`.
+- Every backslash is rejected on every platform, including a literal POSIX
+  `a\b` filename. POSIX and Windows absolute, rooted, UNC, and extended paths
+  are rejected.
+- Windows drive-relative segments such as `C:name` or `C:` are rejected
+  anywhere in a key, including `a/C:name`.
+- No segment may end in an ASCII dot or space.
+
+Violations report `invalid-path` when key validation is reached. Ordinary nested
+keys, NFC Unicode such as `café/日本語.txt`, `.hidden`, `a..b`, and internal spaces
+such as `internal space/a b.txt` are accepted. Colons elsewhere, such as the
+timestamp in `logs/2026-08-02T10:30:00Z.log`, remain lexically valid; filesystem
+success still depends on the platform and the underlying Root policies.
+
+Validation retains each method's operation order. Async reads, `exists`, and
+`remove` open the root first: if the root is missing, strict methods report
+`not-found` and `readTextIfExists` / `readJsonIfExists` return `null`, even for an
+invalid key. With an existing root, those same invalid keys report `invalid-path`.
+Private `copyIn` checks and reads its source before validating the destination
+key, and `writeJson` serializes its value before validating the key. Key rejection
+therefore does not imply that no filesystem access or serialization occurred.
 
 `root()` returns a [`Root`](root.md) handle for the same directory when you need the full surface (move, list, mkdir). It's a fresh handle per call and is safe to call frequently.
 
@@ -186,6 +208,14 @@ Symlinks are skipped. The walk is best-effort — failures on individual entries
 | Reads delegate via `Root` internally. | The boundary itself. |
 
 If you need richer ops (move, list, append, mkdir), call `store.root()` to get a `Root` and use that.
+
+`FileStore` owns portable key identity; `Root` owns filesystem confinement.
+Existing-object Root lookups intentionally retain broader confined path
+compatibility, including in-root absolute paths and parent-segment spellings,
+and literal backslashes on POSIX. FileStore rejects those spellings even when
+Root could resolve them safely inside the directory. This key policy does not
+change Root's containment checks or the absolute-path `jsonStore({ filePath })`
+contract.
 
 ## Common patterns
 
