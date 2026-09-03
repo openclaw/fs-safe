@@ -44,6 +44,7 @@ type ResolveRootPathParams = {
   intent?: RootPathIntent;
   policy?: RootPathAliasPolicy;
   rejectSymlinks?: boolean;
+  rejectUnresolvedSymlinks?: boolean;
   skipLexicalRootCheck?: boolean;
   rootCanonicalPath?: string;
 };
@@ -469,7 +470,10 @@ async function resolveRootPathLexicalAsync(
     }
 
     await resolveAndApplySymlinkHop(context, {
-      resolveLinkCanonical: (cursor) => resolveSymlinkHopPath(cursor),
+      resolveLinkCanonical: (cursor) =>
+        resolveSymlinkHopPath(cursor, {
+          rejectUnresolved: context.resolveParams.rejectUnresolvedSymlinks,
+        }),
     });
     if (context.resolveParams.rejectSymlinks === true) {
       throw new FsSafeError("symlink", "symlink path component not allowed");
@@ -516,7 +520,10 @@ function resolveRootPathLexicalSync(params: LexicalResolutionParams): ResolvedRo
     }
 
     const maybeApplied = resolveAndApplySymlinkHop(context, {
-      resolveLinkCanonical: (cursor) => resolveSymlinkHopPathSync(cursor),
+      resolveLinkCanonical: (cursor) =>
+        resolveSymlinkHopPathSync(cursor, {
+          rejectUnresolved: context.resolveParams.rejectUnresolvedSymlinks,
+        }),
     });
     if (isPromiseLike<void>(maybeApplied)) {
       throw new Error("Unexpected async symlink resolution");

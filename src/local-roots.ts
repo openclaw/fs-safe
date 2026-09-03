@@ -101,6 +101,7 @@ export function resolveLocalPathFromRootsSync(
         rootPath: rootDir,
         rootCanonicalPath: rootReal,
         boundaryLabel: label,
+        rejectUnresolvedSymlinks: true,
       });
     } catch {
       continue;

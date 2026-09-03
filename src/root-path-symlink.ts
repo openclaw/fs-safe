@@ -8,8 +8,18 @@ import {
   resolvePathViaExistingAncestorSync,
 } from "./root-path-existing.js";
 
-function normalizeSymlinkResolutionError(error: unknown): void {
-  if (isSymlinkOpenError(error)) {
+type ResolveSymlinkHopOptions = {
+  rejectUnresolved?: boolean;
+};
+
+function normalizeSymlinkResolutionError(
+  error: unknown,
+  options: ResolveSymlinkHopOptions,
+): void {
+  if (
+    isSymlinkOpenError(error) ||
+    (options.rejectUnresolved && isNotFoundPathError(error))
+  ) {
     throw new FsSafeError("symlink", "symlink path could not be resolved", {
       cause: error instanceof Error ? error : undefined,
     });
@@ -17,21 +27,27 @@ function normalizeSymlinkResolutionError(error: unknown): void {
   if (!isNotFoundPathError(error)) throw error;
 }
 
-export async function resolveSymlinkHopPath(symlinkPath: string): Promise<string> {
+export async function resolveSymlinkHopPath(
+  symlinkPath: string,
+  options: ResolveSymlinkHopOptions = {},
+): Promise<string> {
   try {
     return path.resolve(await fsp.realpath(symlinkPath));
   } catch (error) {
-    normalizeSymlinkResolutionError(error);
+    normalizeSymlinkResolutionError(error, options);
     const linkTarget = await fsp.readlink(symlinkPath);
     return resolvePathViaExistingAncestor(path.resolve(path.dirname(symlinkPath), linkTarget));
   }
 }
 
-export function resolveSymlinkHopPathSync(symlinkPath: string): string {
+export function resolveSymlinkHopPathSync(
+  symlinkPath: string,
+  options: ResolveSymlinkHopOptions = {},
+): string {
   try {
     return path.resolve(fs.realpathSync(symlinkPath));
   } catch (error) {
-    normalizeSymlinkResolutionError(error);
+    normalizeSymlinkResolutionError(error, options);
     const linkTarget = fs.readlinkSync(symlinkPath);
     return resolvePathViaExistingAncestorSync(path.resolve(path.dirname(symlinkPath), linkTarget));
   }

@@ -14,26 +14,27 @@ describe("strict unresolved alias handling", () => {
     const outside = await fs.realpath(
       await tempRoot("fs-safe-unresolved-alias-outside-"),
     );
-    const dangling = path.join(root, "dangling");
-    const danglingChild = path.join(dangling, "child.txt");
+    const danglingInside = path.join(root, "dangling-inside");
+    const danglingOutside = path.join(root, "dangling-outside");
+    const danglingInsideChild = path.join(danglingInside, "child.txt");
     const missing = path.join(root, "missing", "child.txt");
     const linkType = process.platform === "win32" ? "junction" : "dir";
-    await fs.symlink(path.join(outside, "absent"), dangling, linkType);
+    await fs.symlink(path.join(root, "absent-inside"), danglingInside, linkType);
+    await fs.symlink(path.join(outside, "absent"), danglingOutside, linkType);
 
-    expect(
-      resolveLocalPathFromRootsSync({
-        filePath: dangling,
-        roots: [root],
-        allowMissing: true,
-      }),
-    ).toBeNull();
-    expect(
-      resolveLocalPathFromRootsSync({
-        filePath: danglingChild,
-        roots: [root],
-        allowMissing: true,
-      }),
-    ).toBeNull();
+    for (const filePath of [
+      danglingInside,
+      danglingInsideChild,
+      path.join(danglingOutside, "child.txt"),
+    ]) {
+      expect(
+        resolveLocalPathFromRootsSync({
+          filePath,
+          roots: [root],
+          allowMissing: true,
+        }),
+      ).toBeNull();
+    }
     expect(
       resolveLocalPathFromRootsSync({
         filePath: missing,
@@ -42,10 +43,13 @@ describe("strict unresolved alias handling", () => {
       }),
     ).toEqual({ path: missing, root });
 
-    await expectFsSafeError(resolveAbsolutePathForWrite(dangling), "symlink");
-    await expectFsSafeError(resolveAbsolutePathForWrite(danglingChild), "symlink");
-    await expect(resolveAbsolutePathForWrite(dangling, { symlinks: "follow" }))
-      .resolves.toMatchObject({ path: dangling, canonicalPath: dangling });
+    await expectFsSafeError(resolveAbsolutePathForWrite(danglingInside), "symlink");
+    await expectFsSafeError(resolveAbsolutePathForWrite(danglingInsideChild), "symlink");
+    await expect(resolveAbsolutePathForWrite(danglingInside, { symlinks: "follow" }))
+      .resolves.toMatchObject({
+        path: danglingInside,
+        canonicalPath: danglingInside,
+      });
   });
 
   it("keeps following resolvable in-root aliases for local missing paths", async () => {
