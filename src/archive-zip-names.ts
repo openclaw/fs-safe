@@ -60,7 +60,7 @@ export function admitZipNames(params: {
   central: Buffer; local: Buffer; flags: number;
   centralExtra: Map<number, Buffer>; localExtra: Map<number, Buffer>;
   seen: Set<string>;
-}): void {
+}): string | undefined {
   const { central, local, flags, centralExtra, localExtra, seen } = params;
   if (!central.length || !local.length) zipFormat("empty entry name");
   const centralUtf8 = originalName(central, flags); const localUtf8 = originalName(local, flags);
@@ -89,4 +89,5 @@ export function admitZipNames(params: {
     throw new ArchiveSecurityError("entry-path", "zip archive contains duplicate or colliding entry names");
   }
   for (const identity of identities) seen.add(identity);
+  return centralUnicode ?? centralUtf8 ?? (central.every((byte) => byte < 128) ? central.toString("ascii") : undefined);
 }

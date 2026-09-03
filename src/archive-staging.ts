@@ -15,11 +15,13 @@ import {
 } from "./archive-errors.js";
 import { FsSafeError } from "./errors.js";
 import { formatErrorDetail } from "./error-detail.js";
-import { resolveOpenedFileRealPathForHandle, root } from "./root.js";
+import { root } from "./root.js";
 import { isNotFoundPathError, isPathInside } from "./path.js";
-import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
+import { mkdirPathComponentsWithGuards } from "./guarded-mkdir.js";
+import { expandRelativePathWithHome } from "./root-context.js";
+import { resolveRootPath } from "./root-path.js";
 
 const ERROR_ARCHIVE_ENTRY_TRAVERSES_SYMLINK = "archive entry traverses symlink in destination";
 const ARCHIVE_STAGING_MODE = 0o700;
@@ -37,7 +39,7 @@ function symlinkTraversalError(originalPath: string): ArchiveSecurityError {
   );
 }
 
-async function createDirectoryIdentityGuard(dir: string): Promise<AsyncDirectoryGuard> {
+export async function createDirectoryIdentityGuard(dir: string): Promise<AsyncDirectoryGuard> {
   try {
     return await createAsyncDirectoryGuard(dir);
   } catch (err) {
@@ -48,7 +50,7 @@ async function createDirectoryIdentityGuard(dir: string): Promise<AsyncDirectory
   }
 }
 
-async function assertDirectoryIdentityGuard(guard: AsyncDirectoryGuard): Promise<void> {
+export async function assertDirectoryIdentityGuard(guard: AsyncDirectoryGuard): Promise<void> {
   try {
     await assertAsyncDirectoryGuard(guard);
   } catch (err) {
@@ -116,7 +118,7 @@ async function assertNoSymlinkTraversal(params: {
   }
 }
 
-async function assertResolvedInsideDestination(params: {
+export async function assertResolvedInsideDestination(params: {
   destinationRealDir: string;
   targetPath: string;
   originalPath: string;
@@ -150,7 +152,7 @@ async function mkdirArchiveOutput(params: {
   }
 }
 
-export async function prepareArchiveOutputPath(params: {
+type ArchiveOutputPathParams = {
   destinationDir: string;
   destinationRealDir: string;
   relPath: string;
@@ -158,9 +160,48 @@ export async function prepareArchiveOutputPath(params: {
   originalPath: string;
   isDirectory: boolean;
   deadline?: ExtractionDeadline;
-}): Promise<void> {
+};
+
+export async function prepareArchiveOutputPath(params: ArchiveOutputPathParams): Promise<void> {
+  await prepareOutputPath(params);
+}
+
+export async function preparePrivateArchiveOutputPath(
+  params: ArchiveOutputPathParams, assertGuards?: () => Promise<void>,
+): Promise<void> {
+  await prepareOutputPath(params, assertGuards, true);
+}
+
+async function prepareOutputPath(
+  params: ArchiveOutputPathParams, assertGuards?: () => Promise<void>, privateWorkingMode = false,
+): Promise<void> {
   checkExtractionDeadline(params.deadline);
-  const targetRoot = await root(params.destinationRealDir);
+  const targetRoot = privateWorkingMode ? {
+    async mkdir(relativePath: string) {
+      // Retain Root.mkdir's strict alias admission before the shared traversal,
+      // while selecting private creation modes without adding a public option.
+      const resolved = await resolveRootPath({
+        absolutePath: path.resolve(params.destinationRealDir, await expandRelativePathWithHome(relativePath)),
+        rootPath: params.destinationRealDir,
+        rootCanonicalPath: params.destinationRealDir,
+        boundaryLabel: "archive destination",
+        rejectSymlinks: true,
+      });
+      checkExtractionDeadline(params.deadline);
+      await mkdirPathComponentsWithGuards({
+        rootReal: params.destinationRealDir,
+        targetPath: resolved.canonicalPath,
+        mode: 0o700,
+        rejectSymlinks: true,
+        beforeComponent: async () => {
+          await assertDirectoryIdentityGuard(destinationGuard);
+          checkExtractionDeadline(params.deadline);
+          await assertGuards?.();
+          checkExtractionDeadline(params.deadline);
+        },
+      });
+    },
+  } : await root(params.destinationRealDir);
   checkExtractionDeadline(params.deadline);
   const destinationGuard = await createDirectoryIdentityGuard(params.destinationRealDir);
   checkExtractionDeadline(params.deadline);
@@ -177,6 +218,8 @@ export async function prepareArchiveOutputPath(params: {
     checkExtractionDeadline(params.deadline);
     await ownExtractionDestinationMutation(params.deadline, async () => {
       await assertDirectoryIdentityGuard(destinationGuard);
+      checkExtractionDeadline(params.deadline);
+      await assertGuards?.();
       checkExtractionDeadline(params.deadline);
       await mkdirArchiveOutput({
         targetRoot,
@@ -203,6 +246,8 @@ export async function prepareArchiveOutputPath(params: {
     await ownExtractionDestinationMutation(params.deadline, async () => {
       await assertDirectoryIdentityGuard(destinationGuard);
       checkExtractionDeadline(params.deadline);
+      await assertGuards?.();
+      checkExtractionDeadline(params.deadline);
       await mkdirArchiveOutput({
         targetRoot,
         relativePath: parentRel,
@@ -219,97 +264,6 @@ export async function prepareArchiveOutputPath(params: {
     originalPath: params.originalPath,
   });
   checkExtractionDeadline(params.deadline);
-}
-
-async function chmodInsideDestinationBestEffort(params: {
-  destinationRealDir: string;
-  destinationPath: string;
-  mode: number;
-  originalPath: string;
-  deadline?: ExtractionDeadline;
-}): Promise<void> {
-  await getFsSafeTestHooks()?.beforeArchiveOutputMutation?.("chmod", params.destinationPath);
-  checkExtractionDeadline(params.deadline);
-  const destinationGuard = await createDirectoryIdentityGuard(params.destinationRealDir);
-  checkExtractionDeadline(params.deadline);
-  await assertDirectoryIdentityGuard(destinationGuard);
-  checkExtractionDeadline(params.deadline);
-  const handle = await fs
-    .open(params.destinationPath, resolveReadOpenFlags())
-    .catch(() => null);
-  checkExtractionDeadline(params.deadline);
-  if (!handle) {
-    const stat = await fs.lstat(params.destinationPath).catch(() => null);
-    checkExtractionDeadline(params.deadline);
-    if (stat?.isSymbolicLink()) {
-      throw symlinkTraversalError(params.originalPath);
-    }
-    return;
-  }
-  try {
-    const stat = await handle.stat();
-    checkExtractionDeadline(params.deadline);
-    if (!stat.isDirectory() && !stat.isFile()) {
-      return;
-    }
-    const realPath = await resolveOpenedFileRealPathForHandle(handle, params.destinationPath);
-    checkExtractionDeadline(params.deadline);
-    if (!isPathInside(params.destinationRealDir, realPath)) {
-      throw symlinkTraversalError(params.originalPath);
-    }
-    await ownExtractionDestinationMutation(params.deadline, async () => {
-      await handle.chmod(params.mode).catch(() => undefined);
-      checkExtractionDeadline(params.deadline);
-      await assertDirectoryIdentityGuard(destinationGuard);
-      checkExtractionDeadline(params.deadline);
-    });
-  } finally {
-    await handle.close().catch(() => undefined);
-  }
-}
-
-async function applyStagedEntryMode(params: {
-  destinationRealDir: string;
-  relPath: string;
-  mode: number;
-  originalPath: string;
-  deadline?: ExtractionDeadline;
-}): Promise<void> {
-  checkExtractionDeadline(params.deadline);
-  const destinationPath = path.join(params.destinationRealDir, params.relPath);
-  await assertResolvedInsideDestination({
-    destinationRealDir: params.destinationRealDir,
-    targetPath: destinationPath,
-    originalPath: params.originalPath,
-  });
-  checkExtractionDeadline(params.deadline);
-  if (params.mode !== 0) {
-    await chmodInsideDestinationBestEffort({
-      destinationRealDir: params.destinationRealDir,
-      destinationPath,
-      mode: params.mode,
-      originalPath: params.originalPath,
-      deadline: params.deadline,
-    });
-  }
-  checkExtractionDeadline(params.deadline);
-}
-
-async function assertExtractedFileHasNoHardlinkAlias(params: {
-  destinationRealDir: string;
-  relPath: string;
-  originalPath: string;
-}): Promise<void> {
-  const destinationPath = path.join(params.destinationRealDir, params.relPath);
-  await assertResolvedInsideDestination({
-    destinationRealDir: params.destinationRealDir,
-    targetPath: destinationPath,
-    originalPath: params.originalPath,
-  });
-  const stat = await fs.lstat(destinationPath);
-  if (stat.isFile() && stat.nlink > 1) {
-    throw symlinkTraversalError(params.originalPath);
-  }
 }
 
 function assertSafeArchiveStagingPrefix(prefix: string): string {
@@ -361,104 +315,7 @@ export async function withStagedArchiveDestination<T>(params: {
   }
 }
 
-export async function mergeExtractedTreeIntoDestination(params: {
-  sourceDir: string;
-  destinationDir: string;
-  destinationRealDir: string;
-  deadline?: ExtractionDeadline;
-}): Promise<void> {
-  const targetRoot = await root(params.destinationRealDir);
-  const sourceRootGuard = await createDirectoryIdentityGuard(params.sourceDir);
-  const sourceRootReal = sourceRootGuard.realPath;
-  const walk = async (currentSourceDir: string): Promise<void> => {
-    await assertDirectoryIdentityGuard(sourceRootGuard);
-    const entries = await fs.readdir(currentSourceDir, { withFileTypes: true });
-    for (const entry of entries) {
-      await assertDirectoryIdentityGuard(sourceRootGuard);
-      const sourcePath = path.join(currentSourceDir, entry.name);
-      const relPath = path.relative(params.sourceDir, sourcePath);
-      const originalPath = relPath.split(path.sep).join("/");
-      const destinationPath = path.join(params.destinationDir, relPath);
-      const sourceStat = await fs.lstat(sourcePath);
-      if (sourceStat.isSymbolicLink()) {
-        throw symlinkTraversalError(originalPath);
-      }
-      const sourceReal = await fs.realpath(sourcePath);
-      if (!isPathInside(sourceRootReal, sourceReal)) {
-        throw symlinkTraversalError(originalPath);
-      }
-
-      if (sourceStat.isDirectory()) {
-        await prepareArchiveOutputPath({
-          destinationDir: params.destinationDir,
-          destinationRealDir: params.destinationRealDir,
-          relPath,
-          outPath: destinationPath,
-          originalPath,
-          isDirectory: true,
-          deadline: params.deadline,
-        });
-        await walk(sourcePath);
-        await applyStagedEntryMode({
-          destinationRealDir: params.destinationRealDir,
-          relPath,
-          mode: sourceStat.mode & 0o777,
-          originalPath,
-          deadline: params.deadline,
-        });
-        continue;
-      }
-
-      if (!sourceStat.isFile()) {
-        throw new Error(
-          `archive staging contains unsupported entry: ${formatErrorDetail(originalPath)}`,
-        );
-      }
-
-      await prepareArchiveOutputPath({
-        destinationDir: params.destinationDir,
-        destinationRealDir: params.destinationRealDir,
-        relPath,
-        outPath: destinationPath,
-        originalPath,
-        isDirectory: false,
-        deadline: params.deadline,
-      });
-      await ownExtractionDestinationMutation(params.deadline, async () => {
-        try {
-          await targetRoot.copyIn(relPath, sourcePath, { mkdir: true });
-          checkExtractionDeadline(params.deadline);
-          await assertExtractedFileHasNoHardlinkAlias({
-            destinationRealDir: params.destinationRealDir,
-            relPath,
-            originalPath,
-          });
-          checkExtractionDeadline(params.deadline);
-          await applyStagedEntryMode({
-            destinationRealDir: params.destinationRealDir,
-            relPath,
-            mode: sourceStat.mode & 0o777,
-            originalPath,
-            deadline: params.deadline,
-          });
-          checkExtractionDeadline(params.deadline);
-        } catch (err) {
-          // copyIn owns its guarded cleanup. The merge has no publication
-          // receipt authorizing removal of the current destination entry.
-          if (
-            err instanceof FsSafeError &&
-            (err.code === "hardlink" || err.code === "path-alias")
-          ) {
-            throw symlinkTraversalError(originalPath);
-          }
-          throw err;
-        }
-      });
-    }
-  };
-
-  await walk(params.sourceDir);
-}
+export { mergeExtractedTreeIntoDestination } from "./archive-merge.js";
 
 export function createArchiveSymlinkTraversalError(originalPath: string): ArchiveSecurityError {
   return symlinkTraversalError(originalPath);

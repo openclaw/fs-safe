@@ -31,6 +31,7 @@ export type TarModule = {
     noChmod: true;
     preserveOwner: false;
     noMtime: true;
+    dmode: number;
     strict: true;
     maxMetaEntrySize: number;
     maxDecompressionRatio: number;

@@ -2,6 +2,8 @@
 
 ## 0.7.3 - Unreleased
 
+- Separate archive staging permissions from final publication modes so zero/write-only files and restrictive directories extract correctly; finalize explicit and implicit directory modes through retained, verified authority and reject unsafe mode application instead of silently skipping it.
+- Decode absent TAR modes and supported signed GNU binary permission bits in native manifests, matching JavaScript defaults without changing the native ABI.
 - Reject serialized sidecar lock payloads above 1 MiB of UTF-8 bytes, including ownership overhead, with `too-large` before async or sync acquisition so admitted locks remain verifiable and releasable.
 - Honor explicit async file-lock retry counts independently of infinite deadlines, matching sync locks while preserving unlimited retries when the count is omitted.
 - Verify atomic secret writes through the writer's retained descriptor so restrictive POSIX modes such as `0o000` and `0o200` succeed without a readonly reopen or widened permissions.

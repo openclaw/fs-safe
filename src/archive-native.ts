@@ -28,10 +28,11 @@ import {
 import type { ExtractArchiveOptions } from "./archive-options.js";
 import { resolveArchiveEntryMode, shouldExtractArchiveEntry } from "./archive-policy.js";
 import {
-  mergeExtractedTreeIntoDestination,
   prepareArchiveDestinationDir,
   withStagedArchiveDestination,
 } from "./archive-staging.js";
+import { mergePlannedArchiveIntoDestination } from "./archive-merge.js";
+import type { ZipDirectoryEntry } from "./archive-zip-directory.js";
 import type { NativeBinding } from "./native.js";
 import { admitZipFile } from "./archive-zip-admission.js";
 
@@ -79,8 +80,9 @@ export async function extractNativeArchive(params: {
     deadline: params.deadline,
   });
   try {
+    const zipEntries: ZipDirectoryEntry[] = [];
     const physicalCount = params.kind === "zip"
-      ? await admitZipFile(stagedArchive.path, limits, params.deadline)
+      ? await admitZipFile(stagedArchive.path, limits, params.deadline, (entry) => { zipEntries.push(entry); })
       : undefined;
     const destinationRealDir = await prepareArchiveDestinationDir(params.destDir);
     await withStagedArchiveDestination({
@@ -100,6 +102,19 @@ export async function extractNativeArchive(params: {
         if (physicalCount !== undefined && manifest.length !== physicalCount) {
           throw new ArchiveSecurityError("entry-path", "zip decoder collapsed entry names");
         }
+        if (params.kind === "zip") {
+          for (const [ordinal, entry] of manifest.entries()) {
+            const physical = zipEntries[ordinal];
+            // Native ZIP indices are physical central-directory ordinals. Legacy
+            // filename decoding remains native-selected; compare names when known.
+            if (!physical || physical.index !== ordinal || entry.index !== ordinal ||
+                entry.size !== physical.size ||
+                (physical.path !== undefined && stripArchivePath(entry.path, 0) !== stripArchivePath(physical.path, 0)) ||
+                (physical.creatorSystem === 3 && entry.mode !== physical.externalAttributes >>> 16)) {
+              throw new ArchiveFormatError("ZIP decoder disagrees with admitted directory metadata");
+            }
+          }
+        }
         // Recheck the native manifest at the shared policy boundary before
         // any caller callback observes an entry.
         if (params.kind !== "zip") {
@@ -111,7 +126,7 @@ export async function extractNativeArchive(params: {
         const plan: Array<{
           index: number;
           path: string;
-          kind: string;
+          kind: "file" | "directory";
           size: number;
           mode: number;
         }> = [];
@@ -167,7 +182,11 @@ export async function extractNativeArchive(params: {
               size: entry.size,
               mode: resolveArchiveEntryMode({
                 kind,
-                archivedMode: entry.mode,
+                archivedMode: params.kind === "zip"
+                  ? zipEntries[entry.index]!.creatorSystem === 3
+                    ? zipEntries[entry.index]!.externalAttributes >>> 16
+                    : undefined
+                  : entry.mode,
                 policy: params.entryModes,
               }),
             });
@@ -185,7 +204,7 @@ export async function extractNativeArchive(params: {
             stagedArchive.path,
             params.kind,
             directory.fd,
-            plan,
+            plan.map((entry) => ({ ...entry, mode: entry.kind === "directory" ? 0o700 : 0o600 })),
             tarLimits,
             params.deadline.signal,
           ).catch(throwMappedNativeError);
@@ -193,7 +212,8 @@ export async function extractNativeArchive(params: {
           await directory.close().catch(() => undefined);
         }
         params.deadline.check();
-        await mergeExtractedTreeIntoDestination({
+        await mergePlannedArchiveIntoDestination({
+          entries: plan,
           sourceDir: stagingDir,
           destinationDir: params.destDir,
           destinationRealDir,

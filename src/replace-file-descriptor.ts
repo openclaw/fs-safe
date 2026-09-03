@@ -3,6 +3,7 @@ import fs, { type FileHandle } from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
+import { assertOwnedDirectory, ownDirectoryMode, type DirectoryModeOwner } from "./directory-mode-owner.js";
 
 type AsyncTempFileSystem = Pick<typeof fs, "lstat" | "open" | "writeFile">;
 type SyncTempFileSystem = Pick<
@@ -37,13 +38,12 @@ function assertSameDirectory(expected: Stats, opened: Stats, dirPath: string): v
   }
 }
 
-export async function applyDirectoryMode(params: {
+export async function pinDirectoryForMode(params: {
   fsModule: AsyncTempFileSystem;
   dirPath: string;
-  mode: number;
   /** Compatibility for best-effort directory modes; admission and close still fail closed. */
   ignoreChmodError?: boolean;
-}): Promise<void> {
+}): Promise<DirectoryModeOwner | undefined> {
   // Node does not enforce POSIX directory modes on Windows, and its directory
   // descriptors are not consistently openable. mkdir(mode) remains the only
   // bounded behavior there; never fall back to a pathname chmod.
@@ -55,14 +55,35 @@ export async function applyDirectoryMode(params: {
   assertDirectory(expected, params.dirPath);
   const handle = await params.fsModule.open(params.dirPath, directoryOpenFlags());
   try {
-    assertSameDirectory(expected, await handle.stat(), params.dirPath);
-    try {
-      await handle.chmod(params.mode);
-    } catch (error) {
-      if (params.ignoreChmodError !== true) throw error;
-    }
-  } finally {
+    const owner = ownDirectoryMode({
+      async inspect() {
+        const opened = await handle.stat();
+        assertOwnedDirectory(expected, opened);
+        return opened.mode & 0o7777;
+      },
+      chmod: (mode) => handle.chmod(mode),
+      close: () => handle.close(),
+      ignoreChmodError: params.ignoreChmodError,
+    });
+    await owner.verify();
+    return owner;
+  } catch (error) {
     await handle.close();
+    throw error;
+  }
+}
+
+export async function applyDirectoryMode(params: {
+  fsModule: AsyncTempFileSystem;
+  dirPath: string;
+  mode: number;
+  ignoreChmodError?: boolean;
+}): Promise<void> {
+  const owner = await pinDirectoryForMode(params);
+  try {
+    await owner?.apply(params.mode);
+  } finally {
+    await owner?.close();
   }
 }
 

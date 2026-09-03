@@ -6,7 +6,7 @@ import {
 export type ZipEntry = {
   name: string;
   dir: boolean;
-  unixPermissions?: number;
+  unixPermissions?: number | null;
   _data?: { crc32?: number; uncompressedSize?: number } | PromiseLike<unknown>;
   nodeStream?: () => NodeJS.ReadableStream;
   async: (type: "nodebuffer") => Promise<Buffer>;

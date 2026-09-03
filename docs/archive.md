@@ -61,9 +61,42 @@ type ExtractArchiveOptions = {
 `entryModes` defaults to `"clamp"`: directories become `0o755`; files become
 `0o644`, or `0o755` when the archived owner-execute bit is set. `"preserve"`
 keeps archived read/write/execute bits. Both policies strip setuid, setgid, and
-sticky bits, and neither applies archived ownership. TAR extraction disables
-`tar`'s ownership and mode restoration and applies the selected modes in the
-private staging tree; ZIP applies the same policy to `unixPermissions`.
+sticky bits, and neither applies archived ownership. An explicit zero mode,
+including a mode containing only stripped special bits, stays zero under
+`"preserve"`. Absent metadata defaults to `0o644` for files and `0o755` for
+directories; ZIP UNIX creator records with zero attributes are explicit zero,
+while non-UNIX ZIP records use the absent-metadata defaults.
+
+TAR mode fields containing only NUL/ASCII-space padding use absent defaults.
+Native extraction also recognizes GNU binary modes, including signed values,
+within node-tar's JavaScript safe-integer range before masking permission bits.
+Malformed or unsupported mode representations retain existing decoder behavior:
+native falls back to zero, while JavaScript may default, parse an octal prefix,
+or reject. These representations are not newly admitted or standardized by the
+mode repair; raw framing and other numeric-field checks remain unchanged.
+
+Final modes remain separate from private working staging permissions: files
+stay `0o600` and directories `0o700` until publication. Files receive their final
+mode through the guarded copy's owned writer descriptor. Directories are pinned
+before descending and finalized after their children, including empty and
+restrictive directories. Explicit accepted directory modes win regardless of
+archive order; implicit parents receive `0o755`. Existing destination directories
+also receive the requested final mode. They are never temporarily widened to
+allow child writes; insufficient write/search access still rejects.
+
+Directory mode changes use a retained no-follow read descriptor when possible.
+On macOS x64/arm64, read-denied directories can use a retained search descriptor.
+On Linux x64/arm64, the Node-only search route retains an `O_PATH` descriptor and
+changes modes through its exact `/proc/self/fd/N` reference after verifying the
+procfs namespace and followed identity. The descriptor stays open through the
+operation and verification; original root, ancestor and named-directory checks
+still apply. This route trusts host mount-namespace integrity and does not claim
+atomic ancestry checks or protection against privileged mount replacement.
+Readable directories do not depend on procfs. A Linux search-only directory
+needing a mode change requires accessible, genuine procfs; unavailable or
+untrusted authority rejects explicitly instead of silently accepting a wrong
+mode. Other unsupported search-only routes also fail closed. Windows retains
+its existing bounded lack of POSIX mode enforcement.
 
 Native extraction is deliberately split into two phases. Rust first reports an
 entry manifest without creating paths. TypeScript validates paths, applies
@@ -167,6 +200,11 @@ before publication preserves a pre-existing file, and rejection does not grant
 authority to delete a substituted file or alias. Failed extraction does not
 restore overwritten contents. Active destination mutations and their guarded
 cleanup still finish before rejection; no later destination mutation begins.
+New directories whose postorder finalization was never reached can retain their
+private working mode after failure. Failure cleanup closes retained descriptors;
+it does not run a final chmod sweep or roll back the archive. The public merge
+helper still derives modes from its external source tree and must be able to
+read that source; it never chmods an unreadable external source to admit it.
 
 ### Limits
 

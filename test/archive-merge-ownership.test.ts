@@ -77,14 +77,15 @@ describe("archive merge cleanup ownership", () => {
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     "retains a completed entry when the next source cannot be opened",
     async () => {
+      configureFsSafeNative({ mode: "off" });
       const { params } = await fixture();
       await fs.writeFile(path.join(params.sourceDir, "other"), "NEW");
       await fs.writeFile(path.join(params.destinationDir, "other"), "OLD");
       let completed = "";
       let unreadable = "";
       __setFsSafeTestHooksForTest({
-        async beforeArchiveOutputMutation(operation, targetPath) {
-          if (operation !== "chmod" || completed) return;
+        async afterPinnedWriteFallbackRename(targetPath) {
+          if (completed) return;
           completed = path.basename(targetPath);
           unreadable = completed === "keep" ? "other" : "keep";
           await fs.chmod(path.join(params.sourceDir, unreadable), 0o200);
@@ -181,6 +182,7 @@ describe("archive merge cleanup ownership", () => {
   itPosix.each(["published", "file", "hardlink", "symlink"] as const)(
     "joins post-copy timeout, preserves %s, and starts no later mutations",
     async (replacement) => {
+      configureFsSafeNative({ mode: "off" });
       const { base, target, params } = await fixture();
       const substitute = path.join(base, "substitute");
       await fs.writeFile(substitute, "SUBSTITUTE", { mode: 0o600 });
@@ -190,9 +192,9 @@ describe("archive merge cleanup ownership", () => {
       const release = deferred();
       const mutations: string[] = [];
       __setFsSafeTestHooksForTest({
-        async beforeArchiveOutputMutation(operation, targetPath) {
-          mutations.push(`${operation}:${targetPath}`);
-          if (operation !== "chmod" || targetPath !== target) return;
+        async afterPinnedWriteFallbackRename(targetPath) {
+          mutations.push(`publish:${targetPath}`);
+          if (targetPath !== target) return;
           await expect(fs.readFile(target, "utf8")).resolves.toBe("NEW");
           if (replacement !== "published") {
             await fs.rename(target, path.join(base, "published"));
