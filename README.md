@@ -176,7 +176,7 @@ Root reads default to `DEFAULT_ROOT_MAX_BYTES` (16 MiB). Pass a larger `maxBytes
 for expected large reads, or `Number.POSITIVE_INFINITY` when the caller has a
 separate size budget.
 
-`reader()` returns a callback that reads absolute or relative paths through the same root boundary. It is useful for APIs that accept a `(path) => Promise<Buffer>` loader. Absolute paths outside the root are rejected with `outside-workspace`. `readAbsolute()` has the same absolute-path behavior directly.
+`reader()` returns a callback that reads absolute or relative paths through the same root boundary. It is useful for APIs that accept a `(path) => Promise<Buffer>` loader. For roots configured through a directory symlink or Windows junction, absolute inputs may use either the configured spelling or the canonical real path. Absolute paths outside the root are rejected with `outside-workspace`. `readAbsolute()` has the same absolute-path behavior directly.
 
 When you need a writable `FileHandle`, use `openWritable()` and prefer `await using` for cleanup:
 

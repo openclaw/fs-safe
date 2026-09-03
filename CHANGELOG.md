@@ -2,6 +2,7 @@
 
 ## 0.7.3 - Unreleased
 
+- Accept canonical in-root absolute paths in `Root.readAbsolute()` and `Root.reader()` when the Root was configured through a directory symlink or Windows junction.
 - Bound callback staging components to 255 NFC/NFD bytes so filesystem-valid long destination names work without changing final names or short callback paths.
 - End `Root.walk()` immediately after its single truncation marker, including when a nested depth or entry budget is reached.
 - Close a selected archive input if private staging allocation fails, preventing `readArchiveEntry()` setup errors from retaining file descriptors until garbage collection.

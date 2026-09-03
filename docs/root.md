@@ -87,8 +87,10 @@ await using opened = await fs.open("large.log");
 [security model](security-model.md#containment-guarantees-by-platform).
 
 The read methods also accept an absolute spelling that already resolves inside
-the root. `readAbsolute()` and `reader()` make that intent explicit; an absolute
-path outside the root is still rejected.
+the root. `readAbsolute()` and `reader()` make that intent explicit and accept
+both the configured root spelling and its canonical real path when the Root was
+created through a directory symlink or Windows junction. An absolute path
+outside the root is still rejected.
 
 ### Writes
 

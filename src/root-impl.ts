@@ -50,6 +50,7 @@ import {
   expandRelativePathWithHome,
   resolvePathInRoot,
   resolveRootContext,
+  rootRelativeReadPath,
   type RootContext,
 } from "./root-context.js";
 import {
@@ -743,11 +744,7 @@ async function readPathInRoot(
     symlinks?: SymlinkPolicy;
   },
 ): Promise<ReadResult> {
-  const rootDir = root.rootDir;
-  const candidatePath = path.isAbsolute(params.filePath)
-    ? path.resolve(params.filePath)
-    : path.resolve(rootDir, params.filePath);
-  const relativePath = path.relative(rootDir, candidatePath);
+  const relativePath = rootRelativeReadPath(root, params.filePath);
   return await readFileInRoot(root, {
     relativePath,
     hardlinks: params.hardlinks,
