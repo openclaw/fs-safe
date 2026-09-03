@@ -166,8 +166,13 @@ describe("documentation contract", () => {
     expect(archiveDoc).toContain("loadZipArchiveWithPreflight(buffer, limits?)");
     expect(archiveDoc).toContain("readZipCentralDirectoryEntryCount(buffer)");
     expect(archiveDoc).toContain(
+      "prepareArchiveOutputPath({ destinationDir, destinationRealDir, relPath, outPath, originalPath, isDirectory, deadline? })",
+    );
+    expect(archiveDoc).toContain(
       "resolveArchiveOutputPath({ rootDir, relPath, originalPath, escapeLabel? })",
     );
+    expect(archiveDoc).not.toContain("prepareArchiveOutputPath(opts)");
+    expect(archiveDoc).not.toContain("Resolves a single entry's output path against the staging dir");
     expect(archiveDoc).not.toContain("loadZipArchiveWithPreflight(opts)");
     expect(archiveDoc).not.toContain("readZipCentralDirectoryEntryCount(path)");
     expect(archiveDoc).not.toContain("resolveArchiveOutputPath({ destDir, entryPath })");
