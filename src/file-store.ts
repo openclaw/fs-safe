@@ -16,13 +16,12 @@ import {
 import { writeFileSyncAtomic } from "./file-store-sync-write.js";
 import { createJsonStore, type JsonFileStoreOptions, type JsonStore } from "./json-document-store.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
-import { isNotFoundPathError, resolveSafeRelativePath } from "./path.js";
+import { isNotFoundPathError, resolveSafeRelativePath, splitSafeRelativePath } from "./path.js";
 import { throwFsSafeReadError } from "./read-error.js";
 import { root, type OpenResult, type ReadResult, type Root, type RootReadOptions } from "./root.js";
 import { DEFAULT_ROOT_MAX_BYTES } from "./root-impl.js";
 import { readRegularFile } from "./regular-file.js";
 import { matchRootFileOpenFailure, openRootFileSync, type RootFileOpenFailure } from "./root-file.js";
-import { assertNoDriveRelativePathSegments } from "./safe-path-segment.js";
 import { writeSecretFileAtomic } from "./secret-file.js";
 
 export type FileStoreOptions = {
@@ -109,14 +108,10 @@ function assertRelativePath(relativePath: string): string {
   if (!raw || raw !== relativePath) {
     throw new FsSafeError("invalid-path", "store key must be non-empty and unpadded");
   }
-  assertNoDriveRelativePathSegments(raw.replaceAll("\\", "/"), "store key");
-  const segments = raw.split("/");
-  const delegated = segments.includes("..") || raw.includes("\\") ||
-    path.posix.isAbsolute(raw) || path.win32.isAbsolute(raw) || raw.startsWith("//");
-  if (delegated) return raw;
+  const segments = splitSafeRelativePath(raw);
   if (
-    segments.every((segment) => segment.length === 0 || segment === ".") ||
-    segments.some((segment) => segment.length === 0 || segment === ".") ||
+    segments.length === 0 ||
+    segments.join("/") !== raw ||
     raw.normalize("NFC") !== raw ||
     segments.some((segment) => /[ .]$/u.test(segment))
   ) {

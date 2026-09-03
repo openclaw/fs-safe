@@ -956,7 +956,7 @@ describe("private file store mode", () => {
   it("rejects paths outside the store root", async () => {
     const store = fileStore({ rootDir: root, private: true });
     await expect(store.writeText("../escape.txt", "nope")).rejects.toThrow(/relative path/);
-    await expect(store.readTextIfExists("../escape.txt")).rejects.toThrow(/outside workspace root/);
+    await expect(store.readTextIfExists("../escape.txt")).rejects.toMatchObject({ code: "invalid-path" });
   });
 
   it("supports sync JSON writes", async () => {
