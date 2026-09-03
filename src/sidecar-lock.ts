@@ -33,6 +33,7 @@ type SidecarLockManagerState = {
 const GLOBAL_STATE_KEY = Symbol.for("fsSafe.sidecarLockManagers");
 const GLOBAL_CLEANUP_KEY = Symbol.for("fsSafe.sidecarLockCleanupRegistered");
 const GLOBAL_CLEANUP_HANDLER_KEY = Symbol.for("fsSafe.sidecarLockCleanupHandler");
+const GLOBAL_BEFORE_EXIT_KEY = Symbol.for("fsSafe.sidecarLockBeforeExitCleanup");
 function getGlobalManagers(): Map<string, SidecarLockManagerState> {
   const globalWithState = globalThis as typeof globalThis & {
     [GLOBAL_STATE_KEY]?: Map<string, SidecarLockManagerState>;
@@ -148,6 +149,33 @@ function ensureGlobalExitCleanupRegistered(): void {
   process.on("exit", cleanup);
 }
 
+function ensureGlobalBeforeExitCleanupRegistered(): { armed: boolean } {
+  const globalWithCleanup = globalThis as typeof globalThis & {
+    [GLOBAL_BEFORE_EXIT_KEY]?: { armed: boolean };
+  };
+  if (globalWithCleanup[GLOBAL_BEFORE_EXIT_KEY]) {
+    return globalWithCleanup[GLOBAL_BEFORE_EXIT_KEY];
+  }
+  // Independent of the exit registration, which an older package copy may own.
+  const lifecycle = { armed: false };
+  globalWithCleanup[GLOBAL_BEFORE_EXIT_KEY] = lifecycle;
+  process.on("beforeExit", () => {
+    if (!lifecycle.armed) return;
+    // Cleanup itself schedules I/O; retry only after another acquisition.
+    lifecycle.armed = false;
+    for (const state of getGlobalManagers().values()) {
+      for (const [normalizedTargetPath, held] of Array.from(state.held.entries())) {
+        if (held.lockRoot) {
+          void releaseHeldLock(state, normalizedTargetPath, held, { force: true }).catch(
+            () => undefined,
+          );
+        }
+      }
+    }
+  });
+  return lifecycle;
+}
+
 async function releaseHeldLock(
   state: SidecarLockManagerState,
   normalizedTargetPath: string,
@@ -197,6 +225,7 @@ function handleForHeldLock(
   normalizedTargetPath: string,
   held: HeldSidecarLock,
 ) {
+  ensureGlobalBeforeExitCleanupRegistered().armed = true;
   return createHeldSidecarLockHandle({
     normalizedTargetPath,
     held,
@@ -212,6 +241,7 @@ export function createSidecarLockManager(key: string) {
     state.cleanupRegistered = true;
     state.reclaimCleanupRegistered = true;
     ensureGlobalExitCleanupRegistered();
+    ensureGlobalBeforeExitCleanupRegistered().armed = true;
   }
 
   async function acquire<TPayload extends Record<string, unknown>>(
