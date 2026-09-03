@@ -80,6 +80,23 @@ export async function resolveRootContext(rootDir: string): Promise<RootContext> 
   };
 }
 
+export function rootRelativeReadPath(root: RootContext, filePath: string): string {
+  const absoluteInput = path.isAbsolute(filePath);
+  const candidatePath = absoluteInput
+    ? path.resolve(filePath)
+    : path.resolve(root.rootDir, filePath);
+  let relativeBase = root.rootDir;
+  if (
+    absoluteInput &&
+    !isPathInside(root.rootDir, candidatePath) &&
+    isPathInside(root.rootReal, candidatePath)
+  ) {
+    // A Root created through an alias has two valid in-root absolute spellings.
+    relativeBase = root.rootReal;
+  }
+  return path.relative(relativeBase, candidatePath);
+}
+
 export async function assertRootIdentityCurrent(root: RootContext): Promise<void> {
   let current: Awaited<ReturnType<typeof fs.lstat>>;
   try {

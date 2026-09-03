@@ -102,7 +102,9 @@ fs.readAbsolute(absPath, options?)   // ReadResult, abs path must be inside the 
 fs.reader(options?)              // (path) => Promise<Buffer>
 ```
 
-`readAbsolute` accepts absolute paths. Anything outside the root throws
+`readAbsolute` accepts absolute paths using either the configured root spelling
+or its canonical real path. This includes roots configured through a directory
+symlink or Windows junction. Anything outside the root throws
 `outside-workspace`. It also accepts relative paths for compatibility, but use
 `read()`/`readBytes()` when the input contract is explicitly relative.
 
