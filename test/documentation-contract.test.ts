@@ -161,6 +161,18 @@ describe("documentation contract", () => {
     expect(archiveDoc).not.toContain("Returns `undefined` for unknown extensions");
   });
 
+  it("documents the actual lower-level archive helper signatures", () => {
+    const archiveDoc = readRepoFile("docs/archive.md");
+    expect(archiveDoc).toContain("loadZipArchiveWithPreflight(buffer, limits?)");
+    expect(archiveDoc).toContain("readZipCentralDirectoryEntryCount(buffer)");
+    expect(archiveDoc).toContain(
+      "resolveArchiveOutputPath({ rootDir, relPath, originalPath, escapeLabel? })",
+    );
+    expect(archiveDoc).not.toContain("loadZipArchiveWithPreflight(opts)");
+    expect(archiveDoc).not.toContain("readZipCentralDirectoryEntryCount(path)");
+    expect(archiveDoc).not.toContain("resolveArchiveOutputPath({ destDir, entryPath })");
+  });
+
   it("keeps every public error category aligned with observed FsSafeError behavior", () => {
     const operational = new Set<FsSafeErrorCode>([
       "helper-failed",
