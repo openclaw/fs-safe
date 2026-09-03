@@ -78,6 +78,32 @@ it("counts skipped entries against the traversal budget", async () => {
   ]);
 });
 
+it.each([
+  { name: "depth", options: { maxDepth: 1 }, marker: "a/inner" },
+  { name: "entry", options: { maxEntries: 2 }, marker: "a/inner/file.txt" },
+])("ends every generator frame after a nested $name limit", async ({ options, marker }) => {
+  const directory = await tempRoot();
+  await fs.mkdir(path.join(directory, "a", "inner"), { recursive: true });
+  await fs.writeFile(path.join(directory, "a", "inner", "file.txt"), "nested");
+  await fs.writeFile(path.join(directory, "z.txt"), "later sibling");
+  const capability = await root(directory);
+  const entries: RootWalkEntry[] = [];
+
+  for await (const entry of capability.walk("", {
+    ...options,
+    symlinkPolicy: "skip",
+  })) {
+    entries.push(entry);
+  }
+
+  expect(entries.map(({ relativePath, kind }) => ({ relativePath, kind }))).toEqual([
+    { relativePath: "a", kind: "directory" },
+    { relativePath: "a/inner", kind: "directory" },
+    { relativePath: marker, kind: "truncated" },
+  ]);
+  expect(entries.at(-1)).toEqual({ relativePath: marker, kind: "truncated", size: 0 });
+});
+
 it("reports failed directory subtrees and continues when requested", async () => {
   const directory = await tempRoot();
   await fs.mkdir(path.join(directory, "broken"));
