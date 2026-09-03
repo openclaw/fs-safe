@@ -312,33 +312,6 @@ async function assertExtractedFileHasNoHardlinkAlias(params: {
   }
 }
 
-async function removeExtractedDestinationFile(params: {
-  destinationRealDir: string;
-  relPath: string;
-}): Promise<void> {
-  const destinationPath = path.join(params.destinationRealDir, params.relPath);
-  let stat: Awaited<ReturnType<typeof fs.lstat>>;
-  try {
-    stat = await fs.lstat(destinationPath);
-  } catch {
-    return;
-  }
-  if (!stat.isFile()) {
-    return;
-  }
-  let resolved: string;
-  try {
-    resolved = await fs.realpath(destinationPath);
-  } catch {
-    return;
-  }
-  if (!isPathInside(params.destinationRealDir, resolved)) {
-    return;
-  }
-  const targetRoot = await root(params.destinationRealDir);
-  await targetRoot.remove(params.relPath).catch(() => undefined);
-}
-
 function assertSafeArchiveStagingPrefix(prefix: string): string {
   if (
     !prefix ||
@@ -470,10 +443,8 @@ export async function mergeExtractedTreeIntoDestination(params: {
           });
           checkExtractionDeadline(params.deadline);
         } catch (err) {
-          await removeExtractedDestinationFile({
-            destinationRealDir: params.destinationRealDir,
-            relPath,
-          });
+          // copyIn owns its guarded cleanup. The merge has no publication
+          // receipt authorizing removal of the current destination entry.
           if (
             err instanceof FsSafeError &&
             (err.code === "hardlink" || err.code === "path-alias")

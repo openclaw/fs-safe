@@ -374,7 +374,8 @@ describe("archive extraction", () => {
     }
 
     await expect(fs.readFile(outsideAlias, "utf8")).resolves.toBe("owned");
-    await expect(fs.stat(extractedPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.readFile(extractedPath, "utf8")).resolves.toBe("owned");
+    expect((await fs.stat(extractedPath)).nlink).toBe(2);
   });
 
   itPosix("pins the archive file before extraction", async () => {
