@@ -125,6 +125,13 @@ startWebhookVerifier(signingKey);
 
 Async. Creates the parent directory at `dirMode` (default `0o700`) if missing, writes content to a sibling temp file at `mode` (default `0o600`), atomically renames over the destination, and re-asserts the file mode after rename.
 
+Publication verification borrows the writer's still-open descriptor to check
+the exact file identity, regular-file and link policy, requested POSIX mode,
+and root/parent ancestry before the writer closes it. POSIX mode overrides such
+as `0o000` and `0o200` do not require read permission or a readonly reopen, and
+verification does not widen the final mode. Windows retains its existing
+pathname-identity verification policy without enforcing POSIX mode bits.
+
 ```ts
 import { writeSecretFileAtomic } from "@openclaw/fs-safe/secret";
 

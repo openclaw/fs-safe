@@ -6,11 +6,11 @@ import { readFileDescriptorBoundedSync } from "./bounded-read.js";
 import { normalizeMaxBytes } from "./byte-budget.js";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, type AsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
-import { sameFileIdentity, type FileIdentityStat } from "./file-identity.js";
 import { resolveHomeRelativePath } from "./home-dir.js";
 import { openPinnedFileSync } from "./pinned-open.js";
-import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { runPinnedWriteHelper } from "./pinned-write.js";
+import { ensureTrailingSep } from "./root-context.js";
+import { verifyAtomicWriteResult } from "./root-write-verification.js";
 import {
   assertSecretFilePreview,
   DEFAULT_SECRET_FILE_MAX_BYTES,
@@ -155,40 +155,6 @@ async function enforcePrivatePathMode(
   }
 }
 
-async function enforcePrivateFileIdentityAndMode(
-  resolvedPath: string,
-  expectedIdentity: FileIdentityStat,
-  expectedMode: number,
-): Promise<void> {
-  const handle = await fsp.open(resolvedPath, resolveReadOpenFlags());
-  try {
-    const openedStat = await handle.stat();
-    if (!openedStat.isFile() || !sameFileIdentity(openedStat, expectedIdentity)) {
-      throw new FsSafeError("path-mismatch", "private secret file changed during write");
-    }
-    const pathStat = await fsp.lstat(resolvedPath);
-    if (pathStat.isSymbolicLink() || !sameFileIdentity(pathStat, openedStat)) {
-      throw new FsSafeError("path-mismatch", "private secret path changed during write");
-    }
-    if (process.platform !== "win32") {
-      await handle.chmod(expectedMode);
-      const chmodStat = await handle.stat();
-      const actualMode = chmodStat.mode & 0o777;
-      if (actualMode !== expectedMode) {
-        throw new Error(
-          `Private secret file ${resolvedPath} has insecure permissions ${actualMode.toString(8)}.`,
-        );
-      }
-      const refreshedPathStat = await fsp.lstat(resolvedPath);
-      if (refreshedPathStat.isSymbolicLink() || !sameFileIdentity(refreshedPathStat, chmodStat)) {
-        throw new FsSafeError("path-mismatch", "private secret path changed during mode check");
-      }
-    }
-  } finally {
-    await handle.close().catch(() => undefined);
-  }
-}
-
 async function ensurePrivateDirectory(
   rootDir: string,
   targetDir: string,
@@ -304,7 +270,7 @@ async function materializeSecretFileAtomic(
 
   await assertAsyncDirectoryGuard(rootGuard);
   await assertAsyncDirectoryGuard(parentGuard);
-  const identity = await runPinnedWriteHelper({
+  await runPinnedWriteHelper({
     rootPath: parentGuard.realPath,
     relativeParentPath: "",
     basename: fileName,
@@ -313,10 +279,24 @@ async function materializeSecretFileAtomic(
     overwrite: !createOnly,
     input: { kind: "buffer", data: typeof params.content === "string" ? params.content : Buffer.from(params.content) },
     rootIdentity: { dev: parentGuard.stat.dev, ino: parentGuard.stat.ino },
+    verifyPublished: async (fd, expectedIdentity, publishedParentGuard) => {
+      await assertAsyncDirectoryGuard(rootGuard);
+      await assertAsyncDirectoryGuard(parentGuard);
+      await verifyAtomicWriteResult({
+        root: {
+          rootDir: rootGuard.dir,
+          rootReal: rootGuard.realPath,
+          rootWithSep: ensureTrailingSep(rootGuard.realPath),
+          rootIdentity: { dev: rootGuard.stat.dev, ino: rootGuard.stat.ino },
+        },
+        targetPath: finalFilePath,
+        fd,
+        expectedIdentity,
+        expectedMode: mode,
+        parentGuard: publishedParentGuard,
+      });
+    },
   });
-  await assertAsyncDirectoryGuard(rootGuard);
-  await assertAsyncDirectoryGuard(parentGuard);
-  await enforcePrivateFileIdentityAndMode(finalFilePath, identity, mode);
 }
 
 export async function writeSecretFileAtomic(params: SecretFileWriteParams): Promise<void> {

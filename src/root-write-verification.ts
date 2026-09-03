@@ -15,6 +15,7 @@ export async function verifyAtomicWriteResult(params: {
   targetPath: string;
   fd: number;
   expectedIdentity: PublishedWriteIdentity;
+  expectedMode?: number;
   parentGuard: AsyncDirectoryGuard;
 }): Promise<void> {
   let needsPathOpen = false;
@@ -43,6 +44,14 @@ export async function verifyAtomicWriteResult(params: {
       throw new FsSafeError("path-mismatch", "descriptor changed during write");
     }
     assertFile(stat);
+    if (process.platform !== "win32" && params.expectedMode !== undefined) {
+      const actualMode = Number(stat.mode & 0o777n);
+      if (actualMode !== params.expectedMode) {
+        throw new Error(
+          `Private secret file ${params.targetPath} has insecure permissions ${actualMode.toString(8)}.`,
+        );
+      }
+    }
     return stat;
   };
   try {

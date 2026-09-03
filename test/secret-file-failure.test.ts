@@ -10,6 +10,7 @@ import {
   writeSecretFileAtomic,
 } from "../src/secret-file.js";
 import { readSecretFile } from "../src/secret-read-async.js";
+import * as verification from "../src/root-write-verification.js";
 
 const { tempRoot } = useTempDirs();
 
@@ -159,18 +160,15 @@ describe("secret file refusal paths", () => {
   it("rejects a different descriptor identity during post-write verification", async () => {
     const root = await tempRoot("fs-safe-secret-write-identity-");
     const filePath = path.join(root, "token");
-    const realOpen = fs.open.bind(fs);
-    const changedIdentity = vi.fn<() => Promise<fsSync.Stats>>();
-    vi.spyOn(fs, "open").mockImplementation(async (...args) => {
-      const handle = await realOpen(...args);
-      if (path.basename(String(args[0])) === "token" && typeof args[1] === "number") {
-        const stat = await handle.stat();
-        // Numeric Windows file IDs can round together; inject a distinct nonzero ID.
-        stat.ino = stat.ino === 12345 ? 54321 : 12345;
-        changedIdentity.mockResolvedValueOnce(stat);
-        vi.spyOn(handle, "stat").mockImplementationOnce(changedIdentity);
-      }
-      return handle;
+    const verify = verification.verifyAtomicWriteResult;
+    const changedIdentity = vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params) => {
+      const fstat = fsSync.fstatSync.bind(fsSync);
+      vi.spyOn(fsSync, "fstatSync").mockImplementationOnce(((fd: number) => {
+        expect(fd).toBe(params.fd);
+        const stat = fstat(fd, { bigint: true });
+        return Object.assign(Object.create(stat), { ino: stat.ino + 1n });
+      }) as typeof fsSync.fstatSync);
+      await verify(params);
     });
     await expect(
       writeSecretFileAtomic({ rootDir: root, filePath, content: "secret" }),
@@ -181,16 +179,10 @@ describe("secret file refusal paths", () => {
   itPosix("rejects an insecure mode reported after post-write chmod", async () => {
     const root = await tempRoot("fs-safe-secret-write-mode-");
     const filePath = path.join(root, "token");
-    const realOpen = fs.open.bind(fs);
-    vi.spyOn(fs, "open").mockImplementation(async (...args) => {
-      const handle = await realOpen(...args);
-      if (path.basename(String(args[0])) === "token" && typeof args[1] === "number") {
-        const actual = await handle.stat();
-        vi.spyOn(handle, "stat")
-          .mockResolvedValueOnce(actual)
-          .mockResolvedValueOnce({ ...actual, mode: 0o100644 } as never);
-      }
-      return handle;
+    const verify = verification.verifyAtomicWriteResult;
+    vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params) => {
+      fsSync.fchmodSync(params.fd, 0o644);
+      await verify(params);
     });
     await expect(
       writeSecretFileAtomic({ rootDir: root, filePath, content: "secret" }),

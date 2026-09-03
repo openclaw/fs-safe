@@ -327,20 +327,24 @@ describe("deepsec regressions", () => {
     await fsp.chmod(outsideFile, 0o600);
     const secretPath = path.join(rootDir, "secret.txt");
     const finalSecretPath = path.join(await fsp.realpath(rootDir), "secret.txt");
-    const realOpen = fsp.open;
+    const realLstat = fsp.lstat;
     let swapped = false;
-    vi.spyOn(fsp, "open").mockImplementation(async (...args) => {
-      if (!swapped && args[0] === finalSecretPath) {
+    vi.spyOn(fsp, "lstat").mockImplementation(async (target, options) => {
+      // Exact pathname verification occurs after the writer publishes its file.
+      if (!swapped && target === finalSecretPath && (options as { bigint?: boolean })?.bigint) {
         swapped = true;
         await fsp.rm(finalSecretPath, { force: true });
         await fsp.symlink(outsideFile, finalSecretPath, "file");
       }
-      return await realOpen(...args);
+      return await realLstat(target, options as never);
     });
 
     await expect(
       writeSecretFileAtomic({ rootDir, filePath: secretPath, content: "secret" }),
     ).rejects.toBeTruthy();
+    expect(swapped).toBe(true);
+    expect((await fsp.lstat(finalSecretPath)).isSymbolicLink()).toBe(true);
+    expect(await fsp.readFile(outsideFile, "utf8")).toBe("outside");
     expect((await fsp.stat(outsideFile)).mode & 0o777).toBe(0o600);
   });
 
