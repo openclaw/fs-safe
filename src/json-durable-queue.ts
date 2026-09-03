@@ -2,6 +2,7 @@ import fs, { type BigIntStats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { normalizeMaxBytes } from "./byte-budget.js";
+import { syncDirectory } from "./directory-durability.js";
 import { syncQueueDirectoryCreation } from "./json-durable-queue-directory.js";
 import {
   acknowledgeDurableQueueEntry,
@@ -305,8 +306,8 @@ async function replaceJsonDurableQueueEntry(params: {
     mode: 0o600,
     tempPrefix: params.tempPrefix,
     syncTempFile: true,
-    syncParentDir: true,
   });
+  await syncDirectory(path.dirname(params.filePath));
 }
 
 async function inspectQueueEntry(
@@ -458,23 +459,24 @@ export async function loadPendingJsonDurableQueueEntries<T>(
 
   const entries: T[] = [];
   for (const id of ids) {
+    const paths = resolveJsonDurableQueueEntryPaths(options.queueDir, id);
+    const claimedPath = await claimDurableQueueEntry(paths, { skipUnowned: true });
+    if (!claimedPath) continue;
+    let result: JsonDurableQueueReadResult<T>;
     try {
-      const paths = resolveJsonDurableQueueEntryPaths(options.queueDir, id);
-      const claimedPath = await claimDurableQueueEntry(paths);
-      if (!claimedPath) continue;
       const raw = await readJsonDurableQueueEntry<T>(claimedPath, { maxBytes: options.maxBytes });
-      const result = options.read ? await options.read(raw, paths.jsonPath) : { entry: raw };
-      if (result.migrated) {
-        await replaceJsonDurableQueueEntry({
-          filePath: claimedPath,
-          entry: result.entry,
-          tempPrefix: options.tempPrefix,
-        });
-      }
-      entries.push(result.entry);
+      result = options.read ? await options.read(raw, paths.jsonPath) : { entry: raw };
     } catch {
       continue;
     }
+    if (result.migrated) {
+      await replaceJsonDurableQueueEntry({
+        filePath: claimedPath,
+        entry: result.entry,
+        tempPrefix: options.tempPrefix,
+      });
+    }
+    entries.push(result.entry);
   }
   return entries;
 }
