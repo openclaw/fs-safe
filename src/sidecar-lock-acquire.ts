@@ -105,7 +105,6 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
   }
 
   const startedAt = Date.now();
-  const maxRetries = options.timeoutMs === Number.POSITIVE_INFINITY ? undefined : retry.retries;
   const reclaimGuardPath = `${lockPath}.reclaim`;
   let ownsReclaimGuard = false;
   let attempt = 0;
@@ -118,7 +117,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
       (options.timeoutMs !== undefined &&
         options.timeoutMs !== Number.POSITIVE_INFINITY &&
         elapsed >= options.timeoutMs) ||
-      (maxRetries !== undefined && attempt >= maxRetries)
+      (retry.retries !== undefined && attempt >= retry.retries)
     ) {
       throw Object.assign(new Error(`file lock timeout for ${normalizedTargetPath}`), {
         code: "file_lock_timeout",
