@@ -209,35 +209,46 @@ const publishBackends = native
   : (["javascript"] as const);
 
 describe.each(publishBackends)("%s publication fallback", (backend) => {
-  it("publishes identical bytes with an exclusive 0600 target", async () => {
-    const root = await tempRoot();
-    const sourcePath = path.join(root, "source");
-    const targetPath = path.join(root, "target");
-    const payload = Buffer.alloc(256 * 1024, 0x5a);
-    await fs.writeFile(sourcePath, payload, { mode: 0o644 });
+  it.each([0o022, 0o200, 0o777])(
+    "publishes identical bytes with an exclusive 0600 target under umask %s",
+    async (umask) => {
+      const root = await tempRoot();
+      const sourcePath = path.join(root, "source");
+      const targetPath = path.join(root, "target");
+      const payload = Buffer.alloc(256 * 1024, 0x5a);
+      await fs.writeFile(sourcePath, payload, { mode: 0o644 });
 
-    if (backend === "native") {
-      __setNativeLoaderForTest(() => ({
-        ...native!,
-        linkBeneath() {
-          throw Object.assign(new Error("force copy"), { code: "EXDEV" });
-        },
-      }));
-      configureFsSafeNative({ mode: "require" });
-    } else {
-      configureFsSafeNative({ mode: "off" });
-      vi.spyOn(fs, "link").mockRejectedValue(Object.assign(new Error("force copy"), { code: "EXDEV" }));
-    }
+      if (backend === "native") {
+        __setNativeLoaderForTest(() => ({
+          ...native!,
+          linkBeneath() {
+            throw Object.assign(new Error("force copy"), { code: "EXDEV" });
+          },
+        }));
+        configureFsSafeNative({ mode: "require" });
+      } else {
+        configureFsSafeNative({ mode: "off" });
+        vi.spyOn(fs, "link").mockRejectedValue(
+          Object.assign(new Error("force copy"), { code: "EXDEV" }),
+        );
+      }
 
-    const result = await publishFileExclusive({
-      sourcePath,
-      targetPath,
-      strategy: "link-or-copy",
-    });
-    expect(result.method).toBe("exclusive-copy");
-    await expect(fs.readFile(targetPath)).resolves.toEqual(payload);
-    if (process.platform !== "win32") {
-      expect((await fs.stat(targetPath)).mode & 0o777).toBe(0o600);
-    }
-  });
+      const previousUmask = process.umask(umask);
+      let result: Awaited<ReturnType<typeof publishFileExclusive>>;
+      try {
+        result = await publishFileExclusive({
+          sourcePath,
+          targetPath,
+          strategy: "link-or-copy",
+        });
+      } finally {
+        process.umask(previousUmask);
+      }
+      expect(result.method).toBe("exclusive-copy");
+      await expect(fs.readFile(targetPath)).resolves.toEqual(payload);
+      if (process.platform !== "win32") {
+        expect((await fs.stat(targetPath)).mode & 0o777).toBe(0o600);
+      }
+    },
+  );
 });
