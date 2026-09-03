@@ -259,12 +259,16 @@ export async function preflightTarMetadata(params: {
   signal?: AbortSignal;
   onMember?: (entry: TarEntryInfo) => void;
 }): Promise<void> {
-  const input = fs.createReadStream(params.archivePath);
   const meter = new TarMetadataMeter(params.limits, params.onMember);
   const sink = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
-  if (await isGzip(params.archivePath)) {
-    await pipeline(input, createGunzip(), meter, sink, { signal: params.signal });
-  } else {
-    await pipeline(input, meter, sink, { signal: params.signal });
+  const gzip = await isGzip(params.archivePath);
+  const decoder = gzip ? createGunzip() : undefined;
+  const input = fs.createReadStream(params.archivePath);
+  try {
+    await (decoder
+      ? pipeline(input, decoder, meter, sink, { signal: params.signal })
+      : pipeline(input, meter, sink, { signal: params.signal }));
+  } finally {
+    input.destroy();
   }
 }
