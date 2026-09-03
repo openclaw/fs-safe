@@ -157,6 +157,17 @@ record and are then cleared; local PAX on unsupported types and GNU sparse
 
 If `kind` is omitted, the helper calls `resolveArchiveKind(archivePath)` and throws if the extension is not recognized. Pass `kind` explicitly when the archive name doesn't carry the type (e.g. content-addressed names). Archive inputs must remain regular files from preview through descriptor admission; POSIX opens are no-follow and nonblocking, so a FIFO swap cannot stall before deadline checks resume. A positive finite `timeoutMs` is a wall-clock budget; zero, negative, `NaN`, and infinity disable the deadline. Non-mutating work rejects promptly when the budget expires. If a live destination mutation is already in flight, rejection waits only for that mutation and any rollback to finish; no later destination mutation can begin.
 
+The destination merge is nontransactional: each file is published atomically,
+but completed files and directories can remain when a later copy, post-copy
+check, mode application, or deadline fails. This also applies to
+`mergeExtractedTreeIntoDestination()`. Guarded `Root.copyIn()` owns cleanup for
+its operation; the archive merge does not unlink the current destination name
+on error because it has no publication receipt proving ownership. A failure
+before publication preserves a pre-existing file, and rejection does not grant
+authority to delete a substituted file or alias. Failed extraction does not
+restore overwritten contents. Active destination mutations and their guarded
+cleanup still finish before rejection; no later destination mutation begins.
+
 ### Limits
 
 ```ts

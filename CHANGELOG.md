@@ -2,6 +2,7 @@
 
 ## 0.7.3 - Unreleased
 
+- Preserve pre-existing and substituted destination files when an archive merge fails, leaving guarded copy cleanup to the operation that owns publication.
 - Add the narrow `@openclaw/fs-safe/secure-temp-root` package subpath so consumers can import `resolveSecureTempRoot()` and its options type without loading the temp workspace implementation.
 
 ## 0.7.2 - 2026-09-01
