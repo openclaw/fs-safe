@@ -3,6 +3,7 @@
 ## 0.7.3 - Unreleased
 
 - Retry Windows Root-backed sidecar exclusive-create denials within the existing eight-retry and caller budgets, using per-call provenance while preserving callback errors and rejecting replayed failure evidence.
+- Assign cross-platform sidecar contention proof liveness to its whole-worker watchdog instead of false-failing healthy unfair acquisition; production lock timeout behavior is unchanged.
 - Enforce portable FileStore keys consistently across methods: async reads, `exists`, and `remove` now reject parent-segment and backslash aliases with `invalid-path` for existing roots, matching sync and write methods while preserving missing-root error precedence and Root's confined existing-object compatibility.
 - Resync durable queue acknowledgement retries after final marker unlink before reporting completion or a newer-generation mismatch.
 - Propagate durable queue batch claim and migration failures instead of returning empty or partial success, and strictly sync migration publication in both loaders while preserving retry state.
