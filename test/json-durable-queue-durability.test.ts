@@ -230,6 +230,57 @@ describe("durable JSON queue transition durability", () => {
     await expect(fs.access(paths.deliveredPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("resyncs acknowledgement retries after final marker unlink before completing", async () => {
+    const { queueDir, paths } = await fixture();
+    await writeGeneration(paths.jsonPath, 1);
+    await expect(loadJsonDurableQueueEntry({ paths, tempPrefix: "queue" }))
+      .resolves.toEqual({ generation: 1 });
+    const failure = Object.assign(new Error("ack final unlink sync failed"), { code: "EIO" });
+    failDirectorySyncOnce(queueDir, failure, 2);
+
+    await expect(ackJsonDurableQueueEntry(paths)).rejects.toBe(failure);
+    await expect(fs.access(paths.jsonPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.access(paths.processingPath!)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.access(paths.deliveredPath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    vi.restoreAllMocks();
+    const retryFailure = Object.assign(new Error("ack retry sync failed"), { code: "EIO" });
+    failDirectorySyncOnce(queueDir, retryFailure, 1);
+    await expect(ackJsonDurableQueueEntry(paths)).rejects.toBe(retryFailure);
+
+    vi.restoreAllMocks();
+    await expect(ackJsonDurableQueueEntry(paths)).resolves.toBeUndefined();
+  });
+
+  it("resyncs acknowledgement retries after final marker unlink before a generation mismatch", async () => {
+    const { queueDir, paths } = await fixture();
+    await writeGeneration(paths.jsonPath, 1);
+    await expect(loadJsonDurableQueueEntry({ paths, tempPrefix: "queue" }))
+      .resolves.toEqual({ generation: 1 });
+    await writeGeneration(paths.jsonPath, 2);
+    const pendingBytes = await fs.readFile(paths.jsonPath);
+    const failure = Object.assign(new Error("ack final unlink sync failed"), { code: "EIO" });
+    failDirectorySyncOnce(queueDir, failure, 2);
+
+    await expect(ackJsonDurableQueueEntry(paths)).rejects.toBe(failure);
+    await expect(fs.access(paths.processingPath!)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.access(paths.deliveredPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.readFile(paths.jsonPath)).resolves.toEqual(pendingBytes);
+
+    vi.restoreAllMocks();
+    const retryFailure = Object.assign(new Error("ack retry sync failed"), { code: "EIO" });
+    failDirectorySyncOnce(queueDir, retryFailure, 1);
+    await expect(ackJsonDurableQueueEntry(paths)).rejects.toBe(retryFailure);
+    await expect(fs.readFile(paths.jsonPath)).resolves.toEqual(pendingBytes);
+
+    vi.restoreAllMocks();
+    await expect(ackJsonDurableQueueEntry(paths)).rejects.toMatchObject({
+      code: "path-mismatch",
+      message: "queue acknowledgement requires a processing claim",
+    });
+    await expect(fs.readFile(paths.jsonPath)).resolves.toEqual(pendingBytes);
+  });
+
   it("propagates quarantine sync failure and completes the retained hardlink", async () => {
     const { queueDir, failedDir, paths } = await fixture();
     await writeGeneration(paths.jsonPath, 1);

@@ -136,8 +136,8 @@ export async function acknowledgeDurableQueueEntry(
     if (!processing) {
       if (delivered) {
         await fs.unlink(paths.deliveredPath);
-        await syncDirectory(path.dirname(paths.deliveredPath));
       }
+      await syncDirectory(path.dirname(paths.deliveredPath));
       if (await regularQueueFileIdentity(paths.jsonPath)) {
         throw new FsSafeError(
           "path-mismatch",
