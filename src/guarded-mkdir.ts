@@ -33,6 +33,8 @@ export async function mkdirPathComponentsWithGuards(params: {
   rootReal: string;
   targetPath: string;
   beforeComponent?: (componentPath: string) => Promise<void> | void;
+  mode?: number;
+  rejectSymlinks?: boolean;
 }): Promise<string> {
   const root = path.resolve(params.rootReal);
   const rootCanonical = path.resolve(await fs.realpath(root));
@@ -48,14 +50,14 @@ export async function mkdirPathComponentsWithGuards(params: {
     await assertAsyncDirectoryGuard(parentGuard);
     await params.beforeComponent?.(next);
     try {
-      await fs.mkdir(next);
+      await fs.mkdir(next, { mode: params.mode });
     } catch (error) {
       if (!error || typeof error !== "object" || !("code" in error) || error.code !== "EEXIST") {
         throw error;
       }
     }
     const stat = await fs.lstat(next);
-    if (!stat.isSymbolicLink() && !stat.isDirectory()) {
+    if ((params.rejectSymlinks && stat.isSymbolicLink()) || (!stat.isSymbolicLink() && !stat.isDirectory())) {
       throw directoryComponentNotDirectoryError();
     }
     // Node's recursive mkdir follows symlinks in missing components. Build one

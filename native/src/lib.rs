@@ -9,6 +9,7 @@ mod owned_tree;
 #[cfg(unix)]
 mod staged_file;
 mod tar_meter;
+mod tar_mode;
 mod tar_path;
 mod tar_pax;
 #[cfg(unix)]

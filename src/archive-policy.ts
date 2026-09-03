@@ -20,12 +20,12 @@ export function archiveEntryKindFromTarType(type: string): ArchiveEntryKind {
 
 export function resolveArchiveEntryMode(params: {
   kind: "file" | "directory";
-  archivedMode?: number;
+  archivedMode?: number | null;
   policy?: ArchiveEntryModePolicy;
 }): number {
   const archivedMode = (params.archivedMode ?? 0) & 0o777;
   if (params.policy === "preserve") {
-    return archivedMode || (params.kind === "directory" ? 0o755 : 0o644);
+    return params.archivedMode == null ? (params.kind === "directory" ? 0o755 : 0o644) : archivedMode;
   }
   if (params.kind === "directory") {
     return 0o755;

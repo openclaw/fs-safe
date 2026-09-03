@@ -114,7 +114,8 @@ describe("security finding regressions", () => {
     await expect(fsp.stat(path.join(outside, "nested"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  itPosix("does not chmod through an archive entry symlink swap", async () => {
+  itPosix("preserves a substituted archive symlink after publication without changing its target", async () => {
+    configureFsSafeNative({ mode: "off" });
     const base = await tempRoot("fs-safe-archive-chmod-race-");
     const source = path.join(base, "source");
     const dest = path.join(base, "dest");
@@ -126,18 +127,28 @@ describe("security finding regressions", () => {
     await fsp.writeFile(outsideFile, "outside");
     await fsp.chmod(outsideFile, 0o600);
     const destinationRealDir = await prepareArchiveDestinationDir(dest);
+    const target = path.join(destinationRealDir, "payload.txt");
+    const published = path.join(base, "published.txt");
+    let swapped = false;
 
     __setFsSafeTestHooksForTest({
-      async beforeArchiveOutputMutation(operation, targetPath) {
-        if (operation !== "chmod" || !targetPath.endsWith("payload.txt")) return;
-        await fsp.rm(targetPath, { force: true });
+      async afterPinnedWriteFallbackRename(targetPath) {
+        if (targetPath !== target) return;
+        await fsp.rename(targetPath, published);
         await fsp.symlink(outsideFile, targetPath, "file");
+        swapped = true;
       },
     });
 
     await expect(
       mergeExtractedTreeIntoDestination({ sourceDir: source, destinationDir: dest, destinationRealDir }),
-    ).rejects.toBeTruthy();
+    ).rejects.toMatchObject({ code: "path-mismatch" });
+    expect(swapped).toBe(true);
+    expect((await fsp.lstat(target)).isSymbolicLink()).toBe(true);
+    expect(await fsp.readlink(target)).toBe(outsideFile);
+    expect(await fsp.readFile(published, "utf8")).toBe("payload");
+    expect(await fsp.readFile(target, "utf8")).toBe("outside");
+    expect(await fsp.readFile(outsideFile, "utf8")).toBe("outside");
     expect((await fsp.stat(outsideFile)).mode & 0o777).toBe(0o600);
   });
 

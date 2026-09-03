@@ -27,11 +27,11 @@ import {
 } from "./archive-limits.js";
 import { resolveArchiveKind } from "./archive-kind.js";
 import {
-  mergeExtractedTreeIntoDestination,
   prepareArchiveDestinationDir,
-  prepareArchiveOutputPath,
+  preparePrivateArchiveOutputPath,
   withStagedArchiveDestination,
 } from "./archive-staging.js";
+import { mergePlannedArchiveIntoDestination, type ArchivePublicationEntry } from "./archive-merge.js";
 import {
   createTarEntryPreflightChecker,
   readTarEntryInfo,
@@ -147,24 +147,11 @@ function resolveZipOutputPath(params: {
   };
 }
 
-async function prepareZipOutputPath(params: {
-  destinationDir: string;
-  destinationRealDir: string;
-  relPath: string;
-  outPath: string;
-  originalPath: string;
-  isDirectory: boolean;
-  deadline: ExtractionDeadline;
-}): Promise<void> {
-  await prepareArchiveOutputPath(params);
-}
-
 async function writeZipFileEntry(params: {
   entry: ZipEntry;
   outPath: string;
   budget: ZipExtractBudget;
   deadline: ExtractionDeadline;
-  mode: number;
 }): Promise<void> {
   params.deadline.check();
   params.budget.startEntry();
@@ -178,9 +165,9 @@ async function writeZipFileEntry(params: {
     await writeSiblingTempFile({
       dir: path.dirname(destinationPath),
       chmodDir: false,
-      mode: params.mode,
+      mode: 0o600,
       writeTemp: async (tempPath) => {
-        tempHandle = await fs.open(tempPath, OPEN_WRITE_CREATE_FLAGS, 0o666);
+        tempHandle = await fs.open(tempPath, OPEN_WRITE_CREATE_FLAGS, 0o600);
         const writable = tempHandle.createWriteStream();
         writable.once("close", () => {
           handleClosedByStream = true;
@@ -254,6 +241,7 @@ async function extractZip(params: {
       destinationRealDir,
       run: async (stagingDir) => {
         const stagingRealDir = await fs.realpath(stagingDir);
+        const acceptedEntries: ArchivePublicationEntry[] = [];
         for (const entry of entries) {
           params.deadline.check();
           const output = resolveZipOutputPath({
@@ -283,8 +271,9 @@ async function extractZip(params: {
             throw new ArchiveSecurityError("entry-link", `zip entry is a link: ${entry.name}`);
           }
           const mode = zipEntryMode(entry, params.entryModes);
+          acceptedEntries.push({ path: output.relPath, kind: entry.dir ? "directory" : "file", mode });
 
-          await prepareZipOutputPath({
+          await preparePrivateArchiveOutputPath({
             destinationDir: stagingRealDir,
             destinationRealDir: stagingRealDir,
             relPath: output.relPath,
@@ -294,7 +283,6 @@ async function extractZip(params: {
             deadline: params.deadline,
           });
           if (entry.dir) {
-            await fs.chmod(output.outPath, mode);
             continue;
           }
 
@@ -303,12 +291,12 @@ async function extractZip(params: {
             outPath: output.outPath,
             budget,
             deadline: params.deadline,
-            mode,
           });
         }
 
         params.deadline.check();
-        await mergeExtractedTreeIntoDestination({
+        await mergePlannedArchiveIntoDestination({
+          entries: acceptedEntries,
           sourceDir: stagingRealDir,
           destinationDir: params.destDir,
           destinationRealDir,
@@ -392,7 +380,7 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
               deadline.check();
               return checkTarEntrySafety(entry);
             }, strip);
-            const acceptedEntries: Array<{ path: string; mode: number }> = [];
+            const acceptedEntries: ArchivePublicationEntry[] = [];
             // Extract privately, then merge through the safe-open boundary.
             const extractor = tar.x({
               cwd: stagingDir,
@@ -405,6 +393,7 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
               noChmod: true,
               preserveOwner: false,
               noMtime: true,
+              dmode: 0o700,
               strict: true,
               maxMetaEntrySize: tarLimits.maxMetaEntryBytes,
               maxDecompressionRatio: NODE_TAR_RATIO_DISABLED,
@@ -415,19 +404,19 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
                   if (!relPath) {
                     return false;
                   }
-                  // Writes and the mode pass use the admitted output identity.
+                  const kind = info.type === "Directory" || info.type === "GNUDumpDir" ? "directory" : "file";
+                  // Keep archived modes before changing node-tar's creation mode.
                   (entry as { path: string }).path = relPath;
                   acceptedEntries.push({
                     path: relPath,
+                    kind,
                     mode: resolveArchiveEntryMode({
-                      kind:
-                        info.type === "Directory" || info.type === "GNUDumpDir"
-                          ? "directory"
-                          : "file",
+                      kind,
                       archivedMode: info.mode,
                       policy: params.entryModes,
                     }),
                   });
+                  (entry as { mode: number }).mode = kind === "directory" ? 0o700 : 0o600;
                   return true;
                 } catch (error) {
                   // Abort through the parser so pipeline tears down both the
@@ -456,18 +445,9 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
               throw normalizeTarParserError(createPipelineTimeoutError(error, deadline));
             }
             admission.finish();
-            for (const accepted of acceptedEntries) {
-              deadline.check();
-              const outputPath = resolveArchiveOutputPath({
-                rootDir: stagingDir,
-                relPath: accepted.path,
-                originalPath: accepted.path,
-              });
-              await fs.chmod(outputPath, accepted.mode);
-              deadline.check();
-            }
             deadline.check();
-            await mergeExtractedTreeIntoDestination({
+            await mergePlannedArchiveIntoDestination({
+              entries: acceptedEntries,
               sourceDir: stagingDir,
               destinationDir: params.destDir,
               destinationRealDir,

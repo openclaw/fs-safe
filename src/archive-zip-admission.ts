@@ -3,7 +3,7 @@ import path from "node:path";
 import type { ExtractionDeadline } from "./archive-deadline.js";
 import { ARCHIVE_LIMIT_ERROR_CODE, ArchiveLimitError, type ResolvedArchiveExtractLimits } from "./archive-limits.js";
 import { openRootFile } from "./root-file.js";
-import { scanZipDirectory } from "./archive-zip-directory.js";
+import { scanZipDirectory, type ZipDirectoryEntry } from "./archive-zip-directory.js";
 import { zipFormat } from "./archive-zip-names.js";
 
 function checkSize(size: number, limits: ResolvedArchiveExtractLimits): void {
@@ -27,7 +27,10 @@ export function admitZipBuffer(input: Uint8Array, limits: ResolvedArchiveExtract
 }
 
 /** The extraction input is already private and staged; read only bounded metadata. */
-export async function admitZipFile(archivePath: string, limits: ResolvedArchiveExtractLimits, deadline: ExtractionDeadline): Promise<number> {
+export async function admitZipFile(
+  archivePath: string, limits: ResolvedArchiveExtractLimits, deadline: ExtractionDeadline,
+  onEntry?: (entry: ZipDirectoryEntry) => void,
+): Promise<number> {
   deadline.check();
   const opened = await openRootFile({
     absolutePath: archivePath, rootPath: path.dirname(archivePath),
@@ -36,7 +39,7 @@ export async function admitZipFile(archivePath: string, limits: ResolvedArchiveE
   if (!opened.ok) throw opened.error ?? new Error("cannot open staged ZIP archive");
   try {
     checkSize(opened.stat.size, limits);
-    const scan = scanZipDirectory(opened.stat.size, limits);
+    const scan = scanZipDirectory(opened.stat.size, limits, onEntry);
     let step = scan.next();
     while (!step.done) {
       const { offset, length } = step.value;

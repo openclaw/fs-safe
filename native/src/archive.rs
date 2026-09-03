@@ -238,7 +238,7 @@ fn inspect_tar(
             path,
             kind: tar_kind(header.entry_type()).to_owned(),
             size,
-            mode: header.mode().unwrap_or(0),
+            mode: crate::tar_mode::manifest_mode(header, tar_kind(header.entry_type()) == "directory"),
         });
     }
     Ok(result)
@@ -975,6 +975,48 @@ mod tests {
             max_meta_entry_bytes: value,
             max_decoded_bytes: value,
             max_manifest_bytes: value,
+        }
+    }
+
+    #[test]
+    fn tar_manifest_modes_distinguish_absence_and_signed_binary_for_all_codecs() {
+        let binary = |value: i64| {
+            let mut field = value.to_be_bytes();
+            if value >= 0 { field[0] = 0x80; }
+            field
+        };
+        let fields = [
+            ([0; 8], None), ([b' '; 8], None), (*b"0000000\0", Some(0)),
+            (binary(0), Some(0)), (binary(0o755), Some(0o755)),
+            (binary((1_i64 << 32) + 0o755), Some(0o755)),
+            (binary(MAX_SAFE_INTEGER as i64), Some(0o7777)),
+            (binary(-1), Some(0o7777)), (binary(-256), Some(0o7400)),
+            (binary(-512), Some(0o7000)), (binary(-(MAX_SAFE_INTEGER as i64)), Some(1)),
+        ];
+        for (mode, expected) in fields {
+            for entry_type in [b'0', b'7', b'5', b'D'] {
+                let mut header = tar::Header::new_ustar();
+                header.set_path("entry").unwrap();
+                header.set_entry_type(tar::EntryType::new(entry_type));
+                header.set_size(0);
+                header.as_old_mut().mode = mode;
+                header.set_cksum();
+                let bytes = [header.as_bytes().as_slice(), &[0; 1024]].concat();
+                for (format, encoded) in [
+                    (ArchiveFormat::Tar, bytes.clone()), (ArchiveFormat::Tar, gzip(&bytes)),
+                    (ArchiveFormat::TarZstd, zstd::stream::encode_all(bytes.as_slice(), 1).unwrap()),
+                    (ArchiveFormat::TarBzip2, bzip(&bytes)),
+                ] {
+                    let path = temp_path("tar-modes");
+                    std::fs::write(&path, encoded).unwrap();
+                    let result = inspect_tar(path.to_str().unwrap(), format, limits(10), Arc::new(AtomicBool::new(false)));
+                    std::fs::remove_file(path).unwrap();
+                    let manifest = result.unwrap();
+                    let kind = tar_kind(tar::EntryType::new(entry_type));
+                    assert_eq!(manifest[0].kind, kind);
+                    assert_eq!(manifest[0].mode, expected.unwrap_or(if kind == "directory" { 0o755 } else { 0o644 }), "mode={mode:?}, type={entry_type}");
+                }
+            }
         }
     }
 

@@ -6,6 +6,13 @@ import { admitZipNames, zipExtraFields, zipFormat, zipUInt64 } from "./archive-z
 
 export type ZipRead = { offset: number; length: number };
 export type ZipScan = Generator<ZipRead, number, Buffer>;
+export type ZipDirectoryEntry = {
+  index: number;
+  creatorSystem: number;
+  externalAttributes: number;
+  size: number;
+  path?: string;
+};
 
 function* read(offset: number, length: number, bound: number): Generator<ZipRead, Buffer, Buffer> {
   if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(length) || offset < 0 || length < 0 || length > bound - offset) {
@@ -136,7 +143,9 @@ function* descriptorEnd(at: number, bound: number, crc: number, compressed: numb
   return matches[0]!;
 }
 
-export function* scanZipDirectory(size: number, limits: ResolvedArchiveExtractLimits): ZipScan {
+export function* scanZipDirectory(
+  size: number, limits: ResolvedArchiveExtractLimits, onEntry?: (entry: ZipDirectoryEntry) => void,
+): ZipScan {
   const directory = yield* layout(size);
   assertArchiveEntryCountWithinLimit(directory.count, limits);
   const seen = new Set<string>();
@@ -174,7 +183,7 @@ export function* scanZipDirectory(size: number, limits: ResolvedArchiveExtractLi
     const localExtraLength = local.readUInt16LE(28);
     const localNames = yield* read(localAt + 30, localNameLength + localExtraLength, directory.start);
     const localExtra = zipExtraFields(localNames.subarray(localNameLength));
-    admitZipNames({ central: centralName, local: localNames.subarray(0, localNameLength), flags, centralExtra, localExtra, seen });
+    const entryPath = admitZipNames({ central: centralName, local: localNames.subarray(0, localNameLength), flags, centralExtra, localExtra, seen });
     const localValues = wideValues(local, localExtra, false);
     const crc = central.readUInt32LE(16);
     if (!(flags & 8) && (local.readUInt32LE(14) !== crc || localValues.compressed !== values.compressed || localValues.uncompressed !== values.uncompressed)) {
@@ -190,6 +199,10 @@ export function* scanZipDirectory(size: number, limits: ResolvedArchiveExtractLi
     let dataEnd = dataStart + values.compressed;
     if (flags & 8) dataEnd = yield* descriptorEnd(dataEnd, directory.start, crc, values.compressed, values.uncompressed, values.wide || localValues.wide);
     spans.push({ start: localAt, end: dataEnd });
+    onEntry?.({
+      index: count - 1, creatorSystem: central[5]!, externalAttributes: central.readUInt32LE(38),
+      size: values.uncompressed, path: entryPath,
+    });
     at = next;
   }
   if (count !== directory.count) zipFormat("physical and declared entry counts disagree");
