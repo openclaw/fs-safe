@@ -2,6 +2,7 @@
 
 ## 0.7.3 - Unreleased
 
+- Reject dangling symlink leaves and ancestors under strict absolute-write and missing local-root resolution instead of treating unresolved aliases as safe missing paths.
 - Accept canonical in-root absolute paths in `Root.readAbsolute()` and `Root.reader()` when the Root was configured through a directory symlink or Windows junction.
 - Bound callback staging components to 255 NFC/NFD bytes so filesystem-valid long destination names work without changing final names or short callback paths.
 - End `Root.walk()` immediately after its single truncation marker, including when a nested depth or entry budget is reached.

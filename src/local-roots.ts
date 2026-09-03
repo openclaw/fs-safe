@@ -5,6 +5,7 @@ import { FsSafeError } from "./errors.js";
 import { expandHomePrefix, resolveUserPath } from "./home-dir.js";
 import { isFileUrl, safeFileURLToPath } from "./local-file-access.js";
 import { isPathInside } from "./path.js";
+import { resolveRootPathSync } from "./root-path.js";
 import { root, type HardlinkPolicy, type ReadResult, type SymlinkPolicy } from "./root.js";
 
 export type LocalRootsPathResult = {
@@ -66,10 +67,6 @@ function resolveLocalRootInput(input: string, label: string): string {
   return path.resolve(resolved);
 }
 
-function isPathInsideRoot(candidate: string, rootDir: string): boolean {
-  return isPathInside(rootDir, candidate);
-}
-
 function resolveRootRealSync(rootDir: string): string | null {
   try {
     // Configured roots may themselves be symlinks. Follow only this trusted
@@ -81,55 +78,6 @@ function resolveRootRealSync(rootDir: string): string | null {
     return fsSync.realpathSync(rootDir);
   } catch {
     return null;
-  }
-}
-
-function resolveCandidateCanonicalSync(
-  filePath: string,
-): { exists: true; canonicalPath: string; isFile: boolean } | { exists: false; canonicalPath: string } {
-  let sawExistingLeaf = false;
-  try {
-    const stat = fsSync.lstatSync(filePath);
-    sawExistingLeaf = true;
-    return {
-      exists: true,
-      canonicalPath: fsSync.realpathSync(filePath),
-      isFile: stat.isFile(),
-    };
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      throw err;
-    }
-  }
-  if (sawExistingLeaf) {
-    // lstat succeeded but realpath failed: this is an existing dangling
-    // symlink, not a missing path callers may safely create through.
-    throw new FsSafeError("symlink", "local roots candidate is a dangling symlink");
-  }
-
-  let cursor = filePath;
-  const missingSegments: string[] = [];
-  while (true) {
-    const parent = path.dirname(cursor);
-    if (parent === cursor) {
-      return { exists: false, canonicalPath: filePath };
-    }
-    missingSegments.unshift(path.basename(cursor));
-    cursor = parent;
-    try {
-      fsSync.lstatSync(cursor);
-      const ancestorReal = fsSync.realpathSync(cursor);
-      return {
-        exists: false,
-        canonicalPath: path.join(ancestorReal, ...missingSegments),
-      };
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-        // Existing ancestors that cannot be canonicalized are symlink/error
-        // terrain; do not reconstruct a trusted missing path through them.
-        throw err;
-      }
-    }
   }
 }
 
@@ -146,21 +94,30 @@ export function resolveLocalPathFromRootsSync(
       continue;
     }
 
-    let candidate: ReturnType<typeof resolveCandidateCanonicalSync>;
+    let candidate: ReturnType<typeof resolveRootPathSync>;
     try {
-      candidate = resolveCandidateCanonicalSync(requestedPath);
+      candidate = resolveRootPathSync({
+        absolutePath: requestedPath,
+        rootPath: rootDir,
+        rootCanonicalPath: rootReal,
+        boundaryLabel: label,
+      });
     } catch {
       continue;
     }
     if (!candidate.exists && options.allowMissing !== true) {
       continue;
     }
-    if (candidate.exists && options.requireFile === true && !candidate.isFile) {
-      continue;
+    if (candidate.exists && options.requireFile === true) {
+      try {
+        if (!fsSync.lstatSync(requestedPath).isFile()) {
+          continue;
+        }
+      } catch {
+        continue;
+      }
     }
-    if (isPathInsideRoot(candidate.canonicalPath, rootReal)) {
-      return { path: candidate.canonicalPath, root: rootReal };
-    }
+    return { path: candidate.canonicalPath, root: rootReal };
   }
 
   return null;

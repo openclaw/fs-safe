@@ -66,9 +66,10 @@ console.log(r.root); // canonical /srv/uploads
 By default the candidate must exist. `allowMissing: true` instead canonicalizes
 the nearest existing ancestor and validates the missing tail, which is useful
 when selecting a future output location. `requireFile: true` rejects existing
-directories and other non-file leaves. Dangling symlinks and candidates whose
-ancestors cannot be canonicalized are rejected rather than treated as safe
-missing paths.
+directories and other non-file leaves. A missing suffix begins only at a
+component that does not exist: dangling symlinks, descendants of dangling
+symlinks, and candidates whose existing ancestors cannot be canonicalized are
+rejected rather than treated as safe missing paths.
 
 ## `readLocalFileFromRoots(options)`
 

@@ -49,7 +49,7 @@ root-path result helpers.
 | `assertAbsolutePathInput` | – | Validate a caller-supplied absolute path string. |
 | `ensureAbsoluteDirectory`, `EnsureAbsoluteDirectoryOptions`, `EnsureAbsoluteDirectoryResult` | – | Create a trusted absolute directory path one segment at a time, rejecting symlink or non-directory segments. |
 | `canonicalPathFromExistingAncestor`, `findExistingAncestor` | – | Canonicalize without requiring the leaf to exist. |
-| `resolveAbsolutePathForRead`, `resolveAbsolutePathForWrite`, `ResolvedAbsolutePath`, `ResolvedWritableAbsolutePath`, `AbsolutePathSymlinkPolicy` | – | Validate an absolute path against a symlink policy before opening. |
+| `resolveAbsolutePathForRead`, `resolveAbsolutePathForWrite`, `ResolvedAbsolutePath`, `ResolvedWritableAbsolutePath`, `AbsolutePathSymlinkPolicy` | – | Validate an absolute path against a symlink policy before opening; strict writes reject dangling symlink components rather than treating them as missing. |
 
 `ensureAbsoluteDirectory()` is for paths you already intend to trust as absolute
 locations, such as a configured output root. It does not enforce a root boundary;

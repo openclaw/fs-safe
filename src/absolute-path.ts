@@ -8,6 +8,7 @@ import {
 } from "./directory-guard.js";
 import { FsSafeError, type FsSafeErrorCode } from "./errors.js";
 import { pathExists } from "./fs.js";
+import { resolveRootPath } from "./root-path.js";
 
 export type AbsolutePathSymlinkPolicy = "reject" | "follow";
 
@@ -382,16 +383,14 @@ export async function resolveAbsolutePathForWrite(
   const parentDir = path.dirname(normalized);
   const parentExists = await pathExists(parentDir);
   if (symlinks === "reject") {
-    const ancestor = await findExistingAncestor(parentDir);
-    if (ancestor) {
-      const canonicalAncestor = await fs.realpath(ancestor).catch(() => ancestor);
-      if (canonicalAncestor !== ancestor) {
-        const canonicalPath = path.join(canonicalAncestor, path.relative(ancestor, normalized));
-        throw new FsSafeError("symlink", "path traverses a symlink", {
-          cause: { canonicalPath },
-        });
-      }
-    }
+    const filesystemRoot = path.parse(normalized).root;
+    await resolveRootPath({
+      absolutePath: normalized,
+      rootPath: filesystemRoot,
+      rootCanonicalPath: filesystemRoot,
+      boundaryLabel: "absolute path",
+      rejectSymlinks: true,
+    });
   }
   const canonicalPath = await canonicalPathFromExistingAncestor(normalized);
   if (symlinks === "reject" && canonicalPath !== normalized) {
