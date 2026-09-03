@@ -1,4 +1,5 @@
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -10,9 +11,56 @@ import {
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const behaviorIt = process.platform === "win32" ? it.skip : it;
+const fixtureTimeoutMs = 10_000;
+
+function startFixture(
+  scriptPath: string,
+  env: NodeJS.ProcessEnv,
+  armDeadline: (callback: () => void, ms: number) => NodeJS.Timeout = setTimeout,
+) {
+  const child = spawn("bash", [scriptPath], {
+    cwd: process.cwd(), env, detached: true, stdio: ["ignore", "pipe", "pipe"],
+  });
+  let closed = false;
+  let stopping = false;
+  let timedOut = false;
+  let error: Error | undefined;
+  let bytes = 0;
+  const output = { stdout: [] as Buffer[], stderr: [] as Buffer[] };
+  const stop = () => {
+    if (closed || stopping || child.pid === undefined) return;
+    stopping = true;
+    try { process.kill(-child.pid, "SIGKILL"); }
+    catch (reason) {
+      if ((reason as NodeJS.ErrnoException).code !== "ESRCH") error = reason as Error;
+    }
+  };
+  const deadline = armDeadline(() => { timedOut = true; stop(); }, fixtureTimeoutMs);
+  for (const name of ["stdout", "stderr"] as const) {
+    child[name].on("data", (chunk: Buffer) => {
+      bytes += chunk.length;
+      if (bytes <= 1_048_576) output[name].push(chunk);
+      else { error ??= new Error("dispatch fixture output exceeded 1 MiB"); stop(); }
+    });
+  }
+  child.on("error", (reason) => { error = reason; stop(); });
+  // A descendant may hold the pipes after Bash exits; keep the deadline until close.
+  const result = new Promise<{
+    status: number | null; signal: NodeJS.Signals | null; timedOut: boolean;
+    error?: Error; stdout: string; stderr: string;
+  }>((resolve) => child.once("close", (status, signal) => {
+    closed = true;
+    clearTimeout(deadline);
+    resolve({ status, signal, timedOut, error,
+      stdout: Buffer.concat(output.stdout).toString("utf8"),
+      stderr: Buffer.concat(output.stderr).toString("utf8"),
+    });
+  }));
+  return { child, result, stop };
+}
 
 function exactReviewBlock(workflow: string) {
   const start = workflow.indexOf("      - name: Dispatch exact ClawSweeper review");
@@ -32,7 +80,7 @@ function exactReviewRun(workflow: string) {
     .trimEnd();
 }
 
-function executeExactReview(run: string, event: object, environment: Record<string, string>) {
+async function executeExactReview(run: string, event: object, environment: Record<string, string>) {
   const directory = mkdtempSync(join(tmpdir(), "fs-safe-clawsweeper-dispatch-"));
   const eventPath = join(directory, "event.json");
   const capturePath = join(directory, "dispatch.json");
@@ -61,19 +109,17 @@ function executeExactReview(run: string, event: object, environment: Record<stri
     chmodSync(scriptPath, 0o755);
     chmodSync(ghPath, 0o755);
 
-    const result = spawnSync("bash", [scriptPath], {
-      cwd: process.cwd(),
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        ...environment,
-        GH_CAPTURE: capturePath,
-        GH_TOKEN: "proof-token",
-        GITHUB_EVENT_PATH: eventPath,
-        PATH: `${directory}:${process.env.PATH ?? ""}`,
-        SUPERSEDES_IN_PROGRESS: "false",
-      },
-    });
+    const result = await startFixture(scriptPath, {
+      ...process.env,
+      ...environment,
+      GH_CAPTURE: capturePath,
+      GH_TOKEN: "proof-token",
+      GITHUB_EVENT_PATH: eventPath,
+      PATH: `${directory}:${process.env.PATH ?? ""}`,
+      SUPERSEDES_IN_PROGRESS: "false",
+    }).result;
+    expect(result.timedOut, `dispatch fixture timed out after ${fixtureTimeoutMs}ms (${result.status}/${result.signal}): ${result.stdout}\n${result.stderr}`).toBe(false);
+    expect(result.error).toBeUndefined();
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     return JSON.parse(readFileSync(capturePath, "utf8")) as {
       event_type: string;
@@ -124,7 +170,7 @@ describe("ClawSweeper dispatch workflow", () => {
       updated_at: "2026-08-10T22:00:00Z",
       body: "proof body",
     };
-    const prPayload = executeExactReview(
+    const prPayload = await executeExactReview(
       run,
       { pull_request: pullRequest, label: { name: "proof: sufficient" } },
       {
@@ -165,7 +211,7 @@ describe("ClawSweeper dispatch workflow", () => {
       },
     });
 
-    const issuePayload = executeExactReview(
+    const issuePayload = await executeExactReview(
       run,
       { issue: { number: 446 } },
       {
@@ -186,5 +232,52 @@ describe("ClawSweeper dispatch workflow", () => {
       source_action: "opened",
       supersedes_in_progress: false,
     });
-  });
+  }, 2 * fixtureTimeoutMs + 1_000);
+
+  behaviorIt("kills descendants holding pipes after the shell exits and reports a timeout", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "fs-safe-dispatch-watchdog-"));
+    const scriptPath = join(directory, "hang.sh");
+    writeFileSync(scriptPath, '\"$FIXTURE_NODE\" -e \'process.on("SIGTERM", () => {}); console.log("READY"); setInterval(() => {}, 1000)\' &\n');
+    let expire = () => {};
+    const armDeadline = vi.fn((callback: () => void, ms: number) => {
+      expire = callback;
+      return setTimeout(callback, ms);
+    });
+    const fixture = startFixture(scriptPath, { ...process.env, FIXTURE_NODE: process.execPath }, armDeadline);
+    try {
+      await Promise.race([
+        Promise.all([once(fixture.child, "exit"), once(fixture.child.stdout, "data")]),
+        fixture.result.then(() => { throw new Error("fixture closed before readiness"); }),
+      ]);
+      expect(fixture.child.exitCode).toBe(0);
+      expect(armDeadline).toHaveBeenCalledWith(expect.any(Function), fixtureTimeoutMs);
+      expire();
+      const result = await fixture.result;
+      expect(result.timedOut).toBe(true);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("READY");
+      expect(result.error).toBeUndefined();
+    } finally {
+      fixture.stop();
+      await fixture.result;
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }, fixtureTimeoutMs + 1_000);
+
+  behaviorIt("bounds fixture output and reaps an overflowing child", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "fs-safe-dispatch-output-"));
+    const scriptPath = join(directory, "overflow.sh");
+    writeFileSync(scriptPath, '\"$FIXTURE_NODE\" -e \'process.stdout.write("x".repeat(2 * 1024 * 1024)); setInterval(() => {}, 1000)\'\n');
+    const fixture = startFixture(scriptPath, { ...process.env, FIXTURE_NODE: process.execPath });
+    try {
+      const result = await fixture.result;
+      expect(result.error?.message).toBe("dispatch fixture output exceeded 1 MiB");
+      expect(result.timedOut).toBe(false);
+      expect(Buffer.byteLength(result.stdout)).toBeLessThanOrEqual(1_048_576);
+    } finally {
+      fixture.stop();
+      await fixture.result;
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }, fixtureTimeoutMs + 1_000);
 });
