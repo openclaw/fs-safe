@@ -2,6 +2,7 @@
 
 ## 0.7.3 - Unreleased
 
+- Close a selected archive input if private staging allocation fails, preventing `readArchiveEntry()` setup errors from retaining file descriptors until garbage collection.
 - Avoid opening the TAR metadata stream until preflight setup succeeds, and always destroy it after pipeline completion, preventing descriptor leaks on setup failures. Thanks @SebTardif.
 - Separate archive staging permissions from final publication modes so zero/write-only files and restrictive directories extract correctly; finalize explicit and implicit directory modes through retained, verified authority and reject unsafe mode application instead of silently skipping it.
 - Decode absent TAR modes and supported signed GNU binary permission bits in native manifests, matching JavaScript defaults without changing the native ABI.

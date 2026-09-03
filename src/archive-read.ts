@@ -106,8 +106,9 @@ async function stageArchiveInput(archivePath: string): Promise<{
     return stat;
   });
   const handle = await fs.open(resolved, resolveReadOpenFlags());
-  const staged = await tempFile({ prefix: "fs-safe-archive-read", fileName: "archive.bin" });
+  let staged: Awaited<ReturnType<typeof tempFile>> | undefined;
   try {
+    staged = await tempFile({ prefix: "fs-safe-archive-read", fileName: "archive.bin" });
     const opened = await inspectFileIdentity(async () => {
       const stat = await handle.stat({ bigint: true });
       if (!stat.isFile()) throw new Error("archive changed during validation");
@@ -123,7 +124,7 @@ async function stageArchiveInput(archivePath: string): Promise<{
     await fs.writeFile(staged.path, buffer, { flag: "wx", mode: 0o600 });
     return { path: staged.path, buffer, cleanup: staged.cleanup };
   } catch (error) {
-    await staged.cleanup().catch(() => undefined);
+    await staged?.cleanup().catch(() => undefined);
     if (error instanceof FsSafeError && error.code === "path-mismatch") {
       throw new FsSafeError("path-mismatch", "archive changed during validation", { cause: error });
     }
