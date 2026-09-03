@@ -2,6 +2,7 @@
 
 ## 0.7.3 - Unreleased
 
+- Resync durable queue acknowledgement retries after final marker unlink before reporting completion or a newer-generation mismatch.
 - Propagate durable queue batch claim and migration failures instead of returning empty or partial success, and strictly sync migration publication in both loaders while preserving retry state.
 - Correct lower-level archive helper signatures in the reference docs and guard them against drifting from the public declarations.
 - Retry and fully revalidate raced secret-parent creation so concurrent writes to distinct leaves succeed without leaking `EEXIST` or reporting a false `secret-exists` collision.
