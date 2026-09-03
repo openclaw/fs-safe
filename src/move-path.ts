@@ -5,6 +5,16 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { guardedRename } from "./guarded-mutation.js";
+import {
+  assertSourceStillMatches,
+  cleanupCopiedEntry,
+  createCleanupCopiedEntryState,
+  entryIdentity,
+  sameIdentity,
+  sourceChangedError,
+  type CopiedEntryManifest,
+  type EntryIdentity,
+} from "./move-path-cleanup.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { registerTempPathForExit } from "./temp-cleanup.js";
 
@@ -31,25 +41,6 @@ export function moveCopyFallbackReasonForRenameError(
   }
   return undefined;
 }
-
-type EntryIdentity = {
-  ctimeMs: number;
-  dev: number;
-  ino: number;
-  mode: number;
-  mtimeMs: number;
-  nlink: number;
-  size: number;
-};
-
-type CopiedEntryManifest =
-  | (EntryIdentity & {
-      children: Array<{ name: string; manifest: CopiedEntryManifest }>;
-      kind: "directory";
-    })
-  | (EntryIdentity & { kind: "leaf" });
-
-type CleanupCopiedEntryResult = "removed" | "stale";
 
 const MAX_HARDLINK_PREFLIGHT_ENTRIES = 50_000;
 
@@ -106,59 +97,8 @@ async function assertCopyDestinationOutsideSource(sourcePath: string, targetPath
   }
 }
 
-function entryIdentity(stat: {
-  ctimeMs: number;
-  dev: number;
-  ino: number;
-  mode: number;
-  mtimeMs: number;
-  nlink: number;
-  size: number;
-}): EntryIdentity {
-  return {
-    ctimeMs: stat.ctimeMs,
-    dev: stat.dev,
-    ino: stat.ino,
-    mode: stat.mode,
-    mtimeMs: stat.mtimeMs,
-    nlink: stat.nlink,
-    size: stat.size,
-  };
-}
-
-function sameIdentity(a: EntryIdentity, b: EntryIdentity): boolean {
-  return (
-    a.dev === b.dev &&
-    a.ino === b.ino &&
-    a.mode === b.mode &&
-    a.nlink === b.nlink &&
-    a.size === b.size &&
-    a.mtimeMs === b.mtimeMs &&
-    a.ctimeMs === b.ctimeMs
-  );
-}
-
-function sameDirectoryNode(a: EntryIdentity, b: EntryIdentity): boolean {
-  return a.dev === b.dev && a.ino === b.ino;
-}
-
 function modeBits(mode: number): number {
   return mode & 0o777;
-}
-
-function sourceChangedError(sourcePath: string): Error {
-  return Object.assign(new Error(`Source changed during move fallback: ${sourcePath}`), {
-    code: "ESTALE",
-  });
-}
-
-async function assertSourceStillMatches(
-  sourcePath: string,
-  identity: EntryIdentity,
-): Promise<void> {
-  if (!sameIdentity(identity, entryIdentity(await fs.lstat(sourcePath)))) {
-    throw sourceChangedError(sourcePath);
-  }
 }
 
 async function chmodDirectoryPinned(directoryPath: string, mode: number): Promise<void> {
@@ -314,59 +254,6 @@ async function copyEntryWithManifest(
   return { ...identity, kind: "leaf" };
 }
 
-function mergeCleanupResults(
-  a: CleanupCopiedEntryResult,
-  b: CleanupCopiedEntryResult,
-): CleanupCopiedEntryResult {
-  return a === "stale" || b === "stale" ? "stale" : "removed";
-}
-
-async function cleanupCopiedEntry(
-  sourcePath: string,
-  manifest: CopiedEntryManifest,
-): Promise<CleanupCopiedEntryResult> {
-  let currentStat: Awaited<ReturnType<typeof fs.lstat>>;
-  try {
-    currentStat = await fs.lstat(sourcePath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException | null)?.code === "ENOENT") {
-      return "removed";
-    }
-    throw error;
-  }
-
-  if (manifest.kind === "directory") {
-    if (!currentStat.isDirectory() || !sameDirectoryNode(manifest, entryIdentity(currentStat))) {
-      return "stale";
-    }
-    // A same-inode directory can gain unrelated children after commit. Still
-    // clean manifest children so the fallback does not duplicate copied files.
-    let result: CleanupCopiedEntryResult = "removed";
-    for (const child of manifest.children) {
-      result = mergeCleanupResults(
-        result,
-        await cleanupCopiedEntry(path.join(sourcePath, child.name), child.manifest),
-      );
-    }
-    try {
-      await fs.rmdir(sourcePath);
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException | null)?.code;
-      if (code === "ENOTEMPTY" || code === "EEXIST") {
-        return "stale";
-      }
-      throw error;
-    }
-    return result;
-  }
-
-  if (!sameIdentity(manifest, entryIdentity(currentStat))) {
-    return "stale";
-  }
-  await fs.unlink(sourcePath);
-  return "removed";
-}
-
 export async function movePathWithCopyFallback(
   options: MovePathWithCopyFallbackOptions,
 ): Promise<void> {
@@ -418,12 +305,13 @@ export async function movePathWithCopyFallback(
       sourceHardlinks: options.sourceHardlinks ?? "allow",
       ...(rejectHardlinks ? { budget: { discovered: 1 } } : {}),
     });
+    const cleanupState = createCleanupCopiedEntryState(sourcePath, manifest);
     unregisterStaged.setIdentity(await fs.lstat(staged, { bigint: true }));
     await assertCopyDestinationOutsideSource(sourcePath, targetPath);
     await guardedRename({ from: staged, to: targetPath, assertBeforeRename });
     stagedCommitted = true;
     unregisterStaged();
-    const cleanupResult = await cleanupCopiedEntry(sourcePath, manifest);
+    const cleanupResult = await cleanupCopiedEntry(sourcePath, manifest, cleanupState);
     if (cleanupResult === "stale") {
       throw sourceChangedError(sourcePath);
     }

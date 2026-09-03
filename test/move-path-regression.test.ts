@@ -219,6 +219,75 @@ describe("movePathWithCopyFallback regressions", () => {
     await expect(fsp.stat(dest)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("retires allowed source aliases after copy fallback", async () => {
+    const base = await tempRoot("fs-safe-move-hardlink-aliases-");
+    const source = path.join(base, "source");
+    const dest = path.join(base, "dest");
+    const first = path.join(source, "a.txt");
+    const second = path.join(source, "b.txt");
+    const external = path.join(base, "external.txt");
+    await fsp.mkdir(source);
+    await fsp.writeFile(first, "shared");
+    await fsp.link(first, second);
+    await fsp.link(first, external);
+    spyOnRename(async (from, to, rename) => {
+      if (from === source && to === dest) {
+        throw Object.assign(new Error("cross-device"), { code: "EXDEV" });
+      }
+      await rename(from, to);
+    });
+
+    await movePathWithCopyFallback({
+      from: source,
+      sourceHardlinks: "allow",
+      to: dest,
+    });
+
+    await expect(fsp.stat(source)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fsp.readFile(path.join(dest, "a.txt"), "utf8")).resolves.toBe("shared");
+    await expect(fsp.readFile(path.join(dest, "b.txt"), "utf8")).resolves.toBe("shared");
+    await expect(fsp.readFile(external, "utf8")).resolves.toBe("shared");
+    expect((await fsp.stat(external)).nlink).toBe(1);
+  });
+
+  it("keeps external hardlink changes stale during alias retirement", async () => {
+    const base = await tempRoot("fs-safe-move-hardlink-alias-race-");
+    const source = path.join(base, "source");
+    const dest = path.join(base, "dest");
+    const first = path.join(source, "a.txt");
+    const second = path.join(source, "b.txt");
+    const external = path.join(base, "external.txt");
+    await fsp.mkdir(source);
+    await fsp.writeFile(first, "shared");
+    await fsp.link(first, second);
+    spyOnRename(async (from, to, rename) => {
+      if (from === source && to === dest) {
+        throw Object.assign(new Error("cross-device"), { code: "EXDEV" });
+      }
+      await rename(from, to);
+    });
+    const realUnlink = fsp.unlink.bind(fsp);
+    let remainingPath: string | undefined;
+    vi.spyOn(fsp, "unlink").mockImplementation(async (target) => {
+      const targetPath = String(target);
+      await realUnlink(target);
+      if (!remainingPath && path.dirname(targetPath) === source) {
+        remainingPath = targetPath === first ? second : first;
+        await fsp.link(remainingPath, external);
+      }
+    });
+
+    await expect(
+      movePathWithCopyFallback({ from: source, to: dest }),
+    ).rejects.toMatchObject({ code: "ESTALE" });
+
+    expect(remainingPath).toBeDefined();
+    await expect(fsp.readFile(remainingPath!, "utf8")).resolves.toBe("shared");
+    await expect(fsp.readFile(external, "utf8")).resolves.toBe("shared");
+    await expect(fsp.readFile(path.join(dest, "a.txt"), "utf8")).resolves.toBe("shared");
+    await expect(fsp.readFile(path.join(dest, "b.txt"), "utf8")).resolves.toBe("shared");
+  });
+
   itWin32("falls back to copy/remove when rename is denied with EPERM", async () => {
     const base = await tempRoot("fs-safe-move-eperm-");
     const source = path.join(base, "source.txt");
