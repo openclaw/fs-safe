@@ -9,6 +9,11 @@ export function recordFileOpenFailure(error: unknown, filePath: string): never {
   throw error;
 }
 
+export function recordExclusiveCreateFailure(error: unknown, filePath: string): never {
+  recordFileObservationFailure(error, `exclusive-create:${filePath}`);
+  throw error;
+}
+
 export function openedPathResolutionError(
   error: Error = new FsSafeError("path-mismatch", "unable to resolve opened file path"),
 ): Error {
