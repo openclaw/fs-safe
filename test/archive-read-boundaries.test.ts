@@ -30,6 +30,18 @@ function rawHeader(type = "0", size = 0): Buffer {
   return tarFixture([{ path: "entry", type, body: Buffer.alloc(size) }], false).subarray(0, 512);
 }
 
+function descriptorsForFile(filePath: string): number[] {
+  const expected = fsSync.statSync(filePath, { bigint: true });
+  return Array.from({ length: 4096 }, (_, fd) => fd).filter((fd) => {
+    try {
+      const current = fsSync.fstatSync(fd, { bigint: true });
+      return current.dev === expected.dev && current.ino === expected.ino;
+    } catch {
+      return false;
+    }
+  });
+}
+
 beforeEach(() => {
   configureFsSafeNative({ mode: "off" });
 });
@@ -222,6 +234,38 @@ describe("bounded archive reads", () => {
     await expect(readArchiveEntry("missing.zip", "dir/", { maxBytes: 1 }))
       .rejects.toThrow("archive entry is not a file");
   });
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "closes the selected archive when private staging allocation fails",
+    async () => {
+      const root = await tempRoot("fs-safe-archive-read-staging-failure-");
+      const archivePath = path.join(root, "fixture.zip");
+      const privateTmp = path.join(root, "private-tmp");
+      await fs.mkdir(privateTmp, { mode: 0o700 });
+      const zip = new JSZip();
+      zip.file("value", "ok");
+      await fs.writeFile(archivePath, await zip.generateAsync({ type: "nodebuffer" }));
+      await fs.writeFile(path.join(privateTmp, `fs-safe-${process.getuid!()}`), "synthetic blocker", {
+        flag: "wx",
+        mode: 0o600,
+      });
+      const saved = new Map(["TMPDIR", "TMP", "TEMP"].map((name) => [name, process.env[name]]));
+      for (const name of saved.keys()) process.env[name] = privateTmp;
+      try {
+        expect(descriptorsForFile(archivePath)).toEqual([]);
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          await expect(readArchiveEntry(archivePath, "value", { maxBytes: 2 }))
+            .rejects.toThrow("Unsafe fallback secure temp dir");
+          expect(descriptorsForFile(archivePath)).toEqual([]);
+        }
+      } finally {
+        for (const [name, value] of saved) {
+          if (value === undefined) delete process.env[name];
+          else process.env[name] = value;
+        }
+      }
+    },
+  );
 
   it("rejects non-file archive inputs", async () => {
     const root = await tempRoot("fs-safe-read-input-");
