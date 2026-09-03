@@ -288,6 +288,73 @@ describe("exclusive publication failure fencing", () => {
     await expect(fs.access(target)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("rolls back when JavaScript copy mode normalization fails", async () => {
+    configureFsSafeNative({ mode: "off" });
+    const root = await tempRoot("fs-safe-publish-copy-mode-failure-");
+    const source = path.join(root, "source");
+    const target = path.join(root, "target");
+    await fs.writeFile(source, "content");
+    vi.spyOn(fs, "link").mockRejectedValueOnce(
+      Object.assign(new Error("force copy"), { code: "EXDEV" }),
+    );
+    const realOpen = fs.open.bind(fs);
+    vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+      const handle = await realOpen(...args);
+      if (String(args[0]) === target && args[1] === "wx+") {
+        vi.spyOn(handle, "chmod").mockRejectedValueOnce(
+          Object.assign(new Error("mode denied"), { code: "EACCES" }),
+        );
+      }
+      return handle;
+    });
+
+    await expect(
+      publishFileExclusive({ sourcePath: source, targetPath: target, strategy: "link-or-copy" }),
+    ).rejects.toMatchObject({
+      code: "helper-failed",
+      details: { phase: "copy-verify", cleanup: "removed" },
+    });
+    await expect(fs.access(target)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.runIf(Boolean(native))("rolls back when native copy mode normalization fails", async () => {
+    const root = await tempRoot("fs-safe-publish-native-mode-failure-");
+    const source = path.join(root, "source");
+    const target = path.join(root, "target");
+    await fs.writeFile(source, "content");
+    let targetFd: number | undefined;
+    __setNativeLoaderForTest(() => ({
+      ...native!,
+      linkBeneath() {
+        throw Object.assign(new Error("force clone"), { code: "EXDEV" });
+      },
+      cloneFileExclusive() {
+        fsSync.copyFileSync(source, target, fsSync.constants.COPYFILE_EXCL);
+        targetFd = fsSync.openSync(target, "r+");
+        return targetFd;
+      },
+    }));
+    configureFsSafeNative({ mode: "require" });
+    const realFchmod = fsSync.fchmodSync.bind(fsSync);
+    vi.spyOn(fsSync, "fchmodSync").mockImplementation((fd, mode) => {
+      if (fd === targetFd) {
+        throw Object.assign(new Error("mode denied"), { code: "EACCES" });
+      }
+      return realFchmod(fd, mode);
+    });
+
+    await expect(
+      publishFileExclusive({ sourcePath: source, targetPath: target, strategy: "link-or-copy" }),
+    ).rejects.toMatchObject({
+      code: "helper-failed",
+      details: { phase: "copy-verify", cleanup: "removed" },
+    });
+    await expect(fs.access(target)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(() => fsSync.fstatSync(targetFd!)).toThrow(
+      expect.objectContaining({ code: "EBADF" }),
+    );
+  });
+
   it("rolls back when an exclusive copy cannot make write progress", async () => {
     configureFsSafeNative({ mode: "off" });
     const root = await tempRoot("fs-safe-publish-copy-no-progress-");

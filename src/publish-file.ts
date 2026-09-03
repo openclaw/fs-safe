@@ -160,9 +160,11 @@ async function copyPinnedSource(params: {
       }
 
       let target: FileHandle | undefined;
-      const createdIdentity = fsSync.fstatSync(nativeFd, { bigint: true });
+      let createdIdentity = fsSync.fstatSync(nativeFd, { bigint: true });
       rememberCreatedTarget(params.failure, createdIdentity, "copy-verify");
       try {
+        fsSync.fchmodSync(nativeFd, 0o600);
+        createdIdentity = fsSync.fstatSync(nativeFd, { bigint: true });
         await getFsSafeTestHooks()?.afterPublishTargetCreated?.(
           "exclusive-copy",
           params.targetPath,
@@ -198,9 +200,11 @@ async function copyPinnedSource(params: {
   }
 
   const target = await fs.open(params.targetPath, "wx+", 0o600);
-  const exactIdentity = await target.stat({ bigint: true });
-  rememberCreatedTarget(params.failure, exactIdentity, "copy-verify");
+  const createdIdentity = await target.stat({ bigint: true });
+  rememberCreatedTarget(params.failure, createdIdentity, "copy-verify");
   try {
+    await target.chmod(0o600);
+    const exactIdentity = await target.stat({ bigint: true });
     await getFsSafeTestHooks()?.afterPublishTargetCreated?.(
       "exclusive-copy",
       params.targetPath,

@@ -691,6 +691,19 @@ pub fn clone_file_exclusive(
             }
         })
         .ok_or_else(|| native_error("EIO", "create private clone staging directory"))?;
+    if let Err(error) = rustix::fs::chmodat(
+        borrowed(target_root_fd),
+        stage_path.as_str(),
+        Mode::from_bits_retain(0o700),
+        AtFlags::SYMLINK_NOFOLLOW,
+    ) {
+        let _ = rustix::fs::unlinkat(
+            borrowed(target_root_fd),
+            stage_path.as_str(),
+            AtFlags::REMOVEDIR,
+        );
+        return Err(os_error(error, "normalize private clone staging directory"));
+    }
     let stage_fd = match open_beneath(
         target_root_fd,
         &stage_path,
@@ -709,6 +722,14 @@ pub fn clone_file_exclusive(
             return Err(error);
         }
     };
+    if let Err(error) = rustix::fs::fchmod(stage_fd.as_fd(), Mode::from_bits_retain(0o700)) {
+        let _ = rustix::fs::unlinkat(
+            borrowed(target_root_fd),
+            stage_path.as_str(),
+            AtFlags::REMOVEDIR,
+        );
+        return Err(os_error(error, "normalize private clone staging directory"));
+    }
 
     let payload = CString::new("payload").unwrap();
     // SAFETY: descriptors are borrowed for this call and payload is NUL-terminated.
