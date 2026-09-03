@@ -291,21 +291,6 @@ export async function writeJsonDurableQueueEntry(params: {
     mode: 0o600,
     tempPrefix: params.tempPrefix,
     syncTempFile: true,
-    syncParentDir: true,
-  });
-}
-
-async function replaceJsonDurableQueueEntry(params: {
-  filePath: string;
-  entry: unknown;
-  tempPrefix: string;
-}): Promise<void> {
-  await replaceFileAtomic({
-    filePath: params.filePath,
-    content: stringifyJsonDocument(params.entry, null, 2),
-    mode: 0o600,
-    tempPrefix: params.tempPrefix,
-    syncTempFile: true,
   });
   await syncDirectory(path.dirname(params.filePath));
 }
@@ -401,7 +386,7 @@ export async function loadJsonDurableQueueEntry<T>(params: {
     });
     const result = params.read ? await params.read(raw, params.paths.jsonPath) : { entry: raw };
     if (result.migrated) {
-      await replaceJsonDurableQueueEntry({
+      await writeJsonDurableQueueEntry({
         filePath: claimedPath,
         entry: result.entry,
         tempPrefix: params.tempPrefix,
@@ -471,7 +456,7 @@ export async function loadPendingJsonDurableQueueEntries<T>(
       continue;
     }
     if (result.migrated) {
-      await replaceJsonDurableQueueEntry({
+      await writeJsonDurableQueueEntry({
         filePath: claimedPath,
         entry: result.entry,
         tempPrefix: options.tempPrefix,
