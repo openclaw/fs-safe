@@ -35,6 +35,30 @@ describe("writeViaSiblingTempPath", () => {
     });
   });
 
+  it("bounds private staging names without changing a valid long destination", async () => {
+    await withTempDir(async (root) => {
+      const fileName = `${"é".repeat(97)}.json`;
+      const targetPath = path.join(root, fileName);
+      let stagedName = "";
+
+      await writeViaSiblingTempPath({
+        rootDir: root,
+        targetPath,
+        writeTemp: async (candidate) => {
+          stagedName = path.basename(candidate);
+          await fs.writeFile(candidate, "ok", "utf8");
+        },
+      });
+
+      expect(Math.max(
+        Buffer.byteLength(stagedName.normalize("NFC")),
+        Buffer.byteLength(stagedName.normalize("NFD")),
+      )).toBeLessThanOrEqual(255);
+      expect(stagedName).toMatch(/\.json\.part$/u);
+      await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("ok");
+    });
+  });
+
   it("rejects targets outside the root", async () => {
     await withTempDir(async (root) => {
       await expect(

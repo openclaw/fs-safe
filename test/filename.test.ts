@@ -3,13 +3,38 @@ import {
   isUnsafeDeviceReadPath,
   WINDOWS_RESERVED_DEVICE_NAMES,
 } from "../src/device-path.js";
-import { sanitizeUntrustedFileName } from "../src/filename.js";
+import { fitFileNameToPortableComponent, sanitizeUntrustedFileName } from "../src/filename.js";
 
 function mixedCase(value: string): string {
   return Array.from(value, (character, index) =>
     index % 2 === 0 ? character : character.toLowerCase()
   ).join("");
 }
+
+function normalizedBytes(value: string): number {
+  return Math.max(Buffer.byteLength(value.normalize("NFC")), Buffer.byteLength(value.normalize("NFD")));
+}
+
+describe("fitFileNameToPortableComponent", () => {
+  const prefix = `.fs-safe-output-12345-${"a".repeat(36)}-`;
+  const suffix = ".part";
+
+  it("keeps short callback names exact", () => {
+    expect(fitFileNameToPortableComponent({ prefix, fileName: "report.tar.gz", suffix }))
+      .toBe("report.tar.gz");
+  });
+
+  it.each([
+    `${"a".repeat(195)}.json`,
+    `${"é".repeat(100)}.json`,
+    `${"가".repeat(65)}.json`,
+  ])("fits %s under NFC and NFD byte limits while preserving the extension", (fileName) => {
+    const fitted = fitFileNameToPortableComponent({ prefix, fileName, suffix });
+    expect(fitted).toMatch(/\.json$/u);
+    expect(normalizedBytes(`${prefix}${fitted}${suffix}`)).toBeLessThanOrEqual(255);
+    expect(fitted.length).toBeLessThan(fileName.length);
+  });
+});
 
 describe("sanitizeUntrustedFileName", () => {
   it("keeps only the basename and strips control characters", () => {

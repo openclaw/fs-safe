@@ -2,7 +2,7 @@ import crypto, { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard } from "./directory-guard.js";
-import { sanitizeUntrustedFileName } from "./filename.js";
+import { fitFileNameToPortableComponent, sanitizeUntrustedFileName } from "./filename.js";
 import { applyDirectoryMode } from "./replace-file-descriptor.js";
 import { root } from "./root.js";
 import { assertSafePathPrefix } from "./safe-path-segment.js";
@@ -71,11 +71,17 @@ function buildSiblingTempPath(params: {
   const safePrefix = assertSafePathPrefix(params.tempPrefix, {
     label: "sibling temp prefix",
   });
-  const safeTail = sanitizeUntrustedFileName(
-    path.basename(params.targetPath),
-    params.fallbackFileName,
-  );
-  return path.join(path.dirname(params.targetPath), `${safePrefix}${id}-${safeTail}.part`);
+  const prefix = `${safePrefix}${id}-`;
+  const suffix = ".part";
+  const safeTail = fitFileNameToPortableComponent({
+    prefix,
+    fileName: sanitizeUntrustedFileName(
+      path.basename(params.targetPath),
+      params.fallbackFileName,
+    ),
+    suffix,
+  });
+  return path.join(path.dirname(params.targetPath), `${prefix}${safeTail}${suffix}`);
 }
 
 export async function writeViaSiblingTempPath(params: {
