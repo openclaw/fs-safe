@@ -41,6 +41,7 @@ import {
 } from "./path.js";
 import { readOpenedFileSafely, type ReadResult } from "./read-opened-file.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
+import { isNonRegularWriteOpenError, resolveNonblockingWriteFlag } from "./write-open-flags.js";
 import { resolveRootPath } from "./root-path.js";
 import {
   assertRootIdentityCurrent,
@@ -156,14 +157,16 @@ const SUPPORTS_NOFOLLOW = process.platform !== "win32" && "O_NOFOLLOW" in fsCons
 const OPEN_READ_FLAGS = resolveReadOpenFlags();
 const OPEN_READ_FOLLOW_FLAGS = resolveReadOpenFlags({ followSymlinks: true });
 const OPEN_WRITE_EXISTING_FLAGS =
-  fsConstants.O_WRONLY | (SUPPORTS_NOFOLLOW ? fsConstants.O_NOFOLLOW : 0);
+  fsConstants.O_WRONLY | (SUPPORTS_NOFOLLOW ? fsConstants.O_NOFOLLOW : 0) |
+  resolveNonblockingWriteFlag();
 const OPEN_WRITE_CREATE_FLAGS =
   fsConstants.O_WRONLY |
   fsConstants.O_CREAT |
   fsConstants.O_EXCL |
   (SUPPORTS_NOFOLLOW ? fsConstants.O_NOFOLLOW : 0);
 const OPEN_APPEND_EXISTING_FLAGS =
-  fsConstants.O_RDWR | fsConstants.O_APPEND | (SUPPORTS_NOFOLLOW ? fsConstants.O_NOFOLLOW : 0);
+  fsConstants.O_RDWR | fsConstants.O_APPEND | (SUPPORTS_NOFOLLOW ? fsConstants.O_NOFOLLOW : 0) |
+  resolveNonblockingWriteFlag();
 const OPEN_APPEND_CREATE_FLAGS =
   fsConstants.O_RDWR |
   fsConstants.O_APPEND |
@@ -908,6 +911,9 @@ async function openWritableFileInRoot(
     try {
       handle = await fs.open(ioPath, existingFlags, mode);
     } catch (err) {
+      if (await isNonRegularWriteOpenError(err, ioPath, existingFlags)) {
+        throw new FsSafeError("not-file", "path is not a regular file under root");
+      }
       if (!isNotFoundPathError(err)) {
         throw err;
       }
