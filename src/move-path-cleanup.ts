@@ -23,6 +23,7 @@ type CleanupCopiedEntryResult = "removed" | "stale";
 type CleanupAliasGroup = {
   expected: EntryIdentity;
   remainingPaths: Set<string>;
+  stale: boolean;
 };
 
 export type CleanupCopiedEntryState = {
@@ -126,6 +127,7 @@ export function createCleanupCopiedEntryState(
     aliasGroups.set(key, {
       expected: first.manifest,
       remainingPaths: new Set(entries.map((entry) => entry.path)),
+      stale: false,
     });
   }
   return { aliasGroups };
@@ -144,6 +146,11 @@ function sameOwnedUnlinkTransition(before: EntryIdentity, after: EntryIdentity):
   );
 }
 
+function poisonAliasGroup(group: CleanupAliasGroup): CleanupCopiedEntryResult {
+  group.stale = true;
+  return "stale";
+}
+
 async function observeOwnedAliasUnlink(
   sourcePath: string,
   group: CleanupAliasGroup,
@@ -159,13 +166,13 @@ async function observeOwnedAliasUnlink(
     observed = await fs.lstat(remainingPath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException | null)?.code === "ENOENT") {
-      return "stale";
+      return poisonAliasGroup(group);
     }
     throw error;
   }
   const observedIdentity = entryIdentity(observed);
   if (!sameOwnedUnlinkTransition(group.expected, observedIdentity)) {
-    return "stale";
+    return poisonAliasGroup(group);
   }
   group.expected = observedIdentity;
   return "removed";
@@ -183,12 +190,18 @@ export async function cleanupCopiedEntry(
   manifest: CopiedEntryManifest,
   state: CleanupCopiedEntryState,
 ): Promise<CleanupCopiedEntryResult> {
+  const aliasGroup =
+    manifest.kind === "leaf" ? state.aliasGroups.get(identityKey(manifest)) : undefined;
+  if (aliasGroup?.stale) {
+    return "stale";
+  }
+
   let currentStat: Awaited<ReturnType<typeof fs.lstat>>;
   try {
     currentStat = await fs.lstat(sourcePath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException | null)?.code === "ENOENT") {
-      return "removed";
+      return aliasGroup ? poisonAliasGroup(aliasGroup) : "removed";
     }
     throw error;
   }
@@ -218,10 +231,9 @@ export async function cleanupCopiedEntry(
     return result;
   }
 
-  const aliasGroup = state.aliasGroups.get(identityKey(manifest));
   const expected = aliasGroup?.expected ?? manifest;
   if (!sameIdentity(expected, entryIdentity(currentStat))) {
-    return "stale";
+    return aliasGroup ? poisonAliasGroup(aliasGroup) : "stale";
   }
   await fs.unlink(sourcePath);
   return aliasGroup

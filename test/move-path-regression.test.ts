@@ -256,10 +256,12 @@ describe("movePathWithCopyFallback regressions", () => {
     const dest = path.join(base, "dest");
     const first = path.join(source, "a.txt");
     const second = path.join(source, "b.txt");
+    const third = path.join(source, "c.txt");
     const external = path.join(base, "external.txt");
     await fsp.mkdir(source);
     await fsp.writeFile(first, "shared");
     await fsp.link(first, second);
+    await fsp.link(first, third);
     spyOnRename(async (from, to, rename) => {
       if (from === source && to === dest) {
         throw Object.assign(new Error("cross-device"), { code: "EXDEV" });
@@ -267,13 +269,17 @@ describe("movePathWithCopyFallback regressions", () => {
       await rename(from, to);
     });
     const realUnlink = fsp.unlink.bind(fsp);
-    let remainingPath: string | undefined;
+    let removedPath: string | undefined;
     vi.spyOn(fsp, "unlink").mockImplementation(async (target) => {
       const targetPath = String(target);
       await realUnlink(target);
-      if (!remainingPath && path.dirname(targetPath) === source) {
-        remainingPath = targetPath === first ? second : first;
-        await fsp.link(remainingPath, external);
+      if (!removedPath && path.dirname(targetPath) === source) {
+        removedPath = targetPath;
+        const remainingPath = [first, second, third].find(
+          (candidate) => candidate !== targetPath,
+        );
+        expect(remainingPath).toBeDefined();
+        await fsp.link(remainingPath!, external);
       }
     });
 
@@ -281,11 +287,18 @@ describe("movePathWithCopyFallback regressions", () => {
       movePathWithCopyFallback({ from: source, to: dest }),
     ).rejects.toMatchObject({ code: "ESTALE" });
 
-    expect(remainingPath).toBeDefined();
-    await expect(fsp.readFile(remainingPath!, "utf8")).resolves.toBe("shared");
+    expect(removedPath).toBeDefined();
+    const remainingNames = (await fsp.readdir(source)).toSorted();
+    expect(remainingNames).toHaveLength(2);
+    expect(remainingNames).not.toContain(path.basename(removedPath!));
+    for (const name of remainingNames) {
+      await expect(fsp.readFile(path.join(source, name), "utf8")).resolves.toBe("shared");
+    }
     await expect(fsp.readFile(external, "utf8")).resolves.toBe("shared");
+    expect((await fsp.stat(external)).nlink).toBe(3);
     await expect(fsp.readFile(path.join(dest, "a.txt"), "utf8")).resolves.toBe("shared");
     await expect(fsp.readFile(path.join(dest, "b.txt"), "utf8")).resolves.toBe("shared");
+    await expect(fsp.readFile(path.join(dest, "c.txt"), "utf8")).resolves.toBe("shared");
   });
 
   itWin32("falls back to copy/remove when rename is denied with EPERM", async () => {
