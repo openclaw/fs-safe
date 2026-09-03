@@ -188,21 +188,30 @@ async function ensurePrivateDirectory(
     .filter(Boolean)) {
     current = path.join(current, segment);
     const parentGuard = await createAsyncDirectoryGuard(path.dirname(current));
-    await assertAsyncDirectoryGuard(rootGuard);
-    try {
-      const stat = await fsp.lstat(current);
-      if (stat.isSymbolicLink()) {
-        throw new Error(`Private secret directory component ${current} must not be a symlink.`);
-      }
-      if (!stat.isDirectory()) {
-        throw new Error(`Private secret directory component ${current} must be a directory.`);
-      }
-    } catch (error) {
-      if (!error || typeof error !== "object" || !("code" in error) || error.code !== "ENOENT") {
-        throw error;
-      }
+    while (true) {
+      await assertAsyncDirectoryGuard(rootGuard);
       await assertAsyncDirectoryGuard(parentGuard);
-      await fsp.mkdir(current, { mode });
+      try {
+        const stat = await fsp.lstat(current);
+        if (stat.isSymbolicLink()) {
+          throw new Error(`Private secret directory component ${current} must not be a symlink.`);
+        }
+        if (!stat.isDirectory()) {
+          throw new Error(`Private secret directory component ${current} must be a directory.`);
+        }
+        break;
+      } catch (error) {
+        if (!error || typeof error !== "object" || !("code" in error) || error.code !== "ENOENT") {
+          throw error;
+        }
+        await assertAsyncDirectoryGuard(parentGuard);
+        try {
+          await fsp.mkdir(current, { mode });
+        } catch (mkdirError) {
+          if ((mkdirError as NodeJS.ErrnoException).code !== "EEXIST") throw mkdirError;
+        }
+        // A successful mkdir or a competing creator still requires fresh type checks.
+      }
     }
     const currentReal = await fsp.realpath(current);
     assertRealPathWithinRoot(resolvedRootReal, currentReal);
