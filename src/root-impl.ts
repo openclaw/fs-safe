@@ -22,7 +22,7 @@ import {
   type DenyMutationPolicy,
 } from "./deny-mutations.js";
 import { resolveOpenedFileRealPathForFd, resolveOpenedFileRealPathForHandle } from "./opened-realpath.js";
-import { openedPathResolutionError, recordFileOpenFailure, recordOpenedFileFailure, recordPreOpenFileChange } from "./opened-file-failure.js";
+import { openedPathResolutionError, recordExclusiveCreateFailure, recordFileOpenFailure, recordOpenedFileFailure, recordPreOpenFileChange } from "./opened-file-failure.js";
 import {
   type RenameIdentityPolicy,
   runPinnedWriteHelper,
@@ -1699,7 +1699,7 @@ async function writeMissingFileFallback(
     const { handle, writtenStat } = await withAsyncDirectoryGuards(
       [parentGuard],
       async () => {
-        const handle = await fs.open(targetPath, OPEN_WRITE_CREATE_FLAGS, params.mode ?? 0o600);
+        const handle = await fs.open(targetPath, OPEN_WRITE_CREATE_FLAGS, params.mode ?? 0o600).catch((error) => recordExclusiveCreateFailure(error, targetPath));
         created = true;
         try {
           createdIdentity = await handle.stat();
