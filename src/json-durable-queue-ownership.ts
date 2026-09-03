@@ -58,6 +58,7 @@ async function withQueueEntryLock<T>(
 
 async function claimDurableQueueEntryUnlocked(
   paths: DurableQueueEntryPathsLike,
+  options: { skipUnowned?: boolean } = {},
 ): Promise<string | null> {
   const processingPath = durableQueueProcessingPath(paths);
   await recoverDurableQueueRetirement({ jsonPath: paths.jsonPath, processingPath });
@@ -77,6 +78,8 @@ async function claimDurableQueueEntryUnlocked(
   const pending = await lstatOrNull(paths.jsonPath);
   if (!pending || pending.isSymbolicLink() || !pending.isFile()) return null;
   if (pending.nlink > 1n || !sameFileIdentityForCleanup(pending, pending)) {
+    // Batch admission may skip unowned input, never a failed owned transition.
+    if (options.skipUnowned) return null;
     throw new FsSafeError("path-mismatch", "queue entry is not exclusively owned");
   }
   try {
@@ -99,9 +102,10 @@ async function claimDurableQueueEntryUnlocked(
 
 export async function claimDurableQueueEntry(
   paths: DurableQueueEntryPathsLike,
+  options: { skipUnowned?: boolean } = {},
 ): Promise<string | null> {
   if (!(await lstatOrNull(path.dirname(paths.jsonPath)))) return null;
-  return await withQueueEntryLock(paths, async () => await claimDurableQueueEntryUnlocked(paths));
+  return await withQueueEntryLock(paths, async () => await claimDurableQueueEntryUnlocked(paths, options));
 }
 
 export async function completeDeliveredQueueEntry(
