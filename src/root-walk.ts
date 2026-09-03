@@ -83,11 +83,13 @@ export async function* walkRoot(
   const maxEntries = validateBudget("maxEntries", options.maxEntries);
   const visitedDirectories = new Set<string>();
   let examined = 0;
+  let truncated = false;
 
   const onLimit = (atPath: string): RootWalkEntry => {
     if ((options.limitBehavior ?? "truncate") === "throw") {
       throw new FsSafeError("too-large", `root walk budget exceeded at ${atPath || "."}`);
     }
+    truncated = true;
     return limitEntry(atPath);
   };
 
@@ -175,6 +177,7 @@ export async function* walkRoot(
         return;
       }
       yield* visit(child, depth + 1);
+      if (truncated) return;
     }
   }
 
