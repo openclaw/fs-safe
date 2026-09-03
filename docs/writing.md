@@ -207,6 +207,13 @@ destination — there is no atomic-rename step. If you need both streaming and
 atomicity, write to a sibling temp yourself and rename when done; the
 [`atomic`](atomic.md) helpers can do this for you.
 
+On POSIX, existing-target opens use `O_NONBLOCK` as an admission safeguard so
+a no-reader FIFO cannot stall regular-file validation. This does not change
+ordinary regular-file write semantics. `replace` and `update` remain write-only
+opens, including for mode `0o200` files; replacement truncation happens only
+after type, identity, and boundary checks pass. Rejected existing paths are
+never cleanup-owned or unlinked.
+
 ## Write defaults vs per-call options
 
 Set `mkdir: true` once on `root()`; pass text encodings per call when needed:

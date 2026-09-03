@@ -189,6 +189,10 @@ await using opened = await fs.openWritable("logs/current.log", { writeMode: "app
 
 `nonBlockingRead` remains as a compatibility hint in `RootDefaults`. Safe read/open operations already use nonblocking descriptor opens where the platform supports them so a raced FIFO cannot pin a worker; filesystem safety policy remains explicit through `hardlinks`, `symlinks`, and `denyMutations`.
 
+On POSIX, `openWritable()` also uses nonblocking admission for existing targets
+so a no-reader FIFO cannot stall validation. Ordinary regular-file write
+semantics are unchanged; see [writing](docs/writing.md#openwritable-for-streaming).
+
 ```ts
 const locked = await root("/srv/workspace", {
   denyMutations: {

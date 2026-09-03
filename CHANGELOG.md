@@ -2,6 +2,7 @@
 
 ## 0.7.3 - Unreleased
 
+- Prevent no-reader FIFOs from stalling POSIX `Root.openWritable()` and async/sync regular-file append admission, preserving regular-file write semantics and existing-target cleanup fencing.
 - Normalize every exclusive-copy target to mode `0o600` through its owned descriptor, including under restrictive umasks and native macOS clone staging.
 - Move dangling symlink sources through staged and cross-device fallback without dereferencing their absent referents, while retaining same-entry, descendant, and source-substitution guards.
 - Retire every copied source name after cross-device moves with allowed in-tree hardlink aliases, while preserving `ESTALE` fences for unverified external mutations.

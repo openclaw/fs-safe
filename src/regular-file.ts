@@ -12,6 +12,11 @@ import { isNotFoundPathError } from "./path.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { assertNoSymlinkParents, assertNoSymlinkParentsSync } from "./symlink-parents.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
+import {
+  isNonRegularWriteOpenError,
+  isNonRegularWriteOpenErrorSync,
+  resolveNonblockingWriteFlag,
+} from "./write-open-flags.js";
 
 export type RegularFileStatResult = { missing: true } | { missing: false; stat: Stats };
 
@@ -19,7 +24,7 @@ type RegularFileAppendFlagConstants = Pick<
   typeof fsSync.constants,
   "O_APPEND" | "O_CREAT" | "O_WRONLY"
 > &
-  Partial<Pick<typeof fsSync.constants, "O_NOFOLLOW">>;
+  Partial<Pick<typeof fsSync.constants, "O_NOFOLLOW" | "O_NONBLOCK">>;
 
 export type AppendRegularFileOptions = {
   filePath: string;
@@ -38,7 +43,8 @@ export function resolveRegularFileAppendFlags(
     constants.O_CREAT |
     constants.O_APPEND |
     constants.O_WRONLY |
-    (typeof noFollow === "number" ? noFollow : 0)
+    (typeof noFollow === "number" ? noFollow : 0) |
+    resolveNonblockingWriteFlag(constants)
   );
 }
 
@@ -306,11 +312,16 @@ export async function appendRegularFile(options: AppendRegularFileOptions): Prom
   }
 
   await getFsSafeTestHooks()?.beforeRegularFileAppendOpen?.(options.filePath);
-  const handle = await fs.open(
-    options.filePath,
-    resolveRegularFileAppendFlags(),
-    options.mode ?? 0o600,
-  );
+  const flags = resolveRegularFileAppendFlags();
+  let handle: FileHandle;
+  try {
+    handle = await fs.open(options.filePath, flags, options.mode ?? 0o600);
+  } catch (error) {
+    if (await isNonRegularWriteOpenError(error, options.filePath, flags)) {
+      throw new Error(`Refusing to append to non-file: ${options.filePath}`);
+    }
+    throw error;
+  }
   try {
     let identity: BigIntStats;
     try {
@@ -381,11 +392,16 @@ export function appendRegularFileSync(options: AppendRegularFileOptions): void {
   }
 
   getFsSafeTestHooks()?.beforeRegularFileAppendOpenSync?.(options.filePath);
-  const fd = fsSync.openSync(
-    options.filePath,
-    resolveRegularFileAppendFlags(),
-    options.mode ?? 0o600,
-  );
+  const flags = resolveRegularFileAppendFlags();
+  let fd: number;
+  try {
+    fd = fsSync.openSync(options.filePath, flags, options.mode ?? 0o600);
+  } catch (error) {
+    if (isNonRegularWriteOpenErrorSync(error, options.filePath, flags)) {
+      throw new Error(`Refusing to append to non-file: ${options.filePath}`);
+    }
+    throw error;
+  }
   try {
     let identity: BigIntStats;
     try {

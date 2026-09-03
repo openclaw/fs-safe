@@ -111,6 +111,11 @@ append boundary; rounded-equal replacements and persistent unknown Windows
 identities reject before chmod or writing bytes. With
 `rejectSymlinkParents: true`, it also rejects symlinked ancestor directories.
 
+On POSIX, `O_NONBLOCK` prevents a no-reader FIFO substituted before open from
+stalling admission. A confirmed non-regular target is refused before chmod or
+append; other open errors propagate unchanged. This safeguard does not change
+ordinary regular-file append semantics or require read permission.
+
 ### `appendRegularFileSync(options)`
 
 Synchronous. Same options.
@@ -118,7 +123,8 @@ Synchronous. Same options.
 ### `resolveRegularFileAppendFlags()`
 
 Helper that returns the append helpers' `O_WRONLY | O_APPEND | O_CREAT` flags,
-plus `O_NOFOLLOW` where the platform provides it:
+plus `O_NOFOLLOW` where the platform provides it and `O_NONBLOCK` on POSIX
+where available. Windows flags are unchanged:
 
 ```ts
 import { resolveRegularFileAppendFlags } from "@openclaw/fs-safe/advanced";
