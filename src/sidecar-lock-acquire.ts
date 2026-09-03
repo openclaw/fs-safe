@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
+import { fileObservation } from "./file-observation.js";
 import { readFileHandleBounded } from "./bounded-read.js";
 import { openSidecarRoot } from "./sidecar-lock-root.js";
 import { createNativeExclusiveFile, type NativeFileHandle } from "./native-operations.js";
@@ -160,9 +161,13 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
         if (options.lockRoot) {
           const lockRoot = options.lockRoot;
           const relativeLockPath = relativeSidecarLockPath(lockRoot, lockPath);
+          const observation = fileObservation();
           try {
-            await lockRoot.create(relativeLockPath, raw, { mkdir: true, mode: 0o600 });
+            await observation.run(() => lockRoot.create(relativeLockPath, raw, { mkdir: true, mode: 0o600 }));
           } catch (error) {
+            // Only this invocation's failed exclusive open grants denial retry authority.
+            lockFileCreateDenied = observation.has(error, `exclusive-create:${lockPath}`) &&
+              isTransientLockFileDenial(error, lockPath);
             if (error instanceof FsSafeError && error.code === "already-exists") {
               throw Object.assign(new Error("sidecar lock exists"), { code: "EEXIST" });
             }

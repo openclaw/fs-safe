@@ -122,8 +122,11 @@ short teardown race after another holder unlinks it. Both async and sync locks
 retry that specific open denial at most eight times per acquisition, within the
 caller's retry/deadline budget. A parent-directory denial, a callback/read/stat
 failure, or exhaustion of either budget surfaces the original error; a denied
-open is not converted to `file_lock_timeout`. Retrying always requires fresh
-exclusive creation and grants no ownership or removal authority.
+open is not converted to `file_lock_timeout`. Root-backed async creation uses
+this same policy for the Windows fallback's exclusive-open denial, captured
+within that individual create call. A generic `Root.create()` error or an error
+replayed from an earlier call is not exclusive-open evidence. Retrying always
+requires fresh exclusive creation and grants no ownership or removal authority.
 
 ## Owner-scoped reentrancy
 
