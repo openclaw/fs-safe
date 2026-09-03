@@ -345,7 +345,11 @@ If `replaceFileAtomic` does what you need, prefer that. Use
 the final destination still needs root-boundary checks.
 Its private workspace uses the same identity-aware directory cleanup as
 `tempFile()`: moving and replacing the workspace preserves the replacement.
-This workspace owns its contents, unlike the unadmitted sibling pathname above.
+The callback staging component is capped at 255 bytes under NFC and NFD by
+shortening only an overlong embedded destination tail, while preserving an
+extension when possible. Short callback paths and the final target stay
+unchanged. This workspace owns its contents, unlike the unadmitted sibling
+pathname above.
 
 ## Secure temp root
 

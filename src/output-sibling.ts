@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { sanitizeUntrustedFileName } from "./filename.js";
+import { fitFileNameToPortableComponent, sanitizeUntrustedFileName } from "./filename.js";
 import { writeCallbackSibling } from "./sibling-staged-file.js";
 
 function safeFallbackFileName(fallbackFileName?: string): string {
@@ -8,14 +8,17 @@ function safeFallbackFileName(fallbackFileName?: string): string {
 }
 
 function buildSiblingTempPath(targetPath: string, fallbackFileName?: string): string {
-  const safeTail = sanitizeUntrustedFileName(
-    path.basename(targetPath),
-    safeFallbackFileName(fallbackFileName),
-  );
-  return path.join(
-    path.dirname(targetPath),
-    `.fs-safe-output-${process.pid}-${randomUUID()}-${safeTail}.part`,
-  );
+  const prefix = `.fs-safe-output-${process.pid}-${randomUUID()}-`;
+  const suffix = ".part";
+  const safeTail = fitFileNameToPortableComponent({
+    prefix,
+    fileName: sanitizeUntrustedFileName(
+      path.basename(targetPath),
+      safeFallbackFileName(fallbackFileName),
+    ),
+    suffix,
+  });
+  return path.join(path.dirname(targetPath), `${prefix}${safeTail}${suffix}`);
 }
 
 export async function writeExternalFileViaSibling<T>(params: {

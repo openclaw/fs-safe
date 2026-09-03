@@ -26,6 +26,51 @@ function suffixWindowsReservedDeviceName(fileName: string): string {
   return `${baseName}_${fileName.slice(baseNameEnd)}`;
 }
 
+const PORTABLE_FILE_NAME_BYTES = 255;
+
+function normalizedFileNameBytes(value: string): number {
+  return Math.max(
+    Buffer.byteLength(value.normalize("NFC"), "utf8"),
+    Buffer.byteLength(value.normalize("NFD"), "utf8"),
+  );
+}
+
+/** Keeps short names exact and trims only the filename tail of a composite temp name. */
+export function fitFileNameToPortableComponent(params: {
+  prefix: string;
+  fileName: string;
+  suffix: string;
+}): string {
+  const complete = `${params.prefix}${params.fileName}${params.suffix}`;
+  if (normalizedFileNameBytes(complete) <= PORTABLE_FILE_NAME_BYTES) {
+    return params.fileName;
+  }
+  if (normalizedFileNameBytes(`${params.prefix}${params.suffix}`) > PORTABLE_FILE_NAME_BYTES) {
+    throw new RangeError("sibling temp prefix exceeds the portable filename byte limit");
+  }
+
+  const extension = path.extname(params.fileName);
+  const preserveExtension = normalizedFileNameBytes(`${params.prefix}${extension}${params.suffix}`) <=
+    PORTABLE_FILE_NAME_BYTES;
+  const tailSuffix = preserveExtension ? extension : "";
+  const stem = preserveExtension
+    ? params.fileName.slice(0, params.fileName.length - extension.length)
+    : params.fileName;
+  const codePoints = Array.from(stem);
+  let low = 0;
+  let high = codePoints.length;
+  while (low < high) {
+    const length = Math.ceil((low + high) / 2);
+    const candidate = `${params.prefix}${codePoints.slice(0, length).join("")}${tailSuffix}${params.suffix}`;
+    if (normalizedFileNameBytes(candidate) <= PORTABLE_FILE_NAME_BYTES) {
+      low = length;
+    } else {
+      high = length - 1;
+    }
+  }
+  return `${codePoints.slice(0, low).join("")}${tailSuffix}`;
+}
+
 export function sanitizeUntrustedFileName(fileName: string, fallbackName: string): string {
   const trimmed = typeof fileName === "string" ? fileName.trim() : "";
   if (!trimmed) {

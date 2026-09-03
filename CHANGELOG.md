@@ -2,6 +2,7 @@
 
 ## 0.7.3 - Unreleased
 
+- Bound callback staging components to 255 NFC/NFD bytes so filesystem-valid long destination names work without changing final names or short callback paths.
 - End `Root.walk()` immediately after its single truncation marker, including when a nested depth or entry budget is reached.
 - Close a selected archive input if private staging allocation fails, preventing `readArchiveEntry()` setup errors from retaining file descriptors until garbage collection.
 - Avoid opening the TAR metadata stream until preflight setup succeeds, and always destroy it after pipeline completion, preventing descriptor leaks on setup failures. Thanks @SebTardif.

@@ -62,6 +62,30 @@ describe("writeExternalFileWithinRoot", () => {
     await expect(fs.stat(stagedPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("bounds sibling staging names without changing a valid long destination", async () => {
+    const rootDir = await tempRoot("fs-safe-output-long-sibling-");
+    const fileName = `${"a".repeat(195)}.json`;
+    let stagedName = "";
+
+    const result = await writeExternalFileWithinRoot({
+      rootDir,
+      path: fileName,
+      staging: "sibling",
+      write: async (candidate) => {
+        stagedName = path.basename(candidate);
+        await fs.writeFile(candidate, "long", "utf8");
+      },
+    });
+
+    expect(Math.max(
+      Buffer.byteLength(stagedName.normalize("NFC")),
+      Buffer.byteLength(stagedName.normalize("NFD")),
+    )).toBeLessThanOrEqual(255);
+    expect(stagedName).toMatch(/\.json\.part$/u);
+    expect(path.basename(result.path)).toBe(fileName);
+    await expect(fs.readFile(path.join(rootDir, fileName), "utf8")).resolves.toBe("long");
+  });
+
   it("creates missing target parents for sibling staging", async () => {
     const rootDir = await tempRoot("fs-safe-output-sibling-parent-");
 
