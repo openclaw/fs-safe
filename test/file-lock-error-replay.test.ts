@@ -20,8 +20,9 @@ afterEach(() => {
   configureFsSafeNative({ mode: "auto" });
 });
 
-for (const mode of ["sync", "async", "root"] as const) {
-  describe(`${mode} callback error replay (synthetic Windows/errno; real files)`, () => {
+for (const { mode, timeoutMs } of (["sync", "async", "root"] as const).flatMap((mode) =>
+  [undefined, Infinity].map((timeoutMs) => ({ mode, timeoutMs })))) {
+  describe(`${mode} callback error replay, timeout ${timeoutMs} (synthetic Windows/errno; real files)`, () => {
     async function fixture() {
       const directory = await tempRoot("fs-safe-error-replay-");
       const lockRoot = mode === "root" ? await root(directory) : undefined;
@@ -34,8 +35,8 @@ for (const mode of ["sync", "async", "root"] as const) {
         parsePayload?: (raw: string) => unknown;
         retry?: typeof retry;
       }) => mode === "sync"
-        ? acquireFileLockSync(file, { retry, ...options, lockRoot })
-        : manager.acquire(file, { retry, ...options, lockRoot });
+        ? acquireFileLockSync(file, { retry, timeoutMs, ...options, lockRoot })
+        : manager.acquire(file, { retry, timeoutMs, ...options, lockRoot });
       const failOpen = (file: string, error: Error) => {
         if (mode === "sync") {
           const open = fs.openSync.bind(fs);
@@ -100,7 +101,7 @@ for (const mode of ["sync", "async", "root"] as const) {
     });
 
     it.each([
-      { retries: 2, attempts: 3 }, { retries: 20, attempts: 9 },
+      { retries: 0, attempts: 1 }, { retries: 2, attempts: 3 }, { retries: 20, attempts: 9 },
     ])("classifies a reused Error from each current open ($retries retries)", async ({ retries, attempts }) => {
       const { target, lockPath, acquire, failOpen } = await fixture();
       fs.writeFileSync(lockPath, foreign);

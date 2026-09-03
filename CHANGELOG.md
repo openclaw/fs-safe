@@ -2,6 +2,7 @@
 
 ## 0.7.3 - Unreleased
 
+- Honor explicit async file-lock retry counts independently of infinite deadlines, matching sync locks while preserving unlimited retries when the count is omitted.
 - Verify atomic secret writes through the writer's retained descriptor so restrictive POSIX modes such as `0o000` and `0o200` succeed without a readonly reopen or widened permissions.
 - Preserve pre-existing and substituted destination files when an archive merge fails, leaving guarded copy cleanup to the operation that owns publication.
 - Add the narrow `@openclaw/fs-safe/secure-temp-root` package subpath so consumers can import `resolveSecureTempRoot()` and its options type without loading the temp workspace implementation.

@@ -97,7 +97,12 @@ type FileLockRetryOptions = {
 Errors thrown by `payload`, its JSON serialization (including `toJSON`), or
 `parsePayload` propagate unchanged without retrying the callback. Rethrowing an
 error saved from an earlier filesystem operation does not grant retry authority.
-Retry counts must be non-negative safe integers. Retry factors and delays must be finite and non-negative, and when both delay bounds are provided `minTimeout` cannot exceed `maxTimeout`. `timeoutMs` accepts a finite non-negative deadline or positive infinity for an unbounded wait; invalid numeric values reject before filesystem acquisition starts.
+Retry counts must be non-negative safe integers. Retry factors and delays must be finite and non-negative, and when both delay bounds are provided `minTimeout` cannot exceed `maxTimeout`. `timeoutMs` accepts a finite non-negative deadline or positive infinity for no deadline; invalid numeric values reject before filesystem acquisition starts.
+Both async and sync locks enforce retry counts and deadlines independently: an
+explicit `retry.retries` still applies with `timeoutMs: Infinity`, and zero allows
+only the initial attempt. After process defaults are applied, an omitted retry
+count means unlimited retries, and an omitted or infinite timeout means no
+deadline. With neither budget bounded, contention can wait indefinitely.
 `parsePayload` replaces JSON parsing for legacy or custom sidecars. Its `unknown`
 result is passed to `shouldReclaim` and `shouldRemoveStaleLock`, allowing PID,
 process-start, argv, or role schemas to remain application-owned.
