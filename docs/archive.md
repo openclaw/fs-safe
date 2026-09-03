@@ -502,9 +502,9 @@ The archive subpath also exports the helpers `extractArchive` is built on. Most 
 | `withStagedArchiveDestination(opts)` | Creates a private staging dir outside the destination, calls your `run(stagingDir)`, then cleans it up. |
 | `mergeExtractedTreeIntoDestination(opts)` | The merge step alone — staged tree → destination through boundary checks. |
 | `prepareArchiveDestinationDir(destDir)` | Canonicalizes and asserts the destination directory. |
-| `prepareArchiveOutputPath(opts)` | Resolves a single entry's output path against the staging dir. |
-| `loadZipArchiveWithPreflight(opts)` | Loads a JSZip with size/entry-count preflight before unzipping. |
-| `readZipCentralDirectoryEntryCount(path)` | Returns the entry count from a ZIP's central directory without reading any payloads. |
+| `prepareArchiveOutputPath({ destinationDir, destinationRealDir, relPath, outPath, originalPath, isDirectory, deadline? })` | Validates and prepares parents for an already-resolved entry output path. |
+| `loadZipArchiveWithPreflight(buffer, limits?)` | Loads a JSZip from a `Buffer` or `Uint8Array` with size/entry-count preflight before unzipping. |
+| `readZipCentralDirectoryEntryCount(buffer)` | Returns the entry count from an already-loaded ZIP `Buffer` or `Uint8Array` without decoding payloads. |
 | `createTarEntryPreflightChecker(opts)` | Returns a per-entry checker for use as a `tar.x` `onReadEntry` hook. |
 
 These let you build custom extractors that share the same safety machinery — for example, a streaming uploader that wants to refuse archives with too many entries before reading any payloads.
@@ -526,7 +526,7 @@ import {
 - `validateArchiveEntryPath(raw, opts)` — throws `ArchiveSecurityError` for `..`, absolute, NUL-containing, drive-relative, or otherwise unsafe entry paths, including alternate data stream names on Windows.
 - `normalizeArchiveEntryPath(raw)` — converts backslashes in the entry path to forward slashes.
 - `stripArchivePath(entryPath, n)` — normalize separators, drop empty and `.` components, then strip the leading N components, returning `null` if none remain.
-- `resolveArchiveOutputPath({ destDir, entryPath })` — combines the entry path with the destination, after validation.
+- `resolveArchiveOutputPath({ rootDir, relPath, originalPath, escapeLabel? })` — combines the validated relative path with the root and rejects escapes using the original archive path for diagnostics.
 - `isWindowsDrivePath(value)` — detects drive-relative segments such as `C:secret` or `nested/C:secret` that should be rejected.
 
 Validate attacker-controlled paths before calling normalization or stripping
