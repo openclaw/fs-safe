@@ -15,6 +15,8 @@ import {
 import {
   applyDirectoryMode,
   applyDirectoryModeSync,
+  syncDirectoryBestEffort,
+  syncDirectoryBestEffortSync,
   type SyncFchmod,
   writeTempFile,
   writeTempFileSync,
@@ -273,44 +275,16 @@ function missingFchmodSyncError(): TypeError {
   );
 }
 
-async function syncDirectoryBestEffort(
-  fsModule: ReplaceFileAtomicFileSystem["promises"],
-  dirPath: string,
-): Promise<void> {
-  let handle: Awaited<ReturnType<ReplaceFileAtomicFileSystem["promises"]["open"]>> | undefined;
-  try {
-    handle = await fsModule.open(dirPath, "r");
-    await handle.sync();
-  } catch {
-    // Best-effort on platforms/filesystems that do not support directory fsync.
-  } finally {
-    await handle?.close().catch(() => undefined);
-  }
-}
-
-function syncDirectoryBestEffortSync(
-  fsModule: ReplaceFileAtomicSyncFileSystem,
-  dirPath: string,
-): void {
-  let fd: number | undefined;
-  try {
-    fd = fsModule.openSync(dirPath, "r");
-    fsModule.fsyncSync(fd);
-  } catch {
-    // Best-effort on platforms/filesystems that do not support directory fsync.
-  } finally {
-    if (fd !== undefined) {
-      try {
-        fsModule.closeSync(fd);
-      } catch {
-        // Best-effort close after directory fsync.
-      }
-    }
-  }
-}
-
 export async function replaceFileAtomic(
   options: ReplaceFileAtomicOptions,
+): Promise<ReplaceFileAtomicResult> {
+  return await replaceFileAtomicWithDirectorySync(options);
+}
+
+// Internal owner hook: keep directory durability inside publication verification and serialization.
+export async function replaceFileAtomicWithDirectorySync(
+  options: ReplaceFileAtomicOptions,
+  syncParent?: (directoryPath: string) => Promise<unknown>,
 ): Promise<ReplaceFileAtomicResult> {
   const filePath = options.filePath;
   validateReplaceFilePath(filePath);
@@ -318,19 +292,20 @@ export async function replaceFileAtomic(
   validateRenameIdentity(options.renameIdentity);
   return await serializePathWrite(path.resolve(filePath), async () => {
     if (options.renameIdentity !== "verify-content-with-lock") {
-      return await replaceFileAtomicUnserialized(options);
+      return await replaceFileAtomicUnserialized(options, syncParent);
     }
     await (options.fileSystem?.promises ?? fs).mkdir(path.dirname(filePath), {
       recursive: true,
       mode: options.dirMode ?? 0o700,
     });
     return await withAtomicRenameIdentityLock(filePath, async () =>
-      await replaceFileAtomicUnserialized(options));
+      await replaceFileAtomicUnserialized(options, syncParent));
   });
 }
 
 async function replaceFileAtomicUnserialized(
   options: ReplaceFileAtomicOptions,
+  syncParent?: (directoryPath: string) => Promise<unknown>,
 ): Promise<ReplaceFileAtomicResult> {
   const filePath = options.filePath;
   const fsModule = options.fileSystem?.promises ?? fs;
@@ -379,7 +354,9 @@ async function replaceFileAtomicUnserialized(
     } else {
       await tempOwner.assertCurrent(fsModule);
     }
-    if (options.syncParentDir) {
+    if (syncParent) {
+      await syncParent(dir);
+    } else if (options.syncParentDir) {
       await syncDirectoryBestEffort(fsModule, dir);
     }
     if (result.method === "rename") {

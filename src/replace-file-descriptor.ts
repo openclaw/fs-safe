@@ -13,6 +13,42 @@ type SyncTempFileSystem = Pick<
 
 export type SyncFchmod = (fd: number, mode: number) => void;
 
+export async function syncDirectoryBestEffort(
+  fsModule: Pick<typeof fs, "open">,
+  dirPath: string,
+): Promise<void> {
+  let handle: FileHandle | undefined;
+  try {
+    handle = await fsModule.open(dirPath, "r");
+    await handle.sync();
+  } catch {
+    // Best-effort on platforms/filesystems that do not support directory fsync.
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
+}
+
+export function syncDirectoryBestEffortSync(
+  fsModule: Pick<typeof syncFs, "openSync" | "fsyncSync" | "closeSync">,
+  dirPath: string,
+): void {
+  let fd: number | undefined;
+  try {
+    fd = fsModule.openSync(dirPath, "r");
+    fsModule.fsyncSync(fd);
+  } catch {
+    // Best-effort on platforms/filesystems that do not support directory fsync.
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fsModule.closeSync(fd);
+      } catch {
+        // Best-effort close after directory fsync.
+      }
+    }
+  }
+}
+
 function directoryOpenFlags(): number {
   return (
     syncFs.constants.O_RDONLY |

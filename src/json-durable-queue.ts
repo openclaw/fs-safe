@@ -12,7 +12,7 @@ import {
 } from "./json-durable-queue-ownership.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
-import { replaceFileAtomic } from "./replace-file.js";
+import { replaceFileAtomicWithDirectorySync } from "./replace-file.js";
 import { assertSafePathSegment } from "./safe-path-segment.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 
@@ -285,14 +285,13 @@ export async function writeJsonDurableQueueEntry(params: {
   entry: unknown;
   tempPrefix: string;
 }): Promise<void> {
-  await replaceFileAtomic({
+  await replaceFileAtomicWithDirectorySync({
     filePath: params.filePath,
     content: stringifyJsonDocument(params.entry, null, 2),
     mode: 0o600,
     tempPrefix: params.tempPrefix,
     syncTempFile: true,
-  });
-  await syncDirectory(path.dirname(params.filePath));
+  }, syncDirectory);
 }
 
 async function inspectQueueEntry(

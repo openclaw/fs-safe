@@ -2,7 +2,7 @@
 
 ## 0.7.3 - Unreleased
 
-- Propagate durable queue enqueue parent-sync failures instead of reporting success after an unsynced publication, sharing the strict migration writer while retaining published JSON for retry.
+- Propagate durable queue enqueue parent-sync failures and keep published-file identity checks after synchronization, sharing the guarded writer with migrations while retaining retry state.
 - Bound workflow-dispatch test subprocesses and terminate their process groups before fixture cleanup, so stuck shell descendants fail validation instead of hanging the suite.
 - Retry Windows Root-backed sidecar exclusive-create denials within the existing eight-retry and caller budgets, using per-call provenance while preserving callback errors and rejecting replayed failure evidence.
 - Assign cross-platform sidecar contention proof liveness to its whole-worker watchdog instead of false-failing healthy unfair acquisition; production lock timeout behavior is unchanged.
