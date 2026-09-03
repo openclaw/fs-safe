@@ -184,7 +184,9 @@ an identity-bound process-exit cleanup retry.
 On POSIX, staged directory modes are applied through no-follow directory
 descriptors; on Windows, Node cannot portably open those descriptors and no
 pathname `chmod` fallback is attempted, so directory modes remain subject to
-Windows' `mkdir(mode)` behavior.
+Windows' `mkdir(mode)` behavior. Symlink sources are copied as links rather than
+followed, including when the referent is absent; only a source proven to be a
+directory is dereferenced for the destination-descendant guard.
 
 ```ts
 import { movePathWithCopyFallback } from "@openclaw/fs-safe/atomic";

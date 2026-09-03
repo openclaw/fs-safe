@@ -2,6 +2,7 @@
 
 ## 0.7.3 - Unreleased
 
+- Move dangling symlink sources through staged and cross-device fallback without dereferencing their absent referents, while retaining same-entry, descendant, and source-substitution guards.
 - Retire every copied source name after cross-device moves with allowed in-tree hardlink aliases, while preserving `ESTALE` fences for unverified external mutations.
 - Reject dangling symlink leaves and ancestors under strict absolute-write and missing local-root resolution instead of treating unresolved aliases as safe missing paths.
 - Accept canonical in-root absolute paths in `Root.readAbsolute()` and `Root.reader()` when the Root was configured through a directory symlink or Windows junction.

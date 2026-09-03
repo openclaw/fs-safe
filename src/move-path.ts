@@ -87,14 +87,34 @@ function isSameOrDescendant(parentPath: string, candidatePath: string): boolean 
   );
 }
 
-async function assertCopyDestinationOutsideSource(sourcePath: string, targetPath: string) {
-  const sourceReal = await fs.realpath(sourcePath);
+async function assertCopyDestinationOutsideSource(
+  sourcePath: string,
+  targetPath: string,
+  expectedIdentity?: EntryIdentity,
+): Promise<EntryIdentity> {
+  const sourceStat = await fs.lstat(sourcePath);
+  const sourceIdentity = entryIdentity(sourceStat);
+  if (expectedIdentity && !sameIdentity(expectedIdentity, sourceIdentity)) {
+    throw sourceChangedError(sourcePath);
+  }
+  const normalizedSource = path.resolve(sourcePath);
   const normalizedTarget = path.resolve(targetPath);
-  const targetParentReal = await fs.realpath(path.dirname(normalizedTarget));
+  const [sourceParentReal, targetParentReal] = await Promise.all([
+    fs.realpath(path.dirname(normalizedSource)),
+    fs.realpath(path.dirname(normalizedTarget)),
+  ]);
+  const sourceCandidate = path.join(sourceParentReal, path.basename(normalizedSource));
   const targetCandidate = path.join(targetParentReal, path.basename(normalizedTarget));
-  if (isSameOrDescendant(sourceReal, targetCandidate)) {
+  const sourceBoundary = sourceStat.isDirectory()
+    ? await fs.realpath(sourcePath)
+    : sourceCandidate;
+  const unsafeTarget = sourceStat.isDirectory()
+    ? isSameOrDescendant(sourceBoundary, targetCandidate)
+    : path.relative(sourceBoundary, targetCandidate) === "";
+  if (unsafeTarget) {
     throw new FsSafeError("invalid-path", "Move destination must not be inside the source");
   }
+  return sourceIdentity;
 }
 
 function modeBits(mode: number): number {
@@ -199,9 +219,13 @@ async function copyEntryWithManifest(
     sourceHardlinks: "allow" | "reject";
     budget?: { discovered: number };
   },
+  expectedIdentity?: EntryIdentity,
 ): Promise<CopiedEntryManifest> {
   const sourceStat = await fs.lstat(from);
   const identity = entryIdentity(sourceStat);
+  if (expectedIdentity && !sameIdentity(expectedIdentity, identity)) {
+    throw sourceChangedError(from);
+  }
 
   if (sourceStat.isSymbolicLink()) {
     await fs.symlink(await fs.readlink(from), to);
@@ -295,19 +319,24 @@ export async function movePathWithCopyFallback(
     // Commit a fresh inode through the copy path so a post-scan hardlink can
     // never become the published target; the copy loop fences nlink again.
   }
-  await assertCopyDestinationOutsideSource(sourcePath, targetPath);
+  const sourceIdentity = await assertCopyDestinationOutsideSource(sourcePath, targetPath);
   const targetDir = path.dirname(targetPath);
   const staged = path.join(targetDir, `.fs-safe-move-${process.pid}-${randomUUID()}.tmp`);
   const unregisterStaged = registerTempPathForExit(staged, { recursive: true });
   let stagedCommitted = false;
   try {
-    const manifest = await copyEntryWithManifest(sourcePath, staged, {
-      sourceHardlinks: options.sourceHardlinks ?? "allow",
-      ...(rejectHardlinks ? { budget: { discovered: 1 } } : {}),
-    });
+    const manifest = await copyEntryWithManifest(
+      sourcePath,
+      staged,
+      {
+        sourceHardlinks: options.sourceHardlinks ?? "allow",
+        ...(rejectHardlinks ? { budget: { discovered: 1 } } : {}),
+      },
+      sourceIdentity,
+    );
     const cleanupState = createCleanupCopiedEntryState(sourcePath, manifest);
     unregisterStaged.setIdentity(await fs.lstat(staged, { bigint: true }));
-    await assertCopyDestinationOutsideSource(sourcePath, targetPath);
+    await assertCopyDestinationOutsideSource(sourcePath, targetPath, manifest);
     await guardedRename({ from: staged, to: targetPath, assertBeforeRename });
     stagedCommitted = true;
     unregisterStaged();
