@@ -46,7 +46,8 @@ export function fitFileNameToPortableComponent(params: {
     return params.fileName;
   }
   if (normalizedFileNameBytes(`${params.prefix}${params.suffix}`) > PORTABLE_FILE_NAME_BYTES) {
-    throw new RangeError("sibling temp prefix exceeds the portable filename byte limit");
+    // Preserve the existing OS error for a caller-supplied prefix that cannot fit.
+    return params.fileName;
   }
 
   const extension = path.extname(params.fileName);

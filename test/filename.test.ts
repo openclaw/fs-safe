@@ -34,14 +34,6 @@ describe("fitFileNameToPortableComponent", () => {
     expect(normalizedBytes(`${prefix}${fitted}${suffix}`)).toBeLessThanOrEqual(255);
     expect(fitted.length).toBeLessThan(fileName.length);
   });
-
-  it("rejects a fixed prefix and suffix that cannot fit", () => {
-    expect(() => fitFileNameToPortableComponent({
-      prefix: "x".repeat(251),
-      fileName: "name.txt",
-      suffix,
-    })).toThrow(RangeError);
-  });
 });
 
 describe("sanitizeUntrustedFileName", () => {
