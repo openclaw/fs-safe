@@ -116,9 +116,17 @@ stalling admission. A confirmed non-regular target is refused before chmod or
 append; other open errors propagate unchanged. This safeguard does not change
 ordinary regular-file append semantics or require read permission.
 
+The requested mode is applied through the admitted descriptor **before** any
+content is appended, so an existing file is tightened first. On successful
+completion, explicitly requested POSIX special bits are reapplied after the
+content write, which can otherwise clear set-ID bits. An initial chmod failure
+leaves the content untouched; a write or final chmod failure can leave appended
+content and is not rolled back. Windows does not enforce POSIX mode semantics.
+
 ### `appendRegularFileSync(options)`
 
-Synchronous. Same options.
+Synchronous. Same options and mode ordering. Writes the complete input through
+the already-open descriptor, including when an individual write is short.
 
 ### `resolveRegularFileAppendFlags()`
 

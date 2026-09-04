@@ -45,7 +45,7 @@ export async function verifyAtomicWriteResult(params: {
     }
     assertFile(stat);
     if (process.platform !== "win32" && params.expectedMode !== undefined) {
-      const actualMode = Number(stat.mode & 0o777n);
+      const actualMode = Number(stat.mode & 0o7777n);
       if (actualMode !== params.expectedMode) {
         throw new Error(
           `Private secret file ${params.targetPath} has insecure permissions ${actualMode.toString(8)}.`,

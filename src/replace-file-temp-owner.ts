@@ -1,5 +1,6 @@
 import syncFs, { type BigIntStats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
+import { assertAsyncDirectoryGuard, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup, sha256Hex } from "./file-identity.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
@@ -74,6 +75,37 @@ async function cleanupOwnedPath(params: {
       throw cleanupFailure(params.originalError, cleanupError);
     }
     return false;
+  }
+}
+
+// Borrowed handle: the caller retains it until this best-effort cleanup finishes.
+export async function cleanupPinnedFilePath(params: {
+  pathname: string;
+  handle: FileHandle;
+  identity?: BigIntStats;
+  parentGuard: AnyAsyncDirectoryGuard;
+}): Promise<void> {
+  if (!params.identity) return;
+  try {
+    const guard = params.parentGuard;
+    if ([guard.stat.dev, guard.stat.ino].some(
+      (value) => typeof value === "number" && !Number.isSafeInteger(value),
+    )) return;
+    await assertAsyncDirectoryGuard(guard);
+    const parent = await fs.lstat(guard.dir, { bigint: true });
+    if (parent.isSymbolicLink() || !parent.isDirectory() ||
+      !sameFileIdentityForCleanup(parent, guard.stat)) return;
+    const opened = await params.handle.stat({ bigint: true });
+    if (!opened.isFile() || opened.nlink !== 1n ||
+      !sameFileIdentityForCleanup(opened, params.identity)) return;
+    await cleanupOwnedPath({
+      fsModule: fs,
+      pathname: params.pathname,
+      identity: params.identity,
+      throwOnCleanupError: false,
+    });
+  } catch {
+    // Unverifiable authority must preserve the path and the original write failure.
   }
 }
 

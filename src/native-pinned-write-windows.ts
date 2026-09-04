@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import fsSync, { type Stats } from "node:fs";
+import fsSync, { type BigIntStats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import type { AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
@@ -12,6 +12,7 @@ import {
 } from "./native-operations.js";
 import type { NativeBinding } from "./native.js";
 import type { PinnedWriteParams } from "./pinned-write.js";
+import { inspectFileIdentitySync } from "./strict-file-identity.js";
 
 export function sameNativeIdentity(
   left: Pick<FileIdentityStat, "dev" | "ino">,
@@ -39,7 +40,7 @@ export async function runPinnedWriteWindows(
   const parentPath = parentGuard.realPath;
   let tempFd: number | undefined;
   let targetFd: number | undefined;
-  let tempIdentity: Stats | undefined;
+  let tempIdentity: BigIntStats | undefined;
   let tempName = "";
   let renamed = false;
   let completed = false;
@@ -52,8 +53,8 @@ export async function runPinnedWriteWindows(
         fsSync.constants.O_WRONLY | fsSync.constants.O_CREAT | fsSync.constants.O_EXCL,
       ),
     ).fd;
-    tempIdentity = fsSync.fstatSync(tempFd);
-    const verificationIdentity = fsSync.fstatSync(tempFd, { bigint: true });
+    const verificationIdentity = inspectFileIdentitySync(() => fsSync.fstatSync(tempFd!, { bigint: true }));
+    tempIdentity = verificationIdentity;
     // Creation is requested at 0600 in the binding, but a restrictive umask
     // can remove owner access. Keep the unpublished inode private and
     // reopenable until the published name has been identity-fenced.
@@ -71,8 +72,11 @@ export async function runPinnedWriteWindows(
       params.basename,
       nativeOpenFlags(fsSync.constants.O_RDONLY),
     ).fd;
+    const targetStat = inspectFileIdentitySync(
+      () => fsSync.fstatSync(targetFd!, { bigint: true }), verificationIdentity,
+    );
     const targetIdentity = binding.fstatIdentity(targetFd);
-    if (!targetIdentity.isFile || !sameNativeIdentity(tempIdentity, targetIdentity)) {
+    if (!targetStat.isFile()) {
       throw new FsSafeError("path-mismatch", "native write target changed after rename");
     }
     // Native exclusive creation starts at 0600. Apply the requested mode only
@@ -85,7 +89,6 @@ export async function runPinnedWriteWindows(
       closeWriteFd(targetFd);
       targetFd = undefined;
       removeNativeCreatedFileIfStillPinned({
-        binding,
         parentPath,
         parentFd,
         basename: params.basename,
@@ -103,7 +106,6 @@ export async function runPinnedWriteWindows(
     const tempCloseError = closeWriteFd(tempFd);
     if (!renamed) {
       removeNativeCreatedFileIfStillPinned({
-        binding,
         parentPath,
         parentFd,
         basename: tempName,

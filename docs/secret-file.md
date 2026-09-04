@@ -123,7 +123,7 @@ startWebhookVerifier(signingKey);
 
 ### `writeSecretFileAtomic(params)`
 
-Async. Creates the parent directory at `dirMode` (default `0o700`) if missing, writes content to a sibling temp file at `mode` (default `0o600`), atomically renames over the destination, and re-asserts the file mode after rename.
+Async. Creates the parent directory at `dirMode` (default `0o700`) if missing, writes content to a sibling temp file, finalizes `mode` (default `0o600`) through an owned descriptor after content writes, and atomically renames over the destination. Publication verification checks the final file identity and mode.
 
 Concurrent writes to distinct leaves may share creation of a missing parent.
 After a parent-creation race, the helper re-inspects the entry and requires a
@@ -132,10 +132,21 @@ the requested directory mode before writing either leaf.
 
 Publication verification borrows the writer's still-open descriptor to check
 the exact file identity, regular-file and link policy, requested POSIX mode,
-and root/parent ancestry before the writer closes it. POSIX mode overrides such
-as `0o000` and `0o200` do not require read permission or a readonly reopen, and
-verification does not widen the final mode. Windows retains its existing
-pathname-identity verification policy without enforcing POSIX mode bits.
+and root/parent ancestry before the writer closes it. All `0o7777` mode bits
+must match, including explicitly requested special bits; unexpected special
+bits are rejected. POSIX mode overrides such as `0o000` and `0o200` do not
+require read permission or a readonly reopen, and verification does not widen
+the final mode. Windows retains pathname-identity verification without enforcing
+POSIX mode bits; its native writer checks the reopened descriptor against the
+original lossless file identity before changing the final mode.
+
+Failed JavaScript fallback writes attempt cleanup while retaining the original
+descriptor and only after checking parent and file identities. Native cleanup
+also compares lossless parent and file identities. Unverifiable paths are left
+for caller-managed cleanup, and cleanup failures do not replace the original
+write error. These are best-effort identity checks followed by name-based
+removal, not atomic conditional unlink. A publication-verification failure
+after a completed write does not authorize deleting the published file.
 
 ```ts
 import { writeSecretFileAtomic } from "@openclaw/fs-safe/secret";
