@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import { createFileLockManager } from "../src/file-lock.js";
 import { useTempDirs } from "./helpers/vitest.js";
 import { useSuiteFixture } from "./helpers/suite-fixture.js";
 
@@ -62,6 +63,19 @@ describe("sidecar lock natural process exit", () => {
       .resolves.toBe(JSON.parse(replacement));
   });
 
+  it.each(["Root", "raw"])("keeps an unchanged %s sidecar acquired with retainOnExit", async (kind) => {
+    const directory = await tempRoot("fs-safe-lock-exit-retain-");
+    await runChild(directory, `
+      const lock = await acquireFileLock(targetPath, {
+        ...options, retainOnExit: true,
+        lockRoot: ${kind === "raw" ? "undefined" : "capability"},
+      });
+      assert.equal(await lock.verifyStillHeld(), true);
+    `);
+    const raw = await fs.readFile(path.join(directory, "state.json.lock"), "utf8");
+    expect(JSON.parse(raw)).toEqual({ owner: "caller" });
+  });
+
   it("attempts failed Root cleanup once without an unhandled rejection or shutdown loop", async () => {
     const directory = await tempRoot("fs-safe-lock-exit-failure-");
     const output = await runChild(directory, `
@@ -109,6 +123,71 @@ describe("sidecar lock natural process exit", () => {
     `);
     expect(JSON.parse(output)).toEqual({ closes: 1, timerCleared: true });
     await expectAbsent(directory);
+  });
+
+  it("manager reset still releases a retainOnExit raw lock", async () => {
+    const directory = await tempRoot("fs-safe-lock-reset-retain-");
+    const target = path.join(directory, "state.json");
+    const manager = createFileLockManager("reset-retain");
+    const lock = await manager.acquire(target, { payload: () => ({ owner: "caller" }), retainOnExit: true });
+    expect(await lock.verifyStillHeld()).toBe(true);
+    manager.reset();
+    await expectAbsent(directory);
+  });
+
+  it("upgrades an in-process reentrant hold to retainOnExit", async () => {
+    const directory = await tempRoot("fs-safe-lock-reentrant-retain-");
+    const target = path.join(directory, "state.json");
+    const manager = createFileLockManager("reentrant-retain");
+    const options = {
+      payload: () => ({ owner: "caller" }),
+      reentrantOwner: "owner",
+    };
+    await manager.acquire(target, options);
+    await manager.acquire(target, { ...options, retainOnExit: true });
+    const held = [...globalThis[Symbol.for("fsSafe.sidecarLockManagers")].get("reentrant-retain").held.values()][0];
+    expect(held.refCount).toBe(2);
+    expect(held.retainOnExit).toBe(true);
+    await manager.reset();
+  });
+
+  it("keeps the sidecar when a reentrant retainOnExit upgrades a default hold before exit", async () => {
+    const directory = await tempRoot("fs-safe-lock-exit-upgrade-");
+    await runChild(directory, `
+      const manager = createFileLockManager("exit-upgrade");
+      const nested = { ...options, reentrantOwner: "owner" };
+      await manager.acquire(targetPath, nested);
+      await manager.acquire(targetPath, { ...nested, retainOnExit: true });
+    `);
+    const raw = await fs.readFile(path.join(directory, "state.json.lock"), "utf8");
+    expect(JSON.parse(raw)).toEqual({ owner: "caller" });
+  });
+
+  it("rejects retainOnExit when a legacy package copy owns the exit handlers", async () => {
+    const globalWithCleanup = globalThis as Record<symbol, unknown>;
+    const cleanupKey = Symbol.for("fsSafe.sidecarLockCleanupRegistered");
+    const retainAwareKey = Symbol.for("fsSafe.sidecarLockRetainAwareCleanup");
+    const priorCleanup = globalWithCleanup[cleanupKey];
+    const priorRetainAware = globalWithCleanup[retainAwareKey];
+    // Simulate a legacy copy that registered the exit handler without the
+    // retain-aware marker; the new copy must fail closed, not silently lose it.
+    globalWithCleanup[cleanupKey] = true;
+    delete globalWithCleanup[retainAwareKey];
+    try {
+      const directory = await tempRoot("fs-safe-lock-legacy-retain-");
+      const manager = createFileLockManager("legacy-retain");
+      await expect(
+        manager.acquire(path.join(directory, "state.json"), {
+          payload: () => ({ owner: "caller" }),
+          retainOnExit: true,
+        }),
+      ).rejects.toMatchObject({ code: "helper-unavailable" });
+    } finally {
+      if (priorCleanup === undefined) delete globalWithCleanup[cleanupKey];
+      else globalWithCleanup[cleanupKey] = priorCleanup;
+      if (priorRetainAware === undefined) delete globalWithCleanup[retainAwareKey];
+      else globalWithCleanup[retainAwareKey] = priorRetainAware;
+    }
   });
 
   it("joins an explicit release already in flight", async () => {

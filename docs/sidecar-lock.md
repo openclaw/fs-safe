@@ -21,7 +21,7 @@ try {
 
 The lock file sits next to the protected resource. If a process crashes mid-lock, the next acquirer notices the held entry, inspects its payload (PID, host, acquired-at timestamp), and decides — via `shouldReclaim` (defaulting to "is the lock older than `staleMs`?") — whether it should keep waiting or fail.
 
-On natural event-loop shutdown, a globally deduplicated `process.on("beforeExit")` handler attempts asynchronous cleanup of held Root-backed locks through their retained Root capability and ownership receipt. The synchronous `process.on("exit")` handler provides last-chance cleanup for raw locks and reclaim guards. Changed sidecars and failed Root cleanup remain in place; cleanup does not keep retrying during shutdown unless another acquisition re-arms it.
+On natural event-loop shutdown, a globally deduplicated `process.on("beforeExit")` handler attempts asynchronous cleanup of held Root-backed locks through their retained Root capability and ownership receipt. The synchronous `process.on("exit")` handler provides last-chance cleanup for raw locks and reclaim guards. Changed sidecars and failed Root cleanup remain in place; cleanup does not keep retrying during shutdown unless another acquisition re-arms it. Locks acquired with `retainOnExit: true` are exempt from both handlers: their sidecar stays in place after exit and is governed only by the caller's own stale policy. Because exit handlers are globally deduplicated across package copies, `retainOnExit` fails closed with `helper-unavailable` if an older copy that cannot honor it registered the handlers first.
 
 Always release locks in a `finally` block. Application-managed graceful shutdown can await `release()` or `manager.drain()` before terminating. Explicit `process.exit()`, uncaught failures, crashes, default signal handling, and fatal termination (including `SIGKILL`) do not reliably run asynchronous Root cleanup and may leave sidecars. Recover only after an application-owned liveness policy proves the holder cannot still be writing.
 
@@ -82,6 +82,7 @@ type FileLockAcquireOptions<TPayload extends Record<string, unknown>> = {
   metadata?: Record<string, unknown>;    // attached to heldEntries() output for diagnostics
   parsePayload?: (raw: string) => unknown;
   lockRoot?: Root;
+  retainOnExit?: boolean;               // keep the sidecar across process exit (default false)
   onCompromised?: (info: { lockPath: string; normalizedTargetPath: string }) => void;
   compromiseCheckIntervalMs?: number;
 };
