@@ -35,6 +35,19 @@ pnpm test test/archive.test.ts
 
 Use `vi.mock` sparingly. Most tests should drive real disk operations in a `mkdtemp`-created scratch directory, asserting on observable behavior. The library has [test hooks](testing.md) for the rare cases where you need to inject a TOCTOU race deterministically.
 
+Vitest timeouts do not cancel filesystem promises. Shared fixtures with expensive
+setup use `useSuiteFixture` from `test/helpers/suite-fixture.ts`: setup has a separate
+30-second hook budget, and teardown waits for tracked setup and test work before
+removing directories. Run shared-state corpora sequentially with a deadline per
+payload. Keep child-process liveness limits separate from fixture preparation.
+The Windows CI slow-copy proof runs the real package-copy process-exit test with a
+six-second copy delay, retaining its four-second child deadline:
+
+```bash
+pnpm build
+pnpm test --config scripts/slow-package-copy.config.ts
+```
+
 ## Checks
 
 Run the complete repository gate before handoff:

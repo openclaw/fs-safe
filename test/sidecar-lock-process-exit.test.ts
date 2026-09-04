@@ -1,9 +1,11 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { useTempDirs } from "./helpers/vitest.js";
+import { useSuiteFixture } from "./helpers/suite-fixture.js";
 
 const { tempRoot } = useTempDirs();
 const exec = promisify(execFile);
@@ -133,28 +135,37 @@ describe("sidecar lock natural process exit", () => {
     await expectAbsent(directory);
   });
 
-  it("deduplicates listeners across manager domains and physical package copies", async () => {
-    const directory = await tempRoot("fs-safe-lock-exit-copies-");
-    const copy = path.join(directory, "copy");
-    await fs.mkdir(copy);
-    await fs.copyFile(new URL("../package.json", import.meta.url), path.join(copy, "package.json"));
-    await fs.cp(new URL("../dist", import.meta.url), path.join(copy, "dist"), { recursive: true });
-    const output = await runChild(directory, `
-      const { createRequire } = await import("node:module");
-      const { pathToFileURL } = await import("node:url");
-      const copyRequire = createRequire(path.join(directory, "copy", "package.json"));
-      const other = await import(pathToFileURL(copyRequire.resolve("@openclaw/fs-safe/file-lock")));
-      assert.notEqual(other.createFileLockManager, createFileLockManager);
-      const before = process.listenerCount("beforeExit");
-      for (let index = 0; index < 12; index++) {
-        const api = index % 2 ? other : { createFileLockManager };
-        await api.createFileLockManager("domain-" + index)
-          .acquire(path.join(directory, index + ".json"), options);
-      }
-      console.log(process.listenerCount("beforeExit") - before);
-    `);
-    expect(output).toBe("1");
-    for (let index = 0; index < 12; index++) await expectAbsent(directory, `${index}.json.lock`);
+  describe("physical package copies", () => {
+    let directory: string | undefined;
+    const run = useSuiteFixture(async () => {
+      directory = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-lock-exit-copies-"));
+      const copy = path.join(directory, "copy");
+      await fs.mkdir(copy);
+      await fs.copyFile(new URL("../package.json", import.meta.url), path.join(copy, "package.json"));
+      await fs.cp(new URL("../dist", import.meta.url), path.join(copy, "dist"), { recursive: true });
+      return directory;
+    }, async () => {
+      if (directory) await fs.rm(directory, { recursive: true, force: true });
+    });
+
+    it("deduplicates listeners across manager domains and physical package copies", () => run(async (directory) => {
+      const output = await runChild(directory, `
+        const { createRequire } = await import("node:module");
+        const { pathToFileURL } = await import("node:url");
+        const copyRequire = createRequire(path.join(directory, "copy", "package.json"));
+        const other = await import(pathToFileURL(copyRequire.resolve("@openclaw/fs-safe/file-lock")));
+        assert.notEqual(other.createFileLockManager, createFileLockManager);
+        const before = process.listenerCount("beforeExit");
+        for (let index = 0; index < 12; index++) {
+          const api = index % 2 ? other : { createFileLockManager };
+          await api.createFileLockManager("domain-" + index)
+            .acquire(path.join(directory, index + ".json"), options);
+        }
+        console.log(process.listenerCount("beforeExit") - before);
+      `);
+      expect(output).toBe("1");
+      for (let index = 0; index < 12; index++) await expectAbsent(directory, `${index}.json.lock`);
+    }));
   });
 
   it("registers beforeExit when an older copy already registered exit cleanup", async () => {
