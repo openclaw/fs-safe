@@ -1,4 +1,4 @@
-import fsSync, { type Stats } from "node:fs";
+import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { ContainmentGuarantee } from "./containment.js";
@@ -78,25 +78,23 @@ function wrapNativeFd(fd: number, containment: ContainmentGuarantee): NativeFile
 }
 
 export function removeNativeCreatedFileIfStillPinned(params: {
-  binding: NativeBinding;
   parentPath: string;
   parentFd: number;
   basename: string;
-  created?: Stats;
+  created?: BigIntStats;
 }): void {
   if (!params.created) {
     return;
   }
   try {
-    const parentPathStat = fsSync.lstatSync(params.parentPath);
-    const parentFdStat = params.binding.fstatIdentity(params.parentFd);
+    const parentPathStat = fsSync.lstatSync(params.parentPath, { bigint: true });
+    const parentFdStat = fsSync.fstatSync(params.parentFd, { bigint: true });
     const targetPath = path.join(params.parentPath, params.basename);
-    const target = fsSync.lstatSync(targetPath);
+    const target = fsSync.lstatSync(targetPath, { bigint: true });
     if (
-      !parentPathStat.isSymbolicLink() &&
-      parentPathStat.dev === parentFdStat.dev &&
-      parentPathStat.ino === parentFdStat.ino &&
-      !target.isSymbolicLink() &&
+      !parentPathStat.isSymbolicLink() && parentPathStat.isDirectory() &&
+      sameFileIdentityForCleanup(parentPathStat, parentFdStat) &&
+      !target.isSymbolicLink() && target.isFile() &&
       sameFileIdentityForCleanup(target, params.created)
     ) {
       fsSync.rmSync(targetPath);
@@ -123,7 +121,7 @@ export async function createNativeExclusiveFile(
       (typeof fsSync.constants.O_DIRECTORY === "number" ? fsSync.constants.O_DIRECTORY : 0),
   );
   let fd: number | undefined;
-  let created: Stats | undefined;
+  let created: BigIntStats | undefined;
   try {
     let opened: ReturnType<NativeBinding["openBeneath"]>;
     try {
@@ -146,7 +144,7 @@ export async function createNativeExclusiveFile(
     }
     fd = opened.fd;
     fsSync.fchmodSync(fd, mode);
-    created = fsSync.fstatSync(fd);
+    created = fsSync.fstatSync(fd, { bigint: true });
     return wrapNativeFd(fd, opened.containment);
   } catch (error) {
     if (fd !== undefined) {
@@ -156,7 +154,6 @@ export async function createNativeExclusiveFile(
         // Preserve the original error.
       }
       removeNativeCreatedFileIfStillPinned({
-        binding,
         parentPath,
         parentFd: parent.fd,
         basename,

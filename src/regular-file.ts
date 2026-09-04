@@ -344,8 +344,11 @@ export async function appendRegularFile(options: AppendRegularFileOptions): Prom
     ) {
       return;
     }
-    await handle.chmod(options.mode ?? 0o600);
+    const mode = options.mode ?? 0o600;
+    // Tighten before writing; restore explicit special bits only after content is complete.
+    await handle.chmod(mode);
     await handle.appendFile(options.content, options.encoding ?? "utf8");
+    if (mode & 0o7000) await handle.chmod(mode);
   } finally {
     await handle.close();
   }
@@ -424,8 +427,10 @@ export function appendRegularFileSync(options: AppendRegularFileOptions): void {
     ) {
       return;
     }
-    fsSync.fchmodSync(fd, options.mode ?? 0o600);
-    fsSync.writeSync(fd, contentBuffer, 0, contentBuffer.byteLength);
+    const mode = options.mode ?? 0o600;
+    fsSync.fchmodSync(fd, mode);
+    fsSync.appendFileSync(fd, contentBuffer);
+    if (mode & 0o7000) fsSync.fchmodSync(fd, mode);
   } finally {
     fsSync.closeSync(fd);
   }

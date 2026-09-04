@@ -20,7 +20,7 @@ const writers = [
   { operation: "write", write: writeSecretFileAtomic },
   { operation: "create", write: createSecretFileAtomic },
 ] as const;
-const modes = [0o000, 0o200, 0o400, 0o600];
+const modes = [0o000, 0o200, 0o400, 0o600, 0o1600, 0o2600, 0o4600, 0o6600];
 const verify = verification.verifyAtomicWriteResult;
 
 afterEach(() => {
@@ -39,6 +39,7 @@ for (const backend of ["off", "require"] as const) {
         configureFsSafeNative({ mode: backend });
         expect(process.getuid?.()).toBeGreaterThan(0);
         const rootDir = await tempRoot("fs-safe-secret-mode-");
+        await fs.chown(rootDir, process.geteuid!(), process.getegid!());
         const filePath = path.join(rootDir, "token");
         const content = Uint8Array.from([0, 10, 127, 128, 255]);
         const open = vi.spyOn(fs, "open");
@@ -58,7 +59,7 @@ for (const backend of ["off", "require"] as const) {
         const stat = await fs.lstat(filePath);
         expect(stat.isFile()).toBe(true);
         expect(stat.nlink).toBe(1);
-        expect(stat.mode & 0o777).toBe(mode);
+        expect(stat.mode & 0o7777).toBe(mode);
         if ((mode & 0o400) === 0) {
           await expect(fs.readFile(filePath)).rejects.toMatchObject({ code: "EACCES" });
         }
@@ -73,13 +74,14 @@ for (const backend of ["off", "require"] as const) {
         const rootDir = await tempRoot("fs-safe-secret-default-");
         const filePath = path.join(rootDir, "token");
         await write({ rootDir, filePath, content: "synthetic default\n" });
-        expect((await fs.stat(filePath)).mode & 0o777).toBe(0o600);
+        expect((await fs.stat(filePath)).mode & 0o7777).toBe(0o600);
         expect(await fs.readFile(filePath, "utf8")).toBe("synthetic default\n");
       });
 
       it.each(modes)("overwrites restrictive files and preserves create collisions at mode %i", async (mode) => {
         configureFsSafeNative({ mode: backend });
         const rootDir = await tempRoot("fs-safe-secret-overwrite-");
+        await fs.chown(rootDir, process.geteuid!(), process.getegid!());
         const filePath = path.join(rootDir, "token");
         await createSecretFileAtomic({ rootDir, filePath, content: "original", mode });
         const original = await fs.stat(filePath, { bigint: true });
@@ -87,18 +89,37 @@ for (const backend of ["off", "require"] as const) {
           .rejects.toMatchObject({ code: "secret-exists" });
         const collided = await fs.stat(filePath, { bigint: true });
         expect(collided.ino).toBe(original.ino);
-        expect(collided.mode & 0o777n).toBe(BigInt(mode));
+        expect(collided.mode & 0o7777n).toBe(BigInt(mode));
         await fs.chmod(filePath, 0o600);
         expect(await fs.readFile(filePath, "utf8")).toBe("original");
         await fs.chmod(filePath, mode);
         await writeSecretFileAtomic({ rootDir, filePath, content: "overwritten", mode });
         const overwritten = await fs.stat(filePath, { bigint: true });
         expect(overwritten.ino).not.toBe(original.ino);
-        expect(overwritten.mode & 0o777n).toBe(BigInt(mode));
+        expect(overwritten.mode & 0o7777n).toBe(BigInt(mode));
         await fs.chmod(filePath, 0o600);
         expect(await fs.readFile(filePath, "utf8")).toBe("overwritten");
         expect(await fs.readdir(rootDir)).toEqual(["token"]);
       });
+
+      it.each(writers.flatMap((writer) => [0o1000, 0o2000, 0o4000].map((extra) => ({ ...writer, extra }))))(
+        "$operation rejects unexpected special mode bits $extra after publication",
+        async ({ write, extra }) => {
+          configureFsSafeNative({ mode: backend });
+          const rootDir = await tempRoot("fs-safe-secret-extra-mode-");
+          await fs.chown(rootDir, process.geteuid!(), process.getegid!());
+          const filePath = path.join(rootDir, "token");
+          const checked = vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params) => {
+            fsSync.fchmodSync(params.fd, 0o600 | extra);
+            await verify(params);
+          });
+          await expect(write({ rootDir, filePath, content: "synthetic", mode: 0o600 }))
+            .rejects.toThrow(/insecure permissions/);
+          expect(checked).toHaveBeenCalledOnce();
+          expect((await fs.stat(filePath)).mode & 0o7777).toBe(0o600 | extra);
+          expect(await fs.readFile(filePath, "utf8")).toBe("synthetic");
+        },
+      );
 
       const attacks = [
         "none", "same bytes", "symlink", "hardlink replacement", "late hardlink",
@@ -134,7 +155,7 @@ for (const backend of ["off", "require"] as const) {
             borrowedFd = params.fd;
             const stat = fsSync.fstatSync(params.fd, { bigint: true });
             expect(params.expectedIdentity).toMatchObject({ dev: stat.dev, ino: stat.ino });
-            expect(stat.mode & 0o777n).toBe(0n);
+            expect(stat.mode & 0o7777n).toBe(0n);
             if (["same bytes", "symlink", "hardlink replacement"].includes(attack)) {
               publishedPath = path.join(parent, "published");
               await fs.rename(filePath, publishedPath);
@@ -200,13 +221,13 @@ for (const backend of ["off", "require"] as const) {
             + handles.filter(({ fd }) => fd === borrowedFd).reduce((sum, { close }) => sum + close.mock.calls.length, 0);
           expect(closes).toBe(1);
           vi.restoreAllMocks();
-          expect((await fs.stat(publishedPath)).mode & 0o777).toBe(attack === "late mode" ? 0o644 : 0o000);
+          expect((await fs.stat(publishedPath)).mode & 0o7777).toBe(attack === "late mode" ? 0o644 : 0o000);
           await fs.chmod(publishedPath, 0o600);
           expect(await fs.readFile(publishedPath, "utf8")).toBe(payload);
           expect(await fs.readFile(outsideFile, "utf8")).toBe("outside");
-          expect((await fs.stat(outsideFile)).mode & 0o777).toBe(0o600);
+          expect((await fs.stat(outsideFile)).mode & 0o7777).toBe(0o600);
           if (attack === "same bytes") {
-            expect((await fs.stat(filePath)).mode & 0o777).toBe(0o400);
+            expect((await fs.stat(filePath)).mode & 0o7777).toBe(0o400);
             expect(await fs.readFile(filePath, "utf8")).toBe(payload);
           } else if (attack === "symlink") expect((await fs.lstat(filePath)).isSymbolicLink()).toBe(true);
           else if (attack === "hardlink replacement") {

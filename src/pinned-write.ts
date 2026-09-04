@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import fsSync from "node:fs";
+import fsSync, { type BigIntStats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -16,6 +16,7 @@ import { runPinnedWriteNative } from "./native-pinned-write.js";
 import { getNativeBinding } from "./native.js";
 import { validatePinnedOperationPayload } from "./pinned-operation.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
+import { cleanupPinnedFilePath } from "./replace-file-temp-owner.js";
 import { withSidecarLock } from "./sidecar-lock.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
@@ -204,9 +205,10 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
       },
     );
     let created = true;
+    let createdIdentity: BigIntStats | undefined;
     try {
       const verificationIdentity = await handle.stat({ bigint: true });
-      await handle.chmod(params.mode);
+      createdIdentity = verificationIdentity;
       if (params.input.kind === "buffer") {
         assertWithinMaxBytes(
           byteLength(params.input.data, params.input.encoding),
@@ -220,6 +222,8 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
       } else {
         await writeStreamToHandle(params.input.stream, handle, params.maxBytes);
       }
+      // Content writes may clear set-ID bits; finalize them through the owned fd.
+      await handle.chmod(params.mode);
       await syncFileBestEffort(handle);
       const stat = await handle.stat();
       await syncDirectoryBestEffort(parentPath);
@@ -228,9 +232,12 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
       await params.verifyPublished?.(handle.fd, verificationIdentity, parentGuard);
       return { dev: stat.dev, ino: stat.ino };
     } finally {
-      await handle.close().catch(() => undefined);
-      if (created) {
-        await fs.rm(targetPath, { force: true }).catch(() => undefined);
+      try {
+        if (created) {
+          await cleanupPinnedFilePath({ pathname: targetPath, handle, identity: createdIdentity, parentGuard });
+        }
+      } finally {
+        await handle.close().catch(() => undefined);
       }
     }
   }
@@ -246,12 +253,13 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
       : 0);
   let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
   let tempStat: Awaited<ReturnType<NonNullable<typeof handle>["stat"]>> | undefined;
+  let tempIdentity: BigIntStats | undefined;
   let readHandle: FileHandle | undefined;
   let renamed = false;
   try {
     handle = await fs.open(tempPath, tempFlags, params.mode);
     let verificationIdentity = await handle.stat({ bigint: true });
-    await handle.chmod(params.mode);
+    tempIdentity = verificationIdentity;
     if (params.input.kind === "buffer") {
       assertWithinMaxBytes(
         byteLength(params.input.data, params.input.encoding),
@@ -271,6 +279,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
       throw new FsSafeError("path-mismatch", "fallback temp path changed during write");
     }
     const expectedTempStat = tempStat;
+    await handle.chmod(params.mode);
     await syncFileBestEffort(handle);
     let verifiedIdentity: FileIdentityStat = expectedTempStat;
     await withAsyncDirectoryGuards([parentGuard], async () => {
@@ -309,10 +318,13 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
     await params.verifyPublished?.((readHandle ?? handle).fd, verificationIdentity, parentGuard);
     return { dev: verifiedIdentity.dev, ino: verifiedIdentity.ino };
   } finally {
-    await readHandle?.close().catch(() => undefined);
-    await handle?.close().catch(() => undefined);
-    if (!renamed) {
-      await fs.rm(tempPath, { force: true }).catch(() => undefined);
+    try {
+      if (!renamed && handle) {
+        await cleanupPinnedFilePath({ pathname: tempPath, handle, identity: tempIdentity, parentGuard });
+      }
+    } finally {
+      await readHandle?.close().catch(() => undefined);
+      await handle?.close().catch(() => undefined);
     }
   }
 }

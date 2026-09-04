@@ -155,7 +155,9 @@ for (const route of routes) {
         const binding = route.includes("native") ? __loadBundledNativeForTest() : undefined;
         if (route.startsWith("windows")) Object.defineProperty(process, "platform", { value: "win32" });
         let published = false;
-        const currentInode = () => changed && published ? inode - 1n : inode;
+        let callbackStarted = false;
+        // Windows now fences exact fd identity before chmod; keep this fault at the callback boundary.
+        const currentInode = () => changed && published && (route !== "windows native" || callbackStarted) ? inode - 1n : inode;
         const fstat = fsSync.fstatSync.bind(fsSync);
         vi.spyOn(fsSync, "fstatSync").mockImplementation(((...args: Parameters<typeof fsSync.fstatSync>) =>
           project(fstat(...args), currentInode())) as typeof fsSync.fstatSync);
@@ -196,6 +198,7 @@ for (const route of routes) {
           fd = params.fd;
           expect(params.expectedIdentity).toMatchObject({ dev: device, ino: inode });
           // Direct-create paths have no rename; mutate only after their expected snapshot.
+          callbackStarted = true;
           published = true;
           await verify(params);
         };
