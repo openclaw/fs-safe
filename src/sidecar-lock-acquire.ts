@@ -111,6 +111,11 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
       options.reentrantOwner === held.reentrantOwner
     ) {
       held.refCount += 1;
+      // Retention is monotonic: any same-owner request to keep the sidecar on
+      // exit upgrades the held lock; a later default acquisition never revokes it.
+      if (options.retainOnExit === true) {
+        held.retainOnExit = true;
+      }
       return context.handleForHeldLock(normalizedTargetPath, held);
     }
   }

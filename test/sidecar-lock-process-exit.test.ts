@@ -135,6 +135,34 @@ describe("sidecar lock natural process exit", () => {
     await expectAbsent(directory);
   });
 
+  it("upgrades an in-process reentrant hold to retainOnExit", async () => {
+    const directory = await tempRoot("fs-safe-lock-reentrant-retain-");
+    const target = path.join(directory, "state.json");
+    const manager = createFileLockManager("reentrant-retain");
+    const options = {
+      payload: () => ({ owner: "caller" }),
+      reentrantOwner: "owner",
+    };
+    await manager.acquire(target, options);
+    await manager.acquire(target, { ...options, retainOnExit: true });
+    const held = [...globalThis[Symbol.for("fsSafe.sidecarLockManagers")].get("reentrant-retain").held.values()][0];
+    expect(held.refCount).toBe(2);
+    expect(held.retainOnExit).toBe(true);
+    await manager.reset();
+  });
+
+  it("keeps the sidecar when a reentrant retainOnExit upgrades a default hold before exit", async () => {
+    const directory = await tempRoot("fs-safe-lock-exit-upgrade-");
+    await runChild(directory, `
+      const manager = createFileLockManager("exit-upgrade");
+      const nested = { ...options, reentrantOwner: "owner" };
+      await manager.acquire(targetPath, nested);
+      await manager.acquire(targetPath, { ...nested, retainOnExit: true });
+    `);
+    const raw = await fs.readFile(path.join(directory, "state.json.lock"), "utf8");
+    expect(JSON.parse(raw)).toEqual({ owner: "caller" });
+  });
+
   it("rejects retainOnExit when a legacy package copy owns the exit handlers", async () => {
     const globalWithCleanup = globalThis as Record<symbol, unknown>;
     const cleanupKey = Symbol.for("fsSafe.sidecarLockCleanupRegistered");
