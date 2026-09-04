@@ -17,8 +17,15 @@ const loaded = await store.readJsonIfExists<State>("state.json");
 
 - Writes create parent directories at `0o700` and files at `0o600` unless you
   pass stricter `dirMode` / `mode` options.
-- Private-mode writes route through the secret-file atomic path, which refuses
-  symlink parent components and re-asserts mode after rename.
+- Async private-mode writes route through the secret-file atomic path, which refuses
+  symlink parent components and re-asserts mode after rename. Existing directories
+  must already have the requested mode; writes do not repair their permissions.
+  New-directory initialization requires guarded descriptor authority and may
+  fail closed under restrictive platform/umask combinations; see the
+  [secret-directory policy](secret-file.md#parameters).
+- Locked JSON mutations prepare private directories before acquiring their
+  sidecar and bind the lock to the admitted parent identity. The writer still
+  revalidates directory admission afterward; reads do not create directories.
 - `readText()` and `readJson()` are strict and throw on missing files.
 - `readTextIfExists()` and `readJsonIfExists()` return `null` on missing files.
 - `write()`, `writeText()`, `writeJson()`, `writeStream()`, and `copyIn()` all

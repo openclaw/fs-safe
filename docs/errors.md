@@ -134,6 +134,8 @@ type FsSafeErrorCode =
 | `too-large` | A read or bounded walk exceeded its configured budget. | Caller gave a too-permissive file or traversal limit. |
 | `unsupported-platform` | Reserved compatibility code for a platform-specific operation. | No current public helper emits this `FsSafeError` code. Platform-specific APIs currently return a typed unsupported result or use `helper-unavailable`; keep the union member when exhaustively switching across supported package versions. |
 
+Secret writes reject invalid `mode` / `dirMode` values with `invalid-path` before directory creation. Existing secret directories with a mode different from the requested `dirMode` report `insecure-permissions` without chmod; a created directory whose descriptor ownership no longer matches its initializing effective user reports `not-owned`.
+
 Pathname `sha256File()` also reports `path-mismatch` when pre-open, descriptor,
 or current-path identity remains unknown after one bounded Windows retry, even
 if the file is benign. It never reopens to recover identity. Preview symlinks

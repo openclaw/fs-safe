@@ -2,6 +2,7 @@
 
 ## 0.7.3 - Unreleased
 
+- Preserve existing secret-directory permissions instead of repairing them; initialize new directories through guarded descriptor authority, honor full directory mode bits, and fail closed for unpinnable parents, including non-root macOS directories created under `umask(0o777)`.
 - Propagate durable queue enqueue parent-sync failures and keep published-file identity checks after synchronization, sharing the guarded writer with migrations while retaining retry state.
 - Bound workflow-dispatch test subprocesses and terminate their process groups before fixture cleanup, so stuck shell descendants fail validation instead of hanging the suite.
 - Retry Windows Root-backed sidecar exclusive-create denials within the existing eight-retry and caller budgets, using per-call provenance while preserving callback errors and rejecting replayed failure evidence.

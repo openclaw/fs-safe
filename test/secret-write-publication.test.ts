@@ -113,7 +113,7 @@ for (const backend of ["off", "require"] as const) {
           const parent = path.join(rootDir, "parent");
           const outside = path.join(sandbox, "outside");
           const filePath = path.join(parent, "token");
-          await fs.mkdir(parent, { recursive: true });
+          await fs.mkdir(parent, { recursive: true, mode: 0o700 });
           await fs.mkdir(outside);
           const outsideFile = path.join(outside, "untouched");
           await fs.writeFile(outsideFile, "outside", { mode: 0o600 });

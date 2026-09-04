@@ -3,6 +3,7 @@ import { canonicalPathFromExistingAncestor } from "./absolute-path.js";
 import { FsSafeError } from "./errors.js";
 import type { FileLockRetryOptions } from "./file-lock.js";
 import { getFsSafeLockConfig } from "./lock-config.js";
+import type { Root } from "./root.js";
 import { createSidecarLockManager } from "./sidecar-lock.js";
 import type { SidecarLockStaleRecovery } from "./sidecar-lock.js";
 import { serializePathWrite } from "./write-queue.js";
@@ -38,6 +39,8 @@ export type JsonStore<T> = {
 
 export type JsonStoreAdapter<T> = {
   filePath: string;
+  /** Internal admission before lock I/O, within the serialized mutation. */
+  prepareLock?: () => Promise<Root>;
   readIfExists(): Promise<T | undefined>;
   readRequired(): Promise<T>;
   write(value: T, options?: { trailingNewline?: boolean }): Promise<void>;
@@ -110,8 +113,10 @@ export function createJsonStore<T>(
           if (!locks || !lockOptions) {
             return await run();
           }
+          const lockRoot = adapter.prepareLock ? await adapter.prepareLock() : undefined;
           return await locks.withLock(
             {
+              ...(lockRoot ? { lockRoot } : {}),
               targetPath: adapter.filePath,
               staleMs: lockOptions.staleMs,
               timeoutMs: lockOptions.timeoutMs,

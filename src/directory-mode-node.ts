@@ -1,4 +1,4 @@
-import { constants } from "node:fs";
+import { constants, type BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
 import { inspectDirectoryIdentity } from "./directory-guard.js";
@@ -15,12 +15,22 @@ function searchOnlyFlags(): { flags: number; proc: boolean } | undefined {
 }
 
 /** Real Node only: injected filesystem adapters must retain descriptor-chmod semantics. */
-export async function pinNodeDirectoryForMode(dirPath: string): Promise<DirectoryModeOwner> {
-  const expected = await inspectDirectoryIdentity(dirPath);
+export async function pinNodeDirectoryForMode(
+  dirPath: string,
+  options: { expectedIdentity?: BigIntStats; ownerUid?: number } = {},
+): Promise<DirectoryModeOwner> {
+  const { ownerUid } = options;
+  const assertOwner = (stat: BigIntStats) => {
+    if (ownerUid !== undefined && stat.uid !== BigInt(ownerUid)) {
+      throw new FsSafeError("not-owned", "directory mode target must retain its expected owner");
+    }
+  };
+  const expected = await inspectDirectoryIdentity(dirPath, options.expectedIdentity);
+  assertOwner(expected);
   if (process.platform === "win32") {
     // POSIX mode enforcement is unsupported; retain strict path identity checks.
     return ownDirectoryMode({
-      inspect: async () => { await inspectDirectoryIdentity(dirPath, expected); return 0; },
+      inspect: async () => { assertOwner(await inspectDirectoryIdentity(dirPath, expected)); return 0; },
       chmod: async () => undefined, close: async () => undefined, ignoreChmodError: true,
     });
   }
@@ -41,6 +51,7 @@ export async function pinNodeDirectoryForMode(dirPath: string): Promise<Director
     const inspect = async () => {
       const opened = await inspectFileIdentity(() => handle.stat({ bigint: true }), expected);
       assertOwnedDirectory(expected, opened);
+      assertOwner(opened);
       await inspectDirectoryIdentity(dirPath, expected);
       return Number(opened.mode & 0o7777n);
     };
@@ -55,6 +66,8 @@ export async function pinNodeDirectoryForMode(dirPath: string): Promise<Director
       const opened = await inspectFileIdentity(() => handle.stat({ bigint: true }), expected);
       const followed = await inspectFileIdentity(() => fs.stat(procPath, { bigint: true }), expected);
       assertOwnedDirectory(opened, followed);
+      assertOwner(opened);
+      assertOwner(followed);
     };
     const owner = ownDirectoryMode({
       inspect,

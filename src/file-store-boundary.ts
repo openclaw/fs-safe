@@ -13,6 +13,9 @@ import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { isPathInside, isPathRelativeEscape } from "./path.js";
 import { resolveOpenedFileRealPathForHandle, root, type Root } from "./root.js";
+import { ensureTrailingSep } from "./root-context.js";
+import { RootHandle } from "./root-impl.js";
+import { prepareSecretFileWrite } from "./secret-file.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
 
 export type SyncParentGuard = SyncDirectoryGuard;
@@ -44,6 +47,19 @@ export async function openWritableStoreRoot(params: {
   await fs.mkdir(params.rootDir, { recursive: true, mode: params.dirMode });
   await fs.chmod(params.rootDir, params.dirMode).catch(() => undefined);
   return await root(params.rootDir, { hardlinks: "reject", maxBytes });
+}
+
+export async function openPrivateStoreLockRoot(
+  params: Parameters<typeof prepareSecretFileWrite>[0],
+): Promise<Root> {
+  const { parentGuard } = await prepareSecretFileWrite(params);
+  // Bind to the admitted parent, never resolve a replacement into a fresh capability.
+  return new RootHandle({
+    rootDir: parentGuard.dir,
+    rootReal: parentGuard.realPath,
+    rootWithSep: ensureTrailingSep(parentGuard.realPath),
+    rootIdentity: { dev: parentGuard.stat.dev, ino: parentGuard.stat.ino },
+  }, { hardlinks: "reject" });
 }
 
 async function chmodDirectoryInRootBestEffort(
