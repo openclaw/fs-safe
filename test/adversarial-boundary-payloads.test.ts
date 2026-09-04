@@ -2,6 +2,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { expectNoOutsideWrite, makeTempLayout } from "./helpers/security.js";
+import { useSuiteFixture } from "./helpers/suite-fixture.js";
 import { useTempDirs } from "./helpers/vitest.js";
 import { root as openRoot } from "../src/index.js";
 
@@ -71,18 +72,24 @@ async function attemptAll(rootDir: Awaited<ReturnType<typeof openRoot>>, payload
 }
 
 describe("adversarial boundary payloads", () => {
-  it("never reads, writes, or deletes outside the root for a generated traversal corpus", async () => {
-    const layout = await makeTempLayout("fs-safe-adversarial-corpus", tempDirs);
-    await fsp.mkdir(path.join(layout.root, "nested"), { recursive: true });
-    await fsp.mkdir(path.join(layout.root, "safe"), { recursive: true });
-    const safeRoot = await openRoot(layout.root);
+  describe.sequential("generated traversal corpus", () => {
+    const directories: string[] = [];
+    const run = useSuiteFixture(async () => {
+      const layout = await makeTempLayout("fs-safe-adversarial-corpus", directories);
+      await fsp.mkdir(path.join(layout.root, "nested"), { recursive: true });
+      await fsp.mkdir(path.join(layout.root, "safe"), { recursive: true });
+      return { layout, safeRoot: await openRoot(layout.root) };
+    }, async () => {
+      await Promise.all(directories.map((directory) => fsp.rm(directory, { recursive: true, force: true })));
+    });
 
-    const payloads = buildPayloadCorpus().slice(0, 96);
-    for (const payload of payloads) {
-      await attemptAll(safeRoot, payload);
-      await expectNoOutsideWrite(layout);
-    }
-  }, 30_000);
+    // Keep the accumulated fixture state and corpus order, with a deadline per payload.
+    it.each(buildPayloadCorpus().slice(0, 96))("keeps reads and writes inside the root: %j", (payload) =>
+      run(async ({ layout, safeRoot }) => {
+        await attemptAll(safeRoot, payload);
+        await expectNoOutsideWrite(layout);
+      }), 30_000);
+  });
 
   it("rejects chained symlink parent escapes across read and write surfaces", async () => {
     const layout = await makeTempLayout("fs-safe-symlink-chain", tempDirs);
@@ -99,24 +106,29 @@ describe("adversarial boundary payloads", () => {
     await expectNoOutsideWrite(layout);
   });
 
-  it("does not clobber outside files when copy and move payloads mix source and destination attacks", async () => {
-    const layout = await makeTempLayout("fs-safe-copy-move-corpus", tempDirs);
-    const source = path.join(layout.root, "source.txt");
-    await fsp.writeFile(source, "source");
-    await fsp.symlink(layout.outsideFile, path.join(layout.root, "outside-link.txt"), "file");
-    const safeRoot = await openRoot(layout.root);
-    const payloads = buildPayloadCorpus().slice(0, 48);
-
-    for (const payload of payloads) {
-      await Promise.allSettled([
-        safeRoot.copyIn(payload, source),
-        safeRoot.copyIn("copied.txt", layout.outsideFile),
-        safeRoot.move("source.txt", payload, { overwrite: true }),
-        safeRoot.move(payload, "moved.txt", { overwrite: true }),
-        safeRoot.move("outside-link.txt", "moved-link.txt", { overwrite: true }),
-      ]);
-      await expectNoOutsideWrite(layout);
+  describe.sequential("copy and move source and destination attacks", () => {
+    const directories: string[] = [];
+    const run = useSuiteFixture(async () => {
+      const layout = await makeTempLayout("fs-safe-copy-move-corpus", directories);
+      const source = path.join(layout.root, "source.txt");
       await fsp.writeFile(source, "source");
-    }
-  }, 30_000);
+      await fsp.symlink(layout.outsideFile, path.join(layout.root, "outside-link.txt"), "file");
+      return { layout, source, safeRoot: await openRoot(layout.root) };
+    }, async () => {
+      await Promise.all(directories.map((directory) => fsp.rm(directory, { recursive: true, force: true })));
+    });
+
+    it.each(buildPayloadCorpus().slice(0, 48))("does not clobber outside files: %j", (payload) =>
+      run(async ({ layout, source, safeRoot }) => {
+        await Promise.allSettled([
+          safeRoot.copyIn(payload, source),
+          safeRoot.copyIn("copied.txt", layout.outsideFile),
+          safeRoot.move("source.txt", payload, { overwrite: true }),
+          safeRoot.move(payload, "moved.txt", { overwrite: true }),
+          safeRoot.move("outside-link.txt", "moved-link.txt", { overwrite: true }),
+        ]);
+        await expectNoOutsideWrite(layout);
+        await fsp.writeFile(source, "source");
+      }), 30_000);
+  });
 });

@@ -61,6 +61,10 @@ jobs:
       - name: Check JavaScript fallback
         run: pnpm check
 
+      - name: Prove slow package-copy fixture lifetime on Windows
+        if: matrix.os == 'windows-latest'
+        run: pnpm test --config scripts/slow-package-copy.config.ts
+
       - name: Prove Root sidecar unlinked snapshot handoff and replacement rejection
         if: matrix.node == 24 && (matrix.os == 'ubuntu-latest' || matrix.os == 'macos-15')
         env:

@@ -2,6 +2,7 @@
 
 ## 0.7.3 - Unreleased
 
+- Keep slow physical-package fixture setup outside the process-exit test deadline, drain fixture work before teardown, and give each adversarial corpus payload its own test lifetime while retaining Windows boundary assertions.
 - Refresh the Node type definitions, align development and CI on pnpm 11.25.0, and update the pinned Pages deployment action to v5.0.1 for polling backoff and jitter. Thanks @dependabot.
 - Finalize explicit file modes after content writes across pinned writers, verify all `0o7777` POSIX bits for secret publication, and use exact identities before native Windows mode changes and failed-write cleanup; JavaScript fallback cleanup preserves unverified replacements.
 - Complete short synchronous regular-file appends and preserve explicitly requested special mode bits in both append helpers, retaining permission tightening before any data is written.
