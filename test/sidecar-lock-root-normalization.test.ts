@@ -92,23 +92,34 @@ describe.each(["off", "auto"] as const)("Root-backed lock normalization (%s)", (
     const original = path.join(directory, "original");
     const moved = path.join(directory, "moved");
     await fs.mkdir(original);
-    const lockRoot = await root(original);
+    const staleRoot = await root(original);
+    const before = await fs.stat(original, { bigint: true });
+    // Replace before opening a sidecar: the policy must not depend on renaming an open subtree.
+    await fs.rename(original, moved);
+    await fs.mkdir(original);
+    expect((await fs.stat(original, { bigint: true })).ino).not.toBe(before.ino);
+    expect((await fs.stat(moved, { bigint: true })).ino).toBe(before.ino);
+    const freshRoot = await root(original);
     const targetPath = path.join(original, "state.json");
     const manager = createSidecarLockManager(`stale-root:${directory}`);
     const payload = vi.fn(() => ({ owner: "synthetic" }));
-    const options = { targetPath, lockRoot, payload, reentrantOwner: "same" };
-    const first = await manager.acquire(options);
-    try {
-      await fs.rename(original, moved);
-      await fs.mkdir(original);
+    const options = { targetPath, payload, reentrantOwner: "same", timeoutMs: 1000, retry: { retries: 0 } };
+    {
+      await using first = await manager.acquire({ ...options, lockRoot: freshRoot });
       payload.mockClear();
-      await expect(manager.acquire(options)).rejects.toMatchObject({ code: "path-mismatch" });
+      let refusal: unknown;
+      // Retain an unexpected success too, so both handles close if the assertion fails.
+      await using unexpected = await manager.acquire({ ...options, lockRoot: staleRoot }).catch((error: unknown) => {
+        refusal = error;
+        return undefined;
+      });
+      expect(refusal).toMatchObject({ code: "path-mismatch" });
+      expect(unexpected).toBeUndefined();
       expect(payload).not.toHaveBeenCalled();
-      expect(await fs.readdir(original)).toEqual([]);
-    } finally {
-      await fs.rmdir(original);
-      await fs.rename(moved, original);
-      await first.release();
+      await expect(first.verifyStillHeld()).resolves.toBe(true);
+      expect(await fs.readdir(original)).toEqual(["state.json.lock"]);
     }
+    expect(await fs.readdir(original)).toEqual([]);
+    expect(await fs.readdir(moved)).toEqual([]);
   });
 });
