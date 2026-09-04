@@ -122,7 +122,7 @@ function releaseAllLocksSync(state: SidecarLockManagerState): void {
   for (const [normalizedTargetPath, held] of state.held) {
     void held.handle.close().catch(() => undefined);
     try {
-      if (!held.lockRoot && snapshotMatchesSync(held.lockPath, held.snapshot)) {
+      if (!held.retainOnExit && !held.lockRoot && snapshotMatchesSync(held.lockPath, held.snapshot)) {
         fsSync.rmSync(held.lockPath, { force: true });
       }
     } catch {
@@ -165,7 +165,7 @@ function ensureGlobalBeforeExitCleanupRegistered(): { armed: boolean } {
     lifecycle.armed = false;
     for (const state of getGlobalManagers().values()) {
       for (const [normalizedTargetPath, held] of Array.from(state.held.entries())) {
-        if (held.lockRoot) {
+        if (held.lockRoot && !held.retainOnExit) {
           void releaseHeldLock(state, normalizedTargetPath, held, { force: true }).catch(
             () => undefined,
           );

@@ -37,6 +37,13 @@ export type SidecarLockAcquireOptions<TPayload extends Record<string, unknown>> 
   metadata?: Record<string, unknown>;
   parsePayload?: (raw: string) => unknown;
   lockRoot?: Root;
+  /**
+   * Keep the lock file when the process exits naturally. Default `false`:
+   * process-exit handlers release held locks. Set only for deliberately
+   * retained ownership records (for example, fail-closed build locks) whose
+   * liveness is governed by the caller's own stale policy.
+   */
+  retainOnExit?: boolean;
   onCompromised?: (info: SidecarLockCompromisedInfo) => void;
   compromiseCheckIntervalMs?: number;
 };

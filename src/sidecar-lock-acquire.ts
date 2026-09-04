@@ -43,6 +43,7 @@ export type HeldSidecarLock = {
   metadata: Record<string, unknown>;
   releasePromise?: Promise<void>;
   lockRoot?: Root;
+  retainOnExit?: boolean;
   parsePayload?: (raw: string) => unknown;
   compromiseTimer?: NodeJS.Timeout;
 };
@@ -226,6 +227,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
           acquiredAt: Date.now(),
           metadata: options.metadata ?? {},
           lockRoot: options.lockRoot,
+          retainOnExit: options.retainOnExit,
           parsePayload: options.parsePayload,
         };
         context.held.set(normalizedTargetPath, createdHeld);

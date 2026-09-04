@@ -62,6 +62,19 @@ describe("sidecar lock natural process exit", () => {
       .resolves.toBe(JSON.parse(replacement));
   });
 
+  it.each(["Root", "raw"])("keeps an unchanged %s sidecar acquired with retainOnExit", async (kind) => {
+    const directory = await tempRoot("fs-safe-lock-exit-retain-");
+    await runChild(directory, `
+      const lock = await acquireFileLock(targetPath, {
+        ...options, retainOnExit: true,
+        lockRoot: ${kind === "raw" ? "undefined" : "capability"},
+      });
+      assert.equal(await lock.verifyStillHeld(), true);
+    `);
+    const raw = await fs.readFile(path.join(directory, "state.json.lock"), "utf8");
+    expect(JSON.parse(raw)).toEqual({ owner: "caller" });
+  });
+
   it("attempts failed Root cleanup once without an unhandled rejection or shutdown loop", async () => {
     const directory = await tempRoot("fs-safe-lock-exit-failure-");
     const output = await runChild(directory, `
