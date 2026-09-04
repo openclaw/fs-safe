@@ -1,6 +1,13 @@
 # Changelog
 
-## 0.7.3 - Unreleased
+## 0.8.0 - Unreleased
+
+### Compatibility and upgrade notes
+
+- **Existing secret directories must already have the requested mode.** Wrong permissions now fail the write with `insecure-permissions` instead of being chmod-repaired; audit and fix existing directories before upgrading.
+- **FileStore keys are enforced portably.** Parent-segment and backslash aliases are rejected with `invalid-path` across async reads, `exists`, and `remove`, matching the sync and write paths.
+- **Lock and queue failures now surface.** Durable queue enqueue, migration, and acknowledgement sync failures propagate instead of returning empty or partial success; sidecar payloads above 1 MiB are rejected with `too-large`; async lock retry counts apply even with infinite deadlines. Handle these rejections explicitly.
+- **Create-only visibility is backend-scoped.** The sibling-temp no-visibility guarantee for `create`, `createJson`, and `write({ overwrite: false })` holds with the native binding (`require` mode, or `auto` when the binding loads); the JavaScript fallback claims the final name before content is written.
 
 ### Highlights
 
