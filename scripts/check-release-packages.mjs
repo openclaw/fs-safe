@@ -17,7 +17,7 @@ import { normalizePackResult } from "./npm-pack-result.mjs";
 import { consumerInstallSmoke, isolatedConsumerEnv, resolvePnpmCli } from "./consumer-install-smoke.mjs";
 
 const pnpmCli = resolvePnpmCli();
-const outputIndex = process.argv.indexOf("--output");
+const outputIndex = process.argv.lastIndexOf("--output");
 const outputDir = resolve(outputIndex >= 0 ? process.argv[outputIndex + 1] : "release-artifacts");
 const allowHostOnly = process.argv.includes("--allow-host-only");
 mkdirSync(outputDir, { recursive: true });
@@ -140,7 +140,11 @@ async function main() {
   if (!host || !targets.some((target) => target.label === host.label)) {
     throw new Error(`release smoke requires the host target ${host?.label ?? "unknown"}`);
   }
-  await consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCli, pnpmCli, allowHostOnly });
+  const [commit, tree] = execFileSync("git", ["rev-parse", "HEAD", "HEAD^{tree}"], {
+    encoding: "utf8", timeout: 10_000,
+  }).trim().split(/\r?\n/);
+  const dirty = execFileSync("git", ["status", "--porcelain"], { encoding: "utf8", timeout: 10_000 }).trim() !== "";
+  await consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCli, pnpmCli, allowHostOnly, source: { commit, tree, dirty } });
 
   for (const artifact of manifest) {
     console.log(`${artifact.name}: ${artifact.size} bytes gzipped, ${artifact.unpackedSize} bytes unpacked`);

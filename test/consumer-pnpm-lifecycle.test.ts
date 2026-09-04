@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { isolatedConsumerEnv, resolvePnpmCli } from "../scripts/consumer-install-smoke.mjs";
 
@@ -31,6 +31,25 @@ it("rejects absent lifecycle paths and shell/cmd launchers instead of searching 
   }
   expect(() => resolvePnpmCli("pnpm.mjs")).toThrow("pnpm lifecycle CLI");
   expect(() => resolvePnpmCli(join(directory, "pnpm.mjs"))).toThrow("pnpm lifecycle CLI");
+});
+
+it("lets a caller override the package script's default output directory", () => {
+  const directory = temporary();
+  const first = join(directory, "default-artifacts");
+  const last = join(directory, "requested-artifacts");
+  writeFileSync(join(directory, "package.json"), JSON.stringify({ name: "fixture-not-fs-safe" }));
+  try {
+    execFileSync(process.execPath, [resolve("scripts/check-release-packages.mjs"), "--output", first, "--output", last], {
+      cwd: directory, env: { ...isolatedConsumerEnv(join(directory, "config")), npm_execpath: process.env.npm_execpath },
+      encoding: "utf8", timeout: 10_000, stdio: "pipe",
+    });
+    expect.fail("the fixture must stop at package validation");
+  } catch (error) {
+    expect(error).toMatchObject({ status: 1 });
+    expect(String((error as { stderr: string }).stderr)).toContain("unexpected package name fixture-not-fs-safe");
+  }
+  expect(existsSync(first)).toBe(false);
+  expect(existsSync(last)).toBe(true);
 });
 
 it("rejects direct collection before creating artifacts when the lifecycle is absent", () => {
