@@ -45,6 +45,9 @@ export function ownDirectoryMode(params: {
       check?.();
     }),
     apply: (mode, checks = {}) => enqueue(async () => {
+      // inspect() reports permission bits only; chmod ignores file-type bits,
+      // so tolerate raw stat modes (e.g. S_IFDIR | 0o755) by masking up front.
+      mode &= 0o7777;
       checks.check?.();
       const currentMode = await params.inspect();
       checks.check?.();

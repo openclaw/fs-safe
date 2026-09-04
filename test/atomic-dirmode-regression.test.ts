@@ -143,6 +143,30 @@ describe("atomic parent-directory descriptor modes", () => {
     }).toEqual({ targetMode: 0o751, victimMode: 0o755, content: "sync" });
   });
 
+  itPosix("accepts a raw stat mode with file-type bits as dirMode", async () => {
+    const root = await tempRoot("fs-safe-atomic-dirmode-raw-stat-");
+    const asyncDir = path.join(root, "async");
+    const syncDir = path.join(root, "sync");
+    const asyncPath = path.join(asyncDir, "state.txt");
+    const syncPath = path.join(syncDir, "state.txt");
+    await fs.mkdir(asyncDir);
+    fsSync.mkdirSync(syncDir);
+    await fs.chmod(asyncDir, 0o755);
+    fsSync.chmodSync(syncDir, 0o755);
+    // Callers legitimately pass stat.mode verbatim; S_IFDIR bits must be tolerated.
+    const asyncRawMode = (await fs.stat(asyncDir)).mode;
+    const syncRawMode = fsSync.statSync(syncDir).mode;
+    expect(asyncRawMode & fsSync.constants.S_IFDIR).not.toBe(0);
+
+    await replaceFileAtomic({ filePath: asyncPath, content: "async", dirMode: asyncRawMode });
+    replaceFileAtomicSync({ filePath: syncPath, content: "sync", dirMode: syncRawMode });
+
+    expect(await fs.readFile(asyncPath, "utf8")).toBe("async");
+    expect(fsSync.readFileSync(syncPath, "utf8")).toBe("sync");
+    expect((await fs.stat(asyncDir)).mode & 0o777).toBe(0o755);
+    expect(fsSync.statSync(syncDir).mode & 0o777).toBe(0o755);
+  });
+
   it("accepts plain node:fs injection with explicit async and sync dirMode", async () => {
     const root = await tempRoot("fs-safe-atomic-dirmode-node-fs-");
     const asyncDir = path.join(root, "async");

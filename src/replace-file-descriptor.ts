@@ -138,7 +138,8 @@ export function applyDirectoryModeSync(params: {
   const fd = params.fsModule.openSync(params.dirPath, directoryOpenFlags());
   try {
     assertSameDirectory(expected, params.fsModule.fstatSync(fd), params.dirPath);
-    params.fchmodSync?.(fd, params.mode);
+    // chmod ignores file-type bits; mask so raw stat modes are tolerated.
+    params.fchmodSync?.(fd, params.mode & 0o7777);
   } finally {
     params.fsModule.closeSync(fd);
   }

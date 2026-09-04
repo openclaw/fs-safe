@@ -2,6 +2,7 @@
 
 ## 0.8.1 - 2026-09-04
 
+- Fix `replaceFileAtomic({ dirMode })` rejecting a raw `fs.stat` mode: directory modes are masked to permission bits (`0o7777`) before application and verification, matching chmod semantics; 0.8.0 regressed this input tolerance with `directory final mode could not be verified`.
 - Add `retainOnExit` to sidecar lock acquisition so deliberately retained ownership records (for example fail-closed build locks) survive natural process exit; default process-exit release behavior is unchanged.
 
 ## 0.8.0 - 2026-09-04
