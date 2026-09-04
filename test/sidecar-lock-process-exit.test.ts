@@ -135,6 +135,33 @@ describe("sidecar lock natural process exit", () => {
     await expectAbsent(directory);
   });
 
+  it("rejects retainOnExit when a legacy package copy owns the exit handlers", async () => {
+    const globalWithCleanup = globalThis as Record<symbol, unknown>;
+    const cleanupKey = Symbol.for("fsSafe.sidecarLockCleanupRegistered");
+    const retainAwareKey = Symbol.for("fsSafe.sidecarLockRetainAwareCleanup");
+    const priorCleanup = globalWithCleanup[cleanupKey];
+    const priorRetainAware = globalWithCleanup[retainAwareKey];
+    // Simulate a legacy copy that registered the exit handler without the
+    // retain-aware marker; the new copy must fail closed, not silently lose it.
+    globalWithCleanup[cleanupKey] = true;
+    delete globalWithCleanup[retainAwareKey];
+    try {
+      const directory = await tempRoot("fs-safe-lock-legacy-retain-");
+      const manager = createFileLockManager("legacy-retain");
+      await expect(
+        manager.acquire(path.join(directory, "state.json"), {
+          payload: () => ({ owner: "caller" }),
+          retainOnExit: true,
+        }),
+      ).rejects.toMatchObject({ code: "helper-unavailable" });
+    } finally {
+      if (priorCleanup === undefined) delete globalWithCleanup[cleanupKey];
+      else globalWithCleanup[cleanupKey] = priorCleanup;
+      if (priorRetainAware === undefined) delete globalWithCleanup[retainAwareKey];
+      else globalWithCleanup[retainAwareKey] = priorRetainAware;
+    }
+  });
+
   it("joins an explicit release already in flight", async () => {
     const directory = await tempRoot("fs-safe-lock-exit-in-flight-");
     const output = await runChild(directory, `

@@ -1,4 +1,5 @@
 import fsSync from "node:fs";
+import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import {
   removeSidecarLockIfUnchanged,
@@ -34,6 +35,10 @@ const GLOBAL_STATE_KEY = Symbol.for("fsSafe.sidecarLockManagers");
 const GLOBAL_CLEANUP_KEY = Symbol.for("fsSafe.sidecarLockCleanupRegistered");
 const GLOBAL_CLEANUP_HANDLER_KEY = Symbol.for("fsSafe.sidecarLockCleanupHandler");
 const GLOBAL_BEFORE_EXIT_KEY = Symbol.for("fsSafe.sidecarLockBeforeExitCleanup");
+// Set by copies whose exit handlers honor retainOnExit. When an older package
+// copy registered the handlers first, this marker stays absent and retained
+// acquisitions must fail closed rather than silently lose the guarantee.
+const GLOBAL_RETAIN_AWARE_KEY = Symbol.for("fsSafe.sidecarLockRetainAwareCleanup");
 function getGlobalManagers(): Map<string, SidecarLockManagerState> {
   const globalWithState = globalThis as typeof globalThis & {
     [GLOBAL_STATE_KEY]?: Map<string, SidecarLockManagerState>;
@@ -138,9 +143,11 @@ function ensureGlobalExitCleanupRegistered(): void {
   const globalWithCleanup = globalThis as typeof globalThis & {
     [GLOBAL_CLEANUP_KEY]?: boolean;
     [GLOBAL_CLEANUP_HANDLER_KEY]?: () => void;
+    [GLOBAL_RETAIN_AWARE_KEY]?: boolean;
   };
   if (globalWithCleanup[GLOBAL_CLEANUP_KEY]) return;
   globalWithCleanup[GLOBAL_CLEANUP_KEY] = true;
+  globalWithCleanup[GLOBAL_RETAIN_AWARE_KEY] = true;
   const cleanup = () => {
     for (const state of getGlobalManagers().values()) {
       releaseAllLocksSync(state, { preserveRetained: true });
@@ -148,6 +155,15 @@ function ensureGlobalExitCleanupRegistered(): void {
   };
   globalWithCleanup[GLOBAL_CLEANUP_HANDLER_KEY] = cleanup;
   process.on("exit", cleanup);
+}
+
+/** True when a retain-unaware package copy registered the process-exit handlers first. */
+export function exitCleanupCannotRetain(): boolean {
+  const globalWithCleanup = globalThis as typeof globalThis & {
+    [GLOBAL_CLEANUP_KEY]?: boolean;
+    [GLOBAL_RETAIN_AWARE_KEY]?: boolean;
+  };
+  return globalWithCleanup[GLOBAL_CLEANUP_KEY] === true && globalWithCleanup[GLOBAL_RETAIN_AWARE_KEY] !== true;
 }
 
 function ensureGlobalBeforeExitCleanupRegistered(): { armed: boolean } {
@@ -248,6 +264,12 @@ export function createSidecarLockManager(key: string) {
   async function acquire<TPayload extends Record<string, unknown>>(
     options: SidecarLockAcquireOptions<TPayload>,
   ): Promise<SidecarLockHandle> {
+    if (options.retainOnExit === true && exitCleanupCannotRetain()) {
+      throw new FsSafeError(
+        "helper-unavailable",
+        "retainOnExit requires this process's exit handlers to be retain-aware; an older package copy registered them first",
+      );
+    }
     return await acquireSidecarLock(options, {
       held: state.held,
       reclaimGuards: state.reclaimGuards,
