@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.0 - Unreleased
+## 0.8.0 - 2026-09-04
 
 ### Compatibility and upgrade notes
 
