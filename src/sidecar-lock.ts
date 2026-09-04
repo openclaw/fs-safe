@@ -118,11 +118,12 @@ function releaseAllReclaimGuardsSync(state: SidecarLockManagerState): void {
   }
 }
 
-function releaseAllLocksSync(state: SidecarLockManagerState): void {
+function releaseAllLocksSync(state: SidecarLockManagerState, options?: { preserveRetained?: boolean }): void {
   for (const [normalizedTargetPath, held] of state.held) {
     void held.handle.close().catch(() => undefined);
     try {
-      if (!held.retainOnExit && !held.lockRoot && snapshotMatchesSync(held.lockPath, held.snapshot)) {
+      const retained = options?.preserveRetained === true && held.retainOnExit;
+      if (!retained && !held.lockRoot && snapshotMatchesSync(held.lockPath, held.snapshot)) {
         fsSync.rmSync(held.lockPath, { force: true });
       }
     } catch {
@@ -142,7 +143,7 @@ function ensureGlobalExitCleanupRegistered(): void {
   globalWithCleanup[GLOBAL_CLEANUP_KEY] = true;
   const cleanup = () => {
     for (const state of getGlobalManagers().values()) {
-      releaseAllLocksSync(state);
+      releaseAllLocksSync(state, { preserveRetained: true });
     }
   };
   globalWithCleanup[GLOBAL_CLEANUP_HANDLER_KEY] = cleanup;

@@ -82,6 +82,7 @@ type FileLockAcquireOptions<TPayload extends Record<string, unknown>> = {
   metadata?: Record<string, unknown>;    // attached to heldEntries() output for diagnostics
   parsePayload?: (raw: string) => unknown;
   lockRoot?: Root;
+  retainOnExit?: boolean;               // keep the sidecar across process exit (default false)
   onCompromised?: (info: { lockPath: string; normalizedTargetPath: string }) => void;
   compromiseCheckIntervalMs?: number;
 };

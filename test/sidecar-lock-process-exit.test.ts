@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import { createFileLockManager } from "../src/file-lock.js";
 import { useTempDirs } from "./helpers/vitest.js";
 import { useSuiteFixture } from "./helpers/suite-fixture.js";
 
@@ -121,6 +122,16 @@ describe("sidecar lock natural process exit", () => {
       })));
     `);
     expect(JSON.parse(output)).toEqual({ closes: 1, timerCleared: true });
+    await expectAbsent(directory);
+  });
+
+  it("manager reset still releases a retainOnExit raw lock", async () => {
+    const directory = await tempRoot("fs-safe-lock-reset-retain-");
+    const target = path.join(directory, "state.json");
+    const manager = createFileLockManager("reset-retain");
+    const lock = await manager.acquire(target, { payload: () => ({ owner: "caller" }), retainOnExit: true });
+    expect(await lock.verifyStillHeld()).toBe(true);
+    manager.reset();
     await expectAbsent(directory);
   });
 
