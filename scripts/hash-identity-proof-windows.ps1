@@ -107,7 +107,7 @@ try {
     if ($summary.runtime.platform -ne 'win32' -or $summary.runtime.arch -ne 'x64' -or
         $summary.runtime.node -ne "v$NodeVersion") { throw 'Expected the pinned native Windows x64 runtime.' }
     $pnpm = Invoke-Pnpm 'pnpm-version' @('--version')
-    if (-not $pnpm.Result.passed -or $pnpm.Stdout.Trim() -ne '11.24.0') { throw 'Expected pnpm 11.24.0.' }
+    if (-not $pnpm.Result.passed -or $pnpm.Stdout.Trim() -ne '11.25.0') { throw 'Expected pnpm 11.25.0.' }
     # Selected fields only: no hostname, username, label, serial, or environment inventory.
     $facts = [ordered]@{
         powershell = $PSVersionTable.PSVersion.ToString()
