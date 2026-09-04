@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import { configureFsSafeNative } from "@openclaw/fs-safe/config";
 import { createSecretFileAtomic, writeSecretFileAtomic } from "@openclaw/fs-safe/secret";
 import { fileStore } from "@openclaw/fs-safe/store";
+import { nativeBinaryLoaded } from "./consumer-proof-metadata.mjs";
 
 const mode = process.argv[2];
 assert.ok(mode === "off" || mode === "require");
@@ -157,9 +158,8 @@ try {
 
   const rootManifest = require.resolve("@openclaw/fs-safe/package.json");
   const rootRequire = createRequire(rootManifest);
-  const binary = fsSync.realpathSync(rootRequire.resolve(expected.host.package));
-  const loaded = process.report.getReport().sharedObjects.filter((file) => file.endsWith(".node"))
-    .some((file) => fsSync.realpathSync(file) === binary);
+  const binary = fsSync.realpathSync.native(rootRequire.resolve(expected.host.package));
+  const loaded = nativeBinaryLoaded(binary);
   assert.equal(loaded, mode === "require");
   const hash = (file) => createHash("sha256").update(fsSync.readFileSync(file)).digest("hex");
   const modulePath = require.resolve("@openclaw/fs-safe/secret");
@@ -170,7 +170,8 @@ try {
       "secret-file.js", "directory-guard.js", "root-context.js", "native-pinned-write.js", "pinned-write.js", "sidecar-lock-acquire.js",
     ].map((name) => [name, hash(path.join(path.dirname(rootManifest), "dist", name))])),
     binary: path.relative(process.cwd(), binary), binarySha256: hash(binary), nativeLoaded: loaded,
-    probeSha256: hash(new URL(import.meta.url)), metadataProjection: false, separateProcessMutations: true, rows,
+    probeSha256: hash(new URL(import.meta.url)), metadataHelperSha256: hash(new URL("./consumer-proof-metadata.mjs", import.meta.url)),
+    metadataProjection: false, separateProcessMutations: true, rows,
   }));
 } finally {
   Object.assign(fs, original);

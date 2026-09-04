@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { hostNativeTarget, nativePackageDirectory, nativeTargets } from "./native-targets.mjs";
 import { normalizePackResult } from "./npm-pack-result.mjs";
 import { consumerInstallSmoke, isolatedConsumerEnv, resolvePnpmCli } from "./consumer-install-smoke.mjs";
+import { packageProofSource } from "./consumer-proof-metadata.mjs";
 
 const pnpmCli = resolvePnpmCli();
 const outputIndex = process.argv.lastIndexOf("--output");
@@ -140,11 +141,9 @@ async function main() {
   if (!host || !targets.some((target) => target.label === host.label)) {
     throw new Error(`release smoke requires the host target ${host?.label ?? "unknown"}`);
   }
-  const [commit, tree] = execFileSync("git", ["rev-parse", "HEAD", "HEAD^{tree}"], {
-    encoding: "utf8", timeout: 10_000,
-  }).trim().split(/\r?\n/);
-  const dirty = execFileSync("git", ["status", "--porcelain"], { encoding: "utf8", timeout: 10_000 }).trim() !== "";
-  await consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCli, pnpmCli, allowHostOnly, source: { commit, tree, dirty } });
+  const source = packageProofSource();
+  if (source.unavailable) console.warn(`source revision unavailable: ${source.unavailable}; artifact and behavior proof remain separate`);
+  await consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCli, pnpmCli, allowHostOnly, source });
 
   for (const artifact of manifest) {
     console.log(`${artifact.name}: ${artifact.size} bytes gzipped, ${artifact.unpackedSize} bytes unpacked`);
