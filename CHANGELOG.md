@@ -2,41 +2,63 @@
 
 ## 0.7.3 - Unreleased
 
-- Keep slow physical-package fixture setup outside the process-exit test deadline, drain fixture work before teardown, and give each adversarial corpus payload its own test lifetime while retaining Windows boundary assertions.
-- Refresh the Node type definitions, align development and CI on pnpm 11.25.0, and update the pinned Pages deployment action to v5.0.1 for polling backoff and jitter. Thanks @dependabot.
-- Scope the sibling-temp no-visibility guarantee for create-only Root writes (`create`, `createJson`, `write({ overwrite: false })`) to backends with atomic no-replace publication: the native binding stages privately and renames without clobbering, while the pure-JavaScript fallback claims the final name exclusively before content is written. Regression tests now pin both behaviors.
+### Highlights
+
+- **Stricter secret storage:** existing secret directories are never chmod-repaired — wrong permissions fail the write — and directory identity is tracked exactly through private locks and native writes, closing replacement races.
+- **Exact file modes everywhere:** explicit modes, including set-ID bits, are applied after content writes and verified in full at publication, and synchronous appends no longer drop bytes when the kernel writes short.
+- **Restrictive secret modes work:** write-only and no-access files such as `0o200` and `0o000` publish successfully through the writer's retained descriptor, without a readonly reopen or widened permissions.
+- **Resilient locks and queues:** Windows sidecar creation retries genuine denials within the existing budgets, Root-backed locks release on natural process exit, and queue enqueue/migration/ack sync failures propagate instead of returning false success.
+- **Honest backend guarantees:** the no-visibility guarantee for create-only Root writes is scoped to backends with atomic no-replace publication (`require`, or `auto` with a loaded binding); the JavaScript fallback's behavior is documented and regression-pinned.
+
+### Secret files and permissions
+
+- Preserve existing secret-directory permissions instead of repairing them; retain lossless directory identities through private locks and native writes, initialize new directories through guarded descriptor authority, honor full directory mode bits, and fail closed for unpinnable parents, including non-root macOS directories created under `umask(0o777)`.
 - Finalize explicit file modes after content writes across pinned writers, verify all `0o7777` POSIX bits for secret publication, and use exact identities before native Windows mode changes and failed-write cleanup; JavaScript fallback cleanup preserves unverified replacements.
 - Complete short synchronous regular-file appends and preserve explicitly requested special mode bits in both append helpers, retaining permission tightening before any data is written.
-- Preserve existing secret-directory permissions instead of repairing them; retain lossless directory identities through private locks and native writes, initialize new directories through guarded descriptor authority, honor full directory mode bits, and fail closed for unpinnable parents, including non-root macOS directories created under `umask(0o777)`.
-- Keep async Root-backed lock normalization read-only, rejecting deleted or replaced admitted parents without recreating them while preserving explicit in-root sidecars for external target keys.
-- Exercise secret-directory admission from isolated npm/pnpm consumer installs, retain real-identity and native-load proof, and honor explicit package-proof output paths.
-- Propagate durable queue enqueue parent-sync failures and keep published-file identity checks after synchronization, sharing the guarded writer with migrations while retaining retry state.
-- Bound workflow-dispatch test subprocesses and terminate their process groups before fixture cleanup, so stuck shell descendants fail validation instead of hanging the suite.
-- Retry Windows Root-backed sidecar exclusive-create denials within the existing eight-retry and caller budgets, using per-call provenance while preserving callback errors and rejecting replayed failure evidence.
-- Assign cross-platform sidecar contention proof liveness to its whole-worker watchdog instead of false-failing healthy unfair acquisition; production lock timeout behavior is unchanged.
-- Enforce portable FileStore keys consistently across methods: async reads, `exists`, and `remove` now reject parent-segment and backslash aliases with `invalid-path` for existing roots, matching sync and write methods while preserving missing-root error precedence and Root's confined existing-object compatibility.
-- Resync durable queue acknowledgement retries after final marker unlink before reporting completion or a newer-generation mismatch.
-- Propagate durable queue batch claim and migration failures instead of returning empty or partial success, and strictly sync migration publication in both loaders while preserving retry state.
-- Correct lower-level archive helper signatures in the reference docs and guard them against drifting from the public declarations.
+- Verify atomic secret writes through the writer's retained descriptor so restrictive POSIX modes such as `0o000` and `0o200` succeed without a readonly reopen or widened permissions.
 - Retry and fully revalidate raced secret-parent creation so concurrent writes to distinct leaves succeed without leaking `EEXIST` or reporting a false `secret-exists` collision.
-- Release asynchronously acquired Root-backed sidecar locks on natural event-loop shutdown through their retained ownership receipts, preserving changed sidecars and avoiding cleanup retry loops.
-- Prevent no-reader FIFOs from stalling POSIX `Root.openWritable()` and async/sync regular-file append admission, preserving regular-file write semantics and existing-target cleanup fencing.
+- Scope the sibling-temp no-visibility guarantee for create-only Root writes (`create`, `createJson`, `write({ overwrite: false })`) to backends with atomic no-replace publication: the native binding stages privately and renames without clobbering, while the pure-JavaScript fallback claims the final name exclusively before content is written. Regression tests now pin both behaviors.
 - Normalize every exclusive-copy target to mode `0o600` through its owned descriptor, including under restrictive umasks and native macOS clone staging.
-- Move dangling symlink sources through staged and cross-device fallback without dereferencing their absent referents, while retaining same-entry, descendant, and source-substitution guards.
-- Retire every copied source name after cross-device moves with allowed in-tree hardlink aliases, while preserving `ESTALE` fences for unverified external mutations.
-- Reject dangling symlink leaves and ancestors under strict absolute-write and missing local-root resolution instead of treating unresolved aliases as safe missing paths.
-- Accept canonical in-root absolute paths in `Root.readAbsolute()` and `Root.reader()` when the Root was configured through a directory symlink or Windows junction.
-- Bound callback staging components to 255 NFC/NFD bytes so filesystem-valid long destination names work without changing final names or short callback paths.
-- End `Root.walk()` immediately after its single truncation marker, including when a nested depth or entry budget is reached.
-- Close a selected archive input if private staging allocation fails, preventing `readArchiveEntry()` setup errors from retaining file descriptors until garbage collection.
-- Avoid opening the TAR metadata stream until preflight setup succeeds, and always destroy it after pipeline completion, preventing descriptor leaks on setup failures. Thanks @SebTardif.
-- Separate archive staging permissions from final publication modes so zero/write-only files and restrictive directories extract correctly; finalize explicit and implicit directory modes through retained, verified authority and reject unsafe mode application instead of silently skipping it.
-- Decode absent TAR modes and supported signed GNU binary permission bits in native manifests, matching JavaScript defaults without changing the native ABI.
+
+### Locks and durable queues
+
+- Retry Windows Root-backed sidecar exclusive-create denials within the existing eight-retry and caller budgets, using per-call provenance while preserving callback errors and rejecting replayed failure evidence.
+- Release asynchronously acquired Root-backed sidecar locks on natural event-loop shutdown through their retained ownership receipts, preserving changed sidecars and avoiding cleanup retry loops.
+- Keep async Root-backed lock normalization read-only, rejecting deleted or replaced admitted parents without recreating them while preserving explicit in-root sidecars for external target keys.
 - Reject serialized sidecar lock payloads above 1 MiB of UTF-8 bytes, including ownership overhead, with `too-large` before async or sync acquisition so admitted locks remain verifiable and releasable.
 - Honor explicit async file-lock retry counts independently of infinite deadlines, matching sync locks while preserving unlimited retries when the count is omitted.
-- Verify atomic secret writes through the writer's retained descriptor so restrictive POSIX modes such as `0o000` and `0o200` succeed without a readonly reopen or widened permissions.
+- Propagate durable queue enqueue parent-sync failures and keep published-file identity checks after synchronization, sharing the guarded writer with migrations while retaining retry state.
+- Propagate durable queue batch claim and migration failures instead of returning empty or partial success, and strictly sync migration publication in both loaders while preserving retry state.
+- Resync durable queue acknowledgement retries after final marker unlink before reporting completion or a newer-generation mismatch.
+
+### Paths, stores, and moves
+
+- Enforce portable FileStore keys consistently across methods: async reads, `exists`, and `remove` now reject parent-segment and backslash aliases with `invalid-path` for existing roots, matching sync and write methods while preserving missing-root error precedence and Root's confined existing-object compatibility.
+- Prevent no-reader FIFOs from stalling POSIX `Root.openWritable()` and async/sync regular-file append admission, preserving regular-file write semantics and existing-target cleanup fencing.
+- Accept canonical in-root absolute paths in `Root.readAbsolute()` and `Root.reader()` when the Root was configured through a directory symlink or Windows junction.
+- Reject dangling symlink leaves and ancestors under strict absolute-write and missing local-root resolution instead of treating unresolved aliases as safe missing paths.
+- Move dangling symlink sources through staged and cross-device fallback without dereferencing their absent referents, while retaining same-entry, descendant, and source-substitution guards.
+- Retire every copied source name after cross-device moves with allowed in-tree hardlink aliases, while preserving `ESTALE` fences for unverified external mutations.
+- End `Root.walk()` immediately after its single truncation marker, including when a nested depth or entry budget is reached.
+- Bound callback staging components to 255 NFC/NFD bytes so filesystem-valid long destination names work without changing final names or short callback paths.
+
+### Archives
+
+- Separate archive staging permissions from final publication modes so zero/write-only files and restrictive directories extract correctly; finalize explicit and implicit directory modes through retained, verified authority and reject unsafe mode application instead of silently skipping it.
 - Preserve pre-existing and substituted destination files when an archive merge fails, leaving guarded copy cleanup to the operation that owns publication.
+- Decode absent TAR modes and supported signed GNU binary permission bits in native manifests, matching JavaScript defaults without changing the native ABI.
+- Close a selected archive input if private staging allocation fails, preventing `readArchiveEntry()` setup errors from retaining file descriptors until garbage collection.
+- Avoid opening the TAR metadata stream until preflight setup succeeds, and always destroy it after pipeline completion, preventing descriptor leaks on setup failures. Thanks @SebTardif.
+
+### Docs, packaging, and validation
+
 - Add the narrow `@openclaw/fs-safe/secure-temp-root` package subpath so consumers can import `resolveSecureTempRoot()` and its options type without loading the temp workspace implementation.
+- Exercise secret-directory admission from isolated npm/pnpm consumer installs, retain real-identity and native-load proof, and honor explicit package-proof output paths.
+- Correct lower-level archive helper signatures in the reference docs and guard them against drifting from the public declarations.
+- Keep slow physical-package fixture setup outside the process-exit test deadline, drain fixture work before teardown, and give each adversarial corpus payload its own test lifetime while retaining Windows boundary assertions.
+- Bound workflow-dispatch test subprocesses and terminate their process groups before fixture cleanup, so stuck shell descendants fail validation instead of hanging the suite.
+- Assign cross-platform sidecar contention proof liveness to its whole-worker watchdog instead of false-failing healthy unfair acquisition; production lock timeout behavior is unchanged.
+- Refresh the Node type definitions, align development and CI on pnpm 11.25.0, and update the pinned Pages deployment action to v5.0.1 for polling backoff and jitter. Thanks @dependabot.
 
 ## 0.7.2 - 2026-09-01
 
