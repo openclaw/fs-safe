@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.1 - 2026-09-04
 
 - Add `retainOnExit` to sidecar lock acquisition so deliberately retained ownership records (for example fail-closed build locks) survive natural process exit; default process-exit release behavior is unchanged.
 
