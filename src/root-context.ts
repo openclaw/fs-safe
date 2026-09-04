@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { inspectDirectoryIdentity } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { expandHomePrefix } from "./home-dir.js";
@@ -17,7 +18,7 @@ import { isDriveRelativePath } from "./safe-path-segment.js";
 
 export type RootContext = {
   rootDir: string;
-  rootIdentity: { dev: number; ino: number };
+  rootIdentity: { dev: number; ino: number } | { dev: bigint; ino: bigint };
   rootReal: string;
   rootWithSep: string;
 };
@@ -100,6 +101,10 @@ export function rootRelativeReadPath(root: RootContext, filePath: string): strin
 export async function assertRootIdentityCurrent(root: RootContext): Promise<void> {
   let current: Awaited<ReturnType<typeof fs.lstat>>;
   try {
+    if (typeof root.rootIdentity.dev === "bigint" && typeof root.rootIdentity.ino === "bigint") {
+      await inspectDirectoryIdentity(root.rootReal, { dev: root.rootIdentity.dev, ino: root.rootIdentity.ino });
+      return;
+    }
     current = await fs.lstat(root.rootReal);
   } catch (error) {
     throw new FsSafeError("path-mismatch", "root path changed during operation", {

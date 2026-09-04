@@ -21,7 +21,7 @@ import {
   trimSecretFileContent,
   type SecretFileReadOptions,
 } from "./secret-read-policy.js";
-import { inspectFileIdentitySync } from "./strict-file-identity.js";
+import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import { serializePathWrite } from "./write-queue.js";
 
 export const PRIVATE_SECRET_DIR_MODE = 0o700;
@@ -183,14 +183,27 @@ async function enforcePrivateDirectoryMode(params: {
   }
 }
 
+async function inspectPrivateDirectory(directory: string, kind: "root" | "directory component"): Promise<BigIntStats> {
+  return await inspectFileIdentity(async () => {
+    const stat = await fsp.lstat(directory, { bigint: true });
+    if (stat.isSymbolicLink()) {
+      throw new Error(`Private secret ${kind} ${directory} must not be a symlink.`);
+    }
+    if (!stat.isDirectory()) {
+      throw new Error(`Private secret ${kind} ${directory} must be a directory.`);
+    }
+    return stat;
+  });
+}
+
 async function ensurePrivateDirectory(
   rootDir: string,
   targetDir: string,
   mode: number,
-): Promise<{ rootGuard: AsyncDirectoryGuard; parentGuard: AsyncDirectoryGuard }> {
+): Promise<{ rootGuard: AsyncDirectoryGuard<BigIntStats>; parentGuard: AsyncDirectoryGuard<BigIntStats> }> {
   const resolvedRoot = path.resolve(rootDir);
   const resolvedTarget = path.resolve(targetDir);
-  let rootStat = await fsp.lstat(resolvedRoot, { bigint: true }).catch((error) => {
+  let rootStat = await inspectPrivateDirectory(resolvedRoot, "root").catch((error) => {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     return undefined;
   });
@@ -203,15 +216,9 @@ async function ensurePrivateDirectory(
       await fsp.mkdir(path.dirname(resolvedRoot), { recursive: true, mode });
       createdRoot = await createPrivateDirectory(resolvedRoot, mode);
     }
-    rootStat = await fsp.lstat(resolvedRoot, { bigint: true });
+    rootStat = await inspectPrivateDirectory(resolvedRoot, "root");
   }
-  if (rootStat.isSymbolicLink()) {
-    throw new Error(`Private secret root ${resolvedRoot} must not be a symlink.`);
-  }
-  if (!rootStat.isDirectory()) {
-    throw new Error(`Private secret root ${resolvedRoot} must be a directory.`);
-  }
-  const rootGuard = await createAsyncDirectoryGuard(resolvedRoot);
+  const rootGuard = await createAsyncDirectoryGuard(resolvedRoot, { bigint: true });
   assertOwnedDirectory(rootStat, rootGuard.stat);
   await enforcePrivateDirectoryMode({
     realPath: rootGuard.realPath, identity: rootStat, mode, created: createdRoot,
@@ -240,14 +247,7 @@ async function ensurePrivateDirectory(
       await assertAsyncDirectoryGuard(rootGuard);
       await assertAsyncDirectoryGuard(parentGuard);
       try {
-        const stat = await fsp.lstat(current, { bigint: true });
-        identity = stat;
-        if (stat.isSymbolicLink()) {
-          throw new Error(`Private secret directory component ${current} must not be a symlink.`);
-        }
-        if (!stat.isDirectory()) {
-          throw new Error(`Private secret directory component ${current} must be a directory.`);
-        }
+        identity = await inspectPrivateDirectory(current, "directory component");
         break;
       } catch (error) {
         if (!error || typeof error !== "object" || !("code" in error) || error.code !== "ENOENT") {
@@ -258,7 +258,7 @@ async function ensurePrivateDirectory(
         // EEXIST grants no initialization authority; both outcomes need fresh type checks.
       }
     }
-    const currentGuard = await createAsyncDirectoryGuard(current);
+    const currentGuard = await createAsyncDirectoryGuard(current, { bigint: true });
     assertOwnedDirectory(identity, currentGuard.stat);
     assertRealPathWithinRoot(resolvedRootReal, currentGuard.realPath);
     await enforcePrivateDirectoryMode({
@@ -299,8 +299,8 @@ export async function prepareSecretFileWrite(
   params: Omit<SecretFileWriteParams, "content">,
 ): Promise<{
   mode: number;
-  rootGuard: AsyncDirectoryGuard;
-  parentGuard: AsyncDirectoryGuard;
+  rootGuard: AsyncDirectoryGuard<BigIntStats>;
+  parentGuard: AsyncDirectoryGuard<BigIntStats>;
   fileName: string;
   finalFilePath: string;
 }> {

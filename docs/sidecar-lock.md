@@ -178,6 +178,15 @@ an existing `Root` capability. `lockPath` must resolve inside that root.
 Identity-conditioned removal remains the only release and reclaim deletion
 path.
 
+Async Root-backed acquisition normalizes the target's parent without creating
+it, checking the retained Root before and after normalization. A deleted or
+replaced Root fails before payload execution or held-entry reuse. Missing lock
+subdirectories are still created through `Root.create`, never by target-key
+normalization. The target is an arbitration key and may be outside the Root
+when an explicit in-root `lockPath` is supplied; normalization does not follow a
+target-leaf symlink. Non-Root acquisition retains its existing parent-creation
+behavior.
+
 An owner can finish releasing while another async acquirer inspects its record.
 Create-only Root writes do not open an existing record merely to inherit its
 mode. Once a pathname sample and opened descriptor agree, a failed acquisition

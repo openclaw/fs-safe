@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
-import type { AsyncDirectoryGuard } from "./directory-guard.js";
+import type { AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import type { FileIdentityStat } from "./file-identity.js";
 import type { NativeBinding } from "./native-binding.js";
@@ -115,7 +115,7 @@ class NativeStagedFile implements StagedFile {
     parentFd: number,
     directory: StagedFileReceipt["directory"],
     params: PinnedWriteParams,
-    parentGuard: AsyncDirectoryGuard,
+    parentGuard: AnyAsyncDirectoryGuard,
   ): Promise<FileIdentityStat> {
     // This owner never escapes. Only the internal verifier borrows its fd;
     // public descriptor methods remain await-free and cannot race disposal.

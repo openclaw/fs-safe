@@ -8,12 +8,12 @@ import {
   createNearestExistingDirectoryGuard,
   createNearestExistingSyncDirectoryGuard,
   createSyncDirectoryGuard,
-  type AsyncDirectoryGuard,
+  type AnyAsyncDirectoryGuard,
   type SyncDirectoryGuard,
 } from "./directory-guard.js";
 
 export async function withAsyncDirectoryGuards<T>(
-  guards: readonly AsyncDirectoryGuard[],
+  guards: readonly AnyAsyncDirectoryGuard[],
   mutate: () => Promise<T>,
   options: {
     verifyAfter?: boolean;

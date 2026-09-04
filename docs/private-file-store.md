@@ -24,8 +24,10 @@ const loaded = await store.readJsonIfExists<State>("state.json");
   fail closed under restrictive platform/umask combinations; see the
   [secret-directory policy](secret-file.md#parameters).
 - Locked JSON mutations prepare private directories before acquiring their
-  sidecar and bind the lock to the admitted parent identity. The writer still
-  revalidates directory admission afterward; reads do not create directories.
+  sidecar and bind the lock to the admitted parent identity. Lock normalization
+  is read-only: a deleted or replaced admitted parent is rejected, not recreated.
+  The writer still revalidates directory admission afterward; reads do not create
+  directories.
 - `readText()` and `readJson()` are strict and throw on missing files.
 - `readTextIfExists()` and `readJsonIfExists()` return `null` on missing files.
 - `write()`, `writeText()`, `writeJson()`, `writeStream()`, and `copyIn()` all

@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as privateBoundary from "../src/file-store-boundary.js";
 import { createJsonStore } from "../src/json-document-store.js";
 import { root } from "../src/root.js";
 import { fileStore, jsonStore } from "../src/store.js";
@@ -59,15 +60,14 @@ describe("private JSON directory admission before locking", () => {
     const parent = path.join(rootDir, "parent");
     const moved = path.join(rootDir, "moved");
     const state = fileStore({ rootDir, private: true }).json("parent/state.json", { lock: true });
-    const mkdir = fs.mkdir.bind(fs);
+    const prepare = privateBoundary.openPrivateStoreLockRoot;
     let swapped = false;
-    const mkdirSpy = vi.spyOn(fs, "mkdir").mockImplementation(async (candidate, options) => {
-      if (String(candidate) === parent && typeof options === "object" && options?.recursive && options.mode === undefined && !swapped) {
-        swapped = true;
-        await fs.rename(parent, moved);
-        await mkdir(parent, { mode: 0o700 });
-      }
-      return await mkdir(candidate, options);
+    const prepareSpy = vi.spyOn(privateBoundary, "openPrivateStoreLockRoot").mockImplementation(async (params) => {
+      const admitted = await prepare(params);
+      await fs.rename(parent, moved);
+      await fs.mkdir(parent, { mode: 0o700 });
+      swapped = true;
+      return admitted;
     });
     const update = vi.fn(() => ({ count: 1 }));
 
@@ -77,9 +77,31 @@ describe("private JSON directory admission before locking", () => {
     expect(update).not.toHaveBeenCalled();
     expect(await fs.readdir(parent)).toEqual([]);
     expect(await fs.readdir(moved)).toEqual([]);
-    mkdirSpy.mockRestore();
+    prepareSpy.mockRestore();
     await state.write({ count: 2 });
     expect(await state.readRequired()).toEqual({ count: 2 });
+  });
+
+  it("does not recreate an admitted parent deleted before lock acquisition", async () => {
+    const rootDir = await tempRoot("fs-safe-private-json-parent-deleted-");
+    const parent = path.join(rootDir, "parent");
+    const state = fileStore({ rootDir, private: true }).json("parent/state.json", { lock: true });
+    const prepare = privateBoundary.openPrivateStoreLockRoot;
+    let removed = false;
+    vi.spyOn(privateBoundary, "openPrivateStoreLockRoot").mockImplementation(async (params) => {
+      const admitted = await prepare(params);
+      await fs.rmdir(parent);
+      removed = true;
+      return admitted;
+    });
+    const update = vi.fn(() => ({ count: 1 }));
+
+    await expect(state.update(update)).rejects.toMatchObject({ code: "path-mismatch" });
+
+    expect(removed).toBe(true);
+    expect(update).not.toHaveBeenCalled();
+    await expect(fs.lstat(parent)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await fs.readdir(rootDir)).toEqual([]);
   });
 
   it("does not prepare directories on reads", async () => {

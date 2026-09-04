@@ -32,9 +32,10 @@ describe("secret directory admission receipts", () => {
       };
       vi.spyOn(fs, "lstat").mockImplementation(async (target, options) => {
         const isParent = String(target) === parent;
-        if (phase === "ancestor" && admitted && isParent && !options?.bigint && !swapped) await swap();
+        if (phase === "ancestor" && admitted && isParent && !swapped) await swap();
         const value = await lstat(target, options);
-        if (isParent && options?.bigint && ++inspections >= 2) admitted = true;
+        // Initial inspection, guard capture, then the permission-admission inspection.
+        if (isParent && options?.bigint && ++inspections >= 3) admitted = true;
         return value;
       });
       vi.spyOn(fs, "realpath").mockImplementation(async (target, options) => {
