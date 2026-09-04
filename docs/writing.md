@@ -1,11 +1,18 @@
 # Writing
 
 The `Root` handle exposes a tight set of mutation verbs. Replacement writes
-(`write`, `create`, `writeJson`, `createJson`, and `copyIn`) publish with a
-sibling-temp commit so no half-written replacement appears at the destination.
-`append` and `openWritable` intentionally modify an opened file in place;
-`move`, `remove`, and `mkdir` mutate directory entries rather than file bytes.
-Each verb applies the boundary checks appropriate to its operation.
+(`write`, `writeJson`, and `copyIn`) publish with a sibling-temp commit so no
+half-written replacement appears at the destination. Create-only writes
+(`create`, `createJson`, and `write` with `overwrite: false`) share that
+staging and additionally publish with an atomic no-replace rename when the
+backend provides one — the native binding used by the default `auto` and
+`require` modes. The pure-JavaScript fallback has no atomic no-clobber rename;
+it claims the final name exclusively before writing, so a concurrent observer
+can see the new file before its content is complete. Use the native backend
+when that visibility window matters. `append` and `openWritable` intentionally
+modify an opened file in place; `move`, `remove`, and `mkdir` mutate directory
+entries rather than file bytes. Each verb applies the boundary checks
+appropriate to its operation.
 
 ```ts
 await fs.write("state.json", body);
@@ -91,7 +98,12 @@ alone is never proof that the name still refers to the expected file.
 Don't-clobber variant of `write()`. Throws `already-exists` if the target is there.
 Create-only preflight preserves boundary, alias, hardlink, and type checks without
 opening an existing target to inherit its mode; a fresh file uses the requested
-mode or the normal new-file default.
+mode or the normal new-file default. With the native backend, content is staged
+privately and published with an atomic no-replace rename, so the name never
+appears before its bytes. In the pure-JavaScript fallback the name is claimed
+exclusively first and content is written afterward, so observers can briefly see
+an empty file; failure cleanup removes a claimed file only when its identity is
+unchanged.
 
 ```ts
 try {
