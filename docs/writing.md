@@ -3,16 +3,16 @@
 The `Root` handle exposes a tight set of mutation verbs. Replacement writes
 (`write`, `writeJson`, and `copyIn`) publish with a sibling-temp commit so no
 half-written replacement appears at the destination. Create-only writes
-(`create`, `createJson`, and `write` with `overwrite: false`) share that
-staging and additionally publish with an atomic no-replace rename when the
-backend provides one — the native binding used by the default `auto` and
-`require` modes. The pure-JavaScript fallback has no atomic no-clobber rename;
-it claims the final name exclusively before writing, so a concurrent observer
-can see the new file before its content is complete. Use the native backend
-when that visibility window matters. `append` and `openWritable` intentionally
-modify an opened file in place; `move`, `remove`, and `mkdir` mutate directory
-entries rather than file bytes. Each verb applies the boundary checks
-appropriate to its operation.
+(`create`, `createJson`, and `write` with `overwrite: false`) use sibling-temp
+staging with an atomic no-replace rename only on backends that provide one —
+the native binding used by the default `auto` and `require` modes. The
+pure-JavaScript fallback has no atomic no-clobber rename and does not stage:
+it claims the final name exclusively with `O_EXCL` and writes content in
+place, so a concurrent observer can see the new file before its content is
+complete. Use the native backend when that visibility window matters.
+`append` and `openWritable` intentionally modify an opened file in place;
+`move`, `remove`, and `mkdir` mutate directory entries rather than file bytes.
+Each verb applies the boundary checks appropriate to its operation.
 
 ```ts
 await fs.write("state.json", body);
