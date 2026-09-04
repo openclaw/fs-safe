@@ -5,11 +5,12 @@ The `Root` handle exposes a tight set of mutation verbs. Replacement writes
 half-written replacement appears at the destination. Create-only writes
 (`create`, `createJson`, and `write` with `overwrite: false`) use sibling-temp
 staging with an atomic no-replace rename only on backends that provide one —
-the native binding used by the default `auto` and `require` modes. The
-pure-JavaScript fallback has no atomic no-clobber rename and does not stage:
-it claims the final name exclusively with `O_EXCL` and writes content in
-place, so a concurrent observer can see the new file before its content is
-complete. Use the native backend when that visibility window matters.
+the native binding, which `require` mode guarantees and `auto` mode uses when
+the binding loads. The pure-JavaScript fallback has no atomic no-clobber
+rename and does not stage: it claims the final name exclusively with `O_EXCL`
+and writes content in place, so a concurrent observer can see the new file
+before its content is complete. Use `require` mode when that visibility window
+matters.
 `append` and `openWritable` intentionally modify an opened file in place;
 `move`, `remove`, and `mkdir` mutate directory entries rather than file bytes.
 Each verb applies the boundary checks appropriate to its operation.
@@ -98,12 +99,13 @@ alone is never proof that the name still refers to the expected file.
 Don't-clobber variant of `write()`. Throws `already-exists` if the target is there.
 Create-only preflight preserves boundary, alias, hardlink, and type checks without
 opening an existing target to inherit its mode; a fresh file uses the requested
-mode or the normal new-file default. With the native backend, content is staged
-privately and published with an atomic no-replace rename, so the name never
-appears before its bytes. In the pure-JavaScript fallback the name is claimed
-exclusively first and content is written afterward, so observers can briefly see
-an empty file; failure cleanup removes a claimed file only when its identity is
-unchanged.
+mode or the normal new-file default. When the native binding is in use
+(`require` mode, or `auto` mode with a successfully loaded binding), content is
+staged privately and published with an atomic no-replace rename, so the name
+never appears before its bytes. In the pure-JavaScript fallback the name is
+claimed exclusively first and content is written afterward, so observers can
+briefly see an empty file; failure cleanup removes a claimed file only when its
+identity is unchanged.
 
 ```ts
 try {
