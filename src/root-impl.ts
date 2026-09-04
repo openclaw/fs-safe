@@ -391,7 +391,7 @@ export interface Root {
   walk(relativePath: string, options: RootWalkOptions): AsyncIterableIterator<RootWalkEntry>;
 }
 
-class RootHandle implements Root {
+export class RootHandle implements Root {
   private readonly rootIdentity: RootContext["rootIdentity"];
   readonly rootDir: string;
   readonly rootReal: string;

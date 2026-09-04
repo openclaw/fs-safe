@@ -8,11 +8,13 @@ import { inspectFileIdentity } from "./strict-file-identity.js";
 import { isNotFoundPathError } from "./path.js";
 import { directoryComponentNotDirectoryError } from "./root-errors.js";
 
-export type AsyncDirectoryGuard = {
+export type AsyncDirectoryGuard<T extends Stats | BigIntStats = Stats> = {
   dir: string;
   realPath: string;
-  stat: Stats;
+  stat: T;
 };
+
+export type AnyAsyncDirectoryGuard = AsyncDirectoryGuard<Stats | BigIntStats>;
 
 export type SyncDirectoryGuard = {
   dir: string;
@@ -20,16 +22,21 @@ export type SyncDirectoryGuard = {
   stat: Stats;
 };
 
-export async function createAsyncDirectoryGuard(dir: string): Promise<AsyncDirectoryGuard> {
-  const stat = await fs.lstat(dir);
+export function createAsyncDirectoryGuard(dir: string, options: { bigint: true }): Promise<AsyncDirectoryGuard<BigIntStats>>;
+export function createAsyncDirectoryGuard(dir: string, options?: { bigint?: false }): Promise<AsyncDirectoryGuard>;
+export function createAsyncDirectoryGuard(dir: string, options: { bigint: boolean }): Promise<AnyAsyncDirectoryGuard>;
+export async function createAsyncDirectoryGuard(dir: string, options?: { bigint?: boolean }): Promise<AnyAsyncDirectoryGuard> {
+  const stat = options?.bigint ? await inspectDirectoryIdentity(dir) : await fs.lstat(dir);
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw directoryComponentNotDirectoryError();
   }
   return { dir, realPath: await fs.realpath(dir), stat };
 }
 
-export async function assertAsyncDirectoryGuard(guard: AsyncDirectoryGuard): Promise<void> {
-  const stat = await fs.lstat(guard.dir);
+export async function assertAsyncDirectoryGuard(guard: AnyAsyncDirectoryGuard): Promise<void> {
+  const stat = typeof guard.stat.dev === "bigint" && typeof guard.stat.ino === "bigint"
+    ? await inspectDirectoryIdentity(guard.dir, { dev: guard.stat.dev, ino: guard.stat.ino })
+    : await fs.lstat(guard.dir);
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw directoryComponentNotDirectoryError();
   }
@@ -56,15 +63,18 @@ export function assertSyncDirectoryGuard(guard: SyncDirectoryGuard): void {
   }
 }
 
+export function createNearestExistingDirectoryGuard(rootReal: string, targetPath: string): Promise<AsyncDirectoryGuard>;
+export function createNearestExistingDirectoryGuard(rootReal: string, targetPath: string, options: { bigint: boolean }): Promise<AnyAsyncDirectoryGuard>;
 export async function createNearestExistingDirectoryGuard(
   rootReal: string,
   targetPath: string,
-): Promise<AsyncDirectoryGuard> {
+  options = { bigint: false },
+): Promise<AnyAsyncDirectoryGuard> {
   let current = path.resolve(targetPath);
   const root = path.resolve(rootReal);
   while (current !== root) {
     try {
-      return await createAsyncDirectoryGuard(current);
+      return await createAsyncDirectoryGuard(current, options);
     } catch (error) {
       if (!isNotFoundPathError(error)) {
         throw error;
@@ -72,7 +82,7 @@ export async function createNearestExistingDirectoryGuard(
       current = path.dirname(current);
     }
   }
-  return await createAsyncDirectoryGuard(root);
+  return await createAsyncDirectoryGuard(root, options);
 }
 
 export function createNearestExistingSyncDirectoryGuard(
@@ -95,7 +105,7 @@ export function createNearestExistingSyncDirectoryGuard(
 }
 
 // Recovery receipts must retain every identity bit, including on Windows.
-export async function inspectDirectoryIdentity(dir: string, expected?: BigIntStats): Promise<BigIntStats> {
+export async function inspectDirectoryIdentity(dir: string, expected?: Pick<BigIntStats, "dev" | "ino">): Promise<BigIntStats> {
   return await inspectFileIdentity(async () => {
     const stat = await fs.lstat(dir, { bigint: true });
     if (stat.isSymbolicLink() || !stat.isDirectory()) throw directoryComponentNotDirectoryError();

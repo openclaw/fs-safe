@@ -1,10 +1,12 @@
-import fs from "node:fs";
+import fs, { type BigIntStats } from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { canonicalPathFromExistingAncestor } from "./absolute-path.js";
 import { readFileDescriptorBoundedSync } from "./bounded-read.js";
 import { normalizeMaxBytes } from "./byte-budget.js";
-import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, type AsyncDirectoryGuard } from "./directory-guard.js";
+import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, inspectDirectoryIdentity, type AsyncDirectoryGuard } from "./directory-guard.js";
+import { pinNodeDirectoryForMode } from "./directory-mode-node.js";
+import { assertOwnedDirectory } from "./directory-mode-owner.js";
 import { FsSafeError } from "./errors.js";
 import { resolveHomeRelativePath } from "./home-dir.js";
 import { openPinnedFileSync } from "./pinned-open.js";
@@ -19,7 +21,7 @@ import {
   trimSecretFileContent,
   type SecretFileReadOptions,
 } from "./secret-read-policy.js";
-import { inspectFileIdentitySync } from "./strict-file-identity.js";
+import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import { serializePathWrite } from "./write-queue.js";
 
 export const PRIVATE_SECRET_DIR_MODE = 0o700;
@@ -137,89 +139,142 @@ function assertRealPathWithinRoot(rootDir: string, targetPath: string): void {
   }
 }
 
-async function enforcePrivatePathMode(
-  resolvedPath: string,
-  expectedMode: number,
-  kind: "directory" | "file",
-): Promise<void> {
-  if (process.platform === "win32") {
+async function createPrivateDirectory(directory: string, mode: number): Promise<boolean> {
+  try {
+    await fsp.mkdir(directory, { mode });
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw error;
+  }
+}
+
+async function enforcePrivateDirectoryMode(params: {
+  realPath: string;
+  identity: BigIntStats;
+  mode: number;
+  created: boolean;
+  beforeChmod: () => Promise<void>;
+}): Promise<void> {
+  if (process.platform === "win32") return;
+  const stat = await inspectDirectoryIdentity(params.realPath, params.identity);
+  if (!params.created) {
+    const actualMode = Number(stat.mode & 0o7777n);
+    if (actualMode !== params.mode) {
+      throw new FsSafeError(
+        "insecure-permissions",
+        `Private secret directory ${JSON.stringify(params.realPath)} has insecure permissions ${actualMode.toString(8)}.`,
+      );
+    }
     return;
   }
-  await fsp.chmod(resolvedPath, expectedMode);
-  const stat = await fsp.stat(resolvedPath);
-  const actualMode = stat.mode & 0o777;
-  if (actualMode !== expectedMode) {
-    throw new Error(
-      `Private secret ${kind} ${resolvedPath} has insecure permissions ${actualMode.toString(8)}.`,
-    );
+  const ownerUid = process.geteuid?.();
+  if (ownerUid === undefined) {
+    throw new FsSafeError("helper-unavailable", "secret directory initialization requires owner identity");
   }
+  const owner = await pinNodeDirectoryForMode(params.realPath, {
+    expectedIdentity: params.identity,
+    ownerUid,
+  });
+  try {
+    await owner.apply(params.mode, { beforeChmod: params.beforeChmod });
+  } finally {
+    await owner.close();
+  }
+}
+
+async function inspectPrivateDirectory(directory: string, kind: "root" | "directory component"): Promise<BigIntStats> {
+  return await inspectFileIdentity(async () => {
+    const stat = await fsp.lstat(directory, { bigint: true });
+    if (stat.isSymbolicLink()) {
+      throw new Error(`Private secret ${kind} ${directory} must not be a symlink.`);
+    }
+    if (!stat.isDirectory()) {
+      throw new Error(`Private secret ${kind} ${directory} must be a directory.`);
+    }
+    return stat;
+  });
 }
 
 async function ensurePrivateDirectory(
   rootDir: string,
   targetDir: string,
   mode: number,
-): Promise<{ rootGuard: AsyncDirectoryGuard; targetReal: string }> {
+): Promise<{ rootGuard: AsyncDirectoryGuard<BigIntStats>; parentGuard: AsyncDirectoryGuard<BigIntStats> }> {
   const resolvedRoot = path.resolve(rootDir);
   const resolvedTarget = path.resolve(targetDir);
-  await fsp.mkdir(resolvedRoot, { recursive: true, mode });
-  const rootStat = await fsp.lstat(resolvedRoot);
-  if (rootStat.isSymbolicLink()) {
-    throw new Error(`Private secret root ${resolvedRoot} must not be a symlink.`);
+  let rootStat = await inspectPrivateDirectory(resolvedRoot, "root").catch((error) => {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return undefined;
+  });
+  let createdRoot = false;
+  if (!rootStat) {
+    try {
+      createdRoot = await createPrivateDirectory(resolvedRoot, mode);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      await fsp.mkdir(path.dirname(resolvedRoot), { recursive: true, mode });
+      createdRoot = await createPrivateDirectory(resolvedRoot, mode);
+    }
+    rootStat = await inspectPrivateDirectory(resolvedRoot, "root");
   }
-  if (!rootStat.isDirectory()) {
-    throw new Error(`Private secret root ${resolvedRoot} must be a directory.`);
-  }
-  const rootGuard = await createAsyncDirectoryGuard(resolvedRoot);
-  await enforcePrivatePathMode(rootGuard.realPath, mode, "directory");
+  const rootGuard = await createAsyncDirectoryGuard(resolvedRoot, { bigint: true });
+  assertOwnedDirectory(rootStat, rootGuard.stat);
+  await enforcePrivateDirectoryMode({
+    realPath: rootGuard.realPath, identity: rootStat, mode, created: createdRoot,
+    beforeChmod: () => assertAsyncDirectoryGuard(rootGuard),
+  });
   await assertAsyncDirectoryGuard(rootGuard);
 
   if (resolvedTarget === resolvedRoot) {
-    return { rootGuard, targetReal: rootGuard.realPath };
+    return { rootGuard, parentGuard: rootGuard };
   }
 
   assertPathWithinRoot(resolvedRoot, resolvedTarget);
   const resolvedRootReal = rootGuard.realPath;
 
   let current = resolvedRoot;
+  let targetGuard = rootGuard;
   for (const segment of path
     .relative(resolvedRoot, resolvedTarget)
     .split(path.sep)
     .filter(Boolean)) {
     current = path.join(current, segment);
-    const parentGuard = await createAsyncDirectoryGuard(path.dirname(current));
+    const parentGuard = targetGuard;
+    let created = false;
+    let identity: BigIntStats;
     while (true) {
       await assertAsyncDirectoryGuard(rootGuard);
       await assertAsyncDirectoryGuard(parentGuard);
       try {
-        const stat = await fsp.lstat(current);
-        if (stat.isSymbolicLink()) {
-          throw new Error(`Private secret directory component ${current} must not be a symlink.`);
-        }
-        if (!stat.isDirectory()) {
-          throw new Error(`Private secret directory component ${current} must be a directory.`);
-        }
+        identity = await inspectPrivateDirectory(current, "directory component");
         break;
       } catch (error) {
         if (!error || typeof error !== "object" || !("code" in error) || error.code !== "ENOENT") {
           throw error;
         }
         await assertAsyncDirectoryGuard(parentGuard);
-        try {
-          await fsp.mkdir(current, { mode });
-        } catch (mkdirError) {
-          if ((mkdirError as NodeJS.ErrnoException).code !== "EEXIST") throw mkdirError;
-        }
-        // A successful mkdir or a competing creator still requires fresh type checks.
+        created = await createPrivateDirectory(current, mode);
+        // EEXIST grants no initialization authority; both outcomes need fresh type checks.
       }
     }
-    const currentReal = await fsp.realpath(current);
-    assertRealPathWithinRoot(resolvedRootReal, currentReal);
-    await enforcePrivatePathMode(currentReal, mode, "directory");
+    const currentGuard = await createAsyncDirectoryGuard(current, { bigint: true });
+    assertOwnedDirectory(identity, currentGuard.stat);
+    assertRealPathWithinRoot(resolvedRootReal, currentGuard.realPath);
+    await enforcePrivateDirectoryMode({
+      realPath: currentGuard.realPath, identity, mode, created,
+      beforeChmod: async () => {
+        await assertAsyncDirectoryGuard(parentGuard);
+        await assertAsyncDirectoryGuard(rootGuard);
+        await assertAsyncDirectoryGuard(currentGuard);
+      },
+    });
     await assertAsyncDirectoryGuard(parentGuard);
     await assertAsyncDirectoryGuard(rootGuard);
+    await assertAsyncDirectoryGuard(currentGuard);
+    targetGuard = currentGuard;
   }
-  return { rootGuard, targetReal: await fsp.realpath(resolvedTarget) };
+  return { rootGuard, parentGuard: targetGuard };
 }
 
 type SecretFileWriteParams = {
@@ -239,27 +294,45 @@ async function secretFileWriteQueueKey(filePath: string): Promise<string> {
   }
 }
 
-async function materializeSecretFileAtomic(
-  params: SecretFileWriteParams,
-  createOnly: boolean,
-): Promise<void> {
+// Internal preparation for private writers and their pre-write locks; not lasting authorization.
+export async function prepareSecretFileWrite(
+  params: Omit<SecretFileWriteParams, "content">,
+): Promise<{
+  mode: number;
+  rootGuard: AsyncDirectoryGuard<BigIntStats>;
+  parentGuard: AsyncDirectoryGuard<BigIntStats>;
+  fileName: string;
+  finalFilePath: string;
+}> {
   const mode = params.mode ?? PRIVATE_SECRET_FILE_MODE;
   const dirMode = params.dirMode ?? PRIVATE_SECRET_DIR_MODE;
   const resolvedRoot = path.resolve(params.rootDir);
   const resolvedFile = path.resolve(params.filePath);
   assertPathWithinRoot(resolvedRoot, resolvedFile);
+  for (const [kind, value] of [["file", mode], ["directory", dirMode]] as const) {
+    if (!Number.isInteger(value) || value < 0 || value > 0o7777) {
+      throw new FsSafeError("invalid-path", `Private secret ${kind} mode must be an integer between 0o0000 and 0o7777.`);
+    }
+  }
   const intendedParentDir = path.dirname(resolvedFile);
-  const { rootGuard, targetReal } = await ensurePrivateDirectory(
+  const { rootGuard, parentGuard } = await ensurePrivateDirectory(
     resolvedRoot,
     intendedParentDir,
     dirMode,
   );
   await assertAsyncDirectoryGuard(rootGuard);
-  assertRealPathWithinRoot(rootGuard.realPath, targetReal);
-  const parentGuard = await createAsyncDirectoryGuard(targetReal);
+  await assertAsyncDirectoryGuard(parentGuard);
+  assertRealPathWithinRoot(rootGuard.realPath, parentGuard.realPath);
   const fileName = path.basename(resolvedFile);
-  const finalFilePath = path.join(targetReal, fileName);
+  const finalFilePath = path.join(parentGuard.realPath, fileName);
+  return { mode, rootGuard, parentGuard, fileName, finalFilePath };
+}
 
+async function materializeSecretFileAtomic(
+  params: SecretFileWriteParams,
+  createOnly: boolean,
+): Promise<void> {
+  const { mode, rootGuard, parentGuard, fileName, finalFilePath } = await prepareSecretFileWrite(params);
   try {
     const stat = await fsp.lstat(finalFilePath);
     if (createOnly) {

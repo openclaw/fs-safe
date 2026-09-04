@@ -50,7 +50,7 @@ describe("secret file refusal paths", () => {
     const root = await tempRoot("fs-safe-secret-write-link-");
     const realRoot = path.join(root, "real");
     const linkedRoot = path.join(root, "linked-root");
-    await fs.mkdir(realRoot);
+    await fs.mkdir(realRoot, { mode: 0o700 });
     await fs.symlink(realRoot, linkedRoot);
     await expect(
       writeSecretFileAtomic({

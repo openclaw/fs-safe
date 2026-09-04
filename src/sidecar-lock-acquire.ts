@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { canonicalPathFromExistingAncestor } from "./absolute-path.js";
 import { FsSafeError } from "./errors.js";
 import { fileObservation } from "./file-observation.js";
 import { readFileHandleBounded } from "./bounded-read.js";
@@ -58,9 +59,17 @@ type SidecarLockAcquisitionContext = {
   ): Promise<boolean>;
 };
 
-async function resolveNormalizedTargetPath(targetPath: string): Promise<string> {
+async function resolveNormalizedTargetPath(targetPath: string, lockRoot?: Root): Promise<string> {
   const resolved = path.resolve(targetPath);
   const dir = path.dirname(resolved);
+  if (lockRoot) {
+    // The target is an arbitration key, not necessarily inside the lock Root.
+    // Leave parent creation to the Root-backed sidecar write.
+    await lockRoot.resolve(".");
+    const parent = await canonicalPathFromExistingAncestor(dir);
+    await lockRoot.resolve(".");
+    return path.join(parent, path.basename(resolved));
+  }
   await fs.mkdir(dir, { recursive: true });
   try {
     return path.join(await fs.realpath(dir), path.basename(resolved));
@@ -77,7 +86,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
   validateSidecarLockRetryOptions(retry);
   validateSidecarLockTimeoutMs(options.timeoutMs);
   context.ensureExitCleanupRegistered();
-  const normalizedTargetPath = await resolveNormalizedTargetPath(options.targetPath);
+  const normalizedTargetPath = await resolveNormalizedTargetPath(options.targetPath, options.lockRoot);
   const lockPath = options.lockPath ?? `${normalizedTargetPath}.lock`;
   let held = context.held.get(normalizedTargetPath);
   if (

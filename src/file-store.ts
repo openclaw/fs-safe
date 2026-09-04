@@ -10,6 +10,7 @@ import { pruneExpiredStoreEntries, type FileStorePruneOptions } from "./file-sto
 export type { FileStorePruneOptions } from "./file-store-prune.js";
 import {
   ensureParentInRoot,
+  openPrivateStoreLockRoot,
   openWritableStoreRoot,
   writeStreamToTempSource,
 } from "./file-store-boundary.js";
@@ -388,6 +389,9 @@ export function fileStore(options: FileStoreOptions): FileStore {
       return createJsonStore<T>(
         {
           filePath,
+          ...(privateMode ? {
+            prepareLock: () => openPrivateStoreLockRoot({ rootDir, filePath, mode, dirMode }),
+          } : {}),
           readIfExists: async () => {
             try {
               return await (await openRoot()).readJson<T>(assertRelativePath(relativePath));

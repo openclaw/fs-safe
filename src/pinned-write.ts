@@ -5,7 +5,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { Readable } from "node:stream";
 import { normalizeMaxBytes } from "./byte-budget.js";
-import { createAsyncDirectoryGuard, createNearestExistingDirectoryGuard, type AsyncDirectoryGuard } from "./directory-guard.js";
+import { createAsyncDirectoryGuard, createNearestExistingDirectoryGuard, inspectDirectoryIdentity, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { syncDirectoryBestEffort } from "./fsync.js";
 import type { FileIdentityStat } from "./file-identity.js";
@@ -106,7 +106,7 @@ export type PinnedWriteParams = {
   verifyPublished?: (
     fd: number,
     identity: PublishedWriteIdentity,
-    parentGuard: AsyncDirectoryGuard,
+    parentGuard: AnyAsyncDirectoryGuard,
   ) => Promise<void>;
 };
 
@@ -163,6 +163,10 @@ export async function runPinnedWriteWithRenamePolicy(
 }
 
 async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileIdentityStat> {
+  const exactRoot = typeof params.rootIdentity?.dev === "bigint" && typeof params.rootIdentity.ino === "bigint"
+    ? { dev: params.rootIdentity.dev, ino: params.rootIdentity.ino } : undefined;
+  if (exactRoot) await inspectDirectoryIdentity(params.rootPath, exactRoot);
+  const guardOptions = { bigint: exactRoot !== undefined };
   let parentPath = params.relativeParentPath
     ? path.join(params.rootPath, ...params.relativeParentPath.split("/"))
     : params.rootPath;
@@ -179,8 +183,8 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
     });
   }
   const parentGuard = params.mkdir
-    ? await createAsyncDirectoryGuard(parentPath)
-    : await createNearestExistingDirectoryGuard(params.rootPath, parentPath);
+    ? await createAsyncDirectoryGuard(parentPath, guardOptions)
+    : await createNearestExistingDirectoryGuard(params.rootPath, parentPath, guardOptions);
   const targetPath = path.join(parentPath, params.basename);
   if (params.overwrite === false) {
     const handle = await withAsyncDirectoryGuards(

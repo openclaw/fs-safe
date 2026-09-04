@@ -226,7 +226,7 @@ describe("deepsec regressions", () => {
     const rootDir = path.join(base, "root");
     const originalRoot = path.join(base, "root-original");
     const outside = path.join(base, "outside");
-    await fsp.mkdir(rootDir);
+    await fsp.mkdir(rootDir, { mode: 0o700 });
     await fsp.mkdir(outside);
     const secretPath = path.join(rootDir, "nested", "secret.txt");
     const realRealpath = fsp.realpath;
@@ -243,6 +243,7 @@ describe("deepsec regressions", () => {
     await expect(
       writeSecretFileAtomic({ rootDir, filePath: secretPath, content: "secret" }),
     ).rejects.toBeTruthy();
+    expect(swapped).toBe(true);
     await expect(fsp.lstat(path.join(outside, "nested"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -250,7 +251,7 @@ describe("deepsec regressions", () => {
     configureFsSafeNative({ mode: "off" });
     const base = await tempRoot("fs-safe-secret-native-off-");
     const rootDir = path.join(base, "root");
-    await fsp.mkdir(rootDir);
+    await fsp.mkdir(rootDir, { mode: 0o700 });
     const secretPath = path.join(rootDir, "secret.txt");
 
     await expect(
@@ -265,7 +266,7 @@ describe("deepsec regressions", () => {
     const rootDir = path.join(base, "root");
     const outside = path.join(base, "outside");
     const movedParent = path.join(base, "nested-original");
-    await fsp.mkdir(path.join(rootDir, "nested"), { recursive: true });
+    await fsp.mkdir(path.join(rootDir, "nested"), { recursive: true, mode: 0o700 });
     await fsp.mkdir(outside);
     const secretPath = path.join(rootDir, "nested", "secret.txt");
     const realLstat = fsp.lstat;
@@ -282,6 +283,7 @@ describe("deepsec regressions", () => {
     await expect(
       writeSecretFileAtomic({ rootDir, filePath: secretPath, content: "secret" }),
     ).rejects.toBeTruthy();
+    expect(swapped).toBe(true);
     await expect(fsp.lstat(path.join(outside, "secret.txt"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -291,7 +293,7 @@ describe("deepsec regressions", () => {
     const outside = path.join(base, "outside");
     const movedParent = path.join(base, "nested-original");
     const parentDir = path.join(rootDir, "nested");
-    await fsp.mkdir(parentDir, { recursive: true });
+    await fsp.mkdir(parentDir, { recursive: true, mode: 0o700 });
     await fsp.mkdir(outside);
     const secretPath = path.join(parentDir, "secret.txt");
     const realLstat = fsp.lstat;
@@ -313,6 +315,7 @@ describe("deepsec regressions", () => {
     await expect(
       writeSecretFileAtomic({ rootDir, filePath: secretPath, content: "secret" }),
     ).rejects.toBeTruthy();
+    expect(swapped).toBe(true);
     await expect(fsp.lstat(path.join(outside, "secret.txt"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -321,7 +324,7 @@ describe("deepsec regressions", () => {
     const rootDir = path.join(base, "root");
     const outside = path.join(base, "outside");
     const outsideFile = path.join(outside, "outside.txt");
-    await fsp.mkdir(rootDir);
+    await fsp.mkdir(rootDir, { mode: 0o700 });
     await fsp.mkdir(outside);
     await fsp.writeFile(outsideFile, "outside");
     await fsp.chmod(outsideFile, 0o600);

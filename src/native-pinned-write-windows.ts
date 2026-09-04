@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import fsSync, { type Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
-import type { AsyncDirectoryGuard } from "./directory-guard.js";
+import type { AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import type { FileIdentityStat } from "./file-identity.js";
 import {
@@ -34,7 +34,7 @@ export async function runPinnedWriteWindows(
   params: PinnedWriteParams,
   root: FileHandle,
   parentFd: number,
-  parentGuard: AsyncDirectoryGuard,
+  parentGuard: AnyAsyncDirectoryGuard,
 ): Promise<FileIdentityStat> {
   const parentPath = parentGuard.realPath;
   let tempFd: number | undefined;

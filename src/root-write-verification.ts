@@ -1,6 +1,6 @@
 import fsSync, { type BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
-import { assertAsyncDirectoryGuard, type AsyncDirectoryGuard } from "./directory-guard.js";
+import { assertAsyncDirectoryGuard, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { resolveOpenedFileRealPathForFd } from "./opened-realpath.js";
@@ -16,7 +16,7 @@ export async function verifyAtomicWriteResult(params: {
   fd: number;
   expectedIdentity: PublishedWriteIdentity;
   expectedMode?: number;
-  parentGuard: AsyncDirectoryGuard;
+  parentGuard: AnyAsyncDirectoryGuard;
 }): Promise<void> {
   let needsPathOpen = false;
   const assertFile = (stat: BigIntStats) => {

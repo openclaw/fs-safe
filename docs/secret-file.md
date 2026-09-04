@@ -159,7 +159,15 @@ type WriteSecretFileParams = {
 };
 ```
 
-The directory mode is asserted on each component along the path: `rootDir`, then any intermediate dirs, then the parent. The helper enforces that every component matches `dirMode` — wider permissions on an existing directory cause the write to fail. Audit and tighten existing secret directories yourself.
+The full POSIX directory mode is asserted on each component along the path: `rootDir`, then any intermediate dirs, then the parent. Existing directories, including another creator's `EEXIST` winner, must already match `dirMode` exactly or the write fails with `insecure-permissions`; they are never chmod-repaired. An explicitly requested directory mode such as `0o2750` preserves its setgid bit. Audit and adjust existing secret directories yourself. The admitted directory guards are retained through traversal and the final writer/lock handoff; a fresh pathname lookup cannot silently authorize a replacement. The caller must still trust the selected root and its owners; matching permission bits alone do not establish that trust.
+
+Directory admission and its retained guards use lossless bigint identities, including through private locks and native writes. On Windows, an unknown zero device or inode gets one reinspection that retains known components; a definite mismatch or persistent ambiguity fails with `path-mismatch` rather than authorizing a replacement.
+
+Both mode options must resolve to integers between `0o0000` and `0o7777`; invalid values fail with `invalid-path` before directory creation or file publication. Windows validates the options but does not enforce POSIX permission bits.
+
+After this operation wins directory creation, initialization uses a pinned descriptor bound to the admitted identity and effective user, with ancestor checks before chmod. It does not chmod the caller's pathname. Creation and descriptor admission are separate operations, not an atomic create-and-pin guarantee. A raced directory that has not reached its requested mode yet is rejected rather than repaired; callers may retry after its creator finishes initialization.
+
+Initialization fails closed if the platform cannot safely pin a created directory. In particular, a non-root macOS process cannot pin a new `000` directory produced by `umask(0o777)`; the write fails without repairing that directory or writing a secret. Restrictive masks retaining owner search permission remain usable. Linux x64/arm64 can use the guarded `O_PATH`/procfs descriptor route where available. There is no unguarded pathname-chmod fallback, and a failure may leave a created directory for caller-managed cleanup.
 
 ### `createSecretFileAtomic(params)`
 

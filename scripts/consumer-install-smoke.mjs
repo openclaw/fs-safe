@@ -65,7 +65,7 @@ const hashScript = `
   }
 `;
 
-export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCli, pnpmCli, allowHostOnly }) {
+export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCli, pnpmCli, allowHostOnly, source }) {
   const temporary = mkdtempSync(join(tmpdir(), "fs-safe-consumer-proof-"));
   let server;
   try {
@@ -93,7 +93,7 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
     }
     const host = hostNativeTarget();
     const proof = {
-      host: host.label, node: process.version,
+      host: host.label, node: process.version, source,
       root: manifest.find((artifact) => artifact.name === rootPkg.name),
       syntheticForeignPackages: synthetic, managers: [],
     };
@@ -134,6 +134,13 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
         cases.auto = await hash("auto");
         cases.off = await hash("off");
         if (!omitted) {
+          const secretProbe = join(directory, "secret-probe.mjs");
+          writeFileSync(secretProbe, readFileSync(new URL("./consumer-secret-probe.mjs", import.meta.url)));
+          writeFileSync(join(directory, "consumer-proof-metadata.mjs"), readFileSync(new URL("./consumer-proof-metadata.mjs", import.meta.url)));
+          cases.secretDirectories = [];
+          for (const mode of ["off", "require"]) {
+            cases.secretDirectories.push(JSON.parse(await run(secretProbe, [mode], directory, env)));
+          }
           renameSync(installed.binary, `${installed.binary}.removed`);
           cases.missingBinaryAuto = await hash("auto");
           cases.missingBinaryRequire = await hash("require", true);
