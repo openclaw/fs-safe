@@ -15,6 +15,8 @@ export const WINDOWS_ARCHIVE_PORTABILITY_NAMES = [
   ...WINDOWS_RESERVED_ARCHIVE_NAMES.flatMap((name) => [name, `${name}.txt`]),
   "NUL.",
   "NUL ",
+  "nul .txt",
+  "nested/COM1 .log",
   "CON.txt.",
   "CON.txt ",
   "COM1.",

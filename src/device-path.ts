@@ -127,8 +127,12 @@ function normalizeWindowsDeviceBaseName(filePath: string): string {
   const normalized = trimTrailingWindowsSeparators(filePath.replace(/\//g, "\\"));
   const lastSegment = normalized.split("\\").filter(Boolean).at(-1) ?? normalized;
   const withoutStream = lastSegment.split(":")[0] ?? lastSegment;
-  const withoutTrailingIgnoredChars = trimTrailingWindowsIgnoredChars(withoutStream);
-  return (withoutTrailingIgnoredChars.split(".")[0] ?? withoutTrailingIgnoredChars).toUpperCase();
+  const stem = withoutStream.split(".")[0] ?? withoutStream;
+  return trimTrailingWindowsIgnoredChars(stem).toUpperCase();
+}
+
+export function isWindowsReservedDeviceName(name: string): boolean {
+  return name.length > 0 && WINDOWS_RESERVED_DEVICE_NAMES.has(normalizeWindowsDeviceBaseName(name));
 }
 
 function matchWindowsDeviceReadPath(filePath: string): UnsafeDeviceReadPathMatch | undefined {

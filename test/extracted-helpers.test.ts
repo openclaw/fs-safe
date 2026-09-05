@@ -148,6 +148,20 @@ describe("archive entry helpers", () => {
     }
   });
 
+  it("rejects reserved device segments only on Windows", () => {
+    for (const entryPath of ["CON", "NUL", "CON.txt", "COM1", "nested/LPT1", "CON .", "nul .txt", "nested/COM1 .log", "NUL/leaf.txt"]) {
+      if (process.platform === "win32") {
+        expect(() => validateArchiveEntryPath(entryPath), entryPath).toThrow(
+          "archive entry uses a reserved device path",
+        );
+      } else {
+        expect(() => validateArchiveEntryPath(entryPath), entryPath).not.toThrow();
+      }
+    }
+    expect(() => validateArchiveEntryPath("console.txt")).not.toThrow();
+    expect(() => validateArchiveEntryPath("content.txt")).not.toThrow();
+  });
+
   it("resolves archive output paths under the destination root", () => {
     const rootDir = path.join(path.sep, "tmp", "archive-root");
     expect(

@@ -124,6 +124,12 @@ Unicode Path names use the same canonicalization.
 Raw paths undergo traversal, absolute/drive-path, and NUL validation **before**
 canonicalization; normalization cannot turn an unsafe path into an accepted
 one. Stripping and output collision checks use this same canonical identity.
+On Windows, archive admission also rejects reserved device segments such as
+`NUL`, `CON.txt`, and `nul .txt` with `ArchiveSecurityError("entry-path")`,
+before extraction or bounded member reads. Ignored trailing spaces in the stem
+before an extension do not bypass this check. Ordinary members with these names
+remain valid on POSIX; this is a host-specific device guard, not a portable-name
+restriction.
 Filters that compare exact strings should use canonical pre-strip paths,
 including directory names without a trailing `/`.
 Returning `"skip"` rejects the whole archive unless `onFiltered` is

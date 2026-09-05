@@ -1,5 +1,6 @@
 import path from "node:path";
 import { ArchiveSecurityError } from "./archive-errors.js";
+import { isWindowsReservedDeviceName } from "./device-path.js";
 import { formatErrorDetail } from "./error-detail.js";
 import { resolveSafeBaseDir } from "./path.js";
 
@@ -40,6 +41,15 @@ export function validateArchiveEntryPath(
     throw new ArchiveSecurityError(
       "entry-path",
       `archive entry uses a Windows alternate data stream path: ${formatErrorDetail(entryPath)}`,
+    );
+  }
+  if (
+    process.platform === "win32" &&
+    slashNormalized.split("/").some((segment) => isWindowsReservedDeviceName(segment))
+  ) {
+    throw new ArchiveSecurityError(
+      "entry-path",
+      `archive entry uses a reserved device path: ${formatErrorDetail(entryPath)}`,
     );
   }
   const normalized = path.posix.normalize(slashNormalized);

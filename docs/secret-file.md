@@ -91,6 +91,11 @@ credential must also fail on broad permissions or unexpected ownership.
 the same pinned-handle validation, byte cap, trimming, error codes, and strict
 versus missing-is-undefined naming semantics.
 
+Both readers reject known unsafe device and process-fd paths with `device-path`
+before inspection, and check the resolved target before opening it. This includes
+Windows reserved device names and ignored-space aliases such as `nul .txt`.
+Optional readers propagate this error instead of treating the secret as missing.
+
 Both sync and async readers compare lossless bigint identities from the preview,
 opened descriptor, resolved target, and current input path before reading. POSIX
 opens are nonblocking, so a raced FIFO is rejected by descriptor type instead of

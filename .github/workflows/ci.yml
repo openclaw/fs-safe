@@ -64,6 +64,10 @@ jobs:
       - name: Check JavaScript fallback
         run: pnpm check
 
+      - name: Prove archive device admission and secret reads
+        if: matrix.node == 24
+        run: node scripts/device-path-proof.mjs off
+
       - name: Prove slow package-copy fixture lifetime on Windows
         if: matrix.os == 'windows-latest'
         run: pnpm test --config scripts/slow-package-copy.config.ts
@@ -126,6 +130,9 @@ jobs:
 
       - name: Build and stage host binding
         run: pnpm native:build
+
+      - name: Prove archive device admission and secret reads with native binding
+        run: node scripts/device-path-proof.mjs require
 
       - name: Prove temp workspace quarantine swap at native removal
         run: node scripts/temp-workspace-quarantine-swap-proof.mjs

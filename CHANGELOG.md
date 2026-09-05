@@ -4,6 +4,7 @@
 
 **Highlights:** TAR/gzip extraction now shares one parser across native and fallback modes, improving compatibility with system-tar output while keeping admission and publication guarded.
 
+- Reject reserved archive device names and ignored-space aliases on Windows while preserving ordinary POSIX members, and guard secret reads with the documented `device-path` rejection. Thanks @SebTardif.
 - Unify native and guarded JavaScript TAR admission on one Rust core, bundle its WASM build, and accept strict UTF-8/newline PAX paths without a runtime `tar` dependency; retain bounded framing, raw-field validation, and guarded publication.
 - Accept bounded all-zero gzip container padding from system-tar stdout after validated member trailers, and reject nonzero data hidden after padding on both native and guarded JavaScript TAR routes.
 - Fix `replaceFileAtomic({ dirMode })` rejecting a raw `fs.stat` mode: directory modes are masked to permission bits (`0o7777`) before application and verification, matching chmod semantics; 0.8.0 regressed this input tolerance with `directory final mode could not be verified`.
