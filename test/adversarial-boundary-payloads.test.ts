@@ -72,7 +72,7 @@ async function attemptAll(rootDir: Awaited<ReturnType<typeof openRoot>>, payload
 }
 
 describe("adversarial boundary payloads", () => {
-  describe.sequential("generated traversal corpus", () => {
+  describe("generated traversal corpus", { concurrent: false }, () => {
     const directories: string[] = [];
     const run = useSuiteFixture(async () => {
       const layout = await makeTempLayout("fs-safe-adversarial-corpus", directories);
@@ -106,7 +106,7 @@ describe("adversarial boundary payloads", () => {
     await expectNoOutsideWrite(layout);
   });
 
-  describe.sequential("copy and move source and destination attacks", () => {
+  describe("copy and move source and destination attacks", { concurrent: false }, () => {
     const directories: string[] = [];
     const run = useSuiteFixture(async () => {
       const layout = await makeTempLayout("fs-safe-copy-move-corpus", directories);
