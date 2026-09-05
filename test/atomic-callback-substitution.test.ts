@@ -245,6 +245,8 @@ describe("atomic beforeRename ownership", () => {
   });
 
   it("keeps strict async identity checks on rename-unstable filesystems", async () => {
+    // FAT-family filesystems mint a fresh identity on rename: identical
+    // bytes must succeed after structural + byte checks (reanchorToPublished).
     const root = await tempRoot("fs-safe-atomic-fuse-strict-async-");
     const filePath = path.join(root, "target");
     await fs.writeFile(filePath, "old");
@@ -260,12 +262,55 @@ describe("atomic beforeRename ownership", () => {
           },
         },
       },
-    })).rejects.toMatchObject({ code: "path-mismatch" });
+    })).resolves.toEqual({ method: "rename" });
     expect(await fs.readFile(filePath, "utf8")).toBe("new");
   });
 
+  it("still rejects swapped bytes on rename-unstable filesystems (async)", async () => {
+    // Same publication, but swapped bytes afterwards must still fail.
+    const root = await tempRoot("fs-safe-atomic-fuse-swapped-async-");
+    const filePath = path.join(root, "target");
+    await fs.writeFile(filePath, "old");
+    await expect(replaceFileAtomic({
+      filePath,
+      content: "new",
+      fileSystem: {
+        promises: {
+          ...fs,
+          rename: async (source, destination) => {
+            await fs.copyFile(source, destination);
+            await fs.unlink(source);
+            await fs.writeFile(destination, "tampered");
+          },
+        },
+      },
+    })).rejects.toMatchObject({ code: "path-mismatch" });
+    expect(await fs.readFile(filePath, "utf8")).toBe("tampered");
+  });
+
   it("keeps strict sync identity checks on rename-unstable filesystems", async () => {
+    // FAT-family filesystems mint a fresh identity on rename: identical
+    // bytes must succeed after structural + byte checks (reanchorToPublished).
     const root = await tempRoot("fs-safe-atomic-fuse-strict-sync-");
+    const filePath = path.join(root, "target");
+    fsSync.writeFileSync(filePath, "old");
+    expect(replaceFileAtomicSync({
+      filePath,
+      content: "new",
+      fileSystem: {
+        ...fsSync,
+        renameSync: (source, destination) => {
+          fsSync.copyFileSync(source, destination);
+          fsSync.unlinkSync(source);
+        },
+      },
+    })).toEqual({ method: "rename" });
+    expect(fsSync.readFileSync(filePath, "utf8")).toBe("new");
+  });
+
+  it("still rejects swapped bytes on rename-unstable filesystems (sync)", async () => {
+    // Same publication, but swapped bytes afterwards must still fail.
+    const root = await tempRoot("fs-safe-atomic-fuse-swapped-sync-");
     const filePath = path.join(root, "target");
     fsSync.writeFileSync(filePath, "old");
     expect(() => replaceFileAtomicSync({
@@ -276,10 +321,11 @@ describe("atomic beforeRename ownership", () => {
         renameSync: (source, destination) => {
           fsSync.copyFileSync(source, destination);
           fsSync.unlinkSync(source);
+          fsSync.writeFileSync(destination, "tampered");
         },
       },
     })).toThrow(expect.objectContaining({ code: "path-mismatch" }));
-    expect(fsSync.readFileSync(filePath, "utf8")).toBe("new");
+    expect(fsSync.readFileSync(filePath, "utf8")).toBe("tampered");
   });
 
   it("accepts async rename-unstable publication only with locked content verification", async () => {

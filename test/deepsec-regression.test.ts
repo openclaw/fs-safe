@@ -32,7 +32,7 @@ describe("deepsec regressions", () => {
     ).toThrow();
     await expect(
       replaceFileAtomic({ filePath: target, content: "x", tempPrefix: "../escape" }),
-    ).rejects.toThrow();
+    ).rejects.toThrow("single path segment");
     await expect(
       writeViaSiblingTempPath({
         rootDir: base,

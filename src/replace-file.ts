@@ -29,7 +29,6 @@ import {
   withAtomicRenameIdentityLockSync,
 } from "./replace-file-rename-policy.js";
 import { AsyncAtomicTempOwner, SyncAtomicTempOwner } from "./replace-file-temp-owner.js";
-import { assertSafePathPrefix } from "./safe-path-segment.js";
 import { sleep, sleepSync } from "./timing.js";
 import { serializePathWrite } from "./write-queue.js";
 
@@ -234,8 +233,15 @@ function validateRestoreOptions(options: ReplaceFileAtomicBaseOptions): void {
 
 function buildReplaceTempPath(filePath: string, tempPrefix?: string): string {
   const dir = path.dirname(filePath);
-  const safePrefix = assertSafePathPrefix(tempPrefix ?? ".fs-safe-replace", { label: "atomic replace temp prefix" });
-  return path.join(dir, `${safePrefix}.${process.pid}.${randomUUID()}.tmp`);
+  // Keep temp basenames within 8.3 (<=12 chars): FAT-family filesystems
+  // (exFAT/FAT32 USB sticks) mint a fresh ino on rename for longer names,
+  // breaking post-rename identity checks. Hostile prefixes still throw.
+  if (tempPrefix !== undefined && /[/\\]/.test(tempPrefix)) {
+    throw new Error("atomic replace temp prefix must be a single path segment");
+  }
+  const sanitized = (tempPrefix ?? "").replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  const stem = sanitized && sanitized.length <= 8 ? sanitized : randomUUID().slice(0, 8);
+  return path.join(dir, `${stem}.tmp`);
 }
 
 async function resolveMode(options: ReplaceFileAtomicOptions): Promise<number> {
@@ -317,7 +323,23 @@ async function replaceFileAtomicUnserialized(
   const tempOwner = new AsyncAtomicTempOwner(tempPath);
   let originalError: unknown;
   try {
-    await fsModule.mkdir(dir, { recursive: true, mode: dirMode });
+    // Skip mkdir -p when the dir exists: FAT-family USB roots reject
+    // mkdir-with-mode with EPERM even for existing dirs.
+    const dirExists = await fsModule.stat(dir).then(
+      (stat) => stat.isDirectory(),
+      (error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+        throw error;
+      },
+    );
+    if (!dirExists) {
+      try {
+        await fsModule.mkdir(dir, { recursive: true, mode: dirMode });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EPERM") throw error;
+        await fsModule.mkdir(dir, { recursive: true });
+      }
+    }
     await applyDirectoryMode({ fsModule, dirPath: dir, mode: dirMode });
     tempOwner.start();
     tempOwner.adopt(await writeTempFile({
@@ -350,7 +372,7 @@ async function replaceFileAtomicUnserialized(
     });
     if (result.method === "rename") {
       tempOwner.markRenamed();
-      await tempOwner.assertPublished(fsModule, filePath, expectedHash);
+      await tempOwner.assertPublished(fsModule, filePath, expectedHash, options.content);
     } else {
       await tempOwner.assertCurrent(fsModule);
     }
@@ -360,7 +382,7 @@ async function replaceFileAtomicUnserialized(
       await syncDirectoryBestEffort(fsModule, dir);
     }
     if (result.method === "rename") {
-      await tempOwner.assertPublished(fsModule, filePath, expectedHash);
+      await tempOwner.assertPublished(fsModule, filePath, expectedHash, options.content);
     }
     return result;
   } catch (error) {
@@ -417,7 +439,21 @@ function replaceFileAtomicSyncUnserialized(
   const tempOwner = new SyncAtomicTempOwner(tempPath);
   let originalError: unknown;
   try {
-    fsModule.mkdirSync(dir, { recursive: true, mode: dirMode });
+    // Same FAT-family guard as async: skip mkdir when the dir exists.
+    let dirExists = false;
+    try {
+      dirExists = fsModule.statSync(dir).isDirectory();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    if (!dirExists) {
+      try {
+        fsModule.mkdirSync(dir, { recursive: true, mode: dirMode });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EPERM") throw error;
+        fsModule.mkdirSync(dir, { recursive: true });
+      }
+    }
     applyDirectoryModeSync({ fsModule, dirPath: dir, mode: dirMode, fchmodSync });
     tempOwner.start();
     tempOwner.adopt(writeTempFileSync({
@@ -452,7 +488,7 @@ function replaceFileAtomicSyncUnserialized(
     });
     if (result.method === "rename") {
       tempOwner.markRenamed();
-      tempOwner.assertPublished(fsModule, filePath, expectedHash);
+      tempOwner.assertPublished(fsModule, filePath, expectedHash, options.content);
     } else {
       tempOwner.assertCurrent(fsModule);
     }
@@ -460,7 +496,7 @@ function replaceFileAtomicSyncUnserialized(
       syncDirectoryBestEffortSync(fsModule, dir);
     }
     if (result.method === "rename") {
-      tempOwner.assertPublished(fsModule, filePath, expectedHash);
+      tempOwner.assertPublished(fsModule, filePath, expectedHash, options.content);
     }
     return result;
   } catch (error) {

@@ -187,7 +187,10 @@ export function tryReadJsonSync<T = unknown>(
 
 export function writeJsonSync(pathname: string, data: unknown) {
   // Keep literal parent segments so staging follows the same symlinks as the target.
-  const tmpPath = path.format({ ...path.parse(pathname), base: `.fs-safe-${randomUUID()}.tmp` });
+  // NOTE: keep the temp basename within 8.3 (<=12 chars): FAT-family filesystems
+  // (exFAT/FAT32 USB sticks) do not preserve file identity across rename for
+  // longer basenames, which breaks sameFileIdentityForCleanup checks downstream.
+  const tmpPath = path.format({ ...path.parse(pathname), base: `${randomUUID().slice(0, 8)}.tmp` });
   const payload = `${stringifyJsonDocument(data, null, 2)}\n`;
 
   fsSync.mkdirSync(path.dirname(pathname), { recursive: true, mode: JSON_DIR_MODE });

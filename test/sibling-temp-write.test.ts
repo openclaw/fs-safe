@@ -29,7 +29,7 @@ describe("writeViaSiblingTempPath", () => {
         },
       });
 
-      expect(path.basename(tempPath)).toContain(".test-output-");
+      expect(path.basename(tempPath)).toHaveLength(12);
       await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("ok");
       await expect(fs.stat(tempPath)).rejects.toMatchObject({ code: "ENOENT" });
     });
@@ -50,11 +50,10 @@ describe("writeViaSiblingTempPath", () => {
         },
       });
 
-      expect(Math.max(
-        Buffer.byteLength(stagedName.normalize("NFC")),
-        Buffer.byteLength(stagedName.normalize("NFD")),
-      )).toBeLessThanOrEqual(255);
-      expect(stagedName).toMatch(/\.json\.part$/u);
+      // Staging temp names stay within 8.3 (<=12 chars) so FAT-family
+      // filesystems keep a stable file identity across the staging write.
+      expect(stagedName).toHaveLength(12);
+      expect(stagedName).toMatch(/\.tmp$/u);
       await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("ok");
     });
   });

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fix atomic writes on FAT-family filesystems (exFAT/FAT32 USB sticks): Windows mints a fresh file identity on rename when names exceed the 8.3 short-name budget, so `replaceFileAtomic` failed with `path-mismatch` even though the bytes landed. Temp/staging basenames now stay within 8.3 (<=12 chars); post-rename verification re-anchors to the published file's live identity after structural checks plus a staged-bytes equality gate (swapped bytes still fail); `mkdir -p` is skipped when the directory exists (FAT USB roots reject mkdir-with-mode).
 - Fix `replaceFileAtomic({ dirMode })` rejecting a raw `fs.stat` mode: directory modes are masked to permission bits (`0o7777`) before application and verification, matching chmod semantics; 0.8.0 regressed this input tolerance with `directory final mode could not be verified`.
 
 ## 0.8.1 - 2026-09-04

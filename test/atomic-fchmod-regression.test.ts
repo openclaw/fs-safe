@@ -372,7 +372,7 @@ describe("atomic descriptor modes", () => {
 
     expect(await fs.readFile(filePath, "utf8")).toBe("original");
     expect((await fs.stat(filePath)).mode & 0o777).toBe(0o644);
-    expect((await fs.readdir(root)).filter((entry) => entry.startsWith(".fs-safe-replace")))
+    expect((await fs.readdir(root)).filter((entry) => entry.endsWith(".tmp")))
       .toEqual([]);
     expect((await fs.readdir(descriptorDirectory)).length).toBe(descriptorsBefore);
   });

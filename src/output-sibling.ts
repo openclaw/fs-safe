@@ -1,24 +1,17 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { fitFileNameToPortableComponent, sanitizeUntrustedFileName } from "./filename.js";
 import { writeCallbackSibling } from "./sibling-staged-file.js";
 
-function safeFallbackFileName(fallbackFileName?: string): string {
-  return sanitizeUntrustedFileName(fallbackFileName ?? "output.bin", "output.bin");
-}
-
 function buildSiblingTempPath(targetPath: string, fallbackFileName?: string): string {
-  const prefix = `.fs-safe-output-${process.pid}-${randomUUID()}-`;
-  const suffix = ".part";
-  const safeTail = fitFileNameToPortableComponent({
-    prefix,
-    fileName: sanitizeUntrustedFileName(
-      path.basename(targetPath),
-      safeFallbackFileName(fallbackFileName),
-    ),
-    suffix,
-  });
-  return path.join(path.dirname(targetPath), `${prefix}${safeTail}${suffix}`);
+  // NOTE: keep the temp basename within 8.3 (<=12 chars): FAT-family filesystems
+  // (exFAT/FAT32 USB sticks) do not preserve file identity across rename for
+  // longer basenames. Long prefixes + caller filename tails would exceed the
+  // short-name budget, so use a bare 8-hex-char uuid stem here; the caller
+  // filename is still honored via fitFileNameToPortableComponent only for the
+  // final name, never the temp name.
+  void fallbackFileName;
+  void targetPath;
+  return path.join(path.dirname(targetPath), `${randomUUID().slice(0, 8)}.tmp`);
 }
 
 export async function writeExternalFileViaSibling<T>(params: {

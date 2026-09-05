@@ -193,12 +193,25 @@ export class AsyncAtomicTempOwner {
     fsModule: AsyncOwnerFileSystem,
     pathname: string,
     expectedHash?: string,
+    stagedContent?: string | Uint8Array,
   ): Promise<void> {
     try {
       await this.assertCurrent(fsModule, pathname);
       return;
     } catch (error) {
-      if (!(error instanceof FsSafeError) || error.code !== "path-mismatch" || !expectedHash) {
+      if (!(error instanceof FsSafeError) || error.code !== "path-mismatch") {
+        throw error;
+      }
+      // FAT-family filesystems (exFAT/FAT32 USB sticks) mint a fresh ino when
+      // the dest basename exceeds 8.3 (>=16 chars observed): content landed,
+      // only the staged receipt is stale. Re-anchor adopts the live identity
+      // after structural checks + staged-bytes equality gate (swapped bytes
+      // still fail). Never deletes or rolls back.
+      if (!expectedHash && stagedContent !== undefined) {
+        await this.reanchorToPublished(fsModule, pathname, stagedContent);
+        return;
+      }
+      if (!expectedHash) {
         throw error;
       }
     }
@@ -240,6 +253,49 @@ export class AsyncAtomicTempOwner {
   markRenamed(): void {
     this.#exists = false;
     this.#unregister();
+  }
+
+  /**
+   * Adopt the published file's live identity after a post-rename identity
+   * mismatch (FAT-family filesystems minting a fresh ino on rename — see
+   * assertPublished above). Structural checks + staged-bytes equality gate;
+   * never deletes or rolls back the published file.
+   */
+  async reanchorToPublished(fsModule: AsyncOwnerFileSystem, pathname: string, stagedContent: string | Uint8Array): Promise<void> {
+    let published: FileHandle | undefined;
+    try {
+      try {
+        published = await fsModule.open(pathname, PUBLISHED_READ_FLAGS);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+          throw new FsSafeError("symlink", `Atomic replace published file became a symlink: ${pathname}`, {
+            cause: error,
+          });
+        }
+        throw error;
+      }
+      const identity = await inspectFileIdentity(async () => {
+        const stat = await published!.stat({ bigint: true });
+        assertOwnedFile(stat, pathname, false);
+        return stat;
+      });
+      await inspectFileIdentity(async () => {
+        const stat = await fsModule.lstat(pathname, { bigint: true });
+        assertOwnedFile(stat, pathname, true);
+        return stat;
+      }, identity);
+      // Byte gate: only our staged bytes may be adopted; swapped bytes fail.
+      const stagedBytes = typeof stagedContent === "string" ? Buffer.from(stagedContent, "utf8") : Buffer.from(stagedContent);
+      if (!(await published.readFile()).equals(stagedBytes)) {
+        throw new FsSafeError("path-mismatch", `Atomic replace published content changed: ${pathname}`);
+      }
+      await this.#handle?.close();
+      this.#handle = published;
+      this.#identity = identity;
+      published = undefined;
+    } finally {
+      await published?.close().catch(() => undefined);
+    }
   }
 
   async finish(params: {
@@ -334,12 +390,21 @@ export class SyncAtomicTempOwner {
     fsModule: SyncOwnerFileSystem,
     pathname: string,
     expectedHash?: string,
+    stagedContent?: string | Uint8Array,
   ): void {
     try {
       this.assertCurrent(fsModule, pathname);
       return;
     } catch (error) {
-      if (!(error instanceof FsSafeError) || error.code !== "path-mismatch" || !expectedHash) {
+      if (!(error instanceof FsSafeError) || error.code !== "path-mismatch") {
+        throw error;
+      }
+      // Same FAT-family re-anchor as the async owner (see above).
+      if (!expectedHash && stagedContent !== undefined) {
+        this.reanchorToPublished(fsModule, pathname, stagedContent);
+        return;
+      }
+      if (!expectedHash) {
         throw error;
       }
     }
@@ -387,6 +452,50 @@ export class SyncAtomicTempOwner {
   markRenamed(): void {
     this.#exists = false;
     this.#unregister();
+  }
+
+  /** Sync mirror of async reanchorToPublished above. */
+  reanchorToPublished(fsModule: SyncOwnerFileSystem, pathname: string, stagedContent: string | Uint8Array): void {
+    let publishedFd: number | undefined;
+    try {
+      try {
+        publishedFd = fsModule.openSync(pathname, PUBLISHED_READ_FLAGS);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+          throw new FsSafeError("symlink", `Atomic replace published file became a symlink: ${pathname}`, {
+            cause: error,
+          });
+        }
+        throw error;
+      }
+      const identity = inspectFileIdentitySync(() => {
+        const stat = fsModule.fstatSync(publishedFd!, { bigint: true });
+        assertOwnedFile(stat, pathname, false);
+        return stat;
+      });
+      inspectFileIdentitySync(() => {
+        const stat = fsModule.lstatSync(pathname, { bigint: true });
+        assertOwnedFile(stat, pathname, true);
+        return stat;
+      }, identity);
+      // Byte gate (same as async): swapped bytes still fail closed.
+      const stagedBytes = typeof stagedContent === "string" ? Buffer.from(stagedContent, "utf8") : Buffer.from(stagedContent);
+      if (!fsModule.readFileSync(publishedFd).equals(stagedBytes)) {
+        throw new FsSafeError("path-mismatch", `Atomic replace published content changed: ${pathname}`);
+      }
+      fsModule.closeSync(this.#fd!);
+      this.#fd = publishedFd;
+      this.#identity = identity;
+      publishedFd = undefined;
+    } finally {
+      if (publishedFd !== undefined) {
+        try {
+          fsModule.closeSync(publishedFd);
+        } catch {
+          // Best-effort close after a rejected re-anchor.
+        }
+      }
+    }
   }
 
   finish(params: {

@@ -2,10 +2,8 @@ import crypto, { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard } from "./directory-guard.js";
-import { fitFileNameToPortableComponent, sanitizeUntrustedFileName } from "./filename.js";
 import { applyDirectoryMode } from "./replace-file-descriptor.js";
 import { root } from "./root.js";
-import { assertSafePathPrefix } from "./safe-path-segment.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
 import { writeCallbackSibling } from "./sibling-staged-file.js";
 import { tempFile } from "./temp-target.js";
@@ -32,10 +30,18 @@ export type WriteSiblingTempFileResult<T> = {
 };
 
 function buildTempPath(dir: string, tempPrefix?: string): string {
-  const safePrefix = assertSafePathPrefix(tempPrefix ?? ".fs-safe-stream", {
-    label: "sibling temp prefix",
-  });
-  return path.join(dir, `${safePrefix}.${process.pid}.${randomUUID()}.tmp`);
+  // Same FAT-family constraint as replace-file.ts: keep the sibling temp
+  // basename within 8.3 (<=12 chars) so rename preserves file identity
+  // on exFAT/FAT32 USB sticks. Honor a short caller prefix when it fits;
+  // a hostile prefix (path separators) must still throw, not silently
+  // collapse to a random name — callers rely on rejection for audit.
+  const raw = tempPrefix ?? "";
+  if (/[/\\]/.test(raw)) {
+    throw new Error("sibling temp prefix must be a single path segment");
+  }
+  const requested = raw.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  const stem = requested && requested.length <= 8 ? requested : randomUUID().slice(0, 8);
+  return path.join(dir, `${stem}.tmp`);
 }
 
 export async function writeSiblingTempFile<T>(
@@ -62,26 +68,23 @@ export async function writeSiblingTempFile<T>(
   });
 }
 
-function buildSiblingTempPath(params: {
+function buildSiblingTempPath(_params: {
   targetPath: string;
   fallbackFileName: string;
   tempPrefix: string;
 }): string {
-  const id = crypto.randomUUID();
-  const safePrefix = assertSafePathPrefix(params.tempPrefix, {
-    label: "sibling temp prefix",
-  });
-  const prefix = `${safePrefix}${id}-`;
-  const suffix = ".part";
-  const safeTail = fitFileNameToPortableComponent({
-    prefix,
-    fileName: sanitizeUntrustedFileName(
-      path.basename(params.targetPath),
-      params.fallbackFileName,
-    ),
-    suffix,
-  });
-  return path.join(path.dirname(params.targetPath), `${prefix}${safeTail}${suffix}`);
+  // NOTE: staging temp names stay within 8.3 (<=12 chars): FAT-family
+  // filesystems (exFAT/FAT32 USB sticks) do not preserve file identity
+  // across writes for longer basenames. The caller filename is honored
+  // for the FINAL name via copyIn, never for the staging temp name.
+  // A hostile tempPrefix (path separators) must still throw, not silently
+  // collapse — callers rely on rejection for audit.
+  if (/[/\\]/.test(_params.tempPrefix ?? "")) {
+    throw new Error("sibling temp prefix must be a single path segment");
+  }
+  const sanitized = (_params.tempPrefix ?? "").replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  const stem = sanitized && sanitized.length <= 8 ? sanitized : crypto.randomUUID().slice(0, 8);
+  return path.join(path.dirname(_params.targetPath), `${stem}.tmp`);
 }
 
 export async function writeViaSiblingTempPath(params: {

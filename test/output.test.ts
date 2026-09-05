@@ -47,7 +47,7 @@ describe("writeExternalFileWithinRoot", () => {
       write: async (candidate) => {
         stagedPath = candidate;
         expect(path.dirname(candidate)).toBe(await fs.realpath(targetDir));
-        expect(path.basename(candidate)).toMatch(/^\.fs-safe-output-.*-report\.txt\.part$/);
+        expect(path.basename(candidate)).toHaveLength(12);
         await fs.writeFile(candidate, "new", "utf8");
         await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("old");
         return "written";
@@ -77,11 +77,10 @@ describe("writeExternalFileWithinRoot", () => {
       },
     });
 
-    expect(Math.max(
-      Buffer.byteLength(stagedName.normalize("NFC")),
-      Buffer.byteLength(stagedName.normalize("NFD")),
-    )).toBeLessThanOrEqual(255);
-    expect(stagedName).toMatch(/\.json\.part$/u);
+    // Sibling staging temp names stay within 8.3 (<=12 chars) so FAT-family
+    // filesystems keep a stable file identity across the staging write.
+    expect(stagedName).toHaveLength(12);
+    expect(stagedName).toMatch(/\.tmp$/u);
     expect(path.basename(result.path)).toBe(fileName);
     await expect(fs.readFile(path.join(rootDir, fileName), "utf8")).resolves.toBe("long");
   });
@@ -164,7 +163,15 @@ describe("writeExternalFileWithinRoot", () => {
       });
 
       expect(stagedName).not.toMatch(/[\u0000-\u001f\u007f-\u009f<>:"/\\|?*]/u);
-      expect(stagedName).toContain("safe-output.bin");
+      if (staging === "workspace") {
+        // Workspace staging preserves the caller filename tail (copyIn path).
+        expect(stagedName).toContain("safe-output.bin");
+      } else {
+        // Sibling staging uses a bare 8.3 temp name (FAT-family identity):
+        // the caller filename is honored for the FINAL name only.
+        expect(stagedName).toHaveLength(12);
+        expect(stagedName).toMatch(/\.tmp$/u);
+      }
       expect(result.path).toBe(path.join(await fs.realpath(rootDir), "safe-output.bin"));
       await expect(fs.readFile(result.path, "utf8")).resolves.toBe("safe");
       await expect(fs.stat(path.join(rootDir, controlName))).rejects.toMatchObject({
