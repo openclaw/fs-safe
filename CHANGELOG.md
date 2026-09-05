@@ -1,5 +1,7 @@
 # Changelog
 
+## Unreleased
+
 ## 0.8.2 - 2026-09-05
 
 **Highlights:** TAR/gzip extraction now shares one parser across native and fallback modes, improving compatibility with system-tar output while keeping admission and publication guarded.
