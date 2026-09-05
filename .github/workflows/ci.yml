@@ -53,6 +53,9 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
+      - name: Add portable TAR parser target
+        run: rustup target add wasm32-unknown-unknown
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -109,6 +112,9 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
+      - name: Add portable TAR parser target
+        run: rustup target add wasm32-unknown-unknown
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -139,7 +145,7 @@ jobs:
       - name: Test native security and path equivalence
         env:
           FS_SAFE_PAX_REQUIRE_NATIVE: "1"
-        run: pnpm test test/native-integration.test.ts test/native-owned-tree.test.ts test/native-write-containment.test.ts test/native-staging-regression.test.ts test/staged-file.test.ts test/staged-file-failures.test.ts test/native-archive-equivalence.test.ts test/native-publish-equivalence.test.ts test/private-directory.test.ts test/archive-pax.test.ts test/archive-pax-security.test.ts test/archive-pax-compressed.test.ts test/archive-tar-strip.test.ts test/archive-tar-framing.test.ts test/archive-tar-framing-compressed.test.ts test/archive-gzip-integrity.test.ts test/temp-workspace-cleanup-ownership.test.ts test/temp-workspace-cleanup-admission.test.ts test/temp-workspace-cleanup-capability.test.ts
+        run: pnpm test test/native-integration.test.ts test/native-owned-tree.test.ts test/native-write-containment.test.ts test/native-staging-regression.test.ts test/staged-file.test.ts test/staged-file-failures.test.ts test/native-archive-equivalence.test.ts test/native-publish-equivalence.test.ts test/private-directory.test.ts test/archive-unified.test.ts test/archive-wasm-abi.test.ts test/archive-pax.test.ts test/archive-pax-security.test.ts test/archive-pax-compressed.test.ts test/archive-tar-strip.test.ts test/archive-tar-framing.test.ts test/archive-tar-framing-compressed.test.ts test/archive-gzip-integrity.test.ts test/archive-gzip-container.test.ts test/temp-workspace-cleanup-ownership.test.ts test/temp-workspace-cleanup-admission.test.ts test/temp-workspace-cleanup-capability.test.ts
 
       - name: Test native Root publication verification
         env:
@@ -172,7 +178,7 @@ jobs:
       - name: Build and test in Alpine
         run: |
           docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work node:24-alpine sh -euxc '
-            apk add --no-cache cargo rust musl-dev build-base python3
+            apk add --no-cache cargo rust rust-wasm musl-dev build-base python3
             npm install --global pnpm@11.25.0
             pnpm install --frozen-lockfile
             cargo test --workspace --locked
@@ -185,7 +191,7 @@ jobs:
             node scripts/native-mode-smoke.mjs off
             node scripts/sidecar-contention-proof.mjs require
             FS_SAFE_NATIVE_MODE=require pnpm test test/root-create-only-preflight.test.ts test/sidecar-lock-root-admission.test.ts test/sidecar-lock-root-ancestry.test.ts test/sidecar-lock-root-budget.test.ts test/sidecar-lock-root-resolver.test.ts test/sidecar-lock-root-unlink.test.ts test/sidecar-lock-unlink-siblings.test.ts test/file-lock-sync-stale.test.ts test/file-lock-sync-release.test.ts
-            FS_SAFE_PAX_REQUIRE_NATIVE=1 pnpm test test/native-owned-tree.test.ts test/native-write-containment.test.ts test/native-staging-regression.test.ts test/staged-file.test.ts test/staged-file-failures.test.ts test/native-archive-equivalence.test.ts test/native-publish-equivalence.test.ts test/archive-pax.test.ts test/archive-pax-security.test.ts test/archive-pax-compressed.test.ts test/archive-tar-strip.test.ts test/archive-tar-framing.test.ts test/archive-tar-framing-compressed.test.ts test/archive-gzip-integrity.test.ts
+            FS_SAFE_PAX_REQUIRE_NATIVE=1 pnpm test test/native-owned-tree.test.ts test/native-write-containment.test.ts test/native-staging-regression.test.ts test/staged-file.test.ts test/staged-file-failures.test.ts test/native-archive-equivalence.test.ts test/native-publish-equivalence.test.ts test/archive-unified.test.ts test/archive-wasm-abi.test.ts test/archive-pax.test.ts test/archive-pax-security.test.ts test/archive-pax-compressed.test.ts test/archive-tar-strip.test.ts test/archive-tar-framing.test.ts test/archive-tar-framing-compressed.test.ts test/archive-gzip-integrity.test.ts test/archive-gzip-container.test.ts
             FS_SAFE_NATIVE_MODE=require pnpm test test/root-write-mode.test.ts test/root-write-verification.test.ts test/root-write-lifetime.test.ts test/root-write-exact-identity.test.ts test/secret-write-publication.test.ts test/native-write-mode-ownership.test.ts test/native-created-cleanup.test.ts test/file-mode-facades.test.ts
             FS_SAFE_NATIVE_MODE=require pnpm test test/archive-zip-admission.test.ts test/archive-zip-metadata.test.ts test/archive-zip-integrity.test.ts
             FS_SAFE_PAX_REQUIRE_NATIVE=1 pnpm test test/archive-filter-paths.test.ts test/archive-filter-compressed.test.ts test/archive-tar-gnu.test.ts test/archive-tar-gnu-meter.test.ts test/archive-tar-ignored.test.ts test/archive-tar-ignored-meter.test.ts test/archive-tar-admission.test.ts test/archive-tar-manifest.test.ts
@@ -253,6 +259,9 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
+
+      - name: Add portable TAR parser target
+        run: rustup target add wasm32-unknown-unknown
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

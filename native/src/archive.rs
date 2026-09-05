@@ -10,7 +10,7 @@ use napi::bindgen_prelude::{AbortSignal, AsyncTask, Buffer, Task};
 use napi::{Env, Error, Result, Status};
 use napi_derive::napi;
 
-use crate::tar_meter::{TarMetadataMeter, TarMeterLimits, MAX_SAFE_INTEGER, MAX_MANIFEST_BYTES, charge_manifest_path};
+use crate::tar_meter::{TarMetadataMeter, TarMeterLimits, MAX_SAFE_INTEGER, MAX_MANIFEST_BYTES};
 use crate::{NativeResult, native_error, platform, validate_portable_relative_path};
 
 #[napi(object)]
@@ -39,6 +39,7 @@ pub struct ArchiveEntryData {
     kind: String,
     size: u64,
     mode: u32,
+    offset: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -65,6 +66,7 @@ pub struct NativeTarLimits {
 impl NativeTarLimits {
     fn checked(self) -> Result<TarMeterLimits> {
         Ok(TarMeterLimits {
+            windows_paths: cfg!(windows),
             max_entries: checked_tar_limit(self.max_entries, "maxEntries", u32::MAX as u64)? as usize,
             max_meta_entry_bytes: checked_tar_limit(self.max_meta_entry_bytes, "maxMetaEntryBytes", MAX_SAFE_INTEGER)?,
             max_decoded_bytes: checked_tar_limit(self.max_decoded_bytes, "maxDecodedBytes", MAX_SAFE_INTEGER)?,
@@ -119,7 +121,7 @@ fn open_tar_reader(
     format: ArchiveFormat,
     cancelled: Arc<AtomicBool>,
     limits: TarMeterLimits,
-) -> Result<Box<dyn Read + Send>> {
+) -> Result<TarMetadataMeter<Box<dyn Read + Send>>> {
     let mut file = File::open(path).map_err(|error| io_error("open archive", error))?;
     let decoded: Box<dyn Read + Send> = match format {
         ArchiveFormat::TarZstd => Box::new(CancellationReader {
@@ -140,7 +142,10 @@ fn open_tar_reader(
                 .map_err(|error| io_error("rewind archive", error))?;
             if read == 2 && magic == [0x1f, 0x8b] {
                 Box::new(CancellationReader {
-                    inner: flate2::read::MultiGzDecoder::new(file),
+                    inner: crate::archive_gzip::GzipContainer::new(
+                        CancellationReader { inner: file, cancelled: Arc::clone(&cancelled) },
+                        Arc::clone(&cancelled),
+                    ),
                     cancelled,
                 })
             } else {
@@ -154,35 +159,7 @@ fn open_tar_reader(
             return Err(Error::new(Status::InvalidArg, "zip is not a tar stream"));
         }
     };
-    Ok(Box::new(TarMetadataMeter::new(
-        decoded,
-        limits,
-    )))
-}
-
-fn tar_kind(entry_type: tar::EntryType) -> &'static str {
-    if entry_type.is_dir() || entry_type.as_byte() == b'D' {
-        "directory"
-    } else if entry_type.is_file() || entry_type.is_contiguous() {
-        "file"
-    } else if entry_type.is_gnu_sparse() {
-        "sparse"
-    } else if entry_type.is_symlink() {
-        "symlink"
-    } else if entry_type.is_hard_link() {
-        "hardlink"
-    } else if entry_type.is_character_special() || entry_type.is_block_special() || entry_type.is_fifo() {
-        "blocked"
-    } else {
-        "other"
-    }
-}
-
-fn checked_path(path: std::borrow::Cow<'_, std::path::Path>) -> Result<String> {
-    path.into_owned()
-        .into_os_string()
-        .into_string()
-        .map_err(|_| Error::new(Status::InvalidArg, "archive entry path is not valid UTF-8"))
+    Ok(TarMetadataMeter::new(decoded, limits))
 }
 
 fn drain_tar_metadata(reader: &mut impl Read) -> std::io::Result<()> {
@@ -200,46 +177,17 @@ fn inspect_tar(
     limits: InspectLimits,
     cancelled: Arc<AtomicBool>,
 ) -> Result<Vec<ArchiveEntryData>> {
-    // Admit the complete decoded framing before tar can stop at an early zero
-    // block or normalize a non-file size. Reuse the meter for every TAR codec.
-    drain_tar_metadata(&mut open_tar_reader(
-        path,
-        format,
-        Arc::clone(&cancelled),
-        limits.tar,
-    )?)
-    .map_err(|error| io_error("preflight tar metadata", error))?;
-    let mut archive = tar::Archive::new(open_tar_reader(
-        path,
-        format,
-        Arc::clone(&cancelled),
-        limits.tar,
-    )?);
-    let entries = archive
-        .entries()
-        .map_err(|error| io_error("read tar entries", error))?;
+    let mut reader = open_tar_reader(path, format, cancelled, limits.tar)?;
     let mut result = Vec::new();
-    let mut manifest_bytes = 0_u64;
-    for (index, entry) in entries.enumerate() {
-        check_cancelled(&cancelled)?;
-        let entry = entry.map_err(|error| io_error("read tar entry", error))?;
-        let header = entry.header();
-        check_manifest_count(index + 1, limits)?;
-        let size = entry.size();
-        let path = checked_path(
-            entry
-                .path()
-                .map_err(|error| io_error("read tar path", error))?,
-        )?;
-        add_manifest_path_bytes(&mut manifest_bytes, &path, limits)?;
-        result.push(ArchiveEntryData {
-            index: u32::try_from(index)
-                .map_err(|_| Error::new(Status::InvalidArg, "too many archive entries"))?,
-            path,
-            kind: tar_kind(header.entry_type()).to_owned(),
-            size,
-            mode: crate::tar_mode::manifest_mode(header, tar_kind(header.entry_type()) == "directory"),
-        });
+    let mut buffer = [0; 65536];
+    while reader.read(&mut buffer).map_err(|error| io_error("admit tar", error))? != 0 {
+        if let Some(member) = reader.take_member() {
+            let kind = member.kind().to_owned();
+            result.push(ArchiveEntryData {
+                index: result.len() as u32, path: member.path, kind,
+                size: member.size, mode: member.mode, offset: member.offset,
+            });
+        }
     }
     Ok(result)
 }
@@ -288,6 +236,7 @@ fn inspect_zip(
             kind: zip_kind(&file).to_owned(),
             size: file.size(),
             mode: file.unix_mode().unwrap_or(0),
+            offset: 0,
         });
     }
     Ok(result)
@@ -309,17 +258,6 @@ fn limit_error(code: &'static str) -> Error {
     Error::new(Status::GenericFailure, code)
 }
 
-fn check_manifest_count(count: usize, limits: InspectLimits) -> Result<()> {
-    if count > limits.tar.max_entries {
-        return Err(limit_error("archive-entry-count-exceeds-limit"));
-    }
-    Ok(())
-}
-
-fn add_manifest_path_bytes(total: &mut u64, path: &str, limits: InspectLimits) -> Result<()> {
-    charge_manifest_path(total, path, limits.tar.max_manifest_bytes)
-        .map_err(|error| io_error("admit manifest path", error))
-}
 
 fn zip_entry_count(path: &str, max_entries: usize) -> Result<u64> {
     let mut file = File::open(path).map_err(|error| io_error("open zip archive", error))?;
@@ -544,55 +482,44 @@ fn extract_tar(
     cancelled: Arc<AtomicBool>,
     limits: TarMeterLimits,
 ) -> Result<()> {
-    let mut archive = tar::Archive::new(open_tar_reader(
-        path,
-        format,
-        Arc::clone(&cancelled),
-        limits,
-    )?);
-    let entries = archive
-        .entries()
-        .map_err(|error| io_error("read tar entries", error))?;
+    let manifest = inspect_tar(path, format, InspectLimits { tar: limits }, Arc::clone(&cancelled))?;
+    let mut reader = open_tar_reader(path, format, Arc::clone(&cancelled), limits)?;
+    let mut position = 0;
     let mut directories = Vec::new();
-    for (index, entry) in entries.enumerate() {
+    for entry in manifest {
         check_cancelled(&cancelled)?;
-        let mut entry = entry.map_err(|error| io_error("read tar entry", error))?;
-        let Some(item) = plan.remove(&index) else {
-            continue;
-        };
-        let actual_kind = tar_kind(entry.header().entry_type());
-        if actual_kind != item.kind || entry.size() as f64 != item.size {
-            return Err(Error::new(
-                Status::InvalidArg,
-                "archive entry changed after policy evaluation",
-            ));
+        let Some(item) = plan.remove(&(entry.index as usize)) else { continue; };
+        if entry.kind != item.kind || entry.size as f64 != item.size {
+            return Err(Error::new(Status::InvalidArg, "archive entry changed after policy evaluation"));
         }
+        skip_tar_to(&mut reader, &mut position, entry.offset)?;
         if item.kind == "directory" {
             platform::mkdir_beneath(root_fd, &item.path, 0o700)
                 .map_err(|error| Error::new(Status::GenericFailure, error.reason))?;
             directories.push((item.path, item.mode));
         } else {
             ensure_parent(root_fd, &item.path)?;
-            let size = entry.size();
-            let mut reader = CancellationReader {
-                inner: &mut entry,
-                cancelled: Arc::clone(&cancelled),
-            };
-            platform::write_archive_file(root_fd, &item.path, &mut reader, size, item.mode)
+            let mut payload = (&mut reader).take(entry.size);
+            platform::write_archive_file(root_fd, &item.path, &mut payload, entry.size, item.mode)
                 .map_err(|error| Error::new(Status::GenericFailure, error.reason))?;
+            if payload.limit() != 0 { return Err(Error::new(Status::InvalidArg, "truncated TAR payload")); }
+            position += entry.size;
         }
     }
-    // tar stops at logical EOF; the meter must admit the physical tail before
-    // completing directories or allowing the caller to publish the plan.
-    drain_tar_metadata(&mut archive.into_inner())
-        .map_err(|error| io_error("finish tar metadata", error))?;
-    finish_directories(root_fd, directories)?;
+    drain_tar_metadata(&mut reader).map_err(|error| io_error("finish tar", error))?;
     if !plan.is_empty() {
-        return Err(Error::new(
-            Status::InvalidArg,
-            "archive entries disappeared after policy evaluation",
-        ));
+        return Err(Error::new(Status::InvalidArg, "archive entries disappeared after policy evaluation"));
     }
+    finish_directories(root_fd, directories)
+}
+
+fn skip_tar_to(reader: &mut impl Read, position: &mut u64, offset: u64) -> Result<()> {
+    let length = offset.checked_sub(*position)
+        .ok_or_else(|| Error::new(Status::InvalidArg, "invalid admitted TAR range"))?;
+    let copied = std::io::copy(&mut reader.take(length), &mut std::io::sink())
+        .map_err(|error| io_error("replay tar", error))?;
+    if copied != length { return Err(Error::new(Status::InvalidArg, "truncated TAR range")); }
+    *position = offset;
     Ok(())
 }
 
@@ -724,58 +651,21 @@ fn read_tar_entry(
     cancelled: Arc<AtomicBool>,
     limits: TarMeterLimits,
 ) -> Result<Vec<u8>> {
-    let mut archive = tar::Archive::new(open_tar_reader(
-        path,
-        format,
-        Arc::clone(&cancelled),
-        limits,
-    )?);
-    let mut selected = None;
-    for (index, entry) in archive
-        .entries()
-        .map_err(|error| io_error("read tar entries", error))?
-        .enumerate()
-    {
-        if index >= limits.max_entries {
-            return Err(limit_error("archive-entry-count-exceeds-limit"));
-        }
-        check_cancelled(&cancelled)?;
-        let mut entry = entry.map_err(|error| io_error("read tar entry", error))?;
-        if selected.is_some() {
-            continue;
-        }
-        if checked_path(
-            entry
-                .path()
-                .map_err(|error| io_error("read tar path", error))?,
-        )? != requested
-        {
-            continue;
-        }
-        if tar_kind(entry.header().entry_type()) != "file" {
-            if entry.header().entry_type().is_gnu_sparse() {
-                return Err(Error::new(
-                    Status::InvalidArg,
-                    "archive-header-invalid: GNU sparse entries are not supported",
-                ));
-            }
-            return Err(Error::new(
-                Status::InvalidArg,
-                format!("archive entry is not a file: {requested}"),
-            ));
-        }
-        selected = Some(read_bounded(&mut entry, max_bytes, Arc::clone(&cancelled))?);
+    let manifest = inspect_tar(path, format, InspectLimits { tar: limits }, Arc::clone(&cancelled))?;
+    let member = manifest.iter().find(|entry| entry.path == requested)
+        .ok_or_else(|| Error::new(Status::InvalidArg, format!("archive entry not found: {requested}")))?;
+    if member.kind != "file" {
+        return Err(Error::new(Status::InvalidArg, format!("archive entry is not a file: {requested}")));
     }
-    // Keep the first bounded result private until traversal and the physical
-    // tail pass the same framing/decoded limits as native inspection.
-    drain_tar_metadata(&mut archive.into_inner())
-        .map_err(|error| io_error("finish tar metadata", error))?;
-    selected.ok_or_else(|| {
-        Error::new(
-            Status::InvalidArg,
-            format!("archive entry not found: {requested}"),
-        )
-    })
+    if member.size > max_bytes { return Err(limit_error("archive-entry-extracted-size-exceeds-limit")); }
+    let mut reader = open_tar_reader(path, format, Arc::clone(&cancelled), limits)?;
+    skip_tar_to(&mut reader, &mut 0, member.offset)?;
+    let output = read_bounded(&mut (&mut reader).take(member.size), max_bytes, cancelled)?;
+    if output.len() as u64 != member.size {
+        return Err(Error::new(Status::InvalidArg, "archive-header-invalid: truncated TAR payload"));
+    }
+    drain_tar_metadata(&mut reader).map_err(|error| io_error("finish tar", error))?;
+    Ok(output)
 }
 
 fn read_zip_entry(
@@ -913,14 +803,6 @@ mod tests {
 
     static TEMP_PATH_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-    #[test]
-    fn tar_manifest_preserves_blocked_and_dump_directory_kinds() {
-        for kind in [b'3', b'4', b'6'] {
-            assert_eq!(tar_kind(tar::EntryType::new(kind)), "blocked");
-        }
-        assert_eq!(tar_kind(tar::EntryType::new(b'D')), "directory");
-    }
-
     fn fixture_tar() -> Vec<u8> {
         let mut bytes = Vec::new();
         {
@@ -955,6 +837,7 @@ mod tests {
     fn limits(max_entries: usize) -> InspectLimits {
         InspectLimits {
             tar: TarMeterLimits {
+                windows_paths: cfg!(windows),
                 max_entries,
                 max_meta_entry_bytes: 1024 * 1024,
                 max_decoded_bytes: 768 * 1024 * 1024,
@@ -1012,7 +895,7 @@ mod tests {
                     let result = inspect_tar(path.to_str().unwrap(), format, limits(10), Arc::new(AtomicBool::new(false)));
                     std::fs::remove_file(path).unwrap();
                     let manifest = result.unwrap();
-                    let kind = tar_kind(tar::EntryType::new(entry_type));
+                    let kind = if matches!(entry_type, b'5' | b'D') { "directory" } else { "file" };
                     assert_eq!(manifest[0].kind, kind);
                     assert_eq!(manifest[0].mode, expected.unwrap_or(if kind == "directory" { 0o755 } else { 0o644 }), "mode={mode:?}, type={entry_type}");
                 }
@@ -1193,7 +1076,6 @@ mod tests {
             let path = temp_path("tar-framing");
             std::fs::write(&path, bytes).unwrap();
             let error = inspect_tar(path.to_str().unwrap(), format, limits(10), Arc::new(AtomicBool::new(false))).unwrap_err();
-            assert!(error.reason.contains("preflight tar metadata"), "{error}");
             assert!(error.reason.contains("checksum failure"), "{error}");
             std::fs::remove_file(path).unwrap();
         }
@@ -1323,8 +1205,10 @@ mod tests {
         one_entry.max_entries = 1;
         assert!(read("one.txt", 3, one_entry).unwrap_err().reason.contains("archive-entry-count-exceeds-limit"));
 
-        std::fs::write(&path, [canonical.as_slice(), &[1]].concat()).unwrap();
         assert!(read("one.txt", 2, limits.tar).unwrap_err().reason.contains("archive-entry-extracted-size-exceeds-limit"));
+        std::fs::write(&path, [canonical.as_slice(), &[1]].concat()).unwrap();
+        // Complete admission now precedes selected-member policy, as in the public API.
+        assert!(read("one.txt", 2, limits.tar).unwrap_err().reason.contains("archive-header-invalid"));
         assert!(read("absent", 3, limits.tar).unwrap_err().reason.contains("archive-header-invalid"));
         let plan = HashMap::from([(99, NativeArchivePlanEntry {
             index: 99, path: "absent".to_owned(), kind: "file".to_owned(), size: 0.0, mode: 0o600,

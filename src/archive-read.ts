@@ -15,13 +15,11 @@ import {
 import { resolveArchiveKind, type ArchiveKind } from "./archive-kind.js";
 import {
   DEFAULT_MAX_ARCHIVE_BYTES_ZIP,
-  DEFAULT_MAX_META_ENTRY_BYTES,
   ArchiveLimitError,
   ARCHIVE_LIMIT_ERROR_CODE,
 } from "./archive-limits.js";
-import { readTarEntryInfo } from "./archive-tar.js";
-import { preflightTarMetadata } from "./archive-tar-meta.js";
-import { importOptionalTar, NODE_TAR_RATIO_DISABLED, normalizeTarParserError } from "./archive-tar-runtime.js";
+import { inspectTar, replayTar } from "./archive-tar-stream.js";
+import type { AdmittedTarMember } from "./archive-tar-wasm.js";
 import { loadZipArchiveWithPreflight } from "./archive-zip-preflight.js";
 import {
   createZipIntegrityTransform,
@@ -169,72 +167,27 @@ async function readZipEntry(buffer: Buffer, entryPath: string, maxBytes: number)
 }
 
 async function readTarEntry(archivePath: string, entryPath: string, maxBytes: number): Promise<Buffer> {
-  const tar = await importOptionalTar();
   const seenPaths = new Set<string>();
-  await preflightTarMetadata({
-    archivePath,
-    limits: resolveTarMeterLimits(),
-    onMember(info) {
-      const normalized = canonicalEntryPath(info.path);
-      if (seenPaths.has(normalized)) {
-        throw new ArchiveSecurityError("entry-path", `archive contains duplicate entry path: ${formatErrorDetail(normalized)}`);
-      }
-      seenPaths.add(normalized);
-      if (normalized === entryPath && !["File", "OldFile", "ContiguousFile"].includes(info.type)) {
-        throw new Error(`archive entry is not a file: ${formatErrorDetail(entryPath)}`);
-      }
-    },
-  });
-  let matched: Promise<Buffer> | undefined;
-  let entryError: Error | undefined;
-  try {
-    await tar.t({
-      file: archivePath,
-      strict: true,
-      maxMetaEntrySize: DEFAULT_MAX_META_ENTRY_BYTES,
-      maxDecompressionRatio: NODE_TAR_RATIO_DISABLED,
-      onReadEntry(entry) {
-        const info = readTarEntryInfo(entry);
-        let normalized: string;
-        try {
-          normalized = canonicalEntryPath(info.path);
-        } catch (error) {
-          // Throws escaping node-tar's callback do not reject its promise.
-          entryError ??= error instanceof Error ? error : new Error(String(error));
-          entry.resume();
-          return;
-        }
-        if (normalized !== entryPath) {
-          entry.resume();
-          return;
-        }
-        if (info.type !== "File" && info.type !== "OldFile" && info.type !== "ContiguousFile") {
-          entryError ??= new Error(
-            `archive entry is not a file: ${formatErrorDetail(entryPath)}`,
-          );
-          entry.resume();
-          return;
-        }
-        if (info.size > maxBytes) {
-          entryError ??= new ArchiveLimitError(
-            ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT,
-          );
-          entry.resume();
-          return;
-        }
-        matched = readStreamBounded(entry, maxBytes);
-      },
-    });
-  } catch (error) {
-    throw normalizeTarParserError(error);
+  let selected: AdmittedTarMember | undefined;
+  const limits = resolveTarMeterLimits();
+  await inspectTar({ archivePath, limits, onMember(info) {
+    const normalized = canonicalEntryPath(info.path);
+    if (seenPaths.has(normalized)) {
+      throw new ArchiveSecurityError("entry-path", `archive contains duplicate entry path: ${formatErrorDetail(normalized)}`);
+    }
+    seenPaths.add(normalized);
+    if (normalized === entryPath) selected = info;
+  } });
+  if (!selected) throw new Error(`archive entry not found: ${formatErrorDetail(entryPath)}`);
+  if (!["File", "OldFile", "ContiguousFile"].includes(selected.type)) {
+    throw new Error(`archive entry is not a file: ${formatErrorDetail(entryPath)}`);
   }
-  if (entryError) {
-    throw entryError;
-  }
-  if (!matched) {
-    throw new Error(`archive entry not found: ${formatErrorDetail(entryPath)}`);
-  }
-  return await matched;
+  if (selected.size > maxBytes) throw new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT);
+  let result: Buffer | undefined;
+  await replayTar({ archivePath, limits, members: [selected], async consume(_member, payload) {
+    result = await readStreamBounded(payload, maxBytes);
+  } });
+  return result!;
 }
 
 export async function readArchiveEntry(

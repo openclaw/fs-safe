@@ -4,14 +4,12 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
 mod archive;
+mod archive_gzip;
 mod fast_file;
 mod owned_tree;
 #[cfg(unix)]
 mod staged_file;
-mod tar_meter;
-mod tar_mode;
-mod tar_path;
-mod tar_pax;
+use fs_safe_archive_core::tar_meter;
 #[cfg(unix)]
 mod unix;
 #[cfg(windows)]

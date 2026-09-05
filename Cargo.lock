@@ -153,11 +153,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "fs-safe-archive-core"
+version = "0.1.0"
+dependencies = [
+ "tar",
+ "unicode-normalization",
+]
+
+[[package]]
+name = "fs-safe-archive-wasm"
+version = "0.1.0"
+dependencies = [
+ "fs-safe-archive-core",
+]
+
+[[package]]
 name = "fs-safe-native"
 version = "0.8.1"
 dependencies = [
  "bzip2",
  "flate2",
+ "fs-safe-archive-core",
  "libc",
  "napi",
  "napi-build",

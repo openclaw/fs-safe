@@ -43,6 +43,11 @@ fn ascii(bytes: &[u8]) -> io::Result<&str> {
     std::str::from_utf8(bytes).map_err(|_| invalid())
 }
 
+fn structural_text(bytes: &[u8]) -> io::Result<&str> {
+    if bytes.is_empty() || bytes.contains(&0) { return Err(invalid()); }
+    std::str::from_utf8(bytes).map_err(|_| invalid())
+}
+
 fn timestamp(bytes: &[u8]) -> io::Result<()> {
     let text = ascii(bytes)?;
     let unsigned = text.strip_prefix('-').unwrap_or(text);
@@ -58,8 +63,7 @@ fn timestamp(bytes: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
-// Keep this byte grammar aligned with src/archive-tar-pax.ts. In particular,
-// Rust takes the first duplicate and JS takes the last, so neither is allowed.
+// Records are byte-counted; embedded newlines belong to the value.
 pub fn parse_local_pax(body: &[u8]) -> io::Result<LocalPax> {
     if body.is_empty() {
         return Err(invalid());
@@ -82,9 +86,6 @@ pub fn parse_local_pax(body: &[u8]) -> io::Result<LocalPax> {
             return Err(invalid());
         }
         let record = &body[offset + space + 1..end - 1];
-        if record.contains(&b'\n') {
-            return Err(invalid());
-        }
         let equals = record
             .iter()
             .position(|b| *b == b'=')
@@ -98,11 +99,11 @@ pub fn parse_local_pax(body: &[u8]) -> io::Result<LocalPax> {
         let value = &record[equals + 1..];
         match key {
             "path" => {
-                result.path = Some(ascii(value)?.to_owned());
+                result.path = Some(structural_text(value)?.to_owned());
                 result.path_trailing_separator = matches!(value.last(), Some(b'/' | b'\\'));
             }
             "linkpath" => {
-                ascii(value)?;
+                structural_text(value)?;
                 result.linkpath = true;
             }
             "size" => result.size = Some(decimal(value)?),
@@ -117,8 +118,7 @@ pub fn parse_local_pax(body: &[u8]) -> io::Result<LocalPax> {
                 .iter()
                 .any(|prefix| key.starts_with(prefix) && key.len() > prefix.len()) =>
             {
-                // Ignored binary values may contain NUL/non-UTF8, but not LF:
-                // tar's numeric lookup stops at any malformed preceding line.
+                // Opaque bounded bytes, never restored to the filesystem.
             }
             _ => return Err(invalid()),
         }
@@ -168,6 +168,6 @@ fn raw_text(field: &[u8]) -> io::Result<&str> {
     if end == 0 {
         Ok("")
     } else {
-        ascii(&field[..end])
+        structural_text(&field[..end])
     }
 }

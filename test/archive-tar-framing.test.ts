@@ -220,12 +220,12 @@ for (const backend of ["off", "auto-missing", "auto", "require"] as const) {
         await expect(nativeRead("directory", 7)).rejects.toThrow("archive entry is not a file: directory");
         await expect(paxNative!.readArchiveEntryNative(fixture.archivePath, "tar", "value", 7, { ...limits, maxEntries: 1 }, signal)).rejects.toThrow("archive-entry-count-exceeds-limit");
         await fs.writeFile(fixture.archivePath, gzip ? gzipSync(Buffer.concat([bytes, Buffer.from([1])])) : Buffer.concat([bytes, Buffer.from([1])]));
-        await expect(nativeRead("value", 6)).rejects.toThrow("archive-entry-extracted-size-exceeds-limit");
-        await expect(nativeRead("directory", 7)).rejects.toThrow("archive entry is not a file: directory");
+        await expect(nativeRead("value", 6)).rejects.toThrow("archive-header-invalid");
+        await expect(nativeRead("directory", 7)).rejects.toThrow("archive-header-invalid");
         await expect(nativeRead("absent", 7)).rejects.toThrow("archive-header-invalid");
       });
 
-      it.skipIf(backend === "off" || backend === "auto-missing")("keeps native directory modes private until the physical tail passes", async () => {
+      it.skipIf(backend === "off" || backend === "auto-missing")("rejects the physical tail before creating native staging entries", async () => {
         const prefix = tarFixture([{ path: "directory", type: "5", mode: 0o500 }, member]);
         const fixture = await setup(Buffer.concat([prefix, Buffer.from([1])]), gzip);
         const privateDir = path.join(path.dirname(fixture.destDir), "private-stage");
@@ -237,8 +237,7 @@ for (const backend of ["off", "auto-missing", "auto", "require"] as const) {
             { index: 1, path: "value", kind: "file", size: 7, mode: 0o600 },
           ];
           await expect(paxNative!.extractArchiveNative(fixture.archivePath, "tar", directory.fd, plan, resolveTarMeterLimits(), new AbortController().signal)).rejects.toThrow("archive-header-invalid");
-          expect(await fs.readFile(path.join(privateDir, "value"), "utf8")).toBe("payload");
-          if (process.platform !== "win32") expect((await fs.stat(path.join(privateDir, "directory"))).mode & 0o777).toBe(0o700);
+          expect(await fs.readdir(privateDir)).toEqual([]);
           expect(await fs.readdir(fixture.destDir)).toEqual(["sentinel"]);
         } finally {
           await directory.close();

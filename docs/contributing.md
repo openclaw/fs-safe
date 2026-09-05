@@ -19,7 +19,16 @@ manager version declared in `package.json`.
 pnpm build
 ```
 
-Runs `tsc -p tsconfig.json`. Output lands in `dist/`. The package's `prepack` hook re-runs the build before publishing — manual `pnpm build` is only required when you want to inspect the output or run a freshly-built copy locally.
+Runs TypeScript compilation and builds the portable Rust TAR parser for
+`wasm32-unknown-unknown`. Contributors need Rust (the native crate's declared
+minimum or newer) and `rustup target add wasm32-unknown-unknown`; Alpine's
+packaged toolchain uses `rust-wasm`. `pnpm archive:wasm` rebuilds just the parser.
+The import-free asset lands at `dist/archive-parser.wasm`; source tests and
+compiled consumers both resolve that generated artifact. Run `pnpm build`
+before source tests in a fresh checkout. Do not commit `dist/` or built WASM.
+Consumers receive the asset in the npm package and need no compiler.
+
+Output lands in `dist/`. The package's `prepack` hook re-runs the build before publishing — manual `pnpm build` is only required when you want to inspect the output or run a freshly-built copy locally.
 
 ## Test
 
@@ -58,6 +67,23 @@ pnpm check
 
 This runs the filesystem boundary checks, build, tests, and package
 tarball/import validation.
+
+### Real TAR producers
+
+After installing the freshly packed root (and optionally its freshly built host
+binding) in a disposable consumer, run:
+
+```bash
+pnpm archive:producer-smoke ./consumer off
+pnpm archive:producer-smoke ./consumer require
+```
+
+This uses a child bound to canonical cwd/device/inode running `/usr/bin/tar -czf - .`
+with unchanged stdout, and npm tar, on synthetic Unicode/newline/long-name files,
+then the installed package API for exact payload hashes and bounded reads.
+It also rejects a valid PAX override attached to an invalid raw UTF-8 field.
+The `require` command must resolve the freshly packed native binding; the
+`off` command uses the installed WASM asset. No live user files are read.
 
 ### Native consumer installs
 

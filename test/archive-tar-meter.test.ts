@@ -2,7 +2,7 @@ import { Readable, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { describe, expect, it } from "vitest";
 import { resolveTarMeterLimits, type ArchiveExtractLimits } from "../src/archive-limits.js";
-import { TarMetadataMeter } from "../src/archive-tar-meta.js";
+import { TarParserStream } from "../src/archive-tar-wasm.js";
 import { tarFixture } from "./helpers/archive-fuzz.js";
 import { paxArchive, paxHeader } from "./helpers/archive-pax.js";
 import { malformedTarFraming } from "./helpers/archive-tar-framing.js";
@@ -12,7 +12,7 @@ async function meter(bytes: Buffer, chunkSize: number): Promise<Buffer> {
   function* chunks() {
     for (let offset = 0; offset < bytes.length; offset += chunkSize) yield bytes.subarray(offset, offset + chunkSize);
   }
-  await pipeline(Readable.from(chunks()), new TarMetadataMeter(resolveTarMeterLimits({ maxMetaEntryBytes: 1024 })), new Writable({
+  await pipeline(Readable.from(chunks()), new TarParserStream(resolveTarMeterLimits({ maxMetaEntryBytes: 1024 })), new Writable({
     write(chunk: Buffer, _encoding, callback) { output.push(chunk); callback(); },
   }));
   return Buffer.concat(output);
@@ -71,7 +71,7 @@ describe("raw TAR logical entry counts", () => {
   ];
 
   it.each(cases)("rejects %s before asking its producer for body bytes", async (_label, prefix, options, code) => {
-    const meter = new TarMetadataMeter(resolveTarMeterLimits(options));
+    const meter = new TarParserStream(resolveTarMeterLimits(options));
     meter.resume();
     const error = new Promise<Error>((resolve) => meter.once("error", resolve));
     let bodyRequested = false;
@@ -90,7 +90,7 @@ describe("raw TAR logical entry counts", () => {
       tarFixture([paxHeader([["size", "0"]])], false), header(700),
       tarFixture([{ path: "LongName", type: "L", body: "name\0" }, { path: "LongLink", type: "K", body: "link\0" }, member]),
     ]);
-    const meter = new TarMetadataMeter(resolveTarMeterLimits({ ...limits, maxEntries: 2 }));
+    const meter = new TarParserStream(resolveTarMeterLimits({ ...limits, maxEntries: 2 }));
     const output: Buffer[] = [];
     await pipeline(Readable.from([bytes]), meter, new Writable({ write(chunk, _encoding, callback) { output.push(chunk); callback(); } }));
     expect(Buffer.concat(output)).toEqual(bytes);

@@ -1,8 +1,8 @@
 use crate::tar_meter::MAX_SAFE_INTEGER;
 
 /// Normalize absent and supported GNU modes without changing the native manifest ABI.
-pub(crate) fn manifest_mode(header: &tar::Header, directory: bool) -> u32 {
-    let field = &header.as_old().mode;
+pub(crate) fn manifest_mode(header: &[u8; 512], directory: bool) -> u32 {
+    let field: &[u8; 8] = header[100..108].try_into().unwrap();
     if field.iter().all(|byte| matches!(*byte, 0 | b' ')) {
         return if directory { 0o755 } else { 0o644 };
     }
@@ -22,9 +22,11 @@ pub(crate) fn manifest_mode(header: &tar::Header, directory: bool) -> u32 {
         // Do not narrow to u32 before checking its JavaScript numeric domain.
         return (value & 0o7777) as u32;
     }
-    // Keep the existing octal decoder and its malformed/unsupported-mode fallback.
-    // In particular, an out-of-domain binary value must not wrap into rwx bits.
-    header.mode().unwrap_or(0)
+    // Malformed or unsupported fields have one common zero fallback.
+    let end = field.iter().position(|b| *b == 0).unwrap_or(field.len());
+    let text = std::str::from_utf8(&field[..end]).unwrap_or("").trim_matches(' ');
+    if text.is_empty() || !text.bytes().all(|b| (b'0'..=b'7').contains(&b)) { return 0; }
+    u32::from_str_radix(text, 8).unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -34,7 +36,7 @@ mod tests {
     fn mode(field: [u8; 8], directory: bool) -> u32 {
         let mut header = tar::Header::new_ustar();
         header.as_old_mut().mode = field;
-        manifest_mode(&header, directory)
+        manifest_mode(header.as_bytes(), directory)
     }
 
     #[test]

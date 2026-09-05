@@ -24,6 +24,7 @@
     "provenance": true
   },
   "files": [
+    "dist/archive-parser.wasm",
     "dist/**/*.js",
     "dist/**/*.d.ts",
     "dist/**/*.d.ts.map",
@@ -126,7 +127,7 @@
   "scripts": {
     "benchmark": "node scripts/benchmark.mjs",
     "benchmark:publish": "pnpm build && node scripts/bench-publish.mjs",
-    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
+    "build": "node scripts/prepack-build.mjs",
     "lint:file-size": "node scripts/check-file-size.mjs",
     "lint:fs-boundary": "node scripts/check-fs-boundary-primitives.mjs",
     "prepack": "node scripts/prepack-build.mjs",
@@ -139,7 +140,7 @@
     "docs:check": "node scripts/check-doc-examples.mjs",
     "docs:site": "node scripts/build-docs-site.mjs",
     "native:build": "pnpm --filter @openclaw/fs-safe-native-build build",
-    "native:test": "cargo test --manifest-path native/Cargo.toml",
+    "native:test": "cargo test --workspace",
     "pack:check": "pnpm build && node scripts/check-pack.mjs",
     "public-api:update": "pnpm build && node scripts/check-pack.mjs --update-public-api",
     "package:collect": "node scripts/check-release-packages.mjs --output release-artifacts",
@@ -150,7 +151,9 @@
     "crabbox:hydrate": "crabbox actions hydrate",
     "crabbox:run": "crabbox run",
     "crabbox:stop": "crabbox stop",
-    "crabbox:warmup": "crabbox warmup"
+    "crabbox:warmup": "crabbox warmup",
+    "archive:wasm": "node scripts/build-archive-wasm.mjs",
+    "archive:producer-smoke": "node scripts/archive-producer-smoke.mjs"
   },
   "optionalDependencies": {
     "@openclaw/fs-safe-darwin-arm64": "0.8.1",
@@ -160,8 +163,7 @@
     "@openclaw/fs-safe-linux-x64-gnu": "0.8.1",
     "@openclaw/fs-safe-linux-x64-musl": "0.8.1",
     "@openclaw/fs-safe-win32-x64-msvc": "0.8.1",
-    "jszip": "^3.10.1",
-    "tar": "7.5.22"
+    "jszip": "^3.10.1"
   },
   "devDependencies": {
     "@emnapi/runtime": "2.0.0-alpha.4",
@@ -173,6 +175,7 @@
     "istanbul-lib-report": "3.0.1",
     "istanbul-reports": "3.2.0",
     "sigstore": "5.0.0",
+    "tar": "7.5.22",
     "typescript": "^7.0.2",
     "vite": "8.2.2",
     "vitest": "^4.1.11"

@@ -13,7 +13,6 @@ import {
 } from "../src/absolute-path.js";
 import {
   createTarEntryPreflightChecker,
-  readTarEntryInfo,
 } from "../src/archive-tar.js";
 import { resolveArchiveKind, resolvePackedRootDir } from "../src/archive-kind.js";
 import { pathExists, pathExistsSync } from "../src/fs.js";
@@ -147,15 +146,7 @@ describe("archive kind and tar preflight helpers", () => {
     await expect(resolvePackedRootDir(root)).rejects.toThrow("unexpected archive layout");
   });
 
-  it("normalizes tar entries and rejects unsafe entries", () => {
-    expect(readTarEntryInfo({ path: "a.txt", type: "File", size: 4.9 })).toEqual({
-      path: "a.txt",
-      type: "File",
-      size: 4,
-    });
-    expect(readTarEntryInfo({ path: "a.txt", type: "File", size: -1 })).toMatchObject({ size: 0 });
-    expect(readTarEntryInfo(null)).toEqual({ path: "", type: "", size: 0 });
-
+  it("rejects unsafe entries through the public TAR checker", () => {
     const check = createTarEntryPreflightChecker({
       rootDir: "/tmp/extract",
       stripComponents: 1,

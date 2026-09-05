@@ -2,7 +2,7 @@ import { Readable, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { describe, expect, it } from "vitest";
 import { resolveExtractLimits, resolveTarMeterLimits } from "../src/archive-limits.js";
-import { TarMetadataMeter } from "../src/archive-tar-meta.js";
+import { TarParserStream } from "../src/archive-tar-wasm.js";
 import { tarFixture } from "./helpers/archive-fuzz.js";
 import { paxHeader } from "./helpers/archive-pax.js";
 
@@ -13,7 +13,7 @@ async function admit(bytes: Buffer, maxDecodedBytes: number, chunkSize = 511): P
     for (let offset = 0; offset < bytes.length; offset += chunkSize) yield bytes.subarray(offset, offset + chunkSize);
   }
   const output: Buffer[] = [];
-  await pipeline(Readable.from(chunks()), new TarMetadataMeter({ ...resolveTarMeterLimits(), maxDecodedBytes }), new Writable({
+  await pipeline(Readable.from(chunks()), new TarParserStream({ ...resolveTarMeterLimits(), maxDecodedBytes }), new Writable({
     write(chunk: Buffer, _encoding, callback) { output.push(chunk); callback(); },
   }));
   return Buffer.concat(output);
@@ -61,7 +61,7 @@ describe("absolute decoded TAR admission", () => {
     ["PAX metadata", tarFixture([paxHeader([["size", "0"]]), { path: "empty" }], false)],
   ] as const)("stops an unbounded %s tail at the ceiling plus one probe", async (_label, pattern) => {
     const ceiling = pattern.length * 4;
-    const meter = new TarMetadataMeter({ ...resolveTarMeterLimits(), maxDecodedBytes: ceiling });
+    const meter = new TarParserStream({ ...resolveTarMeterLimits(), maxDecodedBytes: ceiling });
     const error = new Promise<Error>((resolve) => meter.once("error", resolve));
     let forwarded = 0;
     meter.on("data", (chunk: Buffer) => { forwarded += chunk.length; });

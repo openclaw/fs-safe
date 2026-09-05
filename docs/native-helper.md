@@ -29,6 +29,11 @@ The equivalent environment variables are `FS_SAFE_NATIVE_MODE` and `OPENCLAW_FS_
 | `off` | Do not load a native package. Use the guarded JavaScript path deterministically. |
 | `require` | Throw `FsSafeError("helper-unavailable")` instead of falling back when an operation needs the native binding and it cannot load. |
 
+TAR/gzip in the guarded JavaScript path uses a bundled, import-free WASM build
+of the same Rust parser used by native. `off` still disables native filesystem
+code; it does not disable this portable parser. ZIP fallback still requires
+optional `jszip`, and zstd/bzip2 remain native-only.
+
 Configure the mode once during startup. Loading is lazy and cached; changing from `auto` to `require` after a failed load changes failure policy but does not repeatedly probe the binary.
 
 [`tempWorkspace()` and its scoped/sync variants](temp.md#private-temp-workspaces)
