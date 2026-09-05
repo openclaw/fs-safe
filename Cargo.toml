@@ -1,5 +1,5 @@
 [workspace]
-members = ["native"]
+members = ["native", "archive-core", "archive-wasm"]
 resolver = "2"
 
 [profile.release]

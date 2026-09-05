@@ -8,7 +8,7 @@ import { pipeline } from "node:stream/promises";
 import { createGzip } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { MAX_TAR_MANIFEST_BYTES, resolveTarMeterLimits, tarManifestEntryCost } from "../src/archive-limits.js";
-import { TarMetadataMeter } from "../src/archive-tar-meta.js";
+import { TarParserStream } from "../src/archive-tar-wasm.js";
 import { manifestMember, nearMaxPath } from "./helpers/archive-admission.js";
 import { tarFixture } from "./helpers/archive-fuzz.js";
 import { paxNative } from "./helpers/archive-pax-native.js";
@@ -35,7 +35,7 @@ it("charges object/string overhead and UTF-8 bytes exactly at the boundary", asy
   expect(tarManifestEntryCost(name)).toBe(cost);
   for (const maximum of [cost - 1, cost]) {
     let emitted = 0;
-    const meter = new TarMetadataMeter({ ...resolveTarMeterLimits(), maxManifestBytes: maximum }, () => { emitted++; });
+    const meter = new TarParserStream({ ...resolveTarMeterLimits(), maxManifestBytes: maximum }, () => { emitted++; });
     meter.resume();
     meter.on("error", () => {});
     const error = await new Promise<Error | null | undefined>((resolve) => meter.end(tarFixture([{ path: name }]), resolve));
@@ -62,7 +62,7 @@ describe.each(["GNU", "PAX"] as const)("streamed %s manifest retention", (extens
   it("stops before emitting the overflowing member or requesting another body", async () => {
     let emitted = 0;
     const limits = resolveTarMeterLimits();
-    const meter = new TarMetadataMeter(limits, () => { emitted++; });
+    const meter = new TarParserStream(limits, () => { emitted++; });
     meter.resume();
     meter.on("error", () => {});
     const member = manifestMember(extension);

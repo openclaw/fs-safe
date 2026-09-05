@@ -80,6 +80,7 @@ try {
   const paths = new Set(files.map((file) => file.path));
   const expected = new Set([
     "CHANGELOG.md",
+    "dist/archive-parser.wasm",
     "docs/assets/readme-banner.jpg",
     "LICENSE",
     "README.md",

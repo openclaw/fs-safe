@@ -1,0 +1,13 @@
+[package]
+name = "fs-safe-archive-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+license = "MIT"
+
+[dependencies]
+unicode-normalization = "0.1.25"
+
+[dev-dependencies]
+tar = { version = "0.4.46", default-features = false }

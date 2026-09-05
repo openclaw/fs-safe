@@ -13,7 +13,7 @@ import {
   readArchiveEntry,
 } from "../src/archive.js";
 import { resolveTarMeterLimits } from "../src/archive-limits.js";
-import { preflightTarMetadata } from "../src/archive-tar-meta.js";
+import { inspectTar } from "../src/archive-tar-stream.js";
 import {
   __resetFsSafeNativeConfigForTest,
   configureFsSafeNative,
@@ -60,9 +60,9 @@ describe("TAR metadata preflight boundaries", () => {
     await fs.writeFile(atLimit, tarFixture([{ path: "long-name", type: "L", body: "x".repeat(16) }, { path: "raw" }]));
     await fs.writeFile(pastLimit, tarFixture([{ path: "long-name", type: "L", body: "x".repeat(17) }, { path: "raw" }]));
 
-    await expect(preflightTarMetadata({ archivePath: atLimit, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 16 }) }))
+    await expect(inspectTar({ archivePath: atLimit, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 16 }) }))
       .resolves.toBeUndefined();
-    await expect(preflightTarMetadata({ archivePath: pastLimit, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 16 }) }))
+    await expect(inspectTar({ archivePath: pastLimit, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 16 }) }))
       .rejects.toMatchObject({
         code: ARCHIVE_LIMIT_ERROR_CODE.META_ENTRY_SIZE_EXCEEDS_LIMIT,
       });
@@ -75,9 +75,9 @@ describe("TAR metadata preflight boundaries", () => {
     await fs.writeFile(headerPath, Buffer.alloc(511));
     await fs.writeFile(entryPath, tarFixture([{ path: "value", body: "payload" }], false).subarray(0, 513));
 
-    await expect(preflightTarMetadata({ archivePath: headerPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
+    await expect(inspectTar({ archivePath: headerPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
       .rejects.toThrow("truncated TAR header");
-    await expect(preflightTarMetadata({ archivePath: entryPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
+    await expect(inspectTar({ archivePath: entryPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
       .rejects.toThrow("truncated TAR entry");
   });
 
@@ -104,15 +104,15 @@ describe("TAR metadata preflight boundaries", () => {
     await fs.writeFile(highBitsPath, highBits);
     await fs.writeFile(paddingPath, padding);
 
-    await expect(preflightTarMetadata({ archivePath: malformedPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
+    await expect(inspectTar({ archivePath: malformedPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
       .rejects.toThrow("size is not valid octal");
-    await expect(preflightTarMetadata({ archivePath: highBitsPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
-      .rejects.toThrow("base-256 size exceeds the safe integer range");
-    await expect(preflightTarMetadata({ archivePath: paddingPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
+    await expect(inspectTar({ archivePath: highBitsPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
+      .rejects.toThrow("base-256 size is negative or overflows u64");
+    await expect(inspectTar({ archivePath: paddingPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
       .rejects.toThrow("entry padding exceeds the safe integer range");
     await fs.writeFile(paddingPath, negative);
-    await expect(preflightTarMetadata({ archivePath: paddingPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
-      .rejects.toThrow("base-256 size is negative or malformed");
+    await expect(inspectTar({ archivePath: paddingPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
+      .rejects.toThrow("base-256 size is negative or overflows u64");
   });
 
   it("rejects dangling PAX and malformed GNU sparse metadata", async () => {
@@ -142,17 +142,17 @@ describe("TAR metadata preflight boundaries", () => {
       Buffer.concat([sparseExtension, repeatedExtension, finalExtension]),
     );
 
-    await expect(preflightTarMetadata({ archivePath: paxPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
+    await expect(inspectTar({ archivePath: paxPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
       .rejects.toThrow("dangling PAX metadata");
-    await expect(preflightTarMetadata({ archivePath: sparseFlagPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
+    await expect(inspectTar({ archivePath: sparseFlagPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
       .rejects.toThrow("GNU sparse extension flag is not 0 or 1");
-    await expect(preflightTarMetadata({ archivePath: sparseExtensionPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
+    await expect(inspectTar({ archivePath: sparseExtensionPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
       .rejects.toThrow("GNU sparse extension flag is not 0 or 1");
-    await expect(preflightTarMetadata({ archivePath: sparseLimitPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 511 }) }))
+    await expect(inspectTar({ archivePath: sparseLimitPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 511 }) }))
       .rejects.toMatchObject({
         code: ARCHIVE_LIMIT_ERROR_CODE.META_ENTRY_SIZE_EXCEEDS_LIMIT,
       });
-    await expect(preflightTarMetadata({ archivePath: sparseUnsupportedPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
+    await expect(inspectTar({ archivePath: sparseUnsupportedPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
       .rejects.toThrow("GNU sparse entries are not supported");
   });
 
@@ -164,7 +164,7 @@ describe("TAR metadata preflight boundaries", () => {
     updateTarChecksum(header);
     await fs.writeFile(archivePath, Buffer.concat([header, Buffer.alloc(512 + 1024)]));
 
-    await expect(preflightTarMetadata({ archivePath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
+    await expect(inspectTar({ archivePath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
       .resolves.toBeUndefined();
   });
 
@@ -172,11 +172,11 @@ describe("TAR metadata preflight boundaries", () => {
     const root = await tempRoot("fs-safe-tar-gzip-");
     const archivePath = path.join(root, "fixture.tar.gz");
     await fs.writeFile(archivePath, gzipSync(tarFixture([{ path: "value", body: "ok" }])));
-    await expect(preflightTarMetadata({ archivePath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
+    await expect(inspectTar({ archivePath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
       .resolves.toBeUndefined();
     const controller = new AbortController();
     controller.abort(new Error("deadline elapsed"));
-    await expect(preflightTarMetadata({
+    await expect(inspectTar({
       archivePath,
       limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }),
       signal: controller.signal,
@@ -189,11 +189,11 @@ describe("TAR metadata preflight boundaries", () => {
     await fs.writeFile(archivePath, tarFixture([{ path: "value", body: "ok" }]));
     const createReadStream = vi.spyOn(fsSync, "createReadStream");
 
-    await expect(preflightTarMetadata({
+    await expect(inspectTar({
       archivePath,
       limits: { ...resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }), maxDecodedBytes: Number.NaN },
-    })).rejects.toThrow("maxDecodedBytes must be a non-negative safe integer");
-    await expect(preflightTarMetadata({
+    })).rejects.toThrow("invalid TAR parser limits");
+    await expect(inspectTar({
       archivePath: path.join(root, "missing.tar"),
       limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }),
     })).rejects.toMatchObject({ code: "ENOENT" });
@@ -212,7 +212,7 @@ describe("TAR metadata preflight boundaries", () => {
       return stream;
     }) as typeof fsSync.createReadStream);
 
-    await expect(preflightTarMetadata({
+    await expect(inspectTar({
       archivePath,
       limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }),
     })).rejects.toThrow("truncated TAR header");

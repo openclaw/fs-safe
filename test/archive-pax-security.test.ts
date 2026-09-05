@@ -47,9 +47,9 @@ for (const mode of ["off", "require"] as const) {
       ["exponent", "size", "1e3"], ["hex", "size", "0x10"], ["leading zero", "size", "01"],
       ["unsafe integer", "size", "9007199254740992"], ["unsafe padding", "size", "9007199254740990991"],
       ["padding overflow", "size", "9007199254740991"], ["space", "size", " 1"],
-      ["NUL path", "path", "ok\0evil"], ["Unicode path", "path", "café"],
-      ["Unicode linkpath", "linkpath", "café"], ["Unicode owner", "uname", "café"],
-      ["non-ASCII key", "päth", "ok"], ["newline xattr", "SCHILY.xattr.user.binary", "ok\nbad"],
+      ["NUL path", "path", "ok\0evil"],
+      ["Unicode owner", "uname", "café"],
+      ["non-ASCII key", "päth", "ok"],
       ["charset", "hdrcharset", "BINARY"], ["charset alias", "charset", "UTF-8"],
       ["sparse map", "GNU.sparse.map", "0,1"], ["sparse name", "GNU.sparse.name", "raw"],
       ["sparse size", "GNU.sparse.size", "1"], ["sparse 1.0", "GNU.sparse.major", "1"],
@@ -68,7 +68,7 @@ for (const mode of ["off", "require"] as const) {
       Buffer.from("09 path=a\n"), Buffer.from("+9 path=a\n"), Buffer.from("0 path=a\n"),
       Buffer.from("999999999999999999999999 path=a\n"), Buffer.from("9 path=a\0"),
       Buffer.from("9 path=a\ntrailing"), Buffer.from("9 path=a\n\n"),
-      paxRecord("path", "a\nb"), paxRecord("bad key", "value"),
+ paxRecord("bad key", "value"),
       Buffer.concat([paxRecord("path", "a"), paxRecord("path", "b")]),
       Buffer.concat([paxRecord("size", "1"), paxRecord("size", "7")]),
       Buffer.concat([paxRecord("SCHILY.xattr.user.binary", "a"), paxRecord("SCHILY.xattr.user.binary", "b")]),
@@ -120,11 +120,9 @@ for (const mode of ["off", "require"] as const) {
 
     it("rejects ambiguous raw text, raw numbers and link fields even when overridden", async () => {
       for (const entry of [
-        { ...member, path: "café" },
         { ...member, linkPath: "not-a-link" },
         { path: "link", type: "2", linkPath: "" },
         { ...member, mutateHeader: (header: Buffer) => { header[124] = 0xb0; } },
-        { ...member, mutateHeader: (header: Buffer) => { header.write("café", 345, "utf8"); } },
       ]) await reject(tarFixture([paxHeader([["path", "safe"], ["size", "0"]]), entry]));
     });
 

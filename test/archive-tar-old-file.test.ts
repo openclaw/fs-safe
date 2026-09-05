@@ -3,11 +3,11 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { gzipSync } from "node:zlib";
-import { Parser } from "tar";
+import { TarParserStream } from "../src/archive-tar-wasm.js";
+import { resolveTarMeterLimits } from "../src/archive-limits.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { extractArchive, readArchiveEntry } from "../src/archive.js";
-import { createTarAdmissionPlan, rawTarMember } from "../src/archive-tar-admission.js";
-import { readTarEntryInfo, type TarEntryInfo } from "../src/archive-tar.js";
+import { type TarEntryInfo } from "../src/archive-tar.js";
 import { __resetFsSafeNativeConfigForTest, configureFsSafeNative } from "../src/native-config.js";
 import { tarFixture, type TarFixtureEntry } from "./helpers/archive-fuzz.js";
 import { useTempDirs } from "./helpers/vitest.js";
@@ -20,41 +20,15 @@ function oldFile(entryPath: string): TarFixtureEntry {
   return { path: entryPath, body: payload, mutateHeader(header) { header[156] = 0; } };
 }
 
-describe("TAR regular-file parser agreement", () => {
-  it.each([0x00, 0x30])("matches node-tar's emitted type for raw byte %i", async (byte) => {
-    const bytes = tarFixture([{
-      path: "./pkg//legacy.bin", body: payload,
-      mutateHeader(header) { header[156] = byte; },
-    }]);
-    const member = rawTarMember(bytes.subarray(0, 512), payload.length);
-    const check = vi.fn(() => true);
-    const plan = createTarAdmissionPlan([member], check, 1);
+describe("TAR regular-file admission", () => {
+  it.each([0x00, 0x30])("admits the exact file identity and range for raw byte %i", async (byte) => {
+    const bytes = tarFixture([{ path: "./pkg//legacy.bin", body: payload,
+      mutateHeader(header) { header[156] = byte; } }]);
     const parsed: TarEntryInfo[] = [];
-    await pipeline(Readable.from([bytes]), new Parser({
-      strict: true,
-      onReadEntry(entry) { parsed.push(readTarEntryInfo(entry)); entry.resume(); },
-    }));
-
-    expect(parsed).toHaveLength(1);
-    expect(member.type).toBe(parsed[0]!.type);
-    if (byte === 0x30) expect(member.type).toBe("File");
-    expect(plan.consume(parsed[0]!)).toBe("legacy.bin");
-    expect(() => plan.finish()).not.toThrow();
-    expect(check.mock.calls).toEqual([[member]]);
-  });
-
-  it.each(["OldFile", "File"])("accepts a matching %s plan but rejects a different parser type", (type) => {
-    const member = { path: "./pkg//legacy.bin", type, size: payload.length };
-    const actual = { ...member, path: "pkg/legacy.bin" };
-    const plan = createTarAdmissionPlan([member], () => true, 1);
-    expect(plan.consume(actual)).toBe("legacy.bin");
-    expect(() => plan.finish()).not.toThrow();
-
-    const mismatch = createTarAdmissionPlan([member], () => true, 1);
-    expect(() => mismatch.consume({ ...actual, type: "Directory" })).toThrowError(expect.objectContaining({
-      name: "ArchiveFormatError", code: "archive-header-invalid",
-      message: "invalid TAR header: parser disagrees with raw admission",
-    }));
+    const parser = new TarParserStream(resolveTarMeterLimits(), (entry) => parsed.push(entry));
+    parser.resume();
+    await pipeline(Readable.from([bytes]), parser);
+    expect(parsed).toEqual([{ path: "./pkg//legacy.bin", type: "File", size: payload.length, mode: 0o644, offset: 512 }]);
   });
 });
 

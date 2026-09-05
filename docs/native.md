@@ -64,13 +64,15 @@ returns a bounded manifest. TypeScript applies the shared path, filter, strip,
 mode, and byte policies and returns an index-bound extraction plan. Rust then
 creates only those planned entries beneath a private staging descriptor.
 
-A raw meter sits between decompression and the TAR crate, with matching
-TypeScript admission before node-tar. It parses 512-byte headers and bounded
-local PAX `x` metadata, using supported effective sizes to locate the following
-member body. GNU long-name/link `L`/`K` payloads remain
-supported. `maxMetaEntryBytes` bounds each metadata body before allocation;
-unsupported global/old metadata and sparse forms fail closed rather than being
-interpreted as ordinary members. See [bounded local PAX support](archive.md#bounded-local-pax-support).
+The `fs-safe-archive-core` Rust workspace crate owns TAR framing, paths, types,
+mode decoding, GNU metadata, and byte-counted local PAX records. The native
+binding and bundled WASM module compile the same source. No `tar::Archive` or
+Node TAR parser reinterprets admitted identities or sizes. Executors replay
+admitted payload ranges after complete bounded admission; native writes retain
+the platform's descriptor-relative primitives, while fallback writes retain
+the guarded Node staging/publication boundary. ZIP behavior is unchanged.
+`maxMetaEntryBytes` bounds bodies before allocation; unsupported global/old
+metadata and sparse forms fail closed. See [bounded local PAX support](archive.md#bounded-local-pax-support).
 
 Every raw pass receives only TypeScript's resolved `maxEntries`,
 `maxMetaEntryBytes`, and `maxDecodedBytes`. Shared resolution caps metadata and
@@ -88,11 +90,15 @@ integer maximum. Every native pass receives that same cap and charges headers,
 metadata, bodies, padding, EOF blocks, and trailing zeros. It rejects overflow
 with `archive-decoded-size-exceeds-limit`; no ratio policy is implied.
 Extraction and entry reads drain the metered reader through physical EOF after
-TAR iteration. Trailing framing or decoded-limit failures propagate before
+admitted-range replay. Trailing framing or decoded-limit failures propagate before
 directory modes are finalized, staging is published, or selected bytes return.
+Native gzip uses the existing flate2 member decoder with an explicit bounded
+member/padding transition; JavaScript retains Node gunzip and validates its
+unconsumed compressed suffix. Only all-zero physical padding after a complete
+validated trailer is accepted, still within the original archive-byte budget.
 Native reads stop at framing boundaries so a rejected header does not request
 its body from the decoder; codec buffering can still read ahead internally.
-Inspection finishes the complete bounded framing pass before parsing. Directory
+Inspection finishes the complete bounded framing pass before returning its manifest. Directory
 and link bodies, missing two-block EOF, and nonzero trailers reject on both
 backends, as detailed in [raw TAR framing](archive.md#raw-tar-framing). Raw and
 padded sizes above JavaScript's safe-integer maximum reject as invalid framing
@@ -155,7 +161,7 @@ remain TypeScript-owned. What changes is the syscall strength or availability:
 | Capability | Native path | Guarded JavaScript path |
 |---|---|---|
 | Root-relative opens/mutations | Descriptor-relative beneath operations. Pinned writes create parents and publish both replacement and no-replace targets relative to open directory descriptors. Linux reports `kernel-atomic`; macOS and Windows report `best-effort`. macOS uses `O_RESOLVE_BENEATH` when available plus an `F_GETPATH` detector, while Windows rejects reparse traversal in the object-manager call. | Reports `best-effort`: component-wise alias checks, no-follow opens where Node exposes them, private temp/rename, and post-operation identity verification. A same-privilege peer can replace a writable parent after a guard assertion but before Node resolves the pathname mutation; the mutation may land outside the intended root before the post-check detects it. |
-| ZIP/TAR/gzip | Rust streaming decode and fd-relative output creation. | JSZip/node-tar into a private stage, then the same guarded merge policy. |
+| ZIP/TAR/gzip | Rust streaming decode and fd-relative output creation. | Optional JSZip or bundled WASM TAR into guarded private staging, then the same guarded merge policy. |
 | Zstd/bzip2 TAR | Supported. | Unsupported; typed `helper-unavailable`. |
 | Publication copy | Clone, Linux `copy_file_range`, async native SHA-256. | Exclusive `wx` byte loop and Node SHA-256 with the same content/identity fences. |
 | `rename-noreplace` | Atomic platform no-replace rename. | Unsupported; no emulation by check-then-rename. |

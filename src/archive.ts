@@ -32,11 +32,6 @@ import {
   withStagedArchiveDestination,
 } from "./archive-staging.js";
 import { mergePlannedArchiveIntoDestination, type ArchivePublicationEntry } from "./archive-merge.js";
-import {
-  createTarEntryPreflightChecker,
-  readTarEntryInfo,
-  type TarEntryInfo,
-} from "./archive-tar.js";
 import { loadZipArchiveWithPreflight } from "./archive-zip-preflight.js";
 import {
   isZipSymlinkEntry,
@@ -58,9 +53,7 @@ import {
   resolveArchiveFilteredEntryPolicy,
   shouldExtractArchiveEntry,
 } from "./archive-policy.js";
-import { importOptionalTar, NODE_TAR_RATIO_DISABLED, normalizeTarParserError } from "./archive-tar-runtime.js";
-import { preflightTarMetadata } from "./archive-tar-meta.js";
-import { createTarAdmissionPlan } from "./archive-tar-admission.js";
+import { extractWasmTar } from "./archive-tar-extract.js";
 import type { ExtractArchiveOptions } from "./archive-options.js";
 import { writeSiblingTempFile } from "./sibling-temp.js";
 export type { ArchiveLogger, ExtractArchiveOptions } from "./archive-options.js";
@@ -348,114 +341,13 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
   }
   if (kind === "tar") {
     await withExtractionDeadline(params.timeoutMs, label, async (deadline) => {
-      const tar = await importOptionalTar();
       const stagedArchive = await stageArchiveFileForExtraction({
         archivePath: params.archivePath,
         limits,
         deadline,
       });
       try {
-        const manifest: TarEntryInfo[] = [];
-        await preflightTarMetadata({
-          archivePath: stagedArchive.path,
-          limits: tarLimits,
-          signal: deadline.signal,
-          onMember: (entry) => { manifest.push(entry); },
-        });
-        deadline.check();
-        const destinationRealDir = await prepareArchiveDestinationDir(params.destDir);
-        await withStagedArchiveDestination({
-          destinationRealDir,
-          run: async (stagingDir) => {
-            deadline.check();
-            const strip = Math.max(0, Math.floor(params.stripComponents ?? 0));
-            const checkTarEntrySafety = createTarEntryPreflightChecker({
-              rootDir: destinationRealDir,
-              stripComponents: params.stripComponents,
-              limits,
-              entryFilter: params.entryFilter,
-              onFiltered,
-            });
-            const admission = createTarAdmissionPlan(manifest, (entry) => {
-              deadline.check();
-              return checkTarEntrySafety(entry);
-            }, strip);
-            const acceptedEntries: ArchivePublicationEntry[] = [];
-            // Extract privately, then merge through the safe-open boundary.
-            const extractor = tar.x({
-              cwd: stagingDir,
-              // fs-safe owns stripping: node-tar counts the `.` and empty path
-              // components that stripArchivePath() drops, so the two disagree.
-              strip: 0,
-              gzip: params.tarGzip,
-              signal: deadline.signal,
-              preservePaths: false,
-              noChmod: true,
-              preserveOwner: false,
-              noMtime: true,
-              dmode: 0o700,
-              strict: true,
-              maxMetaEntrySize: tarLimits.maxMetaEntryBytes,
-              maxDecompressionRatio: NODE_TAR_RATIO_DISABLED,
-              filter(this: { abort(error: Error): void }, _entryPath, entry) {
-                try {
-                  const info = readTarEntryInfo(entry);
-                  const relPath = admission.consume(info);
-                  if (!relPath) {
-                    return false;
-                  }
-                  const kind = info.type === "Directory" || info.type === "GNUDumpDir" ? "directory" : "file";
-                  // Keep archived modes before changing node-tar's creation mode.
-                  (entry as { path: string }).path = relPath;
-                  acceptedEntries.push({
-                    path: relPath,
-                    kind,
-                    mode: resolveArchiveEntryMode({
-                      kind,
-                      archivedMode: info.mode,
-                      policy: params.entryModes,
-                    }),
-                  });
-                  (entry as { mode: number }).mode = kind === "directory" ? 0o700 : 0o600;
-                  return true;
-                } catch (error) {
-                  // Abort through the parser so pipeline tears down both the
-                  // archive reader and unpacker instead of leaving a paused
-                  // stream behind after a policy rejection.
-                  this.abort(error instanceof Error ? error : new Error(String(error)));
-                  return false;
-                }
-              },
-              onReadEntry(entry) {
-                try {
-                  deadline.check();
-                } catch (err) {
-                  const error = err instanceof Error ? err : new Error(String(err));
-                  // EventEmitter binds `this` to tar.Unpack, exposing abort().
-                  const emitter = this as unknown as { abort?: (error: Error) => void };
-                  emitter.abort?.(error);
-                }
-              },
-            });
-            try {
-              await pipeline(fsSync.createReadStream(stagedArchive.path), extractor, {
-                signal: deadline.signal,
-              });
-            } catch (error) {
-              throw normalizeTarParserError(createPipelineTimeoutError(error, deadline));
-            }
-            admission.finish();
-            deadline.check();
-            await mergePlannedArchiveIntoDestination({
-              entries: acceptedEntries,
-              sourceDir: stagingDir,
-              destinationDir: params.destDir,
-              destinationRealDir,
-              deadline,
-            });
-            deadline.check();
-          },
-        });
+        await extractWasmTar({ archivePath: stagedArchive.path, options: { ...params, onFiltered }, limits, tarLimits, deadline });
       } finally {
         await stagedArchive.cleanup();
       }

@@ -1,12 +1,10 @@
 import { Readable, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { Parser } from "tar";
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { TarMetadataMeter } from "../src/archive-tar-meta.js";
+import { TarParserStream } from "../src/archive-tar-wasm.js";
 import { resolveTarMeterLimits, tarManifestEntryCost, type TarMeterLimits } from "../src/archive-limits.js";
 import { createTarEntryPreflightChecker, type TarEntryInfo } from "../src/archive-tar.js";
-import { createTarAdmissionPlan } from "../src/archive-tar-admission.js";
 import { tarFixture } from "./helpers/archive-fuzz.js";
 import { ignored, ignoredTypes, unsafeIgnoredPaths } from "./helpers/archive-ignored.js";
 
@@ -22,34 +20,12 @@ it("rejects raw linkname/type contradictions for all 256 flags before metadata o
       mutateHeader(header) { header[156] = type; },
     }], false);
     const entries: TarEntryInfo[] = [];
-    const meter = new TarMetadataMeter(resolveTarMeterLimits({ maxEntries: 0, maxMetaEntryBytes: 0 }), (entry) => entries.push(entry));
+    const meter = new TarParserStream(resolveTarMeterLimits({ maxEntries: 0, maxMetaEntryBytes: 0 }), (entry) => entries.push({ path: entry.path, type: entry.type, size: entry.size }));
     await expect(pipeline(Readable.from([header]), meter, new Writable({ write(_chunk, _encoding, callback) { callback(); } })))
       .rejects.toMatchObject({ name: "ArchiveFormatError", code: "archive-header-invalid",
         message: `invalid TAR header: linkname ${isLink ? "required on a link" : "forbidden on a non-link"} header` });
     expect(entries).toEqual([]);
   }
-});
-
-it("confirms node-tar's classification for every raw typeflag", async () => {
-  const observed: number[] = [];
-  const named: string[] = [];
-  for (let byte = 0; byte < 256; byte++) {
-    const bytes = tarFixture([{
-      path: "safe", linkPath: byte === 49 || byte === 50 ? "target" : undefined,
-      mutateHeader: (header) => { header[156] = byte; },
-    }]);
-    const callbacks: number[] = [];
-    const parser = new Parser({ strict: true, onReadEntry(entry) { callbacks.push(byte); entry.resume(); } });
-    parser.on("ignoredEntry", (entry) => { observed.push(byte); named.push(entry.type); });
-    await pipeline(Readable.from([bytes]), parser);
-    expect(callbacks).toEqual(visible.includes(byte) ? [byte] : []);
-  }
-  expect(observed).toEqual(ignoredFlags);
-  expect(observed).toHaveLength(240);
-  expect(named.filter((type) => type === "Unsupported")).toHaveLength(235);
-  expect(named.filter((type) => type !== "Unsupported")).toEqual([
-    "SolarisACL", "Inode", "ContinuationFile", "SparseFile", "TapeVolumeHeader",
-  ]);
 });
 
 async function admit(bytes: Buffer, chunkSize: number, maxEntries = 50_000) {
@@ -58,7 +34,7 @@ async function admit(bytes: Buffer, chunkSize: number, maxEntries = 50_000) {
     for (let offset = 0; offset < bytes.length; offset += chunkSize) yield bytes.subarray(offset, offset + chunkSize);
   };
   const output: Buffer[] = [];
-  await pipeline(Readable.from(chunks()), new TarMetadataMeter(resolveTarMeterLimits({ maxEntries }), (entry) => entries.push(entry)),
+  await pipeline(Readable.from(chunks()), new TarParserStream(resolveTarMeterLimits({ maxEntries }), (entry) => entries.push({ path: entry.path, type: entry.type, size: entry.size })),
     new Writable({ write(chunk, _encoding, callback) { output.push(chunk); callback(); } }));
   expect(Buffer.concat(output)).toEqual(bytes);
   return entries;
@@ -66,7 +42,7 @@ async function admit(bytes: Buffer, chunkSize: number, maxEntries = 50_000) {
 
 async function rejectsBeforeEmission(bytes: Buffer, code: string, limits: Partial<TarMeterLimits> = {}, expected: TarEntryInfo[] = []) {
   const entries: TarEntryInfo[] = [];
-  const meter = new TarMetadataMeter({ ...resolveTarMeterLimits(), ...limits }, (entry) => entries.push(entry));
+  const meter = new TarParserStream({ ...resolveTarMeterLimits(), ...limits }, (entry) => entries.push({ path: entry.path, type: entry.type, size: entry.size }));
   await expect(pipeline(Readable.from([bytes]), meter, new Writable({ write(_chunk, _encoding, callback) { callback(); } })))
     .rejects.toMatchObject({ code });
   expect(entries).toEqual(expected);
@@ -134,7 +110,7 @@ describe.each([1, 7, 511, 512, 513, 64 * 1024])("ignored raw admission chunk=%i"
     ]);
   });
   it.each(ignoredTypes)("counts ignored %s headers before requesting their bodies", async (type) => {
-    const meter = new TarMetadataMeter(resolveTarMeterLimits({ maxEntries: 1 }));
+    const meter = new TarParserStream(resolveTarMeterLimits({ maxEntries: 1 }));
     meter.resume();
     const failure = new Promise<Error>((resolve) => meter.once("error", resolve));
     const prefix = Buffer.concat([tarFixture([ignored(type)], false), tarFixture([ignored(type, "second")]).subarray(0, 512)]);
@@ -154,7 +130,7 @@ it("keeps unsupported raw flags under the same alias/collision policy for arbitr
       const entries = await admit(tarFixture(first ? [hidden, file] : [file, hidden]), chunk, 2);
       const calls: string[] = [];
       const check = createTarEntryPreflightChecker({ rootDir: process.cwd(), onFiltered: "skip-entry", entryFilter: ({ path }) => { calls.push(path); return "skip"; } });
-      expect(() => createTarAdmissionPlan(entries, check, 0)).toThrow(expect.objectContaining({ code: "entry-path" }));
+      expect(() => entries.forEach(check)).toThrow(expect.objectContaining({ code: "entry-path" }));
       expect(calls).toEqual(["pkg/item"]);
     },
   ), { numRuns: 100, seed: 47 });

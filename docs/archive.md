@@ -2,15 +2,12 @@
 
 `@openclaw/fs-safe/archive` extracts ZIP and TAR archives behind one API, with traversal checks, blocked-link-type rejection, and entry-count and byte budgets. When the native binding is available for the current platform, Rust streams ZIP, TAR, gzip, zstd, and bzip2 while TypeScript remains the sole policy owner; every accepted output is created fd-relative in a private staging root. Extraction then merges through the same safe-open boundary used by direct writes — a symlinked entry can't trick the merge into following an out-of-tree path.
 
-The guarded JavaScript fallback uses optional runtime dependencies: `jszip` for
-ZIP and `tar` for TAR/gzip. The native path does not use those packages. Installs
-that omit optional dependencies can still import this subpath and use the
-native path or pure path/limit helpers.
-
-Some package managers and CI installs skip optional dependencies
-(`--no-optional`, `--omit=optional`, or equivalent). If an archive helper throws
-that an optional archive dependency is not installed, install `jszip` and/or
-`tar` explicitly in the consuming package.
+TAR admission uses one Rust core compiled into both the native binding and a
+bundled, import-free WebAssembly module. The guarded JavaScript fallback uses
+that module for TAR/gzip and optional `jszip` for ZIP. TAR needs no optional
+parser dependency, runtime download, install script, or consumer Rust toolchain.
+Installs omitting optional dependencies can import every public subpath and use
+TAR/gzip in `auto` or `off`; ZIP fallback still requires `jszip`.
 
 ```ts
 import { extractArchive, resolveArchiveKind } from "@openclaw/fs-safe/archive";
@@ -68,12 +65,12 @@ directories; ZIP UNIX creator records with zero attributes are explicit zero,
 while non-UNIX ZIP records use the absent-metadata defaults.
 
 TAR mode fields containing only NUL/ASCII-space padding use absent defaults.
-Native extraction also recognizes GNU binary modes, including signed values,
-within node-tar's JavaScript safe-integer range before masking permission bits.
-Malformed or unsupported mode representations retain existing decoder behavior:
-native falls back to zero, while JavaScript may default, parse an octal prefix,
-or reject. These representations are not newly admitted or standardized by the
-mode repair; raw framing and other numeric-field checks remain unchanged.
+Both backends recognize GNU binary modes, including signed values,
+within JavaScript's safe-integer range before masking permission bits.
+Malformed or unsupported mode fields consistently fall back to zero, matching
+the former native behavior. This replaces JavaScript's decoder-dependent octal
+prefix parsing, defaulting, or rejection for malformed fields. Ordinary octal,
+absent, explicit zero, and supported GNU binary fields retain their behavior.
 
 Final modes remain separate from private working staging permissions: files
 stay `0o600` and directories `0o700` until publication. Files receive their final
@@ -112,8 +109,8 @@ normalizing separators. For example, `./pkg/hello.txt` with
 `stripComponents: 1` extracts to `hello.txt` on both backends. Entries with no
 remaining components are skipped before the filter callback, but still count
 toward `maxEntries` and undergo traversal validation. JavaScript TAR extraction
-passes node-tar this accepted output path with its own stripping disabled, so
-depth checks, collision checks, writes, and mode application agree.
+copies the admitted payload range to this accepted output path, so depth checks,
+collision checks, writes, and mode application agree.
 
 An `entryFilter` sees the validated **canonical effective archive path before
 stripping**, entry kind, and declared size. On every JavaScript and native
@@ -162,11 +159,10 @@ If skipping was not explicitly part of the restore contract, omit
 `onFiltered`; the first `"skip"` then rejects the complete archive with
 `ArchiveSecurityError("entry-filtered")`.
 
-Both TAR implementations finish bounded admission before TypeScript policy
-evaluation, so a rejected plan never starts extraction. The JavaScript path
-owns the extraction file stream and aborts node-tar through a pipeline on
-parser disagreement, validation, or timeout failure, destroying both ends
-instead of leaving a paused parser to drain indefinitely.
+Both TAR routes finish bounded admission before TypeScript policy evaluation,
+so a rejected plan never starts extraction. The JavaScript path owns its input,
+decoder, and WASM parser streams, joining their teardown on validation, write,
+or timeout failure.
 
 TAR character devices, block devices, and FIFOs are presented to the filter as
 `kind: "other"`. Accepted entries of these types reject with
@@ -183,8 +179,7 @@ and output collision checks in physical order. Each remaining record reaches
 `entryFilter` once with its canonical pre-strip path, `kind: "other"`, and
 declared effective size. A filter skip rejects with `"entry-filtered"` unless
 `onFiltered: "skip-entry"` is explicit. Accepted unsupported records are safely
-omitted and do not consume output payload budgets. This applies even when the
-underlying TAR parser suppresses the record. GNU long names describe one such
+omitted and do not consume output payload budgets. The shared core admits these records explicitly. GNU long names describe one such
 record and are then cleared; local PAX on unsupported types and GNU sparse
 `S` records retain their existing fail-closed format policy.
 
@@ -219,7 +214,7 @@ type ArchiveExtractLimits = {
 };
 ```
 
-Defaults exist for each (`DEFAULT_MAX_ARCHIVE_BYTES_ZIP`, `DEFAULT_MAX_ENTRIES`, `DEFAULT_MAX_EXTRACTED_BYTES`, `DEFAULT_MAX_ENTRY_BYTES`, `DEFAULT_MAX_META_ENTRY_BYTES`, `DEFAULT_MAX_ENTRY_PATH_COMPONENTS`). An explicit zero remains zero rather than selecting the default. `maxEntries` counts every archive entry, including entries removed by `stripComponents` or an explicit filter. The path-component default is 256. It is evaluated after `stripComponents` and before TypeScript accepts an entry for either JavaScript or native extraction, so rejected entries cannot cause implicit parent-directory creation. The 1 MiB metadata default matches node-tar's `maxMetaEntrySize`; fs-safe passes the same resolved value to node-tar and the native TAR meter.
+Defaults exist for each (`DEFAULT_MAX_ARCHIVE_BYTES_ZIP`, `DEFAULT_MAX_ENTRIES`, `DEFAULT_MAX_EXTRACTED_BYTES`, `DEFAULT_MAX_ENTRY_BYTES`, `DEFAULT_MAX_META_ENTRY_BYTES`, `DEFAULT_MAX_ENTRY_PATH_COMPONENTS`). An explicit zero remains zero rather than selecting the default. `maxEntries` counts every archive entry, including entries removed by `stripComponents` or an explicit filter. The path-component default is 256. It is evaluated after `stripComponents` and before TypeScript accepts an entry for either JavaScript or native extraction, so rejected entries cannot cause implicit parent-directory creation. The same resolved 1 MiB metadata default applies to the native and WASM core.
 
 A limit violation throws `ArchiveLimitError`. Its constant and string code are:
 
@@ -262,17 +257,17 @@ codes remain `"destination-not-directory"`, `"destination-symlink"`, and
 - **TOCTOU during merge:** extraction first writes to a private temp dir, then merges into `destDir` using the same boundary checks as `root().write()`. Destination symlink swaps are checked with the selected platform mechanism; non-Linux routes retain the best-effort race window documented in the [security model](security-model.md#containment-guarantees-by-platform).
 - **Zip bombs:** `maxExtractedBytes` and `maxEntryBytes` apply to *post-decompression* bytes, so highly-compressed payloads hit the cap before they exhaust disk.
 - **Corrupt ZIP payloads:** streamed output must match both the central-directory CRC and declared uncompressed size before it can leave private staging.
-- **Corrupt gzip streams:** truncated compressed bodies, missing trailers, and checksum failures reject before extraction publishes files or an entry read returns bytes, on both JavaScript and native backends.
+- **Gzip container integrity:** every concatenated gzip member must have a complete valid header, body, CRC32, and ISIZE trailer. A completed member may be followed by all-zero compressed-container padding (including system-tar stdout padding), bounded by the original archive-byte limit. The padding must remain zero through physical EOF; nonzero bytes or another member after padding reject. Truncation and corruption reject before publication or selected bytes return on both backends. Compressed padding is separate from decoded TAR EOF and does not bypass its checks.
 - **Slow-loris archives:** `timeoutMs` is a hard wall-clock budget for non-mutating work. Extraction is aborted on overrun; if a destination mutation is already in flight, that mutation and rollback are joined before rejection so archive-controlled publication cannot continue afterward.
-- **Metadata bombs:** a streaming pass-through reader rejects oversized PAX, GNU long-name, and GNU long-link bodies before either TAR implementation buffers them. It understands octal and base-256 fixed sizes and validates bounded local PAX bodies before using their size overrides for member framing. Original archive bytes remain unchanged.
+- **Metadata bombs:** a streaming pass-through reader rejects oversized PAX, GNU long-name, and GNU long-link bodies before buffering their bodies. It understands octal and base-256 fixed sizes and validates bounded local PAX bodies before using their size overrides for member framing. Original archive bytes remain unchanged.
 
 ### Raw TAR framing
 
 Extraction and bounded reads admit the complete decoded TAR stream through the
-raw meter before either backend's TAR parser runs. This applies to plain TAR,
+shared Rust core. This applies to plain TAR,
 gzip, and native-supported zstd/bzip2, without changing native-mode availability
-or fallback policy. The existing TypeScript and Rust meters enforce the same
-framing rules before parser normalization:
+or fallback policy. The native and WASM builds enforce the same
+framing rules:
 
 - Every nonzero header must have a valid unsigned octal checksum, delimited
   within its field. Checksum validation precedes metadata allocation and member
@@ -301,22 +296,28 @@ Missing linknames on links and nonempty linknames on non-links still use the
 format error. PAX `x` and GNU long-name/long-link `L`/`K` payloads retain their
 existing support and metadata limits; the zero-body rule is not applied to all
 non-regular types.
-PAX effective sizes still determine regular-member framing. Admission preserves
-the input bytes, and all entry/path/byte limits and extraction deadlines remain
-in force. Native inspection now completes this admission pass before parsing,
-requiring one additional streaming read/decompression pass.
-JavaScript admission reports an ordered logical-member manifest from the raw
-meter, bounded by entry-count, manifest, and decoded limits. Policy runs once
-over that manifest; extraction checks parser-visible members against the
-accepted decisions before writing. Original member names and USTAR prefixes
-are validated even when overridden, and non-padding bytes after a fixed path
-field's NUL terminator reject rather than hiding an unsafe suffix.
-Both meters enforce the 255-byte component ceiling under NFC and NFD before
-metadata replaces a raw path, including Hangul decomposition expansion.
-Native extraction and entry reads also drain their metered readers through
-physical EOF after parser traversal, before completing directory modes,
-publishing staged files, or returning the requested bytes. Finding the requested
-member or reaching the parser's logical EOF cannot bypass trailing validation.
+PAX effective sizes determine regular-member framing. Admission preserves input
+bytes and emits an ordered manifest with exact effective names, types, modes,
+sizes, and decoded payload offsets. TypeScript owns filtering, stripping,
+collisions, permissions, and accepted-output limits. Executors replay admitted
+ranges from the immutable staged input; no second TAR parser interprets PAX,
+GNU names, or payload lengths. Native writes remain descriptor-relative;
+JavaScript writes use the shared guarded private staging and pinned-write helpers.
+
+Original member names and USTAR prefixes are validated even when overridden.
+Non-padding bytes after a fixed path field's NUL terminator reject. The core
+enforces the 255-byte component ceiling under NFC and NFD, including Hangul
+expansion. Every replay drains and validates physical EOF before publication or
+returning selected bytes. Unrequested, filtered, and stripped members cannot
+bypass validation. Decompression remains streaming; no complete decoded archive
+is retained in memory or written to a decoded spool.
+
+The WASM transport has a fixed 64 KiB input buffer, one pending member event,
+and a 256 MiB maximum linear memory per isolated parser instance. Metadata is
+bounded before allocation; allocation failure rejects. Stream backpressure
+bounds queued chunks, and completion/error destroys the instance's parser
+state. The manifest retains the existing charged budget below; linear memory
+is an additional execution resource bound, not a new public limit option.
 
 The raw meter enforces `maxEntries` before consuming each logical member's body,
 including members later skipped by filtering or stripping. PAX/GNU metadata
@@ -343,9 +344,7 @@ archive overhead with safe addition. Ordinary limits, including
 zero and the existing defaulting/rounding rules, retain their behavior.
 There is no new public option. This is an absolute decoded admission
 cap, not a decompression-ratio policy; bounded stream/codec read-ahead remains.
-After this complete preflight, the JavaScript backend disables node-tar's
-independent ratio threshold so it cannot reject data that the native backend
-accepts within the same absolute limits.
+There is no independent TAR parser decompression-ratio threshold.
 
 ### Bounded local PAX support
 
@@ -359,13 +358,14 @@ permits link creation. Effective sizes drive framing, filters, and the existing 
 budgets; `maxEntries` still counts members, not their metadata headers.
 
 Records must have exact byte lengths, ASCII keys, a final newline, and no
-duplicate keys, embedded newlines, or unconsumed bytes. Structural `path` and
-`linkpath` values and ownership names must be nonempty printable ASCII. A PAX
-member's raw name, USTAR prefix, and raw link target must also be printable
-ASCII; raw link targets must be present only on links, even when overridden.
-Unicode
-PAX structural text is deliberately unsupported because the underlying parsers
-do not agree when UTF-8 is split across input chunks. `size`, `uid`, and `gid`
+duplicate keys or unconsumed bytes. `path` and `linkpath` must be nonempty strict
+UTF-8 without NUL. Unicode, a leading BOM, numeric-looking names, and embedded
+newlines preserve their exact spelling; newlines inside a byte-counted value
+are data. Windows filesystem filename restrictions still apply during creation.
+Ownership names retain the existing nonempty printable-ASCII contract. Raw name,
+USTAR prefix, and link fields still require strict UTF-8 and NUL padding even
+when metadata overrides them. Raw link targets must be present only on links.
+`size`, `uid`, and `gid`
 must be canonical unsigned decimal safe integers (zero is valid; signs, leading
 zeros, fractions, and exponents are not). Padded member sizes must also fit the
 safe integer range. Raw and effective directory/link sizes must both be zero;
@@ -378,8 +378,7 @@ with optional fractional digits, within JavaScript's Date range), `uid`, `gid`,
 destination. `LIBARCHIVE.xattr.*` and `SCHILY.xattr.*` with nonempty ASCII
 alphanumeric/dot/underscore/hyphen suffixes are also accepted as inert metadata,
 never restored as extended attributes. Their values are byte-counted and may
-contain NUL or non-UTF8 bytes, including macOS provenance metadata; embedded
-newlines are rejected because they can disrupt downstream record parsing.
+contain NUL, non-UTF8 bytes, or newlines, including macOS provenance metadata.
 
 Global `g`, old `X`, old GNU `N`, empty/dangling/repeated local headers, mixed
 PAX/GNU extension chains, unknown keys, charset declarations, ACL extensions,
@@ -393,11 +392,11 @@ chains without introducing a new limit or changing defaults.
 
 ### Bounded GNU long names and links
 
-Both raw meters buffer GNU long-name `L` and long-link `K` bodies within
-`maxMetaEntryBytes` before either TAR parser runs. A body must contain a nonempty
+The shared core buffers GNU long-name `L` and long-link `K` bodies within
+`maxMetaEntryBytes`. A body must contain a nonempty
 UTF-8 name, with either no NUL or exactly one terminal NUL. Embedded NULs,
 additional terminal NULs, bytes after a NUL, and invalid UTF-8 reject with
-`ArchiveFormatError("archive-header-invalid")`. The meters preserve original
+`ArchiveFormatError("archive-header-invalid")`. The core preserves original
 archive bytes, including the optional terminator and block padding.
 
 One logical member may have at most one `L` and one `K`, in either order.

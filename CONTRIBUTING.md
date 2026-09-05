@@ -19,6 +19,7 @@ described in [SECURITY.md](SECURITY.md).
 Use the Node.js and pnpm versions declared by the repository.
 
 ```bash
+rustup target add wasm32-unknown-unknown
 pnpm install --frozen-lockfile
 pnpm check
 ```

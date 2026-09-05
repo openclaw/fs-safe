@@ -85,7 +85,7 @@ Use the main entry for the common surface, or the focused subpaths when you want
 
 ## Runtime dependencies
 
-`@openclaw/fs-safe` lists `jszip` and `tar` as optional dependencies for JavaScript ZIP/TAR [archive extraction](archive.md). They are loaded lazily; the JavaScript archive fallback requires the corresponding codec and reports a missing-optional-dependency error without it. Public subpaths remain safe to import with all optional dependencies omitted, but imports do not prove native availability.
+`@openclaw/fs-safe` bundles an import-free WASM build of its Rust TAR parser for guarded JavaScript TAR/gzip [archive extraction](archive.md), including installs with optional dependencies omitted. ZIP fallback uses lazily loaded optional `jszip` and reports a missing-dependency error without it. Public subpaths remain safe to import with all optional dependencies omitted, but imports do not prove native availability.
 
 There are no peer dependencies. Exact-version optional packages carry the seven
 native targets and npm-compatible OS, CPU, and Linux libc filters install only

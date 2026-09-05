@@ -42,6 +42,9 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
+      - name: Add portable TAR parser target
+        run: rustup target add wasm32-unknown-unknown
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -158,6 +161,9 @@ jobs:
         with:
           version: 0.15.2
 
+      - name: Add portable TAR parser target
+        run: rustup target add wasm32-unknown-unknown
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -210,6 +216,9 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
+
+      - name: Add portable TAR parser target
+        run: rustup target add wasm32-unknown-unknown
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -301,6 +310,9 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
+      - name: Add portable TAR parser target
+        run: rustup target add wasm32-unknown-unknown
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -342,6 +354,9 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
+
+      - name: Add portable TAR parser target
+        run: rustup target add wasm32-unknown-unknown
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

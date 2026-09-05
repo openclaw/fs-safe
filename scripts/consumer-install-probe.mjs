@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { readFileSync, readdirSync, realpathSync, writeFileSync, mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, relative } from "node:path";
 
@@ -54,8 +54,9 @@ if (expected.omitted) {
     assert.throws(() => rootRequire.resolve(name), { code: "MODULE_NOT_FOUND" });
   }
 } else {
-  for (const name of ["jszip", "tar"]) insideConsumer(rootRequire.resolve(name));
+  insideConsumer(rootRequire.resolve("jszip"));
 }
+assert.throws(() => rootRequire.resolve("tar"), { code: "MODULE_NOT_FOUND" });
 for (const subpath of Object.keys(expected.rootPkg.exports)) {
   if (subpath !== "./package.json") {
     await import(subpath === "." ? expected.rootPkg.name : expected.rootPkg.name + subpath.slice(1));
@@ -65,3 +66,22 @@ writeFileSync("installed.json", JSON.stringify({
   root: expected.rootPkg.name, version: expected.rootPkg.version,
   nativePackages: [...physical], binary,
 }));
+
+// The bundled TAR parser works even in an install with every optional omitted.
+const { configureFsSafeNative } = await import("@openclaw/fs-safe/config");
+const { extractArchive, readArchiveEntry } = await import("@openclaw/fs-safe/archive");
+configureFsSafeNative({ mode: "off" });
+const header = Buffer.alloc(512);
+header.write("雪.txt");
+header.write("0000644\0", 100);
+header.write("00000000003\0", 124);
+header[156] = 48;
+header.fill(32, 148, 156);
+header.write(`${header.reduce((sum, byte) => sum + byte, 0).toString(8).padStart(6, "0")}\0 `, 148);
+const archivePath = join(consumer, "bundled.tar");
+const destDir = join(consumer, "bundled-out");
+writeFileSync(archivePath, Buffer.concat([header, Buffer.from("TAR"), Buffer.alloc(509 + 1024)]));
+mkdirSync(destDir);
+await extractArchive({ archivePath, destDir, timeoutMs: 10000 });
+assert.equal(readFileSync(join(destDir, "雪.txt"), "utf8"), "TAR");
+assert.equal((await readArchiveEntry(archivePath, "雪.txt", { maxBytes: 3 })).toString(), "TAR");

@@ -47,6 +47,9 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
+      - name: Add portable TAR parser target
+        run: rustup target add wasm32-unknown-unknown
+
       - name: Create isolated proof directories
         run: |
           $root = Join-Path $env:RUNNER_TEMP ('hash-identity-proof-' + [guid]::NewGuid().ToString('N'))

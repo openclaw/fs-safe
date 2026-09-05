@@ -3,6 +3,7 @@ use std::io::Cursor;
 
 pub(super) fn test_limits(max_meta_entry_bytes: u64) -> TarMeterLimits {
     TarMeterLimits {
+        windows_paths: cfg!(windows),
         max_meta_entry_bytes,
         max_entries: 50_000,
         max_decoded_bytes: 768 * 1024 * 1024,
@@ -58,7 +59,7 @@ fn reader(bytes: Vec<u8>, chunk: usize, limit: u64) -> TarMetadataMeter<Chunked>
     TarMetadataMeter::new(Chunked { inner: Cursor::new(bytes), chunk }, test_limits(limit))
 }
 
-// Mirrored from the exhaustive node-tar parser probe in the JS meter tests.
+// Ordinary logical types retain their established classification.
 fn node_tar_hidden_flags() -> Vec<u8> {
     let flags: Vec<_> = (0..=255_u8).filter(|kind| !matches!(kind,
         0 | b'0'..=b'7' | b'D' | b'g' | b'x' | b'K' | b'L' | b'N' | b'X'
@@ -199,7 +200,7 @@ fn gnu_valid_utf8_terminators_pairs_and_state_reset_preserve_every_byte() {
 }
 
 #[test]
-fn pax_framing_matches_tar_across_chunk_boundaries_and_size_directions() {
+fn admitted_ranges_preserve_payloads_across_chunks_and_size_directions() {
     for (raw, size) in [(1, 700), (700, 1), (700, 0)] {
         let metadata = [
             record("mtime", b"1787334189.823045922"),
@@ -215,20 +216,20 @@ fn pax_framing_matches_tar_across_chunk_boundaries_and_size_directions() {
             let mut output = Vec::new();
             reader(bytes.clone(), chunk, metadata.len() as u64).read_to_end(&mut output).unwrap();
             assert_eq!(output, bytes, "meter must retain original bytes");
-            let mut archive = tar::Archive::new(reader(bytes.clone(), chunk, metadata.len() as u64));
-            let mut entries = archive.entries().unwrap();
-            let mut first = entries.next().unwrap().unwrap();
-            assert_eq!(first.path_bytes().as_ref(), b"package/value");
-            assert_eq!(first.size(), size as u64);
-            let mut actual = Vec::new();
-            first.read_to_end(&mut actual).unwrap();
-            assert_eq!(actual, body);
-            let mut sentinel = entries.next().unwrap().unwrap();
-            assert_eq!(sentinel.path_bytes().as_ref(), b"sentinel");
-            actual.clear();
-            sentinel.read_to_end(&mut actual).unwrap();
-            assert_eq!(actual, b"end");
-            assert!(entries.next().is_none());
+            let mut parser = reader(bytes.clone(), chunk, metadata.len() as u64);
+            let mut scratch = [0; 65536];
+            let mut members = Vec::new();
+            while parser.read(&mut scratch).unwrap() != 0 {
+                if let Some(member) = parser.take_member() { members.push(member); }
+            }
+            assert_eq!(members.len(), 2);
+            assert_eq!(members[0].path, "package/value");
+            assert_eq!(members[0].size, size as u64);
+            let offset = members[0].offset as usize;
+            assert_eq!(&bytes[offset..offset + size], body.as_slice());
+            assert_eq!(members[1].path, "sentinel");
+            let offset = members[1].offset as usize;
+            assert_eq!(&bytes[offset..offset + 3], b"end");
         }
     }
 }
@@ -246,10 +247,8 @@ fn pax_state_rejects_truncation_duplicates_mixed_and_dangling_metadata() {
         [extension.clone(), gnu.clone(), file.clone()].concat(),
         [gnu, extension, file.clone()].concat(),
         [pax(&[metadata.clone(), metadata].concat()), file.clone()].concat(),
-        [pax(&record("SCHILY.xattr.user.binary", b"a\nb")), file.clone()].concat(),
         [pax(&record("size", b"01")), file.clone()].concat(),
         [pax(&record("GNU.sparse.major", b"1")), file.clone()].concat(),
-        [pax(&record("path", "caf\u{e9}".as_bytes())), file.clone()].concat(),
         [pax(&record("size", b"9007199254740991")), file].concat(),
     ];
     for bytes in invalid {
@@ -586,5 +585,35 @@ fn manifest_budget_stops_repeated_long_paths_before_another_read() {
         assert_eq!(error.to_string(), MANIFEST_LIMIT);
         assert_eq!(meter.manifest_bytes, allowed * cost);
         assert_eq!(source.supplied, maximum);
+    }
+}
+
+#[test]
+fn unicode_and_newline_pax_values_preserve_admitted_ranges_at_every_chunk_size() {
+    for name in ["雪.txt", "line\n.txt", "\u{feff}name", "01"] {
+        for (raw_size, size) in [(1, 700), (700, 1), (700, 0)] {
+            let metadata = [record("path", name.as_bytes()),
+                record("SCHILY.xattr.binary", b"\xff\0\n\xfe"),
+                record("size", size.to_string().as_bytes())].concat();
+            let body = vec![0xa7; size];
+            let bytes = [pax(&metadata), member("raw", b'0', raw_size, &body),
+                member("sentinel", b'0', 3, b"end"), vec![0; 1024]].concat();
+            for chunk in [1, 2, 3, 7, 511, 512, 513, 65536] {
+                let mut parser = reader(bytes.clone(), chunk, 1024);
+                let mut scratch = [0; 65536];
+                let mut entries = Vec::new();
+                while parser.read(&mut scratch).unwrap() != 0 {
+                    if let Some(entry) = parser.take_member() { entries.push(entry); }
+                }
+                assert_eq!(entries.len(), 2);
+                assert_eq!(entries[0].path, name);
+                assert_eq!(entries[0].size, size as u64);
+                let start = entries[0].offset as usize;
+                assert_eq!(&bytes[start..start + size], body);
+                assert_eq!(entries[1].path, "sentinel");
+                let start = entries[1].offset as usize;
+                assert_eq!(&bytes[start..start + 3], b"end");
+            }
+        }
     }
 }

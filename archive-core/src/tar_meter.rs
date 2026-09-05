@@ -18,6 +18,7 @@ pub fn charge_manifest_path(total: &mut u64, path: &str, limit: u64) -> io::Resu
 
 #[derive(Clone, Copy)]
 pub struct TarMeterLimits {
+    pub windows_paths: bool,
     pub max_entries: usize,
     pub max_meta_entry_bytes: u64,
     pub max_decoded_bytes: u64,
@@ -42,7 +43,29 @@ enum MeterState {
     },
 }
 
-// Keep raw framing aligned with src/archive-tar-meta.ts, before either parser.
+/// One admitted identity and decoded payload range, independent of executor.
+#[derive(Debug, Clone)]
+pub struct TarMember {
+    pub path: String,
+    pub entry_type: u8,
+    pub size: u64,
+    pub mode: u32,
+    pub offset: u64,
+}
+
+impl TarMember {
+    pub fn kind(&self) -> &'static str {
+        match self.entry_type {
+            0 | b'0' | b'7' => "file",
+            b'5' | b'D' => "directory",
+            b'1' => "hardlink", b'2' => "symlink",
+            b'3' | b'4' | b'6' => "blocked",
+            _ => "other",
+        }
+    }
+}
+
+// A push consumes at most one framing boundary and emits at most one member.
 pub struct TarMetadataMeter<R> {
     inner: R,
     limits: TarMeterLimits,
@@ -56,6 +79,8 @@ pub struct TarMetadataMeter<R> {
     pending_gnu_path: Option<String>,
     manifest_bytes: u64,
     zero_blocks: u8,
+    offset: u64,
+    member: Option<TarMember>,
 }
 
 impl<R> TarMetadataMeter<R> {
@@ -73,6 +98,8 @@ impl<R> TarMetadataMeter<R> {
             pending_gnu_path: None,
             manifest_bytes: 0,
             zero_blocks: 0,
+            offset: 0,
+            member: None,
         }
     }
 
@@ -87,7 +114,7 @@ impl<R> TarMetadataMeter<R> {
         io::Error::new(io::ErrorKind::InvalidData, META_LIMIT)
     }
 
-    fn validate_gnu_body(body: &[u8], kind: u8) -> io::Result<&str> {
+    fn validate_gnu_body(body: &[u8], kind: u8, windows: bool) -> io::Result<&str> {
         let value = body.strip_suffix(&[0]).unwrap_or(body);
         if value.is_empty() || value.contains(&0) {
             return Err(Self::invalid("empty GNU name or embedded NUL"));
@@ -95,7 +122,7 @@ impl<R> TarMetadataMeter<R> {
         let name = std::str::from_utf8(value)
             .map_err(|_| Self::invalid("GNU name is not valid UTF-8"))?;
         if kind == b'L' {
-            crate::tar_path::validate_path(name)
+            crate::tar_path::validate_path(name, windows)
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, INVALID_GNU_PATH))?;
         }
         Ok(name)
@@ -274,11 +301,16 @@ impl<R> TarMetadataMeter<R> {
             {
                 return Err(Self::invalid("GNU effective non-directory path ends with a separator"));
             }
-            let raw_path = crate::tar_path::validate_member(&self.block)?;
+            let raw_path = crate::tar_path::validate_member(&self.block, self.limits.windows_paths)?;
             let path = self.pending_pax.as_ref().and_then(|pax| pax.path.as_deref())
                 .or(self.pending_gnu_path.as_deref()).unwrap_or(&raw_path);
-            crate::tar_path::validate_path(path)?;
+            crate::tar_path::validate_path(path, self.limits.windows_paths)?;
             charge_manifest_path(&mut self.manifest_bytes, path, self.limits.max_manifest_bytes)?;
+            self.member = Some(TarMember {
+                path: path.to_owned(), entry_type, size,
+                mode: crate::tar_mode::manifest_mode(&self.block, matches!(entry_type, b'5' | b'D')),
+                offset: self.offset,
+            });
             self.pending_pax = None;
             self.pending_gnu = [false; 2];
             self.pending_gnu_path = None;
@@ -332,7 +364,7 @@ impl<R> TarMetadataMeter<R> {
                         if kind == b'x' {
                             self.pending_pax = Some(parse_local_pax(body)?);
                         } else {
-                            let name = Self::validate_gnu_body(body, kind)?;
+                            let name = Self::validate_gnu_body(body, kind, self.limits.windows_paths)?;
                             if kind == b'L' { self.pending_gnu_path = Some(name.to_owned()); }
                         }
                         self.state = if padding == 0 {
@@ -380,7 +412,7 @@ impl<R> TarMetadataMeter<R> {
         Ok(())
     }
 
-    fn check_eof(&self) -> io::Result<()> {
+    pub fn finish(&self) -> io::Result<()> {
         if self.pending_pax.is_some() {
             return Err(Self::invalid("dangling PAX metadata"));
         }
@@ -398,35 +430,43 @@ impl<R> TarMetadataMeter<R> {
     }
 }
 
-impl<R: Read> Read for TarMetadataMeter<R> {
-    fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
-        if output.is_empty() {
-            return Ok(0);
-        }
-        // Never ask the decoder for body bytes until its header is admitted.
+impl<R> TarMetadataMeter<R> {
+    pub fn take_member(&mut self) -> Option<TarMember> { self.member.take() }
+
+    pub fn boundary(&self) -> usize {
         let boundary = match &self.state {
             MeterState::Header | MeterState::SparseHeader { .. } => 512 - self.block_len,
             MeterState::Metadata { body, used, .. } => body.len() - used,
-            MeterState::Data { remaining } => (*remaining).min(output.len() as u64) as usize,
-            MeterState::Eof => output.len(),
+            MeterState::Data { remaining } => (*remaining).min(65536) as usize,
+            MeterState::Eof => 65536,
         };
-        // At the ceiling, read at most one byte to distinguish EOF from overflow.
-        let decoded_boundary = self.remaining_decoded_bytes.max(1).min(output.len() as u64) as usize;
-        let length = output.len().min(boundary).min(decoded_boundary);
-        let read = self.inner.read(&mut output[..length])?;
-        if read == 0 {
-            self.check_eof()?;
-            return Ok(0);
-        }
-        if read as u64 > self.remaining_decoded_bytes {
-            if matches!(self.state, MeterState::Eof) && output[0] != 0 {
+        boundary.min(65536).min(self.remaining_decoded_bytes.clamp(1, 65536) as usize)
+    }
+
+    /// Consume only the next boundary. The caller drains the event before pushing again.
+    pub fn push(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let length = bytes.len().min(self.boundary());
+        let bytes = &bytes[..length];
+        if length as u64 > self.remaining_decoded_bytes {
+            if matches!(self.state, MeterState::Eof) && bytes[0] != 0 {
                 return Err(Self::invalid("nonzero data after TAR EOF"));
             }
             return Err(io::Error::other(DECODED_LIMIT));
         }
-        self.meter(&output[..read])?;
-        self.remaining_decoded_bytes -= read as u64;
-        Ok(read)
+        self.offset += length as u64;
+        self.meter(bytes)?;
+        self.remaining_decoded_bytes -= length as u64;
+        Ok(length)
+    }
+}
+
+impl<R: Read> Read for TarMetadataMeter<R> {
+    fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        if output.is_empty() { return Ok(0); }
+        let length = output.len().min(self.boundary());
+        let read = self.inner.read(&mut output[..length])?;
+        if read == 0 { self.finish()?; return Ok(0); }
+        self.push(&output[..read])
     }
 }
 

@@ -80,3 +80,21 @@ describe.skipIf(process.platform === "win32" || process.getuid?.() === 0).each(r
     });
   },
 );
+
+describe.each(["off", ...(paxNative ? ["require"] : [])] as const)("common malformed TAR modes %s", (backend) => {
+  it.each(["invalid!", "0000755x", "-0000400"])("uses explicit zero for malformed field %j", async (field) => {
+    configureFsSafeNative({ mode: backend as "off" | "require" });
+    if (backend === "require") __setNativeLoaderForTest(() => paxNative!);
+    const base = await tempRoot("fs-safe-tar-mode-invalid-");
+    const archivePath = path.join(base, "input.tar");
+    const destDir = path.join(base, "out");
+    await fs.mkdir(destDir);
+    await fs.writeFile(archivePath, tarFixture([{ path: "file", body: "DATA", mutateHeader(header) { header.write(field, 100); } }]));
+    try {
+      await extractArchive({ archivePath, destDir, entryModes: "preserve", timeoutMs: 10000 });
+      const stat = await fs.stat(path.join(destDir, "file"));
+      if (process.platform !== "win32") expect(stat.mode & 0o777).toBe(0);
+      else expect(stat.isFile()).toBe(true);
+    } finally { await fs.chmod(path.join(destDir, "file"), 0o600).catch(() => undefined); }
+  });
+});
