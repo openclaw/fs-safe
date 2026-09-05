@@ -109,6 +109,34 @@ describe("sync and async public contracts", () => {
     expect(await captureRejected(tryReadSecretFile(filePath, "token", options))).toMatchObject(expected);
   });
 
+  it("rejects unsafe device paths with the same device-path code on sync and async", async () => {
+    const devicePath = process.platform === "win32" ? path.resolve("CON") : "/dev/urandom";
+    const inspectBlocked = new Error("inspect should not run for reserved device paths");
+    const openBlocked = new Error("open should not run for reserved device paths");
+    vi.spyOn(fsSync, "statSync").mockImplementation(() => {
+      throw inspectBlocked;
+    });
+    vi.spyOn(fsSync, "lstatSync").mockImplementation(() => {
+      throw inspectBlocked;
+    });
+    vi.spyOn(fsSync, "openSync").mockImplementation(() => {
+      throw openBlocked;
+    });
+    vi.spyOn(fs, "stat").mockRejectedValue(inspectBlocked);
+    vi.spyOn(fs, "lstat").mockRejectedValue(inspectBlocked);
+    vi.spyOn(fs, "realpath").mockRejectedValue(openBlocked);
+    vi.spyOn(fs, "open").mockRejectedValue(openBlocked);
+
+    const syncError = captureThrown(() => readSecretFileSync(devicePath, "token"));
+    const asyncError = await captureRejected(readSecretFile(devicePath, "token"));
+    for (const error of [syncError, asyncError]) {
+      expectFsSafeCode(error, "device-path");
+      expect(error).toMatchObject({
+        message: `Failed to inspect token file at ${devicePath}: FsSafeError: file reads from unsafe device paths are not allowed: ${devicePath}`,
+      });
+    }
+  });
+
   it("does not reclassify path resolution failures as optional missing secrets", async () => {
     const failure = Object.assign(new Error("cwd unavailable"), { code: "ENOENT" });
     const cwd = vi.spyOn(process, "cwd").mockImplementation(() => { throw failure; });

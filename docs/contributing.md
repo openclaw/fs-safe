@@ -87,6 +87,14 @@ The `require` command must resolve the freshly packed native binding; the
 
 ### Native consumer installs
 
+The CI Node 24 and native jobs also run `node scripts/device-path-proof.mjs off`
+and `node scripts/device-path-proof.mjs require` against the built package.
+This extracts real ZIP files and checks bounded member reads, preserving reserved
+device-like names on POSIX while rejecting them and ignored-space aliases on
+Windows. It also verifies ordinary secret reads and typed device-path rejection
+without replacing filesystem functions. Run after `pnpm build`, and build the
+host binding with `pnpm native:build` before the `require` case.
+
 After `pnpm build` and a fresh `pnpm native:build`, run `pnpm package:smoke`.
 It packs the real root and host binding, then runs root-only npm and the
 declared pnpm version against a disposable loopback registry. The root's exact

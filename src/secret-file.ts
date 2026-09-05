@@ -7,6 +7,7 @@ import { normalizeMaxBytes } from "./byte-budget.js";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, inspectDirectoryIdentity, type AsyncDirectoryGuard } from "./directory-guard.js";
 import { pinNodeDirectoryForMode } from "./directory-mode-node.js";
 import { assertOwnedDirectory } from "./directory-mode-owner.js";
+import { assertNoUnsafeDeviceReadPath } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
 import { resolveHomeRelativePath } from "./home-dir.js";
 import { openPinnedFileSync } from "./pinned-open.js";
@@ -52,6 +53,7 @@ export function readSecretFileSync(
 
   let previewStat: fs.BigIntStats;
   try {
+    assertNoUnsafeDeviceReadPath(resolvedPath);
     previewStat = inspectFileIdentitySync(() =>
       inspectInput(`${label} file at ${resolvedPath} must not be a symlink.`),
     );

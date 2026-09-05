@@ -263,7 +263,7 @@ describe.each(["tar", "zip"] as const)("%s Windows-name portability", (kind) => 
         if (process.platform === "win32") {
           expect(outcome, JSON.stringify({ kind, backend, name })).toEqual({
             accepted: false,
-            code: name.includes(":") ? "entry-path" : "device-path",
+            code: "entry-path",
           });
         } else {
           expect(outcome, JSON.stringify({ kind, backend, name })).toEqual({ accepted: true });

@@ -2,6 +2,7 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import { readFileHandleBounded } from "./bounded-read.js";
 import { normalizeMaxBytes } from "./byte-budget.js";
+import { assertNoUnsafeDeviceReadPath } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
 import { resolveHomeRelativePath } from "./home-dir.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
@@ -39,6 +40,7 @@ export async function readSecretFile(
 
   let previewStat;
   try {
+    assertNoUnsafeDeviceReadPath(resolvedPath);
     previewStat = await inspectFileIdentity(() =>
       inspectInput(`${label} file at ${resolvedPath} must not be a symlink.`),
     );
@@ -54,6 +56,7 @@ export async function readSecretFile(
   let raw: string;
   try {
     const realPath = await fs.realpath(resolvedPath);
+    assertNoUnsafeDeviceReadPath(realPath);
     handle = await fs.open(realPath, resolveReadOpenFlags());
     const openedHandle = handle;
     const openedStat = await inspectFileIdentity(async () => {
