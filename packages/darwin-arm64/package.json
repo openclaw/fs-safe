@@ -1,6 +1,6 @@
 {
   "name": "@openclaw/fs-safe-darwin-arm64",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "macOS arm64 native binding for @openclaw/fs-safe.",
   "license": "MIT",
   "author": "OpenClaw Team <dev@openclaw.ai>",
