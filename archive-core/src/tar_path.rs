@@ -16,8 +16,13 @@ pub fn validate_path(name: &str, windows: bool) -> io::Result<()> {
         let bytes = part.as_bytes();
         (bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':')
             || (windows && part.contains(':'))
-            || part.nfc().map(char::len_utf8).sum::<usize>() > 255
-            || part.nfd().map(char::len_utf8).sum::<usize>() > 255
+            || if part.is_ascii() {
+                // NFC/NFD cannot change ASCII; avoid Unicode iteration on long metadata paths.
+                bytes.len() > 255
+            } else {
+                part.nfc().map(char::len_utf8).sum::<usize>() > 255
+                    || part.nfd().map(char::len_utf8).sum::<usize>() > 255
+            }
     }) {
         return Err(invalid());
     }
@@ -67,4 +72,30 @@ pub fn validate_member(header: &[u8; 512], windows: bool) -> io::Result<String> 
         }
     }
     Ok(name.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_path;
+
+    #[test]
+    fn component_limits_preserve_ascii_and_unicode_normalization_boundaries() {
+        for windows in [false, true] {
+            for (name, accepted) in [
+                ("a".repeat(255), true),
+                ("a".repeat(256), false),
+                (format!("{}\n", "a".repeat(254)), true),
+                ("é".repeat(85), true),
+                ("é".repeat(86), false),
+                ("각".repeat(28), true),
+                ("각".repeat(29), false),
+            ] {
+                assert_eq!(validate_path(&name, windows).is_ok(), accepted);
+            }
+            for name in ["../leaf", "pkg/C:leaf", "/absolute", "nul\0name"] {
+                assert!(validate_path(name, windows).is_err());
+            }
+            assert_eq!(validate_path("name:stream", windows).is_ok(), !windows);
+        }
+    }
 }
