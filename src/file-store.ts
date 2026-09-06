@@ -18,7 +18,7 @@ import { writeFileSyncAtomic } from "./file-store-sync-write.js";
 import { createJsonStore, type JsonFileStoreOptions, type JsonStore } from "./json-document-store.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
 import { isNotFoundPathError, resolveSafeRelativePath, splitSafeRelativePath } from "./path.js";
-import { throwFsSafeReadError } from "./read-error.js";
+import { throwFsSafeReadError } from "./root-errors.js";
 import { root, type OpenResult, type ReadResult, type Root, type RootReadOptions } from "./root.js";
 import { DEFAULT_ROOT_MAX_BYTES } from "./root-impl.js";
 import { readRegularFile } from "./regular-file.js";

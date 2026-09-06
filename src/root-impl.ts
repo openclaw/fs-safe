@@ -8,7 +8,7 @@ import { normalizeMaxBytes } from "./byte-budget.js";
 import type { ContainmentGuarantee } from "./containment.js";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, createNearestExistingDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
-import { syncDirectoryBestEffort } from "./fsync.js";
+import { syncDirectoryBestEffort } from "./directory-durability.js";
 import {
   sameFileIdentity,
   sameFileIdentityForCleanup,

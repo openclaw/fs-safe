@@ -10,7 +10,7 @@ export {
   type StagedFilePublication,
   type StagedFileCleanupReceipt,
   type StagedFileFailureDetails,
-} from "./staged-file.js";
+} from "./native-staged-file.js";
 export {
   readFileDescriptorBounded,
   readFileDescriptorBoundedSync,
@@ -58,7 +58,7 @@ export {
   safeFileURLToPath,
   trySafeFileURLToPath,
 } from "./local-file-access.js";
-export { formatPosixMode } from "./mode.js";
+export { formatPosixMode } from "./permissions.js";
 export {
   configureFsSafeLocks,
   getFsSafeLockConfig,

@@ -205,3 +205,7 @@ export function isWorldReadable(bits: number | null): boolean {
 export function isGroupReadable(bits: number | null): boolean {
   return bits != null && (bits & 0o040) !== 0;
 }
+
+export function formatPosixMode(mode: number): string {
+  return (mode & 0o777).toString(8).padStart(3, "0");
+}

@@ -5,7 +5,7 @@ import {
   type RootPathAliasPolicy,
 } from "./root-path.js";
 import { isNotFoundPathError } from "./path.js";
-import { shortPath } from "./short-path.js";
+import { shortPath } from "./error-detail.js";
 
 export type PathAliasPolicy = RootPathAliasPolicy;
 

@@ -5,7 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
-import { writeExternalFileViaSibling } from "../src/output-sibling.js";
+import { writeExternalFileWithinRoot } from "../src/output.js";
 import { writeSiblingTempFile } from "../src/sibling-temp.js";
 import { __cleanupRegisteredTempPathsForTest } from "../src/temp-cleanup.js";
 import { itPosix, useRealTempDirs } from "./helpers/vitest.js";
@@ -37,7 +37,7 @@ for (const api of ["temp", "output"] as const) {
         return api === "temp"
           ? writeSiblingTempFile({ dir, chmodDir: false, mode: 0o600, syncTempFile: true, syncParentDir: true,
               writeTemp: produce, resolveFinalPath: () => final })
-          : writeExternalFileViaSibling({ finalPath: final, mode: 0o600, write: produce });
+          : writeExternalFileWithinRoot({ rootDir: dir, path: "final", staging: "sibling", mode: 0o600, write: produce });
       };
       return { dir, outside, final, moved, run, temp: () => temporary };
     }

@@ -10,7 +10,7 @@ import {
 } from "./file-store.js";
 import { FsSafeError } from "./errors.js";
 import { isNotFoundPathError } from "./path.js";
-import { throwFsSafeReadError } from "./read-error.js";
+import { throwFsSafeReadError } from "./root-errors.js";
 import {
   matchRootFileOpenFailure,
   openRootFileSync,

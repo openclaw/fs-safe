@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { formatErrorDetail } from "./error-detail.js";
+import { formatErrorDetail, shortPath } from "./error-detail.js";
 import { FsSafeError } from "./errors.js";
 import {
   assertNoNulPathInput,
@@ -15,7 +15,6 @@ import {
 } from "./root-path-existing.js";
 import { resolveSymlinkHopPath, resolveSymlinkHopPathSync } from "./root-path-symlink.js";
 import { assertNoDriveRelativePathSegments } from "./safe-path-segment.js";
-import { shortPath } from "./short-path.js";
 
 export { resolvePathViaExistingAncestorSync } from "./root-path-existing.js";
 
