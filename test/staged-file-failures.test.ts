@@ -101,7 +101,8 @@ describe.runIf(native)("staged ownership failure boundaries", () => {
         }
       },
     }));
-    const staged = await stageFileInDirectory({ directory, content: "committed", mode: 0o666 });
+    const mode = fault === "file-sync" ? 0o400 : 0o666;
+    const staged = await stageFileInDirectory({ directory, content: "committed", mode });
     if (fault === "chmod") {
       vi.spyOn(fsSync, "fchmodSync").mockImplementation(() => {
         throw failure;
@@ -129,7 +130,7 @@ describe.runIf(native)("staged ownership failure boundaries", () => {
         status: "not-needed", publication: { status: "published" },
       });
       expect(await fs.readFile(final, "utf8")).toBe("committed");
-      expect((await fs.lstat(final)).mode & 0o777).toBe(parentMoved || fault === "chmod" ? 0o600 : 0o666);
+      expect((await fs.lstat(final)).mode & 0o777).toBe(parentMoved || fault === "chmod" ? 0o600 : mode);
       expect(staged.receipt.identity.mode).toBe(0o600);
       if (parentMoved) {
         expect(await fs.readFile(path.join(directory, "final"), "utf8")).toBe("sentinel");

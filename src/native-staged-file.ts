@@ -150,14 +150,14 @@ class NativeStagedFile implements StagedFile {
     return state.fileFd;
   }
 
-  #assertNamed(name: string): void {
+  #assertNamed(name: string): number {
     const fd = this.#file();
-    if (
-      !this.#binding.stagedFileMatches(this.#parentFd, name, fd) ||
-      fs.fstatSync(fd, { bigint: true }).nlink !== 1n
-    ) {
+    const stat = this.#binding.stagedFileMatches(this.#parentFd, name, fd)
+      ? fs.fstatSync(fd, { bigint: true }) : undefined;
+    if (!stat || stat.nlink !== 1n) {
       throw new FsSafeError("path-mismatch", "staged entry no longer names the exclusive created file");
     }
+    return Number(stat.mode & 0o7777n);
   }
 
   #assertCurrent(): void {
@@ -251,13 +251,18 @@ class NativeStagedFile implements StagedFile {
         overwrite,
       });
       state.publication = receipt;
-      this.#assertNamed(basename);
+      const stagedMode = this.#assertNamed(basename);
       assertStagedDirectoryCurrent(this.#directory);
       // Keep contents private until the published name passes its identity
       // fence. Mode changes use the owned fd, including for final mode 000.
       const fd = this.#file();
-      fs.fchmodSync(fd, this.#publishedMode);
-      syncNativeFileBestEffort(fd);
+      if (this.#publishedMode !== 0o600 || stagedMode !== 0o600) fs.fchmodSync(fd, this.#publishedMode);
+      // Content was synced before rename. A lost chmod leaves staged 0600,
+      // no wider than modes retaining owner rw. Restrictive modes and observed
+      // widening of the stage still need the permission correction made durable.
+      if ((this.#publishedMode & 0o600) !== 0o600 || (stagedMode & ~this.#publishedMode) !== 0) {
+        syncNativeFileBestEffort(fd);
+      }
       syncNativeFileBestEffort(this.#parentFd);
       this.#assertNamed(basename);
       assertStagedDirectoryCurrent(this.#directory);

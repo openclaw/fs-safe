@@ -84,6 +84,11 @@ final verification uses a descriptor retained by the writer rather than reopenin
 the published file. The requested mode is not relaxed for verification.
 Publication verification compares exact bigint descriptor and pathname identities,
 including large file indexes that cannot be represented by a JavaScript number.
+Native publication syncs content before rename and always syncs the parent directory.
+Modes that retain owner read/write skip the extra mode-only file sync: after a
+crash, the file may retain staged mode `0o600` instead of the wider requested mode.
+Modes that remove owner read or write, and corrections of observed wider staging
+permissions, keep the post-chmod file sync.
 Later reads still obey OS permissions, and access checks on a pre-existing
 destination are unchanged. The explicit FUSE compatibility policy still requires
 a readable destination to prove matching content when rename changes its identity.
