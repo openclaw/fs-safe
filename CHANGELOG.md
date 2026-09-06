@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Reduce filesystem calls per read and write while retaining boundary, hardlink, hook, retry, and post-mutation identity checks.
+- Skip native publication's extra mode-only file fsync for modes that retain owner read/write when staging permissions have not widened; after a crash, a file may retain staged `0o600` instead of the wider requested mode, while restrictive modes retain the extra fsync.
+- Add 1 MiB read/write and existing-mode inheritance benchmarks, with native-mode metadata and per-case iteration counts.
+
 ## 0.8.2 - 2026-09-05
 
 **Highlights:** TAR/gzip extraction now shares one parser across native and fallback modes, improving compatibility with system-tar output while keeping admission and publication guarded.
