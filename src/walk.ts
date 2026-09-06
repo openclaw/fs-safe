@@ -66,43 +66,61 @@ function kindForDirent(dirent: fsSync.Dirent): WalkEntryKind {
   return "other";
 }
 
-function shouldStop(result: WalkDirectoryResult, options: WalkDirectoryOptions): boolean {
-  return options.maxEntries !== undefined && result.scannedEntryCount >= Math.max(0, options.maxEntries);
-}
-
-function buildEntry(params: {
-  rootDir: string;
-  dir: string;
-  dirent: fsSync.Dirent;
-  depth: number;
-  kind?: WalkEntryKind;
-}): WalkDirectoryEntry {
-  const fullPath = path.join(params.dir, params.dirent.name);
-  const relativePath = path.relative(params.rootDir, fullPath) || params.dirent.name;
-  return {
-    name: params.dirent.name,
-    path: fullPath,
-    relativePath,
-    depth: params.depth,
-    kind: params.kind ?? kindForDirent(params.dirent),
-    dirent: params.dirent,
+class WalkState {
+  readonly root: string;
+  readonly symlinks: WalkSymlinkPolicy;
+  readonly result: WalkDirectoryResultWithFailures = {
+    entries: [],
+    scannedEntryCount: 0,
+    truncated: false,
+    failedDirs: [],
   };
-}
+  readonly visitedDirs = new Set<string>();
 
-function recordFailedDir(
-  result: WalkDirectoryResultWithFailures,
-  root: string,
-  dir: string,
-  depth: number,
-  error: unknown,
-): void {
-  const relativePath = path.relative(root, dir);
-  result.failedDirs.push({
-    path: dir,
-    relativePath,
-    depth: relativePath === "" ? 0 : depth - 1,
-    error,
-  });
+  constructor(rootDir: string, readonly options: WalkDirectoryOptions) {
+    validateWalkOptions(options);
+    this.root = path.resolve(rootDir);
+    this.symlinks = options.symlinks ?? "skip";
+  }
+
+  recordFailure(dir: string, depth: number, error: unknown): void {
+    const relativePath = path.relative(this.root, dir);
+    this.result.failedDirs.push({
+      path: dir,
+      relativePath,
+      depth: relativePath === "" ? 0 : depth - 1,
+      error,
+    });
+  }
+
+  scanEntry(): boolean {
+    if (this.options.maxEntries !== undefined &&
+      this.result.scannedEntryCount >= Math.max(0, this.options.maxEntries)) {
+      this.result.truncated = true;
+      return false;
+    }
+    this.result.scannedEntryCount += 1;
+    return true;
+  }
+
+  collectEntry(dir: string, dirent: fsSync.Dirent, depth: number, kind: WalkEntryKind): boolean {
+    const fullPath = path.join(dir, dirent.name);
+    const relativePath = path.relative(this.root, fullPath) || dirent.name;
+    const entry: WalkDirectoryEntry = {
+      name: dirent.name,
+      path: fullPath,
+      relativePath,
+      depth,
+      kind,
+      dirent,
+    };
+    if (this.options.include?.(entry) ?? true) {
+      this.result.entries.push(entry);
+    }
+    return kind === "directory" &&
+      (this.options.maxDepth === undefined || depth < this.options.maxDepth) &&
+      (this.options.descend?.(entry) ?? true);
+  }
 }
 
 function resolveSyncKind(fullPath: string, dirent: fsSync.Dirent, symlinks: WalkSymlinkPolicy): WalkEntryKind | null {
@@ -139,16 +157,8 @@ export function walkDirectorySync(
   rootDir: string,
   options: WalkDirectoryOptions = {},
 ): WalkDirectoryResultWithFailures {
-  validateWalkOptions(options);
-  const root = path.resolve(rootDir);
-  const symlinks = options.symlinks ?? "skip";
-  const result: WalkDirectoryResultWithFailures = {
-    entries: [],
-    scannedEntryCount: 0,
-    truncated: false,
-    failedDirs: [],
-  };
-  const visitedDirs = new Set<string>();
+  const state = new WalkState(rootDir, options);
+  const { root, symlinks, result, visitedDirs } = state;
 
   function visit(dir: string, depth: number): void {
     if (options.maxDepth !== undefined && depth > options.maxDepth) return;
@@ -156,7 +166,7 @@ export function walkDirectorySync(
     try {
       realDir = fsSync.realpathSync(dir);
     } catch (error) {
-      recordFailedDir(result, root, dir, depth, error);
+      state.recordFailure(dir, depth, error);
       return;
     }
     if (visitedDirs.has(realDir)) return;
@@ -166,27 +176,15 @@ export function walkDirectorySync(
     try {
       entries = fsSync.readdirSync(dir, { withFileTypes: true });
     } catch (error) {
-      recordFailedDir(result, root, dir, depth, error);
+      state.recordFailure(dir, depth, error);
       return;
     }
     for (const dirent of entries) {
-      if (shouldStop(result, options)) {
-        result.truncated = true;
-        return;
-      }
-      result.scannedEntryCount += 1;
+      if (!state.scanEntry()) return;
       const fullPath = path.join(dir, dirent.name);
       const kind = resolveSyncKind(fullPath, dirent, symlinks);
       if (!kind) continue;
-      const entry = buildEntry({ rootDir: root, dir, dirent, depth, kind });
-      if (options.include?.(entry) ?? true) {
-        result.entries.push(entry);
-      }
-      if (
-        kind === "directory" &&
-        (options.maxDepth === undefined || depth < options.maxDepth) &&
-        (options.descend?.(entry) ?? true)
-      ) {
+      if (state.collectEntry(dir, dirent, depth, kind)) {
         visit(fullPath, depth + 1);
         if (result.truncated) return;
       }
@@ -201,16 +199,8 @@ export async function walkDirectory(
   rootDir: string,
   options: WalkDirectoryOptions = {},
 ): Promise<WalkDirectoryResultWithFailures> {
-  validateWalkOptions(options);
-  const root = path.resolve(rootDir);
-  const symlinks = options.symlinks ?? "skip";
-  const result: WalkDirectoryResultWithFailures = {
-    entries: [],
-    scannedEntryCount: 0,
-    truncated: false,
-    failedDirs: [],
-  };
-  const visitedDirs = new Set<string>();
+  const state = new WalkState(rootDir, options);
+  const { root, symlinks, result, visitedDirs } = state;
 
   async function visit(dir: string, depth: number): Promise<void> {
     if (options.maxDepth !== undefined && depth > options.maxDepth) return;
@@ -218,7 +208,7 @@ export async function walkDirectory(
     try {
       realDir = await fs.realpath(dir);
     } catch (error) {
-      recordFailedDir(result, root, dir, depth, error);
+      state.recordFailure(dir, depth, error);
       return;
     }
     if (visitedDirs.has(realDir)) return;
@@ -228,27 +218,15 @@ export async function walkDirectory(
     try {
       entries = await fs.readdir(dir, { withFileTypes: true });
     } catch (error) {
-      recordFailedDir(result, root, dir, depth, error);
+      state.recordFailure(dir, depth, error);
       return;
     }
     for (const dirent of entries) {
-      if (shouldStop(result, options)) {
-        result.truncated = true;
-        return;
-      }
-      result.scannedEntryCount += 1;
+      if (!state.scanEntry()) return;
       const fullPath = path.join(dir, dirent.name);
       const kind = await resolveAsyncKind(fullPath, dirent, symlinks);
       if (!kind) continue;
-      const entry = buildEntry({ rootDir: root, dir, dirent, depth, kind });
-      if (options.include?.(entry) ?? true) {
-        result.entries.push(entry);
-      }
-      if (
-        kind === "directory" &&
-        (options.maxDepth === undefined || depth < options.maxDepth) &&
-        (options.descend?.(entry) ?? true)
-      ) {
+      if (state.collectEntry(dir, dirent, depth, kind)) {
         await visit(fullPath, depth + 1);
         if (result.truncated) return;
       }
