@@ -1,3 +1,4 @@
+import { classifyArchiveParserError } from "./archive-parser-errors.js";
 import fs from "node:fs/promises";
 import { Readable } from "node:stream";
 import { readFileHandleBounded } from "./bounded-read.js";
@@ -5,14 +6,13 @@ import {
   ArchiveFormatError,
   ArchiveSecurityError,
   isArchiveFormatErrorMessage,
-  isArchiveTarPathErrorMessage,
 } from "./archive-errors.js";
 import { formatErrorDetail } from "./error-detail.js";
 import {
   stripArchivePath,
   validateArchiveEntryPath,
 } from "./archive-entry.js";
-import { resolveArchiveKind, type ArchiveKind } from "./archive-kind.js";
+import { assertPortableArchiveKind, resolveArchiveKind, type ArchiveKind } from "./archive-kind.js";
 import {
   DEFAULT_MAX_ARCHIVE_BYTES_ZIP,
   ArchiveLimitError,
@@ -254,13 +254,9 @@ export async function readArchiveEntry(
           signal,
         );
       } catch (error) {
-        if (error instanceof Error && isArchiveTarPathErrorMessage(error.message)) {
-          throw new ArchiveSecurityError("entry-path", error.message, { cause: error });
-        }
         if (error instanceof Error) {
-          for (const code of Object.values(ARCHIVE_LIMIT_ERROR_CODE)) {
-            if (error.message.includes(code)) throw new ArchiveLimitError(code);
-          }
+          const mapped = classifyArchiveParserError(error.message, { cause: error });
+          if (mapped) throw mapped;
         }
         if (error instanceof Error && isArchiveFormatErrorMessage(error.message)) {
           throw new ArchiveFormatError(error.message, { cause: error });
@@ -268,13 +264,7 @@ export async function readArchiveEntry(
         throw error;
       }
     }
-    if (kind === "tar-zstd" || kind === "tar-bzip2") {
-      throw new FsSafeError(
-        "helper-unavailable",
-        `${kind} archives require the matching optional native platform package; ` +
-          "install @openclaw/fs-safe with optional dependencies enabled on a supported platform and use FS_SAFE_NATIVE_MODE=auto or require",
-      );
-    }
+    assertPortableArchiveKind(kind);
     return kind === "zip"
       ? await readZipEntry(staged.buffer, requestedEntry, options.maxBytes)
       : await readTarEntry(staged.path, requestedEntry, options.maxBytes);

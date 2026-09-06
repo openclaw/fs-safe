@@ -1,10 +1,11 @@
+import { syncFileBestEffortSync } from "./file-sync.js";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import type { AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import type { FileIdentityStat } from "./file-identity.js";
 import type { NativeBinding } from "./native-binding.js";
-import { syncNativeFileBestEffort, writeNativeInput } from "./native-operations.js";
+import { writeNativeInput } from "./native-operations.js";
 import type { PinnedWriteInput, PinnedWriteParams } from "./pinned-write.js";
 import { assertStagedDirectoryCurrent } from "./staged-directory.js";
 import type {
@@ -182,7 +183,7 @@ class NativeStagedFile implements StagedFile {
       const fd = state.fileFd;
       fs.fchmodSync(fd, 0o600);
       await writeNativeInput(fd, input, maxBytes);
-      syncNativeFileBestEffort(fd);
+      syncFileBestEffortSync(fd);
       const stat = fs.fstatSync(fd, { bigint: true });
       this.#receipt = Object.freeze({
         directory: this.#directory,
@@ -261,9 +262,9 @@ class NativeStagedFile implements StagedFile {
       // no wider than modes retaining owner rw. Restrictive modes and observed
       // widening of the stage still need the permission correction made durable.
       if ((this.#publishedMode & 0o600) !== 0o600 || (stagedMode & ~this.#publishedMode) !== 0) {
-        syncNativeFileBestEffort(fd);
+        syncFileBestEffortSync(fd);
       }
-      syncNativeFileBestEffort(this.#parentFd);
+      syncFileBestEffortSync(this.#parentFd);
       this.#assertNamed(basename);
       assertStagedDirectoryCurrent(this.#directory);
       return receipt;
