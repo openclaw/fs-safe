@@ -51,6 +51,7 @@ export function ownDirectoryMode(params: {
       checks.check?.();
       const currentMode = await params.inspect();
       checks.check?.();
+      if (currentMode === mode && !checks.beforeChmod && !checks.check) return;
       if (currentMode !== mode) {
         await params.prepareChmod?.();
         checks.check?.();

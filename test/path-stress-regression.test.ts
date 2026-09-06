@@ -7,6 +7,7 @@ import { expectFsSafeError, expectFsSafeErrorSync } from "./helpers/security.js"
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { fileStore, fileStoreSync } from "../src/file-store.js";
 import { root as openRoot } from "../src/root.js";
+import * as writeMode from "../src/root-write-mode.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 
 const { tempRoot } = useTempDirs();
@@ -52,37 +53,35 @@ describe("path stress regressions", () => {
     const targetPath = path.join(scoped.rootReal, "state.txt");
     await scoped.write("state.txt", "initial");
 
-    let activeTargetOpens = 0;
-    let maxActiveTargetOpens = 0;
-    let heldFirstOpen = false;
-    let signalFirstOpen!: () => void;
-    const firstOpen = new Promise<void>((resolve) => {
-      signalFirstOpen = resolve;
+    let activeResolutions = 0;
+    let maxActiveResolutions = 0;
+    let heldFirstResolution = false;
+    let signalFirstResolution!: () => void;
+    const firstResolution = new Promise<void>((resolve) => {
+      signalFirstResolution = resolve;
     });
-    __setFsSafeTestHooksForTest({
-      async afterOpen(filePath) {
-        if (filePath !== targetPath) {
-          return;
+    const inheritMode = writeMode.inheritWriteTargetMode;
+    vi.spyOn(writeMode, "inheritWriteTargetMode").mockImplementation(async (params) => {
+      if (params.targetPath !== targetPath) return await inheritMode(params);
+      activeResolutions += 1;
+      maxActiveResolutions = Math.max(maxActiveResolutions, activeResolutions);
+      try {
+        if (!heldFirstResolution) {
+          heldFirstResolution = true;
+          signalFirstResolution();
+          await new Promise((resolve) => setTimeout(resolve, 100));
         }
-        activeTargetOpens += 1;
-        maxActiveTargetOpens = Math.max(maxActiveTargetOpens, activeTargetOpens);
-        try {
-          if (!heldFirstOpen) {
-            heldFirstOpen = true;
-            signalFirstOpen();
-            await new Promise((resolve) => setTimeout(resolve, 100));
-          }
-        } finally {
-          activeTargetOpens -= 1;
-        }
-      },
+        return await inheritMode(params);
+      } finally {
+        activeResolutions -= 1;
+      }
     });
 
     const firstWrite = scoped.write("state.txt", "first");
-    await firstOpen;
+    await firstResolution;
     const secondWrite = scoped.write("state.txt", "second");
     await expect(Promise.all([firstWrite, secondWrite])).resolves.toEqual([undefined, undefined]);
-    expect(maxActiveTargetOpens).toBe(1);
+    expect(maxActiveResolutions).toBe(1);
     await expect(scoped.readText("state.txt")).resolves.toBe("second");
   });
 

@@ -20,7 +20,8 @@ function atFdResolution(lockPath: string, mutate: (handle: FileHandle) => Promis
   const realpath = fs.realpath.bind(fs);
   const wrapper = vi.spyOn(fs, "realpath").mockImplementation(async (...args) => {
     const candidate = String(args[0]);
-    if (!fired && opened && (candidate === `/dev/fd/${opened.fd}` || candidate === `/proc/self/fd/${opened.fd}`)) {
+    // After afterOpen, the resolver probes procfs on Linux and the lock path elsewhere.
+    if (!fired && opened && candidate === (process.platform === "linux" ? `/proc/self/fd/${opened.fd}` : lockPath)) {
       fired = true;
       __setFsSafeTestHooksForTest();
       mutation = mutate(opened);

@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import type { BigIntStats, Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { openedPathResolutionError } from "./opened-file-failure.js";
@@ -10,28 +11,36 @@ export async function resolveOpenedFileRealPathForHandle(
   ioPath: string,
 ): Promise<string> {
   const handleStat = await handle.stat();
-  return await resolveOpenedFileRealPathForFd(handle.fd, handleStat, ioPath);
+  return (await resolveOpenedFileRealPathForFd(handle.fd, handleStat, ioPath)).realPath;
 }
 
+export function resolveOpenedFileRealPathForFd(
+  fd: number,
+  handleStat: { dev: bigint; ino: bigint },
+  ioPath: string,
+): Promise<{ realPath: string; stat: BigIntStats }>;
+export function resolveOpenedFileRealPathForFd(
+  fd: number,
+  handleStat: FileIdentityStat,
+  ioPath: string,
+): Promise<{ realPath: string; stat: Stats | BigIntStats }>;
 export async function resolveOpenedFileRealPathForFd(
   fd: number,
   handleStat: FileIdentityStat,
   ioPath: string,
-): Promise<string> {
+): Promise<{ realPath: string; stat: Stats | BigIntStats }> {
   const statOptions = typeof handleStat.dev === "bigint" || typeof handleStat.ino === "bigint"
     ? { bigint: true as const } : undefined;
   const fdCandidates =
     process.platform === "linux"
       ? [`/proc/self/fd/${fd}`, `/dev/fd/${fd}`]
-      : process.platform === "win32"
-        ? []
-        : [`/dev/fd/${fd}`];
+      : [];
   for (const fdPath of fdCandidates) {
     try {
       const fdRealPath = await fs.realpath(fdPath);
       const fdRealStat = statOptions ? await fs.stat(fdRealPath, statOptions) : await fs.stat(fdRealPath);
       if (sameFileIdentity(handleStat, fdRealStat)) {
-        return fdRealPath;
+        return { realPath: fdRealPath, stat: fdRealStat };
       }
     } catch {
       // try next fd path
@@ -42,7 +51,7 @@ export async function resolveOpenedFileRealPathForFd(
     const ioRealPath = await fs.realpath(ioPath);
     const ioRealStat = statOptions ? await fs.stat(ioRealPath, statOptions) : await fs.stat(ioRealPath);
     if (sameFileIdentity(handleStat, ioRealStat)) {
-      return ioRealPath;
+      return { realPath: ioRealPath, stat: ioRealStat };
     }
   } catch (err) {
     if (!isNotFoundPathError(err)) {
@@ -66,7 +75,7 @@ async function resolveOpenedFileRealPathFromParent(
   handleStat: FileIdentityStat,
   ioPath: string,
   statOptions?: { bigint: true },
-): Promise<string | null> {
+): Promise<{ realPath: string; stat: Stats | BigIntStats } | null> {
   let parentReal: string;
   try {
     parentReal = await fs.realpath(path.dirname(ioPath));
@@ -92,7 +101,9 @@ async function resolveOpenedFileRealPathFromParent(
     try {
       const candidateStat = statOptions ? await fs.lstat(candidatePath, statOptions) : await fs.lstat(candidatePath);
       if (candidateStat.isFile() && sameFileIdentity(handleStat, candidateStat)) {
-        return await fs.realpath(candidatePath);
+        const realPath = await fs.realpath(candidatePath);
+        const stat = statOptions ? await fs.stat(realPath, statOptions) : await fs.stat(realPath);
+        if (sameFileIdentity(handleStat, stat)) return { realPath, stat };
       }
     } catch (err) {
       if (!isNotFoundPathError(err)) {

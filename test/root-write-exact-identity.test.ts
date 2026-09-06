@@ -90,6 +90,7 @@ describe("Root exact publication identity", () => {
     "uses the expected metadata precision for %s realpath resolution",
     async (route) => {
       const directory = await tempRoot("fs-safe-exact-realpath-");
+      if (route === "descriptor") Object.defineProperty(process, "platform", { value: "linux" });
       const target = path.join(directory, "target");
       const handle = await fs.open(target, "wx", 0o600);
       const realpath = fs.realpath.bind(fs);
@@ -129,7 +130,8 @@ describe("Root exact publication identity", () => {
         const pending = route === "numeric handle wrapper"
           ? resolveOpenedFileRealPathForHandle(handle, target)
           : resolveOpenedFileRealPathForFd(handle.fd, { dev: device, ino: inode }, target);
-        await expect(pending).resolves.toBe(target);
+        if (route === "numeric handle wrapper") await expect(pending).resolves.toBe(target);
+        else await expect(pending).resolves.toMatchObject({ realPath: target, stat: { dev: device, ino: inode } });
         expect(sampled.length).toBeGreaterThan(0);
         expect(sampled.every((value) => typeof value === (route === "numeric handle wrapper" ? "number" : "bigint"))).toBe(true);
       } finally {

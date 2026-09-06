@@ -113,19 +113,19 @@ function renderMarkdown(metadata, results) {
   const lines = [
     "# fs-safe benchmark",
     "",
-    `Report-only microbenchmark. Each row times ${metadata.iterations} sequential iterations; lower is better.`,
+    `Report-only microbenchmark. Up to ${metadata.iterations} sequential iterations per row; lower is better.`,
     "",
-    `Node ${metadata.node} on ${metadata.platform}/${metadata.arch}. Samples per case: ${metadata.samples}.`,
+    `Node ${metadata.node} on ${metadata.platform}/${metadata.arch}. Native mode: ${metadata.nativeMode}. Samples per case: ${metadata.samples}.`,
     "",
-    "| Group | Case | Best ms | Median ms | Mean ms | vs raw best | Samples |",
-    "|---|---:|---:|---:|---:|---:|---|",
+    "| Group | Case | Iterations | Best ms | Median ms | Mean ms | vs raw best | Samples |",
+    "|---|---:|---:|---:|---:|---:|---:|---|",
   ];
 
   for (const result of results) {
     const baseline = baselineByGroup.get(result.group) ?? result.bestMs;
     const ratio = baseline > 0 ? result.bestMs / baseline : 1;
     lines.push(
-      `| ${result.group} | ${result.name} | ${formatMs(result.bestMs)} | ${formatMs(result.medianMs)} | ${formatMs(result.meanMs)} | ${formatRatio(ratio)}x | ${result.sampleMs.map(formatMs).join(", ")} |`,
+      `| ${result.group} | ${result.name} | ${result.iterations} | ${formatMs(result.bestMs)} | ${formatMs(result.medianMs)} | ${formatMs(result.meanMs)} | ${formatRatio(ratio)}x | ${result.sampleMs.map(formatMs).join(", ")} |`,
     );
   }
 
@@ -156,6 +156,7 @@ async function main() {
   const warmup = Math.min(args.warmup, iterations);
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-benchmark-"));
   const payload = Buffer.from("x".repeat(BYTES_PER_PAYLOAD));
+  const largePayload = Buffer.alloc(1024 * 1024, "x");
   const jsonPayload = { ok: true, count: 42, label: "fs-safe benchmark" };
   const jsonText = `${JSON.stringify(jsonPayload, null, 2)}\n`;
 
@@ -166,6 +167,12 @@ async function main() {
     const jsonPath = path.join(workspace, "state.json");
     await fs.writeFile(readPath, payload);
     await fs.writeFile(jsonPath, jsonText);
+    const largeReadPath = path.join(workspace, "read-1mib.bin");
+    await fs.writeFile(largeReadPath, largePayload);
+    for (const name of ["raw-mode.txt", "atomic-mode.txt", "root-mode.txt"]) {
+      await fs.writeFile(path.join(workspace, name), payload, { mode: 0o640 });
+      await fs.chmod(path.join(workspace, name), 0o640);
+    }
 
     const cases = [
       {
@@ -250,16 +257,53 @@ async function main() {
           });
         },
       },
+      {
+        group: "write file 1 MiB", name: "raw fs.writeFile", baseline: true, iterationsDivisor: 10,
+        run: () => fs.writeFile(path.join(workspace, "raw-write-1mib.bin"), largePayload),
+      },
+      {
+        group: "write file 1 MiB", name: "replaceFileAtomic", iterationsDivisor: 10,
+        run: () => replaceFileAtomic({ filePath: path.join(workspace, "atomic-write-1mib.bin"), content: largePayload }),
+      },
+      {
+        group: "write file 1 MiB", name: "root.write", iterationsDivisor: 10,
+        run: () => safe.write("root-write-1mib.bin", largePayload),
+      },
+      {
+        group: "read file 1 MiB", name: "raw fs.readFile", baseline: true, iterationsDivisor: 10,
+        run: () => fs.readFile(largeReadPath),
+      },
+      {
+        group: "read file 1 MiB", name: "readRegularFile", iterationsDivisor: 10,
+        run: () => readRegularFile({ filePath: largeReadPath }),
+      },
+      {
+        group: "read file 1 MiB", name: "root.readBytes", iterationsDivisor: 10,
+        run: () => safe.readBytes("read-1mib.bin"),
+      },
+      {
+        group: "write inherited mode 0640", name: "raw fs.writeFile", baseline: true,
+        run: () => fs.writeFile(path.join(workspace, "raw-mode.txt"), payload),
+      },
+      {
+        group: "write inherited mode 0640", name: "replaceFileAtomic",
+        run: () => replaceFileAtomic({ filePath: path.join(workspace, "atomic-mode.txt"), content: payload, preserveExistingMode: true }),
+      },
+      {
+        group: "write inherited mode 0640", name: "root.write",
+        run: () => safe.write("root-mode.txt", payload),
+      },
     ];
 
     const results = [];
     for (const benchCase of cases) {
       console.error(`benchmark: ${benchCase.group} / ${benchCase.name}`);
+      const caseIterations = Math.max(1, Math.floor(iterations / (benchCase.iterationsDivisor ?? 1)));
       const result = await timeCase({
         ...benchCase,
-        iterations,
+        iterations: caseIterations,
         samples,
-        warmup,
+        warmup: Math.min(warmup, caseIterations),
       });
       console.error(`benchmark: ${benchCase.name} best=${formatMs(result.bestMs)}ms`);
       results.push(result);
@@ -270,6 +314,8 @@ async function main() {
       samples,
       warmup,
       payloadBytes: payload.byteLength,
+      largePayloadBytes: largePayload.byteLength,
+      nativeMode: process.env.FS_SAFE_NATIVE_MODE ?? "auto",
       node: process.version,
       platform: process.platform,
       arch: process.arch,

@@ -66,8 +66,12 @@ Strings are UTF-8. `mode` is the requested **published** mode and defaults to
 `0600`; exact final modes, including `000`, are supported. The unpublished file
 stays at `0600` throughout preparation and any awaited application checks.
 After rename succeeds and the published entry passes identity validation, the
-owner applies the requested mode through its retained file descriptor and
-synchronizes the file. No parent is created or chmodded.
+owner applies the requested mode through its retained file descriptor. Content
+was synchronized during preparation; publication always synchronizes the parent.
+Modes retaining owner read/write skip the extra mode-only file sync, so a crash
+may leave the tighter staged `0600` instead of the wider requested mode. Modes
+removing owner read or write, and corrections of an observed wider staged mode,
+retain the post-chmod file sync. No parent is created or chmodded.
 Creation uses an exclusive, no-follow, close-on-exec open of a generated direct
 child name. Writes use that descriptor. Inspection uses non-following metadata
 operations, never a potentially blocking reopen of the leaf.
