@@ -1,16 +1,11 @@
 import fs from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 
-export async function syncFileBestEffort(
-  handle: Pick<FileHandle, "sync">,
-  preserveNullishError = false,
-): Promise<void> {
+export async function syncFileBestEffort(handle: Pick<FileHandle, "sync">): Promise<void> {
   try {
     await handle.sync();
   } catch (error) {
-    // Preserve the existing nullish-throw policy of each caller.
-    if (preserveNullishError && error == null) throw error;
-    if ((error as NodeJS.ErrnoException).code !== "EPERM") throw error;
+    if ((error as NodeJS.ErrnoException | undefined)?.code !== "EPERM") throw error;
   }
 }
 
@@ -21,6 +16,6 @@ export function syncFileBestEffortSync(
   try {
     fsModule.fsyncSync(fd);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EPERM") throw error;
+    if ((error as NodeJS.ErrnoException | undefined)?.code !== "EPERM") throw error;
   }
 }

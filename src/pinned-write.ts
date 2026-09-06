@@ -213,7 +213,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
       }
       // Content writes may clear set-ID bits; finalize them through the owned fd.
       await handle.chmod(params.mode);
-      await syncFileBestEffort(handle, true);
+      await syncFileBestEffort(handle);
       const stat = await handle.stat();
       await syncDirectoryBestEffort(parentPath);
       // Publication is complete. A failed outer check must not remove its target.
@@ -269,7 +269,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
     }
     const expectedTempStat = tempStat;
     await handle.chmod(params.mode);
-    await syncFileBestEffort(handle, true);
+    await syncFileBestEffort(handle);
     let verifiedIdentity: FileIdentityStat = expectedTempStat;
     await withAsyncDirectoryGuards([parentGuard], async () => {
       await fs.rename(tempPath, targetPath);
