@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
+import { sameFileIdentity } from "./file-identity.js";
 import { isNotFoundPathError, isPathInside } from "./path.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { hardlinkedPathNotAllowedError, outsideWorkspaceError } from "./root-errors.js";
@@ -20,7 +21,14 @@ export async function inheritWriteTargetMode(params: {
     // Preserve read-open admission of the pre-existing destination. access(2)
     // is not equivalent: it ignores ACLs on Windows and capabilities on Linux.
     const handle = await fs.open(params.targetPath, resolveReadOpenFlags());
-    await handle.close().catch(() => undefined);
+    try {
+      // Bind admission to the inode whose metadata is inherited.
+      if (!sameFileIdentity(await handle.stat({ bigint: true }), existing)) {
+        throw new FsSafeError("path-mismatch", "write target changed during mode inheritance");
+      }
+    } finally {
+      await handle.close().catch(() => undefined);
+    }
     try {
       // A parent can change after guarded resolution. Do not inherit metadata
       // from an outside inode, even if the parent is restored before publication.

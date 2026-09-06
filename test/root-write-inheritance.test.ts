@@ -97,3 +97,17 @@ it("keeps read-open admission for the existing destination", async () => {
   await expect(inheritWriteTargetMode({ targetPath, rootWithSep: safe.rootReal + path.sep })).rejects.toBe(denied);
   expect(open).toHaveBeenCalledTimes(1);
 });
+
+it("rejects inheritance when the read-open lands on a different inode", async () => {
+  const directory = await tempRoot("fs-safe-inherit-swap-");
+  const safe = await root(directory);
+  const targetPath = path.join(safe.rootReal, "target");
+  const otherPath = path.join(safe.rootReal, "other");
+  await fs.writeFile(targetPath, "original");
+  await fs.writeFile(otherPath, "other");
+  const realOpen = fs.open.bind(fs);
+  vi.spyOn(fs, "open").mockImplementation((candidate, ...rest) =>
+    realOpen(String(candidate) === targetPath ? otherPath : candidate, ...rest));
+  await expect(inheritWriteTargetMode({ targetPath, rootWithSep: safe.rootReal + path.sep }))
+    .rejects.toMatchObject({ code: "path-mismatch" });
+});
