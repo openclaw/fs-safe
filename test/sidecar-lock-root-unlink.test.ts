@@ -7,11 +7,9 @@ import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useTempDirs();
-const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
 afterEach(() => {
   __setFsSafeTestHooksForTest();
   vi.restoreAllMocks();
-  Object.defineProperty(process, "platform", platform);
 });
 
 // Intercept the actual descriptor resolver; all identities come from the filesystem.
@@ -22,7 +20,8 @@ function atFdResolution(lockPath: string, mutate: (handle: FileHandle) => Promis
   const realpath = fs.realpath.bind(fs);
   const wrapper = vi.spyOn(fs, "realpath").mockImplementation(async (...args) => {
     const candidate = String(args[0]);
-    if (!fired && opened && (candidate === `/dev/fd/${opened.fd}` || candidate === `/proc/self/fd/${opened.fd}`)) {
+    // After afterOpen, the resolver probes procfs on Linux and the lock path elsewhere.
+    if (!fired && opened && candidate === (process.platform === "linux" ? `/proc/self/fd/${opened.fd}` : lockPath)) {
       fired = true;
       __setFsSafeTestHooksForTest();
       mutation = mutate(opened);
@@ -46,8 +45,6 @@ function atFdResolution(lockPath: string, mutate: (handle: FileHandle) => Promis
 it.skipIf(process.platform === "win32").each(["snapshot"] as const)(
   "completed owner release permits successor at %s FD resolution",
   async (phase) => {
-    // Descriptor-path resolution is Linux-only; exercise that mechanism on POSIX hosts.
-    Object.defineProperty(process, "platform", { value: "linux" });
     const capability = await root(await tempRoot("sidecar-discovery-"));
     const target = path.join(capability.rootReal, "state");
     const relative = "state.lock";
