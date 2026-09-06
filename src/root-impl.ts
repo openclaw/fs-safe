@@ -305,15 +305,20 @@ async function openVerifiedLocalFile(
     });
 
     await fsSafeTestHooks?.afterOpenedPathIdentityCheck?.(filePath, handle);
-    const realPath = await resolveOpenedFileRealPathForFd(handle.fd, identity, filePath)
+    const resolved = await resolveOpenedFileRealPathForFd(handle.fd, identity, filePath)
       .catch(async (error: unknown) => {
         if (stat.nlink <= 1 && (!preOpenStat || preOpenStat.nlink <= 1n)) {
           await recordOpenedFileFailure(error, handle, filePath, identity);
         }
         throw error;
       });
+    const { realPath } = resolved;
+    let resolvedStat: BigIntStats | undefined = resolved.stat;
     await inspectPathIdentity(async () => {
-      const realStat = await fs.stat(realPath, { bigint: true });
+      // Reuse the post-realpath observation; unknown Windows identities still
+      // get a fresh observation on inspectFileIdentity's retry.
+      const realStat = resolvedStat ?? await fs.stat(realPath, { bigint: true });
+      resolvedStat = undefined;
       if (options?.hardlinks === "reject" && realStat.nlink > 1n) {
         throw hardlinkedPathNotAllowedError();
       }
