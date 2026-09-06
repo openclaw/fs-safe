@@ -69,20 +69,19 @@ export function canUseRootFileOpen(ioFs: typeof fs): boolean {
 
 export function openRootFileSync(params: OpenRootFileSyncParams): RootFileOpenResult {
   const ioFs = params.ioFs ?? fs;
-  const resolved = resolveRootFilePathGeneric({
-    absolutePath: params.absolutePath,
-    resolve: (absolutePath) =>
-      resolveRootPathSync({
-        absolutePath,
-        rootPath: params.rootPath,
-        rootCanonicalPath: params.rootRealPath,
-        boundaryLabel: params.boundaryLabel,
-        rejectSymlinks: params.rejectSymlinks ?? true,
-        skipLexicalRootCheck: params.skipLexicalRootCheck,
-      }),
-  });
-  if (resolved instanceof Promise) {
-    return toBoundaryValidationError(new Error("Unexpected async boundary resolution"));
+  const absolutePath = path.resolve(params.absolutePath);
+  let resolved: ResolvedRootFilePath | RootFileOpenResult;
+  try {
+    resolved = mapResolvedRootPath(absolutePath, resolveRootPathSync({
+      absolutePath,
+      rootPath: params.rootPath,
+      rootCanonicalPath: params.rootRealPath,
+      boundaryLabel: params.boundaryLabel,
+      rejectSymlinks: params.rejectSymlinks ?? true,
+      skipLexicalRootCheck: params.skipLexicalRootCheck,
+    }));
+  } catch (error) {
+    resolved = toBoundaryValidationError(error);
   }
   return finalizeRootFileOpen({
     resolved,
@@ -167,20 +166,21 @@ export async function openRootFile(
   params: OpenRootFileParams,
 ): Promise<RootFileOpenResult> {
   const ioFs = params.ioFs ?? fs;
-  const maybeResolved = resolveRootFilePathGeneric({
-    absolutePath: params.absolutePath,
-    resolve: (absolutePath) =>
-      resolveRootPath({
-        absolutePath,
-        rootPath: params.rootPath,
-        rootCanonicalPath: params.rootRealPath,
-        boundaryLabel: params.boundaryLabel,
-        policy: params.aliasPolicy,
-        rejectSymlinks: params.rejectSymlinks ?? true,
-        skipLexicalRootCheck: params.skipLexicalRootCheck,
-      }),
-  });
-  const resolved = maybeResolved instanceof Promise ? await maybeResolved : maybeResolved;
+  const absolutePath = path.resolve(params.absolutePath);
+  let resolved: ResolvedRootFilePath | RootFileOpenResult;
+  try {
+    resolved = mapResolvedRootPath(absolutePath, await resolveRootPath({
+      absolutePath,
+      rootPath: params.rootPath,
+      rootCanonicalPath: params.rootRealPath,
+      boundaryLabel: params.boundaryLabel,
+      policy: params.aliasPolicy,
+      rejectSymlinks: params.rejectSymlinks ?? true,
+      skipLexicalRootCheck: params.skipLexicalRootCheck,
+    }));
+  } catch (error) {
+    resolved = toBoundaryValidationError(error);
+  }
   return finalizeRootFileOpen({
     resolved,
     maxBytes: params.maxBytes,
@@ -203,25 +203,4 @@ function mapResolvedRootPath(
     resolvedPath: resolved.canonicalPath,
     rootRealPath: resolved.rootCanonicalPath,
   };
-}
-
-function resolveRootFilePathGeneric(params: {
-  absolutePath: string;
-  resolve: (absolutePath: string) => ResolvedRootPath | Promise<ResolvedRootPath>;
-}):
-  | ResolvedRootFilePath
-  | RootFileOpenResult
-  | Promise<ResolvedRootFilePath | RootFileOpenResult> {
-  const absolutePath = path.resolve(params.absolutePath);
-  try {
-    const resolved = params.resolve(absolutePath);
-    if (resolved instanceof Promise) {
-      return resolved
-        .then((value) => mapResolvedRootPath(absolutePath, value))
-        .catch((error) => toBoundaryValidationError(error));
-    }
-    return mapResolvedRootPath(absolutePath, resolved);
-  } catch (error) {
-    return toBoundaryValidationError(error);
-  }
 }

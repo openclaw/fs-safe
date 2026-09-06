@@ -201,15 +201,6 @@ type BoundaryResolutionContext = {
   canonicalOutsideLexicalPath: string;
 };
 
-function isPromiseLike<T>(value: unknown): value is PromiseLike<T> {
-  return Boolean(
-    value &&
-    (typeof value === "object" || typeof value === "function") &&
-    "then" in value &&
-    typeof (value as { then?: unknown }).then === "function",
-  );
-}
-
 function createLexicalTraversalState(params: {
   params: ResolveRootPathParams;
   rootPath: string;
@@ -324,40 +315,17 @@ function handleLexicalLstatFailure(
   return true;
 }
 
-function handleLexicalStatReadFailure(
-  context: LexicalTraversalContext,
-  error: unknown,
-  missingFromIndex: number,
-): null {
-  if (handleLexicalLstatFailure(context, error, missingFromIndex)) {
-    return null;
-  }
-  throw error;
-}
-
-function handleLexicalStatDisposition(
-  context: LexicalTraversalContext,
-  params: {
+function lexicalStatDisposition(params: {
   isSymbolicLink: boolean;
-  segment: string;
   isLast: boolean;
-  },
-): "continue" | "break" | "resolve-link" {
-  if (!params.isSymbolicLink) {
-    advanceCanonicalCursorForSegment(context, params.segment);
-    return "continue";
-  }
-
-  if (context.resolveParams.rejectSymlinks === true && params.isLast) {
+  rejectSymlinks: boolean | undefined;
+  allowFinalSymlink: boolean;
+}): "continue" | "break" | "resolve-link" {
+  if (!params.isSymbolicLink) return "continue";
+  if (params.rejectSymlinks === true && params.isLast) {
     throw new FsSafeError("symlink", "symlink path component not allowed");
   }
-  if (context.state.allowFinalSymlink && params.isLast) {
-    context.state.preserveFinalSymlink = true;
-    advanceCanonicalCursorForSegment(context, params.segment);
-    return "break";
-  }
-
-  return "resolve-link";
+  return params.allowFinalSymlink && params.isLast ? "break" : "resolve-link";
 }
 
 function applyResolvedSymlinkHop(
@@ -375,58 +343,9 @@ function applyResolvedSymlinkHop(
   context.state.lexicalCursor = linkCanonical;
 }
 
-function readLexicalStat(
-  context: LexicalTraversalContext,
-  params: {
-  missingFromIndex: number;
-  read: (cursor: string) => fs.Stats | Promise<fs.Stats>;
-  },
-): fs.Stats | null | Promise<fs.Stats | null> {
-  try {
-    const stat = params.read(context.state.lexicalCursor);
-    if (isPromiseLike<fs.Stats>(stat)) {
-      return Promise.resolve(stat).catch((error) =>
-        handleLexicalStatReadFailure(context, error, params.missingFromIndex),
-      );
-    }
-    return stat;
-  } catch (error) {
-    return handleLexicalStatReadFailure(context, error, params.missingFromIndex);
-  }
-}
-
-function resolveAndApplySymlinkHop(
-  context: LexicalTraversalContext,
-  params: {
-  resolveLinkCanonical: (cursor: string) => string | Promise<string>;
-  },
-): void | Promise<void> {
-  const linkCanonical = params.resolveLinkCanonical(context.state.lexicalCursor);
-  if (isPromiseLike<string>(linkCanonical)) {
-    return Promise.resolve(linkCanonical).then((value) => {
-      applyResolvedSymlinkHop(context, value);
-    });
-  }
-  applyResolvedSymlinkHop(context, linkCanonical);
-}
-
-type LexicalTraversalStep = {
-  idx: number;
-  segment: string;
-  isLast: boolean;
-};
-
 function applyParentTraversalStep(context: LexicalTraversalContext): void {
   context.state.lexicalCursor = path.resolve(context.state.lexicalCursor, "..");
   advanceCanonicalCursorForSegment(context, "..");
-}
-
-function* iterateLexicalTraversal(state: LexicalTraversalState): Iterable<LexicalTraversalStep> {
-  for (let idx = 0; idx < state.segments.length; idx += 1) {
-    const segment = state.segments[idx] ?? "";
-    const isLast = idx === state.segments.length - 1;
-    yield { idx, segment, isLast };
-  }
 }
 
 type LexicalResolutionParams = {
@@ -442,38 +361,40 @@ async function resolveRootPathLexicalAsync(
   const context = createLexicalTraversalContext(params);
   const { state } = context;
 
-  for (const { idx, segment, isLast } of iterateLexicalTraversal(state)) {
+  for (let idx = 0; idx < state.segments.length; idx += 1) {
+    const segment = state.segments[idx] ?? "";
+    const isLast = idx === state.segments.length - 1;
     if (segment === "..") {
       applyParentTraversalStep(context);
       continue;
     }
     state.lexicalCursor = path.join(state.lexicalCursor, segment);
-    const stat = await readLexicalStat(context, {
-      missingFromIndex: idx,
-      read: (cursor) => fsp.lstat(cursor),
-    });
-    if (!stat) {
-      break;
+    let stat: fs.Stats;
+    try {
+      stat = await fsp.lstat(state.lexicalCursor);
+    } catch (error) {
+      if (handleLexicalLstatFailure(context, error, idx)) break;
+      throw error;
     }
 
-    const disposition = handleLexicalStatDisposition(context, {
-      isSymbolicLink: stat.isSymbolicLink(),
-      segment,
+    const isSymbolicLink = stat.isSymbolicLink();
+    const disposition = lexicalStatDisposition({
+      isSymbolicLink,
       isLast,
+      rejectSymlinks: isSymbolicLink ? context.resolveParams.rejectSymlinks : undefined,
+      allowFinalSymlink: state.allowFinalSymlink,
     });
-    if (disposition === "continue") {
+    if (disposition !== "resolve-link") {
+      state.preserveFinalSymlink = disposition === "break";
+      advanceCanonicalCursorForSegment(context, segment);
+      if (state.preserveFinalSymlink) break;
       continue;
     }
-    if (disposition === "break") {
-      break;
-    }
 
-    await resolveAndApplySymlinkHop(context, {
-      resolveLinkCanonical: (cursor) =>
-        resolveSymlinkHopPath(cursor, {
-          rejectUnresolved: context.resolveParams.rejectUnresolvedSymlinks,
-        }),
+    const linkCanonical = await resolveSymlinkHopPath(state.lexicalCursor, {
+      rejectUnresolved: context.resolveParams.rejectUnresolvedSymlinks,
     });
+    applyResolvedSymlinkHop(context, linkCanonical);
     if (context.resolveParams.rejectSymlinks === true) {
       throw new FsSafeError("symlink", "symlink path component not allowed");
     }
@@ -494,39 +415,32 @@ function resolveRootPathLexicalSync(params: LexicalResolutionParams): ResolvedRo
       continue;
     }
     state.lexicalCursor = path.join(state.lexicalCursor, segment);
-    const maybeStat = readLexicalStat(context, {
-      missingFromIndex: idx,
-      read: (cursor) => fs.lstatSync(cursor),
-    });
-    if (isPromiseLike<fs.Stats | null>(maybeStat)) {
-      throw new Error("Unexpected async lexical stat");
-    }
-    const stat = maybeStat;
-    if (!stat) {
-      break;
+    let stat: fs.Stats;
+    try {
+      stat = fs.lstatSync(state.lexicalCursor);
+    } catch (error) {
+      if (handleLexicalLstatFailure(context, error, idx)) break;
+      throw error;
     }
 
-    const disposition = handleLexicalStatDisposition(context, {
-      isSymbolicLink: stat.isSymbolicLink(),
-      segment,
+    const isSymbolicLink = stat.isSymbolicLink();
+    const disposition = lexicalStatDisposition({
+      isSymbolicLink,
       isLast,
+      rejectSymlinks: isSymbolicLink ? context.resolveParams.rejectSymlinks : undefined,
+      allowFinalSymlink: state.allowFinalSymlink,
     });
-    if (disposition === "continue") {
+    if (disposition !== "resolve-link") {
+      state.preserveFinalSymlink = disposition === "break";
+      advanceCanonicalCursorForSegment(context, segment);
+      if (state.preserveFinalSymlink) break;
       continue;
     }
-    if (disposition === "break") {
-      break;
-    }
 
-    const maybeApplied = resolveAndApplySymlinkHop(context, {
-      resolveLinkCanonical: (cursor) =>
-        resolveSymlinkHopPathSync(cursor, {
-          rejectUnresolved: context.resolveParams.rejectUnresolvedSymlinks,
-        }),
+    const linkCanonical = resolveSymlinkHopPathSync(state.lexicalCursor, {
+      rejectUnresolved: context.resolveParams.rejectUnresolvedSymlinks,
     });
-    if (isPromiseLike<void>(maybeApplied)) {
-      throw new Error("Unexpected async symlink resolution");
-    }
+    applyResolvedSymlinkHop(context, linkCanonical);
     if (context.resolveParams.rejectSymlinks === true) {
       throw new FsSafeError("symlink", "symlink path component not allowed");
     }

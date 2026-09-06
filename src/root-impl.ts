@@ -146,7 +146,7 @@ export type RootMoveOptions = Pick<RootDefaults, "denyMutations"> & {
 export type RootRemoveOptions = Pick<RootDefaults, "denyMutations">;
 export type RootMkdirOptions = Pick<RootDefaults, "denyMutations">;
 
-type RootReadParams = RootReadOptions;
+type RootReadParams = Omit<RootReadOptions, "nonBlockingRead">;
 
 function logWarn(message: string): void {
   if (process.env.FS_SAFE_DEBUG_WARNINGS === "1") {
@@ -211,7 +211,6 @@ async function openVerifiedLocalFile(
   filePath: string,
   options?: {
     hardlinks?: HardlinkPolicy;
-    nonBlockingRead?: boolean;
     symlinks?: SymlinkPolicy;
   },
 ): Promise<{ opened: OpenResult; identity: BigIntStats }> {
@@ -670,7 +669,6 @@ function readDefaults(defaults: RootDefaults): RootReadParams {
   return {
     hardlinks: defaults.hardlinks,
     maxBytes: normalizeMaxBytes(defaults.maxBytes, { defaultValue: DEFAULT_ROOT_MAX_BYTES }),
-    nonBlockingRead: defaults.nonBlockingRead,
     symlinks: defaults.symlinks,
   };
 }
@@ -679,7 +677,6 @@ function mergeReadOptions(defaults: RootDefaults, options: RootReadOptions): Roo
   const merged = readDefaults(defaults);
   if (options.hardlinks !== undefined) merged.hardlinks = options.hardlinks;
   merged.maxBytes = normalizeMaxBytes(options.maxBytes, { defaultValue: merged.maxBytes });
-  if (options.nonBlockingRead !== undefined) merged.nonBlockingRead = options.nonBlockingRead;
   if (options.symlinks !== undefined) merged.symlinks = options.symlinks;
   return merged;
 }
@@ -697,7 +694,6 @@ async function openFileInRoot(
   params: {
     relativePath: string;
     hardlinks?: HardlinkPolicy;
-    nonBlockingRead?: boolean;
     symlinks?: SymlinkPolicy;
   },
 ): Promise<OpenResult> {
@@ -708,7 +704,6 @@ async function openFileInRoot(
   });
 
   const { opened } = await openVerifiedLocalFile(resolved, {
-    nonBlockingRead: params.nonBlockingRead,
     symlinks: params.symlinks,
   });
 
@@ -730,7 +725,6 @@ async function readFileInRoot(
   params: {
     relativePath: string;
     hardlinks?: HardlinkPolicy;
-    nonBlockingRead?: boolean;
     symlinks?: SymlinkPolicy;
     maxBytes?: number;
   },
@@ -749,7 +743,6 @@ async function readPathInRoot(
     filePath: string;
     hardlinks?: HardlinkPolicy;
     maxBytes?: number;
-    nonBlockingRead?: boolean;
     symlinks?: SymlinkPolicy;
   },
 ): Promise<ReadResult> {
@@ -758,7 +751,6 @@ async function readPathInRoot(
     relativePath,
     hardlinks: params.hardlinks,
     maxBytes: params.maxBytes,
-    nonBlockingRead: params.nonBlockingRead,
     symlinks: params.symlinks,
   });
 }
