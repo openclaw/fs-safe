@@ -10,7 +10,7 @@ import { FsSafeError } from "./errors.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import { isNotFoundPathError } from "./path.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
-import { assertNoSymlinkParents, assertNoSymlinkParentsSync } from "./symlink-parents.js";
+import { assertNoSymlinkParents, assertNoSymlinkParentsSync, type AssertNoSymlinkParentsOptions } from "./symlink-parents.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import {
   isNonRegularWriteOpenError,
@@ -102,18 +102,13 @@ export async function readRegularFile(params: {
     assertRegularReadStat(stat, params.filePath, true);
     return stat;
   }).catch((error) => throwReadPreviewError(error, params.filePath));
-  if (maxBytes !== undefined && before.size > maxBytes) {
-    throw regularFileTooLargeError(params.filePath, maxBytes);
-  }
+  assertRegularReadSize(before, params.filePath, maxBytes);
 
   let handle: FileHandle;
   try {
     handle = await fs.open(params.filePath, resolveReadOpenFlags());
   } catch (err) {
-    if (isNotFoundPathError(err)) {
-      throw new FsSafeError("path-mismatch", `File changed during read: ${params.filePath}`);
-    }
-    throw err;
+    throwReadPathError(err, params.filePath);
   }
   try {
     const stat = await handle.stat();
@@ -129,14 +124,9 @@ export async function readRegularFile(params: {
         return current;
       }, identity);
     } catch (err) {
-      if (isNotFoundPathError(err)) {
-        throw new FsSafeError("path-mismatch", `File changed during read: ${params.filePath}`);
-      }
-      throw err;
+      throwReadPathError(err, params.filePath);
     }
-    if (maxBytes !== undefined && stat.size > maxBytes) {
-      throw regularFileTooLargeError(params.filePath, maxBytes);
-    }
+    assertRegularReadSize(stat, params.filePath, maxBytes);
     // With a byte cap, avoid readFile(): a raced file growth would allocate
     // the oversized content before the post-read check could reject it.
     let buffer: Buffer;
@@ -154,6 +144,19 @@ export async function readRegularFile(params: {
     return { buffer, stat };
   } finally {
     await handle.close();
+  }
+}
+
+function throwReadPathError(error: unknown, filePath: string): never {
+  if (isNotFoundPathError(error)) {
+    throw new FsSafeError("path-mismatch", `File changed during read: ${filePath}`);
+  }
+  throw error;
+}
+
+function assertRegularReadSize(stat: Stats | BigIntStats, filePath: string, maxBytes?: number): void {
+  if (maxBytes !== undefined && stat.size > maxBytes) {
+    throw regularFileTooLargeError(filePath, maxBytes);
   }
 }
 
@@ -189,14 +192,9 @@ function readOpenedRegularFileSync(params: {
       return current;
     }, identity);
   } catch (error) {
-    if (isNotFoundPathError(error)) {
-      throw new FsSafeError("path-mismatch", `File changed during read: ${params.filePath}`);
-    }
-    throw error;
+    throwReadPathError(error, params.filePath);
   }
-  if (params.maxBytes !== undefined && stat.size > params.maxBytes) {
-    throw regularFileTooLargeError(params.filePath, params.maxBytes);
-  }
+  assertRegularReadSize(stat, params.filePath, params.maxBytes);
   // Keep capped sync reads incremental for the same reason as async reads:
   // readFileSync(fd) would buffer a raced oversized file before throwing.
   let buffer: Buffer;
@@ -230,18 +228,13 @@ export function readRegularFileSync(params: { filePath: string; maxBytes?: numbe
   } catch (error) {
     throwReadPreviewError(error, params.filePath);
   }
-  if (maxBytes !== undefined && before.size > maxBytes) {
-    throw regularFileTooLargeError(params.filePath, maxBytes);
-  }
+  assertRegularReadSize(before, params.filePath, maxBytes);
 
   let fd: number;
   try {
     fd = fsSync.openSync(params.filePath, resolveReadOpenFlags());
   } catch (error) {
-    if (isNotFoundPathError(error)) {
-      throw new FsSafeError("path-mismatch", `File changed during read: ${params.filePath}`);
-    }
-    throw error;
+    throwReadPathError(error, params.filePath);
   }
   try {
     return readOpenedRegularFileSync({
@@ -252,6 +245,27 @@ export function readRegularFileSync(params: { filePath: string; maxBytes?: numbe
     });
   } finally {
     fsSync.closeSync(fd);
+  }
+}
+
+function regularAppendParentOptions(filePath: string): AssertNoSymlinkParentsOptions {
+  const resolvedDir = path.resolve(path.dirname(filePath));
+  return {
+    rootDir: path.parse(resolvedDir).root,
+    targetPath: resolvedDir,
+    allowMissing: false,
+    allowRootChildSymlink: true,
+    requireDirectories: true,
+    messagePrefix: "Refusing to append under",
+  };
+}
+
+function assertRegularAppendPreview(stat: BigIntStats, filePath: string): void {
+  if (stat.isSymbolicLink()) {
+    throw new Error(`Refusing to append through symlink: ${filePath}`);
+  }
+  if (!stat.isFile()) {
+    throw new Error(`Refusing to append to non-file: ${filePath}`);
   }
 }
 
@@ -274,27 +288,14 @@ function throwAppendIdentityError(error: unknown, filePath: string): never {
 
 export async function appendRegularFile(options: AppendRegularFileOptions): Promise<void> {
   if (options.rejectSymlinkParents === true) {
-    const resolvedDir = path.resolve(path.dirname(options.filePath));
-    await assertNoSymlinkParents({
-      rootDir: path.parse(resolvedDir).root,
-      targetPath: resolvedDir,
-      allowMissing: false,
-      allowRootChildSymlink: true,
-      requireDirectories: true,
-      messagePrefix: "Refusing to append under",
-    });
+    await assertNoSymlinkParents(regularAppendParentOptions(options.filePath));
   }
 
   let preOpenStat: BigIntStats | undefined;
   try {
     preOpenStat = await inspectFileIdentity(async () => {
       const stat = await fs.lstat(options.filePath, { bigint: true });
-      if (stat.isSymbolicLink()) {
-        throw new Error(`Refusing to append through symlink: ${options.filePath}`);
-      }
-      if (!stat.isFile()) {
-        throw new Error(`Refusing to append to non-file: ${options.filePath}`);
-      }
+      assertRegularAppendPreview(stat, options.filePath);
       return stat;
     });
   } catch (error) {
@@ -356,27 +357,14 @@ export async function appendRegularFile(options: AppendRegularFileOptions): Prom
 
 export function appendRegularFileSync(options: AppendRegularFileOptions): void {
   if (options.rejectSymlinkParents === true) {
-    const resolvedDir = path.resolve(path.dirname(options.filePath));
-    assertNoSymlinkParentsSync({
-      rootDir: path.parse(resolvedDir).root,
-      targetPath: resolvedDir,
-      allowMissing: false,
-      allowRootChildSymlink: true,
-      requireDirectories: true,
-      messagePrefix: "Refusing to append under",
-    });
+    assertNoSymlinkParentsSync(regularAppendParentOptions(options.filePath));
   }
 
   let preOpenStat: BigIntStats | undefined;
   try {
     preOpenStat = inspectFileIdentitySync(() => {
       const stat = fsSync.lstatSync(options.filePath, { bigint: true });
-      if (stat.isSymbolicLink()) {
-        throw new Error(`Refusing to append through symlink: ${options.filePath}`);
-      }
-      if (!stat.isFile()) {
-        throw new Error(`Refusing to append to non-file: ${options.filePath}`);
-      }
+      assertRegularAppendPreview(stat, options.filePath);
       return stat;
     });
   } catch (error) {
