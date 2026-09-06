@@ -147,6 +147,7 @@ export type RootRemoveOptions = Pick<RootDefaults, "denyMutations">;
 export type RootMkdirOptions = Pick<RootDefaults, "denyMutations">;
 
 type RootReadParams = Omit<RootReadOptions, "nonBlockingRead">;
+type RootWriteParams = RootWriteOptions & { relativePath: string; data: string | Buffer };
 
 function logWarn(message: string): void {
   if (process.env.FS_SAFE_DEBUG_WARNINGS === "1") {
@@ -786,6 +787,17 @@ function emitWriteBoundaryWarning(reason: string) {
   logWarn(`security: fs-safe write boundary warning (${reason})`);
 }
 
+async function verifyRootWriteWithWarning(
+  params: Parameters<typeof verifyAtomicWriteResult>[0],
+): Promise<void> {
+  try {
+    await verifyAtomicWriteResult(params);
+  } catch (error) {
+    emitWriteBoundaryWarning(`post-write verification failed: ${String(error)}`);
+    throw error;
+  }
+}
+
 function buildAtomicWriteTempPath(targetPath: string): string {
   return path.join(path.dirname(targetPath), `.fs-safe-${randomUUID()}.tmp`);
 }
@@ -1001,15 +1013,7 @@ async function openWritableFileInRoot(
 
 async function appendFileInRoot(
   root: RootContext,
-  params: {
-    relativePath: string;
-    data: string | Buffer;
-    encoding?: BufferEncoding;
-    mkdir?: boolean;
-    mode?: number;
-    denyMutations?: DenyMutationPolicy;
-    prependNewlineIfNeeded?: boolean;
-  },
+  params: RootWriteParams & Pick<RootAppendOptions, "prependNewlineIfNeeded">,
 ): Promise<void> {
   const target = await openWritableFileInRoot(root, {
     relativePath: params.relativePath,
@@ -1087,7 +1091,7 @@ async function mkdirPathInRoot(
 
 async function writeFileInRoot(
   root: RootContext,
-  params: RootWriteOptions & { relativePath: string; data: string | Buffer },
+  params: RootWriteParams,
 ): Promise<void> {
   await serializePathWrite(rootWriteQueueKey(root, params.relativePath), async () => {
     if (
@@ -1132,18 +1136,13 @@ async function commitPinnedWriteInRoot(
       rootIdentity: root.rootIdentity,
       verifyPublished: async (fd, expectedIdentity, parentGuard) => {
         verifyingPublication = true;
-        try {
-          await verifyAtomicWriteResult({
-            root,
-            targetPath: pinned.targetPath,
-            fd,
-            expectedIdentity,
-            parentGuard,
-          });
-        } catch (error) {
-          emitWriteBoundaryWarning(`post-write verification failed: ${String(error)}`);
-          throw error;
-        }
+        await verifyRootWriteWithWarning({
+          root,
+          targetPath: pinned.targetPath,
+          fd,
+          expectedIdentity,
+          parentGuard,
+        });
       },
     });
   } catch (error) {
@@ -1163,15 +1162,7 @@ async function commitPinnedWriteInRoot(
 
 async function copyFileInRoot(
   root: RootContext,
-  params: {
-    sourcePath: string;
-    relativePath: string;
-    maxBytes?: number;
-    mkdir?: boolean;
-    mode?: number;
-    denyMutations?: DenyMutationPolicy;
-    sourceHardlinks?: HardlinkPolicy;
-  },
+  params: RootCopyOptions & { sourcePath: string; relativePath: string },
 ): Promise<void> {
   assertValidRootRelativePath(params.relativePath);
   assertNoNulPathInput(params.sourcePath, "source path contains a NUL byte");
@@ -1468,6 +1459,19 @@ async function listPathFallback(
   }
 }
 
+async function resolveMoveMutationPath(
+  root: RootContext,
+  relativePath: string,
+  denyMutations?: DenyMutationPolicy,
+): Promise<GuardedWritePath> {
+  const resolved = await resolvePathInRoot(root, relativePath, {
+    aliasErrorCode: "path-alias",
+    allowFinalSymlink: true,
+  });
+  await assertMutationNotDenied(resolved.resolved, denyMutations, { protectAncestors: true });
+  return resolved;
+}
+
 async function assertMoveMutationAllowed(
   root: RootContext,
   params: {
@@ -1478,16 +1482,8 @@ async function assertMoveMutationAllowed(
 ): Promise<void> {
   // Keep this preflight separate from the pinned resolutions in movePathFallback:
   // mutation denials must take precedence over source alias or identity failures.
-  const source = await resolvePathInRoot(root, params.fromRelative, {
-    aliasErrorCode: "path-alias",
-    allowFinalSymlink: true,
-  });
-  await assertMutationNotDenied(source.resolved, params.denyMutations, { protectAncestors: true });
-  const target = await resolvePathInRoot(root, params.toRelative, {
-    aliasErrorCode: "path-alias",
-    allowFinalSymlink: true,
-  });
-  await assertMutationNotDenied(target.resolved, params.denyMutations, { protectAncestors: true });
+  await resolveMoveMutationPath(root, params.fromRelative, params.denyMutations);
+  await resolveMoveMutationPath(root, params.toRelative, params.denyMutations);
 }
 
 async function movePathFallback(
@@ -1499,11 +1495,7 @@ async function movePathFallback(
     overwrite: boolean;
   },
 ): Promise<void> {
-  const source = await resolvePathInRoot(root, params.fromRelative, {
-    aliasErrorCode: "path-alias",
-    allowFinalSymlink: true,
-  });
-  await assertMutationNotDenied(source.resolved, params.denyMutations, { protectAncestors: true });
+  const source = await resolveMoveMutationPath(root, params.fromRelative, params.denyMutations);
   await resolvePinnedRootPathInRoot(root, {
     relativePath: params.fromRelative,
     policy: PATH_ALIAS_POLICIES.strict,
@@ -1582,15 +1574,7 @@ async function movePathFallback(
 
 async function writeFileFallback(
   root: RootContext,
-  params: {
-    relativePath: string;
-    data: string | Buffer;
-    encoding?: BufferEncoding;
-    mkdir?: boolean;
-    mode?: number;
-    denyMutations?: DenyMutationPolicy;
-    overwrite?: boolean;
-  },
+  params: RootWriteParams,
 ): Promise<void> {
   if (params.overwrite === false) {
     await writeMissingFileFallback(root, params);
@@ -1629,18 +1613,13 @@ async function writeFileFallback(
     });
     unregisterTempPath();
     unregisterTempPath = null;
-    try {
-      await verifyAtomicWriteResult({
-        root,
-        targetPath: destinationPath,
-        expectedIdentity: written.identity,
-        fd: written.handle.fd,
-        parentGuard: destinationGuard,
-      });
-    } catch (err) {
-      emitWriteBoundaryWarning(`post-write verification failed: ${String(err)}`);
-      throw err;
-    }
+    await verifyRootWriteWithWarning({
+      root,
+      targetPath: destinationPath,
+      expectedIdentity: written.identity,
+      fd: written.handle.fd,
+      parentGuard: destinationGuard,
+    });
   } finally {
     await writtenHandle?.close().catch(() => undefined);
     if (tempPath) {
@@ -1652,14 +1631,7 @@ async function writeFileFallback(
 
 async function writeMissingFileFallback(
   root: RootContext,
-  params: {
-    relativePath: string;
-    data: string | Buffer;
-    encoding?: BufferEncoding;
-    mkdir?: boolean;
-    mode?: number;
-    denyMutations?: DenyMutationPolicy;
-  },
+  params: RootWriteParams,
 ): Promise<void> {
   const { rootReal, resolved } = await resolveGuardedWritePathInRoot(root, {
     relativePath: params.relativePath,
