@@ -14,9 +14,14 @@ it.each(["EPERM", "EIO"])("preserves sync receivers and the %s policy", async (c
   }
 });
 
-it.each([null, undefined])("retains each caller's nullish failure behavior (%s)", async (failure) => {
+it.each([null, undefined])("rethrows nullish sync failures unchanged (%s)", async (failure) => {
   const handle = { async sync() { throw failure; } };
-  await expect(syncFileBestEffort(handle, true)).rejects.toBe(failure);
-  await expect(syncFileBestEffort(handle)).rejects.toBeInstanceOf(TypeError);
-  expect(() => syncFileBestEffortSync(42, { fsyncSync() { throw failure; } })).toThrow(TypeError);
+  await expect(syncFileBestEffort(handle)).rejects.toBe(failure);
+  let caught: unknown = Symbol("did not throw");
+  try {
+    syncFileBestEffortSync(42, { fsyncSync() { throw failure; } });
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBe(failure);
 });
