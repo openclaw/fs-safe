@@ -8,13 +8,13 @@ import { sameFileIdentityForCleanup } from "./file-identity.js";
 const RETIREMENT_ROOT_NAME = ".fs-safe-retirements";
 const RETIREMENT_ENTRY_NAME = "entry";
 
-function getErrorCode(error: unknown): string | null {
+export function getErrorCode(error: unknown): string | null {
   return error && typeof error === "object" && "code" in error
     ? String((error as { code?: unknown }).code)
     : null;
 }
 
-async function lstatOrNull(filePath: string): Promise<BigIntStats | null> {
+export async function lstatOrNull(filePath: string): Promise<BigIntStats | null> {
   try {
     return await fs.lstat(filePath, { bigint: true });
   } catch (error) {

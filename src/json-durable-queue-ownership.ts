@@ -5,6 +5,8 @@ import { syncDirectory } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup } from "./file-identity.js";
 import {
+  getErrorCode,
+  lstatOrNull,
   recoverDurableQueueRetirement,
   retireDurableQueueSource,
 } from "./json-durable-queue-retirement.js";
@@ -17,26 +19,11 @@ export type DurableQueueEntryPathsLike = {
   processingPath?: string;
 };
 
-function getErrorCode(error: unknown): string | null {
-  return error && typeof error === "object" && "code" in error
-    ? String((error as { code?: unknown }).code)
-    : null;
-}
-
 export function durableQueueProcessingPath(paths: DurableQueueEntryPathsLike): string {
   if (paths.processingPath) return paths.processingPath;
   return paths.jsonPath.endsWith(".json")
     ? `${paths.jsonPath.slice(0, -".json".length)}.processing`
     : `${paths.jsonPath}.processing`;
-}
-
-async function lstatOrNull(filePath: string): Promise<BigIntStats | null> {
-  try {
-    return await fs.lstat(filePath, { bigint: true });
-  } catch (error) {
-    if (getErrorCode(error) === "ENOENT") return null;
-    throw error;
-  }
 }
 
 async function regularQueueFileIdentity(filePath: string): Promise<BigIntStats | null> {

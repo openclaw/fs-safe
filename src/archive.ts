@@ -25,7 +25,7 @@ import {
   resolveTarMeterLimits,
   type ArchiveExtractLimits,
 } from "./archive-limits.js";
-import { resolveArchiveKind } from "./archive-kind.js";
+import { assertPortableArchiveKind, resolveArchiveKind } from "./archive-kind.js";
 import {
   prepareArchiveDestinationDir,
   preparePrivateArchiveOutputPath,
@@ -331,13 +331,7 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
     );
     return;
   }
-  if (kind === "tar-zstd" || kind === "tar-bzip2") {
-    throw new FsSafeError(
-      "helper-unavailable",
-      `${kind} archives require the matching optional native platform package; ` +
-        "install @openclaw/fs-safe with optional dependencies enabled on a supported platform and use FS_SAFE_NATIVE_MODE=auto or require",
-    );
-  }
+  assertPortableArchiveKind(kind);
   if (kind === "tar") {
     await withExtractionDeadline(params.timeoutMs, label, async (deadline) => {
       const stagedArchive = await stageArchiveFileForExtraction({

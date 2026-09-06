@@ -1,3 +1,4 @@
+import { syncFileBestEffort } from "./file-sync.js";
 import fsSync, { type BigIntStats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
@@ -107,11 +108,7 @@ export async function writeCallbackSibling<T>(params: {
       }
       if (params.syncTempFile) {
         await assertCurrent(params.tempPath);
-        try {
-          await handle!.sync();
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException)?.code !== "EPERM") throw error;
-        }
+        await syncFileBestEffort(handle!, true);
       }
       await assertCurrent(params.tempPath);
       await fs.rename(params.tempPath, filePath);

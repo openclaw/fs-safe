@@ -1,7 +1,8 @@
 import syncFs from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { Transform, type Readable } from "node:stream";
+import type { Transform, Readable } from "node:stream";
+import { createByteLimitTransform } from "./bounded-read-stream.js";
 import { normalizeMaxBytes } from "./byte-budget.js";
 import { pipeline } from "node:stream/promises";
 import {
@@ -94,18 +95,8 @@ function createMaxBytesTransform(maxBytes: number | undefined): Transform | unde
   if (limit === undefined) {
     return undefined;
   }
-  let total = 0;
-  return new Transform({
-    transform(chunk: Buffer | string, _encoding, callback) {
-      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      total += buffer.byteLength;
-      if (total > limit) {
-        callback(new FsSafeError("too-large", `file exceeds maximum size of ${limit} bytes`));
-        return;
-      }
-      callback(null, buffer);
-    },
-  });
+  return createByteLimitTransform(limit, () =>
+    new FsSafeError("too-large", `file exceeds maximum size of ${limit} bytes`));
 }
 
 export async function writeStreamToTempSource(params: {

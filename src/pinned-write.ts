@@ -1,3 +1,4 @@
+import { syncFileBestEffort } from "./file-sync.js";
 import { randomUUID } from "node:crypto";
 import fsSync, { type BigIntStats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
@@ -48,16 +49,6 @@ function assertWithinMaxBytes(bytes: number, maxBytes: number | undefined): void
       "too-large",
       `file exceeds limit of ${maxBytes} bytes (got at least ${bytes})`,
     );
-  }
-}
-
-async function syncFileBestEffort(handle: FileHandle): Promise<void> {
-  try {
-    await handle.sync();
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException | undefined)?.code !== "EPERM") {
-      throw error;
-    }
   }
 }
 
@@ -222,7 +213,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
       }
       // Content writes may clear set-ID bits; finalize them through the owned fd.
       await handle.chmod(params.mode);
-      await syncFileBestEffort(handle);
+      await syncFileBestEffort(handle, true);
       const stat = await handle.stat();
       await syncDirectoryBestEffort(parentPath);
       // Publication is complete. A failed outer check must not remove its target.
@@ -278,7 +269,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
     }
     const expectedTempStat = tempStat;
     await handle.chmod(params.mode);
-    await syncFileBestEffort(handle);
+    await syncFileBestEffort(handle, true);
     let verifiedIdentity: FileIdentityStat = expectedTempStat;
     await withAsyncDirectoryGuards([parentGuard], async () => {
       await fs.rename(tempPath, targetPath);

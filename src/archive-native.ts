@@ -1,10 +1,10 @@
+import { classifyArchiveParserError } from "./archive-parser-errors.js";
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import {
   ArchiveFormatError,
   ArchiveSecurityError,
   isArchiveFormatErrorMessage,
-  isArchiveTarPathErrorMessage,
 } from "./archive-errors.js";
 import { formatErrorDetail } from "./error-detail.js";
 import {
@@ -44,12 +44,8 @@ function policyKind(kind: string): "file" | "directory" | "symlink" | "other" {
 
 function throwMappedNativeError(error: unknown): never {
   if (error instanceof Error) {
-    if (isArchiveTarPathErrorMessage(error.message)) {
-      throw new ArchiveSecurityError("entry-path", error.message, { cause: error });
-    }
-    for (const code of Object.values(ARCHIVE_LIMIT_ERROR_CODE)) {
-      if (error.message.includes(code)) throw new ArchiveLimitError(code);
-    }
+    const mapped = classifyArchiveParserError(error.message, { cause: error });
+    if (mapped) throw mapped;
     if (isArchiveFormatErrorMessage(error.message)) {
       throw new ArchiveFormatError(error.message, { cause: error });
     }

@@ -1,3 +1,4 @@
+import { syncFileBestEffort, syncFileBestEffortSync } from "./file-sync.js";
 import syncFs, { type BigIntStats, type Stats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
@@ -160,13 +161,7 @@ export async function writeTempFile(params: {
     await params.fsModule.writeFile(handle, params.content);
     await handle.chmod(params.mode);
     if (params.sync) {
-      try {
-        await handle.sync();
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EPERM") {
-          throw error;
-        }
-      }
+      await syncFileBestEffort(handle);
     }
     await inspectFileIdentity(() => handle.stat({ bigint: true }), identity);
     return { handle, identity };
@@ -196,13 +191,7 @@ export function writeTempFileSync(params: {
     params.fsModule.writeFileSync(fd, params.content);
     params.fchmodSync?.(fd, params.mode);
     if (params.sync) {
-      try {
-        params.fsModule.fsyncSync(fd);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EPERM") {
-          throw error;
-        }
-      }
+      syncFileBestEffortSync(fd, params.fsModule);
     }
     inspectFileIdentitySync(() => params.fsModule.fstatSync(fd, { bigint: true }), identity);
     return { fd, identity };

@@ -23,7 +23,7 @@ export function assertNoDriveRelativePathSegments(value: string, label: string):
   return value;
 }
 
-function trimHyphenEdges(value: string): string {
+export function trimHyphenEdges(value: string): string {
   let start = 0;
   let end = value.length;
   while (start < end && value.charCodeAt(start) === HYPHEN_CHAR_CODE) {

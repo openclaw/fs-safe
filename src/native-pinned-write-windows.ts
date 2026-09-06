@@ -1,3 +1,4 @@
+import { syncFileBestEffortSync } from "./file-sync.js";
 import { randomUUID } from "node:crypto";
 import fsSync, { type BigIntStats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
@@ -7,7 +8,6 @@ import type { FileIdentityStat } from "./file-identity.js";
 import {
   nativeOpenFlags,
   removeNativeCreatedFileIfStillPinned,
-  syncNativeFileBestEffort,
   writeNativeInput,
 } from "./native-operations.js";
 import type { NativeBinding } from "./native.js";
@@ -60,7 +60,7 @@ export async function runPinnedWriteWindows(
     // reopenable until the published name has been identity-fenced.
     fsSync.fchmodSync(tempFd, 0o600);
     await writeNativeInput(tempFd, params.input, params.maxBytes);
-    syncNativeFileBestEffort(tempFd);
+    syncFileBestEffortSync(tempFd);
     if (params.overwrite === false) {
       binding.renameNoReplace(parentFd, tempName, parentFd, params.basename);
     } else {
@@ -84,7 +84,7 @@ export async function runPinnedWriteWindows(
     // verifiable and so broader modes are never exposed before that fence.
     try {
       fsSync.fchmodSync(targetFd, params.mode);
-      syncNativeFileBestEffort(targetFd);
+      syncFileBestEffortSync(targetFd);
     } catch (error) {
       closeWriteFd(targetFd);
       targetFd = undefined;
@@ -96,7 +96,7 @@ export async function runPinnedWriteWindows(
       });
       throw error;
     }
-    syncNativeFileBestEffort(parentFd);
+    syncFileBestEffortSync(parentFd);
     // Verification follows publication and final chmod, outside rollback handling.
     await params.verifyPublished?.(targetFd, verificationIdentity, parentGuard);
     completed = true;

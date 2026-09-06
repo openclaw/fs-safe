@@ -1,3 +1,5 @@
+import { normalizeMaxBytes } from "./byte-budget.js";
+import { resolveHomeRelativePath } from "./home-dir.js";
 import type { BigIntStats } from "node:fs";
 import { FsSafeError, type FsSafeErrorCode } from "./errors.js";
 
@@ -49,4 +51,18 @@ export function trimSecretFileContent(raw: string, label: string, resolvedPath: 
     throw new FsSafeError("invalid-path", `${label} file at ${resolvedPath} is empty.`, { cause: undefined });
   }
   return secret;
+}
+
+export function resolveSecretReadPolicy(filePath: string, label: string, options: SecretFileReadOptions): {
+  resolvedPath: string;
+  maxBytes: number;
+} {
+  const resolvedPath = resolveHomeRelativePath(filePath.trim());
+  if (!resolvedPath) {
+    throw new FsSafeError("invalid-path", `${label} file path is empty.`, { cause: undefined });
+  }
+  const maxBytes = normalizeMaxBytes(options.maxBytes, {
+    defaultValue: DEFAULT_SECRET_FILE_MAX_BYTES,
+  })!;
+  return { resolvedPath, maxBytes };
 }

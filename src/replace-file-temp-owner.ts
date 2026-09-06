@@ -1,6 +1,7 @@
 import syncFs, { type BigIntStats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import { assertAsyncDirectoryGuard, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
+import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup, sha256Hex } from "./file-identity.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
@@ -12,14 +13,7 @@ type SyncOwnerFileSystem = Pick<
   "closeSync" | "fstatSync" | "lstatSync" | "openSync" | "readFileSync" | "unlinkSync"
 >;
 
-const PUBLISHED_READ_FLAGS =
-  syncFs.constants.O_RDONLY |
-  (process.platform !== "win32" && typeof syncFs.constants.O_NOFOLLOW === "number"
-    ? syncFs.constants.O_NOFOLLOW
-    : 0) |
-  (process.platform !== "win32" && typeof syncFs.constants.O_NONBLOCK === "number"
-    ? syncFs.constants.O_NONBLOCK
-    : 0);
+const PUBLISHED_READ_FLAGS = resolveReadOpenFlags();
 
 function assertOwnedFile(stat: BigIntStats, pathname: string, pathnameEntry: boolean): void {
   if (stat.isSymbolicLink()) {

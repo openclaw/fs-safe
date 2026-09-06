@@ -1,7 +1,8 @@
+import { classifyArchiveParserError } from "./archive-parser-errors.js";
 import { readFileSync } from "node:fs";
 import { Transform, type TransformCallback } from "node:stream";
-import { ArchiveFormatError, ArchiveSecurityError, isArchiveTarPathErrorMessage } from "./archive-errors.js";
-import { ARCHIVE_LIMIT_ERROR_CODE, ArchiveLimitError, type TarMeterLimits } from "./archive-limits.js";
+import { ArchiveFormatError } from "./archive-errors.js";
+import type { TarMeterLimits } from "./archive-limits.js";
 import type { TarEntryInfo } from "./archive-tar.js";
 
 export type AdmittedTarMember = TarEntryInfo & { offset: number };
@@ -38,10 +39,8 @@ const types = new Map([
 ]);
 
 function parserError(message: string): Error {
-  if (isArchiveTarPathErrorMessage(message)) return new ArchiveSecurityError("entry-path", message);
-  for (const code of Object.values(ARCHIVE_LIMIT_ERROR_CODE)) {
-    if (message.includes(code)) return new ArchiveLimitError(code);
-  }
+  const mapped = classifyArchiveParserError(message);
+  if (mapped) return mapped;
   return new ArchiveFormatError(message.replace(/^archive-header-invalid:/, "invalid TAR header:"));
 }
 
