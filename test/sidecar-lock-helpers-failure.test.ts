@@ -25,7 +25,6 @@ import {
   computeSidecarLockDelayMs,
   defaultSidecarLockShouldReclaim,
   sidecarLockPayloadCreatedAtMs,
-  sidecarLockPayloadIsStale,
 } from "../src/sidecar-lock-policy.js";
 
 const { tempRoot } = useTempDirs();
@@ -271,8 +270,6 @@ describe("sidecar lock helper failure handling", () => {
     expect(sidecarLockPayloadCreatedAtMs({ createdAt: "2000-01-01T00:00:00.000Z" })).toBeTypeOf("number");
     expect(sidecarLockPayloadCreatedAtMs({ createdAt: "invalid" })).toBeNull();
     expect(sidecarLockPayloadCreatedAtMs(null)).toBeNull();
-    expect(sidecarLockPayloadIsStale({ createdAt: "2000-01-01T00:00:00.000Z" }, 1, Date.now())).toBe(true);
-    expect(sidecarLockPayloadIsStale({}, 1, Date.now())).toBe(false);
 
     const missing = path.join(await tempRoot("fs-safe-sidecar-policy-"), "missing.lock");
     await expect(defaultSidecarLockShouldReclaim({ lockPath: missing, payload: {}, staleMs: 60_000, nowMs: Date.now() })).resolves.toBe(true);

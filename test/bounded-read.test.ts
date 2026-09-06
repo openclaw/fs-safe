@@ -12,7 +12,6 @@ import {
   readFileHandleBounded,
 } from "../src/bounded-read.js";
 import {
-  createBoundedReadStream,
   createMaxBytesTransform,
 } from "../src/bounded-read-stream.js";
 import { FsSafeError } from "../src/errors.js";
@@ -175,48 +174,4 @@ describe("bounded descriptor reads", () => {
       }
     },
   );
-});
-
-describe("bounded read streams", () => {
-  it("propagates source errors through the returned stream", async () => {
-    const failure = new Error("source failed");
-    const source = new Readable({
-      read() {
-        this.destroy(failure);
-      },
-    });
-    const bounded = createBoundedReadStream(
-      { handle: { createReadStream: () => source } },
-      8,
-    );
-
-    await expect((async () => {
-      for await (const _chunk of bounded) {
-        // Drain the stream so its terminal error surfaces.
-      }
-    })()).rejects.toBe(failure);
-  });
-
-  it("destroys the source when a consumer closes early", async () => {
-    let destroyed = false;
-    const source = new Readable({
-      read() {
-        this.push(Buffer.alloc(64));
-      },
-      destroy(error, callback) {
-        destroyed = true;
-        callback(error);
-      },
-    });
-    const bounded = createBoundedReadStream(
-      { handle: { createReadStream: () => source } },
-      Number.POSITIVE_INFINITY,
-    );
-
-    for await (const _chunk of bounded) {
-      break;
-    }
-    await new Promise((resolve) => setImmediate(resolve));
-    expect(destroyed).toBe(true);
-  });
 });

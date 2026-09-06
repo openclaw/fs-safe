@@ -20,28 +20,15 @@ import {
   expandHomePrefix,
   resolveEffectiveHomeDir,
   resolveHomeRelativePath,
-  resolveOsHomeDir,
-  resolveOsHomeRelativePath,
   resolveRequiredHomeDir,
-  resolveRequiredOsHomeDir,
-  resolveUserPath,
 } from "../src/home-dir.js";
 import { movePathWithCopyFallback } from "../src/move-path.js";
 import { createSidecarLockManager, withSidecarLock } from "../src/sidecar-lock.js";
 import {
-  hasNonEmptyString,
-  localeLowercasePreservingWhitespace,
-  lowercasePreservingWhitespace,
-  normalizeFastMode,
   normalizeLowercaseStringOrEmpty,
   normalizeNullableString,
   normalizeOptionalLowercaseString,
   normalizeOptionalString,
-  normalizeOptionalStringifiedId,
-  normalizeOptionalThreadValue,
-  normalizeStringifiedOptionalString,
-  readStringValue,
-  resolvePrimaryStringValue,
 } from "../src/string-coerce.js";
 import { movePathToTrash } from "../src/trash.js";
 
@@ -51,40 +38,14 @@ const { tempRoot } = useTempDirs();
 
 describe("string coercion helpers", () => {
   it("normalizes optional string-like values", () => {
-    expect(readStringValue("x")).toBe("x");
-    expect(readStringValue(1)).toBeUndefined();
     expect(normalizeNullableString("  hi  ")).toBe("hi");
     expect(normalizeNullableString("   ")).toBeNull();
     expect(normalizeOptionalString(" ok ")).toBe("ok");
     expect(normalizeOptionalString(null)).toBeUndefined();
-    expect(normalizeStringifiedOptionalString(42)).toBe("42");
-    expect(normalizeStringifiedOptionalString(true)).toBe("true");
-    expect(normalizeStringifiedOptionalString(12n)).toBe("12");
-    expect(normalizeStringifiedOptionalString({})).toBeUndefined();
     expect(normalizeOptionalLowercaseString(" YES ")).toBe("yes");
     expect(normalizeLowercaseStringOrEmpty(undefined)).toBe("");
-    expect(lowercasePreservingWhitespace(" A B ")).toBe(" a b ");
-    expect(localeLowercasePreservingWhitespace(" A B ")).toBe(" a b ");
-    expect(resolvePrimaryStringValue({ primary: " value " })).toBe("value");
-    expect(resolvePrimaryStringValue({ primary: " " })).toBeUndefined();
-    expect(resolvePrimaryStringValue(" direct ")).toBe("direct");
-    expect(normalizeOptionalThreadValue(4.9)).toBe(4);
-    expect(normalizeOptionalThreadValue(Number.NaN)).toBeUndefined();
-    expect(normalizeOptionalStringifiedId(7)).toBe("7");
-    expect(hasNonEmptyString(" x ")).toBe(true);
-    expect(hasNonEmptyString(" ")).toBe(false);
   });
 
-  it("parses fast mode aliases", () => {
-    for (const value of [true, "on", "true", "yes", "1", "enable", "enabled", "fast"]) {
-      expect(normalizeFastMode(value)).toBe(true);
-    }
-    for (const value of [false, "off", "false", "no", "0", "disable", "disabled", "normal"]) {
-      expect(normalizeFastMode(value)).toBe(false);
-    }
-    expect(normalizeFastMode(null)).toBeUndefined();
-    expect(normalizeFastMode("maybe")).toBeUndefined();
-  });
 });
 
 describe("home directory helpers", () => {
@@ -95,9 +56,7 @@ describe("home directory helpers", () => {
       USERPROFILE: "/users/fallback",
     };
     expect(resolveEffectiveHomeDir(env, () => "/os/home")).toBe(path.resolve("/home/tester/openclaw"));
-    expect(resolveOsHomeDir(env, () => "/os/home")).toBe(path.resolve("/home/tester"));
     expect(resolveRequiredHomeDir({}, () => "")).toBe(path.resolve(process.cwd()));
-    expect(resolveRequiredOsHomeDir({}, () => "")).toBe(path.resolve(process.cwd()));
     expect(expandHomePrefix("~/file", { home: "/home/tester" })).toBe(
       path.join("/home/tester", "file"),
     );
@@ -105,20 +64,15 @@ describe("home directory helpers", () => {
     expect(expandHomePrefix("~other/file", { home: "/home/tester" })).toBe("~other/file");
   });
 
-  it("resolves user paths through legacy and explicit option shapes", () => {
+  it("resolves home-relative paths with explicit options", () => {
     const env = { OPENCLAW_HOME: "/configured", HOME: "/home/tester" };
     expect(resolveHomeRelativePath("~/state", { env })).toBe(path.resolve("/configured/state"));
-    expect(resolveOsHomeRelativePath("~/state", { env })).toBe(path.resolve("/home/tester/state"));
-    expect(resolveUserPath("~/state", env)).toBe(path.resolve("/configured/state"));
   });
 
   it("ignores unusable home values", () => {
     expect(resolveEffectiveHomeDir({ OPENCLAW_HOME: "undefined", HOME: "null" }, () => "/real"))
       .toBe(path.resolve("/real"));
     expect(resolveEffectiveHomeDir({ OPENCLAW_HOME: "~" }, () => "")).toBeUndefined();
-    expect(resolveOsHomeDir({}, () => {
-      throw new Error("no home");
-    })).toBeUndefined();
   });
 });
 

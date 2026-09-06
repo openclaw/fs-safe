@@ -49,7 +49,6 @@ import { extractNativeArchive } from "./archive-native.js";
 import { stageArchiveFileForExtraction } from "./archive-input.js";
 import { getNativeBinding } from "./native.js";
 import {
-  resolveArchiveEntryMode,
   resolveArchiveFilteredEntryPolicy,
   shouldExtractArchiveEntry,
 } from "./archive-policy.js";
