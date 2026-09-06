@@ -3,7 +3,7 @@ import { pipeline } from "node:stream/promises";
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import { TarParserStream } from "../src/archive-tar-wasm.js";
-import { resolveTarMeterLimits, tarManifestEntryCost, type TarMeterLimits } from "../src/archive-limits.js";
+import { resolveTarMeterLimits, type TarMeterLimits } from "../src/archive-limits.js";
 import { createTarEntryPreflightChecker, type TarEntryInfo } from "../src/archive-tar.js";
 import { tarFixture } from "./helpers/archive-fuzz.js";
 import { ignored, ignoredTypes, unsafeIgnoredPaths } from "./helpers/archive-ignored.js";
@@ -135,3 +135,7 @@ it("keeps unsupported raw flags under the same alias/collision policy for arbitr
     },
   ), { numRuns: 100, seed: 47 });
 });
+
+function tarManifestEntryCost(path: string): number {
+  return 64 + 2 * Buffer.byteLength(path, "utf8");
+}

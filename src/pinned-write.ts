@@ -86,8 +86,6 @@ async function writeStreamToHandle(
   }
 }
 
-export type RenameIdentityMismatchPolicy = "throw" | "verify-content";
-
 export type RenameIdentityPolicy = "strict" | "verify-content-with-lock";
 
 export type PublishedWriteIdentity = Readonly<{ dev: bigint; ino: bigint }>;
@@ -102,7 +100,7 @@ export type PinnedWriteParams = {
   maxBytes?: number;
   input: PinnedWriteInput;
   rootIdentity?: FileIdentityStat;
-  onRenameIdentityMismatch?: RenameIdentityMismatchPolicy;
+  onRenameIdentityMismatch?: "verify-content";
   // Borrowed only for this callback; the writer closes every descriptor in finally.
   verifyPublished?: (
     fd: number,

@@ -7,7 +7,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGzip } from "node:zlib";
 import { describe, expect, it } from "vitest";
-import { MAX_TAR_MANIFEST_BYTES, resolveTarMeterLimits, tarManifestEntryCost } from "../src/archive-limits.js";
+import { MAX_TAR_MANIFEST_BYTES, resolveTarMeterLimits } from "../src/archive-limits.js";
 import { TarParserStream } from "../src/archive-tar-wasm.js";
 import { manifestMember, nearMaxPath } from "./helpers/archive-admission.js";
 import { tarFixture } from "./helpers/archive-fuzz.js";
@@ -103,3 +103,7 @@ describe.each(["GNU", "PAX"] as const)("streamed %s manifest retention", (extens
     expect(await fs.readdir(destDir)).toEqual([]);
   }, 60_000);
 });
+
+function tarManifestEntryCost(path: string): number {
+  return 64 + 2 * Buffer.byteLength(path, "utf8");
+}

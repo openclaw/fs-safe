@@ -1,7 +1,6 @@
 import path from "node:path";
 import { fileStore } from "./file-store.js";
 import {
-  createJsonStore,
   type JsonFileStoreOptions,
   type JsonStore,
   type JsonStoreLockOptions,
