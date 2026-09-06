@@ -75,11 +75,31 @@ If `beforeRename` throws, the rename is skipped and the owned temp file is remov
 
 Identity checks and pathname rename/unlink remain separate syscalls, not atomic conditional mutations. Use an approved writable parent plus cooperative locking or OS isolation when arbitrary concurrent namespace mutation is in scope.
 
-### FUSE mounts and unstable rename identity
+### FUSE, Windows exFAT/FAT32, and unstable rename identity
 
 Strict source-to-destination identity is the default. Some FUSE mounts assign a different inode to the destination during rename even without concurrency. Set `renameIdentity: "verify-content-with-lock"` to accept that boundary only when the re-opened no-follow destination has the exact requested SHA-256 content under an exclusive hashed sidecar lock in the destination parent. The newly accepted descriptor and identity remain pinned through parent sync and final verification. The synchronous helper provides the same policy with the synchronous lock implementation.
 
 This is the same explicit weaker contract available on `Root` writes: cooperating writers are serialized, stale locks fail closed, and mismatched content is rejected after publication without rollback. A same-authority actor that ignores the advisory lock can still substitute another file with identical bytes, so do not use this compatibility policy in directories writable by untrusted same-UID processes.
+
+Windows exFAT/FAT32 volumes can also change file identity during rename, depending
+on the source and destination names. The destination may already contain the
+requested bytes when strict verification reports `path-mismatch`. A short
+temporary name alone does not guarantee stable identity for a longer destination.
+For an application-controlled directory on such a volume, callers can explicitly
+select `renameIdentity: "verify-content-with-lock"` on `replaceFileAtomic` or
+`replaceFileAtomicSync`. Keep strict mode for directories that require the
+stronger identity contract; do not automatically retry every `path-mismatch`
+with the weaker policy. Staging names remain random, including custom prefixes.
+
+To verify the built package against an actual volume, run
+`node scripts/atomic-rename-compat-proof.mjs EXISTING_PARENT` after `pnpm build`.
+The probe creates and cleans up its own child directory and emits JSON without
+local paths. It compares default, strict, and locked policies in both async and
+sync calls, checks real rename identities and file contents, injects different-
+and identical-content substitutions, checks lock cleanup, and exercises custom
+prefix isolation and validation. Callback staging remains strict and can still
+report identity drift; the probe records that result separately. Filesystem type
+must be recorded independently; the probe does not infer it from a drive letter.
 
 ### `EPERM` and copy fallback
 
