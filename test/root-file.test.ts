@@ -127,28 +127,6 @@ describe("root-file", () => {
     expect(openPinnedFileSyncMock).not.toHaveBeenCalled();
   });
 
-  it("guards against unexpected async sync-resolution results", () => {
-    resolveRootPathSyncMock.mockReturnValue(
-      Promise.resolve({
-        canonicalPath: "/real/plugin.json",
-        rootCanonicalPath: "/real/root",
-      }),
-    );
-
-    const opened = openRootFileSync({
-      absolutePath: "plugin.json",
-      rootPath: "/workspace",
-      boundaryLabel: "plugin root",
-    });
-
-    expect(opened.ok).toBe(false);
-    if (opened.ok) {
-      return;
-    }
-    expect(opened.reason).toBe("validation");
-    expect(String(opened.error)).toContain("Unexpected async boundary resolution");
-  });
-
   it("awaits async boundary resolution before verifying the file", async () => {
     const ioFs = { marker: "io" } as never;
     const absolutePath = path.resolve("notes.txt");

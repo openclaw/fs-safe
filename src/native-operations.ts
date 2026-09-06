@@ -165,13 +165,3 @@ export async function createNativeExclusiveFile(
     await parent.close().catch(() => undefined);
   }
 }
-
-export function syncNativeFileBestEffort(fd: number): void {
-  try {
-    fsSync.fsyncSync(fd);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EPERM") {
-      throw error;
-    }
-  }
-}

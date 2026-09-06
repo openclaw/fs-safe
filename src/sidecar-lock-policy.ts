@@ -56,15 +56,6 @@ export function isTransientLockFileDenial(error: unknown, lockPath: string): boo
   return process.platform === "win32" && denial?.code === "EPERM" && denial.path === lockPath;
 }
 
-export function sidecarLockPayloadIsStale(
-  payload: unknown,
-  staleMs: number,
-  nowMs: number,
-): boolean {
-  const createdAtMs = sidecarLockPayloadCreatedAtMs(payload);
-  return createdAtMs !== null && nowMs - createdAtMs > staleMs;
-}
-
 export function sidecarLockPayloadCreatedAtMs(payload: unknown): number | null {
   const createdAt =
     payload &&

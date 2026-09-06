@@ -16,7 +16,7 @@ import {
   safePathSegmentHashed,
 } from "../src/install-path.js";
 import { basenameFromMediaSource, safeFileURLToPath } from "../src/local-file-access.js";
-import { formatPosixMode } from "../src/mode.js";
+import { formatPosixMode } from "../src/permissions.js";
 import { isPathInside, isWithinDir, resolveSafeBaseDir } from "../src/path.js";
 import { tryReadJson, tryReadJsonSync, writeJson, writeJsonSync } from "../src/json.js";
 import {

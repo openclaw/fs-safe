@@ -15,7 +15,7 @@ import {
   sameFileIdentityForCleanup,
   type FileIdentityStat,
 } from "./file-identity.js";
-import { syncNativeFileBestEffort } from "./native-operations.js";
+import { syncFileBestEffortSync } from "./file-sync.js";
 import { getNativeBinding, requireNativeBinding, type NativeBinding } from "./native.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import {
@@ -376,7 +376,7 @@ export async function publishFileExclusive(params: {
           throw error;
         }
       }
-      syncNativeFileBestEffort(sourceNativeParent!.handle.fd);
+      syncFileBestEffortSync(sourceNativeParent!.handle.fd);
       const targetIdentity = await fs.lstat(targetPath);
       return {
         method: "rename-noreplace",

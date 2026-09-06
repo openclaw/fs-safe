@@ -70,10 +70,6 @@ export type TarMeterLimits = Pick<ResolvedArchiveExtractLimits,
 
 export const MAX_TAR_MANIFEST_BYTES = 64 * 1024 * 1024;
 
-export function tarManifestEntryCost(path: string): number {
-  return 64 + 2 * Buffer.byteLength(path, "utf8");
-}
-
 export function resolveTarMeterLimits(options?: ArchiveExtractLimits): TarMeterLimits {
   const limits = resolveExtractLimits(options);
   const payload = Math.min(limits.maxExtractedBytes, Number.MAX_SAFE_INTEGER);

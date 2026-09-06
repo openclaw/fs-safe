@@ -1,12 +1,15 @@
+import type { DirectoryReceipt } from "./directory-durability.js";
+import { requireNativeBinding } from "./native.js";
+import { syncFileBestEffortSync } from "./file-sync.js";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import type { AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import type { FileIdentityStat } from "./file-identity.js";
 import type { NativeBinding } from "./native-binding.js";
-import { syncNativeFileBestEffort, writeNativeInput } from "./native-operations.js";
+import { writeNativeInput } from "./native-operations.js";
 import type { PinnedWriteInput, PinnedWriteParams } from "./pinned-write.js";
-import { assertStagedDirectoryCurrent } from "./staged-directory.js";
+import { assertStagedDirectoryCurrent, openStagedDirectory } from "./staged-directory.js";
 import type {
   PublishedFileReceipt,
   StagedFile,
@@ -182,7 +185,7 @@ class NativeStagedFile implements StagedFile {
       const fd = state.fileFd;
       fs.fchmodSync(fd, 0o600);
       await writeNativeInput(fd, input, maxBytes);
-      syncNativeFileBestEffort(fd);
+      syncFileBestEffortSync(fd);
       const stat = fs.fstatSync(fd, { bigint: true });
       this.#receipt = Object.freeze({
         directory: this.#directory,
@@ -261,9 +264,9 @@ class NativeStagedFile implements StagedFile {
       // no wider than modes retaining owner rw. Restrictive modes and observed
       // widening of the stage still need the permission correction made durable.
       if ((this.#publishedMode & 0o600) !== 0o600 || (stagedMode & ~this.#publishedMode) !== 0) {
-        syncNativeFileBestEffort(fd);
+        syncFileBestEffortSync(fd);
       }
-      syncNativeFileBestEffort(this.#parentFd);
+      syncFileBestEffortSync(this.#parentFd);
       this.#assertNamed(basename);
       assertStagedDirectoryCurrent(this.#directory);
       return receipt;
@@ -340,3 +343,25 @@ class NativeStagedFile implements StagedFile {
 export const createNativeStage: (...args: Parameters<typeof NativeStagedFile.create>) => Promise<StagedFile> =
   NativeStagedFile.create;
 export const writeNativeStage = NativeStagedFile.write;
+
+export type {
+  PublishedFileReceipt, StagedFile, StagedFileCleanupReceipt, StagedFileFailureDetails,
+  StagedFilePublication, StagedFileReceipt,
+} from "./staged-file-types.js";
+
+export async function stageFileInDirectory(options: {
+  directory: string | DirectoryReceipt;
+  content: string | Uint8Array;
+  /** Published mode; the unpublished stage stays at 0600. Defaults to 0600. */
+  mode?: number;
+}): Promise<StagedFile> {
+  if (process.platform !== "linux" && process.platform !== "darwin") {
+    throw new FsSafeError("unsupported-platform", "retained-directory staging requires Linux or macOS");
+  }
+  const binding = requireNativeBinding();
+  assertNativeStaging(binding);
+  const input = { kind: "buffer" as const, data: Buffer.from(options.content) };
+  const mode = options.mode ?? 0o600;
+  const parent = openStagedDirectory(options.directory);
+  return await createNativeStage(binding, parent.fd, parent.receipt, input, mode);
+}

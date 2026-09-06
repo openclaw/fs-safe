@@ -2,7 +2,7 @@ import fsSync from "node:fs";
 import path from "node:path";
 import { normalizeMaxBytes } from "./byte-budget.js";
 import { FsSafeError } from "./errors.js";
-import { expandHomePrefix, resolveUserPath } from "./home-dir.js";
+import { expandHomePrefix, resolveHomeRelativePath } from "./home-dir.js";
 import { isFileUrl, safeFileURLToPath } from "./local-file-access.js";
 import { isPathInside } from "./path.js";
 import { resolveRootPathSync } from "./root-path.js";
@@ -47,7 +47,7 @@ function resolveLocalPathInput(input: string, label: string): string {
   if (input.includes("\0")) {
     throw new FsSafeError("invalid-path", `${label} must not contain NUL bytes`);
   }
-  return resolveUserPath(input);
+  return resolveHomeRelativePath(input);
 }
 
 function resolveLocalRootInput(input: string, label: string): string {
@@ -142,7 +142,6 @@ export async function readLocalFileFromRoots(
 
     const readOptions: Parameters<typeof scopedRoot.read>[1] = {
       hardlinks: options.hardlinks,
-      nonBlockingRead: options.nonBlockingRead,
       symlinks: options.symlinks,
     };
     // Leave maxBytes absent when the caller omits it so Root's own default

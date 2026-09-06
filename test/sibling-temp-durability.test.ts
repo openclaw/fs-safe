@@ -2,7 +2,7 @@ import fsSync from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { writeExternalFileViaSibling } from "../src/output-sibling.js";
+import { writeExternalFileWithinRoot } from "../src/output.js";
 import { writeSiblingTempFile } from "../src/sibling-temp.js";
 import { __cleanupRegisteredTempPathsForTest } from "../src/temp-cleanup.js";
 import { itPosix, useRealTempDirs } from "./helpers/vitest.js";
@@ -147,7 +147,7 @@ itPosix.each([
 
 itPosix("preserves group-readable producer mode when output-sibling mode is omitted", async () => {
   const f = await fixture();
-  await writeExternalFileViaSibling({ finalPath: f.final, write: f.options.writeTemp });
+  await writeExternalFileWithinRoot({ rootDir: f.dir, path: "final", staging: "sibling", write: f.options.writeTemp });
   expect((await fs.stat(f.final)).mode & 0o777).toBe(0o640);
   expect(await fs.readFile(f.final, "utf8")).toBe("new");
 });

@@ -1,3 +1,4 @@
+import { syncFileBestEffort } from "./file-sync.js";
 import { randomUUID } from "node:crypto";
 import fsSync, { type BigIntStats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
@@ -7,7 +8,7 @@ import type { Readable } from "node:stream";
 import { normalizeMaxBytes } from "./byte-budget.js";
 import { createAsyncDirectoryGuard, createNearestExistingDirectoryGuard, inspectDirectoryIdentity, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
-import { syncDirectoryBestEffort } from "./fsync.js";
+import { syncDirectoryBestEffort } from "./directory-durability.js";
 import type { FileIdentityStat } from "./file-identity.js";
 import { sameFileIdentity, sha256Hex } from "./file-identity.js";
 import { withAsyncDirectoryGuards } from "./guarded-mutation.js";
@@ -51,16 +52,6 @@ function assertWithinMaxBytes(bytes: number, maxBytes: number | undefined): void
   }
 }
 
-async function syncFileBestEffort(handle: FileHandle): Promise<void> {
-  try {
-    await handle.sync();
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException | undefined)?.code !== "EPERM") {
-      throw error;
-    }
-  }
-}
-
 async function writeStreamToHandle(
   stream: Readable,
   handle: FileHandle,
@@ -86,8 +77,6 @@ async function writeStreamToHandle(
   }
 }
 
-export type RenameIdentityMismatchPolicy = "throw" | "verify-content";
-
 export type RenameIdentityPolicy = "strict" | "verify-content-with-lock";
 
 export type PublishedWriteIdentity = Readonly<{ dev: bigint; ino: bigint }>;
@@ -102,7 +91,7 @@ export type PinnedWriteParams = {
   maxBytes?: number;
   input: PinnedWriteInput;
   rootIdentity?: FileIdentityStat;
-  onRenameIdentityMismatch?: RenameIdentityMismatchPolicy;
+  onRenameIdentityMismatch?: "verify-content";
   // Borrowed only for this callback; the writer closes every descriptor in finally.
   verifyPublished?: (
     fd: number,

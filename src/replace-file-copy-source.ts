@@ -1,5 +1,6 @@
 import syncFs, { type BigIntStats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
+import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
@@ -10,13 +11,7 @@ type SyncSourceFileSystem = Pick<
   "closeSync" | "fstatSync" | "lstatSync" | "openSync" | "readSync"
 >;
 
-const NOFOLLOW = process.platform !== "win32" && "O_NOFOLLOW" in syncFs.constants
-  ? syncFs.constants.O_NOFOLLOW
-  : 0;
-const NONBLOCK = process.platform !== "win32" && "O_NONBLOCK" in syncFs.constants
-  ? syncFs.constants.O_NONBLOCK
-  : 0;
-const OPEN_READ_FLAGS = syncFs.constants.O_RDONLY | NOFOLLOW | NONBLOCK;
+const OPEN_READ_FLAGS = resolveReadOpenFlags();
 const READ_CHUNK_BYTES = 64 * 1024;
 
 function assertSourcePreview(source: import("node:fs").Stats, src: string): void {

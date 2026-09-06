@@ -21,14 +21,6 @@ export function resolveEffectiveHomeDir(
   return raw ? path.resolve(raw) : undefined;
 }
 
-export function resolveOsHomeDir(
-  env: NodeJS.ProcessEnv = process.env,
-  homedir: () => string = os.homedir,
-): string | undefined {
-  const raw = resolveRawOsHomeDir(env, homedir);
-  return raw ? path.resolve(raw) : undefined;
-}
-
 function resolveRawHomeDir(env: NodeJS.ProcessEnv, homedir: () => string): string | undefined {
   const explicitHome = normalize(env.OPENCLAW_HOME);
   if (!explicitHome) {
@@ -75,13 +67,6 @@ export function resolveRequiredHomeDir(
   return resolveEffectiveHomeDir(env, homedir) ?? path.resolve(process.cwd());
 }
 
-export function resolveRequiredOsHomeDir(
-  env: NodeJS.ProcessEnv = process.env,
-  homedir: () => string = os.homedir,
-): string {
-  return resolveOsHomeDir(env, homedir) ?? path.resolve(process.cwd());
-}
-
 export function expandHomePrefix(
   input: string,
   opts?: {
@@ -119,45 +104,6 @@ export function resolveHomeRelativePath(
   }
   const expanded = expandHomePrefix(input, {
     home: resolveRequiredHomeDir(opts?.env ?? process.env, opts?.homedir ?? os.homedir),
-    env: opts?.env,
-    homedir: opts?.homedir,
-  });
-  return path.resolve(expanded);
-}
-
-export function resolveUserPath(
-  input: string,
-  optsOrEnv?:
-    | {
-        env?: NodeJS.ProcessEnv;
-        homedir?: () => string;
-      }
-    | NodeJS.ProcessEnv,
-  homedir?: () => string,
-): string {
-  const opts =
-    optsOrEnv && ("env" in optsOrEnv || "homedir" in optsOrEnv)
-      ? optsOrEnv
-      : { env: optsOrEnv as NodeJS.ProcessEnv | undefined, homedir };
-  return resolveHomeRelativePath(input, opts);
-}
-
-export function resolveOsHomeRelativePath(
-  input: string,
-  opts?: {
-    env?: NodeJS.ProcessEnv;
-    homedir?: () => string;
-  },
-): string {
-  if (!input) {
-    return input;
-  }
-  const segments = path.normalize(input).split(path.sep);
-  if (segments[0] !== "~") {
-    return path.resolve(input);
-  }
-  const expanded = expandHomePrefix(input, {
-    home: resolveRequiredOsHomeDir(opts?.env ?? process.env, opts?.homedir ?? os.homedir),
     env: opts?.env,
     homedir: opts?.homedir,
   });

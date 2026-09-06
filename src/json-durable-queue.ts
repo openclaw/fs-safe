@@ -5,6 +5,7 @@ import { normalizeMaxBytes } from "./byte-budget.js";
 import { syncDirectory } from "./directory-durability.js";
 import { syncQueueDirectoryCreation } from "./json-durable-queue-directory.js";
 import {
+  getErrorCode,
   acknowledgeDurableQueueEntry,
   claimDurableQueueEntry,
   completeDeliveredQueueEntry,
@@ -42,12 +43,6 @@ type QueueValidationRoot = {
 
 export const DEFAULT_JSON_DURABLE_QUEUE_ENTRY_MAX_BYTES = 16 * 1024 * 1024;
 
-function getErrnoCode(error: unknown): string | null {
-  return error && typeof error === "object" && "code" in error
-    ? String((error as { code?: unknown }).code)
-    : null;
-}
-
 function assertSafeQueueEntryId(id: string): void {
   assertSafePathSegment(id, { label: "queue entry id" });
 }
@@ -61,7 +56,7 @@ export async function jsonDurableQueueEntryExists(filePath: string): Promise<boo
     const stat = await fs.promises.lstat(filePath);
     return stat.isFile();
   } catch (error) {
-    if (getErrnoCode(error) === "ENOENT") {
+    if (getErrorCode(error) === "ENOENT") {
       return false;
     }
     throw error;
@@ -79,7 +74,7 @@ async function unlinkStaleTmpBestEffort(
       await unlinkBestEffort(filePath);
     }
   } catch (error) {
-    if (getErrnoCode(error) !== "ENOENT") {
+    if (getErrorCode(error) !== "ENOENT") {
       throw error;
     }
   }
@@ -393,7 +388,7 @@ export async function loadJsonDurableQueueEntry<T>(params: {
     }
     return result.entry;
   } catch (error) {
-    if (getErrnoCode(error) === "ENOENT") {
+    if (getErrorCode(error) === "ENOENT") {
       return null;
     }
     throw error;
@@ -407,7 +402,7 @@ export async function loadPendingJsonDurableQueueEntries<T>(
   try {
     files = await fs.promises.readdir(options.queueDir);
   } catch (error) {
-    if (getErrnoCode(error) === "ENOENT") {
+    if (getErrorCode(error) === "ENOENT") {
       return [];
     }
     throw error;

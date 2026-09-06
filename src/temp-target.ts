@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { sameFileIdentityForCleanup, type FileIdentityStat } from "./file-identity.js";
-import { assertSafePathSegment, sanitizeSafePathSegment } from "./safe-path-segment.js";
+import { assertSafePathSegment, sanitizeSafePathSegment, trimHyphenEdges } from "./safe-path-segment.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
 import { registerTempPathForExit } from "./temp-cleanup.js";
 
@@ -23,18 +23,6 @@ const UPPERCASE_Z_CHAR_CODE = 0x5a;
 const UNDERSCORE_CHAR_CODE = 0x5f;
 const LOWERCASE_A_CHAR_CODE = 0x61;
 const LOWERCASE_Z_CHAR_CODE = 0x7a;
-
-function trimHyphenEdges(value: string): string {
-  let start = 0;
-  let end = value.length;
-  while (start < end && value.charCodeAt(start) === HYPHEN_CHAR_CODE) {
-    start += 1;
-  }
-  while (end > start && value.charCodeAt(end - 1) === HYPHEN_CHAR_CODE) {
-    end -= 1;
-  }
-  return start === 0 && end === value.length ? value : value.slice(start, end);
-}
 
 function isExtensionCharCode(charCode: number): boolean {
   return (

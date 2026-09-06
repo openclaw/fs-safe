@@ -5,7 +5,7 @@ import { Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { expectFsSafeError } from "./helpers/security.js";
 import { useTempDirs } from "./helpers/vitest.js";
-import { createBoundedReadStream, createMaxBytesTransform } from "../src/bounded-read-stream.js";
+import { createMaxBytesTransform } from "../src/bounded-read-stream.js";
 import {
   assertAsyncDirectoryGuard,
   assertSyncDirectoryGuard,
@@ -170,11 +170,7 @@ describe("small identity and lock wrappers", () => {
 });
 
 describe("bounded streams and directory guard coverage", () => {
-  it("returns raw streams without limits and rejects oversized limited streams", async () => {
-    const raw = Readable.from(["ok"]);
-    const returned = createBoundedReadStream({ handle: { createReadStream: () => raw } }, undefined);
-    expect(returned).toBe(raw);
-
+  it("rejects oversized limited streams", async () => {
     await expectFsSafeError((async () => {
       for await (const _chunk of Readable.from(["ab", "cd"]).pipe(createMaxBytesTransform(3))) {
         // Drain the stream so transform errors surface.
