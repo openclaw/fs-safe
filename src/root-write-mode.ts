@@ -1,4 +1,3 @@
-import { constants } from "node:fs";
 import fs from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
 import { isNotFoundPathError, isPathInside } from "./path.js";
@@ -18,15 +17,10 @@ export async function inheritWriteTargetMode(params: {
     if (!existing.isFile()) throw new FsSafeError("not-file", "not a file");
     if (existing.nlink > 1n) throw hardlinkedPathNotAllowedError();
     if (!isPathInside(params.rootWithSep, params.targetPath)) throw outsideWorkspaceError();
-    // Preserve destination readability. Windows access() does not check ACLs;
-    // POSIX access() uses real IDs, so credential-switched processes still open.
-    if (process.platform === "win32" || process.getuid?.() !== process.geteuid?.() ||
-      process.getgid?.() !== process.getegid?.()) {
-      const handle = await fs.open(params.targetPath, resolveReadOpenFlags());
-      await handle.close().catch(() => undefined);
-    } else {
-      await fs.access(params.targetPath, constants.R_OK);
-    }
+    // Preserve read-open admission of the pre-existing destination. access(2)
+    // is not equivalent: it ignores ACLs on Windows and capabilities on Linux.
+    const handle = await fs.open(params.targetPath, resolveReadOpenFlags());
+    await handle.close().catch(() => undefined);
     try {
       // A parent can change after guarded resolution. Do not inherit metadata
       // from an outside inode, even if the parent is restored before publication.

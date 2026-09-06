@@ -7,11 +7,9 @@ import { inheritWriteTargetMode } from "../src/root-write-mode.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
-const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
 afterEach(() => {
   configureFsSafeNative({ mode: "auto" });
   vi.restoreAllMocks();
-  Object.defineProperty(process, "platform", platform);
 });
 
 for (const nativeMode of ["auto", "off"] as const) {
@@ -89,20 +87,13 @@ for (const nativeMode of ["auto", "off"] as const) {
   });
 }
 
-it.each(["Windows ACL", "effective credentials"])("keeps read-open admission for %s", async (scenario) => {
+it("keeps read-open admission for the existing destination", async () => {
   const directory = await tempRoot("fs-safe-inherit-access-");
   const safe = await root(directory);
   const targetPath = path.join(safe.rootReal, "target");
   await fs.writeFile(targetPath, "original");
   const denied = Object.assign(new Error("read denied"), { code: "EACCES" });
-  const access = vi.spyOn(fs, "access").mockResolvedValue();
   const open = vi.spyOn(fs, "open").mockRejectedValue(denied);
-  if (scenario === "Windows ACL" || !process.geteuid) {
-    Object.defineProperty(process, "platform", { value: "win32" });
-  } else {
-    vi.spyOn(process, "geteuid").mockReturnValue(process.getuid!() + 1);
-  }
   await expect(inheritWriteTargetMode({ targetPath, rootWithSep: safe.rootReal + path.sep })).rejects.toBe(denied);
   expect(open).toHaveBeenCalledTimes(1);
-  expect(access).not.toHaveBeenCalled();
 });
