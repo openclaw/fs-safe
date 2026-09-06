@@ -8,7 +8,7 @@ import type { Readable } from "node:stream";
 import { normalizeMaxBytes } from "./byte-budget.js";
 import { createAsyncDirectoryGuard, createNearestExistingDirectoryGuard, inspectDirectoryIdentity, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
-import { syncDirectoryBestEffort } from "./fsync.js";
+import { syncDirectoryBestEffort } from "./directory-durability.js";
 import type { FileIdentityStat } from "./file-identity.js";
 import { sameFileIdentity, sha256Hex } from "./file-identity.js";
 import { withAsyncDirectoryGuards } from "./guarded-mutation.js";

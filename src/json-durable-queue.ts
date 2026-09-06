@@ -5,12 +5,12 @@ import { normalizeMaxBytes } from "./byte-budget.js";
 import { syncDirectory } from "./directory-durability.js";
 import { syncQueueDirectoryCreation } from "./json-durable-queue-directory.js";
 import {
+  getErrorCode,
   acknowledgeDurableQueueEntry,
   claimDurableQueueEntry,
   completeDeliveredQueueEntry,
   moveDurableQueueEntryToFailed,
 } from "./json-durable-queue-ownership.js";
-import { getErrorCode } from "./json-durable-queue-retirement.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { replaceFileAtomicWithDirectorySync } from "./replace-file.js";

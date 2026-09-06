@@ -1,9 +1,10 @@
+import { randomUUID } from "node:crypto";
+import { writeCallbackSibling } from "./sibling-staged-file.js";
 import path from "node:path";
 import { normalizeMaxBytes } from "./byte-budget.js";
 import { FsSafeError } from "./errors.js";
-import { sanitizeUntrustedFileName } from "./filename.js";
+import { fitFileNameToPortableComponent, sanitizeUntrustedFileName } from "./filename.js";
 import { isPathInside } from "./path.js";
-import { writeExternalFileViaSibling } from "./output-sibling.js";
 import { root } from "./root.js";
 import { tempFile } from "./temp-target.js";
 
@@ -127,4 +128,35 @@ export async function writeExternalFileWithinRoot<T = void>(
   } finally {
     await staged.cleanup();
   }
+}
+
+function buildSiblingTempPath(targetPath: string, fallbackFileName?: string): string {
+  const prefix = `.fs-safe-output-${process.pid}-${randomUUID()}-`;
+  const suffix = ".part";
+  const safeTail = fitFileNameToPortableComponent({
+    prefix,
+    fileName: tempFileNameForTarget(targetPath, fallbackFileName),
+    suffix,
+  });
+  return path.join(path.dirname(targetPath), `${prefix}${safeTail}${suffix}`);
+}
+
+async function writeExternalFileViaSibling<T>(params: {
+  finalPath: string;
+  write: (filePath: string) => Promise<T>;
+  fallbackFileName?: string;
+  maxBytes?: number;
+  mode?: number;
+}): Promise<T> {
+  const finalPath = path.resolve(params.finalPath);
+  const { result } = await writeCallbackSibling({
+    tempPath: buildSiblingTempPath(finalPath, params.fallbackFileName),
+    write: params.write,
+    resolveFinalPath: () => finalPath,
+    mode: params.mode,
+    maxBytes: params.maxBytes,
+    syncTempFile: true,
+    syncParentDir: true,
+  });
+  return result;
 }
