@@ -108,7 +108,7 @@ export async function writeCallbackSibling<T>(params: {
       }
       if (params.syncTempFile) {
         await assertCurrent(params.tempPath);
-        await syncFileBestEffort(handle!, true);
+        await syncFileBestEffort(handle!);
       }
       await assertCurrent(params.tempPath);
       await fs.rename(params.tempPath, filePath);
