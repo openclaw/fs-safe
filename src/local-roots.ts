@@ -142,7 +142,6 @@ export async function readLocalFileFromRoots(
 
     const readOptions: Parameters<typeof scopedRoot.read>[1] = {
       hardlinks: options.hardlinks,
-      nonBlockingRead: options.nonBlockingRead,
       symlinks: options.symlinks,
     };
     // Leave maxBytes absent when the caller omits it so Root's own default
