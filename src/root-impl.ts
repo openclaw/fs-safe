@@ -71,6 +71,7 @@ import { walkRoot, type RootWalkEntry, type RootWalkOptions } from "./root-walk.
 import { registerTempPathForExit, type TempPathRegistration } from "./temp-cleanup.js";
 import { serializePathWrite } from "./write-queue.js";
 import { verifyAtomicWriteResult } from "./root-write-verification.js";
+import { inheritWriteTargetMode } from "./root-write-mode.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 
 export type { DenyMutationPolicy } from "./deny-mutations.js";
@@ -1293,29 +1294,9 @@ async function resolvePinnedWriteTargetInRoot(
       if (!isNotFoundPathError(error)) throw error;
     }
   }
-  let mode = requestedMode ?? 0o600;
-  try {
-    if (overwrite) {
-      const opened = await openFileInRoot(root, {
-        relativePath,
-        hardlinks: "reject",
-        nonBlockingRead: true,
-        symlinks: "follow-within-root",
-      });
-      try {
-        mode = requestedMode ?? (opened.stat.mode & 0o777);
-        if (!isPathInside(rootWithSep, opened.realPath)) {
-          throw outsideWorkspaceError();
-        }
-      } finally {
-        await opened.handle.close().catch(() => {});
-      }
-    }
-  } catch (err) {
-    if (!(err instanceof FsSafeError) || err.code !== "not-found") {
-      throw err;
-    }
-  }
+  const mode = overwrite
+    ? await inheritWriteTargetMode({ targetPath: resolved, rootWithSep, requestedMode })
+    : requestedMode ?? 0o600;
 
   return {
     rootReal,
