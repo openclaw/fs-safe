@@ -143,7 +143,7 @@ async function renameWithRetry(params: {
   syncFallback: boolean;
 }): Promise<ReplaceFileAtomicResult> {
   for (let attempt = 0; attempt <= params.maxRetries; attempt++) {
-    await params.assertSourceCurrent();
+    if (attempt > 0) await params.assertSourceCurrent();
     try {
       await params.fsModule.rename(params.src, params.dest);
       return { method: "rename" };
@@ -187,7 +187,7 @@ function renameWithRetrySync(params: {
   syncFallback: boolean;
 }): ReplaceFileAtomicResult {
   for (let attempt = 0; attempt <= params.maxRetries; attempt++) {
-    params.assertSourceCurrent();
+    if (attempt > 0) params.assertSourceCurrent();
     try {
       params.fsModule.renameSync(params.src, params.dest);
       return { method: "rename" };
@@ -331,9 +331,12 @@ async function replaceFileAtomicUnserialized(
     await tempOwner.assertCurrent(fsModule);
     if (options.beforeRename) {
       await options.beforeRename({ filePath, tempPath });
+      await tempOwner.assertCurrent(fsModule);
     }
-    await tempOwner.assertCurrent(fsModule);
-    await assertDestinationHardlinkPolicy(fsModule, filePath, options.destinationHardlinks);
+    if (options.destinationHardlinks === "reject") {
+      await assertDestinationHardlinkPolicy(fsModule, filePath, options.destinationHardlinks);
+      await tempOwner.assertCurrent(fsModule);
+    }
     const result = await renameWithRetry({
       fsModule,
       src: tempPath,
@@ -354,12 +357,15 @@ async function replaceFileAtomicUnserialized(
     } else {
       await tempOwner.assertCurrent(fsModule);
     }
+    let didSyncParent = false;
     if (syncParent) {
       await syncParent(dir);
+      didSyncParent = true;
     } else if (options.syncParentDir) {
       await syncDirectoryBestEffort(fsModule, dir);
+      didSyncParent = true;
     }
-    if (result.method === "rename") {
+    if (result.method === "rename" && didSyncParent) {
       await tempOwner.assertPublished(fsModule, filePath, expectedHash);
     }
     return result;
@@ -432,9 +438,12 @@ function replaceFileAtomicSyncUnserialized(
     tempOwner.assertCurrent(fsModule);
     if (options.beforeRename) {
       options.beforeRename({ filePath, tempPath });
+      tempOwner.assertCurrent(fsModule);
     }
-    tempOwner.assertCurrent(fsModule);
-    assertDestinationHardlinkPolicySync(fsModule, filePath, options.destinationHardlinks);
+    if (options.destinationHardlinks === "reject") {
+      assertDestinationHardlinkPolicySync(fsModule, filePath, options.destinationHardlinks);
+      tempOwner.assertCurrent(fsModule);
+    }
     const result = renameWithRetrySync({
       fsModule,
       src: tempPath,
@@ -456,10 +465,12 @@ function replaceFileAtomicSyncUnserialized(
     } else {
       tempOwner.assertCurrent(fsModule);
     }
+    let didSyncParent = false;
     if (options.syncParentDir) {
       syncDirectoryBestEffortSync(fsModule, dir);
+      didSyncParent = true;
     }
-    if (result.method === "rename") {
+    if (result.method === "rename" && didSyncParent) {
       tempOwner.assertPublished(fsModule, filePath, expectedHash);
     }
     return result;
