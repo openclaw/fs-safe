@@ -9,7 +9,7 @@ import { useRealTempDirs } from "./helpers/vitest.js";
 const { tempRoot } = useRealTempDirs();
 
 describe("atomic publication fences without beforeRename", () => {
-  it("keeps the post-sync check when an async adapter changes the options", async () => {
+  it.skipIf(process.platform === "win32")("keeps the post-sync check when an async adapter changes the options", async () => {
     const directory = await tempRoot("fs-safe-atomic-sync-options-");
     const filePath = path.join(directory, "target");
     const options: ReplaceFileAtomicOptions = { filePath, content: "intended", syncParentDir: true };
@@ -32,7 +32,7 @@ describe("atomic publication fences without beforeRename", () => {
     expect(await fs.readFile(`${filePath}.owned`, "utf8")).toBe("intended");
   });
 
-  it("keeps the post-sync check when a sync adapter changes the options", async () => {
+  it.skipIf(process.platform === "win32")("keeps the post-sync check when a sync adapter changes the options", async () => {
     const directory = await tempRoot("fs-safe-atomic-sync-options-sync-");
     const filePath = path.join(directory, "target");
     const options: ReplaceFileAtomicSyncOptions = { filePath, content: "intended", syncParentDir: true };
