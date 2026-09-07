@@ -87,6 +87,7 @@ export type PinnedWriteParams = {
   basename: string;
   mkdir: boolean;
   mode: number;
+  sync?: boolean;
   overwrite?: boolean;
   maxBytes?: number;
   input: PinnedWriteInput;
@@ -213,9 +214,9 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
       }
       // Content writes may clear set-ID bits; finalize them through the owned fd.
       await handle.chmod(params.mode);
-      await syncFileBestEffort(handle);
+      if (params.sync !== false) await syncFileBestEffort(handle);
       const stat = await handle.stat();
-      await syncDirectoryBestEffort(parentPath);
+      if (params.sync !== false) await syncDirectoryBestEffort(parentPath);
       // Publication is complete. A failed outer check must not remove its target.
       created = false;
       await params.verifyPublished?.(handle.fd, verificationIdentity, parentGuard);
@@ -269,13 +270,13 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
     }
     const expectedTempStat = tempStat;
     await handle.chmod(params.mode);
-    await syncFileBestEffort(handle);
+    if (params.sync !== false) await syncFileBestEffort(handle);
     let verifiedIdentity: FileIdentityStat = expectedTempStat;
     await withAsyncDirectoryGuards([parentGuard], async () => {
       await fs.rename(tempPath, targetPath);
       renamed = true;
       await getFsSafeTestHooks()?.afterPinnedWriteFallbackRename?.(targetPath);
-      await syncDirectoryBestEffort(parentPath);
+      if (params.sync !== false) await syncDirectoryBestEffort(parentPath);
       const targetStat = await fs.lstat(targetPath);
       if (targetStat.isSymbolicLink()) {
         throw new FsSafeError("path-mismatch", "fallback target changed during write");

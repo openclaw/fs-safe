@@ -60,7 +60,7 @@ export async function runPinnedWriteWindows(
     // reopenable until the published name has been identity-fenced.
     fsSync.fchmodSync(tempFd, 0o600);
     await writeNativeInput(tempFd, params.input, params.maxBytes);
-    syncFileBestEffortSync(tempFd);
+    if (params.sync !== false) syncFileBestEffortSync(tempFd);
     if (params.overwrite === false) {
       binding.renameNoReplace(parentFd, tempName, parentFd, params.basename);
     } else {
@@ -84,7 +84,7 @@ export async function runPinnedWriteWindows(
     // verifiable and so broader modes are never exposed before that fence.
     try {
       fsSync.fchmodSync(targetFd, params.mode);
-      syncFileBestEffortSync(targetFd);
+      if (params.sync !== false) syncFileBestEffortSync(targetFd);
     } catch (error) {
       closeWriteFd(targetFd);
       targetFd = undefined;
@@ -96,7 +96,7 @@ export async function runPinnedWriteWindows(
       });
       throw error;
     }
-    syncFileBestEffortSync(parentFd);
+    if (params.sync !== false) syncFileBestEffortSync(parentFd);
     // Verification follows publication and final chmod, outside rollback handling.
     await params.verifyPublished?.(targetFd, verificationIdentity, parentGuard);
     completed = true;
