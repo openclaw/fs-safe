@@ -2,22 +2,58 @@
 
 ## Unreleased
 
+## 0.8.5 - 2026-09-07
+
+### Highlights
+
+- **Strict moves stay strict:** a move started with hardlink rejection keeps that policy throughout asynchronous preparation and copying, even when the caller reuses or changes its options object.
+
+### Safe moves
+
+- Preserve the admitted `sourceHardlinks` policy through staged-copy fallback. A late hardlink is still rejected before destination publication, with the source and its alias preserved, instead of being accepted after an in-flight options change.
+- Document when move policy is captured and how it relates to the existing per-mutation authority checks and destination-publication receipts.
+
 ## 0.8.4 - 2026-09-07
+
+### Highlights
+
+- **Faster reads and writes:** metadata checks avoid unnecessary event-loop round-trips while data I/O stays asynchronous; reconstructible data can explicitly opt out of fsync with `durable: false`.
+- **Inspect TARs without extracting:** the new bounded archive inspection API uses the same native/WASM admission and canonical planner as extraction.
+
+### Filesystem performance and durability
+
+- Run metadata checks inside async operations synchronously (microseconds each), cutting event-loop round-trips per read/write while data I/O remains asynchronous and native canonical path spelling is preserved, including Windows short paths.
+- Add `durable` to Root write/create/writeJson/createJson/append options and Root defaults; `durable: false` skips file and parent fsync for reconstructible data (default unchanged: durable).
+
+### Archive inspection and compatibility
 
 - Add bounded `inspectTarArchive` with complete native/WASM admission and the same canonical extraction planner, preserving effective member identities without materializing an output tree.
 - Preserve inherited and getter-backed extraction options on the WASM TAR path, matching native and ZIP handling for destinations, filters, stripping, and modes.
+
+### Validation
+
 - Apply the existing filesystem-test worker cap locally as well as in CI, and drain archive publication fixtures before resetting hooks or cleaning restricted directories after timeouts.
-- Add `durable` to Root write/create/writeJson/createJson/append options and Root defaults; `durable: false` skips file and parent fsync for reconstructible data (default unchanged: durable).
-- Run metadata checks inside async operations synchronously (microseconds each), cutting event-loop round-trips per read/write while data I/O remains asynchronous and native canonical path spelling is preserved, including Windows short paths.
 
 ## 0.8.3 - 2026-09-06
 
+### Highlights
+
+- **Safer cancellable moves:** callers can guard every source removal and retain an exact destination-publication receipt for recovery after later failures, including Windows and cross-device fallbacks.
+- **Less filesystem overhead:** reads and writes make fewer calls while preserving their existing boundary and identity checks.
+
+### Move authority and recovery
+
 - Add optional synchronous move authority checks before renames and each copied-source removal, plus an exact bigint destination-publication receipt for caller-owned recovery after later failure; retain cross-device and Windows `EPERM` copy fallbacks and the existing `Promise<void>` contract.
 
-- Simplify internals without changing public behavior: remove unused string/home helpers, `resolveUserPath`, `createBoundedReadStream`, `sidecarLockPayloadIsStale`, and `tarManifestEntryCost`; share filesystem utilities and merge private modules.
+### Filesystem performance and durability
+
 - Reduce filesystem calls per read and write while retaining boundary, hardlink, hook, retry, and post-mutation identity checks.
 - Skip native publication's extra mode-only file fsync for modes that retain owner read/write when staging permissions have not widened; after a crash, a file may retain staged `0o600` instead of the wider requested mode, while restrictive modes retain the extra fsync.
+
+### Tooling and maintenance
+
 - Add 1 MiB read/write and existing-mode inheritance benchmarks, with native-mode metadata and per-case iteration counts.
+- Simplify internals without changing public behavior: remove unused string/home helpers, `resolveUserPath`, `createBoundedReadStream`, `sidecarLockPayloadIsStale`, and `tarManifestEntryCost`; share filesystem utilities and merge private modules.
 
 ## 0.8.2 - 2026-09-05
 

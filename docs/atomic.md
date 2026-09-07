@@ -200,6 +200,8 @@ await movePathWithCopyFallback({
 ```
 
 Use it when source and destination might live on different filesystems (containers, tmpfs, separate volumes).
+The hardlink policy is captured when the move starts. Changing or reusing the
+options object later does not change the policy of an in-flight move.
 `sourceHardlinks: "reject"` performs a recursive preflight capped at 50,000
 entries before any mutation. Because link count and rename cannot be one atomic
 portable operation, this mode always commits a fresh inode/tree through the
