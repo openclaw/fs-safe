@@ -69,6 +69,7 @@ class NativeStagedFile implements StagedFile {
   readonly #directory: StagedFileReceipt["directory"];
   readonly #portableNames: boolean;
   readonly #publishedMode: number;
+  readonly #sync: boolean;
   readonly #name = `.fs-safe-${randomUUID()}.tmp`;
   #state: State = { status: "open", publication: NOT_PUBLISHED };
   #receipt?: StagedFileReceipt;
@@ -79,12 +80,14 @@ class NativeStagedFile implements StagedFile {
     directory: StagedFileReceipt["directory"],
     portableNames: boolean,
     publishedMode: number,
+    sync: boolean,
   ) {
     this.#binding = binding;
     this.#parentFd = parentFd;
     this.#directory = directory;
     this.#portableNames = portableNames;
     this.#publishedMode = publishedMode;
+    this.#sync = sync;
   }
 
   // Takes ownership of parentFd, including all construction and preparation failures.
@@ -97,10 +100,11 @@ class NativeStagedFile implements StagedFile {
     maxBytes?: number,
     // Public staging uses portable names; existing POSIX writes accept literal names.
     portableNames = true,
+    sync = true,
   ): Promise<NativeStagedFile> {
     let staged: NativeStagedFile;
     try {
-      staged = new NativeStagedFile(binding, parentFd, directory, portableNames, mode);
+      staged = new NativeStagedFile(binding, parentFd, directory, portableNames, mode, sync);
     } catch (error) {
       try {
         fs.closeSync(parentFd);
@@ -123,7 +127,7 @@ class NativeStagedFile implements StagedFile {
     // This owner never escapes. Only the internal verifier borrows its fd;
     // public descriptor methods remain await-free and cannot race disposal.
     await using staged = await NativeStagedFile.create(
-      binding, parentFd, directory, params.input, params.mode, params.maxBytes, false,
+      binding, parentFd, directory, params.input, params.mode, params.maxBytes, false, params.sync,
     );
     const published = await staged.publish(params.basename, { overwrite: params.overwrite !== false });
     const identity = published.staged.identity;
@@ -185,7 +189,7 @@ class NativeStagedFile implements StagedFile {
       const fd = state.fileFd;
       fs.fchmodSync(fd, 0o600);
       await writeNativeInput(fd, input, maxBytes);
-      syncFileBestEffortSync(fd);
+      if (this.#sync) syncFileBestEffortSync(fd);
       const stat = fs.fstatSync(fd, { bigint: true });
       this.#receipt = Object.freeze({
         directory: this.#directory,
@@ -260,13 +264,13 @@ class NativeStagedFile implements StagedFile {
       // fence. Mode changes use the owned fd, including for final mode 000.
       const fd = this.#file();
       if (this.#publishedMode !== 0o600 || stagedMode !== 0o600) fs.fchmodSync(fd, this.#publishedMode);
-      // Content was synced before rename. A lost chmod leaves staged 0600,
+      // With sync enabled, content was synced before rename. A lost chmod leaves staged 0600,
       // no wider than modes retaining owner rw. Restrictive modes and observed
       // widening of the stage still need the permission correction made durable.
-      if ((this.#publishedMode & 0o600) !== 0o600 || (stagedMode & ~this.#publishedMode) !== 0) {
+      if (this.#sync && ((this.#publishedMode & 0o600) !== 0o600 || (stagedMode & ~this.#publishedMode) !== 0)) {
         syncFileBestEffortSync(fd);
       }
-      syncFileBestEffortSync(this.#parentFd);
+      if (this.#sync) syncFileBestEffortSync(this.#parentFd);
       this.#assertNamed(basename);
       assertStagedDirectoryCurrent(this.#directory);
       return receipt;

@@ -96,6 +96,7 @@ export type HardlinkPolicy = "reject" | "allow";
 export type WritableOpenMode = "replace" | "append" | "update";
 
 export type RootDefaults = {
+  durable?: boolean;
   hardlinks?: HardlinkPolicy;
   maxBytes?: number;
   mkdir?: boolean;
@@ -113,7 +114,7 @@ export type RootReadOptions = Pick<
 
 export type RootOpenOptions = Omit<RootReadOptions, "maxBytes">;
 
-export type RootWriteOptions = Pick<RootDefaults, "denyMutations" | "mkdir" | "mode" | "renameIdentity"> & {
+export type RootWriteOptions = Pick<RootDefaults, "denyMutations" | "durable" | "mkdir" | "mode" | "renameIdentity"> & {
   encoding?: BufferEncoding;
   overwrite?: boolean;
 };
@@ -514,6 +515,7 @@ export class RootHandle implements Root {
       mkdir: this.defaults.mkdir,
       mode: this.defaults.mode,
       ...this.mutationOptions(options),
+      durable: options.durable ?? this.defaults.durable ?? true,
     });
   }
 
@@ -554,6 +556,7 @@ export class RootHandle implements Root {
       mode: this.defaults.mode,
       renameIdentity: this.defaults.renameIdentity,
       ...this.mutationOptions(options),
+      durable: options.durable ?? this.defaults.durable ?? true,
     });
   }
 
@@ -569,6 +572,7 @@ export class RootHandle implements Root {
       mkdir: this.defaults.mkdir,
       mode: this.defaults.mode,
       ...this.mutationOptions(options),
+      durable: options.durable ?? this.defaults.durable ?? true,
       overwrite: false,
     });
   }
@@ -1004,6 +1008,7 @@ async function appendFileInRoot(
   params: {
     relativePath: string;
     data: string | Buffer;
+    durable?: boolean;
     encoding?: BufferEncoding;
     mkdir?: boolean;
     mode?: number;
@@ -1042,8 +1047,8 @@ async function appendFileInRoot(
         prefix.length > 0 ? Buffer.concat([Buffer.from(prefix, "utf8"), params.data]) : params.data;
       await target.handle.appendFile(payload);
     }
-    await target.handle.sync();
-    if (target.createdForWrite) {
+    if (params.durable !== false) await target.handle.sync();
+    if (params.durable !== false && target.createdForWrite) {
       await syncDirectoryBestEffort(path.dirname(target.realPath));
     }
   } finally {
@@ -1127,6 +1132,7 @@ async function commitPinnedWriteInRoot(
       renameIdentity: params.renameIdentity,
       mkdir: params.mkdir !== false,
       mode: params.mode ?? pinned.mode,
+      sync: params.durable !== false,
       overwrite: params.overwrite,
       input: { kind: "buffer", data: params.data, encoding: params.encoding },
       rootIdentity: root.rootIdentity,

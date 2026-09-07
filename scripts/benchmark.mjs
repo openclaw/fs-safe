@@ -223,6 +223,13 @@ async function main() {
         },
       },
       {
+        group: "write file",
+        name: "root.write durable:false",
+        run: async (i) => {
+          await safe.write("root-write-nondurable.txt", `${i}:${payload.toString("utf8")}`, { durable: false });
+        },
+      },
+      {
         group: "read json",
         name: "raw readFile + JSON.parse",
         baseline: true,
