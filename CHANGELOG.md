@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+**Highlights:** Clearer guidance for atomic writes on Windows exFAT, with a repeatable filesystem compatibility probe.
+
+- Document the existing opt-in locked rename policy for Windows exFAT/FAT32 and add a built-package probe for identity drift, substitution handling, and temporary-prefix isolation; require a trusted, quiescent probe parent and verify its cleanup identity. Thanks @dongsheng123132.
+- Refresh the native zstd decoder to 0.14.0 and compatible Rust and JavaScript development dependencies, and update the pnpm setup action to 6.1.0.
+
 ## 0.8.5 - 2026-09-07
 
 ### Highlights
