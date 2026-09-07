@@ -370,7 +370,7 @@ export async function movePathWithCopyFallback(
       sourcePath,
       staged,
       {
-        sourceHardlinks: options.sourceHardlinks ?? "allow",
+        sourceHardlinks: rejectHardlinks ? "reject" : "allow",
         ...(rejectHardlinks ? { budget: { discovered: 1 } } : {}),
       },
       sourceIdentity,
