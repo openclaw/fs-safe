@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.3 - 2026-09-06
 
 - Add optional synchronous move authority checks before renames and each copied-source removal, plus an exact bigint destination-publication receipt for caller-owned recovery after later failure; retain cross-device and Windows `EPERM` copy fallbacks and the existing `Promise<void>` contract.
 
