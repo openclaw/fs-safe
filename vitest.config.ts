@@ -5,9 +5,9 @@ export default defineConfig({
     include: ["test/**/*.test.ts"],
     pool: "forks",
     // Windows hosted runners become nondeterministic when filesystem stress
-    // suites compete. Other CI hosts stay bounded so high-core machines do not
-    // make the stress and property suites time out under process contention.
-    maxWorkers: process.platform === "win32" ? 1 : process.env.CI ? 4 : undefined,
+    // suites compete. Other hosts stay bounded too: local high-core machines
+    // hit the same stress/property-suite contention as CI.
+    maxWorkers: process.platform === "win32" ? 1 : 4,
     expect: {
       requireAssertions: true,
     },

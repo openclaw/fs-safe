@@ -1,21 +1,34 @@
 import type { BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { mergeExtractedTreeIntoDestination } from "../src/archive.js";
 import { withExtractionDeadline } from "../src/archive-deadline.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
-import { useRealTempDirs } from "./helpers/vitest.js";
+import { removeModeFixture } from "./helpers/archive-modes.js";
+import { useSuiteFixture } from "./helpers/suite-fixture.js";
 
-const { tempRoot } = useRealTempDirs();
-const restoreModes: string[] = [];
-afterEach(async () => {
-  __setFsSafeTestHooksForTest(undefined);
-  __resetFsSafeNativeConfigForTest();
-  vi.restoreAllMocks();
-  for (const directory of restoreModes.splice(0)) await fs.chmod(directory, 0o700).catch(() => undefined);
+let suiteDir: string | undefined;
+const runFixture = useSuiteFixture(async () => {
+  suiteDir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-dir-publication-"));
+  return await fs.realpath(suiteDir);
+}, async () => {
+  if (suiteDir) await removeModeFixture(suiteDir);
 });
+
+function run(operation: (directory: string) => Promise<void>) {
+  return runFixture(async (directory) => {
+    try { await operation(directory); }
+    finally {
+      // A Vitest timeout must not reset hooks while publication is still running.
+      __setFsSafeTestHooksForTest(undefined);
+      __resetFsSafeNativeConfigForTest();
+      vi.restoreAllMocks();
+    }
+  });
+}
 
 function deferred() {
   let resolve!: () => void;
@@ -23,9 +36,9 @@ function deferred() {
   return { promise, resolve };
 }
 
-async function fixture(children = true) {
+async function fixture(directory: string, children = true) {
   configureFsSafeNative({ mode: "off" });
-  const base = await tempRoot("fs-safe-dir-publication-");
+  const base = await fs.mkdtemp(path.join(directory, "case-"));
   const sourceDir = path.join(base, "source");
   const destinationDir = path.join(base, "destination");
   const sourceNested = path.join(sourceDir, "nested");
@@ -38,13 +51,12 @@ async function fixture(children = true) {
     await fs.chmod(sourceNested, 0o555);
   }
   await fs.mkdir(destinationDir);
-  restoreModes.push(sourceNested, target);
   return { base, sourceNested, target, params: { sourceDir, destinationDir, destinationRealDir: destinationDir } };
 }
 
 describe.skipIf(process.platform === "win32" || process.getuid?.() === 0)("real non-root directory publication", () => {
-  it("retains only depth-proportional directory descriptors across many siblings", async () => {
-    const { params } = await fixture(false);
+  it("retains only depth-proportional directory descriptors across many siblings", () => run(async (directory) => {
+    const { params } = await fixture(directory, false);
     await fs.rmdir(path.join(params.sourceDir, "nested"));
     for (let sibling = 0; sibling < 20; sibling++) {
       await fs.mkdir(path.join(params.sourceDir, `sibling-${sibling}`, "middle", "leaf"), { recursive: true });
@@ -65,27 +77,27 @@ describe.skipIf(process.platform === "win32" || process.getuid?.() === 0)("real 
     });
     await mergeExtractedTreeIntoDestination(params);
     expect({ active, peak, closes }).toEqual({ active: 0, peak: 3, closes: 60 });
-  });
+  }));
 
-  it.each([0o300, 0o700])("updates an existing %s directory after publishing children", async (mode) => {
-    const { target, params } = await fixture();
+  it.each([0o300, 0o700])("updates an existing %s directory after publishing children", (mode) => run(async (directory) => {
+    const { target, params } = await fixture(directory);
     await fs.mkdir(target, { mode: 0o700 });
     await fs.writeFile(path.join(target, "value"), "OLD");
     await fs.chmod(target, mode);
     await mergeExtractedTreeIntoDestination(params);
     expect((await fs.stat(target)).mode & 0o777).toBe(0o555);
     expect(await fs.readFile(path.join(target, "value"), "utf8")).toBe("NEW");
-  });
+  }));
 
-  it("finalizes an existing empty search-only directory", async () => {
-    const { target, params } = await fixture(false);
+  it("finalizes an existing empty search-only directory", () => run(async (directory) => {
+    const { target, params } = await fixture(directory, false);
     await fs.mkdir(target, { mode: 0o100 });
     await mergeExtractedTreeIntoDestination(params);
     expect((await fs.stat(target)).mode & 0o777).toBe(0o555);
-  });
+  }));
 
-  it.each([0o500, 0])("does not widen an existing inaccessible %s directory to write children", async (mode) => {
-    const { target, params } = await fixture();
+  it.each([0o500, 0])("does not widen an existing inaccessible %s directory to write children", (mode) => run(async (directory) => {
+    const { target, params } = await fixture(directory);
     await fs.mkdir(target, { mode: 0o700 });
     await fs.writeFile(path.join(target, "value"), "OLD");
     await fs.chmod(target, mode);
@@ -93,10 +105,10 @@ describe.skipIf(process.platform === "win32" || process.getuid?.() === 0)("real 
     expect((await fs.stat(target)).mode & 0o777).toBe(mode);
     await fs.chmod(target, 0o700);
     expect(await fs.readFile(path.join(target, "value"), "utf8")).toBe("OLD");
-  });
+  }));
 
-  it.each(["directory", "root", "ancestor"] as const)("rejects a %s substitution before finalization without chmodding it", async (swap) => {
-    const { base, sourceNested, target, params } = await fixture();
+  it.each(["directory", "root", "ancestor"] as const)("rejects a %s substitution before finalization without chmodding it", (swap) => run(async (directory) => {
+    const { base, sourceNested, target, params } = await fixture(directory);
     if (swap === "ancestor") {
       await fs.chmod(sourceNested, 0o700);
       await fs.mkdir(path.join(sourceNested, "child"), { mode: 0o555 });
@@ -120,10 +132,10 @@ describe.skipIf(process.platform === "win32" || process.getuid?.() === 0)("real 
     expect({ dev: retained.dev, ino: retained.ino, mode: retained.mode }).toEqual({
       dev: original!.dev, ino: original!.ino, mode: original!.mode,
     });
-  });
+  }));
 
-  it("propagates directory chmod failures and performs no final mode sweep", async () => {
-    const { target, params } = await fixture();
+  it("propagates directory chmod failures and performs no final mode sweep", () => run(async (directory) => {
+    const { target, params } = await fixture(directory);
     const realOpen = fs.open.bind(fs);
     let closes = 0;
     let pinned = false;
@@ -141,10 +153,10 @@ describe.skipIf(process.platform === "win32" || process.getuid?.() === 0)("real 
     expect(closes).toBe(1);
     expect((await fs.stat(target)).mode & 0o777).toBe(0o700);
     expect(await fs.readFile(path.join(target, "value"), "utf8")).toBe("NEW");
-  });
+  }));
 
-  it.each(["before-dispatch", "active-chmod", "opening"] as const)("joins %s timeout and closes the pinned directory exactly once", async (stage) => {
-    const { target, params } = await fixture();
+  it.each(["before-dispatch", "active-chmod", "opening"] as const)("joins %s timeout and closes the pinned directory exactly once", (stage) => run(async (directory) => {
+    const { target, params } = await fixture(directory);
     await fs.mkdir(path.join(params.sourceDir, "zz-later"), { mode: 0o555 });
     const entered = deferred();
     const expired = deferred();
@@ -193,5 +205,5 @@ describe.skipIf(process.platform === "win32" || process.getuid?.() === 0)("real 
     const after = chmods;
     await new Promise<void>((done) => setImmediate(done));
     expect(chmods).toBe(after);
-  });
+  }));
 });
