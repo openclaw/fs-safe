@@ -57,24 +57,24 @@ describe("Root exact publication identity", () => {
       expect(Number(inode)).toBe(Number(inode - 1n));
       if (scenario === "unknown Windows path") Object.defineProperty(process, "platform", { value: "win32" });
       const fstat = fsSync.fstatSync.bind(fsSync);
-      const lstat = fs.lstat.bind(fs);
-      const stat = fs.stat.bind(fs);
+      const lstat = fsSync.lstatSync.bind(fsSync);
+      const stat = fsSync.statSync.bind(fsSync);
       vi.spyOn(fsSync, "fstatSync").mockImplementation(((...args: Parameters<typeof fsSync.fstatSync>) => {
         const actual = fstat(...args);
         return actual.isFile() ? project(actual, scenario === "fd mismatch" ? inode : expectedInode, expectedDevice) : actual;
       }) as typeof fsSync.fstatSync);
-      vi.spyOn(fs, "lstat").mockImplementation((async (...args: Parameters<typeof fs.lstat>) => {
-        const actual = await lstat(...args);
+      vi.spyOn(fsSync, "lstatSync").mockImplementation(((...args: Parameters<typeof fsSync.lstatSync>) => {
+        const actual = lstat(...args);
         if (String(args[0]) !== target) return actual;
         return scenario === "unknown Windows path" ? project(actual, 0n, 0n)
           : project(actual, scenario === "path mismatch" ? inode : expectedInode, expectedDevice);
-      }) as typeof fs.lstat);
-      vi.spyOn(fs, "stat").mockImplementation((async (...args: Parameters<typeof fs.stat>) => {
-        const actual = await stat(...args);
+      }) as typeof fsSync.lstatSync);
+      vi.spyOn(fsSync, "statSync").mockImplementation(((...args: Parameters<typeof fsSync.statSync>) => {
+        const actual = stat(...args);
         if (String(args[0]) !== target) return actual;
         return scenario === "unknown Windows path" ? project(actual, 0n, 0n)
           : project(actual, scenario === "canonical mismatch" ? inode : expectedInode, expectedDevice);
-      }) as typeof fs.stat);
+      }) as typeof fsSync.statSync);
       try {
         const pending = verify({ root: context, targetPath: target, fd: handle.fd,
           expectedIdentity: { dev: expectedDevice, ino: expectedInode }, parentGuard });
@@ -93,14 +93,14 @@ describe("Root exact publication identity", () => {
       if (route === "descriptor") Object.defineProperty(process, "platform", { value: "linux" });
       const target = path.join(directory, "target");
       const handle = await fs.open(target, "wx", 0o600);
-      const realpath = fs.realpath.bind(fs);
-      const stat = fs.stat.bind(fs);
-      const lstat = fs.lstat.bind(fs);
-      const handleStat = handle.stat.bind(handle);
+      const realpath = fsSync.realpathSync.native;
+      const stat = fsSync.statSync.bind(fsSync);
+      const lstat = fsSync.lstatSync.bind(fsSync);
+      const handleStat = fsSync.fstatSync.bind(fsSync);
       let pathnameAttempts = 0;
-      vi.spyOn(handle, "stat").mockImplementation((async (...args: Parameters<typeof handle.stat>) =>
-        project(await handleStat(...args))) as typeof handle.stat);
-      vi.spyOn(fs, "realpath").mockImplementation((async (...args: Parameters<typeof fs.realpath>) => {
+      vi.spyOn(fsSync, "fstatSync").mockImplementation(((...args: Parameters<typeof fsSync.fstatSync>) =>
+        args[0] === handle.fd ? project(handleStat(...args)) : handleStat(...args)) as typeof fsSync.fstatSync);
+      vi.spyOn(fsSync.realpathSync, "native").mockImplementation(((...args: Parameters<typeof fsSync.realpathSync.native>) => {
         const candidate = String(args[0]);
         if (candidate.startsWith("/dev/fd/") || candidate.startsWith("/proc/self/fd/")) {
           if (route === "descriptor") return target;
@@ -109,23 +109,23 @@ describe("Root exact publication identity", () => {
         if (candidate === target && route === "parent scan" && pathnameAttempts++ === 0) {
           throw Object.assign(new Error("pathname raced"), { code: "ENOENT" });
         }
-        return await realpath(...args);
-      }) as typeof fs.realpath);
+        return realpath(...args);
+      }) as typeof fsSync.realpathSync.native);
       const sampled: Array<number | bigint> = [];
-      vi.spyOn(fs, "stat").mockImplementation((async (...args: Parameters<typeof fs.stat>) => {
-        const actual = await stat(...args);
+      vi.spyOn(fsSync, "statSync").mockImplementation(((...args: Parameters<typeof fsSync.statSync>) => {
+        const actual = stat(...args);
         if (String(args[0]) !== target) return actual;
         const projected = project(actual);
         sampled.push(projected.ino);
         return projected;
-      }) as typeof fs.stat);
-      vi.spyOn(fs, "lstat").mockImplementation((async (...args: Parameters<typeof fs.lstat>) => {
-        const actual = await lstat(...args);
+      }) as typeof fsSync.statSync);
+      vi.spyOn(fsSync, "lstatSync").mockImplementation(((...args: Parameters<typeof fsSync.lstatSync>) => {
+        const actual = lstat(...args);
         if (String(args[0]) !== target) return actual;
         const projected = project(actual);
         sampled.push(projected.ino);
         return projected;
-      }) as typeof fs.lstat);
+      }) as typeof fsSync.lstatSync);
       try {
         const pending = route === "numeric handle wrapper"
           ? resolveOpenedFileRealPathForHandle(handle, target)
@@ -163,10 +163,10 @@ for (const route of routes) {
         const fstat = fsSync.fstatSync.bind(fsSync);
         vi.spyOn(fsSync, "fstatSync").mockImplementation(((...args: Parameters<typeof fsSync.fstatSync>) =>
           project(fstat(...args), currentInode())) as typeof fsSync.fstatSync);
-        for (const method of ["stat", "lstat"] as const) {
-          const original = fs[method].bind(fs);
-          vi.spyOn(fs, method).mockImplementation((async (...args: Parameters<typeof fs.stat>) =>
-            project(await original(...args), currentInode())) as typeof fs.stat);
+        for (const method of ["statSync", "lstatSync"] as const) {
+          const original = fsSync[method].bind(fsSync);
+          vi.spyOn(fsSync, method).mockImplementation(((...args: Parameters<typeof fsSync.statSync>) =>
+            project(original(...args), currentInode())) as typeof fsSync.statSync);
         }
         const open = fs.open.bind(fs);
         vi.spyOn(fs, "open").mockImplementation(async (...args) => {
@@ -288,16 +288,16 @@ for (const backend of ["fallback", "native"] as const) {
           reopened.push(handle);
           return handle;
         });
-        for (const method of ["stat", "lstat"] as const) {
-          const original = fs[method].bind(fs);
-          vi.spyOn(fs, method).mockImplementation((async (...args: Parameters<typeof fs.stat>) => {
-            const stat = await original(...args);
+        for (const method of ["statSync", "lstatSync"] as const) {
+          const original = fsSync[method].bind(fsSync);
+          vi.spyOn(fsSync, method).mockImplementation(((...args: Parameters<typeof fsSync.statSync>) => {
+            const stat = original(...args);
             if (!opaque || String(args[0]) !== target) return stat;
             return Object.assign(Object.create(stat), {
               dev: typeof stat.dev === "bigint" ? 0n : 0,
               ino: typeof stat.ino === "bigint" ? 0n : 0,
             });
-          }) as typeof fs.stat);
+          }) as typeof fsSync.statSync);
         }
         const verifier = vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(
           async (params) => {

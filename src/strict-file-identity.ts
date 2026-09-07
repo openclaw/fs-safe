@@ -34,7 +34,7 @@ function identityCheck(expected: ExactFileIdentity | undefined, platform: NodeJS
 // Retry only unknown Windows identities, retaining every known component so a
 // later observation cannot erase a definite mismatch. Never reopen the file.
 export async function inspectFileIdentity<T extends ExactFileIdentity>(
-  inspect: () => Promise<T>,
+  inspect: () => T | Promise<T>,
   expected?: ExactFileIdentity,
   platform: NodeJS.Platform = process.platform,
 ): Promise<T> {

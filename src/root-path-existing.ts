@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import fsp from "node:fs/promises";
 import path from "node:path";
 import { isNotFoundPathError } from "./path.js";
 
@@ -9,7 +8,7 @@ function isFilesystemRoot(candidate: string): boolean {
 
 async function pathExists(targetPath: string): Promise<boolean> {
   try {
-    await fsp.lstat(targetPath);
+    fs.lstatSync(targetPath);
     return true;
   } catch (error) {
     if (isNotFoundPathError(error)) {
@@ -38,7 +37,7 @@ export async function resolvePathViaExistingAncestor(targetPath: string): Promis
   }
 
   try {
-    const resolvedAncestor = path.resolve(await fsp.realpath(cursor));
+    const resolvedAncestor = path.resolve(fs.realpathSync.native(cursor));
     return missingSuffix.length === 0
       ? resolvedAncestor
       : path.resolve(resolvedAncestor, ...missingSuffix);

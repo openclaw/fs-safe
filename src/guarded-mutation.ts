@@ -1,4 +1,4 @@
-import fsSync from "node:fs";
+import fsSync, { type BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
@@ -65,6 +65,8 @@ export function withSyncDirectoryGuards<T>(
 
 export async function guardedRename(params: {
   assertBeforeRename?: () => void;
+  onSourceInspected?: (identity: Pick<BigIntStats, "dev" | "ino">) => void;
+  onRenamed?: () => void;
   from: string;
   to: string;
   targetRoot?: string;
@@ -77,9 +79,13 @@ export async function guardedRename(params: {
   await withAsyncDirectoryGuards(
     [sourceGuard, targetGuard],
     async () => {
+      if (params.onSourceInspected) {
+        params.onSourceInspected(await fs.lstat(params.from, { bigint: true }));
+      }
       // Authority must survive all awaited guards; do not yield before rename dispatch.
       params.assertBeforeRename?.();
       await fs.rename(params.from, params.to);
+      params.onRenamed?.();
     },
     { verifyAfter: params.verifyAfter },
   );

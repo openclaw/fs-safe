@@ -1105,14 +1105,14 @@ describe("regular file append", () => {
     await fs.writeFile(filePath, "safe", "utf8");
     await fs.writeFile(secretPath, "secret", "utf8");
 
-    const originalLstat = fs.lstat.bind(fs);
+    const originalLstat = syncFs.lstatSync.bind(syncFs);
     let swapped = false;
-    const lstatSpy = vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
-      const stat = await originalLstat(...args);
+    const lstatSpy = vi.spyOn(syncFs, "lstatSync").mockImplementation((...args) => {
+      const stat = originalLstat(...args);
       if (!swapped && args[0] === filePath) {
         swapped = true;
-        await fs.rm(filePath, { force: true });
-        await fs.symlink(secretPath, filePath);
+        syncFs.rmSync(filePath, { force: true });
+        syncFs.symlinkSync(secretPath, filePath);
       }
       return stat;
     });

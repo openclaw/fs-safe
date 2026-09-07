@@ -57,16 +57,16 @@ export async function verifyAtomicWriteResult(params: {
   try {
     // This descriptor remains owned by the writer, even when final mode forbids opens.
     const stat = assertDescriptor();
-    assertPath(await fs.lstat(params.targetPath, { bigint: true }));
+    assertPath(fsSync.lstatSync(params.targetPath, { bigint: true }));
     const { realPath } = await resolveOpenedFileRealPathForFd(params.fd, stat, params.targetPath);
-    assertPath(await fs.stat(realPath, { bigint: true }));
+    assertPath(fsSync.statSync(realPath, { bigint: true }));
     if (!isPathInside(params.root.rootWithSep, realPath)) {
       throw outsideWorkspaceError();
     }
     await assertAsyncDirectoryGuard(params.parentGuard);
     await assertRootIdentityCurrent(params.root);
     // Recheck after canonical resolution and directory checks, including late links.
-    assertPath(await fs.lstat(params.targetPath, { bigint: true }));
+    assertPath(fsSync.lstatSync(params.targetPath, { bigint: true }));
     assertDescriptor();
     if (needsPathOpen) {
       // A retained fd cannot prove that an opaque Windows pathname still names it.
@@ -84,15 +84,15 @@ export async function verifyAtomicWriteResult(params: {
       });
       try {
         const reopenedStat = assertDescriptor(opened.fd);
-        assertPath(await fs.lstat(params.targetPath, { bigint: true }));
+        assertPath(fsSync.lstatSync(params.targetPath, { bigint: true }));
         const { realPath: reopenedPath } = await resolveOpenedFileRealPathForFd(opened.fd, reopenedStat, params.targetPath);
-        assertPath(await fs.stat(reopenedPath, { bigint: true }));
+        assertPath(fsSync.statSync(reopenedPath, { bigint: true }));
         if (!isPathInside(params.root.rootWithSep, reopenedPath)) {
           throw outsideWorkspaceError();
         }
         await assertAsyncDirectoryGuard(params.parentGuard);
         await assertRootIdentityCurrent(params.root);
-        assertPath(await fs.lstat(params.targetPath, { bigint: true }));
+        assertPath(fsSync.lstatSync(params.targetPath, { bigint: true }));
         assertDescriptor(opened.fd);
       } finally {
         await opened.close().catch(() => undefined);

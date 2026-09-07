@@ -93,6 +93,11 @@ with the weaker policy. Staging names remain random, including custom prefixes.
 
 To verify the built package against an actual volume, run
 `node scripts/atomic-rename-compat-proof.mjs EXISTING_PARENT` after `pnpm build`.
+Use a trusted parent directory that no other process can rename or modify during
+the entire run, including cleanup; do not point the probe at a shared writable
+volume root. Cleanup checks the created directory's identity before recursive
+removal, but the check and removal are not atomic. The probe does not test safety
+against hostile concurrent namespace mutation.
 The probe creates and cleans up its own child directory and emits JSON without
 local paths. It compares default, strict, and locked policies in both async and
 sync calls, checks real rename identities and file contents, injects different-
@@ -193,7 +198,8 @@ metadata where lower latency matters more than crash-durability.
 
 ## `movePathWithCopyFallback`
 
-Rename a path. If the rename fails with `EXDEV` (cross-device), fall back to
+Rename a path. If the rename fails with `EXDEV` (cross-device), or `EPERM` on
+Windows, fall back to
 copying into a staged sibling path, renaming that staged path into place, and
 then removing only the source entries that were copied. The fallback avoids
 buffering regular files into memory and does not tighten the destination parent
@@ -219,6 +225,8 @@ await movePathWithCopyFallback({
 ```
 
 Use it when source and destination might live on different filesystems (containers, tmpfs, separate volumes).
+The hardlink policy is captured when the move starts. Changing or reusing the
+options object later does not change the policy of an in-flight move.
 `sourceHardlinks: "reject"` performs a recursive preflight capped at 50,000
 entries before any mutation. Because link count and rename cannot be one atomic
 portable operation, this mode always commits a fresh inode/tree through the
@@ -235,39 +243,72 @@ identity becomes the next cleanup receipt. This accounts for the operation's
 own link-count and ctime changes without suppressing unexpected external
 mutations.
 
-### Final rename authorization
+### Mutation authority and publication receipts
 
-Pass `assertBeforeRename` when a move depends on a revocable lease or another
-caller-owned authorization. The helper captures this callback when called and
-runs it synchronously after asynchronous preparation and directory checks,
-immediately before each rename is dispatched:
+Pass `assertBeforeMutation` when a move depends on a revocable lease or another
+caller-owned authorization. The helper captures the callback when called and
+runs it synchronously after asynchronous preparation and identity checks,
+immediately before each rename, source-file or source-symlink unlink, and
+source-directory removal. `assertBeforeRename` remains available for callers
+that only guard publication. When both are set, the rename check runs first,
+then the mutation check, without yielding before dispatch.
 
 ```ts
+type MovePathPublicationReceipt = Readonly<{
+  path: string;
+  dev: bigint;
+  ino: bigint;
+}>;
+
 type MovePathWithCopyFallbackOptions = {
   from: string;
   sourceHardlinks?: "allow" | "reject";
   to: string;
   assertBeforeRename?: () => void;
+  assertBeforeMutation?: () => void;
+  onDestinationPublished?: (receipt: MovePathPublicationReceipt) => void;
 };
 ```
 
-Throw to refuse publication. The original error is propagated, including errors
-with `EXDEV` or `EPERM` codes; an authorization failure never starts a copy
-fallback. A genuine rename failure may still require a second authorization
+Throw to refuse the next mutation. The original error is propagated, including
+errors with `EXDEV` or `EPERM` codes; an authorization failure never starts a
+copy fallback. A genuine rename failure may still require a second authority
 check before publishing the staged copy.
 
-The callback must return `undefined` synchronously. Returning a Promise, thenable,
-or any other value refuses the rename with a `TypeError`; rejected asynchronous
-results are consumed without authorizing the operation. Perform asynchronous
-policy checks before calling the helper and use this callback to recheck the
-current owner at the mutation boundary.
+All three callbacks must return `undefined` synchronously. Returning a Promise,
+thenable, or any other value fails with a `TypeError`; rejected asynchronous
+results are consumed. Perform asynchronous policy checks before calling the
+helper and use the authority callback to recheck the current owner at each
+mutation boundary. All callbacks are captured before the first await.
+
+`onDestinationPublished` runs exactly once after a successful rename resolves,
+before awaited post-rename directory checks or source cleanup. It receives a
+frozen receipt with the resolved absolute destination path and the exact bigint
+device/inode identity observed on the rename source before dispatch: the
+original source for a direct rename, or the staged copy for fallback. Failed
+rename attempts never emit receipts. The return contract remains `Promise<void>`.
+
+The receipt records an observed identity, not authorization, durable storage,
+or an atomic guarantee against concurrent pathname replacement. Before recovery,
+recheck caller authority and compare the retained identity with a fresh bigint
+stat of the destination. In particular, unknown Windows device/inode values
+must not be treated as proof of ownership. Do not derive ownership from a new
+post-failure snapshot alone.
 
 A refused rename leaves the source and destination unchanged; any private
-staged copy follows the helper's normal cleanup. The check does not cancel an
-already-dispatched rename or make an external lease store atomic with the
-filesystem. Cleanup after a successful move retains the existing source-identity
-checks. Omitting the
-callback preserves the usual move behavior.
+staged copy follows normal cleanup. If publication has already happened, a
+callback error or later verification failure preserves the published destination
+and stops further source cleanup. Revocation during cleanup leaves all
+as-yet-unremoved source entries intact; entries already removed remain removed.
+The caller retains the receipt even if the move later rejects and owns recovery
+from this partial-move state. An observer that throws must retain its receipt
+before throwing if recovery needs it.
+
+These callbacks do not cancel already-dispatched operations or make an external
+lease store atomic with the filesystem. `assertBeforeMutation` guards renames
+and removal of copied source entries; private staging creation, writes, and
+failed-staging cleanup remain owned by the helper. Omitting the new callbacks
+preserves the existing move and source-identity behavior.
 
 ## Difference from `root()`
 

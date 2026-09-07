@@ -6,6 +6,7 @@ import { itPosix, itWin32, useTempDirs } from "./helpers/vitest.js";
 import {
   moveCopyFallbackReasonForRenameError,
   movePathWithCopyFallback,
+  type MovePathWithCopyFallbackOptions,
 } from "../src/move-path.js";
 
 const { tempRoot } = useTempDirs();
@@ -24,7 +25,6 @@ function spyOnRename(
     await implementation(from, to, rename);
   });
 }
-
 
 async function withProcessPlatform(platform: NodeJS.Platform, body: () => Promise<void>): Promise<void> {
   const descriptor = Object.getOwnPropertyDescriptor(process, "platform");
@@ -99,11 +99,12 @@ describe("movePathWithCopyFallback regressions", () => {
     await expect(fsp.stat(source)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("rejects a hardlink added after preflight without publishing a target", async () => {
+  it.each([false, true])("rejects a late hardlink when caller options change=%s", async (changeOptions) => {
     const base = await tempRoot("fs-safe-move-hardlink-race-");
     const source = path.join(base, "source.txt");
     const hardlink = path.join(base, "late-link.txt");
     const dest = path.join(base, "dest.txt");
+    const moveOptions: MovePathWithCopyFallbackOptions = { from: source, sourceHardlinks: "reject", to: dest };
     await fsp.writeFile(source, "source");
     const realLstat = fsp.lstat;
     let sourceInspections = 0;
@@ -111,11 +112,12 @@ describe("movePathWithCopyFallback regressions", () => {
       const stat = await realLstat(candidate, options as never);
       if (candidate === source && ++sourceInspections === 1) {
         await fsp.link(source, hardlink);
+        if (changeOptions) moveOptions.sourceHardlinks = "allow";
       }
       return stat;
     });
 
-    await expectFsSafeError(movePathWithCopyFallback({ from: source, sourceHardlinks: "reject", to: dest }), "hardlink");
+    await expectFsSafeError(movePathWithCopyFallback(moveOptions), "hardlink");
 
     await expect(fsp.readFile(source, "utf8")).resolves.toBe("source");
     await expect(fsp.readFile(hardlink, "utf8")).resolves.toBe("source");

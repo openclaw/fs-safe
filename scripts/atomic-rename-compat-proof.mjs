@@ -1,5 +1,7 @@
 // Run after pnpm build: node scripts/atomic-rename-compat-proof.mjs EXISTING_PARENT
-// Uses only a fresh child directory. JSON output deliberately omits local paths.
+// Requires a trusted parent with no concurrent namespace mutation for the whole run.
+// Uses a fresh child directory; this is not a hostile-namespace cleanup probe.
+// JSON output deliberately omits local paths.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -8,7 +10,7 @@ import path from "node:path";
 import { replaceFileAtomic, replaceFileAtomicSync } from "../dist/atomic.js";
 import { writeSiblingTempFile } from "../dist/sibling-temp.js";
 
-assert.equal(process.argv.length, 3, "Pass an existing parent on the filesystem to test");
+assert.equal(process.argv.length, 3, "Pass a trusted, quiescent existing parent on the filesystem to test");
 const parent = await fsp.realpath(process.argv[2]);
 const report = { node: process.version, platform: process.platform, cases: [] };
 const buildHash = createHash("sha256");
@@ -19,6 +21,7 @@ for (const name of (await fsp.readdir(dist)).filter((name) => name.endsWith(".js
 report.buildJsSha256 = buildHash.digest("hex");
 const sandbox = await fsp.mkdtemp(path.join(parent, "fs-safe-rename-proof-"));
 assert.equal(path.dirname(sandbox), parent);
+const sandboxIdentity = await fsp.lstat(sandbox, { bigint: true });
 let caseNumber = 0;
 const content = '{"value":"portable"}\n';
 const identity = (stat) => `${stat.dev}:${stat.ino}`;
@@ -239,9 +242,13 @@ try {
   await concurrentLockedWrites();
   report.ok = true;
 } finally {
-  // Only the newly created child is eligible for recursive cleanup.
+  // Detect prior substitution; check + rm is not atomic and requires the trusted parent.
   assert.equal(path.dirname(path.resolve(sandbox)), parent);
   assert.equal(await fsp.realpath(sandbox), sandbox);
+  const current = await fsp.lstat(sandbox, { bigint: true });
+  assert.ok(current.isDirectory());
+  assert.equal(current.dev, sandboxIdentity.dev);
+  assert.equal(current.ino, sandboxIdentity.ino);
   await fsp.rm(sandbox, { recursive: true, force: true });
 }
 console.log(JSON.stringify(report, null, 2));

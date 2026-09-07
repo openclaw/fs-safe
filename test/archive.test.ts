@@ -1,4 +1,4 @@
-import { constants as fsConstants } from "node:fs";
+import fsSync, { constants as fsConstants } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -353,14 +353,14 @@ describe("archive extraction", () => {
     zip.file("package/payload.bin", "owned");
     await fs.writeFile(archivePath, await zip.generateAsync({ type: "nodebuffer" }));
 
-    const realLstat = fs.lstat.bind(fs);
+    const realLstat = fsSync.lstatSync.bind(fsSync);
     let linked = false;
-    const lstatSpy = vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+    const lstatSpy = vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
       if (!linked && String(args[0]) === extractedRealPath) {
-        await fs.link(extractedRealPath, outsideAlias);
+        fsSync.linkSync(extractedRealPath, outsideAlias);
         linked = true;
       }
-      return await realLstat(...args);
+      return realLstat(...args);
     });
 
     try {

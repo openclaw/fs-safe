@@ -1,5 +1,4 @@
 import fsSync from "node:fs";
-import fs from "node:fs/promises";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { hasNodeErrorCode, isPathRelativeEscape } from "./path.js";
@@ -48,7 +47,7 @@ export async function assertNoSymlinkParents(
   for (const [index, segment] of walk.segments.entries()) {
     current = path.join(current, segment);
     try {
-      const stat = await fs.lstat(current);
+      const stat = fsSync.lstatSync(current);
       if (stat.isSymbolicLink()) {
         if (params.allowRootChildSymlink && path.dirname(current) === walk.root) {
           continue;

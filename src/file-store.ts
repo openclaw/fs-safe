@@ -162,7 +162,7 @@ async function readFileStoreCopySource(params: {
   sourcePath: string;
   maxBytes?: number;
 }): Promise<Buffer> {
-  const sourceStat = await fs.lstat(params.sourcePath);
+  const sourceStat = syncFs.lstatSync(params.sourcePath);
   if (sourceStat.isSymbolicLink() || !sourceStat.isFile()) {
     throw new FsSafeError("not-file", "source path is not a file");
   }
@@ -197,7 +197,7 @@ async function copyIntoRoot(params: {
 }): Promise<string> {
   const relativePath = assertRelativePath(params.relativePath);
   const destination = resolveStorePath(params.rootDir, relativePath);
-  const sourceStat = await fs.lstat(params.sourcePath);
+  const sourceStat = syncFs.lstatSync(params.sourcePath);
   if (sourceStat.isSymbolicLink() || !sourceStat.isFile()) {
     throw new FsSafeError("not-file", "source path is not a file");
   }

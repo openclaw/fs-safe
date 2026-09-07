@@ -63,39 +63,39 @@ for (const backend of ["javascript", "native", "windows fallback branch"] as con
         let retainedFd: number | undefined;
         let publishedPath = target;
         let injected = false;
-        const realLstat = fs.lstat.bind(fs);
-        const inject = async (kind: Attack) => {
+        const realLstat = fsSync.lstatSync.bind(fsSync);
+        const inject = (kind: Attack) => {
           injected = true;
           if (kind === "same bytes" || kind === "different bytes" || kind === "symlink") {
             publishedPath = path.join(parent, "original");
-            await fs.rename(target, publishedPath);
+            fsSync.renameSync(target, publishedPath);
             if (kind === "symlink") {
-              await fs.symlink(outsideFile, target);
+              fsSync.symlinkSync(outsideFile, target);
             } else {
-              await fs.writeFile(target, kind === "same bytes" ? payload : "raced bytes", { mode });
+              fsSync.writeFileSync(target, kind === "same bytes" ? payload : "raced bytes", { mode });
             }
           } else if (kind === "hardlink" || kind === "late hardlink") {
-            await fs.link(target, path.join(parent, "alias"));
+            fsSync.linkSync(target, path.join(parent, "alias"));
           } else if (kind === "parent escape" || kind === "parent rebind") {
             const moved = path.join(outside, "moved-parent");
-            await fs.rename(parent, moved);
+            fsSync.renameSync(parent, moved);
             publishedPath = path.join(moved, "target");
             if (kind === "parent escape") {
-              await fs.symlink(moved, parent);
+              fsSync.symlinkSync(moved, parent);
             } else {
-              await fs.mkdir(parent);
-              await fs.rename(publishedPath, target);
+              fsSync.mkdirSync(parent);
+              fsSync.renameSync(publishedPath, target);
               publishedPath = target;
             }
           } else if (kind === "root escape" || kind === "root rebind") {
             const moved = path.join(outside, "moved-root");
-            await fs.rename(workspace, moved);
+            fsSync.renameSync(workspace, moved);
             publishedPath = path.join(moved, "parent", "target");
             if (kind === "root escape") {
-              await fs.symlink(moved, workspace);
+              fsSync.symlinkSync(moved, workspace);
             } else {
-              await fs.mkdir(workspace);
-              await fs.rename(path.join(moved, "parent"), parent);
+              fsSync.mkdirSync(workspace);
+              fsSync.renameSync(path.join(moved, "parent"), parent);
               publishedPath = target;
             }
           }
@@ -106,18 +106,18 @@ for (const backend of ["javascript", "native", "windows fallback branch"] as con
           expect(fsSync.fstatSync(params.fd).isFile()).toBe(true);
           if (attack === "late hardlink") {
             // Add a link after canonical resolution, while checking the parent.
-            vi.spyOn(fs, "lstat").mockImplementation((async (...args: Parameters<typeof fs.lstat>) => {
-              if (!injected && String(args[0]) === parent) await inject(attack);
-              return await realLstat(...args);
-            }) as typeof fs.lstat);
+            vi.spyOn(fsSync, "lstatSync").mockImplementation(((...args: Parameters<typeof fsSync.lstatSync>) => {
+              if (!injected && String(args[0]) === parent) inject(attack);
+              return realLstat(...args);
+            }) as typeof fsSync.lstatSync);
           } else if (["EIO", "EACCES", "EPERM", "EEXIST"].includes(attack)) {
-            vi.spyOn(fs, "lstat").mockImplementation((async (...args: Parameters<typeof fs.lstat>) => {
+            vi.spyOn(fsSync, "lstatSync").mockImplementation(((...args: Parameters<typeof fsSync.lstatSync>) => {
               if (String(args[0]) === target) {
                 injected = true;
                 throw sentinel;
               }
-              return await realLstat(...args);
-            }) as typeof fs.lstat);
+              return realLstat(...args);
+            }) as typeof fsSync.lstatSync);
           } else {
             await inject(attack);
           }

@@ -62,7 +62,7 @@ function translateBoundedReadOverflow(error: unknown, filePath: string, maxBytes
 export async function statRegularFile(filePath: string): Promise<RegularFileStatResult> {
   let stat: Stats;
   try {
-    stat = await fs.lstat(filePath);
+    stat = fsSync.lstatSync(filePath);
   } catch (err) {
     if (isNotFoundPathError(err)) {
       return { missing: true };
@@ -98,7 +98,7 @@ export async function readRegularFile(params: {
   const maxBytes = normalizeMaxBytes(params.maxBytes);
   assertNoUnsafeDeviceReadPath(params.filePath);
   const before = await inspectFileIdentity(async () => {
-    const stat = await fs.lstat(params.filePath, { bigint: true });
+    const stat = fsSync.lstatSync(params.filePath, { bigint: true });
     assertRegularReadStat(stat, params.filePath, true);
     return stat;
   }).catch((error) => throwReadPreviewError(error, params.filePath));
@@ -116,15 +116,15 @@ export async function readRegularFile(params: {
     throw err;
   }
   try {
-    const stat = await handle.stat();
+    const stat = fsSync.fstatSync(handle.fd);
     const identity = await inspectFileIdentity(async () => {
-      const exact = await handle.stat({ bigint: true });
+      const exact = fsSync.fstatSync(handle.fd, { bigint: true });
       assertRegularReadStat(exact, params.filePath);
       return exact;
     }, before);
     try {
       await inspectFileIdentity(async () => {
-        const current = await fs.lstat(params.filePath, { bigint: true });
+        const current = fsSync.lstatSync(params.filePath, { bigint: true });
         assertRegularReadStat(current, params.filePath);
         return current;
       }, identity);
@@ -288,7 +288,7 @@ export async function appendRegularFile(options: AppendRegularFileOptions): Prom
   let preOpenStat: BigIntStats | undefined;
   try {
     preOpenStat = await inspectFileIdentity(async () => {
-      const stat = await fs.lstat(options.filePath, { bigint: true });
+      const stat = fsSync.lstatSync(options.filePath, { bigint: true });
       if (stat.isSymbolicLink()) {
         throw new Error(`Refusing to append through symlink: ${options.filePath}`);
       }
@@ -326,12 +326,12 @@ export async function appendRegularFile(options: AppendRegularFileOptions): Prom
     let identity: BigIntStats;
     try {
       identity = await inspectFileIdentity(async () => {
-        const stat = await handle.stat({ bigint: true });
+        const stat = fsSync.fstatSync(handle.fd, { bigint: true });
         assertRegularAppendStat(stat, options.filePath);
         return stat;
       }, preOpenStat);
       await inspectFileIdentity(async () => {
-        const current = await fs.lstat(options.filePath, { bigint: true });
+        const current = fsSync.lstatSync(options.filePath, { bigint: true });
         assertRegularAppendStat(current, options.filePath);
         return current;
       }, identity);

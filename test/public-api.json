@@ -506,6 +506,7 @@
         "writeTextAtomic"
       ],
       "types": [
+        "MovePathPublicationReceipt",
         "MovePathWithCopyFallbackOptions",
         "RenameIdentityPolicy",
         "ReplaceDirectoryAtomicOptions",
@@ -567,6 +568,7 @@
         "createArchiveSymlinkTraversalError",
         "createTarEntryPreflightChecker",
         "extractArchive",
+        "inspectTarArchive",
         "isWindowsDrivePath",
         "loadZipArchiveWithPreflight",
         "mergeExtractedTreeIntoDestination",
@@ -597,6 +599,8 @@
         "ArchiveSecurityError",
         "ArchiveSecurityErrorCode",
         "ExtractArchiveOptions",
+        "InspectTarArchiveOptions",
+        "InspectedTarEntry",
         "TarEntryInfo",
         "ZipArchiveWithFiles"
       ],

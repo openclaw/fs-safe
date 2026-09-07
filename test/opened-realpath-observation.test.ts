@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -22,16 +23,16 @@ describe("opened realpath observations", () => {
     const handle = await fs.open(target, "r");
     try {
       const identity = await handle.stat({ bigint: true });
-      const realpath = fs.realpath.bind(fs);
+      const realpath = fsSync.realpathSync.native;
       const calls: string[] = [];
-      vi.spyOn(fs, "realpath").mockImplementation(async (...args) => {
+      vi.spyOn(fsSync.realpathSync, "native").mockImplementation((...args) => {
         const candidate = String(args[0]);
         calls.push(candidate);
         if (candidate.startsWith("/proc/self/fd/")) throw Object.assign(new Error("no procfs"), { code: "ENOENT" });
         if (candidate.startsWith("/dev/fd/")) return target;
-        return await realpath(...args);
+        return realpath(...args);
       });
-      const stat = vi.spyOn(fs, "stat");
+      const stat = vi.spyOn(fsSync, "statSync");
       Object.defineProperty(process, "platform", { value: host });
       const resolved = await resolveOpenedFileRealPathForFd(handle.fd, identity, target);
       expect(resolved).toMatchObject({ realPath: target, stat: { dev: identity.dev, ino: identity.ino } });
@@ -49,15 +50,15 @@ describe("opened realpath observations", () => {
     const handle = await fs.open(target, "r");
     try {
       const identity = await handle.stat({ bigint: true });
-      const realpath = fs.realpath.bind(fs);
+      const realpath = fsSync.realpathSync.native;
       let attempts = 0;
-      vi.spyOn(fs, "realpath").mockImplementation(async (...args) => {
+      vi.spyOn(fsSync.realpathSync, "native").mockImplementation((...args) => {
         if (String(args[0]) === target) {
           if (++attempts === 1) throw Object.assign(new Error("raced lookup"), { code: "ENOENT" });
-          await fs.rename(target, path.join(directory, "saved"));
-          await fs.writeFile(target, "replacement");
+          fsSync.renameSync(target, path.join(directory, "saved"));
+          fsSync.writeFileSync(target, "replacement");
         }
-        return await realpath(...args);
+        return realpath(...args);
       });
       Object.defineProperty(process, "platform", { value: "darwin" });
       await expect(resolveOpenedFileRealPathForFd(handle.fd, identity, target)).rejects.toMatchObject({ code: "path-mismatch" });
@@ -81,9 +82,9 @@ describe("opened realpath observations", () => {
         if (scenario === "hardlink") await fs.link(target, path.join(directory, "alias"));
       },
     });
-    const stat = fs.stat.bind(fs);
-    vi.spyOn(fs, "stat").mockImplementation(async (...args) => {
-      const observed = await stat(...args);
+    const stat = fsSync.statSync.bind(fsSync);
+    vi.spyOn(fsSync, "statSync").mockImplementation((...args) => {
+      const observed = stat(...args);
       if (resolving && String(args[0]) === target && args[1]?.bigint) {
         observations++;
         if (scenario === "windows retry" && observations === 1) observed.ino = 0n;

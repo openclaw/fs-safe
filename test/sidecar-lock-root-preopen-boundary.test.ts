@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -74,9 +75,10 @@ itPosix.each(["root", "ancestor", "symlink-leaf", "directory-leaf", "before-mult
       if (candidate !== lockPath) return;
       descriptor = handle;
       if (mutation === "numeric-multilink") {
-        const stat = handle.stat.bind(handle);
-        vi.spyOn(handle, "stat").mockImplementation(async (options) => {
-          const value = await stat(options);
+        const stat = fsSync.fstatSync.bind(fsSync);
+        vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
+          const value = stat(fd, options);
+          if (fd !== handle.fd) return value;
           return options?.bigint ? value : Object.assign(value, { nlink: 2 });
         });
       }

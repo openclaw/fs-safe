@@ -1,4 +1,5 @@
 import type { TarMeterLimits } from "./archive-limits.js";
+import type { ArchiveMemberKind } from "./archive-plan.js";
 
 export interface NativeFileHash {
   bytes: number;
@@ -19,7 +20,7 @@ export interface NativeFileIdentity {
 export interface NativeArchiveEntry {
   index: number;
   path: string;
-  kind: string;
+  kind: ArchiveMemberKind;
   size: number;
   mode: number;
 }

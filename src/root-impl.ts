@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { BigIntStats, Stats } from "node:fs";
-import { constants as fsConstants } from "node:fs";
+import fsSync, { constants as fsConstants } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -96,6 +96,7 @@ export type HardlinkPolicy = "reject" | "allow";
 export type WritableOpenMode = "replace" | "append" | "update";
 
 export type RootDefaults = {
+  durable?: boolean;
   hardlinks?: HardlinkPolicy;
   maxBytes?: number;
   mkdir?: boolean;
@@ -113,7 +114,7 @@ export type RootReadOptions = Pick<
 
 export type RootOpenOptions = Omit<RootReadOptions, "maxBytes">;
 
-export type RootWriteOptions = Pick<RootDefaults, "denyMutations" | "mkdir" | "mode" | "renameIdentity"> & {
+export type RootWriteOptions = Pick<RootDefaults, "denyMutations" | "durable" | "mkdir" | "mode" | "renameIdentity"> & {
   encoding?: BufferEncoding;
   overwrite?: boolean;
 };
@@ -222,7 +223,7 @@ async function openVerifiedLocalFile(
   // results that get sent to messaging channels). See openclaw/openclaw#31186.
   try {
     preOpenStat = await inspectFileIdentity(async () => {
-      const stat = await fs.lstat(filePath, { bigint: true });
+      const stat = fsSync.lstatSync(filePath, { bigint: true });
       observedBeforeOpen = true;
       if (stat.isSymbolicLink() && options?.symlinks !== "follow-within-root") {
         throw new FsSafeError("symlink", "symlink not allowed");
@@ -263,14 +264,14 @@ async function openVerifiedLocalFile(
 
   try {
     await fsSafeTestHooks?.afterOpen?.(filePath, handle);
-    const stat = await handle.stat();
+    const stat = fsSync.fstatSync(handle.fd);
     if (!stat.isFile()) {
       throw new FsSafeError("not-file", "not a file");
     }
     // Keep numeric Stats for the public receipt, never for identity verification.
     let openedIdentity: BigIntStats | undefined;
     const identity = await inspectFileIdentity(
-      async () => (openedIdentity = await handle.stat({ bigint: true })),
+      async () => (openedIdentity = fsSync.fstatSync(handle.fd, { bigint: true })),
       preOpenStat && !preOpenStat.isSymbolicLink() ? preOpenStat : undefined,
     ).catch(async (error: unknown) => {
       if ([0, 1].includes(stat.nlink)) {
@@ -295,8 +296,8 @@ async function openVerifiedLocalFile(
     };
     await inspectPathIdentity(async () => {
       const pathStat = options?.symlinks === "follow-within-root"
-        ? await fs.stat(filePath, { bigint: true })
-        : await fs.lstat(filePath, { bigint: true });
+        ? fsSync.statSync(filePath, { bigint: true })
+        : fsSync.lstatSync(filePath, { bigint: true });
       if (pathStat.isSymbolicLink() && options?.symlinks !== "follow-within-root") {
         throw new FsSafeError("symlink", "symlink not allowed");
       }
@@ -316,7 +317,7 @@ async function openVerifiedLocalFile(
     await inspectPathIdentity(async () => {
       // Reuse the post-realpath observation; unknown Windows identities still
       // get a fresh observation on inspectFileIdentity's retry.
-      const realStat = resolvedStat ?? await fs.stat(realPath, { bigint: true });
+      const realStat = resolvedStat ?? fsSync.statSync(realPath, { bigint: true });
       resolvedStat = undefined;
       if (options?.hardlinks === "reject" && realStat.nlink > 1n) {
         throw hardlinkedPathNotAllowedError();
@@ -514,6 +515,7 @@ export class RootHandle implements Root {
       mkdir: this.defaults.mkdir,
       mode: this.defaults.mode,
       ...this.mutationOptions(options),
+      durable: options.durable ?? this.defaults.durable ?? true,
     });
   }
 
@@ -554,6 +556,7 @@ export class RootHandle implements Root {
       mode: this.defaults.mode,
       renameIdentity: this.defaults.renameIdentity,
       ...this.mutationOptions(options),
+      durable: options.durable ?? this.defaults.durable ?? true,
     });
   }
 
@@ -569,6 +572,7 @@ export class RootHandle implements Root {
       mkdir: this.defaults.mkdir,
       mode: this.defaults.mode,
       ...this.mutationOptions(options),
+      durable: options.durable ?? this.defaults.durable ?? true,
       overwrite: false,
     });
   }
@@ -821,7 +825,7 @@ async function writeTempFileForAtomicReplace(params: {
     }
     return {
       handle: tempHandle,
-      identity: await tempHandle.stat({ bigint: true }),
+      identity: fsSync.fstatSync(tempHandle.fd, { bigint: true }),
     };
   } catch (error) {
     await tempHandle.close().catch(() => {});
@@ -885,7 +889,7 @@ async function openWritableFileInRoot(
     ? resolved
     : await prepareRootWriteTarget(rootReal, resolved);
   try {
-    const resolvedRealPath = await fs.realpath(ioPath);
+    const resolvedRealPath = fsSync.realpathSync.native(ioPath);
     if (!isPathInside(rootWithSep, resolvedRealPath)) {
       throw outsideWorkspaceError();
     }
@@ -934,7 +938,7 @@ async function openWritableFileInRoot(
   let realPathForCleanup: string | null = null;
   let createdIdentity: Stats | null = null;
   try {
-    const stat = await handle.stat();
+    const stat = fsSync.fstatSync(handle.fd);
     if (createdForWrite) {
       createdIdentity = stat;
     }
@@ -946,7 +950,7 @@ async function openWritableFileInRoot(
     }
 
     try {
-      const lstat = await fs.lstat(ioPath);
+      const lstat = fsSync.lstatSync(ioPath);
       if (lstat.isSymbolicLink() || !lstat.isFile()) {
         throw new FsSafeError(
           lstat.isSymbolicLink() ? "symlink" : "not-file",
@@ -964,7 +968,7 @@ async function openWritableFileInRoot(
 
     const realPath = await resolveOpenedFileRealPathForHandle(handle, ioPath);
     realPathForCleanup = realPath;
-    const realStat = await fs.stat(realPath);
+    const realStat = fsSync.statSync(realPath);
     if (!sameFileIdentity(stat, realStat)) {
       throw new FsSafeError("path-mismatch", "path mismatch");
     }
@@ -1004,6 +1008,7 @@ async function appendFileInRoot(
   params: {
     relativePath: string;
     data: string | Buffer;
+    durable?: boolean;
     encoding?: BufferEncoding;
     mkdir?: boolean;
     mode?: number;
@@ -1042,8 +1047,8 @@ async function appendFileInRoot(
         prefix.length > 0 ? Buffer.concat([Buffer.from(prefix, "utf8"), params.data]) : params.data;
       await target.handle.appendFile(payload);
     }
-    await target.handle.sync();
-    if (target.createdForWrite) {
+    if (params.durable !== false) await target.handle.sync();
+    if (params.durable !== false && target.createdForWrite) {
       await syncDirectoryBestEffort(path.dirname(target.realPath));
     }
   } finally {
@@ -1127,6 +1132,7 @@ async function commitPinnedWriteInRoot(
       renameIdentity: params.renameIdentity,
       mkdir: params.mkdir !== false,
       mode: params.mode ?? pinned.mode,
+      sync: params.durable !== false,
       overwrite: params.overwrite,
       input: { kind: "buffer", data: params.data, encoding: params.encoding },
       rootIdentity: root.rootIdentity,
@@ -1226,13 +1232,13 @@ async function copyFileInRoot(
 }
 
 async function assertCopySourceCurrent(source: OpenResult, identity: BigIntStats): Promise<void> {
-  await inspectFileIdentity(() => source.handle.stat({ bigint: true }), identity);
+  await inspectFileIdentity(() => fsSync.fstatSync(source.handle.fd, { bigint: true }), identity);
   await assertCopySourcePathCurrent(source, identity);
 }
 
 async function assertCopySourcePathCurrent(source: OpenResult, identity: BigIntStats): Promise<void> {
   await inspectFileIdentity(async () => {
-    const current = await fs.lstat(source.realPath, { bigint: true });
+    const current = fsSync.lstatSync(source.realPath, { bigint: true });
     if (current.isSymbolicLink() || !current.isFile()) {
       throw new FsSafeError("path-mismatch", "copy source path changed");
     }
@@ -1245,7 +1251,7 @@ async function removePathIfIdentityUnchanged(
   identity: FileIdentityStat,
 ): Promise<void> {
   const parentGuard = await createAsyncDirectoryGuard(path.dirname(targetPath));
-  const current = await fs.lstat(targetPath);
+  const current = fsSync.lstatSync(targetPath);
   if (current.isSymbolicLink() || !sameFileIdentityForCleanup(current, identity)) {
     return;
   }
@@ -1283,7 +1289,7 @@ async function resolvePinnedWriteTargetInRoot(
   // and alias checks, but never open a competing owner's record just to reject it.
   if (!overwrite) {
     try {
-      const existing = await fs.stat(resolved);
+      const existing = fsSync.statSync(resolved);
       if (!existing.isFile()) throw new FsSafeError("not-file", "not a file");
       if (existing.nlink > 1) throw hardlinkedPathNotAllowedError();
       throw new FsSafeError("already-exists", "file already exists");
@@ -1408,7 +1414,7 @@ async function prepareRemoveGuard(targetPath: string) {
 async function removePathFallback(resolved: { resolved: string }): Promise<void> {
   const guard = await prepareRemoveGuard(resolved.resolved);
   try {
-    await ((await fs.lstat(resolved.resolved)).isDirectory() ? fs.rmdir(resolved.resolved) : fs.rm(resolved.resolved));
+    await (fsSync.lstatSync(resolved.resolved).isDirectory() ? fs.rmdir(resolved.resolved) : fs.rm(resolved.resolved));
   } catch (error) {
     throw normalizeRemovePathError(error);
   }
@@ -1425,7 +1431,7 @@ async function mkdirPathFallback(resolved: { rootReal: string; resolved: string 
 async function statPathFallback(root: RootContext, relativePath: string): Promise<PathStat> {
   const resolved = await resolvePinnedPathInRoot(root, { relativePath, allowRoot: true });
   try {
-    const stat = pathStatFromStats(await fs.lstat(resolved.resolved));
+    const stat = pathStatFromStats(fsSync.lstatSync(resolved.resolved));
     await assertRootIdentityCurrent(root);
     return stat;
   } catch (error) {
@@ -1453,7 +1459,7 @@ async function listPathFallback(
     for (const name of sortedNames) {
       entries.push({
         name,
-        ...pathStatFromStats(await fs.lstat(path.join(resolved.resolved, name))),
+        ...pathStatFromStats(fsSync.lstatSync(path.join(resolved.resolved, name))),
       });
     }
     await assertRootIdentityCurrent(root);
@@ -1518,7 +1524,8 @@ async function movePathFallback(
         relativePath: params.toRelative,
         policy: PATH_ALIAS_POLICIES.unlinkTarget,
       });
-      const targetStat = await fs.lstat(resolvedTarget.resolved).catch(() => undefined);
+      let targetStat: Stats | undefined;
+      try { targetStat = fsSync.lstatSync(resolvedTarget.resolved); } catch { /* Advisory lookup. */ }
       return !(
         process.platform !== "win32" &&
         params.overwrite &&
@@ -1529,7 +1536,7 @@ async function movePathFallback(
 
   let sourceStat: Stats;
   try {
-    sourceStat = await fs.lstat(source.resolved);
+    sourceStat = fsSync.lstatSync(source.resolved);
   } catch (error) {
     if (isNotFoundPathError(error)) {
       throw fileNotFoundError(error instanceof Error ? error : undefined);
@@ -1547,7 +1554,7 @@ async function movePathFallback(
   }
   if (!params.overwrite) {
     try {
-      await fs.lstat(target.resolved);
+      fsSync.lstatSync(target.resolved);
       throw new FsSafeError("already-exists", "destination exists");
     } catch (error) {
       if (error instanceof FsSafeError) {
@@ -1680,8 +1687,8 @@ async function writeMissingFileFallback(
         const handle = await fs.open(targetPath, OPEN_WRITE_CREATE_FLAGS, params.mode ?? 0o600).catch((error) => recordExclusiveCreateFailure(error, targetPath));
         created = true;
         try {
-          createdIdentity = await handle.stat();
-          const writtenStat = await handle.stat({ bigint: true });
+          createdIdentity = fsSync.fstatSync(handle.fd);
+          const writtenStat = fsSync.fstatSync(handle.fd, { bigint: true });
           if (typeof params.data === "string") {
             await handle.writeFile(params.data, params.encoding ?? "utf8");
           } else {

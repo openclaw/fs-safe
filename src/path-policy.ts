@@ -1,4 +1,4 @@
-import fs from "node:fs/promises";
+import fs from "node:fs";
 import {
   ROOT_PATH_ALIAS_POLICIES,
   resolveRootPath,
@@ -44,9 +44,9 @@ export async function assertNoHardlinkedFinalPath(params: {
   if (params.allowFinalHardlinkForUnlink) {
     return;
   }
-  let stat: Awaited<ReturnType<typeof fs.stat>>;
+  let stat: fs.Stats;
   try {
-    stat = await fs.stat(params.filePath);
+    stat = fs.statSync(params.filePath);
   } catch (err) {
     if (isNotFoundPathError(err)) {
       return;

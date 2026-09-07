@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { promisify } from "node:util";
 import { configureFsSafeNative } from "@openclaw/fs-safe/config";
 import { createSecretFileAtomic, writeSecretFileAtomic } from "@openclaw/fs-safe/secret";
 import { fileStore } from "@openclaw/fs-safe/store";
@@ -17,20 +16,22 @@ configureFsSafeNative({ mode });
 const require = createRequire(import.meta.url);
 const expected = JSON.parse(await fs.readFile("expected.json", "utf8"));
 const sandbox = await fs.realpath(await fs.mkdtemp(path.join(process.cwd(), "secret-proof-")));
-const original = { lstat: fs.lstat, realpath: fs.realpath, open: fs.open };
-const exec = promisify(execFile);
+const original = { open: fs.open };
+const originalSync = { lstatSync: fsSync.lstatSync, realpath: fsSync.realpathSync.native };
 const rows = [];
 
-async function identity(target) {
-  const stat = await original.lstat(target, { bigint: true }).catch((error) => {
+function identity(target) {
+  try {
+    const stat = originalSync.lstatSync(target, { bigint: true });
+    return { dev: String(stat.dev), ino: String(stat.ino), directory: stat.isDirectory() };
+  } catch (error) {
     if (error.code === "ENOENT") return null;
     throw error;
-  });
-  return stat ? { dev: String(stat.dev), ino: String(stat.ino), directory: stat.isDirectory() } : null;
+  }
 }
 
-async function replaceDirectory(target, moved) {
-  await exec(process.execPath, ["-e", `
+function replaceDirectory(target, moved) {
+  execFileSync(process.execPath, ["-e", `
     const fs = require('node:fs');
     fs.renameSync(process.argv[1], process.argv[2]);
     fs.mkdirSync(process.argv[1], { mode: 0o700 });
@@ -67,19 +68,19 @@ try {
       let inspections = 0;
       let swapped = false;
       const events = [];
-      fs.lstat = async (...args) => {
-        const stat = await original.lstat(...args);
+      fsSync.lstatSync = (...args) => {
+        const stat = originalSync.lstatSync(...args);
         if (String(args[0]) === target && args[1]?.bigint) inspections++;
         return stat;
       };
-      fs.realpath = async (...args) => {
+      fsSync.realpathSync.native = (...args) => {
         // Replace after initial inspection and exact guard capture, before write admission.
         if (String(args[0]) === target && inspections >= 2 && !swapped) {
-          await replaceDirectory(target, moved);
+          replaceDirectory(target, moved);
           swapped = true;
-          events.push({ event: "replace-directory", before, after: await identity(target) });
+          events.push({ event: "replace-directory", before, after: identity(target) });
         }
-        return await original.realpath(...args);
+        return originalSync.realpath(...args);
       };
       observeOpens(events);
       let failure;
@@ -89,6 +90,8 @@ try {
         failure = { name: error.name, code: error.code };
       } finally {
         Object.assign(fs, original);
+        fsSync.lstatSync = originalSync.lstatSync;
+        fsSync.realpathSync.native = originalSync.realpath;
       }
       assert.ok(swapped, "replacement witness must execute");
       assert.equal(failure?.code, "path-mismatch");
@@ -111,19 +114,19 @@ try {
     let callbacks = 0;
     // Queue-key inspection plus preparation; Windows skips the POSIX mode inspection.
     const admittedAfter = process.platform === "win32" ? 5 : 6;
-    fs.lstat = async (...args) => {
+    fsSync.lstatSync = (...args) => {
       if (scenario !== "stable" && String(args[0]) === parent && inspections >= admittedAfter && !changed) {
         if (scenario === "deletion") {
-          await exec(process.execPath, ["-e", "require('node:fs').rmdirSync(process.argv[1])", parent], {
+          execFileSync(process.execPath, ["-e", "require('node:fs').rmdirSync(process.argv[1])", parent], {
             timeout: 10_000, killSignal: "SIGKILL",
           });
         } else {
-          await replaceDirectory(parent, `${parent}-admitted`);
+          replaceDirectory(parent, `${parent}-admitted`);
         }
         changed = true;
-        events.push({ event: scenario, before, after: await identity(parent) });
+        events.push({ event: scenario, before, after: identity(parent) });
       }
-      const stat = await original.lstat(...args);
+      const stat = originalSync.lstatSync(...args);
       if (String(args[0]) === parent) inspections++;
       return stat;
     };
@@ -139,6 +142,8 @@ try {
       failure = { name: error.name, code: error.code };
     } finally {
       Object.assign(fs, original);
+      fsSync.lstatSync = originalSync.lstatSync;
+      fsSync.realpathSync.native = originalSync.realpath;
     }
     if (scenario === "stable") {
       assert.equal(failure, undefined);
@@ -175,5 +180,7 @@ try {
   }));
 } finally {
   Object.assign(fs, original);
+  fsSync.lstatSync = originalSync.lstatSync;
+  fsSync.realpathSync.native = originalSync.realpath;
   await fs.rm(sandbox, { recursive: true, force: true });
 }

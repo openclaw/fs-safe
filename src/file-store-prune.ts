@@ -1,4 +1,4 @@
-import type { Dirent } from "node:fs";
+import fsSync, { type Dirent } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
@@ -24,33 +24,33 @@ export async function pruneExpiredStoreEntries(params: {
   const pruneEmptyDirs =
     (recursive || maxDepth !== undefined) && (params.options.pruneEmptyDirs ?? false);
   await fs.mkdir(params.rootDir, { recursive: true, mode: params.dirMode });
-  const rootReal = await fs.realpath(params.rootDir);
+  const rootReal = fsSync.realpathSync.native(params.rootDir);
   const scopedRoot = await root(rootReal);
   const rootGuard = {
     dir: rootReal,
     realPath: rootReal,
-    stat: await fs.lstat(rootReal),
+    stat: fsSync.lstatSync(rootReal),
   };
 
   async function assertRootGuard(): Promise<void> {
-    const stat = await fs.lstat(rootGuard.dir);
+    const stat = fsSync.lstatSync(rootGuard.dir);
     if (
       stat.isSymbolicLink() ||
       !stat.isDirectory() ||
       stat.dev !== rootGuard.stat.dev ||
       stat.ino !== rootGuard.stat.ino ||
-      (await fs.realpath(rootGuard.dir)) !== rootGuard.realPath
+      fsSync.realpathSync.native(rootGuard.dir) !== rootGuard.realPath
     ) {
       throw new FsSafeError("path-mismatch", "store root changed during prune");
     }
   }
 
   async function readStableDirectory(dir: string): Promise<Dirent[] | null> {
-    const before = await fs.lstat(dir).catch(() => null);
+    const before = observeOrNull(() => fsSync.lstatSync(dir));
     if (!before || before.isSymbolicLink() || !before.isDirectory()) {
       return null;
     }
-    const real = await fs.realpath(dir).catch(() => null);
+    const real = observeOrNull(() => fsSync.realpathSync.native(dir));
     if (!real || !isPathInside(rootReal, real)) {
       return null;
     }
@@ -58,7 +58,7 @@ export async function pruneExpiredStoreEntries(params: {
     if (!entries) {
       return null;
     }
-    const after = await fs.lstat(dir).catch(() => null);
+    const after = observeOrNull(() => fsSync.lstatSync(dir));
     if (!after || before.dev !== after.dev || before.ino !== after.ino) {
       return null;
     }
@@ -73,7 +73,7 @@ export async function pruneExpiredStoreEntries(params: {
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name);
       const relativePath = relativeDir ? `${relativeDir}/${entry.name}` : entry.name;
-      const stat = await fs.lstat(fullPath).catch(() => null);
+      const stat = observeOrNull(() => fsSync.lstatSync(fullPath));
       if (!stat || stat.isSymbolicLink()) {
         continue;
       }
@@ -103,4 +103,8 @@ export async function pruneExpiredStoreEntries(params: {
   }
 
   await pruneDir(rootReal, "", 0);
+}
+
+function observeOrNull<T>(observe: () => T): T | null {
+  try { return observe(); } catch { return null; }
 }

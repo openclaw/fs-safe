@@ -1,8 +1,10 @@
+import fsSync from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { createFileLockManager } from "../src/file-lock.js";
 import { root } from "../src/root.js";
+import * as rootPath from "../src/root-path.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useTempDirs } from "./helpers/vitest.js";
 
@@ -17,28 +19,22 @@ function atFdResolution(lockPath: string, mutate: (handle: FileHandle) => Promis
   let opened: FileHandle | undefined;
   let fired = false;
   let mutation: Promise<void> | undefined;
-  const realpath = fs.realpath.bind(fs);
-  const wrapper = vi.spyOn(fs, "realpath").mockImplementation(async (...args) => {
-    const candidate = String(args[0]);
-    // After afterOpen, the resolver probes procfs on Linux and the lock path elsewhere.
-    if (!fired && opened && candidate === (process.platform === "linux" ? `/proc/self/fd/${opened.fd}` : lockPath)) {
+  __setFsSafeTestHooksForTest({
+    async afterOpenedPathIdentityCheck(candidate, handle) {
+      if (fired || candidate !== lockPath) return;
+      opened = handle;
       fired = true;
       __setFsSafeTestHooksForTest();
-      mutation = mutate(opened);
+      // This awaited hook immediately precedes descriptor realpath resolution.
+      mutation = mutate(handle);
       await mutation;
-    }
-    return await realpath(...args);
-  });
-  __setFsSafeTestHooksForTest({
-    afterOpen(candidate, handle) {
-      if (candidate === lockPath && !opened) opened = handle;
     },
   });
   return {
     get opened() { return opened; },
     get fired() { return fired; },
     async join() { await mutation; },
-    restore() { wrapper.mockRestore(); __setFsSafeTestHooksForTest(); },
+    restore() { __setFsSafeTestHooksForTest(); },
   };
 }
 
@@ -126,15 +122,26 @@ it("owner release during create-only preflight needs no existing-file descriptor
   let fired = false;
   const open = vi.fn();
   __setFsSafeTestHooksForTest({ afterOpen: open });
-  const stat = fs.stat.bind(fs);
-  vi.spyOn(fs, "stat").mockImplementation(async (...args) => {
-    const result = await stat(...args);
+  let release: Promise<void> | undefined;
+  const stat = fsSync.statSync.bind(fsSync);
+  vi.spyOn(fsSync, "statSync").mockImplementation((...args) => {
+    const result = stat(...args);
     if (String(args[0]) === lockPath && !fired) {
       fired = true;
       expect(open).not.toHaveBeenCalled();
       __setFsSafeTestHooksForTest();
-      await owner.release();
+      release = owner.release();
     }
+    return result;
+  });
+  let firstResolution = true;
+  const resolve = rootPath.resolveRootPath;
+  vi.spyOn(rootPath, "resolveRootPath").mockImplementation(async (params) => {
+    const joinRelease = firstResolution && params.absolutePath === lockPath;
+    if (joinRelease) firstResolution = false;
+    const result = await resolve(params);
+    // Join release at the existing async preflight boundary, before admission.
+    if (joinRelease && release) await release;
     return result;
   });
   const waiter = await waiterManager.acquire(target, {

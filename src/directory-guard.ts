@@ -1,6 +1,5 @@
 import type { BigIntStats, Stats } from "node:fs";
 import fsSync from "node:fs";
-import fs from "node:fs/promises";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
@@ -26,21 +25,21 @@ export function createAsyncDirectoryGuard(dir: string, options: { bigint: true }
 export function createAsyncDirectoryGuard(dir: string, options?: { bigint?: false }): Promise<AsyncDirectoryGuard>;
 export function createAsyncDirectoryGuard(dir: string, options: { bigint: boolean }): Promise<AnyAsyncDirectoryGuard>;
 export async function createAsyncDirectoryGuard(dir: string, options?: { bigint?: boolean }): Promise<AnyAsyncDirectoryGuard> {
-  const stat = options?.bigint ? await inspectDirectoryIdentity(dir) : await fs.lstat(dir);
+  const stat = options?.bigint ? await inspectDirectoryIdentity(dir) : fsSync.lstatSync(dir);
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw directoryComponentNotDirectoryError();
   }
-  return { dir, realPath: await fs.realpath(dir), stat };
+  return { dir, realPath: fsSync.realpathSync.native(dir), stat };
 }
 
 export async function assertAsyncDirectoryGuard(guard: AnyAsyncDirectoryGuard): Promise<void> {
   const stat = typeof guard.stat.dev === "bigint" && typeof guard.stat.ino === "bigint"
     ? await inspectDirectoryIdentity(guard.dir, { dev: guard.stat.dev, ino: guard.stat.ino })
-    : await fs.lstat(guard.dir);
+    : fsSync.lstatSync(guard.dir);
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw directoryComponentNotDirectoryError();
   }
-  if (!sameFileIdentity(stat, guard.stat) || (await fs.realpath(guard.dir)) !== guard.realPath) {
+  if (!sameFileIdentity(stat, guard.stat) || fsSync.realpathSync.native(guard.dir) !== guard.realPath) {
     throw new FsSafeError("path-mismatch", "directory changed during operation");
   }
 }
@@ -107,7 +106,7 @@ export function createNearestExistingSyncDirectoryGuard(
 // Recovery receipts must retain every identity bit, including on Windows.
 export async function inspectDirectoryIdentity(dir: string, expected?: Pick<BigIntStats, "dev" | "ino">): Promise<BigIntStats> {
   return await inspectFileIdentity(async () => {
-    const stat = await fs.lstat(dir, { bigint: true });
+    const stat = fsSync.lstatSync(dir, { bigint: true });
     if (stat.isSymbolicLink() || !stat.isDirectory()) throw directoryComponentNotDirectoryError();
     return stat;
   }, expected);

@@ -100,6 +100,7 @@ type RenameIdentityPolicy = "strict" | "verify-content-with-lock";
 
 type RootDefaults = {
   denyMutations?: DenyMutationPolicy;
+  durable?: boolean; // default true for write/create/writeJson/createJson/append
   hardlinks?: "reject" | "allow";
   maxBytes?: number;
   mkdir?: boolean; // default true for mutation methods
@@ -126,7 +127,7 @@ type RootOptions = {
 
 ```ts
 type RootReadOptions = Pick<RootDefaults, "hardlinks" | "maxBytes" | "nonBlockingRead" | "symlinks">;
-type RootWriteOptions = Pick<RootDefaults, "denyMutations" | "mkdir" | "mode" | "renameIdentity"> & {
+type RootWriteOptions = Pick<RootDefaults, "denyMutations" | "durable" | "mkdir" | "mode" | "renameIdentity"> & {
   encoding?: BufferEncoding;
   overwrite?: boolean;
 };

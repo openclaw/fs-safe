@@ -18,6 +18,7 @@ const fs = await root("/srv/workspace", {
 function root(rootDir: string, defaults?: RootDefaults): Promise<Root>;
 
 type RootDefaults = {
+  durable?: boolean;               // fsync write/create/writeJson/createJson/append; default true
   hardlinks?: "reject" | "allow";  // refuse files with nlink > 1 on read; defaults to "reject"
   denyMutations?: DenyMutationPolicy; // absolute paths/prefixes mutation methods may not change
   maxBytes?: number;               // refuse reads larger than this many bytes; defaults to 16 MiB
@@ -99,7 +100,7 @@ fs.write(rel, data, options?)            // overwrite-ok atomic write
 fs.create(rel, data, options?)           // throws "already-exists" if target exists
 fs.writeJson(rel, value, options?)       // JSON.stringify + atomic write
 fs.createJson(rel, value, options?)      // create() variant of writeJson
-fs.append(rel, data, options?)           // append text/buffer; syncs before close
+fs.append(rel, data, options?)           // append text/buffer; syncs before close by default
 fs.copyIn(rel, sourceAbsPath, options?)  // copy from outside the root, atomically, with size cap
 fs.openWritable(rel, options?)           // FileHandle for streaming writes; supports await using
 fs.move(from, to, options?)              // rename within the root; defaults to no clobber
@@ -109,6 +110,14 @@ fs.ensureRoot(options?)                  // accepts "" / "." as the root itself
 ```
 
 `write`, `create`, `append`, `writeJson`, and `createJson` accept `mode?: number`; use `0o600` for credentials and other private state. `writeJson` also accepts the same options as `JSON.stringify` plus `trailingNewline?: boolean` (defaults `true` so the file ends in `\n`).
+
+These five methods also accept `durable?: boolean`: the per-call value overrides
+`Root.defaults.durable`, which defaults to `true` when omitted. An explicitly
+`undefined` per-call value preserves the root default. `durable: false` keeps
+the existing publication behavior, modes, and identity checks but skips file
+and parent-directory fsync calls. Use it only for reconstructible data: a crash
+may lose the write or leave the previous file. See [Writing](writing.md#write-options)
+for platform details.
 
 `copyIn` is a one-shot ingest from a trusted absolute source path: it streams the source through the boundary, atomically renames into the root, and respects `maxBytes`.
 

@@ -12,6 +12,8 @@ const opened = await fs.open("large.log");               // FileHandle for strea
 
 ## What every read does
 
+Identity and containment checks use brief synchronous metadata calls, like Node's module resolution, while file data is read asynchronously. Canonical paths retain Node's native realpath spelling, including expansion of Windows short paths.
+
 Regardless of shape, every read goes through the same boundary checks:
 
 1. Resolve the input lexically against the canonical real root.

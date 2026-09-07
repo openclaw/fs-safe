@@ -1,26 +1,39 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { extractArchive } from "../src/archive.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { __loadBundledNativeForTest, __resetNativeLoaderForTest, __setNativeLoaderForTest, type NativeBinding } from "../src/native.js";
-import { modeArchive, type ModeEntry } from "./helpers/archive-modes.js";
-import { useRealTempDirs } from "./helpers/vitest.js";
+import { modeArchive, removeModeFixture, type ModeEntry } from "./helpers/archive-modes.js";
+import { useSuiteFixture } from "./helpers/suite-fixture.js";
 
-const { tempRoot } = useRealTempDirs();
+let suiteDir: string | undefined;
+const runFixture = useSuiteFixture(async () => {
+  suiteDir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-publication-modes-"));
+  return await fs.realpath(suiteDir);
+}, async () => {
+  if (suiteDir) await removeModeFixture(suiteDir);
+});
 let native: NativeBinding | undefined;
 try { native = __loadBundledNativeForTest(); }
 catch (error) { if (process.env.FS_SAFE_NATIVE_MODE === "require") throw error; }
 const backends = native ? ["off", "require"] as const : ["off"] as const;
 const nonRootPosix = process.platform !== "win32" && process.getuid?.() !== 0;
 
-afterEach(() => {
-  __resetFsSafeNativeConfigForTest();
-  __resetNativeLoaderForTest();
-});
+function run(operation: (directory: string) => Promise<void>) {
+  return runFixture(async (directory) => {
+    try { await operation(directory); }
+    finally {
+      // Reset backend selection only after timed-out test work has settled.
+      __resetFsSafeNativeConfigForTest();
+      __resetNativeLoaderForTest();
+    }
+  });
+}
 
-async function fixture(kind: "tar" | "zip", entries: ModeEntry[]) {
-  const base = await tempRoot("fs-safe-publication-modes-");
+async function fixture(directory: string, kind: "tar" | "zip", entries: ModeEntry[]) {
+  const base = await fs.mkdtemp(path.join(directory, "case-"));
   const archivePath = path.join(base, `fixture.${kind}`);
   const destDir = path.join(base, "output");
   await fs.mkdir(destDir);
@@ -48,25 +61,25 @@ describe.skipIf(!nonRootPosix).each(backends)("%s real non-root publication mode
   }
   it.each([
     ["tar", 0o022], ["tar", 0o077], ["zip", 0o022], ["zip", 0o077],
-  ] as const)("preserves %s file rwx under umask %s, including zero and special bits", async (kind, umask) => {
+  ] as const)("preserves %s file rwx under umask %s, including zero and special bits", (kind, umask) => run(async (directory) => {
     configure();
     const previousUmask = process.umask(umask);
     try {
       const entries = [0, 0o200, 0o400, 0o710, 0o7777, 0o7000].map((mode) => ({ path: `mode-${mode}`, mode }));
-      const params = await fixture(kind, entries);
+      const params = await fixture(directory, kind, entries);
       for (const entry of entries) await fs.writeFile(path.join(params.destDir, entry.path), "OLD");
       await extractArchive({ ...params, entryModes: "preserve" });
       const actual = await inspectTree(params.destDir, entries);
       for (const entry of entries) expect(actual.get(entry.path)).toBe(entry.mode & 0o777);
     } finally { process.umask(previousUmask); }
-  });
+  }));
 
   it.each([
     ["tar", 0o022, "before"], ["tar", 0o022, "after"],
     ["tar", 0o077, "before"], ["tar", 0o077, "after"],
     ["zip", 0o022, "before"], ["zip", 0o022, "after"],
     ["zip", 0o077, "before"], ["zip", 0o077, "after"],
-  ] as const)("finalizes %s directories under umask %s with explicit entries %s children", async (kind, umask, order) => {
+  ] as const)("finalizes %s directories under umask %s with explicit entries %s children", (kind, umask, order) => run(async (directory) => {
     configure();
     const previousUmask = process.umask(umask);
     try {
@@ -78,21 +91,21 @@ describe.skipIf(!nonRootPosix).each(backends)("%s real non-root publication mode
       const files: ModeEntry[] = [0, 0o100, 0o500, 0o555].map((mode) => ({ path: `dir-${mode}/nested/value`, mode: 0o200 }));
       files.push({ path: "bin/tool", mode: 0o755 });
       const entries = order === "before" ? [...dirs, ...files] : [...files, ...dirs];
-      const params = await fixture(kind, entries);
+      const params = await fixture(directory, kind, entries);
       await extractArchive({ ...params, entryModes: "preserve" });
       const expected = [...entries, { path: "bin/", directory: true, mode: 0o755 }];
       const actual = await inspectTree(params.destDir, expected);
       for (const entry of expected) expect(actual.get(entry.path)).toBe(entry.mode! & 0o777);
     } finally { process.umask(previousUmask); }
-  });
+  }));
 
-  it.each(["tar", "zip"] as const)("clamps %s files and implicit parents and calls strip/filter policy once", async (kind) => {
+  it.each(["tar", "zip"] as const)("clamps %s files and implicit parents and calls strip/filter policy once", (kind) => run(async (directory) => {
     configure();
     const entries = [
       { path: "pkg/bin/tool", mode: 0o710 }, { path: "pkg/value", mode: 0 },
       { path: "pkg/skip", mode: 0o200 },
     ];
-    const params = await fixture(kind, entries);
+    const params = await fixture(directory, kind, entries);
     const seen: string[] = [];
     await extractArchive({ ...params, stripComponents: 1, onFiltered: "skip-entry", entryFilter: ({ path }) => {
       seen.push(path); return path === "pkg/skip" ? "skip" : "extract";
@@ -103,21 +116,21 @@ describe.skipIf(!nonRootPosix).each(backends)("%s real non-root publication mode
     ]);
     expect(Object.fromEntries(actual)).toEqual({ "bin/": 0o755, value: 0o644, "bin/tool": 0o755 });
     await expect(fs.stat(path.join(params.destDir, "skip"))).rejects.toMatchObject({ code: "ENOENT" });
-  });
+  }));
 
-  it("distinguishes absent ZIP metadata from explicit UNIX zero", async () => {
+  it("distinguishes absent ZIP metadata from explicit UNIX zero", () => run(async (directory) => {
     configure();
     const entries: ModeEntry[] = [
       { path: "absent", mode: null }, { path: "zero", mode: 0 },
       { path: "absent-dir/", directory: true, mode: null }, { path: "zero-dir/", directory: true, mode: 0 },
     ];
-    const params = await fixture("zip", entries);
+    const params = await fixture(directory, "zip", entries);
     await extractArchive({ ...params, entryModes: "preserve" });
     const actual = await inspectTree(params.destDir, entries);
     expect(Object.fromEntries(actual)).toEqual({ absent: 0o644, zero: 0, "absent-dir/": 0o755, "zero-dir/": 0 });
-  });
+  }));
 
-  it.each(["tar", "zip"] as const)("keeps %s explicit directory modes after strip/filter admission", async (kind) => {
+  it.each(["tar", "zip"] as const)("keeps %s explicit directory modes after strip/filter admission", (kind) => run(async (directory) => {
     configure();
     const entries: ModeEntry[] = [
       { path: "pkg/restricted/", directory: true, mode: 0 },
@@ -125,7 +138,7 @@ describe.skipIf(!nonRootPosix).each(backends)("%s real non-root publication mode
       { path: "pkg/skipped/", directory: true, mode: 0 },
       { path: "pkg/skipped/value", mode: 0o200 },
     ];
-    const params = await fixture(kind, entries);
+    const params = await fixture(directory, kind, entries);
     const seen: string[] = [];
     await extractArchive({ ...params, stripComponents: 1, entryModes: "preserve", onFiltered: "skip-entry", entryFilter: (entry) => {
       seen.push(entry.path);
@@ -134,11 +147,11 @@ describe.skipIf(!nonRootPosix).each(backends)("%s real non-root publication mode
     expect(seen).toEqual(["pkg/restricted", "pkg/restricted/value", "pkg/skipped", "pkg/skipped/value"]);
     const actual = await inspectTree(params.destDir, entries.map((entry) => ({ ...entry, path: entry.path.slice(4) })));
     expect(Object.fromEntries(actual)).toEqual({ "restricted/": 0, "restricted/value": 0o400, "skipped/": 0o755, "skipped/value": 0o200 });
-  });
+  }));
 
-  it.each(["tar", "zip"] as const)("associates %s modes with staged Unicode and case identity", async (kind) => {
+  it.each(["tar", "zip"] as const)("associates %s modes with staged Unicode and case identity", (kind) => run(async (directory) => {
     configure();
-    const params = await fixture(kind, [
+    const params = await fixture(directory, kind, [
       { path: "Dir/é", mode: 0o200 }, { path: "dir/", directory: true, mode: 0o500 },
     ]);
     await extractArchive({ ...params, entryModes: "preserve" });
@@ -149,5 +162,5 @@ describe.skipIf(!nonRootPosix).each(backends)("%s real non-root publication mode
     await fs.chmod(path.join(params.destDir, "dir"), 0o700);
     const actual = await inspectTree(params.destDir, [{ path: "Dir/é" }]);
     expect(actual.get("Dir/é")).toBe(0o200);
-  });
+  }));
 });

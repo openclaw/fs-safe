@@ -77,14 +77,37 @@ await fs.write("state/last-run.json", JSON.stringify(run));
 await fs.write("notes/today.txt", "hello\n", { encoding: "utf8" });
 ```
 
-`data` accepts `string | Buffer`. `options` are `{ denyMutations?: DenyMutationPolicy; encoding?: BufferEncoding; mkdir?: boolean; mode?: number; overwrite?: boolean; renameIdentity?: RenameIdentityPolicy }`. `mode` sets the file's POSIX mode. If neither the call nor `RootDefaults` supplies it, a replacement preserves the existing file mode and a new file uses `0o600`. `mkdir` and `overwrite` both default to `true`; set `overwrite: false` for the same no-clobber behavior as `create()`.
+`data` accepts `string | Buffer`. `mode` sets the file's POSIX mode. If neither the call nor `RootDefaults` supplies it, a replacement preserves the existing file mode and a new file uses `0o600`. `mkdir` and `overwrite` both default to `true`; set `overwrite: false` for the same no-clobber behavior as `create()`.
+
+#### Write options
+
+| Option | Type | Default / behavior |
+|---|---|---|
+| `denyMutations` | `DenyMutationPolicy` | Merged with root-level denies. |
+| `durable` | `boolean` | `true`; use `false` to skip file and parent fsync. |
+| `encoding` | `BufferEncoding` | `"utf8"` for strings. |
+| `mkdir` | `boolean` | `true`; creates missing parents. |
+| `mode` | `number` | Inherited on replacement, otherwise `0o600`. |
+| `overwrite` | `boolean` | `true`; `false` is create-only. |
+| `renameIdentity` | `RenameIdentityPolicy` | `"strict"`. |
+
+`write`, `create`, `writeJson`, `createJson`, and `append` accept `durable`.
+Precedence is per-call option, then `Root.defaults.durable`, then `true`;
+an explicitly `undefined` call option preserves the root default.
+`durable: false` keeps the sibling-temp replace/rename behavior of replacement
+writes but skips file and parent-directory fsync calls. Create-only and append
+publication behavior, permissions, identity checks, and error codes are unchanged.
+Use it only for reconstructible data: a crash may lose the write or leave the
+previous file. `copyIn`, `move`, and streaming `openWritable` do not use this option.
+The existing pure-JavaScript Windows writer performs no fsync calls in either
+setting; native Windows writes honor the option. Directory sync remains best-effort.
 
 POSIX modes without read permission, including `0o000` and `0o200`, succeed:
 final verification uses a descriptor retained by the writer rather than reopening
 the published file. The requested mode is not relaxed for verification.
 Publication verification compares exact bigint descriptor and pathname identities,
 including large file indexes that cannot be represented by a JavaScript number.
-Native publication syncs content before rename and always syncs the parent directory.
+With durability enabled (the default), native publication syncs content before rename and syncs the parent directory.
 Modes that retain owner read/write skip the extra mode-only file sync: after a
 crash, the file may retain staged mode `0o600` instead of the wider requested mode.
 Modes that remove owner read or write, and corrections of observed wider staging
@@ -143,7 +166,7 @@ type RootWriteJsonOptions = RootWriteOptions & {
 
 ### `fs.append(rel, data, options?)`
 
-Open in append mode, write, sync the file handle, and close. Honors `mkdir` for the parent directory and syncs the parent directory when the append creates the file. Pass `prependNewlineIfNeeded: true` to insert a `\n` if the file does not already end in one.
+Open in append mode, write, sync the file handle, and close. Honors `mkdir` for the parent directory and syncs the parent directory when the append creates the file. `durable: false` skips both syncs. Pass `prependNewlineIfNeeded: true` to insert a `\n` if the file does not already end in one.
 
 ```ts
 await fs.append("logs/today.log", `[${ts}] ${line}\n`);

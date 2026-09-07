@@ -36,10 +36,10 @@ describe("Root copy source lifetime", () => {
       fsSync.renameSync(replacement, source);
       swapped = true;
     };
-    for (const method of ["lstat", "stat"] as const) {
-      const actual = fs[method].bind(fs);
-      vi.spyOn(fs, method).mockImplementation(async (...args) => {
-        const stat = await actual(...args);
+    for (const method of ["lstatSync", "statSync"] as const) {
+      const actual = fsSync[method].bind(fsSync);
+      vi.spyOn(fsSync, method).mockImplementation((...args) => {
+        const stat = actual(...args);
         if (String(args[0]) === source) {
           const value = swapped ? (timing === "unknown-after-copy" ? 0n : ino + 1n) : ino;
           stat.ino = args[1]?.bigint ? value : Number(value);
@@ -51,11 +51,12 @@ describe("Root copy source lifetime", () => {
       afterOpen(candidate, handle) {
         if (candidate !== source) return;
         close = vi.spyOn(handle, "close");
-        const actualStat = handle.stat.bind(handle);
+        const actualStat = fsSync.fstatSync.bind(fsSync);
         let inspections = 0;
-        vi.spyOn(handle, "stat").mockImplementation(async (options) => {
+        vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
+          if (fd !== handle.fd) return actualStat(fd, options);
           if (++inspections === 3 && timing === "before-copy") swap();
-          const stat = await actualStat(options);
+          const stat = actualStat(fd, options);
           stat.ino = options?.bigint ? ino : Number(ino);
           return stat;
         });

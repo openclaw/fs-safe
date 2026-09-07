@@ -64,11 +64,11 @@ describe.skipIf(process.platform === "win32")("FUSE accepted descriptor lifetime
           await fs.rename(target, path.join(directory, "accepted"));
           await fs.writeFile(target, "payload", { mode });
         } else if (scenario === "outer I/O") {
-          const realLstat = fs.lstat.bind(fs);
-          vi.spyOn(fs, "lstat").mockImplementation((async (...args: Parameters<typeof fs.lstat>) => {
+          const realLstat = fsSync.lstatSync.bind(fsSync);
+          vi.spyOn(fsSync, "lstatSync").mockImplementation(((...args: Parameters<typeof fsSync.lstatSync>) => {
             if (String(args[0]) === target) throw sentinel;
-            return await realLstat(...args);
-          }) as typeof fs.lstat);
+            return realLstat(...args);
+          }) as typeof fsSync.lstatSync);
         }
         await verifyPublished(params);
       });
@@ -183,13 +183,13 @@ for (const backend of ["javascript", "native", "windows fallback branch"] as con
                 : { isFile: () => false });
           }) as typeof fsSync.fstatSync);
           if (backend === "windows fallback branch") {
-            const realLstat = fs.lstat.bind(fs);
-            vi.spyOn(fs, "lstat").mockImplementation((async (...args: Parameters<typeof fs.lstat>) => {
-              const stat = await realLstat(...args);
+            const realLstat = fsSync.lstatSync.bind(fsSync);
+            vi.spyOn(fsSync, "lstatSync").mockImplementation(((...args: Parameters<typeof fsSync.lstatSync>) => {
+              const stat = realLstat(...args);
               if (String(args[0]) !== target) return stat;
               unknownPathChecked = true;
               return Object.assign(Object.create(stat), { dev: 0, ino: 0 });
-            }) as typeof fs.lstat);
+            }) as typeof fsSync.lstatSync);
           }
           await verifyPublished(params);
         });

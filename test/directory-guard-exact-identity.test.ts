@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -19,10 +20,10 @@ describe.each(["capture", "verify", "secret preparation"] as const)("Windows exa
       const directory = await tempRoot("fs-safe-directory-exact-");
       const guard = await createAsyncDirectoryGuard(directory, { bigint: true });
       Object.defineProperty(process, "platform", { value: "win32" });
-      const lstat = fs.lstat.bind(fs);
+      const lstat = fsSync.lstatSync.bind(fsSync);
       let inspections = 0;
-      vi.spyOn(fs, "lstat").mockImplementation((async (...args: Parameters<typeof fs.lstat>) => {
-        const stat = await lstat(...args);
+      vi.spyOn(fsSync, "lstatSync").mockImplementation(((...args: Parameters<typeof fsSync.lstatSync>) => {
+        const stat = lstat(...args);
         if (String(args[0]) !== directory) return stat;
         expect(typeof stat.ino).toBe("bigint");
         const attempt = ++inspections;
@@ -36,7 +37,7 @@ describe.each(["capture", "verify", "secret preparation"] as const)("Windows exa
           return Object.assign(Object.create(stat), scenario === "transient inode" ? { ino: 0n } : { dev: 0n });
         }
         return stat;
-      }) as typeof fs.lstat);
+      }) as typeof fsSync.lstatSync);
       const pending = stage === "capture" ? createAsyncDirectoryGuard(directory, { bigint: true })
         : stage === "verify" ? assertAsyncDirectoryGuard(guard)
           : prepareSecretFileWrite({ rootDir: directory, filePath: path.join(directory, "secret") });
@@ -60,7 +61,7 @@ it("does not retry an exact guard filesystem failure", async () => {
   const guard = await createAsyncDirectoryGuard(directory, { bigint: true });
   Object.defineProperty(process, "platform", { value: "win32" });
   const failure = Object.assign(new Error("inspection denied"), { code: "EACCES" });
-  const lstat = vi.spyOn(fs, "lstat").mockRejectedValue(failure);
+  const lstat = vi.spyOn(fsSync, "lstatSync").mockImplementation(() => { throw failure; });
   await expect(assertAsyncDirectoryGuard(guard)).rejects.toBe(failure);
   expect(lstat).toHaveBeenCalledTimes(1);
 });

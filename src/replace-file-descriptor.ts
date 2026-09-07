@@ -88,13 +88,14 @@ export async function pinDirectoryForMode(params: {
     return;
   }
 
-  const expected = await params.fsModule.lstat(params.dirPath);
+  const expected = params.fsModule === fs
+    ? syncFs.lstatSync(params.dirPath) : await params.fsModule.lstat(params.dirPath);
   assertDirectory(expected, params.dirPath);
   const handle = await params.fsModule.open(params.dirPath, directoryOpenFlags());
   try {
     const owner = ownDirectoryMode({
       async inspect() {
-        const opened = await handle.stat();
+        const opened = params.fsModule === fs ? syncFs.fstatSync(handle.fd) : await handle.stat();
         assertOwnedDirectory(expected, opened);
         return opened.mode & 0o7777;
       },
@@ -156,14 +157,17 @@ export async function writeTempFile(params: {
 }): Promise<{ handle: FileHandle; identity: BigIntStats }> {
   const handle = await params.fsModule.open(params.tempPath, "wx", params.mode);
   try {
-    const identity = await inspectFileIdentity(() => handle.stat({ bigint: true }));
+    // Custom adapters retain their async-only metadata contract.
+    const inspect = () => params.fsModule === fs
+      ? syncFs.fstatSync(handle.fd, { bigint: true }) : handle.stat({ bigint: true });
+    const identity = await inspectFileIdentity(inspect);
     params.onIdentity?.(identity);
     await params.fsModule.writeFile(handle, params.content);
     await handle.chmod(params.mode);
     if (params.sync) {
       await syncFileBestEffort(handle);
     }
-    await inspectFileIdentity(() => handle.stat({ bigint: true }), identity);
+    await inspectFileIdentity(inspect, identity);
     return { handle, identity };
   } catch (error) {
     try {

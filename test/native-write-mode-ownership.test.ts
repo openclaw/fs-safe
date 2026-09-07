@@ -62,6 +62,9 @@ describe.skipIf(!nativeAvailable)("native Windows final-mode ownership", () => {
           return project(stat, await original(args[0], { bigint: true }));
         }) as typeof fs.stat);
       }
+      const statSync = fsSync.statSync.bind(fsSync);
+      vi.spyOn(fsSync, "statSync").mockImplementation(((...args: Parameters<typeof fsSync.statSync>) =>
+        project(statSync(...args), statSync(args[0], { bigint: true }))) as typeof fsSync.statSync);
       const lstatSync = fsSync.lstatSync.bind(fsSync);
       vi.spyOn(fsSync, "lstatSync").mockImplementation(((...args: Parameters<typeof fsSync.lstatSync>) =>
         project(lstatSync(...args), lstatSync(args[0], { bigint: true }))) as typeof fsSync.lstatSync);
