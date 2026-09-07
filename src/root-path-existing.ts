@@ -37,7 +37,7 @@ export async function resolvePathViaExistingAncestor(targetPath: string): Promis
   }
 
   try {
-    const resolvedAncestor = path.resolve(fs.realpathSync(cursor));
+    const resolvedAncestor = path.resolve(fs.realpathSync.native(cursor));
     return missingSuffix.length === 0
       ? resolvedAncestor
       : path.resolve(resolvedAncestor, ...missingSuffix);

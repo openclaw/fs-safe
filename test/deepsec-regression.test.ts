@@ -230,9 +230,9 @@ describe("deepsec regressions", () => {
     await fsp.mkdir(rootDir, { mode: 0o700 });
     await fsp.mkdir(outside);
     const secretPath = path.join(rootDir, "nested", "secret.txt");
-    const realRealpath = fsSync.realpathSync;
+    const realRealpath = fsSync.realpathSync.native;
     let swapped = false;
-    vi.spyOn(fsSync, "realpathSync").mockImplementation((target, options) => {
+    vi.spyOn(fsSync.realpathSync, "native").mockImplementation((target, options) => {
       if (!swapped && target === path.join(rootDir, "nested")) {
         swapped = true;
         fsSync.renameSync(rootDir, originalRoot);

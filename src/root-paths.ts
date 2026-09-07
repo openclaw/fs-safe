@@ -63,7 +63,7 @@ function pathStaysWithinRoot(rootDir: string, candidatePath: string): boolean {
 
 async function resolveRealPathIfExists(targetPath: string): Promise<string | undefined> {
   try {
-    return fsSync.realpathSync(targetPath);
+    return fsSync.realpathSync.native(targetPath);
   } catch {
     return undefined;
   }
@@ -75,7 +75,7 @@ async function resolveTrustedRootRealPath(rootDir: string): Promise<string | und
     if (!rootLstat.isDirectory() || rootLstat.isSymbolicLink()) {
       return undefined;
     }
-    return fsSync.realpathSync(rootDir);
+    return fsSync.realpathSync.native(rootDir);
   } catch {
     return undefined;
   }
@@ -100,7 +100,7 @@ async function validateCanonicalPathWithinRoot(params: {
     if (params.expect === "file" && candidateLstat.nlink > 1) {
       return "invalid";
     }
-    const candidateRealPath = fsSync.realpathSync(params.candidatePath);
+    const candidateRealPath = fsSync.realpathSync.native(params.candidatePath);
     return isPathInside(params.rootRealPath, candidateRealPath) ? "ok" : "invalid";
   } catch (err) {
     return isNotFoundPathError(err) ? "not-found" : "invalid";
@@ -248,9 +248,9 @@ export async function ensureDirectoryWithinRoot(params: {
       return invalidPath(scopeLabel);
     }
     await assertNoSymlinkSegments({ rootDir, targetPath, scopeLabel });
-    const rootReal = fsSync.realpathSync(rootDir);
+    const rootReal = fsSync.realpathSync.native(rootDir);
     const nearestExistingPath = await resolveNearestExistingPath(targetPath);
-    const nearestExistingReal = fsSync.realpathSync(nearestExistingPath);
+    const nearestExistingReal = fsSync.realpathSync.native(nearestExistingPath);
     if (!isPathInside(rootReal, nearestExistingReal)) {
       return invalidPath(scopeLabel);
     }
@@ -279,12 +279,12 @@ export async function ensureDirectoryWithinRoot(params: {
           }
         }
       }
-      const currentReal = fsSync.realpathSync(current);
+      const currentReal = fsSync.realpathSync.native(current);
       if (!isPathInside(rootReal, currentReal)) {
         return invalidPath(scopeLabel);
       }
     }
-    const targetReal = fsSync.realpathSync(targetPath);
+    const targetReal = fsSync.realpathSync.native(targetPath);
     if (!isPathInside(rootReal, targetReal)) {
       return invalidPath(scopeLabel);
     }
@@ -416,7 +416,7 @@ async function resolveCheckedPathsWithinRoot(
       return lexicalPathResult;
     }
     try {
-      const resolvedExistingPath = fsSync.realpathSync(raw);
+      const resolvedExistingPath = fsSync.realpathSync.native(raw);
       const relativePath = path.relative(rootRealPath, resolvedExistingPath);
       if (!isInRoot(relativePath)) {
         return lexicalPathResult;
@@ -458,7 +458,7 @@ async function resolveCheckedPathsWithinRoot(
             scopeLabel: params.scopeLabel,
           });
           const existingPath = await resolveNearestExistingPath(pathResult.fallbackPath);
-          const existingRealPath = fsSync.realpathSync(existingPath);
+          const existingRealPath = fsSync.realpathSync.native(existingPath);
           if (!isPathInside(rootRealPath, existingRealPath)) {
             return invalidPath(params.scopeLabel);
           }

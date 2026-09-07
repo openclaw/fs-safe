@@ -31,7 +31,7 @@ export async function resolveSymlinkHopPath(
   options: ResolveSymlinkHopOptions = {},
 ): Promise<string> {
   try {
-    return path.resolve(fs.realpathSync(symlinkPath));
+    return path.resolve(fs.realpathSync.native(symlinkPath));
   } catch (error) {
     normalizeSymlinkResolutionError(error, options);
     const linkTarget = fs.readlinkSync(symlinkPath);

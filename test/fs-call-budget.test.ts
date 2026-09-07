@@ -50,7 +50,7 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
         const original = descriptor.value;
         Object.defineProperty(object, key, {
           ...descriptor,
-          value: function (this: unknown, ...args: unknown[]) {
+          value: Object.assign(function (this: unknown, ...args: unknown[]) {
             if (counting) counts.set(prefix + key, (counts.get(prefix + key) ?? 0) + 1);
             const result = Reflect.apply(original, this, args);
             if (prefix === "p." && key === "open") {
@@ -61,13 +61,14 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
               });
             }
             return result;
-          },
+          }, original),
         });
         restore.push(() => Object.defineProperty(object, key, descriptor));
       }
     };
     try {
       wrap(fs, Object.keys(fs), "p.");
+      wrap(fsSync.realpathSync, ["native"], "s.realpathSync.");
       wrap(fsSync, Object.keys(fsSync).filter((key) => key.endsWith("Sync") && key !== "writeSync"), "s.");
       wrap(prototype, Object.getOwnPropertyNames(prototype).filter((key) => key !== "constructor" && key !== "fd"), "h.");
       const operations: Record<keyof typeof budgets, () => Promise<unknown>> = {

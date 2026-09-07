@@ -24,7 +24,7 @@ export async function pruneExpiredStoreEntries(params: {
   const pruneEmptyDirs =
     (recursive || maxDepth !== undefined) && (params.options.pruneEmptyDirs ?? false);
   await fs.mkdir(params.rootDir, { recursive: true, mode: params.dirMode });
-  const rootReal = fsSync.realpathSync(params.rootDir);
+  const rootReal = fsSync.realpathSync.native(params.rootDir);
   const scopedRoot = await root(rootReal);
   const rootGuard = {
     dir: rootReal,
@@ -39,7 +39,7 @@ export async function pruneExpiredStoreEntries(params: {
       !stat.isDirectory() ||
       stat.dev !== rootGuard.stat.dev ||
       stat.ino !== rootGuard.stat.ino ||
-      fsSync.realpathSync(rootGuard.dir) !== rootGuard.realPath
+      fsSync.realpathSync.native(rootGuard.dir) !== rootGuard.realPath
     ) {
       throw new FsSafeError("path-mismatch", "store root changed during prune");
     }
@@ -50,7 +50,7 @@ export async function pruneExpiredStoreEntries(params: {
     if (!before || before.isSymbolicLink() || !before.isDirectory()) {
       return null;
     }
-    const real = observeOrNull(() => fsSync.realpathSync(dir));
+    const real = observeOrNull(() => fsSync.realpathSync.native(dir));
     if (!real || !isPathInside(rootReal, real)) {
       return null;
     }

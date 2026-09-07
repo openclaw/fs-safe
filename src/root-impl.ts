@@ -889,7 +889,7 @@ async function openWritableFileInRoot(
     ? resolved
     : await prepareRootWriteTarget(rootReal, resolved);
   try {
-    const resolvedRealPath = fsSync.realpathSync(ioPath);
+    const resolvedRealPath = fsSync.realpathSync.native(ioPath);
     if (!isPathInside(rootWithSep, resolvedRealPath)) {
       throw outsideWorkspaceError();
     }

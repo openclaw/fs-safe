@@ -33,7 +33,7 @@ export async function inheritWriteTargetMode(params: {
     try {
       // A parent can change after guarded resolution. Do not inherit metadata
       // from an outside inode, even if the parent is restored before publication.
-      const realPath = fsSync.realpathSync(params.targetPath);
+      const realPath = fsSync.realpathSync.native(params.targetPath);
       if (!isPathInside(params.rootWithSep, realPath)) throw outsideWorkspaceError();
       await inspectFileIdentity(async () => {
         const current = fsSync.statSync(realPath, { bigint: true });

@@ -35,8 +35,9 @@ describe("root directory operational diagnostics", () => {
     for (const entry of ["helper", "scope"] as const) {
       const spy = syscall === "mkdir"
         ? vi.spyOn(fs, "mkdir").mockRejectedValueOnce(cause)
-        : vi.spyOn(fsSync, syscall === "lstat" ? "lstatSync" : "realpathSync")
-          .mockImplementationOnce(() => { throw cause; });
+        : syscall === "lstat"
+          ? vi.spyOn(fsSync, "lstatSync").mockImplementationOnce(() => { throw cause; })
+          : vi.spyOn(fsSync.realpathSync, "native").mockImplementationOnce(() => { throw cause; });
       const result = entry === "helper"
         ? await ensureDirectoryWithinRoot({ rootDir, requestedPath: "child", scopeLabel: "uploads" })
         : await pathScope(rootDir, { label: "uploads" }).ensureDir("child");
@@ -61,10 +62,10 @@ describe("root directory operational diagnostics", () => {
     const rootDir = await tempRoot("fs-safe-dir-stage-");
     const target = location === "root" ? rootDir : path.join(rootDir, "child");
     const cause = Object.assign(new Error("I/O failure"), { code: "EIO", errno: -5, syscall });
-    const method = syscall === "lstat" ? "lstatSync" : "realpathSync";
-    const original = fsSync[method].bind(fsSync);
+    const original = syscall === "lstat" ? fsSync.lstatSync : fsSync.realpathSync.native;
     let calls = 0;
-    const spy = vi.spyOn(fsSync, method).mockImplementation((...args) => {
+    const spy = syscall === "lstat" ? vi.spyOn(fsSync, "lstatSync") : vi.spyOn(fsSync.realpathSync, "native");
+    spy.mockImplementation((...args) => {
       if (String(args[0]) === target && ++calls === occurrence) throw cause;
       return original(...args);
     });
@@ -279,9 +280,9 @@ describe("root directory policy results", () => {
     const rootDir = await tempRoot("fs-safe-dir-canonical-");
     const outside = await tempRoot("fs-safe-dir-canonical-outside-");
     const candidatePath = location === "root" ? rootDir : path.join(rootDir, "child");
-    const realRealpath = fsSync.realpathSync.bind(fsSync);
+    const realRealpath = fsSync.realpathSync.native;
     let calls = 0;
-    vi.spyOn(fsSync, "realpathSync").mockImplementation((candidate, options) => {
+    vi.spyOn(fsSync.realpathSync, "native").mockImplementation((candidate, options) => {
       if (String(candidate) === candidatePath && ++calls === occurrence) return outside;
       return realRealpath(candidate, options);
     });

@@ -36,10 +36,10 @@ describe("opened file realpath resolution", () => {
     fd: number,
     pathError?: { path: string; code: string },
   ): void {
-    const realpath = fsSync.realpathSync.bind(fsSync);
+    const realpath = fsSync.realpathSync.native;
     const descriptorPaths = new Set([`/proc/self/fd/${fd}`, `/dev/fd/${fd}`]);
 
-    vi.spyOn(fsSync, "realpathSync").mockImplementation((target) => {
+    vi.spyOn(fsSync.realpathSync, "native").mockImplementation((target) => {
       if (descriptorPaths.has(String(target))) {
         throw Object.assign(new Error("descriptor path unavailable"), { code: "ENOENT" });
       }

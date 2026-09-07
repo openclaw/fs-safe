@@ -123,9 +123,9 @@ describe("ensureAbsoluteDirectory", () => {
     const targetDir = path.join(root, "target");
     await fs.mkdir(targetDir);
 
-    const realRealpath = fsSync.realpathSync.bind(fsSync);
+    const realRealpath = fsSync.realpathSync.native;
     let swapped = false;
-    const realpathSpy = vi.spyOn(fsSync, "realpathSync").mockImplementation((...args) => {
+    const realpathSpy = vi.spyOn(fsSync.realpathSync, "native").mockImplementation((...args) => {
       const candidate = String(args[0]);
       if (!swapped && candidate === targetDir) {
         swapped = true;

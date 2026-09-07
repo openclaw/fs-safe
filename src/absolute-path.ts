@@ -346,7 +346,7 @@ export async function canonicalPathFromExistingAncestor(filePath: string): Promi
   }
   let canonicalAncestor = ancestor;
   try {
-    canonicalAncestor = fsSync.realpathSync(ancestor);
+    canonicalAncestor = fsSync.realpathSync.native(ancestor);
   } catch {
     // Keep lexical path when the existing ancestor cannot be canonicalized.
   }
@@ -362,7 +362,7 @@ export async function resolveAbsolutePathForRead(
   const normalized = assertAbsolutePathInput(filePath);
   let canonicalPath: string;
   try {
-    canonicalPath = fsSync.realpathSync(normalized);
+    canonicalPath = fsSync.realpathSync.native(normalized);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       throw new FsSafeError("not-found", "path not found", { cause: err });

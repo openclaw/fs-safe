@@ -93,14 +93,14 @@ describe("Root exact publication identity", () => {
       if (route === "descriptor") Object.defineProperty(process, "platform", { value: "linux" });
       const target = path.join(directory, "target");
       const handle = await fs.open(target, "wx", 0o600);
-      const realpath = fsSync.realpathSync.bind(fsSync);
+      const realpath = fsSync.realpathSync.native;
       const stat = fsSync.statSync.bind(fsSync);
       const lstat = fsSync.lstatSync.bind(fsSync);
       const handleStat = fsSync.fstatSync.bind(fsSync);
       let pathnameAttempts = 0;
       vi.spyOn(fsSync, "fstatSync").mockImplementation(((...args: Parameters<typeof fsSync.fstatSync>) =>
         args[0] === handle.fd ? project(handleStat(...args)) : handleStat(...args)) as typeof fsSync.fstatSync);
-      vi.spyOn(fsSync, "realpathSync").mockImplementation(((...args: Parameters<typeof fsSync.realpathSync>) => {
+      vi.spyOn(fsSync.realpathSync, "native").mockImplementation(((...args: Parameters<typeof fsSync.realpathSync.native>) => {
         const candidate = String(args[0]);
         if (candidate.startsWith("/dev/fd/") || candidate.startsWith("/proc/self/fd/")) {
           if (route === "descriptor") return target;
@@ -110,7 +110,7 @@ describe("Root exact publication identity", () => {
           throw Object.assign(new Error("pathname raced"), { code: "ENOENT" });
         }
         return realpath(...args);
-      }) as typeof fsSync.realpathSync);
+      }) as typeof fsSync.realpathSync.native);
       const sampled: Array<number | bigint> = [];
       vi.spyOn(fsSync, "statSync").mockImplementation(((...args: Parameters<typeof fsSync.statSync>) => {
         const actual = stat(...args);

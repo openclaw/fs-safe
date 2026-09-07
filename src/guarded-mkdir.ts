@@ -13,7 +13,7 @@ function isSameOrChildPath(candidate: string, parent: string): boolean {
 
 async function realpathOrThrowNotFile(target: string): Promise<string> {
   try {
-    return path.resolve(fsSync.realpathSync(target));
+    return path.resolve(fsSync.realpathSync.native(target));
   } catch (error) {
     if (isNotFoundPathError(error)) {
       // A dangling symlink (or a component removed between lstat and
@@ -38,7 +38,7 @@ export async function mkdirPathComponentsWithGuards(params: {
   rejectSymlinks?: boolean;
 }): Promise<string> {
   const root = path.resolve(params.rootReal);
-  const rootCanonical = path.resolve(fsSync.realpathSync(root));
+  const rootCanonical = path.resolve(fsSync.realpathSync.native(root));
   const target = path.resolve(params.targetPath);
   const relative = path.relative(root, target);
   if (isPathRelativeEscape(relative)) {

@@ -55,7 +55,7 @@ export async function runPinnedWriteNative(binding: NativeBinding, params: Pinne
       params.relativeParentPath,
       directoryFlags,
     ).fd;
-    const parentPath = fsSync.realpathSync(
+    const parentPath = fsSync.realpathSync.native(
       params.relativeParentPath
         ? path.join(params.rootPath, ...params.relativeParentPath.split("/"))
         : params.rootPath,

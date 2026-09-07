@@ -75,7 +75,7 @@ describe("absolute path failure coverage", () => {
       });
 
     const denied = Object.assign(new Error("permission denied"), { code: "EACCES" });
-    vi.spyOn(fsSync, "realpathSync").mockImplementationOnce(() => { throw denied; });
+    vi.spyOn(fsSync.realpathSync, "native").mockImplementationOnce(() => { throw denied; });
     await expect(resolveAbsolutePathForRead(path.join(root, "value.txt"))).rejects.toBe(denied);
   });
 
@@ -144,9 +144,9 @@ describe("absolute path failure coverage", () => {
 
     vi.restoreAllMocks();
     const target = path.join(root, "new.txt");
-    const realRealpath = fsSync.realpathSync.bind(fsSync);
+    const realRealpath = fsSync.realpathSync.native;
     let rejected = false;
-    vi.spyOn(fsSync, "realpathSync").mockImplementation((candidate, options) => {
+    vi.spyOn(fsSync.realpathSync, "native").mockImplementation((candidate, options) => {
       if (!rejected && String(candidate) === root) {
         rejected = true;
         throw Object.assign(new Error("canonicalization unavailable"), { code: "EACCES" });

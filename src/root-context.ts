@@ -44,7 +44,7 @@ export async function expandRelativePathWithHome(relativePath: string): Promise<
   if (cachedHomePath?.raw !== rawHome) {
     let realHome = rawHome;
     try {
-      realHome = fs.realpathSync(rawHome);
+      realHome = fs.realpathSync.native(rawHome);
     } catch {
       // If the home dir cannot be canonicalized, keep lexical expansion behavior.
     }
@@ -58,7 +58,7 @@ export async function resolveRootContext(rootDir: string): Promise<RootContext> 
   let rootReal: string;
   let rootIdentity: { dev: number; ino: number };
   try {
-    rootReal = fs.realpathSync(rootDir);
+    rootReal = fs.realpathSync.native(rootDir);
     const rootStat = fs.statSync(rootReal);
     if (!rootStat.isDirectory()) {
       throw new FsSafeError("invalid-path", "root dir is not a directory");

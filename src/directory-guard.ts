@@ -29,7 +29,7 @@ export async function createAsyncDirectoryGuard(dir: string, options?: { bigint?
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw directoryComponentNotDirectoryError();
   }
-  return { dir, realPath: fsSync.realpathSync(dir), stat };
+  return { dir, realPath: fsSync.realpathSync.native(dir), stat };
 }
 
 export async function assertAsyncDirectoryGuard(guard: AnyAsyncDirectoryGuard): Promise<void> {
@@ -39,7 +39,7 @@ export async function assertAsyncDirectoryGuard(guard: AnyAsyncDirectoryGuard): 
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw directoryComponentNotDirectoryError();
   }
-  if (!sameFileIdentity(stat, guard.stat) || fsSync.realpathSync(guard.dir) !== guard.realPath) {
+  if (!sameFileIdentity(stat, guard.stat) || fsSync.realpathSync.native(guard.dir) !== guard.realPath) {
     throw new FsSafeError("path-mismatch", "directory changed during operation");
   }
 }

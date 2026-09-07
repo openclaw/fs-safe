@@ -87,7 +87,7 @@ async function createDirectoryReceipt(directoryPath: string, label: string): Pro
   assertDirectory(identity, resolvedPath, label);
   return {
     path: resolvedPath,
-    realPath: fsSync.realpathSync(resolvedPath),
+    realPath: fsSync.realpathSync.native(resolvedPath),
     identity,
   };
 }
@@ -111,7 +111,7 @@ async function assertDirectoryReceiptCurrent(
   assertDirectory(currentIdentity, receipt.path, label);
   if (
     !sameFileIdentity(receipt.identity, currentIdentity) ||
-    (fsSync.realpathSync(receipt.path)) !== receipt.realPath
+    (fsSync.realpathSync.native(receipt.path)) !== receipt.realPath
   ) {
     throw new FsSafeError(
       "path-mismatch",
