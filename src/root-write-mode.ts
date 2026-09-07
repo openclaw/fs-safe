@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
@@ -13,7 +14,7 @@ export async function inheritWriteTargetMode(params: {
   requestedMode?: number;
 }): Promise<number> {
   try {
-    const existing = await inspectFileIdentity(() => fs.lstat(params.targetPath, { bigint: true }));
+    const existing = await inspectFileIdentity(() => fsSync.lstatSync(params.targetPath, { bigint: true }));
     if (existing.isSymbolicLink()) throw new FsSafeError("path-alias", "path alias escape blocked");
     if (!existing.isFile()) throw new FsSafeError("not-file", "not a file");
     if (existing.nlink > 1n) throw hardlinkedPathNotAllowedError();
@@ -23,7 +24,7 @@ export async function inheritWriteTargetMode(params: {
     const handle = await fs.open(params.targetPath, resolveReadOpenFlags());
     try {
       // Bind admission to the inode whose metadata is inherited.
-      if (!sameFileIdentity(await handle.stat({ bigint: true }), existing)) {
+      if (!sameFileIdentity(fsSync.fstatSync(handle.fd, { bigint: true }), existing)) {
         throw new FsSafeError("path-mismatch", "write target changed during mode inheritance");
       }
     } finally {
@@ -32,10 +33,10 @@ export async function inheritWriteTargetMode(params: {
     try {
       // A parent can change after guarded resolution. Do not inherit metadata
       // from an outside inode, even if the parent is restored before publication.
-      const realPath = await fs.realpath(params.targetPath);
+      const realPath = fsSync.realpathSync.native(params.targetPath);
       if (!isPathInside(params.rootWithSep, realPath)) throw outsideWorkspaceError();
       await inspectFileIdentity(async () => {
-        const current = await fs.stat(realPath, { bigint: true });
+        const current = fsSync.statSync(realPath, { bigint: true });
         if (!current.isFile()) throw new FsSafeError("not-file", "not a file");
         if (current.nlink > 1n) throw hardlinkedPathNotAllowedError();
         return current;

@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { expectFsSafeErrorSync } from "./helpers/security.js";
 import * as advanced from "../src/advanced.js";
 import {
@@ -30,6 +30,7 @@ async function tempFile(content: string): Promise<string> {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   __setFsSafeTestHooksForTest(undefined);
   await Promise.all(
     [...tempDirs].map((dir) => fs.rm(dir, { recursive: true, force: true })),
@@ -38,6 +39,81 @@ afterEach(async () => {
 });
 
 describe("bounded descriptor reads", () => {
+  it.each([0, 4, 128 * 1024])("reads a known regular file of %s bytes in one call", async (size) => {
+    const filePath = await tempFile("x".repeat(size));
+    const handle = await fs.open(filePath, "r");
+    const read = vi.spyOn(handle, "read");
+    try {
+      const result = await readFileHandleBounded(handle, size);
+      expect(result).toEqual(Buffer.alloc(size, "x"));
+      expect(read).toHaveBeenCalledTimes(1);
+      expect(read.mock.calls[0]?.[2]).toBe(size + 1);
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it.each([false, true])("continues after growth fills the first buffer (over limit: %s)", async (overLimit) => {
+    const filePath = await tempFile("ab");
+    const handle = await fs.open(filePath, "r");
+    const originalRead = handle.read.bind(handle);
+    const read = vi.spyOn(handle, "read").mockImplementationOnce(async (...args) => {
+      fsSync.appendFileSync(filePath, overLimit ? "cdefgh" : "cd");
+      return await originalRead(...args);
+    });
+    try {
+      const pending = readFileHandleBounded(handle, 4);
+      if (overLimit) await expect(pending).rejects.toMatchObject({ code: "too-large" });
+      else await expect(pending).resolves.toEqual(Buffer.from("abcd"));
+      expect(read.mock.calls[0]?.[2]).toBe(3);
+      expect(read.mock.calls.length).toBeGreaterThan(1);
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it("keeps reading after short chunks from an unknown-size handle", async () => {
+    const chunks = [Buffer.from("ab"), Buffer.from("cd"), Buffer.alloc(0)];
+    const read = vi.fn(async (buffer: Buffer) => {
+      const chunk = chunks.shift()!;
+      chunk.copy(buffer);
+      return { buffer, bytesRead: chunk.length };
+    });
+    await expect(readFileHandleBounded({ read } as never, 4)).resolves.toEqual(Buffer.from("abcd"));
+    expect(read).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([false, true])("continues a short regular-file read before EOF (over limit: %s)", async (overLimit) => {
+    const filePath = await tempFile("abcd");
+    const handle = await fs.open(filePath, "r");
+    const originalRead = handle.read.bind(handle);
+    const read = vi.spyOn(handle, "read").mockImplementationOnce(async (buffer, offset, _length, position) => {
+      if (overLimit) fsSync.appendFileSync(filePath, "efgh");
+      return await originalRead(buffer, offset, overLimit ? 4 : 1, position);
+    });
+    try {
+      const pending = readFileHandleBounded(handle, 4);
+      if (overLimit) await expect(pending).rejects.toMatchObject({ code: "too-large" });
+      else await expect(pending).resolves.toEqual(Buffer.from("abcd"));
+      expect(read.mock.calls.length).toBeGreaterThan(1);
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it("retains a custom reader when its extra fd property cannot supply a size hint", async () => {
+    const chunks = [Buffer.from("a"), Buffer.alloc(0)];
+    const reader = {
+      fd: -1,
+      async read(buffer: Buffer) {
+        const chunk = chunks.shift()!;
+        chunk.copy(buffer);
+        return { buffer, bytesRead: chunk.length };
+      },
+    };
+    await expect(readFileHandleBounded(reader as never, 1)).resolves.toEqual(Buffer.from("a"));
+  });
+
   it("rejects a non-finite stream byte cap instead of disabling the bound", () => {
     expect(() => createMaxBytesTransform(Number.NaN)).toThrow(RangeError);
     expect(() => createMaxBytesTransform(Number.NEGATIVE_INFINITY)).toThrow(RangeError);

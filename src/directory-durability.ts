@@ -83,11 +83,11 @@ function assertDirectory(identity: Stats, pathname: string, label: string): void
 
 async function createDirectoryReceipt(directoryPath: string, label: string): Promise<DirectoryReceipt> {
   const resolvedPath = path.resolve(directoryPath);
-  const identity = await fs.lstat(resolvedPath);
+  const identity = fsSync.lstatSync(resolvedPath);
   assertDirectory(identity, resolvedPath, label);
   return {
     path: resolvedPath,
-    realPath: await fs.realpath(resolvedPath),
+    realPath: fsSync.realpathSync.native(resolvedPath),
     identity,
   };
 }
@@ -107,11 +107,11 @@ async function assertDirectoryReceiptCurrent(
   receipt: DirectoryReceipt,
   label: string,
 ): Promise<void> {
-  const currentIdentity = await fs.lstat(receipt.path);
+  const currentIdentity = fsSync.lstatSync(receipt.path);
   assertDirectory(currentIdentity, receipt.path, label);
   if (
     !sameFileIdentity(receipt.identity, currentIdentity) ||
-    (await fs.realpath(receipt.path)) !== receipt.realPath
+    (fsSync.realpathSync.native(receipt.path)) !== receipt.realPath
   ) {
     throw new FsSafeError(
       "path-mismatch",
@@ -139,7 +139,7 @@ async function assertOpenDirectoryCurrent(
   receipt: DirectoryReceipt,
   label: string,
 ): Promise<void> {
-  const openedIdentity = await handle.stat();
+  const openedIdentity = fsSync.fstatSync(handle.fd);
   assertDirectory(openedIdentity, receipt.path, label);
   if (!sameFileIdentity(receipt.identity, openedIdentity)) {
     throw new FsSafeError(

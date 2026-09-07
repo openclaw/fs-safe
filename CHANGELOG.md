@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Add `durable` to Root write/create/writeJson/createJson/append options and Root defaults; `durable: false` skips file and parent fsync for reconstructible data (default unchanged: durable).
+- Run metadata checks inside async operations synchronously (microseconds each), cutting event-loop round-trips per read/write while data I/O remains asynchronous and native canonical path spelling is preserved, including Windows short paths.
 
 ## 0.8.3 - 2026-09-06
 

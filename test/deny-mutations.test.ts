@@ -1,4 +1,5 @@
-import fs, { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import fsSync from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveMutationComparablePaths } from "../src/deny-mutations.js";
@@ -20,7 +21,9 @@ describe("root denyMutations policies", () => {
   it.runIf(process.platform === "win32")(
     "uses the root ancestor canonicalizer for drive-relative and UNC roots",
     async () => {
-      vi.spyOn(fs, "lstat").mockRejectedValue(Object.assign(new Error("missing"), { code: "ENOENT" }));
+      vi.spyOn(fsSync, "lstatSync").mockImplementation(() => {
+        throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      });
 
       for (const input of ["C:foo", "\\\\?\\C:\\", "\\\\server\\share"]) {
         const normalized = path.resolve(input);

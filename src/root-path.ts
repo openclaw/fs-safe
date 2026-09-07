@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import fsp from "node:fs/promises";
 import path from "node:path";
 import { formatErrorDetail, shortPath } from "./error-detail.js";
 import { FsSafeError } from "./errors.js";
@@ -371,7 +370,7 @@ async function resolveRootPathLexicalAsync(
     state.lexicalCursor = path.join(state.lexicalCursor, segment);
     let stat: fs.Stats;
     try {
-      stat = await fsp.lstat(state.lexicalCursor);
+      stat = fs.lstatSync(state.lexicalCursor);
     } catch (error) {
       if (handleLexicalLstatFailure(context, error, idx)) break;
       throw error;
@@ -621,8 +620,8 @@ async function getPathKind(
 ): Promise<{ exists: boolean; kind: ResolvedRootPathKind }> {
   try {
     const stat = preserveFinalSymlink
-      ? await fsp.lstat(absolutePath)
-      : await fsp.stat(absolutePath);
+      ? fs.lstatSync(absolutePath)
+      : fs.statSync(absolutePath);
     return { exists: true, kind: toResolvedKind(stat) };
   } catch (error) {
     if (isNotFoundPathError(error)) {

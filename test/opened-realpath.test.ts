@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -35,17 +36,17 @@ describe("opened file realpath resolution", () => {
     fd: number,
     pathError?: { path: string; code: string },
   ): void {
-    const realpath = fs.realpath.bind(fs);
+    const realpath = fsSync.realpathSync.native;
     const descriptorPaths = new Set([`/proc/self/fd/${fd}`, `/dev/fd/${fd}`]);
 
-    vi.spyOn(fs, "realpath").mockImplementation(async (target) => {
+    vi.spyOn(fsSync.realpathSync, "native").mockImplementation((target) => {
       if (descriptorPaths.has(String(target))) {
         throw Object.assign(new Error("descriptor path unavailable"), { code: "ENOENT" });
       }
       if (String(target) === pathError?.path) {
         throw Object.assign(new Error("path lookup failed"), { code: pathError.code });
       }
-      return await realpath(target);
+      return realpath(target);
     });
   }
 

@@ -69,6 +69,7 @@ export function observeReadAdmission(filePath: string, options: {
     opened = true;
     open();
     handles.push(handle);
+    descriptors.add(handle.fd);
     if (options.swap === "after-open") swap();
     const stat = handle.stat.bind(handle);
     vi.spyOn(handle, "stat").mockImplementation(async (options) =>
@@ -83,6 +84,7 @@ export function observeReadAdmission(filePath: string, options: {
     const actualClose = handle.close.bind(handle);
     vi.spyOn(handle, "close").mockImplementation(async () => {
       close();
+      descriptors.delete(handle.fd);
       await actualClose();
     });
     return handle;

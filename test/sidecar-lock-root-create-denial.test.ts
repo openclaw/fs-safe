@@ -247,10 +247,10 @@ describe("Root exclusive-create denial (synthetic Windows/errno; real files)", (
         attempts += 1;
         if (operation === "write") vi.spyOn(handle, "writeFile").mockRejectedValue(error);
         else {
-          const realStat = handle.stat.bind(handle);
-          vi.spyOn(handle, "stat").mockImplementation(async (options) => {
-            if (options?.bigint) throw error;
-            return await realStat(options);
+          const realStat = fs.fstatSync.bind(fs);
+          vi.spyOn(fs, "fstatSync").mockImplementation((fd, options) => {
+            if (fd === handle.fd && options?.bigint) throw error;
+            return realStat(fd, options);
           });
         }
       }

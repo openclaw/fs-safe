@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -36,23 +37,23 @@ it.each(["EPERM", "EBADF"])("retries the recorded Windows resolver %s only with 
       await owner.release();
       expect((await handle.stat({ bigint: true })).nlink).toBe(0n);
       Object.defineProperty(process, "platform", { value: "win32" });
-      const realpath = fs.realpath.bind(fs), stat = fs.stat.bind(fs);
-      vi.spyOn(fs, "realpath").mockImplementation(async (...values) => {
+      const realpath = fsSync.realpathSync.native, stat = fsSync.statSync.bind(fsSync);
+      vi.spyOn(fsSync.realpathSync, "native").mockImplementation((...values) => {
         if (String(values[0]) === lockPath) {
           if (code === "EBADF") throw failure;
           return failure.path;
         }
-        return await realpath(...values);
+        return realpath(...values);
       });
-      vi.spyOn(fs, "stat").mockImplementation(async (...values) => {
+      vi.spyOn(fsSync, "statSync").mockImplementation((...values) => {
         if (String(values[0]) === failure.path) throw failure;
-        return await stat(...values);
+        return stat(...values);
       });
     } });
     try { return await open(...args); } finally {
       Object.defineProperty(process, "platform", platform);
-      vi.mocked(fs.realpath).mockRestore();
-      vi.mocked(fs.stat).mockRestore();
+      vi.mocked(fsSync.realpathSync.native).mockRestore();
+      vi.mocked(fsSync.statSync).mockRestore();
     }
   });
   const waiter = await waiterManager.acquire(target, {
@@ -96,10 +97,10 @@ it.each(["numeric", "unknown", "closed", "changed", "linked", "multiple-links"])
           });
         }
         Object.defineProperty(process, "platform", { value: "win32" });
-        const realpath = fs.realpath.bind(fs);
-        vi.spyOn(fs, "realpath").mockImplementation(async (...args) => {
+        const realpath = fsSync.realpathSync.native;
+        vi.spyOn(fsSync.realpathSync, "native").mockImplementation((...args) => {
           if (String(args[0]) === lockPath) throw failure;
-          return await realpath(...args);
+          return realpath(...args);
         });
       },
     });
@@ -139,7 +140,14 @@ it.each(["parser", "read", "stat"])("does not retry a Windows %s exception shape
   const create = vi.spyOn(capability, "create").mockRejectedValue(new FsSafeError("already-exists", "exists"));
   const parsePayload = vi.fn(() => { throw failure; });
   if (stage !== "parser") __setFsSafeTestHooksForTest({ afterOpen(candidate, handle) {
-    if (candidate === lockPath) vi.spyOn(handle, stage).mockRejectedValue(failure);
+    if (candidate !== lockPath) return;
+    if (stage === "stat") {
+      const fstat = fsSync.fstatSync.bind(fsSync);
+      vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
+        if (fd === handle.fd) throw failure;
+        return fstat(fd, options);
+      });
+    } else vi.spyOn(handle, "read").mockRejectedValue(failure);
   } });
   Object.defineProperty(process, "platform", { value: "win32" });
   const manager = createFileLockManager(`read-error:${lockPath}`);
@@ -174,10 +182,10 @@ it.each(["EPERM", "EBADF"])("generic Root.open preserves the Windows resolver %s
     __setFsSafeTestHooksForTest();
     await fs.unlink(lockPath);
     Object.defineProperty(process, "platform", { value: "win32" });
-    const realpath = fs.realpath.bind(fs);
-    vi.spyOn(fs, "realpath").mockImplementation(async (...args) => {
+    const realpath = fsSync.realpathSync.native;
+    vi.spyOn(fsSync.realpathSync, "native").mockImplementation((...args) => {
       if (String(args[0]) === lockPath) throw failure;
-      return await realpath(...args);
+      return realpath(...args);
     });
   } });
   await expect(capability.open("state.lock")).rejects.toBe(failure);
@@ -222,11 +230,11 @@ it.each(["sequential", "nested", "interleaved"])(
     // Synthetic Windows resolver EPERM; unlink and descriptor checks are real.
     Object.defineProperty(process, "platform", { value: "win32" });
     const failure = Object.assign(new Error("synthetic resolver failure"), { code: "EPERM" });
-    const realpath = fs.realpath.bind(fs);
+    const realpath = fsSync.realpathSync.native;
     let deny = false, observingFirst = false;
-    vi.spyOn(fs, "realpath").mockImplementation(async (...args) => {
+    vi.spyOn(fsSync.realpathSync, "native").mockImplementation((...args) => {
       if (args[0] === firstPath && deny && observingFirst) throw failure;
-      return await realpath(...args);
+      return realpath(...args);
     });
     let unblock!: () => void, entered!: () => void;
     const paused = new Promise<void>((resolve) => { entered = resolve; });

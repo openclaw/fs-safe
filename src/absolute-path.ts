@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import type { Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -141,7 +142,7 @@ async function directoryGuardFailure(
   }
 
   try {
-    const stat = await fs.lstat(dir);
+    const stat = fsSync.lstatSync(dir);
     const failure = classifyExistingDirectorySegment(stat, scopeLabel);
     if (failure) {
       return failure;
@@ -164,7 +165,7 @@ async function resolveTrustedDirectoryPrefix(
   let current = root;
   let currentStat: Stats;
   try {
-    currentStat = await fs.lstat(current);
+    currentStat = fsSync.lstatSync(current);
   } catch (err) {
     const failure = classifyDirectoryLookupError(err, scopeLabel);
     if (failure) {
@@ -189,7 +190,7 @@ async function resolveTrustedDirectoryPrefix(
     }
     const next = path.join(current, segment);
     try {
-      const nextStat = await fs.lstat(next);
+      const nextStat = fsSync.lstatSync(next);
       const segmentFailure = classifyExistingDirectorySegment(nextStat, scopeLabel);
       if (segmentFailure) {
         return segmentFailure;
@@ -240,7 +241,7 @@ async function findExistingAncestorWithStat(filePath: string): Promise<{
   let current = path.resolve(filePath);
   while (true) {
     try {
-      return { path: current, stat: await fs.lstat(current) };
+      return { path: current, stat: fsSync.lstatSync(current) };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
         throw err;
@@ -288,7 +289,7 @@ export async function ensureAbsoluteDirectory(
         return guardResult;
       }
       try {
-        const stat = await fs.lstat(current);
+        const stat = fsSync.lstatSync(current);
         if (stat.isSymbolicLink()) {
           return ensureDirectoryFailure(
             "symlink",
@@ -345,7 +346,7 @@ export async function canonicalPathFromExistingAncestor(filePath: string): Promi
   }
   let canonicalAncestor = ancestor;
   try {
-    canonicalAncestor = await fs.realpath(ancestor);
+    canonicalAncestor = fsSync.realpathSync.native(ancestor);
   } catch {
     // Keep lexical path when the existing ancestor cannot be canonicalized.
   }
@@ -361,7 +362,7 @@ export async function resolveAbsolutePathForRead(
   const normalized = assertAbsolutePathInput(filePath);
   let canonicalPath: string;
   try {
-    canonicalPath = await fs.realpath(normalized);
+    canonicalPath = fsSync.realpathSync.native(normalized);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       throw new FsSafeError("not-found", "path not found", { cause: err });

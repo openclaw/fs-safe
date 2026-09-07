@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, vi } from "vitest";
@@ -19,28 +20,28 @@ describe("secret directory admission receipts", () => {
       const moved = path.join(rootDir, "admitted");
       await fs.mkdir(parent, { mode: 0o700 });
       const filePath = path.join(parent, phase === "ancestor" ? "inner/token" : "token");
-      const lstat = fs.lstat.bind(fs);
-      const realpath = fs.realpath.bind(fs);
+      const lstat = fsSync.lstatSync.bind(fsSync);
+      const realpath = fsSync.realpathSync.native;
       let inspections = 0;
       let admitted = false;
       let swapped = false;
-      const swap = async () => {
+      const swap = () => {
         swapped = true;
-        await fs.rename(parent, moved);
-        await fs.mkdir(parent, { mode: 0o750 });
-        await fs.chmod(parent, 0o750);
+        fsSync.renameSync(parent, moved);
+        fsSync.mkdirSync(parent, { mode: 0o750 });
+        fsSync.chmodSync(parent, 0o750);
       };
-      vi.spyOn(fs, "lstat").mockImplementation(async (target, options) => {
+      vi.spyOn(fsSync, "lstatSync").mockImplementation((target, options) => {
         const isParent = String(target) === parent;
-        if (phase === "ancestor" && admitted && isParent && !swapped) await swap();
-        const value = await lstat(target, options);
+        if (phase === "ancestor" && admitted && isParent && !swapped) swap();
+        const value = lstat(target, options);
         // Initial inspection, guard capture, then the permission-admission inspection.
         if (isParent && options?.bigint && ++inspections >= 3) admitted = true;
         return value;
       });
-      vi.spyOn(fs, "realpath").mockImplementation(async (target, options) => {
-        if (phase === "final parent" && admitted && String(target) === parent && !swapped) await swap();
-        return await realpath(target, options);
+      vi.spyOn(fsSync.realpathSync, "native").mockImplementation((target, options) => {
+        if (phase === "final parent" && admitted && String(target) === parent && !swapped) swap();
+        return realpath(target, options);
       });
 
       const failure = await write({ rootDir, filePath, content: "synthetic" }).catch((error: unknown) => error);

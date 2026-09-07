@@ -41,7 +41,7 @@ describe("regular file refusal and race handling", () => {
     expect(() => statRegularFileSync(root)).toThrow("path must be a regular file");
 
     const denied = Object.assign(new Error("inspection denied"), { code: "EACCES" });
-    vi.spyOn(fs, "lstat").mockRejectedValueOnce(denied);
+    vi.spyOn(fsSync, "lstatSync").mockImplementationOnce(() => { throw denied; });
     await expect(statRegularFile(missing)).rejects.toBe(denied);
     vi.spyOn(fsSync, "lstatSync").mockImplementationOnce(() => {
       throw denied;
@@ -108,11 +108,11 @@ describe("regular file refusal and race handling", () => {
     vi.spyOn(fs, "open").mockRejectedValueOnce(missing);
     await expect(readRegularFile({ filePath })).rejects.toMatchObject({ code: "path-mismatch" });
 
-    const realLstat = fs.lstat.bind(fs);
+    const realLstat = fsSync.lstatSync.bind(fsSync);
     let calls = 0;
-    vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
       if (String(args[0]) === filePath && ++calls === 2) throw missing;
-      return await realLstat(...args);
+      return realLstat(...args);
     });
     await expect(readRegularFile({ filePath })).rejects.toMatchObject({ code: "path-mismatch" });
   });
@@ -208,19 +208,17 @@ describe("regular file refusal and race handling", () => {
     const oldPath = path.join(root, "old");
     await fs.writeFile(filePath, "original");
     const preview = setIdentity(await fs.lstat(filePath, { bigint: true }), roundedIdentityA);
-    vi.spyOn(fs, "lstat").mockResolvedValueOnce(preview);
+    vi.spyOn(fsSync, "lstatSync").mockReturnValueOnce(preview);
     const realOpen = fs.open.bind(fs);
     vi.spyOn(fs, "open").mockImplementationOnce(async (...args) => {
       await fs.rename(filePath, oldPath);
       await fs.writeFile(filePath, "replacement");
       const handle = await realOpen(...args);
       const opened = setIdentity(await handle.stat({ bigint: true }), roundedIdentityB);
-      return {
-        stat: async () => opened,
-        chmod: handle.chmod.bind(handle),
-        appendFile: handle.appendFile.bind(handle),
-        close: handle.close.bind(handle),
-      } as Awaited<ReturnType<typeof fs.open>>;
+      const fstat = fsSync.fstatSync.bind(fsSync);
+      vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) =>
+        fd === handle.fd ? opened : fstat(fd, options));
+      return handle;
     });
 
     expect(Number(roundedIdentityA)).toBe(Number(roundedIdentityB));
@@ -270,7 +268,7 @@ describe("regular file refusal and race handling", () => {
       await fs.writeFile(filePath, "original");
       if (variant === "async") {
         const unknown = setIdentity(await fs.lstat(filePath, { bigint: true }), 0n);
-        vi.spyOn(fs, "lstat").mockResolvedValue(unknown);
+        vi.spyOn(fsSync, "lstatSync").mockReturnValue(unknown);
         const open = vi.spyOn(fs, "open");
         await expect(appendRegularFile({ filePath, content: "x" })).rejects.toThrow(
           "file identity changed or could not be verified",
@@ -377,11 +375,11 @@ describe("regular file refusal and race handling", () => {
     const filePath = path.join(root, "value");
     await fs.writeFile(filePath, "abc");
     const denied = Object.assign(new Error("inspection denied"), { code: "EACCES" });
-    const realLstat = fs.lstat.bind(fs);
+    const realLstat = fsSync.lstatSync.bind(fsSync);
     let calls = 0;
-    vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
       if (String(args[0]) === filePath && ++calls === 2) throw denied;
-      return await realLstat(...args);
+      return realLstat(...args);
     });
     await expect(readRegularFile({ filePath })).rejects.toBe(denied);
   });
@@ -438,7 +436,7 @@ describe("regular file refusal and race handling", () => {
     const realOpen = fs.open.bind(fs);
     vi.spyOn(fs, "open").mockImplementationOnce(async (...args) => {
       const handle = await realOpen(...args);
-      vi.spyOn(handle, "stat").mockResolvedValueOnce(directoryStat);
+      vi.spyOn(fsSync, "fstatSync").mockReturnValueOnce(directoryStat);
       return handle;
     });
     await expect(appendRegularFile({ filePath, content: "d" })).rejects.toThrow(

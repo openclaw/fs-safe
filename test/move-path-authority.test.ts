@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -54,20 +55,17 @@ describe("movePathWithCopyFallback publication authority", () => {
     const expired = new Error("move owner expired");
     let active = true;
     const rename = observeRename(fixture, route.fallback);
-    const paused = Promise.withResolvers<void>();
-    const release = Promise.withResolvers<void>();
-    const lstat = fs.lstat;
-    let pausedOnce = false;
-    vi.spyOn(fs, "lstat").mockImplementation(async (candidate, options) => {
-      const stat = await lstat(candidate, options as never);
+    const lstat = fsSync.lstatSync;
+    let expiredDuringPreparation = false;
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((candidate, options) => {
+      const stat = lstat(candidate, options as never);
       if (
-        !pausedOnce && candidate === fixture.targetParent &&
+        !expiredDuringPreparation && candidate === fixture.targetParent &&
         (!route.fallback || rename.mock.calls.length > 0)
       ) {
-        pausedOnce = true;
-        paused.resolve();
+        expiredDuringPreparation = true;
         // Deliver unchanged filesystem evidence after the caller loses authority.
-        await release.promise;
+        active = false;
       }
       return stat;
     });
@@ -80,20 +78,10 @@ describe("movePathWithCopyFallback publication authority", () => {
       },
     }).catch((error: unknown) => error);
 
-    try {
-      await Promise.race([
-        paused.promise,
-        move.then(() => { throw new Error("move settled before the preparation barrier"); }),
-      ]);
-      active = false;
-      release.resolve();
-      expect(await move).toBe(expired);
-      expect(rename).toHaveBeenCalledTimes(route.fallback ? 1 : 0);
-      await expectUnpublished(fixture);
-    } finally {
-      release.resolve();
-      await move;
-    }
+    expect(await move).toBe(expired);
+    expect(expiredDuringPreparation).toBe(true);
+    expect(rename).toHaveBeenCalledTimes(route.fallback ? 1 : 0);
+    await expectUnpublished(fixture);
   });
 
   it.each(routes)("does not yield between approval and $name dispatch", async (route) => {

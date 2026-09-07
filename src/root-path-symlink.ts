@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import fsp from "node:fs/promises";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { isNotFoundPathError, isSymlinkOpenError } from "./path.js";
@@ -32,10 +31,10 @@ export async function resolveSymlinkHopPath(
   options: ResolveSymlinkHopOptions = {},
 ): Promise<string> {
   try {
-    return path.resolve(await fsp.realpath(symlinkPath));
+    return path.resolve(fs.realpathSync.native(symlinkPath));
   } catch (error) {
     normalizeSymlinkResolutionError(error, options);
-    const linkTarget = await fsp.readlink(symlinkPath);
+    const linkTarget = fs.readlinkSync(symlinkPath);
     return resolvePathViaExistingAncestor(path.resolve(path.dirname(symlinkPath), linkTarget));
   }
 }

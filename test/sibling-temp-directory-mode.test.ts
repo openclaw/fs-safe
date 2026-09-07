@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, vi } from "vitest";
@@ -51,8 +52,8 @@ itPosix.each(["lstat", "open", "pathname-type", "stat", "descriptor-type", "iden
     const failure = Object.assign(new Error(`directory ${phase} failed`), { code: "EIO" });
     const chmod = vi.fn();
     let directory: FileHandle | undefined;
-    if (phase === "lstat") vi.spyOn(fs, "lstat").mockRejectedValueOnce(failure);
-    if (phase === "pathname-type") vi.spyOn(fs, "lstat").mockResolvedValueOnce(await fs.stat(f.final));
+    if (phase === "lstat") vi.spyOn(fsSync, "lstatSync").mockImplementationOnce(() => { throw failure; });
+    if (phase === "pathname-type") vi.spyOn(fsSync, "lstatSync").mockReturnValueOnce(await fs.stat(f.final));
     vi.spyOn(fs, "open").mockImplementation(async (...args) => {
       if (args[0] !== f.dir) return await open(...args);
       if (phase === "open") throw failure;
@@ -66,7 +67,13 @@ itPosix.each(["lstat", "open", "pathname-type", "stat", "descriptor-type", "iden
         chmod();
         throw new Error("directory chmod denied");
       });
-      if (phase === "stat") vi.spyOn(directory, "stat").mockRejectedValue(failure);
+      if (phase === "stat") {
+        const fstat = fsSync.fstatSync.bind(fsSync);
+        vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
+          if (fd === directory!.fd) throw failure;
+          return fstat(fd, options);
+        });
+      }
       if (phase === "close") {
         const close = directory.close.bind(directory);
         vi.spyOn(directory, "close").mockImplementation(async () => {

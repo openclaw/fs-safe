@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -59,21 +60,21 @@ for (const nativeMode of ["auto", "off"] as const) {
       await fs.writeFile(target, "original", { mode: 0o600 });
       await fs.writeFile(path.join(outside, "target"), "outside");
       await fs.chmod(path.join(outside, "target"), 0o666);
-      const lstat = fs.lstat.bind(fs);
+      const lstat = fsSync.lstatSync.bind(fsSync);
       let attacked = false;
-      vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+      vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
         if (String(args[0]) === target && args[1]?.bigint && !attacked) {
           attacked = true;
-          await fs.rename(parent, saved);
-          await fs.symlink(outside, parent);
-          const observed = await lstat(...args);
+          fsSync.renameSync(parent, saved);
+          fsSync.symlinkSync(outside, parent);
+          const observed = lstat(...args);
           if (restoreParent) {
-            await fs.unlink(parent);
-            await fs.rename(saved, parent);
+            fsSync.unlinkSync(parent);
+            fsSync.renameSync(saved, parent);
           }
           return observed;
         }
-        return await lstat(...args);
+        return lstat(...args);
       });
       await expect(safe.write("parent/target", "sensitive")).rejects.toMatchObject({
         code: restoreParent ? "path-mismatch" : "outside-workspace",

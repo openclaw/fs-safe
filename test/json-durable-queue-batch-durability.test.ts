@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -198,7 +199,7 @@ describe("queue migration durability", () => {
     const failure = ioFailure();
     const realWrite = fs.writeFile.bind(fs);
     const realRename = fs.rename.bind(fs);
-    const realLstat = fs.lstat.bind(fs);
+    const realLstat = fsSync.lstatSync.bind(fsSync);
     let published = false;
     vi.spyOn(fs, "writeFile").mockImplementation(async (...args) => {
       if (stage === "write" && typeof args[0] === "object" && "fd" in args[0]) throw failure;
@@ -209,9 +210,9 @@ describe("queue migration durability", () => {
       await realRename(source, target);
       if (target === paths.processingPath) published = true;
     });
-    vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
       if (stage === "verify" && published && args[0] === paths.processingPath) throw failure;
-      return await realLstat(...args);
+      return realLstat(...args);
     });
     const load = () => loadPendingJsonDurableQueueEntries({ ...options, read: migrate });
 

@@ -76,7 +76,7 @@ async function chmodDirectoryInRootBestEffort(
       : 0;
   const handle = await fs.open(dirPath, syncFs.constants.O_RDONLY | directoryFlag | noFollowFlag);
   try {
-    const stat = await handle.stat();
+    const stat = syncFs.fstatSync(handle.fd);
     if (!stat.isDirectory()) {
       return;
     }

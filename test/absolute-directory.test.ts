@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -91,16 +92,16 @@ describe("ensureAbsoluteDirectory", () => {
     const targetDir = path.join(parentDir, "child");
     await fs.mkdir(parentDir);
 
-    const realLstat = fs.lstat.bind(fs);
+    const realLstat = fsSync.lstatSync.bind(fsSync);
     let swapped = false;
-    const lstatSpy = vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+    const lstatSpy = vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
       const candidate = String(args[0]);
       if (!swapped && candidate === targetDir) {
         swapped = true;
-        await fs.rename(parentDir, `${parentDir}-real`);
-        await fs.symlink(outside, parentDir, "dir");
+        fsSync.renameSync(parentDir, `${parentDir}-real`);
+        fsSync.symlinkSync(outside, parentDir, "dir");
       }
-      return await realLstat(...args);
+      return realLstat(...args);
     });
 
     try {
@@ -122,18 +123,18 @@ describe("ensureAbsoluteDirectory", () => {
     const targetDir = path.join(root, "target");
     await fs.mkdir(targetDir);
 
-    const realRealpath = fs.realpath.bind(fs);
+    const realRealpath = fsSync.realpathSync.native;
     let swapped = false;
-    const realpathSpy = vi.spyOn(fs, "realpath").mockImplementation(async (...args) => {
+    const realpathSpy = vi.spyOn(fsSync.realpathSync, "native").mockImplementation((...args) => {
       const candidate = String(args[0]);
       if (!swapped && candidate === targetDir) {
         swapped = true;
-        const resolved = await realRealpath(...args);
-        await fs.rename(targetDir, `${targetDir}-real`);
-        await fs.symlink(outside, targetDir, "dir");
+        const resolved = realRealpath(...args);
+        fsSync.renameSync(targetDir, `${targetDir}-real`);
+        fsSync.symlinkSync(outside, targetDir, "dir");
         return resolved;
       }
-      return await realRealpath(...args);
+      return realRealpath(...args);
     });
 
     try {

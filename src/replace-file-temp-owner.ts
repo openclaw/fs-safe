@@ -52,7 +52,9 @@ async function cleanupOwnedPath(params: {
 }): Promise<boolean> {
   if (!params.identity) return true;
   try {
-    const current = await params.fsModule.lstat(params.pathname, { bigint: true });
+    const current = params.fsModule === fs
+      ? syncFs.lstatSync(params.pathname, { bigint: true })
+      : await params.fsModule.lstat(params.pathname, { bigint: true });
     if (
       current.isSymbolicLink() ||
       !current.isFile() ||
@@ -86,10 +88,10 @@ export async function cleanupPinnedFilePath(params: {
       (value) => typeof value === "number" && !Number.isSafeInteger(value),
     )) return;
     await assertAsyncDirectoryGuard(guard);
-    const parent = await fs.lstat(guard.dir, { bigint: true });
+    const parent = syncFs.lstatSync(guard.dir, { bigint: true });
     if (parent.isSymbolicLink() || !parent.isDirectory() ||
       !sameFileIdentityForCleanup(parent, guard.stat)) return;
-    const opened = await params.handle.stat({ bigint: true });
+    const opened = syncFs.fstatSync(params.handle.fd, { bigint: true });
     if (!opened.isFile() || opened.nlink !== 1n ||
       !sameFileIdentityForCleanup(opened, params.identity)) return;
     await cleanupOwnedPath({
@@ -165,13 +167,15 @@ export class AsyncAtomicTempOwner {
 
   async assertCurrent(fsModule: AsyncOwnerFileSystem, pathname = this.pathname): Promise<void> {
     const opened = await inspectFileIdentity(async () => {
-      const stat = await this.#handle!.stat({ bigint: true });
+      const stat = fsModule === fs ? syncFs.fstatSync(this.#handle!.fd, { bigint: true })
+        : await this.#handle!.stat({ bigint: true });
       assertOwnedFile(stat, pathname, false);
       return stat;
     }, this.identity);
     try {
       await inspectFileIdentity(async () => {
-        const stat = await fsModule.lstat(pathname, { bigint: true });
+        const stat = fsModule === fs ? syncFs.lstatSync(pathname, { bigint: true })
+          : await fsModule.lstat(pathname, { bigint: true });
         assertOwnedFile(stat, pathname, true);
         return stat;
       }, opened);
@@ -210,12 +214,14 @@ export class AsyncAtomicTempOwner {
         throw error;
       }
       const identity = await inspectFileIdentity(async () => {
-        const stat = await published!.stat({ bigint: true });
+        const stat = fsModule === fs ? syncFs.fstatSync(published!.fd, { bigint: true })
+          : await published!.stat({ bigint: true });
         assertOwnedFile(stat, pathname, false);
         return stat;
       });
       await inspectFileIdentity(async () => {
-        const stat = await fsModule.lstat(pathname, { bigint: true });
+        const stat = fsModule === fs ? syncFs.lstatSync(pathname, { bigint: true })
+          : await fsModule.lstat(pathname, { bigint: true });
         assertOwnedFile(stat, pathname, true);
         return stat;
       }, identity);

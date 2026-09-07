@@ -197,7 +197,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
     let created = true;
     let createdIdentity: BigIntStats | undefined;
     try {
-      const verificationIdentity = await handle.stat({ bigint: true });
+      const verificationIdentity = fsSync.fstatSync(handle.fd, { bigint: true });
       createdIdentity = verificationIdentity;
       if (params.input.kind === "buffer") {
         assertWithinMaxBytes(
@@ -215,7 +215,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
       // Content writes may clear set-ID bits; finalize them through the owned fd.
       await handle.chmod(params.mode);
       if (params.sync !== false) await syncFileBestEffort(handle);
-      const stat = await handle.stat();
+      const stat = fsSync.fstatSync(handle.fd);
       if (params.sync !== false) await syncDirectoryBestEffort(parentPath);
       // Publication is complete. A failed outer check must not remove its target.
       created = false;
@@ -248,7 +248,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
   let renamed = false;
   try {
     handle = await fs.open(tempPath, tempFlags, params.mode);
-    let verificationIdentity = await handle.stat({ bigint: true });
+    let verificationIdentity = fsSync.fstatSync(handle.fd, { bigint: true });
     tempIdentity = verificationIdentity;
     if (params.input.kind === "buffer") {
       assertWithinMaxBytes(
@@ -263,8 +263,8 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
     } else {
       await writeStreamToHandle(params.input.stream, handle, params.maxBytes);
     }
-    tempStat = await handle.stat();
-    const tempPathStat = await fs.lstat(tempPath);
+    tempStat = fsSync.fstatSync(handle.fd);
+    const tempPathStat = fsSync.lstatSync(tempPath);
     if (tempPathStat.isSymbolicLink() || !sameFileIdentity(tempPathStat, tempStat)) {
       throw new FsSafeError("path-mismatch", "fallback temp path changed during write");
     }
@@ -277,7 +277,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
       renamed = true;
       await getFsSafeTestHooks()?.afterPinnedWriteFallbackRename?.(targetPath);
       if (params.sync !== false) await syncDirectoryBestEffort(parentPath);
-      const targetStat = await fs.lstat(targetPath);
+      const targetStat = fsSync.lstatSync(targetPath);
       if (targetStat.isSymbolicLink()) {
         throw new FsSafeError("path-mismatch", "fallback target changed during write");
       }
@@ -294,7 +294,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
         }
         const expectedHash = sha256Hex(params.input.data, params.input.encoding);
         readHandle = await fs.open(targetPath, resolveReadOpenFlags());
-        const readHandleStat = await readHandle.stat({ bigint: true });
+        const readHandleStat = fsSync.fstatSync(readHandle.fd, { bigint: true });
         const actualHash = sha256Hex(await readHandle.readFile());
         if (actualHash !== expectedHash) {
           throw new FsSafeError("path-mismatch", "fallback target changed during write");
