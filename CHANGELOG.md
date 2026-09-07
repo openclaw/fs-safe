@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.6 - 2026-09-07
 
 **Highlights:** Clearer guidance for atomic writes on Windows exFAT, with a repeatable filesystem compatibility probe.
 
