@@ -422,6 +422,63 @@ Normal link/filter policy still governs the described member. Canonical
 pre-strip filter paths, decoded-stream ceilings, and physical EOF checks apply
 to plain/gzip TAR and native zstd/bzip2 alike.
 
+## `inspectTarArchive`
+
+Inspect accepted TAR members without creating an extracted tree. This operation
+uses the same complete Rust/WASM admission and TypeScript extraction planner as
+`extractArchive`, with zero stripping. It detects plain TAR or gzip from the
+input bytes; ZIP, zstd, and bzip2 are not part of this inspection API.
+
+```ts
+import { inspectTarArchive } from "@openclaw/fs-safe/archive";
+
+const entries = await inspectTarArchive({
+  archivePath: "/srv/uploads/tree.tar.gz",
+  timeoutMs: 30_000,
+  limits: {
+    maxArchiveBytes: 16 * 1024 * 1024,
+    maxEntries: 5_000,
+    maxEntryBytes: 16 * 1024 * 1024,
+    maxExtractedBytes: 64 * 1024 * 1024,
+  },
+  entryFilter: ({ kind }) => kind === "file" || kind === "directory" ? "extract" : "skip",
+  onFiltered: "reject-archive",
+});
+```
+
+`InspectTarArchiveOptions` accepts `archivePath`, `timeoutMs`, `limits`,
+`entryFilter`, and `onFiltered`, with the same defaults and error classes as
+extraction. The result is a frozen array of frozen `InspectedTarEntry` records:
+`{ path: string; kind: "file" | "directory"; size: number }`, in archive order.
+`size` is the effective declared payload length. `path` is extraction's
+canonical pre-strip identity: case, Unicode spelling, BOM, and embedded LF are
+preserved, while separators and dot components follow the existing archive path
+contract. No human-readable tar listing or escape decoding is involved.
+
+Full framing, gzip integrity, EOF, metadata, decoded-byte, and manifest-budget
+validation finishes before the caller's filter runs. The shared planner then
+applies traversal, collision, depth, blocked-type, and accepted-payload limits.
+A failure returns no partial result. Filter callbacks are decisions, not admission
+receipts: later policy, collision, or budget checks can still reject the archive.
+Only the resolved Promise/result is authorization-worthy; do not perform
+irreversible actions from a filter callback.
+
+Root-only records count toward entry limits but produce no result; PAX/GNU metadata headers are not members. Only accepted
+file/directory members appear, not implicit parent directories. Unsupported
+records follow extraction's omission policy unless the filter rejects them, as
+in the example. AppleDouble records encoded as ordinary files are ordinary
+members, not hidden metadata.
+
+Inspection pins and privately stages its input, then cleans up that copy. It
+neither creates destination paths nor tests destination permissions or platform
+filename restrictions. Its result is evidence about those inspected bytes, not
+an extraction capability or a promise that a later file at `archivePath` is
+unchanged. Callers making authorization decisions must retain the same private
+immutable archive or verify byte identity before extracting with matching
+filter/limit settings. Extraction always performs its own admission and guarded
+publication. Native `off`, `auto`, and `require` retain their existing selection
+and availability semantics; inspection does not fall back after native failure.
+
 ## `resolveArchiveKind`
 
 ```ts
