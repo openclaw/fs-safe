@@ -19,9 +19,10 @@ const BLOCKED_TAR_ENTRY_TYPES = new Set([
   "Socket",
 ]);
 
-export function createTarEntryPlanner(params: Omit<ArchivePlanOptions, "kind">):
+export function createTarEntryPlanner(params: ArchivePlanOptions):
   (entry: TarEntryInfo) => ArchivePlanEntry | null {
-  const plan = createArchiveEntryPlanner({ ...params, kind: "tar" });
+  // Preserve inherited/getter-backed public options and per-entry policy reads.
+  const plan = createArchiveEntryPlanner(params, "tar");
   return (entry) => {
     const kind = BLOCKED_TAR_ENTRY_TYPES.has(entry.type) ? "blocked" : archiveEntryKindFromTarType(entry.type);
     // The public checker accepts structural entry objects, including class getters.

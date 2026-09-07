@@ -319,21 +319,16 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
   const limits = resolveExtractLimits(params.limits);
   const tarLimits = resolveTarMeterLimits(limits);
   const native = getNativeBinding();
+  // Read the declared public fields before private adapters copy options: class
+  // getters and inherited policy must survive identically on every backend.
+  const options = {
+    archivePath: params.archivePath, destDir: params.destDir,
+    stripComponents: params.stripComponents, limits,
+    entryModes: params.entryModes, entryFilter: params.entryFilter, onFiltered,
+  };
   if (native) {
     await withExtractionDeadline(params.timeoutMs, label, async (deadline) =>
-      extractNativeArchive({
-        binding: native,
-        archivePath: params.archivePath,
-        destDir: params.destDir,
-        kind,
-        stripComponents: params.stripComponents,
-        limits,
-        tarLimits,
-        deadline,
-        entryModes: params.entryModes,
-        entryFilter: params.entryFilter,
-        onFiltered,
-      }),
+      extractNativeArchive({ ...options, binding: native, kind, tarLimits, deadline }),
     );
     return;
   }
@@ -341,12 +336,12 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
   if (kind === "tar") {
     await withExtractionDeadline(params.timeoutMs, label, async (deadline) => {
       const stagedArchive = await stageArchiveFileForExtraction({
-        archivePath: params.archivePath,
+        archivePath: options.archivePath,
         limits,
         deadline,
       });
       try {
-        await extractWasmTar({ archivePath: stagedArchive.path, options: { ...params, onFiltered }, limits, tarLimits, deadline });
+        await extractWasmTar({ archivePath: stagedArchive.path, options, limits, tarLimits, deadline });
       } finally {
         await stagedArchive.cleanup();
       }
@@ -355,21 +350,13 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
   }
 
   await withExtractionDeadline(params.timeoutMs, label, async (deadline) =>
-    extractZip({
-      archivePath: params.archivePath,
-      destDir: params.destDir,
-      stripComponents: params.stripComponents,
-      limits,
-      deadline,
-      entryModes: params.entryModes,
-      entryFilter: params.entryFilter,
-      onFiltered,
-    }),
+    extractZip({ ...options, deadline }),
   );
 }
 
 async function extractWasmTar(params: {
-  archivePath: string; options: ExtractArchiveOptions; limits: ResolvedArchiveExtractLimits;
+  archivePath: string; options: Pick<ExtractArchiveOptions, "destDir" | "stripComponents" | "entryModes" | "entryFilter" | "onFiltered">;
+  limits: ResolvedArchiveExtractLimits;
   tarLimits: TarMeterLimits; deadline: ExtractionDeadline;
 }): Promise<void> {
   const { options, deadline, tarLimits } = params;

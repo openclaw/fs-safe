@@ -37,7 +37,7 @@ export async function inspectTarArchive(params: InspectTarArchiveOptions): Promi
         deadline.check();
         // Match extraction's whole-manifest validation before caller policy runs.
         for (const entry of manifest) validateArchiveEntryPath(entry.path);
-        const planEntry = createArchiveEntryPlanner({ ...policy, kind: "tar" });
+        const planEntry = createArchiveEntryPlanner(policy, "tar");
         for (const entry of manifest) {
           deadline.check();
           append(planEntry(entry));

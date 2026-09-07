@@ -22,14 +22,13 @@ export type ArchiveMemberKind = "file" | "directory" | "symlink" | "hardlink" | 
 export type ArchivePlanEntry = { path: string; kind: "file" | "directory"; size: number; mode: number };
 export type ArchivePlanOptions = Pick<ExtractArchiveOptions,
   "stripComponents" | "limits" | "entryModes" | "entryFilter" | "onFiltered"> & {
-  kind: ArchiveKind;
   rootDir?: string;
   escapeLabel?: string;
 };
 
 // Inspection and both executors decide over the same admitted identities.
 // A destination is optional only for inspection; writers still prove containment.
-export function createArchiveEntryPlanner(params: ArchivePlanOptions): (entry: {
+export function createArchiveEntryPlanner(params: ArchivePlanOptions, archiveKind: ArchiveKind): (entry: {
   path: string; kind: ArchiveMemberKind; size: number; mode?: number;
 }) => ArchivePlanEntry | null {
   const strip = Math.max(0, Math.floor(params.stripComponents ?? 0));
@@ -59,7 +58,7 @@ export function createArchiveEntryPlanner(params: ArchivePlanOptions): (entry: {
       throw new ArchiveFormatError(`GNU sparse archive entry is not supported: ${formatErrorDetail(entry.path)}`);
     }
     if (kind === "symlink" || entry.kind === "blocked") {
-      const label = params.kind === "zip" ? "zip" : "tar";
+      const label = archiveKind === "zip" ? "zip" : "tar";
       throw new ArchiveSecurityError("entry-link", `${label} entry is a link: ${formatErrorDetail(entry.path)}`);
     }
     if (!Number.isSafeInteger(entry.size) || entry.size < 0) {
@@ -67,7 +66,7 @@ export function createArchiveEntryPlanner(params: ArchivePlanOptions): (entry: {
     }
     // Unsupported records remain visible to policy but cannot create outputs.
     if (kind === "other") return null;
-    if (kind === "file" || params.kind !== "zip") {
+    if (kind === "file" || archiveKind !== "zip") {
       budget.startEntry();
       budget.addEntrySize(entry.size);
     }

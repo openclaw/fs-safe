@@ -100,7 +100,7 @@ export async function extractNativeArchive(params: {
         if (params.kind !== "zip") {
           for (const entry of manifest) validateArchiveEntryPath(entry.path);
         }
-        const planEntry = createArchiveEntryPlanner({ ...params, rootDir: stagingDir });
+        const planEntry = createArchiveEntryPlanner({ ...params, rootDir: stagingDir }, params.kind);
         const plan: Array<ArchivePlanEntry & { index: number }> = [];
         for (const entry of manifest) {
           params.deadline.check();
