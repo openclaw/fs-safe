@@ -181,10 +181,10 @@ describe("move publication receipts and mutation authority", () => {
         expectReceipt(receipt, move.target);
         committed = true;
       });
-      const lstat = fs.lstat;
-      vi.spyOn(fs, "lstat").mockImplementation(async (candidate, options) => {
+      const lstat = fsSync.lstatSync;
+      vi.spyOn(fsSync, "lstatSync").mockImplementation((candidate, options) => {
         if (committed && candidate === move.parent) throw failed;
-        return await lstat(candidate, options as never);
+        return lstat(candidate, options as never);
       });
       await expect(movePathWithCopyFallback({
         from: move.source,

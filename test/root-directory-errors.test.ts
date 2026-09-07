@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -32,7 +33,10 @@ describe("root directory operational diagnostics", () => {
       code, errno: -1, syscall, path: path.join(rootDir, "child"),
     });
     for (const entry of ["helper", "scope"] as const) {
-      const spy = vi.spyOn(fs, syscall).mockRejectedValueOnce(cause);
+      const spy = syscall === "mkdir"
+        ? vi.spyOn(fs, "mkdir").mockRejectedValueOnce(cause)
+        : vi.spyOn(fsSync, syscall === "lstat" ? "lstatSync" : "realpathSync")
+          .mockImplementationOnce(() => { throw cause; });
       const result = entry === "helper"
         ? await ensureDirectoryWithinRoot({ rootDir, requestedPath: "child", scopeLabel: "uploads" })
         : await pathScope(rootDir, { label: "uploads" }).ensureDir("child");
@@ -57,11 +61,12 @@ describe("root directory operational diagnostics", () => {
     const rootDir = await tempRoot("fs-safe-dir-stage-");
     const target = location === "root" ? rootDir : path.join(rootDir, "child");
     const cause = Object.assign(new Error("I/O failure"), { code: "EIO", errno: -5, syscall });
-    const original = fs[syscall].bind(fs);
+    const method = syscall === "lstat" ? "lstatSync" : "realpathSync";
+    const original = fsSync[method].bind(fsSync);
     let calls = 0;
-    const spy = vi.spyOn(fs, syscall).mockImplementation(async (...args) => {
+    const spy = vi.spyOn(fsSync, method).mockImplementation((...args) => {
       if (String(args[0]) === target && ++calls === occurrence) throw cause;
-      return await original(...args);
+      return original(...args);
     });
     const result = await pathScope(rootDir, { label: "uploads" }).ensureDir("child");
     expectOperational(result, cause, "EIO", syscall);
@@ -80,7 +85,7 @@ describe("root directory operational diagnostics", () => {
       syscall: `lstat\r${"y".repeat(1000)}`,
       path: path.join(rootDir, "secret"),
     });
-    vi.spyOn(fs, "lstat").mockRejectedValueOnce(cause);
+    vi.spyOn(fsSync, "lstatSync").mockImplementationOnce(() => { throw cause; });
     const result = await pathScope(rootDir, { label: `uploads\n${"z".repeat(1000)}` })
       .ensureDir("requested-secret");
     expect(result.ok).toBe(false);
@@ -98,7 +103,7 @@ describe("root directory operational diagnostics", () => {
     "retains unexpected non-errno failures without rejecting",
     async (cause) => {
       const rootDir = await tempRoot("fs-safe-dir-unexpected-");
-      vi.spyOn(fs, "lstat").mockRejectedValueOnce(cause);
+      vi.spyOn(fsSync, "lstatSync").mockImplementationOnce(() => { throw cause; });
       const result = await pathScope(rootDir, { label: "uploads" }).ensureDir("child");
       expect(result).toMatchObject({ ok: false, diagnostic: { category: "operational" } });
       if (result.ok) throw new Error("expected directory failure");
@@ -116,11 +121,11 @@ describe("root directory operational diagnostics", () => {
     const requestedPath = path.join("missing", "date", "a".repeat(256));
     const target = path.join(rootDir, requestedPath);
     await expect(fs.lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
-    const realLstat = fs.lstat.bind(fs);
+    const realLstat = fsSync.lstatSync.bind(fsSync);
     const causes: unknown[] = [];
-    vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
       try {
-        return await realLstat(...args);
+        return realLstat(...args);
       } catch (cause) {
         if ((cause as NodeJS.ErrnoException).code === "ENAMETOOLONG") causes.push(cause);
         throw cause;
@@ -173,7 +178,7 @@ describe("root directory policy results", () => {
 
   it("rejects traversal, root aliases, escaping defaults and NUL before I/O", async () => {
     const rootDir = await tempRoot("fs-safe-dir-input-");
-    const lstat = vi.spyOn(fs, "lstat");
+    const lstat = vi.spyOn(fsSync, "lstatSync");
     const mkdir = vi.spyOn(fs, "mkdir");
     for (const params of [
       { requestedPath: "../outside" },
@@ -274,11 +279,11 @@ describe("root directory policy results", () => {
     const rootDir = await tempRoot("fs-safe-dir-canonical-");
     const outside = await tempRoot("fs-safe-dir-canonical-outside-");
     const candidatePath = location === "root" ? rootDir : path.join(rootDir, "child");
-    const realRealpath = fs.realpath.bind(fs);
+    const realRealpath = fsSync.realpathSync.bind(fsSync);
     let calls = 0;
-    vi.spyOn(fs, "realpath").mockImplementation(async (candidate, options) => {
+    vi.spyOn(fsSync, "realpathSync").mockImplementation((candidate, options) => {
       if (String(candidate) === candidatePath && ++calls === occurrence) return outside;
-      return await realRealpath(candidate, options);
+      return realRealpath(candidate, options);
     });
     await expect(pathScope(rootDir, { label: "uploads" }).ensureDir("child"))
       .resolves.toEqual(policyFailure);

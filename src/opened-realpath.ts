@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import type { BigIntStats, Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
@@ -10,7 +11,7 @@ export async function resolveOpenedFileRealPathForHandle(
   handle: FileHandle,
   ioPath: string,
 ): Promise<string> {
-  const handleStat = await handle.stat();
+  const handleStat = fsSync.fstatSync(handle.fd);
   return (await resolveOpenedFileRealPathForFd(handle.fd, handleStat, ioPath)).realPath;
 }
 
@@ -37,8 +38,8 @@ export async function resolveOpenedFileRealPathForFd(
       : [];
   for (const fdPath of fdCandidates) {
     try {
-      const fdRealPath = await fs.realpath(fdPath);
-      const fdRealStat = statOptions ? await fs.stat(fdRealPath, statOptions) : await fs.stat(fdRealPath);
+      const fdRealPath = fsSync.realpathSync(fdPath);
+      const fdRealStat = statOptions ? fsSync.statSync(fdRealPath, statOptions) : fsSync.statSync(fdRealPath);
       if (sameFileIdentity(handleStat, fdRealStat)) {
         return { realPath: fdRealPath, stat: fdRealStat };
       }
@@ -48,8 +49,8 @@ export async function resolveOpenedFileRealPathForFd(
   }
 
   try {
-    const ioRealPath = await fs.realpath(ioPath);
-    const ioRealStat = statOptions ? await fs.stat(ioRealPath, statOptions) : await fs.stat(ioRealPath);
+    const ioRealPath = fsSync.realpathSync(ioPath);
+    const ioRealStat = statOptions ? fsSync.statSync(ioRealPath, statOptions) : fsSync.statSync(ioRealPath);
     if (sameFileIdentity(handleStat, ioRealStat)) {
       return { realPath: ioRealPath, stat: ioRealStat };
     }
@@ -78,7 +79,7 @@ async function resolveOpenedFileRealPathFromParent(
 ): Promise<{ realPath: string; stat: Stats | BigIntStats } | null> {
   let parentReal: string;
   try {
-    parentReal = await fs.realpath(path.dirname(ioPath));
+    parentReal = fsSync.realpathSync(path.dirname(ioPath));
   } catch (err) {
     if (isNotFoundPathError(err)) {
       return null;
@@ -99,10 +100,10 @@ async function resolveOpenedFileRealPathFromParent(
   for (const entry of entries.toSorted()) {
     const candidatePath = path.join(parentReal, entry);
     try {
-      const candidateStat = statOptions ? await fs.lstat(candidatePath, statOptions) : await fs.lstat(candidatePath);
+      const candidateStat = statOptions ? fsSync.lstatSync(candidatePath, statOptions) : fsSync.lstatSync(candidatePath);
       if (candidateStat.isFile() && sameFileIdentity(handleStat, candidateStat)) {
-        const realPath = await fs.realpath(candidatePath);
-        const stat = statOptions ? await fs.stat(realPath, statOptions) : await fs.stat(realPath);
+        const realPath = fsSync.realpathSync(candidatePath);
+        const stat = statOptions ? fsSync.statSync(realPath, statOptions) : fsSync.statSync(realPath);
         if (sameFileIdentity(handleStat, stat)) return { realPath, stat };
       }
     } catch (err) {

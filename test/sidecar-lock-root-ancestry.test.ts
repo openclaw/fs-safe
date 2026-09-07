@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -61,9 +62,9 @@ it.each(["numeric", "unknown", "changed", "EACCES", "EIO"])("rejects %s canonica
     __setFsSafeTestHooksForTest();
     await fs.unlink(lockPath);
     Object.defineProperty(process, "platform", { value: "win32" });
-    const lstat = fs.lstat.bind(fs);
-    vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
-      const value = await lstat(...args);
+    const lstat = fsSync.lstatSync.bind(fsSync);
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
+      const value = lstat(...args);
       if (String(args[0]) === parent && typeof args[1] === "object" && args[1]?.bigint) {
         if (kind === "EACCES" || kind === "EIO") throw Object.assign(new Error("directory failure"), { code: kind });
         Object.assign(value, { ino: kind === "numeric" ? Number(value.ino) : kind === "unknown" ? 0n : BigInt(value.ino) + 1n });
@@ -80,10 +81,10 @@ it.each(["EACCES", "EIO"])("does not treat initial directory %s as missing-paren
   const lockPath = path.join(capability.rootReal, "state.lock");
   await capability.create("state.lock", "{}");
   const failure = Object.assign(new Error("directory failure"), { code });
-  const lstat = fs.lstat.bind(fs), open = vi.spyOn(capability, "open");
-  vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+  const lstat = fsSync.lstatSync.bind(fsSync), open = vi.spyOn(capability, "open");
+  vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
     if (String(args[0]) === capability.rootReal && typeof args[1] === "object" && args[1]?.bigint) throw failure;
-    return await lstat(...args);
+    return lstat(...args);
   });
   await expect(readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardObservation: "unlinked" })).rejects.toBe(failure);
   expect(open).not.toHaveBeenCalled();

@@ -181,8 +181,8 @@ for (const backend of ["off", "require"] as const) {
               injected = true;
               throw sentinel;
             } else if (attack === "I/O failure" || attack === "late hardlink" || attack === "late mode") {
-              const lstat = fs.lstat.bind(fs);
-              vi.spyOn(fs, "lstat").mockImplementation((async (...args: Parameters<typeof fs.lstat>) => {
+              const lstat = fsSync.lstatSync.bind(fsSync);
+              vi.spyOn(fsSync, "lstatSync").mockImplementation(((...args: Parameters<typeof fsSync.lstatSync>) => {
                 if (attack === "I/O failure" && String(args[0]) === filePath) {
                   injected = true;
                   throw sentinel;
@@ -190,11 +190,11 @@ for (const backend of ["off", "require"] as const) {
                 // Run after the first file check, during ancestry validation.
                 if (!injected && String(args[0]) === parent) {
                   injected = true;
-                  if (attack === "late hardlink") await fs.link(filePath, path.join(parent, "alias"));
+                  if (attack === "late hardlink") fsSync.linkSync(filePath, path.join(parent, "alias"));
                   else fsSync.fchmodSync(params.fd, 0o644);
                 }
-                return await lstat(...args);
-              }) as typeof fs.lstat);
+                return lstat(...args);
+              }) as typeof fsSync.lstatSync);
             }
             try {
               await verify(params);

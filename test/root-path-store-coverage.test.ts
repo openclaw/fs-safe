@@ -29,18 +29,18 @@ afterEach(() => {
 describe("absolute path failure coverage", () => {
   it("classifies root lookup errno and preserves unexpected failures", async () => {
     const target = path.join(path.parse(process.cwd()).root, "missing");
-    const realLstat = fs.lstat.bind(fs);
+    const realLstat = fsSync.lstatSync.bind(fsSync);
 
     for (const [errno, code] of [["ENOENT", "not-found"], ["ENOTDIR", "not-file"]] as const) {
-      vi.spyOn(fs, "lstat").mockRejectedValueOnce(
-        Object.assign(new Error(errno), { code: errno }),
-      );
+      vi.spyOn(fsSync, "lstatSync").mockImplementationOnce(() => {
+        throw Object.assign(new Error(errno), { code: errno });
+      });
       await expect(ensureAbsoluteDirectory(target, { scopeLabel: "test root" }))
         .resolves.toMatchObject({ ok: false, code });
       vi.restoreAllMocks();
     }
 
-    vi.spyOn(fs, "lstat").mockImplementationOnce(async () => {
+    vi.spyOn(fsSync, "lstatSync").mockImplementationOnce(() => {
       throw Object.assign(new Error("permission denied"), { code: "EACCES" });
     }).mockImplementation(realLstat);
     await expect(ensureAbsoluteDirectory(target, { scopeLabel: "test root" }))
@@ -75,7 +75,7 @@ describe("absolute path failure coverage", () => {
       });
 
     const denied = Object.assign(new Error("permission denied"), { code: "EACCES" });
-    vi.spyOn(fs, "realpath").mockRejectedValueOnce(denied);
+    vi.spyOn(fsSync, "realpathSync").mockImplementationOnce(() => { throw denied; });
     await expect(resolveAbsolutePathForRead(path.join(root, "value.txt"))).rejects.toBe(denied);
   });
 
@@ -85,14 +85,14 @@ describe("absolute path failure coverage", () => {
     const original = `${root}-original`;
     tempDirs.push(original);
     const target = path.join(root, "missing");
-    const realLstat = fs.lstat.bind(fs);
+    const realLstat = fsSync.lstatSync.bind(fsSync);
     let rootLookups = 0;
-    vi.spyOn(fs, "lstat").mockImplementation(async (candidate, options) => {
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((candidate, options) => {
       if (String(candidate) === root && ++rootLookups === 2) {
-        await fs.rename(root, original);
-        await fs.symlink(outside, root, "dir");
+        fsSync.renameSync(root, original);
+        fsSync.symlinkSync(outside, root, "dir");
       }
-      return await realLstat(candidate, options);
+      return realLstat(candidate, options);
     });
 
     await expect(ensureAbsoluteDirectory(target, { scopeLabel: "test root" }))
@@ -106,9 +106,9 @@ describe("absolute path failure coverage", () => {
     const target = path.join(root, "missing");
     await fs.writeFile(file, "not a directory");
     const fileStat = await fs.lstat(file);
-    const realLstat = fs.lstat.bind(fs);
+    const realLstat = fsSync.lstatSync.bind(fsSync);
     let rootLookups = 0;
-    vi.spyOn(fs, "lstat").mockImplementation(async (candidate, options) => {
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((candidate, options) => {
       if (String(candidate) === root) {
         rootLookups += 1;
         if (rootLookups === 2) return fileStat;
@@ -116,20 +116,20 @@ describe("absolute path failure coverage", () => {
           throw Object.assign(new Error("vanished"), { code: "ENOENT" });
         }
       }
-      return await realLstat(candidate, options);
+      return realLstat(candidate, options);
     });
     await expect(ensureAbsoluteDirectory(target, { scopeLabel: "test root" }))
       .resolves.toMatchObject({ ok: false, code: "not-found" });
 
     vi.restoreAllMocks();
     const denied = Object.assign(new Error("permission denied"), { code: "EACCES" });
-    vi.spyOn(fs, "lstat").mockImplementation(async (candidate, options) => {
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((candidate, options) => {
       if (String(candidate) === target) throw denied;
-      return await realLstat(candidate, options);
+      return realLstat(candidate, options);
     });
     await expect(ensureAbsoluteDirectory(target, { scopeLabel: "test root" })).rejects.toBe(denied);
     vi.restoreAllMocks();
-    vi.spyOn(fs, "lstat").mockRejectedValueOnce(denied);
+    vi.spyOn(fsSync, "lstatSync").mockImplementationOnce(() => { throw denied; });
     await expect(canonicalPathFromExistingAncestor(target)).rejects.toBe(denied);
   });
 
@@ -138,20 +138,20 @@ describe("absolute path failure coverage", () => {
     const file = path.join(root, "file.txt");
     await fs.writeFile(file, "file");
     const fileStat = await fs.lstat(file);
-    vi.spyOn(fs, "lstat").mockResolvedValueOnce(fileStat);
+    vi.spyOn(fsSync, "lstatSync").mockReturnValueOnce(fileStat);
     await expect(ensureAbsoluteDirectory(path.join(root, "missing"), { scopeLabel: "test root" }))
       .resolves.toMatchObject({ ok: false, code: "not-file" });
 
     vi.restoreAllMocks();
     const target = path.join(root, "new.txt");
-    const realRealpath = fs.realpath.bind(fs);
+    const realRealpath = fsSync.realpathSync.bind(fsSync);
     let rejected = false;
-    vi.spyOn(fs, "realpath").mockImplementation(async (candidate, options) => {
+    vi.spyOn(fsSync, "realpathSync").mockImplementation((candidate, options) => {
       if (!rejected && String(candidate) === root) {
         rejected = true;
         throw Object.assign(new Error("canonicalization unavailable"), { code: "EACCES" });
       }
-      return await realRealpath(candidate, options);
+      return realRealpath(candidate, options);
     });
     await expect(resolveAbsolutePathForWrite(target)).resolves.toMatchObject({ path: target });
   });

@@ -55,7 +55,7 @@ export async function runPinnedWriteNative(binding: NativeBinding, params: Pinne
       params.relativeParentPath,
       directoryFlags,
     ).fd;
-    const parentPath = await fs.realpath(
+    const parentPath = fsSync.realpathSync(
       params.relativeParentPath
         ? path.join(params.rootPath, ...params.relativeParentPath.split("/"))
         : params.rootPath,
@@ -63,7 +63,7 @@ export async function runPinnedWriteNative(binding: NativeBinding, params: Pinne
     const directory = windows ? undefined : describeStagedDirectory(parentFd, parentPath);
     const parentPathStat = exactRoot
       ? await inspectDirectoryIdentity(parentPath, inspectFileIdentitySync(() => fsSync.fstatSync(parentFd!, { bigint: true })))
-      : await fs.lstat(parentPath);
+      : fsSync.lstatSync(parentPath);
     if (windows && !exactRoot) {
       const parentIdentity = binding.fstatIdentity(parentFd);
       if (parentPathStat.isSymbolicLink() || !sameNativeIdentity(parentPathStat, parentIdentity)) {
@@ -75,7 +75,7 @@ export async function runPinnedWriteNative(binding: NativeBinding, params: Pinne
     const verificationGuard = { dir: parentPath, realPath: parentPath, stat: parentPathStat };
     if (params.overwrite === false) {
       try {
-        await fs.lstat(path.join(parentPath, params.basename));
+        fsSync.lstatSync(path.join(parentPath, params.basename));
         throw Object.assign(new Error("destination already exists"), { code: "EEXIST" });
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") {

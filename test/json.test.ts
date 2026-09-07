@@ -145,7 +145,7 @@ describe("json file helpers", () => {
   it("does not retry initially missing nullable JSON reads", async () => {
     const root = await tempRoot("fs-safe-json-missing-");
     const missing = path.join(root, "missing.json");
-    const lstatSpy = vi.spyOn(fs, "lstat");
+    const lstatSpy = vi.spyOn(fsSync, "lstatSync");
 
     try {
       await expect(readJsonIfExists(missing)).resolves.toBeNull();
@@ -163,14 +163,14 @@ describe("json file helpers", () => {
     await fs.writeFile(filePath, "{\"ok\":true}", "utf8");
     await fs.writeFile(secretPath, "{\"secret\":true}", "utf8");
 
-    const originalLstat = fs.lstat.bind(fs);
+    const originalLstat = fsSync.lstatSync.bind(fsSync);
     let swapped = false;
-    const lstatSpy = vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
-      const stat = await originalLstat(...args);
+    const lstatSpy = vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
+      const stat = originalLstat(...args);
       if (!swapped && args[0] === filePath) {
         swapped = true;
-        await fs.rm(filePath, { force: true });
-        await fs.symlink(secretPath, filePath);
+        fsSync.rmSync(filePath, { force: true });
+        fsSync.symlinkSync(secretPath, filePath);
       }
       return stat;
     });

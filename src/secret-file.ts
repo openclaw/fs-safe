@@ -179,7 +179,7 @@ async function enforcePrivateDirectoryMode(params: {
 
 async function inspectPrivateDirectory(directory: string, kind: "root" | "directory component"): Promise<BigIntStats> {
   return await inspectFileIdentity(async () => {
-    const stat = await fsp.lstat(directory, { bigint: true });
+    const stat = fs.lstatSync(directory, { bigint: true });
     if (stat.isSymbolicLink()) {
       throw new Error(`Private secret ${kind} ${directory} must not be a symlink.`);
     }
@@ -328,7 +328,7 @@ async function materializeSecretFileAtomic(
 ): Promise<void> {
   const { mode, rootGuard, parentGuard, fileName, finalFilePath } = await prepareSecretFileWrite(params);
   try {
-    const stat = await fsp.lstat(finalFilePath);
+    const stat = fs.lstatSync(finalFilePath);
     if (createOnly) {
       throw new FsSafeError("secret-exists", `Private secret file ${finalFilePath} already exists.`);
     }

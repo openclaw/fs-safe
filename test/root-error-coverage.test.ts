@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -203,7 +204,7 @@ describe("root context error paths", () => {
       .resolves.toMatchObject({ resolved: path.join(rootDir, "value.txt") });
 
     const denied = Object.assign(new Error("permission denied"), { code: "EACCES" });
-    vi.spyOn(fs, "realpath").mockRejectedValueOnce(denied);
+    vi.spyOn(fsSync, "realpathSync").mockImplementationOnce(() => { throw denied; });
     await expect(resolveRootContext(rootDir)).rejects.toBe(denied);
   });
 });

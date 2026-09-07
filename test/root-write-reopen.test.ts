@@ -31,13 +31,13 @@ describe("Windows publication reopen guards", () => {
     let readFile: ReturnType<typeof vi.spyOn> | undefined;
     let retainedFd: number | undefined;
     let linked = false;
-    for (const operation of ["stat", "lstat"] as const) {
-      const actual = fs[operation].bind(fs);
-      vi.spyOn(fs, operation).mockImplementation(async (...args) => {
-        const stat = await actual(...args);
+    for (const operation of ["statSync", "lstatSync"] as const) {
+      const actual = fsSync[operation].bind(fsSync);
+      vi.spyOn(fsSync, operation).mockImplementation((...args) => {
+        const stat = actual(...args);
         if (!opaque || String(args[0]) !== target) return stat;
-        if (operation === "stat" && reopened && attack === "late hardlink" && !linked) {
-          await fs.link(target, alias);
+        if (operation === "statSync" && reopened && attack === "late hardlink" && !linked) {
+          fsSync.linkSync(target, alias);
           linked = true;
         }
         stat.dev = args[1]?.bigint ? 0n : 0;

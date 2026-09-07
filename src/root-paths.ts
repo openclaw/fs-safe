@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { formatErrorDetail } from "./error-detail.js";
@@ -62,7 +63,7 @@ function pathStaysWithinRoot(rootDir: string, candidatePath: string): boolean {
 
 async function resolveRealPathIfExists(targetPath: string): Promise<string | undefined> {
   try {
-    return await fs.realpath(targetPath);
+    return fsSync.realpathSync(targetPath);
   } catch {
     return undefined;
   }
@@ -70,11 +71,11 @@ async function resolveRealPathIfExists(targetPath: string): Promise<string | und
 
 async function resolveTrustedRootRealPath(rootDir: string): Promise<string | undefined> {
   try {
-    const rootLstat = await fs.lstat(rootDir);
+    const rootLstat = fsSync.lstatSync(rootDir);
     if (!rootLstat.isDirectory() || rootLstat.isSymbolicLink()) {
       return undefined;
     }
-    return await fs.realpath(rootDir);
+    return fsSync.realpathSync(rootDir);
   } catch {
     return undefined;
   }
@@ -86,7 +87,7 @@ async function validateCanonicalPathWithinRoot(params: {
   expect: "directory" | "file";
 }): Promise<"ok" | "not-found" | "invalid"> {
   try {
-    const candidateLstat = await fs.lstat(params.candidatePath);
+    const candidateLstat = fsSync.lstatSync(params.candidatePath);
     if (candidateLstat.isSymbolicLink()) {
       return "invalid";
     }
@@ -99,7 +100,7 @@ async function validateCanonicalPathWithinRoot(params: {
     if (params.expect === "file" && candidateLstat.nlink > 1) {
       return "invalid";
     }
-    const candidateRealPath = await fs.realpath(params.candidatePath);
+    const candidateRealPath = fsSync.realpathSync(params.candidatePath);
     return isPathInside(params.rootRealPath, candidateRealPath) ? "ok" : "invalid";
   } catch (err) {
     return isNotFoundPathError(err) ? "not-found" : "invalid";
@@ -175,7 +176,7 @@ async function resolveNearestExistingPath(targetPath: string): Promise<string> {
   let current = path.resolve(targetPath);
   while (true) {
     try {
-      await fs.lstat(current);
+      fsSync.lstatSync(current);
       return current;
     } catch (err) {
       if (!isNotFoundPathError(err)) {
@@ -203,7 +204,7 @@ async function assertNoSymlinkSegments(params: {
   for (const segment of relative.split(path.sep).filter(Boolean)) {
     current = path.join(current, segment);
     try {
-      const stat = await fs.lstat(current);
+      const stat = fsSync.lstatSync(current);
       if (stat.isSymbolicLink()) {
         throw new FsSafeError(
           "symlink", `Invalid path: must not traverse symlinks within ${params.scopeLabel}`,
@@ -242,14 +243,14 @@ export async function ensureDirectoryWithinRoot(params: {
     if (!lexical.ok) return lexical;
     const rootDir = path.resolve(params.rootDir);
     const targetPath = lexical.path;
-    const rootStat = await fs.lstat(rootDir);
+    const rootStat = fsSync.lstatSync(rootDir);
     if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
       return invalidPath(scopeLabel);
     }
     await assertNoSymlinkSegments({ rootDir, targetPath, scopeLabel });
-    const rootReal = await fs.realpath(rootDir);
+    const rootReal = fsSync.realpathSync(rootDir);
     const nearestExistingPath = await resolveNearestExistingPath(targetPath);
-    const nearestExistingReal = await fs.realpath(nearestExistingPath);
+    const nearestExistingReal = fsSync.realpathSync(nearestExistingPath);
     if (!isPathInside(rootReal, nearestExistingReal)) {
       return invalidPath(scopeLabel);
     }
@@ -259,7 +260,7 @@ export async function ensureDirectoryWithinRoot(params: {
       current = path.join(current, segment);
       while (true) {
         try {
-          const stat = await fs.lstat(current);
+          const stat = fsSync.lstatSync(current);
           if (stat.isSymbolicLink() || !stat.isDirectory()) {
             return invalidPath(scopeLabel);
           }
@@ -278,12 +279,12 @@ export async function ensureDirectoryWithinRoot(params: {
           }
         }
       }
-      const currentReal = await fs.realpath(current);
+      const currentReal = fsSync.realpathSync(current);
       if (!isPathInside(rootReal, currentReal)) {
         return invalidPath(scopeLabel);
       }
     }
-    const targetReal = await fs.realpath(targetPath);
+    const targetReal = fsSync.realpathSync(targetPath);
     if (!isPathInside(rootReal, targetReal)) {
       return invalidPath(scopeLabel);
     }
@@ -415,7 +416,7 @@ async function resolveCheckedPathsWithinRoot(
       return lexicalPathResult;
     }
     try {
-      const resolvedExistingPath = await fs.realpath(raw);
+      const resolvedExistingPath = fsSync.realpathSync(raw);
       const relativePath = path.relative(rootRealPath, resolvedExistingPath);
       if (!isInRoot(relativePath)) {
         return lexicalPathResult;
@@ -457,7 +458,7 @@ async function resolveCheckedPathsWithinRoot(
             scopeLabel: params.scopeLabel,
           });
           const existingPath = await resolveNearestExistingPath(pathResult.fallbackPath);
-          const existingRealPath = await fs.realpath(existingPath);
+          const existingRealPath = fsSync.realpathSync(existingPath);
           if (!isPathInside(rootRealPath, existingRealPath)) {
             return invalidPath(params.scopeLabel);
           }

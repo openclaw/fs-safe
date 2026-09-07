@@ -1,4 +1,4 @@
-import fs from "node:fs/promises";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { inspectDirectoryIdentity } from "./directory-guard.js";
@@ -44,7 +44,7 @@ export async function expandRelativePathWithHome(relativePath: string): Promise<
   if (cachedHomePath?.raw !== rawHome) {
     let realHome = rawHome;
     try {
-      realHome = await fs.realpath(rawHome);
+      realHome = fs.realpathSync(rawHome);
     } catch {
       // If the home dir cannot be canonicalized, keep lexical expansion behavior.
     }
@@ -58,8 +58,8 @@ export async function resolveRootContext(rootDir: string): Promise<RootContext> 
   let rootReal: string;
   let rootIdentity: { dev: number; ino: number };
   try {
-    rootReal = await fs.realpath(rootDir);
-    const rootStat = await fs.stat(rootReal);
+    rootReal = fs.realpathSync(rootDir);
+    const rootStat = fs.statSync(rootReal);
     if (!rootStat.isDirectory()) {
       throw new FsSafeError("invalid-path", "root dir is not a directory");
     }
@@ -99,13 +99,13 @@ export function rootRelativeReadPath(root: RootContext, filePath: string): strin
 }
 
 export async function assertRootIdentityCurrent(root: RootContext): Promise<void> {
-  let current: Awaited<ReturnType<typeof fs.lstat>>;
+  let current: fs.Stats;
   try {
     if (typeof root.rootIdentity.dev === "bigint" && typeof root.rootIdentity.ino === "bigint") {
       await inspectDirectoryIdentity(root.rootReal, { dev: root.rootIdentity.dev, ino: root.rootIdentity.ino });
       return;
     }
-    current = await fs.lstat(root.rootReal);
+    current = fs.lstatSync(root.rootReal);
   } catch (error) {
     throw new FsSafeError("path-mismatch", "root path changed during operation", {
       cause: error instanceof Error ? error : undefined,

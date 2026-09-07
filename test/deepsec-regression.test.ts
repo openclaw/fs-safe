@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -143,14 +144,14 @@ describe("deepsec regressions", () => {
     const outsideFile = path.join(outside, "secret.txt");
     await fsp.writeFile(sourcePath, "upload");
     await fsp.writeFile(outsideFile, "secret");
-    const originalLstat = fsp.lstat;
+    const originalLstat = fsSync.lstatSync;
     let swapped = false;
-    vi.spyOn(fsp, "lstat").mockImplementation(async (candidate, options) => {
-      const stat = await originalLstat(candidate, options as never);
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((candidate, options) => {
+      const stat = originalLstat(candidate, options as never);
       if (!swapped && candidate === sourcePath) {
         swapped = true;
-        await fsp.rm(sourcePath);
-        await fsp.symlink(outsideFile, sourcePath, "file");
+        fsSync.rmSync(sourcePath);
+        fsSync.symlinkSync(outsideFile, sourcePath, "file");
       }
       return stat;
     });
@@ -229,15 +230,15 @@ describe("deepsec regressions", () => {
     await fsp.mkdir(rootDir, { mode: 0o700 });
     await fsp.mkdir(outside);
     const secretPath = path.join(rootDir, "nested", "secret.txt");
-    const realRealpath = fsp.realpath;
+    const realRealpath = fsSync.realpathSync;
     let swapped = false;
-    vi.spyOn(fsp, "realpath").mockImplementation(async (target, options) => {
+    vi.spyOn(fsSync, "realpathSync").mockImplementation((target, options) => {
       if (!swapped && target === path.join(rootDir, "nested")) {
         swapped = true;
-        await fsp.rename(rootDir, originalRoot);
-        await fsp.symlink(outside, rootDir, "dir");
+        fsSync.renameSync(rootDir, originalRoot);
+        fsSync.symlinkSync(outside, rootDir, "dir");
       }
-      return await realRealpath(target, options as never);
+      return realRealpath(target, options as never);
     });
 
     await expect(
@@ -269,15 +270,15 @@ describe("deepsec regressions", () => {
     await fsp.mkdir(path.join(rootDir, "nested"), { recursive: true, mode: 0o700 });
     await fsp.mkdir(outside);
     const secretPath = path.join(rootDir, "nested", "secret.txt");
-    const realLstat = fsp.lstat;
+    const realLstat = fsSync.lstatSync;
     let swapped = false;
-    vi.spyOn(fsp, "lstat").mockImplementation(async (target, options) => {
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((target, options) => {
       if (!swapped && String(target).endsWith(path.join("nested", "secret.txt"))) {
         swapped = true;
-        await fsp.rename(path.join(rootDir, "nested"), movedParent);
-        await fsp.symlink(outside, path.join(rootDir, "nested"), "dir");
+        fsSync.renameSync(path.join(rootDir, "nested"), movedParent);
+        fsSync.symlinkSync(outside, path.join(rootDir, "nested"), "dir");
       }
-      return await realLstat(target, options as never);
+      return realLstat(target, options as never);
     });
 
     await expect(
@@ -296,20 +297,20 @@ describe("deepsec regressions", () => {
     await fsp.mkdir(parentDir, { recursive: true, mode: 0o700 });
     await fsp.mkdir(outside);
     const secretPath = path.join(parentDir, "secret.txt");
-    const realLstat = fsp.lstat;
+    const realLstat = fsSync.lstatSync;
     let swapped = false;
-    vi.spyOn(fsp, "lstat").mockImplementation(async (target, options) => {
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((target, options) => {
       if (!swapped && target === rootDir) {
         try {
-          await realLstat(secretPath);
+          realLstat(secretPath);
           swapped = true;
-          await fsp.rename(parentDir, movedParent);
-          await fsp.symlink(outside, parentDir, "dir");
+          fsSync.renameSync(parentDir, movedParent);
+          fsSync.symlinkSync(outside, parentDir, "dir");
         } catch {
           // Wait until the helper has committed the file in the pinned parent.
         }
       }
-      return await realLstat(target, options as never);
+      return realLstat(target, options as never);
     });
 
     await expect(
@@ -330,16 +331,16 @@ describe("deepsec regressions", () => {
     await fsp.chmod(outsideFile, 0o600);
     const secretPath = path.join(rootDir, "secret.txt");
     const finalSecretPath = path.join(await fsp.realpath(rootDir), "secret.txt");
-    const realLstat = fsp.lstat;
+    const realLstat = fsSync.lstatSync;
     let swapped = false;
-    vi.spyOn(fsp, "lstat").mockImplementation(async (target, options) => {
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((target, options) => {
       // Exact pathname verification occurs after the writer publishes its file.
       if (!swapped && target === finalSecretPath && (options as { bigint?: boolean })?.bigint) {
         swapped = true;
-        await fsp.rm(finalSecretPath, { force: true });
-        await fsp.symlink(outsideFile, finalSecretPath, "file");
+        fsSync.rmSync(finalSecretPath, { force: true });
+        fsSync.symlinkSync(outsideFile, finalSecretPath, "file");
       }
-      return await realLstat(target, options as never);
+      return realLstat(target, options as never);
     });
 
     await expect(

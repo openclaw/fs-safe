@@ -11,13 +11,22 @@ import { useRealTempDirs } from "./helpers/vitest.js";
 
 // Measured fallback calls on macOS; allow two calls for platform variation.
 const budgets = {
-  "root.readBytes": 14, // measured 12
-  readRegularFile: 8, // measured 6
-  tryReadJson: 9, // measured 7
-  replaceFileAtomic: 18, // measured 16
-  "writeJson durable:false": 18, // measured 16
-  "root.write": 56, // measured 54, including canonical mode-inheritance identity
+  "root.readBytes": 16, // measured 14, including the post-read EOF size observation
+  readRegularFile: 9, // measured 7
+  tryReadJson: 10, // measured 8
+  replaceFileAtomic: 20, // measured 18
+  "writeJson durable:false": 20, // measured 18
+  "root.write": 60, // measured 58, including canonical mode-inheritance identity
   "root.exists": 7, // measured 5
+};
+const asyncBudgets = {
+  "root.readBytes": 4, // measured 3: open, read, close
+  readRegularFile: 4, // measured 3: open, readFile, close
+  tryReadJson: 4, // measured 3: open, readFile, close
+  replaceFileAtomic: 9, // measured 8
+  "writeJson durable:false": 9, // measured 8
+  "root.write": 12, // measured 11, including two durability syncs
+  "root.exists": 1, // measured 0
 };
 const { tempRoot } = useRealTempDirs();
 
@@ -43,7 +52,15 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
           ...descriptor,
           value: function (this: unknown, ...args: unknown[]) {
             if (counting) counts.set(prefix + key, (counts.get(prefix + key) ?? 0) + 1);
-            return Reflect.apply(original, this, args);
+            const result = Reflect.apply(original, this, args);
+            if (prefix === "p." && key === "open") {
+              return result.then((opened: object) => {
+                // FileHandle.close is an own property, not a prototype method.
+                wrap(opened, ["close"], "h.");
+                return opened;
+              });
+            }
+            return result;
           },
         });
         restore.push(() => Object.defineProperty(object, key, descriptor));
@@ -69,7 +86,11 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
         try { await operations[name](); } finally { counting = false; }
         const total = [...counts.values()].reduce((sum, count) => sum + count, 0);
         const breakdown = [...counts].map(([key, count]) => `${key}=${count}`).join(" ");
+        const asyncTotal = [...counts].reduce((sum, [key, count]) =>
+          sum + (key.startsWith("s.") ? 0 : count), 0);
         expect.soft(total, `${name}: ${total} calls; ${breakdown}`).toBeLessThanOrEqual(budgets[name]);
+        expect.soft(asyncTotal, `${name}: ${asyncTotal} async calls; ${breakdown}`)
+          .toBeLessThanOrEqual(asyncBudgets[name]);
       }
     } finally {
       counting = false;

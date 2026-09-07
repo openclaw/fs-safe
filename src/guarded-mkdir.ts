@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard } from "./directory-guard.js";
@@ -12,7 +13,7 @@ function isSameOrChildPath(candidate: string, parent: string): boolean {
 
 async function realpathOrThrowNotFile(target: string): Promise<string> {
   try {
-    return path.resolve(await fs.realpath(target));
+    return path.resolve(fsSync.realpathSync(target));
   } catch (error) {
     if (isNotFoundPathError(error)) {
       // A dangling symlink (or a component removed between lstat and
@@ -37,7 +38,7 @@ export async function mkdirPathComponentsWithGuards(params: {
   rejectSymlinks?: boolean;
 }): Promise<string> {
   const root = path.resolve(params.rootReal);
-  const rootCanonical = path.resolve(await fs.realpath(root));
+  const rootCanonical = path.resolve(fsSync.realpathSync(root));
   const target = path.resolve(params.targetPath);
   const relative = path.relative(root, target);
   if (isPathRelativeEscape(relative)) {
@@ -56,7 +57,7 @@ export async function mkdirPathComponentsWithGuards(params: {
         throw error;
       }
     }
-    const stat = await fs.lstat(next);
+    const stat = fsSync.lstatSync(next);
     if ((params.rejectSymlinks && stat.isSymbolicLink()) || (!stat.isSymbolicLink() && !stat.isDirectory())) {
       throw directoryComponentNotDirectoryError();
     }
@@ -76,7 +77,7 @@ export async function mkdirPathComponentsWithGuards(params: {
       // every subsequent segment. Callers that need the final directory
       // (e.g. to guard it themselves after this function returns) must use
       // the returned resolved path, not their own lexical parent path.
-      const targetStat = await fs.stat(nextReal);
+      const targetStat = fsSync.statSync(nextReal);
       if (!targetStat.isDirectory()) {
         throw directoryComponentNotDirectoryError();
       }
