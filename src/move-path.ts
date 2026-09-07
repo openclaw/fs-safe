@@ -18,9 +18,19 @@ import {
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { registerTempPathForExit } from "./temp-cleanup.js";
 
+export type MovePathPublicationReceipt = Readonly<{
+  path: string;
+  dev: bigint;
+  ino: bigint;
+}>;
+
 export type MovePathWithCopyFallbackOptions = {
+  /** Rechecks authority before each rename and copied-source unlink/rmdir dispatch. */
+  assertBeforeMutation?: () => void;
   /** Rechecks caller authority synchronously immediately before each rename dispatch. */
   assertBeforeRename?: () => void;
+  /** Reports the committed destination before post-rename checks or source cleanup. */
+  onDestinationPublished?: (receipt: MovePathPublicationReceipt) => void;
   from: string;
   sourceHardlinks?: "allow" | "reject";
   to: string;
@@ -278,23 +288,49 @@ async function copyEntryWithManifest(
   return { ...identity, kind: "leaf" };
 }
 
+function assertSynchronousResult(returned: unknown, name: string): void {
+  if (returned !== undefined) {
+    // TypeScript permits async functions for () => void; consume their rejection.
+    void Promise.resolve(returned).catch(() => {});
+    throw new TypeError(`${name} must return undefined synchronously`);
+  }
+}
+
 export async function movePathWithCopyFallback(
   options: MovePathWithCopyFallbackOptions,
 ): Promise<void> {
-  // Keep the initiating owner's callback across preparation and copy fallback.
-  const callerAssert = options.assertBeforeRename;
+  // Keep the initiating owner's callbacks across preparation and copy fallback.
+  const callerRenameAssert = options.assertBeforeRename;
+  const callerMutationAssert = options.assertBeforeMutation;
+  const callerPublished = options.onDestinationPublished;
   let assertionRejected = false;
+  let destinationPublished = false;
+  const assertBeforeMutation = () => {
+    assertSynchronousResult(callerMutationAssert?.(), "assertBeforeMutation");
+  };
   const assertBeforeRename = () => {
     try {
-      const returned = callerAssert?.();
-      if (returned !== undefined) {
-        // TypeScript permits async functions for () => void; they cannot authorize a rename.
-        void Promise.resolve(returned).catch(() => {});
-        throw new TypeError("assertBeforeRename must return undefined synchronously");
-      }
+      assertSynchronousResult(callerRenameAssert?.(), "assertBeforeRename");
+      assertBeforeMutation();
     } catch (error) {
       assertionRejected = true;
       throw error;
+    }
+  };
+  let publicationReceipt: MovePathPublicationReceipt | undefined;
+  const onSourceInspected = callerPublished
+    ? (identity: { dev: bigint; ino: bigint }) => {
+        publicationReceipt = Object.freeze({
+          path: targetPath,
+          dev: identity.dev,
+          ino: identity.ino,
+        });
+      }
+    : undefined;
+  const onRenamed = () => {
+    destinationPublished = true;
+    if (publicationReceipt) {
+      assertSynchronousResult(callerPublished?.(publicationReceipt), "onDestinationPublished");
     }
   };
   const sourcePath = path.resolve(options.from);
@@ -306,11 +342,17 @@ export async function movePathWithCopyFallback(
 
   if (!rejectHardlinks) {
     try {
-      await guardedRename({ from: sourcePath, to: targetPath, assertBeforeRename });
+      await guardedRename({
+        from: sourcePath,
+        to: targetPath,
+        assertBeforeRename,
+        onSourceInspected,
+        onRenamed,
+      });
       return;
     } catch (error) {
       // An owner's EXDEV/EPERM refusal is not permission to copy instead.
-      if (assertionRejected || !moveCopyFallbackReasonForRenameError(error)) {
+      if (assertionRejected || destinationPublished || !moveCopyFallbackReasonForRenameError(error)) {
         throw error;
       }
     }
@@ -323,7 +365,6 @@ export async function movePathWithCopyFallback(
   const targetDir = path.dirname(targetPath);
   const staged = path.join(targetDir, `.fs-safe-move-${process.pid}-${randomUUID()}.tmp`);
   const unregisterStaged = registerTempPathForExit(staged, { recursive: true });
-  let stagedCommitted = false;
   try {
     const manifest = await copyEntryWithManifest(
       sourcePath,
@@ -337,15 +378,27 @@ export async function movePathWithCopyFallback(
     const cleanupState = createCleanupCopiedEntryState(sourcePath, manifest);
     unregisterStaged.setIdentity(await fs.lstat(staged, { bigint: true }));
     await assertCopyDestinationOutsideSource(sourcePath, targetPath, manifest);
-    await guardedRename({ from: staged, to: targetPath, assertBeforeRename });
-    stagedCommitted = true;
-    unregisterStaged();
-    const cleanupResult = await cleanupCopiedEntry(sourcePath, manifest, cleanupState);
+    await guardedRename({
+      from: staged,
+      to: targetPath,
+      assertBeforeRename,
+      onSourceInspected,
+      onRenamed: () => {
+        unregisterStaged();
+        onRenamed();
+      },
+    });
+    const cleanupResult = await cleanupCopiedEntry(
+      sourcePath,
+      manifest,
+      cleanupState,
+      assertBeforeMutation,
+    );
     if (cleanupResult === "stale") {
       throw sourceChangedError(sourcePath);
     }
   } finally {
-    if (!stagedCommitted) {
+    if (!destinationPublished) {
       try {
         const stagedIdentity = await fs.lstat(staged, { bigint: true });
         if (!stagedIdentity.isSymbolicLink()) unregisterStaged.setIdentity(stagedIdentity);

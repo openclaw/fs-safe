@@ -189,6 +189,7 @@ export async function cleanupCopiedEntry(
   sourcePath: string,
   manifest: CopiedEntryManifest,
   state: CleanupCopiedEntryState,
+  assertBeforeMutation: () => void,
 ): Promise<CleanupCopiedEntryResult> {
   const aliasGroup =
     manifest.kind === "leaf" ? state.aliasGroups.get(identityKey(manifest)) : undefined;
@@ -216,9 +217,15 @@ export async function cleanupCopiedEntry(
     for (const child of manifest.children) {
       result = mergeCleanupResults(
         result,
-        await cleanupCopiedEntry(path.join(sourcePath, child.name), child.manifest, state),
+        await cleanupCopiedEntry(
+          path.join(sourcePath, child.name),
+          child.manifest,
+          state,
+          assertBeforeMutation,
+        ),
       );
     }
+    assertBeforeMutation();
     try {
       await fs.rmdir(sourcePath);
     } catch (error) {
@@ -235,6 +242,7 @@ export async function cleanupCopiedEntry(
   if (!sameIdentity(expected, entryIdentity(currentStat))) {
     return aliasGroup ? poisonAliasGroup(aliasGroup) : "stale";
   }
+  assertBeforeMutation();
   await fs.unlink(sourcePath);
   return aliasGroup
     ? await observeOwnedAliasUnlink(sourcePath, aliasGroup)

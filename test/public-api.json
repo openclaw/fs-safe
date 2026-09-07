@@ -506,6 +506,7 @@
         "writeTextAtomic"
       ],
       "types": [
+        "MovePathPublicationReceipt",
         "MovePathWithCopyFallbackOptions",
         "RenameIdentityPolicy",
         "ReplaceDirectoryAtomicOptions",
