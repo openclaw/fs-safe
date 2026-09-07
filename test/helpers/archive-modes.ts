@@ -1,7 +1,18 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import JSZip from "jszip";
 import { tarFixture } from "./archive-fuzz.js";
 
 export type ModeEntry = { path: string; mode?: number | null; directory?: boolean };
+
+// Only owned synthetic fixtures: assertions can fail before restoring traversal.
+export async function removeModeFixture(directory: string): Promise<void> {
+  await fs.chmod(directory, 0o700);
+  for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+    if (entry.isDirectory()) await removeModeFixture(path.join(directory, entry.name));
+  }
+  await fs.rm(directory, { recursive: true, force: true });
+}
 
 export async function modeArchive(kind: "tar" | "zip", entries: ModeEntry[]): Promise<Buffer> {
   if (kind === "tar") {

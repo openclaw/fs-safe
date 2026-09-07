@@ -1,8 +1,8 @@
-import { createTarEntryPreflightChecker } from "./archive-tar.js";
+import { createTarEntryPlanner } from "./archive-tar.js";
 import { inspectTar, replayTar } from "./archive-tar-stream.js";
 import type { AdmittedTarMember } from "./archive-tar-wasm.js";
 import { runPinnedWriteHelper } from "./pinned-write.js";
-import fsSync, { constants as fsConstants } from "node:fs";
+import { constants as fsConstants } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -55,7 +55,6 @@ import { extractNativeArchive } from "./archive-native.js";
 import { stageArchiveFileForExtraction } from "./archive-input.js";
 import { getNativeBinding } from "./native.js";
 import {
-  resolveArchiveEntryMode,
   resolveArchiveFilteredEntryPolicy,
   shouldExtractArchiveEntry,
 } from "./archive-policy.js";
@@ -77,6 +76,7 @@ export {
 } from "./archive-entry.js";
 export { resolveArchiveKind, resolvePackedRootDir, type ArchiveKind } from "./archive-kind.js";
 export { readArchiveEntry } from "./archive-read.js";
+export { inspectTarArchive, type InspectTarArchiveOptions, type InspectedTarEntry } from "./archive-tar-inspect.js";
 export {
   ARCHIVE_LIMIT_ERROR_CODE,
   ArchiveLimitError,
@@ -380,14 +380,11 @@ async function extractWasmTar(params: {
   const destinationRealDir = await prepareArchiveDestinationDir(options.destDir);
   await withStagedArchiveDestination({ destinationRealDir, run: async (stagingPath) => {
     const stagingDir = await fs.realpath(stagingPath);
-    const check = createTarEntryPreflightChecker({ rootDir: destinationRealDir,
-      stripComponents: options.stripComponents, limits: params.limits,
-      entryFilter: options.entryFilter, onFiltered: options.onFiltered });
-    const strip = Math.max(0, Math.floor(options.stripComponents ?? 0));
-    const accepted = manifest.filter((entry) => { deadline.check(); return check(entry); }).map((entry) => {
-      const kind = entry.type === "Directory" || entry.type === "GNUDumpDir" ? "directory" as const : "file" as const;
-      return { ...entry, path: stripArchivePath(entry.path, strip)!, kind,
-        mode: resolveArchiveEntryMode({ kind, archivedMode: entry.mode, policy: options.entryModes }) };
+    const planEntry = createTarEntryPlanner({ ...options, rootDir: destinationRealDir, limits: params.limits });
+    const accepted = manifest.flatMap((entry) => {
+      deadline.check();
+      const planned = planEntry(entry);
+      return planned ? [{ ...entry, ...planned }] : [];
     });
     await replayTar({ archivePath: params.archivePath, limits: tarLimits, signal: deadline.signal, members: accepted,
       async consume(member, payload) {

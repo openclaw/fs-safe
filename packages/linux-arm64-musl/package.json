@@ -1,6 +1,6 @@
 {
   "name": "@openclaw/fs-safe-linux-arm64-musl",
-  "version": "0.8.3",
+  "version": "0.8.4",
   "description": "Linux arm64 musl native binding for @openclaw/fs-safe.",
   "license": "MIT",
   "author": "OpenClaw Team <dev@openclaw.ai>",

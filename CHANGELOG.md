@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.8.4 - 2026-09-07
+
+- Add bounded `inspectTarArchive` with complete native/WASM admission and the same canonical extraction planner, preserving effective member identities without materializing an output tree.
+- Apply the existing filesystem-test worker cap locally as well as in CI, and drain archive publication fixtures before resetting hooks or cleaning restricted directories after timeouts.
 - Add `durable` to Root write/create/writeJson/createJson/append options and Root defaults; `durable: false` skips file and parent fsync for reconstructible data (default unchanged: durable).
 - Run metadata checks inside async operations synchronously (microseconds each), cutting event-loop round-trips per read/write while data I/O remains asynchronous and native canonical path spelling is preserved, including Windows short paths.
 
