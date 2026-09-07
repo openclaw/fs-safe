@@ -60,7 +60,9 @@ const policies: { name: string; rootDefault?: boolean; options?: RootWriteOption
 for (const backend of ["auto", "off"] as const) {
   describe.skipIf(backend === "auto" && !nativeAvailable)(`Root durable option: native ${backend}`, () => {
     for (const method of ["write", "create", "writeJson", "createJson", "append"] as const) {
-      it.each(policies.flatMap((policy) => [0o640, 0o400].map((mode) => ({ ...policy, mode }))))(
+      // The Windows JavaScript fallback cannot rename over a read-only destination.
+      const modes = process.platform === "win32" && backend === "off" && method !== "append" ? [0o640] : [0o640, 0o400];
+      it.each(policies.flatMap((policy) => modes.map((mode) => ({ ...policy, mode }))))(
         `${method}: $name, mode $mode`,
         async ({ rootDefault, options, sync, mode }) => {
           configureFsSafeNative({ mode: backend });
