@@ -163,8 +163,9 @@ async function copyRegularFilePinned(params: {
   mode: number;
   rejectHardlinks: boolean;
   to: string;
-}): Promise<void> {
+}): Promise<EntryIdentity> {
   let destinationCreated = false;
+  let openedIdentity: EntryIdentity;
   let sourceHandle: FileHandle;
   try {
     sourceHandle = await fs.open(params.from, resolveReadOpenFlags());
@@ -177,12 +178,26 @@ async function copyRegularFilePinned(params: {
   }
   try {
     const openedStat = await sourceHandle.stat();
+    openedIdentity = entryIdentity(openedStat);
     if (params.rejectHardlinks && openedStat.nlink > 1) {
       throw hardlinkedSourceError(params.from);
     }
-    if (!openedStat.isFile() || !sameIdentity(params.identity, entryIdentity(openedStat))) {
+    const openAdvancedWindowsCtime =
+      process.platform === "win32" &&
+      params.identity.dev === openedIdentity.dev &&
+      params.identity.ino === openedIdentity.ino &&
+      params.identity.mode === openedIdentity.mode &&
+      params.identity.nlink === openedIdentity.nlink &&
+      params.identity.size === openedIdentity.size &&
+      params.identity.mtimeMs === openedIdentity.mtimeMs &&
+      openedIdentity.ctimeMs >= params.identity.ctimeMs;
+    if (
+      !openedStat.isFile() ||
+      (!sameIdentity(params.identity, openedIdentity) && !openAdvancedWindowsCtime)
+    ) {
       throw sourceChangedError(params.from);
     }
+    await assertSourceStillMatches(params.from, openedIdentity);
 
     const destinationHandle = await fs.open(
       params.to,
@@ -205,7 +220,7 @@ async function copyRegularFilePinned(params: {
       if (params.rejectHardlinks && finalSourceStat.nlink > 1) {
         throw hardlinkedSourceError(params.from);
       }
-      if (!sameIdentity(params.identity, entryIdentity(finalSourceStat))) {
+      if (!sameIdentity(openedIdentity, entryIdentity(finalSourceStat))) {
         throw sourceChangedError(params.from);
       }
       await destinationHandle.chmod(modeBits(params.mode));
@@ -220,6 +235,7 @@ async function copyRegularFilePinned(params: {
   } finally {
     await sourceHandle.close();
   }
+  return openedIdentity;
 }
 
 async function copyEntryWithManifest(
@@ -238,7 +254,10 @@ async function copyEntryWithManifest(
   }
 
   if (sourceStat.isSymbolicLink()) {
-    await fs.symlink(await fs.readlink(from), to);
+    const target = await fs.readlink(from);
+    const targetType =
+      process.platform === "win32" && (await fs.stat(from)).isDirectory() ? "junction" : undefined;
+    await fs.symlink(target, to, targetType);
     // readlink() is path-based; verify the symlink we copied is still the one
     // we inspected before letting the staged destination become visible.
     await assertSourceStillMatches(from, identity);
@@ -278,14 +297,14 @@ async function copyEntryWithManifest(
     throw hardlinkedSourceError(from);
   }
 
-  await copyRegularFilePinned({
+  const copiedIdentity = await copyRegularFilePinned({
     from,
     identity,
     mode: sourceStat.mode,
     rejectHardlinks: options.sourceHardlinks === "reject",
     to,
   });
-  return { ...identity, kind: "leaf" };
+  return { ...copiedIdentity, kind: "leaf" };
 }
 
 function assertSynchronousResult(returned: unknown, name: string): void {
