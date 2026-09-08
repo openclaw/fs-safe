@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preserve Windows file identity across open-induced `ctime` changes during guarded move fallback, and recreate directory junctions without requiring symlink privileges.
+
 ## 0.8.6 - 2026-09-07
 
 **Highlights:** Clearer guidance for atomic writes on Windows exFAT, with a repeatable filesystem compatibility probe.
