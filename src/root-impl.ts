@@ -1614,10 +1614,7 @@ async function writeFileFallback(
   const target = await openWritableFileInRoot(root, {
     relativePath: params.relativePath,
     mkdir: params.mkdir,
-    // The placeholder only reserves and verifies the name. Keep it private and
-    // writable: a read-only placeholder (mode 0o400 maps to the Windows read-only
-    // attribute) cannot be renamed over, and broader modes must not be exposed
-    // before the published file is identity-fenced.
+    // Private, writable placeholder: Windows cannot rename over a read-only file.
     mode: 0o600,
     denyMutations: params.denyMutations,
     truncateExisting: false,
@@ -1647,9 +1644,7 @@ async function writeFileFallback(
     });
     unregisterTempPath();
     unregisterTempPath = null;
-    // Apply the requested mode only after publication, through the retained
-    // handle of the inode we wrote, mirroring the native Windows writer. On
-    // failure remove the published file if it is still ours, then rethrow.
+    // Final mode via the retained handle after publication, as the native writer does.
     try {
       await written.handle.chmod(mode);
     } catch (error) {
