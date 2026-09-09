@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Publish read-only modes (for example `0o400`) through the Windows JavaScript write fallback by keeping the placeholder and temporary file private at `0o600`, then applying the final mode through the retained handle after rename and before post-write verification.
 - Add `Root.copyIn({ durable: false })`, with per-call, root-default, then `true` precedence, to skip file and parent-directory fsync for reconstructible data.
 - Add `extractArchive({ durable: false })` to skip durability syncs for temporary or reconstructible extraction destinations.
 - Speed up archive extraction by omitting private staging syncs, deferring publication durability to one bounded file/directory pass, and sharing duplicate destination guards without weakening containment checks.

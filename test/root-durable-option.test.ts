@@ -60,8 +60,7 @@ const policies: { name: string; rootDefault?: boolean; options?: RootWriteOption
 for (const backend of ["auto", "off"] as const) {
   describe.skipIf(backend === "auto" && !nativeAvailable)(`Root durable option: native ${backend}`, () => {
     for (const method of ["write", "create", "writeJson", "createJson", "append", "copyIn"] as const) {
-      // The Windows JavaScript fallback cannot rename over a read-only destination.
-      const modes = process.platform === "win32" && backend === "off" && method !== "append" ? [0o640] : [0o640, 0o400];
+      const modes = [0o640, 0o400];
       it.each(policies.flatMap((policy) => modes.map((mode) => ({ ...policy, mode }))))(
         `${method}: $name, mode $mode`,
         async ({ rootDefault, options, sync, mode }) => {
@@ -164,6 +163,77 @@ for (const backend of ["auto", "off"] as const) {
 }
 
 describe.skipIf(process.platform === "win32")("Windows writer branch simulation", () => {
+  it("keeps JS write creation private and applies the final mode after rename", async () => {
+    configureFsSafeNative({ mode: "off" });
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const directory = await tempRoot("fs-safe-win-js-read-only-");
+    const target = path.join(directory, "target");
+    const safe = await root(directory);
+    const open = fs.open.bind(fs);
+    const creationModes: (number | string | undefined)[] = [];
+    const events: string[] = [];
+    vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+      const handle = await open(...args);
+      const filePath = String(args[0]);
+      const creates = typeof args[1] === "number"
+        ? (args[1] & fsSync.constants.O_CREAT) !== 0 : /^[wa]/.test(args[1]);
+      if (filePath.startsWith(directory + path.sep) && creates) {
+        creationModes.push(args[2]);
+        if (filePath !== target) {
+          const chmod = handle.chmod.bind(handle);
+          vi.spyOn(handle, "chmod").mockImplementation(async (mode) => {
+            expect((await fs.stat(target)).ino).toBe((await handle.stat()).ino);
+            expect((await fs.stat(target)).mode & 0o777).toBe(0o600);
+            await expect(fs.lstat(filePath)).rejects.toMatchObject({ code: "ENOENT" });
+            events.push("chmod");
+            await chmod(mode);
+          });
+        }
+      }
+      return handle;
+    });
+    vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params) => {
+      events.push("verify");
+      expect((await fs.stat(target)).mode & 0o777).toBe(0o400);
+      await verifyPublished(params);
+    });
+
+    await safe.write("target", "payload", { mode: 0o400 });
+
+    expect(creationModes).toEqual([0o600, 0o600]);
+    expect(events).toEqual(["chmod", "verify"]);
+    expect((await fs.stat(target)).mode & 0o777).toBe(0o400);
+    expect(await fs.readFile(target, "utf8")).toBe("payload");
+    expect(await fs.readdir(directory)).toEqual(["target"]);
+  });
+
+  it("removes the published JS write when final handle chmod fails", async () => {
+    configureFsSafeNative({ mode: "off" });
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const directory = await tempRoot("fs-safe-win-js-mode-cleanup-");
+    const target = path.join(directory, "target");
+    const safe = await root(directory);
+    const failure = Object.assign(new Error("synthetic mode failure"), { code: "EIO" });
+    const open = fs.open.bind(fs);
+    vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+      const handle = await open(...args);
+      const filePath = String(args[0]);
+      if (path.dirname(filePath) === directory && path.basename(filePath).startsWith(".fs-safe-")) {
+        vi.spyOn(handle, "chmod").mockImplementationOnce(async () => {
+          expect((await fs.stat(target)).ino).toBe((await handle.stat()).ino);
+          expect(await fs.readFile(target, "utf8")).toBe("payload");
+          throw failure;
+        });
+      }
+      return handle;
+    });
+
+    await expect(safe.write("target", "payload", { mode: 0o400 })).rejects.toBe(failure);
+
+    await expect(fs.lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await fs.readdir(directory)).toEqual([]);
+  });
+
   it.each([true, false])("preserves the unsynced JS writer with durable %s", async (durable) => {
     configureFsSafeNative({ mode: "off" });
     Object.defineProperty(process, "platform", { value: "win32" });
