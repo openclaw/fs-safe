@@ -67,7 +67,7 @@ function formatRatio(value) {
 }
 
 async function ensureDistIsBuilt() {
-  const required = ["dist/root.js", "dist/regular-file.js", "dist/atomic.js", "dist/json.js"];
+  const required = ["dist/root.js", "dist/regular-file.js", "dist/atomic.js", "dist/json.js", "dist/store.js"];
   const missing = required.filter((filePath) => !fsSync.existsSync(filePath));
   if (missing.length > 0) {
     throw new Error(`Benchmark needs built dist files. Run pnpm build first. Missing: ${missing.join(", ")}`);
@@ -144,11 +144,13 @@ async function main() {
     { readRegularFile },
     { root },
     { tryReadJson, writeJson },
+    { fileStore },
   ] = await Promise.all([
     import("../dist/atomic.js"),
     import("../dist/regular-file.js"),
     import("../dist/root.js"),
     import("../dist/json.js"),
+    import("../dist/store.js"),
   ]);
   const args = parseArgs(process.argv.slice(2));
   const iterations = args.iterations;
@@ -162,6 +164,7 @@ async function main() {
 
   try {
     const safe = await root(workspace, { mkdir: true, hardlinks: "allow" });
+    const store = fileStore({ rootDir: workspace });
     const readPath = path.join(workspace, "read.txt");
     const readRelPath = "read.txt";
     const jsonPath = path.join(workspace, "state.json");
@@ -228,6 +231,22 @@ async function main() {
         run: async (i) => {
           await safe.write("root-write-nondurable.txt", `${i}:${payload.toString("utf8")}`, { durable: false });
         },
+      },
+      {
+        group: "file store",
+        name: "raw fs.writeFile",
+        baseline: true,
+        run: () => fs.writeFile(path.join(workspace, "store-raw.txt"), payload, { mode: 0o600 }),
+      },
+      {
+        group: "file store",
+        name: "fileStore.write",
+        run: () => store.write("store-write.txt", payload),
+      },
+      {
+        group: "file store",
+        name: "fileStore.write durable:false",
+        run: () => store.write("store-write-nondurable.txt", payload, { durable: false }),
       },
       {
         group: "read json",
