@@ -28,8 +28,17 @@ const cache = fileStore({
   dirMode: 0o700,     // mode for parent directories created on demand (default 0o700)
   maxBytes: 64 * 1024 * 1024, // optional: refuse writes/reads larger than this
   private: true,      // use secret-file atomic writes for private state
+  durable: true,      // sync file and parent directory (default true)
 });
 ```
+
+| `FileStoreOptions` option | Default | Purpose |
+|---|---|---|
+| `rootDir` | Required | Store directory. |
+| `private` | `false` | Use the secret-file atomic path. |
+| `mode` / `dirMode` | `0o600` / `0o700` | File and parent-directory modes. |
+| `maxBytes` | Unset | Store read/write byte limit. |
+| `durable` | `true` | Sync the written file and its parent directory; see method support below. |
 
 Store and per-call `maxBytes` values must be non-negative safe integers or positive `Infinity`. Zero is an active zero-byte cap; `Infinity` disables the cap. An omitted or explicitly `undefined` per-call value preserves the store-level limit. The same rule applies to buffer writes, streams, copies, async reads, and synchronous reads/writes.
 
@@ -101,7 +110,24 @@ therefore does not imply that no filesystem access or serialization occurred.
 
 ## Writes
 
-Every write goes through `writeSiblingTempFile` — temp + rename, mode applied to file and parent dir, both `fsync`'d.
+Writes use guarded sibling-temp publication: apply file and directory modes,
+then rename into place. By default, the file and parent directory are synced
+where supported by the platform and writer.
+
+`durable: false` keeps the sibling-temp replace/rename behavior but skips the
+temp-file and parent-directory `fsync` calls. Use it only for reconstructible
+metadata where lower latency matters more than crash-durability. Per-call
+`durable` overrides the store option, which defaults to `true`; an omitted or
+`undefined` override preserves the store default. Modes, path confinement,
+and publication identity checks are unchanged.
+
+| Method | Durability support |
+|---|---|
+| `write`, `writeText`, `writeJson` (async and sync) | Per-call option overrides store default. |
+| `writeStream`, `private: true` | Per-call option overrides store default. |
+| `writeStream`, `private: false` | Always durable until Root.copyIn gains the option; `durable` is ignored. |
+| `copyIn` (either private mode) | Always durable until Root.copyIn gains the option; `durable` is ignored. |
+| JSON `write`, `update`, `updateOr` | JSON handle option overrides file-store default. |
 
 ### `write(rel, data, options?)`
 
@@ -118,7 +144,7 @@ Convenience wrappers over `write`. `writeJson` pretty-prints with a trailing new
 ### `json<T>(rel, options?)`
 
 Returns a typed single-file JSON state helper for a file under this store. It
-inherits the store's root, mode, max-size, and private-write policy, then adds
+inherits the store's root, mode, max-size, durability, and private-write policy, then adds
 `readOr`, `readRequired`, `update`, `updateOr`, and optional sidecar locking:
 
 ```ts
@@ -129,6 +155,9 @@ await state.updateOr(defaultState, (current) => ({ ...current, enabled: true }))
 Use this when one JSON file owns one piece of state. `jsonStore({ filePath })`
 is the absolute-path convenience wrapper for the same primitive.
 
+Pass `{ durable: false }` or `{ durable: true }` to `json()` to override the
+parent store's durability for all mutations of that JSON handle.
+
 ### `writeStream(rel, stream, options?)`
 
 ```ts
@@ -138,6 +167,9 @@ const path = await cache.writeStream("downloads/blob.bin", Readable.from(remoteF
 
 Streams into a sibling temp with a running byte budget. Aborts the source stream with `too-large` if `maxBytes` is exceeded mid-stream — partial writes are cleaned up.
 
+Private streams honor `durable`. Non-private streams stage their input and
+publish through Root `copyIn`, so they remain always durable for now.
+
 ### `copyIn(rel, sourcePath, options?)`
 
 ```ts
@@ -146,18 +178,33 @@ const path = await cache.copyIn("ingest/upload.bin", "/tmp/upload.bin");
 
 One-shot ingest from an absolute source path. Source is checked for symlink/non-regular before copy. Same mode rules as `write`.
 
+`copyIn` remains always durable in both private modes until Root `copyIn`
+gains the option. It ignores both store-level and per-call `durable` values.
+
 ### `FileStoreWriteOptions`
 
 Per-call overrides for the store-level defaults:
 
 ```ts
 type FileStoreWriteOptions = {
+  durable?: boolean;   // store default, otherwise true
   dirMode?: number;
   mode?: number;
   maxBytes?: number;
   tempPrefix?: string;  // override the default "." + basename
 };
 ```
+
+| `FileStoreWriteOptions` option | Default |
+|---|---|
+| `durable` | Store option, otherwise `true`; ignored by `copyIn` and non-private `writeStream`. |
+| `dirMode` / `mode` | Store directory/file modes. |
+| `maxBytes` | Store byte limit. |
+| `tempPrefix` | Writer-specific temporary prefix. |
+
+The same durability precedence applies to `fileStoreSync().write`,
+`writeText`, and `writeJson`. The synchronous store has no `writeStream` or
+`copyIn` methods.
 
 ## Reads
 
@@ -254,5 +301,5 @@ await root.move(`pending/${id}`, `done/${id}`);
 
 - [`root()`](root.md) — the boundary `FileStore` is built on; reach for it when you need move/list/append.
 - [JSON store](json-store.md) — the JSON-state-file equivalent of this surface.
-- [Atomic writes](atomic.md) — `writeSiblingTempFile` is what every write goes through.
+- [Atomic writes](atomic.md) — lower-level sibling-temp publication helpers.
 - [Temp workspaces](temp.md) — private scratch directories backed by `FileStore`.

@@ -277,6 +277,7 @@ type SecretFileWriteParams = {
   content: string | Uint8Array;
   mode?: number;
   dirMode?: number;
+  durable?: boolean;
 };
 
 async function secretFileWriteQueueKey(filePath: string): Promise<string> {
@@ -352,6 +353,7 @@ async function materializeSecretFileAtomic(
     basename: fileName,
     mkdir: false,
     mode,
+    sync: params.durable !== false,
     overwrite: !createOnly,
     input: { kind: "buffer", data: typeof params.content === "string" ? params.content : Buffer.from(params.content) },
     rootIdentity: { dev: parentGuard.stat.dev, ino: parentGuard.stat.ino },

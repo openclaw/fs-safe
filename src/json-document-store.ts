@@ -23,6 +23,8 @@ export type JsonStoreLockOptions = {
 };
 
 export type JsonFileStoreOptions = {
+  /** Overrides the parent store's durability for every JSON mutation. */
+  durable?: boolean;
   trailingNewline?: boolean;
   lock?: boolean | JsonStoreLockOptions;
 };
@@ -43,7 +45,7 @@ export type JsonStoreAdapter<T> = {
   prepareLock?: () => Promise<Root>;
   readIfExists(): Promise<T | undefined>;
   readRequired(): Promise<T>;
-  write(value: T, options?: { trailingNewline?: boolean }): Promise<void>;
+  write(value: T, options?: { trailingNewline?: boolean; durable?: boolean }): Promise<void>;
 };
 
 function cloneFallback<T>(value: T): T {
@@ -90,6 +92,7 @@ export function createJsonStore<T>(
   async function write(value: T): Promise<void> {
     await adapter.write(value, {
       trailingNewline: options.trailingNewline ?? true,
+      durable: options.durable,
     });
   }
 

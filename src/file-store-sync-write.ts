@@ -27,6 +27,7 @@ export function writeFileSyncAtomic(params: {
   filePath: string;
   content: string | Uint8Array;
   privateMode: boolean;
+  durable: boolean;
   dirMode: number;
   mode: number;
 }): string {
@@ -78,7 +79,7 @@ export function writeFileSyncAtomic(params: {
         if (!opened.isFile() || opened.nlink > 1) {
           throw new FsSafeError("path-mismatch", "store temp is not an owned regular file");
         }
-        fs.fsyncSync(descriptor);
+        if (params.durable) fs.fsyncSync(descriptor);
         return opened;
       } finally {
         fs.closeSync(descriptor);
@@ -121,11 +122,13 @@ export function writeFileSyncAtomic(params: {
     }
     if (parentGuard) {
       assertSyncDirectoryGuard(parentGuard);
-      syncDirectorySync({
-        path: parentGuard.dir,
-        realPath: parentGuard.realPath,
-        identity: parentGuard.stat,
-      }, { label: "store parent" });
+      if (params.durable) {
+        syncDirectorySync({
+          path: parentGuard.dir,
+          realPath: parentGuard.realPath,
+          identity: parentGuard.stat,
+        }, { label: "store parent" });
+      }
       assertSyncDirectoryGuard(parentGuard);
     }
     return filePath;

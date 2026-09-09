@@ -45,6 +45,7 @@ type JsonStoreOptions<T> = {
   filePath: string;
   dirMode?: number;                                // default 0o700
   mode?: number;                                   // default 0o600
+  durable?: boolean;                              // default true
   trailingNewline?: boolean;                       // default true
   lock?: boolean | JsonStoreLockOptions;           // false / undefined = no lock
 };
@@ -70,6 +71,15 @@ type JsonStore<T> = {
 
 `jsonStore({ filePath })` resolves `rootDir = dirname(filePath)` and calls
 `fileStore({ rootDir, private: true }).json(basename(filePath), options)`.
+
+`durable: false` keeps sibling-temp replace/rename behavior but skips the
+temp-file and parent-directory `fsync` calls. Use it only for reconstructible
+metadata where lower latency matters more than crash-durability. The default
+is `true`, subject to platform sync support. This store-level policy applies
+to `write`, `update`, and `updateOr`; these methods have no per-call options.
+For `fileStore(...).json(rel, options)`, `options.durable` overrides the parent
+file store's durability, while omission or `undefined` inherits it. Modes,
+identity checks, mutation serialization, and sidecar locking are unchanged.
 
 The store does **not** validate the parsed value against `T` at runtime — the cast is unchecked. Wrap with a schema (zod/valibot) if the file might be hand-edited or written by another process you don't control.
 
