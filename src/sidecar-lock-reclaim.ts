@@ -142,7 +142,9 @@ export async function readSidecarLockRawSnapshot(
         await opened.handle.close().catch(() => undefined);
       }
     }
-    const before = await fs.lstat(lockPath).catch(missingSnapshotPath);
+    let before: Stats | null;
+    try { before = fsSync.lstatSync(lockPath); }
+    catch (error) { before = missingSnapshotPath(error); }
     if (!before) return null;
     if (!before.isFile() || before.isSymbolicLink()) {
       if (options.rejectNonFile) {
@@ -172,7 +174,7 @@ export async function readSidecarLockRawSnapshot(
       options.onOpenFailure?.(error);
       throw error;
     }
-    const opened = await handle.stat();
+    const opened = fsSync.fstatSync(handle.fd);
     if (!opened.isFile()) {
       if (options.rejectNonFile) {
         throw new FsSafeError("not-file", `sidecar lock is not a regular file: ${lockPath}`);
@@ -181,7 +183,9 @@ export async function readSidecarLockRawSnapshot(
     }
     if (!options.allowDescriptorIdentityDrift && !sameFileIdentity(before, opened)) return null;
     const raw = (await readFileHandleBounded(handle, MAX_LOCK_PAYLOAD_BYTES)).toString("utf8");
-    const after = await fs.lstat(lockPath).catch(missingSnapshotPath);
+    let after: Stats | null;
+    try { after = fsSync.lstatSync(lockPath); }
+    catch (error) { after = missingSnapshotPath(error); }
     if (!after || !after.isFile() || !sameFileIdentity(before, after)) return null;
     return { raw, stat: after };
   } finally {
@@ -313,7 +317,7 @@ export async function sidecarLockSnapshotStillPresent(
 
 export async function sidecarReclaimGuardExists(pathname: string): Promise<boolean> {
   try {
-    await fs.lstat(pathname);
+    fsSync.lstatSync(pathname);
     return true;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {

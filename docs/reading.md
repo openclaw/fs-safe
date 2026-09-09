@@ -14,6 +14,12 @@ const opened = await fs.open("large.log");               // FileHandle for strea
 
 Identity and containment checks use brief synchronous metadata calls, like Node's module resolution, while file data is read asynchronously. Canonical paths retain Node's native realpath spelling, including expansion of Windows short paths.
 
+The same observation rule applies to archive extraction, copy, publication, move,
+directory modes, and supporting lock, queue, and secret-file operations. Opens,
+data transfers, durability syncs, filesystem mutations, and closes retain their
+existing asynchronous behavior. Custom filesystem adapters retain their async
+metadata interface.
+
 Regardless of shape, every read goes through the same boundary checks:
 
 1. Resolve the input lexically against the canonical real root.

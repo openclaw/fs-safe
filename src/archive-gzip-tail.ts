@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import { Writable } from "node:stream";
 import type { Gunzip } from "node:zlib";
@@ -49,7 +50,7 @@ export async function validateGzipContainerTail(filePath: string, consumed: numb
   signal?.throwIfAborted();
   const handle = await fs.open(filePath, "r");
   try {
-    const { size } = await handle.stat();
+    const { size } = fsSync.fstatSync(handle.fd);
     if (!Number.isSafeInteger(consumed) || consumed <= 0 || consumed > size) {
       throw new ArchiveFormatError("invalid gzip consumed-input boundary");
     }

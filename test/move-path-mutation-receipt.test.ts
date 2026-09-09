@@ -79,9 +79,9 @@ describe("move publication receipts and mutation authority", () => {
   it("retains bigint identity bits from the admitted rename source", async () => {
     const move = await fixture(routes[0]);
     const identity = { dev: 9007199254740995n, ino: 9007199254740997n };
-    const lstat = fs.lstat;
-    vi.spyOn(fs, "lstat").mockImplementation(async (candidate, options) => {
-      const stat = await lstat(candidate, options as never);
+    const lstat = fsSync.lstatSync;
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((candidate, options) => {
+      const stat = lstat(candidate, options as never);
       if (candidate === move.source && options && typeof options === "object" && options.bigint) {
         return Object.assign(stat, identity);
       }
@@ -97,7 +97,7 @@ describe("move publication receipts and mutation authority", () => {
   });
 
   describe.each(routes.slice(1))("$name source cleanup", (route) => {
-    it.each(["publication", "awaited stat", "first unlink", "last unlink"] as const)(
+    it.each(["publication", "stat observation", "first unlink", "last unlink"] as const)(
       "preserves remaining source after revocation at %s", async (boundary) => {
         const move = await fixture(route);
         const expired = Object.assign(new Error("owner expired"), { code: "ENOTEMPTY" });
@@ -113,10 +113,10 @@ describe("move publication receipts and mutation authority", () => {
             active = false;
           }
         });
-        const lstat = fs.lstat;
-        vi.spyOn(fs, "lstat").mockImplementation(async (candidate, options) => {
-          const stat = await lstat(candidate, options as never);
-          if (boundary === "awaited stat" && published && path.dirname(String(candidate)) === move.source) {
+        const lstat = fsSync.lstatSync;
+        vi.spyOn(fsSync, "lstatSync").mockImplementation((candidate, options) => {
+          const stat = lstat(candidate, options as never);
+          if (boundary === "stat observation" && published && path.dirname(String(candidate)) === move.source) {
             active = false;
           }
           return stat;

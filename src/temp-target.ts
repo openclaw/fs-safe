@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { sameFileIdentityForCleanup, type FileIdentityStat } from "./file-identity.js";
@@ -116,12 +117,15 @@ async function cleanupTempDir(
   onCleanupError?: (error: unknown) => void,
 ) {
   try {
-    const current = await fs.lstat(dir, { bigint: true }).catch((error: unknown) => {
+    let current: fsSync.BigIntStats | undefined;
+    try {
+      current = fsSync.lstatSync(dir, { bigint: true });
+    } catch (error) {
       if (isNodeErrorWithCode(error, "ENOENT")) {
-        return undefined;
+        return;
       }
       throw error;
-    });
+    }
     if (!current || !sameFileIdentityForCleanup(current, identity)) {
       return;
     }
@@ -148,7 +152,7 @@ export async function tempFile(params: {
   const dir = await fs.mkdtemp(path.join(rootDir, prefix));
   // Windows file indexes can exceed Number.MAX_SAFE_INTEGER. Cleanup receipts
   // must retain the exact identity or adjacent directories can compare equal.
-  const identity = await fs.lstat(dir, { bigint: true });
+  const identity = fsSync.lstatSync(dir, { bigint: true });
   const unregisterTempDir = registerTempPathForExit(dir, { recursive: true, identity });
   const file = (fileName?: string) =>
     path.join(dir, sanitizeTempFileName(fileName ?? params.fileName ?? "download.bin"));

@@ -1,5 +1,5 @@
 import fsSync from "node:fs";
-import fs, { type FileHandle } from "node:fs/promises";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -174,9 +174,7 @@ describe("atomic publication stress regressions", () => {
 
   it("keeps a failed sibling output temp registered when immediate cleanup fails", async () => {
     const root = await tempRoot("fs-safe-output-cleanup-");
-    const probeHandle = await fs.open(path.join(root, "stat-probe"), "w");
-    const stat = vi.spyOn(Object.getPrototypeOf(probeHandle) as FileHandle, "stat");
-    await probeHandle.close();
+    const stat = vi.spyOn(fsSync, "fstatSync");
     let tempPath = "";
     let cleanupAttempts = 0;
     const realRename = fs.rename.bind(fs);
@@ -203,7 +201,7 @@ describe("atomic publication stress regressions", () => {
         await fs.writeFile(candidate, "partial");
       },
     })).rejects.toMatchObject({ code: "EACCES" });
-    expect(stat).toHaveBeenCalledWith({ bigint: true });
+    expect(stat).toHaveBeenCalledWith(expect.any(Number), { bigint: true });
     await expect(fs.stat(tempPath)).resolves.toBeTruthy();
 
     __cleanupRegisteredTempPathsForTest();

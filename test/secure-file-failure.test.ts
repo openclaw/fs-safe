@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -71,12 +72,12 @@ describe("secure file inspection failures", () => {
     const root = await tempRoot("fs-safe-secure-permission-inspect-");
     const filePath = path.join(root, "secret");
     await fs.writeFile(filePath, "secret", { mode: 0o600 });
-    const realLstat = fs.lstat.bind(fs);
+    const realLstat = fsSync.lstatSync.bind(fsSync);
     let calls = 0;
-    vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
       calls += 1;
       if (calls === 3) throw Object.assign(new Error("permission inspection denied"), { code: "EACCES" });
-      return await realLstat(...args);
+      return realLstat(...args);
     });
     await expect(
       readSecureFile({ filePath, inject: { platform: "win32" } }),
@@ -110,7 +111,7 @@ describe("secure file inspection failures", () => {
     const realOpen = fs.open.bind(fs);
     vi.spyOn(fs, "open").mockImplementationOnce(async (...args) => {
       const handle = await realOpen(...args);
-      vi.spyOn(handle, "stat").mockResolvedValueOnce(directoryStat);
+      vi.spyOn(fsSync, "fstatSync").mockReturnValueOnce(directoryStat);
       return handle;
     });
     await expect(readSecureFile({ filePath })).rejects.toMatchObject({ code: "not-file" });
@@ -122,9 +123,9 @@ describe("secure file inspection failures", () => {
     const otherPath = path.join(root, "other");
     await fs.writeFile(filePath, "secret", { mode: 0o600 });
     await fs.writeFile(otherPath, "other", { mode: 0o600 });
-    const realStat = fs.stat.bind(fs);
-    const changedIdentity = vi.spyOn(fs, "stat").mockImplementationOnce(async (...args) => {
-      return await realStat(otherPath, args[1]);
+    const realStat = fsSync.statSync.bind(fsSync);
+    const changedIdentity = vi.spyOn(fsSync, "statSync").mockImplementationOnce((...args) => {
+      return realStat(otherPath, args[1]);
     });
     await expect(readSecureFile({ filePath })).rejects.toMatchObject({ code: "path-mismatch" });
     expect(changedIdentity).toHaveBeenCalledTimes(1);
@@ -138,7 +139,7 @@ describe("secure file inspection failures", () => {
     vi.spyOn(fs, "open").mockImplementationOnce(async (...args) => {
       const handle = await realOpen(...args);
       const actual = await handle.stat();
-      vi.spyOn(handle, "stat").mockResolvedValueOnce({
+      vi.spyOn(fsSync, "fstatSync").mockReturnValueOnce({
         ...actual,
         uid: (process.getuid?.() ?? actual.uid) + 1,
         isDirectory: () => false,

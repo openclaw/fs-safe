@@ -1,5 +1,4 @@
 import fsSync from "node:fs";
-import fs from "node:fs/promises";
 import { hasNodeErrorCode } from "./path.js";
 
 export function resolveNonblockingWriteFlag(
@@ -25,7 +24,7 @@ export async function isNonRegularWriteOpenError(
 ): Promise<boolean> {
   if (!isNonblockingWriteEnxio(error, flags)) return false;
   try {
-    return !(await fs.lstat(filePath)).isFile();
+    return !fsSync.lstatSync(filePath).isFile();
   } catch {
     return false;
   }

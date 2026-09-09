@@ -1,7 +1,9 @@
+import fsSync from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { createFileLockManager } from "../src/file-lock.js";
+import * as boundedRead from "../src/bounded-read.js";
 import { root } from "../src/root.js";
 import { readSidecarLockSnapshot } from "../src/sidecar-lock-reclaim.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
@@ -319,12 +321,23 @@ posix("creator cleanup retains its token when a later stat fails over a replacem
   vi.spyOn(capability, "open").mockImplementationOnce(async (...args) => {
     const opened = await open(...args);
     descriptor = opened.handle;
-    const stat = opened.handle.stat.bind(opened.handle);
-    vi.spyOn(opened.handle, "stat").mockImplementationOnce(async () => {
-      await fs.rename(lockPath, `${lockPath}.displaced`);
-      await fs.writeFile(lockPath, '{"owner":"replacement"}');
+    const stat = fsSync.fstatSync.bind(fsSync);
+    const read = boundedRead.readFileHandleBounded;
+    let readFinished = false;
+    vi.spyOn(boundedRead, "readFileHandleBounded").mockImplementation(async (handle, maxBytes) => {
+      const result = await read(handle, maxBytes);
+      if (handle === opened.handle) readFinished = true;
+      return result;
+    });
+    let injected = false;
+    vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
+      // Arm only after payload admission; bounded-read size hints also use fstatSync.
+      if (fd !== opened.handle.fd || !readFinished || injected) return stat(fd, options);
+      injected = true;
+      fsSync.renameSync(lockPath, `${lockPath}.displaced`);
+      fsSync.writeFileSync(lockPath, '{"owner":"replacement"}');
       throw failure;
-    }).mockImplementation(stat);
+    });
     return opened;
   });
   await expect(manager.acquire(target, { lockRoot: capability, payload: () => ({ owner: "creator" }) })).rejects.toBe(failure);

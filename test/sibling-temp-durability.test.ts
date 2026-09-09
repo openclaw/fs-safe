@@ -268,7 +268,7 @@ it.each(["unchanged", "replaced", "hardlinked"] as const)("bounds cleanup retrie
 
 it("preserves a replacement appearing after cleanup starts", async () => {
   const f = await fixture();
-  const rename = fs.rename.bind(fs);
+  const rename = fsSync.renameSync.bind(fsSync);
   const open = fs.open.bind(fs);
   let cleanup = false;
   vi.spyOn(fs, "rename").mockImplementation(async () => {
@@ -278,15 +278,15 @@ it("preserves a replacement appearing after cleanup starts", async () => {
   vi.spyOn(fs, "open").mockImplementation(async (...args) => {
     const handle = await open(...args);
     if (args[0] === f.temp()) {
-      const stat = handle.stat.bind(handle);
-      vi.spyOn(handle, "stat").mockImplementation(async (options) => {
-        if (cleanup) {
+      const stat = fsSync.fstatSync.bind(fsSync);
+      vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
+        if (fd === handle.fd && cleanup) {
           cleanup = false;
-          await rename(f.temp(), path.join(f.dir, "moved"));
-          await fs.mkdir(f.temp());
-          await fs.writeFile(path.join(f.temp(), "sentinel"), "keep");
+          rename(f.temp(), path.join(f.dir, "moved"));
+          fsSync.mkdirSync(f.temp());
+          fsSync.writeFileSync(path.join(f.temp(), "sentinel"), "keep");
         }
-        return await stat(options);
+        return stat(fd, options);
       });
     }
     return handle;

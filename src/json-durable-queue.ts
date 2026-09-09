@@ -53,7 +53,7 @@ export async function unlinkBestEffort(filePath: string): Promise<void> {
 
 export async function jsonDurableQueueEntryExists(filePath: string): Promise<boolean> {
   try {
-    const stat = await fs.promises.lstat(filePath);
+    const stat = fs.lstatSync(filePath);
     return stat.isFile();
   } catch (error) {
     if (getErrorCode(error) === "ENOENT") {
@@ -69,7 +69,7 @@ async function unlinkStaleTmpBestEffort(
   maxAgeMs: number,
 ): Promise<void> {
   try {
-    const stat = await fs.promises.stat(filePath);
+    const stat = fs.statSync(filePath);
     if (stat.isFile() && now - stat.mtimeMs >= maxAgeMs) {
       await unlinkBestEffort(filePath);
     }
@@ -177,10 +177,11 @@ async function isDarwinSystemAlias(
   if (resolved !== "/tmp" && resolved !== "/var") {
     return false;
   }
-  return await fs.promises.realpath(resolved).then(
-    (realPath) => realPath === `/private${resolved}`,
-    () => false,
-  );
+  try {
+    return fs.realpathSync.native(resolved) === `/private${resolved}`;
+  } catch {
+    return false;
+  }
 }
 
 async function assertNoSymlinkDirectorySegments(
@@ -191,16 +192,16 @@ async function assertNoSymlinkDirectorySegments(
   let base = path.resolve(validationRoot.path);
   let target = path.resolve(dir);
   let current = base;
-  let baseStat = await fs.promises.lstat(base);
+  let baseStat = fs.lstatSync(base);
   if (baseStat.isSymbolicLink() && validationRoot.allowSymlinkBase) {
     const relative = path.relative(base, target);
     if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
       throw new Error(`durable queue path is not a directory: ${dir}`);
     }
-    base = await fs.promises.realpath(base);
+    base = fs.realpathSync.native(base);
     target = path.join(base, ...relative.split(path.sep).filter(Boolean));
     current = base;
-    baseStat = await fs.promises.lstat(base);
+    baseStat = fs.lstatSync(base);
   }
   if (baseStat.isSymbolicLink() || !baseStat.isDirectory()) {
     throw new Error(`durable queue path is not a directory: ${dir}`);
@@ -214,7 +215,7 @@ async function assertNoSymlinkDirectorySegments(
     current = path.join(current, segment);
     let stat: Awaited<ReturnType<typeof fs.promises.lstat>>;
     try {
-      stat = await fs.promises.lstat(current);
+      stat = fs.lstatSync(current);
     } catch (error) {
       if (allowMissing && (error as NodeJS.ErrnoException).code === "ENOENT") {
         return;
@@ -224,7 +225,7 @@ async function assertNoSymlinkDirectorySegments(
     if (stat.isSymbolicLink() || !stat.isDirectory()) {
       if (stat.isSymbolicLink() && validationRoot.allowSymlinkBase) {
         if (await isDarwinSystemAlias(current, stat)) {
-          current = await fs.promises.realpath(current);
+          current = fs.realpathSync.native(current);
           continue;
         }
       }
@@ -246,7 +247,7 @@ async function chmodQueueDirectory(dir: string): Promise<void> {
     let handle: FileHandle | undefined;
     try {
       handle = await fs.promises.open(dir, fs.constants.O_RDONLY | noFollow | directoryFlag);
-      const stat = await handle.stat();
+      const stat = fs.fstatSync(handle.fd);
       if (!stat.isDirectory()) {
         throw new Error(`durable queue path is not a directory: ${dir}`);
       }
@@ -264,7 +265,7 @@ async function chmodQueueDirectory(dir: string): Promise<void> {
       }
     }
   }
-  const stat = await fs.promises.lstat(dir);
+  const stat = fs.lstatSync(dir);
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw new Error(`durable queue path is not a directory: ${dir}`);
   }
@@ -290,7 +291,7 @@ export async function writeJsonDurableQueueEntry(params: {
 }
 
 async function inspectQueueEntry(
-  inspect: () => Promise<BigIntStats>,
+  inspect: () => BigIntStats,
   maxBytes: number,
   expected?: BigIntStats,
 ): Promise<BigIntStats> {
@@ -298,7 +299,7 @@ async function inspectQueueEntry(
   try {
     return await inspectFileIdentity(async () => {
       try {
-        const stat = await inspect();
+        const stat = inspect();
         if (stat.isSymbolicLink() || !stat.isFile()) {
           throw new Error("queue entry is not a regular file");
         }
@@ -321,12 +322,12 @@ async function readBoundedUtf8File(params: {
   filePath: string;
   maxBytes: number;
 }): Promise<string> {
-  const inspectPath = () => fs.promises.lstat(params.filePath, { bigint: true });
+  const inspectPath = () => fs.lstatSync(params.filePath, { bigint: true });
   const initialStat = await inspectQueueEntry(inspectPath, params.maxBytes);
   const handle = await fs.promises.open(params.filePath, resolveReadOpenFlags());
   try {
     const openedStat = await inspectQueueEntry(
-      () => handle.stat({ bigint: true }), params.maxBytes, initialStat,
+      () => fs.fstatSync(handle.fd, { bigint: true }), params.maxBytes, initialStat,
     );
     await inspectQueueEntry(inspectPath, params.maxBytes, openedStat);
     const chunks: Buffer[] = [];

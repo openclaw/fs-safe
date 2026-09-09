@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -164,7 +165,9 @@ describe("asynchronous sidecar lock acquisition failures", () => {
     configureFsSafeNative({ mode: "off" });
     const directory = await tempRoot("fs-safe-sidecar-realpath-failure-");
     const targetPath = path.join(directory, "state.json");
-    vi.spyOn(fs, "realpath").mockRejectedValueOnce(Object.assign(new Error("unavailable"), { code: "EIO" }));
+    vi.spyOn(fsSync.realpathSync, "native").mockImplementationOnce(() => {
+      throw Object.assign(new Error("unavailable"), { code: "EIO" });
+    });
     const manager = createSidecarLockManager(`realpath-failure-${Date.now()}-${Math.random()}`);
     const lock = await manager.acquire({ targetPath, payload: async () => ({ owner: "one" }) });
     expect(lock.normalizedTargetPath).toBe(path.resolve(targetPath));

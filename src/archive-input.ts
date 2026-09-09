@@ -1,4 +1,4 @@
-import { constants as fsConstants } from "node:fs";
+import fsSync, { constants as fsConstants } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -48,7 +48,7 @@ export async function stageArchiveFileForExtraction(params: {
   params.deadline.check();
   const sourcePath = path.resolve(params.archivePath);
   const initialStat = await inspectFileIdentity(async () => {
-    const stat = await fs.lstat(sourcePath, { bigint: true });
+    const stat = fsSync.lstatSync(sourcePath, { bigint: true });
     if (stat.isSymbolicLink() || !stat.isFile()) {
       throw new Error(`archive is not a regular file: ${params.archivePath}`);
     }
@@ -66,12 +66,12 @@ export async function stageArchiveFileForExtraction(params: {
       fileName: path.basename(sourcePath),
     });
     const opened = await inspectFileIdentity(async () => {
-      const stat = await handle.stat({ bigint: true });
+      const stat = fsSync.fstatSync(handle.fd, { bigint: true });
       if (!stat.isFile()) throw new Error("archive changed during validation");
       return stat;
     }, initialStat);
     await inspectFileIdentity(async () => {
-      const stat = await fs.lstat(sourcePath, { bigint: true });
+      const stat = fsSync.lstatSync(sourcePath, { bigint: true });
       if (stat.isSymbolicLink() || !stat.isFile()) throw new Error("archive changed during validation");
       return stat;
     }, opened);

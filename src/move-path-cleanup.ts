@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -76,7 +77,7 @@ export async function assertSourceStillMatches(
   sourcePath: string,
   identity: EntryIdentity,
 ): Promise<void> {
-  if (!sameIdentity(identity, entryIdentity(await fs.lstat(sourcePath)))) {
+  if (!sameIdentity(identity, entryIdentity(fsSync.lstatSync(sourcePath)))) {
     throw sourceChangedError(sourcePath);
   }
 }
@@ -163,7 +164,7 @@ async function observeOwnedAliasUnlink(
 
   let observed: Awaited<ReturnType<typeof fs.lstat>>;
   try {
-    observed = await fs.lstat(remainingPath);
+    observed = fsSync.lstatSync(remainingPath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException | null)?.code === "ENOENT") {
       return poisonAliasGroup(group);
@@ -199,7 +200,7 @@ export async function cleanupCopiedEntry(
 
   let currentStat: Awaited<ReturnType<typeof fs.lstat>>;
   try {
-    currentStat = await fs.lstat(sourcePath);
+    currentStat = fsSync.lstatSync(sourcePath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException | null)?.code === "ENOENT") {
       return aliasGroup ? poisonAliasGroup(aliasGroup) : "removed";

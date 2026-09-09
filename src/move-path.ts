@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { constants as fsConstants } from "node:fs";
+import fsSync, { constants as fsConstants } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -71,7 +71,7 @@ async function preflightSourceHardlinks(sourcePath: string): Promise<void> {
 
   while (pending.length > 0) {
     const current = pending.pop()!;
-    const stat = await fs.lstat(current);
+    const stat = fsSync.lstatSync(current);
     if (stat.isFile() && stat.nlink > 1) {
       throw hardlinkedSourceError(current);
     }
@@ -102,21 +102,19 @@ async function assertCopyDestinationOutsideSource(
   targetPath: string,
   expectedIdentity?: EntryIdentity,
 ): Promise<EntryIdentity> {
-  const sourceStat = await fs.lstat(sourcePath);
+  const sourceStat = fsSync.lstatSync(sourcePath);
   const sourceIdentity = entryIdentity(sourceStat);
   if (expectedIdentity && !sameIdentity(expectedIdentity, sourceIdentity)) {
     throw sourceChangedError(sourcePath);
   }
   const normalizedSource = path.resolve(sourcePath);
   const normalizedTarget = path.resolve(targetPath);
-  const [sourceParentReal, targetParentReal] = await Promise.all([
-    fs.realpath(path.dirname(normalizedSource)),
-    fs.realpath(path.dirname(normalizedTarget)),
-  ]);
+  const sourceParentReal = fsSync.realpathSync.native(path.dirname(normalizedSource));
+  const targetParentReal = fsSync.realpathSync.native(path.dirname(normalizedTarget));
   const sourceCandidate = path.join(sourceParentReal, path.basename(normalizedSource));
   const targetCandidate = path.join(targetParentReal, path.basename(normalizedTarget));
   const sourceBoundary = sourceStat.isDirectory()
-    ? await fs.realpath(sourcePath)
+    ? fsSync.realpathSync.native(sourcePath)
     : sourceCandidate;
   const unsafeTarget = sourceStat.isDirectory()
     ? isSameOrDescendant(sourceBoundary, targetCandidate)
@@ -177,7 +175,7 @@ async function copyRegularFilePinned(params: {
     throw error;
   }
   try {
-    const openedStat = await sourceHandle.stat();
+    const openedStat = fsSync.fstatSync(sourceHandle.fd);
     openedIdentity = entryIdentity(openedStat);
     if (params.rejectHardlinks && openedStat.nlink > 1) {
       throw hardlinkedSourceError(params.from);
@@ -216,7 +214,7 @@ async function copyRegularFilePinned(params: {
       }
       // Re-check the opened source before the staged tree can be committed. If
       // it changed while we copied, the caller should retry the move.
-      const finalSourceStat = await sourceHandle.stat();
+      const finalSourceStat = fsSync.fstatSync(sourceHandle.fd);
       if (params.rejectHardlinks && finalSourceStat.nlink > 1) {
         throw hardlinkedSourceError(params.from);
       }
@@ -247,7 +245,7 @@ async function copyEntryWithManifest(
   },
   expectedIdentity?: EntryIdentity,
 ): Promise<CopiedEntryManifest> {
-  const sourceStat = await fs.lstat(from);
+  const sourceStat = fsSync.lstatSync(from);
   const identity = entryIdentity(sourceStat);
   if (expectedIdentity && !sameIdentity(expectedIdentity, identity)) {
     throw sourceChangedError(from);
@@ -256,7 +254,7 @@ async function copyEntryWithManifest(
   if (sourceStat.isSymbolicLink()) {
     const target = await fs.readlink(from);
     const targetType =
-      process.platform === "win32" && (await fs.stat(from)).isDirectory() ? "junction" : undefined;
+      process.platform === "win32" && fsSync.statSync(from).isDirectory() ? "junction" : undefined;
     await fs.symlink(target, to, targetType);
     // readlink() is path-based; verify the symlink we copied is still the one
     // we inspected before letting the staged destination become visible.
@@ -395,7 +393,7 @@ export async function movePathWithCopyFallback(
       sourceIdentity,
     );
     const cleanupState = createCleanupCopiedEntryState(sourcePath, manifest);
-    unregisterStaged.setIdentity(await fs.lstat(staged, { bigint: true }));
+    unregisterStaged.setIdentity(fsSync.lstatSync(staged, { bigint: true }));
     await assertCopyDestinationOutsideSource(sourcePath, targetPath, manifest);
     await guardedRename({
       from: staged,
@@ -419,7 +417,7 @@ export async function movePathWithCopyFallback(
   } finally {
     if (!destinationPublished) {
       try {
-        const stagedIdentity = await fs.lstat(staged, { bigint: true });
+        const stagedIdentity = fsSync.lstatSync(staged, { bigint: true });
         if (!stagedIdentity.isSymbolicLink()) unregisterStaged.setIdentity(stagedIdentity);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") {

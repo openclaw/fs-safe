@@ -1,4 +1,5 @@
 import crypto, { randomUUID } from "node:crypto";
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard } from "./directory-guard.js";
@@ -91,14 +92,17 @@ export async function writeViaSiblingTempPath(params: {
   fallbackFileName?: string;
   tempPrefix?: string;
 }): Promise<void> {
-  const rootDir = await fs
-    .realpath(path.resolve(params.rootDir))
-    .catch(() => path.resolve(params.rootDir));
+  let rootDir: string;
+  try { rootDir = fsSync.realpathSync.native(path.resolve(params.rootDir)); }
+  catch { rootDir = path.resolve(params.rootDir); }
   const requestedTargetPath = path.resolve(params.targetPath);
-  const targetPath = await fs
-    .realpath(path.dirname(requestedTargetPath))
-    .then((realDir) => path.join(realDir, path.basename(requestedTargetPath)))
-    .catch(() => requestedTargetPath);
+  let targetPath: string;
+  try {
+    const realDir = fsSync.realpathSync.native(path.dirname(requestedTargetPath));
+    targetPath = path.join(realDir, path.basename(requestedTargetPath));
+  } catch {
+    targetPath = requestedTargetPath;
+  }
   const relativeTargetPath = path.relative(rootDir, targetPath);
   if (
     !relativeTargetPath ||

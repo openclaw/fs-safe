@@ -60,9 +60,9 @@ export async function observeHashPath(
     return stat;
   }
 
-  const lstat = fs.lstat.bind(fs);
-  vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
-    const stat = await lstat(...args);
+  const lstat = fsSync.lstatSync.bind(fsSync);
+  vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
+    const stat = lstat(...args);
     if (args[0] !== filePath) return stat;
     return observe(handles.length === 0 ? "preview" : "current", stat, args[1]?.bigint === true);
   });
@@ -72,9 +72,10 @@ export async function observeHashPath(
     if (args[0] !== filePath) return handle;
     events.push("open");
     handles.push(handle);
-    const stat = handle.stat.bind(handle);
-    vi.spyOn(handle, "stat").mockImplementation(async (options) => {
-      const result = await stat(options);
+    const stat = fsSync.fstatSync.bind(fsSync);
+    vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
+      const result = stat(fd, options);
+      if (fd !== handle.fd) return result;
       if (!options?.bigint) {
         events.push("hash-stat");
         return result;

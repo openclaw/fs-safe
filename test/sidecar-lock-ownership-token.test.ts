@@ -50,9 +50,9 @@ describe("sidecar lock ownership tokens", () => {
       staleMs: 1,
       payload: async () => ({ createdAt: new Date().toISOString(), owner: "caller" }),
     });
-    const realLstat = fsp.lstat.bind(fsp);
-    vi.spyOn(fsp, "lstat").mockImplementation(async (...args) => {
-      const stat = await realLstat(...args);
+    const realLstat = fsSync.lstatSync.bind(fsSync);
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
+      const stat = realLstat(...args);
       if (String(args[0]) !== lockPath) {
         return stat;
       }

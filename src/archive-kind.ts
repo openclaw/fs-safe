@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
@@ -50,7 +51,7 @@ async function hasPackedRootMarker(extractDir: string, rootMarkers: string[]): P
       continue;
     }
     try {
-      await fs.stat(path.join(extractDir, trimmed));
+      fsSync.statSync(path.join(extractDir, trimmed));
       return true;
     } catch {
       // ignore
@@ -65,7 +66,7 @@ export async function resolvePackedRootDir(
 ): Promise<string> {
   const direct = path.join(extractDir, "package");
   try {
-    const stat = await fs.stat(direct);
+    const stat = fsSync.statSync(direct);
     if (stat.isDirectory()) {
       return direct;
     }

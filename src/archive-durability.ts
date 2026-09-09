@@ -1,4 +1,4 @@
-import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import path from "node:path";
 import { ownExtractionDestinationMutation, type ExtractionDeadline } from "./archive-deadline.js";
 import { assertDirectoryIdentityGuard, assertResolvedInsideDestination, createArchiveSymlinkTraversalError } from "./archive-staging.js";
@@ -55,13 +55,13 @@ export async function finalizeArchivePublication(params: {
               throw error;
             });
           check();
-          await inspectFileIdentity(() => opened.handle.stat({ bigint: true }), file.identity);
+          await inspectFileIdentity(() => fsSync.fstatSync(opened.handle.fd, { bigint: true }), file.identity);
           check();
           await syncFileBestEffort(opened.handle).catch((error: unknown) => { throw normalizePinnedWriteError(error); });
           check();
           await assertGuards(file.guards);
           await inspectFileIdentity(async () => {
-            const stat = await fs.lstat(opened.realPath, { bigint: true });
+            const stat = fsSync.lstatSync(opened.realPath, { bigint: true });
             if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink > 1n) {
               throw new FsSafeError("path-mismatch", "archive file changed during durability pass");
             }

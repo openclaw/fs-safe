@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -140,7 +141,7 @@ describe("archive input staging failures", () => {
     const root = await tempRoot("fs-safe-stage-race-");
     const archivePath = path.join(root, "archive");
     await fs.writeFile(archivePath, "archive");
-    const realLstat = fs.lstat.bind(fs);
+    const realLstat = fsSync.lstatSync.bind(fsSync);
     const originalStat = await realLstat(archivePath, { bigint: true });
     const changedStat = new Proxy(originalStat, {
       get(target, property) {
@@ -154,9 +155,9 @@ describe("archive input staging failures", () => {
       },
     });
     let archiveLstats = 0;
-    vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
       if (String(args[0]) === archivePath && ++archiveLstats === 2) return changedStat;
-      return await realLstat(...args);
+      return realLstat(...args);
     });
 
     await expect(stageArchiveFileForExtraction({

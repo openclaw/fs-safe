@@ -22,9 +22,9 @@ function assertRegularFile(stat: BigIntStats): void {
   }
 }
 
-async function inspectStage(inspect: () => Promise<BigIntStats>, expected?: BigIntStats) {
+async function inspectStage(inspect: () => BigIntStats, expected?: BigIntStats) {
   return await inspectFileIdentity(async () => {
-    const stat = await inspect();
+    const stat = inspect();
     assertRegularFile(stat);
     return stat;
   }, expected);
@@ -46,10 +46,10 @@ export async function writeCallbackSibling<T>(params: {
 }): Promise<{ filePath: string; result: T }> {
   const parent = path.dirname(params.tempPath);
   const guard = await createAsyncDirectoryGuard(parent);
-  const parentIdentity = await inspectFileIdentity(() => fs.lstat(parent, { bigint: true }));
+  const parentIdentity = await inspectFileIdentity(() => fsSync.lstatSync(parent, { bigint: true }));
   const assertParent = async () => {
     await assertAsyncDirectoryGuard(guard);
-    await inspectFileIdentity(() => fs.lstat(parent, { bigint: true }), parentIdentity);
+    await inspectFileIdentity(() => fsSync.lstatSync(parent, { bigint: true }), parentIdentity);
   };
   let handle: FileHandle | undefined;
   let identity: BigIntStats | undefined;
@@ -57,10 +57,10 @@ export async function writeCallbackSibling<T>(params: {
   let renamed = false;
   let failure: { error: unknown } | undefined;
   const inspectPath = (pathname: string, expected?: BigIntStats) =>
-    inspectStage(() => fs.lstat(pathname, { bigint: true }), expected);
+    inspectStage(() => fsSync.lstatSync(pathname, { bigint: true }), expected);
   const assertCurrent = async (pathname: string) => {
     await assertParent();
-    const opened = await inspectStage(() => handle!.stat({ bigint: true }), identity);
+    const opened = await inspectStage(() => fsSync.fstatSync(handle!.fd, { bigint: true }), identity);
     const current = await inspectPath(pathname, opened);
     if (
       params.maxBytes !== undefined &&
@@ -84,7 +84,7 @@ export async function writeCallbackSibling<T>(params: {
       }
       throw error;
     }
-    const opened = await inspectStage(() => handle!.stat({ bigint: true }), before);
+    const opened = await inspectStage(() => fsSync.fstatSync(handle!.fd, { bigint: true }), before);
     await inspectPath(params.tempPath, opened);
     await assertParent();
     identity = opened;
@@ -128,7 +128,7 @@ export async function writeCallbackSibling<T>(params: {
       if (!renamed && identity) {
         try {
           await assertParent();
-          await inspectStage(() => handle!.stat({ bigint: true }), identity);
+          await inspectStage(() => fsSync.fstatSync(handle!.fd, { bigint: true }), identity);
           await inspectPath(params.tempPath, identity);
           await fs.unlink(params.tempPath);
           unregister?.();

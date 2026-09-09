@@ -21,31 +21,11 @@ describe.each(["sync", "async"] as const)("%s secret identity", (kind) => {
     const filePath = path.join(root, "token");
     await fs.writeFile(filePath, "secret");
     const inspections: string[] = [];
-    if (kind === "sync") {
-      for (const operation of ["statSync", "lstatSync", "fstatSync"] as const) {
-        const real = fsSync[operation].bind(fsSync);
-        vi.spyOn(fsSync, operation).mockImplementation((...args) => {
-          if (args[1]?.bigint) inspections.push(operation.replace("Sync", ""));
-          return real(...args as Parameters<typeof real>);
-        });
-      }
-    } else {
-      for (const operation of ["stat", "lstat"] as const) {
-        const real = fs[operation].bind(fs);
-        vi.spyOn(fs, operation).mockImplementation(async (...args) => {
-          if (args[1]?.bigint) inspections.push(operation);
-          return await real(...args);
-        });
-      }
-      const open = fs.open.bind(fs);
-      vi.spyOn(fs, "open").mockImplementationOnce(async (...args) => {
-        const handle = await open(...args);
-        const stat = handle.stat.bind(handle);
-        vi.spyOn(handle, "stat").mockImplementation(async (options) => {
-          if (options?.bigint) inspections.push("fstat");
-          return await stat(options);
-        });
-        return handle;
+    for (const operation of ["statSync", "lstatSync", "fstatSync"] as const) {
+      const real = fsSync[operation].bind(fsSync);
+      vi.spyOn(fsSync, operation).mockImplementation((...args) => {
+        if (args[1]?.bigint) inspections.push(operation.replace("Sync", ""));
+        return real(...args as Parameters<typeof real>);
       });
     }
     await expect(read(filePath, rejectSymlink)).resolves.toBe("secret");
@@ -107,11 +87,11 @@ describe.each(["sync", "async"] as const)("%s secret identity", (kind) => {
         return realpath(...args);
       });
     } else {
-      const realpath = fs.realpath.bind(fs);
-      vi.spyOn(fs, "realpath").mockImplementationOnce(async (...args) => {
-        await fs.rename(filePath, path.join(root, "original"));
-        await fs.writeFile(filePath, "replacement");
-        return await realpath(...args);
+      const realpath = fsSync.realpathSync.native;
+      vi.spyOn(fsSync.realpathSync, "native").mockImplementationOnce((...args) => {
+        fsSync.renameSync(filePath, path.join(root, "original"));
+        fsSync.writeFileSync(filePath, "replacement");
+        return realpath(...args);
       });
     }
     await expect(read(filePath)).rejects.toMatchObject({ code: "path-mismatch" });

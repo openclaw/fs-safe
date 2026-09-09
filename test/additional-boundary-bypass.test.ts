@@ -92,7 +92,7 @@ describe("additional helper boundary bypass attempts", () => {
 
   it("captures exact directory identities for temp file cleanup", async () => {
     const layout = await makeTempLayout("fs-safe-temp-exact-identity", tempDirs);
-    const lstat = vi.spyOn(fsp, "lstat");
+    const lstat = vi.spyOn(fs, "lstatSync");
     const target = await tempFile({ rootDir: layout.root, prefix: "download" });
     expect(lstat).toHaveBeenCalledWith(target.dir, { bigint: true });
 

@@ -1,4 +1,4 @@
-import { constants, type BigIntStats } from "node:fs";
+import fsSync, { constants, type BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
 import { inspectDirectoryIdentity } from "./directory-guard.js";
@@ -49,7 +49,7 @@ export async function pinNodeDirectoryForMode(
   });
   try {
     const inspect = async () => {
-      const opened = await inspectFileIdentity(() => handle.stat({ bigint: true }), expected);
+      const opened = await inspectFileIdentity(() => fsSync.fstatSync(handle.fd, { bigint: true }), expected);
       assertOwnedDirectory(expected, opened);
       assertOwner(opened);
       await inspectDirectoryIdentity(dirPath, expected);
@@ -63,8 +63,8 @@ export async function pinNodeDirectoryForMode(
       if (namespace.type !== 0x9fa0n) {
         throw new FsSafeError("path-mismatch", "directory mode requires a trusted procfs fd namespace");
       }
-      const opened = await inspectFileIdentity(() => handle.stat({ bigint: true }), expected);
-      const followed = await inspectFileIdentity(() => fs.stat(procPath, { bigint: true }), expected);
+      const opened = await inspectFileIdentity(() => fsSync.fstatSync(handle.fd, { bigint: true }), expected);
+      const followed = await inspectFileIdentity(() => fsSync.statSync(procPath, { bigint: true }), expected);
       assertOwnedDirectory(opened, followed);
       assertOwner(opened);
       assertOwner(followed);

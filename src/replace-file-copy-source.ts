@@ -1,5 +1,5 @@
 import syncFs, { type BigIntStats } from "node:fs";
-import type { FileHandle } from "node:fs/promises";
+import fs, { type FileHandle } from "node:fs/promises";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
@@ -72,21 +72,25 @@ export async function readOwnedCopySource(params: {
   src: string;
   expectedIdentity?: BigIntStats;
 }): Promise<{ replacement: Buffer; mode: number }> {
-  assertSourcePreview(await params.fsModule.lstat(params.src), params.src);
+  assertSourcePreview(params.fsModule === fs
+    ? syncFs.lstatSync(params.src) : await params.fsModule.lstat(params.src), params.src);
   const handle = await openSource(params.fsModule, params.src);
   try {
     if (params.expectedIdentity) {
       const exact = await inspectFileIdentity(
-        () => handle.stat({ bigint: true }),
+        () => params.fsModule === fs
+          ? syncFs.fstatSync(handle.fd, { bigint: true }) : handle.stat({ bigint: true }),
         params.expectedIdentity,
       );
       await inspectFileIdentity(
-        () => params.fsModule.lstat(params.src, { bigint: true }),
+        () => params.fsModule === fs
+          ? syncFs.lstatSync(params.src, { bigint: true }) : params.fsModule.lstat(params.src, { bigint: true }),
         exact,
       );
     }
-    const opened = await handle.stat();
-    const current = await params.fsModule.lstat(params.src);
+    const opened = params.fsModule === fs ? syncFs.fstatSync(handle.fd) : await handle.stat();
+    const current = params.fsModule === fs
+      ? syncFs.lstatSync(params.src) : await params.fsModule.lstat(params.src);
     if (!opened.isFile() || current.isSymbolicLink() || !sameFileIdentity(opened, current)) {
       throw new FsSafeError("path-mismatch", `Copy fallback source changed while opening: ${params.src}`);
     }

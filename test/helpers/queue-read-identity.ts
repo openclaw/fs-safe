@@ -1,4 +1,4 @@
-import { type BigIntStats, type Stats } from "node:fs";
+import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { vi } from "vitest";
@@ -44,9 +44,9 @@ export async function observeQueueRead(directory: string, samples: QueueSamples 
     return stat;
   }
 
-  const lstat = fs.lstat.bind(fs);
-  vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
-    const stat = await lstat(...args);
+  const lstat = fsSync.lstatSync.bind(fsSync);
+  vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
+    const stat = lstat(...args);
     if (args[0] !== filePath) return stat;
     return observe(handles.length === 0 ? "preview" : "current", stat, args[1]?.bigint === true);
   });
@@ -56,10 +56,9 @@ export async function observeQueueRead(directory: string, samples: QueueSamples 
     if (args[0] !== filePath) return handle;
     events.push("open");
     handles.push(handle);
-    const stat = handle.stat.bind(handle);
-    vi.spyOn(handle, "stat").mockImplementation(async (options) =>
-      observe("descriptor", await stat(options), options?.bigint === true),
-    );
+    const stat = fsSync.fstatSync.bind(fsSync);
+    vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) =>
+      fd === handle.fd ? observe("descriptor", stat(fd, options), options?.bigint === true) : stat(fd, options));
     const actualRead = handle.read.bind(handle);
     vi.spyOn(handle, "read").mockImplementation(async (...args) => {
       events.push("read");

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import path from "node:path";
 import { isPathInside } from "./path.js";
 
@@ -68,9 +68,9 @@ export async function assertCanonicalPathWithinBase(params: {
     throw new Error(`Invalid path: must stay within ${params.boundaryLabel}`);
   }
 
-  const baseLstat = await fs.lstat(baseDir);
+  const baseLstat = fsSync.lstatSync(baseDir);
   if (baseLstat.isSymbolicLink()) {
-    const baseStat = await fs.stat(baseDir);
+    const baseStat = fsSync.statSync(baseDir);
     if (!baseStat.isDirectory()) {
       throw new Error(
         `Invalid ${params.boundaryLabel}: base directory must resolve to a directory`,
@@ -79,23 +79,23 @@ export async function assertCanonicalPathWithinBase(params: {
   } else if (!baseLstat.isDirectory()) {
     throw new Error(`Invalid ${params.boundaryLabel}: base directory must be a directory`);
   }
-  const baseRealPath = await fs.realpath(baseDir);
+  const baseRealPath = fsSync.realpathSync.native(baseDir);
 
   const validateDirectory = async (dirPath: string): Promise<void> => {
     const resolvedDirPath = path.resolve(dirPath);
-    const dirLstat = await fs.lstat(dirPath);
+    const dirLstat = fsSync.lstatSync(dirPath);
     if (dirLstat.isSymbolicLink()) {
       if (resolvedDirPath !== baseDir) {
         throw new Error(`Invalid path: must stay within ${params.boundaryLabel}`);
       }
-      const dirStat = await fs.stat(dirPath);
+      const dirStat = fsSync.statSync(dirPath);
       if (!dirStat.isDirectory()) {
         throw new Error(`Invalid path: must stay within ${params.boundaryLabel}`);
       }
     } else if (!dirLstat.isDirectory()) {
       throw new Error(`Invalid path: must stay within ${params.boundaryLabel}`);
     }
-    const dirRealPath = await fs.realpath(dirPath);
+    const dirRealPath = fsSync.realpathSync.native(dirPath);
     if (!isPathInside(baseRealPath, dirRealPath)) {
       throw new Error(`Invalid path: must stay within ${params.boundaryLabel}`);
     }

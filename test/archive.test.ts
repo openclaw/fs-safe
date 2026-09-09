@@ -27,40 +27,27 @@ beforeEach(() => {
 });
 
 
-async function createRebindableDirectoryAlias(params: {
-  aliasPath: string;
-  targetPath: string;
-}): Promise<void> {
-  await fs.rm(params.aliasPath, { recursive: true, force: true });
-  await fs.symlink(
-    params.targetPath,
-    params.aliasPath,
-    process.platform === "win32" ? "junction" : undefined,
-  );
-}
-
 async function withRealpathSymlinkRebindRace<T>(params: {
   shouldFlip: (realpathInput: string) => boolean;
   symlinkPath: string;
   symlinkTarget: string;
   run: () => Promise<T>;
 }): Promise<T> {
-  const realRealpath = fs.realpath.bind(fs);
+  const realRealpath = fsSync.realpathSync.native;
   let flipped = false;
   const realpathSpy = vi
-    .spyOn(fs, "realpath")
-    .mockImplementation(async (...args: Parameters<typeof fs.realpath>) => {
+    .spyOn(fsSync.realpathSync, "native")
+    .mockImplementation((...args: Parameters<typeof fsSync.realpathSync.native>) => {
       const filePath = String(args[0]);
       if (!flipped && params.shouldFlip(filePath)) {
         flipped = true;
-        const resolved = await realRealpath(...args);
-        await createRebindableDirectoryAlias({
-          aliasPath: params.symlinkPath,
-          targetPath: params.symlinkTarget,
-        });
+        const resolved = realRealpath(...args);
+        fsSync.rmSync(params.symlinkPath, { recursive: true, force: true });
+        fsSync.symlinkSync(params.symlinkTarget, params.symlinkPath,
+          process.platform === "win32" ? "junction" : undefined);
         return resolved;
       }
-      return await realRealpath(...args);
+      return realRealpath(...args);
     });
   try {
     return await params.run();
@@ -392,13 +379,13 @@ describe("archive extraction", () => {
     replacement.file("owned.txt", "owned");
     await fs.writeFile(replacementPath, await replacement.generateAsync({ type: "nodebuffer" }));
 
-    const realLstat = fs.lstat.bind(fs);
+    const realLstat = fsSync.lstatSync.bind(fsSync);
     let swapped = false;
-    const lstatSpy = vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
-      const stat = await realLstat(...args);
+    const lstatSpy = vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
+      const stat = realLstat(...args);
       if (!swapped && String(args[0]) === archivePath) {
         swapped = true;
-        await fs.rename(replacementPath, archivePath);
+        fsSync.renameSync(replacementPath, archivePath);
       }
       return stat;
     });

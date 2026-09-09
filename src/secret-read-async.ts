@@ -22,8 +22,8 @@ export async function readSecretFile(
   const { resolvedPath, maxBytes } = resolveSecretReadPolicy(filePath, label, options);
   async function inspectInput(symlinkMessage: string): Promise<fsSync.BigIntStats> {
     const stat = options.rejectSymlink
-      ? await fs.lstat(resolvedPath, { bigint: true })
-      : await fs.stat(resolvedPath, { bigint: true });
+      ? fsSync.lstatSync(resolvedPath, { bigint: true })
+      : fsSync.statSync(resolvedPath, { bigint: true });
     if (options.rejectSymlink && stat.isSymbolicLink()) {
       throw new FsSafeError("symlink", symlinkMessage);
     }
@@ -47,19 +47,19 @@ export async function readSecretFile(
   let handle: fs.FileHandle | undefined;
   let raw: string;
   try {
-    const realPath = await fs.realpath(resolvedPath);
+    const realPath = fsSync.realpathSync.native(resolvedPath);
     assertNoUnsafeDeviceReadPath(realPath);
     handle = await fs.open(realPath, resolveReadOpenFlags());
     const openedHandle = handle;
     const openedStat = await inspectFileIdentity(async () => {
-      const stat = await openedHandle.stat({ bigint: true });
+      const stat = fsSync.fstatSync(openedHandle.fd, { bigint: true });
       if (!stat.isFile() || (options.rejectHardlinks !== false && stat.nlink > 1n)) {
         throw new FsSafeError("path-mismatch", "security validation failed");
       }
       return stat;
     }, previewStat);
     await inspectFileIdentity(async () => {
-      const stat = await fs.lstat(realPath, { bigint: true });
+      const stat = fsSync.lstatSync(realPath, { bigint: true });
       if (!stat.isFile()) throw new FsSafeError("path-mismatch", "security validation failed");
       return stat;
     }, openedStat);

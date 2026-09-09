@@ -1,4 +1,4 @@
-import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import type { SidecarLockRetryOptions } from "./sidecar-lock-types.js";
 
 function assertFiniteNonNegative(value: number, label: string): void {
@@ -77,7 +77,7 @@ export async function defaultSidecarLockShouldReclaim(params: {
   const createdAtMs = sidecarLockPayloadCreatedAtMs(params.payload);
   if (createdAtMs !== null) return params.nowMs - createdAtMs > params.staleMs;
   try {
-    return params.nowMs - (await fs.stat(params.lockPath)).mtimeMs > params.staleMs;
+    return params.nowMs - fsSync.statSync(params.lockPath).mtimeMs > params.staleMs;
   } catch {
     return true;
   }
