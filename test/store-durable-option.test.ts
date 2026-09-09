@@ -4,12 +4,20 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative } from "../src/config.js";
+import { __loadBundledNativeForTest } from "../src/native.js";
 import { fileStore, fileStoreSync, jsonStore, type FileStoreWriteOptions } from "../src/store.js";
 import * as verification from "../src/root-write-verification.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
 const verifyPublished = verification.verifyAtomicWriteResult;
+let nativeAvailable = false;
+try {
+  __loadBundledNativeForTest();
+  nativeAvailable = true;
+} catch (error) {
+  if (process.env.FS_SAFE_NATIVE_MODE === "require") throw error;
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -64,7 +72,7 @@ const policies: {
 ];
 
 for (const backend of ["require", "off"] as const) {
-  describe(`store durable option: native ${backend}`, () => {
+  describe.skipIf(backend === "require" && !nativeAvailable)(`store durable option: native ${backend}`, () => {
     for (const privateMode of [false, true]) {
       for (const method of ["writeStream", "copyIn"] as const) {
         const deferred = method === "copyIn" || !privateMode;
