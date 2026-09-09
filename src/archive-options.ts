@@ -15,6 +15,7 @@ export type ExtractArchiveOptions = {
   archivePath: string;
   destDir: string;
   timeoutMs: number;
+  durable?: boolean;
   kind?: ArchiveKind;
   stripComponents?: number;
   tarGzip?: boolean;

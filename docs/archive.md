@@ -43,6 +43,7 @@ type ExtractArchiveOptions = {
   archivePath: string;          // absolute path to the archive
   destDir: string;              // absolute destination directory; must already exist
   timeoutMs: number;            // positive wall-clock budget; <= 0/non-finite disables it
+  durable?: boolean;            // true; sync published files and directories before completion
   kind?: ArchiveKind;           // "zip" | "tar" | "tar-zstd" | "tar-bzip2"
   stripComponents?: number;     // strip N leading dirs from entry paths
   tarGzip?: boolean;            // when archive is .tar.gz/.tgz
@@ -54,6 +55,27 @@ type ExtractArchiveOptions = {
   onFiltered?: "reject-archive" | "skip-entry";
 };
 ```
+
+`durable` defaults to `true`. Private staging never fsyncs, and publication copies
+defer durability until the complete merge succeeds. The final pass syncs each
+published file once (at most eight concurrently), then each published directory
+once, deepest first, and finally the destination directory. All work stays inside
+the extraction deadline; active syncs are joined before rejection. File sync
+failures use the same error surface as `Root.copyIn()`; directory I/O failures
+also reject, with the existing platform limitations on directory flushing.
+Files whose final mode prevents reading, including `0o000` and write-only files,
+sync once through the copy's retained descriptor during publication. Permissions
+are never widened to reopen them. Directory modes are finalized after the file
+pass, with a descriptor pinned before chmod for syncing restrictive directories.
+Existing inaccessible directories are never widened; an existing search-only
+directory must become readable in its final mode if no readable sync descriptor
+can be acquired before chmod.
+
+Use `durable: false` for extractions into temporary or reconstructible locations.
+It skips all file and directory syncs while preserving atomic file publication,
+mode enforcement, identity checks, and containment checks. Successful default
+extraction syncs file contents and directory entries before returning; failures
+can leave a partially published tree as described below.
 
 `entryModes` defaults to `"clamp"`: directories become `0o755`; files become
 `0o644`, or `0o755` when the archived owner-execute bit is set. `"preserve"`
@@ -201,11 +223,13 @@ before publication preserves a pre-existing file, and rejection does not grant
 authority to delete a substituted file or alias. Failed extraction does not
 restore overwritten contents. Active destination mutations and their guarded
 cleanup still finish before rejection; no later destination mutation begins.
-New directories whose postorder finalization was never reached can retain their
+New directories whose finalization was never reached can retain their
 private working mode after failure. Failure cleanup closes retained descriptors;
-it does not run a final chmod sweep or roll back the archive. The public merge
+it does not run a cleanup chmod sweep or roll back the archive. The public merge
 helper still derives modes from its external source tree and must be able to
 read that source; it never chmods an unreadable external source to admit it.
+That helper retains per-copy durability and immediate postorder directory-mode
+finalization; the deferred pass described above belongs to `extractArchive()`.
 
 ### Limits
 

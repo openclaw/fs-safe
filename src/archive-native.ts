@@ -41,6 +41,7 @@ export function throwMappedNativeArchiveError(error: unknown): never {
 }
 
 export async function extractNativeArchive(params: {
+  durable?: boolean;
   binding: NativeBinding;
   archivePath: string;
   destDir: string;
@@ -134,6 +135,7 @@ export async function extractNativeArchive(params: {
         params.deadline.check();
         await mergePlannedArchiveIntoDestination({
           entries: plan,
+          durable: params.durable,
           sourceDir: stagingDir,
           destinationDir: params.destDir,
           destinationRealDir,

@@ -91,14 +91,14 @@ await fs.write("notes/today.txt", "hello\n", { encoding: "utf8" });
 | `overwrite` | `boolean` | `true`; `false` is create-only. |
 | `renameIdentity` | `RenameIdentityPolicy` | `"strict"`. |
 
-`write`, `create`, `writeJson`, `createJson`, and `append` accept `durable`.
+`write`, `create`, `writeJson`, `createJson`, `append`, and `copyIn` accept `durable`.
 Precedence is per-call option, then `Root.defaults.durable`, then `true`;
 an explicitly `undefined` call option preserves the root default.
 `durable: false` keeps the sibling-temp replace/rename behavior of replacement
 writes but skips file and parent-directory fsync calls. Create-only and append
 publication behavior, permissions, identity checks, and error codes are unchanged.
 Use it only for reconstructible data: a crash may lose the write or leave the
-previous file. `copyIn`, `move`, and streaming `openWritable` do not use this option.
+previous file. `move` and streaming `openWritable` do not use this option.
 The existing pure-JavaScript Windows writer performs no fsync calls in either
 setting; native Windows writes honor the option. Directory sync remains best-effort.
 
@@ -185,7 +185,9 @@ await fs.copyIn("inbox/upload.bin", "/tmp/incoming.bin", {
 });
 ```
 
-Options are `{ denyMutations?, maxBytes?, mkdir?, mode?, sourceHardlinks? }`.
+Options are `{ denyMutations?, durable?, maxBytes?, mkdir?, mode?, sourceHardlinks? }`.
+`durable` follows the root default and is `true` when omitted at both levels;
+set it to `false` to skip file and parent-directory syncs for reconstructible data.
 Use `sourceHardlinks: "reject"` to refuse if the source itself is a hardlinked
 alias. There is no encoding option: copying preserves source bytes.
 

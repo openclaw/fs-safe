@@ -164,6 +164,8 @@ async function writeZipFileEntry(params: {
       dir: path.dirname(destinationPath),
       chmodDir: false,
       mode: 0o600,
+      syncTempFile: false,
+      syncParentDir: false,
       writeTemp: async (tempPath) => {
         tempHandle = await fs.open(tempPath, OPEN_WRITE_CREATE_FLAGS, 0o600);
         const writable = tempHandle.createWriteStream();
@@ -205,6 +207,7 @@ async function writeZipFileEntry(params: {
 }
 
 async function extractZip(params: {
+  durable?: boolean;
   archivePath: string;
   destDir: string;
   stripComponents?: number;
@@ -295,6 +298,7 @@ async function extractZip(params: {
         params.deadline.check();
         await mergePlannedArchiveIntoDestination({
           entries: acceptedEntries,
+          durable: params.durable,
           sourceDir: stagingRealDir,
           destinationDir: params.destDir,
           destinationRealDir,
@@ -323,6 +327,7 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
   // getters and inherited policy must survive identically on every backend.
   const options = {
     archivePath: params.archivePath, destDir: params.destDir,
+    durable: params.durable,
     stripComponents: params.stripComponents, limits,
     entryModes: params.entryModes, entryFilter: params.entryFilter, onFiltered,
   };
@@ -355,7 +360,7 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
 }
 
 async function extractWasmTar(params: {
-  archivePath: string; options: Pick<ExtractArchiveOptions, "destDir" | "stripComponents" | "entryModes" | "entryFilter" | "onFiltered">;
+  archivePath: string; options: Pick<ExtractArchiveOptions, "destDir" | "durable" | "stripComponents" | "entryModes" | "entryFilter" | "onFiltered">;
   limits: ResolvedArchiveExtractLimits;
   tarLimits: TarMeterLimits; deadline: ExtractionDeadline;
 }): Promise<void> {
@@ -382,6 +387,7 @@ async function extractWasmTar(params: {
         if (member.kind === "file") {
           await runPinnedWriteHelper({ rootPath: stagingDir, relativeParentPath: path.posix.dirname(member.path),
             basename: path.posix.basename(member.path), mkdir: false, mode: 0o600, overwrite: false,
+            sync: false,
             maxBytes: member.size, input: { kind: "stream", stream: Readable.from(payload) } });
         }
         deadline.check();
@@ -389,7 +395,7 @@ async function extractWasmTar(params: {
     });
     deadline.check();
     await mergePlannedArchiveIntoDestination({ entries: accepted, sourceDir: stagingDir,
-      destinationDir: options.destDir, destinationRealDir, deadline });
+      destinationDir: options.destDir, destinationRealDir, deadline, durable: options.durable });
     deadline.check();
   } });
 }
