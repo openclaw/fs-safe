@@ -18,7 +18,7 @@ const fs = await root("/srv/workspace", {
 function root(rootDir: string, defaults?: RootDefaults): Promise<Root>;
 
 type RootDefaults = {
-  durable?: boolean;               // fsync write/create/writeJson/createJson/append; default true
+  durable?: boolean;               // fsync write/create/writeJson/createJson/append/copyIn; default true
   hardlinks?: "reject" | "allow";  // refuse files with nlink > 1 on read; defaults to "reject"
   denyMutations?: DenyMutationPolicy; // absolute paths/prefixes mutation methods may not change
   maxBytes?: number;               // refuse reads larger than this many bytes; defaults to 16 MiB
@@ -111,7 +111,7 @@ fs.ensureRoot(options?)                  // accepts "" / "." as the root itself
 
 `write`, `create`, `append`, `writeJson`, and `createJson` accept `mode?: number`; use `0o600` for credentials and other private state. `writeJson` also accepts the same options as `JSON.stringify` plus `trailingNewline?: boolean` (defaults `true` so the file ends in `\n`).
 
-These five methods also accept `durable?: boolean`: the per-call value overrides
+These five methods and `copyIn` also accept `durable?: boolean`: the per-call value overrides
 `Root.defaults.durable`, which defaults to `true` when omitted. An explicitly
 `undefined` per-call value preserves the root default. `durable: false` keeps
 the existing publication behavior, modes, and identity checks but skips file

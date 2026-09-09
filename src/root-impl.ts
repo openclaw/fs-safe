@@ -73,6 +73,7 @@ import { serializePathWrite } from "./write-queue.js";
 import { verifyAtomicWriteResult } from "./root-write-verification.js";
 import { inheritWriteTargetMode } from "./root-write-mode.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
+import { onCopyPublication, type CopyPublicationOptions } from "./copy-publication.js";
 
 export type { DenyMutationPolicy } from "./deny-mutations.js";
 export type { RenameIdentityPolicy } from "./pinned-write.js";
@@ -123,7 +124,7 @@ export type RootOpenWritableOptions = Pick<RootDefaults, "denyMutations" | "mkdi
   writeMode?: WritableOpenMode;
 };
 
-export type RootCopyOptions = Pick<RootDefaults, "denyMutations" | "maxBytes" | "mkdir" | "mode"> & {
+export type RootCopyOptions = Pick<RootDefaults, "denyMutations" | "durable" | "maxBytes" | "mkdir" | "mode"> & {
   sourceHardlinks?: HardlinkPolicy;
 };
 
@@ -611,6 +612,8 @@ export class RootHandle implements Root {
       mkdir: this.defaults.mkdir,
       mode: this.defaults.mode,
       ...copyOptions,
+      durable: options.durable ?? this.defaults.durable ?? true,
+      verifyPublished: (options as CopyPublicationOptions)[onCopyPublication],
     });
   }
 
@@ -1177,6 +1180,8 @@ async function copyFileInRoot(
     mode?: number;
     denyMutations?: DenyMutationPolicy;
     sourceHardlinks?: HardlinkPolicy;
+    durable?: boolean;
+    verifyPublished?: CopyPublicationOptions[typeof onCopyPublication];
   },
 ): Promise<void> {
   assertValidRootRelativePath(params.relativePath);
@@ -1212,6 +1217,8 @@ async function copyFileInRoot(
             mode: pinned.mode,
             overwrite: true,
             maxBytes: params.maxBytes,
+            sync: params.durable !== false,
+            verifyPublished: params.verifyPublished,
             input: { kind: "stream", stream: source.handle.createReadStream() },
             rootIdentity: root.rootIdentity,
           });

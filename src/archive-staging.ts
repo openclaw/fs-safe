@@ -168,12 +168,14 @@ export async function prepareArchiveOutputPath(params: ArchiveOutputPathParams):
 
 export async function preparePrivateArchiveOutputPath(
   params: ArchiveOutputPathParams, assertGuards?: () => Promise<void>,
+  destinationGuard?: AsyncDirectoryGuard,
 ): Promise<void> {
-  await prepareOutputPath(params, assertGuards, true);
+  await prepareOutputPath(params, assertGuards, true, destinationGuard);
 }
 
 async function prepareOutputPath(
   params: ArchiveOutputPathParams, assertGuards?: () => Promise<void>, privateWorkingMode = false,
+  existingDestinationGuard?: AsyncDirectoryGuard,
 ): Promise<void> {
   checkExtractionDeadline(params.deadline);
   const targetRoot = privateWorkingMode ? {
@@ -194,16 +196,23 @@ async function prepareOutputPath(
         mode: 0o700,
         rejectSymlinks: true,
         beforeComponent: async () => {
-          await assertDirectoryIdentityGuard(destinationGuard);
-          checkExtractionDeadline(params.deadline);
-          await assertGuards?.();
+          await assertOutputGuards();
           checkExtractionDeadline(params.deadline);
         },
       });
     },
   } : await root(params.destinationRealDir);
   checkExtractionDeadline(params.deadline);
-  const destinationGuard = await createDirectoryIdentityGuard(params.destinationRealDir);
+  const destinationGuard = existingDestinationGuard ?? await createDirectoryIdentityGuard(params.destinationRealDir);
+  const assertOutputGuards = async () => {
+    // The merge's callback verifies this same original destination guard.
+    if (existingDestinationGuard && assertGuards) await assertGuards();
+    else {
+      await assertDirectoryIdentityGuard(destinationGuard);
+      checkExtractionDeadline(params.deadline);
+      await assertGuards?.();
+    }
+  };
   checkExtractionDeadline(params.deadline);
   const relPath = params.relPath.split(path.sep).join(path.posix.sep);
   await assertNoSymlinkTraversal({
@@ -217,9 +226,7 @@ async function prepareOutputPath(
     await getFsSafeTestHooks()?.beforeArchiveOutputMutation?.("mkdir", params.outPath);
     checkExtractionDeadline(params.deadline);
     await ownExtractionDestinationMutation(params.deadline, async () => {
-      await assertDirectoryIdentityGuard(destinationGuard);
-      checkExtractionDeadline(params.deadline);
-      await assertGuards?.();
+      await assertOutputGuards();
       checkExtractionDeadline(params.deadline);
       await mkdirArchiveOutput({
         targetRoot,
@@ -244,9 +251,7 @@ async function prepareOutputPath(
     await getFsSafeTestHooks()?.beforeArchiveOutputMutation?.("mkdir", path.dirname(params.outPath));
     checkExtractionDeadline(params.deadline);
     await ownExtractionDestinationMutation(params.deadline, async () => {
-      await assertDirectoryIdentityGuard(destinationGuard);
-      checkExtractionDeadline(params.deadline);
-      await assertGuards?.();
+      await assertOutputGuards();
       checkExtractionDeadline(params.deadline);
       await mkdirArchiveOutput({
         targetRoot,

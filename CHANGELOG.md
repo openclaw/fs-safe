@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add `Root.copyIn({ durable: false })`, with per-call, root-default, then `true` precedence, to skip file and parent-directory fsync for reconstructible data.
+- Add `extractArchive({ durable: false })` to skip durability syncs for temporary or reconstructible extraction destinations.
+- Speed up archive extraction by omitting private staging syncs, deferring publication durability to one bounded file/directory pass, and sharing duplicate destination guards without weakening containment checks.
 - Preserve Windows file identity across open-induced `ctime` changes during guarded move fallback, and recreate directory junctions without requiring symlink privileges.
 
 ## 0.8.6 - 2026-09-07

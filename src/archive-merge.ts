@@ -14,6 +14,9 @@ import { formatErrorDetail } from "./error-detail.js";
 import { isPathInside } from "./path.js";
 import { root } from "./root.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
+import { onCopyPublication, type CopyPublicationOptions } from "./copy-publication.js";
+import { syncFileBestEffortSync } from "./file-sync.js";
+import { finalizeArchivePublication, type ArchivePublishedDirectory, type ArchivePublishedFile } from "./archive-durability.js";
 
 export type ArchivePublicationEntry = { path: string; kind: "file" | "directory"; mode: number };
 type MergeParams = {
@@ -24,16 +27,18 @@ type MergeParams = {
 };
 
 export async function mergePlannedArchiveIntoDestination(
-  params: MergeParams & { entries: readonly ArchivePublicationEntry[] },
+  params: MergeParams & { entries: readonly ArchivePublicationEntry[]; durable?: boolean },
 ): Promise<void> {
-  await mergeTree(params, params.entries);
+  await mergeTree(params, params.entries, params.durable !== false);
 }
 
 export async function mergeExtractedTreeIntoDestination(params: MergeParams): Promise<void> {
   await mergeTree(params);
 }
 
-async function mergeTree(params: MergeParams, publication?: readonly ArchivePublicationEntry[]): Promise<void> {
+async function mergeTree(params: MergeParams, publication?: readonly ArchivePublicationEntry[], durable = true): Promise<void> {
+  const publishedFiles: ArchivePublishedFile[] = [];
+  const publishedDirectories: ArchivePublishedDirectory[] = [];
   const check = () => params.deadline?.check();
   check();
   const destinationGuard = await createDirectoryIdentityGuard(params.destinationRealDir);
@@ -93,7 +98,7 @@ async function mergeTree(params: MergeParams, publication?: readonly ArchivePubl
       const mode = plan ? planned?.mode ?? 0o755 : sourceStat.mode & 0o777;
       await preparePrivateArchiveOutputPath({
         ...params, relPath, outPath: destinationPath, originalPath, isDirectory: kind === "directory",
-      }, assertGuards);
+      }, assertGuards, destinationGuard);
       check();
       if (kind === "directory") {
         // Ownership spans open, descendants, finalization and close, including timeout.
@@ -113,6 +118,11 @@ async function mergeTree(params: MergeParams, publication?: readonly ArchivePubl
             ancestors.push({ guard, owner });
             try {
               await walk(sourcePath);
+              if (publication) {
+                await assertGuards();
+                publishedDirectories.push({ guard, mode, parents: ancestors.slice(0, -1).map((ancestor) => ancestor.guard) });
+                return;
+              }
               await getFsSafeTestHooks()?.beforeArchiveOutputMutation?.("chmod", destinationPath);
               check();
               await assertGuards();
@@ -140,7 +150,24 @@ async function mergeTree(params: MergeParams, publication?: readonly ArchivePubl
         await ownExtractionDestinationMutation(params.deadline, async () => {
           await assertGuards();
           try {
-            await targetRoot.copyIn(relPath, sourcePath, { mkdir: true, mode });
+            const options: CopyPublicationOptions & { mkdir: boolean; mode: number; durable: boolean } = {
+              mkdir: true, mode, durable: publication ? false : true,
+            };
+            if (publication && durable) {
+              options[onCopyPublication] = async (fd, identity) => {
+                check();
+                if ((mode & 0o400) === 0) {
+                  // Final mode may prohibit reopening. Sync the writer's still-owned
+                  // descriptor without widening permissions or syncing its parent.
+                  syncFileBestEffortSync(fd);
+                  check();
+                } else {
+                  publishedFiles.push({ relativePath: relPath, identity,
+                    guards: ancestors.map((ancestor) => ancestor.guard) });
+                }
+              };
+            }
+            await targetRoot.copyIn(relPath, sourcePath, options);
             check();
             await assertGuards();
             await assertResolvedInsideDestination({
@@ -164,4 +191,8 @@ async function mergeTree(params: MergeParams, publication?: readonly ArchivePubl
     }
   };
   await walk(params.sourceDir);
+  if (publication) {
+    await finalizeArchivePublication({ targetRoot, destinationGuard, sourceGuard,
+      files: publishedFiles, directories: publishedDirectories, durable, deadline: params.deadline });
+  }
 }

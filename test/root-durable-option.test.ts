@@ -59,7 +59,7 @@ const policies: { name: string; rootDefault?: boolean; options?: RootWriteOption
 
 for (const backend of ["auto", "off"] as const) {
   describe.skipIf(backend === "auto" && !nativeAvailable)(`Root durable option: native ${backend}`, () => {
-    for (const method of ["write", "create", "writeJson", "createJson", "append"] as const) {
+    for (const method of ["write", "create", "writeJson", "createJson", "append", "copyIn"] as const) {
       // The Windows JavaScript fallback cannot rename over a read-only destination.
       const modes = process.platform === "win32" && backend === "off" && method !== "append" ? [0o640] : [0o640, 0o400];
       it.each(policies.flatMap((policy) => modes.map((mode) => ({ ...policy, mode }))))(
@@ -69,14 +69,18 @@ for (const backend of ["auto", "off"] as const) {
           const directory = await tempRoot("fs-safe-durable-");
           const safe = await root(directory, { durable: rootDefault });
           expect(safe.defaults.durable).toBe(rootDefault);
+          const source = path.join(await tempRoot("fs-safe-copy-source-"), "source");
+          if (method === "copyIn") await fs.writeFile(source, "payload");
           const { events, asyncSpy, syncSpy } = await observeSyncs(directory);
           const isJson = method === "writeJson" || method === "createJson";
           if (isJson) {
             await safe[method]("target", { value: "payload" }, { ...options, mode });
+          } else if (method === "copyIn") {
+            await safe.copyIn("target", source, { ...options, mode });
           } else {
             await safe[method]("target", "payload", { ...options, mode });
           }
-          if (!sync || (process.platform === "win32" && backend === "off" && method !== "append")) {
+          if (!sync || (process.platform === "win32" && backend === "off" && method !== "append" && method !== "copyIn")) {
             expect(asyncSpy).not.toHaveBeenCalled();
             expect(syncSpy).not.toHaveBeenCalled();
           } else if (process.platform === "win32") {
@@ -143,7 +147,7 @@ for (const backend of ["auto", "off"] as const) {
       expect(await fs.readFile(path.join(directory, "published"), "utf8")).toBe("payload");
     });
 
-    it("retains create-only errors and copyIn durability with a false root default", async () => {
+    it("retains create-only errors and skips copyIn syncing with a false root default", async () => {
       configureFsSafeNative({ mode: backend });
       const directory = await tempRoot("fs-safe-durable-copy-");
       const source = path.join(directory, "source");
@@ -153,7 +157,7 @@ for (const backend of ["auto", "off"] as const) {
       await expect(safe.write("../escape", "payload")).rejects.toMatchObject({ code: "outside-workspace" });
       const { events } = await observeSyncs(directory);
       await safe.copyIn("target", source);
-      expect(events).toContain("file");
+      expect(events).toEqual([]);
       expect(await fs.readFile(path.join(directory, "target"), "utf8")).toBe("payload");
     });
   });
