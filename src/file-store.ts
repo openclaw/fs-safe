@@ -28,7 +28,7 @@ import { writeSecretFileAtomic } from "./secret-file.js";
 export type FileStoreOptions = {
   rootDir: string;
   private?: boolean;
-  /** Default for write and private writeStream; true syncs file and parent where supported. */
+  /** Default for writes, streams, and copies; true syncs file and parent where supported. */
   durable?: boolean;
   dirMode?: number;
   mode?: number;
@@ -36,7 +36,7 @@ export type FileStoreOptions = {
 };
 
 export type FileStoreWriteOptions = {
-  /** Write durability; ignored by copyIn and non-private writeStream until Root.copyIn supports it. */
+  /** Override store durability; defaults to the store option, then true. */
   durable?: boolean;
   dirMode?: number;
   mode?: number;
@@ -60,10 +60,7 @@ export type FileStore = {
   open(relativePath: string, options?: RootReadOptions): Promise<OpenResult>;
   read(relativePath: string, options?: RootReadOptions): Promise<ReadResult>;
   readBytes(relativePath: string, options?: RootReadOptions): Promise<Buffer>;
-  readText(
-    relativePath: string,
-    options?: FileStoreReadOptions,
-  ): Promise<string>;
+  readText(relativePath: string, options?: FileStoreReadOptions): Promise<string>;
   readTextIfExists(relativePath: string, options?: FileStoreReadOptions): Promise<string | null>;
   readJson<T = unknown>(relativePath: string, options?: FileStoreReadOptions): Promise<T>;
   readJsonIfExists<T = unknown>(
@@ -186,6 +183,7 @@ async function copyIntoRoot(params: {
   rootDir: string;
   relativePath: string;
   sourcePath: string;
+  durable: boolean;
   dirMode?: number;
   maxBytes?: number;
   mode?: number;
@@ -206,6 +204,7 @@ async function copyIntoRoot(params: {
   });
   await ensureParentInRoot(scopedRoot, relativePath, dirMode);
   await scopedRoot.copyIn(relativePath, params.sourcePath, {
+    durable: params.durable,
     maxBytes: params.maxBytes,
     mkdir: false,
     mode: params.mode ?? 0o600,
@@ -301,6 +300,7 @@ export function fileStore(options: FileStoreOptions): FileStore {
           rootDir,
           relativePath: safeRelativePath,
           sourcePath: staged.path,
+          durable: writeOptions?.durable ?? durable,
           maxBytes: limit,
           mode: writeOptions?.mode ?? mode,
           tempPrefix: writeOptions?.tempPrefix,
@@ -318,12 +318,13 @@ export function fileStore(options: FileStoreOptions): FileStore {
           sourcePath,
           maxBytes: configuredLimit ?? DEFAULT_ROOT_MAX_BYTES,
         });
-        return await write(relativePath, buffer, { ...writeOptions, durable: true });
+        return await write(relativePath, buffer, writeOptions);
       }
       return await copyIntoRoot({
         rootDir,
         relativePath,
         sourcePath,
+        durable: writeOptions?.durable ?? durable,
         dirMode: writeOptions?.dirMode ?? dirMode,
         maxBytes: configuredLimit,
         mode: writeOptions?.mode ?? mode,

@@ -46,13 +46,13 @@ async function observeSyncs(directory: string) {
   return events;
 }
 
-function expectSyncs(events: string[], durable: boolean, syncStore: boolean, backend: string) {
+function expectSyncs(events: string[], durable: boolean, syncStore: boolean, backend: string, rootCopy = false) {
   if (!durable) {
     expect(events).toEqual([]);
   } else if (process.platform !== "win32") {
     expect(events).toEqual(["file", "parent"]);
-  } else if (syncStore || backend === "require") {
-    // Directory sync is not portable on Windows; the JS async fallback is unsynced.
+  } else if (syncStore || rootCopy || (backend !== "off" && nativeAvailable)) {
+    // Windows directory sync is not portable; JS async writes can also be unsynced.
     expect(events).toContain("file");
   }
 }
@@ -71,46 +71,34 @@ const policies: {
   { name: "per-call false overrides store true", storeDefault: true, options: { durable: false }, sync: false },
 ];
 
-for (const backend of ["require", "off"] as const) {
+for (const backend of ["auto", "require", "off"] as const) {
   describe.skipIf(backend === "require" && !nativeAvailable)(`store durable option: native ${backend}`, () => {
     for (const privateMode of [false, true]) {
       for (const method of ["writeStream", "copyIn"] as const) {
-        const deferred = method === "copyIn" || !privateMode;
-        const note = deferred ? " (always durable until Root.copyIn gains the option)" : "";
-        it.skipIf(deferred).each(policies)(`private=${privateMode} ${method}${note}: $name`, async ({ storeDefault, options, sync }) => {
+        it.each(policies)(`private=${privateMode} ${method}: $name`, async ({ storeDefault, options, sync }) => {
           configureFsSafeNative({ mode: backend });
           const directory = await tempRoot("fs-safe-store-copy-durable-");
           const source = path.join(directory, "source");
-          await fs.writeFile(source, "payload");
           const store = fileStore({ rootDir: directory, private: privateMode, durable: storeDefault });
           const target = path.join(directory, "nested/target");
           const events = await observeSyncs(directory);
-          const result = method === "copyIn"
-            ? await store.copyIn("nested/target", source, { ...options, mode: 0o640 })
-            : await store.writeStream("nested/target", Readable.from(["pay", "load"]), { ...options, mode: 0o640 });
-          expect(result).toBe(target);
-          expectSyncs(events, sync, false, backend);
-          expect(await fs.readFile(target, "utf8")).toBe("payload");
-          if (process.platform !== "win32") {
-            expect((await fs.stat(target)).mode & 0o777).toBe(0o640);
-            expect((await fs.stat(path.dirname(target))).mode & 0o777).toBe(0o700);
+          for (const value of ["first", "replacement"]) {
+            await fs.writeFile(source, value);
+            events.length = 0;
+            const mode = value === "first" ? 0o640 : 0o600;
+            const result = method === "copyIn"
+              ? await store.copyIn("nested/target", source, { ...options, mode })
+              : await store.writeStream("nested/target", Readable.from([value.slice(0, 2), value.slice(2)]), { ...options, mode });
+            expect(result).toBe(target);
+            expectSyncs(events, sync, false, backend, !privateMode);
+            expect(await fs.readFile(target, "utf8")).toBe(value);
+            if (process.platform !== "win32") {
+              expect((await fs.stat(target)).mode & 0o777).toBe(mode);
+              expect((await fs.stat(path.dirname(target))).mode & 0o777).toBe(0o700);
+            }
+            expect(await fs.readdir(path.dirname(target))).toEqual(["target"]);
           }
-          expect(await fs.readdir(path.dirname(target))).toEqual(["target"]);
         });
-        if (deferred) {
-          it(`private=${privateMode} ${method}: always durable until Root.copyIn gains the option`, async () => {
-            configureFsSafeNative({ mode: backend });
-            const directory = await tempRoot("fs-safe-store-deferred-durable-");
-            const source = path.join(directory, "source");
-            await fs.writeFile(source, "payload");
-            const store = fileStore({ rootDir: directory, private: privateMode, durable: false });
-            const events = await observeSyncs(directory);
-            if (method === "copyIn") await store.copyIn("target", source, { durable: false });
-            else await store.writeStream("target", Readable.from(["payload"]), { durable: false });
-            expectSyncs(events, true, false, backend);
-            expect(await store.readText("target")).toBe("payload");
-          });
-        }
       }
       for (const syncStore of [false, true]) {
         for (const method of ["write", "writeText", "writeJson"] as const) {

@@ -124,9 +124,7 @@ and publication identity checks are unchanged.
 | Method | Durability support |
 |---|---|
 | `write`, `writeText`, `writeJson` (async and sync) | Per-call option overrides store default. |
-| `writeStream`, `private: true` | Per-call option overrides store default. |
-| `writeStream`, `private: false` | Always durable until Root.copyIn gains the option; `durable` is ignored. |
-| `copyIn` (either private mode) | Always durable until Root.copyIn gains the option; `durable` is ignored. |
+| `writeStream`, `copyIn` (either private mode) | Per-call option overrides store default. |
 | JSON `write`, `update`, `updateOr` | JSON handle option overrides file-store default. |
 
 ### `write(rel, data, options?)`
@@ -167,8 +165,8 @@ const path = await cache.writeStream("downloads/blob.bin", Readable.from(remoteF
 
 Streams into a sibling temp with a running byte budget. Aborts the source stream with `too-large` if `maxBytes` is exceeded mid-stream — partial writes are cleaned up.
 
-Private streams honor `durable`. Non-private streams stage their input and
-publish through Root `copyIn`, so they remain always durable for now.
+Streams honor `durable` in both private modes. Non-private streams stage their
+input and forward the resolved durability option to Root `copyIn` for publication.
 
 ### `copyIn(rel, sourcePath, options?)`
 
@@ -178,8 +176,8 @@ const path = await cache.copyIn("ingest/upload.bin", "/tmp/upload.bin");
 
 One-shot ingest from an absolute source path. Source is checked for symlink/non-regular before copy. Same mode rules as `write`.
 
-`copyIn` remains always durable in both private modes until Root `copyIn`
-gains the option. It ignores both store-level and per-call `durable` values.
+`copyIn` honors per-call and store-level `durable` values in both private modes,
+with the same precedence as `write`.
 
 ### `FileStoreWriteOptions`
 
@@ -197,7 +195,7 @@ type FileStoreWriteOptions = {
 
 | `FileStoreWriteOptions` option | Default |
 |---|---|
-| `durable` | Store option, otherwise `true`; ignored by `copyIn` and non-private `writeStream`. |
+| `durable` | Store option, otherwise `true`. |
 | `dirMode` / `mode` | Store directory/file modes. |
 | `maxBytes` | Store byte limit. |
 | `tempPrefix` | Writer-specific temporary prefix. |
