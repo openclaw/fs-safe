@@ -2,6 +2,8 @@ import { createTarEntryPlanner } from "./archive-tar.js";
 import { inspectTar, replayTar } from "./archive-tar-stream.js";
 import type { AdmittedTarMember } from "./archive-tar-wasm.js";
 import { runPinnedWriteHelper } from "./pinned-write.js";
+import { createArchiveBatch } from "./archive-batch.js";
+import { createZipExtractionBudget } from "./archive-zip-budget.js";
 import { constants as fsConstants } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
@@ -23,7 +25,6 @@ import {
 import {
   assertArchiveEntryCountWithinLimit,
   assertArchiveEntryPathComponentsWithinLimit,
-  createByteBudgetTracker,
   createExtractBudgetTransform,
   resolveExtractLimits,
   resolveTarMeterLimits,
@@ -110,7 +111,6 @@ const OPEN_WRITE_CREATE_FLAGS =
   fsConstants.O_CREAT |
   fsConstants.O_EXCL |
   (SUPPORTS_NOFOLLOW ? fsConstants.O_NOFOLLOW : 0);
-type ZipExtractBudget = ReturnType<typeof createByteBudgetTracker>;
 
 async function readZipEntryStream(entry: ZipEntry): Promise<NodeJS.ReadableStream> {
   if (typeof entry.nodeStream === "function") {
@@ -148,11 +148,10 @@ function resolveZipOutputPath(params: {
 async function writeZipFileEntry(params: {
   entry: ZipEntry;
   outPath: string;
-  budget: ZipExtractBudget;
+  addBytes: (bytes: number) => void;
   deadline: ExtractionDeadline;
 }): Promise<void> {
   params.deadline.check();
-  params.budget.startEntry();
   const readable = await readZipEntryStream(params.entry);
   const destinationPath = params.outPath;
 
@@ -176,7 +175,7 @@ async function writeZipFileEntry(params: {
         try {
           await pipeline(
             readable,
-            createExtractBudgetTransform({ onChunkBytes: params.budget.addBytes }),
+            createExtractBudgetTransform({ onChunkBytes: params.addBytes }),
             createZipIntegrityTransform(params.entry),
             writable,
             { signal: params.deadline.signal },
@@ -235,7 +234,7 @@ async function extractZip(params: {
 
     assertArchiveEntryCountWithinLimit(entries.length, limits);
 
-    const budget = createByteBudgetTracker(limits);
+    const reserveEntry = createZipExtractionBudget(limits);
     const trackOutputPath = createArchiveOutputPathTracker();
 
     await withStagedArchiveDestination({
@@ -243,6 +242,7 @@ async function extractZip(params: {
       run: async (stagingDir) => {
         const stagingRealDir = await fs.realpath(stagingDir);
         const acceptedEntries: ArchivePublicationEntry[] = [];
+        const batch = createArchiveBatch(params.deadline);
         for (const entry of entries) {
           params.deadline.check();
           const output = resolveZipOutputPath({
@@ -274,7 +274,7 @@ async function extractZip(params: {
           const mode = zipEntryMode(entry, params.entryModes);
           acceptedEntries.push({ path: output.relPath, kind: entry.dir ? "directory" : "file", mode });
 
-          await preparePrivateArchiveOutputPath({
+          const prepare = () => preparePrivateArchiveOutputPath({
             destinationDir: stagingRealDir,
             destinationRealDir: stagingRealDir,
             relPath: output.relPath,
@@ -284,16 +284,18 @@ async function extractZip(params: {
             deadline: params.deadline,
           });
           if (entry.dir) {
+            await batch.drain();
+            await prepare();
             continue;
           }
 
-          await writeZipFileEntry({
-            entry,
-            outPath: output.outPath,
-            budget,
-            deadline: params.deadline,
+          const addBytes = reserveEntry(entrySize);
+          await batch.add(async () => {
+            await prepare();
+            await writeZipFileEntry({ entry, outPath: output.outPath, addBytes, deadline: params.deadline });
           });
         }
+        await batch.drain();
 
         params.deadline.check();
         await mergePlannedArchiveIntoDestination({

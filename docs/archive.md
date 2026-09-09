@@ -223,6 +223,7 @@ before publication preserves a pre-existing file, and rejection does not grant
 authority to delete a substituted file or alias. Failed extraction does not
 restore overwritten contents. Active destination mutations and their guarded
 cleanup still finish before rejection; no later destination mutation begins.
+Sibling files are published with bounded concurrency (8), so up to that many additional siblings may complete before a failure is reported; the ordering and atomicity of each file's publication are unchanged.
 New directories whose finalization was never reached can retain their
 private working mode after failure. Failure cleanup closes retained descriptors;
 it does not run a cleanup chmod sweep or roll back the archive. The public merge

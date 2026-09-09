@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { ownExtractionDestinationMutation, type ExtractionDeadline } from "./archive-deadline.js";
+import { createArchiveBatch } from "./archive-batch.js";
 import {
   assertDirectoryIdentityGuard, assertResolvedInsideDestination,
   createDirectoryIdentityGuard, createArchiveSymlinkTraversalError,
@@ -59,10 +60,10 @@ async function mergeTree(params: MergeParams, publication?: readonly ArchivePubl
     plan!.set(stagedPath, entry);
   }
   const ancestors: Array<{ guard: AsyncDirectoryGuard; owner: DirectoryModeOwner }> = [];
-  const assertGuards = async () => {
+  const assertAncestorGuards = async (guards: typeof ancestors) => {
     await assertDirectoryIdentityGuard(destinationGuard);
     check();
-    for (const ancestor of ancestors) {
+    for (const ancestor of guards) {
       await assertDirectoryIdentityGuard(ancestor.guard);
       check();
       await ancestor.owner.verify(check);
@@ -71,10 +72,12 @@ async function mergeTree(params: MergeParams, publication?: readonly ArchivePubl
     await assertDirectoryIdentityGuard(sourceGuard);
     check();
   };
+  const assertGuards = () => assertAncestorGuards(ancestors);
   const walk = async (sourceDir: string): Promise<void> => {
     await assertGuards();
     const entries = await fs.readdir(sourceDir, { withFileTypes: true });
     check();
+    const batch = createArchiveBatch(params.deadline);
     for (const entry of entries) {
       await assertGuards();
       const sourcePath = path.join(sourceDir, entry.name);
@@ -96,11 +99,17 @@ async function mergeTree(params: MergeParams, publication?: readonly ArchivePubl
         throw new FsSafeError("path-mismatch", "archive staging disagrees with the admitted publication plan");
       }
       const mode = plan ? planned?.mode ?? 0o755 : sourceStat.mode & 0o777;
-      await preparePrivateArchiveOutputPath({
-        ...params, relPath, outPath: destinationPath, originalPath, isDirectory: kind === "directory",
-      }, assertGuards, destinationGuard);
-      check();
+      const fileAncestors = ancestors.slice();
+      const assertFileGuards = () => assertAncestorGuards(fileAncestors);
+      const prepare = async (assertOutputGuards: () => Promise<void>) => {
+        await preparePrivateArchiveOutputPath({
+          ...params, relPath, outPath: destinationPath, originalPath, isDirectory: kind === "directory",
+        }, assertOutputGuards, destinationGuard);
+        check();
+      };
       if (kind === "directory") {
+        await batch.drain();
+        await prepare(assertGuards);
         // Ownership spans open, descendants, finalization and close, including timeout.
         await ownExtractionDestinationMutation(params.deadline, async () => {
           await assertGuards();
@@ -147,48 +156,55 @@ async function mergeTree(params: MergeParams, publication?: readonly ArchivePubl
           }
         });
       } else {
-        await ownExtractionDestinationMutation(params.deadline, async () => {
-          await assertGuards();
-          try {
-            const options: CopyPublicationOptions & { mkdir: boolean; mode: number; durable: boolean } = {
-              mkdir: true, mode, durable: publication ? false : true,
-            };
-            if (publication && durable) {
-              options[onCopyPublication] = async (fd, identity) => {
-                check();
-                if ((mode & 0o400) === 0) {
-                  // Final mode may prohibit reopening. Sync the writer's still-owned
-                  // descriptor without widening permissions or syncing its parent.
-                  syncFileBestEffortSync(fd);
-                  check();
-                } else {
-                  publishedFiles.push({ relativePath: relPath, identity,
-                    guards: ancestors.map((ancestor) => ancestor.guard) });
-                }
+        const publish = async () => {
+          await prepare(assertFileGuards);
+          await ownExtractionDestinationMutation(params.deadline, async () => {
+            await assertFileGuards();
+            try {
+              const options: CopyPublicationOptions & { mkdir: boolean; mode: number; durable: boolean } = {
+                mkdir: true, mode, durable: publication ? false : true,
               };
+              if (publication && durable) {
+                options[onCopyPublication] = async (fd, identity) => {
+                  check();
+                  if ((mode & 0o400) === 0) {
+                    // Final mode may prohibit reopening. Sync the writer's still-owned
+                    // descriptor without widening permissions or syncing its parent.
+                    syncFileBestEffortSync(fd);
+                    check();
+                  } else {
+                    publishedFiles.push({ relativePath: relPath, identity,
+                      guards: fileAncestors.map((ancestor) => ancestor.guard) });
+                  }
+                };
+              }
+              await targetRoot.copyIn(relPath, sourcePath, options);
+              check();
+              await assertFileGuards();
+              await assertResolvedInsideDestination({
+                destinationRealDir: params.destinationRealDir, targetPath: destinationPath, originalPath,
+              });
+              check();
+              const stat = await fs.lstat(destinationPath);
+              check();
+              if (stat.isSymbolicLink() || (stat.isFile() && stat.nlink > 1)) {
+                throw createArchiveSymlinkTraversalError(originalPath);
+              }
+            } catch (error) {
+              // copyIn alone owns cleanup; no receipt permits archive-layer unlink.
+              if (error instanceof FsSafeError && (error.code === "hardlink" || error.code === "path-alias")) {
+                throw createArchiveSymlinkTraversalError(originalPath);
+              }
+              throw error;
             }
-            await targetRoot.copyIn(relPath, sourcePath, options);
-            check();
-            await assertGuards();
-            await assertResolvedInsideDestination({
-              destinationRealDir: params.destinationRealDir, targetPath: destinationPath, originalPath,
-            });
-            check();
-            const stat = await fs.lstat(destinationPath);
-            check();
-            if (stat.isSymbolicLink() || (stat.isFile() && stat.nlink > 1)) {
-              throw createArchiveSymlinkTraversalError(originalPath);
-            }
-          } catch (error) {
-            // copyIn alone owns cleanup; no receipt permits archive-layer unlink.
-            if (error instanceof FsSafeError && (error.code === "hardlink" || error.code === "path-alias")) {
-              throw createArchiveSymlinkTraversalError(originalPath);
-            }
-            throw error;
-          }
-        });
+          });
+        };
+        // The public unplanned merge retains its sequential source-tree contract.
+        if (publication) await batch.add(publish);
+        else await publish();
       }
     }
+    await batch.drain();
   };
   await walk(params.sourceDir);
   if (publication) {

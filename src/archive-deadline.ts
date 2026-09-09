@@ -6,6 +6,14 @@ export type ExtractionDeadline = {
   dispose: () => void;
 };
 
+const batchFailures = new WeakMap<ExtractionDeadline, { error: unknown }>();
+
+export function recordExtractionBatchFailure(deadline: ExtractionDeadline | undefined, error: unknown): void {
+  if (deadline && !deadline.signal.aborted && !batchFailures.has(deadline)) {
+    batchFailures.set(deadline, { error });
+  }
+}
+
 export async function ownExtractionDestinationMutation<T>(
   deadline: ExtractionDeadline | undefined,
   run: () => Promise<T>,
@@ -128,10 +136,15 @@ export async function withExtractionDeadline<T>(
         // Preserve prompt timeout settlement for non-mutating work, but never
         // return while live destination publication or rollback is still owned.
         await deadline.waitForDestinationMutations();
+        // A sibling failure observed before expiry wins, even if joining its
+        // already-started siblings and their cleanup outlives the timer.
+        const failure = batchFailures.get(deadline);
+        if (failure) throw failure.error;
       }
       throw error;
     }
   } finally {
+    batchFailures.delete(deadline);
     deadline.dispose();
   }
 }
