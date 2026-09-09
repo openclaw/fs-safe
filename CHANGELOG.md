@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Extend synchronous metadata observations to archive extraction, copy, publication, move, and directory-mode paths, while data and structural I/O remain asynchronous and native canonical path spelling is preserved.
+- Extend synchronous metadata observations to archive extraction, copy, publication, move, and directory-mode paths, while data and structural I/O remain asynchronous and native canonical path spelling is preserved; update the Windows hash-identity proof to observe the synchronous checks.
 - Publish read-only modes (for example `0o400`) through the Windows JavaScript write fallback by keeping the placeholder and temporary file private at `0o600`, then applying the final mode through the retained handle after rename and before post-write verification.
 - Add `Root.copyIn({ durable: false })`, with per-call, root-default, then `true` precedence, to skip file and parent-directory fsync for reconstructible data.
 - Add `extractArchive({ durable: false })` to skip durability syncs for temporary or reconstructible extraction destinations.

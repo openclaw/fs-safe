@@ -2,9 +2,10 @@
 // Usage: node scripts/hash-identity-proof.mjs --repo BUILT_REPO --output NEW_DIR
 //   --variant baseline|patched [--source-ref COMMIT] [--require-windows] [--include-unscoped]
 // Companion stats are additional, non-atomic observations. Keep local smoke receipts private.
+// Companions use synchronous stats in both variants; retained-file evidence stays asynchronous.
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import { constants, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import fsSync, { constants, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import crypto from 'node:crypto';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
@@ -55,6 +56,7 @@ const summary = {
   ],
 };
 const actual = Object.fromEntries(['open', 'lstat', 'readFile', 'writeFile', 'rename'].map(k => [k, fs[k].bind(fs)]));
+const actualSync = { lstat: fsSync.lstatSync.bind(fsSync), fstat: fsSync.fstatSync.bind(fsSync) };
 let activeCase;
 let timer;
 let fingerprintBefore;
@@ -139,7 +141,7 @@ try {
     let targetOpenEntered = false;
     let previewReturned = 0;
     let hashStarted = false;
-    let openSpy, lstatSpy, hashSpy;
+    let openSpy, lstatSpy, fstatSpy, hashSpy;
     const handles = [];
     const event = (type, data = {}) => {
       assert(receipt.events.length < 150, 'event bound exceeded');
@@ -166,13 +168,13 @@ try {
       event('additional-retained-evidence', record);
       return record;
     }
-    async function companion(method, stage, call, originalOptions, originalEvent) {
+    function companion(method, stage, call, originalOptions, originalEvent) {
       if (values.companions !== 'after') return;
       const options = { bigint: !originalOptions?.bigint };
       receipt.counts.companionStats++;
       const start = event('additional-stat-enter', { method, stage, options: atom(options), afterOriginalEvent: originalEvent });
       try {
-        const stat = await call(options);
+        const stat = call(options);
         event('additional-stat-return', { entered: start.order, method, stage, result: stats(stat),
           separateSyscall: true, atomicWithOriginal: false });
       } catch (error) {
@@ -211,17 +213,17 @@ try {
       const handle = await actual.open(...args);
       event('open-spy-return', { entered: entry.order, classification, fd: handle.fd });
       const raw = { stat: handle.stat.bind(handle), read: handle.read.bind(handle), close: handle.close.bind(handle) };
-      const tracked = { handle, raw, classification, closed: false };
+      const tracked = { handle, fd: handle.fd, raw, classification, closed: false };
       handles.push(tracked);
       if (classification === 'target') {
-        handle.stat = async (...statArgs) => {
+        if (values.variant === 'baseline') handle.stat = async (...statArgs) => {
           assert(++receipt.counts.descriptorStats <= 4, 'descriptor stat bound');
           const start = event('algorithm-stat-enter', { method: 'FileHandle.stat', stage: 'descriptor',
             descriptorOrdinal: receipt.counts.descriptorStats, arguments: argsRecord(statArgs) });
           const stat = await raw.stat(...statArgs);
           const end = event('algorithm-stat-return', { entered: start.order, method: 'FileHandle.stat',
             stage: 'descriptor', result: stats(stat) });
-          await companion('FileHandle.stat', 'descriptor', raw.stat, statArgs[0], end.order);
+          companion('fs.fstatSync', 'descriptor', options => actualSync.fstat(tracked.fd, options), statArgs[0], end.order);
           return stat;
         };
         handle.read = async (...readArgs) => {
@@ -272,17 +274,42 @@ try {
       openSpy = spyOn(fs, 'open');
       openSpy.mockImplementation((...args) => trackOpen(args, kind === 'replacement' && armed && classify(args[0]) === 'target'));
       if (kind === 'unscoped') openSpy.mockImplementationOnce((...args) => trackOpen(args, true));
-      lstatSpy = spyOn(fs, 'lstat').mockImplementation(async (...args) => {
+      if (values.variant === 'baseline') lstatSpy = spyOn(fs, 'lstat').mockImplementation(async (...args) => {
         assert.equal(classify(args[0]), 'target', 'unexpected non-target lstat');
         assert(++receipt.counts.algorithmLstats <= 4, 'pathname stat bound');
         const stage = targetOpenEntered ? 'current-path' : 'preview';
         const start = event('algorithm-stat-enter', { method: 'fs.lstat', stage, arguments: argsRecord(args) });
         const stat = await actual.lstat(...args);
         const end = event('algorithm-stat-return', { entered: start.order, method: 'fs.lstat', stage, result: stats(stat) });
-        await companion('fs.lstat', stage, options => actual.lstat(args[0], options), args[1], end.order);
+        companion('fs.lstatSync', stage, options => actualSync.lstat(args[0], options), args[1], end.order);
         if (stage === 'preview') previewReturned++;
         return stat;
       });
+      else {
+        lstatSpy = spyOn(fsSync, 'lstatSync').mockImplementation((...args) => {
+          assert.equal(classify(args[0]), 'target', 'unexpected non-target lstat');
+          assert(++receipt.counts.algorithmLstats <= 4, 'pathname stat bound');
+          const stage = targetOpenEntered ? 'current-path' : 'preview';
+          const start = event('algorithm-stat-enter', { method: 'fs.lstatSync', stage, arguments: argsRecord(args) });
+          const stat = actualSync.lstat(...args);
+          const end = event('algorithm-stat-return', { entered: start.order, method: 'fs.lstatSync', stage, result: stats(stat) });
+          companion('fs.lstatSync', stage, options => actualSync.lstat(args[0], options), args[1], end.order);
+          if (stage === 'preview') previewReturned++;
+          return stat;
+        });
+        fstatSpy = spyOn(fsSync, 'fstatSync').mockImplementation((...args) => {
+          const tracked = handles.find(entry => entry.fd === args[0] && !entry.closed);
+          assert(tracked?.classification === 'target', 'unexpected non-target fstat');
+          assert(++receipt.counts.descriptorStats <= 4, 'descriptor stat bound');
+          const start = event('algorithm-stat-enter', { method: 'fs.fstatSync', stage: 'descriptor',
+            descriptorOrdinal: receipt.counts.descriptorStats, arguments: argsRecord(args) });
+          const stat = actualSync.fstat(...args);
+          const end = event('algorithm-stat-return', { entered: start.order, method: 'fs.fstatSync',
+            stage: 'descriptor', result: stats(stat) });
+          companion('fs.fstatSync', 'descriptor', options => actualSync.fstat(tracked.fd, options), args[1], end.order);
+          return stat;
+        });
+      }
       // Deliberate exported fs.open before sha256File and its first lstat, not an inferred coverage event.
       event('controlled-unrelated-open-before-algorithm');
       const auxiliary = await fs.open(unrelated, 'r');
@@ -300,6 +327,7 @@ try {
       receipt.lstatSpyInvocationOrder = [...lstatSpy.mock.invocationCallOrder];
       openSpy.mockRestore(); openSpy = undefined;
       lstatSpy.mockRestore(); lstatSpy = undefined;
+      fstatSpy?.mockRestore(); fstatSpy = undefined;
       receipt.finalTarget = await retained(swapped ? 'replacement' : 'unchanged original', target);
       if (swapped) receipt.finalDisplaced = await retained('rename-retained original', displaced);
       const expectedContent = kind === 'stable' ? 'original' : 'replacement';
@@ -339,10 +367,10 @@ try {
         check('baseline stat options remain numeric defaults', algorithmStats.every(e =>
           e.method === 'fs.lstat' ? e.arguments.length === 1 : e.arguments.length === 0));
       } else {
-        check('patched pathname identity stats request bigint', algorithmStats.filter(e => e.method === 'fs.lstat')
+        check('patched pathname identity stats request bigint', algorithmStats.filter(e => e.method === 'fs.lstatSync')
           .every(e => e.arguments[1]?.value?.bigint === true));
-        const firstDescriptor = algorithmStats.find(e => e.method === 'FileHandle.stat');
-        check('patched descriptor identity stat requests bigint', firstDescriptor?.arguments[0]?.value?.bigint === true);
+        const firstDescriptor = algorithmStats.find(e => e.method === 'fs.fstatSync');
+        check('patched descriptor identity stat requests bigint', firstDescriptor?.arguments[1]?.value?.bigint === true);
       }
       const targetCall = receipt.openSpyCalls.find(e => e.classification === 'target');
       const flags = targetCall?.arguments[1]?.value;
@@ -356,7 +384,7 @@ try {
         rejected ? 'replacement rejected before read' : 'stable original hashed';
     } catch (error) { receipt.harnessError = errorInfo(error); }
     finally {
-      openSpy?.mockRestore(); lstatSpy?.mockRestore();
+      openSpy?.mockRestore(); lstatSpy?.mockRestore(); fstatSpy?.mockRestore();
       hashSpy?.mockRestore(); syncBuiltinESMExports();
       __resetNativeLoaderForTest(); __resetFsSafeNativeConfigForTest();
       for (const tracked of handles) if (!tracked.closed) {
