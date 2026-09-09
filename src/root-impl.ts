@@ -1614,7 +1614,8 @@ async function writeFileFallback(
   const target = await openWritableFileInRoot(root, {
     relativePath: params.relativePath,
     mkdir: params.mkdir,
-    mode: params.mode,
+    // Private, writable placeholder: Windows cannot rename over a read-only file.
+    mode: 0o600,
     denyMutations: params.denyMutations,
     truncateExisting: false,
   });
@@ -1632,7 +1633,7 @@ async function writeFileFallback(
       tempPath,
       data: params.data,
       encoding: params.encoding,
-      mode,
+      mode: 0o600,
     });
     writtenHandle = written.handle;
     unregisterTempPath.setIdentity(written.identity);
@@ -1643,6 +1644,13 @@ async function writeFileFallback(
     });
     unregisterTempPath();
     unregisterTempPath = null;
+    // Final mode via the retained handle after publication, as the native writer does.
+    try {
+      await written.handle.chmod(mode);
+    } catch (error) {
+      await removePathIfIdentityUnchanged(destinationPath, written.identity).catch(() => {});
+      throw error;
+    }
     try {
       await verifyAtomicWriteResult({
         root,
