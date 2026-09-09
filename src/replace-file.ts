@@ -243,12 +243,16 @@ async function resolveMode(options: ReplaceFileAtomicOptions): Promise<number> {
   if (!options.preserveExistingMode) {
     return defaultMode;
   }
-  const stat = await (options.fileSystem?.promises ?? fs).stat(options.filePath).catch((error) => {
+  const fsModule = options.fileSystem?.promises ?? fs;
+  let stat: import("node:fs").Stats | null;
+  try {
+    stat = fsModule === fs ? syncFs.statSync(options.filePath) : await fsModule.stat(options.filePath);
+  } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return null;
+      return defaultMode;
     }
     throw error;
-  });
+  }
   return stat ? stat.mode : defaultMode;
 }
 

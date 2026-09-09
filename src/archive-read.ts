@@ -1,4 +1,5 @@
 import { classifyArchiveParserError } from "./archive-parser-errors.js";
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import { Readable } from "node:stream";
 import { readFileHandleBounded } from "./bounded-read.js";
@@ -95,9 +96,9 @@ async function stageArchiveInput(archivePath: string): Promise<{
   buffer: Buffer;
   cleanup(): Promise<void>;
 }> {
-  const resolved = await fs.realpath(archivePath);
+  const resolved = fsSync.realpathSync.native(archivePath);
   const before = await inspectFileIdentity(async () => {
-    const stat = await fs.lstat(archivePath, { bigint: true });
+    const stat = fsSync.lstatSync(archivePath, { bigint: true });
     if (stat.isSymbolicLink() || !stat.isFile()) {
       throw new Error(`archive is not a regular file: ${archivePath}`);
     }
@@ -108,12 +109,12 @@ async function stageArchiveInput(archivePath: string): Promise<{
   try {
     staged = await tempFile({ prefix: "fs-safe-archive-read", fileName: "archive.bin" });
     const opened = await inspectFileIdentity(async () => {
-      const stat = await handle.stat({ bigint: true });
+      const stat = fsSync.fstatSync(handle.fd, { bigint: true });
       if (!stat.isFile()) throw new Error("archive changed during validation");
       return stat;
     }, before);
     await inspectFileIdentity(async () => {
-      const stat = await fs.lstat(resolved, { bigint: true });
+      const stat = fsSync.lstatSync(resolved, { bigint: true });
       if (stat.isSymbolicLink() || !stat.isFile()) throw new Error("archive changed during validation");
       return stat;
     }, opened);

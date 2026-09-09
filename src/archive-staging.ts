@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
@@ -65,7 +66,7 @@ export async function assertDirectoryIdentityGuard(guard: AsyncDirectoryGuard): 
 }
 
 export async function prepareArchiveDestinationDir(destDir: string): Promise<string> {
-  const stat = await fs.lstat(destDir);
+  const stat = fsSync.lstatSync(destDir);
   if (stat.isSymbolicLink()) {
     throw new ArchiveSecurityError("destination-symlink", "archive destination is a symlink");
   }
@@ -75,9 +76,9 @@ export async function prepareArchiveDestinationDir(destDir: string): Promise<str
       "archive destination is not a directory",
     );
   }
-  const realPath = await fs.realpath(destDir);
-  const realStat = await fs.stat(realPath);
-  const postStat = await fs.lstat(destDir);
+  const realPath = fsSync.realpathSync.native(destDir);
+  const realStat = fsSync.statSync(realPath);
+  const postStat = fsSync.lstatSync(destDir);
   if (
     realStat.dev !== stat.dev ||
     realStat.ino !== stat.ino ||
@@ -105,7 +106,7 @@ async function assertNoSymlinkTraversal(params: {
     current = path.join(current, part);
     let stat: Awaited<ReturnType<typeof fs.lstat>>;
     try {
-      stat = await fs.lstat(current);
+      stat = fsSync.lstatSync(current);
     } catch (err) {
       if (isNotFoundPathError(err)) {
         continue;
@@ -125,7 +126,7 @@ export async function assertResolvedInsideDestination(params: {
 }): Promise<void> {
   let resolved: string;
   try {
-    resolved = await fs.realpath(params.targetPath);
+    resolved = fsSync.realpathSync.native(params.targetPath);
   } catch (err) {
     if (isNotFoundPathError(err)) {
       return;

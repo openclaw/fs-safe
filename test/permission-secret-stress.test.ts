@@ -82,10 +82,10 @@ describe("permission and secret stress matrix", () => {
       expect.objectContaining({ code: "too-large" }),
     );
 
-    const realpath = fs.realpath.bind(fs);
-    vi.spyOn(fs, "realpath").mockImplementationOnce(async (target, options) => {
-      await fs.appendFile(asyncPath, "def");
-      return await realpath(target, options as never);
+    const realpath = fsSync.realpathSync.native;
+    vi.spyOn(fsSync.realpathSync, "native").mockImplementationOnce((target, options) => {
+      fsSync.appendFileSync(asyncPath, "def");
+      return realpath(target, options as never);
     });
     await expect(readSecretFile(asyncPath, "async token", { maxBytes: 3 })).rejects.toMatchObject({
       code: "too-large",

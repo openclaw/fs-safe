@@ -10,6 +10,12 @@ import { observeArchiveFs } from "./helpers/archive-fs-counts.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
+// macOS measurements for the 20-file/3-directory fixture; default then durable:false.
+// Include every fs/promises call and async FileHandle method, including own close.
+const budgets = {
+  auto: { tar: { async: [268, 196], total: [3131, 2500] }, zip: { async: [268, 196], total: [3140, 2510] } },
+  off: { tar: { async: [455, 383], total: [4148, 3517] }, zip: { async: [530, 458], total: [4702, 4072] } },
+} as const;
 afterEach(() => {
   vi.restoreAllMocks();
   configureFsSafeNative({ mode: "auto" });
@@ -39,9 +45,13 @@ for (const backend of ["auto", "off"] as const) {
         const directorySyncs = observed.syncs.filter((type) => type === "directory").length;
         if (process.platform === "win32" && durable !== false) expect(directorySyncs, diagnostic).toBeLessThanOrEqual(4);
         else expect(directorySyncs, diagnostic).toBe(durable === false ? 0 : 4);
-        // Baseline JS-visible fs calls for this 20-file/3-directory fixture, plus 20%.
-        const baseline = backend === "auto" ? (kind === "tar" ? 2535 : 2544) : kind === "tar" ? 4132 : 4348;
-        expect(observed.total() / 20, diagnostic).toBeLessThanOrEqual(Math.ceil(baseline * 1.2) / 20);
+        const budget = budgets[backend][kind];
+        const index = durable === false ? 1 : 0;
+        expect(observed.asyncTotal(), diagnostic).toBeLessThanOrEqual(Math.ceil(budget.async[index] * 1.1));
+        expect(observed.total(), diagnostic).toBeLessThanOrEqual(Math.ceil(budget.total[index] * 1.1));
+        for (const name of ["p.lstat", "p.stat", "p.realpath", "h.stat"]) {
+          expect(observed.counts[name] ?? 0, diagnostic).toBe(0);
+        }
         vi.restoreAllMocks();
         for (let f = 0; f < 20; f++) expect(await fs.readFile(path.join(destDir, `d${f % 3}/f${f}`), "utf8")).toBe("NEW");
       });

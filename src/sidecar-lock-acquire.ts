@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { canonicalPathFromExistingAncestor } from "./absolute-path.js";
@@ -31,7 +32,7 @@ import {
 import type { SidecarLockAcquireOptions, SidecarLockHandle } from "./sidecar-lock-types.js";
 import { createSuppressedError } from "./suppressed-error.js";
 
-type SidecarFileHandle = Pick<NativeFileHandle, "close" | "stat" | "writeFile">;
+type SidecarFileHandle = Pick<NativeFileHandle, "fd" | "close" | "stat" | "writeFile">;
 
 export type HeldSidecarLock = {
   refCount: number;
@@ -73,7 +74,7 @@ async function resolveNormalizedTargetPath(targetPath: string, lockRoot?: Root):
   }
   await fs.mkdir(dir, { recursive: true });
   try {
-    return path.join(await fs.realpath(dir), path.basename(resolved));
+    return path.join(fsSync.realpathSync.native(dir), path.basename(resolved));
   } catch {
     return resolved;
   }
@@ -216,7 +217,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
           }
           await handle.writeFile(raw, "utf8");
         }
-        const snapshot = { raw, payload, stat: await handle.stat(), ownershipToken };
+        const snapshot = { raw, payload, stat: fsSync.fstatSync(handle.fd), ownershipToken };
         if (snapshot.stat.nlink === 0) {
           await handle.close();
           handle = null;
@@ -268,7 +269,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
           if (handle) {
             const failedSnapshot: SidecarLockSnapshot = createdSnapshot ?? { payload: null };
             try {
-              failedSnapshot.stat = await handle.stat();
+              failedSnapshot.stat = fsSync.fstatSync(handle.fd);
             } catch {
               // Best-effort cleanup of a failed exclusive create.
             }

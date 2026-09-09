@@ -1,4 +1,4 @@
-import { Stats } from "node:fs";
+import fsSync, { Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -48,11 +48,11 @@ describe("secure file exact identity", () => {
     const root = await tempRoot("fs-safe-secure-real-swap-");
     const filePath = path.join(root, "secret");
     await fs.writeFile(filePath, "original", { mode: 0o600 });
-    const realpath = fs.realpath.bind(fs);
-    vi.spyOn(fs, "realpath").mockImplementationOnce(async (...args) => {
-      await fs.rename(filePath, path.join(root, "original"));
-      await fs.writeFile(filePath, "replacement", { mode: 0o600 });
-      return await realpath(...args);
+    const realpath = fsSync.realpathSync.native;
+    vi.spyOn(fsSync.realpathSync, "native").mockImplementationOnce((...args) => {
+      fsSync.renameSync(filePath, path.join(root, "original"));
+      fsSync.writeFileSync(filePath, "replacement", { mode: 0o600 });
+      return realpath(...args);
     });
     await expect(readSecureFile({ filePath, permissions: { allowInsecure: true } }))
       .rejects.toMatchObject({ code: "path-mismatch" });
@@ -80,9 +80,10 @@ describe("secure file exact identity", () => {
     await fs.writeFile(filePath, "secret", { mode: 0o600 });
     let numeric: Stats;
     onNextOpen((handle) => {
-      const stat = handle.stat.bind(handle);
-      vi.spyOn(handle, "stat").mockImplementation(async (options) => {
-        const result = await stat(options);
+      const stat = fsSync.fstatSync.bind(fsSync);
+      vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
+        const result = stat(fd, options);
+        if (fd !== handle.fd) return result;
         if (!options?.bigint) numeric = result as Stats;
         return result;
       });
@@ -103,23 +104,24 @@ describe("secure file exact identity", () => {
     await fs.writeFile(filePath, "secret", { mode: 0o600 });
     const ino = 9007199254740992n;
     onNextOpen((handle) => {
-      const stat = handle.stat.bind(handle);
-      vi.spyOn(handle, "stat").mockImplementation(async (options) => {
-        const result = await stat(options);
+      const stat = fsSync.fstatSync.bind(fsSync);
+      vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
+        const result = stat(fd, options);
+        if (fd !== handle.fd) return result;
         result.ino = options?.bigint ? ino : Number(ino);
         return result;
       });
     });
-    const lstat = fs.lstat.bind(fs);
-    vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
-      const result = await lstat(...args);
+    const lstat = fsSync.lstatSync.bind(fsSync);
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
+      const result = lstat(...args);
       const value = boundary === "path" ? ino + 1n : ino;
       result.ino = args[1]?.bigint ? value : Number(value);
       return result;
     });
-    const stat = fs.stat.bind(fs);
-    vi.spyOn(fs, "stat").mockImplementation(async (...args) => {
-      const result = await stat(...args);
+    const stat = fsSync.statSync.bind(fsSync);
+    vi.spyOn(fsSync, "statSync").mockImplementation((...args) => {
+      const result = stat(...args);
       result.ino = args[1]?.bigint ? ino + 1n : Number(ino + 1n);
       return result;
     });
@@ -137,9 +139,10 @@ describe("secure file exact identity", () => {
     const open = onNextOpen((handle) => {
       close = vi.spyOn(handle, "close");
       read = vi.spyOn(handle, "readFile");
-      const stat = handle.stat.bind(handle);
-      vi.spyOn(handle, "stat").mockImplementation(async (options) => {
-        const result = await stat(options);
+      const stat = fsSync.fstatSync.bind(fsSync);
+      vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
+        const result = stat(fd, options);
+        if (fd !== handle.fd) return result;
         if (boundary === "descriptor" && options?.bigint) {
           inspections++;
           result.ino = 0n;
@@ -147,18 +150,18 @@ describe("secure file exact identity", () => {
         return result;
       });
     });
-    const lstat = fs.lstat.bind(fs);
-    vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
-      const result = await lstat(...args);
+    const lstat = fsSync.lstatSync.bind(fsSync);
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
+      const result = lstat(...args);
       if (boundary === "path" && args[1]?.bigint) {
         inspections++;
         result.ino = 0n;
       }
       return result;
     });
-    const stat = fs.stat.bind(fs);
-    vi.spyOn(fs, "stat").mockImplementation(async (...args) => {
-      const result = await stat(...args);
+    const stat = fsSync.statSync.bind(fsSync);
+    vi.spyOn(fsSync, "statSync").mockImplementation((...args) => {
+      const result = stat(...args);
       if (boundary === "realpath" && args[1]?.bigint) {
         inspections++;
         result.ino = 0n;
@@ -180,10 +183,10 @@ describe("secure file exact identity", () => {
     const root = await tempRoot("fs-safe-secure-transient-");
     const filePath = path.join(root, "secret");
     await fs.writeFile(filePath, "secret", { mode: 0o600 });
-    const lstat = fs.lstat.bind(fs);
+    const lstat = fsSync.lstatSync.bind(fsSync);
     let inspections = 0;
-    vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
-      const result = await lstat(...args);
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
+      const result = lstat(...args);
       if (args[1]?.bigint && ++inspections === 1) result.ino = 0n;
       return result;
     });

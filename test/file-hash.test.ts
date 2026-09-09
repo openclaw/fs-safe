@@ -84,10 +84,12 @@ describe("sha256File", () => {
         await handle.read(Buffer.alloc(2), 0, 2, null);
         const close = vi.spyOn(handle, "close");
         const open = vi.spyOn(fs, "open");
-        const lstat = vi.spyOn(fs, "lstat");
+        const lstat = vi.spyOn(fsSync, "lstatSync");
         if (failureAt === "native") {
           const nativeHash = vi.fn(async () => { throw failure; });
           __setNativeLoaderForTest(() => ({ sha256File: nativeHash }) as unknown as NativeBinding);
+        } else if (failureAt === "stat") {
+          vi.spyOn(fsSync, "fstatSync").mockImplementationOnce(() => { throw failure; });
         } else {
           vi.spyOn(handle, failureAt).mockRejectedValueOnce(failure);
         }
@@ -194,7 +196,7 @@ describe("sha256File", () => {
     await fs.writeFile(filePath, "original");
     await fs.writeFile(unrelatedPath, "auxiliary");
     configureFsSafeNative({ mode: "off" });
-    const originalLstat = fs.lstat.bind(fs);
+    const originalLstat = fsSync.lstatSync.bind(fsSync);
     const originalOpen = fs.open.bind(fs);
     const identity = (stat: fsSync.Stats | fsSync.BigIntStats) => ({ dev: stat.dev, ino: stat.ino });
     const before = identity(await originalLstat(filePath, { bigint: true }));
@@ -222,8 +224,8 @@ describe("sha256File", () => {
       observations.push({ stage, bigint, raw, delivered: identity(stat) });
       return stat;
     }
-    vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
-      const stat = await originalLstat(...args);
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
+      const stat = originalLstat(...args);
       return args[0] === filePath
         ? observe(opened ? "current" : "preview", stat, args[1]?.bigint === true)
         : stat;
@@ -247,10 +249,9 @@ describe("sha256File", () => {
       opened = handle;
       close = vi.spyOn(handle, "close");
       read = vi.spyOn(handle, "read");
-      const stat = handle.stat.bind(handle);
-      vi.spyOn(handle, "stat").mockImplementation(async (options) =>
-        observe("descriptor", await stat(options), options?.bigint === true),
-      );
+      const stat = fsSync.fstatSync.bind(fsSync);
+      vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) =>
+        fd === handle.fd ? observe("descriptor", stat(fd, options), options?.bigint === true) : stat(fd, options));
       if (armed && timing === "after-open") await replace();
       return handle;
     });

@@ -126,7 +126,7 @@ async function resolveAsyncKind(fullPath: string, dirent: fsSync.Dirent, symlink
   if (symlinks === "skip") return null;
   if (symlinks === "include") return "symlink";
   try {
-    const stat = await fs.stat(fullPath);
+    const stat = fsSync.statSync(fullPath);
     if (stat.isDirectory()) return "directory";
     if (stat.isFile()) return "file";
   } catch {
@@ -216,7 +216,7 @@ export async function walkDirectory(
     if (options.maxDepth !== undefined && depth > options.maxDepth) return;
     let realDir: string;
     try {
-      realDir = await fs.realpath(dir);
+      realDir = fsSync.realpathSync.native(dir);
     } catch (error) {
       recordFailedDir(result, root, dir, depth, error);
       return;

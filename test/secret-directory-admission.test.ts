@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -205,10 +206,11 @@ describe("secret directory admission", () => {
     vi.spyOn(fs, "open").mockImplementation(async (...args) => {
       const handle = await open(...args);
       if (String(args[0]) === parent) {
-        const stat = handle.stat.bind(handle);
+        const stat = fsSync.fstatSync.bind(fsSync);
         let inspections = 0;
-        vi.spyOn(handle, "stat").mockImplementation(async (options) => {
-          const value = await stat(options);
+        vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
+          const value = stat(fd, options);
+          if (fd !== handle.fd) return value;
           if (++inspections > 1) {
             changedOwner = true;
             Object.assign(value, { uid: typeof value.uid === "bigint" ? value.uid + 1n : value.uid + 1 });

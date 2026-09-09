@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import fsSync from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
@@ -17,7 +18,7 @@ export async function hashFileHandle(
   handle: FileHandle,
   native: NativeBinding | undefined = getNativeBinding(),
 ): Promise<Sha256FileResult> {
-  const stat = await handle.stat();
+  const stat = fsSync.fstatSync(handle.fd);
   if (!stat.isFile()) {
     throw new FsSafeError("not-file", "SHA-256 input is not a regular file");
   }
@@ -40,7 +41,7 @@ export async function hashFileHandle(
 
 async function hashPath(filePath: string): Promise<Sha256FileResult> {
   const before = await inspectFileIdentity(async () => {
-    const stat = await fs.lstat(filePath, { bigint: true });
+    const stat = fsSync.lstatSync(filePath, { bigint: true });
     if (stat.isSymbolicLink()) {
       throw new FsSafeError("symlink", "SHA-256 path must not be a symbolic link");
     }
@@ -64,14 +65,14 @@ async function hashPath(filePath: string): Promise<Sha256FileResult> {
 
   try {
     const opened = await inspectFileIdentity(async () => {
-      const stat = await handle.stat({ bigint: true });
+      const stat = fsSync.fstatSync(handle.fd, { bigint: true });
       if (!stat.isFile()) {
         throw new FsSafeError("not-file", "SHA-256 path is not a regular file");
       }
       return stat;
     }, before);
     await inspectFileIdentity(async () => {
-      const stat = await fs.lstat(filePath, { bigint: true });
+      const stat = fsSync.lstatSync(filePath, { bigint: true });
       if (stat.isSymbolicLink() || !stat.isFile()) {
         throw new FsSafeError("path-mismatch", "SHA-256 path changed while opening");
       }

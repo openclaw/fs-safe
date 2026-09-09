@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -106,12 +107,12 @@ describe("movePathWithCopyFallback regressions", () => {
     const dest = path.join(base, "dest.txt");
     const moveOptions: MovePathWithCopyFallbackOptions = { from: source, sourceHardlinks: "reject", to: dest };
     await fsp.writeFile(source, "source");
-    const realLstat = fsp.lstat;
+    const realLstat = fs.lstatSync;
     let sourceInspections = 0;
-    vi.spyOn(fsp, "lstat").mockImplementation(async (candidate, options) => {
-      const stat = await realLstat(candidate, options as never);
+    vi.spyOn(fs, "lstatSync").mockImplementation((candidate, options) => {
+      const stat = realLstat(candidate, options as never);
       if (candidate === source && ++sourceInspections === 1) {
-        await fsp.link(source, hardlink);
+        fs.linkSync(source, hardlink);
         if (changeOptions) moveOptions.sourceHardlinks = "allow";
       }
       return stat;
@@ -188,9 +189,7 @@ describe("movePathWithCopyFallback regressions", () => {
       }
     });
 
-    await expect(movePathWithCopyFallback({ from: source, to: dest })).rejects.toMatchObject({
-      code: "ESTALE",
-    });
+    await expect(movePathWithCopyFallback({ from: source, to: dest })).rejects.toMatchObject({ code: "ESTALE" });
 
     await expect(fsp.readFile(path.join(dest, "copied.txt"), "utf8")).resolves.toBe("copied");
     await expect(fsp.readFile(path.join(source, "copied.txt"), "utf8")).resolves.toBe(
@@ -479,14 +478,14 @@ describe("movePathWithCopyFallback regressions", () => {
       }
       return await rename(from, to);
     });
-    const realLstat = fsp.lstat;
+    const realLstat = fs.lstatSync;
     let swapped = false;
-    vi.spyOn(fsp, "lstat").mockImplementation(async (candidate, options) => {
-      const stat = await realLstat(candidate, options as never);
+    vi.spyOn(fs, "lstatSync").mockImplementation((candidate, options) => {
+      const stat = realLstat(candidate, options as never);
       if (!swapped && candidate === source) {
         swapped = true;
-        await fsp.rm(source);
-        await fsp.symlink(outsideFile, source, "file");
+        fs.rmSync(source);
+        fs.symlinkSync(outsideFile, source, "file");
       }
       return stat;
     });

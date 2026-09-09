@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { withSidecarLock } from "./sidecar-lock.js";
-import type { BigIntStats } from "node:fs";
+import fsSync, { type BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { syncDirectory } from "./directory-durability.js";
@@ -201,7 +201,7 @@ export function getErrorCode(error: unknown): string | null {
 
 async function lstatOrNull(filePath: string): Promise<BigIntStats | null> {
   try {
-    return await fs.lstat(filePath, { bigint: true });
+    return fsSync.lstatSync(filePath, { bigint: true });
   } catch (error) {
     if (getErrorCode(error) === "ENOENT") return null;
     throw error;
@@ -247,7 +247,7 @@ async function ensureRetirementRoot(jsonPath: string): Promise<string> {
   await fs.mkdir(rootPath, { mode: 0o700 }).catch((error) => {
     if (getErrorCode(error) !== "EEXIST") throw error;
   });
-  const root = await fs.lstat(rootPath, { bigint: true });
+  const root = fsSync.lstatSync(rootPath, { bigint: true });
   assertDirectory(root, "queue retirement root");
   await syncDirectory(parentPath);
   return rootPath;

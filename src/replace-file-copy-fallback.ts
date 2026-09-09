@@ -1,5 +1,5 @@
 import syncFs, { type BigIntStats, type Stats } from "node:fs";
-import type { FileHandle } from "node:fs/promises";
+import fs, { type FileHandle } from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { readOwnedCopySource, readOwnedCopySourceSync } from "./replace-file-copy-source.js";
@@ -70,10 +70,13 @@ async function openPinnedDestination(
   dest: string,
   hardlinks?: ReplaceFileDestinationHardlinkPolicy,
 ): Promise<{ handle: FileHandle; stat: Stats } | null> {
-  const preview = await fsModule.lstat(dest).catch((error) => {
+  let preview: Stats | null;
+  try {
+    preview = fsModule === fs ? syncFs.lstatSync(dest) : await fsModule.lstat(dest);
+  } catch (error) {
     if (notFound(error)) return null;
     throw error;
-  });
+  }
   if (!preview) return null;
   if (preview.isSymbolicLink()) {
     throw new FsSafeError("symlink", `Refusing copy fallback through symlink destination: ${dest}`);
@@ -81,8 +84,8 @@ async function openPinnedDestination(
 
   const handle = await fsModule.open(dest, OPEN_READ_WRITE_FLAGS);
   try {
-    const opened = await handle.stat();
-    const current = await fsModule.lstat(dest);
+    const opened = fsModule === fs ? syncFs.fstatSync(handle.fd) : await handle.stat();
+    const current = fsModule === fs ? syncFs.lstatSync(dest) : await fsModule.lstat(dest);
     assertPinnedDestination(current, opened, dest, hardlinks);
     return { handle, stat: opened };
   } catch (error) {
@@ -124,16 +127,19 @@ export async function assertDestinationHardlinkPolicy(
   policy?: ReplaceFileDestinationHardlinkPolicy,
 ): Promise<void> {
   if (policy !== "reject") return;
-  const preview = await fsModule.lstat(dest).catch((error) => {
-    if (notFound(error)) return null;
+  let preview: Stats | null;
+  try {
+    preview = fsModule === fs ? syncFs.lstatSync(dest) : await fsModule.lstat(dest);
+  } catch (error) {
+    if (notFound(error)) return;
     throw error;
-  });
+  }
   if (!preview || preview.isSymbolicLink() || !preview.isFile()) return;
 
   const handle = await fsModule.open(dest, OPEN_READ_FLAGS);
   try {
-    const opened = await handle.stat();
-    const current = await fsModule.lstat(dest);
+    const opened = fsModule === fs ? syncFs.fstatSync(handle.fd) : await handle.stat();
+    const current = fsModule === fs ? syncFs.lstatSync(dest) : await fsModule.lstat(dest);
     if (current.isSymbolicLink() || !current.isFile() || !sameFileIdentity(current, opened)) {
       throw new FsSafeError("path-mismatch", `Atomic replace destination changed while opening: ${dest}`);
     }
@@ -249,12 +255,13 @@ function restoreFailure(
 }
 
 async function replacePinnedWithRestore(
+  fsModule: AsyncFallbackFs,
   handle: FileHandle,
   replacement: Buffer,
   maxRestoreBytes: number,
   replacementMode: number,
 ): Promise<void> {
-  const originalMode = (await handle.stat()).mode;
+  const originalMode = (fsModule === fs ? syncFs.fstatSync(handle.fd) : await handle.stat()).mode;
   const original = await readBounded(handle, maxRestoreBytes);
   try {
     await writeAll(handle, replacement);
@@ -331,6 +338,7 @@ export async function copyFallbackReplace(params: {
       if (pinned) {
         destHandle = pinned.handle;
         await replacePinnedWithRestore(
+          params.fsModule,
           destHandle,
           replacement,
           params.maxRestoreBytes!,
@@ -340,10 +348,13 @@ export async function copyFallbackReplace(params: {
     }
 
     if (!destHandle) {
-      const destStat = await params.fsModule.lstat(params.dest).catch((error) => {
-        if (notFound(error)) return null;
-        throw error;
-      });
+      let destStat: Stats | null = null;
+      try {
+        destStat = params.fsModule === fs
+          ? syncFs.lstatSync(params.dest) : await params.fsModule.lstat(params.dest);
+      } catch (error) {
+        if (!notFound(error)) throw error;
+      }
       if (destStat?.isSymbolicLink()) {
         throw new FsSafeError("symlink", `Refusing copy fallback through symlink destination: ${params.dest}`);
       }

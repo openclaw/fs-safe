@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { ownExtractionDestinationMutation, type ExtractionDeadline } from "./archive-deadline.js";
@@ -51,7 +52,7 @@ async function mergeTree(params: MergeParams, publication?: readonly ArchivePubl
   for (const entry of publication ?? []) {
     // Resolve admitted spelling in private staging, preserving the volume's case
     // and Unicode behavior without assigning explicit modes to distinct parents.
-    const stagedPath = await fs.realpath(path.join(params.sourceDir, entry.path));
+    const stagedPath = fsSync.realpathSync.native(path.join(params.sourceDir, entry.path));
     check();
     if (!isPathInside(sourceGuard.realPath, stagedPath) || plan!.has(stagedPath)) {
       throw new FsSafeError("path-mismatch", "archive publication paths changed in staging");
@@ -81,10 +82,10 @@ async function mergeTree(params: MergeParams, publication?: readonly ArchivePubl
       const relPath = path.relative(params.sourceDir, sourcePath);
       const originalPath = relPath.split(path.sep).join("/");
       const destinationPath = path.join(params.destinationDir, relPath);
-      const sourceStat = await fs.lstat(sourcePath);
+      const sourceStat = fsSync.lstatSync(sourcePath);
       check();
       if (sourceStat.isSymbolicLink()) throw createArchiveSymlinkTraversalError(originalPath);
-      const sourceReal = await fs.realpath(sourcePath);
+      const sourceReal = fsSync.realpathSync.native(sourcePath);
       check();
       if (!isPathInside(sourceGuard.realPath, sourceReal)) throw createArchiveSymlinkTraversalError(originalPath);
       if (!sourceStat.isFile() && !sourceStat.isDirectory()) {
@@ -174,7 +175,7 @@ async function mergeTree(params: MergeParams, publication?: readonly ArchivePubl
               destinationRealDir: params.destinationRealDir, targetPath: destinationPath, originalPath,
             });
             check();
-            const stat = await fs.lstat(destinationPath);
+            const stat = fsSync.lstatSync(destinationPath);
             check();
             if (stat.isSymbolicLink() || (stat.isFile() && stat.nlink > 1)) {
               throw createArchiveSymlinkTraversalError(originalPath);

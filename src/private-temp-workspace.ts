@@ -136,7 +136,7 @@ function throwTempWorkspaceOpenFailure(failure: RootFileOpenFailure): never {
 
 async function ensurePrivateDirectory(dir: string, mode: number): Promise<void> {
   await fs.mkdir(dir, { recursive: true, mode });
-  const stat = await fs.stat(dir);
+  const stat = fsSync.statSync(dir);
   if (!stat.isDirectory()) {
     throw new Error(`Temp root must be a directory: ${dir}`);
   }
@@ -163,7 +163,12 @@ async function createTempWorkspace(
   const mode = options.mode ?? 0o600;
   const cleanupSafety = resolveTempWorkspaceCleanupSafety(options.cleanupSafety);
   const requestedRoot = path.resolve(options.rootDir);
-  const root = await fs.realpath(requestedRoot).catch(() => requestedRoot);
+  let root = requestedRoot;
+  try {
+    root = fsSync.realpathSync.native(requestedRoot);
+  } catch {
+    root = requestedRoot;
+  }
   await ensurePrivateDirectory(root, dirMode);
   const capability = new TempWorkspaceCleanupCapability(root, cleanupSafety);
   let dir: string;
@@ -173,7 +178,7 @@ async function createTempWorkspace(
   try {
     dir = await fs.mkdtemp(path.join(root, sanitizeTempPrefix(options.prefix)));
     await fs.chmod(dir, dirMode).catch(() => undefined);
-    stat = await fs.lstat(dir, { bigint: true });
+    stat = fsSync.lstatSync(dir, { bigint: true });
     if (stat.isSymbolicLink() || !stat.isDirectory()) {
       throw new Error(`Temp workspace must be a directory: ${dir}`);
     }

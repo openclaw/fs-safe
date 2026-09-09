@@ -87,9 +87,10 @@ it.each(["numeric", "unknown", "closed", "changed", "linked", "multiple-links"])
         if (control === "multiple-links") await fs.unlink(`${lockPath}.link`);
         if (control === "closed") await handle.close();
         if (["numeric", "unknown", "changed"].includes(control)) {
-          const stat = handle.stat.bind(handle);
-          vi.spyOn(handle, "stat").mockImplementation(async (options) => {
-            const value = await stat(options);
+          const stat = fsSync.fstatSync.bind(fsSync);
+          vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
+            const value = stat(fd, options);
+            if (fd !== handle.fd) return value;
             if (options?.bigint) Object.assign(value, {
               ino: control === "numeric" ? Number(value.ino) : control === "unknown" ? 0n : BigInt(value.ino) + 1n,
             });

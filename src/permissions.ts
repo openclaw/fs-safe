@@ -1,4 +1,4 @@
-import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import type { PermissionCommandFailure } from "./permission-exec.js";
 import {
   formatIcaclsResetCommand,
@@ -66,7 +66,7 @@ export type SafeStatResult = {
 
 export async function safeStat(targetPath: string): Promise<SafeStatResult> {
   try {
-    const lst = await fs.lstat(targetPath);
+    const lst = fsSync.lstatSync(targetPath);
     return {
       ok: true,
       isSymlink: lst.isSymbolicLink(),
@@ -113,7 +113,7 @@ export async function inspectPathPermissions(
   let effectiveIsDir = st.isDir;
   if (st.isSymlink) {
     try {
-      const target = await fs.stat(targetPath);
+      const target = fsSync.statSync(targetPath);
       effectiveMode = typeof target.mode === "number" ? target.mode : st.mode;
       effectiveIsDir = target.isDirectory();
     } catch {

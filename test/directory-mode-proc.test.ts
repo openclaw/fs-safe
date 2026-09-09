@@ -46,11 +46,11 @@ async function simulatedProcRoute() {
     return { type: 0x9fa0n } as Awaited<ReturnType<typeof fs.statfs>>;
   });
   const procPath = `/proc/self/fd/${fd}`;
-  const realStat = fs.stat.bind(fs);
-  vi.spyOn(fs, "stat").mockImplementation((async (candidate: fsSync.PathLike, options?: { bigint?: boolean }) => {
-    if (candidate === procPath) return await handle.stat({ bigint: true });
-    return await realStat(candidate, options as { bigint: true });
-  }) as typeof fs.stat);
+  const realStat = fsSync.statSync.bind(fsSync);
+  vi.spyOn(fsSync, "statSync").mockImplementation(((candidate: fsSync.PathLike, options?: { bigint?: boolean }) => {
+    if (candidate === procPath) return fsSync.fstatSync(handle.fd, { bigint: true });
+    return realStat(candidate, options as { bigint: true });
+  }) as typeof fsSync.statSync);
   const realChmod = fs.chmod.bind(fs);
   const dispatch = vi.spyOn(fs, "chmod").mockImplementation(async (candidate, mode) => {
     if (candidate === procPath) await handle.chmod(mode);
@@ -121,7 +121,7 @@ describe.skipIf(process.platform === "win32")("mocked Linux directory proc-fd au
   it("authenticates the exact followed fd identity before dispatch", async () => {
     const fixture = await simulatedProcRoute();
     const wrong = await fs.stat(fixture.dir, { bigint: true });
-    vi.mocked(fs.stat).mockResolvedValue(wrong);
+    vi.mocked(fsSync.statSync).mockReturnValue(wrong);
     try {
       await expect(fixture.owner.apply(0o755)).rejects.toMatchObject({ code: "path-mismatch" });
       expect(fixture.dispatch).not.toHaveBeenCalled();

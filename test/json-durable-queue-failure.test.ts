@@ -82,7 +82,7 @@ describe("durable JSON queue failure recovery", () => {
     const filePath = path.join(queueDir, "job.json");
     await fs.writeFile(filePath, "{}");
     const denied = Object.assign(new Error("inspection denied"), { code: "EACCES" });
-    vi.spyOn(fs, "lstat").mockRejectedValueOnce(denied);
+    vi.spyOn(fsSync, "lstatSync").mockImplementationOnce(() => { throw denied; });
     await expect(jsonDurableQueueEntryExists(filePath)).rejects.toBe(denied);
 
     const readdirDenied = Object.assign(new Error("listing denied"), { code: "EACCES" });
@@ -213,7 +213,7 @@ describe("durable JSON queue failure recovery", () => {
     const tempPath = path.join(queueDir, "orphan.tmp");
     await fs.writeFile(tempPath, "tmp");
     const denied = Object.assign(new Error("temp inspection denied"), { code: "EACCES" });
-    vi.spyOn(fs, "stat").mockRejectedValueOnce(denied);
+    vi.spyOn(fsSync, "statSync").mockImplementationOnce(() => { throw denied; });
     await expect(loadPendingJsonDurableQueueEntries({
       queueDir,
       tempPrefix: "queue",

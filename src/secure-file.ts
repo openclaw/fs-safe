@@ -1,4 +1,4 @@
-import type { Stats } from "node:fs";
+import fsSync, { type Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -82,11 +82,14 @@ async function openSecureHandle(options: SecureFileReadOptions, maxBytes: number
     throw new FsSafeError("invalid-path", `${label(options)} must be an absolute path.`);
   }
 
-  const preStat = await fs.lstat(options.filePath).catch((err: unknown) => {
+  let preStat: Stats;
+  try {
+    preStat = fsSync.lstatSync(options.filePath);
+  } catch (err) {
     throw new FsSafeError("not-found", `${label(options)} is not readable: ${options.filePath}`, {
       cause: err,
     });
-  });
+  }
   if (preStat.isSymbolicLink()) {
     if (!options.trust?.allowSymlink) {
       throw new FsSafeError("symlink", `${label(options)} must not be a symlink: ${options.filePath}`);
@@ -108,22 +111,22 @@ async function openSecureHandle(options: SecureFileReadOptions, maxBytes: number
   }
 
   try {
-    const openedStat = await handle.stat();
+    const openedStat = fsSync.fstatSync(handle.fd);
     if (!openedStat.isFile()) {
       throw new FsSafeError("not-file", `${label(options)} must be a file: ${options.filePath}`);
     }
-    const openedIdentity = await inspectFileIdentity(() => handle.stat({ bigint: true }));
+    const openedIdentity = await inspectFileIdentity(() => fsSync.fstatSync(handle.fd, { bigint: true }));
     await inspectFileIdentity(async () => {
       const pathStat = options.trust?.allowSymlink
-        ? await fs.stat(options.filePath, { bigint: true })
-        : await fs.lstat(options.filePath, { bigint: true });
+        ? fsSync.statSync(options.filePath, { bigint: true })
+        : fsSync.lstatSync(options.filePath, { bigint: true });
       if (!options.trust?.allowSymlink && pathStat.isSymbolicLink()) {
         throw new FsSafeError("symlink", `${label(options)} must not be a symlink: ${options.filePath}`);
       }
       return pathStat;
     }, openedIdentity);
-    const realPath = await fs.realpath(options.filePath);
-    await inspectFileIdentity(() => fs.stat(realPath, { bigint: true }), openedIdentity);
+    const realPath = fsSync.realpathSync.native(options.filePath);
+    await inspectFileIdentity(() => fsSync.statSync(realPath, { bigint: true }), openedIdentity);
     if (maxBytes !== undefined && openedStat.size > maxBytes) {
       throw new FsSafeError("too-large", `${label(options)} exceeded maxBytes (${maxBytes}).`);
     }
@@ -141,7 +144,11 @@ async function assertTrustedDirs(options: SecureFileReadOptions, realPath: strin
   const trusted = await Promise.all(
     options.trust.trustedDirs.map(async (dir) => {
       const resolved = path.resolve(dir);
-      return await fs.realpath(resolved).catch(() => resolved);
+      try {
+        return fsSync.realpathSync.native(resolved);
+      } catch {
+        return resolved;
+      }
     }),
   );
   if (!trusted.some((dir) => isPathInside(dir, realPath))) {

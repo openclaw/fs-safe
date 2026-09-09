@@ -16,8 +16,8 @@ export async function observeArchiveFs(directory: string) {
   const record = (fd: number) => syncs.push(fstat(fd).isFile() ? "file" : "directory");
   const groups = [
     [fsSync, "s", ["fsyncSync", "fdatasyncSync", "copyFileSync", "openSync", "renameSync", "lstatSync", "statSync", "fstatSync"]],
-    [fs, "p", ["open", "rename", "copyFile", "mkdir", "readFile", "writeFile", "lstat", "stat", "realpath", "unlink", "rm", "readdir", "link"]],
-    [prototype, "h", ["sync", "datasync", "stat", "read", "write", "writeFile", "readFile", "chmod", "close"]],
+    [fs, "p", Object.keys(fs)],
+    [prototype, "h", ["appendFile", "chmod", "chown", "datasync", "read", "readFile", "readv", "stat", "sync", "truncate", "utimes", "write", "writeFile", "writev"]],
   ] as const;
   for (const [object, prefix, names] of groups) {
     for (const name of names) {
@@ -28,7 +28,19 @@ export async function observeArchiveFs(directory: string) {
         bump(`${prefix}.${name}`);
         if (["sync", "datasync"].includes(name)) record(this.fd);
         if (["fsyncSync", "fdatasyncSync"].includes(name)) record(args[0] as number);
-        return original.apply(this, args);
+        const result = original.apply(this, args);
+        if (prefix === "p" && name === "open") {
+          return (result as Promise<FileHandle>).then((handle) => {
+            // FileHandle.close is an own property, not a prototype method.
+            const close = handle.close.bind(handle);
+            vi.spyOn(handle, "close").mockImplementation(() => {
+              bump("h.close");
+              return close();
+            });
+            return handle;
+          });
+        }
+        return result;
       });
     }
   }
@@ -37,5 +49,11 @@ export async function observeArchiveFs(directory: string) {
     bump("s.realpathSync.native");
     return realpath(...args);
   });
-  return { counts, syncs, total: () => Object.values(counts).reduce((sum, count) => sum + count, 0) };
+  return {
+    counts, syncs,
+    total: () => Object.values(counts).reduce((sum, count) => sum + count, 0),
+    asyncTotal: () => Object.entries(counts)
+      .filter(([name]) => name.startsWith("p.") || name.startsWith("h."))
+      .reduce((sum, [, count]) => sum + count, 0),
+  };
 }

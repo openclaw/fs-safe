@@ -21,13 +21,13 @@ it.each(["known", "transient-unknown", "unknown", "rounded-replacement"] as cons
     let opened = false;
     let inspections = 0;
     const open = fs.open.bind(fs);
-    const lstat = fs.lstat.bind(fs);
+    const lstat = fsSync.lstatSync.bind(fsSync);
     const originalIno = 2n ** 53n;
     const replacementIno = originalIno + 1n;
     expect(Number(originalIno)).toBe(Number(replacementIno));
     vi.spyOn(process, "platform", "get").mockReturnValue("win32");
-    vi.spyOn(fs, "lstat").mockImplementation(async (candidate, options) => {
-      const stat = await lstat(candidate, options);
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((candidate, options) => {
+      const stat = lstat(candidate, options);
       if ((candidate === temporary || candidate === final) && options?.bigint) {
         inspections++;
         const unknown = state === "unknown" || (state === "transient-unknown" && inspections === 1);
@@ -45,9 +45,10 @@ it.each(["known", "transient-unknown", "unknown", "rounded-replacement"] as cons
       if (candidate === temporary) {
         expect(flags).toBe(fsSync.constants.O_RDONLY);
         opened = true;
-        const stat = handle.stat.bind(handle);
-        vi.spyOn(handle, "stat").mockImplementation(async (options) => {
-          return Object.assign(await stat(options), { dev: 1n, ino: originalIno });
+        const stat = fsSync.fstatSync.bind(fsSync);
+        vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
+          const result = stat(fd, options);
+          return fd === handle.fd ? Object.assign(result, { dev: 1n, ino: originalIno }) : result;
         });
         if (state === "rounded-replacement") {
           await fs.rename(temporary, path.join(dir, "moved"));

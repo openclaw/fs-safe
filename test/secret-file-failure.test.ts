@@ -148,11 +148,11 @@ describe("secret file refusal paths", () => {
     });
     expectFsSafeErrorSync(() => readSecretFileSync(syncLink, "sync token"), "path-mismatch");
 
-    const realpath = fs.realpath.bind(fs);
-    vi.spyOn(fs, "realpath").mockImplementationOnce(async (candidate, options) => {
-      await fs.unlink(asyncLink);
-      await fs.symlink(replacementPath, asyncLink);
-      return await realpath(candidate, options as never);
+    const realpath = fsSync.realpathSync.native;
+    vi.spyOn(fsSync.realpathSync, "native").mockImplementationOnce((candidate, options) => {
+      fsSync.unlinkSync(asyncLink);
+      fsSync.symlinkSync(replacementPath, asyncLink);
+      return realpath(candidate, options as never);
     });
     await expectFsSafeError(readSecretFile(asyncLink, "async token"), "path-mismatch");
   });

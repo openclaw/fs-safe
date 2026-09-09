@@ -89,15 +89,15 @@ describe("clawpatch regression coverage", () => {
     const outside = path.join(base, "outside");
     await fs.mkdir(dest);
     await fs.mkdir(outside);
-    const realRealpath = fs.realpath;
+    const realRealpath = fsSync.realpathSync.native;
     let swapped = false;
-    vi.spyOn(fs, "realpath").mockImplementation(async (target, options) => {
+    vi.spyOn(fsSync.realpathSync, "native").mockImplementation((target, options) => {
       if (!swapped && target === dest) {
         swapped = true;
-        await fs.rename(dest, path.join(base, "dest-real"));
-        await fs.symlink(outside, dest, "dir");
+        fsSync.renameSync(dest, path.join(base, "dest-real"));
+        fsSync.symlinkSync(outside, dest, "dir");
       }
-      return await realRealpath(target, options as never);
+      return realRealpath(target, options as never);
     });
 
     await expect(prepareArchiveDestinationDir(dest)).rejects.toMatchObject({
@@ -112,19 +112,19 @@ describe("clawpatch regression coverage", () => {
     const original = path.join(base, "dest-original");
     await fs.mkdir(dest);
     await fs.mkdir(outside);
-    const realRealpath = fs.realpath;
+    const realRealpath = fsSync.realpathSync.native;
     let swapped = false;
-    vi.spyOn(fs, "realpath").mockImplementation(async (target, options) => {
+    vi.spyOn(fsSync.realpathSync, "native").mockImplementation((target, options) => {
       if (!swapped && target === dest) {
         swapped = true;
-        await fs.rename(dest, original);
-        await fs.symlink(outside, dest, "dir");
-        const result = await realRealpath(target, options as never);
-        await fs.unlink(dest);
-        await fs.rename(original, dest);
+        fsSync.renameSync(dest, original);
+        fsSync.symlinkSync(outside, dest, "dir");
+        const result = realRealpath(target, options as never);
+        fsSync.unlinkSync(dest);
+        fsSync.renameSync(original, dest);
         return result;
       }
-      return await realRealpath(target, options as never);
+      return realRealpath(target, options as never);
     });
 
     await expect(prepareArchiveDestinationDir(dest)).rejects.toMatchObject({

@@ -99,15 +99,15 @@ describe("batch queue transition failures", () => {
     const { paths, load } = await fixture();
     const failure = new FsSafeError("path-mismatch", "injected claim validation failure");
     const realLink = fs.link.bind(fs);
-    const realLstat = fs.lstat.bind(fs);
+    const realLstat = fsSync.lstatSync.bind(fsSync);
     let linked = false;
     vi.spyOn(fs, "link").mockImplementation(async (source, target) => {
       await realLink(source, target);
       if (target === paths.processingPath) linked = true;
     });
-    vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
       if (linked && args[0] === paths.processingPath) throw failure;
-      return await realLstat(...args);
+      return realLstat(...args);
     });
 
     await expect(load()).rejects.toBe(failure);
@@ -245,9 +245,9 @@ describe("batch entry skip boundary", () => {
   it("skips unverifiable initial pending identity while the single loader still rejects", async () => {
     const { paths, load } = await fixture();
     Object.defineProperty(process, "platform", { value: "win32" });
-    const realLstat = fs.lstat.bind(fs);
-    vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
-      const stat = await realLstat(...args);
+    const realLstat = fsSync.lstatSync.bind(fsSync);
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
+      const stat = realLstat(...args);
       if (args[0] === paths.jsonPath) Object.assign(stat, { ino: 0n });
       return stat;
     });
@@ -267,9 +267,10 @@ describe("batch entry skip boundary", () => {
     vi.spyOn(fs, "open").mockImplementation(async (...args) => {
       const handle = await realOpen(...args);
       if (args[0] === paths.processingPath) {
-        const realStat = handle.stat.bind(handle);
-        vi.spyOn(handle, "stat").mockImplementation(async (...statArgs) => {
-          const stat = await realStat(...statArgs);
+        const realStat = fsSync.fstatSync.bind(fsSync);
+        vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
+          const stat = realStat(fd, options);
+          if (fd !== handle.fd) return stat;
           return Object.assign(stat, { ino: BigInt(stat.ino) + 1n });
         });
       }

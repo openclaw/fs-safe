@@ -1,4 +1,4 @@
-import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import path from "node:path";
 import { syncDirectory } from "./directory-durability.js";
 import { isPathRelativeEscape } from "./path.js";
@@ -7,8 +7,8 @@ export async function syncQueueDirectoryCreation(
   dir: string,
   validationBase: string,
 ): Promise<void> {
-  const baseReal = await fs.realpath(validationBase);
-  const targetReal = await fs.realpath(dir);
+  const baseReal = fsSync.realpathSync.native(validationBase);
+  const targetReal = fsSync.realpathSync.native(dir);
   const relative = path.relative(baseReal, targetReal);
   if (isPathRelativeEscape(relative)) {
     throw new Error(`durable queue directory escapes validation base: ${dir}`);

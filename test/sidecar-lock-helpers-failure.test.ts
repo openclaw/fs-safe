@@ -208,7 +208,7 @@ describe("sidecar lock helper failure handling", () => {
     expect(guards.has(guard)).toBe(false);
 
     const denied = Object.assign(new Error("guard denied"), { code: "EACCES" });
-    vi.spyOn(fs, "lstat").mockRejectedValueOnce(denied);
+    vi.spyOn(fsSync, "lstatSync").mockImplementationOnce(() => { throw denied; });
     await expect(sidecarReclaimGuardExists(guard)).rejects.toBe(denied);
     vi.spyOn(fs, "mkdir").mockRejectedValueOnce(denied);
     await expect(tryAcquireSidecarReclaimGuard(guards, guard)).rejects.toBe(denied);
@@ -283,14 +283,14 @@ describe("sidecar lock helper failure handling", () => {
     const realOpen = fs.open.bind(fs);
     vi.spyOn(fs, "open").mockImplementationOnce(async (...args) => {
       const handle = await realOpen(...args);
-      vi.spyOn(handle, "stat").mockResolvedValueOnce(directoryStat);
+      vi.spyOn(fsSync, "fstatSync").mockReturnValueOnce(directoryStat);
       return handle;
     });
     await expect(readSidecarLockSnapshot(lockPath)).resolves.toBeNull();
 
     vi.spyOn(fs, "open").mockImplementationOnce(async (...args) => {
       const handle = await realOpen(...args);
-      vi.spyOn(handle, "stat").mockResolvedValueOnce(directoryStat);
+      vi.spyOn(fsSync, "fstatSync").mockReturnValueOnce(directoryStat);
       return handle;
     });
     await expect(readSidecarLockSnapshot(lockPath, { rejectNonFile: true }))
