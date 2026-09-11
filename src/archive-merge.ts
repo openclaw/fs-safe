@@ -30,7 +30,7 @@ type MergeParams = {
 export async function mergePlannedArchiveIntoDestination(
   params: MergeParams & { entries: readonly ArchivePublicationEntry[]; durable?: boolean },
 ): Promise<void> {
-  await mergeTree(params, params.entries, params.durable !== false);
+  await mergeTree(params, params.entries, params.durable === true);
 }
 
 export async function mergeExtractedTreeIntoDestination(params: MergeParams): Promise<void> {

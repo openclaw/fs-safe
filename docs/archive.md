@@ -43,7 +43,7 @@ type ExtractArchiveOptions = {
   archivePath: string;          // absolute path to the archive
   destDir: string;              // absolute destination directory; must already exist
   timeoutMs: number;            // positive wall-clock budget; <= 0/non-finite disables it
-  durable?: boolean;            // true; sync published files and directories before completion
+  durable?: boolean;            // false; opt into syncing published files and directories before completion
   kind?: ArchiveKind;           // "zip" | "tar" | "tar-zstd" | "tar-bzip2"
   stripComponents?: number;     // strip N leading dirs from entry paths
   tarGzip?: boolean;            // when archive is .tar.gz/.tgz
@@ -56,8 +56,8 @@ type ExtractArchiveOptions = {
 };
 ```
 
-`durable` defaults to `true`. Private staging never fsyncs, and publication copies
-defer durability until the complete merge succeeds. The final pass syncs each
+`durable` defaults to `false`. Private staging never fsyncs, and publication copies
+defer opted-in durability until the complete merge succeeds. With `durable: true`, the final pass syncs each
 published file once (at most eight concurrently), then each published directory
 once, deepest first, and finally the destination directory. All work stays inside
 the extraction deadline; active syncs are joined before rejection. File sync
@@ -71,11 +71,20 @@ Existing inaccessible directories are never widened; an existing search-only
 directory must become readable in its final mode if no readable sync descriptor
 can be acquired before chmod.
 
-Use `durable: false` for extractions into temporary or reconstructible locations.
+The default suits extractions into temporary or reconstructible locations.
 It skips all file and directory syncs while preserving atomic file publication,
-mode enforcement, identity checks, and containment checks. Successful default
+mode enforcement, identity checks, and containment checks. Successful `durable: true`
 extraction syncs file contents and directory entries before returning; failures
 can leave a partially published tree as described below.
+
+For a crash-safe install workflow, extract with the default into a scratch
+directory, then apply the caller's durability policy: sync the staged files and
+directories before publishing with [`replaceDirectoryAtomic`](atomic.md#replacedirectoryatomic),
+and sync the affected parent directories afterward. The directory swap alone
+does not sync the staged tree. Alternatively, pass `durable: true` when extracted
+files must be on stable storage before the extraction call returns, subject to
+the platform's flushing guarantees. A plain fsync on macOS does not flush the
+drive cache.
 
 `entryModes` defaults to `"clamp"`: directories become `0o755`; files become
 `0o644`, or `0o755` when the archived owner-execute bit is set. `"preserve"`
