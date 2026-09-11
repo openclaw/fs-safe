@@ -1,5 +1,7 @@
 # Changelog
 
+## Unreleased
+
 ## 0.9.0 - 2026-09-11
 
 **Highlights:** Faster bulk extraction and configurable durability, with Windows filesystem fixes and reliable mixed-version lock cleanup.
