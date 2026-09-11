@@ -113,7 +113,8 @@ function snapshotMatchesSync(lockPath: string, observed: SidecarLockSnapshot): b
 }
 
 function releaseAllReclaimGuardsSync(state: SidecarLockManagerState): void {
-  for (const reclaimGuardPath of state.reclaimGuards) {
+  // Exit cleanup also visits managers created by older copies and never reopened here.
+  for (const reclaimGuardPath of state.reclaimGuards ?? []) {
     try {
       fsSync.rmdirSync(reclaimGuardPath);
       state.reclaimGuards.delete(reclaimGuardPath);

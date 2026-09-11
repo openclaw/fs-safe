@@ -37,6 +37,23 @@ async function expectAbsent(directory: string, name = "state.json.lock"): Promis
 }
 
 describe("sidecar lock natural process exit", () => {
+  it("cleans every manager when an older package copy has no reclaim state", async () => {
+    const directory = await tempRoot("fs-safe-lock-exit-legacy-state-");
+    await runChild(directory, `
+      const legacy = createFileLockManager("legacy-domain");
+      await legacy.acquire(path.join(directory, "legacy.json"), {
+        ...options, lockRoot: undefined,
+      });
+      const legacyState = globalThis[Symbol.for("fsSafe.sidecarLockManagers")].get("legacy-domain");
+      delete legacyState.reclaimGuards;
+      delete legacyState.reclaimCleanupRegistered;
+      await acquireFileLock(targetPath, { ...options, lockRoot: undefined });
+      process.exit(0);
+    `);
+    await expectAbsent(directory, "legacy.json.lock");
+    await expectAbsent(directory);
+  });
+
   it.each(["Root held", "raw held", "Root released"])("cleans %s locks", async (kind) => {
     const directory = await tempRoot("fs-safe-lock-exit-");
     await runChild(directory, `
