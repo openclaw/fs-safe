@@ -2,14 +2,18 @@
 
 ## Unreleased
 
-- **Compatibility:** `extractArchive` no longer fsyncs extracted files and directories by default to avoid per-entry sync costs during bulk imports; pass `durable: true` to restore the previous behavior.
-- Extend synchronous metadata observations to archive extraction, copy, publication, move, and directory-mode paths, while data and structural I/O remain asynchronous and native canonical path spelling is preserved; update the Windows hash-identity proof to observe the synchronous checks.
-- Publish read-only modes (for example `0o400`) through the Windows JavaScript write fallback by keeping the placeholder and temporary file private at `0o600`, then applying the final mode through the retained handle after rename and before post-write verification.
+**Highlights:** Faster bulk extraction and configurable durability, with Windows filesystem fixes and reliable mixed-version lock cleanup.
+
+- **Compatibility:** `extractArchive` skips file and directory fsync by default for faster bulk imports; pass `durable: true` to restore the previous durability behavior.
+- Add store-level and per-call `durable` options to FileStore writes, streams, copies, and synchronous writes, plus JSON-store defaults, so reconstructible data can skip fsync while preserving guarded atomic publication.
 - Add `Root.copyIn({ durable: false })`, with per-call, root-default, then `true` precedence, to skip file and parent-directory fsync for reconstructible data.
-- Add `extractArchive({ durable: true })` to opt into durability syncs; temporary or reconstructible extraction destinations skip them by default.
 - Speed up archive extraction by omitting private staging syncs, deferring opted-in publication durability to one bounded file/directory pass, and sharing duplicate destination guards without weakening containment checks.
-- Add store-level and per-call `durable` options to FileStore writes, streams, copies, and synchronous writes, plus JSON-store durability defaults, so reconstructible data can skip file and parent fsync while preserving guarded atomic publication.
-- Preserve Windows file identity across open-induced `ctime` changes during guarded move fallback, and recreate directory junctions without requiring symlink privileges.
+- Keep process-exit lock cleanup working when a legacy shared manager lacks reclaim-guard state, continuing through later managers while preserving retained locks; thanks @metahacker.
+- Publish read-only modes such as `0o400` through the Windows JavaScript write fallback by retaining private `0o600` staging and applying the final mode through the retained handle after rename.
+- Preserve Windows file identity across open-induced `ctime` changes during guarded move fallback, and recreate directory junctions without requiring symlink privileges; thanks @giodl73-repo.
+- Extend synchronous metadata observations to archive, copy, publication, move, and directory-mode paths while keeping data and structural I/O asynchronous and preserving native canonical paths.
+- Keep durable publication coverage reliable under filesystem contention by allowing bounded I/O time and draining unfinished operations before fixture cleanup.
+- Refresh JSZip to 3.10.2, Node declarations to 26.5.1, emnapi runtime build tooling to 2.0.0-alpha.5, and pinned CodeQL actions to 4.38.0.
 
 ## 0.8.6 - 2026-09-07
 

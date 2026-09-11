@@ -163,12 +163,12 @@
     "@openclaw/fs-safe-linux-x64-gnu": "0.8.6",
     "@openclaw/fs-safe-linux-x64-musl": "0.8.6",
     "@openclaw/fs-safe-win32-x64-msvc": "0.8.6",
-    "jszip": "^3.10.1"
+    "jszip": "^3.10.2"
   },
   "devDependencies": {
-    "@emnapi/runtime": "2.0.0-alpha.4",
+    "@emnapi/runtime": "2.0.0-alpha.5",
     "@napi-rs/cli": "3.9.0",
-    "@types/node": "^26.4.1",
+    "@types/node": "^26.5.1",
     "@vitest/coverage-v8": "5.0.0",
     "fast-check": "^4.9.0",
     "istanbul-lib-coverage": "3.2.2",
