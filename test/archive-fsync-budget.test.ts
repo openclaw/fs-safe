@@ -10,7 +10,7 @@ import { observeArchiveFs } from "./helpers/archive-fs-counts.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
-// macOS measurements for the 20-file/3-directory fixture; default then durable:false.
+// macOS measurements for the 20-file/3-directory fixture; durable:true then false/default.
 // Include every fs/promises call and async FileHandle method, including own close.
 const budgets = {
   auto: { tar: { async: [268, 196], total: [3131, 2500] }, zip: { async: [268, 196], total: [3140, 2510] } },
@@ -25,7 +25,7 @@ afterEach(() => {
 for (const backend of ["auto", "off"] as const) {
   describe.skipIf(backend === "auto" && !paxNative)(`archive sync budget: native ${backend}`, () => {
     for (const kind of ["tar", "zip"] as const) {
-      it.each([undefined, false])(`${kind}: durable %s`, async (durable) => {
+      it.each([undefined, false, true])(`${kind}: durable %s`, async (durable) => {
         if (paxNative) __setNativeLoaderForTest(() => paxNative);
         configureFsSafeNative({ mode: backend });
         const base = await tempRoot("fs-safe-fsync-budget-");
@@ -41,12 +41,12 @@ for (const backend of ["auto", "off"] as const) {
         // Native archive extraction has no Rust fsync; native pinned writers use
         // fs.fsyncSync, so all active sync routes are included in these counters.
         const diagnostic = JSON.stringify({ backend, kind, durable, calls: observed.total(), counts: observed.counts });
-        expect(observed.syncs.filter((type) => type === "file").length, diagnostic).toBe(durable === false ? 0 : 20);
+        expect(observed.syncs.filter((type) => type === "file").length, diagnostic).toBe(durable === true ? 20 : 0);
         const directorySyncs = observed.syncs.filter((type) => type === "directory").length;
-        if (process.platform === "win32" && durable !== false) expect(directorySyncs, diagnostic).toBeLessThanOrEqual(4);
-        else expect(directorySyncs, diagnostic).toBe(durable === false ? 0 : 4);
+        if (process.platform === "win32" && durable === true) expect(directorySyncs, diagnostic).toBeLessThanOrEqual(4);
+        else expect(directorySyncs, diagnostic).toBe(durable === true ? 4 : 0);
         const budget = budgets[backend][kind];
-        const index = durable === false ? 1 : 0;
+        const index = durable === true ? 0 : 1;
         expect(observed.asyncTotal(), diagnostic).toBeLessThanOrEqual(Math.ceil(budget.async[index] * 1.1));
         expect(observed.total(), diagnostic).toBeLessThanOrEqual(Math.ceil(budget.total[index] * 1.1));
         for (const name of ["p.lstat", "p.stat", "p.realpath", "h.stat"]) {
