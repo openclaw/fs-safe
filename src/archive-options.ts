@@ -15,6 +15,7 @@ export type ExtractArchiveOptions = {
   archivePath: string;
   destDir: string;
   timeoutMs: number;
+  /** Sync published files and directories before returning. Defaults to false. */
   durable?: boolean;
   kind?: ArchiveKind;
   stripComponents?: number;

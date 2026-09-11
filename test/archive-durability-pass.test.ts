@@ -38,7 +38,7 @@ it.each(["file", "directory"])("propagates %s sync failure", async (kind) => {
     }
     await sync.call(this);
   });
-  await expect(extractArchive(options)).rejects.toMatchObject({ code: "invalid-path", cause: { code: "EIO" } });
+  await expect(extractArchive({ ...options, durable: true })).rejects.toMatchObject({ code: "invalid-path", cause: { code: "EIO" } });
   expect(failed).toBe(true);
 });
 
@@ -59,7 +59,7 @@ it("bounds file syncs at eight and joins them on timeout before rejecting", asyn
     await release.promise;
     try { await sync.call(this); } finally { active--; }
   });
-  const extraction = extractArchive({ ...options, timeoutMs: 1000 });
+  const extraction = extractArchive({ ...options, durable: true, timeoutMs: 1000 });
   void extraction.then(() => { settled = true; }, () => { settled = true; });
   try {
     await entered.promise;
@@ -72,7 +72,7 @@ it("bounds file syncs at eight and joins them on timeout before rejecting", asyn
   expect(started).toBe(8);
 }, 10000);
 
-it.each([true, false])("keeps restrictive file and directory modes with durable %s", async (durable) => {
+it.each([undefined, false, true])("keeps restrictive file and directory modes with durable %s", async (durable) => {
   const { options } = await fixture();
   await fs.writeFile(options.archivePath, await modeArchive("tar", [
     { path: "closed/", directory: true, mode: 0 },
