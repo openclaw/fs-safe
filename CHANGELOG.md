@@ -13,7 +13,7 @@
 - Preserve Windows file identity across open-induced `ctime` changes during guarded move fallback, and recreate directory junctions without requiring symlink privileges; thanks @giodl73-repo.
 - Extend synchronous metadata observations to archive, copy, publication, move, and directory-mode paths while keeping data and structural I/O asynchronous and preserving native canonical paths.
 - Keep durable publication coverage reliable under filesystem contention by allowing bounded I/O time and draining unfinished operations before fixture cleanup.
-- Refresh JSZip to 3.10.2, Node declarations to 26.5.1, emnapi runtime build tooling to 2.0.0-alpha.5, and pinned CodeQL actions to 4.38.0.
+- Refresh JSZip to 3.10.2, Node declarations to 26.5.1, emnapi runtime build tooling to 2.0.0-alpha.5, the Rust hybrid-array dependency to 0.4.15, and pinned CodeQL actions to 4.38.0.
 
 ## 0.8.6 - 2026-09-07
 
