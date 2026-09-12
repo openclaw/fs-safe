@@ -8,6 +8,7 @@
 - Close publication descriptors when initial inspection fails, and relinquish descriptor numbers before potentially failing closes so cleanup cannot close a reused descriptor.
 - Expand leading home-directory prefixes before resolving parent segments, so `~/../file` resolves against the home directory's parent; keep tildes elsewhere in a relative path literal.
 - Accelerate ZIP integrity checks with Node's native CRC32 on Node 22.2 and newer, retaining checksum validation and compatibility with earlier Node 22 versions.
+- Read JavaScript ZIP members directly from the admitted in-memory archive, avoiding an unused disk snapshot while preserving byte limits, identity checks, and ZIP integrity validation.
 - Batch JavaScript SHA-256 reads for larger files in bounded buffers up to 256 KiB, reducing asynchronous filesystem calls while preserving descriptor ownership and offsets.
 - Read durable queue entries through the shared bounded buffer, using the admitted file size to reduce filesystem calls and chunk copies while retaining exact identity and byte-limit checks.
 - Preserve recreated temporary paths when an exit-cleanup lookup observed the original name missing; absence no longer authorizes a forced removal.
