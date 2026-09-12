@@ -2,10 +2,9 @@
 
 <!--
 Describe the concrete problem for consumers of `@openclaw/fs-safe`.
-For fixes, begin with:
-"Fixes an issue where consumers <do X> would <experience Y> when <condition>."
-or:
-"Resolves a problem where..."
+Use one short, plain-language sentence. For fixes, prefer:
+"Fixes: <what goes wrong> when <trigger or condition>."
+For other changes, describe the need without inventing a bug.
 
 Name the affected filesystem surface: root confinement, path validation,
 identity checks, archive extraction, permissions, atomic operations, stores,
@@ -13,20 +12,25 @@ secrets, exports, packaging, or supported platforms. Do not describe only the
 code-level cause.
 -->
 
-## Why This Change Was Made
-
-<!--
-In one or two sentences, explain the complete shipped solution, key design
-decisions, and relevant boundaries or non-goals. Call out security,
-compatibility, export, error-shape, default, or platform implications.
--->
-
 ## User Impact
 
 <!--
-State what package consumers can now do or expect. If the change is breaking,
-describe the migration path. If it affects only tooling, tests, or docs and
-ships nothing new in the package, say so plainly.
+"User impact: <what package consumers can now do or expect>."
+Lead with the concrete outcome in plain language, usually one sentence.
+For internal-only changes, say there is no user-visible change; do not invent a benefit.
+Keep important risks, breaking changes, migrations, and required user actions visible here.
+Mention security, compatibility, exports, error shapes, defaults, or platform
+impacts only when they change. For breaking changes, describe the migration path.
+For tooling, tests, or docs that ship nothing new in the package, say so plainly.
+-->
+
+## Why This Change Was Made
+
+<!--
+Briefly explain how the change addresses the problem without repeating the impact.
+Keep the body short. Leave file lists, internal acronyms, and root-cause walkthroughs
+in the diff or optional <details>; include technical detail only when it explains
+behavior or a material tradeoff. Do not hide risks or required actions in <details>.
 -->
 
 ## Evidence
@@ -39,6 +43,9 @@ Show the most useful proof that this change works:
 - tarball/import proof from `pnpm pack:check`
 - platform or filesystem-specific reproduction
 - CI links or redacted logs
+
+Summarize what was checked and the result; note meaningful gaps. Link long output
+or put it in optional <details>, keeping the useful evidence summary visible.
 -->
 
 - [ ] Tests added or updated when behavior changed
