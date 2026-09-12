@@ -203,9 +203,16 @@ await fs.move("incoming/foo.txt", "archive/foo.txt", { overwrite: true });
 
 Both `from` and `to` are bounded; `..` in either is rejected.
 
+The JavaScript fallback checks both parent directories before and after the
+rename. A failed post-operation check rejects even though the rename may
+already have completed; rejection does not imply rollback.
+
 ### `fs.remove(rel)`
 
 Unlink a file or `rmdir` an empty directory. Non-empty directories throw `not-empty`. For atomic directory replacement, use [`replaceDirectoryAtomic`](atomic.md#replacedirectoryatomic).
+
+The JavaScript fallback reports failed parent-directory checks after removal.
+The entry may already have been removed when this verification rejects.
 
 ```ts
 await fs.remove("logs/yesterday.log");

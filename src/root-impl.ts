@@ -1400,7 +1400,7 @@ async function removePathFallback(resolved: { resolved: string }): Promise<void>
   } catch (error) {
     throw normalizeRemovePathError(error);
   }
-  await assertAsyncDirectoryGuard(guard).catch(() => undefined);
+  await assertAsyncDirectoryGuard(guard).catch(error => { throw normalizeRemoveGuardError(error); });
 }
 
 async function mkdirPathFallback(resolved: { rootReal: string; resolved: string }): Promise<void> {
@@ -1566,7 +1566,12 @@ async function movePathFallback(
     }
     throw error;
   }
-  await assertAsyncDirectoryGuard(targetParentGuard).catch(() => undefined);
+  try {
+    await assertAsyncDirectoryGuard(sourceParentGuard);
+    await assertAsyncDirectoryGuard(targetParentGuard);
+  } catch (error) {
+    throw normalizePinnedPathError(error);
+  }
 }
 
 async function writeFileFallback(
