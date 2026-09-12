@@ -29,7 +29,7 @@ Inputs are synthetic. Fixture setup and cleanup run outside the timer; callback
 work and cleanup performed *by the method* remain inside it. Open and acquire
 cases exclude later close/release, which have their own rows. Representative
 payload assertions run outside measurement. Reads cover 128 B, 64 KiB, 1 MiB,
-2 MiB, and the default Root budget of 16 MiB;
+2 MiB, the default Root budget of 16 MiB, and an explicit 32 MiB budget;
 writes compare both durability settings without changing package defaults.
 
 For a quick executable coverage check:

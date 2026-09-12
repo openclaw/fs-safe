@@ -4,6 +4,7 @@ import { normalizeMaxBytes } from "./byte-budget.js";
 import { FsSafeError } from "./errors.js";
 
 const READ_CHUNK_BYTES = 64 * 1024;
+const LARGE_FILE_CHUNK_BYTES = 1024 * 1024;
 // Preserve one-read performance through the default Root byte budget.
 const MAX_INITIAL_READ_BYTES = 16 * 1024 * 1024;
 
@@ -14,10 +15,12 @@ function createInitialBuffer(maxBytes: number, size: number): Buffer {
   return Buffer.allocUnsafe(Math.min(maxBytes, size, MAX_INITIAL_READ_BYTES) + 1);
 }
 
-function createScratchBuffer(maxBytes: number): Buffer {
+function createScratchBuffer(maxBytes: number, size?: number): Buffer {
+  const chunkBytes = size !== undefined && size > MAX_INITIAL_READ_BYTES
+    ? LARGE_FILE_CHUNK_BYTES : READ_CHUNK_BYTES;
   const initialReadBytes = Number.isFinite(maxBytes)
-    ? Math.min(READ_CHUNK_BYTES, maxBytes + 1)
-    : READ_CHUNK_BYTES;
+    ? Math.min(chunkBytes, maxBytes + 1)
+    : chunkBytes;
   return Buffer.allocUnsafe(Math.max(1, initialReadBytes));
 }
 
@@ -64,7 +67,7 @@ async function readBoundedAsync(
     if (currentSize !== undefined && bytesRead >= currentSize) return first.subarray(0, bytesRead);
     total = appendChunk({ chunks, scratch: first, bytesRead, total, maxBytes });
   }
-  const scratch = createScratchBuffer(maxBytes);
+  const scratch = createScratchBuffer(maxBytes, size);
   while (true) {
     const length = nextReadLength(total, maxBytes, scratch.length);
     const bytesRead = await readChunk(scratch, length);
@@ -138,7 +141,7 @@ export function readFileDescriptorBoundedSync(fd: number, maxBytes: number): Buf
     if (currentSize !== undefined && bytesRead >= currentSize) return first.subarray(0, bytesRead);
     total = appendChunk({ chunks, scratch: first, bytesRead, total, maxBytes });
   }
-  const scratch = createScratchBuffer(maxBytes);
+  const scratch = createScratchBuffer(maxBytes, size);
   while (true) {
     const length = nextReadLength(total, maxBytes, scratch.length);
     const bytesRead = fs.readSync(fd, scratch, 0, length, null);

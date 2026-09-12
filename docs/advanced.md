@@ -83,7 +83,8 @@ The bounded descriptor helpers cap their initial speculative allocation at
 16 MiB plus the overflow-probe byte, even when a file reports a much larger
 size. Regular files up to that size can return from one read without copying
 chunks; larger files and short reads continue incrementally under the same
-byte limit.
+byte limit. Known files above that size use 1 MiB continuation chunks to keep
+filesystem round-trips bounded; unknown-size inputs retain 64 KiB chunks.
 
 The bounded descriptor helpers start at the descriptor's current offset and
 leave ownership with the caller. They are intended for the second half of a
