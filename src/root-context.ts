@@ -15,6 +15,7 @@ import {
 import { ROOT_PATH_ALIAS_POLICIES, resolveRootPath } from "./root-path.js";
 import { outsideWorkspaceError } from "./root-errors.js";
 import { isDriveRelativePath } from "./safe-path-segment.js";
+import { inspectFileIdentity } from "./strict-file-identity.js";
 
 export type RootContext = {
   rootDir: string;
@@ -55,14 +56,16 @@ export async function expandRelativePathWithHome(relativePath: string): Promise<
 
 export async function resolveRootContext(rootDir: string): Promise<RootContext> {
   assertNoNulPathInput(rootDir, "root dir contains a NUL byte");
+  const lexicalRoot = path.resolve(rootDir);
   let rootReal: string;
-  let rootIdentity: { dev: number; ino: number };
+  let rootIdentity: { dev: bigint; ino: bigint };
   try {
     rootReal = fs.realpathSync.native(rootDir);
-    const rootStat = fs.statSync(rootReal);
-    if (!rootStat.isDirectory()) {
-      throw new FsSafeError("invalid-path", "root dir is not a directory");
-    }
+    const rootStat = await inspectFileIdentity(() => {
+      const stat = fs.statSync(rootReal, { bigint: true });
+      if (!stat.isDirectory()) throw new FsSafeError("invalid-path", "root dir is not a directory");
+      return stat;
+    });
     rootIdentity = { dev: rootStat.dev, ino: rootStat.ino };
   } catch (err) {
     if (err instanceof FsSafeError) {
@@ -74,7 +77,7 @@ export async function resolveRootContext(rootDir: string): Promise<RootContext> 
     throw err;
   }
   return {
-    rootDir: path.resolve(rootDir),
+    rootDir: lexicalRoot,
     rootIdentity,
     rootReal,
     rootWithSep: ensureTrailingSep(rootReal),

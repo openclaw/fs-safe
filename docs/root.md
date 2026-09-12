@@ -37,6 +37,8 @@ type DenyMutationPolicy = {
 
 `root()` resolves the directory through the real filesystem. A symlinked input becomes the canonical path; a non-existent root throws `FsSafeError` with code `not-found`, and malformed or non-directory roots throw `invalid-path`.
 
+The root directory is pinned with exact bigint device/inode identities. A changed root rejects subsequent operations; an unknown Windows identity that remains unverifiable after bounded reinspection rejects construction with `path-mismatch`.
+
 `defaults` apply to every method on the returned handle. Per-call options on individual methods override the defaults for that call only, except `denyMutations`: root and per-call deny entries are merged so a call cannot clear a root-level deny.
 
 Every `maxBytes` value must be a non-negative safe integer or positive `Infinity`. Zero is an active zero-byte cap; `Infinity` explicitly disables the cap. An omitted or explicitly `undefined` per-call value preserves the configured Root default instead of clearing it.
