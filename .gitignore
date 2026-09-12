@@ -12,6 +12,7 @@ release-artifacts*/
 *.tgz
 *.tsbuildinfo
 .clawpatch/
+.crabbox/
 .deepsec/
 .vscode
 .DS_Store

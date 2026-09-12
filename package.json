@@ -126,6 +126,7 @@
   },
   "scripts": {
     "benchmark": "node scripts/benchmark.mjs",
+    "benchmark:methods": "node benchmarks/runner.mjs",
     "benchmark:publish": "pnpm build && node scripts/bench-publish.mjs",
     "build": "node scripts/prepack-build.mjs",
     "lint:file-size": "node scripts/check-file-size.mjs",

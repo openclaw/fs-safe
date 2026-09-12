@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add a method-by-method benchmark with callable API coverage checks, native/fallback reports, and separate fixture timing.
+
 ## 0.9.0 - 2026-09-11
 
 **Highlights:** Faster bulk extraction and configurable durability, with Windows filesystem fixes and reliable mixed-version lock cleanup.
