@@ -3,7 +3,21 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 
-export async function registerLifecycle({ api: a, workspace: w, native, register: add, contract, onCleanup }) {
+export async function registerLifecycle({ api: a, workspace: w, native, binding, register: add, contract, onCleanup }) {
+  if (binding) {
+    const directory = path.join(w, "native-directory");
+    fs.mkdirSync(directory);
+    const flags = fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY ?? 0);
+    const rootFd = fs.openSync(w, flags);
+    onCleanup(() => fs.closeSync(rootFd));
+    add("native.openBeneath/directory", () => binding.openBeneath(rootFd, "native-directory", flags), {
+      sync: true,
+      verify: (opened) => assert.ok(fs.fstatSync(opened.fd).isDirectory()),
+      after: (opened) => { if (opened) fs.closeSync(opened.fd); },
+    });
+  } else {
+    add("native.openBeneath/directory", () => {}, { skip: "native binding unavailable" });
+  }
   const input = path.join(w, "input.json");
   const data = Buffer.from("synthetic benchmark\n");
   const output = path.join(w, "lifecycle-output");

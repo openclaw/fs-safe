@@ -76,7 +76,7 @@ const contract = (name, object) => {
   contracts.set(name, [...properties].sort());
 };
 const cleanups = [];
-const context = { api, workspace, native, register, exclude, contract, args, onCleanup: (fn) => cleanups.push(fn) };
+const context = { api, workspace, native, binding, register, exclude, contract, args, onCleanup: (fn) => cleanups.push(fn) };
 let cleanup;
 try {
   cleanup = await registerCore(context);
