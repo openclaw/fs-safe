@@ -9,6 +9,7 @@ import {
   isPathRelativeEscape,
 } from "./path.js";
 import {
+  rawPathRelativeToCanonicalRoot,
   resolvePathViaExistingAncestor,
   resolvePathViaExistingAncestorSync,
 } from "./root-path-existing.js";
@@ -78,6 +79,14 @@ async function resolveRootPathInternal(
   const rootCanonicalPath = params.rootCanonicalPath
     ? path.resolve(params.rootCanonicalPath)
     : await resolvePathViaExistingAncestor(rootPath);
+  const reentered = rawPathRelativeToRoot(rootPath, params.absolutePath) === undefined
+    ? rawPathRelativeToCanonicalRoot(params.absolutePath, rootCanonicalPath, params) : undefined;
+  if (reentered !== undefined) {
+    return resolveRootPathLexicalAsync({
+      params: { ...params, absolutePath: `${rootPath}${path.sep}${reentered}` },
+      absolutePath, rootPath, rootCanonicalPath,
+    });
+  }
   const context = createBoundaryResolutionContext({
     resolveParams: params,
     rootPath,
@@ -120,6 +129,14 @@ function resolveRootPathSyncInternal(params: ResolveRootPathParams): ResolvedRoo
   const rootCanonicalPath = params.rootCanonicalPath
     ? path.resolve(params.rootCanonicalPath)
     : resolvePathViaExistingAncestorSync(rootPath);
+  const reentered = rawPathRelativeToRoot(rootPath, params.absolutePath) === undefined
+    ? rawPathRelativeToCanonicalRoot(params.absolutePath, rootCanonicalPath, params) : undefined;
+  if (reentered !== undefined) {
+    return resolveRootPathLexicalSync({
+      params: { ...params, absolutePath: `${rootPath}${path.sep}${reentered}` },
+      absolutePath, rootPath, rootCanonicalPath,
+    });
+  }
   const context = createBoundaryResolutionContext({
     resolveParams: params,
     rootPath,
@@ -182,6 +199,7 @@ type LexicalTraversalState = {
   canonicalCursor: string;
   lexicalCursor: string;
   preserveFinalSymlink: boolean;
+  missingDepth: number;
 };
 
 type LexicalTraversalContext = {
@@ -215,6 +233,7 @@ function createLexicalTraversalState(params: {
     canonicalCursor: params.rootCanonicalPath,
     lexicalCursor: params.rootPath,
     preserveFinalSymlink: false,
+    missingDepth: 0,
   };
 }
 
@@ -270,16 +289,6 @@ function assertLexicalCursorInsideBoundary(
   });
 }
 
-function applyMissingSuffixToCanonicalCursor(
-  context: LexicalTraversalContext,
-  missingFromIndex: number,
-): void {
-  const missingSuffix = context.state.segments.slice(missingFromIndex);
-  for (const segment of missingSuffix) {
-    advanceCanonicalCursorForSegment(context, segment);
-  }
-}
-
 function advanceCanonicalCursorForSegment(
   context: LexicalTraversalContext,
   segment: string,
@@ -305,12 +314,13 @@ function finalizeLexicalResolution(
 function handleLexicalLstatFailure(
   context: LexicalTraversalContext,
   error: unknown,
-  missingFromIndex: number,
+  segment: string,
 ): boolean {
   if (!isNotFoundPathError(error)) {
     return false;
   }
-  applyMissingSuffixToCanonicalCursor(context, missingFromIndex);
+  advanceCanonicalCursorForSegment(context, segment);
+  context.state.missingDepth = 1;
   return true;
 }
 
@@ -345,6 +355,7 @@ function applyResolvedSymlinkHop(
 function applyParentTraversalStep(context: LexicalTraversalContext): void {
   context.state.lexicalCursor = path.resolve(context.state.lexicalCursor, "..");
   advanceCanonicalCursorForSegment(context, "..");
+  if (context.state.missingDepth > 0) context.state.missingDepth -= 1;
 }
 
 type LexicalResolutionParams = {
@@ -368,11 +379,16 @@ async function resolveRootPathLexicalAsync(
       continue;
     }
     state.lexicalCursor = path.join(state.lexicalCursor, segment);
+    if (state.missingDepth > 0) {
+      advanceCanonicalCursorForSegment(context, segment);
+      state.missingDepth += 1;
+      continue;
+    }
     let stat: fs.Stats;
     try {
       stat = fs.lstatSync(state.lexicalCursor);
     } catch (error) {
-      if (handleLexicalLstatFailure(context, error, idx)) break;
+      if (handleLexicalLstatFailure(context, error, segment)) continue;
       throw error;
     }
 
@@ -414,11 +430,16 @@ function resolveRootPathLexicalSync(params: LexicalResolutionParams): ResolvedRo
       continue;
     }
     state.lexicalCursor = path.join(state.lexicalCursor, segment);
+    if (state.missingDepth > 0) {
+      advanceCanonicalCursorForSegment(context, segment);
+      state.missingDepth += 1;
+      continue;
+    }
     let stat: fs.Stats;
     try {
       stat = fs.lstatSync(state.lexicalCursor);
     } catch (error) {
-      if (handleLexicalLstatFailure(context, error, idx)) break;
+      if (handleLexicalLstatFailure(context, error, segment)) continue;
       throw error;
     }
 

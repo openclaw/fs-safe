@@ -4,7 +4,6 @@ import path from "node:path";
 import { inspectDirectoryIdentity } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
-import { expandHomePrefix } from "./home-dir.js";
 import {
   assertNoNulPathInput,
   assertNoUnsafeDeviceReadPath,
@@ -13,6 +12,7 @@ import {
   isPathInside,
 } from "./path.js";
 import { ROOT_PATH_ALIAS_POLICIES, resolveRootPath } from "./root-path.js";
+import { rawPathRelativeToCanonicalRoot } from "./root-path-existing.js";
 import { outsideWorkspaceError } from "./root-errors.js";
 import { isDriveRelativePath } from "./safe-path-segment.js";
 
@@ -50,7 +50,11 @@ export async function expandRelativePathWithHome(relativePath: string): Promise<
     }
     cachedHomePath = { raw: rawHome, real: realHome };
   }
-  return expandHomePrefix(relativePath, { home: cachedHomePath.real });
+  if (relativePath === "~") return cachedHomePath.real;
+  if (relativePath.startsWith("~/") || (path.sep === "\\" && relativePath.startsWith("~\\"))) {
+    return `${ensureTrailingSep(cachedHomePath.real)}${relativePath.slice(2)}`;
+  }
+  return relativePath;
 }
 
 export async function resolveRootContext(rootDir: string): Promise<RootContext> {
@@ -81,19 +85,34 @@ export async function resolveRootContext(rootDir: string): Promise<RootContext> 
   };
 }
 
-export function rootRelativeReadPath(root: RootContext, filePath: string): string {
+export function rootRelativeReadPath(root: RootContext, filePath: string, options: { rejectSymlinks?: boolean } = {}): string {
   const absoluteInput = path.isAbsolute(filePath);
-  const candidatePath = absoluteInput
-    ? path.resolve(filePath)
-    : path.resolve(root.rootDir, filePath);
+  if (!absoluteInput) return filePath;
+  const raw = process.platform === "win32" ? filePath.replaceAll("/", path.sep) : filePath;
+  for (const base of [root.rootDir, root.rootReal]) {
+    const prefix = ensureTrailingSep(base);
+    const matches = process.platform === "win32"
+      ? raw.slice(0, prefix.length).toLowerCase() === prefix.toLowerCase()
+      : raw.startsWith(prefix);
+    if (matches) {
+      let start = prefix.length;
+      while (raw[start] === path.sep) start += 1;
+      return raw.slice(start);
+    }
+  }
+  const candidatePath = path.resolve(filePath);
   let relativeBase = root.rootDir;
   if (
-    absoluteInput &&
     !isPathInside(root.rootDir, candidatePath) &&
     isPathInside(root.rootReal, candidatePath)
   ) {
     // A Root created through an alias has two valid in-root absolute spellings.
     relativeBase = root.rootReal;
+  }
+  if (isPathInside(relativeBase, candidatePath)) {
+    const relative = rawPathRelativeToCanonicalRoot(raw, root.rootReal, options);
+    if (relative !== undefined) return relative;
+    throw outsideWorkspaceError();
   }
   return path.relative(relativeBase, candidatePath);
 }
@@ -128,12 +147,13 @@ export async function resolvePathInRoot(
     allowFinalSymlink?: boolean;
     rejectUnsafeDeviceReads?: boolean;
     rejectSymlinks?: boolean;
+    resolveCanonical?: boolean;
   },
 ): Promise<{ rootReal: string; rootWithSep: string; resolved: string }> {
   assertValidRootRelativePath(relativePath);
   await assertRootIdentityCurrent(root);
   const expanded = await expandRelativePathWithHome(relativePath);
-  const resolved = path.resolve(root.rootWithSep, expanded);
+  let resolved = path.resolve(root.rootWithSep, expanded);
   if (!isPathInside(root.rootWithSep, resolved)) {
     throw outsideWorkspaceError();
   }
@@ -144,7 +164,7 @@ export async function resolvePathInRoot(
     ? expanded
     : `${root.rootWithSep}${expanded}`;
   try {
-    await resolveRootPath({
+    const checked = await resolveRootPath({
       absolutePath: rawAbsolutePath,
       rootPath: root.rootReal,
       rootCanonicalPath: root.rootReal,
@@ -152,6 +172,7 @@ export async function resolvePathInRoot(
       policy: options?.allowFinalSymlink ? ROOT_PATH_ALIAS_POLICIES.unlinkTarget : undefined,
       rejectSymlinks: options?.rejectSymlinks,
     });
+    if (options?.resolveCanonical) resolved = checked.canonicalPath;
   } catch (error) {
     if (error instanceof FsSafeError && error.code === "symlink") {
       throw error;

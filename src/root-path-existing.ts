@@ -1,6 +1,36 @@
 import fs from "node:fs";
 import path from "node:path";
-import { isNotFoundPathError } from "./path.js";
+import { FsSafeError } from "./errors.js";
+import { isNotFoundPathError, isPathInside } from "./path.js";
+
+export function rawPathRelativeToCanonicalRoot(
+  candidate: string,
+  rootCanonicalPath: string,
+  options: { rejectSymlinks?: boolean } = {},
+): string | undefined {
+  const absolute = path.isAbsolute(candidate) ? candidate : `${process.cwd()}${path.sep}${candidate}`;
+  const raw = process.platform === "win32" ? absolute.replaceAll("/", path.sep) : absolute;
+  const filesystemRoot = path.parse(raw).root;
+  const segments = raw.slice(filesystemRoot.length).split(path.sep);
+  let prefix = filesystemRoot;
+  for (let index = 0; index < segments.length; index += 1) {
+    prefix += `${prefix.endsWith(path.sep) ? "" : path.sep}${segments[index]}`;
+    let canonical: string;
+    try {
+      if (options.rejectSymlinks && fs.lstatSync(prefix).isSymbolicLink()) {
+        throw new FsSafeError("symlink", "symlink path component not allowed");
+      }
+      canonical = fs.realpathSync.native(prefix);
+    } catch (error) {
+      if (error instanceof FsSafeError) throw error;
+      continue;
+    }
+    if (!isPathInside(rootCanonicalPath, canonical)) continue;
+    return [path.relative(rootCanonicalPath, canonical), ...segments.slice(index + 1)]
+      .filter(Boolean).join(path.sep);
+  }
+  return undefined;
+}
 
 function isFilesystemRoot(candidate: string): boolean {
   return path.parse(candidate).root === candidate;

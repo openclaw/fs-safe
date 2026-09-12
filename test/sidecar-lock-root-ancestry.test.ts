@@ -40,7 +40,7 @@ it.skipIf(process.platform === "win32")("permits an unchanged canonical parent r
   const lockPath = path.join(capability.rootReal, "alias/state.lock");
   await capability.create("actual/state.lock", "{}");
   __setFsSafeTestHooksForTest({ async afterOpenedPathIdentityCheck(candidate) {
-    if (candidate !== lockPath) return;
+    if (candidate !== path.join(capability.rootReal, "actual/state.lock")) return;
     __setFsSafeTestHooksForTest();
     await fs.unlink(lockPath);
   } });

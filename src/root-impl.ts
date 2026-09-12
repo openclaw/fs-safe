@@ -435,7 +435,7 @@ export class RootHandle implements Root {
   async resolve(relativePath: string): Promise<string> {
     assertValidRootDestinationPath(relativePath);
     return (
-      await resolvePathInRoot(this.context, relativePath, { allowFinalSymlink: true })
+      await resolvePathInRoot(this.context, relativePath, { allowFinalSymlink: true, resolveCanonical: true })
     ).resolved;
   }
 
@@ -698,16 +698,13 @@ export async function root(
 
 async function openFileInRoot(
   root: RootContext,
-  params: {
-    relativePath: string;
-    hardlinks?: HardlinkPolicy;
-    symlinks?: SymlinkPolicy;
-  },
+  params: RootOpenOptions & { relativePath: string },
 ): Promise<OpenResult> {
   const { rootWithSep, resolved } = await resolvePathInRoot(root, params.relativePath, {
     allowFinalSymlink: true,
     rejectUnsafeDeviceReads: true,
     rejectSymlinks: params.symlinks !== "follow-within-root",
+    resolveCanonical: true,
   });
 
   const { opened } = await openVerifiedLocalFile(resolved, {
@@ -753,7 +750,7 @@ async function readPathInRoot(
     symlinks?: SymlinkPolicy;
   },
 ): Promise<ReadResult> {
-  const relativePath = rootRelativeReadPath(root, params.filePath);
+  const relativePath = rootRelativeReadPath(root, params.filePath, { rejectSymlinks: params.symlinks !== "follow-within-root" });
   return await readFileInRoot(root, {
     relativePath,
     hardlinks: params.hardlinks,
