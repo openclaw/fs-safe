@@ -26,8 +26,9 @@ function pathStillMatchesReceipt(entry: TempCleanupEntry): boolean {
     const current = fsSync.lstatSync(entry.path, { bigint: true });
     return (!entry.singleLinkFile || (current.isFile() && current.nlink === 1n)) &&
       sameFileIdentityForCleanup(current, entry.identity);
-  } catch (error) {
-    return !entry.singleLinkFile && (error as NodeJS.ErrnoException).code === "ENOENT";
+  } catch {
+    // A missing pathname grants no authority over an entry created after this lookup.
+    return false;
   }
 }
 
