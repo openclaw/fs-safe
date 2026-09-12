@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { extractArchive } from "../src/archive.js";
 import { configureFsSafeNative } from "../src/native-config.js";
+import * as timing from "../src/timing.js";
 import { modeArchive, removeModeFixture } from "./helpers/archive-modes.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
@@ -51,6 +52,13 @@ it("bounds file syncs at eight and joins them on timeout before rejecting", asyn
   let started = 0;
   let peak = 0;
   let settled = false;
+  let expire: (() => void) | undefined;
+  const schedule = timing.scheduleTimeout;
+  vi.spyOn(timing, "scheduleTimeout").mockImplementation((callback, ms) => {
+    if (ms !== 1000) return schedule(callback, ms);
+    expire = callback;
+    return () => { expire = undefined; };
+  });
   vi.spyOn(prototype, "sync").mockImplementation(async function (this: FileHandle) {
     if (!fsSync.fstatSync(this.fd).isFile()) return await sync.call(this);
     started++;
@@ -61,12 +69,20 @@ it("bounds file syncs at eight and joins them on timeout before rejecting", asyn
   });
   const extraction = extractArchive({ ...options, durable: true, timeoutMs: 1000 });
   void extraction.then(() => { settled = true; }, () => { settled = true; });
+  const earlyStop = extraction.then(() => { throw new Error("extraction completed before eight syncs were active"); });
+  const watchdog = setTimeout(release.resolve, 5000);
   try {
-    await entered.promise;
-    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await Promise.race([entered.promise, earlyStop]);
+    expect(expire).toBeTypeOf("function");
+    expire!();
+    await new Promise<void>((resolve) => setImmediate(resolve));
     expect(settled).toBe(false);
     expect(peak).toBe(8);
-  } finally { release.resolve(); }
+  } finally {
+    clearTimeout(watchdog);
+    release.resolve();
+    await extraction.catch(() => undefined);
+  }
   await expect(extraction).rejects.toThrow("timed out");
   expect(active).toBe(0);
   expect(started).toBe(8);

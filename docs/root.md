@@ -220,6 +220,11 @@ await fs.readText("config.toml");
 await fs.readText("links/current.log", { symlinks: "follow-within-root" });
 ```
 
+With `follow-within-root`, parent components after a symlink are applied to the
+symlink's resolved target. Reads use that checked canonical path, including
+after home expansion and through `readAbsolute` and `reader`; the default policy still rejects a symlink
+even when a later `..` would hide it in a purely lexical normalization.
+
 Text helpers default to UTF-8. Pass `encoding` per call to `readText`, `readJson`, `write`, `create`, or `append` when you need another encoding.
 
 ## Common patterns
