@@ -96,6 +96,21 @@ for (const mode of ["async", "Root async", "sync", "Root sync"] as const) {
       }
     });
 
+    it.each([false, true])("keeps zero delays finite when exponential backoff overflows (randomize=%s)", async (randomize) => {
+      const { holder, original, lockPath, payload, waits, acquire, cleanup } = await fixture(4);
+      try {
+        await expect(acquire({
+          retries: 3, minTimeout: 0, maxTimeout: 1000, factor: Number.MAX_VALUE, randomize,
+        }, 100)).rejects.toMatchObject({ code: "file_lock_timeout", lockPath });
+        expect(waits).toEqual([0, 0, 0]);
+        expect(payload).toHaveBeenCalledTimes(4);
+        expect(holder.verifyStillHeld()).toBe(true);
+        expect(fs.readFileSync(lockPath, "utf8")).toBe(original);
+      } finally {
+        await cleanup();
+      }
+    });
+
     it.each([
       { retry: undefined, timeoutMs: undefined }, { retry: {}, timeoutMs: undefined },
       { retry: undefined, timeoutMs: Infinity }, { retry: {}, timeoutMs: Infinity },
