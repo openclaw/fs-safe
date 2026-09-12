@@ -10,6 +10,7 @@
 - Expand leading home-directory prefixes before resolving parent segments, so `~/../file` resolves against the home directory's parent; keep tildes elsewhere in a relative path literal.
 - Shorten only the home directory and its descendants in error messages, preserving sibling paths that share the same string prefix.
 - Accelerate ZIP integrity checks with Node's native CRC32 on Node 22.2 and newer, retaining checksum validation and compatibility with earlier Node 22 versions.
+- Reuse the strict UTF-8 decoder while streaming TAR metadata through WebAssembly, reducing per-member allocation without changing filename validation or BOM handling.
 - Read JavaScript ZIP members directly from the admitted in-memory archive, avoiding an unused disk snapshot while preserving byte limits, identity checks, and ZIP integrity validation.
 - Batch JavaScript SHA-256 reads for larger files in bounded buffers up to 256 KiB, reducing asynchronous filesystem calls while preserving descriptor ownership and offsets.
 - Read durable queue entries through the shared bounded buffer, using the admitted file size to reduce filesystem calls and chunk copies while retaining exact identity and byte-limit checks.
