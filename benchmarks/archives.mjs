@@ -49,4 +49,23 @@ export async function registerArchives({ api: a, workspace: w, register: add }) 
     add(`readArchiveEntry/${kind}`, () => a.readArchiveEntry(archivePath, "entry.json", { maxBytes: 1024 }), { divisor: 10 });
     if (kind !== "zip") add(`inspectTarArchive/${kind}`, () => a.inspectTarArchive({ archivePath, timeoutMs: 30_000 }), { divisor: 10 });
   }
+  for (const size of [1024 * 1024, 16 * 1024 * 1024]) {
+    const payload = Buffer.alloc(size, 0x61);
+    for (const compression of ["STORE", "DEFLATE"]) {
+      const largeZip = new JSZip();
+      largeZip.file("payload.bin", payload);
+      const archivePath = path.join(w, `large-${size}-${compression}.zip`);
+      fs.writeFileSync(archivePath, await largeZip.generateAsync({ type: "nodebuffer", compression }));
+      const label = `zip-${size / 1024 / 1024}MiB-${compression.toLowerCase()}`;
+      add(`readArchiveEntry/${label}`, () => a.readArchiveEntry(archivePath, "payload.bin", { maxBytes: size }), {
+        divisor: 10,
+        verify: (result) => assert.ok(result.equals(payload)),
+      });
+      add(`extractArchive/${label}`, () => a.extractArchive({ archivePath, destDir: destination, timeoutMs: 30_000 }), {
+        divisor: 10,
+        verify: () => assert.ok(fs.readFileSync(path.join(destination, "payload.bin")).equals(payload)),
+        after: () => fs.rmSync(path.join(destination, "payload.bin"), { force: true }),
+      });
+    }
+  }
 }
