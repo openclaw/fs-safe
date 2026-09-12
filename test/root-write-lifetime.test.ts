@@ -171,6 +171,7 @@ for (const backend of ["javascript", "native", "windows fallback branch"] as con
         let fdChecks = 0;
         let unknownPathChecked = false;
         vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params) => {
+          if (params.targetPath !== target) return await verifyPublished(params);
           retainedFd = params.fd;
           const realFstat = fsSync.fstatSync.bind(fsSync);
           vi.spyOn(fsSync, "fstatSync").mockImplementation(((...args: Parameters<typeof fsSync.fstatSync>) => {
@@ -223,7 +224,9 @@ for (const backend of ["javascript", "native", "windows fallback branch"] as con
           handles.push(handle);
           return handle;
         });
-        vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async ({ fd }) => {
+        vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params) => {
+          if (params.targetPath !== target) return await verifyPublished(params);
+          const { fd } = params;
           retainedFd = fd;
           if (backend === "native") {
             const realClose = fsSync.closeSync.bind(fsSync);

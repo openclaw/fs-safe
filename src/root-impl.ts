@@ -40,6 +40,7 @@ import {
   isSymlinkOpenError,
 } from "./path.js";
 import { readOpenedFileSafely, type ReadResult } from "./read-opened-file.js";
+import { cleanupPinnedFilePath } from "./replace-file-temp-owner.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { isNonRegularWriteOpenError, resolveNonblockingWriteFlag } from "./write-open-flags.js";
 import { resolveRootPath } from "./root-path.js";
@@ -813,29 +814,6 @@ async function prepareRootWriteTarget(rootReal: string, targetPath: string): Pro
   return path.join(parentPath, path.basename(targetPath));
 }
 
-async function writeTempFileForAtomicReplace(params: {
-  tempPath: string;
-  data: string | Buffer;
-  encoding?: BufferEncoding;
-  mode: number;
-}): Promise<{ handle: FileHandle; identity: BigIntStats }> {
-  const tempHandle = await fs.open(params.tempPath, OPEN_WRITE_CREATE_FLAGS, params.mode);
-  try {
-    if (typeof params.data === "string") {
-      await tempHandle.writeFile(params.data, params.encoding ?? "utf8");
-    } else {
-      await tempHandle.writeFile(params.data);
-    }
-    return {
-      handle: tempHandle,
-      identity: fsSync.fstatSync(tempHandle.fd, { bigint: true }),
-    };
-  } catch (error) {
-    await tempHandle.close().catch(() => {});
-    throw error;
-  }
-}
-
 type GuardedWritePath = Awaited<ReturnType<typeof resolvePathInRoot>>;
 
 async function resolveGuardedWritePathInRoot(
@@ -1604,6 +1582,7 @@ async function writeFileFallback(
     mode?: number;
     denyMutations?: DenyMutationPolicy;
     overwrite?: boolean;
+    durable?: boolean;
   },
 ): Promise<void> {
   if (params.overwrite === false) {
@@ -1621,53 +1600,74 @@ async function writeFileFallback(
   });
   const destinationPath = target.realPath;
   const mode = params.mode ?? (target.stat.mode & 0o777);
-  await target.handle.close().catch(() => {});
-  const destinationGuard = await createAsyncDirectoryGuard(path.dirname(destinationPath));
+  const destinationGuard = await createAsyncDirectoryGuard(path.dirname(destinationPath)).catch(async error => {
+    await target.handle.close().catch(() => undefined);
+    throw error;
+  });
   let tempPath: string | null = null;
   let unregisterTempPath: TempPathRegistration | null = null;
   let writtenHandle: FileHandle | undefined;
+  let writtenIdentity: BigIntStats | undefined;
+  let placeholderIdentity: BigIntStats | undefined;
+  let published = false;
   try {
+    if (target.createdForWrite) placeholderIdentity = fsSync.fstatSync(target.handle.fd, { bigint: true });
     tempPath = buildAtomicWriteTempPath(destinationPath);
-    unregisterTempPath = registerTempPathForExit(tempPath);
-    const written = await writeTempFileForAtomicReplace({
-      tempPath,
-      data: params.data,
-      encoding: params.encoding,
-      mode: 0o600,
-    });
-    writtenHandle = written.handle;
-    unregisterTempPath.setIdentity(written.identity);
+    writtenHandle = await fs.open(tempPath, OPEN_WRITE_CREATE_FLAGS, 0o600);
+    writtenIdentity = fsSync.fstatSync(writtenHandle.fd, { bigint: true });
+    unregisterTempPath = registerTempPathForExit(tempPath, { identity: writtenIdentity, singleLinkFile: true });
+    await writtenHandle.writeFile(params.data, params.encoding ?? "utf8");
+    if (params.durable !== false) await writtenHandle.sync();
     const commitTempPath = tempPath;
+    const commitHandle = writtenHandle;
+    const commitIdentity = writtenIdentity;
     await withAsyncDirectoryGuards([destinationGuard], async () => {
+      await verifyAtomicWriteResult({
+        root, targetPath: commitTempPath, fd: commitHandle.fd,
+        expectedIdentity: commitIdentity, parentGuard: destinationGuard,
+      });
       await fs.rename(commitTempPath, destinationPath);
       tempPath = null;
+      published = true;
     });
     unregisterTempPath();
     unregisterTempPath = null;
     // Final mode via the retained handle after publication, as the native writer does.
     try {
-      await written.handle.chmod(mode);
+      await writtenHandle.chmod(mode);
     } catch (error) {
-      await removePathIfIdentityUnchanged(destinationPath, written.identity).catch(() => {});
+      await cleanupPinnedFilePath({
+        pathname: destinationPath, handle: writtenHandle, identity: writtenIdentity, parentGuard: destinationGuard,
+      });
       throw error;
     }
+    if (params.durable !== false) await writtenHandle.sync();
     try {
       await verifyAtomicWriteResult({
         root,
         targetPath: destinationPath,
-        expectedIdentity: written.identity,
-        fd: written.handle.fd,
+        expectedIdentity: writtenIdentity,
+        fd: writtenHandle.fd,
         parentGuard: destinationGuard,
       });
     } catch (err) {
       emitWriteBoundaryWarning(`post-write verification failed: ${String(err)}`);
       throw err;
     }
+    if (params.durable !== false) await syncDirectoryBestEffort(path.dirname(destinationPath));
   } finally {
-    await writtenHandle?.close().catch(() => undefined);
-    if (tempPath) {
-      await fs.rm(tempPath, { force: true }).catch(() => {});
+    if (!published && target.createdForWrite) {
+      await cleanupPinnedFilePath({
+        pathname: destinationPath, handle: target.handle, identity: placeholderIdentity, parentGuard: destinationGuard,
+      });
     }
+    await target.handle.close().catch(() => undefined);
+    if (tempPath && writtenHandle) {
+      await cleanupPinnedFilePath({
+        pathname: tempPath, handle: writtenHandle, identity: writtenIdentity, parentGuard: destinationGuard,
+      });
+    }
+    await writtenHandle?.close().catch(() => undefined);
     unregisterTempPath?.();
   }
 }
@@ -1681,6 +1681,7 @@ async function writeMissingFileFallback(
     mkdir?: boolean;
     mode?: number;
     denyMutations?: DenyMutationPolicy;
+    durable?: boolean;
   },
 ): Promise<void> {
   const { rootReal, resolved } = await resolveGuardedWritePathInRoot(root, {
@@ -1692,7 +1693,7 @@ async function writeMissingFileFallback(
     : await prepareRootWriteTarget(rootReal, resolved);
   const parentGuard = await createAsyncDirectoryGuard(path.dirname(targetPath));
   let created = false;
-  let createdIdentity: FileIdentityStat | undefined;
+  let createdIdentity: BigIntStats | undefined;
   let writtenHandle: FileHandle | undefined;
   let verifyingPublication = false;
   try {
@@ -1700,25 +1701,17 @@ async function writeMissingFileFallback(
       [parentGuard],
       async () => {
         const handle = await fs.open(targetPath, OPEN_WRITE_CREATE_FLAGS, params.mode ?? 0o600).catch((error) => recordExclusiveCreateFailure(error, targetPath));
+        writtenHandle = handle;
         created = true;
-        try {
-          createdIdentity = fsSync.fstatSync(handle.fd);
-          const writtenStat = fsSync.fstatSync(handle.fd, { bigint: true });
-          if (typeof params.data === "string") {
-            await handle.writeFile(params.data, params.encoding ?? "utf8");
-          } else {
-            await handle.writeFile(params.data);
-          }
-          return { handle, writtenStat };
-        } catch (error) {
-          await handle.close().catch(() => undefined);
-          throw error;
-        }
+        const writtenStat = fsSync.fstatSync(handle.fd, { bigint: true });
+        createdIdentity = writtenStat;
+        await handle.writeFile(params.data, params.encoding ?? "utf8");
+        if (params.durable !== false) await handle.sync();
+        return { handle, writtenStat };
       },
       {
-        onPostGuardFailure: async ({ handle }) => {
+        onPostGuardFailure: () => {
           created = false; // Parent is untrusted now; skip outer path cleanup by name.
-          await handle.close().catch(() => undefined);
         },
       },
     );
@@ -1732,6 +1725,7 @@ async function writeMissingFileFallback(
       fd: handle.fd,
       parentGuard,
     });
+    if (params.durable !== false) await syncDirectoryBestEffort(path.dirname(targetPath));
   } catch (err) {
     if (verifyingPublication) throw err;
     if (hasNodeErrorCode(err, "EEXIST")) {
@@ -1741,9 +1735,11 @@ async function writeMissingFileFallback(
     }
     throw err;
   } finally {
-    await writtenHandle?.close().catch(() => undefined);
-    if (created && createdIdentity) {
-      await removePathIfIdentityUnchanged(targetPath, createdIdentity).catch(() => undefined);
+    if (created && writtenHandle) {
+      await cleanupPinnedFilePath({
+        pathname: targetPath, handle: writtenHandle, identity: createdIdentity, parentGuard,
+      });
     }
+    await writtenHandle?.close().catch(() => undefined);
   }
 }

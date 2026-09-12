@@ -196,6 +196,7 @@ for (const route of routes) {
         let callbacks = 0;
         let fd: number | undefined;
         const check: typeof verify = async (params) => {
+          if (params.targetPath !== target) return await verify(params);
           callbacks++;
           fd = params.fd;
           expect(params.expectedIdentity).toMatchObject({ dev: device, ino: inode });
@@ -301,6 +302,7 @@ for (const backend of ["fallback", "native"] as const) {
         }
         const verifier = vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(
           async (params) => {
+            if (params.targetPath !== target) return await verify(params);
             expect(params.targetPath).toBe(target);
             retainedFd = params.fd;
             if (swapped) {
@@ -317,7 +319,7 @@ for (const backend of ["fallback", "native"] as const) {
         if (swapped) await expect(pending).rejects.toMatchObject({ code: "path-mismatch" });
         else if (behavior === "read error") await expect(pending).rejects.toBe(failure);
         else await expect(pending).resolves.toBeUndefined();
-        expect(verifier).toHaveBeenCalledTimes(1);
+        expect(verifier.mock.calls.filter(([params]) => params.targetPath === target)).toHaveLength(1);
         expect(reopens).toBe(behavior === "known identity" ? 0 : 1);
         expect(reopened.every((handle) => handle.fd === -1)).toBe(true);
         expect(() => fsSync.fstatSync(retainedFd!)).toThrowError(expect.objectContaining({ code: "EBADF" }));

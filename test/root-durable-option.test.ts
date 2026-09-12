@@ -193,6 +193,7 @@ describe.skipIf(process.platform === "win32")("Windows writer branch simulation"
       return handle;
     });
     vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params) => {
+      if (params.targetPath !== target) return await verifyPublished(params);
       events.push("verify");
       expect((await fs.stat(target)).mode & 0o777).toBe(0o400);
       await verifyPublished(params);
@@ -234,7 +235,7 @@ describe.skipIf(process.platform === "win32")("Windows writer branch simulation"
     expect(await fs.readdir(directory)).toEqual([]);
   });
 
-  it.each([true, false])("preserves the unsynced JS writer with durable %s", async (durable) => {
+  it.each([true, false])("gates Windows JS writer syncs with durable %s", async (durable) => {
     configureFsSafeNative({ mode: "off" });
     Object.defineProperty(process, "platform", { value: "win32" });
     const directory = await tempRoot("fs-safe-durable-win-js-");
@@ -242,7 +243,7 @@ describe.skipIf(process.platform === "win32")("Windows writer branch simulation"
     const { events } = await observeSyncs(directory);
     await safe.create("created", "created");
     await safe.write("created", "replaced");
-    expect(events).toEqual([]);
+    expect(events).toEqual(durable ? ["file", "parent", "file", "file", "parent"] : []);
     expect(await fs.readFile(path.join(directory, "created"), "utf8")).toBe("replaced");
   });
 

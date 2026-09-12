@@ -259,6 +259,8 @@ describe("Root exclusive-create denial (synthetic Windows/errno; real files)", (
     await expect(manager.acquire(target, options)).rejects.toBe(error);
     expect(attempts).toBe(1);
     expect(manager.heldEntries()).toEqual([]);
-    expect(await fsp.readdir(directory)).toEqual([]);
+    // A failed first exact stat provides no cleanup authority over the pathname.
+    expect(await fsp.readdir(directory)).toEqual(operation === "stat" ? ["state.lock"] : []);
+    if (operation === "stat") expect(await fsp.readFile(lockPath, "utf8")).toBe("");
   });
 });
