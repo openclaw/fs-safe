@@ -1591,7 +1591,7 @@ async function writeFileFallback(
   });
   const destinationPath = target.realPath;
   const mode = params.mode ?? (target.stat.mode & 0o777);
-  const destinationGuard = await createAsyncDirectoryGuard(path.dirname(destinationPath)).catch(async error => {
+  const destinationGuard = await createAsyncDirectoryGuard(path.dirname(destinationPath), { bigint: true }).catch(async error => {
     await target.handle.close().catch(() => undefined);
     throw error;
   });
@@ -1681,7 +1681,7 @@ async function writeMissingFileFallback(
   const targetPath = params.mkdir === false
     ? resolved
     : await prepareRootWriteTarget(rootReal, resolved);
-  const parentGuard = await createAsyncDirectoryGuard(path.dirname(targetPath));
+  const parentGuard = await createAsyncDirectoryGuard(path.dirname(targetPath), { bigint: true });
   let created = false;
   let createdIdentity: BigIntStats | undefined;
   let writtenHandle: FileHandle | undefined;

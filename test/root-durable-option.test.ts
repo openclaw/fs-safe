@@ -79,7 +79,7 @@ for (const backend of ["auto", "off"] as const) {
           } else {
             await safe[method]("target", "payload", { ...options, mode });
           }
-          if (!sync || (process.platform === "win32" && backend === "off" && method !== "append" && method !== "copyIn")) {
+          if (!sync) {
             expect(asyncSpy).not.toHaveBeenCalled();
             expect(syncSpy).not.toHaveBeenCalled();
           } else if (process.platform === "win32") {
@@ -135,6 +135,7 @@ for (const backend of ["auto", "off"] as const) {
       const target = path.join(directory, "target");
       const safe = await root(directory, { durable: false });
       vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params) => {
+        if (params.targetPath !== target) return await verifyPublished(params);
         await fs.rename(target, path.join(directory, "published"));
         await fs.writeFile(target, "substitute");
         await verifyPublished(params);
