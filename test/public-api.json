@@ -549,6 +549,7 @@
         "PublishFileExclusiveStrategy",
         "PublishFileExclusiveSyncFailurePolicy",
         "Sha256FileInput",
+        "Sha256FileOptions",
         "Sha256FileResult"
       ],
       "errorCodes": {}

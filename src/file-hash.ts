@@ -2,12 +2,18 @@ import { createHash } from "node:crypto";
 import fsSync from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
+import { normalizeMaxBytes } from "./byte-budget.js";
 import { FsSafeError } from "./errors.js";
 import { getNativeBinding, type NativeBinding } from "./native.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 
 export type Sha256FileInput = string | FileHandle;
+
+export type Sha256FileOptions = {
+  maxBytes?: number;
+  signal?: AbortSignal;
+};
 
 export type Sha256FileResult = {
   bytes: number;
@@ -17,13 +23,38 @@ export type Sha256FileResult = {
 export async function hashFileHandle(
   handle: FileHandle,
   native: NativeBinding | undefined = getNativeBinding(),
+  { maxBytes = Infinity, signal }: Sha256FileOptions = {},
 ): Promise<Sha256FileResult> {
+  signal?.throwIfAborted();
   const stat = fsSync.fstatSync(handle.fd);
   if (!stat.isFile()) {
     throw new FsSafeError("not-file", "SHA-256 input is not a regular file");
   }
+  if (stat.size > maxBytes) {
+    throw new FsSafeError("too-large", `SHA-256 input exceeds ${maxBytes} bytes`);
+  }
   if (native) {
-    return await native.sha256File(handle.fd);
+    // A completed N-API task can mask later aborts on the same signal.
+    const nativeSignal = signal ? AbortSignal.any([signal]) : undefined;
+    try {
+      const result = await native.sha256File(
+        handle.fd,
+        Number.isFinite(maxBytes) ? maxBytes : undefined,
+        nativeSignal,
+      );
+      signal?.throwIfAborted();
+      return result;
+    } catch (error) {
+      // N-API settles only after compute stops; never race descriptor cleanup.
+      signal?.throwIfAborted();
+      if ((error as NodeJS.ErrnoException | null)?.code === "too-large") {
+        throw new FsSafeError("too-large", `SHA-256 input exceeds ${maxBytes} bytes`, { cause: error });
+      }
+      throw error;
+    } finally {
+      // Node retains composite signals while N-API's abort listener is attached.
+      if (nativeSignal) nativeSignal.onabort = null;
+    }
   }
 
   const hash = createHash("sha256");
@@ -32,7 +63,13 @@ export async function hashFileHandle(
   );
   let position = 0;
   while (true) {
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
+    signal?.throwIfAborted();
+    const length = Math.min(buffer.length, maxBytes - position + 1);
+    const { bytesRead } = await handle.read(buffer, 0, length, position);
+    signal?.throwIfAborted();
+    if (bytesRead > maxBytes - position) {
+      throw new FsSafeError("too-large", `SHA-256 input exceeds ${maxBytes} bytes`);
+    }
     if (bytesRead === 0) {
       return { bytes: position, digest: hash.digest("hex") };
     }
@@ -41,7 +78,10 @@ export async function hashFileHandle(
   }
 }
 
-async function hashPath(filePath: string): Promise<Sha256FileResult> {
+async function hashPath(
+  filePath: string,
+  options: Sha256FileOptions,
+): Promise<Sha256FileResult> {
   const before = await inspectFileIdentity(async () => {
     const stat = fsSync.lstatSync(filePath, { bigint: true });
     if (stat.isSymbolicLink()) {
@@ -55,6 +95,7 @@ async function hashPath(filePath: string): Promise<Sha256FileResult> {
 
   let handle: FileHandle;
   try {
+    options.signal?.throwIfAborted();
     handle = await fs.open(filePath, resolveReadOpenFlags());
   } catch (error) {
     if ((error as NodeJS.ErrnoException | null)?.code === "ELOOP") {
@@ -66,6 +107,7 @@ async function hashPath(filePath: string): Promise<Sha256FileResult> {
   }
 
   try {
+    options.signal?.throwIfAborted();
     const opened = await inspectFileIdentity(async () => {
       const stat = fsSync.fstatSync(handle.fd, { bigint: true });
       if (!stat.isFile()) {
@@ -80,12 +122,19 @@ async function hashPath(filePath: string): Promise<Sha256FileResult> {
       }
       return stat;
     }, opened);
-    return await hashFileHandle(handle);
+    return await hashFileHandle(handle, getNativeBinding(), options);
   } finally {
     await handle.close().catch(() => undefined);
   }
 }
 
-export async function sha256File(input: Sha256FileInput): Promise<Sha256FileResult> {
-  return typeof input === "string" ? await hashPath(input) : await hashFileHandle(input);
+export async function sha256File(
+  input: Sha256FileInput,
+  options: Sha256FileOptions = {},
+): Promise<Sha256FileResult> {
+  options.signal?.throwIfAborted();
+  const normalized = { maxBytes: normalizeMaxBytes(options.maxBytes), signal: options.signal };
+  return typeof input === "string"
+    ? await hashPath(input, normalized)
+    : await hashFileHandle(input, getNativeBinding(), normalized);
 }

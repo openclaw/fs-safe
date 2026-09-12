@@ -63,7 +63,7 @@ function assertTrace(
     const fd = subject.close.mock.calls[0]![0];
     expect(subject.descriptors).toEqual(Array(counts.descriptor).fill(fd));
     expect(subject.handles[0]!.fd).toBe(-1);
-    if (hashing === "mock-native") expect(subject.nativeHash).toHaveBeenCalledWith(fd);
+    if (hashing === "mock-native") expect(subject.nativeHash.mock.calls[0]?.[0]).toBe(fd);
     for (const call of subject.read.mock.calls) expect(call).toEqual([fd]);
   }
   for (const observation of subject.observations) {

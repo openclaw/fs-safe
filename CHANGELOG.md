@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add byte limits and cooperative cancellation to `sha256File`, preserving descriptor ownership and waiting for native work to stop before rejecting.
+
 - Report failed parent-directory checks after JavaScript fallback moves and removals, including moved source parents, instead of silently reporting success.
 
 - Resolve Windows ACL principal names such as `constructor` and `__proto__` as real dictionary keys, without skipping SID lookup or dropping translated entries.
