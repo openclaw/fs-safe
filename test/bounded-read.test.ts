@@ -39,13 +39,13 @@ afterEach(async () => {
 });
 
 describe("bounded descriptor reads", () => {
-  it.each([0, 4, 128 * 1024])("reads a known regular file of %s bytes in one call", async (size) => {
+  it.each([0, 4, 128 * 1024, 2 * 1024 * 1024, 16 * 1024 * 1024])("reads a known regular file of %s bytes in one call", async (size) => {
     const filePath = await tempFile("x".repeat(size));
     const handle = await fs.open(filePath, "r");
     const read = vi.spyOn(handle, "read");
     try {
       const result = await readFileHandleBounded(handle, size);
-      expect(result).toEqual(Buffer.alloc(size, "x"));
+      expect(result.equals(Buffer.alloc(size, "x"))).toBe(true);
       expect(read).toHaveBeenCalledTimes(1);
       expect(read.mock.calls[0]?.[2]).toBe(size + 1);
     } finally {

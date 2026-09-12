@@ -80,10 +80,13 @@ Windows identities receive one re-inspection without reopening, then fail
 validation if still unknown.
 
 The bounded descriptor helpers cap their initial speculative allocation at
-1 MiB plus the overflow-probe byte, even when a file reports a much larger
+16 MiB plus the overflow-probe byte, even when a file reports a much larger
 size. Regular files up to that size can return from one read without copying
 chunks; larger files and short reads continue incrementally under the same
-byte limit.
+byte limit. Continuation buffers grow only after filling with actual bytes,
+up to the byte budget plus its probe; file-size hints cannot force that growth.
+Unknown-size inputs start with at most 64 KiB. This avoids per-chunk copies and
+a final concatenation when a file exceeds the initial allocation.
 
 The bounded descriptor helpers start at the descriptor's current offset and
 leave ownership with the caller. They are intended for the second half of a
