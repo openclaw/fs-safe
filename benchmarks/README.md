@@ -33,6 +33,7 @@ payload assertions run outside measurement. Reads cover 128 B, 64 KiB, 1 MiB,
 writes compare both durability settings without changing package defaults.
 ZIP reads and extraction also cover 1 MiB and 16 MiB stored and deflated members
 to expose payload integrity costs beyond tiny archive fixtures.
+The native directory-open case times admission separately from descriptor close.
 
 For a quick executable coverage check:
 
