@@ -34,6 +34,8 @@
 - Honor finite timeouts and retry delays above Node's single-timer limit by rearming bounded timers instead of expiring after approximately 1 ms.
 - Allow explicitly authorized filesystem-root descendants in Trash moves and keep reservation-directory names bounded for long source filenames.
 
+- Retain exact parent-directory identities in JavaScript fallback writes so failure cleanup removes owned partial files even when Windows directory indexes exceed numeric precision.
+
 ## 0.9.0 - 2026-09-11
 
 **Highlights:** Faster bulk extraction and configurable durability, with Windows filesystem fixes and reliable mixed-version lock cleanup.
