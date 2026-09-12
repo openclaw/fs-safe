@@ -101,6 +101,7 @@ for (const backend of ["javascript", "native", "windows fallback branch"] as con
           }
         };
         const verifier = vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params) => {
+          if (params.targetPath !== target) return await verifyPublished(params);
           retainedFd = params.fd;
           expect(fsSync.fstatSync(params.fd).mode & 0o777).toBe(mode);
           expect(fsSync.fstatSync(params.fd).isFile()).toBe(true);
@@ -140,7 +141,7 @@ for (const backend of ["javascript", "native", "windows fallback branch"] as con
             : ["path-mismatch"];
           expect(acceptable).toContain((error as FsSafeError).code);
         }
-        expect(verifier).toHaveBeenCalledTimes(1);
+        expect(verifier.mock.calls.filter(([params]) => params.targetPath === target)).toHaveLength(1);
         expect(injected).toBe(true);
         expect(retainedFd).toBeTypeOf("number");
         expect(() => fsSync.fstatSync(retainedFd!)).toThrowError(expect.objectContaining({ code: "EBADF" }));

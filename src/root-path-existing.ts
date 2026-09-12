@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
+import { formatErrorDetail } from "./error-detail.js";
 import { isNotFoundPathError, isPathInside } from "./path.js";
 
 export function rawPathRelativeToCanonicalRoot(
@@ -17,10 +18,14 @@ export function rawPathRelativeToCanonicalRoot(
     prefix += `${prefix.endsWith(path.sep) ? "" : path.sep}${segments[index]}`;
     let canonical: string;
     try {
-      if (options.rejectSymlinks && fs.lstatSync(prefix).isSymbolicLink()) {
+      const isSymlink = fs.lstatSync(prefix).isSymbolicLink();
+      if (options.rejectSymlinks && isSymlink) {
         throw new FsSafeError("symlink", "symlink path component not allowed");
       }
       canonical = fs.realpathSync.native(prefix);
+      if (isSymlink && !isPathInside(rootCanonicalPath, canonical) && !isPathInside(canonical, rootCanonicalPath)) {
+        throw new FsSafeError("outside-workspace", `symlink prefix resolves outside the root ancestry: ${formatErrorDetail(candidate)}`);
+      }
     } catch (error) {
       if (error instanceof FsSafeError) throw error;
       continue;

@@ -99,8 +99,9 @@ writes but skips file and parent-directory fsync calls. Create-only and append
 publication behavior, permissions, identity checks, and error codes are unchanged.
 Use it only for reconstructible data: a crash may lose the write or leave the
 previous file. `move` and streaming `openWritable` do not use this option.
-The existing pure-JavaScript Windows writer performs no fsync calls in either
-setting; native Windows writes honor the option. Directory sync remains best-effort.
+Native and pure-JavaScript Windows writers honor the option. Replacement writes
+sync staged content before rename and the final mode through the retained file
+handle. Directory sync remains best-effort.
 
 POSIX modes without read permission, including `0o000` and `0o200`, succeed:
 final verification uses a descriptor retained by the writer rather than reopening

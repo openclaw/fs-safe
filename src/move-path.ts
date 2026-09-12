@@ -3,6 +3,7 @@ import fsSync, { constants as fsConstants } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { guardedRename } from "./guarded-mutation.js";
 import {
@@ -16,7 +17,8 @@ import {
   type EntryIdentity,
 } from "./move-path-cleanup.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
-import { registerTempPathForExit } from "./temp-cleanup.js";
+import { cleanupPinnedFilePath } from "./replace-file-temp-owner.js";
+import { createMoveStageOwner } from "./move-path-stage.js";
 
 export type MovePathPublicationReceipt = Readonly<{
   path: string;
@@ -151,6 +153,7 @@ async function writeAll(handle: FileHandle, buffer: Buffer, bytesRead: number): 
   let offset = 0;
   while (offset < bytesRead) {
     const { bytesWritten } = await handle.write(buffer, offset, bytesRead - offset);
+    if (bytesWritten <= 0) throw new FsSafeError("helper-failed", "move copy made no progress");
     offset += bytesWritten;
   }
 }
@@ -161,8 +164,8 @@ async function copyRegularFilePinned(params: {
   mode: number;
   rejectHardlinks: boolean;
   to: string;
+  onCreated?: (identity: fsSync.BigIntStats) => void;
 }): Promise<EntryIdentity> {
-  let destinationCreated = false;
   let openedIdentity: EntryIdentity;
   let sourceHandle: FileHandle;
   try {
@@ -197,13 +200,16 @@ async function copyRegularFilePinned(params: {
     }
     await assertSourceStillMatches(params.from, openedIdentity);
 
+    const parentGuard = await createAsyncDirectoryGuard(path.dirname(params.to), { bigint: true });
     const destinationHandle = await fs.open(
       params.to,
       fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL,
       modeBits(params.mode) || 0o666,
     );
-    destinationCreated = true;
+    let destinationIdentity: fsSync.BigIntStats | undefined;
     try {
+      destinationIdentity = fsSync.fstatSync(destinationHandle.fd, { bigint: true });
+      params.onCreated?.(destinationIdentity);
       const scratch = Buffer.allocUnsafe(64 * 1024);
       while (true) {
         const { bytesRead } = await sourceHandle.read(scratch, 0, scratch.length, null);
@@ -222,14 +228,14 @@ async function copyRegularFilePinned(params: {
         throw sourceChangedError(params.from);
       }
       await destinationHandle.chmod(modeBits(params.mode));
+    } catch (error) {
+      await cleanupPinnedFilePath({
+        pathname: params.to, handle: destinationHandle, identity: destinationIdentity, parentGuard,
+      });
+      throw error;
     } finally {
       await destinationHandle.close();
     }
-  } catch (error) {
-    if (destinationCreated) {
-      await fs.rm(params.to, { force: true }).catch(() => undefined);
-    }
-    throw error;
   } finally {
     await sourceHandle.close();
   }
@@ -242,6 +248,7 @@ async function copyEntryWithManifest(
   options: {
     sourceHardlinks: "allow" | "reject";
     budget?: { discovered: number };
+    onCreated?: (identity: fsSync.BigIntStats) => void;
   },
   expectedIdentity?: EntryIdentity,
 ): Promise<CopiedEntryManifest> {
@@ -256,6 +263,7 @@ async function copyEntryWithManifest(
     const targetType =
       process.platform === "win32" && fsSync.statSync(from).isDirectory() ? "junction" : undefined;
     await fs.symlink(target, to, targetType);
+    options.onCreated?.(fsSync.lstatSync(to, { bigint: true }));
     // readlink() is path-based; verify the symlink we copied is still the one
     // we inspected before letting the staged destination become visible.
     await assertSourceStillMatches(from, identity);
@@ -264,6 +272,7 @@ async function copyEntryWithManifest(
 
   if (sourceStat.isDirectory()) {
     await fs.mkdir(to, { mode: modeBits(sourceStat.mode) || 0o755 });
+    options.onCreated?.(fsSync.lstatSync(to, { bigint: true }));
     const children: Array<{ name: string; manifest: CopiedEntryManifest }> = [];
     const childNames: string[] = [];
     const directory = await fs.opendir(from);
@@ -276,7 +285,9 @@ async function copyEntryWithManifest(
     for (const child of childNames) {
       children.push({
         name: child,
-        manifest: await copyEntryWithManifest(path.join(from, child), path.join(to, child), options),
+        manifest: await copyEntryWithManifest(path.join(from, child), path.join(to, child), {
+          sourceHardlinks: options.sourceHardlinks, budget: options.budget,
+        }),
       });
     }
     // Directory traversal is path-based in Node. Treat a changed parent as a
@@ -301,6 +312,7 @@ async function copyEntryWithManifest(
     mode: sourceStat.mode,
     rejectHardlinks: options.sourceHardlinks === "reject",
     to,
+    onCreated: options.onCreated,
   });
   return { ...copiedIdentity, kind: "leaf" };
 }
@@ -381,27 +393,27 @@ export async function movePathWithCopyFallback(
   const sourceIdentity = await assertCopyDestinationOutsideSource(sourcePath, targetPath);
   const targetDir = path.dirname(targetPath);
   const staged = path.join(targetDir, `.fs-safe-move-${process.pid}-${randomUUID()}.tmp`);
-  const unregisterStaged = registerTempPathForExit(staged, { recursive: true });
+  const stage = await createMoveStageOwner(staged);
   try {
     const manifest = await copyEntryWithManifest(
       sourcePath,
       staged,
       {
         sourceHardlinks: rejectHardlinks ? "reject" : "allow",
+        onCreated: stage.record,
         ...(rejectHardlinks ? { budget: { discovered: 1 } } : {}),
       },
       sourceIdentity,
     );
     const cleanupState = createCleanupCopiedEntryState(sourcePath, manifest);
-    unregisterStaged.setIdentity(fsSync.lstatSync(staged, { bigint: true }));
     await assertCopyDestinationOutsideSource(sourcePath, targetPath, manifest);
     await guardedRename({
       from: staged,
       to: targetPath,
-      assertBeforeRename,
+      assertBeforeRename: () => { assertBeforeRename(); stage.assertCurrent(); },
       onSourceInspected,
       onRenamed: () => {
-        unregisterStaged();
+        stage.published();
         onRenamed();
       },
     });
@@ -416,20 +428,7 @@ export async function movePathWithCopyFallback(
     }
   } finally {
     if (!destinationPublished) {
-      try {
-        const stagedIdentity = fsSync.lstatSync(staged, { bigint: true });
-        if (!stagedIdentity.isSymbolicLink()) unregisterStaged.setIdentity(stagedIdentity);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-          unregisterStaged();
-        }
-      }
-      try {
-        await fs.rm(staged, { recursive: true, force: true });
-        unregisterStaged();
-      } catch {
-        // Keep the identity-bound exit cleanup registered for a later retry.
-      }
+      await stage.cleanup();
     }
   }
 }

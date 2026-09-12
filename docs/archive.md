@@ -555,8 +555,8 @@ await extractArchive({
 ## `readArchiveEntry`
 
 `readArchiveEntry(archivePath, entryPath, { maxBytes, kind? })` reads one
-regular-file entry into a bounded `Buffer` without extracting a tree. It pins
-and privately stages the archive input, rejects link, directory, and duplicate
+regular-file entry into a bounded `Buffer` without extracting a tree. It reads
+the input through an identity-checked descriptor, rejects link, directory, and duplicate
 entries, verifies ZIP CRC and declared size,
 and throws `ArchiveLimitError` if the requested entry's output exceeds
 `maxBytes`. ZIP output within that cap must match the declared uncompressed
@@ -571,6 +571,8 @@ limits. It does not apply payload budgets to unrequested members. ZIP
 inputs retain the archive subpath's 256 MiB compressed-input ceiling.
 With a native binding it uses the same Rust decoders as extraction, including
 zstd and bzip2 TAR. Without native it retains the JS ZIP/TAR/gzip implementation.
+The JavaScript ZIP reader consumes the admitted buffer directly. Native decoders
+and TAR replay use a private disk snapshot of that buffer.
 
 Requested paths and effective member names use extraction's canonical pre-strip
 identity: backslashes become `/`, and repeated separators and `.` components

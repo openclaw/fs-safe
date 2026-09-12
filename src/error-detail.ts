@@ -1,4 +1,5 @@
 import os from "node:os";
+import path from "node:path";
 
 const UNSAFE_ERROR_DETAIL_CHARACTERS =
   /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/gu;
@@ -11,6 +12,8 @@ export function formatErrorDetail(value: string): string {
 
 export function shortPath(value: string): string {
   const home = os.homedir();
-  const shortened = value.startsWith(home) ? `~${value.slice(home.length)}` : value;
+  const prefix = home.endsWith(path.sep) ? home : `${home}${path.sep}`;
+  const shortened = value === home ? "~"
+    : value.startsWith(prefix) ? `~${path.sep}${value.slice(prefix.length)}` : value;
   return formatErrorDetail(shortened);
 }
