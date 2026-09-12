@@ -1,3 +1,5 @@
+import { scheduleTimeout } from "./timing.js";
+
 export type ExtractionDeadline = {
   signal: AbortSignal;
   check: () => void;
@@ -99,16 +101,14 @@ function createExtractionDeadline(timeoutMs: number, label: string): ExtractionD
       dispose: () => undefined,
     };
   }
-  const timeoutId = setTimeout(() => {
+  const cancelTimeout = scheduleTimeout(() => {
     controller.abort(timeoutError);
   }, timeoutMs);
   return {
     signal: controller.signal,
     check,
     ...mutationOwner,
-    dispose: () => {
-      clearTimeout(timeoutId);
-    },
+    dispose: cancelTimeout,
   };
 }
 
