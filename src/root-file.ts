@@ -67,9 +67,16 @@ export function canUseRootFileOpen(ioFs: typeof fs): boolean {
   );
 }
 
+function absoluteRootFilePath(filePath: string): string {
+  if (path.isAbsolute(filePath)) return filePath;
+  const drive = path.parse(filePath).root;
+  const base = drive ? path.resolve(drive) : process.cwd();
+  return `${base}${path.sep}${filePath.slice(drive.length)}`;
+}
+
 export function openRootFileSync(params: OpenRootFileSyncParams): RootFileOpenResult {
   const ioFs = params.ioFs ?? fs;
-  const absolutePath = path.resolve(params.absolutePath);
+  const absolutePath = absoluteRootFilePath(params.absolutePath);
   let resolved: ResolvedRootFilePath | RootFileOpenResult;
   try {
     resolved = mapResolvedRootPath(absolutePath, resolveRootPathSync({
@@ -166,7 +173,7 @@ export async function openRootFile(
   params: OpenRootFileParams,
 ): Promise<RootFileOpenResult> {
   const ioFs = params.ioFs ?? fs;
-  const absolutePath = path.resolve(params.absolutePath);
+  const absolutePath = absoluteRootFilePath(params.absolutePath);
   let resolved: ResolvedRootFilePath | RootFileOpenResult;
   try {
     resolved = mapResolvedRootPath(absolutePath, await resolveRootPath({
