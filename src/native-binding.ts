@@ -144,5 +144,5 @@ export interface NativeBinding {
     targetRootFd: number,
     targetRelPath: string,
   ): void;
-  sha256File(fd: number): Promise<NativeFileHash>;
+  sha256File(fd: number, maxBytes?: number, signal?: AbortSignal): Promise<NativeFileHash>;
 }

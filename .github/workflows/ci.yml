@@ -153,6 +153,11 @@ jobs:
       - name: Test native mode off
         run: node scripts/native-mode-smoke.mjs off
 
+      - name: Test bounded hashing with required native binding
+        env:
+          FS_SAFE_NATIVE_MODE: require
+        run: pnpm test test/file-hash-options.test.ts
+
       - name: Prove sidecar contention with required native binding
         run: node scripts/sidecar-contention-proof.mjs require
 
@@ -205,6 +210,7 @@ jobs:
             node scripts/native-mode-smoke.mjs auto
             node scripts/native-mode-smoke.mjs require
             node scripts/native-mode-smoke.mjs off
+            FS_SAFE_NATIVE_MODE=require pnpm test test/file-hash-options.test.ts
             node scripts/sidecar-contention-proof.mjs require
             FS_SAFE_NATIVE_MODE=require pnpm test test/root-create-only-preflight.test.ts test/sidecar-lock-root-admission.test.ts test/sidecar-lock-root-ancestry.test.ts test/sidecar-lock-root-budget.test.ts test/sidecar-lock-root-resolver.test.ts test/sidecar-lock-root-unlink.test.ts test/sidecar-lock-unlink-siblings.test.ts test/file-lock-sync-stale.test.ts test/file-lock-sync-release.test.ts
             FS_SAFE_PAX_REQUIRE_NATIVE=1 pnpm test test/native-owned-tree.test.ts test/native-write-containment.test.ts test/native-staging-regression.test.ts test/staged-file.test.ts test/staged-file-failures.test.ts test/native-archive-equivalence.test.ts test/native-publish-equivalence.test.ts test/archive-unified.test.ts test/archive-wasm-abi.test.ts test/archive-pax.test.ts test/archive-pax-security.test.ts test/archive-pax-compressed.test.ts test/archive-tar-strip.test.ts test/archive-tar-framing.test.ts test/archive-tar-framing-compressed.test.ts test/archive-gzip-integrity.test.ts test/archive-gzip-container.test.ts

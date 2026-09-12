@@ -25,5 +25,6 @@ export {
 export {
   sha256File,
   type Sha256FileInput,
+  type Sha256FileOptions,
   type Sha256FileResult,
 } from "./file-hash.js";

@@ -59,7 +59,11 @@ const hashScript = `
     await assert.rejects(sha256File('fixture.txt'), {code:'helper-unavailable'});
     console.log('helper-unavailable');
   } else {
-    const result=await sha256File('fixture.txt');
+    const result=await sha256File('fixture.txt', {maxBytes:3, signal:new AbortController().signal});
+    assert.equal(result.bytes,3);
+    await assert.rejects(sha256File('fixture.txt', {maxBytes:2}), {code:'too-large'});
+    const reason=new Error('cancelled consumer hash');
+    await assert.rejects(sha256File('fixture.txt', {signal:AbortSignal.abort(reason)}), error=>error===reason);
     assert.equal(result.digest,'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
     console.log(result.digest);
   }
