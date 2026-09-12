@@ -1,7 +1,6 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
-import { sameFileIdentity } from "./file-identity.js";
 import { isNotFoundPathError, isPathInside } from "./path.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { hardlinkedPathNotAllowedError, outsideWorkspaceError } from "./root-errors.js";
@@ -24,9 +23,7 @@ export async function inheritWriteTargetMode(params: {
     const handle = await fs.open(params.targetPath, resolveReadOpenFlags());
     try {
       // Bind admission to the inode whose metadata is inherited.
-      if (!sameFileIdentity(fsSync.fstatSync(handle.fd, { bigint: true }), existing)) {
-        throw new FsSafeError("path-mismatch", "write target changed during mode inheritance");
-      }
+      await inspectFileIdentity(() => fsSync.fstatSync(handle.fd, { bigint: true }), existing);
     } finally {
       await handle.close().catch(() => undefined);
     }
