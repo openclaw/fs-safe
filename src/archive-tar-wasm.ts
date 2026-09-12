@@ -38,6 +38,8 @@ const types = new Map([
   [54, "FIFO"], [55, "ContiguousFile"], [68, "GNUDumpDir"],
 ]);
 
+const utf8Decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+
 function parserError(message: string): Error {
   const mapped = classifyArchiveParserError(message);
   if (mapped) return mapped;
@@ -66,7 +68,7 @@ export class TarParserStream extends Transform {
   }
   private text(): string {
     const abi = this.abi!;
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(this.bytes(abi.text_ptr(), abi.text_len()));
+    return utf8Decoder.decode(this.bytes(abi.text_ptr(), abi.text_len()));
   }
   override _transform(chunk: Buffer, _encoding: BufferEncoding, callback: TransformCallback): void {
     try {

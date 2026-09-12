@@ -825,6 +825,7 @@ async function resolveGuardedWritePathInRoot(
 ): Promise<GuardedWritePath> {
   const resolvedPath = await resolvePathInRoot(root, params.relativePath, {
     aliasErrorCode: "path-alias",
+    rejectAmbiguousParents: true,
     allowFinalSymlink: params.allowFinalSymlink,
   });
   await assertMutationNotDenied(
