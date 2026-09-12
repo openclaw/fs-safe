@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Speed up POSIX containment checks with trailing root separators and filename helpers while preserving traversal rejection, Unicode handling, reserved names, and collision-resistant install names.
+
 ## 0.9.0 - 2026-09-11
 
 **Highlights:** Faster bulk extraction and configurable durability, with Windows filesystem fixes and reliable mixed-version lock cleanup.

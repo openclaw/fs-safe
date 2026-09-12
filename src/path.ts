@@ -72,7 +72,9 @@ export function isPathInside(root: string, target: string): boolean {
     target.charCodeAt(0) === POSIX_SEPARATOR_CHAR_CODE &&
     !target.includes("/..") &&
     (target === root ||
-      (target.startsWith(root) && target.charCodeAt(root.length) === POSIX_SEPARATOR_CHAR_CODE))
+      (target.startsWith(root) &&
+        (root.charCodeAt(root.length - 1) === POSIX_SEPARATOR_CHAR_CODE ||
+          target.charCodeAt(root.length) === POSIX_SEPARATOR_CHAR_CODE)))
   ) {
     return true;
   }
