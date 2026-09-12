@@ -15,6 +15,7 @@
 - Batch JavaScript SHA-256 reads for larger files in bounded buffers up to 256 KiB, reducing asynchronous filesystem calls while preserving descriptor ownership and offsets.
 - Read durable queue entries through the shared bounded buffer, using the admitted file size to reduce filesystem calls and chunk copies while retaining exact identity and byte-limit checks.
 - Preserve recreated temporary paths when an exit-cleanup lookup observed the original name missing; absence no longer authorizes a forced removal.
+- Pin Root directory identities as bigint values, reject indistinguishable numeric inode replacements, and fail closed after bounded retries when Windows root identity remains unknown.
 
 - Speed up POSIX containment checks with trailing root separators and filename helpers while preserving traversal rejection, Unicode handling, reserved names, and collision-resistant install names.
 - Bound speculative read allocations for large or exhausted files, and accelerate synchronous bounded reads of regular files up to 16 MiB without extra chunk copies; retain one-read async performance through the default Root byte budget.
