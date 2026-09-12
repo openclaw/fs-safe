@@ -66,7 +66,7 @@ function windowsPrincipalQueryCommand(principals: string[]): string {
 
 function parsePrincipalSidRows(value: unknown): Record<string, string> {
   const rows = Array.isArray(value) ? value : value ? [value] : [];
-  const result: Record<string, string> = {};
+  const result: Record<string, string> = Object.create(null);
   for (const row of rows) {
     if (!row || typeof row !== "object") {
       continue;
@@ -90,7 +90,9 @@ export async function resolveWindowsPrincipalSids(params: {
   const known = Object.fromEntries(
     Object.entries(params.known ?? {}).map(([name, sid]) => [name.toLowerCase(), normalizeSid(sid)]),
   );
-  const unresolved = principals.filter((principal) => !known[principal.toLowerCase()]);
+  const unresolved = principals.filter((principal) =>
+    !Object.hasOwn(known, principal.toLowerCase()) || !known[principal.toLowerCase()],
+  );
   if (unresolved.length === 0) {
     return known;
   }
@@ -106,7 +108,9 @@ export async function resolveWindowsPrincipalSids(params: {
     encodePowerShellCommand(windowsPrincipalQueryCommand(unresolved)),
   ]);
   const resolved = { ...known, ...parsePrincipalSidRows(JSON.parse(stdout.trim())) };
-  if (principals.some((principal) => !resolved[principal.toLowerCase()])) {
+  if (principals.some((principal) =>
+    !Object.hasOwn(resolved, principal.toLowerCase()) || !resolved[principal.toLowerCase()],
+  )) {
     throw new Error("Windows ACL principal translation returned incomplete SID data");
   }
   return resolved;

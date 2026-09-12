@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Resolve Windows ACL principal names such as `constructor` and `__proto__` as real dictionary keys, without skipping SID lookup or dropping translated entries.
 - Reduce directory-walk overhead by sharing synchronous entry classification and reusing each joined path, avoiding an extra promise per async entry.
 - Skip invalid delivered-marker names during durable queue batch loading, preserving malformed files while continuing to load valid pending entries.
 - Forward archive deadlines through a separate abort signal for each native pass, so completed inspection cannot mask cancellation of extraction.
