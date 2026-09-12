@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Report failed parent-directory checks after JavaScript fallback moves and removals, including moved source parents, instead of silently reporting success.
+
 - Resolve Windows ACL principal names such as `constructor` and `__proto__` as real dictionary keys, without skipping SID lookup or dropping translated entries.
 - Reduce directory-walk overhead by sharing synchronous entry classification and reusing each joined path, avoiding an extra promise per async entry.
 - Skip invalid delivered-marker names during durable queue batch loading, preserving malformed files while continuing to load valid pending entries.
