@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Speed up POSIX containment checks with trailing root separators and filename helpers while preserving traversal rejection, Unicode handling, reserved names, and collision-resistant install names.
 - Bound speculative read allocations for large or exhausted files, and accelerate synchronous bounded reads of regular files up to 1 MiB without extra chunk copies.
 
 ## 0.9.0 - 2026-09-11
