@@ -26,7 +26,7 @@ function isTrashDestinationCollision(error: unknown): boolean {
 }
 
 function isSameOrChildPath(candidate: string, parent: string): boolean {
-  return candidate === parent || candidate.startsWith(`${parent}${path.sep}`);
+  return candidate === parent || candidate.startsWith(parent.endsWith(path.sep) ? parent : `${parent}${path.sep}`);
 }
 
 function resolveAllowedTrashRoots(allowedRoots?: Iterable<string>): string[] {
@@ -133,7 +133,7 @@ function resolveContainedPath(root: string, leaf: string): string {
 }
 
 function reserveTrashDestination(trashDir: string, base: string, timestamp: number): string {
-  const containerPrefix = resolveContainedPath(trashDir, `${base}-${timestamp}-`);
+  const containerPrefix = resolveContainedPath(trashDir, `.fs-safe-trash-${timestamp}-`);
   const container = fs.mkdtempSync(containerPrefix);
   const resolvedContainer = path.resolve(container);
   const resolvedTrashDir = path.resolve(trashDir);

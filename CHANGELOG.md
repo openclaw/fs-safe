@@ -18,6 +18,7 @@
 - Add a method-by-method benchmark with callable API coverage checks, native/fallback reports, and separate fixture timing.
 - Keep zero-delay lock retries finite when a large backoff factor overflows, preventing synchronous waits from bypassing retry and timeout budgets.
 - Honor finite timeouts and retry delays above Node's single-timer limit by rearming bounded timers instead of expiring after approximately 1 ms.
+- Allow explicitly authorized filesystem-root descendants in Trash moves and keep reservation-directory names bounded for long source filenames.
 
 ## 0.9.0 - 2026-09-11
 
