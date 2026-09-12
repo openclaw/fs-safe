@@ -199,7 +199,7 @@ import { sha256File } from "@openclaw/fs-safe/durability";
 const snapshot = await open(stagedArchive, "r");
 try {
   const before = await snapshot.stat();
-  const hash = await sha256File(snapshot);
+  const hash = await sha256File(snapshot, { maxBytes: before.size });
   if (hash.bytes !== before.size || hash.digest !== manifest.sha256) {
     throw new Error("staged backup does not match its manifest");
   }
@@ -209,6 +209,21 @@ try {
 ```
 
 The result is `{ bytes, digest }`, where `digest` is lowercase hexadecimal.
+The optional `Sha256FileOptions` argument supports `maxBytes` and `signal`.
+`maxBytes` accepts a non-negative safe integer (including zero), or
+`Infinity` for no limit, which is also the default. Oversized files reject with
+`FsSafeError("too-large")`; reads stay bounded to at most `maxBytes + 1` bytes,
+even if the file grows after its initial size check. Hashing never silently
+truncates to the limit.
+
+Pass `signal` to cancel. A pre-aborted signal rejects before file I/O or native
+loading. In-flight cancellation is cooperative between reads and rejects with
+the signal's original reason only after the pending read or native task stops.
+Callers may close their handle after awaiting rejection; do not close it while
+the operation is pending. A signal can be shared by successive or concurrent
+hashes. Neither mode provides a snapshot of concurrently modified contents;
+callers requiring stable content must also fence identity and metadata.
+
 The handle overload never closes the caller's descriptor and uses positioned
 reads, so it does not alter the descriptor's current offset. The path overload
 rejects symbolic links and non-regular files, compares lossless bigint identities
@@ -226,7 +241,7 @@ descriptor inspection rather than waiting for a writer.
 When the optional binding is active, hashing runs as an async native task and
 does not occupy the JavaScript event loop with digest updates. With native mode
 `off`, or in `auto` when no binding loads, the fallback performs asynchronous
-positioned reads in 64 KiB chunks but updates Node's `Hash` on the JavaScript
+positioned reads in chunks of up to 256 KiB but updates Node's `Hash` on the JavaScript
 thread. Both paths stream constant-size buffers rather than loading the file
 into memory. Native mode `require` keeps its usual fail-closed loader semantics.
 

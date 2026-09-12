@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Give the full documentation-build smoke test a bounded longer runtime so slow Windows runners do not hit the default unit-test deadline.
+- Add byte limits and cooperative cancellation to `sha256File`, preserving descriptor ownership and waiting for native work to stop before rejecting.
 
 - Report failed parent-directory checks after JavaScript fallback moves and removals, including moved source parents, instead of silently reporting success.
 
