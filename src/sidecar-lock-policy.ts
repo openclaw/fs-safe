@@ -37,7 +37,9 @@ export function computeSidecarLockDelayMs(retry: SidecarLockRetryOptions, attemp
   const minTimeout = retry.minTimeout ?? 50;
   const maxTimeout = retry.maxTimeout ?? 1000;
   const factor = retry.factor ?? 1;
-  const base = Math.min(maxTimeout, Math.max(minTimeout, minTimeout * factor ** attempt));
+  // Zero times an overflowing power is NaN, which makes Atomics.wait unbounded.
+  const scaled = minTimeout === 0 ? 0 : minTimeout * factor ** attempt;
+  const base = Math.min(maxTimeout, Math.max(minTimeout, scaled));
   const jitter = retry.randomize ? 1 + Math.random() : 1;
   return Math.min(maxTimeout, Math.round(base * jitter));
 }
