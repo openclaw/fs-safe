@@ -9,6 +9,7 @@
 - Honor Root durability defaults and per-call overrides in the Windows JavaScript write/create fallback, and preserve unowned staging replacements when a write or sync fails.
 - Preserve Linux native directory-only open flags so non-directories are rejected by the kernel before FIFO blocking or truncation, while removing the redundant post-open stat.
 - Close publication descriptors when initial inspection fails, and relinquish descriptor numbers before potentially failing closes so cleanup cannot close a reused descriptor.
+- Require a verified descriptor identity before inheriting an existing write target's mode, including bounded reinspection of transient unknown Windows identities.
 - Expand leading home-directory prefixes before resolving parent segments, so `~/../file` resolves against the home directory's parent; keep tildes elsewhere in a relative path literal.
 - Shorten only the home directory and its descendants in error messages, preserving sibling paths that share the same string prefix.
 - Accelerate ZIP integrity checks with Node's native CRC32 on Node 22.2 and newer, retaining checksum validation and compatibility with earlier Node 22 versions.
