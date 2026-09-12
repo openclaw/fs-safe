@@ -103,7 +103,7 @@ describe("docs site navigation", () => {
 
   it("builds the real docs with sidebar, section, and pager links for repaired pages and staging", () => {
     const { root, output } = siteFixture();
-    const result = spawnSync(process.execPath, [builder], { cwd: root, encoding: "utf8" });
+    const result = spawnSync(process.execPath, [builder], { cwd: root, encoding: "utf8", timeout: 20_000 });
     expect(result.error).toBeUndefined();
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("built docs site:");
@@ -124,5 +124,5 @@ describe("docs site navigation", () => {
       expect(html).toContain(`<a class="page-nav-next" href="${next}.html">`);
       expect(html).not.toContain('href="pinned-open.html"');
     }
-  });
+  }, 30_000);
 });

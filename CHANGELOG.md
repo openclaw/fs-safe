@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Give the full documentation-build smoke test a bounded longer runtime so slow Windows runners do not hit the default unit-test deadline.
+
 - Report failed parent-directory checks after JavaScript fallback moves and removals, including moved source parents, instead of silently reporting success.
 
 - Resolve Windows ACL principal names such as `constructor` and `__proto__` as real dictionary keys, without skipping SID lookup or dropping translated entries.
