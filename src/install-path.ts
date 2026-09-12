@@ -23,13 +23,8 @@ export function safePathSegmentHashed(input: string): string {
   const normalized = base.length > 0 ? base : "skill";
   const safe = normalized === "." || normalized === ".." ? "skill" : normalized;
 
-  const hash = createHash("sha256").update(trimmed).digest("hex").slice(0, 10);
-
-  if (safe !== trimmed) {
-    const prefix = safe.length > 50 ? safe.slice(0, 50) : safe;
-    return `${prefix}-${hash}`;
-  }
-  if (safe.length > 60) {
+  if (safe !== trimmed || safe.length > 60) {
+    const hash = createHash("sha256").update(trimmed).digest("hex").slice(0, 10);
     return `${safe.slice(0, 50)}-${hash}`;
   }
   return safe;
