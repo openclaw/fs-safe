@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Speed up POSIX containment checks with trailing root separators and filename helpers while preserving traversal rejection, Unicode handling, reserved names, and collision-resistant install names.
 - Add a method-by-method benchmark with callable API coverage checks, native/fallback reports, and separate fixture timing.
 
 ## 0.9.0 - 2026-09-11

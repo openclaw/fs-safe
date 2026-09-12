@@ -40,7 +40,9 @@ pnpm benchmark:methods --mode off --iterations 1 --samples 1 --warmup 0
 Use `--filter readFileDescriptorBounded` to repeat one family. Filtered reports
 are marked explicitly and do not imply all cases ran. `--dist /absolute/dist`
 lets the same harness measure a saved build; preserve the WASM asset alongside
-JavaScript. Reports identify the JavaScript/WASM build by a content hash and
+JavaScript and keep the output directory named `dist` (for example,
+`/snapshot/baseline/dist`) for the parser's package-relative asset lookup.
+Reports identify the JavaScript/WASM build by a content hash and
 record a separate SHA-256 for the actual loaded native addon. They also record
 the harness checkout revision and a hash of the actual benchmark code, package
 manifest, and lockfile (including uncommitted edits), Node version, platform, CPU, requested native
