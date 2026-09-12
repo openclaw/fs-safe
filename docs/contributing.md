@@ -68,6 +68,13 @@ pnpm check
 This runs the filesystem boundary checks, build, tests, and package
 tarball/import validation.
 
+### Method benchmarks
+
+`pnpm benchmark:methods` measures the callable library surface against synthetic
+fixtures and fails on uncovered exports or returned methods. See the
+[benchmark guide](https://github.com/openclaw/fs-safe/tree/main/benchmarks) for native/fallback runs, per-call
+timings, exclusions, and comparison methodology. Run `pnpm build` first.
+
 ### Real TAR producers
 
 After installing the freshly packed root (and optionally its freshly built host

@@ -64,6 +64,10 @@ jobs:
       - name: Check JavaScript fallback
         run: pnpm check
 
+      - name: Smoke method benchmarks with JavaScript fallback
+        if: matrix.node == 24
+        run: pnpm benchmark:methods --mode off --iterations 1 --samples 1 --warmup 0
+
       - name: Prove archive device admission and secret reads
         if: matrix.node == 24
         run: node scripts/device-path-proof.mjs off
@@ -130,6 +134,9 @@ jobs:
 
       - name: Build and stage host binding
         run: pnpm native:build
+
+      - name: Smoke method benchmarks with native binding
+        run: pnpm benchmark:methods --mode require --iterations 1 --samples 1 --warmup 0
 
       - name: Prove archive device admission and secret reads with native binding
         run: node scripts/device-path-proof.mjs require
