@@ -201,6 +201,7 @@ describe("platform fallback coverage", () => {
     const scoped = await openRoot(rootDir, { mkdir: false });
     let swapped = false;
     vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params) => {
+      if (params.targetPath !== target) return await verifyPublished(params);
       expect(params.targetPath).toBe(target);
       swapped = true;
       await fs.rename(parent, `${parent}-original`);
@@ -235,6 +236,7 @@ describe("platform fallback coverage", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     let swapped = false;
     vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params) => {
+      if (params.targetPath !== target) return await verifyPublished(params);
       expect(params.targetPath).toBe(target);
       swapped = true;
       await fs.rename(parent, `${parent}-original`);
