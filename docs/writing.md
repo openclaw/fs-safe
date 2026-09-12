@@ -54,6 +54,10 @@ Post-publication verification can still reject after a complete replacement has
 been committed. Rejection does not promise that a successful rename was rolled
 back; the published file or a raced replacement may remain at the destination.
 
+Failed-write cleanup compares exact parent and file identities, including large
+Windows file indexes. Replaced paths and paths whose ownership cannot be verified
+are preserved.
+
 ## Denying mutations
 
 All mutation verbs accept `denyMutations?: DenyMutationPolicy`, either as a root default or per-call option:

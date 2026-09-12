@@ -157,7 +157,6 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
   const exactRoot = typeof params.rootIdentity?.dev === "bigint" && typeof params.rootIdentity.ino === "bigint"
     ? { dev: params.rootIdentity.dev, ino: params.rootIdentity.ino } : undefined;
   if (exactRoot) await inspectDirectoryIdentity(params.rootPath, exactRoot);
-  const guardOptions = { bigint: exactRoot !== undefined };
   let parentPath = params.relativeParentPath
     ? path.join(params.rootPath, ...params.relativeParentPath.split("/"))
     : params.rootPath;
@@ -174,8 +173,8 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
     });
   }
   const parentGuard = params.mkdir
-    ? await createAsyncDirectoryGuard(parentPath, guardOptions)
-    : await createNearestExistingDirectoryGuard(params.rootPath, parentPath, guardOptions);
+    ? await createAsyncDirectoryGuard(parentPath, { bigint: true })
+    : await createNearestExistingDirectoryGuard(params.rootPath, parentPath, { bigint: true });
   const targetPath = path.join(parentPath, params.basename);
   if (params.overwrite === false) {
     const handle = await withAsyncDirectoryGuards(
