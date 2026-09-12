@@ -90,6 +90,26 @@ describe("bounded read allocation", () => {
     }
   });
 
+  it.each(["handle", "sync"] as const)("does not treat later short reads as EOF for zero-size virtual files (%s)", async (reader) => {
+    const filePath = await fixture("abcdef");
+    const handle = await fs.open(filePath, "r");
+    const stat = fsSync.fstatSync(handle.fd);
+    vi.spyOn(fsSync, "fstatSync").mockReturnValue(Object.assign(Object.create(stat), { size: 0 }));
+    const read = handle.read.bind(handle);
+    const readSync = fsSync.readSync;
+    vi.spyOn(handle, "read").mockImplementation((buffer, offset, length, position) =>
+      read(buffer, offset, Math.min(length, 1), position));
+    vi.spyOn(fsSync, "readSync").mockImplementation((fd, buffer, offset, length, position) =>
+      readSync(fd, buffer, offset, Math.min(length, 1), position));
+    try {
+      const result = reader === "handle" ? await readFileHandleBounded(handle, Infinity)
+        : readFileDescriptorBoundedSync(handle.fd, Infinity);
+      expect(result.toString()).toBe("abcdef");
+    } finally {
+      await handle.close();
+    }
+  });
+
   it.each(["handle", "sync"] as const)("reads beyond the initial allocation and enforces an exact large cap (%s)", async (reader) => {
     const content = "y".repeat(32 * 1024 * 1024);
     const filePath = await fixture(content);
