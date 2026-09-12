@@ -25,9 +25,10 @@ export function rawPathRelativeToCanonicalRoot(
   for (let index = 0; index < segments.length; index += 1) {
     prefix += `${prefix.endsWith(path.sep) ? "" : path.sep}${segments[index]}`;
     let canonical: string;
+    let isSymlink = false;
     try {
       const stat = fs.lstatSync(prefix);
-      const isSymlink = stat.isSymbolicLink();
+      isSymlink = stat.isSymbolicLink();
       if (!isSymlink && !stat.isDirectory() && index < segments.length - 1) return undefined;
       traversedSymlink ||= isSymlink;
       canonical = fs.realpathSync.native(prefix);
@@ -37,6 +38,7 @@ export function rawPathRelativeToCanonicalRoot(
       }
     } catch (error) {
       if (error instanceof FsSafeError) throw error;
+      if (isSymlink) return undefined;
       continue;
     }
     if (!isPathInside(rootCanonicalPath, canonical)) continue;
