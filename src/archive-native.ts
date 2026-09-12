@@ -70,12 +70,13 @@ export async function extractNativeArchive(params: {
       destinationRealDir,
       run: async (stagingDir) => {
         params.deadline.check();
+        // N-API retains completed task state on its signal; each pass needs its own.
         const manifest = await params.binding
           .inspectArchiveNative(
             stagedArchive.path,
             params.kind,
             tarLimits,
-            params.deadline.signal,
+            AbortSignal.any([params.deadline.signal]),
           )
           .catch(throwMappedNativeArchiveError);
         params.deadline.check();
@@ -127,7 +128,7 @@ export async function extractNativeArchive(params: {
             directory.fd,
             plan.map((entry) => ({ ...entry, mode: entry.kind === "directory" ? 0o700 : 0o600 })),
             tarLimits,
-            params.deadline.signal,
+            AbortSignal.any([params.deadline.signal]),
           ).catch(throwMappedNativeArchiveError);
         } finally {
           await directory.close().catch(() => undefined);
