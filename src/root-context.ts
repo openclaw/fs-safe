@@ -39,6 +39,8 @@ export function assertValidRootDestinationPath(relativePath: string): void {
 }
 
 let cachedHomePath: { raw: string; real: string } | undefined;
+const POSIX_PARENT_COMPONENT = /(?:^|\/)\.\.(?:\/|$)/;
+const WINDOWS_PARENT_COMPONENT = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
 
 export async function expandRelativePathWithHome(relativePath: string): Promise<string> {
   const rawHome = process.env.HOME || process.env.USERPROFILE || os.homedir();
@@ -151,6 +153,7 @@ export async function resolvePathInRoot(
     rejectUnsafeDeviceReads?: boolean;
     rejectSymlinks?: boolean;
     resolveCanonical?: boolean;
+    rejectAmbiguousParents?: boolean;
   },
 ): Promise<{ rootReal: string; rootWithSep: string; resolved: string }> {
   assertValidRootRelativePath(relativePath);
@@ -167,14 +170,23 @@ export async function resolvePathInRoot(
     ? expanded
     : `${root.rootWithSep}${expanded}`;
   try {
-    const checked = await resolveRootPath({
+    const resolution = {
       absolutePath: rawAbsolutePath,
       rootPath: root.rootReal,
       rootCanonicalPath: root.rootReal,
       boundaryLabel: "root",
       policy: options?.allowFinalSymlink ? ROOT_PATH_ALIAS_POLICIES.unlinkTarget : undefined,
       rejectSymlinks: options?.rejectSymlinks,
-    });
+    };
+    const checked = await resolveRootPath(resolution);
+    const parentComponent = process.platform === "win32" ? WINDOWS_PARENT_COMPONENT : POSIX_PARENT_COMPONENT;
+    if (options?.rejectAmbiguousParents && parentComponent.test(expanded) &&
+      path.relative(checked.canonicalPath, resolved) !== "") {
+      const normalized = await resolveRootPath({ ...resolution, absolutePath: resolved });
+      if (path.relative(checked.canonicalPath, normalized.canonicalPath) !== "") {
+        throw new FsSafeError("path-alias", "parent traversal resolves differently through a symlink");
+      }
+    }
     if (options?.resolveCanonical) resolved = checked.canonicalPath;
   } catch (error) {
     if (error instanceof FsSafeError && error.code === "symlink") {

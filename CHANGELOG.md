@@ -20,6 +20,7 @@
 - Speed up POSIX containment checks with trailing root separators and filename helpers while preserving traversal rejection, Unicode handling, reserved names, and collision-resistant install names.
 - Bound speculative read allocations for large or exhausted files, and accelerate synchronous bounded reads of regular files up to 16 MiB without extra chunk copies; retain one-read async performance through the default Root byte budget.
 - Read the checked canonical Root path after symlink/parent traversal, preserve raw components in absolute reads, and resume alias inspection when parent components cancel a missing prefix.
+- Reject ambiguous symlink/parent combinations in Root mutations instead of silently writing to the separately normalized target.
 - Preserve raw symlink and parent components in `openRootFile` and `openRootFileSync`, so validation cannot normalize away a rejected link or open a different in-root file.
 - Add a method-by-method benchmark with callable API coverage checks, native/fallback reports, and separate fixture timing.
 - Report the resolved target's size when Root walking follows a symlink, so size filters and returned entry metadata describe the same object.

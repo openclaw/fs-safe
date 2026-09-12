@@ -38,6 +38,12 @@ await fs.mkdir("snapshots/2026/05");
 Private sibling temporary names are independent of the destination basename,
 so staging does not add a suffix to an otherwise valid long filename.
 
+Write paths reject `path-alias` when symlinks and parent components select a
+different target before and after lexical normalization, such as `link/../file`
+where `link` points into a deeper directory. This avoids silently modifying the
+wrong file. Resolve an intended alias explicitly with `Root.resolve()` before
+passing its canonical path to a mutation.
+
 A failure before the final rename leaves the destination at its previous
 contents. A successful rename publishes the complete replacement. This
 old-or-new guarantee does not apply to `append()` or `openWritable()`, which
