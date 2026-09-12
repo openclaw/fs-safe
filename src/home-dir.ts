@@ -2,6 +2,11 @@ import os from "node:os";
 import path from "node:path";
 import { normalizeOptionalString } from "./string-coerce.js";
 
+function hasHomePrefix(input: string): boolean {
+  return input === "~" || input.startsWith("~/") ||
+    (path.sep === "\\" && input.startsWith("~\\"));
+}
+
 function normalize(value: string | undefined): string | undefined {
   const trimmed = normalizeOptionalString(value);
   if (!trimmed) {
@@ -26,8 +31,7 @@ function resolveRawHomeDir(env: NodeJS.ProcessEnv, homedir: () => string): strin
   if (!explicitHome) {
     return resolveRawOsHomeDir(env, homedir);
   }
-  const segments = path.normalize(explicitHome).split(path.sep);
-  if (segments[0] !== "~") {
+  if (!hasHomePrefix(explicitHome)) {
     return explicitHome;
   }
   // OPENCLAW_HOME starts with "~"; expand against the os home dir. Fall
@@ -75,8 +79,7 @@ export function expandHomePrefix(
     homedir?: () => string;
   },
 ): string {
-  const segments = path.normalize(input).split(path.sep);
-  if (segments[0] !== "~") {
+  if (!hasHomePrefix(input)) {
     return input;
   }
   const home =
@@ -85,7 +88,8 @@ export function expandHomePrefix(
   if (!home) {
     return input;
   }
-  return path.join(home, ...segments.slice(1));
+  // Expand before normalizing so a following .. traverses the actual home.
+  return path.join(home, input.slice(2));
 }
 
 export function resolveHomeRelativePath(
@@ -98,8 +102,7 @@ export function resolveHomeRelativePath(
   if (!input) {
     return input;
   }
-  const segments = path.normalize(input).split(path.sep)
-  if (segments[0] !== "~") {
+  if (!hasHomePrefix(input)) {
     return path.resolve(input);
   }
   const expanded = expandHomePrefix(input, {
