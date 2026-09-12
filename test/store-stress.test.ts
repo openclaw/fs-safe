@@ -4,6 +4,7 @@ import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { fileStore, fileStoreSync } from "../src/file-store.js";
+import { FsSafeError } from "../src/errors.js";
 import {
   ensureJsonDurableQueueDirs,
   readJsonDurableQueueEntry,
@@ -62,10 +63,20 @@ describe("store stress matrix", () => {
         await store.writeJson("state.json", { index, payload: payloadFor(index) });
       });
       const reads = Array.from({ length: 48 }, async () => {
-        const value = await store.readJson<{ index: number; payload: string }>("state.json");
+        let value: { index: number; payload: string };
+        try {
+          value = await store.readJson<typeof value>("state.json");
+        } catch (error) {
+          // Atomic replacement may invalidate admission; successful reads must be complete.
+          if (error instanceof FsSafeError && error.code === "path-mismatch") return;
+          throw error;
+        }
         expect(value.payload).toBe(payloadFor(value.index));
       });
-      await Promise.all([...writes, ...reads]);
+      const settled = await Promise.allSettled([...writes, ...reads]);
+      for (const result of settled) {
+        if (result.status === "rejected") throw result.reason;
+      }
 
       const final = await store.readJson<{ index: number; payload: string }>("state.json");
       expect(final.payload).toBe(payloadFor(final.index));

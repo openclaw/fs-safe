@@ -79,6 +79,12 @@ receipts remain numeric. Custom `ioFs` adapters must honor `{ bigint: true }` fo
 Windows identities receive one re-inspection without reopening, then fail
 validation if still unknown.
 
+The bounded descriptor helpers cap their initial speculative allocation at
+1 MiB plus the overflow-probe byte, even when a file reports a much larger
+size. Regular files up to that size can return from one read without copying
+chunks; larger files and short reads continue incrementally under the same
+byte limit.
+
 The bounded descriptor helpers start at the descriptor's current offset and
 leave ownership with the caller. They are intended for the second half of a
 safe read: first open and validate the path using the boundary appropriate to
