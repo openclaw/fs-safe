@@ -22,6 +22,7 @@ import {
   type PermissionCheckOptions,
 } from "./permissions.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
+import { scheduleTimeout } from "./timing.js";
 
 export type SecureFileReadOptions = {
   filePath: string;
@@ -234,19 +235,19 @@ async function readHandleWithTimeout(
   if (timeoutMs === undefined || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     return await read();
   }
-  let timeout: NodeJS.Timeout | undefined;
+  let cancelTimeout: (() => void) | undefined;
   try {
     return await Promise.race([
       read(),
       new Promise<never>((_resolve, reject) => {
-        timeout = setTimeout(() => {
+        cancelTimeout = scheduleTimeout(() => {
           void handle.close().catch(() => undefined);
           reject(new FsSafeError("timeout", `secure file read timed out after ${timeoutMs}ms`));
         }, timeoutMs);
       }),
     ]);
   } finally {
-    if (timeout) clearTimeout(timeout);
+    cancelTimeout?.();
   }
 }
 

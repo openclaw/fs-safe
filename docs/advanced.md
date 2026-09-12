@@ -148,7 +148,7 @@ component is followed by another segment, both helpers throw
 | Export | Page | Notes |
 |---|---|---|
 | `createAsyncLock` | – | In-process async lock (separate from cross-process file locks). |
-| `withTimeout` | [timing.md](timing.md) | Wrap a promise with a timeout that raises `FsSafeError("timeout")`. |
+| `withTimeout` | [timing.md](timing.md) | Wrap a promise with a timeout that raises `Error` by default, or an error supplied by `createError`. |
 | `movePathToTrash`, `MovePathToTrashOptions` | – | Best-effort move to the platform trash. |
 
 ## Stability
@@ -158,5 +158,5 @@ Items in this surface can change shape between minor versions if a higher-level 
 ## Related pages
 
 - [Root API](root.md) — built on top of these helpers.
-- [Errors](errors.md) — every helper here surfaces failures as `FsSafeError`.
+- [Errors](errors.md) — shared filesystem error codes; generic timing helpers retain their documented error types.
 - [Security model](security-model.md) — what the underlying boundary checks promise.

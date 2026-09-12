@@ -31,6 +31,7 @@ import {
 } from "./sidecar-lock-reclaim.js";
 import type { SidecarLockAcquireOptions, SidecarLockHandle } from "./sidecar-lock-types.js";
 import { createSuppressedError } from "./suppressed-error.js";
+import { sleep } from "./timing.js";
 
 type SidecarFileHandle = Pick<NativeFileHandle, "fd" | "close" | "stat" | "writeFile">;
 
@@ -148,7 +149,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
         : Math.max(0, options.timeoutMs - elapsed);
     const delay = Math.min(computeSidecarLockDelayMs(retry, attempt), remaining);
     attempt += 1;
-    await new Promise((resolve) => setTimeout(resolve, delay));
+    await sleep(delay);
   };
   // Waiting can fail on the caller's own retry or deadline limits. Classifying
   // a denial as contention must not cost them the original diagnosis, so hand

@@ -22,6 +22,8 @@ function withTimeout<T>(
 
 If `timeoutMs` is `0`, negative, `Infinity`, or `NaN`, the helper is a no-op and simply awaits the original promise.
 
+Finite delays above Node's single-timer limit (2,147,483,647 ms, about 24.9 days) are scheduled in bounded intervals without expiring early. The timer is still cleared if the wrapped promise settles first.
+
 ## Examples
 
 ### Simple ceiling
