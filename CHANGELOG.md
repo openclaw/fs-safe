@@ -4,10 +4,13 @@
 
 - Skip invalid delivered-marker names during durable queue batch loading, preserving malformed files while continuing to load valid pending entries.
 - Forward archive deadlines through a separate abort signal for each native pass, so completed inspection cannot mask cancellation of extraction.
+- Honor Root durability defaults and per-call overrides in the Windows JavaScript write/create fallback, and preserve unowned staging replacements when a write or sync fails.
 - Preserve Linux native directory-only open flags so non-directories are rejected by the kernel before FIFO blocking or truncation, while removing the redundant post-open stat.
 - Close publication descriptors when initial inspection fails, and relinquish descriptor numbers before potentially failing closes so cleanup cannot close a reused descriptor.
 - Expand leading home-directory prefixes before resolving parent segments, so `~/../file` resolves against the home directory's parent; keep tildes elsewhere in a relative path literal.
+- Shorten only the home directory and its descendants in error messages, preserving sibling paths that share the same string prefix.
 - Accelerate ZIP integrity checks with Node's native CRC32 on Node 22.2 and newer, retaining checksum validation and compatibility with earlier Node 22 versions.
+- Read JavaScript ZIP members directly from the admitted in-memory archive, avoiding an unused disk snapshot while preserving byte limits, identity checks, and ZIP integrity validation.
 - Batch JavaScript SHA-256 reads for larger files in bounded buffers up to 256 KiB, reducing asynchronous filesystem calls while preserving descriptor ownership and offsets.
 - Read durable queue entries through the shared bounded buffer, using the admitted file size to reduce filesystem calls and chunk copies while retaining exact identity and byte-limit checks.
 - Preserve recreated temporary paths when an exit-cleanup lookup observed the original name missing; absence no longer authorizes a forced removal.
@@ -15,9 +18,12 @@
 - Speed up POSIX containment checks with trailing root separators and filename helpers while preserving traversal rejection, Unicode handling, reserved names, and collision-resistant install names.
 - Bound speculative read allocations for large or exhausted files, and accelerate synchronous bounded reads of regular files up to 16 MiB without extra chunk copies; retain one-read async performance through the default Root byte budget.
 - Read the checked canonical Root path after symlink/parent traversal, preserve raw components in absolute reads, and resume alias inspection when parent components cancel a missing prefix.
+- Preserve raw symlink and parent components in `openRootFile` and `openRootFileSync`, so validation cannot normalize away a rejected link or open a different in-root file.
 - Add a method-by-method benchmark with callable API coverage checks, native/fallback reports, and separate fixture timing.
 - Keep zero-delay lock retries finite when a large backoff factor overflows, preventing synchronous waits from bypassing retry and timeout budgets.
+- Fence move-fallback staging publication and cleanup to its initially admitted identity, preserve later substituted paths after copy failures, and reject writes that make no progress.
 - Honor finite timeouts and retry delays above Node's single-timer limit by rearming bounded timers instead of expiring after approximately 1 ms.
+- Allow explicitly authorized filesystem-root descendants in Trash moves and keep reservation-directory names bounded for long source filenames.
 
 ## 0.9.0 - 2026-09-11
 

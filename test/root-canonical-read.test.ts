@@ -101,6 +101,34 @@ it("retains the rejection policy for an external symlink before root re-entry", 
   expect(read.buffer.toString("utf8")).toBe("external alias bytes");
 });
 
+it("rejects an outside symlink detour before root re-entry", async () => {
+  const base = await tempRoot("fs-safe-outside-prefix-detour-");
+  const dir = path.join(base, "root"), prefix = path.join(base, "prefix");
+  const outside = path.join(base, "outside", "deep");
+  await fs.mkdir(dir);
+  await fs.mkdir(prefix);
+  await fs.mkdir(outside, { recursive: true });
+  await fs.writeFile(path.join(dir, "value"), "inside bytes");
+  await fs.symlink(outside, path.join(prefix, "alias"), process.platform === "win32" ? "junction" : "dir");
+  const raw = `${prefix}${path.sep}alias${path.sep}..${path.sep}..${path.sep}root${path.sep}value`;
+  const scoped = await root(dir);
+  await expect(scoped.readAbsolute(raw, { symlinks: "follow-within-root" })).rejects.toMatchObject({ code: "outside-workspace" });
+  const params = { rootPath: dir, absolutePath: raw, boundaryLabel: "fixture" };
+  await expect(resolveRootPath(params)).rejects.toMatchObject({ code: "outside-workspace" });
+  expect(() => resolveRootPathSync(params)).toThrowError(expect.objectContaining({ code: "outside-workspace" }));
+});
+
+it("accepts an alias for the trusted root ancestry", async () => {
+  const base = await tempRoot("fs-safe-root-ancestor-alias-");
+  const dir = path.join(base, "root"), alias = path.join(base, "ancestor-alias");
+  await fs.mkdir(dir);
+  await fs.writeFile(path.join(dir, "value"), "inside bytes");
+  await fs.symlink(base, alias, process.platform === "win32" ? "junction" : "dir");
+  const params = { rootPath: dir, absolutePath: path.join(alias, "root", "value"), boundaryLabel: "fixture" };
+  expect((await resolveRootPath(params)).canonicalPath).toBe(path.join(dir, "value"));
+  expect(resolveRootPathSync(params).canonicalPath).toBe(path.join(dir, "value"));
+});
+
 it.each(["async", "sync"])("%s resolution resumes inspection after a missing prefix is canceled", async mode => {
   const { dir } = await fixture();
   const params = { rootPath: dir, absolutePath: `${dir}${path.sep}missing${path.sep}..${path.sep}link${path.sep}..${path.sep}value`, boundaryLabel: "fixture" };
