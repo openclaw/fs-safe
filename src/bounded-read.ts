@@ -4,8 +4,14 @@ import { normalizeMaxBytes } from "./byte-budget.js";
 import { FsSafeError } from "./errors.js";
 
 const READ_CHUNK_BYTES = 64 * 1024;
+const MAX_INITIAL_READ_BYTES = 1024 * 1024;
 
 type ReadableFileHandle = Pick<FileHandle, "read">;
+
+function createInitialBuffer(maxBytes: number, size: number): Buffer {
+  // A size hint can describe a huge sparse file or an already exhausted fd.
+  return Buffer.allocUnsafe(Math.min(maxBytes, size, MAX_INITIAL_READ_BYTES) + 1);
+}
 
 function createScratchBuffer(maxBytes: number): Buffer {
   const initialReadBytes = Number.isFinite(maxBytes)
@@ -48,7 +54,7 @@ async function readBoundedAsync(
   let total = 0;
   const size = observeRegularFileSize?.();
   if (size !== undefined) {
-    const first = Buffer.allocUnsafe(Math.min(maxBytes, size) + 1);
+    const first = createInitialBuffer(maxBytes, size);
     const bytesRead = await readChunk(first, first.length);
     if (bytesRead === 0) return first.subarray(0, 0);
     // Short reads can occur before EOF. Only accept one when a fresh fd size
@@ -119,8 +125,18 @@ export async function readFileDescriptorBounded(fd: number, maxBytes: number): P
 export function readFileDescriptorBoundedSync(fd: number, maxBytes: number): Buffer {
   normalizeMaxBytes(maxBytes);
   const chunks: Buffer[] = [];
-  const scratch = createScratchBuffer(maxBytes);
   let total = 0;
+  const size = regularFileSize(fd);
+  if (size !== undefined) {
+    const first = createInitialBuffer(maxBytes, size);
+    const bytesRead = fs.readSync(fd, first, 0, first.length, null);
+    if (bytesRead === 0) return first.subarray(0, 0);
+    // A short read alone is not EOF, including on regular files.
+    const currentSize = bytesRead < first.length ? regularFileSize(fd) : undefined;
+    if (currentSize !== undefined && bytesRead >= currentSize) return first.subarray(0, bytesRead);
+    total = appendChunk({ chunks, scratch: first, bytesRead, total, maxBytes });
+  }
+  const scratch = createScratchBuffer(maxBytes);
   while (true) {
     const length = nextReadLength(total, maxBytes, scratch.length);
     const bytesRead = fs.readSync(fd, scratch, 0, length, null);

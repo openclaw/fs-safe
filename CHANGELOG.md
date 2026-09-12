@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Bound speculative read allocations for large or exhausted files, and accelerate synchronous bounded reads of regular files up to 1 MiB without extra chunk copies.
+
 ## 0.9.0 - 2026-09-11
 
 **Highlights:** Faster bulk extraction and configurable durability, with Windows filesystem fixes and reliable mixed-version lock cleanup.
