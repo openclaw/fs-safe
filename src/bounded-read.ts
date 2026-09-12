@@ -126,7 +126,8 @@ export function readFileDescriptorBoundedSync(fd: number, maxBytes: number): Buf
   normalizeMaxBytes(maxBytes);
   const chunks: Buffer[] = [];
   let total = 0;
-  const size = regularFileSize(fd);
+  // Small budgets already bound the first allocation without a size lookup.
+  const size = maxBytes <= READ_CHUNK_BYTES ? maxBytes : regularFileSize(fd);
   if (size !== undefined) {
     const first = createInitialBuffer(maxBytes, size);
     const bytesRead = fs.readSync(fd, first, 0, first.length, null);
