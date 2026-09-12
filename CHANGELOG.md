@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Skip invalid delivered-marker names during durable queue batch loading, preserving malformed files while continuing to load valid pending entries.
 - Forward archive deadlines through a separate abort signal for each native pass, so completed inspection cannot mask cancellation of extraction.
 - Preserve Linux native directory-only open flags so non-directories are rejected by the kernel before FIFO blocking or truncation, while removing the redundant post-open stat.
 - Expand leading home-directory prefixes before resolving parent segments, so `~/../file` resolves against the home directory's parent; keep tildes elsewhere in a relative path literal.
