@@ -369,7 +369,9 @@ export class SyncAtomicTempOwner {
       if (sha256Hex(fsModule.readFileSync(publishedFd)) !== expectedHash) {
         throw new FsSafeError("path-mismatch", `Atomic replace published content changed: ${pathname}`);
       }
-      fsModule.closeSync(this.#fd!);
+      const previousFd = this.#fd!;
+      this.#fd = undefined;
+      fsModule.closeSync(previousFd);
       this.#fd = publishedFd;
       this.#identity = identity;
       publishedFd = undefined;
@@ -411,8 +413,10 @@ export class SyncAtomicTempOwner {
     }
     if (cleanupComplete) this.#unregister();
     if (this.#fd !== undefined) {
+      const fd = this.#fd;
+      this.#fd = undefined;
       try {
-        params.fsModule.closeSync(this.#fd);
+        params.fsModule.closeSync(fd);
       } catch (closeError) {
         deferredError = deferredError
           ? new AggregateError([deferredError, closeError], "Atomic temp cleanup and close failed")
