@@ -1,7 +1,7 @@
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { resolveRootPath } from "./root-path.js";
-import type { DirEntry } from "./types.js";
+import type { DirEntry, PathStat } from "./types.js";
 
 export type RootWalkSymlinkPolicy = "skip" | "follow-within-root";
 export type RootWalkLimitBehavior = "truncate" | "throw";
@@ -35,6 +35,7 @@ export type RootWalkOptions = {
 
 type RootWalkCapability = {
   rootReal: string;
+  stat(relativePath: string): Promise<PathStat>;
   list(relativePath: string, options: { withFileTypes: true }): Promise<DirEntry[]>;
 };
 
@@ -154,8 +155,9 @@ export async function* walkRoot(
         if (!resolved.exists) {
           continue;
         }
-        kind = resolved.kind === "directory" ? "directory" : resolved.kind === "file" ? "file" : "other";
-        size = entry.size;
+        const target = await root.stat(path.relative(root.rootReal, resolved.canonicalPath));
+        kind = target.isDirectory ? "directory" : target.isFile ? "file" : "other";
+        size = target.size;
       }
 
       const walkEntry: RootWalkDataEntry = { relativePath: child, kind, size };

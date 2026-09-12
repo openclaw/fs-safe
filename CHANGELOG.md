@@ -21,6 +21,7 @@
 - Bound speculative read allocations for large or exhausted files, and accelerate synchronous bounded reads of regular files up to 16 MiB without extra chunk copies; retain one-read async performance through the default Root byte budget.
 - Preserve raw symlink and parent components in `openRootFile` and `openRootFileSync`, so validation cannot normalize away a rejected link or open a different in-root file.
 - Add a method-by-method benchmark with callable API coverage checks, native/fallback reports, and separate fixture timing.
+- Report the resolved target's size when Root walking follows a symlink, so size filters and returned entry metadata describe the same object.
 - Keep zero-delay lock retries finite when a large backoff factor overflows, preventing synchronous waits from bypassing retry and timeout budgets.
 - Fence move-fallback staging publication and cleanup to its initially admitted identity, preserve later substituted paths after copy failures, and reject writes that make no progress.
 - Honor finite timeouts and retry delays above Node's single-timer limit by rearming bounded timers instead of expiring after approximately 1 ms.

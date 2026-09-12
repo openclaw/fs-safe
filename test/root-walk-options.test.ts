@@ -116,6 +116,7 @@ it("reports failed directory subtrees and continues when requested", async () =>
   ) => Promise<DirEntry[]>;
   const walkingRoot = {
     rootReal: capability.rootReal,
+    stat: capability.stat.bind(capability),
     async list(relativePath: string, options: { withFileTypes: true }): Promise<DirEntry[]> {
       if (relativePath === "broken") {
         throw Object.assign(new Error("unreadable subtree"), { code: "EACCES" });
@@ -156,6 +157,7 @@ it("observes an abort that occurs while an empty directory is being listed", asy
   const capability = await root(directory);
   const walkingRoot = {
     rootReal: capability.rootReal,
+    stat: capability.stat.bind(capability),
     async list(): Promise<DirEntry[]> {
       controller.abort();
       return [];
