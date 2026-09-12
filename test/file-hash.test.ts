@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -41,6 +42,26 @@ afterEach(async () => {
 });
 
 describe("sha256File", () => {
+  it("batches large fallback reads in bounded buffers", async () => {
+    const directory = await tempRoot();
+    const filePath = path.join(directory, "large.bin");
+    const payload = Buffer.alloc(1024 * 1024, "x");
+    await fs.writeFile(filePath, payload);
+    configureFsSafeNative({ mode: "off" });
+    const handle = await fs.open(filePath, "r");
+    const read = vi.spyOn(handle, "read");
+    try {
+      await expect(sha256File(handle)).resolves.toEqual({
+        bytes: payload.length,
+        digest: createHash("sha256").update(payload).digest("hex"),
+      });
+      expect(read.mock.calls.length).toBeLessThanOrEqual(5);
+      for (const call of read.mock.calls) expect(call[2]).toBeLessThanOrEqual(256 * 1024);
+    } finally {
+      await handle.close();
+    }
+  });
+
   it("streams a path through the JavaScript fallback", async () => {
     const root = await tempRoot();
     const filePath = path.join(root, "payload.bin");
