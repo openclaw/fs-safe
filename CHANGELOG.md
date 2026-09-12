@@ -15,6 +15,7 @@
 - Speed up POSIX containment checks with trailing root separators and filename helpers while preserving traversal rejection, Unicode handling, reserved names, and collision-resistant install names.
 - Bound speculative read allocations for large or exhausted files, and accelerate synchronous bounded reads of regular files up to 16 MiB without extra chunk copies; retain one-read async performance through the default Root byte budget.
 - Read the checked canonical Root path after symlink/parent traversal, preserve raw components in absolute reads, and resume alias inspection when parent components cancel a missing prefix.
+- Preserve raw filesystem traversal in local-root selection and reads, including home expansion, while retaining final-symlink rejection for `requireFile`.
 - Add a method-by-method benchmark with callable API coverage checks, native/fallback reports, and separate fixture timing.
 - Keep zero-delay lock retries finite when a large backoff factor overflows, preventing synchronous waits from bypassing retry and timeout budgets.
 - Honor finite timeouts and retry delays above Node's single-timer limit by rearming bounded timers instead of expiring after approximately 1 ms.
