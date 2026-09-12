@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Resolve Windows ACL principal names such as `constructor` and `__proto__` as real dictionary keys, without skipping SID lookup or dropping translated entries.
+- Reduce directory-walk overhead by sharing synchronous entry classification and reusing each joined path, avoiding an extra promise per async entry.
 - Skip invalid delivered-marker names during durable queue batch loading, preserving malformed files while continuing to load valid pending entries.
 - Forward archive deadlines through a separate abort signal for each native pass, so completed inspection cannot mask cancellation of extraction.
 - Honor Root durability defaults and per-call overrides in the Windows JavaScript write/create fallback, and preserve unowned staging replacements when a write or sync fails.
@@ -11,13 +12,17 @@
 - Expand leading home-directory prefixes before resolving parent segments, so `~/../file` resolves against the home directory's parent; keep tildes elsewhere in a relative path literal.
 - Shorten only the home directory and its descendants in error messages, preserving sibling paths that share the same string prefix.
 - Accelerate ZIP integrity checks with Node's native CRC32 on Node 22.2 and newer, retaining checksum validation and compatibility with earlier Node 22 versions.
+- Read JavaScript ZIP members directly from the admitted in-memory archive, avoiding an unused disk snapshot while preserving byte limits, identity checks, and ZIP integrity validation.
 - Batch JavaScript SHA-256 reads for larger files in bounded buffers up to 256 KiB, reducing asynchronous filesystem calls while preserving descriptor ownership and offsets.
 - Read durable queue entries through the shared bounded buffer, using the admitted file size to reduce filesystem calls and chunk copies while retaining exact identity and byte-limit checks.
 - Preserve recreated temporary paths when an exit-cleanup lookup observed the original name missing; absence no longer authorizes a forced removal.
+- Pin Root directory identities as bigint values, reject indistinguishable numeric inode replacements, and fail closed after bounded retries when Windows root identity remains unknown.
 
 - Speed up POSIX containment checks with trailing root separators and filename helpers while preserving traversal rejection, Unicode handling, reserved names, and collision-resistant install names.
 - Bound speculative read allocations for large or exhausted files, and accelerate synchronous bounded reads of regular files up to 16 MiB without extra chunk copies; retain one-read async performance through the default Root byte budget.
+- Preserve raw symlink and parent components in `openRootFile` and `openRootFileSync`, so validation cannot normalize away a rejected link or open a different in-root file.
 - Add a method-by-method benchmark with callable API coverage checks, native/fallback reports, and separate fixture timing.
+- Report the resolved target's size when Root walking follows a symlink, so size filters and returned entry metadata describe the same object.
 - Keep zero-delay lock retries finite when a large backoff factor overflows, preventing synchronous waits from bypassing retry and timeout budgets.
 - Fence move-fallback staging publication and cleanup to its initially admitted identity, preserve later substituted paths after copy failures, and reject writes that make no progress.
 - Honor finite timeouts and retry delays above Node's single-timer limit by rearming bounded timers instead of expiring after approximately 1 ms.

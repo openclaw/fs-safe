@@ -91,11 +91,7 @@ async function readStreamBounded(
   return Buffer.concat(chunks, total);
 }
 
-async function stageArchiveInput(archivePath: string): Promise<{
-  path: string;
-  buffer: Buffer;
-  cleanup(): Promise<void>;
-}> {
+async function readArchiveInput(archivePath: string): Promise<Buffer> {
   const resolved = fsSync.realpathSync.native(archivePath);
   const before = await inspectFileIdentity(async () => {
     const stat = fsSync.lstatSync(archivePath, { bigint: true });
@@ -105,9 +101,7 @@ async function stageArchiveInput(archivePath: string): Promise<{
     return stat;
   });
   const handle = await fs.open(resolved, resolveReadOpenFlags());
-  let staged: Awaited<ReturnType<typeof tempFile>> | undefined;
   try {
-    staged = await tempFile({ prefix: "fs-safe-archive-read", fileName: "archive.bin" });
     const opened = await inspectFileIdentity(async () => {
       const stat = fsSync.fstatSync(handle.fd, { bigint: true });
       if (!stat.isFile()) throw new Error("archive changed during validation");
@@ -119,11 +113,8 @@ async function stageArchiveInput(archivePath: string): Promise<{
       return stat;
     }, opened);
 
-    const buffer = await readFileHandleBounded(handle, DEFAULT_MAX_ARCHIVE_BYTES_ZIP);
-    await fs.writeFile(staged.path, buffer, { flag: "wx", mode: 0o600 });
-    return { path: staged.path, buffer, cleanup: staged.cleanup };
+    return await readFileHandleBounded(handle, DEFAULT_MAX_ARCHIVE_BYTES_ZIP);
   } catch (error) {
-    await staged?.cleanup().catch(() => undefined);
     if (error instanceof FsSafeError && error.code === "path-mismatch") {
       throw new FsSafeError("path-mismatch", "archive changed during validation", { cause: error });
     }
@@ -204,12 +195,18 @@ export async function readArchiveEntry(
     throw new Error(`unsupported archive: ${archivePath}`);
   }
   const requestedEntry = normalizedRequestedEntry(entryPath);
-  const staged = await stageArchiveInput(archivePath);
+  const buffer = await readArchiveInput(archivePath);
+  const physicalCount = kind === "zip"
+    ? admitZipBuffer(buffer, resolveExtractLimits())
+    : undefined;
+  const native = getNativeBinding();
+  if (!native) {
+    assertPortableArchiveKind(kind);
+    if (kind === "zip") return await readZipEntry(buffer, requestedEntry, options.maxBytes);
+  }
+  const staged = await tempFile({ prefix: "fs-safe-archive-read", fileName: "archive.bin" });
   try {
-    const physicalCount = kind === "zip"
-      ? admitZipBuffer(staged.buffer, resolveExtractLimits())
-      : undefined;
-    const native = getNativeBinding();
+    await fs.writeFile(staged.path, buffer, { flag: "wx", mode: 0o600 });
     if (native) {
       try {
         const signal = new AbortController().signal;
@@ -265,10 +262,7 @@ export async function readArchiveEntry(
         throw error;
       }
     }
-    assertPortableArchiveKind(kind);
-    return kind === "zip"
-      ? await readZipEntry(staged.buffer, requestedEntry, options.maxBytes)
-      : await readTarEntry(staged.path, requestedEntry, options.maxBytes);
+    return await readTarEntry(staged.path, requestedEntry, options.maxBytes);
   } finally {
     await staged.cleanup();
   }

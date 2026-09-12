@@ -79,16 +79,19 @@ it.each(operations.flatMap(operation => settings.map(setting => ({ operation, ..
 );
 
 it.each(["write", "replace", "create"] as const)("%s reports file sync failure and cleans only the owned new file with a large parent inode", async operation => {
-  const { dir, scoped, target } = await fixture();
+  const { dir, target } = await fixture();
   if (operation === "replace") await fs.writeFile(target, "original");
-  const lstat = fsSync.lstatSync.bind(fsSync);
-  vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
-    const stat = lstat(...args);
-    if (String(args[0]) === dir && typeof stat.ino === "bigint") {
-      return Object.assign(Object.create(stat), { ino: 9007199254740993n });
-    }
-    return stat;
-  });
+  for (const method of ["statSync", "lstatSync"] as const) {
+    const original = fsSync[method].bind(fsSync);
+    vi.spyOn(fsSync, method).mockImplementation((...args) => {
+      const stat = original(...args);
+      if (String(args[0]) === dir && typeof stat.ino === "bigint") {
+        return Object.assign(Object.create(stat), { ino: 9007199254740993n });
+      }
+      return stat;
+    });
+  }
+  const scoped = await root(dir);
   const error = Object.assign(new Error("sync failed"), { code: "EIO" });
   const open = fs.open.bind(fs);
   vi.spyOn(fs, "open").mockImplementation(async (...args) => {

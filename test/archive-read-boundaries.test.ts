@@ -239,12 +239,10 @@ describe("bounded archive reads", () => {
     "closes the selected archive when private staging allocation fails",
     async () => {
       const root = await tempRoot("fs-safe-archive-read-staging-failure-");
-      const archivePath = path.join(root, "fixture.zip");
+      const archivePath = path.join(root, "fixture.tar");
       const privateTmp = path.join(root, "private-tmp");
       await fs.mkdir(privateTmp, { mode: 0o700 });
-      const zip = new JSZip();
-      zip.file("value", "ok");
-      await fs.writeFile(archivePath, await zip.generateAsync({ type: "nodebuffer" }));
+      await fs.writeFile(archivePath, tarFixture([{ path: "value", body: "ok" }]));
       await fs.writeFile(path.join(privateTmp, `fs-safe-${process.getuid!()}`), "synthetic blocker", {
         flag: "wx",
         mode: 0o600,
