@@ -751,7 +751,7 @@ async function readPathInRoot(
     symlinks?: SymlinkPolicy;
   },
 ): Promise<ReadResult> {
-  const relativePath = rootRelativeReadPath(root, params.filePath, { rejectSymlinks: params.symlinks !== "follow-within-root" });
+  const relativePath = rootRelativeReadPath(root, params.filePath);
   return await readFileInRoot(root, {
     relativePath,
     hardlinks: params.hardlinks,

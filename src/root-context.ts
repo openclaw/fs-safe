@@ -12,7 +12,6 @@ import {
   isPathInside,
 } from "./path.js";
 import { ROOT_PATH_ALIAS_POLICIES, resolveRootPath } from "./root-path.js";
-import { rawPathRelativeToCanonicalRoot } from "./root-path-existing.js";
 import { outsideWorkspaceError } from "./root-errors.js";
 import { isDriveRelativePath } from "./safe-path-segment.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
@@ -90,7 +89,7 @@ export async function resolveRootContext(rootDir: string): Promise<RootContext> 
   };
 }
 
-export function rootRelativeReadPath(root: RootContext, filePath: string, options: { rejectSymlinks?: boolean } = {}): string {
+export function rootRelativeReadPath(root: RootContext, filePath: string): string {
   const absoluteInput = path.isAbsolute(filePath);
   if (!absoluteInput) return filePath;
   const raw = process.platform === "win32" ? filePath.replaceAll("/", path.sep) : filePath;
@@ -105,21 +104,7 @@ export function rootRelativeReadPath(root: RootContext, filePath: string, option
       return raw.slice(start);
     }
   }
-  const candidatePath = path.resolve(filePath);
-  let relativeBase = root.rootDir;
-  if (
-    !isPathInside(root.rootDir, candidatePath) &&
-    isPathInside(root.rootReal, candidatePath)
-  ) {
-    // A Root created through an alias has two valid in-root absolute spellings.
-    relativeBase = root.rootReal;
-  }
-  if (isPathInside(relativeBase, candidatePath)) {
-    const relative = rawPathRelativeToCanonicalRoot(raw, root.rootReal, options);
-    if (relative !== undefined) return relative;
-    throw outsideWorkspaceError();
-  }
-  return path.relative(relativeBase, candidatePath);
+  return raw;
 }
 
 export async function assertRootIdentityCurrent(root: RootContext): Promise<void> {
@@ -160,7 +145,7 @@ export async function resolvePathInRoot(
   await assertRootIdentityCurrent(root);
   const expanded = await expandRelativePathWithHome(relativePath);
   let resolved = path.resolve(root.rootWithSep, expanded);
-  if (!isPathInside(root.rootWithSep, resolved)) {
+  if (!options?.resolveCanonical && !isPathInside(root.rootWithSep, resolved)) {
     throw outsideWorkspaceError();
   }
   if (options?.rejectUnsafeDeviceReads === true) {
