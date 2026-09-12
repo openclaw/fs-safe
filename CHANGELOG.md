@@ -17,6 +17,7 @@
 - Bound speculative read allocations for large or exhausted files, and accelerate synchronous bounded reads of regular files up to 16 MiB without extra chunk copies; retain one-read async performance through the default Root byte budget.
 - Add a method-by-method benchmark with callable API coverage checks, native/fallback reports, and separate fixture timing.
 - Keep zero-delay lock retries finite when a large backoff factor overflows, preventing synchronous waits from bypassing retry and timeout budgets.
+- Fence move-fallback staging publication and cleanup to its initially admitted identity, preserve later substituted paths after copy failures, and reject writes that make no progress.
 - Honor finite timeouts and retry delays above Node's single-timer limit by rearming bounded timers instead of expiring after approximately 1 ms.
 - Allow explicitly authorized filesystem-root descendants in Trash moves and keep reservation-directory names bounded for long source filenames.
 

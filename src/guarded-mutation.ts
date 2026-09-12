@@ -110,6 +110,7 @@ export function guardedRenameSync(params: {
 
 export async function guardedRm(params: {
   target: string;
+  assertBeforeMutation?: () => void;
   recursive?: boolean;
   force?: boolean;
   verifyAfter?: boolean;
@@ -118,6 +119,7 @@ export async function guardedRm(params: {
   await withAsyncDirectoryGuards(
     [guard],
     async () => {
+      params.assertBeforeMutation?.();
       await fs.rm(params.target, {
         ...(params.recursive !== undefined ? { recursive: params.recursive } : {}),
         ...(params.force !== undefined ? { force: params.force } : {}),
@@ -129,6 +131,7 @@ export async function guardedRm(params: {
 
 export function guardedRmSync(params: {
   target: string;
+  assertBeforeMutation?: () => void;
   recursive?: boolean;
   force?: boolean;
   verifyAfter?: boolean;
@@ -136,11 +139,13 @@ export function guardedRmSync(params: {
   const guard = createSyncDirectoryGuard(path.dirname(params.target));
   withSyncDirectoryGuards(
     [guard],
-    () =>
+    () => {
+      params.assertBeforeMutation?.();
       fsSync.rmSync(params.target, {
         ...(params.recursive !== undefined ? { recursive: params.recursive } : {}),
         ...(params.force !== undefined ? { force: params.force } : {}),
-      }),
+      });
+    },
     { verifyAfter: params.verifyAfter },
   );
 }

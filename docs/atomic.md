@@ -207,6 +207,13 @@ directory mode. Staged file modes are applied through their still-open handles.
 If descriptor-bound mode application fails, the staged path is removed and the
 move fails before publication. A transient staged-path cleanup failure retains
 an identity-bound process-exit cleanup retry.
+The staging entry's initially admitted identity is checked before publication
+and cleanup; a later substituted entry is preserved. Regular files are admitted
+through their new descriptor. Node provides no creation descriptor for directories
+or symlinks, so their first identity comes from an immediate pathname observation.
+Replacement before that observation remains a best-effort detection gap: use a
+parent protected from concurrent untrusted mutation or OS isolation. A copy write
+that makes no progress rejects instead of looping indefinitely.
 On POSIX, staged directory modes are applied through no-follow directory
 descriptors; on Windows, Node cannot portably open those descriptors and no
 pathname `chmod` fallback is attempted, so directory modes remain subject to
