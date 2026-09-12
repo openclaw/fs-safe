@@ -116,6 +116,11 @@ export function resolveLocalPathFromRootsSync(
       continue;
     }
     if (candidate.exists && options.requireFile === true && candidate.kind !== "file") continue;
+    if (candidate.exists && options.requireFile === true) {
+      try {
+        if (!fsSync.lstatSync(requestedPath).isFile()) continue;
+      } catch { continue; }
+    }
     return { path: candidate.canonicalPath, root: rootReal };
   }
 

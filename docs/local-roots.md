@@ -75,6 +75,8 @@ Filesystem path inputs retain symlinks and parent components until boundary
 resolution, including after home expansion. A followed `link/../file` resolves
 the parent of the link's target; default reads reject the link instead of
 normalizing it away. File URLs retain the URL parser's normal path semantics.
+An existing non-directory component cannot be traversed further, including by
+`..`; the helpers reject that input instead of selecting a different file.
 
 ## `readLocalFileFromRoots(options)`
 

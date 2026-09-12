@@ -78,12 +78,13 @@ it.each(["numeric", "unknown", "changed", "EACCES", "EIO"])("rejects %s canonica
 
 it.each(["EACCES", "EIO"])("does not treat initial directory %s as missing-parent evidence", async (code) => {
   const capability = await root(await tempRoot("sidecar-parent-denial-"));
-  const lockPath = path.join(capability.rootReal, "state.lock");
-  await capability.create("state.lock", "{}");
+  const parent = path.join(capability.rootReal, "parent");
+  const lockPath = path.join(parent, "state.lock");
+  await capability.create("parent/state.lock", "{}");
   const failure = Object.assign(new Error("directory failure"), { code });
   const lstat = fsSync.lstatSync.bind(fsSync), open = vi.spyOn(capability, "open");
   vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
-    if (String(args[0]) === capability.rootReal && typeof args[1] === "object" && args[1]?.bigint) throw failure;
+    if (String(args[0]) === parent && typeof args[1] === "object" && args[1]?.bigint) throw failure;
     return lstat(...args);
   });
   await expect(readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardObservation: "unlinked" })).rejects.toBe(failure);

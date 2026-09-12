@@ -12,9 +12,9 @@ import {
   isPathInside,
 } from "./path.js";
 import { ROOT_PATH_ALIAS_POLICIES, resolveRootPath } from "./root-path.js";
-import { rawPathRelativeToCanonicalRoot } from "./root-path-existing.js";
 import { outsideWorkspaceError } from "./root-errors.js";
 import { isDriveRelativePath } from "./safe-path-segment.js";
+import { inspectFileIdentity } from "./strict-file-identity.js";
 
 export type RootContext = {
   rootDir: string;
@@ -59,14 +59,16 @@ export async function expandRelativePathWithHome(relativePath: string): Promise<
 
 export async function resolveRootContext(rootDir: string): Promise<RootContext> {
   assertNoNulPathInput(rootDir, "root dir contains a NUL byte");
+  const lexicalRoot = path.resolve(rootDir);
   let rootReal: string;
-  let rootIdentity: { dev: number; ino: number };
+  let rootIdentity: { dev: bigint; ino: bigint };
   try {
     rootReal = fs.realpathSync.native(rootDir);
-    const rootStat = fs.statSync(rootReal);
-    if (!rootStat.isDirectory()) {
-      throw new FsSafeError("invalid-path", "root dir is not a directory");
-    }
+    const rootStat = await inspectFileIdentity(() => {
+      const stat = fs.statSync(rootReal, { bigint: true });
+      if (!stat.isDirectory()) throw new FsSafeError("invalid-path", "root dir is not a directory");
+      return stat;
+    });
     rootIdentity = { dev: rootStat.dev, ino: rootStat.ino };
   } catch (err) {
     if (err instanceof FsSafeError) {
@@ -78,14 +80,14 @@ export async function resolveRootContext(rootDir: string): Promise<RootContext> 
     throw err;
   }
   return {
-    rootDir: path.resolve(rootDir),
+    rootDir: lexicalRoot,
     rootIdentity,
     rootReal,
     rootWithSep: ensureTrailingSep(rootReal),
   };
 }
 
-export function rootRelativeReadPath(root: RootContext, filePath: string, options: { rejectSymlinks?: boolean } = {}): string {
+export function rootRelativeReadPath(root: RootContext, filePath: string): string {
   const absoluteInput = path.isAbsolute(filePath);
   if (!absoluteInput) return filePath;
   const raw = process.platform === "win32" ? filePath.replaceAll("/", path.sep) : filePath;
@@ -100,21 +102,7 @@ export function rootRelativeReadPath(root: RootContext, filePath: string, option
       return raw.slice(start);
     }
   }
-  const candidatePath = path.resolve(filePath);
-  let relativeBase = root.rootDir;
-  if (
-    !isPathInside(root.rootDir, candidatePath) &&
-    isPathInside(root.rootReal, candidatePath)
-  ) {
-    // A Root created through an alias has two valid in-root absolute spellings.
-    relativeBase = root.rootReal;
-  }
-  if (isPathInside(relativeBase, candidatePath)) {
-    const relative = rawPathRelativeToCanonicalRoot(raw, root.rootReal, options);
-    if (relative !== undefined) return relative;
-    throw outsideWorkspaceError();
-  }
-  return path.relative(relativeBase, candidatePath);
+  return raw;
 }
 
 export async function assertRootIdentityCurrent(root: RootContext): Promise<void> {
@@ -154,7 +142,7 @@ export async function resolvePathInRoot(
   await assertRootIdentityCurrent(root);
   const expanded = await expandRelativePathWithHome(relativePath);
   let resolved = path.resolve(root.rootWithSep, expanded);
-  if (!isPathInside(root.rootWithSep, resolved)) {
+  if (!options?.resolveCanonical && !isPathInside(root.rootWithSep, resolved)) {
     throw outsideWorkspaceError();
   }
   if (options?.rejectUnsafeDeviceReads === true) {

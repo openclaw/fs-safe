@@ -72,12 +72,12 @@ function shouldStop(result: WalkDirectoryResult, options: WalkDirectoryOptions):
 
 function buildEntry(params: {
   rootDir: string;
-  dir: string;
+  fullPath: string;
   dirent: fsSync.Dirent;
   depth: number;
   kind?: WalkEntryKind;
 }): WalkDirectoryEntry {
-  const fullPath = path.join(params.dir, params.dirent.name);
+  const fullPath = params.fullPath;
   const relativePath = path.relative(params.rootDir, fullPath) || params.dirent.name;
   return {
     name: params.dirent.name,
@@ -105,22 +105,7 @@ function recordFailedDir(
   });
 }
 
-function resolveSyncKind(fullPath: string, dirent: fsSync.Dirent, symlinks: WalkSymlinkPolicy): WalkEntryKind | null {
-  const kind = kindForDirent(dirent);
-  if (kind !== "symlink") return kind;
-  if (symlinks === "skip") return null;
-  if (symlinks === "include") return "symlink";
-  try {
-    const stat = fsSync.statSync(fullPath);
-    if (stat.isDirectory()) return "directory";
-    if (stat.isFile()) return "file";
-  } catch {
-    return null;
-  }
-  return "other";
-}
-
-async function resolveAsyncKind(fullPath: string, dirent: fsSync.Dirent, symlinks: WalkSymlinkPolicy): Promise<WalkEntryKind | null> {
+function resolveKind(fullPath: string, dirent: fsSync.Dirent, symlinks: WalkSymlinkPolicy): WalkEntryKind | null {
   const kind = kindForDirent(dirent);
   if (kind !== "symlink") return kind;
   if (symlinks === "skip") return null;
@@ -176,9 +161,9 @@ export function walkDirectorySync(
       }
       result.scannedEntryCount += 1;
       const fullPath = path.join(dir, dirent.name);
-      const kind = resolveSyncKind(fullPath, dirent, symlinks);
+      const kind = resolveKind(fullPath, dirent, symlinks);
       if (!kind) continue;
-      const entry = buildEntry({ rootDir: root, dir, dirent, depth, kind });
+      const entry = buildEntry({ rootDir: root, fullPath, dirent, depth, kind });
       if (options.include?.(entry) ?? true) {
         result.entries.push(entry);
       }
@@ -238,9 +223,9 @@ export async function walkDirectory(
       }
       result.scannedEntryCount += 1;
       const fullPath = path.join(dir, dirent.name);
-      const kind = await resolveAsyncKind(fullPath, dirent, symlinks);
+      const kind = resolveKind(fullPath, dirent, symlinks);
       if (!kind) continue;
-      const entry = buildEntry({ rootDir: root, dir, dirent, depth, kind });
+      const entry = buildEntry({ rootDir: root, fullPath, dirent, depth, kind });
       if (options.include?.(entry) ?? true) {
         result.entries.push(entry);
       }

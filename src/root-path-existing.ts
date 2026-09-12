@@ -4,25 +4,34 @@ import { FsSafeError } from "./errors.js";
 import { formatErrorDetail } from "./error-detail.js";
 import { isNotFoundPathError, isPathInside } from "./path.js";
 
+export function absolutePathWithRawSegments(candidate: string): string {
+  if (path.isAbsolute(candidate)) return candidate;
+  const drive = path.parse(candidate).root;
+  const base = drive ? path.resolve(drive) : process.cwd();
+  return `${base}${path.sep}${candidate.slice(drive.length)}`;
+}
+
 export function rawPathRelativeToCanonicalRoot(
   candidate: string,
   rootCanonicalPath: string,
   options: { rejectSymlinks?: boolean } = {},
 ): string | undefined {
-  const absolute = path.isAbsolute(candidate) ? candidate : `${process.cwd()}${path.sep}${candidate}`;
+  const absolute = absolutePathWithRawSegments(candidate);
   const raw = process.platform === "win32" ? absolute.replaceAll("/", path.sep) : absolute;
   const filesystemRoot = path.parse(raw).root;
   const segments = raw.slice(filesystemRoot.length).split(path.sep);
   let prefix = filesystemRoot;
+  let traversedSymlink = false;
   for (let index = 0; index < segments.length; index += 1) {
     prefix += `${prefix.endsWith(path.sep) ? "" : path.sep}${segments[index]}`;
     let canonical: string;
     try {
-      const isSymlink = fs.lstatSync(prefix).isSymbolicLink();
-      if (options.rejectSymlinks && isSymlink) {
-        throw new FsSafeError("symlink", "symlink path component not allowed");
-      }
+      const stat = fs.lstatSync(prefix);
+      const isSymlink = stat.isSymbolicLink();
+      if (!isSymlink && !stat.isDirectory() && index < segments.length - 1) return undefined;
+      traversedSymlink ||= isSymlink;
       canonical = fs.realpathSync.native(prefix);
+      if (isSymlink && index < segments.length - 1 && !fs.statSync(canonical).isDirectory()) return undefined;
       if (isSymlink && !isPathInside(rootCanonicalPath, canonical) && !isPathInside(canonical, rootCanonicalPath)) {
         throw new FsSafeError("outside-workspace", `symlink prefix resolves outside the root ancestry: ${formatErrorDetail(candidate)}`);
       }
@@ -31,6 +40,9 @@ export function rawPathRelativeToCanonicalRoot(
       continue;
     }
     if (!isPathInside(rootCanonicalPath, canonical)) continue;
+    if (options.rejectSymlinks && traversedSymlink) {
+      throw new FsSafeError("symlink", "symlink path component not allowed");
+    }
     return [path.relative(rootCanonicalPath, canonical), ...segments.slice(index + 1)]
       .filter(Boolean).join(path.sep);
   }

@@ -76,6 +76,8 @@ accepts `maxDepth`, `maxEntries`, `symlinkPolicy: "skip" |
 one `kind: "truncated"` marker and ends; pass `limitBehavior: "throw"` for a
 typed `FsSafeError("too-large")` instead.
 
+For followed symlinks, both `kind` and `size` describe the resolved target.
+
 `entryFilter` is evaluated for each resolved file, directory, or other entry:
 
 ```ts
