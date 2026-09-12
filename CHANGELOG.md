@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Skip invalid delivered-marker names during durable queue batch loading, preserving malformed files while continuing to load valid pending entries.
 - Forward archive deadlines through a separate abort signal for each native pass, so completed inspection cannot mask cancellation of extraction.
 - Preserve Linux native directory-only open flags so non-directories are rejected by the kernel before FIFO blocking or truncation, while removing the redundant post-open stat.
 - Close publication descriptors when initial inspection fails, and relinquish descriptor numbers before potentially failing closes so cleanup cannot close a reused descriptor.

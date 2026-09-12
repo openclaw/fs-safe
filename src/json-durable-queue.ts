@@ -413,6 +413,7 @@ export async function loadPendingJsonDurableQueueEntries<T>(
   for (const file of files) {
     if (file.endsWith(".delivered")) {
       const id = file.slice(0, -".delivered".length);
+      try { assertSafeQueueEntryId(id); } catch { continue; }
       await completeDeliveredQueueEntry(resolveJsonDurableQueueEntryPaths(options.queueDir, id));
     } else if (options.cleanupTmpMaxAgeMs !== undefined && file.endsWith(".tmp")) {
       await unlinkStaleTmpBestEffort(
