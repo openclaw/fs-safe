@@ -31,7 +31,7 @@ function validatePinnedRelativePath(relativePath: string): void {
   ) {
     throw new FsSafeError("invalid-path", "relative path must not escape root");
   }
-  for (const segment of relativePath.split("/")) {
+  for (const segment of relativePath.split(process.platform === "win32" ? /[\\/]/ : "/")) {
     if (segment === "..") {
       throw new FsSafeError("invalid-path", "relative path must not contain '..'");
     }
