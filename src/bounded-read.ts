@@ -4,7 +4,8 @@ import { normalizeMaxBytes } from "./byte-budget.js";
 import { FsSafeError } from "./errors.js";
 
 const READ_CHUNK_BYTES = 64 * 1024;
-const MAX_INITIAL_READ_BYTES = 1024 * 1024;
+// Preserve one-read performance through the default Root byte budget.
+const MAX_INITIAL_READ_BYTES = 16 * 1024 * 1024;
 
 type ReadableFileHandle = Pick<FileHandle, "read">;
 

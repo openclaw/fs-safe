@@ -27,7 +27,7 @@ describe("bounded read allocation", () => {
     vi.spyOn(Buffer, "allocUnsafe").mockImplementation((size) => {
       largestAllocation = Math.max(largestAllocation, size);
       // Make a speculative OOM deterministic without allocating large memory.
-      if (size > 1024 * 1024 + 1) throw new RangeError("oversized speculative allocation");
+      if (size > 16 * 1024 * 1024 + 1) throw new RangeError("oversized speculative allocation");
       return allocate(size);
     });
     try {
@@ -35,13 +35,13 @@ describe("bounded read allocation", () => {
         : reader === "descriptor" ? await readFileDescriptorBounded(handle.fd, Infinity)
           : readFileDescriptorBoundedSync(handle.fd, Infinity);
       expect(result.length).toBe(0);
-      expect(largestAllocation).toBeLessThanOrEqual(1024 * 1024 + 1);
+      expect(largestAllocation).toBeLessThanOrEqual(16 * 1024 * 1024 + 1);
     } finally {
       await handle.close();
     }
   });
 
-  it.each([0, 4, 128 * 1024, 1024 * 1024])("reads a %s-byte regular file synchronously without a second read or a copy", async (size) => {
+  it.each([0, 4, 128 * 1024, 1024 * 1024, 2 * 1024 * 1024, 16 * 1024 * 1024])("reads a %s-byte regular file synchronously without a second read or a copy", async (size) => {
     const filePath = await fixture("x".repeat(size));
     const fd = fsSync.openSync(filePath, "r");
     const read = vi.spyOn(fsSync, "readSync");
@@ -91,7 +91,7 @@ describe("bounded read allocation", () => {
   });
 
   it.each(["handle", "sync"] as const)("reads beyond the initial allocation and enforces an exact large cap (%s)", async (reader) => {
-    const content = "y".repeat(2 * 1024 * 1024);
+    const content = "y".repeat(32 * 1024 * 1024);
     const filePath = await fixture(content);
     const handle = await fs.open(filePath, "r");
     try {

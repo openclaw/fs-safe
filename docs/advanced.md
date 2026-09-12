@@ -80,7 +80,7 @@ Windows identities receive one re-inspection without reopening, then fail
 validation if still unknown.
 
 The bounded descriptor helpers cap their initial speculative allocation at
-1 MiB plus the overflow-probe byte, even when a file reports a much larger
+16 MiB plus the overflow-probe byte, even when a file reports a much larger
 size. Regular files up to that size can return from one read without copying
 chunks; larger files and short reads continue incrementally under the same
 byte limit.
