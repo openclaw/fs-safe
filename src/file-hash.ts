@@ -27,7 +27,9 @@ export async function hashFileHandle(
   }
 
   const hash = createHash("sha256");
-  const buffer = Buffer.allocUnsafe(64 * 1024);
+  const buffer = Buffer.allocUnsafe(
+    Math.min(256 * 1024, Math.max(64 * 1024, stat.size)),
+  );
   let position = 0;
   while (true) {
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
