@@ -32,9 +32,15 @@ function finishReadBuffer(buffer: Buffer, total: number): Buffer {
   return total < buffer.length / 2 ? Buffer.from(result) : result;
 }
 
-function addReadBytes(total: number, bytesRead: number, maxBytes: number): number {
+function addReadBytes(
+  total: number,
+  bytesRead: number,
+  maxBytes: number,
+  createLimitError?: () => Error,
+): number {
   const next = total + bytesRead;
   if (next > maxBytes) {
+    if (createLimitError) throw createLimitError();
     throw new FsSafeError(
       "too-large",
       `file exceeds limit of ${maxBytes} bytes (got at least ${next})`,
@@ -43,14 +49,19 @@ function addReadBytes(total: number, bytesRead: number, maxBytes: number): numbe
   return next;
 }
 
-async function readBoundedAsync(
+export async function readBoundedAsync(
   maxBytes: number,
   readChunk: (scratch: Buffer, length: number) => Promise<number>,
-  observeRegularFileSize?: () => number | undefined,
+  options: {
+    observeRegularFileSize?: () => number | undefined;
+    initialSize?: number;
+    createLimitError?: () => Error;
+  } = {},
 ): Promise<Buffer> {
   normalizeMaxBytes(maxBytes);
   let total = 0;
-  const size = observeRegularFileSize?.();
+  const { observeRegularFileSize, createLimitError } = options;
+  const size = options.initialSize ?? observeRegularFileSize?.();
   let buffer = size === undefined ? createScratchBuffer(maxBytes) : createInitialBuffer(maxBytes, size);
   if (size !== undefined) {
     const bytesRead = await readChunk(buffer, buffer.length);
@@ -58,7 +69,7 @@ async function readBoundedAsync(
     // Short reads can occur before EOF. Only use the size shortcut on this
     // initial read; virtual files can report zero or stale sizes thereafter.
     const currentSize = bytesRead < buffer.length ? observeRegularFileSize?.() : undefined;
-    total = addReadBytes(total, bytesRead, maxBytes);
+    total = addReadBytes(total, bytesRead, maxBytes, createLimitError);
     if (currentSize !== undefined && bytesRead >= currentSize) return finishReadBuffer(buffer, total);
   }
   while (true) {
@@ -66,7 +77,7 @@ async function readBoundedAsync(
     const remaining = buffer.subarray(total);
     const bytesRead = await readChunk(remaining, remaining.length);
     if (bytesRead === 0) return finishReadBuffer(buffer, total);
-    total = addReadBytes(total, bytesRead, maxBytes);
+    total = addReadBytes(total, bytesRead, maxBytes, createLimitError);
   }
 }
 
@@ -83,7 +94,7 @@ export async function readFileHandleBounded(
   const fd = "fd" in handle && typeof handle.fd === "number" ? handle.fd : undefined;
   return await readBoundedAsync(maxBytes, async (scratch, length) => {
     return (await handle.read(scratch, 0, length, null)).bytesRead;
-  }, fd === undefined ? undefined : () => regularFileSize(fd));
+  }, { observeRegularFileSize: fd === undefined ? undefined : () => regularFileSize(fd) });
 }
 
 function regularFileSize(fd: number): number | undefined {
@@ -114,7 +125,7 @@ export async function readFileDescriptorBounded(fd: number, maxBytes: number): P
   normalizeMaxBytes(maxBytes);
   return await readBoundedAsync(maxBytes, async (scratch, length) => {
     return await readDescriptorChunk(fd, scratch, length);
-  }, () => regularFileSize(fd));
+  }, { observeRegularFileSize: () => regularFileSize(fd) });
 }
 
 /** Sync bounded read from a numeric descriptor. The caller owns the descriptor. */

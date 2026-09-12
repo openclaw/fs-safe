@@ -314,7 +314,10 @@ describe("batch entry skip boundary", () => {
 
   it("skips invalid listed IDs while returning a valid entry", async () => {
     const { queueDir, paths, load } = await fixture();
-    const invalid = [".json", ".processing", ".hidden.json", "bad name.json"];
+    const invalid = [
+      ".json", ".processing", ".hidden.json", "bad name.json",
+      ".delivered", ".hidden.delivered", "bad name.delivered",
+    ];
     await Promise.all(invalid.map(async (name) => await fs.writeFile(path.join(queueDir, name), "invalid")));
     const realReaddir = fs.readdir.bind(fs);
     vi.spyOn(fs, "readdir").mockImplementation(async (...args) => {

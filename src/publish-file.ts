@@ -160,9 +160,9 @@ async function copyPinnedSource(params: {
       }
 
       let target: FileHandle | undefined;
-      let createdIdentity = fsSync.fstatSync(nativeFd, { bigint: true });
-      rememberCreatedTarget(params.failure, createdIdentity, "copy-verify");
       try {
+        let createdIdentity = fsSync.fstatSync(nativeFd, { bigint: true });
+        rememberCreatedTarget(params.failure, createdIdentity, "copy-verify");
         fsSync.fchmodSync(nativeFd, 0o600);
         createdIdentity = fsSync.fstatSync(nativeFd, { bigint: true });
         await getFsSafeTestHooks()?.afterPublishTargetCreated?.(
@@ -182,8 +182,9 @@ async function copyPinnedSource(params: {
           throw new FsSafeError("path-mismatch", "native publication target changed after copy");
         }
         const hashed = await hashFileHandle(target, params.native);
-        fsSync.closeSync(nativeFd);
+        const completedFd = nativeFd;
         nativeFd = undefined;
+        fsSync.closeSync(completedFd);
         return {
           handle: target,
           exactIdentity: opened,
@@ -200,9 +201,9 @@ async function copyPinnedSource(params: {
   }
 
   const target = await fs.open(params.targetPath, "wx+", 0o600);
-  const createdIdentity = fsSync.fstatSync(target.fd, { bigint: true });
-  rememberCreatedTarget(params.failure, createdIdentity, "copy-verify");
   try {
+    const createdIdentity = fsSync.fstatSync(target.fd, { bigint: true });
+    rememberCreatedTarget(params.failure, createdIdentity, "copy-verify");
     await target.chmod(0o600);
     const exactIdentity = fsSync.fstatSync(target.fd, { bigint: true });
     await getFsSafeTestHooks()?.afterPublishTargetCreated?.(
