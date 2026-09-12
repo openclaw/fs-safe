@@ -48,7 +48,7 @@ describe("bounded read allocation", () => {
     const concat = vi.spyOn(Buffer, "concat");
     try {
       const result = readFileDescriptorBoundedSync(fd, size);
-      expect(result).toEqual(Buffer.alloc(size, "x"));
+      expect(result.equals(Buffer.alloc(size, "x"))).toBe(true);
       expect(read).toHaveBeenCalledTimes(1);
       expect(concat).not.toHaveBeenCalled();
     } finally {
