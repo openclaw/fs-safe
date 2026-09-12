@@ -2,6 +2,7 @@ import fs, { type BigIntStats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { normalizeMaxBytes } from "./byte-budget.js";
+import { readBoundedAsync } from "./bounded-read.js";
 import { syncDirectory } from "./directory-durability.js";
 import { syncQueueDirectoryCreation } from "./json-durable-queue-directory.js";
 import {
@@ -330,20 +331,16 @@ async function readBoundedUtf8File(params: {
       () => fs.fstatSync(handle.fd, { bigint: true }), params.maxBytes, initialStat,
     );
     await inspectQueueEntry(inspectPath, params.maxBytes, openedStat);
-    const chunks: Buffer[] = [];
-    const scratch = Buffer.allocUnsafe(Math.min(64 * 1024, params.maxBytes + 1));
-    let total = 0;
-    while (true) {
-      const { bytesRead } = await handle.read(scratch, 0, scratch.length, null);
-      if (bytesRead === 0) {
-        return Buffer.concat(chunks, total).toString("utf8");
-      }
-      total += bytesRead;
-      if (total > params.maxBytes) {
-        throw new Error(`queue entry exceeds ${params.maxBytes} bytes`);
-      }
-      chunks.push(Buffer.from(scratch.subarray(0, bytesRead)));
-    }
+    const bytes = await readBoundedAsync(
+      params.maxBytes,
+      async (buffer, length) => (await handle.read(buffer, 0, length, null)).bytesRead,
+      {
+        initialSize: openedStat.size >= 0n && Number.isSafeInteger(Number(openedStat.size))
+          ? Number(openedStat.size) : undefined,
+        createLimitError: () => new Error(`queue entry exceeds ${params.maxBytes} bytes`),
+      },
+    );
+    return bytes.toString("utf8");
   } finally {
     await handle.close();
   }
