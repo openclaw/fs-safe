@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Reduce directory-walk overhead by sharing synchronous entry classification and reusing each joined path, avoiding an extra promise per async entry.
 - Skip invalid delivered-marker names during durable queue batch loading, preserving malformed files while continuing to load valid pending entries.
 - Forward archive deadlines through a separate abort signal for each native pass, so completed inspection cannot mask cancellation of extraction.
 - Honor Root durability defaults and per-call overrides in the Windows JavaScript write/create fallback, and preserve unowned staging replacements when a write or sync fails.
