@@ -1574,16 +1574,7 @@ async function movePathFallback(
 
 async function writeFileFallback(
   root: RootContext,
-  params: {
-    relativePath: string;
-    data: string | Buffer;
-    encoding?: BufferEncoding;
-    mkdir?: boolean;
-    mode?: number;
-    denyMutations?: DenyMutationPolicy;
-    overwrite?: boolean;
-    durable?: boolean;
-  },
+  params: RootWriteOptions & { relativePath: string; data: string | Buffer },
 ): Promise<void> {
   if (params.overwrite === false) {
     await writeMissingFileFallback(root, params);
@@ -1626,6 +1617,13 @@ async function writeFileFallback(
         root, targetPath: commitTempPath, fd: commitHandle.fd,
         expectedIdentity: commitIdentity, parentGuard: destinationGuard,
       });
+      if (target.createdForWrite) {
+        await cleanupPinnedFilePath({
+          pathname: destinationPath, handle: target.handle, identity: placeholderIdentity, parentGuard: destinationGuard,
+        });
+      }
+      // Windows cannot replace a destination while its old handle remains open.
+      await target.handle.close();
       await fs.rename(commitTempPath, destinationPath);
       tempPath = null;
       published = true;
@@ -1674,15 +1672,7 @@ async function writeFileFallback(
 
 async function writeMissingFileFallback(
   root: RootContext,
-  params: {
-    relativePath: string;
-    data: string | Buffer;
-    encoding?: BufferEncoding;
-    mkdir?: boolean;
-    mode?: number;
-    denyMutations?: DenyMutationPolicy;
-    durable?: boolean;
-  },
+  params: RootWriteOptions & { relativePath: string; data: string | Buffer },
 ): Promise<void> {
   const { rootReal, resolved } = await resolveGuardedWritePathInRoot(root, {
     relativePath: params.relativePath,

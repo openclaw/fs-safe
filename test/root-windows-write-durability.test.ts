@@ -37,9 +37,11 @@ it.each(operations.flatMap(operation => settings.map(setting => ({ operation, ..
     const { dir, scoped, target } = await fixture(defaultDurable);
     if (operation === "replace") await fs.writeFile(target, "original");
     const events: string[] = [];
+    const destinationHandles: fs.FileHandle[] = [];
     const open = fs.open.bind(fs);
     vi.spyOn(fs, "open").mockImplementation(async (...args) => {
       const handle = await open(...args);
+      if (String(args[0]) === target) destinationHandles.push(handle);
       const write = handle.writeFile.bind(handle);
       vi.spyOn(handle, "writeFile").mockImplementation(async (...writeArgs) => {
         events.push("write");
@@ -52,7 +54,11 @@ it.each(operations.flatMap(operation => settings.map(setting => ({ operation, ..
       return handle;
     });
     const rename = fs.rename.bind(fs);
-    vi.spyOn(fs, "rename").mockImplementation(async (...args) => { events.push("rename"); await rename(...args); });
+    vi.spyOn(fs, "rename").mockImplementation(async (...args) => {
+      expect(destinationHandles.every(handle => handle.fd === -1)).toBe(true);
+      events.push("rename");
+      await rename(...args);
+    });
     const parentSync = vi.spyOn(durability, "syncDirectoryBestEffort").mockImplementation(async () => {
       events.push("directory");
     });
