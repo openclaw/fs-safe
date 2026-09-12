@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Expand leading home-directory prefixes before resolving parent segments, so `~/../file` resolves against the home directory's parent; keep tildes elsewhere in a relative path literal.
 - Batch JavaScript SHA-256 reads for larger files in bounded buffers up to 256 KiB, reducing asynchronous filesystem calls while preserving descriptor ownership and offsets.
 
 - Speed up POSIX containment checks with trailing root separators and filename helpers while preserving traversal rejection, Unicode handling, reserved names, and collision-resistant install names.

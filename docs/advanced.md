@@ -126,7 +126,7 @@ component is followed by another segment, both helpers throw
 |---|---|---|
 | `safeDirName`, `safePathSegmentHashed`, `resolveSafeInstallDir`, `assertCanonicalPathWithinBase` | [install-path.md](install-path.md) | Build install-target directories from caller-supplied identifiers. |
 | `sanitizeUntrustedFileName` | [filename.md](filename.md) | Coerce an untrusted string into a safe filename. |
-| `resolveHomeRelativePath` | – | Expand `~`-prefixed paths. |
+| `resolveHomeRelativePath` | – | Expand a leading `~` before resolving `.` and `..`; tildes inside relative paths stay literal. |
 
 ### Temp targets and sibling-temp writes
 
