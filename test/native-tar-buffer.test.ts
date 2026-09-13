@@ -43,7 +43,7 @@ for (const mode of ["off", "require"] as const) {
         return reader;
       });
       if (mode === "require") __setNativeLoaderForTest(() => ({ ...native!, openTarBufferNative: open }));
-      await expect(readArchiveEntry(archivePath, "payload", { maxBytes: payload.length })).resolves.toEqual(payload);
+      expect((await readArchiveEntry(archivePath, "payload", { maxBytes: payload.length })).equals(payload)).toBe(true);
       expect(staging).not.toHaveBeenCalled();
       if (mode === "require") expect(open).toHaveBeenCalledTimes(1);
     });
@@ -75,10 +75,10 @@ describe.skipIf(!native)("native retained TAR reader", () => {
     const reader = await native!.openTarBufferNative(input, "tar", resolveTarMeterLimits());
     expect(reader.entries[1]).toMatchObject({ path: "payload", size: payload.length, index: 1 });
     const results = await Promise.all(Array.from({ length: 8 }, () => reader.readEntry(1, payload.length)));
-    for (const result of results) expect(result).toEqual(payload);
+    for (const result of results) expect(result.equals(payload)).toBe(true);
     results[0]!.fill(0);
-    expect(await reader.readEntry(1, payload.length)).toEqual(payload);
-    expect(results[1]).toEqual(payload);
+    expect((await reader.readEntry(1, payload.length)).equals(payload)).toBe(true);
+    expect(results[1]!.equals(payload)).toBe(true);
     await expect(reader.readEntry(3, payload.length)).rejects.toThrow("not found");
     await expect(reader.readEntry(2, payload.length)).rejects.toThrow("not a file");
     for (const max of [-1, NaN, Infinity, 0.5, Number.MAX_SAFE_INTEGER + 1]) expect(() => reader.readEntry(1, max)).toThrow();
