@@ -156,11 +156,12 @@ describe("native directory cloning", () => {
       const { source, destination } = await cloneFixture(context);
       await fs.mkdir(path.join(source, "nested"));
       await fs.mkdir(path.join(source, "empty-directory"));
+      const payload = Buffer.alloc(1024 * 1024, 0x5a);
       const contents = new Map([
         ["empty", Buffer.alloc(0)],
         ["short", Buffer.from("unaligned payload")],
         ["日本語-🦀", Buffer.alloc(4097, 0x37)],
-        [path.join("nested", ".payload"), Buffer.alloc(1024 * 1024, 0x5a)],
+        [path.join("nested", ".payload"), payload],
       ]);
       for (const [name, bytes] of contents) {
         await fs.writeFile(path.join(source, name), bytes);
@@ -181,7 +182,7 @@ describe("native directory cloning", () => {
       controller.abort();
       expect(callerAborts).toBe(1);
       for (const [name, bytes] of contents) {
-        expect(await fs.readFile(path.join(destination, name))).toEqual(bytes);
+        expect((await fs.readFile(path.join(destination, name))).equals(bytes), name).toBe(true);
         expect((await fs.stat(path.join(destination, name))).mtimeMs).toBe(1_600_000_000_000);
       }
       expect(await fs.readdir(path.join(destination, "empty-directory"))).toEqual([]);
@@ -190,7 +191,7 @@ describe("native directory cloning", () => {
         expect((await fs.stat(path.join(destination, "nested"))).mode & 0o777).toBe(0o750);
       }
       await fs.writeFile(cloned, "independent edit");
-      expect(await fs.readFile(original)).toEqual(contents.get(path.join("nested", ".payload")));
+      expect((await fs.readFile(original)).equals(payload)).toBe(true);
       await expect(cloneTree(source, destination)).rejects.toThrow();
       await expect(createCloneSource(destination)).rejects.toThrow();
       expect(await fs.readFile(cloned, "utf8")).toBe("independent edit");
@@ -296,6 +297,6 @@ describe("native directory cloning", () => {
     assert(afterSource);
     assert(afterClone);
     expect(afterClone.cloneId).not.toBe(afterSource.cloneId);
-    expect(await fs.readFile(original)).toEqual(Buffer.alloc(1024 * 1024, 0x5a));
+    expect((await fs.readFile(original)).equals(Buffer.alloc(1024 * 1024, 0x5a))).toBe(true);
   });
 });
