@@ -92,7 +92,7 @@ async function resolveRootPathInternal(
   assertNoWindowsPathAlias(absolutePath);
   assertNoWindowsPathAlias(rootCanonicalPath);
   return resolveRootPathLexicalAsync(
-    prepareRootTraversal(params, rootPath, rootCanonicalPath, absolutePath, rawAbsolutePath),
+    prepareRootTraversal(input, rootPath, rootCanonicalPath, absolutePath, rawAbsolutePath),
   );
 }
 
@@ -116,7 +116,7 @@ function resolveRootPathSyncInternal(params: ResolveRootPathParams): ResolvedRoo
   assertNoWindowsPathAlias(absolutePath);
   assertNoWindowsPathAlias(rootCanonicalPath);
   return resolveRootPathLexicalSync(
-    prepareRootTraversal(params, rootPath, rootCanonicalPath, absolutePath, rawAbsolutePath),
+    prepareRootTraversal(input, rootPath, rootCanonicalPath, absolutePath, rawAbsolutePath),
   );
 }
 
@@ -152,11 +152,7 @@ function sanitizeRootPathError(error: unknown): unknown {
   return error;
 }
 
-function captureValidRootPathInputs(params: ResolveRootPathParams): {
-  rootPath: string;
-  absolutePath: string;
-  rootCanonicalPath?: string;
-} {
+function captureValidRootPathInputs(params: ResolveRootPathParams): ResolveRootPathParams {
   const rootPath = params.rootPath;
   assertNoNulPathInput(rootPath, "root path contains a NUL byte");
   const absolutePath = params.absolutePath;
@@ -175,9 +171,21 @@ function captureValidRootPathInputs(params: ResolveRootPathParams): {
     );
     assertNoEmbeddedDriveRelativeSegment(rootCanonicalPath, "canonical root path");
   }
-  return rootCanonicalPath === undefined
-    ? { rootPath, absolutePath }
-    : { rootPath, absolutePath, rootCanonicalPath };
+  // Keep traversal policy with the admitted paths across ancestor and symlink
+  // resolution. Caller-owned flags and getters must not change a running walk.
+  const policy = params.policy;
+  return {
+    rootPath,
+    absolutePath,
+    rootCanonicalPath,
+    boundaryLabel: params.boundaryLabel,
+    policy: policy == null ? undefined : {
+      allowFinalSymlinkForUnlink: policy.allowFinalSymlinkForUnlink,
+    },
+    rejectSymlinks: params.rejectSymlinks,
+    rejectFinalSymlink: params.rejectFinalSymlink,
+    rejectUnresolvedSymlinks: params.rejectUnresolvedSymlinks,
+  };
 }
 
 function assertNoEmbeddedDriveRelativeSegment(filePath: string, label: string): void {
