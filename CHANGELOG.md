@@ -3,6 +3,7 @@
 ## Unreleased
 
 - XFS clones preserve user extended attributes on read-only files and directories while retaining their exact modes and ACLs.
+- Fix package consumer smoke and lifecycle tests with standalone `@pnpm/exe` installations, preserving the pinned pnpm version and isolated consumer configuration.
 
 ## 0.10.0 - 2026-09-13
 
