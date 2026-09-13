@@ -39,6 +39,7 @@ export {
   type RootWalkOptions,
   type RootWalkSymlinkPolicy,
   type SymlinkPolicy,
+  type MutationSymlinkPolicy,
   type WritableOpenMode,
   type WritableOpenResult,
 } from "./root.js";

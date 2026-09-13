@@ -1,6 +1,7 @@
 import { syncFileBestEffortSync } from "./file-sync.js";
 import { randomUUID } from "node:crypto";
 import fsSync, { type BigIntStats } from "node:fs";
+import path from "node:path";
 import type { FileHandle } from "node:fs/promises";
 import type { AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
@@ -13,6 +14,7 @@ import {
 import type { NativeBinding } from "./native.js";
 import type { PinnedWriteParams } from "./pinned-write.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
+import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
 
 export function sameNativeIdentity(
   left: Pick<FileIdentityStat, "dev" | "ino">,
@@ -62,6 +64,7 @@ export async function runPinnedWriteWindows(
     fsSync.fchmodSync(tempFd, 0o600);
     await writeNativeInput(tempFd, params.input, params.maxBytes, params.assertBeforeMutation);
     if (params.sync !== false) syncFileBestEffortSync(tempFd);
+    assertFinalSymlinkRejected(path.join(parentPath, params.basename), params.rejectFinalSymlink);
     params.assertBeforeMutation?.();
     if (params.overwrite === false) {
       binding.renameNoReplace(parentFd, tempName, parentFd, params.basename);

@@ -1,6 +1,7 @@
 import { normalizeMaxBytes } from "./byte-budget.js";
 import type { DenyMutationPolicy } from "./deny-mutations.js";
 import type { RenameIdentityPolicy } from "./pinned-write.js";
+import type { MutationSymlinkPolicy, SymlinkPolicy } from "./root-symlink-policy.js";
 
 export const DEFAULT_ROOT_MAX_BYTES = 16 * 1024 * 1024;
 
@@ -9,7 +10,6 @@ export type RootOptions = {
   defaults?: RootDefaults;
 };
 
-export type SymlinkPolicy = "reject" | "follow-within-root";
 export type HardlinkPolicy = "reject" | "allow";
 export type WritableOpenMode = "replace" | "append" | "update";
 
@@ -24,6 +24,7 @@ export type RootDefaults = {
   nonBlockingRead?: boolean;
   renameIdentity?: RenameIdentityPolicy;
   symlinks?: SymlinkPolicy;
+  mutationSymlinks?: MutationSymlinkPolicy;
 };
 
 export type RootReadOptions = Pick<
@@ -33,16 +34,16 @@ export type RootReadOptions = Pick<
 
 export type RootOpenOptions = Omit<RootReadOptions, "maxBytes">;
 
-export type RootWriteOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "durable" | "mkdir" | "mode" | "renameIdentity"> & {
+export type RootWriteOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks" | "durable" | "mkdir" | "mode" | "renameIdentity"> & {
   encoding?: BufferEncoding;
   overwrite?: boolean;
 };
 
-export type RootOpenWritableOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mkdir" | "mode"> & {
+export type RootOpenWritableOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks" | "mkdir" | "mode"> & {
   writeMode?: WritableOpenMode;
 };
 
-export type RootCopyOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "durable" | "maxBytes" | "mkdir" | "mode"> & {
+export type RootCopyOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks" | "durable" | "maxBytes" | "mkdir" | "mode"> & {
   sourceHardlinks?: HardlinkPolicy;
 };
 
@@ -59,12 +60,12 @@ export type RootAppendOptions = RootWriteOptions & {
   prependNewlineIfNeeded?: boolean;
 };
 
-export type RootMoveOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations"> & {
+export type RootMoveOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks"> & {
   overwrite?: boolean;
 };
 
-export type RootRemoveOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations">;
-export type RootMkdirOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations">;
+export type RootRemoveOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks">;
+export type RootMkdirOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks">;
 
 export type RootReadParams = Omit<RootReadOptions, "nonBlockingRead">;
 

@@ -21,6 +21,7 @@ import { cleanupPinnedFilePath } from "./replace-file-temp-owner.js";
 import { withSidecarLock } from "./sidecar-lock.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import { writeAllToFile } from "./write-file-handle.js";
+import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
 
 export type PinnedWriteInput =
   | { kind: "buffer"; data: string | Buffer; encoding?: BufferEncoding }
@@ -81,6 +82,7 @@ export type PinnedWriteParams = {
   sync?: boolean;
   overwrite?: boolean;
   assertBeforeMutation?: () => void;
+  rejectFinalSymlink?: boolean;
   maxBytes?: number;
   input: PinnedWriteInput;
   rootIdentity?: FileIdentityStat;
@@ -170,10 +172,14 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
     : await createNearestExistingDirectoryGuard(params.rootPath, parentPath, { bigint: true });
   const targetPath = path.join(parentPath, params.basename);
   if (params.overwrite === false) {
+    const assertBeforeMutation = () => {
+      assertFinalSymlinkRejected(targetPath, params.rejectFinalSymlink);
+      params.assertBeforeMutation?.();
+    };
     const handle = await withAsyncDirectoryGuards(
       [parentGuard],
       async () => {
-        params.assertBeforeMutation?.();
+        assertBeforeMutation();
         return await fs.open(
           targetPath,
           fsSync.constants.O_WRONLY | fsSync.constants.O_CREAT | fsSync.constants.O_EXCL,
@@ -199,10 +205,10 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
           params.maxBytes,
         );
         await writeAllToFile(handle, params.input.data, {
-          encoding: params.input.encoding, assertBeforeMutation: params.assertBeforeMutation,
+          encoding: params.input.encoding, assertBeforeMutation,
         });
       } else {
-        await writeStreamToHandle(params.input.stream, handle, params.maxBytes, params.assertBeforeMutation);
+        await writeStreamToHandle(params.input.stream, handle, params.maxBytes, assertBeforeMutation);
       }
       // Content writes may clear set-ID bits; finalize them through the owned fd.
       await handle.chmod(params.mode);
@@ -264,6 +270,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
     if (params.sync !== false) await syncFileBestEffort(handle);
     let verifiedIdentity: FileIdentityStat = expectedTempStat;
     await withAsyncDirectoryGuards([parentGuard], async () => {
+      assertFinalSymlinkRejected(targetPath, params.rejectFinalSymlink);
       params.assertBeforeMutation?.();
       await fs.rename(tempPath, targetPath);
       renamed = true;

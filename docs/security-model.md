@@ -53,6 +53,11 @@ Every path is resolved against the canonicalized real path of the root, then che
 
 Per-call `symlinks: "follow-within-root"` allows symlinks whose final target is still inside the root. The default is `"reject"`.
 
+`symlinks: "follow-parents-within-root"` allows contained parent directory aliases
+while rejecting a final symlink, including dangling links. Reads open the checked
+canonical parent plus the final basename with the usual no-follow and identity
+checks, so callers do not need their own parent canonicalization.
+
 Guarded root reads compare lossless bigint identities from before open, the opened
 descriptor, the input path, and the canonical target; numeric public `Stats`
 receipts are not used as identity evidence. Unknown Windows device/inode values
@@ -69,6 +74,15 @@ sibling temp file and create parents and publish the target relative to pinned
 directory descriptors. Replacement uses descriptor-relative rename just like
 no-replace publication, so replacing the parent pathname does not divert the
 mutation.
+
+The opt-in `mutationSymlinks` policy applies independently of read policy.
+`"reject"` rejects symlink components; `"follow-parents-within-root"` resolves
+contained directory aliases and rejects final symlinks. Publication checks the
+final component again after awaited staging and parent fences, immediately before
+the rename or exclusive open. These are best-effort symlink checks, not an atomic
+expected-entry/CAS replacement: a concurrent process can still replace the final
+entry between its check and rename. Existing parent containment guarantees remain
+as described below. Omitting `mutationSymlinks` preserves existing mutation behavior.
 
 The JavaScript fallback used by `off`, by `auto` when no binding loads, and by
 the explicit `renameIdentity: "verify-content-with-lock"` compatibility policy

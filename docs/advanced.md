@@ -66,7 +66,7 @@ Operational filesystem failures such as permissions or I/O errors are rethrown.
 |---|---|---|
 | `readFileDescriptorBounded`, `readFileDescriptorBoundedSync`, `readFileHandleBounded` | – | Incremental whole-file reads for already-open descriptors/handles. They consume at most `maxBytes + 1`, do not close the input, and throw `FsSafeError("too-large")` on overflow. |
 | `readFileWindowFully`, `readFileWindowFullySync`, `ReadFileWindowOptions` | [positional-read.md](positional-read.md) | Fill a caller-owned buffer at an explicit file position, completing short reads and returning the EOF count without moving or closing the descriptor. |
-| `openRootFile`, `openRootFileSync`, `canUseRootFileOpen`, `matchRootFileOpenFailure`, related types | – | Low-level root-bounded open; rejects every symlink component by default, with `rejectSymlinks: false` for explicit in-root following. |
+| `openRootFile`, `openRootFileSync`, `canUseRootFileOpen`, `matchRootFileOpenFailure`, related types | – | Low-level root-bounded open; rejects every symlink component by default, with `symlinks: "follow-parents-within-root"` for contained parent aliases or `"follow-within-root"` for final links too. |
 | `appendRegularFile`, `appendRegularFileSync`, `readRegularFile`, `readRegularFileSync`, `statRegularFile`, `statRegularFileSync`, `resolveRegularFileAppendFlags`, `AppendRegularFileOptions`, `RegularFileStatResult` | [regular-file.md](regular-file.md) | Type-checked regular-file I/O. |
 | `sameFileIdentity`, `FileIdentityStat` | – | Compare two stats for same-inode equality. |
 | `pathExists`, `pathExistsSync` | – | Boolean existence check that does not throw on `ENOENT`. |
@@ -79,6 +79,10 @@ receipts remain numeric. Custom `ioFs` adapters must honor `{ bigint: true }` fo
 `lstatSync` and `fstatSync`; numeric identity responses fail validation. Unknown
 Windows identities receive one re-inspection without reopening, then fail
 validation if still unknown.
+
+The explicit `symlinks` policy takes precedence over the existing `rejectSymlinks`
+boolean. Without `symlinks`, `rejectSymlinks: false` retains its existing behavior
+of following contained links, and omission still rejects all symlink components.
 
 The bounded descriptor helpers cap their initial speculative allocation at
 16 MiB plus the overflow-probe byte, even when a file reports a much larger

@@ -6,6 +6,7 @@ export {
   root,
   type DenyMutationPolicy,
   type HardlinkPolicy,
+  type MutationSymlinkPolicy,
   type RenameIdentityPolicy,
   type OpenResult,
   type ReadResult,

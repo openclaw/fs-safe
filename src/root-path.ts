@@ -44,6 +44,7 @@ type ResolveRootPathParams = {
   intent?: RootPathIntent;
   policy?: RootPathAliasPolicy;
   rejectSymlinks?: boolean;
+  rejectFinalSymlink?: boolean;
   rejectUnresolvedSymlinks?: boolean;
   skipLexicalRootCheck?: boolean;
   rootCanonicalPath?: string;
@@ -155,6 +156,7 @@ function assertNoEmbeddedDriveRelativeSegment(filePath: string, label: string): 
 
 type LexicalTraversalState = {
   segments: string[];
+  finalComponentIndex: number;
   allowFinalSymlink: boolean;
   canonicalCursor: string;
   lexicalCursor: string;
@@ -180,8 +182,10 @@ function createLexicalTraversalState(params: {
   const rawAbsolutePath = params.params.absolutePath;
   const relative = rawPathRelativeToRoot(params.rootPath, rawAbsolutePath);
   if (relative === undefined) throw new Error("Path traversal must begin at the root");
+  const segments = splitTraversalSegments(relative);
   return {
-    segments: splitTraversalSegments(relative),
+    segments,
+    finalComponentIndex: segments.findLastIndex((segment) => segment !== "."),
     allowFinalSymlink: params.params.policy?.allowFinalSymlinkForUnlink === true,
     canonicalCursor: params.rootCanonicalPath,
     lexicalCursor: params.rootPath,
@@ -283,10 +287,11 @@ function lexicalStatDisposition(params: {
   isSymbolicLink: boolean;
   isLast: boolean;
   rejectSymlinks: boolean | undefined;
+  rejectFinalSymlink: boolean;
   allowFinalSymlink: boolean;
 }): "continue" | "break" | "resolve-link" {
   if (!params.isSymbolicLink) return "continue";
-  if (params.rejectSymlinks === true && params.isLast) {
+  if (params.rejectFinalSymlink || (params.rejectSymlinks === true && params.isLast)) {
     throw new FsSafeError("symlink", "symlink path component not allowed");
   }
   return params.allowFinalSymlink && params.isLast ? "break" : "resolve-link";
@@ -366,6 +371,7 @@ async function resolveRootPathLexicalAsync(
       isSymbolicLink,
       isLast,
       rejectSymlinks: isSymbolicLink ? context.resolveParams.rejectSymlinks : undefined,
+      rejectFinalSymlink: context.resolveParams.rejectFinalSymlink === true && idx === state.finalComponentIndex,
       allowFinalSymlink: state.allowFinalSymlink,
     });
     if (disposition !== "resolve-link") {
@@ -420,6 +426,7 @@ function resolveRootPathLexicalSync(params: LexicalResolutionParams): ResolvedRo
       isSymbolicLink,
       isLast,
       rejectSymlinks: isSymbolicLink ? context.resolveParams.rejectSymlinks : undefined,
+      rejectFinalSymlink: context.resolveParams.rejectFinalSymlink === true && idx === state.finalComponentIndex,
       allowFinalSymlink: state.allowFinalSymlink,
     });
     if (disposition !== "resolve-link") {

@@ -99,6 +99,7 @@ type ReadResult = {
 type RenameIdentityPolicy = "strict" | "verify-content-with-lock";
 
 type RootDefaults = {
+  assertBeforeMutation?: () => void;
   denyMutations?: DenyMutationPolicy;
   durable?: boolean; // default true for write/create/writeJson/createJson/append
   hardlinks?: "reject" | "allow";
@@ -107,7 +108,8 @@ type RootDefaults = {
   mode?: number;
   nonBlockingRead?: boolean;
   renameIdentity?: RenameIdentityPolicy;
-  symlinks?: "reject" | "follow-within-root";
+  symlinks?: "reject" | "follow-within-root" | "follow-parents-within-root";
+  mutationSymlinks?: MutationSymlinkPolicy;
 };
 
 type DenyMutationPolicy = {
@@ -121,20 +123,20 @@ type RootOptions = {
 };
 ```
 
-`RootDefaults` is what `root(rootDir, defaults)` accepts. See [`root()`](root.md) for the per-method options that override these. `denyMutations` is the exception: root and per-call deny entries are merged.
+`RootDefaults` is what `root(rootDir, defaults)` accepts. See [`root()`](root.md) for the per-method options that override these. `denyMutations` and `assertBeforeMutation` are exceptions: deny entries are merged, and the root authority assertion runs before the per-call assertion.
 
 ## `RootReadOptions` / `RootWriteOptions` / `RootCopyOptions`
 
 ```ts
 type RootReadOptions = Pick<RootDefaults, "hardlinks" | "maxBytes" | "nonBlockingRead" | "symlinks">;
-type RootWriteOptions = Pick<RootDefaults, "denyMutations" | "durable" | "mkdir" | "mode" | "renameIdentity"> & {
+type RootWriteOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "durable" | "mkdir" | "mode" | "renameIdentity" | "mutationSymlinks"> & {
   encoding?: BufferEncoding;
   overwrite?: boolean;
 };
-type RootCopyOptions = Pick<RootDefaults, "denyMutations" | "maxBytes" | "mkdir" | "mode"> & {
+type RootCopyOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "durable" | "maxBytes" | "mkdir" | "mode" | "mutationSymlinks"> & {
   sourceHardlinks?: "reject" | "allow";
 };
-type RootOpenWritableOptions = Pick<RootDefaults, "denyMutations" | "mkdir" | "mode"> & {
+type RootOpenWritableOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mkdir" | "mode" | "mutationSymlinks"> & {
   writeMode?: "replace" | "append" | "update";
 };
 type RootWriteJsonOptions = RootWriteOptions & {
@@ -145,23 +147,28 @@ type RootWriteJsonOptions = RootWriteOptions & {
 type RootAppendOptions = RootWriteOptions & {
   prependNewlineIfNeeded?: boolean;
 };
-type RootMoveOptions = Pick<RootDefaults, "denyMutations"> & {
+type RootMoveOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks"> & {
   overwrite?: boolean;
 };
-type RootRemoveOptions = Pick<RootDefaults, "denyMutations">;
-type RootMkdirOptions = Pick<RootDefaults, "denyMutations">;
+type RootRemoveOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks">;
+type RootMkdirOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks">;
 ```
 
 Per-method option shapes. Each picks the `RootDefaults` keys that apply, plus method-specific extras.
 
-## `SymlinkPolicy` / `HardlinkPolicy`
+## `SymlinkPolicy` / `MutationSymlinkPolicy` / `HardlinkPolicy`
 
 ```ts
-type SymlinkPolicy = "reject" | "follow-within-root";
+type SymlinkPolicy = "reject" | "follow-within-root" | "follow-parents-within-root";
+type MutationSymlinkPolicy = "reject" | "follow-parents-within-root";
 type HardlinkPolicy = "reject" | "allow";
 ```
 
-The two policy unions you'll see throughout. `"reject"` is conservative; `"follow-within-root"` allows symlinks whose final target is still inside the root; `"allow"` (hardlinks only) is permissive. Defaults for both symlinks and hardlinks are `"reject"`; switch hardlinks to `"allow"` only when you intentionally accept hardlink aliases.
+`"reject"` is conservative; `"follow-within-root"` allows symlinks whose final target is still inside the root; `"allow"` (hardlinks only) is permissive. Defaults for read symlinks and hardlinks are `"reject"`; switch hardlinks to `"allow"` only when you intentionally accept hardlink aliases.
+
+`"follow-parents-within-root"` allows contained parent directory aliases while
+rejecting final symlinks. Mutation policy is opt-in and independent of read
+policy; omission preserves each mutation method's existing behavior.
 
 ## `FsSafeErrorCode` / `FsSafeErrorCategory`
 
