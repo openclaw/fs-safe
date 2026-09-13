@@ -5,7 +5,7 @@ import { FsSafeError } from "./errors.js";
 import { getNativeBinding, type NativeBinding } from "./native.js";
 import type { NativeFileCopyResult } from "./native-binding.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
-import { writeAllToFile } from "./write-file-handle.js";
+import { transferFileHandle } from "./file-handle-transfer.js";
 
 export type CopyFileInput = {
   kind: "file";
@@ -38,42 +38,15 @@ export async function assertCopySourceCurrent(
   }, identity);
 }
 
-export async function* copyFileChunks(
-  input: CopyFileInput,
-  maxBytes = Infinity,
-): AsyncGenerator<Buffer> {
-  const buffer = Buffer.allocUnsafe(Math.min(256 * 1024, Math.max(64 * 1024, input.size)));
-  let position = 0;
-  while (true) {
-    input.signal?.throwIfAborted();
-    const { bytesRead } = await input.handle.read(
-      buffer, 0, Math.min(buffer.length, maxBytes - position + 1), position,
-    );
-    input.signal?.throwIfAborted();
-    if (bytesRead > maxBytes - position) {
-      throw new FsSafeError("too-large", `file exceeds limit of ${maxBytes} bytes`);
-    }
-    if (bytesRead === 0) return;
-    position += bytesRead;
-    // The consumer finishes writing before the next iteration reuses this buffer.
-    yield buffer.subarray(0, bytesRead);
-  }
-}
-
 export async function writeCopyFileToFd(
   fd: number,
   input: CopyFileInput,
   maxBytes?: number,
   assertBeforeMutation?: () => void,
 ): Promise<void> {
-  for await (const chunk of copyFileChunks(input, maxBytes)) {
-    await writeAllToFile(fd, chunk, {
-      assertBeforeMutation: () => {
-        input.signal?.throwIfAborted();
-        assertBeforeMutation?.();
-      },
-    });
-  }
+  await transferFileHandle(input.handle, fd, {
+    maxBytes, sizeHint: input.size, signal: input.signal, assertBeforeMutation,
+  });
 }
 
 export async function createNativeCopyFile(

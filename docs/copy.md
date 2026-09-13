@@ -69,6 +69,62 @@ XFS preserves regular-file and directory modes, timestamps, extended attributes,
 
 `readCloneFileMetadata(files)` asynchronously reads APFS data-stream identities and file metadata in one native batch. Results correspond to input order; missing or unsupported entries return `undefined`. The returned `CloneFileMetadata` includes clone ID, device/inode, size, mode, ownership, and timestamps. These are point-in-time observations, not authorization or proof that later reads remain unchanged. Consumers such as Git index adapters must validate their own content and timestamp invariants. The reader does not follow leaf symbolic links.
 
+## Borrowed FileHandle transfers
+
+`copyFileHandle` from `@openclaw/fs-safe/advanced` copies bytes between two
+already-open regular files. Use it when a snapshot or materialization owner
+has admitted the source and opened its own destination:
+
+```ts
+import { createHash } from "node:crypto";
+import { copyFileHandle } from "@openclaw/fs-safe/advanced";
+
+const digest = createHash("sha256");
+const bytes = await copyFileHandle(sourceHandle, targetHandle, {
+  maxBytes: expectedSize,
+  signal: AbortSignal.timeout(30_000),
+  onChunk: (chunk) => { digest.update(chunk); },
+  assertBeforeMutation: assertSnapshotOwnerCurrent,
+});
+```
+
+`CopyFileHandleOptions` contains optional `maxBytes`, `signal`, `onChunk`, and
+`assertBeforeMutation`. The result is the actual byte count copied through EOF.
+The byte limit is not a prefix length: excess data rejects with `too-large`,
+including data added after admission. Omitted limits are unlimited; Root's
+default read cap does not apply. Zero accepts only an empty source. Invalid
+limits reject before descriptor inspection.
+
+The source and target must be distinct regular files; exact device/inode
+aliases, including two handles to hardlinked names, reject before writing.
+Both reads and writes start at position zero and preserve the handles' current
+cursors. Existing destination bytes beyond the copied prefix remain intact.
+The target must have been opened **without append mode**: some platforms ignore
+positional writes on append handles, and Node exposes no portable open-flags
+query. Keep both handles open and free of concurrent I/O through settlement.
+
+The synchronous `onChunk` observer sees each source chunk before any target
+write for that chunk. It receives a borrowed view reused by later reads; consume
+it immediately without retaining or mutating it. This supports source hashing;
+it does not verify bytes persisted by the destination. Callers that require a
+destination digest must still hash the destination handle afterward. Observer
+and authority callbacks may throw; thenable returns reject with `TypeError`
+before the affected write. `assertBeforeMutation` runs immediately before every
+partial-write submission and must inspect current authority each time.
+
+The helper reuses Root copying's bounded read buffer and completes positive
+short reads and writes. A zero-progress write rejects with `helper-failed`.
+Cancellation is checked before I/O, after source reads, and before each write;
+admitted reads and writes settle before rejection. A rejected operation can
+leave a copied prefix. There is no rollback or pathname cleanup.
+
+This helper never opens or closes a file, truncates, chmods, syncs, renames, or
+publishes it. Source admission, immutability checks, destination preparation,
+durability, publication, and failure recovery stay with the caller. Initial
+descriptor inspection does not prove that the source remained unchanged while
+copying. Keep existing source-fingerprint and publication checks around the
+transfer when building snapshot operations.
+
 ## Ownership and cancellation
 
 These are low-level operations on caller-owned absolute paths, not Root-relative methods. The source and destination parent must be real directories. The library pins their descriptors and verifies their identities; it does not establish the caller's authorization to use them. Keep the source immutable for the operation, including writes through other aliases, and keep the destination namespace under the caller's control. Literal symlinks in the cloned contents are preserved rather than followed or sanitized.

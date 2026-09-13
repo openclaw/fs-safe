@@ -2,6 +2,7 @@
 // public subpaths; prefer root/json/store/temp/archive unless you are building a
 // higher-level primitive.
 export { createAsyncLock } from "./async-lock.js";
+export { copyFileHandle, type CopyFileHandleOptions } from "./file-handle-transfer.js";
 export {
   stageFileInDirectory,
   type StagedFile,

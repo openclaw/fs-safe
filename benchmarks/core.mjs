@@ -81,6 +81,17 @@ export async function registerCore({ api: a, workspace: w, register: add, contra
     for (const name of ["sha256File", "sha256FileSync"]) {
       add(`${name}/${size}`, () => a[name](filePath), { divisor, sync: name.endsWith("Sync"), verify: (r) => assert.equal(r.bytes, size) });
     }
+    const copyPath = path.join(w, `handle-copy-${size}`);
+    add(`copyFileHandle/${size}`, ({ source, target }) => a.copyFileHandle(source, target), {
+      divisor,
+      before: async () => {
+        const source = await fsp.open(filePath, "r");
+        try { return { source, target: await fsp.open(copyPath, "w+", 0o600) }; }
+        catch (error) { await source.close(); throw error; }
+      },
+      after: (_, { source, target }) => Promise.all([source.close(), target.close()]),
+      verify: (bytes) => { assert.equal(bytes, size); assert.deepEqual(fs.readFileSync(copyPath), payload); },
+    });
   }
   for (const name of ["tryReadJson", "tryReadJsonSync", "readJson", "readJsonSync", "readJsonIfExists"]) add(name, () => a[name](input), { sync: name.endsWith("Sync"), verify: (r) => assert.equal(r.ok, true) });
   for (const name of ["readRootJsonSync", "readRootJsonObjectSync", "readRootStructuredFileSync"]) add(name, () => a[name]({ rootDir: w, relativePath: "input.json", boundaryLabel: "benchmark", parse: JSON.parse }), { sync: true, verify: (r) => assert(r.ok) });
