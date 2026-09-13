@@ -230,6 +230,58 @@ await fs.remove("snapshots/empty-dir"); // ok
 await fs.remove("snapshots/full-dir");  // throws not-empty
 ```
 
+For a tree, opt into bounded recursive removal:
+
+```ts
+await fs.remove("scratch/finished-job", {
+  recursive: true,
+  force: true,
+  maxEntries: 20_000,
+  maxDepth: 32,
+  mutationSymlinks: "reject",
+  signal: AbortSignal.timeout(30_000),
+  assertBeforeMutation: () => assertJobLeaseCurrent(),
+});
+```
+
+| Option | Default / behavior |
+| --- | --- |
+| `recursive` | `false`; opt in to removing non-empty directories. |
+| `force` | `false`; `true` tolerates missing targets and vanished child entries. Other errors still reject. |
+| `maxEntries` | `100_000` in recursive mode; counts the requested target and every encountered child, including directories and symlinks. |
+| `maxDepth` | `64` in recursive mode; the requested target has depth 0 and each child adds one. An empty directory at the limit can be removed. |
+| `signal` | Stops traversal and new mutations when aborted. Already dispatched work settles and directory handles close before rejection. |
+
+Budgets must be non-negative safe integers and require `recursive: true`.
+An entry or depth limit throws `too-large` before processing the over-budget
+entry; one directory-entry lookahead detects a limit without loading all names
+or inspecting later siblings. Each directory is streamed once in filesystem
+order. Recursion uses memory and open directory handles proportional to depth,
+not directory width. Newly added entries can make the final `rmdir` fail with
+`not-empty`; the operation does not retry indefinitely.
+
+Recursive removal never follows a discovered symlink or junction. With an
+omitted `mutationSymlinks` policy it unlinks that entry, preserving the existing
+nonrecursive behavior. Both explicit mutation policies reject discovered links.
+`follow-parents-within-root` permits aliases only in the requested target's
+parents, and still rejects a final link. Root and per-call `denyMutations` policies
+remain additive; a denied descendant prevents removal of the enclosing requested
+tree before any entry is removed.
+
+The operation retains exact identities for the traversal directories and each
+observed target. Swapped or missing ancestors reject even with `force: true`;
+an abort reason or authority refusal carrying `ENOENT` is not treated as absence.
+Authority is rechecked immediately before each direct `unlink` or `rmdir`
+dispatch. Directory handles close before their directories are removed, including
+on Windows. If both traversal and close fail, `SuppressedError` retains both
+failures.
+
+Removal is incremental, not atomic. A later budget, cancellation, identity, or
+filesystem failure does not restore already removed entries. As with existing
+`remove`, this is a guarded JavaScript operation in every native mode: pathname
+checks are best-effort against a hostile concurrent process and do not create
+an atomic check-and-delete syscall. Use OS isolation for that threat model.
+
 ### `fs.mkdir(rel)`
 
 `mkdir -p`. Creates missing parents.

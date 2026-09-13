@@ -74,7 +74,13 @@ export type RootMoveOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyM
   overwrite?: boolean;
 };
 
-export type RootRemoveOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks">;
+export type RootRemoveOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks"> & {
+  recursive?: boolean;
+  force?: boolean;
+  maxEntries?: number;
+  maxDepth?: number;
+  signal?: AbortSignal;
+};
 export type RootMkdirOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks">;
 
 export type RootReadParams = Omit<RootReadOptions, "nonBlockingRead">;

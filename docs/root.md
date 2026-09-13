@@ -113,7 +113,7 @@ fs.append(rel, data, options?)           // append text/buffer; syncs before clo
 fs.copyIn(rel, sourceAbsPath, options?)  // copy from outside the root, atomically, with size cap
 fs.openWritable(rel, options?)           // FileHandle for streaming writes; supports await using
 fs.move(from, to, options?)              // rename within the root; defaults to no clobber
-fs.remove(rel, options?)                 // unlink file or rmdir empty directory
+fs.remove(rel, options?)                 // unlink file, rmdir, or bounded recursive removal
 fs.mkdir(rel, options?)                  // mkdir -p (creates missing parents)
 fs.ensureRoot(options?)                  // accepts "" / "." as the root itself
 ```
@@ -212,6 +212,16 @@ derive portable destination names from host files must sanitize or map that
 basename first.
 
 `openWritable` opens a writable file with options `mode?: number` and `writeMode?: "replace" | "append" | "update"`. `replace` truncates existing files and is the default; `update` keeps existing contents. Use it for streaming output. Prefer `await using` for cleanup.
+
+`remove` leaves non-empty directories unchanged unless `recursive: true` is
+provided. Recursive removal streams entries in filesystem order with finite
+`maxEntries` (100,000 by default) and `maxDepth` (64 by default) budgets. It never
+follows discovered symlinks; an explicit `mutationSymlinks` policy rejects them,
+while the omitted policy unlinks them. `force: true` ignores missing targets,
+and `signal` stops further work after admitted I/O and resource cleanup settle.
+Removal is not transactional: a budget, cancellation, policy, or identity
+failure can leave a partially removed tree. See [removal](writing.md)
+for the full counting and failure contract.
 
 ### Live mutation authority
 

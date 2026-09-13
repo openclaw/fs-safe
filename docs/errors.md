@@ -117,7 +117,7 @@ type FsSafeErrorCode =
 | `helper-unavailable` | Required native binding could not be loaded. | Unsupported platform, omitted/missing/incompatible platform package, or `FS_SAFE_NATIVE_MODE=require`. `auto` falls back where possible; `require` fails closed. |
 | `insecure-permissions` | A secure file or path permission check found a mode/ACL that allows broader access than requested. | File or directory is group/world writable/readable; Windows ACL grants broad read. |
 | `invalid-path` | Input was empty, contained NUL, was an unparseable URL, or otherwise unusable; a FileStore key used a noncanonical spelling. | Noncanonical FileStore aliases, backslashes, or complete parent segments; a network path on Windows; a drive-relative segment in a portable relative path or store key; or a leading drive-relative spelling such as `C:name` used as a Root destination. Existing-object Root lookups retain broader confined path compatibility, including legal POSIX drive-like names. |
-| `not-empty` | `remove()` on a non-empty directory. | Use `replaceDirectoryAtomic` or remove children first. |
+| `not-empty` | Nonrecursive `remove()` on a non-empty directory, or new children appeared during recursive removal. | Use bounded `recursive: true` removal or coordinate concurrent writers. |
 | `not-file` | Read or copy targeted a non-regular file, or a path walk found a non-directory ancestor. | Target was a directory, FIFO, socket, device, or an existing file was followed by another segment. |
 | `not-found` | The target does not exist (or its parent does not, with `mkdir: false`). | Typical missing-file case. |
 | `not-owned` | A secure file owner check failed. | File is owned by another UID. |
@@ -131,7 +131,7 @@ type FsSafeErrorCode =
 | `store-reentrant-update` | A `JsonStore.update()` callback called `update()` or `updateOr()` for the same canonical store before returning. | Reentrant mutation would deadlock or lose an update; return the complete next value from the outer callback. |
 | `symlink` | Path component is a symlink, policy is `reject`. | Caller followed a symlink they shouldn't have, or `symlinks: "reject"` is set. |
 | `timeout` | An operation with a wall-clock budget overran. | Secure file read or timed operation exceeded `timeoutMs`. |
-| `too-large` | A read or bounded walk exceeded its configured budget. | Caller gave a too-permissive file or traversal limit. |
+| `too-large` | A read, bounded walk, or recursive removal exceeded its configured budget. | Review the expected file or tree size before increasing the limit; recursive removal may have completed earlier entries. |
 | `unsupported-platform` | The platform or filesystem cannot perform the requested operation. | `createCloneSource` and `copyTree({ clone: "always" })` require native cloning support. The default `copyTree({ clone: "auto" })` selects portable byte copying when cloning is unavailable; unsupported source contents or metadata still fail. See [directory copying](copy.md) for backend limits and fallback behavior. |
 
 Secret writes reject invalid `mode` / `dirMode` values with `invalid-path` before directory creation. Existing secret directories with a mode different from the requested `dirMode` report `insecure-permissions` without chmod; a created directory whose descriptor ownership no longer matches its initializing effective user reports `not-owned`.

@@ -63,8 +63,6 @@ import {
   isAlreadyExistsError,
   normalizePinnedPathError,
   normalizePinnedWriteError,
-  normalizeRemoveGuardError,
-  normalizeRemovePathError,
   outsideWorkspaceError,
 } from "./root-errors.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
@@ -72,6 +70,7 @@ import { stringifyJsonDocument } from "./json-stringify.js";
 import type { DirEntry, PathStat } from "./types.js";
 import { walkRoot, type RootWalkEntry, type RootWalkOptions } from "./root-walk.js";
 import { registerTempPathForExit, type TempPathRegistration } from "./temp-cleanup.js";
+import { removePathInRootFallback, validateRemoveOptions } from "./root-remove.js";
 import { serializePathWrite } from "./write-queue.js";
 import { verifyAtomicWriteResult } from "./root-write-verification.js";
 import { inheritWriteTargetMode } from "./root-write-mode.js";
@@ -466,6 +465,8 @@ export class RootHandle implements Root {
 
   async remove(relativePath: string, options: RootRemoveOptions = {}): Promise<void> {
     assertValidRootRelativePath(relativePath);
+    validateRemoveOptions(options);
+    options.signal?.throwIfAborted();
     await removePathInRoot(this.context, {
       relativePath,
       ...this.mutationOptions(options),
@@ -1021,8 +1022,9 @@ async function removePathInRoot(
     remove: true,
   });
   try {
-    await removePathFallback(resolved, params.assertBeforeMutation, params.mutationSymlinks !== undefined);
+    await removePathInRootFallback(root, resolved.resolved, params);
   } catch (error) {
+    if (params.recursive) throw error;
     throw normalizePinnedPathError(error);
   }
 }
@@ -1375,30 +1377,6 @@ async function resolvePinnedRootPathInRoot(
     rootWithSep,
     canonicalPath: resolved.canonicalPath,
   };
-}
-
-async function prepareRemoveGuard(targetPath: string) {
-  try {
-    const guard = await createAsyncDirectoryGuard(path.dirname(targetPath));
-    await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("remove", targetPath);
-    await assertAsyncDirectoryGuard(guard);
-    return guard;
-  } catch (error) {
-    throw normalizeRemoveGuardError(error);
-  }
-}
-
-async function removePathFallback(resolved: { resolved: string }, assertBeforeMutation?: () => void, rejectFinalSymlink = false): Promise<void> {
-  const guard = await prepareRemoveGuard(resolved.resolved);
-  try {
-    const isDirectory = fsSync.lstatSync(resolved.resolved).isDirectory();
-    assertFinalSymlinkRejected(resolved.resolved, rejectFinalSymlink);
-    assertBeforeMutation?.();
-    await (isDirectory ? fs.rmdir(resolved.resolved) : fs.unlink(resolved.resolved));
-  } catch (error) {
-    throw normalizeRemovePathError(error);
-  }
-  await assertAsyncDirectoryGuard(guard).catch(error => { throw normalizeRemoveGuardError(error); });
 }
 
 async function mkdirPathFallback(resolved: { rootReal: string; resolved: string }, assertBeforeMutation?: () => void, rejectSymlinks = false): Promise<void> {

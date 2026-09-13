@@ -131,6 +131,11 @@ await fs.move("notes/today.txt", "notes/archive/today.txt", { overwrite: true })
 await fs.remove("notes/archive/today.txt");
 ```
 
+Use `remove(path, { recursive: true, maxEntries: 20_000, maxDepth: 32 })` for
+bounded tree cleanup. It streams directory entries, checks mutation authority
+before every removal, and supports cancellation. See [removal options and partial
+failure semantics](docs/writing.md).
+
 `root()` takes the trusted directory; relative paths in subsequent calls are resolved against it. Defaults you pass to `root()` apply to every call below; per-call options override them.
 
 `copyIn()` also accepts `{ root: sourceRoot, relativePath }`, `overwrite: false`,

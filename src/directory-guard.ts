@@ -52,12 +52,16 @@ export function createSyncDirectoryGuard(dir: string): SyncDirectoryGuard {
   return { dir, realPath: fsSync.realpathSync(dir), stat };
 }
 
-export function assertSyncDirectoryGuard(guard: SyncDirectoryGuard): void {
-  const stat = fsSync.lstatSync(guard.dir);
+export function assertSyncDirectoryGuard(guard: SyncDirectoryGuard | AnyAsyncDirectoryGuard): void {
+  const stat = typeof guard.stat.dev === "bigint" && typeof guard.stat.ino === "bigint"
+    ? inspectFileIdentitySync(() => fsSync.lstatSync(guard.dir, { bigint: true }), { dev: guard.stat.dev, ino: guard.stat.ino })
+    : fsSync.lstatSync(guard.dir);
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw directoryComponentNotDirectoryError();
   }
-  if (!sameFileIdentity(stat, guard.stat) || fsSync.realpathSync(guard.dir) !== guard.realPath) {
+  const realPath = typeof guard.stat.ino === "bigint"
+    ? fsSync.realpathSync.native(guard.dir) : fsSync.realpathSync(guard.dir);
+  if (!sameFileIdentity(stat, guard.stat) || realPath !== guard.realPath) {
     throw new FsSafeError("path-mismatch", "directory changed during operation");
   }
 }
