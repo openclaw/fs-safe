@@ -171,20 +171,21 @@ fallback links the completed stage and removes its temporary name in the same
 JavaScript turn; the filesystem must support hardlinks. Other processes can
 briefly observe both names. The source is never hardlinked to the destination.
 
-`clone` chooses the file-data transfer strategy through `CopyFileCloneMode`
-and defaults to `"never"`:
+`clone` chooses the file-data transfer strategy through `CopyCloneMode`, shared
+with [`copyTree`](copy.md#api). File copies default to `"never"`; tree copies
+default to `"auto"`:
 
 | Value | Behavior |
 | --- | --- |
-| `never` | Do not explicitly request a copy-on-write clone. Kernel copying can still share storage internally. |
-| `auto` | Try native file cloning, then copy bytes when the platform or filesystem does not support it. |
-| `require` | Require native cloning; fail when the binding or filesystem cannot provide it. |
+| `never` | Copy regular file bytes using reads and writes, without explicit cloning or copy offload. |
+| `auto` | Try native file cloning, then copy offload or ordinary byte copying when cloning is unavailable. |
+| `always` | Require native cloning; fail when the binding or filesystem cannot provide it. |
 
 Native file cloning supports APFS and supported Linux filesystems. Windows
-currently uses byte copying for `never` and `auto`; `require` fails. Clone choice
+currently uses byte copying for `never` and `auto`; `always` fails. Clone choice
 does not change modes, durability, root confinement, or source and publication
-identity checks. These are regular-file copies, separate from directory snapshot
-or tree-clone operations.
+identity checks. The shared strategy does not replace Root's guarded regular-file
+contract with `copyTree`'s caller-owned immutable-tree and metadata contract.
 
 An already aborted `signal` prevents I/O. Cancellation during copying waits for
 admitted reads and native work to settle, then cleans only the owned unpublished
@@ -197,10 +198,10 @@ published file. This receipt records an outcome; it does not authorize removing
 a file that another actor may have edited. Application recovery and cooperative
 locking remain caller-owned.
 
-When upgrading from 0.9.0, account for completed destinations retained after a
-post-publication source-verification failure, even with the existing call
-signature. Recovery must inspect current destination state rather than assume
-a rejected copy left no file.
+Existing `copyIn` callers must account for completed destinations retained after
+a post-publication source-verification failure, even without the new options.
+Recovery must inspect current destination state rather than assume a rejected
+copy left no file.
 
 Root operations that choose a new destination reject a leading Windows
 drive-relative spelling such as `C:name` on every platform. This applies to

@@ -1,5 +1,6 @@
 import type { TarMeterLimits } from "./archive-limits.js";
 import type { ArchiveMemberKind } from "./archive-plan.js";
+import type { CopyCloneMode } from "./copy-policy.js";
 
 export interface NativeFileHash {
   bytes: number;
@@ -116,7 +117,7 @@ export interface NativeBinding {
     sourceFd: number,
     parentFd: number,
     basename: string,
-    clone: "never" | "auto" | "require",
+    clone: CopyCloneMode,
     maxBytes: number | undefined,
     signal: AbortSignal | undefined,
     sync: boolean,

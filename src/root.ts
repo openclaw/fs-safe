@@ -31,7 +31,7 @@ export {
   type WritableOpenResult,
 } from "./root-impl.js";
 export type { RootCopyPublicationReceipt } from "./copy-publication.js";
-export type { CopyFileCloneMode } from "./copy-file-input.js";
+export type { CopyCloneMode } from "./copy-policy.js";
 export type { ContainmentGuarantee } from "./containment.js";
 export type {
   RootWalkDataEntry,

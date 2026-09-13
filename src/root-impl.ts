@@ -5,7 +5,7 @@ import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { normalizeMaxBytes } from "./byte-budget.js";
-import { assertCopySourceCurrent, resolveCopyCloneMode } from "./copy-file-input.js";
+import { assertCopySourceCurrent, resolveFileCopyCloneMode } from "./copy-file-input.js";
 import type { ContainmentGuarantee } from "./containment.js";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, createNearestExistingDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
@@ -1120,7 +1120,7 @@ async function copyFileInRoot(
   },
 ): Promise<void> {
   params.signal?.throwIfAborted();
-  const clone = resolveCopyCloneMode(params.clone);
+  const clone = resolveFileCopyCloneMode(params.clone);
   let source: OpenResult;
   let sourceIdentity: BigIntStats;
   if (typeof params.source === "string") {

@@ -2,7 +2,7 @@ import { normalizeMaxBytes } from "./byte-budget.js";
 import type { DenyMutationPolicy } from "./deny-mutations.js";
 import type { RenameIdentityPolicy } from "./pinned-write.js";
 import type { MutationSymlinkPolicy, SymlinkPolicy } from "./root-symlink-policy.js";
-import type { CopyFileCloneMode } from "./copy-file-input.js";
+import type { CopyCloneMode } from "./copy-policy.js";
 import type { RootCopyPublicationReceipt } from "./copy-publication.js";
 import type { Root } from "./root-impl.js";
 
@@ -49,7 +49,7 @@ export type RootOpenWritableOptions = Pick<RootDefaults, "assertBeforeMutation" 
 export type RootCopyOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks" | "durable" | "maxBytes" | "mkdir" | "mode"> & {
   sourceHardlinks?: HardlinkPolicy;
   overwrite?: boolean;
-  clone?: CopyFileCloneMode;
+  clone?: CopyCloneMode;
   signal?: AbortSignal;
   preserveSourceMode?: boolean;
   onDestinationPublished?: (receipt: RootCopyPublicationReceipt) => void;

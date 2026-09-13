@@ -5,9 +5,9 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative, root, type RootCopyPublicationReceipt } from "../src/index.js";
 import { __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
-import { __loadBundledNativeForTest, __resetNativeLoaderForTest } from "../src/native.js";
+import { __loadBundledNativeForTest, __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
-import { probeTreeClone, readCloneFileMetadata } from "../src/clone.js";
+import { probeTreeClone, readCloneFileMetadata } from "../src/copy.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -31,7 +31,7 @@ async function fixture(content: string | Buffer = "complete source bytes") {
   const sourceDirectory = path.join(directory, "source");
   const destinationDirectory = path.join(directory, "destination");
   await fs.mkdir(sourceDirectory);
-  await fs.mkdir(destinationDirectory);
+  await fs.mkdir(destinationDirectory, { mode: 0o700 });
   const sourcePath = path.join(sourceDirectory, "input");
   const target = path.join(destinationDirectory, "target");
   await fs.writeFile(sourcePath, content);
@@ -91,11 +91,21 @@ describe("Root.copyIn source and clone options", () => {
     },
   );
 
-  it("fails required cloning without native support before creating the destination", async () => {
+  it("fails clone=always without native support before creating the destination", async () => {
     const copy = await fixture();
     await expect(copy.destination.copyIn("nested/target", {
       root: copy.source, relativePath: "input",
-    }, { clone: "require", mkdir: true })).rejects.toMatchObject({ code: "helper-unavailable" });
+    }, { clone: "always", mkdir: true })).rejects.toMatchObject({ code: "helper-unavailable" });
+    expect(await fs.readdir(copy.destinationDirectory)).toEqual([]);
+    expect(await fs.readFile(copy.sourcePath, "utf8")).toBe(copy.content);
+  });
+
+  it("rejects the removed require clone strategy before creating the destination", async () => {
+    const copy = await fixture();
+    await expect(copy.destination.copyIn("nested/target", copy.sourcePath, {
+      // @ts-expect-error Untyped callers must not retain the removed strategy spelling.
+      clone: "require",
+    })).rejects.toMatchObject({ code: "invalid-path" });
     expect(await fs.readdir(copy.destinationDirectory)).toEqual([]);
     expect(await fs.readFile(copy.sourcePath, "utf8")).toBe(copy.content);
   });
@@ -339,11 +349,11 @@ describe("Root.copyIn exclusive publication", () => {
 });
 
 describe.skipIf(!nativeAvailable)("Root.copyIn native transfer", () => {
-  it.runIf(process.platform === "win32")("refuses required file cloning with the Windows binding before destination creation", async () => {
+  it.runIf(process.platform === "win32")("refuses clone=always with the Windows binding before destination creation", async () => {
     configureFsSafeNative({ mode: "require" });
     const copy = await fixture();
     await expect(copy.destination.copyIn("nested/target", copy.sourcePath, {
-      clone: "require", overwrite: false,
+      clone: "always", overwrite: false,
     })).rejects.toMatchObject({ code: "helper-unavailable" });
     expect(await fs.readdir(copy.destinationDirectory)).toEqual([]);
     expect(await fs.readFile(copy.sourcePath, "utf8")).toBe(copy.content);
@@ -351,6 +361,17 @@ describe.skipIf(!nativeAvailable)("Root.copyIn native transfer", () => {
 
   it.each(["never", "auto"] as const)("copies complete independent bytes with clone=%s", async clone => {
     configureFsSafeNative({ mode: "require" });
+    const native = __loadBundledNativeForTest();
+    const copyFile = native.copyFileExclusive;
+    let method: string | undefined;
+    if (copyFile) {
+      const observeCopy: typeof copyFile = async (...args) => {
+        const copied = await copyFile(...args);
+        method = copied.method;
+        return copied;
+      };
+      __setNativeLoaderForTest(() => ({ ...native, copyFileExclusive: observeCopy }));
+    }
     const copy = await fixture(Buffer.alloc(128 * 1024 + 1, 0x5a));
     __setFsSafeTestHooksForTest({
       async afterOpen(candidate, handle) {
@@ -361,13 +382,19 @@ describe.skipIf(!nativeAvailable)("Root.copyIn native transfer", () => {
       root: copy.source, relativePath: "input",
     }, { overwrite: false, clone });
     expect(await fs.readFile(copy.target)).toEqual(copy.content);
+    if (copyFile) {
+      if (clone === "never") expect(method).toBe("copy");
+      else if (process.platform === "darwin" && probeTreeClone(copy.destinationDirectory) === "apfs") {
+        expect(method).toBe("clone");
+      }
+    }
     await fs.writeFile(copy.target, "independent destination");
     expect(await fs.readFile(copy.sourcePath)).toEqual(copy.content);
     expect(await fs.readdir(copy.destinationDirectory)).toEqual(["target"]);
   });
 
   it.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
-    "requires cloning exactly when the source and destination filesystem support it",
+    "honors clone=always only when the source and destination filesystem support it",
     async () => {
       configureFsSafeNative({ mode: "require" });
       const copy = await fixture(Buffer.alloc(128 * 1024 + 1, 0x5a));
@@ -383,7 +410,7 @@ describe.skipIf(!nativeAvailable)("Root.copyIn native transfer", () => {
       await fs.rm(probe, { force: true });
       const pending = copy.destination.copyIn("target", {
         root: copy.source, relativePath: "input",
-      }, { overwrite: false, clone: "require" });
+      }, { overwrite: false, clone: "always" });
       if (supported) {
         await expect(pending).resolves.toBeUndefined();
         expect(await fs.readFile(copy.target)).toEqual(copy.content);

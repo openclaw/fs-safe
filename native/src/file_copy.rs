@@ -26,7 +26,7 @@ pub struct NativeFileCopyResult {
 enum CloneMode {
     Never,
     Auto,
-    Require,
+    Always,
 }
 
 // The result retains both cleanup identity and the parent until the JS thread
@@ -188,18 +188,19 @@ impl FileCopyTask {
     }
 
     fn copy_contents(&self, source: &OwnedFd, target: &OwnedFd) -> NativeResult<&'static str> {
-        #[cfg(not(target_os = "linux"))]
         let mut offset = 0_u64;
         #[cfg(target_os = "linux")]
-        let mut offset = match copy_file_ranges(
-            source.as_raw_fd(),
-            target.as_raw_fd(),
-            self.max_bytes,
-            || self.check_cancelled(),
-        )? {
-            RangeCopyOutcome::Complete(_) => return Ok("copy-file-range"),
-            RangeCopyOutcome::Unsupported { offset, .. } => offset,
-        };
+        if self.clone_mode == CloneMode::Auto {
+            offset = match copy_file_ranges(
+                source.as_raw_fd(),
+                target.as_raw_fd(),
+                self.max_bytes,
+                || self.check_cancelled(),
+            )? {
+                RangeCopyOutcome::Complete(_) => return Ok("copy-file-range"),
+                RangeCopyOutcome::Unsupported { offset, .. } => offset,
+            };
+        }
         let mut buffer = [0_u8; 64 * 1024];
         loop {
             self.check_cancelled()?;
@@ -301,7 +302,7 @@ pub fn copy_file_exclusive(
     let clone_mode = match clone_mode.as_str() {
         "never" => CloneMode::Never,
         "auto" => CloneMode::Auto,
-        "require" => CloneMode::Require,
+        "always" => CloneMode::Always,
         _ => return Err(Error::new(Status::InvalidArg, "invalid copy clone mode")),
     };
     let max_bytes = match max_bytes {
@@ -397,7 +398,7 @@ mod tests {
 
     #[test]
     fn transfer_preserves_contents_source_position_and_existing_destinations() {
-        for clone_mode in [CloneMode::Never, CloneMode::Auto, CloneMode::Require] {
+        for clone_mode in [CloneMode::Never, CloneMode::Auto, CloneMode::Always] {
             let mut fixture = Fixture::new();
             let contents = (0..150_001)
                 .map(|index| (index % 251) as u8)
@@ -411,15 +412,15 @@ mod tests {
             let task = fixture.task(clone_mode, contents.len() as u64);
             let created = match task.copy() {
                 Ok(created) => created,
-                Err(error) if clone_mode == CloneMode::Require && unsupported(&error.status) => {
+                Err(error) if clone_mode == CloneMode::Always && unsupported(&error.status) => {
                     assert!(!fixture.path.join("stage").exists());
                     continue;
                 }
                 Err(error) => panic!("copy failed: {error}"),
             };
             if clone_mode == CloneMode::Never {
-                assert_ne!(created.method, "clone");
-            } else if clone_mode == CloneMode::Require {
+                assert_eq!(created.method, "copy");
+            } else if clone_mode == CloneMode::Always {
                 assert_eq!(created.method, "clone");
             }
             assert!(
@@ -450,43 +451,61 @@ mod tests {
     }
 
     #[test]
+    fn rejects_retired_clone_mode_before_starting_work() {
+        let error = copy_file_exclusive(
+            i32::MAX,
+            i32::MAX,
+            "stage".to_owned(),
+            "require".to_owned(),
+            None,
+            None,
+            false,
+        )
+        .err()
+        .expect("retired clone mode must be rejected");
+        assert_eq!(error.status, Status::InvalidArg);
+    }
+
+    #[test]
     fn source_growth_is_bounded_during_transfer_and_failed_stages_are_removed() {
-        let mut fixture = Fixture::new();
-        let task = fixture.task(CloneMode::Never, 11);
-        let source = rustix::io::dup(borrowed(task.source_fd)).unwrap();
-        task.check_size(&source).unwrap();
-        fixture.source.seek(SeekFrom::End(0)).unwrap();
-        fixture.source.write_all(b" grew").unwrap();
-        let created = CreatedCopy {
-            parent: rustix::io::dup(borrowed(task.parent_fd)).unwrap(),
-            name: task.name.clone(),
-            target: Some(
-                OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .create_new(true)
-                    .open(fixture.path.join("stage"))
+        for clone_mode in [CloneMode::Never, CloneMode::Auto] {
+            let mut fixture = Fixture::new();
+            let task = fixture.task(clone_mode, 11);
+            let source = rustix::io::dup(borrowed(task.source_fd)).unwrap();
+            task.check_size(&source).unwrap();
+            fixture.source.seek(SeekFrom::End(0)).unwrap();
+            fixture.source.write_all(b" grew").unwrap();
+            let created = CreatedCopy {
+                parent: rustix::io::dup(borrowed(task.parent_fd)).unwrap(),
+                name: task.name.clone(),
+                target: Some(
+                    OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .create_new(true)
+                        .open(fixture.path.join("stage"))
+                        .unwrap()
+                        .into(),
+                ),
+                method: "copy",
+                error: None,
+            };
+            assert_eq!(
+                task.copy_contents(&source, created.fd())
+                    .err()
                     .unwrap()
-                    .into(),
-            ),
-            method: "copy",
-            error: None,
-        };
-        assert_eq!(
-            task.copy_contents(&source, created.fd())
-                .err()
-                .unwrap()
-                .status,
-            "too-large"
-        );
-        drop(created);
-        assert!(!fixture.path.join("stage").exists());
-        assert_eq!(task.copy().err().unwrap().status, "too-large");
-        assert!(!fixture.path.join("stage").exists());
-        let mut task = fixture.task(CloneMode::Never, u64::MAX);
-        task.source_fd = i32::MAX;
-        assert_eq!(task.copy().err().unwrap().status, "EBADF");
-        assert!(!fixture.path.join("stage").exists());
+                    .status,
+                "too-large"
+            );
+            drop(created);
+            assert!(!fixture.path.join("stage").exists());
+            assert_eq!(task.copy().err().unwrap().status, "too-large");
+            assert!(!fixture.path.join("stage").exists());
+            let mut task = fixture.task(clone_mode, u64::MAX);
+            task.source_fd = i32::MAX;
+            assert_eq!(task.copy().err().unwrap().status, "EBADF");
+            assert!(!fixture.path.join("stage").exists());
+        }
     }
 
     #[test]

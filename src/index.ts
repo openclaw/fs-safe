@@ -18,7 +18,7 @@ export {
   type RootCopyOptions,
   type RootCopySource,
   type RootCopyPublicationReceipt,
-  type CopyFileCloneMode,
+  type CopyCloneMode,
   type RootCreateJsonOptions,
   type RootCreateOptions,
   type RootDefaults,

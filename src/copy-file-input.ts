@@ -1,30 +1,27 @@
 import fs, { type BigIntStats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
+import { resolveCopyCloneMode, type CopyCloneMode } from "./copy-policy.js";
 import { FsSafeError } from "./errors.js";
 import { getNativeBinding, type NativeBinding } from "./native.js";
 import type { NativeFileCopyResult } from "./native-binding.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 import { writeAllToFile } from "./write-file-handle.js";
 
-export type CopyFileCloneMode = "never" | "auto" | "require";
-
 export type CopyFileInput = {
   kind: "file";
   handle: FileHandle;
   size: number;
-  clone: CopyFileCloneMode;
+  clone: CopyCloneMode;
   signal?: AbortSignal;
   verifySource(): Promise<void>;
 };
 
-export function resolveCopyCloneMode(mode: CopyFileCloneMode = "never"): CopyFileCloneMode {
-  if (mode !== "never" && mode !== "auto" && mode !== "require") {
-    throw new FsSafeError("invalid-path", "clone must be never, auto, or require");
-  }
-  if (mode === "require" && !getNativeBinding()?.copyFileExclusive) {
+export function resolveFileCopyCloneMode(mode?: CopyCloneMode): CopyCloneMode {
+  const clone = resolveCopyCloneMode(mode, "never");
+  if (clone === "always" && !getNativeBinding()?.copyFileExclusive) {
     throw new FsSafeError("helper-unavailable", "native file cloning is unavailable");
   }
-  return mode;
+  return clone;
 }
 
 export async function assertCopySourceCurrent(
@@ -89,7 +86,7 @@ export async function createNativeCopyFile(
 ): Promise<NativeFileCopyResult | undefined> {
   input.signal?.throwIfAborted();
   if (!native.copyFileExclusive) {
-    if (input.clone === "require") {
+    if (input.clone === "always") {
       throw new FsSafeError("helper-unavailable", "native file cloning is unavailable");
     }
     return undefined;
@@ -108,7 +105,7 @@ export async function createNativeCopyFile(
     if (code === "too-large") {
       throw new FsSafeError("too-large", `file exceeds limit of ${maxBytes} bytes`, { cause: error });
     }
-    if (code === "ENOTSUP" && input.clone !== "require") return undefined;
+    if (code === "ENOTSUP" && input.clone !== "always") return undefined;
     if (code === "ENOTSUP") {
       throw new FsSafeError("unsupported-platform", "native file cloning is unsupported", { cause: error });
     }
