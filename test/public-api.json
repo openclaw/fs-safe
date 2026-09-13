@@ -560,6 +560,7 @@
         "pinDirectory",
         "publishFileExclusive",
         "sha256File",
+        "sha256FileSync",
         "syncDirectory",
         "syncDirectoryBestEffort",
         "syncDirectoryBestEffortSync",
@@ -580,7 +581,8 @@
         "PublishFileExclusiveSyncFailurePolicy",
         "Sha256FileInput",
         "Sha256FileOptions",
-        "Sha256FileResult"
+        "Sha256FileResult",
+        "Sha256FileSyncInput"
       ],
       "errorCodes": {}
     },

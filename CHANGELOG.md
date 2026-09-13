@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add `sha256FileSync()` for bounded SHA-256 hashing of pathnames and borrowed file descriptors without changing their current positions, with exact pathname admission checks and no native binding requirement.
 - Keep synchronous store writers open through publication and verify exact inode identities, rejecting substituted files even when Windows reports opaque or numerically indistinguishable pathname metadata.
 
 - Restrict atomic replacement mode inheritance to ordinary rwx bits from an existing non-symlink regular file, preventing symlink, file-type, and special-bit permission laundering.

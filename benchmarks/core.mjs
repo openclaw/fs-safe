@@ -78,7 +78,9 @@ export async function registerCore({ api: a, workspace: w, register: add, contra
       });
     }
     add(`Root.readBytes/${size}`, () => safe.readBytes(`bytes-${size}`, size > 16 * 1024 * 1024 ? { maxBytes: size } : undefined), { divisor, verify: (r) => assert.deepEqual(r, payload) });
-    add(`sha256File/${size}`, () => a.sha256File(filePath), { divisor, verify: (r) => assert.equal(r.bytes, size) });
+    for (const name of ["sha256File", "sha256FileSync"]) {
+      add(`${name}/${size}`, () => a[name](filePath), { divisor, sync: name.endsWith("Sync"), verify: (r) => assert.equal(r.bytes, size) });
+    }
   }
   for (const name of ["tryReadJson", "tryReadJsonSync", "readJson", "readJsonSync", "readJsonIfExists"]) add(name, () => a[name](input), { sync: name.endsWith("Sync"), verify: (r) => assert.equal(r.ok, true) });
   for (const name of ["readRootJsonSync", "readRootJsonObjectSync", "readRootStructuredFileSync"]) add(name, () => a[name]({ rootDir: w, relativePath: "input.json", boundaryLabel: "benchmark", parse: JSON.parse }), { sync: true, verify: (r) => assert(r.ok) });

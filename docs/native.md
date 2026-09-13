@@ -133,6 +133,10 @@ workers rather than the JavaScript event loop.
 | `require` | Try once, cache the result | Throw `FsSafeError("helper-unavailable")` |
 | `off` | Never attempt a binding load | Always use guarded JavaScript |
 
+`sha256FileSync()` is a synchronous Node implementation in all three modes and
+does not load the binding. Use asynchronous `sha256File()` for native hashing
+and cancellation that can respond while JavaScript callbacks run.
+
 Features without a safe JavaScript implementation, including zstd/bzip2 TAR,
 Windows private-directory creation, and [retained-directory staging](staged-file.md),
 fail with `helper-unavailable` when native support is absent or off. Staging

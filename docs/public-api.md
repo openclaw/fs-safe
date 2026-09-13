@@ -89,8 +89,10 @@ The durability surface also exports the synchronous strict
 `EnsureDurableDirectoryOptions`, `PublishFileExclusiveResult`,
 `PublishFileExclusiveStrategy`, `PublishFileExclusiveCleanup`,
 `PublishFileExclusiveFailurePhase`,
-`PublishFileExclusiveDirectorySyncFailure`, `Sha256FileInput`, and
-`Sha256FileResult`.
+`PublishFileExclusiveDirectorySyncFailure`, `Sha256FileInput`,
+`Sha256FileSyncInput`, `Sha256FileOptions`, and `Sha256FileResult`.
+`sha256FileSync()` provides synchronous pathname or borrowed-descriptor hashing
+with the same byte-budget and digest-result contracts as `sha256File()`.
 
 ## Archives
 
