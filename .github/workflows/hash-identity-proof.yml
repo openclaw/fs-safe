@@ -6,6 +6,8 @@ on:
       - src/file-hash.ts
       - test/file-hash.test.ts
       - test/file-hash-identity.test.ts
+      - test/file-hash-options.test.ts
+      - test/file-hash-sync.test.ts
       - test/helpers/file-hash-identity.ts
       - scripts/hash-identity-proof.mjs
       - scripts/hash-identity-proof-windows.ps1
