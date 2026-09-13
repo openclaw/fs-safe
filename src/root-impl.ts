@@ -76,6 +76,7 @@ import { inheritWriteTargetMode } from "./root-write-mode.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 import { onCopyPublication, type CopyPublicationOptions } from "./copy-publication.js";
 import { writeAllToFile } from "./write-file-handle.js";
+import { assertFinalSymlinkRejected, mutationSymlinkResolution, readSymlinkResolution, type MutationSymlinkPolicy, type SymlinkPolicy } from "./root-symlink-policy.js";
 
 import {
   mergeReadOptions, readDefaults,
@@ -83,19 +84,20 @@ import {
   type RootCreateJsonOptions, type RootCreateOptions, type RootDefaults,
   type RootMkdirOptions, type RootMoveOptions, type RootOpenOptions,
   type RootOpenWritableOptions, type RootReadOptions, type RootRemoveOptions,
-  type RootWriteJsonOptions, type RootWriteOptions, type SymlinkPolicy,
+  type RootWriteJsonOptions, type RootWriteOptions,
 } from "./root-options.js";
 import { composeMutationAssertions, rethrowMutationAuthorityError } from "./mutation-authority.js";
 export type {
   HardlinkPolicy, RootAppendOptions, RootCopyOptions, RootCreateJsonOptions,
   RootCreateOptions, RootDefaults, RootMkdirOptions, RootMoveOptions,
   RootOpenOptions, RootOpenWritableOptions, RootOptions, RootReadOptions,
-  RootRemoveOptions, RootWriteJsonOptions, RootWriteOptions, SymlinkPolicy, WritableOpenMode,
+  RootRemoveOptions, RootWriteJsonOptions, RootWriteOptions, WritableOpenMode,
 } from "./root-options.js";
 export { DEFAULT_ROOT_MAX_BYTES } from "./root-options.js";
 
 export type { DenyMutationPolicy } from "./deny-mutations.js";
 export type { RenameIdentityPolicy } from "./pinned-write.js";
+export type { MutationSymlinkPolicy, SymlinkPolicy } from "./root-symlink-policy.js";
 export { resolveOpenedFileRealPathForHandle } from "./opened-realpath.js";
 export type { ReadResult } from "./read-opened-file.js";
 export type OpenResult = {
@@ -376,10 +378,11 @@ export class RootHandle implements Root {
     };
   }
 
-  private mutationOptions<T extends { denyMutations?: DenyMutationPolicy; assertBeforeMutation?: () => void }>(options: T): T {
+  private mutationOptions<T extends { denyMutations?: DenyMutationPolicy; assertBeforeMutation?: () => void; mutationSymlinks?: MutationSymlinkPolicy }>(options: T): T {
     return {
       ...options,
       assertBeforeMutation: composeMutationAssertions(this.defaults.assertBeforeMutation, options.assertBeforeMutation),
+      mutationSymlinks: options.mutationSymlinks ?? this.defaults.mutationSymlinks,
       denyMutations: mergeDenyMutationPolicies(
         this.defaults.denyMutations,
         options.denyMutations,
@@ -609,7 +612,7 @@ export class RootHandle implements Root {
     assertValidRootRelativePath(fromRelative);
     assertValidRootDestinationPath(toRelative);
     validatePinnedOperationPayload({ from: fromRelative, to: toRelative });
-    const { denyMutations, assertBeforeMutation } = this.mutationOptions(options);
+    const { denyMutations, assertBeforeMutation, mutationSymlinks } = this.mutationOptions(options);
     await assertMoveMutationAllowed(this.context, {
       fromRelative,
       toRelative,
@@ -619,6 +622,7 @@ export class RootHandle implements Root {
       fromRelative,
       denyMutations,
       assertBeforeMutation,
+      mutationSymlinks,
       overwrite: options.overwrite ?? false,
       toRelative,
     }).catch(rethrowMutationAuthorityError);
@@ -643,7 +647,7 @@ async function openFileInRoot(
   const { rootWithSep, resolved } = await resolvePathInRoot(root, params.relativePath, {
     allowFinalSymlink: true,
     rejectUnsafeDeviceReads: true,
-    rejectSymlinks: params.symlinks !== "follow-within-root",
+    ...readSymlinkResolution(params.symlinks),
     resolveCanonical: true,
   });
 
@@ -758,6 +762,7 @@ async function resolveGuardedWritePathInRoot(
   params: {
     relativePath: string;
     denyMutations?: DenyMutationPolicy;
+    mutationSymlinks?: MutationSymlinkPolicy;
     allowFinalSymlink?: boolean;
     protectDeniedAncestors?: boolean;
     shouldAssertNoPathAlias?: (resolved: GuardedWritePath) => Promise<boolean> | boolean;
@@ -767,6 +772,7 @@ async function resolveGuardedWritePathInRoot(
     aliasErrorCode: "path-alias",
     rejectAmbiguousParents: true,
     allowFinalSymlink: params.allowFinalSymlink,
+    ...mutationSymlinkResolution(params.mutationSymlinks),
   });
   await assertMutationNotDenied(
     resolvedPath.resolved,
@@ -797,6 +803,7 @@ async function openWritableFileInRoot(
     mode?: number;
     denyMutations?: DenyMutationPolicy;
     assertBeforeMutation?: () => void;
+    mutationSymlinks?: MutationSymlinkPolicy;
     truncateExisting?: boolean;
     append?: boolean;
   },
@@ -804,12 +811,14 @@ async function openWritableFileInRoot(
   const { rootReal, rootWithSep, resolved } = await resolveGuardedWritePathInRoot(root, {
     relativePath: params.relativePath,
     denyMutations: params.denyMutations,
+    mutationSymlinks: params.mutationSymlinks,
   });
   let ioPath = params.mkdir === false
     ? resolved
     : await prepareRootWriteTarget(rootReal, resolved, params.assertBeforeMutation);
   try {
-    const resolvedRealPath = fsSync.realpathSync.native(ioPath);
+    assertFinalSymlinkRejected(ioPath, params.mutationSymlinks !== undefined);
+    const resolvedRealPath = params.mutationSymlinks === undefined ? fsSync.realpathSync.native(ioPath) : ioPath;
     if (!isPathInside(rootWithSep, resolvedRealPath)) {
       throw outsideWorkspaceError();
     }
@@ -903,6 +912,7 @@ async function openWritableFileInRoot(
     // Truncate only after boundary and identity checks complete. This avoids
     // irreversible side effects if a symlink target changes before validation.
     if (params.append !== true && params.truncateExisting !== false && !createdForWrite) {
+      assertFinalSymlinkRejected(ioPath, params.mutationSymlinks !== undefined);
       params.assertBeforeMutation?.();
       await handle.truncate(0);
     }
@@ -927,17 +937,7 @@ async function openWritableFileInRoot(
 
 async function appendFileInRoot(
   root: RootContext,
-  params: {
-    relativePath: string;
-    data: string | Buffer;
-    durable?: boolean;
-    encoding?: BufferEncoding;
-    mkdir?: boolean;
-    mode?: number;
-    denyMutations?: DenyMutationPolicy;
-    assertBeforeMutation?: () => void;
-    prependNewlineIfNeeded?: boolean;
-  },
+  params: RootAppendOptions & { relativePath: string; data: string | Buffer },
 ): Promise<void> {
   const target = await openWritableFileInRoot(root, {
     relativePath: params.relativePath,
@@ -945,6 +945,7 @@ async function appendFileInRoot(
     mode: params.mode,
     denyMutations: params.denyMutations,
     assertBeforeMutation: params.assertBeforeMutation,
+    mutationSymlinks: params.mutationSymlinks,
     truncateExisting: false,
     append: true,
   });
@@ -978,7 +979,11 @@ async function appendFileInRoot(
       : prefix.length > 0 ? Buffer.concat([Buffer.from(prefix, "utf8"), params.data]) : params.data;
     await writeAllToFile(target.handle, payload, {
       encoding: params.encoding,
-      assertBeforeMutation: () => { params.assertBeforeMutation?.(); dispatched = true; },
+      assertBeforeMutation: () => {
+        assertFinalSymlinkRejected(target.realPath, params.mutationSymlinks !== undefined);
+        params.assertBeforeMutation?.();
+        dispatched = true;
+      },
     });
     // A successful empty append still creates the file, as Node's appendFile does.
     dispatched = true;
@@ -999,10 +1004,11 @@ async function removePathInRoot(
   const resolved = await resolvePinnedPathInRoot(root, {
     relativePath: params.relativePath,
     denyMutations: params.denyMutations,
+    mutationSymlinks: params.mutationSymlinks,
     remove: true,
   });
   try {
-    await removePathFallback(resolved, params.assertBeforeMutation);
+    await removePathFallback(resolved, params.assertBeforeMutation, params.mutationSymlinks !== undefined);
   } catch (error) {
     throw normalizePinnedPathError(error);
   }
@@ -1015,12 +1021,13 @@ async function mkdirPathInRoot(
     allowRoot?: boolean;
     denyMutations?: DenyMutationPolicy;
     assertBeforeMutation?: () => void;
+    mutationSymlinks?: MutationSymlinkPolicy;
   },
 ): Promise<void> {
   validatePinnedOperationPayload({ relativePath: params.relativePath });
   const resolved = await resolvePinnedPathInRoot(root, params);
   try {
-    await mkdirPathFallback(resolved, params.assertBeforeMutation);
+    await mkdirPathFallback(resolved, params.assertBeforeMutation, params.mutationSymlinks !== undefined);
   } catch (error) {
     throw normalizePinnedPathError(error);
   }
@@ -1045,6 +1052,7 @@ async function writeFileInRoot(
       params.mode,
       params.denyMutations,
       params.overwrite,
+      params.mutationSymlinks,
     );
 
     await serializePathWrite(pinned.targetPath, async () => {
@@ -1070,6 +1078,7 @@ async function commitPinnedWriteInRoot(
       mode: params.mode ?? pinned.mode,
       sync: params.durable !== false,
       overwrite: params.overwrite,
+      rejectFinalSymlink: params.mutationSymlinks !== undefined,
       input: { kind: "buffer", data: params.data, encoding: params.encoding },
       rootIdentity: root.rootIdentity,
       assertBeforeMutation: params.assertBeforeMutation,
@@ -1114,6 +1123,7 @@ async function copyFileInRoot(
     mode?: number;
     denyMutations?: DenyMutationPolicy;
     assertBeforeMutation?: () => void;
+    mutationSymlinks?: MutationSymlinkPolicy;
     sourceHardlinks?: HardlinkPolicy;
     durable?: boolean;
     verifyPublished?: CopyPublicationOptions[typeof onCopyPublication];
@@ -1139,6 +1149,8 @@ async function copyFileInRoot(
         params.relativePath,
         params.mode,
         params.denyMutations,
+        true,
+        params.mutationSymlinks,
       );
       await serializePathWrite(pinned.targetPath, async () => {
         await assertCopySourceCurrent(source, sourceIdentity);
@@ -1151,6 +1163,7 @@ async function copyFileInRoot(
             mkdir: params.mkdir !== false,
             mode: pinned.mode,
             overwrite: true,
+            rejectFinalSymlink: params.mutationSymlinks !== undefined,
             maxBytes: params.maxBytes,
             sync: params.durable !== false,
             verifyPublished: params.verifyPublished,
@@ -1207,10 +1220,12 @@ async function resolvePinnedWriteTargetInRoot(
   requestedMode?: number,
   denyMutations?: DenyMutationPolicy,
   overwrite = true,
+  mutationSymlinks?: MutationSymlinkPolicy,
 ): Promise<PinnedWriteTarget> {
   const { rootReal, rootWithSep, resolved } = await resolveGuardedWritePathInRoot(root, {
     relativePath,
     denyMutations,
+    mutationSymlinks,
   });
 
   // resolvePathInRoot already enforces isPathInside, so any actual escape
@@ -1258,12 +1273,14 @@ async function resolvePinnedPathInRoot(
     relativePath: string;
     allowRoot?: boolean;
     denyMutations?: DenyMutationPolicy;
+    mutationSymlinks?: MutationSymlinkPolicy;
     remove?: boolean;
   },
 ): Promise<{ rootReal: string; resolved: string; relativePosix: string }> {
   return await resolvePinnedOperationPathInRoot(root, {
     allowRoot: params.allowRoot,
     denyMutations: params.denyMutations,
+    mutationSymlinks: params.mutationSymlinks,
     protectDenyMutationAncestors: params.remove === true,
     relativePath: params.relativePath,
     policy: params.remove ? PATH_ALIAS_POLICIES.unlinkTarget : PATH_ALIAS_POLICIES.strict,
@@ -1277,12 +1294,14 @@ async function resolvePinnedOperationPathInRoot(
     policy: (typeof PATH_ALIAS_POLICIES)[keyof typeof PATH_ALIAS_POLICIES];
     allowRoot?: boolean;
     denyMutations?: DenyMutationPolicy;
+    mutationSymlinks?: MutationSymlinkPolicy;
     protectDenyMutationAncestors: boolean;
   },
 ): Promise<{ rootReal: string; resolved: string; relativePosix: string }> {
   const resolved = await resolvePinnedRootPathInRoot(root, {
     relativePath: params.relativePath,
     policy: params.policy,
+    mutationSymlinks: params.mutationSymlinks,
   });
   const relativeResolved = path.relative(resolved.rootReal, resolved.canonicalPath);
   if ((relativeResolved === "" || relativeResolved === ".") && params.allowRoot === true) {
@@ -1314,6 +1333,7 @@ async function resolvePinnedRootPathInRoot(
   params: {
     relativePath: string;
     policy: (typeof PATH_ALIAS_POLICIES)[keyof typeof PATH_ALIAS_POLICIES];
+    mutationSymlinks?: MutationSymlinkPolicy;
   },
 ): Promise<{ rootReal: string; rootWithSep: string; canonicalPath: string }> {
   await assertRootIdentityCurrent(root);
@@ -1329,8 +1349,10 @@ async function resolvePinnedRootPathInRoot(
       rootCanonicalPath: rootReal,
       boundaryLabel: "root",
       policy: params.policy,
+      ...mutationSymlinkResolution(params.mutationSymlinks),
     });
   } catch (err) {
+    if (err instanceof FsSafeError && err.code === "symlink") throw err;
     throw new FsSafeError("path-alias", "path alias escape blocked", { cause: err });
   }
   const rootWithSep = ensureTrailingSep(resolved.rootCanonicalPath);
@@ -1352,10 +1374,11 @@ async function prepareRemoveGuard(targetPath: string) {
   }
 }
 
-async function removePathFallback(resolved: { resolved: string }, assertBeforeMutation?: () => void): Promise<void> {
+async function removePathFallback(resolved: { resolved: string }, assertBeforeMutation?: () => void, rejectFinalSymlink = false): Promise<void> {
   const guard = await prepareRemoveGuard(resolved.resolved);
   try {
     const isDirectory = fsSync.lstatSync(resolved.resolved).isDirectory();
+    assertFinalSymlinkRejected(resolved.resolved, rejectFinalSymlink);
     assertBeforeMutation?.();
     await (isDirectory ? fs.rmdir(resolved.resolved) : fs.unlink(resolved.resolved));
   } catch (error) {
@@ -1364,9 +1387,10 @@ async function removePathFallback(resolved: { resolved: string }, assertBeforeMu
   await assertAsyncDirectoryGuard(guard).catch(error => { throw normalizeRemoveGuardError(error); });
 }
 
-async function mkdirPathFallback(resolved: { rootReal: string; resolved: string }, assertBeforeMutation?: () => void): Promise<void> {
+async function mkdirPathFallback(resolved: { rootReal: string; resolved: string }, assertBeforeMutation?: () => void, rejectSymlinks = false): Promise<void> {
   await mkdirPathComponentsWithGuards({
     rootReal: resolved.rootReal, targetPath: resolved.resolved, assertBeforeMutation,
+    rejectSymlinks,
     beforeComponent: async (componentPath) => await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("mkdir", componentPath),
   });
 }
@@ -1445,6 +1469,7 @@ async function movePathFallback(
     fromRelative: string;
     denyMutations?: DenyMutationPolicy;
     assertBeforeMutation?: () => void;
+    mutationSymlinks?: MutationSymlinkPolicy;
     toRelative: string;
     overwrite: boolean;
   },
@@ -1452,15 +1477,18 @@ async function movePathFallback(
   const source = await resolvePathInRoot(root, params.fromRelative, {
     aliasErrorCode: "path-alias",
     allowFinalSymlink: true,
+    ...mutationSymlinkResolution(params.mutationSymlinks),
   });
   await assertMutationNotDenied(source.resolved, params.denyMutations, { protectAncestors: true });
   await resolvePinnedRootPathInRoot(root, {
     relativePath: params.fromRelative,
     policy: PATH_ALIAS_POLICIES.strict,
+    mutationSymlinks: params.mutationSymlinks,
   });
   const target = await resolveGuardedWritePathInRoot(root, {
     relativePath: params.toRelative,
     denyMutations: params.denyMutations,
+    mutationSymlinks: params.mutationSymlinks,
     allowFinalSymlink: true,
     protectDeniedAncestors: true,
     shouldAssertNoPathAlias: async (resolvedTarget) => {
@@ -1515,8 +1543,10 @@ async function movePathFallback(
   await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("move", target.resolved);
   await assertAsyncDirectoryGuard(sourceParentGuard);
   await assertAsyncDirectoryGuard(targetParentGuard);
-  params.assertBeforeMutation?.();
   try {
+    assertFinalSymlinkRejected(source.resolved, params.mutationSymlinks !== undefined);
+    assertFinalSymlinkRejected(target.resolved, params.mutationSymlinks !== undefined);
+    params.assertBeforeMutation?.();
     await fs.rename(source.resolved, target.resolved);
   } catch (error) {
     if (isNotFoundPathError(error)) {
@@ -1553,6 +1583,7 @@ async function writeFileFallback(
     mode: 0o600,
     denyMutations: params.denyMutations,
     assertBeforeMutation: params.assertBeforeMutation,
+    mutationSymlinks: params.mutationSymlinks,
     truncateExisting: false,
   });
   const destinationPath = target.realPath;
@@ -1593,6 +1624,7 @@ async function writeFileFallback(
       }
       // Windows cannot replace a destination while its old handle remains open.
       await target.handle.close();
+      assertFinalSymlinkRejected(destinationPath, params.mutationSymlinks !== undefined);
       params.assertBeforeMutation?.();
       await fs.rename(commitTempPath, destinationPath);
       tempPath = null;
@@ -1647,6 +1679,7 @@ async function writeMissingFileFallback(
   const { rootReal, resolved } = await resolveGuardedWritePathInRoot(root, {
     relativePath: params.relativePath,
     denyMutations: params.denyMutations,
+    mutationSymlinks: params.mutationSymlinks,
   });
   const targetPath = params.mkdir === false
     ? resolved
@@ -1660,6 +1693,7 @@ async function writeMissingFileFallback(
     const { handle, writtenStat } = await withAsyncDirectoryGuards(
       [parentGuard],
       async () => {
+        assertFinalSymlinkRejected(targetPath, params.mutationSymlinks !== undefined);
         params.assertBeforeMutation?.();
         const handle = await fs.open(targetPath, OPEN_WRITE_CREATE_FLAGS, params.mode ?? 0o600).catch((error) => recordExclusiveCreateFailure(error, targetPath));
         writtenHandle = handle;
@@ -1667,7 +1701,11 @@ async function writeMissingFileFallback(
         const writtenStat = fsSync.fstatSync(handle.fd, { bigint: true });
         createdIdentity = writtenStat;
         await writeAllToFile(handle, params.data, {
-          encoding: params.encoding, assertBeforeMutation: params.assertBeforeMutation,
+          encoding: params.encoding,
+          assertBeforeMutation: () => {
+            assertFinalSymlinkRejected(targetPath, params.mutationSymlinks !== undefined);
+            params.assertBeforeMutation?.();
+          },
         });
         if (params.durable !== false) await handle.sync();
         return { handle, writtenStat };

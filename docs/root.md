@@ -27,7 +27,8 @@ type RootDefaults = {
   mode?: number;                   // file mode applied to new writes; per-call override available
   nonBlockingRead?: boolean;       // compatibility hint; safe opens are already nonblocking where supported
   renameIdentity?: "strict" | "verify-content-with-lock"; // default "strict"
-  symlinks?: "reject" | "follow-within-root"; // policy when a path component is a symlink
+  symlinks?: "reject" | "follow-within-root" | "follow-parents-within-root"; // read policy
+  mutationSymlinks?: "reject" | "follow-parents-within-root"; // opt-in mutation policy
 };
 
 type DenyMutationPolicy = {
@@ -179,6 +180,14 @@ the caller, which must check authority before its own later writes.
 
 All mutation methods accept `denyMutations?: { paths?: string[]; prefixes?: string[] }`. Entries must be absolute paths. `paths` blocks those exact paths; `prefixes` blocks those paths and their descendants. fs-safe preserves path strings exactly and canonicalizes through existing ancestors before comparing, so a symlinked ancestor to a denied location is still denied. Denied mutations throw `FsSafeError` with code `denied-path`. Use this for caller-specific sensitive paths, not as a replacement for the root boundary, symlink, or hardlink checks.
 
+All mutation methods also accept `mutationSymlinks`. `"reject"` rejects symlink
+components; `"follow-parents-within-root"` resolves contained parent directory
+aliases but rejects the final component if it is a symlink, including a dangling
+link. Missing parent directories can still be created through a contained alias.
+`move()` applies the policy to both source and destination. An omitted value
+preserves existing behavior, including `remove()` unlinking a final symlink.
+The read-only `symlinks` default does not change mutation behavior.
+
 ### Inspection (advisory)
 
 ```ts
@@ -268,6 +277,30 @@ With `follow-within-root`, parent components after a symlink are applied to the
 symlink's resolved target. Reads use that checked canonical path, including
 after home expansion and through `readAbsolute` and `reader`; the default policy still rejects a symlink
 even when a later `..` would hide it in a purely lexical normalization.
+
+Use `follow-parents-within-root` when directory aliases are allowed but a final
+file symlink should fail. Set each policy at the root to share that contract
+between reads and mutations:
+
+```ts
+const workspace = await root("/srv/workspace", {
+  symlinks: "follow-parents-within-root",
+  mutationSymlinks: "follow-parents-within-root",
+});
+await workspace.readText("directory-alias/notes.txt");
+await workspace.write("directory-alias/notes.txt", "updated\n");
+```
+
+The library uses the resolved parent for the operation and checks the final
+component again before publication or removal. These checks preserve the existing
+[platform containment guarantees](security-model.md#symlinks-write-side);
+they do not make check-and-rename atomic against another process. Callers do not
+need a separate `realpath()` or final `lstat()` preflight.
+
+For methods that accept absolute paths, the same final-component rule applies
+when a path enters the root through an alias outside its lexical spelling. A directory alias may
+lead to a regular file inside the root; an absolute final file or directory
+symlink is rejected before its canonical target replaces the original path.
 
 Text helpers default to UTF-8. Pass `encoding` per call to `readText`, `readJson`, `write`, `create`, or `append` when you need another encoding.
 

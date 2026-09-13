@@ -89,7 +89,7 @@ type ReadLocalFileFromRootsOptions = LocalRootsInputOptions & {
   hardlinks?: "reject" | "allow";
   maxBytes?: number;
   nonBlockingRead?: boolean;
-  symlinks?: "reject" | "follow-within-root";
+  symlinks?: "reject" | "follow-within-root" | "follow-parents-within-root";
 };
 
 type LocalRootsReadResult = ReadResult & {

@@ -137,6 +137,7 @@ export async function resolvePathInRoot(
     allowFinalSymlink?: boolean;
     rejectUnsafeDeviceReads?: boolean;
     rejectSymlinks?: boolean;
+    rejectFinalSymlink?: boolean;
     resolveCanonical?: boolean;
     rejectAmbiguousParents?: boolean;
   },
@@ -162,6 +163,7 @@ export async function resolvePathInRoot(
       boundaryLabel: "root",
       policy: options?.allowFinalSymlink ? ROOT_PATH_ALIAS_POLICIES.unlinkTarget : undefined,
       rejectSymlinks: options?.rejectSymlinks,
+      rejectFinalSymlink: options?.rejectFinalSymlink,
     };
     const checked = await resolveRootPath(resolution);
     const parentComponent = process.platform === "win32" ? WINDOWS_PARENT_COMPONENT : POSIX_PARENT_COMPONENT;

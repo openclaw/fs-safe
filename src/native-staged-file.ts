@@ -3,6 +3,7 @@ import { requireNativeBinding } from "./native.js";
 import { syncFileBestEffortSync } from "./file-sync.js";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 import type { AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { MutationAuthorityError } from "./mutation-authority.js";
@@ -11,6 +12,7 @@ import type { NativeBinding } from "./native-binding.js";
 import { writeNativeInput } from "./native-operations.js";
 import type { PinnedWriteInput, PinnedWriteParams } from "./pinned-write.js";
 import { assertStagedDirectoryCurrent, openStagedDirectory } from "./staged-directory.js";
+import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
 import type {
   PublishedFileReceipt,
   StagedFile,
@@ -75,6 +77,7 @@ class NativeStagedFile implements StagedFile {
   readonly #name = `.fs-safe-${randomUUID()}.tmp`;
   #state: State = { status: "open", publication: NOT_PUBLISHED };
   #receipt?: StagedFileReceipt;
+  #rejectFinalSymlink = false;
 
   constructor(
     binding: NativeStagingBinding,
@@ -134,6 +137,7 @@ class NativeStagedFile implements StagedFile {
     await using staged = await NativeStagedFile.create(
       binding, parentFd, directory, params.input, params.mode, params.maxBytes, false, params.sync, params.assertBeforeMutation,
     );
+    staged.#rejectFinalSymlink = params.rejectFinalSymlink === true;
     const published = await staged.publish(params.basename, { overwrite: params.overwrite !== false });
     const identity = published.staged.identity;
     await params.verifyPublished?.(staged.#file(), identity, parentGuard);
@@ -243,6 +247,7 @@ class NativeStagedFile implements StagedFile {
         throw new FsSafeError("invalid-path", "publication needs a distinct basename and explicit overwrite policy");
       }
       this.#assertCurrent();
+      assertFinalSymlinkRejected(path.join(this.#directory.realPath, basename), this.#rejectFinalSymlink);
       this.#assertBeforeMutation?.();
       try {
         if (overwrite) {

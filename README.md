@@ -153,6 +153,11 @@ cancellation checks immediately before filesystem dispatch. Root defaults and
 per-call checks compose; cleanup and already-dispatched work still settle.
 See [live mutation authority](docs/root.md#live-mutation-authority) for the exact
 scope, including raw writable handles and lock bookkeeping.
+For workspaces with directory aliases, use `symlinks: "follow-parents-within-root"`
+on reads and `mutationSymlinks: "follow-parents-within-root"` on mutations or root
+defaults. Contained parent symlinks are resolved by the library, while a final
+symlink is rejected. Read policy and mutation policy are separate; omitting
+`mutationSymlinks` preserves the existing mutation behavior. See [root policies](docs/root.md#defaults-vs-per-call-options).
 
 Use `ensureRoot()` when a computed relative directory target resolves to the root itself (`""` or `"."`) and you want the operation to be accepted. `root()` still requires the trusted root directory to already exist.
 

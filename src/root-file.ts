@@ -6,6 +6,7 @@ import {
   type ResolvedRootPath,
 } from "./root-path.js";
 import type { PathAliasPolicy } from "./path-policy.js";
+import { readSymlinkResolution, type SymlinkPolicy } from "./root-symlink-policy.js";
 import {
   openPinnedFileSync,
   type PinnedOpenSyncAllowedType,
@@ -39,6 +40,7 @@ export type OpenRootFileSyncParams = {
   maxBytes?: number;
   rejectHardlinks?: boolean;
   rejectSymlinks?: boolean;
+  symlinks?: SymlinkPolicy;
   allowedType?: PinnedOpenSyncAllowedType;
   skipLexicalRootCheck?: boolean;
   ioFs?: BoundaryReadFs;
@@ -84,7 +86,7 @@ export function openRootFileSync(params: OpenRootFileSyncParams): RootFileOpenRe
       rootPath: params.rootPath,
       rootCanonicalPath: params.rootRealPath,
       boundaryLabel: params.boundaryLabel,
-      rejectSymlinks: params.rejectSymlinks ?? true,
+      ...readSymlinkResolution(params.symlinks ?? (params.rejectSymlinks === false ? "follow-within-root" : "reject")),
       skipLexicalRootCheck: params.skipLexicalRootCheck,
     }));
   } catch (error) {
@@ -182,7 +184,7 @@ export async function openRootFile(
       rootCanonicalPath: params.rootRealPath,
       boundaryLabel: params.boundaryLabel,
       policy: params.aliasPolicy,
-      rejectSymlinks: params.rejectSymlinks ?? true,
+      ...readSymlinkResolution(params.symlinks ?? (params.rejectSymlinks === false ? "follow-within-root" : "reject")),
       skipLexicalRootCheck: params.skipLexicalRootCheck,
     }));
   } catch (error) {

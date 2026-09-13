@@ -14,12 +14,13 @@ export function absolutePathWithRawSegments(candidate: string): string {
 export function rawPathRelativeToCanonicalRoot(
   candidate: string,
   rootCanonicalPath: string,
-  options: { rejectSymlinks?: boolean } = {},
+  options: { rejectSymlinks?: boolean; rejectFinalSymlink?: boolean } = {},
 ): string | undefined {
   const absolute = absolutePathWithRawSegments(candidate);
   const raw = process.platform === "win32" ? absolute.replaceAll("/", path.sep) : absolute;
   const filesystemRoot = path.parse(raw).root;
   const segments = raw.slice(filesystemRoot.length).split(path.sep);
+  const finalComponentIndex = segments.findLastIndex(segment => segment !== "" && segment !== ".");
   let prefix = filesystemRoot;
   let traversedSymlink = false;
   for (let index = 0; index < segments.length; index += 1) {
@@ -29,6 +30,10 @@ export function rawPathRelativeToCanonicalRoot(
     try {
       const stat = fs.lstatSync(prefix);
       isSymlink = stat.isSymbolicLink();
+      // Check the original leaf before canonicalization can erase an entry alias.
+      if (isSymlink && options.rejectFinalSymlink && index === finalComponentIndex) {
+        throw new FsSafeError("symlink", "final symlink not allowed");
+      }
       if (!isSymlink && !stat.isDirectory() && index < segments.length - 1) return undefined;
       traversedSymlink ||= isSymlink;
       canonical = fs.realpathSync.native(prefix);
