@@ -88,6 +88,7 @@ describe("root-file", () => {
       rootCanonicalPath: undefined,
       boundaryLabel: "plugin root",
       rejectSymlinks: true,
+      rejectFinalSymlink: false,
       skipLexicalRootCheck: undefined,
     });
     expect(openPinnedFileSyncMock).toHaveBeenCalledWith({
@@ -156,6 +157,7 @@ describe("root-file", () => {
       boundaryLabel: "workspace",
       policy: { allowFinalSymlinkForUnlink: true },
       rejectSymlinks: true,
+      rejectFinalSymlink: false,
       skipLexicalRootCheck: undefined,
     });
     expect(openPinnedFileSyncMock).toHaveBeenCalledWith({
