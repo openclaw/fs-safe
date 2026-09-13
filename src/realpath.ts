@@ -12,6 +12,8 @@ function resolve(input: string, native: boolean): string {
   if (bunPosix) {
     // Bun 1.4.2 normalizes native path components and opens the leaf for reads.
     // The Rust OS resolver preserves permissions, locks and physical spelling.
+    // Reuse our N-API addon so this also works with JIT disabled; Bun's FFI
+    // bridge requires JIT and would duplicate native loading and memory handling.
     // Remove this routing once the Bun baseline includes oven-sh/bun#42374.
     if (input.includes("\0")) {
       throw Object.assign(new TypeError("realpath input must not contain null bytes"), {
@@ -32,7 +34,8 @@ function resolve(input: string, native: boolean): string {
     if (getFsSafeNativeConfig().mode === "require") {
       throw new FsSafeError("helper-unavailable", "native fs-safe canonicalization is unavailable");
     }
-    // Honor off/missing-addon policy. These modes retain Bun's runtime limits.
+    // The workaround belongs to the same optional addon, so "off" disables it
+    // too. With off or a missing addon in auto, Bun's upstream limits still apply.
   }
   return native ? fs.realpathSync.native(input) : fs.realpathSync(input);
 }
