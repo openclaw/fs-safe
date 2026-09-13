@@ -1,7 +1,7 @@
 import os from "node:os";
 import { getNativeBinding } from "./native.js";
 import { executePermissionCommand, type PermissionCommandFailure } from "./permission-exec.js";
-import type { PermissionCheck, PermissionCheckOptions, SafeStatResult } from "./permissions.js";
+import { safeStat, type PermissionCheck, type PermissionCheckOptions, type SafeStatResult } from "./permissions.js";
 import { normalizeLowercaseStringOrEmpty } from "./string-coerce.js";
 import { resolveWindowsSystemCommand } from "./windows-command.js";
 import { inspectWindowsOwner, type WindowsOwnerSummary } from "./windows-owner.js";
@@ -315,7 +315,36 @@ export async function inspectWindowsAcl(targetPath: string, opts?: { env?: NodeJ
     const error = new Error("Windows ACL principal SID translation failed");
     return summarizeWindowsOwnerAcl({ error: String(error), errorCause: error });
   }
-  const owner = await inspectWindowsOwner({ targetPath, env: opts?.env, exec: opts?.exec ?? defaultPermissionExec });
+  let owner: WindowsOwnerSummary | undefined;
+  if (process.platform === "win32" && opts?.env === undefined && opts?.exec === undefined) {
+    try {
+      const native = getNativeBinding();
+      const stat = native && await safeStat(targetPath);
+      // Keep the named-query behavior for leaf links; the native reader follows them.
+      const facts = stat?.ok && !stat.isSymlink ? native?.readOwnerAndDacl(targetPath) : undefined;
+      if (facts && !facts.fallbackRequired && facts.isLocal && facts.aceListComplete && facts.unsupportedAceTypes.length === 0 &&
+          facts.aces.every(ace => ace.flags.inherited && ace.mask !== 0)) {
+        // .NET normalizes explicit ACEs, but retains nonzero inherited ACEs in
+        // their original order without merging them. Other forms keep its query.
+        // Adapt descriptor facts only: the public summary owns its SID and rights
+        // classification, which differs from the native secure-read policy.
+        owner = {
+          daclPresent: facts.daclPresent,
+          currentUserSid: facts.currentUserSid,
+          aces: facts.aces.map(ace => ({
+            sid: ace.sid,
+            mask: ace.mask,
+            deny: ace.aceType === "deny",
+            inheritOnly: ace.flags.inheritOnly,
+          })),
+        };
+      }
+    } catch {
+      // Preserve this inspector's structured fallback and command diagnostics
+      // when the optional helper or native descriptor query is unavailable.
+    }
+  }
+  owner ??= await inspectWindowsOwner({ targetPath, env: opts?.env, exec: opts?.exec ?? defaultPermissionExec });
   return summarizeWindowsOwnerAcl({
     ...owner,
     currentUserSid: normalizeSid(opts?.currentUserSid ?? "") || owner.currentUserSid,

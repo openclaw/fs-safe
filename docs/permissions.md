@@ -71,8 +71,15 @@ resolveWindowsUserPrincipal(env);
 The fallback Windows inspector reads the owner and DACL together through one
 built-in Windows PowerShell/.NET query. It returns canonical SIDs and numeric
 access masks, so Unicode paths and account names do not pass through lossy
-console display text. `inspectWindowsAcl()` uses the same query and returns
-canonical SIDs in its `principal` fields, with normalized rights tokens.
+console display text. `inspectWindowsAcl()` uses native descriptor facts for
+complete local ACLs with nonzero inherited ACEs (or empty/null DACLs) when the
+optional Windows binding is available. It applies
+the same classifier to native facts and the fallback query, returning canonical
+SIDs in its `principal` fields with normalized rights tokens. Explicit `env` or
+`exec` options retain the query path. Disabled or unavailable native helpers,
+remote or incomplete descriptors, leaf symbolic links, and native query errors
+use the fallback. Explicit ACEs and zero-mask entries also retain the query so
+.NET continues to own its ACE ordering and normalization.
 Structured ACLs containing only canonical SIDs are classified directly from
 the current-user SID without requiring a separate account-name lookup.
 The advanced options retain `currentUserSid` as an explicit classification

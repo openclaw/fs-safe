@@ -11,7 +11,8 @@ import {
   __setNativeLoaderForTest,
   type NativeBinding,
 } from "../src/native.js";
-import { inspectPathPermissions } from "../src/permissions.js";
+import { executePermissionCommand } from "../src/permission-exec.js";
+import { inspectPathPermissions, inspectWindowsAcl } from "../src/permissions.js";
 import { createPrivateDirectory } from "../src/private-directory.js";
 
 let native: NativeBinding | undefined;
@@ -90,6 +91,25 @@ describe("createPrivateDirectory", () => {
         worldWritable: false,
         groupWritable: false,
       });
+      const file = path.join(target, "ordinary-é-🦀.txt");
+      await fs.writeFile(file, "ordinary ACL inspection");
+      const junction = path.join(root, "ordinary-junction");
+      await fs.symlink(target, junction, "junction");
+      const readOwnerAndDacl = vi.fn(native!.readOwnerAndDacl);
+      __setNativeLoaderForTest(() => ({ ...native!, readOwnerAndDacl }));
+      for (const pathname of [target, file, junction]) {
+        readOwnerAndDacl.mockClear();
+        const summary = await inspectWindowsAcl(pathname);
+        expect(readOwnerAndDacl).toHaveBeenCalledTimes(pathname === junction ? 0 : 1);
+        const fallback = await inspectWindowsAcl(pathname, { exec: executePermissionCommand });
+        expect(summary.ok).toBe(true);
+        expect(summary).toEqual(fallback);
+        if (pathname !== junction) {
+          expect(summary.trusted).toHaveLength(3);
+          expect(summary.untrustedWorld).toEqual([]);
+          expect(summary.untrustedGroup).toEqual([]);
+        }
+      }
     },
   );
 });
