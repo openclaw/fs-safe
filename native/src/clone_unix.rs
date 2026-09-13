@@ -147,6 +147,9 @@ pub fn clone_tree(
     }
     #[cfg(target_os = "macos")]
     {
+        use rustix::fs::{OFlags, Timespec, Timestamps};
+        use std::os::fd::{FromRawFd, OwnedFd};
+
         let name = std::ffi::CString::new(basename)
             .map_err(|_| native_error("EINVAL", "clone destination contains a NUL byte"))?;
         // CLONE_ACL can copy the root ACL, but directory clones can lose both
@@ -181,6 +184,30 @@ pub fn clone_tree(
                 },
             );
         }
+        // APFS can stamp the cloned root with its creation time. Restore the
+        // captured source times through a pinned, no-follow directory handle;
+        // the bulk clone still handles descendants without a userspace walk.
+        let cloned_fd = crate::unix::open_beneath(
+            parent_fd,
+            basename,
+            (OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC).bits() as i32,
+        )?;
+        // SAFETY: open_beneath transfers ownership of a newly opened descriptor.
+        let cloned = unsafe { OwnedFd::from_raw_fd(cloned_fd) };
+        rustix::fs::futimens(
+            &cloned,
+            &Timestamps {
+                last_access: Timespec {
+                    tv_sec: source.st_atime,
+                    tv_nsec: source.st_atime_nsec,
+                },
+                last_modification: Timespec {
+                    tv_sec: source.st_mtime,
+                    tv_nsec: source.st_mtime_nsec,
+                },
+            },
+        )
+        .map_err(|error| os_error(error, "preserve APFS clone root timestamps"))?;
     }
     // These bulk operations cannot be interrupted once dispatched. Report
     // cancellation only after their writes settle; recovery may then proceed.
