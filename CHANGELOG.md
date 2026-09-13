@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preserve fractional access and modification timestamps during directory byte copying, including dates before 1970, to the precision supported by Node and the destination filesystem.
+
 ## 0.10.0 - 2026-09-13
 
 ### Highlights

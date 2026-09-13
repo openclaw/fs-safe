@@ -45,6 +45,7 @@ describe("directory copying", () => {
       if (process.platform !== "win32") await fs.chmod(original, 0o751);
       await fs.mkdir(path.join(source, "nested", "deep"), { recursive: true });
       const contents = new Map<string, Buffer>();
+      const timestamps = new Map<string, { atimeNs: bigint; mtimeNs: bigint }>();
       for (let index = 0; index < 12; index++) {
         const parent = ["", "nested", path.join("nested", "deep")][index % 3]!;
         const name = path.join(parent, `file-${index}`);
@@ -52,22 +53,42 @@ describe("directory copying", () => {
         bytes.fill(index + 77, 1024 * 1024);
         contents.set(name, bytes);
         await fs.writeFile(path.join(source, name), bytes);
-        await fs.utimes(path.join(source, name), 1_600_000_000 + index, 1_600_000_000 + index);
+        const seconds = (index % 2 === 0 ? 1_600_000_000 : -315_619_200) + index;
+        await fs.utimes(
+          path.join(source, name),
+          String(seconds + 0.125375),
+          String(seconds + 0.875625),
+        );
+        timestamps.set(name, await fs.stat(path.join(source, name), { bigint: true }));
       }
       const directories = ["", "empty", "nested", path.join("nested", "deep")];
-      for (const name of directories) {
-        await fs.utimes(path.join(source, name), 1_500_000_000, 1_500_000_000);
+      for (const [index, name] of directories.entries()) {
+        const seconds = index % 2 === 0 ? 1_500_000_000 : -315_619_200;
+        await fs.utimes(
+          path.join(source, name),
+          String(seconds + 0.125375),
+          String(seconds + 0.875625),
+        );
+        timestamps.set(name, await fs.stat(path.join(source, name), { bigint: true }));
       }
 
       await copyTree(source, destination, { clone, concurrency });
+      // Inspect access times before reading any copied contents. Node's floating-
+      // point timestamp APIs can round at sub-microsecond/Windows FILETIME precision.
+      for (const [name, expected] of timestamps) {
+        const actual = await fs.stat(path.join(destination, name), { bigint: true });
+        for (const field of ["atimeNs", "mtimeNs"] as const) {
+          expect(
+            Number(actual[field] - expected[field]),
+            `${name} ${field}`,
+          ).toBeGreaterThanOrEqual(-2_000);
+          expect(Number(actual[field] - expected[field]), `${name} ${field}`).toBeLessThanOrEqual(
+            2_000,
+          );
+        }
+      }
       for (const [name, bytes] of contents) {
         expect((await fs.readFile(path.join(destination, name))).equals(bytes), name).toBe(true);
-        expect((await fs.stat(path.join(destination, name))).mtimeMs, name).toBe(
-          (await fs.stat(path.join(source, name))).mtimeMs,
-        );
-      }
-      for (const name of directories) {
-        expect((await fs.stat(path.join(destination, name))).mtimeMs, name).toBe(1_500_000_000_000);
       }
       expect(await fs.readFile(copied, "utf8")).toBe("original");
       expect(await fs.readdir(path.join(destination, "empty"))).toEqual([]);

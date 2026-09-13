@@ -10,6 +10,12 @@ import {
   openStagedDirectory,
 } from "./staged-directory.js";
 
+function timestampSeconds(nanoseconds: bigint): string {
+  // Dates discard sub-millisecond precision; negative numbers mean "now" in
+  // Node's utimes API. Numeric strings retain fractional, pre-epoch timestamps.
+  return String(Number(nanoseconds / 1_000_000_000n) + Number(nanoseconds % 1_000_000_000n) / 1e9);
+}
+
 /** Byte-copy adapter for the shared immutable-source, caller-owned namespace contract. */
 export async function copyOwnedTree(
   source: ReturnType<typeof openStagedDirectory>,
@@ -98,7 +104,7 @@ export async function copyOwnedTree(
       }
       signal.throwIfAborted();
       if (process.platform !== "win32") await output.chmod(Number(stat.mode & 0o7777n));
-      await output.utimes(stat.atime, stat.mtime);
+      await output.utimes(timestampSeconds(stat.atimeNs), timestampSeconds(stat.mtimeNs));
     } catch (error) {
       cancellation.abort(error);
       throw error;
@@ -173,7 +179,7 @@ export async function copyOwnedTree(
       assertStagedDirectoryCurrent(original.receipt);
       assertStagedDirectoryCurrent(target.receipt);
       if (process.platform !== "win32") fs.fchmodSync(target.fd, Number(stat.mode & 0o7777n));
-      await fsp.utimes(to, stat.atime, stat.mtime);
+      await fsp.utimes(to, timestampSeconds(stat.atimeNs), timestampSeconds(stat.mtimeNs));
       assertStagedDirectoryCurrent(target.receipt);
     } catch (error) {
       cancellation.abort(error);
