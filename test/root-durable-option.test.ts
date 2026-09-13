@@ -104,12 +104,12 @@ for (const backend of ["auto", "off"] as const) {
       const directory = await tempRoot("fs-safe-durable-replace-");
       const target = path.join(directory, "target");
       await fs.writeFile(target, "old bytes", { mode: 0o640 });
-      const before = await fs.stat(target);
+      const before = await fs.stat(target, { bigint: true });
       const safe = await root(directory);
       const { events } = await observeSyncs(directory);
       await safe.write("target", "new bytes", { durable });
       expect(await fs.readFile(target, "utf8")).toBe("new bytes");
-      const after = await fs.stat(target);
+      const after = await fs.stat(target, { bigint: true });
       expect(after.ino).not.toBe(before.ino);
       expect(after.mode).toBe(before.mode);
       if (!durable) expect(events).toEqual([]);
@@ -120,13 +120,13 @@ for (const backend of ["auto", "off"] as const) {
       const directory = await tempRoot("fs-safe-durable-append-");
       const target = path.join(directory, "target");
       await fs.writeFile(target, "old", { mode: 0o600 });
-      const before = await fs.stat(target);
+      const before = await fs.stat(target, { bigint: true });
       const safe = await root(directory);
       const { events } = await observeSyncs(directory);
       await safe.append("target", Buffer.from("new"), { durable, prependNewlineIfNeeded: true });
       expect(events).toEqual(durable ? ["file"] : []);
       expect(await fs.readFile(target, "utf8")).toBe("old\nnew");
-      expect((await fs.stat(target)).ino).toBe(before.ino);
+      expect((await fs.stat(target, { bigint: true })).ino).toBe(before.ino);
     });
 
     it.each(["write", "create"] as const)("%s retains post-publication identity rejection without sync", async (method) => {
@@ -183,7 +183,7 @@ describe.skipIf(process.platform === "win32")("Windows writer branch simulation"
         if (filePath !== target) {
           const chmod = handle.chmod.bind(handle);
           vi.spyOn(handle, "chmod").mockImplementation(async (mode) => {
-            expect((await fs.stat(target)).ino).toBe((await handle.stat()).ino);
+            expect((await fs.stat(target, { bigint: true })).ino).toBe((await handle.stat({ bigint: true })).ino);
             expect((await fs.stat(target)).mode & 0o777).toBe(0o600);
             await expect(fs.lstat(filePath)).rejects.toMatchObject({ code: "ENOENT" });
             events.push("chmod");
@@ -222,7 +222,7 @@ describe.skipIf(process.platform === "win32")("Windows writer branch simulation"
       const filePath = String(args[0]);
       if (path.dirname(filePath) === directory && path.basename(filePath).startsWith(".fs-safe-")) {
         vi.spyOn(handle, "chmod").mockImplementationOnce(async () => {
-          expect((await fs.stat(target)).ino).toBe((await handle.stat()).ino);
+          expect((await fs.stat(target, { bigint: true })).ino).toBe((await handle.stat({ bigint: true })).ino);
           expect(await fs.readFile(target, "utf8")).toBe("payload");
           throw failure;
         });

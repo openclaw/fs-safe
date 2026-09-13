@@ -6,7 +6,7 @@ export class MutationAuthorityError extends FsSafeError {
   }
 }
 
-function assertSynchronous(returned: unknown): void {
+export function assertSynchronousCallbackResult(returned: unknown, name: string): void {
   if (
     returned !== null &&
     (typeof returned === "object" || typeof returned === "function") &&
@@ -14,7 +14,7 @@ function assertSynchronous(returned: unknown): void {
   ) {
     // TypeScript permits async functions for () => void. Do not admit their work.
     void Promise.resolve(returned).catch(() => undefined);
-    throw new TypeError("assertBeforeMutation must be synchronous");
+    throw new TypeError(`${name} must be synchronous`);
   }
 }
 
@@ -25,8 +25,8 @@ export function composeMutationAssertions(
   if (!defaultAssertion && !callAssertion) return undefined;
   return () => {
     try {
-      assertSynchronous(defaultAssertion?.());
-      assertSynchronous(callAssertion?.());
+      assertSynchronousCallbackResult(defaultAssertion?.(), "assertBeforeMutation");
+      assertSynchronousCallbackResult(callAssertion?.(), "assertBeforeMutation");
     } catch (error) {
       throw new MutationAuthorityError(error);
     }

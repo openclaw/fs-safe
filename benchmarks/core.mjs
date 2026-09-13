@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
@@ -7,6 +9,12 @@ import { Readable } from "node:stream";
 export async function registerCore({ api: a, workspace: w, register: add, contract }) {
   const data = Buffer.from(' {"ok":true,"label":"synthetic benchmark"}\n');
   const input = path.join(w, "input.json");
+  if (process.platform === "win32") {
+    const acl = a.createIcaclsResetCommand(w, { isDir: true });
+    assert(acl, "Cannot resolve the benchmark workspace's Windows principal");
+    const result = spawnSync(acl.command, acl.args, { windowsHide: true, timeout: 30_000, stdio: "ignore" });
+    assert.equal(result.status, 0, "Cannot set the benchmark workspace's private Windows ACL");
+  }
   fs.writeFileSync(input, data, { mode: 0o600 });
   fs.mkdirSync(path.join(w, "tree", "nested"), { recursive: true });
   for (let i = 0; i < 100; i++) fs.writeFileSync(path.join(w, "tree", `entry-${i}`), data);
@@ -46,7 +54,20 @@ export async function registerCore({ api: a, workspace: w, register: add, contra
   });
   add("Root.list/names-100", () => safe.list("tree"));
   add("Root.list/metadata-100", () => safe.list("tree", { withFileTypes: true }));
-  add("Root.entries", async () => { const entries = []; for await (const entry of safe.entries("tree", { maxEntries: 101 })) entries.push(entry); return entries; }, { verify: (r) => assert.equal(r.length, 101) });
+  const entryNames = [...Array.from({ length: 100 }, (_, i) => `entry-${i}`), "nested"].sort();
+  for (const order of ["filesystem", "sorted"]) {
+    add(order === "filesystem" ? "Root.entries" : "Root.entries/sorted", async () => {
+      const entries = [];
+      for await (const entry of safe.entries("tree", { order, maxEntries: 101 })) entries.push(entry);
+      return entries;
+    }, { verify: (entries) => assert.deepEqual(order === "sorted" ? entries.map(entry => entry.name) : entries.map(entry => entry.name).sort(), entryNames) });
+    add(`Root.entries/first/${order}`, async () => {
+      for await (const entry of safe.entries("tree", { order, maxEntries: 101 })) return entry;
+    }, { verify: (entry) => {
+      assert(entryNames.includes(entry?.name));
+      if (order === "sorted") assert.equal(entry.name, entryNames[0]);
+    } });
+  }
   add("Root.walk", async () => { const entries = []; for await (const entry of safe.walk("tree", { symlinkPolicy: "skip" })) entries.push(entry); return entries; });
   for (const name of ["walkDirectory", "walkDirectorySync"]) add(name, () => a[name](path.join(w, "tree")), { sync: name.endsWith("Sync"), verify: (r) => assert.equal(r.entries.length, 102) });
   add("readLocalFileSafely", () => a.readLocalFileSafely({ filePath: input, maxBytes: 1024 }));
@@ -69,6 +90,7 @@ export async function registerCore({ api: a, workspace: w, register: add, contra
     const divisor = size > 1024 * 1024 ? 10 : 1;
     const filePath = path.join(w, `bytes-${size}`);
     const payload = Buffer.alloc(size, 120);
+    const digest = createHash("sha256").update(payload).digest("hex");
     fs.writeFileSync(filePath, payload);
     for (const name of ["readFileDescriptorBounded", "readFileDescriptorBoundedSync", "readFileHandleBounded"]) {
       const handle = name === "readFileHandleBounded";
@@ -79,8 +101,19 @@ export async function registerCore({ api: a, workspace: w, register: add, contra
     }
     add(`Root.readBytes/${size}`, () => safe.readBytes(`bytes-${size}`, size > 16 * 1024 * 1024 ? { maxBytes: size } : undefined), { divisor, verify: (r) => assert.deepEqual(r, payload) });
     for (const name of ["sha256File", "sha256FileSync"]) {
-      add(`${name}/${size}`, () => a[name](filePath), { divisor, sync: name.endsWith("Sync"), verify: (r) => assert.equal(r.bytes, size) });
+      add(`${name}/${size}`, () => a[name](filePath), { divisor, sync: name.endsWith("Sync"), verify: (r) => assert.deepEqual(r, { bytes: size, digest }) });
     }
+    const copyPath = path.join(w, `handle-copy-${size}`);
+    add(`copyFileHandle/${size}`, ({ source, target }) => a.copyFileHandle(source, target), {
+      divisor,
+      before: async () => {
+        const source = await fsp.open(filePath, "r");
+        try { return { source, target: await fsp.open(copyPath, "w+", 0o600) }; }
+        catch (error) { await source.close(); throw error; }
+      },
+      after: (_, { source, target }) => Promise.all([source.close(), target.close()]),
+      verify: (bytes) => { assert.equal(bytes, size); assert.deepEqual(fs.readFileSync(copyPath), payload); },
+    });
   }
   for (const name of ["tryReadJson", "tryReadJsonSync", "readJson", "readJsonSync", "readJsonIfExists"]) add(name, () => a[name](input), { sync: name.endsWith("Sync"), verify: (r) => assert.equal(r.ok, true) });
   for (const name of ["readRootJsonSync", "readRootJsonObjectSync", "readRootStructuredFileSync"]) add(name, () => a[name]({ rootDir: w, relativePath: "input.json", boundaryLabel: "benchmark", parse: JSON.parse }), { sync: true, verify: (r) => assert(r.ok) });

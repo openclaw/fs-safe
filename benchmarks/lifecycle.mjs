@@ -20,17 +20,33 @@ export async function registerLifecycle({ api: a, workspace: w, native, binding,
   } else {
     fs.mkdirSync(cloneSource);
   }
-  fs.writeFileSync(path.join(cloneSource, "payload"), "clone benchmark");
+  fs.mkdirSync(path.join(cloneSource, "nested"));
+  fs.mkdirSync(path.join(cloneSource, "empty"));
+  const cloneContents = new Map([["payload", Buffer.alloc(1024 * 1024, 0x5a)]]);
+  for (let i = 0; i < 64; i++) {
+    cloneContents.set(i % 2 ? `nested/file-${i}` : `file-${i}`, Buffer.alloc(4096, i));
+  }
+  for (const [name, bytes] of cloneContents) fs.writeFileSync(path.join(cloneSource, name), bytes);
+  const cloneNames = fs.readdirSync(cloneSource).sort();
+  const nestedCloneNames = fs.readdirSync(path.join(cloneSource, "nested")).sort();
   add("createCloneSource", () => a.createCloneSource(clonePreparation), {
     skip: cloneSkip,
     verify: () => assert(fs.statSync(clonePreparation).isDirectory()),
     after: () => fs.rmSync(clonePreparation, { recursive: true, force: true }),
   });
-  add("copyTree", () => a.copyTree(cloneSource, cloneTarget), {
-    verify: () =>
-      assert.equal(fs.readFileSync(path.join(cloneTarget, "payload"), "utf8"), "clone benchmark"),
-    after: () => fs.rmSync(cloneTarget, { recursive: true, force: true }),
-  });
+  for (const clone of ["auto", "never", "always"]) {
+    add(`copyTree/${clone}/mixed`, () => a.copyTree(cloneSource, cloneTarget, { clone }), {
+      divisor: 10,
+      skip: clone === "always" ? cloneSkip : undefined,
+      verify: () => {
+        assert.deepEqual(fs.readdirSync(cloneTarget).sort(), cloneNames);
+        assert.deepEqual(fs.readdirSync(path.join(cloneTarget, "nested")).sort(), nestedCloneNames);
+        assert.deepEqual(fs.readdirSync(path.join(cloneTarget, "empty")), []);
+        for (const [name, bytes] of cloneContents) assert(fs.readFileSync(path.join(cloneTarget, name)).equals(bytes), name);
+      },
+      after: () => fs.rmSync(cloneTarget, { recursive: true, force: true }),
+    });
+  }
   add("readCloneFileMetadata", () => a.readCloneFileMetadata([path.join(w, "input.json")]), {
     skip: !native ? "Native metadata reader unavailable." : undefined,
     verify: (entries) => {
