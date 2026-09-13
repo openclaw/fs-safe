@@ -13,6 +13,7 @@ import {
   defaultSidecarLockShouldReclaim,
   isTransientLockFileDenial,
   maxTransientLockDenials,
+  validateSidecarLockStaleMs,
   validateSidecarLockRetryOptions,
   validateSidecarLockTimeoutMs,
 } from "./sidecar-lock-policy.js";
@@ -88,6 +89,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
   const retry = options.retry ?? {};
   validateSidecarLockRetryOptions(retry);
   validateSidecarLockTimeoutMs(options.timeoutMs);
+  validateSidecarLockStaleMs(options.staleMs);
   context.ensureExitCleanupRegistered();
   const normalizedTargetPath = await resolveNormalizedTargetPath(options.targetPath, options.lockRoot);
   const lockPath = options.lockPath ?? `${normalizedTargetPath}.lock`;

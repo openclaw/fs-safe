@@ -65,6 +65,7 @@ type FsSafeLockConfig = {
 Set process-wide defaults for sidecar lock options. This does **not** turn locking on globally; callers still need to pass `lock: true` or a lock options object for the specific JSON store/resource that needs cross-process coordination.
 
 `staleRecovery` defaults to `"fail-closed"`. The opt-in `"remove-if-unchanged"` mode requires caller approval and serializes the final snapshot check and unlink with an exclusive `.reclaim` guard. A reclaim guard left by a killed reclaimer fails closed and requires externally coordinated cleanup.
+`staleMs` must be non-negative and not `NaN`; `Infinity` disables age-based staleness.
 
 For a daemon that should wait briefly for normal contention but never delete a
 stale owner without per-lock approval:

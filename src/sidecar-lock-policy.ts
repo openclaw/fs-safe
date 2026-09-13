@@ -32,6 +32,15 @@ export function validateSidecarLockTimeoutMs(timeoutMs: number | undefined): voi
   assertFiniteNonNegative(timeoutMs, "lock timeoutMs");
 }
 
+export function validateSidecarLockStaleMs(staleMs: number | undefined): void {
+  // The lower-level sidecar manager historically treats an omitted threshold
+  // as disabling age-based reclamation. Its public type requires a number, but
+  // retain that fail-closed runtime behavior for JavaScript callers and older
+  // consumers.
+  if (staleMs === undefined || staleMs === Number.POSITIVE_INFINITY) return;
+  assertFiniteNonNegative(staleMs, "lock staleMs");
+}
+
 export function computeSidecarLockDelayMs(retry: SidecarLockRetryOptions, attempt: number): number {
   validateSidecarLockRetryOptions(retry);
   const minTimeout = retry.minTimeout ?? 50;

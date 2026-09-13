@@ -18,6 +18,7 @@ import {
   isTransientLockFileDenial,
   maxTransientLockDenials,
   sidecarLockPayloadCreatedAtMs,
+  validateSidecarLockStaleMs,
   validateSidecarLockRetryOptions,
   validateSidecarLockTimeoutMs,
 } from "./sidecar-lock-policy.js";
@@ -215,6 +216,8 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
   const timeoutMs = options.timeoutMs ?? defaults.timeoutMs;
   validateSidecarLockRetryOptions(retry);
   validateSidecarLockTimeoutMs(timeoutMs);
+  const staleMs = options.staleMs ?? defaults.staleMs ?? 30_000;
+  validateSidecarLockStaleMs(staleMs);
   const normalizedTargetPath = normalizeTargetPath(targetPath);
   const lockPath = boundedLockPath(options.lockPath ?? `${normalizedTargetPath}.lock`, options.lockRoot);
   const heldLocks = getSyncHeldLocks();
@@ -230,7 +233,6 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
   }
   // Process defaults fill the same fields here as withLockDefaults() fills for
   // the asynchronous manager, so both acquirers honor configureFsSafeLocks().
-  const staleMs = options.staleMs ?? defaults.staleMs ?? 30_000;
   const staleRecovery = options.staleRecovery ?? defaults.staleRecovery;
   const startedAt = Date.now();
   let attempt = 0;

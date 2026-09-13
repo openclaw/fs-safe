@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Reject negative, `NaN`, and negative-infinite file-lock stale thresholds before acquisition; negative thresholds can no longer force a live lock into stale recovery.
 - XFS clones preserve user extended attributes on read-only files and directories while retaining their exact modes and ACLs.
 - Confirm EOF when Linux copy offload initially reports zero bytes, so automatic file copies fall back to reading available data instead of publishing an empty file.
 - Preserve fractional access and modification timestamps during directory byte copying, including dates before 1970 on Unix, to the precision supported by Node and the destination filesystem.

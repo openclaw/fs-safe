@@ -61,7 +61,7 @@ function withFileLockSync<T, TPayload>(targetPath: string, options: FileLockSync
 type FileLockAcquireOptions<TPayload extends Record<string, unknown>> = {
   managerKey?: string;                   // optional in-process manager namespace
   lockPath?: string;                     // override; defaults to `${targetPath}.lock`
-  staleMs?: number;                      // default 30_000
+  staleMs?: number;                      // non-negative or Infinity; default 30_000
   timeoutMs?: number;                    // overall acquire deadline; default unbounded
   retry?: FileLockRetryOptions;
   staleRecovery?: "fail-closed" | "remove-if-unchanged"; // default "fail-closed"
