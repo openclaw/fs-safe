@@ -164,7 +164,7 @@ it.each([false, true])("handles a directory disappearing before its guard is adm
     const options = args[1];
     if (!removed && String(args[0]) === target && typeof options === "object" && options?.bigint) {
       removed = true;
-      queueMicrotask(() => fsSync.rmdirSync(target));
+      fsSync.rmdirSync(target);
     }
     return stat;
   });
