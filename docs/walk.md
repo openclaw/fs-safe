@@ -72,11 +72,41 @@ Unreadable directories are skipped rather than throwing, but every skipped direc
 `Root.walk(rel, options)` is the root-bounded counterpart to these standalone
 inventory helpers. It yields `{ relativePath, kind, size }` incrementally and
 accepts `maxDepth`, `maxEntries`, `symlinkPolicy: "skip" |
-"follow-within-root"`, and an `AbortSignal`. The default budget behavior yields
+"follow-within-root"`, `order: "sorted" | "filesystem"`, and an `AbortSignal`. The default budget behavior yields
 one `kind: "truncated"` marker and ends; pass `limitBehavior: "throw"` for a
 typed `FsSafeError("too-large")` instead.
 
 For followed symlinks, both `kind` and `size` describe the resolved target.
+
+The default `order: "sorted"` visits each directory's names in lexicographic
+order before descending depth first. It reads and sorts all names in each
+visited directory, but reads child metadata only when the entry is reached
+within the budget. `maxEntries: 0`, truncation, and early iterator
+termination never trigger metadata reads for the unused suffix. Filtering
+still requires the current entry's metadata and consumes its budget.
+
+Use `order: "filesystem"` when a wide directory must not be fully enumerated:
+
+```ts
+for await (const entry of capability.walk("", {
+  order: "filesystem",
+  maxEntries: 128,
+  symlinkPolicy: "skip",
+})) {
+  consume(entry);
+}
+```
+
+This order follows the filesystem's directory stream and is not deterministic.
+It reads one entry at a time, including one name of lookahead to distinguish an
+exactly exhausted budget from truncation. The lookahead does not request full
+entry metadata from fs-safe. If a filesystem does not supply directory-entry
+types, Node may classify that one extra entry with a synchronous `lstat`.
+Handles close on completion, truncation, cancellation, errors, or an
+early `break`. Both orders keep the same depth-first traversal, entry filtering,
+and truncation rules. Cancellation is checked between asynchronous reads; it
+does not interrupt a filesystem operation already in progress or the sorted
+mode's name sorting.
 
 `entryFilter` is evaluated for each resolved file, directory, or other entry:
 
@@ -111,10 +141,10 @@ Every examined directory entry consumes `maxEntries` before filtering, so
 `"truncated"` markers describe already-reached state and do not authorize
 further descent.
 
-The pure-Node path validates every directory canonically inside the root,
-revalidates each listing through the normal `Root.list()` boundary, and tracks
-canonical directories to stop symlink cycles. It does not hold a descriptor
-for the entire tree, so it is not a process sandbox against a hostile peer that
+The pure-Node path validates every directory through the Root boundary, pins
+its exact identity, and rechecks it and the Root identity around deferred child
+metadata reads. It tracks canonical directories to stop symlink cycles.
+Neither mode holds a descriptor for every path component, so it is not a process sandbox against a hostile peer that
 can continuously swap and restore directories. Each individual lookup retains
 the documented Node `Root` boundary checks.
 

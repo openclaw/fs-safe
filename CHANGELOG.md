@@ -7,6 +7,7 @@
 - Add async and sync positional reads that fill caller-owned buffers through short reads, stop at EOF, preserve descriptor offsets and ownership, and support cooperative async cancellation.
 - Add composed Root `assertBeforeMutation` callbacks that recheck live caller authority immediately before filesystem mutation dispatch, including each buffered-write chunk and direct file removal, preserving refusal errors and owned cleanup across native and JavaScript writers.
 - Add `follow-parents-within-root` reads and opt-in `mutationSymlinks` policies, following contained directory aliases while rejecting final symlinks at absolute root entry, open, and publication boundaries.
+- Read Root walk metadata only for examined entries, and add `order: "filesystem"` for streamed directory enumeration with bounded lookahead, cancellation, and guarded cleanup; preserve sorted traversal by default.
 
 - Give the full documentation-build smoke test a bounded longer runtime so slow Windows runners do not hit the default unit-test deadline.
 - Add byte limits and cooperative cancellation to `sha256File`, preserving descriptor ownership and waiting for native work to stop before rejecting.

@@ -1,10 +1,9 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { root } from "../src/root.js";
-import { walkRoot, type RootWalkEntry } from "../src/root-walk.js";
-import type { DirEntry } from "../src/types.js";
+import type { RootWalkEntry } from "../src/root-walk.js";
 
 const tempDirs: string[] = [];
 
@@ -15,6 +14,7 @@ async function tempRoot(): Promise<string> {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(
     tempDirs.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
@@ -110,23 +110,16 @@ it("reports failed directory subtrees and continues when requested", async () =>
   await fs.mkdir(path.join(directory, "healthy"));
   await fs.writeFile(path.join(directory, "healthy", "value.txt"), "healthy");
   const capability = await root(directory);
-  const list = capability.list.bind(capability) as (
-    relativePath: string,
-    options: { withFileTypes: true },
-  ) => Promise<DirEntry[]>;
-  const walkingRoot = {
-    rootReal: capability.rootReal,
-    stat: capability.stat.bind(capability),
-    async list(relativePath: string, options: { withFileTypes: true }): Promise<DirEntry[]> {
-      if (relativePath === "broken") {
-        throw Object.assign(new Error("unreadable subtree"), { code: "EACCES" });
-      }
-      return await list(relativePath, options);
-    },
-  };
+  const readdir = fs.readdir.bind(fs);
+  vi.spyOn(fs, "readdir").mockImplementation(async (...args) => {
+    if (String(args[0]) === path.join(capability.rootReal, "broken")) {
+      throw Object.assign(new Error("unreadable subtree"), { code: "EACCES" });
+    }
+    return await readdir(...args);
+  });
 
   const entries: RootWalkEntry[] = [];
-  for await (const entry of walkRoot(walkingRoot, "", {
+  for await (const entry of capability.walk("", {
     symlinkPolicy: "skip",
     onDirectoryError: "skip-and-report",
   })) {
@@ -145,7 +138,7 @@ it("reports failed directory subtrees and continues when requested", async () =>
   });
 
   await expect(async () => {
-    for await (const _entry of walkRoot(walkingRoot, "", { symlinkPolicy: "skip" })) {
+    for await (const _entry of capability.walk("", { symlinkPolicy: "skip" })) {
       // Consume the iterator to prove the default remains fail-fast.
     }
   }).rejects.toMatchObject({ code: "EACCES" });
@@ -155,17 +148,15 @@ it("observes an abort that occurs while an empty directory is being listed", asy
   const directory = await tempRoot();
   const controller = new AbortController();
   const capability = await root(directory);
-  const walkingRoot = {
-    rootReal: capability.rootReal,
-    stat: capability.stat.bind(capability),
-    async list(): Promise<DirEntry[]> {
-      controller.abort();
-      return [];
-    },
-  };
+  const readdir = fs.readdir.bind(fs);
+  vi.spyOn(fs, "readdir").mockImplementation(async (...args) => {
+    const names = await readdir(...args);
+    controller.abort();
+    return names;
+  });
 
   await expect(async () => {
-    for await (const _entry of walkRoot(walkingRoot, "", {
+    for await (const _entry of capability.walk("", {
       signal: controller.signal,
       symlinkPolicy: "skip",
     })) {
@@ -178,6 +169,7 @@ it.each([
   { symlinkPolicy: "unexpected" },
   { symlinkPolicy: "skip", limitBehavior: "unexpected" },
   { symlinkPolicy: "skip", onDirectoryError: "unexpected" },
+  { symlinkPolicy: "skip", order: "unexpected" },
 ])("rejects invalid runtime walk policies: %j", async (options) => {
   const directory = await tempRoot();
   const capability = await root(directory);
