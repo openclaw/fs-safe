@@ -61,7 +61,7 @@ a:hover{text-decoration:underline;text-underline-offset:.2em}
 .theme-toggle:hover{border-color:var(--ink);color:var(--ink)}
 .theme-toggle:active{transform:scale(.94)}
 .theme-toggle svg{width:16px;height:16px;display:block}
-.theme-icon-sun{display:none}
+.theme-toggle .theme-icon-sun{display:none}
 :root[data-theme="dark"] .theme-icon-sun{display:block}
 :root[data-theme="dark"] .theme-icon-moon{display:none}
 .search{display:block;margin:0 0 22px}

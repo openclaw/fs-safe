@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fix the docs theme picker showing both sun and moon icons in light mode.
 - Restrict atomic replacement mode inheritance to ordinary rwx bits from an existing non-symlink regular file, preventing symlink, file-type, and special-bit permission laundering.
 - Reject hardlinked `readSecureFile()` inputs before reading and recheck the pinned descriptor after reading so bytes are not returned while a late additional alias remains.
 - Reject invalid or Node-overflowing lock compromise-check intervals before acquisition and serialize asynchronous checks, preventing high-frequency or overlapping filesystem polling loops.
