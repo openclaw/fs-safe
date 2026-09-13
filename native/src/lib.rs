@@ -6,6 +6,12 @@ use napi_derive::napi;
 mod archive;
 mod archive_gzip;
 mod fast_file;
+mod clone_tree;
+mod clone_metadata;
+#[cfg(unix)]
+mod clone_unix;
+#[cfg(windows)]
+mod clone_windows;
 mod owned_tree;
 #[cfg(unix)]
 mod staged_file;
