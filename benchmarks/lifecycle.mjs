@@ -3,7 +3,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 
-export async function registerLifecycle({ api: a, workspace: w, native, binding, register: add, contract, onCleanup }) {
+export async function registerLifecycle({ api: a, workspace: w, native, binding, register: add, contract, onCleanup, args }) {
   const cloneBackend = a.probeTreeClone(w);
   add("probeTreeClone", () => a.probeTreeClone(w), {
     sync: true,
@@ -20,32 +20,36 @@ export async function registerLifecycle({ api: a, workspace: w, native, binding,
   } else {
     fs.mkdirSync(cloneSource);
   }
-  fs.mkdirSync(path.join(cloneSource, "nested"));
-  fs.mkdirSync(path.join(cloneSource, "empty"));
-  const cloneContents = new Map([["payload", Buffer.alloc(1024 * 1024, 0x5a)]]);
-  for (let i = 0; i < 64; i++) {
-    cloneContents.set(i % 2 ? `nested/file-${i}` : `file-${i}`, Buffer.alloc(4096, i));
+  const shape = args["copy-shape"];
+  const cloneDirectories = ["empty", ...(shape === "mixed" ? ["nested"] : [])];
+  const cloneContents = new Map(shape === "mixed" ? [["payload", Buffer.alloc(1024 * 1024, 0x5a)]] : []);
+  for (let i = 0; shape !== "empty" && i < args["copy-files"]; i++) {
+    if (shape === "nested") cloneDirectories.push(`directory-${i}`);
+    const name = shape === "nested" ? `directory-${i}/file` : shape === "mixed" && i % 2 ? `nested/file-${i}` : `file-${i}`;
+    cloneContents.set(name, Buffer.alloc(args["copy-file-bytes"], i % 251 + 1));
   }
+  for (const name of cloneDirectories) fs.mkdirSync(path.join(cloneSource, name));
   for (const [name, bytes] of cloneContents) fs.writeFileSync(path.join(cloneSource, name), bytes);
   const cloneNames = fs.readdirSync(cloneSource).sort();
-  const nestedCloneNames = fs.readdirSync(path.join(cloneSource, "nested")).sort();
+  const directoryNames = new Map(cloneDirectories.map(name => [name, fs.readdirSync(path.join(cloneSource, name)).sort()]));
   add("createCloneSource", () => a.createCloneSource(clonePreparation), {
     skip: cloneSkip,
     verify: () => assert(fs.statSync(clonePreparation).isDirectory()),
     after: () => fs.rmSync(clonePreparation, { recursive: true, force: true }),
   });
-  for (const clone of ["auto", "never", "always"]) {
-    add(`copyTree/${clone}/mixed`, () => a.copyTree(cloneSource, cloneTarget, { clone }), {
-      divisor: 10,
-      skip: clone === "always" ? cloneSkip : undefined,
-      verify: () => {
-        assert.deepEqual(fs.readdirSync(cloneTarget).sort(), cloneNames);
-        assert.deepEqual(fs.readdirSync(path.join(cloneTarget, "nested")).sort(), nestedCloneNames);
-        assert.deepEqual(fs.readdirSync(path.join(cloneTarget, "empty")), []);
-        for (const [name, bytes] of cloneContents) assert(fs.readFileSync(path.join(cloneTarget, name)).equals(bytes), name);
-      },
-      after: () => fs.rmSync(cloneTarget, { recursive: true, force: true }),
-    });
+  for (const concurrency of args["copy-concurrency"] ?? [undefined]) {
+    for (const clone of ["auto", "never", "always"]) {
+      add(`copyTree/${clone}/${shape}${concurrency === undefined ? "" : `/workers=${concurrency}`}`, () => a.copyTree(cloneSource, cloneTarget, { clone, concurrency }), {
+        divisor: 10,
+        skip: clone === "always" ? cloneSkip : undefined,
+        verify: () => {
+          assert.deepEqual(fs.readdirSync(cloneTarget).sort(), cloneNames);
+          for (const [name, entries] of directoryNames) assert.deepEqual(fs.readdirSync(path.join(cloneTarget, name)).sort(), entries);
+          for (const [name, bytes] of cloneContents) assert(fs.readFileSync(path.join(cloneTarget, name)).equals(bytes), name);
+        },
+        after: () => fs.rmSync(cloneTarget, { recursive: true, force: true }),
+      });
+    }
   }
   add("readCloneFileMetadata", () => a.readCloneFileMetadata([path.join(w, "input.json")]), {
     skip: !native ? "Native metadata reader unavailable." : undefined,

@@ -65,3 +65,20 @@ load can dwarf JavaScript changes. Warm-cache sequential latency does not measur
 cold storage, concurrent throughput, or event-loop responsiveness. This report is
 not a timing assertion in CI. CI smoke runs verify that the benchmark continues
 to exercise real callable APIs.
+
+For copy comparisons, specify identical worker counts: native tree cloning
+defaults to 16 workers while portable Windows copying defaults to 4. Use the
+same harness, payload, runtime, volume, and native mode for both builds:
+
+```sh
+pnpm benchmark:methods --mode require --filter copyTree/ --copy-shape nested --copy-files 64 --copy-file-bytes 4096 --copy-concurrency 1,4,8,16,32 --iterations 10 --samples 5 --warmup 1
+```
+
+`--copy-shape` accepts `empty`, `flat`, `nested` (one file per sibling directory),
+or `mixed` (the default). Mixed adds a 1 MiB payload and splits the selected
+files between the root and one nested directory. All shapes include an empty
+directory. `--copy-files` defaults to 64, and `--copy-file-bytes` defaults to
+4096. Generated file data is bounded to 512 MiB plus the mixed payload. Each
+worker count runs auto, never, and supported always policies; explicit workers
+are included in row names. Contents and directory listings are checked outside
+timing. On Windows, `TEMP`/`TMP` select the fixture volume; on POSIX use `TMPDIR`.
