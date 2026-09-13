@@ -313,7 +313,7 @@ describe("directory copying", () => {
     await expect(fs.access(destination)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it.runIf(process.platform === "win32").each(["abort", "file error"] as const)(
+  it.runIf(process.platform === "win32").for(["abort", "file error"] as const)(
     "joins admitted native file writes after %s without exceeding concurrency",
     async (stop, context) => {
       configureFsSafeNative({ mode: "auto" });
