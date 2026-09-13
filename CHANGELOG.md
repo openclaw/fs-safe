@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Confirm EOF when Linux copy offload initially reports zero bytes, so automatic file copies fall back to reading available data instead of publishing an empty file.
+- Fix package consumer smoke and lifecycle tests with standalone `@pnpm/exe` installations, preserving the pinned pnpm version and isolated consumer configuration.
 
 ## 0.10.0 - 2026-09-13
 

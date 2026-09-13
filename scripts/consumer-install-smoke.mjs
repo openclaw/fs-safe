@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
@@ -35,18 +35,37 @@ export function isolatedConsumerEnv(directory) {
   return env;
 }
 
-async function run(cli, args, cwd, env) {
+async function run(command, args, cwd, env) {
   // Async children leave the test-owned registry's event loop available.
-  const { stdout } = await exec(process.execPath, [cli, ...args], {
+  const { stdout } = await exec(command[0], [...command.slice(1), ...args], {
     cwd, env, encoding: "utf8", timeout: 120_000, killSignal: "SIGKILL", maxBuffer: 8 * 1024 * 1024,
   });
   return stdout.trim();
 }
 
-export function resolvePnpmCli(cli = process.env.npm_execpath) {
+function isNativeExecutable(file) {
+  const descriptor = openSync(file, "r");
+  try {
+    const header = Buffer.alloc(4);
+    if (readSync(descriptor, header, 0, header.length, 0) !== header.length) return false;
+    // ELF, Mach-O (including universal binaries), and Windows PE executables.
+    return header.readUInt16BE(0) === 0x4d5a || [
+      0x7f454c46, 0xfeedface, 0xcefaedfe, 0xfeedfacf, 0xcffaedfe,
+      0xcafebabe, 0xbebafeca, 0xcafebabf, 0xbfbafeca,
+    ].includes(header.readUInt32BE(0));
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+/** @returns {[string, ...string[]]} */
+export function resolvePnpmCommand(cli = process.env.npm_execpath) {
   const resolved = cli && isAbsolute(cli) && statSync(cli, { throwIfNoEntry: false })?.isFile()
     ? realpathSync(cli) : undefined;
-  if (resolved && /^pnpm\.(?:c?js|mjs)$/.test(basename(resolved))) return resolved;
+  if (resolved && /^pnpm\.(?:c?js|mjs)$/.test(basename(resolved))) return [process.execPath, resolved];
+  // @pnpm/exe supplies a standalone binary, not a script for the current Node.
+  // Keep shell/cmd shims rejected and never substitute a different pnpm from PATH.
+  if (resolved && /^pnpm(?:\.exe)?$/.test(basename(resolved)) && isNativeExecutable(resolved)) return [resolved];
   throw new Error("package collection requires a pnpm lifecycle CLI; run pnpm package:collect or pnpm package:smoke");
 }
 
@@ -69,7 +88,7 @@ const hashScript = `
   }
 `;
 
-export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCli, pnpmCli, allowHostOnly, source }) {
+export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCli, pnpmCommand, allowHostOnly, source }) {
   const temporary = mkdtempSync(join(tmpdir(), "fs-safe-consumer-proof-"));
   let server;
   try {
@@ -78,7 +97,7 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
     const packingEnv = isolatedConsumerEnv(join(temporary, "packing-config"));
     const { artifacts, synthetic } = await consumerFixtureArtifacts({
       rootPkg, manifest, outputDir, fixtureDir, allowHostOnly,
-      runNpm: (args, cwd) => run(npmCli, args, cwd, packingEnv),
+      runNpm: (args, cwd) => run([process.execPath, npmCli], args, cwd, packingEnv),
     });
     server = await startConsumerRegistry(artifacts);
     // Check every platform metadata/tarball endpoint, including foreign fixtures,
@@ -101,14 +120,14 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
       root: manifest.find((artifact) => artifact.name === rootPkg.name),
       syntheticForeignPackages: synthetic, managers: [],
     };
-    for (const [manager, cli] of [["npm", npmCli], ["pnpm", pnpmCli]]) {
+    for (const [manager, command] of [["npm", [process.execPath, npmCli]], ["pnpm", pnpmCommand]]) {
       const managerProof = { manager, cases: [] };
       for (const omitted of [false, true]) {
         const directory = join(temporary, `${manager}-${omitted ? "omitted" : "normal"}`);
         mkdirSync(directory);
         const env = isolatedConsumerEnv(join(directory, "config"));
         env.npm_config_registry = server.registry;
-        const version = await run(cli, ["--version"], directory, env);
+        const version = await run(command, ["--version"], directory, env);
         if (manager === "pnpm") assert.equal(`pnpm@${version}`, rootPkg.packageManager);
         managerProof.version = version;
         writeFileSync(join(directory, "package.json"), JSON.stringify({ private: true, type: "module" }));
@@ -117,7 +136,7 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
           : ["add", "--ignore-scripts", "--ignore-workspace", "--store-dir", join(directory, "store"), ...(omitted ? ["--no-optional"] : [])];
         // The only requested package is the root; its exact optional pins are untouched.
         args.push(`${rootPkg.name}@${rootPkg.version}`, "--registry", server.registry);
-        await run(cli, args, directory, env);
+        await run(command, args, directory, env);
         assert.deepEqual(Object.keys(readJson(join(directory, "package.json")).dependencies), [rootPkg.name]);
         const lockfile = readFileSync(join(directory, manager === "npm" ? "package-lock.json" : "pnpm-lock.yaml"), "utf8");
         const rootArtifact = artifacts.find((artifact) => artifact.pkg.name === rootPkg.name);
@@ -127,11 +146,11 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
           entryHash: createHash("sha256").update(readFileSync("dist/index.js")).digest("hex"),
         }));
         writeFileSync(join(directory, "probe.mjs"), readFileSync(new URL("./consumer-install-probe.mjs", import.meta.url)));
-        await run(join(directory, "probe.mjs"), [], directory, env);
+        await run([process.execPath, join(directory, "probe.mjs")], [], directory, env);
         const installed = readJson(join(directory, "installed.json"));
         writeFileSync(join(directory, "fixture.txt"), "abc");
         async function hash(mode, missing = false) {
-          return run("--input-type=module", ["--eval", hashScript, mode, missing ? "missing" : "present"], directory, env);
+          return run([process.execPath], ["--input-type=module", "--eval", hashScript, mode, missing ? "missing" : "present"], directory, env);
         }
         const cases = { omitted, nativePackages: installed.nativePackages };
         cases.require = await hash("require", omitted);
@@ -143,7 +162,7 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
           writeFileSync(join(directory, "consumer-proof-metadata.mjs"), readFileSync(new URL("./consumer-proof-metadata.mjs", import.meta.url)));
           cases.secretDirectories = [];
           for (const mode of ["off", "require"]) {
-            cases.secretDirectories.push(JSON.parse(await run(secretProbe, [mode], directory, env)));
+            cases.secretDirectories.push(JSON.parse(await run([process.execPath, secretProbe], [mode], directory, env)));
           }
           renameSync(installed.binary, `${installed.binary}.removed`);
           cases.missingBinaryAuto = await hash("auto");
