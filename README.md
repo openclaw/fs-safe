@@ -231,7 +231,7 @@ const locked = await root("/srv/workspace", {
 await locked.write(".env", "token"); // FsSafeError code "denied-path"
 ```
 
-`stat()`, `exists()`, and `list()` are boundary-checked, but they cannot pin a later operation to the same filesystem object. Use `read()`, `open()`, `write()`, `create()`, `copyIn()`, `move()`, or `remove()` for operation-local identity checks, and inspect `containment` when the platform distinction matters.
+`stat()`, `exists()`, `list()`, and `entries()` are boundary-checked, but they cannot pin a later operation to the same filesystem object. Use `read()`, `open()`, `write()`, `create()`, `copyIn()`, `move()`, or `remove()` for operation-local identity checks, and inspect `containment` when the platform distinction matters.
 
 ## Subpaths
 
@@ -468,6 +468,17 @@ Use `permissions: { allowInsecure: true }` only for migration or explicit local-
 flows where a warning is preferable to refusing the file.
 
 ## Directory walking
+
+[`Root.entries()`](docs/entries.md) observes one directory without descending or
+following child symlinks. It streams in filesystem order by default and supports
+cancellation, entry limits that throw on overflow, and bounded sorted-name
+collection. Use it when the caller owns traversal or symlink validation:
+
+```ts
+for await (const entry of fs.entries("plugins", { maxEntries: 1_000 })) {
+  console.log(entry.name, entry.isSymbolicLink);
+}
+```
 
 `walkDirectory()` and `walkDirectorySync()` replace ad-hoc recursive
 `readdir()` loops with entry and depth budgets, a symlink policy, and stable

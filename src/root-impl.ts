@@ -46,7 +46,8 @@ import { cleanupPinnedFilePath } from "./replace-file-temp-owner.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { isNonRegularWriteOpenError, resolveNonblockingWriteFlag } from "./write-open-flags.js";
 import { resolveRootPath } from "./root-path.js";
-import { listDirectoryForWalk, listDirectoryPath, pathStatFromStats } from "./root-directory-list.js";
+import { openRootDirectoryListing, listDirectoryPath, pathStatFromStats } from "./root-directory-list.js";
+import { entriesInRoot, type RootEntriesOptions } from "./root-entries.js";
 import {
   assertRootIdentityCurrent,
   assertValidRootDestinationPath,
@@ -334,6 +335,7 @@ export interface Root {
   stat(relativePath: string): Promise<PathStat>;
   list(relativePath: string, options?: { withFileTypes?: false }): Promise<string[]>;
   list(relativePath: string, options: { withFileTypes: true }): Promise<DirEntry[]>;
+  entries(relativePath: string, options?: RootEntriesOptions): AsyncIterableIterator<DirEntry>;
   move(
     fromRelative: string,
     toRelative: string,
@@ -620,6 +622,13 @@ export class RootHandle implements Root {
       toRelative,
     }).catch(rethrowMutationAuthorityError);
   }
+  entries(relativePath: string, options: RootEntriesOptions = {}): AsyncIterableIterator<DirEntry> {
+    assertValidRootRelativePath(relativePath);
+    return entriesInRoot(this.context, relativePath, {
+      ...options,
+      symlinks: options.symlinks ?? this.defaults.symlinks,
+    });
+  }
   walk(relativePath: string, options: RootWalkOptions): AsyncIterableIterator<RootWalkEntry> {
     assertValidRootRelativePath(relativePath);
     return walkRoot({
@@ -628,7 +637,7 @@ export class RootHandle implements Root {
       list: async (relative, listingOptions) => {
         validatePinnedOperationPayload({ relativePath: relative });
         const resolved = await resolvePinnedPathInRoot(this.context, { relativePath: relative, allowRoot: true });
-        return await listDirectoryForWalk(this.context, resolved.resolved, listingOptions);
+        return await openRootDirectoryListing(this.context, resolved.resolved, listingOptions);
       },
     }, relativePath, options);
   }

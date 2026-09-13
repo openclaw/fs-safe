@@ -291,14 +291,22 @@ fs.exists(rel)                   // boolean
 fs.stat(rel)                     // PathStat
 fs.list(rel)                     // string[]
 fs.list(rel, { withFileTypes })  // DirEntry[]
+fs.entries(rel, options?)        // nonrecursive AsyncIterable<DirEntry>, including symlinks
 fs.resolve(rel)                  // absolute path inside the root, after canonicalization
 ```
 
 These do not pin a later operation. They are safe to expose to UIs and decision points; for the actual read or write, use the verb methods so the operation pins identity at the point of use.
 
+`entries()` streams immediate children in filesystem order by default. It
+supports cancellation, a physical-entry limit that throws on overflow, and
+bounded sorted-name collection. It reports child symlinks without following
+them; its `symlinks` option applies only to the selected directory path.
+See [Directory entries](entries.md) for ordering, identity, and partial-result
+semantics.
+
 `resolve()` is the exception to the existing-object rule: because it selects a
 location for later use, it rejects a leading drive-relative spelling. Reads,
-`stat`, `exists`, `list`, `walk`, `remove`, and the source argument of `move`
+`stat`, `exists`, `list`, `entries`, `walk`, `remove`, and the source argument of `move`
 accept an existing POSIX filename such as `c:notes.txt`. For `move`, only the
 new destination name is subject to the portable guard.
 

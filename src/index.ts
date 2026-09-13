@@ -23,6 +23,7 @@ export {
   type RootCreateOptions,
   type RootCreateStreamOptions,
   type RootDefaults,
+  type RootEntriesOptions,
   type RootMkdirOptions,
   type RootMoveOptions,
   type RootOpenOptions,

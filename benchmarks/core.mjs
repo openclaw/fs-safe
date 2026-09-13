@@ -46,6 +46,7 @@ export async function registerCore({ api: a, workspace: w, register: add, contra
   });
   add("Root.list/names-100", () => safe.list("tree"));
   add("Root.list/metadata-100", () => safe.list("tree", { withFileTypes: true }));
+  add("Root.entries", async () => { const entries = []; for await (const entry of safe.entries("tree", { maxEntries: 101 })) entries.push(entry); return entries; }, { verify: (r) => assert.equal(r.length, 101) });
   add("Root.walk", async () => { const entries = []; for await (const entry of safe.walk("tree", { symlinkPolicy: "skip" })) entries.push(entry); return entries; });
   for (const name of ["walkDirectory", "walkDirectorySync"]) add(name, () => a[name](path.join(w, "tree")), { sync: name.endsWith("Sync"), verify: (r) => assert.equal(r.entries.length, 102) });
   add("readLocalFileSafely", () => a.readLocalFileSafely({ filePath: input, maxBytes: 1024 }));
