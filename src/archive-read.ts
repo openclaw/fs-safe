@@ -2,7 +2,7 @@ import { classifyArchiveParserError } from "./archive-parser-errors.js";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import { Readable } from "node:stream";
-import { readFileHandleBounded } from "./bounded-read.js";
+import { readBoundedAsync } from "./bounded-read.js";
 import {
   ArchiveFormatError,
   ArchiveSecurityError,
@@ -30,7 +30,8 @@ import type { ZipEntry } from "./archive-zip-entry.js";
 import { FsSafeError } from "./errors.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
-import { getNativeBinding } from "./native.js";
+import { getNativeBinding, type NativeBinding } from "./native.js";
+import type { NativeArchiveEntry } from "./native-binding.js";
 import { admitZipBuffer } from "./archive-zip-admission.js";
 import { resolveExtractLimits, resolveTarMeterLimits } from "./archive-limits.js";
 import { tempFile } from "./temp-target.js";
@@ -113,7 +114,15 @@ async function readArchiveInput(archivePath: string): Promise<Buffer> {
       return stat;
     }, opened);
 
-    return await readFileHandleBounded(handle, DEFAULT_MAX_ARCHIVE_BYTES_ZIP);
+    // Native ZIP workers borrow this private buffer. A pooled allocation could
+    // share its ArrayBuffer with unrelated JS buffers while the worker runs.
+    return await readBoundedAsync(DEFAULT_MAX_ARCHIVE_BYTES_ZIP,
+      async (buffer, length) => (await handle.read(buffer, 0, length, null)).bytesRead,
+      { unpooled: true, observeRegularFileSize: () => {
+        const size = fsSync.fstatSync(handle.fd).size;
+        return Number.isSafeInteger(size) && size >= 0 ? size : undefined;
+      } },
+    );
   } catch (error) {
     if (error instanceof FsSafeError && error.code === "path-mismatch") {
       throw new FsSafeError("path-mismatch", "archive changed during validation", { cause: error });
@@ -182,6 +191,51 @@ async function readTarEntry(archivePath: string, entryPath: string, maxBytes: nu
   return result!;
 }
 
+function selectNativeEntry(
+  manifest: NativeArchiveEntry[], requested: string, displayPath: string, physicalCount?: number,
+): NativeArchiveEntry {
+  if (physicalCount !== undefined && manifest.length !== physicalCount) {
+    throw new ArchiveSecurityError("entry-path", "zip decoder collapsed entry names");
+  }
+  const seen = new Set<string>();
+  let selected: NativeArchiveEntry | undefined;
+  for (const entry of manifest) {
+    const normalized = canonicalEntryPath(entry.path);
+    if (seen.has(normalized)) {
+      throw new ArchiveSecurityError("entry-path", `archive contains duplicate entry path: ${formatErrorDetail(normalized)}`);
+    }
+    seen.add(normalized);
+    if (normalized === requested) {
+      if (entry.kind !== "file") throw new Error(`archive entry is not a file: ${formatErrorDetail(displayPath)}`);
+      selected = entry;
+    }
+  }
+  if (!selected) throw new Error(`archive entry not found: ${formatErrorDetail(displayPath)}`);
+  return selected;
+}
+
+function throwNativeReadError(error: unknown): never {
+  if (error instanceof Error) {
+    const mapped = classifyArchiveParserError(error.message, { cause: error });
+    if (mapped) throw mapped;
+    if (isArchiveFormatErrorMessage(error.message)) throw new ArchiveFormatError(error.message, { cause: error });
+  }
+  throw error;
+}
+
+async function readNativeZipEntry(
+  native: NativeBinding, buffer: Buffer, requested: string, displayPath: string, maxBytes: number, physicalCount: number,
+): Promise<Buffer> {
+  try {
+    const signal = new AbortController().signal;
+    const reader = await native.openZipBufferNative(buffer, resolveTarMeterLimits(), AbortSignal.any([signal]));
+    const selected = selectNativeEntry(reader.entries, requested, displayPath, physicalCount);
+    return await reader.readEntry(selected.index, maxBytes, AbortSignal.any([signal]));
+  } catch (error) {
+    throwNativeReadError(error);
+  }
+}
+
 export async function readArchiveEntry(
   archivePath: string,
   entryPath: string,
@@ -200,6 +254,9 @@ export async function readArchiveEntry(
     ? admitZipBuffer(buffer, resolveExtractLimits())
     : undefined;
   const native = getNativeBinding();
+  if (kind === "zip" && native) {
+    return await readNativeZipEntry(native, buffer, requestedEntry, entryPath, options.maxBytes, physicalCount!);
+  }
   if (!native) {
     assertPortableArchiveKind(kind);
     if (kind === "zip") return await readZipEntry(buffer, requestedEntry, options.maxBytes);
@@ -217,49 +274,17 @@ export async function readArchiveEntry(
           limits,
           signal,
         );
-        let rawEntryPath: string | undefined;
-        if (physicalCount !== undefined && manifest.length !== physicalCount) {
-          throw new ArchiveSecurityError("entry-path", "zip decoder collapsed entry names");
-        }
-        const seenPaths = new Set<string>();
-        for (const entry of manifest) {
-          const normalized = canonicalEntryPath(entry.path);
-          if (seenPaths.has(normalized)) {
-            throw new ArchiveSecurityError(
-              "entry-path",
-              `archive contains duplicate entry path: ${formatErrorDetail(normalized)}`,
-            );
-          }
-          seenPaths.add(normalized);
-          if (normalized === requestedEntry) {
-            if (entry.kind !== "file") {
-              throw new Error(
-                `archive entry is not a file: ${formatErrorDetail(entryPath)}`,
-              );
-            }
-            rawEntryPath = entry.path;
-          }
-        }
-        if (!rawEntryPath) {
-          throw new Error(`archive entry not found: ${formatErrorDetail(entryPath)}`);
-        }
+        const selected = selectNativeEntry(manifest, requestedEntry, entryPath);
         return await native.readArchiveEntryNative(
           staged.path,
           kind,
-          rawEntryPath,
+          selected.path,
           options.maxBytes,
           limits,
           signal,
         );
       } catch (error) {
-        if (error instanceof Error) {
-          const mapped = classifyArchiveParserError(error.message, { cause: error });
-          if (mapped) throw mapped;
-        }
-        if (error instanceof Error && isArchiveFormatErrorMessage(error.message)) {
-          throw new ArchiveFormatError(error.message, { cause: error });
-        }
-        throw error;
+        throwNativeReadError(error);
       }
     }
     return await readTarEntry(staged.path, requestedEntry, options.maxBytes);

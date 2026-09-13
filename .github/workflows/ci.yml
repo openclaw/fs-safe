@@ -158,6 +158,14 @@ jobs:
           FS_SAFE_NATIVE_MODE: require
         run: pnpm test test/file-hash-options.test.ts
 
+      - name: Test native ZIP buffer ownership and validation
+        env:
+          FS_SAFE_NATIVE_MODE: require
+        run: pnpm test test/native-zip-buffer.test.ts
+
+      - name: Prove native ZIP buffer lifetime across garbage collection
+        run: node --expose-gc scripts/native-zip-buffer-gc-proof.mjs
+
       - name: Prove sidecar contention with required native binding
         run: node scripts/sidecar-contention-proof.mjs require
 

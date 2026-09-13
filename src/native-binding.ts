@@ -78,6 +78,11 @@ export interface NativeWindowsSecurityFacts {
 }
 
 export interface NativeBinding {
+  /** Internal: input remains private, unpooled and immutable until the reader is released. */
+  openZipBufferNative(buffer: Buffer, limits: TarMeterLimits, signal?: AbortSignal): Promise<{
+    readonly entries: NativeArchiveEntry[];
+    readEntry(index: number, maxBytes: number, signal?: AbortSignal): Promise<Buffer>;
+  }>;
   // POSIX-only direct-child staging; the matching Windows binary omits these methods.
   createStagedFile?(parentFd: number, basename: string): number;
   stagedFileMatches?(parentFd: number, basename: string, fileFd: number): boolean;

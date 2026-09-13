@@ -9,27 +9,31 @@ const MAX_INITIAL_READ_BYTES = 16 * 1024 * 1024;
 
 type ReadableFileHandle = Pick<FileHandle, "read">;
 
-function createInitialBuffer(maxBytes: number, size: number): Buffer {
+function createInitialBuffer(maxBytes: number, size: number, allocate = Buffer.allocUnsafe): Buffer {
   // A size hint can describe a huge sparse file or an already exhausted fd.
-  return Buffer.allocUnsafe(Math.min(maxBytes, size, MAX_INITIAL_READ_BYTES) + 1);
+  return allocate(Math.min(maxBytes, size, MAX_INITIAL_READ_BYTES) + 1);
 }
 
-function createScratchBuffer(maxBytes: number): Buffer {
-  return Buffer.allocUnsafe(Math.min(READ_CHUNK_BYTES, maxBytes + 1));
+function createScratchBuffer(maxBytes: number, allocate = Buffer.allocUnsafe): Buffer {
+  return allocate(Math.min(READ_CHUNK_BYTES, maxBytes + 1));
 }
 
-function growReadBuffer(buffer: Buffer, maxBytes: number): Buffer {
+function growReadBuffer(buffer: Buffer, maxBytes: number, allocate = Buffer.allocUnsafe): Buffer {
   // Grow only after consuming the whole buffer, never from an unchecked size hint.
   const capacity = Math.min(maxBytes + 1, Math.max(READ_CHUNK_BYTES, buffer.length * 2));
-  const grown = Buffer.allocUnsafe(capacity);
+  const grown = allocate(capacity);
   buffer.copy(grown);
   return grown;
 }
 
-function finishReadBuffer(buffer: Buffer, total: number): Buffer {
+function finishReadBuffer(buffer: Buffer, total: number, allocate?: (size: number) => Buffer): Buffer {
   if (total === 0) return Buffer.alloc(0);
   const result = buffer.subarray(0, total);
-  return total < buffer.length / 2 ? Buffer.from(result) : result;
+  if (total >= buffer.length / 2) return result;
+  if (!allocate) return Buffer.from(result);
+  const compact = allocate(total);
+  result.copy(compact);
+  return compact;
 }
 
 function addReadBytes(
@@ -56,27 +60,30 @@ export async function readBoundedAsync(
     observeRegularFileSize?: () => number | undefined;
     initialSize?: number;
     createLimitError?: () => Error;
+    /** Keep the result outside Node's shared small-buffer allocation pool. */
+    unpooled?: boolean;
   } = {},
 ): Promise<Buffer> {
   normalizeMaxBytes(maxBytes);
   let total = 0;
   const { observeRegularFileSize, createLimitError } = options;
+  const allocate = options.unpooled ? Buffer.allocUnsafeSlow : undefined;
   const size = options.initialSize ?? observeRegularFileSize?.();
-  let buffer = size === undefined ? createScratchBuffer(maxBytes) : createInitialBuffer(maxBytes, size);
+  let buffer = size === undefined ? createScratchBuffer(maxBytes, allocate) : createInitialBuffer(maxBytes, size, allocate);
   if (size !== undefined) {
     const bytesRead = await readChunk(buffer, buffer.length);
-    if (bytesRead === 0) return finishReadBuffer(buffer, 0);
+    if (bytesRead === 0) return finishReadBuffer(buffer, 0, allocate);
     // Short reads can occur before EOF. Only use the size shortcut on this
     // initial read; virtual files can report zero or stale sizes thereafter.
     const currentSize = bytesRead < buffer.length ? observeRegularFileSize?.() : undefined;
     total = addReadBytes(total, bytesRead, maxBytes, createLimitError);
-    if (currentSize !== undefined && bytesRead >= currentSize) return finishReadBuffer(buffer, total);
+    if (currentSize !== undefined && bytesRead >= currentSize) return finishReadBuffer(buffer, total, allocate);
   }
   while (true) {
-    if (total === buffer.length) buffer = growReadBuffer(buffer, maxBytes);
+    if (total === buffer.length) buffer = growReadBuffer(buffer, maxBytes, allocate);
     const remaining = buffer.subarray(total);
     const bytesRead = await readChunk(remaining, remaining.length);
-    if (bytesRead === 0) return finishReadBuffer(buffer, total);
+    if (bytesRead === 0) return finishReadBuffer(buffer, total, allocate);
     total = addReadBytes(total, bytesRead, maxBytes, createLimitError);
   }
 }

@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicBool, Ordering},
 };
 
@@ -14,6 +14,7 @@ use crate::tar_meter::{TarMetadataMeter, TarMeterLimits, MAX_SAFE_INTEGER, MAX_M
 use crate::{NativeResult, native_error, platform, validate_portable_relative_path};
 
 #[napi(object)]
+#[derive(Clone)]
 pub struct NativeArchiveEntry {
     pub index: u32,
     pub path: String,
@@ -192,7 +193,7 @@ fn inspect_tar(
     Ok(result)
 }
 
-fn zip_kind(file: &zip::read::ZipFile<'_, File>) -> &'static str {
+fn zip_kind<R: Read>(file: &zip::read::ZipFile<'_, R>) -> &'static str {
     let mode = file.unix_mode().unwrap_or(0);
     if mode & 0o170000 == 0o120000 {
         "symlink"
@@ -219,6 +220,12 @@ fn inspect_zip(
         .len().saturating_mul(3);
     let mut archive =
         zip::ZipArchive::new(file).map_err(|error| io_error("read zip archive", error))?;
+    inspect_zip_entries(&mut archive, max_path_bytes, cancelled)
+}
+
+fn inspect_zip_entries<R: Read + Seek>(
+    archive: &mut zip::ZipArchive<R>, max_path_bytes: u64, cancelled: &AtomicBool,
+) -> Result<Vec<ArchiveEntryData>> {
     let mut result = Vec::with_capacity(archive.len());
     let mut manifest_bytes = 0_u64;
     for index in 0..archive.len() {
@@ -261,10 +268,11 @@ fn limit_error(code: &'static str) -> Error {
 
 fn zip_entry_count(path: &str, max_entries: usize) -> Result<u64> {
     let mut file = File::open(path).map_err(|error| io_error("open zip archive", error))?;
-    let length = file
-        .metadata()
-        .map_err(|error| io_error("stat zip archive", error))?
-        .len();
+    zip_reader_entry_count(&mut file, max_entries)
+}
+
+fn zip_reader_entry_count<R: Read + Seek>(file: &mut R, max_entries: usize) -> Result<u64> {
+    let length = file.seek(SeekFrom::End(0)).map_err(|error| io_error("stat zip archive", error))?;
     let tail_size = length.min(65_557) as usize;
     let mut tail = vec![0_u8; tail_size];
     file.seek(SeekFrom::End(-(tail_size as i64)))
@@ -314,7 +322,7 @@ fn zip_entry_count(path: &str, max_entries: usize) -> Result<u64> {
             continue;
         }
         let parsed = count_central_directory_entries(
-            &mut file,
+            file,
             directory_offset,
             directory_size,
             max_entries,
@@ -329,8 +337,8 @@ fn zip_entry_count(path: &str, max_entries: usize) -> Result<u64> {
     ))
 }
 
-fn count_central_directory_entries(
-    file: &mut File,
+fn count_central_directory_entries<R: Read + Seek>(
+    file: &mut R,
     offset: u64,
     size: u64,
     max_entries: usize,
@@ -725,6 +733,110 @@ fn read_bounded(
     Ok(output)
 }
 
+type BufferedZip = zip::ZipArchive<Cursor<Buffer>>;
+
+#[napi]
+pub struct NativeZipBufferReader {
+    archive: Arc<Mutex<BufferedZip>>,
+    entries: Vec<NativeArchiveEntry>,
+}
+
+#[napi]
+impl NativeZipBufferReader {
+    #[napi(getter)]
+    pub fn entries(&self) -> Vec<NativeArchiveEntry> {
+        self.entries.clone()
+    }
+
+    #[napi]
+    pub fn read_entry(&self, index: u32, max_bytes: f64, signal: Option<AbortSignal>) -> Result<AsyncTask<ReadZipBufferTask>> {
+        if !max_bytes.is_finite() || !(0.0..=MAX_SAFE_INTEGER as f64).contains(&max_bytes)
+            || max_bytes.fract() != 0.0 {
+            return Err(Error::new(Status::InvalidArg, "maxBytes must be a non-negative safe integer"));
+        }
+        let cancelled = signal.as_ref().map(cancellation).unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+        Ok(AsyncTask::with_optional_signal(ReadZipBufferTask {
+            archive: Arc::clone(&self.archive), index: index as usize, max_bytes: max_bytes as u64,
+            cancelled,
+        }, signal))
+    }
+}
+
+pub struct OpenZipBufferTask {
+    buffer: Option<Buffer>,
+    max_entries: usize,
+    cancelled: Arc<AtomicBool>,
+}
+
+impl Task for OpenZipBufferTask {
+    type Output = NativeZipBufferReader;
+    type JsValue = NativeZipBufferReader;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        check_cancelled(&self.cancelled)?;
+        let buffer = self.buffer.take().ok_or_else(|| Error::new(Status::GenericFailure, "ZIP buffer already consumed"))?;
+        let max_path_bytes = (buffer.len() as u64).saturating_mul(3);
+        let mut cursor = Cursor::new(buffer);
+        zip_reader_entry_count(&mut cursor, self.max_entries)?;
+        let mut archive = zip::ZipArchive::new(cursor).map_err(|error| io_error("read zip archive", error))?;
+        let entries = inspect_zip_entries(&mut archive, max_path_bytes, &self.cancelled)?
+            .into_iter().map(|entry| NativeArchiveEntry {
+                index: entry.index, path: entry.path, kind: entry.kind,
+                size: entry.size as f64, mode: entry.mode,
+            }).collect();
+        Ok(NativeZipBufferReader { archive: Arc::new(Mutex::new(archive)), entries })
+    }
+
+    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
+        check_cancelled(&self.cancelled)?;
+        Ok(output)
+    }
+}
+
+// Internal borrowing contract: the caller supplies a private, unpooled buffer
+// and never mutates/detaches it while this reader or any of its tasks is alive.
+// napi::Buffer retains the JS allocation; Cursor reads it without a byte copy.
+#[napi(js_name = "openZipBufferNative")]
+pub fn open_zip_buffer_native(buffer: Buffer, limits: NativeTarLimits, signal: Option<AbortSignal>) -> Result<AsyncTask<OpenZipBufferTask>> {
+    let limits = limits.checked()?;
+    let cancelled = signal.as_ref().map(cancellation).unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+    Ok(AsyncTask::with_optional_signal(OpenZipBufferTask { buffer: Some(buffer), max_entries: limits.max_entries, cancelled }, signal))
+}
+
+pub struct ReadZipBufferTask {
+    archive: Arc<Mutex<BufferedZip>>,
+    index: usize,
+    max_bytes: u64,
+    cancelled: Arc<AtomicBool>,
+}
+
+impl Task for ReadZipBufferTask {
+    type Output = Vec<u8>;
+    type JsValue = Buffer;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        check_cancelled(&self.cancelled)?;
+        let mut archive = self.archive.lock().map_err(|_| Error::new(Status::GenericFailure, "ZIP reader unavailable"))?;
+        check_cancelled(&self.cancelled)?;
+        let mut entry = archive.by_index(self.index).map_err(|error| io_error("read zip entry", error))?;
+        if zip_kind(&entry) != "file" {
+            return Err(Error::new(Status::InvalidArg, "archive entry is not a file"));
+        }
+        let expected_size = entry.size();
+        let output = read_bounded(&mut entry, self.max_bytes, Arc::clone(&self.cancelled))?;
+        if output.len() as u64 != expected_size {
+            return Err(Error::new(Status::InvalidArg, "archive-header-invalid: ZIP entry size does not match declared uncompressed size"));
+        }
+        Ok(output)
+    }
+
+    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
+        check_cancelled(&self.cancelled)?;
+        // napi transfers the Vec allocation to a Node Buffer.
+        Ok(output.into())
+    }
+}
+
 pub struct ReadEntryTask {
     path: String,
     format: ArchiveFormat,
@@ -802,6 +914,25 @@ mod tests {
     use super::*;
 
     static TEMP_PATH_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    #[test]
+    fn buffered_zip_retains_the_input_allocation_across_reader_and_tasks() {
+        assert!(open_zip_buffer_native(Buffer::default(), native_limits(f64::NAN), None).is_err());
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        writer.start_file("payload", zip::write::SimpleFileOptions::default()).unwrap();
+        writer.write_all(b"retained bytes").unwrap();
+        let input = Buffer::from(writer.finish().unwrap().into_inner());
+        let input_pointer = input.as_ptr();
+        let mut open = OpenZipBufferTask { buffer: Some(input), max_entries: 10, cancelled: Arc::new(AtomicBool::new(false)) };
+        let reader = open.compute().unwrap();
+        let archive = Arc::clone(&reader.archive);
+        let mut task = ReadZipBufferTask { archive: Arc::clone(&archive), index: 0, max_bytes: 14, cancelled: Arc::new(AtomicBool::new(false)) };
+        drop(reader);
+        assert_eq!(task.compute().unwrap(), b"retained bytes");
+        drop(task);
+        let original = Arc::try_unwrap(archive).ok().unwrap().into_inner().unwrap().into_inner().into_inner();
+        assert_eq!(original.as_ptr(), input_pointer, "input bytes must not be copied");
+    }
 
     fn fixture_tar() -> Vec<u8> {
         let mut bytes = Vec::new();

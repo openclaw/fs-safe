@@ -59,6 +59,15 @@ whether a path, archive entry, mode, owner, or cleanup policy is acceptable.
 
 ## Archives
 
+Native ZIP entry reads retain a private, unpooled input Buffer in the async
+reader and reuse the parsed ZIP directory after TypeScript admission and
+selection. The internal binding borrows that allocation: it must never be
+mutated or detached while the reader or a read task exists. The public API only
+accepts a pathname and owns this buffer exclusively. An N-API reference keeps
+the bytes alive; a mutex serializes access to the retained ZIP cursor. Output
+decompression allocates a new vector, which N-API transfers to Node without a
+second payload copy on runtimes supporting external buffers.
+
 Rust streams ZIP and TAR payloads, including gzip, zstd, and bzip2. It first
 returns a bounded manifest. TypeScript applies the shared path, filter, strip,
 mode, and byte policies and returns an index-bound extraction plan. Rust then
