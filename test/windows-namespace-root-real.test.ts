@@ -7,6 +7,12 @@ import {
   createNearestExistingSyncDirectoryGuard,
   inspectDirectoryIdentity,
 } from "../src/directory-guard.js";
+import { executePermissionCommand } from "../src/permission-exec.js";
+import {
+  inspectPathPermissions,
+  inspectWindowsAcl,
+  safeStat,
+} from "../src/permissions.js";
 import { root } from "../src/root.js";
 import { resolveRootContext } from "../src/root-context.js";
 import { resolveRootPath, resolveRootPathSync } from "../src/root-path.js";
@@ -37,6 +43,23 @@ describe.skipIf(process.platform !== "win32")("real Windows namespace drive root
         .resolves.toMatchObject({ dir: namespaceRoot });
       expect(createNearestExistingSyncDirectoryGuard(namespaceRoot, namespaceMissing))
         .toMatchObject({ dir: namespaceRoot });
+      await expect(safeStat(namespaceRoot)).resolves.toMatchObject({
+        ok: true,
+        isDir: true,
+        isSymlink: false,
+      });
+      await expect(inspectPathPermissions(namespaceRoot)).resolves.toMatchObject({
+        ok: true,
+        isDir: true,
+        isSymlink: false,
+        source: "windows-acl",
+      });
+      const acl = await inspectWindowsAcl(namespaceRoot);
+      const fallbackAcl = await inspectWindowsAcl(namespaceRoot, {
+        exec: executePermissionCommand,
+      });
+      expect(acl).toEqual(fallbackAcl);
+      expect(acl.ok).toBe(true);
 
       const suppliedCanonicalParams = {
         rootPath: namespaceRoot,

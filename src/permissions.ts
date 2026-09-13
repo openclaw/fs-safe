@@ -5,7 +5,10 @@ import {
   inspectWindowsPermissions,
   type PermissionExec,
 } from "./permissions-windows.js";
-import { hasWindowsPathAlias } from "./windows-path-alias.js";
+import {
+  hasWindowsPathAlias,
+  pathForWindowsFilesystem,
+} from "./windows-path-alias.js";
 export type { PermissionCommandFailure } from "./permission-exec.js";
 export {
   createIcaclsResetCommand,
@@ -78,7 +81,7 @@ function failedSafeStat(error: string): SafeStatResult {
 
 async function safeStatAdmitted(targetPath: string): Promise<SafeStatResult> {
   try {
-    const lst = fsSync.lstatSync(targetPath);
+    const lst = fsSync.lstatSync(pathForWindowsFilesystem(targetPath));
     return {
       ok: true,
       isSymlink: lst.isSymbolicLink(),
