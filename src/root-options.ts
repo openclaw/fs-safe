@@ -2,6 +2,9 @@ import { normalizeMaxBytes } from "./byte-budget.js";
 import type { DenyMutationPolicy } from "./deny-mutations.js";
 import type { RenameIdentityPolicy } from "./pinned-write.js";
 import type { MutationSymlinkPolicy, SymlinkPolicy } from "./root-symlink-policy.js";
+import type { CopyCloneMode } from "./copy-policy.js";
+import type { RootCopyPublicationReceipt } from "./copy-publication.js";
+import type { Root } from "./root-impl.js";
 
 export const DEFAULT_ROOT_MAX_BYTES = 16 * 1024 * 1024;
 
@@ -45,7 +48,14 @@ export type RootOpenWritableOptions = Pick<RootDefaults, "assertBeforeMutation" 
 
 export type RootCopyOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks" | "durable" | "maxBytes" | "mkdir" | "mode"> & {
   sourceHardlinks?: HardlinkPolicy;
+  overwrite?: boolean;
+  clone?: CopyCloneMode;
+  signal?: AbortSignal;
+  preserveSourceMode?: boolean;
+  onDestinationPublished?: (receipt: RootCopyPublicationReceipt) => void;
 };
+
+export type RootCopySource = string | { root: Pick<Root, "open" | "stat">; relativePath: string };
 
 export type RootWriteJsonOptions = RootWriteOptions & {
   replacer?: Parameters<typeof JSON.stringify>[1];

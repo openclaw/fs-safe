@@ -133,6 +133,11 @@ await fs.remove("notes/archive/today.txt");
 
 `root()` takes the trusted directory; relative paths in subsequent calls are resolved against it. Defaults you pass to `root()` apply to every call below; per-call options override them.
 
+`copyIn()` also accepts `{ root: sourceRoot, relativePath }`, `overwrite: false`,
+and `clone: "auto"` for guarded, exclusive file copies with optional native
+copy-on-write acceleration. Byte limits, cancellation, and publication receipts
+are described in the [Root copy contract](docs/root.md#writes).
+
 When you need metadata or a `FileHandle`:
 
 ```ts

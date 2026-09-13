@@ -1,15 +1,17 @@
 import fs from "node:fs";
 import path from "node:path";
 import { assertAbsolutePathInput } from "./absolute-path.js";
+import { resolveCopyCloneMode, type CopyCloneMode } from "./copy-policy.js";
 import { copyOwnedTree } from "./copy-tree-portable.js";
 import { FsSafeError } from "./errors.js";
 import { getNativeBinding, requireNativeBinding } from "./native.js";
 import { assertStagedDirectoryCurrent, openStagedDirectory } from "./staged-directory.js";
 export { readCloneFileMetadata, type CloneFileMetadata } from "./clone-metadata.js";
+export type { CopyCloneMode } from "./copy-policy.js";
 
 export type TreeCloneBackend = "apfs" | "btrfs" | "refs" | "xfs";
 export type CopyTreeOptions = {
-  clone?: "auto" | "always" | "never";
+  clone?: CopyCloneMode;
   signal?: AbortSignal;
   concurrency?: number;
 };
@@ -41,10 +43,7 @@ export async function copyTree(
   options: CopyTreeOptions = {},
 ): Promise<void> {
   options.signal?.throwIfAborted();
-  const policy = options.clone ?? "auto";
-  if (policy !== "auto" && policy !== "always" && policy !== "never") {
-    throw new FsSafeError("invalid-path", "copy clone policy must be auto, always, or never");
-  }
+  const policy = resolveCopyCloneMode(options.clone, "auto");
   await materializeTree(source, destination, options, policy);
 }
 
@@ -60,7 +59,7 @@ async function materializeTree(
   source: string | undefined,
   destination: string,
   options: CopyTreeOptions,
-  policy: NonNullable<CopyTreeOptions["clone"]>,
+  policy: CopyCloneMode,
 ): Promise<void> {
   options.signal?.throwIfAborted();
   const concurrency = options.concurrency ?? 16;

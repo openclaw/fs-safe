@@ -161,22 +161,31 @@ describe("archive merge cleanup ownership", () => {
     expect((await fs.stat(target)).nlink).toBe(2);
   });
 
-  itPosix("leaves receipt-based source-swap cleanup to copyIn", async () => {
+  itPosix.each(["NEW", "LATER EDIT"])("preserves %s after a post-publication source swap", async (contents) => {
     configureFsSafeNative({ mode: "off" });
     const { base, source, target, params } = await fixture();
+    const originalSource = path.join(base, "original-source");
+    let publishedIdentity: { dev: bigint; ino: bigint } | undefined;
     __setFsSafeTestHooksForTest({
       async afterPinnedWriteFallbackRename(targetPath) {
         if (targetPath !== target) return;
-        await fs.rename(source, path.join(base, "original-source"));
+        const published = await fs.stat(target, { bigint: true });
+        publishedIdentity = { dev: published.dev, ino: published.ino };
+        await fs.rename(source, originalSource);
         await fs.writeFile(source, "REPLACED SOURCE");
+        if (contents !== "NEW") await fs.writeFile(target, contents);
       },
     });
 
     await expect(mergeExtractedTreeIntoDestination(params)).rejects.toMatchObject({
       code: "path-mismatch",
     });
-    await expect(fs.stat(target)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(publishedIdentity).toBeDefined();
+    await expect(fs.stat(target, { bigint: true })).resolves.toMatchObject(publishedIdentity!);
+    await expect(fs.readFile(target, "utf8")).resolves.toBe(contents);
     await expect(fs.readFile(source, "utf8")).resolves.toBe("REPLACED SOURCE");
+    await expect(fs.readFile(originalSource, "utf8")).resolves.toBe("NEW");
+    await expect(fs.readdir(params.destinationDir)).resolves.toEqual(["keep"]);
   });
 
   itPosix.each(["published", "file", "hardlink", "symlink"] as const)(

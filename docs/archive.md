@@ -225,11 +225,13 @@ If `kind` is omitted, the helper calls `resolveArchiveKind(archivePath)` and thr
 The destination merge is nontransactional: each file is published atomically,
 but completed files and directories can remain when a later copy, post-copy
 check, mode application, or deadline fails. This also applies to
-`mergeExtractedTreeIntoDestination()`. Guarded `Root.copyIn()` owns cleanup for
-its operation; the archive merge does not unlink the current destination name
-on error because it has no publication receipt proving ownership. A failure
-before publication preserves a pre-existing file, and rejection does not grant
-authority to delete a substituted file or alias. Failed extraction does not
+`mergeExtractedTreeIntoDestination()`. Guarded `Root.copyIn()` owns unpublished
+stage cleanup and preserves completed publications. The archive merge never
+acquires rollback authority over the current destination name. Replacing a
+source path after publication rejects the merge with `path-mismatch` while
+preserving the admitted bytes already published, or any later destination edit.
+A failure before publication preserves a pre-existing file, and rejection does
+not grant authority to delete a substituted file or alias. Failed extraction does not
 restore overwritten contents. Active destination mutations and their guarded
 cleanup still finish before rejection; no later destination mutation begins.
 New directories whose finalization was never reached can retain their

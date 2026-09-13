@@ -10,6 +10,7 @@ import { MutationAuthorityError } from "./mutation-authority.js";
 import type { FileIdentityStat } from "./file-identity.js";
 import type { NativeBinding } from "./native-binding.js";
 import { writeNativeInput } from "./native-operations.js";
+import { assertNativeCopyCompleted, createNativeCopyFile } from "./copy-file-input.js";
 import type { PinnedWriteInput, PinnedWriteParams } from "./pinned-write.js";
 import { assertStagedDirectoryCurrent, openStagedDirectory } from "./staged-directory.js";
 import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
@@ -138,7 +139,10 @@ class NativeStagedFile implements StagedFile {
       binding, parentFd, directory, params.input, params.mode, params.maxBytes, false, params.sync, params.assertBeforeMutation,
     );
     staged.#rejectFinalSymlink = params.rejectFinalSymlink === true;
-    const published = await staged.publish(params.basename, { overwrite: params.overwrite !== false });
+    if (params.input.kind === "file") await params.input.verifySource();
+    const published = await staged.publish(
+      params.basename, { overwrite: params.overwrite !== false }, params.onPublished,
+    );
     const identity = published.staged.identity;
     await params.verifyPublished?.(staged.#file(), identity, parentGuard);
     return { dev: identity.dev, ino: identity.ino };
@@ -195,10 +199,19 @@ class NativeStagedFile implements StagedFile {
       // before every subsequent operation, including the first metadata read.
       const state = this.#open();
       this.#assertBeforeMutation?.();
-      state.fileFd = this.#binding.createStagedFile(this.#parentFd, this.#name);
+      const copied = input.kind === "file"
+        ? await createNativeCopyFile(this.#binding, input, this.#parentFd, this.#name, maxBytes, false)
+        : undefined;
+      state.fileFd = copied?.fd;
+      if (state.fileFd === undefined) {
+        this.#assertBeforeMutation?.();
+        state.fileFd = this.#binding.createStagedFile(this.#parentFd, this.#name);
+      }
       const fd = state.fileFd;
+      if (input.kind === "file") assertNativeCopyCompleted(input, copied);
+      this.#assertBeforeMutation?.();
       fs.fchmodSync(fd, 0o600);
-      await writeNativeInput(fd, input, maxBytes, this.#assertBeforeMutation);
+      if (!copied) await writeNativeInput(fd, input, maxBytes, this.#assertBeforeMutation);
       if (this.#sync) syncFileBestEffortSync(fd);
       const stat = fs.fstatSync(fd, { bigint: true });
       this.#receipt = Object.freeze({
@@ -238,7 +251,11 @@ class NativeStagedFile implements StagedFile {
     this.#assertCurrent();
   }
 
-  async publish(basename: string, options: { overwrite: boolean }): Promise<PublishedFileReceipt> {
+  async publish(
+    basename: string,
+    options: { overwrite: boolean },
+    onPublished?: PinnedWriteParams["onPublished"],
+  ): Promise<PublishedFileReceipt> {
     const overwrite = options?.overwrite;
     try {
       const state = this.#open();
@@ -270,6 +287,7 @@ class NativeStagedFile implements StagedFile {
         overwrite,
       });
       state.publication = receipt;
+      onPublished?.(receipt.staged.identity);
       const stagedMode = this.#assertNamed(basename);
       assertStagedDirectoryCurrent(this.#directory);
       // Keep contents private until the published name passes its identity

@@ -4,6 +4,7 @@
 
 - Preserve Unicode Windows paths during fallback permission inspection by reading structured SID and access-mask facts instead of localized command output.
 - Check the complete encoded newline before Root append, avoiding duplicated or missing separators in UTF-16LE files on Windows and other platforms.
+- Extend `Root.copyIn` with guarded Root sources, exclusive publication, settled cancellation, exact publication receipts, and optional native file cloning while keeping copied data independent. Share `clone: "auto" | "always" | "never"` with `copyTree`; Root keeps its `"never"` default, which uses ordinary reads and writes without clone or copy-offload calls.
 
 ## 0.10.0 - 2026-09-12
 

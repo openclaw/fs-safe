@@ -102,7 +102,7 @@ it("stops a large append when authority expires after its first filesystem write
   const expected = Buffer.concat([initial, Buffer.from("\n"), payload]);
   expect(actual.length).toBeGreaterThan(initial.length);
   expect(actual.length).toBeLessThan(expected.length);
-  expect(actual).toEqual(expected.subarray(0, actual.length));
+  expect(actual.equals(expected.subarray(0, actual.length))).toBe(true);
 });
 
 it("rechecks empty append cleanup identity after its awaited parent guard", async () => {

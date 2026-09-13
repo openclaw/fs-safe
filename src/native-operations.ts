@@ -7,6 +7,7 @@ import { sameFileIdentityForCleanup } from "./file-identity.js";
 import { getNativeBinding, type NativeBinding } from "./native.js";
 import type { PinnedWriteInput } from "./pinned-write.js";
 import { writeAllToFile } from "./write-file-handle.js";
+import { writeCopyFileToFd } from "./copy-file-input.js";
 
 export type NativeFileHandle = {
   readonly fd: number;
@@ -42,6 +43,10 @@ export async function writeNativeInput(
   maxBytes?: number,
   assertBeforeMutation?: () => void,
 ): Promise<void> {
+  if (input.kind === "file") {
+    await writeCopyFileToFd(fd, input, maxBytes, assertBeforeMutation);
+    return;
+  }
   let bytes = 0;
   const write = async (data: Buffer) => {
     bytes += data.byteLength;
