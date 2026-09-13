@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- XFS clones preserve user extended attributes on read-only files and directories while retaining their exact modes and ACLs.
+
 ## 0.10.0 - 2026-09-13
 
 ### Highlights

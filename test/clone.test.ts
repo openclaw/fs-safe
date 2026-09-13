@@ -322,36 +322,109 @@ describe("native directory cloning", () => {
     }
   });
 
-  it("preserves XFS file and directory extended attributes and ACLs", async (context) => {
-    const { source, destination, backend } = await cloneFixture(context);
-    if (backend !== "xfs") context.skip("XFS-specific extended metadata");
-    await fs.mkdir(path.join(source, "nested"));
-    await fs.writeFile(path.join(source, "nested", "payload"), "original");
-    const entries = ["", "nested", path.join("nested", "payload")];
-    for (const name of entries) {
-      const original = path.join(source, name);
-      execFileSync("setfattr", ["-n", "user.fs-safe-clone", "-v", `metadata:${name}`, original]);
-      execFileSync("setfacl", [
-        "-m",
-        name === path.join("nested", "payload") ? "u:65534:r--" : "u:65534:r-x,d:u:65534:r-x",
-        original,
-      ]);
-    }
+  it.for([
+    { label: "writable entries", fileMode: 0o644, directoryMode: 0o755 },
+    { label: "read-only files", fileMode: 0o444, directoryMode: 0o755 },
+    { label: "read-only directories", fileMode: 0o644, directoryMode: 0o555 },
+  ])(
+    "preserves XFS extended attributes and ACLs on $label",
+    async ({ fileMode, directoryMode }, context) => {
+      const { source, destination, backend } = await cloneFixture(context);
+      if (backend !== "xfs") context.skip("XFS-specific extended metadata");
+      await fs.mkdir(path.join(source, "nested"));
+      await fs.writeFile(path.join(source, "nested", "payload"), "original");
+      const entries = ["", "nested", path.join("nested", "payload")];
+      for (const name of entries) {
+        const original = path.join(source, name);
+        execFileSync("setfattr", ["-n", "user.fs-safe-clone", "-v", `metadata:${name}`, original]);
+        execFileSync("setfacl", [
+          "-m",
+          name === path.join("nested", "payload") ? "u:65534:r--" : "u:65534:r-x,d:u:65534:r-x",
+          original,
+        ]);
+      }
+      for (const name of entries) {
+        await fs.chmod(
+          path.join(source, name),
+          name === path.join("nested", "payload") ? fileMode : directoryMode,
+        );
+      }
+      try {
+        await copyTree(source, destination, { clone: "always" });
+        for (const name of entries) {
+          const cloned = path.join(destination, name);
+          expect(
+            execFileSync("getfattr", ["--only-values", "-n", "user.fs-safe-clone", cloned], {
+              encoding: "utf8",
+            }),
+          ).toBe(`metadata:${name}`);
+          const aclOptions = ["--omit-header", "--numeric", "--absolute-names"];
+          expect(execFileSync("getfacl", [...aclOptions, cloned], { encoding: "utf8" })).toBe(
+            execFileSync("getfacl", [...aclOptions, path.join(source, name)], { encoding: "utf8" }),
+          );
+          const expectedMode = name === path.join("nested", "payload") ? fileMode : directoryMode;
+          expect((await fs.stat(cloned)).mode & 0o777).toBe(expectedMode);
+          expect((await fs.stat(path.join(source, name))).mode & 0o777).toBe(expectedMode);
+        }
+        expect(await fs.readFile(path.join(destination, "nested", "payload"), "utf8")).toBe(
+          "original",
+        );
+        expect(await fs.readFile(path.join(source, "nested", "payload"), "utf8")).toBe("original");
+      } finally {
+        for (const tree of [source, destination]) {
+          for (const name of ["", "nested"]) {
+            await fs.chmod(path.join(tree, name), 0o755).catch((error: unknown) => {
+              if (!(error instanceof Error && "code" in error && error.code === "ENOENT"))
+                throw error;
+            });
+          }
+        }
+      }
+    },
+  );
 
-    await copyTree(source, destination, { clone: "always" });
-    for (const name of entries) {
-      const cloned = path.join(destination, name);
-      expect(
-        execFileSync("getfattr", ["--only-values", "-n", "user.fs-safe-clone", cloned], {
-          encoding: "utf8",
-        }),
-      ).toBe(`metadata:${name}`);
-      const aclOptions = ["--omit-header", "--numeric", "--absolute-names"];
-      expect(execFileSync("getfacl", [...aclOptions, cloned], { encoding: "utf8" })).toBe(
-        execFileSync("getfacl", [...aclOptions, path.join(source, name)], { encoding: "utf8" }),
-      );
-    }
-    expect(await fs.readFile(path.join(destination, "nested", "payload"), "utf8")).toBe("original");
+  it("preserves XFS directory attributes when umask removes owner-write", async (context) => {
+    const { source, destination, backend } = await cloneFixture(context);
+    if (backend !== "xfs" || process.getuid?.() === 0)
+      context.skip("requires unprivileged XFS attribute permissions");
+    execFileSync("setfattr", ["-n", "user.fs-safe-clone", "-v", "original", source]);
+    execFileSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `
+          import assert from "node:assert/strict";
+          import { execFileSync } from "node:child_process";
+          import fs from "node:fs/promises";
+          import { copyTree } from "@openclaw/fs-safe/copy";
+          const [source, destination] = process.argv.slice(1);
+          for (const mode of [0o755, 0o555]) {
+            await fs.chmod(source, mode);
+            for (const clone of ["always", "auto"]) {
+              const previous = process.umask(0o200);
+              try {
+                await copyTree(source, destination, { clone });
+              } finally {
+                process.umask(previous);
+              }
+              assert.equal((await fs.stat(destination)).mode & 0o777, mode);
+              assert.equal((await fs.stat(source)).mode & 0o777, mode);
+              assert.deepEqual(await fs.readdir(destination), []);
+              for (const entry of [source, destination]) {
+                assert.equal(execFileSync("getfattr", ["--only-values", "-n", "user.fs-safe-clone", entry], { encoding: "utf8" }), "original");
+              }
+              await fs.rmdir(destination);
+            }
+          }
+        `,
+        source,
+        destination,
+      ],
+      { cwd: new URL("..", import.meta.url), timeout: 4_000, stdio: "pipe" },
+    );
+    expect((await fs.stat(source)).mode & 0o777).toBe(0o555);
+    await expect(fs.stat(destination)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("rejects cloning a tree into itself or its descendants", async (context) => {

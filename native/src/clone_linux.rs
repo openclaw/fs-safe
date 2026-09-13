@@ -75,30 +75,54 @@ fn xattr_names(fd: i32) -> NativeResult<Vec<CString>> {
 
 fn copy_metadata(source_fd: i32, target_fd: i32, metadata: &Stat) -> NativeResult<()> {
     let names = xattr_names(source_fd)?;
+    if !names.is_empty() {
+        // Creation is filtered by umask. Restore private staging permissions
+        // before xattrs require owner-write, without publishing final access.
+        let mode = if FileType::from_raw_mode(metadata.st_mode).is_dir() {
+            0o700
+        } else {
+            0o600
+        };
+        rustix::fs::fchmod(borrowed(target_fd), Mode::from_bits_retain(mode))
+            .map_err(|error| os_error(error, "prepare XFS clone attribute permissions"))?;
+    }
     for inherited in xattr_names(target_fd)? {
         if !names.contains(&inherited) {
             rustix::fs::fremovexattr(borrowed(target_fd), inherited.as_c_str())
                 .map_err(|error| os_error(error, "remove inherited clone extended attribute"))?;
         }
     }
-    // chmod can alter an access ACL's mask. Set the mode first, then install
-    // the source ACL along with its other xattrs; default ACLs arrive only
-    // after all children have been created.
+    let mut value = vec![0; if names.is_empty() { 0 } else { 65_536 }];
+    let mut copy_attributes = |acl: bool| -> NativeResult<()> {
+        for name in &names {
+            let is_acl = matches!(
+                name.to_bytes(),
+                b"system.posix_acl_access" | b"system.posix_acl_default"
+            );
+            if is_acl != acl {
+                continue;
+            }
+            let length =
+                rustix::fs::fgetxattr(borrowed(source_fd), name.as_c_str(), value.as_mut_slice())
+                    .map_err(|error| os_error(error, "read XFS clone extended attribute"))?;
+            rustix::fs::fsetxattr(
+                borrowed(target_fd),
+                name.as_c_str(),
+                &value[..length],
+                XattrFlags::empty(),
+            )
+            .map_err(|error| os_error(error, "preserve XFS clone extended attribute"))?;
+        }
+        Ok(())
+    };
+    // user.* xattrs require write permission even through an open descriptor.
+    // Keep the new entry writable until these are copied. Install ACLs after
+    // the final mode so neither a read-only ACL nor chmod's ACL-mask update
+    // can interfere with metadata preservation.
+    copy_attributes(false)?;
     rustix::fs::fchmod(borrowed(target_fd), Mode::from_raw_mode(metadata.st_mode))
         .map_err(|error| os_error(error, "preserve XFS clone mode"))?;
-    let mut value = vec![0; if names.is_empty() { 0 } else { 65_536 }];
-    for name in names {
-        let length =
-            rustix::fs::fgetxattr(borrowed(source_fd), name.as_c_str(), value.as_mut_slice())
-                .map_err(|error| os_error(error, "read XFS clone extended attribute"))?;
-        rustix::fs::fsetxattr(
-            borrowed(target_fd),
-            name.as_c_str(),
-            &value[..length],
-            XattrFlags::empty(),
-        )
-        .map_err(|error| os_error(error, "preserve XFS clone extended attribute"))?;
-    }
+    copy_attributes(true)?;
     rustix::fs::futimens(borrowed(target_fd), &timestamps(metadata))
         .map_err(|error| os_error(error, "preserve XFS clone timestamps"))?;
     unchanged(metadata, &stat(source_fd)?)
