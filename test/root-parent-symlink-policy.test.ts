@@ -191,9 +191,15 @@ it.each(mutations.flatMap(method => ["contained", "absolute root entry"].map(loc
     const source = path.join(directory, "source");
     await fs.writeFile(source, "source");
     const linkDirectory = location === "contained" ? actual : await tempRoot("fs-safe-mutation-entry-alias-");
-    // These methods already reject absolute inputs before resolving aliases.
-    const code = location === "absolute root entry" && ["move-source", "move-target", "remove", "mkdir"].includes(method)
-      ? "invalid-path" : "symlink";
+    // POSIX absolute paths fail payload validation; Windows drive paths reach the root checks.
+    let code = "symlink";
+    if (location === "absolute root entry") {
+      if (process.platform !== "win32" && ["move-source", "move-target", "remove", "mkdir"].includes(method)) {
+        code = "invalid-path";
+      } else if (process.platform === "win32" && (method === "move-source" || method === "move-target")) {
+        code = "outside-workspace";
+      }
+    }
     const targets = [
       { name: "file-link", target: path.join(actual, "value"), kind: "file" as const },
       { name: "directory-link", target: actual, kind: directoryLink },
