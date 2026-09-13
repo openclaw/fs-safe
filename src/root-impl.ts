@@ -44,6 +44,7 @@ import { cleanupPinnedFilePath } from "./replace-file-temp-owner.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { isNonRegularWriteOpenError, resolveNonblockingWriteFlag } from "./write-open-flags.js";
 import { resolveRootPath } from "./root-path.js";
+import { listDirectoryForWalk, listDirectoryPath, pathStatFromStats } from "./root-directory-list.js";
 import {
   assertRootIdentityCurrent,
   assertValidRootDestinationPath,
@@ -134,22 +135,6 @@ const OPEN_APPEND_CREATE_FLAGS =
   fsConstants.O_CREAT |
   fsConstants.O_EXCL |
   (SUPPORTS_NOFOLLOW ? fsConstants.O_NOFOLLOW : 0);
-
-function pathStatFromStats(stat: Stats): PathStat {
-  return {
-    dev: Number(stat.dev),
-    gid: Number(stat.gid),
-    ino: Number(stat.ino),
-    isDirectory: stat.isDirectory(),
-    isFile: stat.isFile(),
-    isSymbolicLink: stat.isSymbolicLink(),
-    mode: stat.mode,
-    mtimeMs: stat.mtimeMs,
-    nlink: stat.nlink,
-    size: stat.size,
-    uid: stat.uid,
-  };
-}
 
 function openResult(params: {
   handle: FileHandle;
@@ -629,7 +614,15 @@ export class RootHandle implements Root {
   }
   walk(relativePath: string, options: RootWalkOptions): AsyncIterableIterator<RootWalkEntry> {
     assertValidRootRelativePath(relativePath);
-    return walkRoot(this, relativePath, options);
+    return walkRoot({
+      rootReal: this.rootReal,
+      stat: relative => this.stat(relative),
+      list: async (relative, listingOptions) => {
+        validatePinnedOperationPayload({ relativePath: relative });
+        const resolved = await resolvePinnedPathInRoot(this.context, { relativePath: relative, allowRoot: true });
+        return await listDirectoryForWalk(this.context, resolved.resolved, listingOptions);
+      },
+    }, relativePath, options);
   }
 }
 export async function root(
@@ -1415,30 +1408,7 @@ async function listPathFallback(
   withFileTypes: boolean,
 ): Promise<string[] | DirEntry[]> {
   const resolved = await resolvePinnedPathInRoot(root, { relativePath, allowRoot: true });
-  try {
-    const names = await fs.readdir(resolved.resolved);
-    const sortedNames = names.toSorted();
-    if (!withFileTypes) {
-      await assertRootIdentityCurrent(root);
-      return sortedNames;
-    }
-    const entries: DirEntry[] = [];
-    for (const name of sortedNames) {
-      entries.push({
-        name,
-        ...pathStatFromStats(fsSync.lstatSync(path.join(resolved.resolved, name))),
-      });
-    }
-    await assertRootIdentityCurrent(root);
-    return entries;
-  } catch (error) {
-    if (isNotFoundPathError(error)) {
-      throw new FsSafeError("not-found", "directory not found", {
-        cause: error instanceof Error ? error : undefined,
-      });
-    }
-    throw error;
-  }
+  return await listDirectoryPath(root, resolved.resolved, withFileTypes);
 }
 
 async function assertMoveMutationAllowed(

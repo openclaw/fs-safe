@@ -64,7 +64,12 @@ fs.walk(rel, options)          // root-bounded AsyncIterable<{ relativePath, kin
 
 `walk()` is the incremental, root-bounded recursive scan. It supports entry and
 depth budgets, cancellation, and `symlinkPolicy: "skip" |
-"follow-within-root"`. Budget exhaustion yields a `"truncated"` marker by
+"follow-within-root"`. With an entry budget, sorted walks prepare small metadata
+batches within the remaining budget; unbounded sorted walks reuse the full
+directory snapshot.
+The default `order: "sorted"` enumerates and sorts each directory's names;
+`order: "filesystem"` streams names in filesystem order for bounded work in
+wide directories. Budget exhaustion yields a `"truncated"` marker by
 default or throws `FsSafeError("too-large")` with `limitBehavior: "throw"`.
 Use `entryFilter(entry)` to return `"include"`, `"skip"`, or
 `"skip-subtree"`. `"skip"` omits the current entry but still descends into a

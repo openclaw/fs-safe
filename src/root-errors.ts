@@ -13,6 +13,10 @@ export function outsideWorkspaceError(): FsSafeError {
   return new FsSafeError("outside-workspace", "file is outside workspace root");
 }
 
+export function rootPathChangedError(cause?: Error): FsSafeError {
+  return new FsSafeError("path-mismatch", "root path changed during operation", { cause });
+}
+
 export function directoryComponentNotDirectoryError(cause?: unknown): FsSafeError {
   return cause === undefined
     ? new FsSafeError("not-file", "directory component must be a directory")
