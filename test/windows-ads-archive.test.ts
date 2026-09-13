@@ -17,6 +17,10 @@ import type { ExtractionDeadline } from "../src/archive-deadline.js";
 import { resolveExtractLimits } from "../src/archive-limits.js";
 import { resolveTarMeterLimits } from "../src/archive-limits.js";
 import {
+  __resetNativeLoaderForTest,
+  __setNativeLoaderForTest,
+} from "../src/native.js";
+import {
   __resetFsSafeNativeConfigForTest,
   configureFsSafeNative,
 } from "../src/native-config.js";
@@ -28,6 +32,7 @@ const { tempRoot } = useTempDirs();
 
 afterEach(() => {
   __resetFsSafeNativeConfigForTest();
+  __resetNativeLoaderForTest();
   vi.restoreAllMocks();
 });
 
@@ -57,8 +62,12 @@ describe.runIf(process.platform === "win32")("Windows archive namespace aliases"
       deadline: deadline(),
     }));
     await expectInvalidPath(readArchiveEntry(archivePath, "value", { kind: "zip", maxBytes: 3 }));
-    for (const mode of ["off", "require"] as const) {
+    const modes = paxNative
+      ? (["off", "auto", "require"] as const)
+      : (["off", "auto"] as const);
+    for (const mode of modes) {
       configureFsSafeNative({ mode });
+      if (mode === "require") __setNativeLoaderForTest(() => paxNative);
       await expectInvalidPath(extractArchive({ archivePath, destDir: root, kind: "zip" }));
       __resetFsSafeNativeConfigForTest();
     }
