@@ -40,7 +40,7 @@ type ReplaceFileAtomicOptions = {
   content: string | Uint8Array;
   dirMode?: number;                 // parent-directory mode (POSIX; default 0o700)
   mode?: number;                    // new-file mode (default 0o600)
-  preserveExistingMode?: boolean;   // copy existing mode; default false
+  preserveExistingMode?: boolean;   // inherit existing regular-file rwx bits; default false
   tempPrefix?: string;              // default ".fs-safe-replace"
   renameMaxRetries?: number;        // EBUSY retries; default 0
   renameRetryBaseDelayMs?: number;  // exponential base; default 50
@@ -56,6 +56,17 @@ type ReplaceFileAtomicOptions = {
   fileSystem?: ReplaceFileAtomicFileSystem; // injectable fs for tests
 };
 ```
+
+`preserveExistingMode` snapshots only the ordinary rwx bits (`0o777`) from an
+existing non-symlink regular destination. A final symlink fails with
+`FsSafeError("symlink")`; a directory or other non-regular destination fails
+with `FsSafeError("not-file")`. Set-user-ID, set-group-ID, and sticky bits are
+never inherited. Mode inheritance does not copy ownership, ACLs, extended
+attributes, or exact destination identity. Rename publication creates a new
+inode; an in-place copy fallback can retain metadata already attached to its
+pinned destination. The snapshot does not make replacement a compare-and-swap
+operation, so the destination parent must still be protected from untrusted
+concurrent namespace mutation.
 
 ### `beforeRename`
 

@@ -21,6 +21,7 @@ import {
   writeTempFile,
   writeTempFileSync,
 } from "./replace-file-descriptor.js";
+import { inheritedRegularFileMode } from "./replace-file-mode.js";
 import {
   atomicExpectedContentHash,
   type RenameIdentityPolicy,
@@ -88,6 +89,7 @@ type ReplaceFileAtomicBaseOptions = {
   content: string | Uint8Array;
   dirMode?: number;
   mode?: number;
+  /** Inherit only rwx bits from an existing non-symlink regular file. */
   preserveExistingMode?: boolean;
   tempPrefix?: string;
   renameMaxRetries?: number;
@@ -246,14 +248,14 @@ async function resolveMode(options: ReplaceFileAtomicOptions): Promise<number> {
   const fsModule = options.fileSystem?.promises ?? fs;
   let stat: import("node:fs").Stats | null;
   try {
-    stat = fsModule === fs ? syncFs.statSync(options.filePath) : await fsModule.stat(options.filePath);
+    stat = fsModule === fs ? syncFs.lstatSync(options.filePath) : await fsModule.lstat(options.filePath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return defaultMode;
     }
     throw error;
   }
-  return stat ? stat.mode : defaultMode;
+  return stat ? inheritedRegularFileMode(stat) : defaultMode;
 }
 
 function resolveModeSync(options: ReplaceFileAtomicSyncOptions): number {
@@ -264,13 +266,13 @@ function resolveModeSync(options: ReplaceFileAtomicSyncOptions): number {
   const fsModule = options.fileSystem ?? syncFs;
   let stat: Stats | undefined;
   try {
-    stat = fsModule.statSync(options.filePath);
+    stat = fsModule.lstatSync(options.filePath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
       throw error;
     }
   }
-  return stat ? stat.mode : defaultMode;
+  return stat ? inheritedRegularFileMode(stat) : defaultMode;
 }
 
 function missingFchmodSyncError(): TypeError {
