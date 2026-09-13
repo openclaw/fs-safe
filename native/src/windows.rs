@@ -136,7 +136,7 @@ unsafe extern "C" fn ignore_invalid_parameter(
 ) {
 }
 
-struct OwnedHandle(HANDLE);
+pub(crate) struct OwnedHandle(pub(crate) HANDLE);
 
 impl Drop for OwnedHandle {
     fn drop(&mut self) {
@@ -155,7 +155,7 @@ impl OwnedHandle {
     }
 }
 
-fn root_handle(fd: i32) -> NativeResult<HANDLE> {
+pub(crate) fn root_handle(fd: i32) -> NativeResult<HANDLE> {
     let direct = fd as usize as HANDLE;
     // Node/libuv may expose a Windows HANDLE directly rather than a UCRT fd.
     // Probe that representation first with a non-destructive handle query.
@@ -229,7 +229,7 @@ fn wide_relative(path: &str) -> NativeResult<Vec<u16>> {
     Ok(wide)
 }
 
-fn win_error(code: u32, operation: &str) -> napi::Error<String> {
+pub(crate) fn win_error(code: u32, operation: &str) -> napi::Error<String> {
     let typed = match code {
         ERROR_FILE_EXISTS | ERROR_ALREADY_EXISTS => "EEXIST",
         ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND => "ENOENT",
@@ -250,7 +250,7 @@ fn nt_error(status: i32, operation: &str) -> napi::Error<String> {
     win_error(unsafe { RtlNtStatusToDosError(status) }, operation)
 }
 
-fn handle_is_reparse(handle: HANDLE) -> NativeResult<bool> {
+pub(crate) fn handle_is_reparse(handle: HANDLE) -> NativeResult<bool> {
     // SAFETY: info is a valid output buffer for the supplied class.
     let mut info: FILE_ATTRIBUTE_TAG_INFO = unsafe { zeroed() };
     let ok = unsafe {
@@ -278,7 +278,7 @@ fn assert_not_reparse(handle: HANDLE) -> NativeResult<()> {
     Ok(())
 }
 
-enum ReparsePolicy {
+pub(crate) enum ReparsePolicy {
     Reject,
     AllowLeaf,
 }
@@ -300,13 +300,28 @@ fn nt_open_relative(
     )
 }
 
-fn nt_open_relative_with_policy(
+pub(crate) fn nt_open_relative_with_policy(
     root: HANDLE,
     path: &str,
     desired_access: u32,
     disposition: u32,
     options: u32,
     reparse_policy: ReparsePolicy,
+) -> NativeResult<OwnedHandle> {
+    nt_open_relative_with_sharing(
+        root, path, desired_access, disposition, options, reparse_policy,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+    )
+}
+
+pub(crate) fn nt_open_relative_with_sharing(
+    root: HANDLE,
+    path: &str,
+    desired_access: u32,
+    disposition: u32,
+    options: u32,
+    reparse_policy: ReparsePolicy,
+    share_access: u32,
 ) -> NativeResult<OwnedHandle> {
     if matches!(reparse_policy, ReparsePolicy::AllowLeaf) {
         crate::validate_relative_path(path, false)?;
@@ -343,7 +358,7 @@ fn nt_open_relative_with_policy(
             &mut io,
             null(),
             0,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            share_access,
             disposition,
             // FILE_OPEN_REPARSE_POINT opens the final entry itself without reparsing.
             options | FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT,
@@ -619,7 +634,7 @@ pub fn rename_replace(
     )
 }
 
-fn handle_identity(handle: HANDLE) -> NativeResult<(u32, u64, bool)> {
+pub(crate) fn handle_identity(handle: HANDLE) -> NativeResult<(u32, u64, bool)> {
     // SAFETY: info is a valid output buffer for this API.
     let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { zeroed() };
     if unsafe { GetFileInformationByHandle(handle, &mut info) } == 0 {
@@ -651,7 +666,7 @@ fn same_handle_identity(left: HANDLE, right: HANDLE) -> NativeResult<bool> {
     Ok(left.2 && right.2 && left.0 == right.0 && left.1 == right.1)
 }
 
-fn list_directory_entries(directory: HANDLE) -> NativeResult<Vec<(String, u32, u64)>> {
+pub(crate) fn list_directory_entries(directory: HANDLE) -> NativeResult<Vec<(String, u32, u64)>> {
     let mut entries = Vec::new();
     let mut restart = true;
     loop {
@@ -721,7 +736,7 @@ fn list_directory_entries(directory: HANDLE) -> NativeResult<Vec<(String, u32, u
     Ok(entries)
 }
 
-fn mark_handle_for_deletion(handle: HANDLE) -> NativeResult<()> {
+pub(crate) fn mark_handle_for_deletion(handle: HANDLE) -> NativeResult<()> {
     let info = FILE_DISPOSITION_INFO_EX {
         Flags: FILE_DISPOSITION_FLAG_DELETE
             | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS
@@ -783,7 +798,7 @@ fn remove_directory_handle_with_hook(
     Ok(())
 }
 
-fn remove_directory_handle(directory: HANDLE) -> NativeResult<()> {
+pub(crate) fn remove_directory_handle(directory: HANDLE) -> NativeResult<()> {
     remove_directory_handle_with_hook(directory, &mut |_| {})
 }
 

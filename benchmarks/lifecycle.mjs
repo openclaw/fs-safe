@@ -4,6 +4,39 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 
 export async function registerLifecycle({ api: a, workspace: w, native, binding, register: add, contract, onCleanup }) {
+  const cloneBackend = a.probeTreeClone(w);
+  add("probeTreeClone", () => a.probeTreeClone(w), {
+    sync: true,
+    verify: (backend) => assert.equal(backend, cloneBackend),
+  });
+  const cloneSource = path.join(w, "clone-source");
+  const cloneTarget = path.join(w, "clone-target");
+  const clonePreparation = path.join(w, "clone-preparation");
+  const cloneSkip = !cloneBackend
+    ? "Native directory cloning requires APFS, Btrfs, or ReFS."
+    : undefined;
+  if (cloneBackend) {
+    await a.createCloneSource(cloneSource);
+    fs.writeFileSync(path.join(cloneSource, "payload"), "clone benchmark");
+  }
+  add("createCloneSource", () => a.createCloneSource(clonePreparation), {
+    skip: cloneSkip,
+    verify: () => assert(fs.statSync(clonePreparation).isDirectory()),
+    after: () => fs.rmSync(clonePreparation, { recursive: true, force: true }),
+  });
+  add("cloneTree", () => a.cloneTree(cloneSource, cloneTarget), {
+    skip: cloneSkip,
+    verify: () =>
+      assert.equal(fs.readFileSync(path.join(cloneTarget, "payload"), "utf8"), "clone benchmark"),
+    after: () => fs.rmSync(cloneTarget, { recursive: true, force: true }),
+  });
+  add("readCloneFileMetadata", () => a.readCloneFileMetadata([path.join(w, "input.json")]), {
+    skip: !native ? "Native metadata reader unavailable." : undefined,
+    verify: (entries) => {
+      assert.equal(entries.length, 1);
+      if (cloneBackend === "apfs") assert.equal(entries[0]?.type, 1);
+    },
+  });
   if (binding) {
     const directory = path.join(w, "native-directory");
     fs.mkdirSync(directory);

@@ -198,9 +198,4 @@ describe("documentation contract", () => {
     }
   });
 
-  it("does not claim a current producer for the reserved unsupported-platform code", () => {
-    expect(readRepoFile("docs/errors.md")).toContain(
-      "No current public helper emits this `FsSafeError` code",
-    );
-  });
 });
