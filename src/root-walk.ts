@@ -1,7 +1,7 @@
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { resolveRootPath } from "./root-path.js";
-import type { RootDirectoryListing } from "./root-directory-list.js";
+import type { RootDirectoryListing, RootDirectoryListingOptions } from "./root-directory-list.js";
 import type { DirEntry, PathStat } from "./types.js";
 
 export type RootWalkSymlinkPolicy = "skip" | "follow-within-root";
@@ -40,7 +40,7 @@ type RootWalkCapability = {
   stat(relativePath: string): Promise<PathStat>;
   list(
     relativePath: string,
-    options: { order: "sorted" | "filesystem"; signal?: AbortSignal },
+    options: RootDirectoryListingOptions,
   ): Promise<RootDirectoryListing>;
 };
 
@@ -94,6 +94,12 @@ export async function* walkRoot(
   let examined = 0;
   let truncated = false;
 
+  const admitEntry = () => {
+    if (examined >= maxEntries) return false;
+    examined += 1;
+    return true;
+  };
+
   const onLimit = (atPath: string): RootWalkEntry => {
     if ((options.limitBehavior ?? "truncate") === "throw") {
       throw new FsSafeError("too-large", `root walk budget exceeded at ${atPath || "."}`);
@@ -138,6 +144,8 @@ export async function* walkRoot(
       listing = await root.list(listingDirectory, {
         order: options.order ?? "sorted",
         signal: options.signal,
+        snapshot: maxEntries === Number.POSITIVE_INFINITY,
+        admitEntry,
       });
     } catch (error) {
       yield onDirectoryError(directory, error);
@@ -146,30 +154,24 @@ export async function* walkRoot(
     {
       await using ownedListing = listing;
       while (true) {
-        let name: string | undefined;
+        let next: Awaited<ReturnType<RootDirectoryListing["next"]>>;
         try {
-          name = await listing.next();
+          next = await listing.next();
           options.signal?.throwIfAborted();
         } catch (error) {
           yield onDirectoryError(directory, error);
           return;
         }
-        if (name === undefined) return;
+        if (next === undefined) return;
+        const name = next.kind === "entry" ? next.entry.name : next.name;
         const child = directory
           ? path.posix.join(directory.split(path.sep).join(path.posix.sep), name)
           : name;
-        if (examined >= maxEntries) {
+        if (next.kind === "limit") {
           yield onLimit(child);
           return;
         }
-        examined += 1;
-        let entry: DirEntry;
-        try {
-          entry = await listing.readEntry(name);
-        } catch (error) {
-          yield onDirectoryError(directory, error);
-          return;
-        }
+        const entry = next.entry;
         let kind = entryKind(entry);
         let size = entry.size;
         if (kind === "symlink") {

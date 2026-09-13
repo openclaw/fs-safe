@@ -80,10 +80,19 @@ For followed symlinks, both `kind` and `size` describe the resolved target.
 
 The default `order: "sorted"` visits each directory's names in lexicographic
 order before descending depth first. It reads and sorts all names in each
-visited directory, but reads child metadata only when the entry is reached
-within the budget. `maxEntries: 0`, truncation, and early iterator
-termination never trigger metadata reads for the unused suffix. Filtering
-still requires the current entry's metadata and consumes its budget.
+visited directory. With `maxEntries`, it prepares small metadata batches capped
+by the remaining global entry budget. Every batch stops at the first directory
+or symlink, so recursive descent cannot spend a budget already used by later
+siblings. An early `break` may leave metadata from the current batch unused;
+the total still stays within `maxEntries`. Filtering requires metadata and
+consumes the entry budget, including entries skipped by the filter.
+
+Without `maxEntries`, sorted walks reuse a full directory metadata snapshot
+from the `Root.list()` owner. This preserves the existing fast complete-scan
+behavior and its snapshot semantics: changes made after a directory is listed
+do not alter its already-captured entries. Supply an entry budget or use
+filesystem order when metadata work must remain incremental. Sorted entries
+describe the observations captured in their directory snapshot or batch.
 
 Use `order: "filesystem"` when a wide directory must not be fully enumerated:
 
@@ -100,13 +109,15 @@ for await (const entry of capability.walk("", {
 This order follows the filesystem's directory stream and is not deterministic.
 It reads one entry at a time, including one name of lookahead to distinguish an
 exactly exhausted budget from truncation. The lookahead does not request full
-entry metadata from fs-safe. If a filesystem does not supply directory-entry
+entry metadata from fs-safe, and an early `break` does not prefetch later child
+metadata. If a filesystem does not supply directory-entry
 types, Node may classify that one extra entry with a synchronous `lstat`.
 Handles close on completion, truncation, cancellation, errors, or an
 early `break`. Both orders keep the same depth-first traversal, entry filtering,
-and truncation rules. Cancellation is checked between asynchronous reads; it
-does not interrupt a filesystem operation already in progress or the sorted
-mode's name sorting.
+and truncation rules. Cancellation is checked between entries, with event-loop
+handoffs between budgeted sorted batches. Root and directory checks and admitted
+child metadata reads are synchronous; no mode can interrupt a filesystem
+syscall already in progress or the sorted mode's name sorting.
 
 If a thrown walk failure and directory close both fail, disposal throws a
 `SuppressedError` with the close failure in `error` and the original failure in
@@ -146,8 +157,10 @@ Every examined directory entry consumes `maxEntries` before filtering, so
 further descent.
 
 The pure-Node path validates every directory through the Root boundary, pins
-its exact identity, and rechecks it and the Root identity around deferred child
-metadata reads. It tracks canonical directories to stop symlink cycles.
+its exact identity, and rechecks it and the Root identity around each metadata
+batch or individual filesystem-order observation. Sorted batches contain no
+await or caller code between their before/after checks. It tracks canonical
+directories to stop symlink cycles.
 Neither mode holds a descriptor for every path component, so it is not a process sandbox against a hostile peer that
 can continuously swap and restore directories. Each individual lookup retains
 the documented Node `Root` boundary checks.

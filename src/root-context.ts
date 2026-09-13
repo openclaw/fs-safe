@@ -12,7 +12,7 @@ import {
   isPathInside,
 } from "./path.js";
 import { ROOT_PATH_ALIAS_POLICIES, resolveRootPath } from "./root-path.js";
-import { outsideWorkspaceError } from "./root-errors.js";
+import { outsideWorkspaceError, rootPathChangedError } from "./root-errors.js";
 import { isDriveRelativePath } from "./safe-path-segment.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 
@@ -116,16 +116,14 @@ export async function assertRootIdentityCurrent(root: RootContext): Promise<void
     }
     current = fs.lstatSync(root.rootReal);
   } catch (error) {
-    throw new FsSafeError("path-mismatch", "root path changed during operation", {
-      cause: error instanceof Error ? error : undefined,
-    });
+    throw rootPathChangedError(error instanceof Error ? error : undefined);
   }
   if (
     current.isSymbolicLink() ||
     !current.isDirectory() ||
     !sameFileIdentity(current, root.rootIdentity)
   ) {
-    throw new FsSafeError("path-mismatch", "root path changed during operation");
+    throw rootPathChangedError();
   }
 }
 
