@@ -42,6 +42,13 @@ Vitest. Tests live in `test/` and follow `*.test.ts`. Run a single file with:
 pnpm test test/archive.test.ts
 ```
 
+Guest filesystem tests and package smoke also need `python3` on Linux and
+macOS. They execute the exported source on synthetic files; Windows checks
+the import surface and leaves POSIX execution to the Linux/macOS lanes.
+After building on Linux, `node scripts/check-pack.mjs --guest-cross-device`
+also proves an installed-package directory move from temporary storage to
+`/dev/shm`; the command requires those locations to be different filesystems.
+
 With Bun 1.4.2 installed, build the host addon and run the native compatibility
 lane in real Bun workers, then exercise the built package with JIT disabled:
 

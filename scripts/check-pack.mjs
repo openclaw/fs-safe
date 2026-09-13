@@ -123,6 +123,12 @@ try {
     ],
     { cwd: workdir, stdio: "pipe" },
   );
+  const guestSmokeArgs = [join(import.meta.dirname, "guest-package-smoke.mjs"), workdir];
+  if (process.argv.includes("--guest-cross-device")) guestSmokeArgs.push("--cross-device");
+  execFileSync(process.execPath, guestSmokeArgs, {
+    cwd: workdir,
+    stdio: "inherit",
+  });
   const publicApi = inspectPublicApi({
     packageName: pkg.name,
     packageSubpaths: Object.keys(pkg.exports),

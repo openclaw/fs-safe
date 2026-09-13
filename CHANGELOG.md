@@ -4,6 +4,8 @@
 
 - Add bounded copy benchmark shapes and explicit worker matrices for comparisons at equal concurrency across native cloning and ordinary copying.
 
+- Export the caller-launched Linux/macOS Python guest filesystem program and shared no-replace rename fragment through `@openclaw/fs-safe/guest`, preserving OpenClaw's protocol and adding basename syntax checks before filesystem operations.
+
 - Inspect complete inherited local Windows ACLs through the existing native descriptor reader, avoiding PowerShell startup while preserving the public SID classifier, explicit injections, .NET normalization, and structured fallback diagnostics.
 
 - Add `copyFileHandle` for bounded transfers between caller-owned regular-file handles, preserving both cursors and source observation before target writes while sharing Root's portable copy machinery.

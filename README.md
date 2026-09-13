@@ -264,6 +264,7 @@ contract. Low-level helpers that OpenClaw needs to compose higher-level APIs are
 | `@openclaw/fs-safe/errors` | `FsSafeError`, closed codes/categories, causes, and operation-specific details receipts |
 | `@openclaw/fs-safe/types` | shared types: `DirEntry`, `PathStat`, … |
 | `@openclaw/fs-safe/test-hooks` | hooks the test suite uses to inject races; registration requires `NODE_ENV=test` or `VITEST=true` |
+| `@openclaw/fs-safe/guest` | Python source and exit constants for caller-launched filesystem operations in Linux/macOS guests without Node; see the [guest protocol and trust boundary](docs/guest.md) |
 
 ## Failure semantics in the name
 

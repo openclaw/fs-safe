@@ -42,6 +42,15 @@ their own pinned-open flow, not substitutes for the higher-level `Root` verbs.
 regular files without taking over their cursors, lifetime, or publication.
 See [borrowed-handle transfers](copy.md#borrowed-filehandle-transfers).
 
+## Guest source
+
+`@openclaw/fs-safe/guest` exports `GUEST_FILESYSTEM_PYTHON`,
+`GUEST_FILESYSTEM_CREATE_EXISTS_EXIT_CODE`,
+`GUEST_FILESYSTEM_READ_NOT_FOUND_EXIT_CODE`, and
+`GUEST_FILESYSTEM_RENAME_NO_REPLACE_PYTHON`. These are source and protocol
+constants; the caller launches the Python guest and owns authorization and
+transport lifetime. See the [guest protocol](guest.md).
+
 ## `json` and `store`
 
 Standalone structured reads use `ReadJsonOptions`, `ReadRootJsonSyncOptions`,
