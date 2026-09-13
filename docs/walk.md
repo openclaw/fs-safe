@@ -108,6 +108,10 @@ and truncation rules. Cancellation is checked between asynchronous reads; it
 does not interrupt a filesystem operation already in progress or the sorted
 mode's name sorting.
 
+If a thrown walk failure and directory close both fail, disposal throws a
+`SuppressedError` with the close failure in `error` and the original failure in
+`suppressed`, preserving both causes.
+
 `entryFilter` is evaluated for each resolved file, directory, or other entry:
 
 ```ts

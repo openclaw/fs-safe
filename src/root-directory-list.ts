@@ -56,7 +56,7 @@ export async function listDirectoryPath(
 export type RootDirectoryListing = {
   next(): Promise<string | undefined>;
   readEntry(name: string): Promise<DirEntry>;
-  close(): Promise<void>;
+  [Symbol.asyncDispose](): Promise<void>;
 };
 
 export async function listDirectoryForWalk(
@@ -93,7 +93,7 @@ export async function listDirectoryForWalk(
     await assertCurrent();
     names?.sort();
   } catch (error) {
-    await close();
+    await using cleanup = { [Symbol.asyncDispose]: close };
     normalizeDirectoryError(error);
   }
   return {
@@ -116,6 +116,6 @@ export async function listDirectoryForWalk(
         normalizeDirectoryError(error);
       }
     },
-    close,
+    [Symbol.asyncDispose]: close,
   };
 }

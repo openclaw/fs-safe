@@ -103,8 +103,8 @@ export async function* walkRoot(
   };
 
   const onDirectoryError = (directory: string, error: unknown): RootWalkEntry => {
-    options.signal?.throwIfAborted();
-    if ((options.onDirectoryError ?? "throw") === "throw") throw error;
+    // Rethrow cancellation with any disposal failure already attached.
+    if (options.signal?.aborted || (options.onDirectoryError ?? "throw") === "throw") throw error;
     return { relativePath: directory, kind: "directory-error", size: 0, error };
   };
 
@@ -143,7 +143,8 @@ export async function* walkRoot(
       yield onDirectoryError(directory, error);
       return;
     }
-    try {
+    {
+      await using ownedListing = listing;
       while (true) {
         let name: string | undefined;
         try {
@@ -210,8 +211,6 @@ export async function* walkRoot(
         yield* visit(child, depth + 1);
         if (truncated) return;
       }
-    } finally {
-      await listing.close();
     }
   }
 
