@@ -245,7 +245,8 @@ type FileLockHandle = {
 captured at acquisition. Set `compromiseCheckIntervalMs` together with
 `onCompromised` for a cheap periodic check; the callback fires once after the
 sidecar no longer matches or after a verification I/O failure. This is
-detection, not revocation of work already in progress.
+detection, not revocation of work already in progress. Asynchronous checks are
+serialized, so a slow verification never overlaps the next timer tick.
 
 The compromise-check interval is validated before payload evaluation or
 filesystem acquisition. Omit it or pass `0` to disable monitoring; enabled

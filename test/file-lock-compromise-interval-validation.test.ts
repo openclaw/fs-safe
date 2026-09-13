@@ -28,6 +28,14 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 describe("file-lock compromise interval validation", () => {
   it.each(invalidIntervals)(
     "rejects async interval %s before payload, filesystem mutation, or timer registration",
@@ -142,6 +150,59 @@ describe("file-lock compromise interval validation", () => {
 
     await held.release();
     await expect(fs.stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await manager.drain();
+  });
+
+  it("never overlaps asynchronous compromise checks", async () => {
+    const base = await tempRoot("fs-safe-lock-interval-overlap-");
+    const manager = createSidecarLockManager(`interval-overlap-${Date.now()}`);
+    const fakeTimer = { unref: vi.fn() } as unknown as NodeJS.Timeout;
+    let tick: (() => void) | undefined;
+    vi.spyOn(globalThis, "setInterval").mockImplementation((callback, _delay, ...args) => {
+      tick = () => callback(...args);
+      return fakeTimer;
+    });
+    const clear = vi.spyOn(globalThis, "clearInterval").mockImplementation(() => undefined);
+    const held = await manager.acquire({
+      targetPath: path.join(base, "state.json"),
+      staleMs: 30_000,
+      compromiseCheckIntervalMs: 1,
+      onCompromised: vi.fn(),
+      payload: () => ({ owner: "overlap" }),
+    });
+    const checkGate = deferred();
+    let activeChecks = 0;
+    let checkCalls = 0;
+    let maxConcurrentChecks = 0;
+    held.verifyStillHeld = vi.fn(async () => {
+      checkCalls++;
+      activeChecks++;
+      maxConcurrentChecks = Math.max(maxConcurrentChecks, activeChecks);
+      await checkGate.promise;
+      activeChecks--;
+      return true;
+    });
+
+    tick?.();
+    tick?.();
+    tick?.();
+    await vi.waitFor(() => {
+      expect(checkCalls).toBe(1);
+    });
+    expect(maxConcurrentChecks).toBe(1);
+
+    checkGate.resolve();
+    await vi.waitFor(() => {
+      tick?.();
+      expect(checkCalls).toBe(2);
+    });
+    expect(maxConcurrentChecks).toBe(1);
+
+    await vi.waitFor(() => {
+      expect(activeChecks).toBe(0);
+    });
+    await held.release();
+    expect(clear).toHaveBeenCalledWith(fakeTimer);
     await manager.drain();
   });
 });

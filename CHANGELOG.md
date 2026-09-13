@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Reject invalid or Node-overflowing lock compromise-check intervals before acquisition, preventing oversized delays from becoming millisecond filesystem polling loops.
+- Reject invalid or Node-overflowing lock compromise-check intervals before acquisition and serialize asynchronous checks, preventing high-frequency or overlapping filesystem polling loops.
 - Retain the original archive destination's exact bigint identity from admission through publication, rejecting destination replacement from entry filters or concurrent actors before extracted files can be published into the replacement.
 - Classify structured Windows ACL SID facts without a redundant account lookup, preserving fail-closed permission checks when account discovery is unavailable.
 - Reject negative, `NaN`, and negative-infinite file-lock stale thresholds before acquisition; negative thresholds can no longer force a live lock into stale recovery.
