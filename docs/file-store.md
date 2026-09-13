@@ -130,6 +130,12 @@ the published entry intact for caller-owned recovery. Ordinary write-only and
 mode-000 outputs do not require a readable descriptor when pathname metadata is
 available.
 
+If an opaque pathname cannot be reopened because of an ACL denial or sharing
+restriction, the synchronous writer intentionally rejects with `path-mismatch`:
+its exact publication identity cannot be verified. There is no equal-content
+fallback. The published entry remains present, so callers must inspect or
+recover that outcome instead of assuming the write did not occur.
+
 | Method | Durability support |
 |---|---|
 | `write`, `writeText`, `writeJson` (async and sync) | Per-call option overrides store default. |
