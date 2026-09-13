@@ -10,6 +10,7 @@ import type { NativeBinding } from "./native.js";
 import type { PinnedWriteParams } from "./pinned-write.js";
 import { describeStagedDirectory, exactIdentityMatches } from "./staged-directory.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
+import { realpathSync } from "./realpath.js";
 
 export async function runPinnedWriteNative(binding: NativeBinding, params: PinnedWriteParams): Promise<FileIdentityStat> {
   const windows = process.platform === "win32";
@@ -56,7 +57,7 @@ export async function runPinnedWriteNative(binding: NativeBinding, params: Pinne
       params.relativeParentPath,
       directoryFlags,
     ).fd;
-    const parentPath = fsSync.realpathSync.native(
+    const parentPath = realpathSync.native(
       params.relativeParentPath
         ? path.join(params.rootPath, ...params.relativeParentPath.split("/"))
         : params.rootPath,

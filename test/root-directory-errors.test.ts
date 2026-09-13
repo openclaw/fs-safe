@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FsSafeError } from "../src/errors.js";
 import { ensureDirectoryWithinRoot, pathScope } from "../src/advanced.js";
+import { realpathSync } from "../src/realpath.js";
 import { itDarwin, itPosix, useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempDirs, tempRoot } = useRealTempDirs();
@@ -37,7 +38,7 @@ describe("root directory operational diagnostics", () => {
         ? vi.spyOn(fs, "mkdir").mockRejectedValueOnce(cause)
         : syscall === "lstat"
           ? vi.spyOn(fsSync, "lstatSync").mockImplementationOnce(() => { throw cause; })
-          : vi.spyOn(fsSync.realpathSync, "native").mockImplementationOnce(() => { throw cause; });
+          : vi.spyOn(realpathSync, "native").mockImplementationOnce(() => { throw cause; });
       const result = entry === "helper"
         ? await ensureDirectoryWithinRoot({ rootDir, requestedPath: "child", scopeLabel: "uploads" })
         : await pathScope(rootDir, { label: "uploads" }).ensureDir("child");
@@ -62,9 +63,9 @@ describe("root directory operational diagnostics", () => {
     const rootDir = await tempRoot("fs-safe-dir-stage-");
     const target = location === "root" ? rootDir : path.join(rootDir, "child");
     const cause = Object.assign(new Error("I/O failure"), { code: "EIO", errno: -5, syscall });
-    const original = syscall === "lstat" ? fsSync.lstatSync : fsSync.realpathSync.native;
+    const original = syscall === "lstat" ? fsSync.lstatSync : realpathSync.native;
     let calls = 0;
-    const spy = syscall === "lstat" ? vi.spyOn(fsSync, "lstatSync") : vi.spyOn(fsSync.realpathSync, "native");
+    const spy = syscall === "lstat" ? vi.spyOn(fsSync, "lstatSync") : vi.spyOn(realpathSync, "native");
     spy.mockImplementation((...args) => {
       if (String(args[0]) === target && ++calls === occurrence) throw cause;
       return original(...args);
@@ -280,11 +281,11 @@ describe("root directory policy results", () => {
     const rootDir = await tempRoot("fs-safe-dir-canonical-");
     const outside = await tempRoot("fs-safe-dir-canonical-outside-");
     const candidatePath = location === "root" ? rootDir : path.join(rootDir, "child");
-    const realRealpath = fsSync.realpathSync.native;
+    const realRealpath = realpathSync.native;
     let calls = 0;
-    vi.spyOn(fsSync.realpathSync, "native").mockImplementation((candidate, options) => {
+    vi.spyOn(realpathSync, "native").mockImplementation((candidate) => {
       if (String(candidate) === candidatePath && ++calls === occurrence) return outside;
-      return realRealpath(candidate, options);
+      return realRealpath(candidate);
     });
     await expect(pathScope(rootDir, { label: "uploads" }).ensureDir("child"))
       .resolves.toEqual(policyFailure);

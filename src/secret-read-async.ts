@@ -4,6 +4,7 @@ import { readFileHandleBounded } from "./bounded-read.js";
 import { assertNoUnsafeDeviceReadPath } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
+import { realpathSync } from "./realpath.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 import {
   assertSecretFilePreview,
@@ -47,7 +48,7 @@ export async function readSecretFile(
   let handle: fs.FileHandle | undefined;
   let raw: string;
   try {
-    const realPath = fsSync.realpathSync.native(resolvedPath);
+    const realPath = realpathSync.native(resolvedPath);
     assertNoUnsafeDeviceReadPath(realPath);
     handle = await fs.open(realPath, resolveReadOpenFlags());
     const openedHandle = handle;

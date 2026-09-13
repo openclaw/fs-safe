@@ -97,7 +97,7 @@ for (const mode of ["off", "auto", "require"] as const) {
       if (policy === "skip" || (directory && policy !== "reject-filtered")) {
         await extraction;
         if (directory && policy !== "skip") expect((await fs.stat(path.join(options.destDir, "pkg", "directory"))).isDirectory()).toBe(true);
-        else expect(await fs.readdir(options.destDir)).toEqual(["keep", "sentinel"]);
+        else expect((await fs.readdir(options.destDir)).sort()).toEqual(["keep", "sentinel"]);
         expect(await fs.readFile(path.join(options.destDir, "keep"), "utf8")).toBe("keep");
         if (mode !== "off") expect(extractNative).toHaveBeenCalledTimes(1);
       } else {

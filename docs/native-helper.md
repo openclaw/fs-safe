@@ -30,9 +30,13 @@ The equivalent environment variables are `FS_SAFE_NATIVE_MODE` and `OPENCLAW_FS_
 | `require` | Throw `FsSafeError("helper-unavailable")` instead of falling back when an operation needs the native binding and it cannot load. |
 
 TAR/gzip in the guarded JavaScript path uses a bundled, import-free WASM build
-of the same Rust parser used by native. `off` still disables native filesystem
-code; it does not disable this portable parser. ZIP fallback still requires
+of the same Rust parser used by native. `off` still disables the optional native
+filesystem helper; it does not disable this portable parser. ZIP fallback still requires
 optional `jszip`, and zstd/bzip2 remain native-only.
+
+On Bun, the [runtime path adapter](install.md#bun-runtime) uses Bun's built-in
+FFI and system libc for POSIX canonicalization in every mode. It does not load
+the optional N-API package or change containment and identity policy.
 
 Configure the mode once during startup. Loading is lazy and cached; changing from `auto` to `require` after a failed load changes failure policy but does not repeatedly probe the binary.
 

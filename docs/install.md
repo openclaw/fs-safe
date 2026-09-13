@@ -31,6 +31,30 @@ node --version
 # v22.0.0 or newer
 ```
 
+## Bun runtime
+
+Bun 1.4.2 can run the same public APIs and load the matching native package.
+On macOS and Linux, fs-safe uses Bun's built-in `bun:ffi` to call the system
+`realpath` implementation. This works around Bun path-resolution defects that
+otherwise reject restrictive permissions and confuse literal POSIX backslashes
+with directory separators. The OS still resolves symlinks and canonical file
+names; fs-safe retains its confinement and file-identity checks.
+
+This adapter requires Bun's normal JIT-enabled runtime; `--jitless` is not
+supported. It loads only an absolute system-library path, needs no extra npm
+dependency or compiler, and also works when optional npm dependencies are
+omitted. Native mode `off` continues to disable fs-safe's optional N-API helper;
+the Bun runtime adapter supplies ordinary path resolution in every mode.
+Node and Windows use their existing runtime canonicalizers. On Windows, Bun's
+recursive directory creation receives an absolute spelling that preserves raw
+path components, working around its rejection of existing relative `.` and `..`
+directories. Public paths and caller-supplied filesystem adapters remain unchanged.
+
+The upstream fix is tracked in [Bun #42374](https://github.com/oven-sh/bun/pull/42374).
+The adapter can be removed when the supported Bun baseline includes that fix.
+Run the full suite in real Bun workers with `pnpm test:bun` after building the
+package. See [contributing](contributing.md) for the Node/pnpm build toolchain.
+
 ## TypeScript
 
 Types ship with the package — no `@types/openclaw__fs-safe` needed. The `exports` map in `package.json` provides typed entries for every subpath:

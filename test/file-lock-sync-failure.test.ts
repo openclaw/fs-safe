@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { itWin32, useTempDirs } from "./helpers/vitest.js";
 import { acquireFileLockSync } from "../src/file-lock.js";
 import { root } from "../src/root.js";
+import * as canonicalPath from "../src/realpath.js";
 
 const { tempRoot } = useTempDirs();
 
@@ -204,7 +205,7 @@ describe("synchronous file-lock failure handling", () => {
     const root = await tempRoot("fs-safe-sync-lock-realpath-failure-");
     const targetPath = path.join(root, "state.json");
     const realpath = process.platform === "win32"
-      ? vi.spyOn(fsSync.realpathSync, "native") : vi.spyOn(fsSync, "realpathSync");
+      ? vi.spyOn(canonicalPath.realpathSync, "native") : vi.spyOn(canonicalPath, "realpathSync");
     realpath.mockImplementationOnce(() => {
       throw Object.assign(new Error("realpath unavailable"), { code: "EIO" });
     });
@@ -250,7 +251,7 @@ describe("synchronous file-lock failure handling", () => {
       ...lockOptions(), lockRoot, reentrantOwner: "canonical-owner",
       ...(explicit ? { lockPath: path.join(directory, "custom.lock") } : {}),
     };
-    const realpath = vi.spyOn(fsSync.realpathSync, "native");
+    const realpath = vi.spyOn(canonicalPath.realpathSync, "native");
     const first = acquireFileLockSync(path.join(directory, "state.json"), options);
     let second: ReturnType<typeof acquireFileLockSync> | undefined;
     try {
@@ -278,7 +279,7 @@ describe("synchronous file-lock failure handling", () => {
     const target = path.join(directory, "state.json");
     const failure = Object.assign(new Error("canonical parent unavailable"), { code, path: `${target}.lock` });
     const realpath = process.platform === "win32"
-      ? vi.spyOn(fsSync.realpathSync, "native") : vi.spyOn(fsSync, "realpathSync");
+      ? vi.spyOn(canonicalPath.realpathSync, "native") : vi.spyOn(canonicalPath, "realpathSync");
     realpath.mockImplementation(() => { throw failure; });
     const open = vi.spyOn(fsSync, "openSync");
     expect(() => acquireFileLockSync(target, { ...lockOptions(), lockRoot })).toThrow(failure);

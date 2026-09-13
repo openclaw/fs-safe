@@ -273,7 +273,7 @@ describe.runIf(nativeAvailable)("retained-directory staging", () => {
       });
       await staged[Symbol.asyncDispose]();
       expect(await fs.readFile(path.join(directory, "unrelated"), "utf8")).toBe("untouched");
-      expect(await fs.readdir(directory)).toEqual(order === "publish-first" ? ["final", "unrelated"] : ["unrelated"]);
+      expect((await fs.readdir(directory)).sort()).toEqual(order === "publish-first" ? ["final", "unrelated"] : ["unrelated"]);
     } finally {
       await unrelated.close();
     }

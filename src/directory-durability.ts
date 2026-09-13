@@ -5,6 +5,7 @@ import path from "node:path";
 import { ensureAbsoluteDirectory } from "./absolute-path.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity, type FileIdentityStat } from "./file-identity.js";
+import { realpathSync } from "./realpath.js";
 
 export type DirectorySyncOutcome =
   | { status: "synced" }
@@ -87,7 +88,7 @@ async function createDirectoryReceipt(directoryPath: string, label: string): Pro
   assertDirectory(identity, resolvedPath, label);
   return {
     path: resolvedPath,
-    realPath: fsSync.realpathSync.native(resolvedPath),
+    realPath: realpathSync.native(resolvedPath),
     identity,
   };
 }
@@ -98,7 +99,7 @@ function createDirectoryReceiptSync(directoryPath: string, label: string): Direc
   assertDirectory(identity, resolvedPath, label);
   return {
     path: resolvedPath,
-    realPath: fsSync.realpathSync(resolvedPath),
+    realPath: realpathSync(resolvedPath),
     identity,
   };
 }
@@ -111,7 +112,7 @@ async function assertDirectoryReceiptCurrent(
   assertDirectory(currentIdentity, receipt.path, label);
   if (
     !sameFileIdentity(receipt.identity, currentIdentity) ||
-    (fsSync.realpathSync.native(receipt.path)) !== receipt.realPath
+    (realpathSync.native(receipt.path)) !== receipt.realPath
   ) {
     throw new FsSafeError(
       "path-mismatch",
@@ -125,7 +126,7 @@ function assertDirectoryReceiptCurrentSync(receipt: DirectoryReceipt, label: str
   assertDirectory(currentIdentity, receipt.path, label);
   if (
     !sameFileIdentity(receipt.identity, currentIdentity) ||
-    fsSync.realpathSync(receipt.path) !== receipt.realPath
+    realpathSync(receipt.path) !== receipt.realPath
   ) {
     throw new FsSafeError(
       "path-mismatch",

@@ -1,10 +1,11 @@
 import crypto, { randomUUID } from "node:crypto";
-import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard } from "./directory-guard.js";
 import { fitFileNameToPortableComponent, sanitizeUntrustedFileName } from "./filename.js";
 import { applyDirectoryMode } from "./replace-file-descriptor.js";
+import { realpathSync } from "./realpath.js";
+import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { root } from "./root.js";
 import { assertSafePathPrefix } from "./safe-path-segment.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
@@ -43,7 +44,7 @@ export async function writeSiblingTempFile<T>(
   options: WriteSiblingTempFileOptions<T>,
 ): Promise<WriteSiblingTempFileResult<T>> {
   const dir = path.resolve(options.dir);
-  await fs.mkdir(dir, { recursive: true, mode: options.dirMode ?? 0o700 });
+  await fs.mkdir(recursiveMkdirPath(dir), { recursive: true, mode: options.dirMode ?? 0o700 });
   if (options.chmodDir !== false) {
     await applyDirectoryMode({
       fsModule: fs,
@@ -93,12 +94,12 @@ export async function writeViaSiblingTempPath(params: {
   tempPrefix?: string;
 }): Promise<void> {
   let rootDir: string;
-  try { rootDir = fsSync.realpathSync.native(path.resolve(params.rootDir)); }
+  try { rootDir = realpathSync.native(path.resolve(params.rootDir)); }
   catch { rootDir = path.resolve(params.rootDir); }
   const requestedTargetPath = path.resolve(params.targetPath);
   let targetPath: string;
   try {
-    const realDir = fsSync.realpathSync.native(path.dirname(requestedTargetPath));
+    const realDir = realpathSync.native(path.dirname(requestedTargetPath));
     targetPath = path.join(realDir, path.basename(requestedTargetPath));
   } catch {
     targetPath = requestedTargetPath;

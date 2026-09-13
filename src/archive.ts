@@ -2,7 +2,7 @@ import { createTarEntryPlanner } from "./archive-tar.js";
 import { inspectTar, replayTar } from "./archive-tar-stream.js";
 import type { AdmittedTarMember } from "./archive-tar-wasm.js";
 import { runPinnedWriteHelper } from "./pinned-write.js";
-import fsSync, { constants as fsConstants } from "node:fs";
+import { constants as fsConstants } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -60,6 +60,7 @@ import {
 } from "./archive-policy.js";
 import type { ExtractArchiveOptions } from "./archive-options.js";
 import { writeSiblingTempFile } from "./sibling-temp.js";
+import { realpathSync } from "./realpath.js";
 export type { ArchiveLogger, ExtractArchiveOptions } from "./archive-options.js";
 export type {
   ArchiveEntryFilter,
@@ -242,7 +243,7 @@ async function extractZip(params: {
     await withStagedArchiveDestination({
       destinationRealDir,
       run: async (stagingDir) => {
-        const stagingRealDir = fsSync.realpathSync.native(stagingDir);
+        const stagingRealDir = realpathSync.native(stagingDir);
         const acceptedEntries: ArchivePublicationEntry[] = [];
         for (const entry of entries) {
           params.deadline.check();
@@ -372,7 +373,7 @@ async function extractWasmTar(params: {
   const destinationGuard = await prepareArchiveDestinationGuard(options.destDir);
   const destinationRealDir = destinationGuard.realPath;
   await withStagedArchiveDestination({ destinationRealDir, run: async (stagingPath) => {
-    const stagingDir = fsSync.realpathSync.native(stagingPath);
+    const stagingDir = realpathSync.native(stagingPath);
     const planEntry = createTarEntryPlanner({ ...options, rootDir: destinationRealDir, limits: params.limits });
     const accepted = manifest.flatMap((entry) => {
       deadline.check();

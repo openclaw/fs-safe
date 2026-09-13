@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { FsSafeError } from "./errors.js";
+import { realpathSync } from "./realpath.js";
 import { isDriveRelativePath } from "./safe-path-segment.js";
 
 export {
@@ -105,7 +106,7 @@ export function safeRealpathSync(targetPath: string, cache?: Map<string, string>
     return cached;
   }
   try {
-    const resolved = fs.realpathSync(targetPath);
+    const resolved = realpathSync(targetPath);
     cache?.set(targetPath, resolved);
     cache?.set(resolved, resolved);
     return resolved;

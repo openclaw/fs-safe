@@ -14,6 +14,7 @@ import {
 import { ROOT_PATH_ALIAS_POLICIES, resolveRootPath } from "./root-path.js";
 import { outsideWorkspaceError, rootPathChangedError } from "./root-errors.js";
 import { isDriveRelativePath } from "./safe-path-segment.js";
+import { realpathSync } from "./realpath.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 
 export type RootContext = {
@@ -46,7 +47,7 @@ export async function expandRelativePathWithHome(relativePath: string): Promise<
   if (cachedHomePath?.raw !== rawHome) {
     let realHome = rawHome;
     try {
-      realHome = fs.realpathSync.native(rawHome);
+      realHome = realpathSync.native(rawHome);
     } catch {
       // If the home dir cannot be canonicalized, keep lexical expansion behavior.
     }
@@ -65,7 +66,7 @@ export async function resolveRootContext(rootDir: string): Promise<RootContext> 
   let rootReal: string;
   let rootIdentity: { dev: bigint; ino: bigint };
   try {
-    rootReal = fs.realpathSync.native(rootDir);
+    rootReal = realpathSync.native(rootDir);
     const rootStat = await inspectFileIdentity(() => {
       const stat = fs.statSync(rootReal, { bigint: true });
       if (!stat.isDirectory()) throw new FsSafeError("invalid-path", "root dir is not a directory");

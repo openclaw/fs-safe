@@ -1,6 +1,7 @@
 import fs, { type BigIntStats } from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { canonicalPathFromExistingAncestor } from "./absolute-path.js";
 import { readFileDescriptorBoundedSync } from "./bounded-read.js";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, inspectDirectoryIdentity, type AsyncDirectoryGuard } from "./directory-guard.js";
@@ -207,7 +208,7 @@ async function ensurePrivateDirectory(
       createdRoot = await createPrivateDirectory(resolvedRoot, mode);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      await fsp.mkdir(path.dirname(resolvedRoot), { recursive: true, mode });
+      await fsp.mkdir(recursiveMkdirPath(path.dirname(resolvedRoot)), { recursive: true, mode });
       createdRoot = await createPrivateDirectory(resolvedRoot, mode);
     }
     rootStat = await inspectPrivateDirectory(resolvedRoot, "root");

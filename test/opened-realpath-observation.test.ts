@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveOpenedFileRealPathForFd } from "../src/opened-realpath.js";
+import { realpathSync } from "../src/realpath.js";
 import { root } from "../src/root.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
@@ -23,9 +24,9 @@ describe("opened realpath observations", () => {
     const handle = await fs.open(target, "r");
     try {
       const identity = await handle.stat({ bigint: true });
-      const realpath = fsSync.realpathSync.native;
+      const realpath = realpathSync.native;
       const calls: string[] = [];
-      vi.spyOn(fsSync.realpathSync, "native").mockImplementation((...args) => {
+      vi.spyOn(realpathSync, "native").mockImplementation((...args) => {
         const candidate = String(args[0]);
         calls.push(candidate);
         if (candidate.startsWith("/proc/self/fd/")) throw Object.assign(new Error("no procfs"), { code: "ENOENT" });
@@ -50,9 +51,9 @@ describe("opened realpath observations", () => {
     const handle = await fs.open(target, "r");
     try {
       const identity = await handle.stat({ bigint: true });
-      const realpath = fsSync.realpathSync.native;
+      const realpath = realpathSync.native;
       let attempts = 0;
-      vi.spyOn(fsSync.realpathSync, "native").mockImplementation((...args) => {
+      vi.spyOn(realpathSync, "native").mockImplementation((...args) => {
         if (String(args[0]) === target) {
           if (++attempts === 1) throw Object.assign(new Error("raced lookup"), { code: "ENOENT" });
           fsSync.renameSync(target, path.join(directory, "saved"));

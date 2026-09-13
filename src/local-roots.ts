@@ -4,6 +4,7 @@ import { normalizeMaxBytes } from "./byte-budget.js";
 import { FsSafeError } from "./errors.js";
 import { expandHomePrefix, resolveRequiredHomeDir } from "./home-dir.js";
 import { isFileUrl, safeFileURLToPath } from "./local-file-access.js";
+import { realpathSync } from "./realpath.js";
 import { ROOT_PATH_ALIAS_POLICIES, resolveRootPathSync } from "./root-path.js";
 import { root, type HardlinkPolicy, type ReadResult, type SymlinkPolicy } from "./root.js";
 
@@ -80,7 +81,7 @@ function resolveRootRealSync(rootDir: string): string | null {
     if (!stat.isDirectory()) {
       return null;
     }
-    return fsSync.realpathSync(rootDir);
+    return realpathSync(rootDir);
   } catch {
     return null;
   }

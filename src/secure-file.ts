@@ -11,6 +11,7 @@ import { isWindowsDriveLetterPath, isWindowsNetworkPath } from "./local-file-acc
 import { isPathInside, isSymlinkOpenError } from "./path.js";
 import { formatPermissionErrorDetail } from "./permission-exec.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
+import { realpathSync } from "./realpath.js";
 import {
   inspectPathPermissions,
   isGroupReadable,
@@ -138,7 +139,7 @@ async function openSecureHandle(options: SecureFileReadOptions, maxBytes: number
       assertNotHardlinked(options, pathStat);
       return pathStat;
     }, openedIdentity);
-    const realPath = fsSync.realpathSync.native(options.filePath);
+    const realPath = realpathSync.native(options.filePath);
     await inspectFileIdentity(() => {
       const realPathStat = fsSync.statSync(realPath, { bigint: true });
       assertNotHardlinked(options, realPathStat);
@@ -162,7 +163,7 @@ async function assertTrustedDirs(options: SecureFileReadOptions, realPath: strin
     options.trust.trustedDirs.map(async (dir) => {
       const resolved = path.resolve(dir);
       try {
-        return fsSync.realpathSync.native(resolved);
+        return realpathSync.native(resolved);
       } catch {
         return resolved;
       }

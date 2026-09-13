@@ -12,6 +12,7 @@ import {
   isPathRelativeEscape,
 } from "./path.js";
 import { root as openRoot } from "./root.js";
+import { realpathSync } from "./realpath.js";
 
 type InvalidPathResult = { ok: false; error: string };
 type DirectoryResult =
@@ -63,7 +64,7 @@ function pathStaysWithinRoot(rootDir: string, candidatePath: string): boolean {
 
 async function resolveRealPathIfExists(targetPath: string): Promise<string | undefined> {
   try {
-    return fsSync.realpathSync.native(targetPath);
+    return realpathSync.native(targetPath);
   } catch {
     return undefined;
   }
@@ -75,7 +76,7 @@ async function resolveTrustedRootRealPath(rootDir: string): Promise<string | und
     if (!rootLstat.isDirectory() || rootLstat.isSymbolicLink()) {
       return undefined;
     }
-    return fsSync.realpathSync.native(rootDir);
+    return realpathSync.native(rootDir);
   } catch {
     return undefined;
   }
@@ -100,7 +101,7 @@ async function validateCanonicalPathWithinRoot(params: {
     if (params.expect === "file" && candidateLstat.nlink > 1) {
       return "invalid";
     }
-    const candidateRealPath = fsSync.realpathSync.native(params.candidatePath);
+    const candidateRealPath = realpathSync.native(params.candidatePath);
     return isPathInside(params.rootRealPath, candidateRealPath) ? "ok" : "invalid";
   } catch (err) {
     return isNotFoundPathError(err) ? "not-found" : "invalid";
@@ -248,9 +249,9 @@ export async function ensureDirectoryWithinRoot(params: {
       return invalidPath(scopeLabel);
     }
     await assertNoSymlinkSegments({ rootDir, targetPath, scopeLabel });
-    const rootReal = fsSync.realpathSync.native(rootDir);
+    const rootReal = realpathSync.native(rootDir);
     const nearestExistingPath = await resolveNearestExistingPath(targetPath);
-    const nearestExistingReal = fsSync.realpathSync.native(nearestExistingPath);
+    const nearestExistingReal = realpathSync.native(nearestExistingPath);
     if (!isPathInside(rootReal, nearestExistingReal)) {
       return invalidPath(scopeLabel);
     }
@@ -279,12 +280,12 @@ export async function ensureDirectoryWithinRoot(params: {
           }
         }
       }
-      const currentReal = fsSync.realpathSync.native(current);
+      const currentReal = realpathSync.native(current);
       if (!isPathInside(rootReal, currentReal)) {
         return invalidPath(scopeLabel);
       }
     }
-    const targetReal = fsSync.realpathSync.native(targetPath);
+    const targetReal = realpathSync.native(targetPath);
     if (!isPathInside(rootReal, targetReal)) {
       return invalidPath(scopeLabel);
     }
@@ -416,7 +417,7 @@ async function resolveCheckedPathsWithinRoot(
       return lexicalPathResult;
     }
     try {
-      const resolvedExistingPath = fsSync.realpathSync.native(raw);
+      const resolvedExistingPath = realpathSync.native(raw);
       const relativePath = path.relative(rootRealPath, resolvedExistingPath);
       if (!isInRoot(relativePath)) {
         return lexicalPathResult;
@@ -458,7 +459,7 @@ async function resolveCheckedPathsWithinRoot(
             scopeLabel: params.scopeLabel,
           });
           const existingPath = await resolveNearestExistingPath(pathResult.fallbackPath);
-          const existingRealPath = fsSync.realpathSync.native(existingPath);
+          const existingRealPath = realpathSync.native(existingPath);
           if (!isPathInside(rootRealPath, existingRealPath)) {
             return invalidPath(params.scopeLabel);
           }

@@ -19,6 +19,7 @@ import {
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { cleanupPinnedFilePath } from "./replace-file-temp-owner.js";
 import { createMoveStageOwner } from "./move-path-stage.js";
+import { realpathSync } from "./realpath.js";
 
 export type MovePathPublicationReceipt = Readonly<{
   path: string;
@@ -111,12 +112,12 @@ async function assertCopyDestinationOutsideSource(
   }
   const normalizedSource = path.resolve(sourcePath);
   const normalizedTarget = path.resolve(targetPath);
-  const sourceParentReal = fsSync.realpathSync.native(path.dirname(normalizedSource));
-  const targetParentReal = fsSync.realpathSync.native(path.dirname(normalizedTarget));
+  const sourceParentReal = realpathSync.native(path.dirname(normalizedSource));
+  const targetParentReal = realpathSync.native(path.dirname(normalizedTarget));
   const sourceCandidate = path.join(sourceParentReal, path.basename(normalizedSource));
   const targetCandidate = path.join(targetParentReal, path.basename(normalizedTarget));
   const sourceBoundary = sourceStat.isDirectory()
-    ? fsSync.realpathSync.native(sourcePath)
+    ? realpathSync.native(sourcePath)
     : sourceCandidate;
   const unsafeTarget = sourceStat.isDirectory()
     ? isSameOrDescendant(sourceBoundary, targetCandidate)

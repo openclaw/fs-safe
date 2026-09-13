@@ -5,6 +5,7 @@ import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard } from "./director
 import { FsSafeError } from "./errors.js";
 import { isNotFoundPathError, isPathRelativeEscape } from "./path.js";
 import { directoryComponentNotDirectoryError } from "./root-errors.js";
+import { realpathSync } from "./realpath.js";
 
 function isSameOrChildPath(candidate: string, parent: string): boolean {
   const parentPrefix = parent.endsWith(path.sep) ? parent : `${parent}${path.sep}`;
@@ -13,7 +14,7 @@ function isSameOrChildPath(candidate: string, parent: string): boolean {
 
 async function realpathOrThrowNotFile(target: string): Promise<string> {
   try {
-    return path.resolve(fsSync.realpathSync.native(target));
+    return path.resolve(realpathSync.native(target));
   } catch (error) {
     if (isNotFoundPathError(error)) {
       // A dangling symlink (or a component removed between lstat and
@@ -39,7 +40,7 @@ export async function mkdirPathComponentsWithGuards(params: {
   rejectSymlinks?: boolean;
 }): Promise<string> {
   const root = path.resolve(params.rootReal);
-  const rootCanonical = path.resolve(fsSync.realpathSync.native(root));
+  const rootCanonical = path.resolve(realpathSync.native(root));
   const target = path.resolve(params.targetPath);
   const relative = path.relative(root, target);
   if (isPathRelativeEscape(relative)) {

@@ -6,6 +6,7 @@ import path from "node:path";
 import { openedPathResolutionError } from "./opened-file-failure.js";
 import { sameFileIdentity, type FileIdentityStat } from "./file-identity.js";
 import { isNotFoundPathError } from "./path.js";
+import { realpathSync } from "./realpath.js";
 
 export async function resolveOpenedFileRealPathForHandle(
   handle: FileHandle,
@@ -38,7 +39,7 @@ export async function resolveOpenedFileRealPathForFd(
       : [];
   for (const fdPath of fdCandidates) {
     try {
-      const fdRealPath = fsSync.realpathSync.native(fdPath);
+      const fdRealPath = realpathSync.native(fdPath);
       const fdRealStat = statOptions ? fsSync.statSync(fdRealPath, statOptions) : fsSync.statSync(fdRealPath);
       if (sameFileIdentity(handleStat, fdRealStat)) {
         return { realPath: fdRealPath, stat: fdRealStat };
@@ -49,7 +50,7 @@ export async function resolveOpenedFileRealPathForFd(
   }
 
   try {
-    const ioRealPath = fsSync.realpathSync.native(ioPath);
+    const ioRealPath = realpathSync.native(ioPath);
     const ioRealStat = statOptions ? fsSync.statSync(ioRealPath, statOptions) : fsSync.statSync(ioRealPath);
     if (sameFileIdentity(handleStat, ioRealStat)) {
       return { realPath: ioRealPath, stat: ioRealStat };
@@ -79,7 +80,7 @@ async function resolveOpenedFileRealPathFromParent(
 ): Promise<{ realPath: string; stat: Stats | BigIntStats } | null> {
   let parentReal: string;
   try {
-    parentReal = fsSync.realpathSync.native(path.dirname(ioPath));
+    parentReal = realpathSync.native(path.dirname(ioPath));
   } catch (err) {
     if (isNotFoundPathError(err)) {
       return null;
@@ -102,7 +103,7 @@ async function resolveOpenedFileRealPathFromParent(
     try {
       const candidateStat = statOptions ? fsSync.lstatSync(candidatePath, statOptions) : fsSync.lstatSync(candidatePath);
       if (candidateStat.isFile() && sameFileIdentity(handleStat, candidateStat)) {
-        const realPath = fsSync.realpathSync.native(candidatePath);
+        const realPath = realpathSync.native(candidatePath);
         const stat = statOptions ? fsSync.statSync(realPath, statOptions) : fsSync.statSync(realPath);
         if (sameFileIdentity(handleStat, stat)) return { realPath, stat };
       }

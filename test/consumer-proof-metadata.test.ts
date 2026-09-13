@@ -16,7 +16,7 @@ it("records the actual checkout rather than workflow head metadata", () => {
 
 it("marks source metadata unavailable when Git is absent", async () => {
   const directory = await tempRoot("fs-safe-proof-no-git-");
-  vi.stubEnv("PATH", "");
+  vi.stubEnv("PATH", directory);
   expect(packageProofSource(directory)).toEqual({ unavailable: "git-not-installed" });
 });
 

@@ -14,6 +14,8 @@ import {
 } from "./json-durable-queue-ownership.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
+import { realpathSync } from "./realpath.js";
+import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { replaceFileAtomicWithDirectorySync } from "./replace-file.js";
 import { assertSafePathSegment } from "./safe-path-segment.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
@@ -110,7 +112,7 @@ async function ensureJsonDurableQueueDir(
     ? validationRoot
     : queueValidationRoot(dir);
   await assertNoSymlinkDirectorySegments(root, dir, true);
-  await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
+  await fs.promises.mkdir(recursiveMkdirPath(dir), { recursive: true, mode: 0o700 });
   await assertNoSymlinkDirectorySegments(root, dir, false);
   await chmodQueueDirectory(dir);
   await syncQueueDirectoryCreation(dir, root.path);
@@ -179,7 +181,7 @@ async function isDarwinSystemAlias(
     return false;
   }
   try {
-    return fs.realpathSync.native(resolved) === `/private${resolved}`;
+    return realpathSync.native(resolved) === `/private${resolved}`;
   } catch {
     return false;
   }
@@ -199,7 +201,7 @@ async function assertNoSymlinkDirectorySegments(
     if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
       throw new Error(`durable queue path is not a directory: ${dir}`);
     }
-    base = fs.realpathSync.native(base);
+    base = realpathSync.native(base);
     target = path.join(base, ...relative.split(path.sep).filter(Boolean));
     current = base;
     baseStat = fs.lstatSync(base);
@@ -226,7 +228,7 @@ async function assertNoSymlinkDirectorySegments(
     if (stat.isSymbolicLink() || !stat.isDirectory()) {
       if (stat.isSymbolicLink() && validationRoot.allowSymlinkBase) {
         if (await isDarwinSystemAlias(current, stat)) {
-          current = fs.realpathSync.native(current);
+          current = realpathSync.native(current);
           continue;
         }
       }

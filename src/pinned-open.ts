@@ -3,6 +3,7 @@ import { isUnsafeDeviceReadPath } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
+import { realpathSync } from "./realpath.js";
 
 export type PinnedOpenSyncFailureReason = "path" | "validation" | "io";
 
@@ -47,7 +48,8 @@ export function openPinnedFileSync(params: {
       }
     }
 
-    const realPath = params.resolvedPath ?? ioFs.realpathSync(params.filePath);
+    const realPath = params.resolvedPath ??
+      (ioFs === fs ? realpathSync(params.filePath) : ioFs.realpathSync(params.filePath));
     if (isUnsafeDeviceReadPath(realPath)) {
       return { ok: false, reason: "validation" };
     }

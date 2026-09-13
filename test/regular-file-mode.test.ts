@@ -44,12 +44,14 @@ describe.skipIf(process.platform === "win32")("regular append final file mode", 
         return handle;
       });
     } else {
-      const write = fsSync.writeSync.bind(fsSync);
-      vi.spyOn(fsSync, "writeSync").mockImplementation(((...args: Parameters<typeof fsSync.writeSync>) => {
-        expect(fsSync.fstatSync(args[0]).mode & 0o7777).toBe(0o600);
+      const appendFile = fsSync.appendFileSync.bind(fsSync);
+      vi.spyOn(fsSync, "appendFileSync").mockImplementation((...args) => {
+        const fd = args[0];
+        if (typeof fd !== "number") throw new Error("append must use its verified descriptor");
+        expect(fsSync.fstatSync(fd).mode & 0o7777).toBe(0o600);
         observed = true;
-        return write(...args);
-      }) as typeof fsSync.writeSync);
+        appendFile(...args);
+      });
     }
     await append(kind, { filePath, content: "private", mode: 0o600 });
     expect(observed).toBe(true);
@@ -106,17 +108,4 @@ describe.skipIf(process.platform === "win32")("regular append final file mode", 
     expect(() => fsSync.fstatSync(openedFd)).toThrow(expect.objectContaining({ code: "EBADF" }));
     expect(await fs.readFile(filePath, "utf8")).toBe("initialadded");
   });
-});
-
-it("completes short synchronous writes before finalizing an append", async () => {
-  const directory = await tempRoot("fs-safe-append-short-write-");
-  const filePath = path.join(directory, "target");
-  await fs.writeFile(filePath, "initial", { mode: 0o600 });
-  const write = fsSync.writeSync.bind(fsSync);
-  const calls = vi.spyOn(fsSync, "writeSync").mockImplementation(((
-    fd: number, buffer: Uint8Array, offset: number, length: number, position?: number | null,
-  ) => write(fd, buffer, offset, Math.min(2, length), position)) as typeof fsSync.writeSync);
-  appendRegularFileSync({ filePath, content: "abcdef", mode: 0o600 });
-  expect(await fs.readFile(filePath, "utf8")).toBe("initialabcdef");
-  expect(calls).toHaveBeenCalledTimes(3);
 });

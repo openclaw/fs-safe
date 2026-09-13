@@ -5,6 +5,8 @@ import { canonicalPathFromExistingAncestor } from "./absolute-path.js";
 import { FsSafeError } from "./errors.js";
 import { fileObservation } from "./file-observation.js";
 import { readFileHandleBounded } from "./bounded-read.js";
+import { realpathSync } from "./realpath.js";
+import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { openSidecarRoot } from "./sidecar-lock-root.js";
 import { createNativeExclusiveFile, type NativeFileHandle } from "./native-operations.js";
 import type { Root } from "./root-impl.js";
@@ -75,9 +77,9 @@ async function resolveNormalizedTargetPath(targetPath: string, lockRoot?: Root):
     await lockRoot.resolve(".");
     return path.join(parent, path.basename(resolved));
   }
-  await fs.mkdir(dir, { recursive: true });
+  await fs.mkdir(recursiveMkdirPath(dir), { recursive: true });
   try {
-    return path.join(fsSync.realpathSync.native(dir), path.basename(resolved));
+    return path.join(realpathSync.native(dir), path.basename(resolved));
   } catch {
     return resolved;
   }

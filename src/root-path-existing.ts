@@ -3,6 +3,7 @@ import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { formatErrorDetail } from "./error-detail.js";
 import { isNotFoundPathError, isPathInside } from "./path.js";
+import { realpathSync } from "./realpath.js";
 
 export function absolutePathWithRawSegments(candidate: string): string {
   if (path.isAbsolute(candidate)) return candidate;
@@ -36,7 +37,7 @@ export function rawPathRelativeToCanonicalRoot(
       }
       if (!isSymlink && !stat.isDirectory() && index < segments.length - 1) return undefined;
       traversedSymlink ||= isSymlink;
-      canonical = fs.realpathSync.native(prefix);
+      canonical = realpathSync.native(prefix);
       if (isSymlink && index < segments.length - 1 && !fs.statSync(canonical).isDirectory()) return undefined;
       if (isSymlink && !isPathInside(rootCanonicalPath, canonical) && !isPathInside(canonical, rootCanonicalPath)) {
         throw new FsSafeError("outside-workspace", `symlink prefix resolves outside the root ancestry: ${formatErrorDetail(candidate)}`);
@@ -91,7 +92,7 @@ export async function resolvePathViaExistingAncestor(targetPath: string): Promis
   }
 
   try {
-    const resolvedAncestor = path.resolve(fs.realpathSync.native(cursor));
+    const resolvedAncestor = path.resolve(realpathSync.native(cursor));
     return missingSuffix.length === 0
       ? resolvedAncestor
       : path.resolve(resolvedAncestor, ...missingSuffix);
@@ -119,7 +120,7 @@ export function resolvePathViaExistingAncestorSync(targetPath: string): string {
   }
 
   try {
-    const resolvedAncestor = path.resolve(fs.realpathSync(cursor));
+    const resolvedAncestor = path.resolve(realpathSync(cursor));
     return missingSuffix.length === 0
       ? resolvedAncestor
       : path.resolve(resolvedAncestor, ...missingSuffix);

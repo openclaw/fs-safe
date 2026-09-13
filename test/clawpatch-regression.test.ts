@@ -18,6 +18,7 @@ import { summarizeWindowsAcl } from "../src/permissions.js";
 import { configureFsSafeNative, root as openRoot } from "../src/index.js";
 import { resolveExistingPathsWithinRoot, resolvePathWithinRoot } from "../src/root-paths.js";
 import { readSecureFile } from "../src/secure-file.js";
+import { realpathSync } from "../src/realpath.js";
 import { withTimeout } from "../src/timing.js";
 
 const { tempRoot } = useTempDirs();
@@ -89,15 +90,15 @@ describe("clawpatch regression coverage", () => {
     const outside = path.join(base, "outside");
     await fs.mkdir(dest);
     await fs.mkdir(outside);
-    const realRealpath = fsSync.realpathSync.native;
+    const realRealpath = realpathSync.native;
     let swapped = false;
-    vi.spyOn(fsSync.realpathSync, "native").mockImplementation((target, options) => {
+    vi.spyOn(realpathSync, "native").mockImplementation((target) => {
       if (!swapped && target === dest) {
         swapped = true;
         fsSync.renameSync(dest, path.join(base, "dest-real"));
         fsSync.symlinkSync(outside, dest, "dir");
       }
-      return realRealpath(target, options as never);
+      return realRealpath(target);
     });
 
     await expect(prepareArchiveDestinationDir(dest)).rejects.toMatchObject({
@@ -112,19 +113,19 @@ describe("clawpatch regression coverage", () => {
     const original = path.join(base, "dest-original");
     await fs.mkdir(dest);
     await fs.mkdir(outside);
-    const realRealpath = fsSync.realpathSync.native;
+    const realRealpath = realpathSync.native;
     let swapped = false;
-    vi.spyOn(fsSync.realpathSync, "native").mockImplementation((target, options) => {
+    vi.spyOn(realpathSync, "native").mockImplementation((target) => {
       if (!swapped && target === dest) {
         swapped = true;
         fsSync.renameSync(dest, original);
         fsSync.symlinkSync(outside, dest, "dir");
-        const result = realRealpath(target, options as never);
+        const result = realRealpath(target);
         fsSync.unlinkSync(dest);
         fsSync.renameSync(original, dest);
         return result;
       }
-      return realRealpath(target, options as never);
+      return realRealpath(target);
     });
 
     await expect(prepareArchiveDestinationDir(dest)).rejects.toMatchObject({

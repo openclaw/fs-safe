@@ -6,6 +6,7 @@ import { sameFileIdentity } from "./file-identity.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { isNotFoundPathError } from "./path.js";
 import { directoryComponentNotDirectoryError } from "./root-errors.js";
+import { realpathSync } from "./realpath.js";
 
 export type AsyncDirectoryGuard<T extends Stats | BigIntStats = Stats> = {
   dir: string;
@@ -29,7 +30,7 @@ export async function createAsyncDirectoryGuard(dir: string, options?: { bigint?
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw directoryComponentNotDirectoryError();
   }
-  return { dir, realPath: fsSync.realpathSync.native(dir), stat };
+  return { dir, realPath: realpathSync.native(dir), stat };
 }
 
 export async function assertAsyncDirectoryGuard(guard: AnyAsyncDirectoryGuard): Promise<void> {
@@ -39,7 +40,7 @@ export async function assertAsyncDirectoryGuard(guard: AnyAsyncDirectoryGuard): 
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw directoryComponentNotDirectoryError();
   }
-  if (!sameFileIdentity(stat, guard.stat) || fsSync.realpathSync.native(guard.dir) !== guard.realPath) {
+  if (!sameFileIdentity(stat, guard.stat) || realpathSync.native(guard.dir) !== guard.realPath) {
     throw new FsSafeError("path-mismatch", "directory changed during operation");
   }
 }
@@ -49,7 +50,7 @@ export function createSyncDirectoryGuard(dir: string): SyncDirectoryGuard {
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw directoryComponentNotDirectoryError();
   }
-  return { dir, realPath: fsSync.realpathSync(dir), stat };
+  return { dir, realPath: realpathSync(dir), stat };
 }
 
 export function assertSyncDirectoryGuard(guard: SyncDirectoryGuard | AnyAsyncDirectoryGuard): void {
@@ -60,7 +61,7 @@ export function assertSyncDirectoryGuard(guard: SyncDirectoryGuard | AnyAsyncDir
     throw directoryComponentNotDirectoryError();
   }
   const realPath = typeof guard.stat.ino === "bigint"
-    ? fsSync.realpathSync.native(guard.dir) : fsSync.realpathSync(guard.dir);
+    ? realpathSync.native(guard.dir) : realpathSync(guard.dir);
   if (!sameFileIdentity(stat, guard.stat) || realPath !== guard.realPath) {
     throw new FsSafeError("path-mismatch", "directory changed during operation");
   }

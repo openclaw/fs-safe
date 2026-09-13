@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readSecureFile } from "../src/secure-file.js";
+import { realpathSync } from "../src/realpath.js";
 import { useTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useTempDirs();
@@ -48,8 +49,8 @@ describe("secure file exact identity", () => {
     const root = await tempRoot("fs-safe-secure-real-swap-");
     const filePath = path.join(root, "secret");
     await fs.writeFile(filePath, "original", { mode: 0o600 });
-    const realpath = fsSync.realpathSync.native;
-    vi.spyOn(fsSync.realpathSync, "native").mockImplementationOnce((...args) => {
+    const realpath = realpathSync.native;
+    vi.spyOn(realpathSync, "native").mockImplementationOnce((...args) => {
       fsSync.renameSync(filePath, path.join(root, "original"));
       fsSync.writeFileSync(filePath, "replacement", { mode: 0o600 });
       return realpath(...args);

@@ -11,6 +11,7 @@ import {
 import { readSecretFile } from "../src/secret-read-async.js";
 import { readSecretFileSync } from "../src/secret-file.js";
 import { readSecureFile } from "../src/secure-file.js";
+import * as realpath from "../src/realpath.js";
 
 const { tempRoot } = useTempDirs();
 const POSIX_PERMISSIONS: PermissionCheck = {
@@ -73,19 +74,20 @@ describe("permission and secret stress matrix", () => {
     await fs.writeFile(syncPath, "abc");
     await fs.writeFile(asyncPath, "abc");
 
-    const realpathSync = fsSync.realpathSync.bind(fsSync);
-    vi.spyOn(fsSync, "realpathSync").mockImplementationOnce((target, options) => {
+    const resolvePath = realpath.realpathSync;
+    const resolveSpy = vi.spyOn(realpath, "realpathSync").mockImplementationOnce((target) => {
       fsSync.appendFileSync(syncPath, "def");
-      return realpathSync(target, options as never);
+      return resolvePath(target);
     });
     expect(() => readSecretFileSync(syncPath, "sync token", { maxBytes: 3 })).toThrow(
       expect.objectContaining({ code: "too-large" }),
     );
+    resolveSpy.mockRestore();
 
-    const realpath = fsSync.realpathSync.native;
-    vi.spyOn(fsSync.realpathSync, "native").mockImplementationOnce((target, options) => {
+    const nativeRealpath = realpath.realpathSync.native;
+    vi.spyOn(realpath.realpathSync, "native").mockImplementationOnce((target) => {
       fsSync.appendFileSync(asyncPath, "def");
-      return realpath(target, options as never);
+      return nativeRealpath(target);
     });
     await expect(readSecretFile(asyncPath, "async token", { maxBytes: 3 })).rejects.toMatchObject({
       code: "too-large",

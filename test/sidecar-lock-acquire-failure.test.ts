@@ -1,10 +1,10 @@
-import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { pauseSidecarSnapshotOpen } from "./helpers/sidecar-snapshot.js";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { configureFsSafeNative } from "../src/native-config.js";
+import { realpathSync } from "../src/realpath.js";
 import { root } from "../src/root.js";
 import { createSidecarLockManager, withSidecarLock } from "../src/sidecar-lock.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
@@ -127,7 +127,7 @@ describe("asynchronous sidecar lock acquisition failures", () => {
       error: cleanupError,
       suppressed: acquisitionError,
     });
-    await expect(fs.access(lockPath)).resolves.toBeUndefined();
+    expect((await fs.lstat(lockPath)).isFile()).toBe(true);
     expect(manager.heldEntries()).toEqual([]);
 
     rm.mockRestore();
@@ -165,7 +165,7 @@ describe("asynchronous sidecar lock acquisition failures", () => {
     configureFsSafeNative({ mode: "off" });
     const directory = await tempRoot("fs-safe-sidecar-realpath-failure-");
     const targetPath = path.join(directory, "state.json");
-    vi.spyOn(fsSync.realpathSync, "native").mockImplementationOnce(() => {
+    vi.spyOn(realpathSync, "native").mockImplementationOnce(() => {
       throw Object.assign(new Error("unavailable"), { code: "EIO" });
     });
     const manager = createSidecarLockManager(`realpath-failure-${Date.now()}-${Math.random()}`);

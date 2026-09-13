@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import syncFs, { type BigIntStats, type Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import {
   assertDestinationHardlinkPolicy,
   assertDestinationHardlinkPolicySync,
@@ -300,7 +301,9 @@ export async function replaceFileAtomicWithDirectorySync(
     if (options.renameIdentity !== "verify-content-with-lock") {
       return await replaceFileAtomicUnserialized(options, syncParent);
     }
-    await (options.fileSystem?.promises ?? fs).mkdir(path.dirname(filePath), {
+    const fsModule = options.fileSystem?.promises ?? fs;
+    const dir = path.dirname(filePath);
+    await fsModule.mkdir(fsModule === fs ? recursiveMkdirPath(dir) : dir, {
       recursive: true,
       mode: options.dirMode ?? 0o700,
     });
@@ -323,7 +326,7 @@ async function replaceFileAtomicUnserialized(
   const tempOwner = new AsyncAtomicTempOwner(tempPath);
   let originalError: unknown;
   try {
-    await fsModule.mkdir(dir, { recursive: true, mode: dirMode });
+    await fsModule.mkdir(fsModule === fs ? recursiveMkdirPath(dir) : dir, { recursive: true, mode: dirMode });
     await applyDirectoryMode({ fsModule, dirPath: dir, mode: dirMode });
     tempOwner.start();
     tempOwner.adopt(await writeTempFile({
@@ -397,7 +400,9 @@ export function replaceFileAtomicSync(
   if (options.renameIdentity !== "verify-content-with-lock") {
     return replaceFileAtomicSyncUnserialized(options);
   }
-  (options.fileSystem ?? syncFs).mkdirSync(path.dirname(filePath), {
+  const fsModule = options.fileSystem ?? syncFs;
+  const dir = path.dirname(filePath);
+  fsModule.mkdirSync(fsModule === syncFs ? recursiveMkdirPath(dir) : dir, {
     recursive: true,
     mode: options.dirMode ?? 0o700,
   });
@@ -429,7 +434,7 @@ function replaceFileAtomicSyncUnserialized(
   const tempOwner = new SyncAtomicTempOwner(tempPath);
   let originalError: unknown;
   try {
-    fsModule.mkdirSync(dir, { recursive: true, mode: dirMode });
+    fsModule.mkdirSync(fsModule === syncFs ? recursiveMkdirPath(dir) : dir, { recursive: true, mode: dirMode });
     applyDirectoryModeSync({ fsModule, dirPath: dir, mode: dirMode, fchmodSync });
     tempOwner.start();
     tempOwner.adopt(writeTempFileSync({

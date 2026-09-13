@@ -155,6 +155,10 @@ describe("batch queue transition failures", () => {
     await expect(fs.access(earlier.deliveredPath)).rejects.toMatchObject({ code: "ENOENT" });
     await expectClaimLinks(paths.jsonPath, paths.processingPath!);
     vi.restoreAllMocks();
+    vi.spyOn(fs, "readdir").mockImplementation(async (...args) => {
+      if (args[0] === queueDir) return (await realReaddir(queueDir)).sort();
+      return await realReaddir(...args);
+    });
     await expect(load()).resolves.toEqual([{ version: 0 }, { version: 1 }]);
   });
 });

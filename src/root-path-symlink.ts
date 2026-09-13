@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { isNotFoundPathError, isSymlinkOpenError } from "./path.js";
+import { realpathSync } from "./realpath.js";
 import {
   resolvePathViaExistingAncestor,
   resolvePathViaExistingAncestorSync,
@@ -31,7 +32,7 @@ export async function resolveSymlinkHopPath(
   options: ResolveSymlinkHopOptions = {},
 ): Promise<string> {
   try {
-    return path.resolve(fs.realpathSync.native(symlinkPath));
+    return path.resolve(realpathSync.native(symlinkPath));
   } catch (error) {
     normalizeSymlinkResolutionError(error, options);
     const linkTarget = fs.readlinkSync(symlinkPath);
@@ -44,7 +45,7 @@ export function resolveSymlinkHopPathSync(
   options: ResolveSymlinkHopOptions = {},
 ): string {
   try {
-    return path.resolve(fs.realpathSync(symlinkPath));
+    return path.resolve(realpathSync(symlinkPath));
   } catch (error) {
     normalizeSymlinkResolutionError(error, options);
     const linkTarget = fs.readlinkSync(symlinkPath);

@@ -12,6 +12,7 @@ import {
   resolvePackedRootDir,
 } from "../src/archive.js";
 import { __resetFsSafeNativeConfigForTest, configureFsSafeNative } from "../src/native-config.js";
+import { realpathSync } from "../src/realpath.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import {
   buildRandomTempFilePath,
@@ -33,21 +34,20 @@ async function withRealpathSymlinkRebindRace<T>(params: {
   symlinkTarget: string;
   run: () => Promise<T>;
 }): Promise<T> {
-  const realRealpath = fsSync.realpathSync.native;
+  const realRealpath = realpathSync.native;
   let flipped = false;
   const realpathSpy = vi
-    .spyOn(fsSync.realpathSync, "native")
-    .mockImplementation((...args: Parameters<typeof fsSync.realpathSync.native>) => {
-      const filePath = String(args[0]);
+    .spyOn(realpathSync, "native")
+    .mockImplementation((filePath) => {
       if (!flipped && params.shouldFlip(filePath)) {
         flipped = true;
-        const resolved = realRealpath(...args);
+        const resolved = realRealpath(filePath);
         fsSync.rmSync(params.symlinkPath, { recursive: true, force: true });
         fsSync.symlinkSync(params.symlinkTarget, params.symlinkPath,
           process.platform === "win32" ? "junction" : undefined);
         return resolved;
       }
-      return realRealpath(...args);
+      return realRealpath(filePath);
     });
   try {
     return await params.run();

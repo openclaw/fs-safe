@@ -42,6 +42,16 @@ Vitest. Tests live in `test/` and follow `*.test.ts`. Run a single file with:
 pnpm test test/archive.test.ts
 ```
 
+With Bun 1.4.2 installed, run the same suite in Bun and its child workers:
+
+```bash
+pnpm test:bun
+```
+
+Keep the Node/pnpm build toolchain above. `test:bun` verifies the actual worker
+runtime and preserves pnpm lifecycle metadata for package-tooling tests. CI runs
+this lane with the host native binding on Linux, macOS, and Windows.
+
 Use `vi.mock` sparingly. Most tests should drive real disk operations in a `mkdtemp`-created scratch directory, asserting on observable behavior. The library has [test hooks](testing.md) for the rare cases where you need to inject a TOCTOU race deterministically.
 
 Vitest timeouts do not cancel filesystem promises. Shared fixtures with expensive

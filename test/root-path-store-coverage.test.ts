@@ -12,6 +12,7 @@ import {
   resolveAbsolutePathForWrite,
 } from "../src/absolute-path.js";
 import { fileStore, fileStoreSync } from "../src/file-store.js";
+import { realpathSync } from "../src/realpath.js";
 import {
   ensureDirectoryWithinRoot,
   pathScope,
@@ -75,7 +76,7 @@ describe("absolute path failure coverage", () => {
       });
 
     const denied = Object.assign(new Error("permission denied"), { code: "EACCES" });
-    vi.spyOn(fsSync.realpathSync, "native").mockImplementationOnce(() => { throw denied; });
+    vi.spyOn(realpathSync, "native").mockImplementationOnce(() => { throw denied; });
     await expect(resolveAbsolutePathForRead(path.join(root, "value.txt"))).rejects.toBe(denied);
   });
 
@@ -144,14 +145,14 @@ describe("absolute path failure coverage", () => {
 
     vi.restoreAllMocks();
     const target = path.join(root, "new.txt");
-    const realRealpath = fsSync.realpathSync.native;
+    const realRealpath = realpathSync.native;
     let rejected = false;
-    vi.spyOn(fsSync.realpathSync, "native").mockImplementation((candidate, options) => {
+    vi.spyOn(realpathSync, "native").mockImplementation((candidate) => {
       if (!rejected && String(candidate) === root) {
         rejected = true;
         throw Object.assign(new Error("canonicalization unavailable"), { code: "EACCES" });
       }
-      return realRealpath(candidate, options);
+      return realRealpath(candidate);
     });
     await expect(resolveAbsolutePathForWrite(target)).resolves.toMatchObject({ path: target });
   });

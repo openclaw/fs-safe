@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, vi } from "vitest";
 import { createSecretFileAtomic, writeSecretFileAtomic } from "../src/secret.js";
+import { realpathSync } from "../src/realpath.js";
 import { itPosix, useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -21,7 +22,7 @@ describe("secret directory admission receipts", () => {
       await fs.mkdir(parent, { mode: 0o700 });
       const filePath = path.join(parent, phase === "ancestor" ? "inner/token" : "token");
       const lstat = fsSync.lstatSync.bind(fsSync);
-      const realpath = fsSync.realpathSync.native;
+      const realpath = realpathSync.native;
       let inspections = 0;
       let admitted = false;
       let swapped = false;
@@ -39,9 +40,9 @@ describe("secret directory admission receipts", () => {
         if (isParent && options?.bigint && ++inspections >= 3) admitted = true;
         return value;
       });
-      vi.spyOn(fsSync.realpathSync, "native").mockImplementation((target, options) => {
+      vi.spyOn(realpathSync, "native").mockImplementation((target) => {
         if (phase === "final parent" && admitted && String(target) === parent && !swapped) swap();
-        return realpath(target, options);
+        return realpath(target);
       });
 
       const failure = await write({ rootDir, filePath, content: "synthetic" }).catch((error: unknown) => error);

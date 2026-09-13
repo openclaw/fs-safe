@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
 import { isNotFoundPathError, isPathInside } from "./path.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
+import { realpathSync } from "./realpath.js";
 import { hardlinkedPathNotAllowedError, outsideWorkspaceError } from "./root-errors.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 
@@ -30,7 +31,7 @@ export async function inheritWriteTargetMode(params: {
     try {
       // A parent can change after guarded resolution. Do not inherit metadata
       // from an outside inode, even if the parent is restored before publication.
-      const realPath = fsSync.realpathSync.native(params.targetPath);
+      const realPath = realpathSync.native(params.targetPath);
       if (!isPathInside(params.rootWithSep, realPath)) throw outsideWorkspaceError();
       await inspectFileIdentity(async () => {
         const current = fsSync.statSync(realPath, { bigint: true });

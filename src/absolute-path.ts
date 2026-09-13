@@ -9,6 +9,7 @@ import {
 } from "./directory-guard.js";
 import { FsSafeError, type FsSafeErrorCode } from "./errors.js";
 import { pathExists } from "./fs.js";
+import { realpathSync } from "./realpath.js";
 import { resolveRootPath } from "./root-path.js";
 
 export type AbsolutePathSymlinkPolicy = "reject" | "follow";
@@ -346,7 +347,7 @@ export async function canonicalPathFromExistingAncestor(filePath: string): Promi
   }
   let canonicalAncestor = ancestor;
   try {
-    canonicalAncestor = fsSync.realpathSync.native(ancestor);
+    canonicalAncestor = realpathSync.native(ancestor);
   } catch {
     // Keep lexical path when the existing ancestor cannot be canonicalized.
   }
@@ -362,7 +363,7 @@ export async function resolveAbsolutePathForRead(
   const normalized = assertAbsolutePathInput(filePath);
   let canonicalPath: string;
   try {
-    canonicalPath = fsSync.realpathSync.native(normalized);
+    canonicalPath = realpathSync.native(normalized);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       throw new FsSafeError("not-found", "path not found", { cause: err });

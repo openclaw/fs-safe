@@ -30,6 +30,8 @@ import type {
 } from "./sidecar-lock-types.js";
 import { getFsSafeLockConfig } from "./lock-config.js";
 import { sleepSync } from "./timing.js";
+import { realpathSync } from "./realpath.js";
+import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 
 export type FileLockSyncAcquireOptions<TPayload extends Record<string, unknown>> = {
   lockPath?: string;
@@ -165,12 +167,12 @@ function createSyncHeldLockHandle(held: SyncHeldLock): FileLockSyncHandle {
 
 function canonicalLockParentSync(parent: string): string {
   // Match Root's async realpath, including Windows short-name expansion.
-  return process.platform === "win32" ? fs.realpathSync.native(parent) : fs.realpathSync(parent);
+  return process.platform === "win32" ? realpathSync.native(parent) : realpathSync(parent);
 }
 
 function normalizeTargetPath(targetPath: string): string {
   const resolved = path.resolve(targetPath);
-  fs.mkdirSync(path.dirname(resolved), { recursive: true });
+  fs.mkdirSync(recursiveMkdirPath(path.dirname(resolved)), { recursive: true });
   try {
     return path.join(canonicalLockParentSync(path.dirname(resolved)), path.basename(resolved));
   } catch {

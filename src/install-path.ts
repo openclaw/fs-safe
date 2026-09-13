@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import fsSync from "node:fs";
 import path from "node:path";
 import { isPathInside } from "./path.js";
+import { realpathSync } from "./realpath.js";
 
 export function safeDirName(input: string): string {
   const trimmed = input.trim();
@@ -74,7 +75,7 @@ export async function assertCanonicalPathWithinBase(params: {
   } else if (!baseLstat.isDirectory()) {
     throw new Error(`Invalid ${params.boundaryLabel}: base directory must be a directory`);
   }
-  const baseRealPath = fsSync.realpathSync.native(baseDir);
+  const baseRealPath = realpathSync.native(baseDir);
 
   const validateDirectory = async (dirPath: string): Promise<void> => {
     const resolvedDirPath = path.resolve(dirPath);
@@ -90,7 +91,7 @@ export async function assertCanonicalPathWithinBase(params: {
     } else if (!dirLstat.isDirectory()) {
       throw new Error(`Invalid path: must stay within ${params.boundaryLabel}`);
     }
-    const dirRealPath = fsSync.realpathSync.native(dirPath);
+    const dirRealPath = realpathSync.native(dirPath);
     if (!isPathInside(baseRealPath, dirRealPath)) {
       throw new Error(`Invalid path: must stay within ${params.boundaryLabel}`);
     }

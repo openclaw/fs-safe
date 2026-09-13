@@ -10,6 +10,8 @@ import {
 } from "./file-store.js";
 import { FsSafeError } from "./errors.js";
 import { isNotFoundPathError } from "./path.js";
+import { realpathSync } from "./realpath.js";
+import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { throwFsSafeReadError } from "./root-errors.js";
 import {
   matchRootFileOpenFailure,
@@ -135,7 +137,7 @@ function throwTempWorkspaceOpenFailure(failure: RootFileOpenFailure): never {
 }
 
 async function ensurePrivateDirectory(dir: string, mode: number): Promise<void> {
-  await fs.mkdir(dir, { recursive: true, mode });
+  await fs.mkdir(recursiveMkdirPath(dir), { recursive: true, mode });
   const stat = fsSync.statSync(dir);
   if (!stat.isDirectory()) {
     throw new Error(`Temp root must be a directory: ${dir}`);
@@ -144,7 +146,7 @@ async function ensurePrivateDirectory(dir: string, mode: number): Promise<void> 
 }
 
 function ensurePrivateDirectorySync(dir: string, mode: number): void {
-  fsSync.mkdirSync(dir, { recursive: true, mode });
+  fsSync.mkdirSync(recursiveMkdirPath(dir), { recursive: true, mode });
   const stat = fsSync.statSync(dir);
   if (!stat.isDirectory()) {
     throw new Error(`Temp root must be a directory: ${dir}`);
@@ -165,7 +167,7 @@ async function createTempWorkspace(
   const requestedRoot = path.resolve(options.rootDir);
   let root = requestedRoot;
   try {
-    root = fsSync.realpathSync.native(requestedRoot);
+    root = realpathSync.native(requestedRoot);
   } catch {
     root = requestedRoot;
   }
@@ -271,7 +273,7 @@ export function tempWorkspaceSync(
   const requestedRoot = path.resolve(options.rootDir);
   let root = requestedRoot;
   try {
-    root = fsSync.realpathSync.native(requestedRoot);
+    root = realpathSync.native(requestedRoot);
   } catch {
     root = requestedRoot;
   }

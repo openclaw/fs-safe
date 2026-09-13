@@ -44,6 +44,7 @@ import {
 import { readOpenedFileSafely, type ReadResult } from "./read-opened-file.js";
 import { cleanupPinnedFilePath } from "./replace-file-temp-owner.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
+import { realpathSync } from "./realpath.js";
 import { isNonRegularWriteOpenError, resolveNonblockingWriteFlag } from "./write-open-flags.js";
 import { resolveRootPath } from "./root-path.js";
 import { openRootDirectoryListing, listDirectoryPath, pathStatFromStats } from "./root-directory-list.js";
@@ -843,7 +844,7 @@ async function openWritableFileInRoot(
     : await prepareRootWriteTarget(rootReal, resolved, params.assertBeforeMutation);
   try {
     assertFinalSymlinkRejected(ioPath, params.mutationSymlinks !== undefined);
-    const resolvedRealPath = params.mutationSymlinks === undefined ? fsSync.realpathSync.native(ioPath) : ioPath;
+    const resolvedRealPath = params.mutationSymlinks === undefined ? realpathSync.native(ioPath) : ioPath;
     if (!isPathInside(rootWithSep, resolvedRealPath)) {
       throw outsideWorkspaceError();
     }

@@ -1,6 +1,7 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { realpathSync } from "./realpath.js";
 
 export type WalkEntryKind = "file" | "directory" | "symlink" | "other";
 export type WalkSymlinkPolicy = "skip" | "follow" | "include";
@@ -139,7 +140,7 @@ export function walkDirectorySync(
     if (options.maxDepth !== undefined && depth > options.maxDepth) return;
     let realDir: string;
     try {
-      realDir = fsSync.realpathSync(dir);
+      realDir = realpathSync(dir);
     } catch (error) {
       recordFailedDir(result, root, dir, depth, error);
       return;
@@ -201,7 +202,7 @@ export async function walkDirectory(
     if (options.maxDepth !== undefined && depth > options.maxDepth) return;
     let realDir: string;
     try {
-      realDir = fsSync.realpathSync.native(dir);
+      realDir = realpathSync.native(dir);
     } catch (error) {
       recordFailedDir(result, root, dir, depth, error);
       return;
