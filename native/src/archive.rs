@@ -123,8 +123,14 @@ fn open_tar_reader(
     cancelled: Arc<AtomicBool>,
     limits: TarMeterLimits,
 ) -> Result<TarMetadataMeter<Box<dyn Read + Send>>> {
-    let mut file = File::open(path).map_err(|error| io_error("open archive", error))?;
-    let decoded: Box<dyn Read + Send> = match format {
+    let file = File::open(path).map_err(|error| io_error("open archive", error))?;
+    open_tar_source(file, format, cancelled, limits)
+}
+
+fn open_tar_source<'a, R: Read + Seek + Send + 'a>(
+    mut file: R, format: ArchiveFormat, cancelled: Arc<AtomicBool>, limits: TarMeterLimits,
+) -> Result<TarMetadataMeter<Box<dyn Read + Send + 'a>>> {
+    let decoded: Box<dyn Read + Send + 'a> = match format {
         ArchiveFormat::TarZstd => Box::new(CancellationReader {
             inner: zstd::stream::read::Decoder::new(file)
                 .map_err(|error| io_error("open zstd archive", error))?,
@@ -178,7 +184,11 @@ fn inspect_tar(
     limits: InspectLimits,
     cancelled: Arc<AtomicBool>,
 ) -> Result<Vec<ArchiveEntryData>> {
-    let mut reader = open_tar_reader(path, format, cancelled, limits.tar)?;
+    let reader = open_tar_reader(path, format, cancelled, limits.tar)?;
+    inspect_tar_reader(reader)
+}
+
+fn inspect_tar_reader<R: Read>(mut reader: TarMetadataMeter<R>) -> Result<Vec<ArchiveEntryData>> {
     let mut result = Vec::new();
     let mut buffer = [0; 65536];
     while reader.read(&mut buffer).map_err(|error| io_error("admit tar", error))? != 0 {
@@ -837,6 +847,128 @@ impl Task for ReadZipBufferTask {
     }
 }
 
+struct TarBufferData {
+    input: Buffer,
+    format: ArchiveFormat,
+    limits: TarMeterLimits,
+    members: Vec<ArchiveEntryData>,
+}
+
+#[napi]
+pub struct NativeTarBufferReader {
+    data: Arc<TarBufferData>,
+}
+
+#[napi]
+impl NativeTarBufferReader {
+    #[napi(getter)]
+    pub fn entries(&self) -> Vec<NativeArchiveEntry> {
+        self.data.members.iter().map(|entry| NativeArchiveEntry {
+            index: entry.index, path: entry.path.clone(), kind: entry.kind.clone(),
+            size: entry.size as f64, mode: entry.mode,
+        }).collect()
+    }
+
+    #[napi]
+    pub fn read_entry(&self, index: u32, max_bytes: f64, signal: Option<AbortSignal>) -> Result<AsyncTask<ReadTarBufferTask>> {
+        if !max_bytes.is_finite() || !(0.0..=MAX_SAFE_INTEGER as f64).contains(&max_bytes)
+            || max_bytes.fract() != 0.0 {
+            return Err(Error::new(Status::InvalidArg, "maxBytes must be a non-negative safe integer"));
+        }
+        let cancelled = signal.as_ref().map(cancellation).unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+        Ok(AsyncTask::with_optional_signal(ReadTarBufferTask {
+            data: Arc::clone(&self.data), index: index as usize, max_bytes: max_bytes as u64, cancelled,
+        }, signal))
+    }
+}
+
+pub struct OpenTarBufferTask {
+    buffer: Option<Buffer>,
+    format: ArchiveFormat,
+    limits: TarMeterLimits,
+    cancelled: Arc<AtomicBool>,
+}
+
+impl Task for OpenTarBufferTask {
+    type Output = NativeTarBufferReader;
+    type JsValue = NativeTarBufferReader;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        check_cancelled(&self.cancelled)?;
+        let input = self.buffer.take().ok_or_else(|| Error::new(Status::GenericFailure, "TAR buffer already consumed"))?;
+        let reader = open_tar_source(Cursor::new(input.as_ref()), self.format, Arc::clone(&self.cancelled), self.limits)?;
+        let members = inspect_tar_reader(reader)?;
+        Ok(NativeTarBufferReader { data: Arc::new(TarBufferData { input, format: self.format, limits: self.limits, members }) })
+    }
+
+    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
+        check_cancelled(&self.cancelled)?;
+        Ok(output)
+    }
+}
+
+// Same private, immutable, unpooled borrowing contract as the ZIP buffer reader.
+#[napi(js_name = "openTarBufferNative")]
+pub fn open_tar_buffer_native(buffer: Buffer, kind: String, limits: NativeTarLimits, signal: Option<AbortSignal>) -> Result<AsyncTask<OpenTarBufferTask>> {
+    let format = parse_format(&kind).map_err(|error| Error::new(Status::InvalidArg, error.reason))?;
+    if matches!(format, ArchiveFormat::Zip) {
+        return Err(Error::new(Status::InvalidArg, "zip is not a tar stream"));
+    }
+    let limits = limits.checked()?;
+    let cancelled = signal.as_ref().map(cancellation).unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+    Ok(AsyncTask::with_optional_signal(OpenTarBufferTask { buffer: Some(buffer), format, limits, cancelled }, signal))
+}
+
+pub struct ReadTarBufferTask {
+    data: Arc<TarBufferData>,
+    index: usize,
+    max_bytes: u64,
+    cancelled: Arc<AtomicBool>,
+}
+
+impl Task for ReadTarBufferTask {
+    type Output = Vec<u8>;
+    type JsValue = Buffer;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        check_cancelled(&self.cancelled)?;
+        let member = self.data.members.get(self.index)
+            .ok_or_else(|| Error::new(Status::InvalidArg, "archive entry not found"))?;
+        if member.kind != "file" {
+            return Err(Error::new(Status::InvalidArg, "archive entry is not a file"));
+        }
+        if member.size > self.max_bytes { return Err(limit_error("archive-entry-extracted-size-exceeds-limit")); }
+        let input = self.data.input.as_ref();
+        if matches!(self.data.format, ArchiveFormat::Tar) && !input.starts_with(&[0x1f, 0x8b]) {
+            // Complete admission already checked this immutable raw TAR, including
+            // unselected members and EOF. Its retained payload range needs no replay.
+            let range = member.offset.checked_add(member.size)
+                .and_then(|end| Some((usize::try_from(member.offset).ok()?, usize::try_from(end).ok()?)))
+                .and_then(|(start, end)| input.get(start..end))
+                .ok_or_else(|| Error::new(Status::InvalidArg, "archive-header-invalid: truncated TAR payload"))?;
+            let mut output = Vec::with_capacity(range.len());
+            for chunk in range.chunks(65536) {
+                check_cancelled(&self.cancelled)?;
+                output.extend_from_slice(chunk);
+            }
+            return Ok(output);
+        }
+        let mut reader = open_tar_source(Cursor::new(input), self.data.format, Arc::clone(&self.cancelled), self.data.limits)?;
+        skip_tar_to(&mut reader, &mut 0, member.offset)?;
+        let output = read_bounded(&mut (&mut reader).take(member.size), self.max_bytes, Arc::clone(&self.cancelled))?;
+        if output.len() as u64 != member.size {
+            return Err(Error::new(Status::InvalidArg, "archive-header-invalid: truncated TAR payload"));
+        }
+        drain_tar_metadata(&mut reader).map_err(|error| io_error("finish tar", error))?;
+        Ok(output)
+    }
+
+    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
+        check_cancelled(&self.cancelled)?;
+        Ok(output.into())
+    }
+}
+
 pub struct ReadEntryTask {
     path: String,
     format: ArchiveFormat,
@@ -932,6 +1064,27 @@ mod tests {
         drop(task);
         let original = Arc::try_unwrap(archive).ok().unwrap().into_inner().unwrap().into_inner().into_inner();
         assert_eq!(original.as_ptr(), input_pointer, "input bytes must not be copied");
+    }
+
+    #[test]
+    fn buffered_tar_retains_the_input_allocation_across_reader_and_tasks() {
+        let raw = fixture_tar();
+        for (format, bytes) in [
+            (ArchiveFormat::Tar, raw.clone()), (ArchiveFormat::Tar, gzip(&raw)),
+            (ArchiveFormat::TarZstd, zstd::stream::encode_all(raw.as_slice(), 1).unwrap()),
+            (ArchiveFormat::TarBzip2, bzip(&raw)),
+        ] {
+            let input = Buffer::from(bytes);
+            let pointer = input.as_ptr();
+            let mut open = OpenTarBufferTask { buffer: Some(input), format, limits: limits(10).tar, cancelled: Arc::new(AtomicBool::new(false)) };
+            let reader = open.compute().unwrap();
+            let mut task = ReadTarBufferTask { data: Arc::clone(&reader.data), index: 1, max_bytes: 3, cancelled: Arc::new(AtomicBool::new(false)) };
+            drop(reader);
+            assert_eq!(task.data.input.as_ptr(), pointer, "input bytes must not be copied");
+            assert_eq!(task.compute().unwrap(), b"two");
+            task.index = 0;
+            assert_eq!(task.compute().unwrap(), b"one");
+        }
     }
 
     fn fixture_tar() -> Vec<u8> {

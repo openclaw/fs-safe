@@ -41,8 +41,8 @@ for (const backend of ["off", "auto-missing", "auto", "require"] as const) {
         const native = paxNative!;
         inspect = vi.fn(native.inspectArchiveNative.bind(native));
         extract = vi.fn(native.extractArchiveNative.bind(native));
-        read = vi.fn(native.readArchiveEntryNative.bind(native));
-        __setNativeLoaderForTest(() => ({ ...native, inspectArchiveNative: inspect, extractArchiveNative: extract, readArchiveEntryNative: read }));
+        read = vi.fn(native.openTarBufferNative.bind(native));
+        __setNativeLoaderForTest(() => ({ ...native, inspectArchiveNative: inspect, extractArchiveNative: extract, openTarBufferNative: read }));
       }
     });
 
@@ -197,10 +197,10 @@ for (const backend of ["off", "auto-missing", "auto", "require"] as const) {
         await expect(fs.stat(stagedPath!)).rejects.toMatchObject({ code: "ENOENT" });
         expect((await fs.readdir(path.dirname(fixture.destDir))).sort()).toEqual([path.basename(fixture.archivePath), "out"]);
 
-        read.mockImplementationOnce(async (...args: Parameters<NonNullable<typeof paxNative>["readArchiveEntryNative"]>) => {
-          await fs.writeFile(args[0], gzip ? gzipSync(bytes) : bytes);
-          args[4] = { ...args[4], maxDecodedBytes: canonical.length };
-          return paxNative!.readArchiveEntryNative(...args);
+        await fs.writeFile(fixture.archivePath, gzip ? gzipSync(bytes) : bytes);
+        read.mockImplementationOnce(async (...args: Parameters<NonNullable<typeof paxNative>["openTarBufferNative"]>) => {
+          args[2] = { ...args[2], maxDecodedBytes: canonical.length };
+          return paxNative!.openTarBufferNative(...args);
         });
         await expect(readArchiveEntry(fixture.archivePath, "value", { maxBytes: 7 })).rejects.toMatchObject({
           name: code === "archive-header-invalid" ? "ArchiveFormatError" : "ArchiveLimitError", code,
@@ -285,8 +285,8 @@ for (const backend of ["off", "auto-missing", "auto", "require"] as const) {
         });
         expect(await readArchiveEntry(fixture.archivePath, "raw", { maxBytes: 700 })).toEqual(Buffer.alloc(700, 0x61));
         if (backend === "auto" || backend === "require") {
-          expect(inspect).toHaveBeenLastCalledWith(expect.any(String), "tar", resolveTarMeterLimits(), expect.any(AbortSignal));
-          expect(read).toHaveBeenLastCalledWith(expect.any(String), "tar", "raw", 700, resolveTarMeterLimits(), expect.any(AbortSignal));
+          expect(inspect).not.toHaveBeenCalled();
+          expect(read).toHaveBeenLastCalledWith(expect.any(Buffer), "tar", resolveTarMeterLimits(), expect.any(AbortSignal));
         }
         const smallFirst = await setup(tarFixture([member, { path: "large", body: Buffer.alloc(1000) }]), gzip);
         expect(await readArchiveEntry(smallFirst.archivePath, "value", { maxBytes: 7 })).toEqual(Buffer.from("payload"));
@@ -322,9 +322,9 @@ for (const backend of ["off", "auto-missing", "auto", "require"] as const) {
         expect(await fs.readFile(path.join(fixture.destDir, "sentinel"), "utf8")).toBe("unchanged");
         await expect(readArchiveEntry(fixture.archivePath, "value", { maxBytes: 7 })).rejects.toMatchObject(invalid);
         if (backend === "auto" || backend === "require") {
-          expect(inspect).toHaveBeenCalledTimes(2);
+          expect(inspect).toHaveBeenCalledTimes(1);
           expect(extract).not.toHaveBeenCalled();
-          expect(read).not.toHaveBeenCalled();
+          expect(read).toHaveBeenCalledTimes(1);
         }
       });
 

@@ -32,13 +32,18 @@ for (const { mode, format } of routes) {
       configureFsSafeNative({ mode });
       if (mode === "require") {
         const native = paxNative!;
-        inspectNative = vi.fn(format === "zip" ? native.openZipBufferNative.bind(native) : native.inspectArchiveNative.bind(native));
+        inspectNative = vi.fn(format === "zip" ? native.openZipBufferNative.bind(native) : native.openTarBufferNative.bind(native));
         readNative = vi.fn(native.readArchiveEntryNative.bind(native));
         extractNative = vi.fn(native.extractArchiveNative.bind(native));
         __setNativeLoaderForTest(() => ({ ...native,
-          inspectArchiveNative: format === "zip" ? native.inspectArchiveNative.bind(native) : inspectNative,
+          inspectArchiveNative: native.inspectArchiveNative.bind(native),
           readArchiveEntryNative: readNative, extractArchiveNative: extractNative,
           openZipBufferNative: async (...args) => {
+            const reader = await inspectNative(...args);
+            readNative = vi.fn(reader.readEntry.bind(reader));
+            return { entries: reader.entries, readEntry: readNative };
+          },
+          openTarBufferNative: async (...args) => {
             const reader = await inspectNative(...args);
             readNative = vi.fn(reader.readEntry.bind(reader));
             return { entries: reader.entries, readEntry: readNative };
@@ -95,12 +100,8 @@ for (const { mode, format } of routes) {
       nativeRead(true);
       if (mode === "require") {
         const inspected = await inspectNative.mock.results[0]!.value;
-        // ZIP selects the retained manifest index; TAR retains its raw spelling.
-        if (format === "zip") {
-          expect(inspected.entries.some((entry: { index: number }) => entry.index === readNative.mock.calls[0]![0])).toBe(true);
-        } else {
-          expect(inspected.some((entry: { path: string }) => entry.path === readNative.mock.calls[0]![2])).toBe(true);
-        }
+        // Both native readers select the retained manifest index.
+        expect(inspected.entries.some((entry: { index: number }) => entry.index === readNative.mock.calls[0]![0])).toBe(true);
       }
     });
 

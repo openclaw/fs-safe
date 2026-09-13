@@ -34,7 +34,6 @@ import { getNativeBinding, type NativeBinding } from "./native.js";
 import type { NativeArchiveEntry } from "./native-binding.js";
 import { admitZipBuffer } from "./archive-zip-admission.js";
 import { resolveExtractLimits, resolveTarMeterLimits } from "./archive-limits.js";
-import { tempFile } from "./temp-target.js";
 
 const ZIP_UNIX_FILE_TYPE_MASK = 0o170000;
 const ZIP_UNIX_SYMLINK_TYPE = 0o120000;
@@ -114,7 +113,7 @@ async function readArchiveInput(archivePath: string): Promise<Buffer> {
       return stat;
     }, opened);
 
-    // Native ZIP workers borrow this private buffer. A pooled allocation could
+    // Native archive workers borrow this private buffer. A pooled allocation could
     // share its ArrayBuffer with unrelated JS buffers while the worker runs.
     return await readBoundedAsync(DEFAULT_MAX_ARCHIVE_BYTES_ZIP,
       async (buffer, length) => (await handle.read(buffer, 0, length, null)).bytesRead,
@@ -167,11 +166,11 @@ async function readZipEntry(buffer: Buffer, entryPath: string, maxBytes: number)
   return await readStreamBounded(stream.pipe(integrity), maxBytes);
 }
 
-async function readTarEntry(archivePath: string, entryPath: string, maxBytes: number): Promise<Buffer> {
+async function readTarEntry(archiveBuffer: Buffer, entryPath: string, maxBytes: number): Promise<Buffer> {
   const seenPaths = new Set<string>();
   let selected: AdmittedTarMember | undefined;
   const limits = resolveTarMeterLimits();
-  await inspectTar({ archivePath, limits, onMember(info) {
+  await inspectTar({ archiveBuffer, limits, onMember(info) {
     const normalized = canonicalEntryPath(info.path);
     if (seenPaths.has(normalized)) {
       throw new ArchiveSecurityError("entry-path", `archive contains duplicate entry path: ${formatErrorDetail(normalized)}`);
@@ -185,7 +184,7 @@ async function readTarEntry(archivePath: string, entryPath: string, maxBytes: nu
   }
   if (selected.size > maxBytes) throw new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT);
   let result: Buffer | undefined;
-  await replayTar({ archivePath, limits, members: [selected], async consume(_member, payload) {
+  await replayTar({ archiveBuffer, limits, members: [selected], async consume(_member, payload) {
     result = await readStreamBounded(payload, maxBytes);
   } });
   return result!;
@@ -223,12 +222,15 @@ function throwNativeReadError(error: unknown): never {
   throw error;
 }
 
-async function readNativeZipEntry(
-  native: NativeBinding, buffer: Buffer, requested: string, displayPath: string, maxBytes: number, physicalCount: number,
+async function readNativeBufferEntry(
+  native: NativeBinding, buffer: Buffer, kind: ArchiveKind, requested: string, displayPath: string, maxBytes: number, physicalCount?: number,
 ): Promise<Buffer> {
   try {
     const signal = new AbortController().signal;
-    const reader = await native.openZipBufferNative(buffer, resolveTarMeterLimits(), AbortSignal.any([signal]));
+    const limits = resolveTarMeterLimits();
+    const reader = kind === "zip"
+      ? await native.openZipBufferNative(buffer, limits, AbortSignal.any([signal]))
+      : await native.openTarBufferNative(buffer, kind, limits, AbortSignal.any([signal]));
     const selected = selectNativeEntry(reader.entries, requested, displayPath, physicalCount);
     return await reader.readEntry(selected.index, maxBytes, AbortSignal.any([signal]));
   } catch (error) {
@@ -254,41 +256,8 @@ export async function readArchiveEntry(
     ? admitZipBuffer(buffer, resolveExtractLimits())
     : undefined;
   const native = getNativeBinding();
-  if (kind === "zip" && native) {
-    return await readNativeZipEntry(native, buffer, requestedEntry, entryPath, options.maxBytes, physicalCount!);
-  }
-  if (!native) {
-    assertPortableArchiveKind(kind);
-    if (kind === "zip") return await readZipEntry(buffer, requestedEntry, options.maxBytes);
-  }
-  const staged = await tempFile({ prefix: "fs-safe-archive-read", fileName: "archive.bin" });
-  try {
-    await fs.writeFile(staged.path, buffer, { flag: "wx", mode: 0o600 });
-    if (native) {
-      try {
-        const signal = new AbortController().signal;
-        const limits = resolveTarMeterLimits();
-        const manifest = await native.inspectArchiveNative(
-          staged.path,
-          kind,
-          limits,
-          signal,
-        );
-        const selected = selectNativeEntry(manifest, requestedEntry, entryPath);
-        return await native.readArchiveEntryNative(
-          staged.path,
-          kind,
-          selected.path,
-          options.maxBytes,
-          limits,
-          signal,
-        );
-      } catch (error) {
-        throwNativeReadError(error);
-      }
-    }
-    return await readTarEntry(staged.path, requestedEntry, options.maxBytes);
-  } finally {
-    await staged.cleanup();
-  }
+  if (native) return await readNativeBufferEntry(native, buffer, kind, requestedEntry, entryPath, options.maxBytes, physicalCount);
+  assertPortableArchiveKind(kind);
+  return kind === "zip" ? await readZipEntry(buffer, requestedEntry, options.maxBytes)
+    : await readTarEntry(buffer, requestedEntry, options.maxBytes);
 }

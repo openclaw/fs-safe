@@ -4,6 +4,26 @@ import { Writable } from "node:stream";
 import type { Gunzip } from "node:zlib";
 import { ArchiveFormatError } from "./archive-errors.js";
 
+function assertConsumedBoundary(consumed: number, size: number): void {
+  if (!Number.isSafeInteger(consumed) || consumed <= 0 || consumed > size) {
+    throw new ArchiveFormatError("invalid gzip consumed-input boundary");
+  }
+}
+
+/** Validate the same physical suffix when admission owns an in-memory input. */
+export async function validateGzipBufferTail(input: Buffer, consumed: number, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
+  assertConsumedBoundary(consumed, input.length);
+  for (let position = consumed; position < input.length; position += 65536) {
+    signal?.throwIfAborted();
+    if (input.subarray(position, position + 65536).some(byte => byte !== 0)) {
+      throw new ArchiveFormatError("nonzero gzip container padding");
+    }
+    if (position + 65536 < input.length) await new Promise<void>(resolve => setImmediate(resolve));
+  }
+  signal?.throwIfAborted();
+}
+
 /** Track physical input, not the sum of bytes consumed across separate writes:
  * gunzip can resume on a later chunk after leaving an earlier padding gap. */
 export class GzipInput extends Writable {
@@ -51,9 +71,7 @@ export async function validateGzipContainerTail(filePath: string, consumed: numb
   const handle = await fs.open(filePath, "r");
   try {
     const { size } = fsSync.fstatSync(handle.fd);
-    if (!Number.isSafeInteger(consumed) || consumed <= 0 || consumed > size) {
-      throw new ArchiveFormatError("invalid gzip consumed-input boundary");
-    }
+    assertConsumedBoundary(consumed, size);
     if (consumed === size) return;
     const buffer = Buffer.allocUnsafe(65536);
     let position = consumed;

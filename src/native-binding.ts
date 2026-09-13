@@ -78,6 +78,11 @@ export interface NativeWindowsSecurityFacts {
 }
 
 export interface NativeBinding {
+  /** Internal: same private, immutable input ownership as the ZIP buffer reader. */
+  openTarBufferNative(buffer: Buffer, kind: string, limits: TarMeterLimits, signal?: AbortSignal): Promise<{
+    readonly entries: NativeArchiveEntry[];
+    readEntry(index: number, maxBytes: number, signal?: AbortSignal): Promise<Buffer>;
+  }>;
   /** Internal: input remains private, unpooled and immutable until the reader is released. */
   openZipBufferNative(buffer: Buffer, limits: TarMeterLimits, signal?: AbortSignal): Promise<{
     readonly entries: NativeArchiveEntry[];

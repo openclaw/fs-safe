@@ -236,7 +236,7 @@ describe("bounded archive reads", () => {
   });
 
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
-    "closes the selected archive when private staging allocation fails",
+    "reads TAR without staging and closes the descriptor when temporary storage is blocked",
     async () => {
       const root = await tempRoot("fs-safe-archive-read-staging-failure-");
       const archivePath = path.join(root, "fixture.tar");
@@ -253,7 +253,7 @@ describe("bounded archive reads", () => {
         expect(descriptorsForFile(archivePath)).toEqual([]);
         for (let attempt = 0; attempt < 3; attempt += 1) {
           await expect(readArchiveEntry(archivePath, "value", { maxBytes: 2 }))
-            .rejects.toThrow("Unsafe fallback secure temp dir");
+            .resolves.toEqual(Buffer.from("ok"));
           expect(descriptorsForFile(archivePath)).toEqual([]);
         }
       } finally {

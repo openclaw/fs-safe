@@ -37,6 +37,7 @@ for (const backend of ["off", "auto-missing", "auto", "require"] as const) {
     () => {
       let inspect: ReturnType<typeof vi.fn> | undefined;
       let extract: ReturnType<typeof vi.fn> | undefined;
+      let open: ReturnType<typeof vi.fn> | undefined;
       let read: ReturnType<typeof vi.fn> | undefined;
 
       beforeEach(() => {
@@ -50,12 +51,16 @@ for (const backend of ["off", "auto-missing", "auto", "require"] as const) {
           const native = paxNative!;
           inspect = vi.fn(native.inspectArchiveNative.bind(native));
           extract = vi.fn(native.extractArchiveNative.bind(native));
-          read = vi.fn(native.readArchiveEntryNative.bind(native));
+          open = vi.fn(async (...args: Parameters<typeof native.openTarBufferNative>) => {
+            const reader = await native.openTarBufferNative(...args);
+            read = vi.fn(reader.readEntry.bind(reader));
+            return { entries: reader.entries, readEntry: read };
+          });
           __setNativeLoaderForTest(() => ({
             ...native,
             inspectArchiveNative: inspect!,
             extractArchiveNative: extract!,
-            readArchiveEntryNative: read!,
+            openTarBufferNative: open!,
           }));
         }
       });
@@ -96,7 +101,8 @@ for (const backend of ["off", "auto-missing", "auto", "require"] as const) {
         expect(selected.equals(payload)).toBe(true);
 
         if (backend === "auto" || backend === "require") {
-          expect(inspect).toHaveBeenCalledTimes(2);
+          expect(inspect).toHaveBeenCalledTimes(1);
+          expect(open).toHaveBeenCalledTimes(1);
           expect(extract).toHaveBeenCalledTimes(1);
           expect(read).toHaveBeenCalledTimes(1);
         }
