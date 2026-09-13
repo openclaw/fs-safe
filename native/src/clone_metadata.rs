@@ -20,7 +20,7 @@ fn metadata(path: &str) -> Option<Buffer> {
     let status = unsafe {
         libc::getattrlist(
             path.as_ptr(),
-            &mut attributes,
+            (&mut attributes as *mut libc::attrlist).cast(),
             result.as_mut_ptr().cast(),
             result.len(),
             0x21,
