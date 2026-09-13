@@ -13,24 +13,58 @@ import { useSuiteFixture } from "./helpers/suite-fixture.js";
 
 const COMMAND_TIMEOUT_MS = 20_000;
 const PROOF_TIMEOUT_MS = COMMAND_TIMEOUT_MS * 4;
+const DIAGNOSTIC_PREFIX = "FS_SAFE_ACL_DIAGNOSTIC:";
 
-function windowsCommand(command: string, args: string[], env: NodeJS.ProcessEnv): string {
+function safeDiagnostics(output: string): string {
+  const reports: Record<string, string | number | boolean>[] = [];
+  for (const line of output.split(/\r?\n/u)) {
+    if (!line.startsWith(DIAGNOSTIC_PREFIX)) continue;
+    let value: unknown;
+    try { value = JSON.parse(line.slice(DIAGNOSTIC_PREFIX.length)); }
+    catch { continue; }
+    if (!value || typeof value !== "object") continue;
+    const safe: Record<string, string | number | boolean> = {};
+    for (const [key, field] of Object.entries(value)) {
+      if (key === "phase" && typeof field === "string" && /^[a-z-]+$/u.test(field)) safe[key] = field;
+      else if (key === "exceptionType" && typeof field === "string" && /^[A-Za-z0-9_.+]+$/u.test(field)) safe[key] = field;
+      else if (key === "hresult" && typeof field === "string" && /^[0-9A-F]{8}$/u.test(field)) safe[key] = field;
+      else if (["savedControlFlags", "restoredControlFlags", "savedAceCount", "restoredAceCount"].includes(key) &&
+        typeof field === "number" && Number.isSafeInteger(field)) safe[key] = field;
+      else if (["savedProtected", "restoredProtected", "aclBytesEqual"].includes(key) && typeof field === "boolean") safe[key] = field;
+    }
+    reports.push(safe);
+  }
+  return reports.length ? `; ${JSON.stringify(reports)}` : "";
+}
+
+function windowsCommand(command: string, args: string[], env: NodeJS.ProcessEnv, phase: string, cwd?: string): string {
   const result = spawnSync(resolveWindowsSystemCommand(command), args, {
-    env, encoding: "utf8", windowsHide: true, timeout: COMMAND_TIMEOUT_MS,
+    env, cwd, encoding: "utf8", windowsHide: true, timeout: COMMAND_TIMEOUT_MS,
     maxBuffer: 64 * 1024, stdio: ["ignore", "pipe", "pipe"],
   });
   if (result.error || result.status !== 0) {
     // ACL text contains account SIDs; keep command output out of public CI diagnostics.
-    throw new Error(`Windows ACL proof command failed: ${path.win32.basename(command)} (${result.status ?? "no exit"})`);
+    const details = safeDiagnostics(`${result.stdout ?? ""}\n${result.stderr ?? ""}`);
+    throw new Error(`Windows ACL proof ${phase} failed: ${path.win32.basename(command)} (${result.status ?? "no exit"})${details}`);
   }
   return result.stdout;
 }
 
-function powershell(source: string, env: NodeJS.ProcessEnv): string {
+function powershell(source: string, env: NodeJS.ProcessEnv, phase: string): string {
+  const wrapped = [
+    "$ErrorActionPreference='Stop'",
+    `$phase='${phase}'`,
+    "$detail=@{}",
+    `try { ${source} } catch {`,
+    "$base=$_.Exception.GetBaseException()",
+    "$detail.phase=$phase;$detail.exceptionType=$base.GetType().FullName;$detail.hresult=$base.HResult.ToString('X8')",
+    `[Console]::Out.WriteLine('${DIAGNOSTIC_PREFIX}'+($detail|ConvertTo-Json -Compress))`,
+    "exit 1 }",
+  ].join(";");
   return windowsCommand(String.raw`WindowsPowerShell\v1.0\powershell.exe`, [
     "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand",
-    Buffer.from(source, "utf16le").toString("base64"),
-  ], env);
+    Buffer.from(wrapped, "utf16le").toString("base64"),
+  ], env, phase);
 }
 
 describe.skipIf(process.platform !== "win32")("sync store real Windows ACL proof", () => {
@@ -45,6 +79,7 @@ describe.skipIf(process.platform !== "win32")("sync store real Windows ACL proof
 
   it("preserves publication when a real read-data denial prevents opaque-name verification", () => withFixture(async () => {
     const target = path.join(directory, "target");
+    const aclBackup = path.join(directory, "original.dacl");
     const payload = "synthetic Windows ACL publication";
     const env = { ...process.env, FS_SAFE_ACL_PROOF_TARGET: target };
     const open = fsSync.openSync.bind(fsSync);
@@ -55,6 +90,7 @@ describe.skipIf(process.platform !== "win32")("sync store real Windows ACL proof
     let writerFd: number | undefined;
     let beforeDenial: BigIntStats | undefined;
     let savedAcl: { sid: string; sddl: string } | undefined;
+    let aclBackupSaved = false;
     let denialApplied = false;
     let directOpenError: unknown;
     let verifierOpenError: unknown;
@@ -97,14 +133,17 @@ describe.skipIf(process.platform !== "win32")("sync store real Windows ACL proof
           "$section=[Security.AccessControl.AccessControlSections]::Access",
           "$acl=[IO.File]::GetAccessControl($env:FS_SAFE_ACL_PROOF_TARGET,$section)",
           "@{sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;sddl=$acl.GetSecurityDescriptorSddlForm($section)}|ConvertTo-Json -Compress",
-        ].join(";"), env));
+        ].join(";"), env, "query-acl").trim());
         if (!facts || typeof facts !== "object" || !("sid" in facts) || !("sddl" in facts) ||
           typeof facts.sid !== "string" || !/^S-\d+(?:-\d+)+$/i.test(facts.sid) ||
           typeof facts.sddl !== "string" || !facts.sddl.startsWith("D:")) {
           throw new Error("Windows ACL proof returned invalid security facts");
         }
         savedAcl = { sid: facts.sid, sddl: facts.sddl };
-        windowsCommand("icacls.exe", [target, "/deny", `*${savedAcl.sid}:(RD)`], env);
+        // Save a relative child name so native restore has an unambiguous directory root.
+        windowsCommand("icacls.exe", ["target", "/save", aclBackup, "/q"], env, "save-acl", directory);
+        aclBackupSaved = true;
+        windowsCommand("icacls.exe", [target, "/deny", `*${savedAcl.sid}:(RD)`], env, "deny-read-data");
         denialApplied = true;
         try { close(open(target, fsSync.constants.O_RDONLY)); }
         catch (error) { directOpenError = error; }
@@ -131,18 +170,28 @@ describe.skipIf(process.platform !== "win32")("sync store real Windows ACL proof
       throw error;
     } finally {
       vi.restoreAllMocks();
-      if (savedAcl) {
+      if (savedAcl && aclBackupSaved) {
         try {
+          windowsCommand("icacls.exe", [directory, "/restore", aclBackup, "/q"], env, "restore-acl", directory);
           powershell([
             "$ErrorActionPreference='Stop'",
             "$section=[Security.AccessControl.AccessControlSections]::Access",
-            "$acl=[Security.AccessControl.FileSecurity]::new()",
-            "$acl.SetSecurityDescriptorSddlForm($env:FS_SAFE_ACL_PROOF_SDDL,$section)",
-            "[IO.File]::SetAccessControl($env:FS_SAFE_ACL_PROOF_TARGET,$acl)",
+            "$phase='verify-acl'",
             "$restoredAcl=[IO.File]::GetAccessControl($env:FS_SAFE_ACL_PROOF_TARGET,$section)",
             "$restored=$restoredAcl.GetSecurityDescriptorSddlForm($section)",
-            "if($restored -cne $env:FS_SAFE_ACL_PROOF_SDDL){throw 'ACL restoration mismatch'}",
-          ].join(";"), { ...env, FS_SAFE_ACL_PROOF_SDDL: savedAcl.sddl });
+            "$phase='compare-acl'",
+            "if($restored -cne $env:FS_SAFE_ACL_PROOF_SDDL){",
+            "$savedRaw=[Security.AccessControl.RawSecurityDescriptor]::new($env:FS_SAFE_ACL_PROOF_SDDL)",
+            "$restoredRaw=[Security.AccessControl.RawSecurityDescriptor]::new($restored)",
+            "$savedBytes=New-Object byte[] $savedRaw.DiscretionaryAcl.BinaryLength",
+            "$restoredBytes=New-Object byte[] $restoredRaw.DiscretionaryAcl.BinaryLength",
+            "$savedRaw.DiscretionaryAcl.GetBinaryForm($savedBytes,0);$restoredRaw.DiscretionaryAcl.GetBinaryForm($restoredBytes,0)",
+            "$detail.savedControlFlags=[int]$savedRaw.ControlFlags;$detail.restoredControlFlags=[int]$restoredRaw.ControlFlags",
+            "$detail.savedAceCount=$savedRaw.DiscretionaryAcl.Count;$detail.restoredAceCount=$restoredRaw.DiscretionaryAcl.Count",
+            "$detail.savedProtected=([int]$savedRaw.ControlFlags -band 4096) -ne 0;$detail.restoredProtected=$restoredAcl.AreAccessRulesProtected",
+            "$detail.aclBytesEqual=[Convert]::ToBase64String($savedBytes) -ceq [Convert]::ToBase64String($restoredBytes)",
+            "throw 'ACL restoration mismatch'}",
+          ].join(";"), { ...env, FS_SAFE_ACL_PROOF_SDDL: savedAcl.sddl }, "verify-acl");
         } catch (restoreError) {
           throw failure === undefined ? restoreError : new AggregateError([failure, restoreError], "ACL proof and restoration failed");
         }
@@ -168,7 +217,8 @@ describe.skipIf(process.platform !== "win32")("sync store real Windows ACL proof
       verifierOpenCode: isNodeError(verifierOpenError) ? verifierOpenError.code : null,
       observedOpaquePath, metadataProjected, libraryCode, dataReadsDuringWrite: reads,
       retainedWriterSurvivedDenial: true, writerClosedAfterRejection: true,
-      originalDaclRestored: true, publishedIdentityAndModePreserved: true,
+      originalDaclRestored: true, restoreMethod: "icacls-save-restore", exactSddlMatched: true,
+      publishedIdentityAndModePreserved: true,
       publishedBytes: Buffer.byteLength(contents), sha256: createHash("sha256").update(contents).digest("hex"),
     }));
   }), PROOF_TIMEOUT_MS);
