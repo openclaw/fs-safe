@@ -83,4 +83,3 @@ export function mergeReadOptions(defaults: RootDefaults, options: RootReadOption
   if (options.symlinks !== undefined) merged.symlinks = options.symlinks;
   return merged;
 }
-
