@@ -961,9 +961,12 @@ async function appendFileInRoot(
       ((typeof params.data === "string" && !params.data.startsWith("\n")) ||
         (Buffer.isBuffer(params.data) && params.data.length > 0 && params.data[0] !== 0x0a))
     ) {
-      const lastByte = Buffer.alloc(1);
-      const { bytesRead } = await target.handle.read(lastByte, 0, 1, target.stat.size - 1);
-      if (bytesRead === 1 && lastByte[0] !== 0x0a) {
+      const newline = Buffer.from("\n", typeof params.data === "string" ? params.encoding : "utf8");
+      const tail = Buffer.alloc(newline.length);
+      const { bytesRead } = await target.handle.read(
+        tail, 0, tail.length, Math.max(0, target.stat.size - tail.length),
+      );
+      if (bytesRead > 0 && (bytesRead !== newline.length || !tail.equals(newline))) {
         prefix = "\n";
       }
     }

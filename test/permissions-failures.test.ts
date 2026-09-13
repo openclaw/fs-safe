@@ -95,44 +95,60 @@ describe("permission inspection failure modes", () => {
     ]);
   });
 
-  it("fails closed when a parsed ACL entry has no principal to translate", async () => {
-    const exec = vi.fn(async () => ({ stdout: ":(R)\n", stderr: "" }));
-    const result = await inspectWindowsAcl("C:\\secret", {
-      exec,
-      env: { SystemRoot: "C:\\Windows" },
-    });
-
-    expect(result).toMatchObject({
-      ok: false,
-      error: expect.stringContaining("principal SID could not be verified"),
-    });
-    expect(exec).toHaveBeenCalledTimes(1);
+  it("retains explicit advanced classification and translation-failure options", async () => {
+    const exec = vi.fn(async () => ({ stdout: JSON.stringify({
+      ownerSid: "S-1-5-21-42", currentUserSid: "S-1-5-21-42", complete: true, daclPresent: true,
+      aces: [{ sid: "S-1-5-21-99", mask: 1, deny: false, inheritOnly: false }],
+    }), stderr: "" }));
+    const result = await inspectWindowsAcl("C:\\fixture", { exec, currentUserSid: "S-1-5-21-99" });
+    expect(result.trusted).toMatchObject([{ sid: "s-1-5-21-99" }]);
+    exec.mockClear();
+    await expect(inspectWindowsAcl("C:\\fixture", { exec, principalTranslationFailed: true }))
+      .resolves.toMatchObject({ ok: false, error: "Error: Windows ACL principal SID translation failed" });
+    expect(exec).not.toHaveBeenCalled();
   });
 
-  it("attributes an injected principal translation failure to PowerShell, not icacls", async () => {
-    const original = Object.assign(new Error("translation denied"), {
-      code: 9, signal: null, stderr: "SID translation failed\n",
+  it.each([
+    { complete: false },
+    { aces: [{ sid: "invalid", mask: 1, deny: false, inheritOnly: false }] },
+    { aces: [{ sid: "S-1-1-0", mask: -1, deny: false, inheritOnly: false }] },
+    { aces: [{ sid: "S-1-1-0", mask: 1, inheritOnly: false }] },
+  ])("leaves incomplete or malformed descriptor facts unverified", async override => {
+    const result = await inspectWindowsAcl("C:\\fixture", {
+      exec: async () => ({ stdout: JSON.stringify({ ownerSid: "S-1-5-21-42", currentUserSid: "S-1-5-21-42",
+        complete: true, daclPresent: true, aces: [], ...override }), stderr: "" }),
     });
-    const exec = vi.fn(async (command: string) => {
-      if (command.endsWith("icacls.exe")) return { stdout: "DOMAIN\\user:(R)\n", stderr: "" };
-      throw original;
-    });
-    const result = await inspectWindowsAcl("C:\\secret", {
-      exec, env: { SystemRoot: "C:\\Windows" },
-    });
+    expect(result).toMatchObject({ ok: false, entries: [], error: expect.stringContaining("Windows ACL query returned") });
+  });
 
-    expect(result).toMatchObject({
-      ok: false,
-      error: "Error: translation denied",
-      errorDetail: {
-        command: expect.stringContaining("powershell.exe"),
-        durationMs: expect.any(Number), timedOut: false, exitCode: 9, signal: null,
-        stderr: "SID translation failed\\u000a",
-      },
+  it.each([false, true])("distinguishes a null DACL from an empty DACL (present=%s)", async daclPresent => {
+    const result = await inspectWindowsAcl("C:\\fixture", {
+      exec: async () => ({ stdout: JSON.stringify({ ownerSid: "S-1-5-21-42", currentUserSid: "S-1-5-21-42",
+        complete: true, daclPresent, aces: [] }), stderr: "" }),
     });
+    expect(result.ok).toBe(true);
+    if (daclPresent) expect(result.entries).toEqual([]);
+    else expect(result.untrustedWorld).toMatchObject([{ sid: "s-1-1-0", canRead: true, canWrite: true }]);
+  });
+
+  it("ignores inherit-only grants and never subtracts deny entries from coarse grants", async () => {
+    const result = await inspectWindowsAcl("C:\\fixture", {
+      exec: async () => ({ stdout: JSON.stringify({ ownerSid: "S-1-5-21-42", currentUserSid: "S-1-5-21-42",
+        complete: true, daclPresent: true, aces: [
+          { sid: "S-1-1-0", mask: 0x001f01ff, deny: true, inheritOnly: false },
+          { sid: "S-1-1-0", mask: 1, deny: false, inheritOnly: false },
+          { sid: "S-1-5-32-545", mask: 0x001f01ff, deny: false, inheritOnly: true },
+        ] }), stderr: "" }),
+    });
+    expect(result.ok).toBe(true);
+    expect(result.untrustedWorld).toMatchObject([{ sid: "s-1-1-0", canRead: true, canWrite: false }]);
+    expect(result.entries).toHaveLength(1);
+  });
+
+  it("preserves a structured query failure as the original diagnostic cause", async () => {
+    const original = Object.assign(new Error("descriptor query denied"), { code: 9, signal: null, stderr: "query failed\n" });
+    const result = await inspectWindowsAcl("C:\\fixture", { exec: async () => { throw original; } });
+    expect(result).toMatchObject({ ok: false, errorDetail: { command: expect.stringContaining("powershell.exe"), exitCode: 9, stderr: "query failed\\u000a" } });
     expect(result.errorCause).toBe(original);
-    expect(exec.mock.calls.map(([command]) => path.win32.basename(command))).toEqual([
-      "icacls.exe", "powershell.exe",
-    ]);
   });
 });

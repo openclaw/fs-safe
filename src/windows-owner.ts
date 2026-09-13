@@ -13,13 +13,21 @@ export type WindowsOwnerExec = (
 export type WindowsOwnerSummary = {
   sid?: string;
   currentUserSid?: string;
-  principalSids?: Record<string, string>;
-  principalTranslationFailed?: boolean;
+  daclPresent?: boolean;
+  aces?: WindowsOwnerAce[];
+  aclError?: string;
   remote?: boolean;
   trusted?: boolean;
   error?: string;
   errorDetail?: PermissionCommandFailure;
   errorCause?: unknown;
+};
+
+export type WindowsOwnerAce = {
+  sid: string;
+  mask: number;
+  deny: boolean;
+  inheritOnly: boolean;
 };
 
 const SID_RE = /^\*?s-\d+-\d+(-\d+)+$/i;
@@ -48,88 +56,29 @@ function windowsOwnerQueryCommand(targetPath: string): string {
     "$driveRoot=if($extendedDrive){$p.Substring(4,3)}else{$root}",
     "$namespacePath=$p.StartsWith('\\\\')",
     "$remote=($namespacePath -and -not $extendedDrive) -or ([IO.DriveInfo]::new($driveRoot).DriveType -eq [IO.DriveType]::Network)",
-    "$rules=$acl.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier])",
-    "$principalSids=@($rules|ForEach-Object {$identity=$_.IdentityReference;$sid=$identity.Value;@{name=$sid;sid=$sid};try{@{name=$identity.Translate([System.Security.Principal.NTAccount]).Value;sid=$sid}}catch{}})",
-    "@{ownerSid=$ownerSid;currentUserSid=$currentSid;principalSids=$principalSids;principalTranslationFailed=$false;remote=$remote}|ConvertTo-Json -Depth 4 -Compress",
+    // Emit only ASCII SID and numeric facts: console encodings can replace both
+    // Unicode pathnames and account names before JavaScript receives the bytes.
+    "$raw=[System.Security.AccessControl.RawSecurityDescriptor]::new($acl.GetSecurityDescriptorBinaryForm(),0)",
+    "$dacl=$raw.DiscretionaryAcl;$complete=$true",
+    "$aces=@(foreach($ace in $dacl){if($ace -isnot [System.Security.AccessControl.CommonAce] -or $ace.IsCallback -or [int]$ace.AceType -notin @(0,1)){$complete=$false;continue};@{sid=$ace.SecurityIdentifier.Value;mask=([long]$ace.AccessMask -band 4294967295);deny=([int]$ace.AceType -eq 1);inheritOnly=([int]$ace.AceFlags -band 8) -ne 0}})",
+    "@{ownerSid=$ownerSid;currentUserSid=$currentSid;daclPresent=($null -ne $dacl);aces=$aces;complete=$complete;remote=$remote}|ConvertTo-Json -Depth 4 -Compress",
   ].join(";");
 }
 
-function windowsPrincipalQueryCommand(principals: string[]): string {
-  const encodedPrincipals = Buffer.from(JSON.stringify(principals), "utf8").toString("base64");
-  return [
-    "$ErrorActionPreference='Stop'",
-    `$names=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedPrincipals}'))|ConvertFrom-Json`,
-    "$rows=@($names|ForEach-Object {@{name=$_;sid=(New-Object System.Security.Principal.NTAccount($_)).Translate([System.Security.Principal.SecurityIdentifier]).Value}})",
-    "ConvertTo-Json -InputObject $rows -Compress",
-  ].join(";");
-}
-
-function parsePrincipalSidRows(value: unknown): Record<string, string> {
-  const rows = Array.isArray(value) ? value : value ? [value] : [];
-  const result: Record<string, string> = Object.create(null);
-  for (const row of rows) {
-    if (!row || typeof row !== "object") {
-      continue;
+function parseWindowsAclFacts(parsed: Record<string, unknown>): Pick<WindowsOwnerSummary, "daclPresent" | "aces" | "aclError"> {
+  if (parsed.complete !== true || typeof parsed.daclPresent !== "boolean" || !Array.isArray(parsed.aces)) {
+    return { aclError: "Windows ACL query returned incomplete descriptor data" };
+  }
+  const aces: WindowsOwnerAce[] = [];
+  for (const row of parsed.aces) {
+    if (!row || typeof row !== "object" || typeof row.sid !== "string" || !SID_RE.test(row.sid) ||
+        typeof row.mask !== "number" || !Number.isInteger(row.mask) || row.mask < 0 || row.mask > 0xffff_ffff ||
+        typeof row.deny !== "boolean" || typeof row.inheritOnly !== "boolean") {
+      return { aclError: "Windows ACL query returned invalid access-rule data" };
     }
-    const name = "name" in row && typeof row.name === "string" ? row.name.trim() : "";
-    const sid = "sid" in row && typeof row.sid === "string" ? normalizeSid(row.sid) : "";
-    if (name && SID_RE.test(sid)) {
-      result[name.toLowerCase()] = sid;
-    }
+    aces.push({ sid: normalizeSid(row.sid), mask: row.mask, deny: row.deny, inheritOnly: row.inheritOnly });
   }
-  return result;
-}
-
-export async function resolveWindowsPrincipalSids(params: {
-  principals: string[];
-  known?: Record<string, string>;
-  env?: NodeJS.ProcessEnv;
-  exec: WindowsOwnerExec;
-}): Promise<Record<string, string>> {
-  const principals = [...new Set(params.principals.map((value) => value.trim()).filter(Boolean))];
-  const known = Object.fromEntries(
-    Object.entries(params.known ?? {}).map(([name, sid]) => [name.toLowerCase(), normalizeSid(sid)]),
-  );
-  const unresolved = principals.filter((principal) =>
-    !Object.hasOwn(known, principal.toLowerCase()) || !known[principal.toLowerCase()],
-  );
-  if (unresolved.length === 0) {
-    return known;
-  }
-  const command = resolveWindowsSystemCommand(
-    String.raw`WindowsPowerShell\v1.0\powershell.exe`,
-    params.env,
-  );
-  const { stdout } = await params.exec(command, [
-    "-NoLogo",
-    "-NoProfile",
-    "-NonInteractive",
-    "-EncodedCommand",
-    encodePowerShellCommand(windowsPrincipalQueryCommand(unresolved)),
-  ]);
-  const resolved = { ...known, ...parsePrincipalSidRows(JSON.parse(stdout.trim())) };
-  if (principals.some((principal) =>
-    !Object.hasOwn(resolved, principal.toLowerCase()) || !resolved[principal.toLowerCase()],
-  )) {
-    throw new Error("Windows ACL principal translation returned incomplete SID data");
-  }
-  return resolved;
-}
-
-export async function resolveWindowsCurrentUserSid(params: {
-  env?: NodeJS.ProcessEnv;
-  exec: WindowsOwnerExec;
-}): Promise<string | null> {
-  try {
-    const { stdout, stderr } = await params.exec(
-      resolveWindowsSystemCommand("whoami.exe", params.env),
-      ["/user", "/fo", "csv", "/nh"],
-    );
-    const match = `${stdout}\n${stderr}`.match(/\*?S-\d+-\d+(?:-\d+)+/i);
-    return match ? normalizeSid(match[0]) : null;
-  } catch {
-    return null;
-  }
+  return { daclPresent: parsed.daclPresent, aces };
 }
 
 export async function inspectWindowsOwner(params: {
@@ -152,13 +101,11 @@ export async function inspectWindowsOwner(params: {
       "-EncodedCommand",
       encodePowerShellCommand(windowsOwnerQueryCommand(params.targetPath)),
     ]);
-    const parsed = JSON.parse(stdout.trim()) as {
-      ownerSid?: unknown;
-      currentUserSid?: unknown;
-      principalSids?: unknown;
-      principalTranslationFailed?: unknown;
-      remote?: unknown;
-    };
+    const value: unknown = JSON.parse(stdout.trim());
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return { error: "Windows owner query returned invalid SID data" };
+    }
+    const parsed = value as Record<string, unknown>;
     const ownerSid =
       typeof parsed.ownerSid === "string" && SID_RE.test(parsed.ownerSid)
         ? normalizeSid(parsed.ownerSid)
@@ -174,8 +121,7 @@ export async function inspectWindowsOwner(params: {
     return {
       sid: ownerSid,
       currentUserSid,
-      principalSids: parsePrincipalSidRows(parsed.principalSids),
-      principalTranslationFailed: parsed.principalTranslationFailed === true,
+      ...parseWindowsAclFacts(parsed),
       remote,
       trusted: !remote && (ownerSid === currentUserSid || TRUSTED_OWNER_SIDS.has(ownerSid)),
     };

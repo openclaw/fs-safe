@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Preserve Unicode Windows paths during fallback permission inspection by reading structured SID and access-mask facts instead of localized command output.
+- Check the complete encoded newline before Root append, avoiding duplicated or missing separators in UTF-16LE files on Windows and other platforms.
+
 ## 0.10.0 - 2026-09-12
 
 ### Highlights

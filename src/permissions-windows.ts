@@ -1,19 +1,10 @@
 import os from "node:os";
 import { getNativeBinding } from "./native.js";
-import {
-  executePermissionCommand,
-  formatPermissionErrorDetail,
-  getPermissionCommandFailure,
-  type PermissionCommandFailure,
-} from "./permission-exec.js";
+import { executePermissionCommand, type PermissionCommandFailure } from "./permission-exec.js";
 import type { PermissionCheck, PermissionCheckOptions, SafeStatResult } from "./permissions.js";
 import { normalizeLowercaseStringOrEmpty } from "./string-coerce.js";
 import { resolveWindowsSystemCommand } from "./windows-command.js";
-import {
-  inspectWindowsOwner,
-  resolveWindowsCurrentUserSid,
-  resolveWindowsPrincipalSids,
-} from "./windows-owner.js";
+import { inspectWindowsOwner, type WindowsOwnerSummary } from "./windows-owner.js";
 
 export type PermissionExec = (
   command: string,
@@ -151,13 +142,7 @@ export async function inspectWindowsPermissions(params: {
     const error = `Windows owner inspection failed: ${owner.error}`;
     return { ...unverified, ownerError: owner.error, error, errorDetail: owner.errorDetail, errorCause: owner.errorCause };
   }
-  const acl = await inspectWindowsAcl(params.targetPath, {
-    env: params.opts?.env,
-    exec: params.opts?.exec,
-    currentUserSid: owner.currentUserSid,
-    principalSids: owner.principalSids,
-    principalTranslationFailed: owner.principalTranslationFailed,
-  });
+  const acl = summarizeWindowsOwnerAcl(owner);
   const ownerFields = {
     ...(owner.sid ? { ownerSid: owner.sid } : {}),
     ...(owner.trusted !== undefined ? { ownerTrusted: owner.trusted } : {}),
@@ -282,45 +267,47 @@ export function summarizeWindowsAcl(entries: WindowsAclEntry[], env?: NodeJS.Pro
   return { trusted, untrustedWorld, untrustedGroup };
 }
 
-export async function inspectWindowsAcl(targetPath: string, opts?: { env?: NodeJS.ProcessEnv; exec?: PermissionExec; currentUserSid?: string; principalSids?: Record<string, string>; principalTranslationFailed?: boolean }): Promise<WindowsAclSummary> {
-  let command = "";
-  let startedAt = performance.now();
-  const exec: PermissionExec = async (file, args) => {
-    command = file;
-    startedAt = performance.now();
-    return await (opts?.exec ?? defaultPermissionExec)(file, args);
-  };
-  try {
-    if (opts?.principalTranslationFailed) throw new Error("Windows ACL principal SID translation failed");
-    const { stdout, stderr } = await exec(resolveWindowsSystemCommand("icacls.exe", opts?.env), [targetPath]);
-    let entries = parseIcaclsOutput(`${stdout}\n${stderr}`.trim(), targetPath);
-    if (!entries.length) throw new Error("Windows ACL output could not be verified");
-    const unresolvedPrincipals = entries.filter((entry) => !entry.sid).map((entry) => entry.principal);
-    const principalSids = await resolveWindowsPrincipalSids({ principals: unresolvedPrincipals, known: opts?.principalSids, env: opts?.env, exec });
-    entries = entries.map((entry) => {
-      const sid = entry.sid ?? principalSids[entry.principal.toLowerCase()];
-      if (!sid) throw new Error(`Windows ACL principal SID could not be verified: ${entry.principal}`);
-      return { ...entry, sid };
-    });
-    let currentUserSid = normalizeSid(opts?.currentUserSid ?? "");
-    let effectiveEnv = currentUserSid ? { USERSID: currentUserSid } : undefined;
-    let { trusted, untrustedWorld, untrustedGroup } = summarizeWindowsAcl(entries, effectiveEnv);
-    if (!currentUserSid && untrustedGroup.some((entry) => entry.sid && !TRUSTED_SIDS.has(entry.sid))) {
-      currentUserSid = (await resolveWindowsCurrentUserSid({ exec, env: opts?.env })) ?? "";
-      if (currentUserSid) {
-        effectiveEnv = { USERSID: currentUserSid };
-        ({ trusted, untrustedWorld, untrustedGroup } = summarizeWindowsAcl(entries, effectiveEnv));
-      }
-    }
-    return { ok: true, entries, trusted, untrustedWorld, untrustedGroup };
-  } catch (err) {
+const MASK_RIGHTS: ReadonlyArray<readonly [number, string]> = [
+  [0x1000_0000, "GA"], [0x8000_0000, "GR"], [0x4000_0000, "GW"], [0x2000_0000, "GE"],
+  [0x0001_0000, "D"], [0x0002_0000, "RC"], [0x0004_0000, "WDAC"], [0x0008_0000, "WO"],
+  [0x0010_0000, "S"], [0x0001, "RD"], [0x0002, "WD"], [0x0004, "AD"],
+  [0x0008, "REA"], [0x0010, "WEA"], [0x0020, "X"], [0x0040, "DC"], [0x0080, "RA"], [0x0100, "WA"],
+];
+
+function summarizeWindowsOwnerAcl(owner: WindowsOwnerSummary): WindowsAclSummary {
+  const error = owner.error ?? owner.aclError;
+  if (error || owner.daclPresent === undefined || !owner.aces || !owner.currentUserSid) {
     return {
       ok: false, entries: [], trusted: [], untrustedWorld: [], untrustedGroup: [],
-      error: formatPermissionErrorDetail(String(err)),
-      errorDetail: getPermissionCommandFailure(err, command, performance.now() - startedAt),
-      errorCause: err,
+      error: error ?? "Windows ACL query returned incomplete descriptor data",
+      errorDetail: owner.errorDetail, errorCause: owner.errorCause,
     };
   }
+  // A null DACL grants everyone full access; an empty DACL grants nothing.
+  const grants = owner.daclPresent ? owner.aces : [{ sid: "s-1-1-0", mask: 0x001f_01ff, deny: false, inheritOnly: false }];
+  const entries: WindowsAclEntry[] = grants.filter(ace => !ace.deny && !ace.inheritOnly).map(ace => {
+    const rights = ace.mask === 0x001f_01ff ? ["F"] : MASK_RIGHTS.filter(([mask]) => (ace.mask & mask) !== 0).map(([, name]) => name);
+    return {
+      principal: ace.sid, sid: ace.sid, rights, rawRights: "(" + rights.join(",") + ")",
+      // Retain the coarse policy's conservative treatment of read-control and
+      // mutation rights. Denies do not subtract grants or claim effective access.
+      canRead: (ace.mask & 0x9002_0089) !== 0,
+      canWrite: (ace.mask & 0x500d_0156) !== 0,
+    };
+  });
+  return { ok: true, entries, ...summarizeWindowsAcl(entries, { USERSID: owner.currentUserSid }) };
+}
+
+export async function inspectWindowsAcl(targetPath: string, opts?: { env?: NodeJS.ProcessEnv; exec?: PermissionExec; currentUserSid?: string; principalSids?: Record<string, string>; principalTranslationFailed?: boolean }): Promise<WindowsAclSummary> {
+  if (opts?.principalTranslationFailed) {
+    const error = new Error("Windows ACL principal SID translation failed");
+    return summarizeWindowsOwnerAcl({ error: String(error), errorCause: error });
+  }
+  const owner = await inspectWindowsOwner({ targetPath, env: opts?.env, exec: opts?.exec ?? defaultPermissionExec });
+  return summarizeWindowsOwnerAcl({
+    ...owner,
+    currentUserSid: normalizeSid(opts?.currentUserSid ?? "") || owner.currentUserSid,
+  });
 }
 
 export function formatWindowsAclSummary(summary: WindowsAclSummary): string {

@@ -145,7 +145,7 @@ describe("Windows permission command execution", () => {
     expect(exec).toHaveBeenCalledTimes(1);
   });
 
-  it("preserves icacls stderr and exit status after a successful owner query", async () => {
+  it("preserves structured-query stderr and exit status through a secure read", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-permission-acl-detail-"));
     tempDirs.push(dir);
     const target = path.join(dir, "secret.json");
@@ -156,14 +156,7 @@ describe("Windows permission command execution", () => {
       stderr: `\u001b[31mACL access denied\n${"x".repeat(500)}`,
       stdout: "PRIVATE_CHILD_STDOUT",
     });
-    const exec = vi.fn(async (command: string) => {
-      if (command.endsWith("powershell.exe")) {
-        return { stdout: JSON.stringify({
-          ownerSid: "S-1-5-21-42", currentUserSid: "S-1-5-21-42", remote: false,
-        }), stderr: "" };
-      }
-      throw original;
-    });
+    const exec = vi.fn(async (_command: string) => { throw original; });
     const failure = await readSecureFile({
       filePath: target,
       inject: { platform: "win32", env: { SystemRoot: "C:\\Windows" }, exec },
@@ -172,9 +165,9 @@ describe("Windows permission command execution", () => {
     expect(failure).toBeInstanceOf(FsSafeError);
     expect(failure).toMatchObject({
       code: "permission-unverified", category: "operational",
-      message: expect.stringContaining("Error: ACL query denied\\u000a"),
+      message: expect.stringContaining("ACL query denied\\u000a"),
       details: {
-        command: "C:\\Windows\\System32\\icacls.exe",
+        command: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
         durationMs: expect.any(Number), timedOut: false, exitCode: 5, signal: null,
         stderr: expect.stringContaining("\\u001b[31mACL access denied\\u000a"),
       },
@@ -183,14 +176,12 @@ describe("Windows permission command execution", () => {
     expect(error.cause).toBe(original);
     expect(error.details?.stderr).toHaveLength(400);
     expect(String(error.details?.stderr)).toMatch(/…$/u);
-    const reason = error.message.split(": Error: ")[1]!;
-    expect(`Error: ${reason}`).toHaveLength(400);
     const diagnostic = `${error.message}${JSON.stringify(error.details)}`;
     expect(diagnostic).not.toContain(secret);
     expect(diagnostic).not.toContain("PRIVATE_CHILD_STDOUT");
     expect(diagnostic).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/u);
     expect(exec.mock.calls.map(([command]) => path.win32.basename(command))).toEqual([
-      "powershell.exe", "icacls.exe",
+      "powershell.exe",
     ]);
   });
 
@@ -230,7 +221,7 @@ describe("Windows permission command execution", () => {
     expect(exec).toHaveBeenCalledTimes(1);
   });
 
-  it("fails closed when a successful ACL command yields no verifiable entries", async () => {
+  it("fails closed when a successful query yields incomplete descriptor facts", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-permission-empty-acl-"));
     tempDirs.push(dir);
     const target = path.join(dir, "secret.json");
@@ -241,8 +232,9 @@ describe("Windows permission command execution", () => {
           stdout: JSON.stringify({
             ownerSid: "S-1-5-21-42",
             currentUserSid: "S-1-5-21-42",
-            principalSids: [],
-            principalTranslationFailed: false,
+            complete: false,
+            daclPresent: true,
+            aces: [],
             remote: false,
           }),
           stderr: "",
@@ -260,7 +252,7 @@ describe("Windows permission command execution", () => {
     ).resolves.toMatchObject({
       ok: true,
       source: "unknown",
-      error: expect.stringContaining("could not be verified"),
+      error: expect.stringContaining("incomplete descriptor data"),
     });
 
     await expectFsSafeError(readSecureFile({
@@ -284,8 +276,9 @@ describe("Windows permission command execution", () => {
           stdout: JSON.stringify({
             ownerSid: "S-1-5-21-42",
             currentUserSid: "S-1-5-21-42",
-            principalSids: [{ name: "S-1-5-21-42", sid: "S-1-5-21-42" }],
-            principalTranslationFailed: false,
+            complete: true,
+            daclPresent: true,
+            aces: [{ sid: "S-1-5-21-42", mask: 0x001f01ff, deny: false, inheritOnly: false }],
             remote: false,
           }),
           stderr: "",
@@ -304,10 +297,9 @@ describe("Windows permission command execution", () => {
     });
 
     expect(result.permissions).toMatchObject({ source: "windows-acl", ownerTrusted: true });
-    expect(exec).toHaveBeenCalledTimes(2);
+    expect(exec).toHaveBeenCalledTimes(1);
     expect(exec.mock.calls.map(([command]) => path.win32.basename(command))).toEqual([
       "powershell.exe",
-      "icacls.exe",
     ]);
   });
 });

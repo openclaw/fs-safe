@@ -178,7 +178,7 @@ remain TypeScript-owned. What changes is the syscall strength or availability:
 | Zstd/bzip2 TAR | Supported. | Unsupported; typed `helper-unavailable`. |
 | Publication copy | Clone, Linux `copy_file_range`, async native SHA-256. | Exclusive `wx` byte loop and Node SHA-256 with the same content/identity fences. |
 | `rename-noreplace` | Atomic platform no-replace rename. | Unsupported; no emulation by check-then-rename. |
-| Windows DACL read | Direct `GetSecurityInfo`; the public facts API exposes ordered basic allow/deny ACE SIDs, masks, and decoded flags without trust policy. | Established .NET/`icacls` inspection fallback for coarse permission checks; raw ACE facts are native-only. |
+| Windows DACL read | Direct `GetSecurityInfo`; the public facts API exposes ordered basic allow/deny ACE SIDs, masks, and decoded flags without trust policy. | Structured .NET owner/DACL inspection for coarse permission checks; the public raw ACE facts API remains native-only. |
 | Windows private directory | Creation-time protected DACL. | Unsupported; no weaker pathname-only substitute. |
 
 Use `off` in CI to keep the fallback contract exercised. Use `require` when a
