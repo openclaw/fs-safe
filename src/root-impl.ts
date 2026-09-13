@@ -5,6 +5,7 @@ import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { normalizeMaxBytes } from "./byte-budget.js";
+import { assertCopySourceCurrent, resolveFileCopyCloneMode } from "./copy-file-input.js";
 import type { ContainmentGuarantee } from "./containment.js";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, createNearestExistingDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
@@ -75,21 +76,21 @@ import { serializePathWrite } from "./write-queue.js";
 import { verifyAtomicWriteResult } from "./root-write-verification.js";
 import { inheritWriteTargetMode } from "./root-write-mode.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
-import { onCopyPublication, type CopyPublicationOptions } from "./copy-publication.js";
+import { createCopyPublicationObserver, onCopyPublication, type CopyPublicationOptions } from "./copy-publication.js";
 import { writeAllToFile } from "./write-file-handle.js";
 import { assertFinalSymlinkRejected, mutationSymlinkResolution, readSymlinkResolution, type MutationSymlinkPolicy, type SymlinkPolicy } from "./root-symlink-policy.js";
 
 import {
   mergeReadOptions, readDefaults,
-  type HardlinkPolicy, type RootAppendOptions, type RootCopyOptions,
+  type HardlinkPolicy, type RootAppendOptions, type RootCopyOptions, type RootCopySource,
   type RootCreateJsonOptions, type RootCreateOptions, type RootDefaults,
   type RootMkdirOptions, type RootMoveOptions, type RootOpenOptions,
   type RootOpenWritableOptions, type RootReadOptions, type RootRemoveOptions,
   type RootWriteJsonOptions, type RootWriteOptions,
 } from "./root-options.js";
-import { composeMutationAssertions, rethrowMutationAuthorityError } from "./mutation-authority.js";
+import { composeMutationAssertions, MutationAuthorityError, rethrowMutationAuthorityError } from "./mutation-authority.js";
 export type {
-  HardlinkPolicy, RootAppendOptions, RootCopyOptions, RootCreateJsonOptions,
+  HardlinkPolicy, RootAppendOptions, RootCopyOptions, RootCopySource, RootCreateJsonOptions,
   RootCreateOptions, RootDefaults, RootMkdirOptions, RootMoveOptions,
   RootOpenOptions, RootOpenWritableOptions, RootOptions, RootReadOptions,
   RootRemoveOptions, RootWriteJsonOptions, RootWriteOptions, WritableOpenMode,
@@ -326,7 +327,7 @@ export interface Root {
     data: unknown,
     options?: RootCreateJsonOptions,
   ): Promise<void>;
-  copyIn(relativePath: string, sourcePath: string, options?: RootCopyOptions): Promise<void>;
+  copyIn(relativePath: string, source: RootCopySource, options?: RootCopyOptions): Promise<void>;
   exists(relativePath: string): Promise<boolean>;
   stat(relativePath: string): Promise<PathStat>;
   list(relativePath: string, options?: { withFileTypes?: false }): Promise<string[]>;
@@ -543,18 +544,19 @@ export class RootHandle implements Root {
 
   async copyIn(
     relativePath: string,
-    sourcePath: string,
+    source: RootCopySource,
     options: RootCopyOptions = {},
   ): Promise<void> {
+    options.signal?.throwIfAborted();
     assertValidRootDestinationPath(relativePath);
     const { maxBytes, ...copyOptions } = this.mutationOptions(options);
     await copyFileInRoot(this.context, {
-      sourcePath,
+      source: typeof source === "string" ? source : { root: source.root, relativePath: source.relativePath },
       relativePath,
       maxBytes: normalizeMaxBytes(maxBytes, { defaultValue: this.defaults.maxBytes }),
       mkdir: this.defaults.mkdir,
-      mode: this.defaults.mode,
       ...copyOptions,
+      mode: options.mode ?? this.defaults.mode,
       durable: options.durable ?? this.defaults.durable ?? true,
       verifyPublished: (options as CopyPublicationOptions)[onCopyPublication],
     }).catch(rethrowMutationAuthorityError);
@@ -1111,25 +1113,30 @@ async function commitPinnedWriteInRoot(
 
 async function copyFileInRoot(
   root: RootContext,
-  params: {
-    sourcePath: string;
+  params: RootCopyOptions & {
+    source: RootCopySource;
     relativePath: string;
-    maxBytes?: number;
-    mkdir?: boolean;
-    mode?: number;
-    denyMutations?: DenyMutationPolicy;
-    assertBeforeMutation?: () => void;
-    mutationSymlinks?: MutationSymlinkPolicy;
-    sourceHardlinks?: HardlinkPolicy;
-    durable?: boolean;
     verifyPublished?: CopyPublicationOptions[typeof onCopyPublication];
   },
 ): Promise<void> {
-  assertValidRootRelativePath(params.relativePath);
-  assertNoNulPathInput(params.sourcePath, "source path contains a NUL byte");
-  const { opened: source, identity: sourceIdentity } = await openVerifiedLocalFile(params.sourcePath, {
-    hardlinks: params.sourceHardlinks,
-  });
+  params.signal?.throwIfAborted();
+  const clone = resolveFileCopyCloneMode(params.clone);
+  let source: OpenResult;
+  let sourceIdentity: BigIntStats;
+  if (typeof params.source === "string") {
+    assertNoNulPathInput(params.source, "source path contains a NUL byte");
+    ({ opened: source, identity: sourceIdentity } = await openVerifiedLocalFile(params.source, {
+      hardlinks: params.sourceHardlinks,
+    }));
+  } else {
+    source = await params.source.root.open(params.source.relativePath, params.sourceHardlinks === undefined ? undefined : { hardlinks: params.sourceHardlinks });
+    try {
+      sourceIdentity = await inspectFileIdentity(() => fsSync.fstatSync(source.handle.fd, { bigint: true }));
+    } catch (error) {
+      await source.handle.close().catch(() => undefined);
+      throw error;
+    }
+  }
   if (params.maxBytes !== undefined && source.stat.size > params.maxBytes) {
     await source.handle.close().catch(() => {});
     throw new FsSafeError(
@@ -1143,59 +1150,55 @@ async function copyFileInRoot(
       const pinned = await resolvePinnedWriteTargetInRoot(
         root,
         params.relativePath,
-        params.mode,
+        params.mode ?? (params.preserveSourceMode ? Number(sourceIdentity.mode & 0o7777n) : undefined),
         params.denyMutations,
-        true,
+        params.overwrite !== false,
         params.mutationSymlinks,
       );
       await serializePathWrite(pinned.targetPath, async () => {
         await assertCopySourceCurrent(source, sourceIdentity);
-        let identity: FileIdentityStat;
+        const verifySource = async () => {
+          params.signal?.throwIfAborted();
+          if (typeof params.source !== "string") {
+            await params.source.root.stat(".");
+          }
+          await assertCopySourceCurrent(source, sourceIdentity);
+        };
+        const observer = createCopyPublicationObserver(pinned.targetPath, params.onDestinationPublished);
         try {
-          identity = await runPinnedWriteHelper({
+          await runPinnedWriteHelper({
             rootPath: pinned.rootReal,
             relativeParentPath: pinned.relativeParentPath,
             basename: pinned.basename,
             mkdir: params.mkdir !== false,
             mode: pinned.mode,
-            overwrite: true,
+            overwrite: params.overwrite !== false,
             rejectFinalSymlink: params.mutationSymlinks !== undefined,
             maxBytes: params.maxBytes,
             sync: params.durable !== false,
+            assertBeforeMutation: () => {
+              if (params.signal?.aborted) throw new MutationAuthorityError(params.signal.reason);
+              params.assertBeforeMutation?.();
+            },
             verifyPublished: params.verifyPublished,
-            input: { kind: "stream", stream: source.handle.createReadStream() },
+            onPublished: observer.onPublished,
+            input: { kind: "file", handle: source.handle, size: source.stat.size, clone, signal: params.signal, verifySource },
             rootIdentity: root.rootIdentity,
-            assertBeforeMutation: params.assertBeforeMutation,
           });
         } catch (error) {
+          observer.rethrowObserverFailure(error);
+          if (params.signal?.aborted && error === params.signal.reason) throw error;
+          if (isAlreadyExistsError(error)) {
+            throw new FsSafeError("already-exists", "copy destination already exists", { cause: error });
+          }
           throw normalizePinnedWriteError(error);
         }
-        try {
-          await assertCopySourcePathCurrent(source, sourceIdentity);
-        } catch (error) {
-          await removePathIfIdentityUnchanged(pinned.targetPath, identity).catch(() => undefined);
-          throw error;
-        }
+        await verifySource();
       });
     });
   } finally {
     await source.handle.close().catch(() => {});
   }
-}
-
-async function assertCopySourceCurrent(source: OpenResult, identity: BigIntStats): Promise<void> {
-  await inspectFileIdentity(() => fsSync.fstatSync(source.handle.fd, { bigint: true }), identity);
-  await assertCopySourcePathCurrent(source, identity);
-}
-
-async function assertCopySourcePathCurrent(source: OpenResult, identity: BigIntStats): Promise<void> {
-  await inspectFileIdentity(async () => {
-    const current = fsSync.lstatSync(source.realPath, { bigint: true });
-    if (current.isSymbolicLink() || !current.isFile()) {
-      throw new FsSafeError("path-mismatch", "copy source path changed");
-    }
-    return current;
-  }, identity);
 }
 
 async function removePathIfIdentityUnchanged(

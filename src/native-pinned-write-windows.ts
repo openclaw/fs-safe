@@ -64,6 +64,7 @@ export async function runPinnedWriteWindows(
     fsSync.fchmodSync(tempFd, 0o600);
     await writeNativeInput(tempFd, params.input, params.maxBytes, params.assertBeforeMutation);
     if (params.sync !== false) syncFileBestEffortSync(tempFd);
+    if (params.input.kind === "file") await params.input.verifySource();
     assertFinalSymlinkRejected(path.join(parentPath, params.basename), params.rejectFinalSymlink);
     params.assertBeforeMutation?.();
     if (params.overwrite === false) {
@@ -72,6 +73,7 @@ export async function runPinnedWriteWindows(
       binding.renameReplace(parentFd, tempName, parentFd, params.basename);
     }
     renamed = true;
+    params.onPublished?.(verificationIdentity);
     targetFd = binding.openBeneath(
       parentFd,
       params.basename,
@@ -93,12 +95,15 @@ export async function runPinnedWriteWindows(
     } catch (error) {
       closeWriteFd(targetFd);
       targetFd = undefined;
-      removeNativeCreatedFileIfStillPinned({
-        parentPath,
-        parentFd,
-        basename: params.basename,
-        created: tempIdentity,
-      });
+      // Copies preserve the published name for caller-owned recovery.
+      if (params.input.kind !== "file") {
+        removeNativeCreatedFileIfStillPinned({
+          parentPath,
+          parentFd,
+          basename: params.basename,
+          created: tempIdentity,
+        });
+      }
       throw error;
     }
     if (params.sync !== false) syncFileBestEffortSync(parentFd);

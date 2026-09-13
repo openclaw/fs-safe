@@ -1,5 +1,6 @@
 import type { TarMeterLimits } from "./archive-limits.js";
 import type { ArchiveMemberKind } from "./archive-plan.js";
+import type { CopyCloneMode } from "./copy-policy.js";
 
 export interface NativeFileHash {
   bytes: number;
@@ -30,6 +31,13 @@ export interface NativeArchivePlanEntry extends NativeArchiveEntry {}
 export interface NativeCopyResult {
   fd: number;
   bytes: number;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
+export interface NativeFileCopyResult {
+  fd: number;
+  method: "clone" | "copy-file-range" | "copy";
   errorCode?: string;
   errorMessage?: string;
 }
@@ -107,6 +115,15 @@ export interface NativeBinding {
     basename: string,
     fileFd: number,
   ): "removed" | "name-absent" | "preserved";
+  copyFileExclusive?(
+    sourceFd: number,
+    parentFd: number,
+    basename: string,
+    clone: CopyCloneMode,
+    maxBytes: number | undefined,
+    signal: AbortSignal | undefined,
+    sync: boolean,
+  ): Promise<NativeFileCopyResult>;
   cloneFileExclusive(sourceFd: number, targetRootFd: number, targetRelPath: string): number;
   copyFileRangeExclusive(
     sourceFd: number,

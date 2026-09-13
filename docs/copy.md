@@ -41,7 +41,7 @@ Apple [strongly discourages general directory cloning](https://github.com/apple-
 
 ## API
 
-`TreeCloneBackend` is the `"apfs" | "btrfs" | "refs" | "xfs"` union returned by the probe. `CopyTreeOptions` contains the optional `clone`, `signal`, and `concurrency` arguments.
+`TreeCloneBackend` is the `"apfs" | "btrfs" | "refs" | "xfs"` union returned by the probe. `CopyTreeOptions` contains the optional `clone`, `signal`, and `concurrency` arguments. `CopyCloneMode` is the `"auto" | "always" | "never"` strategy shared with [`Root.copyIn`](root.md#writes); tree copies default to `"auto"`, while guarded file copies default to `"never"`.
 
 `probeTreeClone(parentPath)` synchronously inspects an existing directory and returns its supported backend name or `undefined`. It creates no probe artifacts. A filesystem name identifies a candidate backend; for example, an older XFS volume may have reflinks disabled. The actual operation determines availability. An unavailable native binding produces `undefined` in automatic mode; the package's explicit native `require` mode still reports a missing binding as an error.
 

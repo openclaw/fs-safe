@@ -16,6 +16,8 @@ mod clone_unix;
 mod clone_windows;
 #[cfg(windows)]
 mod copy_windows;
+#[cfg(unix)]
+mod file_copy;
 mod owned_tree;
 #[cfg(unix)]
 mod staged_file;
@@ -216,6 +218,8 @@ pub use fast_file::{
 };
 #[cfg(windows)]
 pub use copy_windows::copy_file_contents;
+#[cfg(unix)]
+pub use file_copy::{NativeFileCopyResult, copy_file_exclusive};
 pub use owned_tree::{
     NativeOwnedTreeRemovalResult, owned_tree_removal_available, remove_owned_tree,
     remove_owned_tree_sync,

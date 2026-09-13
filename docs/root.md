@@ -132,7 +132,76 @@ and parent-directory fsync calls. Use it only for reconstructible data: a crash
 may lose the write or leave the previous file. See [Writing](writing.md#write-options)
 for platform details.
 
-`copyIn` is a one-shot ingest from a trusted absolute source path: it streams the source through the boundary, atomically renames into the root, and respects `maxBytes`.
+`copyIn` accepts a `RootCopySource`: a trusted absolute source path or a file
+within another Root. The guarded form supplies `root` with only its `open` and
+`stat` read capabilities, plus `relativePath`:
+
+```ts
+const source = await root("/srv/templates");
+const destination = await root("/srv/workspace");
+await destination.copyIn("config/settings.json", {
+  root: source,
+  relativePath: "config/settings.json",
+}, {
+  overwrite: false,
+  clone: "auto",
+  mode: 0o600,
+  signal: AbortSignal.timeout(30_000),
+});
+```
+
+The source Root applies its read policies, including confinement and symlink
+handling. `sourceHardlinks` overrides its hardlink policy only when supplied;
+otherwise the source Root default is retained. The admitted source
+descriptor stays open through copying and source-identity verification; copying
+does not consume its current file position. Both forms enforce `maxBytes` while
+reading, including when a file grows after admission, and use bounded buffers.
+Copies have independent file data; changing either file cannot change the other.
+Set `preserveSourceMode: true` to select the mode from the admitted source
+descriptor. An explicit numeric `mode`, including `Root.defaults.mode`, takes
+precedence. By default, copying retains the existing destination-mode rules.
+The operation verifies source identity, not a coherent snapshot of concurrent
+in-place edits. Keep the source unchanged when snapshot consistency is required.
+
+`overwrite` defaults to `true`, preserving the existing replacement behavior.
+With `overwrite: false`, an existing destination produces `already-exists` and
+is never altered. Copying prepares a private sibling file before publishing its
+completed contents. Native mode uses no-replace rename. The guarded JavaScript
+fallback links the completed stage and removes its temporary name in the same
+JavaScript turn; the filesystem must support hardlinks. Other processes can
+briefly observe both names. The source is never hardlinked to the destination.
+
+`clone` chooses the file-data transfer strategy through `CopyCloneMode`, shared
+with [`copyTree`](copy.md#api). File copies default to `"never"`; tree copies
+default to `"auto"`:
+
+| Value | Behavior |
+| --- | --- |
+| `never` | Copy regular file bytes using reads and writes, without explicit cloning or copy offload. |
+| `auto` | Try native file cloning, then copy offload or ordinary byte copying when cloning is unavailable. |
+| `always` | Require native cloning; fail when the binding or filesystem cannot provide it. |
+
+Native file cloning supports APFS and supported Linux filesystems. Windows
+currently uses byte copying for `never` and `auto`; `always` fails. Clone choice
+does not change modes, durability, root confinement, or source and publication
+identity checks. The shared strategy does not replace Root's guarded regular-file
+contract with `copyTree`'s caller-owned immutable-tree and metadata contract.
+
+An already aborted `signal` prevents I/O. Cancellation during copying waits for
+admitted reads and native work to settle, then cleans only the owned unpublished
+stage. The final authority check runs before publication. Once publication has
+occurred, later cancellation or verification failure preserves the destination.
+The synchronous optional `onDestinationPublished` callback receives a frozen
+`RootCopyPublicationReceipt` containing `{ path, dev, ino }`, with exact bigint identity immediately after
+publication, before later checks can fail. Callback errors also preserve the
+published file. This receipt records an outcome; it does not authorize removing
+a file that another actor may have edited. Application recovery and cooperative
+locking remain caller-owned.
+
+Existing `copyIn` callers must account for completed destinations retained after
+a post-publication source-verification failure, even without the new options.
+Recovery must inspect current destination state rather than assume a rejected
+copy left no file.
 
 Root operations that choose a new destination reject a leading Windows
 drive-relative spelling such as `C:name` on every platform. This applies to
