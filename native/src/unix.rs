@@ -602,14 +602,46 @@ pub fn remove_owned_tree(
     remove_owned_tree_with_hook(parent_fd, name, directory_fd, || {})
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn remove_created_target(root_fd: i32, rel_path: &str, target: &OwnedFd) {
+    let _ = remove_created_target_checked(root_fd, rel_path, target);
+}
+
+fn remove_created_target_checked(
+    root_fd: i32,
+    rel_path: &str,
+    target: &OwnedFd,
+) -> NativeResult<()> {
     #[cfg(target_os = "macos")]
     // SAFETY: target is an open descriptor owned by the caller.
     unsafe {
         libc::fchflags(target.as_raw_fd(), 0);
     }
-    if let Ok((parent, name)) = open_parent(root_fd, rel_path) {
-        let _ = remove_matching_child(parent.as_raw_fd(), name, target.as_raw_fd());
+    let outcome = if !rel_path.contains('/') {
+        remove_matching_child(root_fd, rel_path, target.as_raw_fd())?
+    } else {
+        let (parent, name) = open_parent(root_fd, rel_path)?;
+        remove_matching_child(parent.as_raw_fd(), name, target.as_raw_fd())?
+    };
+    if outcome == "preserved" {
+        return Err(native_error(
+            "EIO",
+            "clone cleanup preserved a substituted target",
+        ));
+    }
+    Ok(())
+}
+
+fn with_cleanup_error(
+    error: napi::Error<String>,
+    cleanup: NativeResult<()>,
+) -> napi::Error<String> {
+    match cleanup {
+        Ok(()) => error,
+        Err(cleanup) => native_error(
+            "EIO",
+            format!("{}; cleanup failed: {}", error.reason, cleanup.reason),
+        ),
     }
 }
 
@@ -619,19 +651,49 @@ pub fn clone_file_exclusive(
     target_root_fd: i32,
     target_rel_path: &str,
 ) -> NativeResult<i32> {
+    clone_file_exclusive_with_sync(source_fd, target_root_fd, target_rel_path, true)
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn clone_file_exclusive_with_sync(
+    source_fd: i32,
+    target_root_fd: i32,
+    target_rel_path: &str,
+    sync: bool,
+) -> NativeResult<i32> {
     let target = create_exclusive_target(target_root_fd, target_rel_path)?;
     if let Err(error) = rustix::fs::ioctl_ficlone(target.as_fd(), borrowed(source_fd)) {
-        remove_created_target(target_root_fd, target_rel_path, &target);
-        return Err(native_error(
-            "ENOTSUP",
-            format!("FICLONE is unavailable: {error}"),
+        let error = if matches!(
+            error,
+            rustix::io::Errno::NOTTY
+                | rustix::io::Errno::INVAL
+                | rustix::io::Errno::XDEV
+                | rustix::io::Errno::NOSYS
+        ) || error == rustix::io::Errno::NOTSUP
+            || error == rustix::io::Errno::OPNOTSUPP
+        {
+            native_error("ENOTSUP", format!("FICLONE is unavailable: {error}"))
+        } else {
+            os_error(error, "FICLONE")
+        };
+        return Err(with_cleanup_error(
+            error,
+            remove_created_target_checked(target_root_fd, target_rel_path, &target),
         ));
     }
-    if let Err(error) = rustix::fs::fchmod(target.as_fd(), Mode::from_bits_retain(0o600))
-        .and_then(|()| rustix::fs::fsync(target.as_fd()))
+    if let Err(error) =
+        rustix::fs::fchmod(target.as_fd(), Mode::from_bits_retain(0o600)).and_then(|()| {
+            if sync {
+                rustix::fs::fsync(target.as_fd())
+            } else {
+                Ok(())
+            }
+        })
     {
-        remove_created_target(target_root_fd, target_rel_path, &target);
-        return Err(os_error(error, "normalize cloned file"));
+        return Err(with_cleanup_error(
+            os_error(error, "normalize cloned file"),
+            remove_created_target_checked(target_root_fd, target_rel_path, &target),
+        ));
     }
     Ok(target.into_raw_fd())
 }
@@ -641,6 +703,16 @@ pub fn clone_file_exclusive(
     source_fd: i32,
     target_root_fd: i32,
     target_rel_path: &str,
+) -> NativeResult<i32> {
+    clone_file_exclusive_with_sync(source_fd, target_root_fd, target_rel_path, true)
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn clone_file_exclusive_with_sync(
+    source_fd: i32,
+    target_root_fd: i32,
+    target_rel_path: &str,
+    sync: bool,
 ) -> NativeResult<i32> {
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -688,12 +760,10 @@ pub fn clone_file_exclusive(
         Mode::from_bits_retain(0o700),
         AtFlags::SYMLINK_NOFOLLOW,
     ) {
-        let _ = rustix::fs::unlinkat(
-            borrowed(target_root_fd),
-            stage_path.as_str(),
-            AtFlags::REMOVEDIR,
-        );
-        return Err(os_error(error, "normalize private clone staging directory"));
+        return Err(with_cleanup_error(
+            os_error(error, "normalize private clone staging directory"),
+            cleanup_clone_stage(target_root_fd, &stage_path, None, false, None),
+        ));
     }
     let stage_fd = match open_beneath(
         target_root_fd,
@@ -705,21 +775,17 @@ pub fn clone_file_exclusive(
             unsafe { OwnedFd::from_raw_fd(fd) }
         }
         Err(error) => {
-            let _ = rustix::fs::unlinkat(
-                borrowed(target_root_fd),
-                stage_path.as_str(),
-                AtFlags::REMOVEDIR,
-            );
-            return Err(error);
+            return Err(with_cleanup_error(
+                error,
+                cleanup_clone_stage(target_root_fd, &stage_path, None, false, None),
+            ));
         }
     };
     if let Err(error) = rustix::fs::fchmod(stage_fd.as_fd(), Mode::from_bits_retain(0o700)) {
-        let _ = rustix::fs::unlinkat(
-            borrowed(target_root_fd),
-            stage_path.as_str(),
-            AtFlags::REMOVEDIR,
-        );
-        return Err(os_error(error, "normalize private clone staging directory"));
+        return Err(with_cleanup_error(
+            os_error(error, "normalize private clone staging directory"),
+            cleanup_clone_stage(target_root_fd, &stage_path, Some(&stage_fd), false, None),
+        ));
     }
 
     let payload = CString::new("payload").unwrap();
@@ -734,18 +800,16 @@ pub fn clone_file_exclusive(
     } != 0
     {
         let error = std::io::Error::last_os_error();
-        let _ = rustix::fs::unlinkat(
-            borrowed(target_root_fd),
-            stage_path.as_str(),
-            AtFlags::REMOVEDIR,
-        );
         let code = match error.raw_os_error() {
             Some(libc::EXDEV) | Some(libc::ENOTSUP) | Some(libc::EINVAL) => "ENOTSUP",
             Some(libc::EACCES) => "EACCES",
             Some(libc::EPERM) => "EPERM",
             _ => "EIO",
         };
-        return Err(native_error(code, format!("fclonefileat: {error}")));
+        return Err(with_cleanup_error(
+            native_error(code, format!("fclonefileat: {error}")),
+            cleanup_clone_stage(target_root_fd, &stage_path, Some(&stage_fd), false, None),
+        ));
     }
     let target_fd = match open_beneath(
         stage_fd.as_raw_fd(),
@@ -754,13 +818,10 @@ pub fn clone_file_exclusive(
     ) {
         Ok(fd) => fd,
         Err(error) => {
-            let _ = rustix::fs::unlinkat(stage_fd.as_fd(), "payload", AtFlags::empty());
-            let _ = rustix::fs::unlinkat(
-                borrowed(target_root_fd),
-                stage_path.as_str(),
-                AtFlags::REMOVEDIR,
-            );
-            return Err(error);
+            return Err(with_cleanup_error(
+                error,
+                cleanup_clone_stage(target_root_fd, &stage_path, Some(&stage_fd), true, None),
+            ));
         }
     };
     // SAFETY: open_beneath returned a fresh descriptor owned here.
@@ -781,16 +842,23 @@ pub fn clone_file_exclusive(
         rustix::fs::fchmod(target.as_fd(), Mode::from_bits_retain(0o600))
             .map_err(|error| os_error(error, "set cloned file mode"))?;
         clear_macos_xattrs(target.as_raw_fd())?;
-        rustix::fs::fsync(target.as_fd()).map_err(|error| os_error(error, "sync cloned file"))
+        if sync {
+            rustix::fs::fsync(target.as_fd())
+                .map_err(|error| os_error(error, "sync cloned file"))?;
+        }
+        Ok(())
     };
     if let Err(error) = normalize() {
-        remove_created_target(stage_fd.as_raw_fd(), "payload", &target);
-        let _ = rustix::fs::unlinkat(
-            borrowed(target_root_fd),
-            stage_path.as_str(),
-            AtFlags::REMOVEDIR,
-        );
-        return Err(error);
+        return Err(with_cleanup_error(
+            error,
+            cleanup_clone_stage(
+                target_root_fd,
+                &stage_path,
+                Some(&stage_fd),
+                true,
+                Some(&target),
+            ),
+        ));
     }
     if let Err(error) = rename_no_replace(
         stage_fd.as_raw_fd(),
@@ -798,20 +866,76 @@ pub fn clone_file_exclusive(
         target_root_fd,
         target_rel_path,
     ) {
-        remove_created_target(stage_fd.as_raw_fd(), "payload", &target);
-        let _ = rustix::fs::unlinkat(
-            borrowed(target_root_fd),
-            stage_path.as_str(),
-            AtFlags::REMOVEDIR,
-        );
-        return Err(error);
+        return Err(with_cleanup_error(
+            error,
+            cleanup_clone_stage(
+                target_root_fd,
+                &stage_path,
+                Some(&stage_fd),
+                true,
+                Some(&target),
+            ),
+        ));
     }
-    let _ = rustix::fs::unlinkat(
-        borrowed(target_root_fd),
-        stage_path.as_str(),
-        AtFlags::REMOVEDIR,
-    );
+    if let Err(error) =
+        cleanup_clone_stage(target_root_fd, &stage_path, Some(&stage_fd), false, None)
+    {
+        return Err(with_cleanup_error(
+            error,
+            remove_created_target_checked(target_root_fd, target_rel_path, &target),
+        ));
+    }
     Ok(target.into_raw_fd())
+}
+
+#[cfg(target_os = "macos")]
+fn cleanup_clone_stage(
+    parent_fd: i32,
+    name: &str,
+    stage: Option<&OwnedFd>,
+    payload_created: bool,
+    target: Option<&OwnedFd>,
+) -> NativeResult<()> {
+    let mut errors = Vec::new();
+    if payload_created {
+        let stage = stage.expect("a cloned payload has a retained private directory");
+        let result = if let Some(target) = target {
+            remove_created_target_checked(stage.as_raw_fd(), "payload", target)
+        } else {
+            // fclonefileat created this payload inside our private directory,
+            // but reopening it failed before a file descriptor was available.
+            match rustix::fs::unlinkat(stage, "payload", AtFlags::empty()) {
+                Ok(()) | Err(rustix::io::Errno::NOENT) => Ok(()),
+                Err(error) => Err(os_error(error, "remove cloned payload")),
+            }
+        };
+        if let Err(error) = result {
+            errors.push(error.reason);
+        }
+    }
+    let remove_directory = || -> NativeResult<()> {
+        if let Some(stage) = stage {
+            if !directory_name_matches_fd(parent_fd, name, stage.as_raw_fd())? {
+                return Err(native_error(
+                    "EIO",
+                    "private clone directory identity changed",
+                ));
+            }
+        }
+        rustix::fs::unlinkat(borrowed(parent_fd), name, AtFlags::REMOVEDIR)
+            .map_err(|error| os_error(error, "remove private clone directory"))
+    };
+    if let Err(error) = remove_directory() {
+        errors.push(error.reason);
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(native_error(
+            "EIO",
+            format!("private clone stage '{name}': {}", errors.join("; ")),
+        ))
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -945,36 +1069,31 @@ pub fn copy_file_range_exclusive(
     target_root_fd: i32,
     target_rel_path: &str,
 ) -> NativeResult<(i32, u64)> {
-    let target = create_exclusive_target(target_root_fd, target_rel_path)?;
     let source_stat = rustix::fs::fstat(borrowed(source_fd))
         .map_err(|error| os_error(error, "inspect copy source"))?;
     let expected = u64::try_from(source_stat.st_size)
         .map_err(|_| native_error("EINVAL", "copy source has a negative size"))?;
-    let mut source_offset = 0_u64;
-    let mut target_offset = 0_u64;
-    while source_offset < expected {
-        let length = usize::try_from((expected - source_offset).min(16 * 1024 * 1024)).unwrap();
-        match rustix::fs::copy_file_range(
-            borrowed(source_fd),
-            Some(&mut source_offset),
-            target.as_fd(),
-            Some(&mut target_offset),
-            length,
-        ) {
-            Ok(0) => {
-                remove_created_target(target_root_fd, target_rel_path, &target);
-                return Err(native_error("EIO", "copy_file_range made no progress"));
-            }
-            Ok(_) => {}
-            Err(error) => {
-                remove_created_target(target_root_fd, target_rel_path, &target);
-                return Err(native_error(
-                    "ENOTSUP",
-                    format!("copy_file_range is unavailable: {error}"),
-                ));
-            }
+    let target = create_exclusive_target(target_root_fd, target_rel_path)?;
+    let copied =
+        crate::file_copy::copy_file_ranges(source_fd, target.as_raw_fd(), expected, || Ok(()))
+            .and_then(|outcome| match outcome {
+                crate::file_copy::RangeCopyOutcome::Complete(bytes) if bytes == expected => {
+                    Ok(bytes)
+                }
+                crate::file_copy::RangeCopyOutcome::Complete(_) => {
+                    Err(native_error("EIO", "copy_file_range made no progress"))
+                }
+                crate::file_copy::RangeCopyOutcome::Unsupported { error, .. } => {
+                    Err(native_error("ENOTSUP", error.reason))
+                }
+            });
+    let target_offset = match copied {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            remove_created_target(target_root_fd, target_rel_path, &target);
+            return Err(error);
         }
-    }
+    };
     if let Err(error) = rustix::fs::fchmod(target.as_fd(), Mode::from_bits_retain(0o600))
         .and_then(|()| rustix::fs::fsync(target.as_fd()))
     {
@@ -1679,6 +1798,41 @@ mod tests {
             "removed"
         );
         assert!(!workspace.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn clone_cleanup_reports_unremoved_private_stages() {
+        let root = temp_root("clone-cleanup-report");
+        fs::create_dir(root.join("stage")).unwrap();
+        fs::write(root.join("stage/foreign"), b"preserve").unwrap();
+        let parent = fs::File::open(&root).unwrap();
+        let stage = OwnedFd::from(fs::File::open(root.join("stage")).unwrap());
+        let error = with_cleanup_error(
+            native_error("ENOTSUP", "clone unsupported"),
+            cleanup_clone_stage(parent.as_raw_fd(), "stage", Some(&stage), false, None),
+        );
+        assert_eq!(error.status, "EIO");
+        assert!(error.reason.contains("clone unsupported"));
+        assert!(error.reason.contains("private clone stage 'stage'"));
+        assert_eq!(fs::read(root.join("stage/foreign")).unwrap(), b"preserve");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn rejected_copy_source_leaves_no_created_target() {
+        let root = temp_root("copy-invalid-source");
+        let parent = std::fs::File::open(&root).unwrap();
+        assert_eq!(
+            copy_file_range_exclusive(i32::MAX, parent.as_raw_fd(), "target")
+                .err()
+                .unwrap()
+                .status,
+            "EBADF"
+        );
+        assert!(!root.join("target").exists());
         fs::remove_dir_all(root).unwrap();
     }
 

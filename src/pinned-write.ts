@@ -22,10 +22,13 @@ import { withSidecarLock } from "./sidecar-lock.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import { writeAllToFile } from "./write-file-handle.js";
 import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
+import { type CopyFileInput, writeCopyFileToFd } from "./copy-file-input.js";
+import { publishCopyStage } from "./publish-copy-stage.js";
 
 export type PinnedWriteInput =
   | { kind: "buffer"; data: string | Buffer; encoding?: BufferEncoding }
-  | { kind: "stream"; stream: Readable };
+  | { kind: "stream"; stream: Readable }
+  | CopyFileInput;
 
 function byteLength(input: string | Buffer, encoding: BufferEncoding | undefined): number {
   return typeof input === "string"
@@ -87,6 +90,7 @@ export type PinnedWriteParams = {
   input: PinnedWriteInput;
   rootIdentity?: FileIdentityStat;
   onRenameIdentityMismatch?: "verify-content";
+  onPublished?: (identity: PublishedWriteIdentity) => void;
   // Borrowed only for this callback; the writer closes every descriptor in finally.
   verifyPublished?: (
     fd: number,
@@ -171,7 +175,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
     ? await createAsyncDirectoryGuard(parentPath, { bigint: true })
     : await createNearestExistingDirectoryGuard(params.rootPath, parentPath, { bigint: true });
   const targetPath = path.join(parentPath, params.basename);
-  if (params.overwrite === false) {
+  if (params.overwrite === false && params.input.kind !== "file") {
     const assertBeforeMutation = () => {
       assertFinalSymlinkRejected(targetPath, params.rejectFinalSymlink);
       params.assertBeforeMutation?.();
@@ -257,6 +261,8 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
       await writeAllToFile(handle, params.input.data, {
         encoding: params.input.encoding, assertBeforeMutation: params.assertBeforeMutation,
       });
+    } else if (params.input.kind === "file") {
+      await writeCopyFileToFd(handle.fd, params.input, params.maxBytes, params.assertBeforeMutation);
     } else {
       await writeStreamToHandle(params.input.stream, handle, params.maxBytes, params.assertBeforeMutation);
     }
@@ -268,12 +274,26 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
     const expectedTempStat = tempStat;
     await handle.chmod(params.mode);
     if (params.sync !== false) await syncFileBestEffort(handle);
+    if (params.input.kind === "file") await params.input.verifySource();
     let verifiedIdentity: FileIdentityStat = expectedTempStat;
     await withAsyncDirectoryGuards([parentGuard], async () => {
       assertFinalSymlinkRejected(targetPath, params.rejectFinalSymlink);
-      params.assertBeforeMutation?.();
-      await fs.rename(tempPath, targetPath);
-      renamed = true;
+      if (params.overwrite === false) {
+        publishCopyStage({
+          temporaryPath: tempPath, targetPath, fd: handle!.fd,
+          identity: tempIdentity!, parentGuard,
+          assertBeforeMutation: params.assertBeforeMutation,
+          onPublished: (identity) => {
+            renamed = true;
+            params.onPublished?.(identity);
+          },
+        });
+      } else {
+        params.assertBeforeMutation?.();
+        await fs.rename(tempPath, targetPath);
+        renamed = true;
+        params.onPublished?.(verificationIdentity);
+      }
       await getFsSafeTestHooks()?.afterPinnedWriteFallbackRename?.(targetPath);
       if (params.sync !== false) await syncDirectoryBestEffort(parentPath);
       const targetStat = fsSync.lstatSync(targetPath);

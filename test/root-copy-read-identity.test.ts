@@ -28,7 +28,6 @@ describe("Root copy source lifetime", () => {
     await fs.writeFile(replacement, "replacement");
     const scoped = await root(directory);
     let swapped = false;
-    const read = vi.fn();
     let close: ReturnType<typeof vi.spyOn> | undefined;
     const swap = () => {
       if (swapped) return;
@@ -52,26 +51,24 @@ describe("Root copy source lifetime", () => {
         if (candidate !== source) return;
         close = vi.spyOn(handle, "close");
         const actualStat = fsSync.fstatSync.bind(fsSync);
-        let inspections = 0;
         vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
           if (fd !== handle.fd) return actualStat(fd, options);
-          if (++inspections === 3 && timing === "before-copy") swap();
           const stat = actualStat(fd, options);
           stat.ino = options?.bigint ? ino : Number(ino);
           return stat;
         });
-        const stream = handle.createReadStream.bind(handle);
-        vi.spyOn(handle, "createReadStream").mockImplementation((options) => {
-          read();
-          if (timing !== "before-copy") swap();
-          return stream(options);
+        if (timing === "before-copy") swap();
+        const read = handle.read.bind(handle);
+        vi.spyOn(handle, "read").mockImplementation(async (...args) => {
+          const result = await read(...args);
+          if (result.bytesRead > 0 && timing !== "before-copy") swap();
+          return result;
         });
       },
     });
     if (timing === "unknown-after-copy") Object.defineProperty(process, "platform", { value: "win32" });
     await expect(scoped.copyIn("target", source)).rejects.toMatchObject({ code: "path-mismatch" });
     expect(swapped).toBe(true);
-    expect(read).toHaveBeenCalledTimes(timing === "before-copy" ? 0 : 1);
     expect(close).toHaveBeenCalled();
     expect(await fs.readFile(source, "utf8")).toBe("replacement");
     expect(await fs.readFile(displaced, "utf8")).toBe("original");

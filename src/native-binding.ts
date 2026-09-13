@@ -34,6 +34,13 @@ export interface NativeCopyResult {
   errorMessage?: string;
 }
 
+export interface NativeFileCopyResult {
+  fd: number;
+  method: "clone" | "copy-file-range" | "copy";
+  errorCode?: string;
+  errorMessage?: string;
+}
+
 export interface NativeOpenBeneathResult {
   fd: number;
   containment: "kernel-atomic" | "best-effort";
@@ -105,6 +112,15 @@ export interface NativeBinding {
     basename: string,
     fileFd: number,
   ): "removed" | "name-absent" | "preserved";
+  copyFileExclusive?(
+    sourceFd: number,
+    parentFd: number,
+    basename: string,
+    clone: "never" | "auto" | "require",
+    maxBytes: number | undefined,
+    signal: AbortSignal | undefined,
+    sync: boolean,
+  ): Promise<NativeFileCopyResult>;
   cloneFileExclusive(sourceFd: number, targetRootFd: number, targetRelPath: string): number;
   copyFileRangeExclusive(
     sourceFd: number,
