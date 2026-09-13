@@ -12,6 +12,7 @@ import { replaceFileAtomic } from "../src/replace-file.js";
 import { resolveRootPath } from "../src/root-path.js";
 import { assertNoSymlinkParents } from "../src/symlink-parents.js";
 import { writeSecretFileAtomic } from "../src/secret-file.js";
+import { realpathSync } from "../src/realpath.js";
 import { writeViaSiblingTempPath } from "../src/sibling-temp.js";
 import { buildRandomTempFilePath, tempFile } from "../src/temp-target.js";
 
@@ -230,15 +231,15 @@ describe("deepsec regressions", () => {
     await fsp.mkdir(rootDir, { mode: 0o700 });
     await fsp.mkdir(outside);
     const secretPath = path.join(rootDir, "nested", "secret.txt");
-    const realRealpath = fsSync.realpathSync.native;
+    const realRealpath = realpathSync.native;
     let swapped = false;
-    vi.spyOn(fsSync.realpathSync, "native").mockImplementation((target, options) => {
+    vi.spyOn(realpathSync, "native").mockImplementation((target) => {
       if (!swapped && target === path.join(rootDir, "nested")) {
         swapped = true;
         fsSync.renameSync(rootDir, originalRoot);
         fsSync.symlinkSync(outside, rootDir, "dir");
       }
-      return realRealpath(target, options as never);
+      return realRealpath(target);
     });
 
     await expect(

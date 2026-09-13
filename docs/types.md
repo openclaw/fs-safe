@@ -45,7 +45,7 @@ type DirEntry = PathStat & {
 };
 ```
 
-Returned by `Root.list(rel, { withFileTypes: true })`. Includes every
+Returned by `Root.list(rel, { withFileTypes: true })` and [`Root.entries()`](entries.md). Includes every
 `PathStat` field plus the entry's `name`.
 
 ## `BasePathOptions`

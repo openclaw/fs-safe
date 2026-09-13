@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { tmpdir as getOsTmpDir } from "node:os";
 import path from "node:path";
+import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { assertSafePathSegment } from "./safe-path-segment.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
@@ -48,7 +49,8 @@ export function resolveSecureTempRoot(options: ResolveSecureTempRootOptions): st
   const accessSync = options.accessSync ?? fs.accessSync;
   const chmodSync = options.chmodSync ?? fs.chmodSync;
   const lstatSync = options.lstatSync ?? fs.lstatSync;
-  const mkdirSync = options.mkdirSync ?? fs.mkdirSync;
+  const mkdirSync = options.mkdirSync ?? ((directory: string, mkdirOptions: { recursive: boolean; mode?: number }) =>
+    fs.mkdirSync(recursiveMkdirPath(directory), mkdirOptions));
   const warn = options.warn ?? ((message: string) => console.warn(message));
   const warningPrefix = options.warningPrefix ?? "[fs-safe]";
   const unsafeFallbackLabel = options.unsafeFallbackLabel ?? "secure temp dir";

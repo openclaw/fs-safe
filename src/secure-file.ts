@@ -11,6 +11,7 @@ import { isWindowsDriveLetterPath, isWindowsNetworkPath } from "./local-file-acc
 import { isPathInside, isSymlinkOpenError } from "./path.js";
 import { formatPermissionErrorDetail } from "./permission-exec.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
+import { realpathSync } from "./realpath.js";
 import {
   inspectPathPermissions,
   isGroupReadable,
@@ -167,7 +168,7 @@ async function openSecureHandle(options: SecureFileReadOptions, maxBytes: number
       assertNotHardlinked(options, pathStat);
       return pathStat;
     }, openedIdentity);
-    const realPath = fsSync.realpathSync.native(options.filePath);
+    const realPath = realpathSync.native(options.filePath);
     assertNoWindowsPathAlias(realPath, "filesystem", `${label(options)} resolved path uses a Windows filesystem namespace alias`);
     await inspectFileIdentity(() => {
       const realPathStat = fsSync.statSync(realPath, { bigint: true });
@@ -195,7 +196,7 @@ async function assertTrustedDirs(options: SecureFileReadOptions, realPath: strin
       assertNoWindowsPathAlias(resolved, "filesystem", "trusted directory uses a Windows filesystem namespace alias");
       let realPath: string;
       try {
-        realPath = fsSync.realpathSync.native(resolved);
+        realPath = realpathSync.native(resolved);
       } catch {
         return resolved;
       }

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import syncFs, { type BigIntStats, type Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import {
   assertDestinationHardlinkPolicy,
   assertDestinationHardlinkPolicySync,
@@ -278,14 +279,10 @@ function resolveModeSync(options: ReplaceFileAtomicSyncOptions, filePath: string
 }
 
 function missingFchmodSyncError(): TypeError {
-  return new TypeError(
-    "fileSystem.fchmodSync is required when mode, dirMode, or preserveExistingMode is specified",
-  );
+  return new TypeError("fileSystem.fchmodSync is required when mode, dirMode, or preserveExistingMode is specified");
 }
 
-export async function replaceFileAtomic(
-  options: ReplaceFileAtomicOptions,
-): Promise<ReplaceFileAtomicResult> {
+export async function replaceFileAtomic(options: ReplaceFileAtomicOptions): Promise<ReplaceFileAtomicResult> {
   return await replaceFileAtomicWithDirectorySync(options);
 }
 
@@ -303,7 +300,9 @@ export async function replaceFileAtomicWithDirectorySync(
     if (renameIdentity !== "verify-content-with-lock") {
       return await replaceFileAtomicUnserialized(options, filePath, renameIdentity, syncParent);
     }
-    await (options.fileSystem?.promises ?? fs).mkdir(path.dirname(filePath), {
+    const fsModule = options.fileSystem?.promises ?? fs;
+    const dir = path.dirname(filePath);
+    await fsModule.mkdir(fsModule === fs ? recursiveMkdirPath(dir) : dir, {
       recursive: true,
       mode: options.dirMode ?? 0o700,
     });
@@ -327,7 +326,7 @@ async function replaceFileAtomicUnserialized(
   const tempOwner = new AsyncAtomicTempOwner(tempPath);
   let originalError: unknown;
   try {
-    await fsModule.mkdir(dir, { recursive: true, mode: dirMode });
+    await fsModule.mkdir(fsModule === fs ? recursiveMkdirPath(dir) : dir, { recursive: true, mode: dirMode });
     await applyDirectoryMode({ fsModule, dirPath: dir, mode: dirMode });
     tempOwner.start();
     tempOwner.adopt(await writeTempFile({
@@ -391,9 +390,7 @@ async function replaceFileAtomicUnserialized(
   }
 }
 
-export function replaceFileAtomicSync(
-  options: ReplaceFileAtomicSyncOptions,
-): ReplaceFileAtomicResult {
+export function replaceFileAtomicSync(options: ReplaceFileAtomicSyncOptions): ReplaceFileAtomicResult {
   const filePath = options.filePath;
   validateReplaceFilePath(filePath);
   validateRestoreOptions(options);
@@ -402,7 +399,9 @@ export function replaceFileAtomicSync(
   if (renameIdentity !== "verify-content-with-lock") {
     return replaceFileAtomicSyncUnserialized(options, filePath, renameIdentity);
   }
-  (options.fileSystem ?? syncFs).mkdirSync(path.dirname(filePath), {
+  const fsModule = options.fileSystem ?? syncFs;
+  const dir = path.dirname(filePath);
+  fsModule.mkdirSync(fsModule === syncFs ? recursiveMkdirPath(dir) : dir, {
     recursive: true,
     mode: options.dirMode ?? 0o700,
   });
@@ -435,7 +434,7 @@ function replaceFileAtomicSyncUnserialized(
   const tempOwner = new SyncAtomicTempOwner(tempPath);
   let originalError: unknown;
   try {
-    fsModule.mkdirSync(dir, { recursive: true, mode: dirMode });
+    fsModule.mkdirSync(fsModule === syncFs ? recursiveMkdirPath(dir) : dir, { recursive: true, mode: dirMode });
     applyDirectoryModeSync({ fsModule, dirPath: dir, mode: dirMode, fchmodSync });
     tempOwner.start();
     tempOwner.adopt(writeTempFileSync({

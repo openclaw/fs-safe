@@ -1,4 +1,3 @@
-import { createHook } from "node:async_hooks";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -13,48 +12,30 @@ afterEach(() => {
   __resetFsSafeNativeConfigForTest();
 });
 
-it("does not remove a file after asynchronous Node removal preparation loses authority", async () => {
+it("submits removal before authority can expire in a later microtask", async () => {
   const directory = await tempRoot("fs-safe-remove-dispatch-");
   const target = path.join(directory, "target");
   await fs.writeFile(target, "keep while unauthorized");
   configureFsSafeNative({ mode: "off" });
   const scoped = await root(directory);
-  const expired = new Error("removal owner expired during Node preparation");
-  let armed = false;
+  const expired = new Error("removal owner expired before dispatch");
   let revoked = false;
-  const preparations = new Set<number>();
-  // Node's rm() validates/lstats through callback requests before unlink. Observe
-  // their real completion, without replacing either fs.rm() or its filesystem work.
-  const hook = createHook({
-    init(id, type) {
-      if (armed && type === "FSREQCALLBACK") preparations.add(id);
-    },
-    after(id) {
-      if (preparations.has(id)) revoked = true;
+  let dispatched = false;
+  const unlink = fs.unlink.bind(fs);
+  vi.spyOn(fs, "unlink").mockImplementation((filePath) => {
+    expect(revoked).toBe(false);
+    dispatched = true;
+    return unlink(filePath);
+  });
+  await scoped.remove("target", {
+    assertBeforeMutation: () => {
+      if (revoked) throw expired;
+      queueMicrotask(() => { revoked = true; });
     },
   });
-  hook.enable();
-  let failure: unknown;
-  try {
-    await scoped.remove("target", {
-      assertBeforeMutation: () => {
-        if (revoked) throw expired;
-        armed = true;
-      },
-    });
-  } catch (error) {
-    failure = error;
-  } finally {
-    hook.disable();
-  }
-  if (revoked) {
-    expect(failure).toBe(expired);
-    expect(await fs.readFile(target, "utf8")).toBe("keep while unauthorized");
-  } else {
-    // Direct unlink submission has no intervening asynchronous preparation.
-    expect(failure).toBeUndefined();
-    await expect(fs.lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
-  }
+  expect(dispatched).toBe(true);
+  expect(revoked).toBe(true);
+  await expect(fs.lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 it("stops a large append when authority expires after its first filesystem write", async () => {
@@ -66,38 +47,21 @@ it("stops a large append when authority expires after its first filesystem write
   configureFsSafeNative({ mode: "off" });
   const scoped = await root(directory);
   const expired = new Error("append owner expired after the first write");
-  let armed = false;
-  let firstWrite: number | undefined;
   let revoked = false;
-  // The first admitted request is the actual append write. Revocation happens
-  // at its completion, before Node or fs-safe can submit a subsequent chunk.
-  const hook = createHook({
-    init(id, type) {
-      if (armed && firstWrite === undefined && type === "FSREQPROMISE") firstWrite = id;
+  // Revoke from completed filesystem state, independently of the runtime's
+  // async request types or the append implementation's chunk size.
+  await expect(scoped.append("target", payload.toString("latin1"), {
+    mkdir: false,
+    encoding: "latin1",
+    prependNewlineIfNeeded: true,
+    assertBeforeMutation: () => {
+      if (fsSync.statSync(target).size > initial.length) {
+        revoked = true;
+        throw expired;
+      }
     },
-    after(id) {
-      if (id === firstWrite) revoked = true;
-    },
-  });
-  hook.enable();
-  let failure: unknown;
-  try {
-    await scoped.append("target", payload.toString("latin1"), {
-      mkdir: false,
-      encoding: "latin1",
-      prependNewlineIfNeeded: true,
-      assertBeforeMutation: () => {
-        if (revoked) throw expired;
-        armed = true;
-      },
-    });
-  } catch (error) {
-    failure = error;
-  } finally {
-    hook.disable();
-  }
+  })).rejects.toBe(expired);
   expect(revoked).toBe(true);
-  expect(failure).toBe(expired);
   const actual = await fs.readFile(target);
   const expected = Buffer.concat([initial, Buffer.from("\n"), payload]);
   expect(actual.length).toBeGreaterThan(initial.length);

@@ -65,6 +65,7 @@ await fs.remove("notes/archive/today.txt");
 | [`tempWorkspace`](temp.md) | 0700 scratch dir with auto-cleanup. |
 | [`readSecureFile`](secure-file.md) | Absolute file reads with fd pinning, permissions, owner, size, and timeout checks. |
 | [`walkDirectory` / `Root.walk`](walk.md) | Standalone inventories plus root-bounded pruning, budgets, and partial-error reporting. |
+| [`Root.entries`](entries.md) | Guarded nonrecursive entries, bounded name collection, and caller-owned symlink validation. |
 | [`extractArchive`](archive.md) | Policy-driven ZIP/TAR extraction with clamp/filter, metadata/path-depth, link, count, and byte limits. |
 | [Secret files](secret-file.md) | Mode-0600 credentials with size and TOCTOU defense. |
 | [Permissions](permissions.md) | POSIX mode helpers plus Windows ACL inspection, raw owner/ACE facts, remediation, and private-directory creation. |

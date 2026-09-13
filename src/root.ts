@@ -33,6 +33,7 @@ export {
 } from "./root-impl.js";
 export type { RootCopyPublicationReceipt } from "./copy-publication.js";
 export type { CopyCloneMode } from "./copy-policy.js";
+export type { RootEntriesOptions } from "./root-entries.js";
 export type { ContainmentGuarantee } from "./containment.js";
 export type {
   RootWalkDataEntry,

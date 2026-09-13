@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { vi } from "vitest";
+import { realpathSync } from "../../src/realpath.js";
 
 export async function observeArchiveFs(directory: string) {
   const probe = await fs.open(path.join(directory, "probe"), "w");
@@ -44,8 +45,8 @@ export async function observeArchiveFs(directory: string) {
       });
     }
   }
-  const realpath = fsSync.realpathSync.native;
-  vi.spyOn(fsSync.realpathSync, "native").mockImplementation((...args: Parameters<typeof realpath>) => {
+  const realpath = realpathSync.native;
+  vi.spyOn(realpathSync, "native").mockImplementation((...args: Parameters<typeof realpath>) => {
     bump("s.realpathSync.native");
     return realpath(...args);
   });

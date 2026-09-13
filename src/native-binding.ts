@@ -86,6 +86,8 @@ export interface NativeWindowsSecurityFacts {
 }
 
 export interface NativeBinding {
+  /** POSIX system canonicalization; confinement and identity policy stay with callers. */
+  canonicalizePath?(path: string, ordinary: boolean): { path?: string; errno?: number };
   /** Windows-only byte transfer; callers retain both admitted descriptors until settlement. */
   copyFileContents?(sourceFd: number, targetFd: number, signal?: AbortSignal): Promise<void>;
   /** Internal: same private, immutable input ownership as the ZIP buffer reader. */

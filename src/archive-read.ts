@@ -30,6 +30,7 @@ import type { ZipEntry } from "./archive-zip-entry.js";
 import { FsSafeError } from "./errors.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
+import { realpathSync } from "./realpath.js";
 import { getNativeBinding, type NativeBinding } from "./native.js";
 import type { NativeArchiveEntry } from "./native-binding.js";
 import { admitZipBuffer } from "./archive-zip-admission.js";
@@ -94,7 +95,7 @@ async function readStreamBounded(
 
 async function readArchiveInput(archivePath: string): Promise<Buffer> {
   assertNoWindowsPathAlias(archivePath);
-  const resolved = fsSync.realpathSync.native(archivePath);
+  const resolved = realpathSync.native(archivePath);
   assertNoWindowsPathAlias(resolved);
   const before = await inspectFileIdentity(async () => {
     const stat = fsSync.lstatSync(archivePath, { bigint: true });

@@ -17,6 +17,8 @@ import { resolveOpenedFileRealPathForHandle, root, type Root } from "./root.js";
 import { ensureTrailingSep } from "./root-context.js";
 import { RootHandle } from "./root-impl.js";
 import { prepareSecretFileWrite } from "./secret-file.js";
+import { realpathSync } from "./realpath.js";
+import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
 import {
   assertNoWindowsPathAlias,
@@ -50,7 +52,7 @@ export async function openWritableStoreRoot(params: {
 }): Promise<Root> {
   assertNoWindowsPathAlias(params.rootDir, "filesystem", "store root uses a Windows filesystem namespace alias");
   const maxBytes = normalizeMaxBytes(params.maxBytes);
-  await fs.mkdir(params.rootDir, { recursive: true, mode: params.dirMode });
+  await fs.mkdir(recursiveMkdirPath(params.rootDir), { recursive: true, mode: params.dirMode });
   await fs.chmod(params.rootDir, params.dirMode).catch(() => undefined);
   return await root(params.rootDir, { hardlinks: "reject", maxBytes });
 }
@@ -203,7 +205,7 @@ export function ensureStoreDirectorySync(params: {
     throw new FsSafeError("outside-workspace", "file path escapes store root");
   }
 
-  syncFs.mkdirSync(rootDir, { recursive: true, mode: params.mode });
+  syncFs.mkdirSync(recursiveMkdirPath(rootDir), { recursive: true, mode: params.mode });
   const rootStat = syncFs.lstatSync(rootDir);
   if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
     throw new FsSafeError(
@@ -211,7 +213,7 @@ export function ensureStoreDirectorySync(params: {
       `${params.messagePrefix} root must be a directory: ${rootDir}`,
     );
   }
-  const rootReal = syncFs.realpathSync(rootDir);
+  const rootReal = realpathSync(rootDir);
   chmodDirectorySyncBestEffort(rootDir, params.mode);
 
   let current = rootDir;
@@ -232,8 +234,8 @@ export function ensureStoreDirectorySync(params: {
       syncFs.mkdirSync(current, { mode: params.mode });
     }
     const currentRootStat = syncFs.lstatSync(rootDir);
-    const currentRootReal = syncFs.realpathSync(rootDir);
-    const currentReal = syncFs.realpathSync(current);
+    const currentRootReal = realpathSync(rootDir);
+    const currentReal = realpathSync(current);
     if (
       currentRootStat.isSymbolicLink() ||
       !currentRootStat.isDirectory() ||

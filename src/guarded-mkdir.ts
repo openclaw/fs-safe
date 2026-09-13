@@ -10,6 +10,7 @@ import {
   pathForWindowsFilesystem,
   resolvePathPreservingWindowsRoot,
 } from "./windows-path-alias.js";
+import { realpathSync } from "./realpath.js";
 
 function isSameOrChildPath(candidate: string, parent: string): boolean {
   const parentPrefix = parent.endsWith(path.sep) ? parent : `${parent}${path.sep}`;
@@ -18,7 +19,7 @@ function isSameOrChildPath(candidate: string, parent: string): boolean {
 
 async function realpathOrThrowNotFile(target: string): Promise<string> {
   try {
-    const canonical = fsSync.realpathSync.native(
+    const canonical = realpathSync.native(
       pathForWindowsFilesystem(target),
     );
     assertNoWindowsPathAlias(
@@ -64,7 +65,7 @@ export async function mkdirPathComponentsWithGuards(params: {
     "target directory uses a Windows filesystem namespace alias",
   );
   const root = resolvePathPreservingWindowsRoot(rawRootReal);
-  const rawRootCanonical = fsSync.realpathSync.native(
+  const rawRootCanonical = realpathSync.native(
     pathForWindowsFilesystem(root),
   );
   assertNoWindowsPathAlias(

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { guardedRename, guardedRm } from "./guarded-mutation.js";
+import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { assertSafePathPrefix } from "./safe-path-segment.js";
 import { serializePathWrite } from "./write-queue.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
@@ -45,7 +46,7 @@ async function replaceDirectoryAtomicUnserialized(
   );
   let backupCreated = false;
 
-  await fs.mkdir(parentDir, { recursive: true });
+  await fs.mkdir(recursiveMkdirPath(parentDir), { recursive: true });
   try {
     await guardedRename({ from: targetDir, to: backupDir });
     backupCreated = true;

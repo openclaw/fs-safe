@@ -42,6 +42,25 @@ Vitest. Tests live in `test/` and follow `*.test.ts`. Run a single file with:
 pnpm test test/archive.test.ts
 ```
 
+With Bun 1.4.2 installed, build the host addon and run the native compatibility
+lane in real Bun workers, then exercise the built package with JIT disabled:
+
+```bash
+pnpm native:build
+pnpm test:bun:native
+bun --jitless scripts/bun-native-proof.mjs
+```
+
+Keep the Node/pnpm build toolchain above. CI runs the native compatibility lane
+on Linux, macOS, and Windows. The built-package proof checks `auto`/`require`,
+native-off loading policy, and a separate installation without the addon.
+
+`pnpm test:bun` runs the entire Node-oriented suite as a diagnostic. On released
+Bun, its explicit native-off and missing-helper cases include unsupported
+permission/path behavior described in [install](install.md#bun-runtime); this
+command is not a passing compatibility gate. Node CI retains every fallback
+assertion. Neither lane rewrites `off` to `auto` or marks defects as expected passes.
+
 Use `vi.mock` sparingly. Most tests should drive real disk operations in a `mkdtemp`-created scratch directory, asserting on observable behavior. The library has [test hooks](testing.md) for the rare cases where you need to inject a TOCTOU race deterministically.
 
 Vitest timeouts do not cancel filesystem promises. Shared fixtures with expensive

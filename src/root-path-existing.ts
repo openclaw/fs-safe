@@ -3,6 +3,7 @@ import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { formatErrorDetail } from "./error-detail.js";
 import { isNotFoundPathError, isPathInside } from "./path.js";
+import { realpathSync } from "./realpath.js";
 import {
   assertNoWindowsPathAlias,
   pathForWindowsFilesystem,
@@ -44,7 +45,7 @@ export function rawPathRelativeToCanonicalRoot(
       }
       if (!isSymlink && !stat.isDirectory() && index < segments.length - 1) return undefined;
       traversedSymlink ||= isSymlink;
-      canonical = fs.realpathSync.native(operationPath);
+      canonical = realpathSync.native(operationPath);
       if (
         isSymlink && index < segments.length - 1 &&
         !fs.statSync(pathForWindowsFilesystem(canonical)).isDirectory()
@@ -106,7 +107,7 @@ export async function resolvePathViaExistingAncestor(targetPath: string): Promis
 
   let rawResolvedAncestor: string;
   try {
-    rawResolvedAncestor = fs.realpathSync.native(pathForWindowsFilesystem(cursor));
+    rawResolvedAncestor = realpathSync.native(pathForWindowsFilesystem(cursor));
   } catch {
     return normalized;
   }
@@ -145,7 +146,7 @@ export function resolvePathViaExistingAncestorSync(targetPath: string): string {
 
   let rawResolvedAncestor: string;
   try {
-    rawResolvedAncestor = fs.realpathSync(pathForWindowsFilesystem(cursor));
+    rawResolvedAncestor = realpathSync(pathForWindowsFilesystem(cursor));
   } catch {
     return normalized;
   }

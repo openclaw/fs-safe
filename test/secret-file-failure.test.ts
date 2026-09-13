@@ -10,6 +10,7 @@ import {
   writeSecretFileAtomic,
 } from "../src/secret-file.js";
 import { readSecretFile } from "../src/secret-read-async.js";
+import * as realpath from "../src/realpath.js";
 import * as verification from "../src/root-write-verification.js";
 
 const { tempRoot } = useTempDirs();
@@ -121,7 +122,7 @@ describe("secret file refusal paths", () => {
     const root = await tempRoot("fs-safe-secret-open-vanish-");
     const filePath = path.join(root, "token");
     await fs.writeFile(filePath, "secret");
-    vi.spyOn(fsSync, "realpathSync").mockImplementationOnce(() => {
+    vi.spyOn(realpath, "realpathSync").mockImplementationOnce(() => {
       throw Object.assign(new Error("vanished"), { code: "ENOENT" });
     });
     expect(() => readSecretFileSync(filePath, "token")).toThrow(
@@ -164,19 +165,20 @@ describe("secret file refusal paths", () => {
     await fs.symlink(originalPath, syncLink);
     await fs.symlink(originalPath, asyncLink);
 
-    const realpathSync = fsSync.realpathSync.bind(fsSync);
-    vi.spyOn(fsSync, "realpathSync").mockImplementationOnce((candidate, options) => {
+    const resolvePath = realpath.realpathSync;
+    const resolveSpy = vi.spyOn(realpath, "realpathSync").mockImplementationOnce((candidate) => {
       fsSync.unlinkSync(syncLink);
       fsSync.symlinkSync(replacementPath, syncLink);
-      return realpathSync(candidate, options as never);
+      return resolvePath(candidate);
     });
     expectFsSafeErrorSync(() => readSecretFileSync(syncLink, "sync token"), "path-mismatch");
+    resolveSpy.mockRestore();
 
-    const realpath = fsSync.realpathSync.native;
-    vi.spyOn(fsSync.realpathSync, "native").mockImplementationOnce((candidate, options) => {
+    const nativeRealpath = realpath.realpathSync.native;
+    vi.spyOn(realpath.realpathSync, "native").mockImplementationOnce((candidate) => {
       fsSync.unlinkSync(asyncLink);
       fsSync.symlinkSync(replacementPath, asyncLink);
-      return realpath(candidate, options as never);
+      return nativeRealpath(candidate);
     });
     await expectFsSafeError(readSecretFile(asyncLink, "async token"), "path-mismatch");
   });

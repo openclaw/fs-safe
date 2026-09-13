@@ -9,6 +9,7 @@ import {
 } from "./directory-guard.js";
 import { FsSafeError, type FsSafeErrorCode } from "./errors.js";
 import { pathExists } from "./fs.js";
+import { realpathSync } from "./realpath.js";
 import { resolveRootPath } from "./root-path.js";
 import {
   assertNoWindowsPathAlias,
@@ -364,7 +365,7 @@ export async function canonicalPathFromExistingAncestor(filePath: string): Promi
   let canonicalAncestor = ancestor;
   let resolvedAncestor: string | undefined;
   try {
-    resolvedAncestor = fsSync.realpathSync.native(
+    resolvedAncestor = realpathSync.native(
       pathForWindowsFilesystem(ancestor),
     );
   } catch {
@@ -388,7 +389,7 @@ export async function resolveAbsolutePathForRead(
   const normalized = assertAbsolutePathInput(filePath);
   let canonicalPath: string;
   try {
-    canonicalPath = fsSync.realpathSync.native(
+    canonicalPath = realpathSync.native(
       pathForWindowsFilesystem(normalized),
     );
     assertNoWindowsPathAlias(canonicalPath);

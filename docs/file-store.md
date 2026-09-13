@@ -124,6 +124,21 @@ metadata where lower latency matters more than crash-durability. Per-call
 `undefined` override preserves the store default. Modes, path confinement,
 and publication identity checks are unchanged.
 
+Synchronous writes retain their original write-only descriptor through rename
+and publication checks, using exact bigint file identities. When Windows cannot
+report a pathname's identity, verification reopens the name only to compare its
+descriptor with the retained writer; it never reads file contents. A substituted
+file is rejected even if its bytes match, and a post-publication failure leaves
+the published entry intact for caller-owned recovery. Ordinary write-only and
+mode-000 outputs do not require a readable descriptor when pathname metadata is
+available.
+
+If an opaque pathname cannot be reopened because of an ACL denial or sharing
+restriction, the synchronous writer intentionally rejects with `path-mismatch`:
+its exact publication identity cannot be verified. There is no equal-content
+fallback. The published entry remains present, so callers must inspect or
+recover that outcome instead of assuming the write did not occur.
+
 | Method | Durability support |
 |---|---|
 | `write`, `writeText`, `writeJson` (async and sync) | Per-call option overrides store default. |

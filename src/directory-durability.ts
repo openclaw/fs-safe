@@ -6,6 +6,7 @@ import { ensureAbsoluteDirectory } from "./absolute-path.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity, type FileIdentityStat } from "./file-identity.js";
 import { assertNoWindowsPathAlias, pathForWindowsFilesystem, resolvePathPreservingWindowsRoot } from "./windows-path-alias.js";
+import { realpathSync } from "./realpath.js";
 
 export type DirectorySyncOutcome =
   | { status: "synced" }
@@ -117,7 +118,7 @@ async function createDirectoryReceipt(directoryPath: string, label: string): Pro
   const operationPath = pathForWindowsFilesystem(resolvedPath);
   const identity = fsSync.lstatSync(operationPath);
   assertDirectory(identity, resolvedPath, label);
-  const realPath = fsSync.realpathSync.native(operationPath);
+  const realPath = realpathSync.native(operationPath);
   assertNoWindowsPathAlias(
     realPath,
     "filesystem",
@@ -145,7 +146,7 @@ function createDirectoryReceiptSync(directoryPath: string, label: string): Direc
   const operationPath = pathForWindowsFilesystem(resolvedPath);
   const identity = fsSync.lstatSync(operationPath);
   assertDirectory(identity, resolvedPath, label);
-  const realPath = fsSync.realpathSync(operationPath);
+  const realPath = realpathSync(operationPath);
   assertNoWindowsPathAlias(
     realPath,
     "filesystem",
@@ -166,7 +167,7 @@ async function assertDirectoryReceiptCurrent(
   const operationPath = pathForWindowsFilesystem(receipt.path);
   const currentIdentity = fsSync.lstatSync(operationPath);
   assertDirectory(currentIdentity, receipt.path, label);
-  const realPath = fsSync.realpathSync.native(operationPath);
+  const realPath = realpathSync.native(operationPath);
   assertNoWindowsPathAlias(
     realPath,
     "filesystem",
@@ -188,7 +189,7 @@ function assertDirectoryReceiptCurrentSync(receipt: DirectoryReceipt, label: str
   const operationPath = pathForWindowsFilesystem(receipt.path);
   const currentIdentity = fsSync.lstatSync(operationPath);
   assertDirectory(currentIdentity, receipt.path, label);
-  const realPath = fsSync.realpathSync(operationPath);
+  const realPath = realpathSync(operationPath);
   assertNoWindowsPathAlias(
     realPath,
     "filesystem",

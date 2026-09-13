@@ -167,7 +167,7 @@ for (const mode of ["off", "require"] as const) {
             [{ path: "pkg/state/cache/value", kind: "file", size: 6 }],
             [{ path: "pkg/keep", kind: "file", size: 4 }],
           ]);
-          expect(await fs.readdir(options.destDir)).toEqual(["keep", "sentinel"]);
+          expect((await fs.readdir(options.destDir)).sort()).toEqual(["keep", "sentinel"]);
           nativeExecuted();
         });
 

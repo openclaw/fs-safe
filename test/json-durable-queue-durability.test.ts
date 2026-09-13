@@ -199,7 +199,7 @@ describe("durable JSON queue transition durability", () => {
       paths,
       tempPrefix: "queue",
     })).rejects.toThrow("restore retry sync failed");
-    await expect(fs.access(entryPath)).resolves.toBeUndefined();
+    await expect(fs.lstat(entryPath, { bigint: true })).resolves.toMatchObject({ nlink: 2n });
 
     vi.restoreAllMocks();
     await expect(loadJsonDurableQueueEntry<{ generation: number }>({

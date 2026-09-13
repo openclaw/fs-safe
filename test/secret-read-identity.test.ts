@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readSecretFileSync } from "../src/secret-file.js";
 import { readSecretFile } from "../src/secret-read-async.js";
+import * as realpath from "../src/realpath.js";
 import { useTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useTempDirs();
@@ -80,18 +81,18 @@ describe.each(["sync", "async"] as const)("%s secret identity", (kind) => {
     const filePath = path.join(root, "token");
     await fs.writeFile(filePath, "original");
     if (kind === "sync") {
-      const realpath = fsSync.realpathSync.bind(fsSync);
-      vi.spyOn(fsSync, "realpathSync").mockImplementationOnce((...args) => {
+      const resolvePath = realpath.realpathSync;
+      vi.spyOn(realpath, "realpathSync").mockImplementationOnce((...args) => {
         fsSync.renameSync(filePath, path.join(root, "original"));
         fsSync.writeFileSync(filePath, "replacement");
-        return realpath(...args);
+        return resolvePath(...args);
       });
     } else {
-      const realpath = fsSync.realpathSync.native;
-      vi.spyOn(fsSync.realpathSync, "native").mockImplementationOnce((...args) => {
+      const nativeRealpath = realpath.realpathSync.native;
+      vi.spyOn(realpath.realpathSync, "native").mockImplementationOnce((...args) => {
         fsSync.renameSync(filePath, path.join(root, "original"));
         fsSync.writeFileSync(filePath, "replacement");
-        return realpath(...args);
+        return nativeRealpath(...args);
       });
     }
     await expect(read(filePath)).rejects.toMatchObject({ code: "path-mismatch" });

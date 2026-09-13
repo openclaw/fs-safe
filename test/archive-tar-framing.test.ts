@@ -341,7 +341,7 @@ for (const backend of ["off", "auto-missing", "auto", "require"] as const) {
         const fixture = await setup(tarFixture([member, { path: "link", type, linkPath: "value" }]), gzip);
         await expect(extractArchive(fixture)).rejects.toMatchObject({ code: "entry-link" });
         await extractArchive({ ...fixture, entryFilter: (entry) => entry.kind === "symlink" ? "skip" : "extract", onFiltered: "skip-entry" });
-        expect(await fs.readdir(fixture.destDir)).toEqual(["sentinel", "value"]);
+        expect((await fs.readdir(fixture.destDir)).sort()).toEqual(["sentinel", "value"]);
         expect(await readArchiveEntry(fixture.archivePath, "value", { maxBytes: 7 })).toEqual(Buffer.from("payload"));
       });
 
@@ -351,7 +351,7 @@ for (const backend of ["off", "auto-missing", "auto", "require"] as const) {
         const fixture = await setup(bytes, gzip);
         await extractArchive(fixture);
         expect(await readArchiveEntry(fixture.archivePath, "value", { maxBytes: body.length })).toEqual(body);
-        expect(await fs.readdir(fixture.destDir)).toEqual(["sentinel", "value"]);
+        expect((await fs.readdir(fixture.destDir)).sort()).toEqual(["sentinel", "value"]);
       });
 
       it("preserves PAX and GNU metadata payloads", async () => {

@@ -56,9 +56,10 @@ write remains useful without a crash-durability promise.
 On Windows, pathname inputs and supplied directory receipts reject NTFS
 alternate-stream and directory-index namespace spellings before opening,
 creating, hashing, or publishing anything. This applies to directory
-durability, `publishFileExclusive()`, and the pathname overload of
-`sha256File()`; the already-open `FileHandle` overload is unchanged. Ordinary
-colon-bearing POSIX paths remain valid.
+durability, `publishFileExclusive()`, and the pathname overloads of
+`sha256File()` and `sha256FileSync()`; the already-open `FileHandle` and
+borrowed numeric file-descriptor overloads are unchanged. Ordinary colon-bearing
+POSIX paths remain valid.
 
 ## Pinned directories
 
@@ -252,7 +253,42 @@ positioned reads in chunks of up to 256 KiB but updates Node's `Hash` on the Jav
 thread. Both paths stream constant-size buffers rather than loading the file
 into memory. Native mode `require` keeps its usual fail-closed loader semantics.
 
-If publication fails after this call created the target, it throws an
+### Synchronous hashing
+
+`sha256FileSync()` accepts a pathname or a borrowed numeric file descriptor and
+returns the same `{ bytes, digest }` result. It shares `Sha256FileOptions`,
+including the default unlimited byte budget and `too-large` errors for growth
+beyond `maxBytes`. It always reads from offset zero with bounded positional
+`readSync` calls and leaves a borrowed descriptor open at its original position.
+Path inputs use the same regular-file, final-symlink, nonblocking-open, and exact
+bigint admission checks described above, then close their owned descriptor.
+These checks do not provide ancestor confinement or a snapshot of concurrent edits.
+
+```ts
+import { closeSync, openSync } from "node:fs";
+import { sha256FileSync } from "@openclaw/fs-safe/durability";
+
+const fd = openSync(stagedArchive, "r");
+try {
+  const hash = sha256FileSync(fd, { maxBytes: manifest.sizeBytes });
+  if (hash.bytes !== manifest.sizeBytes || hash.digest !== manifest.sha256) {
+    throw new Error("staged backup does not match its manifest");
+  }
+} finally {
+  closeSync(fd);
+}
+```
+
+The synchronous API uses Node's crypto implementation in every native mode,
+including `require`; it never loads a native binding. It blocks the calling
+thread until hashing finishes or throws. A pre-aborted signal fails before I/O,
+and synchronous signal changes are checked between operations with the original
+reason preserved. Timers and other JavaScript callbacks cannot run while the
+hash is executing; use `sha256File()` when responsive cancellation is needed.
+
+## Publication failure receipts
+
+If `publishFileExclusive()` fails after creating the target, it throws an
 `FsSafeError` with a `details` receipt:
 
 ```ts

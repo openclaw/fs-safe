@@ -1,9 +1,8 @@
 import { randomUUID } from "node:crypto";
-import fs from "node:fs";
+import fs, { type BigIntStats } from "node:fs";
 import path from "node:path";
 import { syncDirectorySync } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
-import { sameFileIdentity } from "./file-identity.js";
 import {
   assertSyncDirectoryGuard,
   ensureParentSync,
@@ -11,6 +10,10 @@ import {
   type SyncParentGuard,
 } from "./file-store-boundary.js";
 import { isPathInside } from "./path.js";
+import { resolveReadOpenFlags } from "./read-open-flags.js";
+import { writeTempFileSync } from "./replace-file-descriptor.js";
+import { SyncAtomicTempOwner } from "./replace-file-temp-owner.js";
+import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
 function ensurePrivateDirectorySync(rootDir: string, targetDir: string, mode: number): SyncParentGuard {
@@ -20,6 +23,35 @@ function ensurePrivateDirectorySync(rootDir: string, targetDir: string, mode: nu
     mode,
     messagePrefix: "private store",
   });
+}
+
+function verifyStoreFile(fd: number, expected: BigIntStats, filePath: string): void {
+  const assertFile = (stat: BigIntStats, allowUnknown = false): boolean => {
+    const unknown = allowUnknown && process.platform === "win32" && (stat.dev === 0n || stat.ino === 0n);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1n ||
+      (stat.dev !== expected.dev && !(unknown && stat.dev === 0n)) ||
+      (stat.ino !== expected.ino && !(unknown && stat.ino === 0n))) {
+      throw new FsSafeError("path-mismatch", "store file changed during write");
+    }
+    return unknown;
+  };
+  const assertDescriptor = (descriptor: number) => {
+    assertFile(inspectFileIdentitySync(() => fs.fstatSync(descriptor, { bigint: true }), expected));
+  };
+  assertDescriptor(fd);
+  if (assertFile(fs.lstatSync(filePath, { bigint: true }), true)) {
+    // A Windows pathname can have opaque metadata even while the retained writer is known.
+    // Reopen for identity only; equal content cannot establish that publication kept its file.
+    const reopened = fs.openSync(filePath, resolveReadOpenFlags());
+    try {
+      assertDescriptor(reopened);
+      assertFile(fs.lstatSync(filePath, { bigint: true }), true);
+      assertDescriptor(reopened);
+    } finally {
+      fs.closeSync(reopened);
+    }
+  }
+  assertDescriptor(fd);
 }
 
 export function writeFileSyncAtomic(params: {
@@ -59,59 +91,39 @@ export function writeFileSyncAtomic(params: {
     parentGuard?.dir ?? path.dirname(filePath),
     `.fs-safe-${process.pid}-${randomUUID()}.tmp`,
   );
-  let tempExists = false;
+  const owner = new SyncAtomicTempOwner(tempPath);
+  let originalError: unknown;
   try {
     getFsSafeTestHooks()?.beforeFileStoreSyncPrivateWrite?.(filePath);
     if (parentGuard) {
       assertSyncDirectoryGuard(parentGuard);
     }
-    const tempStat = (() => {
-      const descriptor = fs.openSync(tempPath, "wx", params.mode);
-      tempExists = true;
-      try {
-        fs.writeFileSync(descriptor, params.content);
+    owner.start();
+    const temp = writeTempFileSync({
+      fsModule: fs, tempPath, content: params.content, mode: params.mode, sync: false,
+      onIdentity: owner.onIdentity,
+      fchmodSync: (descriptor, mode) => {
         try {
-          fs.fchmodSync(descriptor, params.mode);
+          fs.fchmodSync(descriptor, mode);
         } catch {
           // Best-effort on platforms that do not enforce POSIX modes.
         }
-        const opened = fs.fstatSync(descriptor);
-        if (!opened.isFile() || opened.nlink > 1) {
-          throw new FsSafeError("path-mismatch", "store temp is not an owned regular file");
-        }
-        if (params.durable) fs.fsyncSync(descriptor);
-        return opened;
-      } finally {
-        fs.closeSync(descriptor);
-      }
-    })();
-    const tempPathStat = fs.lstatSync(tempPath);
-    if (
-      tempPathStat.isSymbolicLink() ||
-      !tempPathStat.isFile() ||
-      tempPathStat.nlink > 1 ||
-      !sameFileIdentity(tempPathStat, tempStat)
-    ) {
-      throw new FsSafeError("path-mismatch", "store temp changed before publication");
-    }
+      },
+    });
+    owner.adopt(temp);
+    // Preserve the store's strict fsync errors; the generic temp helper tolerates EPERM.
+    if (params.durable) fs.fsyncSync(temp.fd);
+    verifyStoreFile(temp.fd, owner.identity, tempPath);
     if (parentGuard) {
       assertSyncDirectoryGuard(parentGuard);
     }
     fs.renameSync(tempPath, filePath);
-    tempExists = false;
+    owner.markRenamed();
     if (parentGuard) {
       assertSyncDirectoryGuard(parentGuard);
     }
     try {
-      const publishedStat = fs.lstatSync(filePath);
-      if (
-        publishedStat.isSymbolicLink() ||
-        !publishedStat.isFile() ||
-        publishedStat.nlink > 1 ||
-        !sameFileIdentity(tempStat, publishedStat)
-      ) {
-        throw new FsSafeError("path-mismatch", "store target changed after write");
-      }
+      verifyStoreFile(temp.fd, owner.identity, filePath);
     } catch (error) {
       if (error instanceof FsSafeError) {
         throw error;
@@ -132,13 +144,10 @@ export function writeFileSyncAtomic(params: {
       assertSyncDirectoryGuard(parentGuard);
     }
     return filePath;
+  } catch (error) {
+    originalError = error;
+    throw error;
   } finally {
-    if (tempExists) {
-      try {
-        fs.unlinkSync(tempPath);
-      } catch {
-        // Best-effort cleanup after write failure.
-      }
-    }
+    owner.finish({ fsModule: fs, originalError, throwOnCleanupError: false });
   }
 }

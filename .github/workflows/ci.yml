@@ -135,6 +135,20 @@ jobs:
       - name: Build and stage host binding
         run: pnpm native:build
 
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Test Bun native compatibility
+        run: pnpm test:bun:native
+
+      - name: Prove Bun compatibility with JIT disabled
+        run: bun --jitless scripts/bun-native-proof.mjs
+
+      - name: Require Bun native helper
+        run: bun scripts/native-mode-smoke.mjs require
+
       - name: Test directory copying and native cloning
         run: pnpm test test/clone.test.ts test/copy-tree.test.ts
 

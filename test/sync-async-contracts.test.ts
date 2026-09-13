@@ -11,6 +11,7 @@ import {
 } from "../src/private-temp-workspace.js";
 import { readSecretFileSync, tryReadSecretFileSync } from "../src/secret-file.js";
 import { readSecretFile, tryReadSecretFile } from "../src/secret-read-async.js";
+import { realpathSync } from "../src/realpath.js";
 import {
   assertNoSymlinkParents,
   assertNoSymlinkParentsSync,
@@ -124,7 +125,7 @@ describe("sync and async public contracts", () => {
     });
     vi.spyOn(fs, "stat").mockRejectedValue(inspectBlocked);
     vi.spyOn(fs, "lstat").mockRejectedValue(inspectBlocked);
-    vi.spyOn(fs, "realpath").mockRejectedValue(openBlocked);
+    vi.spyOn(realpathSync, "native").mockImplementation(() => { throw openBlocked; });
     vi.spyOn(fs, "open").mockRejectedValue(openBlocked);
 
     const syncError = captureThrown(() => readSecretFileSync(devicePath, "token"));
@@ -139,14 +140,18 @@ describe("sync and async public contracts", () => {
 
   it("does not reclassify path resolution failures as optional missing secrets", async () => {
     const failure = Object.assign(new Error("cwd unavailable"), { code: "ENOENT" });
-    const cwd = vi.spyOn(process, "cwd").mockImplementation(() => { throw failure; });
+    const resolve = path.resolve.bind(path);
+    const resolvePath = vi.spyOn(path, "resolve").mockImplementation((...segments) => {
+      if (segments.length === 1 && segments[0] === "token") throw failure;
+      return resolve(...segments);
+    });
     try {
       expect(captureThrown(() => readSecretFileSync("token", "token"))).toBe(failure);
       expect(captureThrown(() => tryReadSecretFileSync("token", "token"))).toBe(failure);
       expect(await captureRejected(readSecretFile("token", "token"))).toBe(failure);
       expect(await captureRejected(tryReadSecretFile("token", "token"))).toBe(failure);
     } finally {
-      cwd.mockRestore();
+      resolvePath.mockRestore();
     }
   });
 

@@ -1,10 +1,11 @@
 import crypto, { randomUUID } from "node:crypto";
-import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard } from "./directory-guard.js";
 import { fitFileNameToPortableComponent, sanitizeUntrustedFileName } from "./filename.js";
 import { applyDirectoryMode } from "./replace-file-descriptor.js";
+import { realpathSync } from "./realpath.js";
+import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { root } from "./root.js";
 import { assertSafePathPrefix } from "./safe-path-segment.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
@@ -50,7 +51,7 @@ export async function writeSiblingTempFile<T>(
   assertNoWindowsPathAlias(dirInput, "filesystem", "sibling temp directory uses a Windows filesystem namespace alias");
   const dir = resolvePathPreservingWindowsRoot(dirInput);
   assertNoWindowsPathAlias(dir, "filesystem", "sibling temp directory uses a Windows filesystem namespace alias");
-  await fs.mkdir(dir, { recursive: true, mode: options.dirMode ?? 0o700 });
+  await fs.mkdir(recursiveMkdirPath(dir), { recursive: true, mode: options.dirMode ?? 0o700 });
   if (options.chmodDir !== false) {
     await applyDirectoryMode({
       fsModule: fs,
@@ -104,14 +105,14 @@ export async function writeViaSiblingTempPath(params: {
   assertNoWindowsPathAlias(rootDirInput, "filesystem", "sibling temp root uses a Windows filesystem namespace alias");
   assertNoWindowsPathAlias(targetPathInput, "filesystem", "sibling temp target uses a Windows filesystem namespace alias");
   let rootDir: string;
-  try { rootDir = fsSync.realpathSync.native(resolvePathPreservingWindowsRoot(rootDirInput)); }
+  try { rootDir = realpathSync.native(resolvePathPreservingWindowsRoot(rootDirInput)); }
   catch { rootDir = resolvePathPreservingWindowsRoot(rootDirInput); }
   assertNoWindowsPathAlias(rootDir, "filesystem", "sibling temp root uses a Windows filesystem namespace alias");
   const requestedTargetPath = path.resolve(targetPathInput);
   assertNoWindowsPathAlias(requestedTargetPath, "filesystem", "sibling temp target uses a Windows filesystem namespace alias");
   let targetPath: string;
   try {
-    const realDir = fsSync.realpathSync.native(path.dirname(requestedTargetPath));
+    const realDir = realpathSync.native(path.dirname(requestedTargetPath));
     targetPath = path.join(realDir, path.basename(requestedTargetPath));
   } catch {
     targetPath = requestedTargetPath;

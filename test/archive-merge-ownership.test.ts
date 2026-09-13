@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mergeExtractedTreeIntoDestination } from "../src/archive.js";
 import { withExtractionDeadline } from "../src/archive-deadline.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
@@ -12,6 +12,7 @@ const { tempRoot } = useRealTempDirs();
 afterEach(() => {
   __setFsSafeTestHooksForTest(undefined);
   __resetFsSafeNativeConfigForTest();
+  vi.restoreAllMocks();
 });
 
 async function fixture() {
@@ -196,6 +197,15 @@ describe("archive merge cleanup ownership", () => {
       const substitute = path.join(base, "substitute");
       await fs.writeFile(substitute, "SUBSTITUTE", { mode: 0o600 });
       await fs.writeFile(path.join(params.sourceDir, "later"), "LATER");
+      const realReaddir = fs.readdir.bind(fs);
+      vi.spyOn(fs, "readdir").mockImplementation(async (...args) => {
+        const entries = await realReaddir(...args);
+        // Exercise timeout at keep before the next entry can be published.
+        if (args[0] === params.sourceDir) {
+          entries.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+        }
+        return entries;
+      });
       const entered = deferred();
       const expired = deferred();
       const release = deferred();

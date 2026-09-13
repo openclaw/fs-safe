@@ -17,7 +17,7 @@ const require = createRequire(import.meta.url);
 const expected = JSON.parse(await fs.readFile("expected.json", "utf8"));
 const sandbox = await fs.realpath(await fs.mkdtemp(path.join(process.cwd(), "secret-proof-")));
 const original = { open: fs.open };
-const originalSync = { lstatSync: fsSync.lstatSync, realpath: fsSync.realpathSync.native };
+const originalSync = { lstatSync: fsSync.lstatSync };
 const rows = [];
 
 function identity(target) {
@@ -71,16 +71,14 @@ try {
       fsSync.lstatSync = (...args) => {
         const stat = originalSync.lstatSync(...args);
         if (String(args[0]) === target && args[1]?.bigint) inspections++;
-        return stat;
-      };
-      fsSync.realpathSync.native = (...args) => {
-        // Replace after initial inspection and exact guard capture, before write admission.
+        // Swap after the descriptor-independent guard observation has completed.
+        // The next guard must reject the replacement before any writable open.
         if (String(args[0]) === target && inspections >= 2 && !swapped) {
           replaceDirectory(target, moved);
           swapped = true;
           events.push({ event: "replace-directory", before, after: identity(target) });
         }
-        return originalSync.realpath(...args);
+        return stat;
       };
       observeOpens(events);
       let failure;
@@ -91,7 +89,6 @@ try {
       } finally {
         Object.assign(fs, original);
         fsSync.lstatSync = originalSync.lstatSync;
-        fsSync.realpathSync.native = originalSync.realpath;
       }
       assert.ok(swapped, "replacement witness must execute");
       assert.equal(failure?.code, "path-mismatch");
@@ -143,7 +140,6 @@ try {
     } finally {
       Object.assign(fs, original);
       fsSync.lstatSync = originalSync.lstatSync;
-      fsSync.realpathSync.native = originalSync.realpath;
     }
     if (scenario === "stable") {
       assert.equal(failure, undefined);
@@ -181,6 +177,5 @@ try {
 } finally {
   Object.assign(fs, original);
   fsSync.lstatSync = originalSync.lstatSync;
-  fsSync.realpathSync.native = originalSync.realpath;
   await fs.rm(sandbox, { recursive: true, force: true });
 }

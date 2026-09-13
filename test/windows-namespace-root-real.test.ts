@@ -2,6 +2,11 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import {
+  createNearestExistingDirectoryGuard,
+  createNearestExistingSyncDirectoryGuard,
+  inspectDirectoryIdentity,
+} from "../src/directory-guard.js";
 import { root } from "../src/root.js";
 import { resolveRootContext } from "../src/root-context.js";
 import { resolveRootPath, resolveRootPathSync } from "../src/root-path.js";
@@ -25,6 +30,13 @@ describe.skipIf(process.platform !== "win32")("real Windows namespace drive root
       const namespaceMissing = path.join(namespaceRoot, missingName);
       const canonicalMissing = path.join(canonicalRoot, missingName);
       expect(fsSync.existsSync(canonicalMissing)).toBe(false);
+      await expect(inspectDirectoryIdentity(namespaceRoot)).resolves.toMatchObject({
+        isDirectory: expect.any(Function),
+      });
+      await expect(createNearestExistingDirectoryGuard(namespaceRoot, namespaceMissing))
+        .resolves.toMatchObject({ dir: namespaceRoot });
+      expect(createNearestExistingSyncDirectoryGuard(namespaceRoot, namespaceMissing))
+        .toMatchObject({ dir: namespaceRoot });
 
       const suppliedCanonicalParams = {
         rootPath: namespaceRoot,
@@ -113,6 +125,12 @@ describe.skipIf(process.platform !== "win32")("real Windows namespace drive root
         const resolvedCwd = await scoped.resolve(relativeCwd.split(path.sep).join("/"));
         expectSameRealPath(resolvedCwd, process.cwd());
         expect(await scoped.resolve(missingName)).toBe(canonicalMissing);
+        const entries = scoped.entries(relativeCwd.split(path.sep).join("/"), {
+          maxEntries: 1,
+          order: "filesystem",
+        });
+        expect((await entries.next()).done).toBe(false);
+        await entries.return?.();
 
         for (const operation of [
           () => scoped.write("C:relative", "blocked"),

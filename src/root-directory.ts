@@ -11,6 +11,7 @@ import {
   isPathInside,
   isPathRelativeEscape,
 } from "./path.js";
+import { realpathSync } from "./realpath.js";
 import { resolvePathWithinRoot } from "./root-paths-lexical.js";
 import {
   assertNoWindowsPathAlias,
@@ -109,12 +110,12 @@ export async function ensureDirectoryWithinRoot(params: {
     const rootStat = fsSync.lstatSync(pathForWindowsFilesystem(rootDir));
     if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) return invalidPath(scopeLabel);
     await assertNoSymlinkSegments({ rootDir, targetPath, scopeLabel });
-    const rootReal = fsSync.realpathSync.native(
+    const rootReal = realpathSync.native(
       pathForWindowsFilesystem(rootDir),
     );
     assertNoWindowsPathAlias(rootReal);
     const nearestExistingPath = resolveNearestExistingPath(targetPath);
-    const nearestExistingReal = fsSync.realpathSync.native(
+    const nearestExistingReal = realpathSync.native(
       pathForWindowsFilesystem(nearestExistingPath),
     );
     assertNoWindowsPathAlias(nearestExistingReal);
@@ -138,11 +139,11 @@ export async function ensureDirectoryWithinRoot(params: {
           }
         }
       }
-      const currentReal = fsSync.realpathSync.native(current);
+      const currentReal = realpathSync.native(current);
       assertNoWindowsPathAlias(currentReal);
       if (!isPathInside(rootReal, currentReal)) return invalidPath(scopeLabel);
     }
-    const targetReal = fsSync.realpathSync.native(
+    const targetReal = realpathSync.native(
       pathForWindowsFilesystem(targetPath),
     );
     assertNoWindowsPathAlias(targetReal);

@@ -47,7 +47,7 @@ describe("asynchronous sidecar lock release failures", () => {
     });
 
     await expect(lock.release()).rejects.toBe(failure);
-    await expect(fs.access(lock.lockPath)).resolves.toBeUndefined();
+    expect((await fs.lstat(lock.lockPath)).isFile()).toBe(true);
     expect(manager.heldEntries()).toHaveLength(1);
 
     await expect(lock.release()).resolves.toBeUndefined();
@@ -69,7 +69,7 @@ describe("asynchronous sidecar lock release failures", () => {
     const remove = vi.spyOn(capability, "remove").mockRejectedValueOnce(failure);
 
     await expect(lock.release()).rejects.toBe(failure);
-    await expect(fs.access(lock.lockPath)).resolves.toBeUndefined();
+    expect((await fs.lstat(lock.lockPath)).isFile()).toBe(true);
     expect(manager.heldEntries()).toHaveLength(1);
 
     await manager.drain();
@@ -101,7 +101,7 @@ describe("asynchronous sidecar lock release failures", () => {
 
     const third = await manager.acquire(options);
     await second.release();
-    await expect(fs.access(third.lockPath)).resolves.toBeUndefined();
+    expect((await fs.lstat(third.lockPath)).isFile()).toBe(true);
     expect(manager.heldEntries()).toHaveLength(1);
 
     rm.mockRestore();
@@ -193,7 +193,7 @@ describe("asynchronous sidecar lock release failures", () => {
       error: releaseError,
       suppressed: bodyError,
     });
-    await expect(fs.access(lockPath)).resolves.toBeUndefined();
+    expect((await fs.lstat(lockPath)).isFile()).toBe(true);
     const manager = createFileLockManager(managerKey);
     expect(manager.heldEntries()).toHaveLength(1);
 

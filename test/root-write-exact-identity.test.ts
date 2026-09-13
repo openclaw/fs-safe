@@ -6,6 +6,7 @@ import { createAsyncDirectoryGuard } from "../src/directory-guard.js";
 import { configureFsSafeNative, root } from "../src/index.js";
 import { __loadBundledNativeForTest, __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
 import { resolveOpenedFileRealPathForFd, resolveOpenedFileRealPathForHandle } from "../src/opened-realpath.js";
+import { realpathSync } from "../src/realpath.js";
 import { runPinnedWriteHelper } from "../src/pinned-write.js";
 import { resolveRootContext } from "../src/root-context.js";
 import * as verification from "../src/root-write-verification.js";
@@ -93,15 +94,14 @@ describe("Root exact publication identity", () => {
       if (route === "descriptor") Object.defineProperty(process, "platform", { value: "linux" });
       const target = path.join(directory, "target");
       const handle = await fs.open(target, "wx", 0o600);
-      const realpath = fsSync.realpathSync.native;
+      const realpath = realpathSync.native;
       const stat = fsSync.statSync.bind(fsSync);
       const lstat = fsSync.lstatSync.bind(fsSync);
       const handleStat = fsSync.fstatSync.bind(fsSync);
       let pathnameAttempts = 0;
       vi.spyOn(fsSync, "fstatSync").mockImplementation(((...args: Parameters<typeof fsSync.fstatSync>) =>
         args[0] === handle.fd ? project(handleStat(...args)) : handleStat(...args)) as typeof fsSync.fstatSync);
-      vi.spyOn(fsSync.realpathSync, "native").mockImplementation(((...args: Parameters<typeof fsSync.realpathSync.native>) => {
-        const candidate = String(args[0]);
+      vi.spyOn(realpathSync, "native").mockImplementation((candidate) => {
         if (candidate.startsWith("/dev/fd/") || candidate.startsWith("/proc/self/fd/")) {
           if (route === "descriptor") return target;
           throw Object.assign(new Error("no descriptor alias"), { code: "ENOENT" });
@@ -109,8 +109,8 @@ describe("Root exact publication identity", () => {
         if (candidate === target && route === "parent scan" && pathnameAttempts++ === 0) {
           throw Object.assign(new Error("pathname raced"), { code: "ENOENT" });
         }
-        return realpath(...args);
-      }) as typeof fsSync.realpathSync.native);
+        return realpath(candidate);
+      });
       const sampled: Array<number | bigint> = [];
       vi.spyOn(fsSync, "statSync").mockImplementation(((...args: Parameters<typeof fsSync.statSync>) => {
         const actual = stat(...args);

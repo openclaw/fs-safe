@@ -10,6 +10,8 @@ import type { NativeBinding } from "./native.js";
 import type { PinnedWriteParams } from "./pinned-write.js";
 import { describeStagedDirectory, exactIdentityMatches } from "./staged-directory.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
+import { realpathSync } from "./realpath.js";
+import { assertNoWindowsPathAlias, pathForWindowsFilesystem } from "./windows-path-alias.js";
 
 export async function runPinnedWriteNative(binding: NativeBinding, params: PinnedWriteParams): Promise<FileIdentityStat> {
   const windows = process.platform === "win32";
@@ -17,7 +19,7 @@ export async function runPinnedWriteNative(binding: NativeBinding, params: Pinne
     assertNativeStaging(binding);
   }
   const directoryFlags = fsSync.constants.O_RDONLY | (fsSync.constants.O_DIRECTORY ?? 0);
-  const root = await fs.open(params.rootPath, directoryFlags);
+  const root = await fs.open(pathForWindowsFilesystem(params.rootPath), directoryFlags);
   await using posixRoot = windows ? undefined : root;
   let parentFd: number | undefined;
   let windowsOwnsDirectories = false;
@@ -56,15 +58,20 @@ export async function runPinnedWriteNative(binding: NativeBinding, params: Pinne
       params.relativeParentPath,
       directoryFlags,
     ).fd;
-    const parentPath = fsSync.realpathSync.native(
+    const parentInput =
       params.relativeParentPath
         ? path.join(params.rootPath, ...params.relativeParentPath.split("/"))
-        : params.rootPath,
+        : params.rootPath;
+    const parentPath = realpathSync.native(pathForWindowsFilesystem(parentInput));
+    assertNoWindowsPathAlias(
+      parentPath,
+      "filesystem",
+      "native write parent uses a Windows filesystem namespace alias",
     );
     const directory = windows ? undefined : describeStagedDirectory(parentFd, parentPath);
     const parentPathStat = exactRoot
       ? await inspectDirectoryIdentity(parentPath, inspectFileIdentitySync(() => fsSync.fstatSync(parentFd!, { bigint: true })))
-      : fsSync.lstatSync(parentPath);
+      : fsSync.lstatSync(pathForWindowsFilesystem(parentPath));
     if (windows && !exactRoot) {
       const parentIdentity = binding.fstatIdentity(parentFd);
       if (parentPathStat.isSymbolicLink() || !sameNativeIdentity(parentPathStat, parentIdentity)) {
@@ -97,7 +104,15 @@ export async function runPinnedWriteNative(binding: NativeBinding, params: Pinne
   } finally {
     if (windows && !windowsOwnsDirectories) {
       if (parentFd !== undefined) {
-        fsSync.closeSync(parentFd);
+        // Match the Windows leaf cleanup contract: an admission or identity
+        // failure remains primary, while every owned directory is still given
+        // a close attempt. In particular, a parent close failure must not skip
+        // the root FileHandle close.
+        try {
+          fsSync.closeSync(parentFd);
+        } catch {
+          // Best effort while propagating the operation failure.
+        }
       }
       await root.close().catch(() => undefined);
     }

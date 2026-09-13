@@ -3,6 +3,9 @@
 ## Unreleased
 
 - Reject NTFS alternate-data-stream and directory-index pathname aliases across guarded Root, FileStore, archive, JSON queue, sidecar lock, secret, secure-read, atomic publication, temp, permission, install, trash, and output boundaries before filesystem access. Preserve rooted drive paths, including valid extended namespace drive roots without widening volume-root mutation authority, independent device/network policies, intentional output-name sanitization, existing failure shapes, and ordinary colon-bearing POSIX names; native relative and archive paths enforce the same Windows rule.
+- Add `sha256FileSync()` for bounded SHA-256 hashing of pathnames and borrowed file descriptors without changing their current positions, with exact pathname admission checks, Windows pathname-alias rejection, and no native binding requirement.
+- Keep synchronous store writers open through publication and verify exact inode identities, rejecting substituted files even when Windows reports opaque or numerically indistinguishable pathname metadata.
+
 - Restrict atomic replacement mode inheritance to ordinary rwx bits from an existing non-symlink regular file, preventing symlink, file-type, and special-bit permission laundering.
 - Reject hardlinked `readSecureFile()` inputs before reading and recheck the pinned descriptor after reading so bytes are not returned while a late additional alias remains.
 - Reject invalid or Node-overflowing lock compromise-check intervals before acquisition and serialize asynchronous checks, preventing high-frequency or overlapping filesystem polling loops.
@@ -12,10 +15,13 @@
 - XFS clones preserve user extended attributes on read-only files and directories while retaining their exact modes and ACLs.
 - Confirm EOF when Linux copy offload initially reports zero bytes, so automatic file copies fall back to reading available data instead of publishing an empty file.
 - Preserve fractional access and modification timestamps during directory byte copying, including dates before 1970 on Unix, to the precision supported by Node and the destination filesystem.
+- Support Bun POSIX path resolution for restrictive permissions, literal backslashes, sockets, and symlink/parent traversal through the existing Rust addon, including JIT-disabled Bun; preserve native-off policy and identity checks, document addon-free runtime limitations, and add Bun compatibility checks.
+- Fix relative file publication and queue writes on Bun for Windows by preserving raw components in absolute recursive-mkdir inputs.
 - Fix package consumer smoke and lifecycle tests with standalone `@pnpm/exe` installations, preserving the pinned pnpm version and isolated consumer configuration.
 - Report native Windows disk-full and sharing failures as `ENOSPC` and `EBUSY`, and return ReFS worker-start failures after joining admitted workers instead of panicking across the native boundary.
 - Add bounded recursive `Root.remove` with entry and depth limits, cancellation, missing-target handling, and exact directory/leaf identity checks without repeated sibling scans.
 - Add a streamed `Root.create` overload for async byte iterables, with bounded consumption, settled cancellation, and exclusive publication of completed contents through the existing guarded writer.
+- Add `Root.entries()` for guarded nonrecursive directory iteration that reports child symlinks, supports cancellation, and bounds entry counts and sorted-name collection while leaving traversal and link policy with the caller.
 
 ## 0.10.0 - 2026-09-13
 

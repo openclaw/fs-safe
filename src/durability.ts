@@ -24,7 +24,9 @@ export {
 } from "./publish-file.js";
 export {
   sha256File,
+  sha256FileSync,
   type Sha256FileInput,
+  type Sha256FileSyncInput,
   type Sha256FileOptions,
   type Sha256FileResult,
 } from "./file-hash.js";

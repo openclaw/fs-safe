@@ -8,6 +8,7 @@ import { stringifyJsonDocument } from "./json-stringify.js";
 import { readRegularFile, readRegularFileSync, statRegularFile } from "./regular-file.js";
 import { openRootFileSync, type RootFileOpenFailure } from "./root-file.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
+import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { writeTextAtomic, type WriteTextAtomicOptions } from "./text-atomic.js";
 import { sleep } from "./timing.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
@@ -192,7 +193,7 @@ export function writeJsonSync(pathname: string, data: unknown) {
   const tmpPath = path.format({ ...path.parse(pathname), base: `.fs-safe-${randomUUID()}.tmp` });
   const payload = `${stringifyJsonDocument(data, null, 2)}\n`;
 
-  fsSync.mkdirSync(path.dirname(pathname), { recursive: true, mode: JSON_DIR_MODE });
+  fsSync.mkdirSync(recursiveMkdirPath(path.dirname(pathname)), { recursive: true, mode: JSON_DIR_MODE });
   try {
     const tempIdentity = writeTempJsonFile(tmpPath, payload);
     trySetSecureMode(tmpPath, tempIdentity);

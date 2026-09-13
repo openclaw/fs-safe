@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { fileStoreSync } from "../src/file-store.js";
+import * as realpath from "../src/realpath.js";
 
 const tempDirs: string[] = [];
 
@@ -27,9 +28,9 @@ it.runIf(process.platform !== "win32")(
       await fsp.mkdir(storeRoot);
       await fsp.mkdir(path.join(outside, "first"), { recursive: true });
 
-      const originalRealpathSync = fs.realpathSync.bind(fs);
+      const originalRealpathSync = realpath.realpathSync;
       let swapped = false;
-      const realpathSpy = vi.spyOn(fs, "realpathSync").mockImplementation((...args) => {
+      const realpathSpy = vi.spyOn(realpath, "realpathSync").mockImplementation((...args) => {
         const realPath = originalRealpathSync(...args);
         if (!swapped && String(args[0]) === firstDir) {
           swapped = true;

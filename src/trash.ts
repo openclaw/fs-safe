@@ -3,6 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { sameFileIdentity } from "./file-identity.js";
 import { guardedRenameSync, guardedRmSync } from "./guarded-mutation.js";
+import { realpathSync } from "./realpath.js";
+import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import {
   hasWindowsPathAlias,
@@ -54,7 +56,7 @@ function resolveAllowedTrashRoots(allowedRoots: readonly string[]): string[] {
     try {
       // Keep both spellings: broken symlink targets cannot be realpathed and
       // may only compare equal to the caller's lexical allowed root.
-      realRoot = fs.realpathSync.native(root);
+      realRoot = realpathSync.native(root);
     } catch {
       return [lexicalRoot];
     }
@@ -77,7 +79,7 @@ function resolveTrashTargetPath(targetPath: string): { path: string; resolved: b
   assertNoTrashPathAlias(targetPath, "target path");
   let realPath: string;
   try {
-    realPath = fs.realpathSync.native(targetPath);
+    realPath = realpathSync.native(targetPath);
   } catch {
     // Broken symlinks are valid trash targets. Fall back to the lexical path,
     // then rely on lstat identity so the move renames the symlink itself.
@@ -133,13 +135,13 @@ function resolveTrashDir(): string {
   assertNoTrashPathAlias(homeDir, "home directory");
   const trashDir = path.join(homeDir, ".Trash");
   assertNoTrashPathAlias(trashDir, "trash directory");
-  fs.mkdirSync(trashDir, { recursive: true, mode: 0o700 });
+  fs.mkdirSync(recursiveMkdirPath(trashDir), { recursive: true, mode: 0o700 });
   const trashDirStat = fs.lstatSync(trashDir);
   if (!trashDirStat.isDirectory() || trashDirStat.isSymbolicLink()) {
     throw new Error(`Refusing to use non-directory/symlink trash directory: ${trashDir}`);
   }
-  const realHome = path.resolve(fs.realpathSync.native(homeDir));
-  const resolvedTrashDir = path.resolve(fs.realpathSync.native(trashDir));
+  const realHome = path.resolve(realpathSync.native(homeDir));
+  const resolvedTrashDir = path.resolve(realpathSync.native(trashDir));
   assertNoTrashPathAlias(realHome, "home directory");
   assertNoTrashPathAlias(resolvedTrashDir, "trash directory");
   if (resolvedTrashDir === realHome || !isSameOrChildPath(resolvedTrashDir, realHome)) {

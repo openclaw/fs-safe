@@ -14,6 +14,7 @@ import { FsSafeError } from "./errors.js";
 import { formatErrorDetail } from "./error-detail.js";
 import { isPathInside } from "./path.js";
 import { rootFromDirectoryGuard } from "./root-impl.js";
+import { realpathSync } from "./realpath.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import { onCopyPublication, type CopyPublicationOptions } from "./copy-publication.js";
 import { syncFileBestEffortSync } from "./file-sync.js";
@@ -71,7 +72,7 @@ async function mergeTree(params: GuardedMergeParams, publication?: readonly Arch
   for (const entry of publication ?? []) {
     // Resolve admitted spelling in private staging, preserving the volume's case
     // and Unicode behavior without assigning explicit modes to distinct parents.
-    const stagedPath = fsSync.realpathSync.native(path.join(params.sourceDir, entry.path));
+    const stagedPath = realpathSync.native(path.join(params.sourceDir, entry.path));
     check();
     if (!isPathInside(sourceGuard.realPath, stagedPath) || plan!.has(stagedPath)) {
       throw new FsSafeError("path-mismatch", "archive publication paths changed in staging");
@@ -104,7 +105,7 @@ async function mergeTree(params: GuardedMergeParams, publication?: readonly Arch
       const sourceStat = fsSync.lstatSync(sourcePath);
       check();
       if (sourceStat.isSymbolicLink()) throw createArchiveSymlinkTraversalError(originalPath);
-      const sourceReal = fsSync.realpathSync.native(sourcePath);
+      const sourceReal = realpathSync.native(sourcePath);
       check();
       if (!isPathInside(sourceGuard.realPath, sourceReal)) throw createArchiveSymlinkTraversalError(originalPath);
       if (!sourceStat.isFile() && !sourceStat.isDirectory()) {

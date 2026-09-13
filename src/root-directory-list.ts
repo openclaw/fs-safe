@@ -69,10 +69,12 @@ export type RootDirectoryListingOptions = {
   order: "sorted" | "filesystem";
   signal?: AbortSignal;
   snapshot: boolean;
+  maxNames?: number;
+  metadataBatchSize?: number;
   admitEntry(): boolean;
 };
 
-export async function listDirectoryForWalk(
+export async function openRootDirectoryListing(
   root: RootContext,
   directory: string,
   options: RootDirectoryListingOptions,
@@ -121,6 +123,20 @@ export async function listDirectoryForWalk(
       handle = await fs.opendir(guard.realPath, { bufferSize: 1 });
     } else if (options.snapshot) {
       snapshot = await listDirectoryPath(root, guard.realPath, true);
+    } else if (options.maxNames !== undefined) {
+      names = [];
+      handle = await fs.opendir(guard.realPath, { bufferSize: 1 });
+      while (true) {
+        await assertCurrent();
+        const name = (await handle.read())?.name;
+        await assertCurrent();
+        if (name === undefined) break;
+        if (names.length >= options.maxNames) {
+          throw new FsSafeError("too-large", "directory entry budget exceeded");
+        }
+        names.push(name);
+      }
+      await close();
     } else {
       names = await fs.readdir(guard.realPath);
     }
@@ -138,7 +154,10 @@ export async function listDirectoryForWalk(
 
   const prepareBatch = async (sortedNames: readonly string[]) => {
     let name = sortedNames[index++];
-    if (name === undefined) return;
+    if (name === undefined) {
+      await assertCurrent();
+      return;
+    }
     if (!options.admitEntry()) {
       pendingLimit = name;
       return;
@@ -153,7 +172,7 @@ export async function listDirectoryForWalk(
         const entry = { name, ...pathStatFromStats(fsSync.lstatSync(path.join(guard.realPath, name))) };
         prepared.push(entry);
         // No later sibling can be observed before a possible recursive descent.
-        if (entry.isDirectory || entry.isSymbolicLink || prepared.length >= METADATA_BATCH_SIZE) break;
+        if (entry.isDirectory || entry.isSymbolicLink || prepared.length >= (options.metadataBatchSize ?? METADATA_BATCH_SIZE)) break;
       } catch (error) {
         pendingFailure = { error: normalizeDirectoryError(error) };
         break;

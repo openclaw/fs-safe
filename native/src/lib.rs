@@ -20,6 +20,8 @@ mod copy_windows;
 mod file_copy;
 mod owned_tree;
 #[cfg(unix)]
+mod realpath;
+#[cfg(unix)]
 mod staged_file;
 use fs_safe_archive_core::tar_meter;
 #[cfg(unix)]

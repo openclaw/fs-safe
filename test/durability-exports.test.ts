@@ -9,6 +9,7 @@ describe("durability exports", () => {
       "pinDirectory",
       "publishFileExclusive",
       "sha256File",
+      "sha256FileSync",
       "syncDirectory",
       "syncDirectoryBestEffort",
       "syncDirectoryBestEffortSync",

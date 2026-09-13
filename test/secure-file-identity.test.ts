@@ -2,6 +2,7 @@ import fsSync, { Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { realpathSync } from "../src/realpath.js";
 import { readSecureFile } from "../src/secure-file.js";
 import { itWin32, useTempDirs } from "./helpers/vitest.js";
 
@@ -48,8 +49,8 @@ describe("secure file exact identity", () => {
     const root = await tempRoot("fs-safe-secure-real-swap-");
     const filePath = path.join(root, "secret");
     await fs.writeFile(filePath, "original", { mode: 0o600 });
-    const realpath = fsSync.realpathSync.native;
-    vi.spyOn(fsSync.realpathSync, "native").mockImplementationOnce((...args) => {
+    const realpath = realpathSync.native;
+    vi.spyOn(realpathSync, "native").mockImplementationOnce((...args) => {
       fsSync.renameSync(filePath, path.join(root, "original"));
       fsSync.writeFileSync(filePath, "replacement", { mode: 0o600 });
       return realpath(...args);
@@ -72,11 +73,11 @@ describe("secure file exact identity", () => {
       read = vi.spyOn(handle, "read");
       readFile = vi.spyOn(handle, "readFile");
     });
-    const realpath = fsSync.realpathSync.native;
-    const canonicalize = vi.spyOn(fsSync.realpathSync, "native").mockImplementation(
-      (candidate, options) => candidate === filePath
+    const realpath = realpathSync.native;
+    const canonicalize = vi.spyOn(realpathSync, "native").mockImplementation(
+      (candidate) => candidate === filePath
         ? `${filePath}:stream`
-        : realpath(candidate, options as never),
+        : realpath(candidate),
     );
 
     await expect(readSecureFile({ filePath, permissions: { allowInsecure: true } }))

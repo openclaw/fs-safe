@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import fsSync from "node:fs";
 import path from "node:path";
 import { isPathInside } from "./path.js";
+import { realpathSync } from "./realpath.js";
 import {
   hasWindowsPathAlias,
   pathForWindowsFilesystem,
@@ -109,7 +110,7 @@ export async function assertCanonicalPathWithinBase(params: {
   } else if (!baseLstat.isDirectory()) {
     throw new Error(`Invalid ${boundaryLabel}: base directory must be a directory`);
   }
-  const baseRealPath = fsSync.realpathSync.native(baseOperationPath);
+  const baseRealPath = realpathSync.native(baseOperationPath);
   assertAdmittedPath(baseRealPath);
 
   const validateDirectory = async (dirPath: string): Promise<void> => {
@@ -129,7 +130,7 @@ export async function assertCanonicalPathWithinBase(params: {
     } else if (!dirLstat.isDirectory()) {
       throw new Error(`Invalid path: must stay within ${boundaryLabel}`);
     }
-    const dirRealPath = fsSync.realpathSync.native(operationPath);
+    const dirRealPath = realpathSync.native(operationPath);
     assertAdmittedPath(dirRealPath);
     if (!isPathInside(baseRealPath, dirRealPath)) {
       throw invalidPath();

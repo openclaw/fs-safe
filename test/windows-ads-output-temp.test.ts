@@ -6,7 +6,7 @@ import {
   ensureDurableDirectory,
   syncDirectory,
 } from "../src/directory-durability.js";
-import { sha256File } from "../src/file-hash.js";
+import { sha256File, sha256FileSync } from "../src/file-hash.js";
 import { writeExternalFileWithinRoot } from "../src/output.js";
 import {
   tempWorkspace,
@@ -243,16 +243,25 @@ describe("Windows filesystem namespace admission for output and temp helpers", (
     await expect(fs.readdir(root)).resolves.toEqual([]);
   });
 
-  itWin32("rejects stream hashing before path inspection", async () => {
+  itWin32("rejects stream and index hashing before path inspection", async () => {
     const root = await tempRoot("fs-safe-ads-hash-");
     const carrier = path.join(root, "carrier.bin");
     const stream = `${carrier}:payload`;
     await fs.writeFile(carrier, "base");
     await fs.writeFile(stream, "hidden");
-    const lstatSync = vi.spyOn(fsSync, "lstatSync");
+    const aliases = [stream, `${carrier}::$INDEX_ALLOCATION`];
+    const observations = [
+      vi.spyOn(fsSync, "lstatSync"),
+      vi.spyOn(fsSync, "openSync"),
+      vi.spyOn(fsSync, "fstatSync"),
+      vi.spyOn(fsSync, "readSync"),
+    ];
 
-    await expect(sha256File(stream)).rejects.toMatchObject(aliasError);
-    expect(lstatSync).not.toHaveBeenCalled();
+    for (const alias of aliases) {
+      await expect(sha256File(alias)).rejects.toMatchObject(aliasError);
+      expect(() => sha256FileSync(alias)).toThrow(expect.objectContaining(aliasError));
+    }
+    for (const observation of observations) expect(observation).not.toHaveBeenCalled();
   });
 
   itPosix("keeps colon-bearing POSIX roots and file names usable", async () => {

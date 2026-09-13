@@ -184,7 +184,8 @@ try {
             }
         }
     }
-    $tests = @('test/file-hash.test.ts', 'test/file-hash-identity.test.ts')
+    $tests = @('test/file-hash.test.ts', 'test/file-hash-identity.test.ts',
+        'test/file-hash-options.test.ts', 'test/file-hash-sync.test.ts')
     $plainArguments = @('run', 'test') + $tests + @('--maxWorkers=1', '--no-file-parallelism')
     $plain = Invoke-Pnpm 'focused-tests-plain' $plainArguments
     $reports = Join-Path $Work 'focused-coverage'

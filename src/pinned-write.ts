@@ -23,6 +23,7 @@ import { writeAllToFile } from "./write-file-handle.js";
 import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
 import { type CopyFileInput, writeCopyFileToFd } from "./copy-file-input.js";
 import { publishCopyStage } from "./publish-copy-stage.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type PinnedWriteInput =
   | { kind: "buffer"; data: string | Buffer; encoding?: BufferEncoding }
@@ -41,6 +42,7 @@ function assertSafeBasename(basename: string): void {
     basename === "." ||
     basename === ".." ||
     basename.includes("/") ||
+    (process.platform === "win32" && basename.includes("\\")) ||
     basename.includes("\0")
   ) {
     throw new FsSafeError("invalid-path", "invalid target path");
@@ -99,11 +101,37 @@ export type PinnedWriteParams = {
 };
 
 export async function runPinnedWriteHelper(params: PinnedWriteParams): Promise<FileIdentityStat> {
-  const normalizedParams = { ...params, maxBytes: normalizeMaxBytes(params.maxBytes) };
-  assertSafeBasename(params.basename);
+  const { rootPath, relativeParentPath, basename, maxBytes, rootIdentity, ...ownedParams } = params;
+  const normalizedParams: PinnedWriteParams = {
+    ...ownedParams,
+    rootPath,
+    relativeParentPath,
+    basename,
+    maxBytes: normalizeMaxBytes(maxBytes),
+    rootIdentity,
+  };
+  assertSafeBasename(normalizedParams.basename);
   validatePinnedOperationPayload({
-    relativeParentPath: params.relativeParentPath,
+    relativeParentPath: normalizedParams.relativeParentPath,
   });
+  assertNoWindowsPathAlias(
+    normalizedParams.rootPath,
+    "filesystem",
+    "pinned write root uses a Windows filesystem namespace alias",
+  );
+  assertNoWindowsPathAlias(
+    normalizedParams.relativeParentPath,
+    "relative",
+    "pinned write parent uses a Windows filesystem namespace alias",
+  );
+  assertNoWindowsPathAlias(
+    normalizedParams.basename,
+    "relative",
+    "pinned write basename uses a Windows filesystem namespace alias",
+  );
+  if (rootIdentity !== undefined) {
+    normalizedParams.rootIdentity = { dev: rootIdentity.dev, ino: rootIdentity.ino };
+  }
   // The explicit compatibility policy uses the guarded Node fallback, where
   // content verification can replace the strict post-rename inode check.
   if (normalizedParams.onRenameIdentityMismatch === "verify-content") {

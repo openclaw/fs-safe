@@ -158,6 +158,15 @@ describe.skipIf(process.platform === "win32" || process.getuid?.() === 0)("real 
   it.each(["before-dispatch", "active-chmod", "opening"] as const)("joins %s timeout and closes the pinned directory exactly once", (stage) => run(async (directory) => {
     const { target, params } = await fixture(directory);
     await fs.mkdir(path.join(params.sourceDir, "zz-later"), { mode: 0o555 });
+    const realReaddir = fs.readdir.bind(fs);
+    vi.spyOn(fs, "readdir").mockImplementation(async (...args) => {
+      const entries = await realReaddir(...args);
+      // The unvisited-sibling assertion requires nested to precede zz-later.
+      if (args[0] === params.sourceDir) {
+        entries.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+      }
+      return entries;
+    });
     const entered = deferred();
     const expired = deferred();
     const release = deferred();

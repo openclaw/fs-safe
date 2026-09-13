@@ -94,7 +94,7 @@ describe.each(archiveBackends)("%s archive path", (backend) => {
         });
         if (policy === "skip-link") {
           await extraction;
-          await expect(fs.readdir(destination)).resolves.toEqual(["keep.txt", "sentinel.txt"]);
+          expect((await fs.readdir(destination)).sort()).toEqual(["keep.txt", "sentinel.txt"]);
           await expect(fs.readFile(path.join(destination, "keep.txt"), "utf8")).resolves.toBe("keep");
         } else {
           await expect(extraction).rejects.toMatchObject({

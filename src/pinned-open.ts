@@ -4,6 +4,7 @@ import { FsSafeError } from "./errors.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
+import { realpathSync } from "./realpath.js";
 
 export type PinnedOpenSyncFailureReason = "path" | "validation" | "io";
 
@@ -59,7 +60,8 @@ export function openPinnedFileSync(params: {
       }
     }
 
-    const realPath = resolvedPath ?? ioFs.realpathSync(filePath);
+    const realPath = resolvedPath ??
+      (ioFs === fs ? realpathSync(filePath) : ioFs.realpathSync(filePath));
     assertNoWindowsPathAlias(realPath, "filesystem", "resolved path uses a Windows filesystem namespace alias");
     if (isUnsafeDeviceReadPath(realPath)) {
       return { ok: false, reason: "validation" };

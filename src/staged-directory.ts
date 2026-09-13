@@ -2,6 +2,7 @@ import fs from "node:fs";
 import type { DirectoryReceipt } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
 import type { FileIdentityStat } from "./file-identity.js";
+import { realpathSync } from "./realpath.js";
 import type { StagedFileReceipt } from "./staged-file-types.js";
 import { resolvePathPreservingWindowsRoot } from "./windows-path-alias.js";
 
@@ -24,7 +25,7 @@ export function describeStagedDirectory(fd: number, pathname: string): Directory
   }
   const receipt = Object.freeze({
     path: resolvePathPreservingWindowsRoot(pathname),
-    realPath: fs.realpathSync(pathname),
+    realPath: realpathSync(pathname),
     identity: Object.freeze({ dev: identity.dev, ino: identity.ino }),
   });
   assertStagedDirectoryCurrent(receipt);
@@ -35,7 +36,7 @@ export function assertStagedDirectoryCurrent(receipt: DirectorySnapshot): void {
   const current = fs.lstatSync(receipt.path, { bigint: true });
   if (
     !current.isDirectory() || !exactIdentityMatches(receipt.identity, current) ||
-    fs.realpathSync(receipt.path) !== receipt.realPath
+    realpathSync(receipt.path) !== receipt.realPath
   ) {
     throw new FsSafeError("path-mismatch", "staging directory pathname changed");
   }
@@ -56,7 +57,7 @@ export function openStagedDirectory(directory: string | DirectoryReceipt): {
   if (!before.isDirectory()) {
     throw new FsSafeError("not-file", "staging parent must be a real directory");
   }
-  if (expected && (!exactIdentityMatches(expected, before) || fs.realpathSync(pathname) !== expected.realPath)) {
+  if (expected && (!exactIdentityMatches(expected, before) || realpathSync(pathname) !== expected.realPath)) {
     throw new FsSafeError("path-mismatch", "stale staging directory receipt");
   }
   const fd = fs.openSync(

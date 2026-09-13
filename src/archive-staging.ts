@@ -25,6 +25,7 @@ import { expandRelativePathWithHome } from "./root-context.js";
 import { resolveRootPath } from "./root-path.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
+import { realpathSync } from "./realpath.js";
 
 const ERROR_ARCHIVE_ENTRY_TRAVERSES_SYMLINK = "archive entry traverses symlink in destination";
 const ARCHIVE_STAGING_MODE = 0o700;
@@ -99,7 +100,7 @@ export async function prepareArchiveDestinationGuard(destDir: string): Promise<A
     }
     throw err;
   }
-  const realPath = fsSync.realpathSync.native(destDir);
+  const realPath = realpathSync.native(destDir);
   assertNoWindowsPathAlias(realPath);
   const guard: ArchiveDirectoryGuard = { dir: destDir, realPath, stat };
   try {
@@ -157,7 +158,7 @@ export async function assertResolvedInsideDestination(params: {
   assertNoWindowsPathAlias(targetPath);
   let resolved: string;
   try {
-    resolved = fsSync.realpathSync.native(targetPath);
+    resolved = realpathSync.native(targetPath);
   } catch (err) {
     if (isNotFoundPathError(err)) {
       return;

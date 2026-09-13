@@ -5,6 +5,7 @@ import { FsSafeError } from "./errors.js";
 import { guardedRm, guardedRmSync } from "./guarded-mutation.js";
 import { sameFileIdentityForCleanup } from "./file-identity.js";
 import { registerTempPathForExit, type TempPathRegistration } from "./temp-cleanup.js";
+import { realpathSync } from "./realpath.js";
 
 export async function createMoveStageOwner(staged: string) {
   const parent = await createAsyncDirectoryGuard(path.dirname(staged), { bigint: true });
@@ -15,7 +16,7 @@ export async function createMoveStageOwner(staged: string) {
     const current = fsSync.lstatSync(parent.dir, { bigint: true });
     if (!current.isDirectory() || current.isSymbolicLink() ||
       !sameFileIdentityForCleanup(current, parent.stat) ||
-      fsSync.realpathSync.native(parent.dir) !== parent.realPath) throw changed();
+      realpathSync.native(parent.dir) !== parent.realPath) throw changed();
   };
   const assertCurrent = (): void => {
     assertParent();

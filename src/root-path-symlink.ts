@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { isNotFoundPathError, isSymlinkOpenError } from "./path.js";
+import { realpathSync } from "./realpath.js";
 import {
   resolvePathViaExistingAncestor,
   resolvePathViaExistingAncestorSync,
@@ -41,7 +42,7 @@ export async function resolveSymlinkHopPath(
   options: ResolveSymlinkHopOptions = {},
 ): Promise<string> {
   try {
-    const rawRealPath = fs.realpathSync.native(symlinkPath);
+    const rawRealPath = realpathSync.native(symlinkPath);
     assertNoWindowsPathAlias(rawRealPath, "filesystem", "resolved symlink path uses a Windows filesystem namespace alias");
     const realPath = resolvePathPreservingWindowsRoot(rawRealPath);
     assertNoWindowsPathAlias(realPath, "filesystem", "resolved symlink path uses a Windows filesystem namespace alias");
@@ -61,7 +62,7 @@ export function resolveSymlinkHopPathSync(
   options: ResolveSymlinkHopOptions = {},
 ): string {
   try {
-    const rawRealPath = fs.realpathSync(symlinkPath);
+    const rawRealPath = realpathSync(symlinkPath);
     assertNoWindowsPathAlias(rawRealPath, "filesystem", "resolved symlink path uses a Windows filesystem namespace alias");
     const realPath = resolvePathPreservingWindowsRoot(rawRealPath);
     assertNoWindowsPathAlias(realPath, "filesystem", "resolved symlink path uses a Windows filesystem namespace alias");

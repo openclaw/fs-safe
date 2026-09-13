@@ -27,7 +27,7 @@ it("runs the actual pnpm lifecycle at the repository's pinned version", () => {
   expect(`pnpm@${version}`).toBe(pkg.packageManager);
 });
 
-it.each(["pnpm.js", "pnpm.cjs", "pnpm.mjs"])("runs the %s lifecycle script through Node with intact arguments", (name) => {
+it.each(["pnpm.js", "pnpm.cjs", "pnpm.mjs"])("runs the %s lifecycle script through the current runtime with intact arguments", (name) => {
   const directory = temporary();
   const cli = join(directory, name);
   writeFileSync(cli, "console.log(JSON.stringify(process.argv.slice(2)))");
@@ -58,7 +58,7 @@ it("lets a caller override the package script's default output directory", () =>
   const last = join(directory, "requested-artifacts");
   writeFileSync(join(directory, "package.json"), JSON.stringify({ name: "fixture-not-fs-safe" }));
   try {
-    execFileSync(process.execPath, [resolve("scripts/check-release-packages.mjs"), "--output", first, "--output", last], {
+    execFileSync("node", [resolve("scripts/check-release-packages.mjs"), "--output", first, "--output", last], {
       cwd: directory, env: { ...isolatedConsumerEnv(join(directory, "config")), npm_execpath: process.env.npm_execpath },
       encoding: "utf8", timeout: 10_000, stdio: "pipe",
     });
@@ -75,7 +75,7 @@ it("rejects direct collection before creating artifacts when the lifecycle is ab
   const directory = temporary();
   const output = join(directory, "artifacts");
   try {
-    execFileSync(process.execPath, ["scripts/check-release-packages.mjs", "--output", output], {
+    execFileSync("node", ["scripts/check-release-packages.mjs", "--output", output], {
       env: isolatedConsumerEnv(join(directory, "config")), encoding: "utf8", timeout: 10_000, stdio: "pipe",
     });
     expect.fail("direct collection must reject a missing lifecycle CLI");

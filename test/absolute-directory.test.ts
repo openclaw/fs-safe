@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { ensureAbsoluteDirectory } from "../src/absolute-path.js";
+import { realpathSync } from "../src/realpath.js";
 
 const { tempRoot } = useTempDirs();
 
@@ -123,9 +124,9 @@ describe("ensureAbsoluteDirectory", () => {
     const targetDir = path.join(root, "target");
     await fs.mkdir(targetDir);
 
-    const realRealpath = fsSync.realpathSync.native;
+    const realRealpath = realpathSync.native;
     let swapped = false;
-    const realpathSpy = vi.spyOn(fsSync.realpathSync, "native").mockImplementation((...args) => {
+    const realpathSpy = vi.spyOn(realpathSync, "native").mockImplementation((...args) => {
       const candidate = String(args[0]);
       if (!swapped && candidate === targetDir) {
         swapped = true;

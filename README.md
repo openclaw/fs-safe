@@ -59,6 +59,8 @@ pnpm add @openclaw/fs-safe
 
 Node 22 or newer. Core root/path/json/temp helpers avoid framework dependencies. With all optional dependencies omitted, public subpaths remain safe to import and non-archive fallback-capable operations work in `auto` or `off`. Native-only features remain unavailable, and operations needing the binding in `require` mode fail with `helper-unavailable`. TAR/gzip fallback uses the bundled WASM build of the same Rust parser as native and works with optional dependencies omitted. ZIP fallback still needs optional `jszip`. See the [0.6 migration guide](docs/migrating-to-0.6.md).
 
+Bun 1.4.2 is also supported with the [Bun runtime requirements](docs/install.md#bun-runtime), including the matching Rust addon on macOS and Linux. JIT-disabled Bun works too.
+
 The package installs one prebuilt native binding for the current supported target. It
 supplies fd-relative and atomic no-replace primitives that Node does not expose
 directly. Configure the lazy loader before first use when you need a strict
@@ -231,7 +233,7 @@ const locked = await root("/srv/workspace", {
 await locked.write(".env", "token"); // FsSafeError code "denied-path"
 ```
 
-`stat()`, `exists()`, and `list()` are boundary-checked, but they cannot pin a later operation to the same filesystem object. Use `read()`, `open()`, `write()`, `create()`, `copyIn()`, `move()`, or `remove()` for operation-local identity checks, and inspect `containment` when the platform distinction matters.
+`stat()`, `exists()`, `list()`, and `entries()` are boundary-checked, but they cannot pin a later operation to the same filesystem object. Use `read()`, `open()`, `write()`, `create()`, `copyIn()`, `move()`, or `remove()` for operation-local identity checks, and inspect `containment` when the platform distinction matters.
 
 ## Subpaths
 
@@ -250,7 +252,7 @@ contract. Low-level helpers that OpenClaw needs to compose higher-level APIs are
 | `@openclaw/fs-safe/store` | `fileStore`, `fileStoreSync`, and `jsonStore` |
 | `@openclaw/fs-safe/secret` | sync/async strict and try-style secret reads, atomic replace, and create-only secret writes |
 | `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `replaceFileAtomicSync`, `replaceDirectoryAtomic`, `movePathWithCopyFallback` |
-| `@openclaw/fs-safe/durability` | pinned directory identities, strict directory sync, durable nested-directory creation, exclusive publication, streaming SHA-256, provenance receipts, and sync-failure policy |
+| `@openclaw/fs-safe/durability` | pinned directory identities, strict directory sync, durable nested-directory creation, exclusive publication, streaming and synchronous SHA-256, provenance receipts, and sync-failure policy |
 | `@openclaw/fs-safe/temp` | `tempWorkspace`, `tempWorkspaceSync`, `withTempWorkspace`, `resolveSecureTempRoot` |
 | `@openclaw/fs-safe/secure-file` | fd-pinned absolute file reads with owner, mode, ACL, trusted-dir, size, and timeout checks |
 | `@openclaw/fs-safe/file-lock` | async/sync sidecar locks, root-bounded sidecars, ownership verification, and stale policy |
@@ -470,6 +472,17 @@ Use `permissions: { allowInsecure: true }` only for migration or explicit local-
 flows where a warning is preferable to refusing the file.
 
 ## Directory walking
+
+[`Root.entries()`](docs/entries.md) observes one directory without descending or
+following child symlinks. It streams in filesystem order by default and supports
+cancellation, entry limits that throw on overflow, and bounded sorted-name
+collection. Use it when the caller owns traversal or symlink validation:
+
+```ts
+for await (const entry of fs.entries("plugins", { maxEntries: 1_000 })) {
+  console.log(entry.name, entry.isSymbolicLink);
+}
+```
 
 `walkDirectory()` and `walkDirectorySync()` replace ad-hoc recursive
 `readdir()` loops with entry and depth budgets, a symlink policy, and stable

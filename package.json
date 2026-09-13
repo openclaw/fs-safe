@@ -137,6 +137,8 @@
     "lint:fs-boundary": "node scripts/check-fs-boundary-primitives.mjs",
     "prepack": "node scripts/prepack-build.mjs",
     "test": "vitest run",
+    "test:bun": "bun node_modules/vitest/vitest.mjs run --config scripts/bun-vitest.config.ts",
+    "test:bun:native": "bun scripts/bun-native-proof.mjs && bun node_modules/vitest/vitest.mjs run --config scripts/bun-native-vitest.config.ts",
     "test:coverage": "vitest run --coverage",
     "test:coverage:collect": "pnpm build && vitest run --coverage --coverage.reporter=json --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 --coverage.thresholds.statements=0 --coverage.thresholds.branches=0",
     "test:coverage:merge": "node scripts/merge-coverage.mjs",

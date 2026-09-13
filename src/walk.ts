@@ -1,6 +1,7 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { realpathSync } from "./realpath.js";
 import {
   pathForWindowsFilesystem,
   resolvePathPreservingWindowsRoot,
@@ -144,7 +145,7 @@ export function walkDirectorySync(
     let realDir: string;
     const operationPath = pathForWindowsFilesystem(dir);
     try {
-      realDir = fsSync.realpathSync(operationPath);
+      realDir = realpathSync(operationPath);
     } catch (error) {
       recordFailedDir(result, root, dir, depth, error);
       return;
@@ -207,7 +208,7 @@ export async function walkDirectory(
     let realDir: string;
     const operationPath = pathForWindowsFilesystem(dir);
     try {
-      realDir = fsSync.realpathSync.native(operationPath);
+      realDir = realpathSync.native(operationPath);
     } catch (error) {
       recordFailedDir(result, root, dir, depth, error);
       return;
