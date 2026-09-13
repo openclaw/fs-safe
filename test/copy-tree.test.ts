@@ -44,10 +44,11 @@ describe("directory copying", () => {
       await fs.utimes(original, 1_600_000_000, 1_600_000_000);
       if (process.platform !== "win32") await fs.chmod(original, 0o751);
       await fs.mkdir(path.join(source, "nested", "deep"), { recursive: true });
+      await fs.mkdir(path.join(source, "sibling"));
       const contents = new Map<string, Buffer>();
       const timestamps = new Map<string, { atimeNs: bigint; mtimeNs: bigint }>();
       for (let index = 0; index < 12; index++) {
-        const parent = ["", "nested", path.join("nested", "deep")][index % 3]!;
+        const parent = ["", "nested", path.join("nested", "deep"), "sibling"][index % 4]!;
         const name = path.join(parent, `file-${index}`);
         const bytes = Buffer.alloc(1024 * 1024 + 17 + index, index + 1);
         bytes.fill(index + 77, 1024 * 1024);
@@ -65,7 +66,7 @@ describe("directory copying", () => {
         expect(expected.mtimeNs / 1_000_000_000n).toBe(BigInt(Math.trunc(seconds + 0.875625)));
         timestamps.set(name, expected);
       }
-      const directories = ["", "empty", "nested", path.join("nested", "deep")];
+      const directories = ["", "empty", "nested", path.join("nested", "deep"), "sibling"];
       for (const [index, name] of directories.entries()) {
         const alternate = process.platform === "win32" ? 2_200_000_000 : -315_619_200;
         const seconds = index % 2 === 0 ? 1_500_000_000 : alternate;
@@ -254,23 +255,25 @@ describe("directory copying", () => {
     await expect(fs.access(destination)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("settles a byte copy aborted after visible progress before the destination is reused", async () => {
+  it("settles concurrent sibling-directory copies before an aborted destination is reused", async () => {
     const { source, destination } = await copyFixture();
-    const original = path.join(source, "payload");
-    const copied = path.join(destination, "payload");
+    const names = [path.join("first", "payload"), path.join("second", "payload")];
     const bytes = Buffer.alloc(8 * 1024 * 1024, 0x5a);
-    await fs.writeFile(original, bytes);
+    for (const name of names) {
+      await fs.mkdir(path.dirname(path.join(source, name)));
+      await fs.writeFile(path.join(source, name), bytes);
+    }
+    const copied = path.join(destination, names[0]!);
     const controller = new AbortController();
     const reason = new Error("cancel after partial byte copy");
-    const written = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
     const open = fs.open.bind(fs);
     let writes = 0;
-    let copiedFd: number | undefined;
+    const copiedFds: number[] = [];
     const openSpy = vi.spyOn(fs, "open").mockImplementation(async (...args) => {
       const handle = await open(...args);
-      if (args[0] === copied && args[1] === "wx") {
-        copiedFd = handle.fd;
+      if (names.some((name) => args[0] === path.join(destination, name)) && args[1] === "wx") {
+        copiedFds.push(handle.fd);
         const write = handle.write.bind(handle);
         // This fixture exercises the buffer overload and forwards the real write.
         vi.spyOn(handle, "write").mockImplementation((async (
@@ -281,7 +284,6 @@ describe("directory copying", () => {
         ) => {
           const result = await write(buffer, offset, length, position);
           writes++;
-          written.resolve();
           await release.promise;
           return result;
         }) as FileHandle["write"]);
@@ -291,6 +293,7 @@ describe("directory copying", () => {
     let settled = false;
     const pending = copyTree(source, destination, {
       clone: "never",
+      concurrency: 2,
       signal: controller.signal,
     }).then(
       () => {
@@ -303,31 +306,31 @@ describe("directory copying", () => {
       },
     );
     try {
-      await Promise.race([
-        written.promise,
-        pending.then((error) => {
-          throw error ?? new Error("copy completed before the held write");
-        }),
-      ]);
+      // Both real writes stay admitted until released, even though their files
+      // belong to different directories. Failure still releases them below.
+      await vi.waitFor(() => expect(writes).toBe(2));
       const partial = await fs.stat(copied);
       expect(partial.size).toBeGreaterThan(0);
       expect(partial.size).toBeLessThan(bytes.length / 2);
       controller.abort(reason);
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(settled).toBe(false);
-      expect(fsSync.fstatSync(copiedFd!).isFile()).toBe(true);
+      expect(copiedFds).toHaveLength(2);
+      for (const fd of copiedFds) expect(fsSync.fstatSync(fd).isFile()).toBe(true);
       release.resolve();
       expect(await pending).toBe(reason);
       expect((await fs.stat(copied)).size).toBeLessThan(bytes.length);
       const afterAbort = await fs.readFile(copied);
       await new Promise<void>((resolve) => setImmediate(resolve));
-      expect(writes).toBe(1);
+      expect(writes).toBe(2);
       expect((await fs.readFile(copied)).equals(afterAbort)).toBe(true);
       openSpy.mockRestore();
       await fs.rm(destination, { recursive: true });
       await copyTree(source, destination, { clone: "never" });
-      expect((await fs.readFile(copied)).equals(bytes)).toBe(true);
-      expect((await fs.readFile(original)).equals(bytes)).toBe(true);
+      for (const name of names) {
+        expect((await fs.readFile(path.join(destination, name))).equals(bytes)).toBe(true);
+        expect((await fs.readFile(path.join(source, name))).equals(bytes)).toBe(true);
+      }
     } finally {
       controller.abort(reason);
       release.resolve();

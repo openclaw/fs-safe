@@ -33,11 +33,12 @@ export async function copyOwnedTree(
   const abort = () => cancellation.abort(options.signal?.reason);
   options.signal?.addEventListener("abort", abort, { once: true });
   const pending = new Set<Promise<void>>();
+  const finishing = new Set<Promise<void>>();
   const buffers: Buffer[] = [];
-  const settle = async () => {
-    await Promise.all(pending);
-  };
-  async function schedule(operation: () => Promise<void>): Promise<void> {
+  async function schedule(
+    operation: () => Promise<void>,
+    children: Set<Promise<void>>,
+  ): Promise<void> {
     signal.throwIfAborted();
     const task = operation()
       .catch((error: unknown) => {
@@ -45,8 +46,10 @@ export async function copyOwnedTree(
       })
       .finally(() => {
         pending.delete(task);
+        children.delete(task);
       });
     pending.add(task);
+    children.add(task);
     if (pending.size >= options.concurrency) await Promise.race(pending);
     signal.throwIfAborted();
   }
@@ -116,13 +119,18 @@ export async function copyOwnedTree(
       }
     }
   }
-  async function copyDirectory(from: string, to: string): Promise<void> {
+  async function copyDirectory(
+    from: string,
+    to: string,
+    parentChildren?: Set<Promise<void>>,
+  ): Promise<void> {
     signal?.throwIfAborted();
     const stat = await fsp.lstat(from, { bigint: true });
     // Exclusive admission prevents merging a pre-existing directory, including
     // any destination left by an unsuccessful native clone.
     await fsp.mkdir(to, { mode: 0o700 });
     const target = openStagedDirectory(to);
+    const children = new Set<Promise<void>>();
     let original: ReturnType<typeof openStagedDirectory> | undefined;
     try {
       original = openStagedDirectory(from);
@@ -137,9 +145,9 @@ export async function copyOwnedTree(
         const childTarget = path.join(to, entry.name);
         const child = await fsp.lstat(childSource, { bigint: true });
         if (child.isDirectory()) {
-          await copyDirectory(childSource, childTarget);
+          await copyDirectory(childSource, childTarget, children);
         } else if (child.isFile()) {
-          await schedule(() => copyFile(childSource, childTarget, child));
+          await schedule(() => copyFile(childSource, childTarget, child), children);
         } else if (child.isSymbolicLink()) {
           const link =
             process.platform === "win32"
@@ -174,33 +182,56 @@ export async function copyOwnedTree(
           throw new FsSafeError("not-file", "tree copying does not support special files");
         }
       }
-      await settle();
-      signal.throwIfAborted();
-      assertStagedDirectoryCurrent(original.receipt);
-      assertStagedDirectoryCurrent(target.receipt);
-      if (process.platform !== "win32") fs.fchmodSync(target.fd, Number(stat.mode & 0o7777n));
-      await fsp.utimes(to, timestampSeconds(stat.atimeNs), timestampSeconds(stat.mtimeNs));
-      assertStagedDirectoryCurrent(target.receipt);
     } catch (error) {
       cancellation.abort(error);
       throw error;
     } finally {
-      // Directory descriptors and destination ownership outlive every admitted
-      // write, including when traversal, a sibling copy, or cancellation fails.
-      await settle();
-      try {
-        if (original) fs.closeSync(original.fd);
-      } finally {
-        fs.closeSync(target.fd);
-      }
+      // Traversal can advance into siblings while this directory's own files
+      // settle. Children retain their parents and finish metadata bottom-up.
+      const completion = (async () => {
+        try {
+          await Promise.all(children);
+          signal.throwIfAborted();
+          if (original) {
+            assertStagedDirectoryCurrent(original.receipt);
+            assertStagedDirectoryCurrent(target.receipt);
+            if (process.platform !== "win32") fs.fchmodSync(target.fd, Number(stat.mode & 0o7777n));
+            await fsp.utimes(to, timestampSeconds(stat.atimeNs), timestampSeconds(stat.mtimeNs));
+            assertStagedDirectoryCurrent(target.receipt);
+          }
+        } finally {
+          try {
+            if (original) fs.closeSync(original.fd);
+          } finally {
+            fs.closeSync(target.fd);
+          }
+        }
+      })()
+        .catch((error: unknown) => {
+          cancellation.abort(error);
+        })
+        .finally(() => {
+          finishing.delete(completion);
+          parentChildren?.delete(completion);
+        });
+      finishing.add(completion);
+      parentChildren?.add(completion);
+      // Bound traversed-but-unsettled directories as well as file workers;
+      // ancestors stay open along the current traversal path.
+      if (finishing.size >= options.concurrency) await Promise.race(finishing);
     }
+    signal.throwIfAborted();
   }
   try {
     await copyDirectory(source.receipt.realPath, destination);
+    await Promise.all(finishing);
+    signal.throwIfAborted();
   } catch (error) {
+    await Promise.all(finishing);
     options.signal?.throwIfAborted();
     throw error;
   } finally {
+    await Promise.all(finishing);
     options.signal?.removeEventListener("abort", abort);
   }
 }
