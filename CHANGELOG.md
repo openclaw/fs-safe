@@ -5,6 +5,8 @@
 - Preserve established callback receivers while retaining single-read pathname and transfer-authority snapshots across structured JSON, durable directory and queue, sibling staging, and borrowed-handle flows.
 - Snapshot root traversal symlink-rejection policy with admitted paths so caller mutation cannot change an in-flight resolution.
 - Reject NTFS alternate-data-stream and directory-index pathname aliases across guarded Root, FileStore, archive, JSON queue, sidecar lock, secret, secure-read, atomic publication, temp, permission, install, trash, and output boundaries before filesystem access. Preserve rooted drive paths, including valid extended namespace drive roots without widening volume-root mutation authority, independent device/network policies, intentional output-name sanitization, existing failure shapes, and ordinary colon-bearing POSIX names; native relative and archive paths enforce the same Windows rule.
+- Add bounded copy benchmark shapes and explicit worker matrices for comparisons at equal concurrency across native cloning and ordinary copying.
+
 - Inspect complete inherited local Windows ACLs through the existing native descriptor reader, avoiding PowerShell startup while preserving the public SID classifier, explicit injections, .NET normalization, and structured fallback diagnostics.
 
 - Add `copyFileHandle` for bounded transfers between caller-owned regular-file handles, preserving both cursors and source observation before target writes, snapshotting cancellation and mutation callbacks before descriptor inspection, and sharing Root's portable copy machinery.
@@ -20,12 +22,15 @@
 - Reject negative, `NaN`, and negative-infinite file-lock stale thresholds before acquisition; negative thresholds can no longer force a live lock into stale recovery.
 - XFS clones preserve user extended attributes on read-only files and directories while retaining their exact modes and ACLs.
 - Confirm EOF when Linux copy offload initially reports zero bytes, so automatic file copies fall back to reading available data instead of publishing an empty file.
+- Avoid allocating zero-filled ranges during automatic Linux directory byte copies with the native binding, preserving file lengths, contents, metadata, and cancellation settlement without cloning or copy offload.
 - Preserve fractional access and modification timestamps during directory byte copying, including dates before 1970 on Unix, to the precision supported by Node and the destination filesystem.
 - Support Bun POSIX path resolution for restrictive permissions, literal backslashes, sockets, and symlink/parent traversal through the existing Rust addon, including JIT-disabled Bun; preserve native-off policy and identity checks, document addon-free runtime limitations, and add Bun compatibility checks.
 - Fix relative file publication and queue writes on Bun for Windows by preserving raw components in absolute recursive-mkdir inputs.
 - Fix package consumer smoke and lifecycle tests with standalone `@pnpm/exe` installations, preserving the pinned pnpm version and isolated consumer configuration.
 - Report native Windows disk-full and sharing failures as `ENOSPC` and `EBUSY`, and return ReFS worker-start failures after joining admitted workers instead of panicking across the native boundary.
+- Reduce Windows copy allocation overhead by sizing native file buffers to small inputs, reusing directory enumeration buffers, and starting ReFS workers only as file jobs arrive.
 - Add bounded recursive `Root.remove` with entry and depth limits, cancellation, missing-target handling, and exact directory/leaf identity checks without repeated sibling scans.
+- Share portable directory-copy workers across sibling directories, with bounded deferred directory completion, joined cancellation, and bottom-up timestamp restoration.
 - Add a streamed `Root.create` overload for async byte iterables, with bounded consumption, settled cancellation, and exclusive publication of completed contents through the existing guarded writer.
 - Add `Root.entries()` for guarded nonrecursive directory iteration that reports child symlinks, supports cancellation, and bounds entry counts and sorted-name collection while leaving traversal and link policy with the caller.
 

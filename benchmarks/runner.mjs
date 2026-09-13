@@ -12,19 +12,28 @@ import { registerPaths } from "./paths.mjs";
 import { registerLifecycle } from "./lifecycle.mjs";
 import { registerArchives } from "./archives.mjs";
 
-const args = { iterations: 100, samples: 5, warmup: 5, mode: "off" };
+const args = { iterations: 100, samples: 5, warmup: 5, mode: "off", "copy-shape": "mixed", "copy-files": 64, "copy-file-bytes": 4096 };
 for (let i = 2; i < process.argv.length; i++) {
   const key = process.argv[i].replace(/^--/, "");
   if (key === "") continue;
-  if (!["iterations", "samples", "warmup", "mode", "json", "filter", "dist"].includes(key)) throw new Error(`Unknown argument: ${key}`);
+  if (!["iterations", "samples", "warmup", "mode", "json", "filter", "dist", "copy-shape", "copy-files", "copy-file-bytes", "copy-concurrency"].includes(key)) throw new Error(`Unknown argument: ${key}`);
   const value = process.argv[++i];
   if (value === undefined) throw new Error(`Missing value for ${key}`);
-  args[key] = ["iterations", "samples", "warmup"].includes(key) ? Number(value) : value;
+  args[key] = ["iterations", "samples", "warmup", "copy-files", "copy-file-bytes"].includes(key) ? Number(value) : value;
 }
 for (const key of ["iterations", "samples", "warmup"]) {
   assert(Number.isSafeInteger(args[key]) && args[key] >= (key === "warmup" ? 0 : 1), `Invalid ${key}`);
 }
 assert(["off", "require", "auto"].includes(args.mode), "Invalid native mode");
+assert(["empty", "flat", "nested", "mixed"].includes(args["copy-shape"]), "Invalid copy shape");
+assert(Number.isSafeInteger(args["copy-files"]) && args["copy-files"] >= 0 && args["copy-files"] <= 100_000, "Invalid copy file count");
+assert(Number.isSafeInteger(args["copy-file-bytes"]) && args["copy-file-bytes"] >= 0 && args["copy-file-bytes"] <= 1024 * 1024, "Invalid copy file size");
+assert(args["copy-files"] * args["copy-file-bytes"] <= 512 * 1024 * 1024, "Copy fixture exceeds 512 MiB");
+if (args["copy-concurrency"] !== undefined) {
+  args["copy-concurrency"] = args["copy-concurrency"].split(",").map(Number);
+  assert(args["copy-concurrency"].length > 0 && args["copy-concurrency"].every(value => Number.isInteger(value) && value >= 1 && value <= 32), "Invalid copy concurrency");
+  assert(new Set(args["copy-concurrency"]).size === args["copy-concurrency"].length, "Duplicate copy concurrency");
+}
 const packageRoot = path.resolve(import.meta.dirname, "..");
 const dist = path.resolve(args.dist ?? path.join(packageRoot, "dist"));
 const manifest = JSON.parse(fs.readFileSync(path.join(packageRoot, "package.json"), "utf8"));
@@ -135,6 +144,7 @@ try {
   }
   const report = {
     schemaVersion: 1,
+    copyFixture: { shape: args["copy-shape"], files: args["copy-shape"] === "empty" ? 0 : args["copy-files"], bytesPerFile: args["copy-file-bytes"], extraPayloadBytes: args["copy-shape"] === "mixed" ? 1024 * 1024 : 0, concurrency: args["copy-concurrency"] ?? null },
     metadata: { harnessHash: harnessDigest, nativeHash, distHash: createHash("sha256").update(fs.readdirSync(dist).filter((name) => /\.(js|wasm)$/.test(name)).sort().map((name) => name + createHash("sha256").update(fs.readFileSync(path.join(dist, name))).digest("hex")).join("\n")).digest("hex"), harnessRevision: execFileSync("git", ["rev-parse", "HEAD"], { cwd: packageRoot, encoding: "utf8" }).trim(), node: process.version, platform: process.platform, arch: process.arch, cpu: os.cpus()[0]?.model, mode: args.mode, native, samples: args.samples, date: new Date().toISOString() },
     coverage: { exports: Object.fromEntries(exportsByName), methods: Object.fromEntries(contracts), exclusions: Object.fromEntries(exclusions), registeredCases: cases.length, filtered: Boolean(args.filter) },
     results,

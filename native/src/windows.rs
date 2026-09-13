@@ -638,6 +638,12 @@ pub fn rename_replace(
 }
 
 pub(crate) fn handle_identity(handle: HANDLE) -> NativeResult<(u32, u64, bool)> {
+    handle_identity_and_size(handle).map(|(identity, _)| identity)
+}
+
+pub(crate) fn handle_identity_and_size(
+    handle: HANDLE,
+) -> NativeResult<((u32, u64, bool), u64)> {
     // SAFETY: info is a valid output buffer for this API.
     let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { zeroed() };
     if unsafe { GetFileInformationByHandle(handle, &mut info) } == 0 {
@@ -647,9 +653,12 @@ pub(crate) fn handle_identity(handle: HANDLE) -> NativeResult<(u32, u64, bool)> 
         ));
     }
     Ok((
-        info.dwVolumeSerialNumber,
-        ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64,
-        info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0,
+        (
+            info.dwVolumeSerialNumber,
+            ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64,
+            info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0,
+        ),
+        ((info.nFileSizeHigh as u64) << 32) | info.nFileSizeLow as u64,
     ))
 }
 
@@ -672,8 +681,8 @@ fn same_handle_identity(left: HANDLE, right: HANDLE) -> NativeResult<bool> {
 pub(crate) fn list_directory_entries(directory: HANDLE) -> NativeResult<Vec<(String, u32, u64)>> {
     let mut entries = Vec::new();
     let mut restart = true;
+    let mut storage = vec![0_usize; (64_usize * 1024).div_ceil(size_of::<usize>())];
     loop {
-        let mut storage = vec![0_usize; (64_usize * 1024).div_ceil(size_of::<usize>())];
         let class = if restart {
             FileIdBothDirectoryRestartInfo
         } else {
@@ -989,12 +998,66 @@ pub fn copy_file_range_exclusive(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::fs::{self, OpenOptions};
     use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::AsRawHandle;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+
+    #[test]
+    fn directory_enumeration_spans_batches_and_restarts_without_losing_entries() {
+        let base = fs::canonicalize(std::env::temp_dir()).unwrap();
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = base.join(format!("fs-safe-directory-batches-{}-{nonce}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        let owned = fs::canonicalize(&root).unwrap();
+        assert_eq!(owned.parent(), Some(base.as_path()));
+        let mut expected = BTreeMap::new();
+        // Long ordinary names make this exceed a single 64 KiB enumeration batch.
+        for index in 0..400 {
+            let name = format!("{index:04}-{}", "entry".repeat(16));
+            let path = root.join(&name);
+            let is_directory = index % 20 == 0;
+            if is_directory {
+                fs::create_dir(&path).unwrap();
+            } else {
+                fs::write(&path, [index as u8]).unwrap();
+            }
+            let handle = OpenOptions::new()
+                .read(true)
+                .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS)
+                .open(&path)
+                .unwrap();
+            let identity = handle_identity(handle.as_raw_handle()).unwrap();
+            expected.insert(name, (is_directory, identity.1));
+        }
+        {
+            let handle = OpenOptions::new()
+                .read(true)
+                .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS)
+                .open(&root)
+                .unwrap();
+            for _ in 0..2 {
+                let entries = list_directory_entries(handle.as_raw_handle()).unwrap();
+                assert_eq!(entries.len(), expected.len());
+                let actual: BTreeMap<_, _> = entries
+                    .into_iter()
+                    .map(|(name, attributes, id)| {
+                        (name, (attributes & FILE_ATTRIBUTE_DIRECTORY != 0, id))
+                    })
+                    .collect();
+                assert_eq!(actual, expected);
+            }
+        }
+        assert_eq!(fs::canonicalize(&root).unwrap(), owned);
+        assert_eq!(owned.parent(), Some(base.as_path()));
+        fs::remove_dir_all(&root).unwrap();
+    }
 
     #[test]
     fn maps_access_denied_to_node_filesystem_eperm() {

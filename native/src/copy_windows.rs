@@ -13,8 +13,8 @@ use windows_sys::Win32::Storage::FileSystem::{
 };
 
 use crate::windows::{
-    OwnedHandle, handle_identity, handle_is_reparse, open_independent_reader, read_at, root_handle,
-    win_error,
+    OwnedHandle, handle_identity, handle_identity_and_size, handle_is_reparse,
+    open_independent_reader, read_at, root_handle, win_error,
 };
 use crate::{NativeResult, native_error};
 
@@ -36,7 +36,7 @@ fn copy_contents(source_fd: i32, target_fd: i32, cancelled: &AtomicBool) -> Nati
     check_cancelled(cancelled)?;
     let source_handle = root_handle(source_fd)?;
     let target_handle = root_handle(target_fd)?;
-    let source_identity = handle_identity(source_handle)?;
+    let (source_identity, source_size) = handle_identity_and_size(source_handle)?;
     let target_identity = handle_identity(target_handle)?;
     for (handle, identity) in [(source_handle, source_identity), (target_handle, target_identity)] {
         // SAFETY: the caller keeps both admitted file descriptors open until settlement.
@@ -66,7 +66,8 @@ fn copy_contents(source_fd: i32, target_fd: i32, cancelled: &AtomicBool) -> Nati
         return Err(win_error(unsafe { GetLastError() }, "reopen copy target"));
     }
     let writer = OwnedHandle(writer);
-    let mut buffer = vec![0_u8; 1024 * 1024];
+    // Size only guides allocation; reading to EOF still handles a changed length.
+    let mut buffer = vec![0_u8; source_size.clamp(4096, 1024 * 1024) as usize];
     let mut offset = 0_u64;
     loop {
         check_cancelled(cancelled)?;
@@ -152,7 +153,7 @@ mod tests {
         let root = std::env::temp_dir()
             .join(format!("fs-safe-copy-{}-{nonce}", std::process::id()));
         fs::create_dir(&root).unwrap();
-        for size in [0, 1, 1024 * 1024 + 17] {
+        for size in [0, 1, 4095, 4096, 4097, 65_537, 1024 * 1024 + 17] {
             let source_path = root.join(format!("source-{size}"));
             let target_path = root.join(format!("target-{size}"));
             let contents: Vec<u8> = (0..size).map(|index| (index % 251) as u8).collect();
