@@ -180,16 +180,24 @@ export function resolveWindowsUserPrincipal(
   return domain ? `${domain}\\${username}` : username;
 }
 
+function buildTrustedSidPrincipals(env?: NodeJS.ProcessEnv): Set<string> {
+  const trusted = new Set<string>();
+  const userSid = normalizeSid(env?.USERSID ?? "");
+  if (userSid && SID_RE.test(userSid) && !WORLD_SIDS.has(userSid)) trusted.add(userSid);
+  return trusted;
+}
+
 function buildTrustedPrincipals(env?: NodeJS.ProcessEnv): Set<string> {
-  const trusted = new Set<string>(TRUSTED_BASE);
+  const trusted = new Set<string>([
+    ...TRUSTED_BASE,
+    ...buildTrustedSidPrincipals(env),
+  ]);
   const principal = resolveWindowsUserPrincipal(env);
   if (principal) {
     trusted.add(normalize(principal));
     const userOnly = principal.split("\\").at(-1);
     if (userOnly) trusted.add(normalize(userOnly));
   }
-  const userSid = normalizeSid(env?.USERSID ?? "");
-  if (userSid && SID_RE.test(userSid) && !WORLD_SIDS.has(userSid)) trusted.add(userSid);
   return trusted;
 }
 
@@ -254,7 +262,11 @@ export function parseIcaclsOutput(output: string, targetPath: string): WindowsAc
 }
 
 export function summarizeWindowsAcl(entries: WindowsAclEntry[], env?: NodeJS.ProcessEnv): Pick<WindowsAclSummary, "trusted" | "untrustedWorld" | "untrustedGroup"> {
-  const trustedPrincipals = buildTrustedPrincipals(env);
+  // Canonical SID entries cannot match account names. Classify them directly
+  // so structured descriptor facts do not depend on a separate user lookup.
+  const trustedPrincipals = entries.every((entry) => SID_RE.test(normalize(entry.sid ?? entry.principal)))
+    ? buildTrustedSidPrincipals(env)
+    : buildTrustedPrincipals(env);
   const trusted: WindowsAclEntry[] = [];
   const untrustedWorld: WindowsAclEntry[] = [];
   const untrustedGroup: WindowsAclEntry[] = [];

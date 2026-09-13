@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useTempDirs } from "./helpers/vitest.js";
@@ -8,6 +9,7 @@ import {
   inspectPathPermissions,
   inspectWindowsAcl,
   parseIcaclsOutput,
+  summarizeWindowsAcl,
   type PermissionCheck,
 } from "../src/permissions.js";
 import {
@@ -106,6 +108,82 @@ describe("permission inspection failure modes", () => {
     await expect(inspectWindowsAcl("C:\\fixture", { exec, principalTranslationFailed: true }))
       .resolves.toMatchObject({ ok: false, error: "Error: Windows ACL principal SID translation failed" });
     expect(exec).not.toHaveBeenCalled();
+  });
+
+  it("classifies canonical SID facts without an account-name lookup", async () => {
+    const userInfo = vi.spyOn(os, "userInfo").mockImplementation(() => {
+      throw Object.assign(new Error("account lookup exhausted"), { code: "ENOMEM" });
+    });
+    const inspect = async (daclPresent: boolean, aces: unknown[]) => await inspectWindowsAcl(
+      "C:\\fixture",
+      {
+        exec: async () => ({
+          stdout: JSON.stringify({
+            ownerSid: "S-1-5-21-42",
+            currentUserSid: "S-1-5-21-42",
+            complete: true,
+            daclPresent,
+            aces,
+          }),
+          stderr: "",
+        }),
+      },
+    );
+
+    const populated = await inspect(true, [
+      { sid: "S-1-5-21-42", mask: 1, deny: false, inheritOnly: false },
+      { sid: "S-1-5-21-99", mask: 1, deny: false, inheritOnly: false },
+      { sid: "S-1-1-0", mask: 1, deny: false, inheritOnly: false },
+    ]);
+    expect(populated.trusted).toMatchObject([{ sid: "s-1-5-21-42" }]);
+    expect(populated.untrustedGroup).toMatchObject([{ sid: "s-1-5-21-99" }]);
+    expect(populated.untrustedWorld).toMatchObject([{ sid: "s-1-1-0" }]);
+
+    await expect(inspect(true, [])).resolves.toMatchObject({
+      ok: true,
+      entries: [],
+      untrustedWorld: [],
+    });
+    await expect(inspect(false, [])).resolves.toMatchObject({
+      ok: true,
+      untrustedWorld: [{ sid: "s-1-1-0", canRead: true, canWrite: true }],
+    });
+    const systemEntry = {
+      principal: "S-1-5-18",
+      sid: "s-1-5-18",
+      rights: ["F"],
+      rawRights: "(F)",
+      canRead: true,
+      canWrite: true,
+    };
+    const unknownEntry = { ...systemEntry, principal: "S-1-5-21-77", sid: "s-1-5-21-77" };
+    for (const env of [{}, { USERSID: "not-a-sid" }, { USERSID: "S-1-1-0" }]) {
+      expect(summarizeWindowsAcl([systemEntry, unknownEntry], env)).toMatchObject({
+        trusted: [systemEntry],
+        untrustedGroup: [unknownEntry],
+      });
+    }
+    expect(userInfo).not.toHaveBeenCalled();
+  });
+
+  it("retains account-name lookup for name-based ACL entries", () => {
+    const userInfo = vi.spyOn(os, "userInfo").mockReturnValue({
+      username: "fallback-user",
+      uid: -1,
+      gid: -1,
+      shell: null,
+      homedir: "C:\\Users\\fallback-user",
+    });
+    const entry = {
+      principal: "fallback-user",
+      rights: ["R"],
+      rawRights: "(R)",
+      canRead: true,
+      canWrite: false,
+    };
+
+    expect(summarizeWindowsAcl([entry], {})).toMatchObject({ trusted: [entry] });
+    expect(userInfo).toHaveBeenCalledOnce();
   });
 
   it.each([

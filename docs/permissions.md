@@ -73,6 +73,8 @@ built-in Windows PowerShell/.NET query. It returns canonical SIDs and numeric
 access masks, so Unicode paths and account names do not pass through lossy
 console display text. `inspectWindowsAcl()` uses the same query and returns
 canonical SIDs in its `principal` fields, with normalized rights tokens.
+Structured ACLs containing only canonical SIDs are classified directly from
+the current-user SID without requiring a separate account-name lookup.
 The advanced options retain `currentUserSid` as an explicit classification
 override and `principalTranslationFailed: true` as an immediate unverified
 result. The optional `principalSids` translation cache is still accepted but
