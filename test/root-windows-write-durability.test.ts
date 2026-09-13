@@ -43,8 +43,8 @@ it.each(operations.flatMap(operation => settings.map(setting => ({ operation, ..
     vi.spyOn(fs, "open").mockImplementation(async (...args) => {
       const handle = await open(...args);
       if (String(args[0]) === target) destinationHandles.push(handle);
-      const write = handle.writeFile.bind(handle);
-      vi.spyOn(handle, "writeFile").mockImplementation(async (...writeArgs) => {
+      const write = handle.write.bind(handle);
+      vi.spyOn(handle, "write").mockImplementation(async (...writeArgs) => {
         events.push("write");
         return await write(...writeArgs);
       });
@@ -126,7 +126,12 @@ it.each(["write failure", "sync failure", "successful sync"] as const)(
         if (fault !== "successful sync") throw error;
       };
       if (fault === "write failure") {
-        vi.spyOn(handle, "writeFile").mockImplementation(swap);
+        const write = handle.write.bind(handle);
+        vi.spyOn(handle, "write").mockImplementation(async (...writeArgs) => {
+          const result = await write(...writeArgs);
+          await swap();
+          return result;
+        });
       } else {
         vi.spyOn(handle, "sync").mockImplementation(swap);
       }

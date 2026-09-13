@@ -51,15 +51,13 @@ describe("create-only publication outcomes", () => {
         const handle = await open(...args);
         if (!(await handle.stat()).isFile()) return handle;
         if (String(args[0]) !== target) return handle;
-        const writeFile = handle.writeFile.bind(handle);
-        vi.spyOn(handle, "writeFile").mockImplementation(async (...writeArgs) => {
-          if (outcome === "write-error") {
-            await writeFile("partial");
+        if (outcome === "write-error") {
+          const write = handle.write.bind(handle);
+          vi.spyOn(handle, "write").mockImplementation(async () => {
+            await write("partial");
             throw failure;
-          }
-          await writeFile(...writeArgs);
-          if (outcome === "competing-create") return; // target already exists; never reached
-        });
+          });
+        }
         return handle;
       });
       if (outcome === "competing-create") await fs.writeFile(target, "winner", { mode: 0o600 });
@@ -94,14 +92,10 @@ describe("create-only publication visibility", () => {
     vi.spyOn(fs, "open").mockImplementation(async (...args) => {
       const handle = await open(...args);
       if (String(args[0]) !== target || !(await handle.stat()).isFile()) return handle;
-      const writeFile = handle.writeFile.bind(handle);
-      vi.spyOn(handle, "writeFile").mockImplementation(async (...writeArgs) => {
-        visibleBeforeWrite = await fs.lstat(target).then(
-          (stat) => stat.isFile() && stat.size === 0,
-          () => false,
-        );
-        await writeFile(...writeArgs);
-      });
+      visibleBeforeWrite = await fs.lstat(target).then(
+        (stat) => stat.isFile() && stat.size === 0,
+        () => false,
+      );
       return handle;
     });
 
@@ -121,12 +115,12 @@ describe("create-only publication visibility", () => {
       const target = path.join(capability.rootReal, "target");
       const content = operation.endsWith("Json") ? '{"value":"complete"}' : "complete";
       let visibleBeforeWrite: boolean | undefined;
-      const writeSync = fsSync.writeSync.bind(fsSync);
-      vi.spyOn(fsSync, "writeSync").mockImplementation((fd, buffer, ...rest) => {
+      const write = fsSync.write.bind(fsSync);
+      vi.spyOn(fsSync, "write").mockImplementation((fd, buffer, ...writeArgs) => {
         if (visibleBeforeWrite === undefined && fsSync.fstatSync(fd).isFile()) {
           visibleBeforeWrite = fsSync.existsSync(target);
         }
-        return writeSync(fd, buffer, ...rest as []);
+        return write(fd, buffer, ...writeArgs);
       });
 
       await runOperation(capability, operation, content);
