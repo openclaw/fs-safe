@@ -120,6 +120,10 @@ fs.ensureRoot(options?)                  // accepts "" / "." as the root itself
 
 `write`, `create`, `append`, `writeJson`, and `createJson` accept `mode?: number`; use `0o600` for credentials and other private state. `writeJson` also accepts the same options as `JSON.stringify` plus `trailingNewline?: boolean` (defaults `true` so the file ends in `\n`).
 
+`append` accepts `prependNewlineIfNeeded: true` to separate text from existing
+content when neither side supplies a newline. String data uses its `encoding`
+for the newline check, including UTF-16LE; Buffer data uses a single LF byte.
+
 These five methods and `copyIn` also accept `durable?: boolean`: the per-call value overrides
 `Root.defaults.durable`, which defaults to `true` when omitted. An explicitly
 `undefined` per-call value preserves the root default. `durable: false` keeps

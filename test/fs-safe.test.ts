@@ -17,7 +17,6 @@ const skipOnWindows = process.platform === "win32";
 
 const { tempDirs, tempRoot } = useTempDirs();
 
-
 afterEach(async () => {
   configureFsSafeNative({ mode: "auto" });
   __setFsSafeTestHooksForTest(undefined);
@@ -138,21 +137,26 @@ describe("@openclaw/fs-safe", () => {
     expect(lines).toHaveLength(26);
   });
 
-  it.skipIf(skipOnWindows)("preserves append mkdir and encoding semantics", async () => {
-    const rootPath = await tempRoot("fs-safe-append-semantics-");
-    const root = await openRoot(rootPath);
+  it.each(["off", "auto"] as const)("preserves append mkdir and encoding semantics (%s)", async (mode) => {
+    configureFsSafeNative({ mode });
+    const root = await openRoot(await tempRoot("fs-safe-append-semantics-"));
 
     await expectFsSafeError(root.append("missing/file.txt", "x", { mkdir: false }), "not-found");
     await expect(root.exists("missing")).resolves.toBe(false);
 
-    await root.write("utf16.txt", "alpha", { encoding: "utf16le" });
-    await root.append("utf16.txt", "beta", {
-      encoding: "utf16le",
-      prependNewlineIfNeeded: true,
-    });
-    await expect(root.readBytes("utf16.txt")).resolves.toEqual(
-      Buffer.from("alpha\nbeta", "utf16le"),
-    );
+    for (const [before, appended, expected] of [
+      ["alpha", "beta", "alpha\nbeta"],
+      ["alpha\n", "beta", "alpha\nbeta"],
+      ["alpha", "\nbeta", "alpha\nbeta"],
+      ["\u0a00", "beta", "\u0a00\nbeta"],
+    ]) {
+      await root.write("utf16.txt", before, { encoding: "utf16le" });
+      await root.append("utf16.txt", appended, {
+        encoding: "utf16le",
+        prependNewlineIfNeeded: true,
+      });
+      await expect(root.readBytes("utf16.txt")).resolves.toEqual(Buffer.from(expected, "utf16le"));
+    }
   });
 
   it.skipIf(skipOnWindows)("preserves existing file mode during append", async () => {

@@ -68,11 +68,18 @@ createIcaclsResetCommand(targetPath, { isDir, env });
 resolveWindowsUserPrincipal(env);
 ```
 
-The fallback Windows inspector calls `icacls.exe <path>` using its supported
-path-only inspection syntax and classifies principals as trusted, world, or
-group. Trusted defaults include the current user, SYSTEM, and Administrators.
-Built-in PowerShell, `icacls.exe`, and `whoami.exe` invocations have a fixed
-30-second per-process deadline. A command failure or timeout returns an
+The fallback Windows inspector reads the owner and DACL together through one
+built-in Windows PowerShell/.NET query. It returns canonical SIDs and numeric
+access masks, so Unicode paths and account names do not pass through lossy
+console display text. `inspectWindowsAcl()` uses the same query and returns
+canonical SIDs in its `principal` fields, with normalized rights tokens.
+The advanced options retain `currentUserSid` as an explicit classification
+override and `principalTranslationFailed: true` as an immediate unverified
+result. The optional `principalSids` translation cache is still accepted but
+is no longer needed because the query returns SIDs directly.
+The existing classifier assigns principals to trusted, world, or group;
+trusted defaults include the current user, SYSTEM, and Administrators.
+The built-in query has a fixed 30-second process deadline. A command failure or timeout returns an
 unverified result (`source: "unknown"`) so callers fail closed. Advanced callers
 that inject a custom `exec` implementation own that executor's deadline.
 Failed owner and ACL inspections retain `error` text and an optional
@@ -86,15 +93,18 @@ characters, including a trailing `…` when truncated. Diagnostics do not copy
 stdout or read target file contents. The separate `errorCause` retains the
 original exception for restricted local diagnosis; do not serialize or expose
 it as display text.
-The parser is on the advanced surface so tests and CLIs can process captured
-`icacls` output without spawning a process.
+The parser and remediation command builders remain on the advanced surface for
+CLIs processing captured `icacls` output or presenting an explicit repair.
+Runtime inspection does not parse that display text. A null DACL reports
+unrestricted access; an empty DACL grants nothing. Inherit-only ACEs do not
+apply to the inspected object, and deny ACEs never subtract coarse grants or
+claim effective-access evaluation. Unsupported ACE layouts remain unverified.
 
 When the native binding is available, `inspectPathPermissions()`
 reads the owner and DACL directly with Windows security APIs. It classifies the
 current user, LocalSystem, and built-in Administrators as trusted and reports
 the world/group read/write facts consumed by secure reads. Descriptor forms it
-cannot classify equivalently fall back to the established owner/.NET and
-`icacls` path; `mode: "off"` exercises that fallback deterministically.
+cannot classify equivalently fall back to the structured .NET query; `mode: "off"` exercises that fallback deterministically.
 
 ## Policy-free owner and DACL facts
 
@@ -164,7 +174,7 @@ This API is Windows-only and native-only; it fails closed with
 or when the binding is unavailable. POSIX callers should create private
 directories through their existing trusted-root creation policy rather than a
 pathname-only compatibility shim. Existing Windows permission inspection still
-retains its .NET/`icacls` compatibility fallback.
+retains its structured .NET compatibility fallback.
 
 Use `createIcaclsResetCommand()` when you need a structured command and argv pair. Use `formatIcaclsResetCommand()` when you only need a remediation string for a user-facing message.
 
