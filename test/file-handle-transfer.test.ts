@@ -3,7 +3,7 @@ import fsSync from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { copyFileHandle } from "../src/advanced.js";
+import { copyFileHandle, type CopyFileHandleOptions } from "../src/advanced.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -123,6 +123,63 @@ describe("borrowed FileHandle copying", () => {
     expect(await fs.readFile(f.targetPath, "utf8")).toBe(f.prior);
   });
 
+  it("snapshots inherited non-enumerable option accessors before the first await", async () => {
+    const f = await fixture("snapshot", "");
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const stat = f.source.stat.bind(f.source);
+    vi.spyOn(f.source, "stat").mockImplementation(async (...args) => {
+      entered.resolve();
+      await release.promise;
+      return await stat(...args);
+    });
+    const selected = new AbortController();
+    const replacement = new AbortController();
+    let observerReceiver: unknown;
+    const onChunk = vi.fn(function (this: unknown) { observerReceiver = this; });
+    const replacementChunk = vi.fn(() => { throw new Error("late observer"); });
+    const authority = vi.fn();
+    const replacementAuthority = vi.fn(() => { throw new Error("late authority"); });
+    let signal = selected.signal;
+    let observer: CopyFileHandleOptions["onChunk"] = onChunk;
+    let assertion: CopyFileHandleOptions["assertBeforeMutation"] = authority;
+    let budget = f.content.length;
+    const reads = { signal: 0, maxBytes: 0, onChunk: 0, assertBeforeMutation: 0 };
+    const inherited = Object.defineProperties({}, {
+      signal: { get: () => { reads.signal += 1; return signal; } },
+      maxBytes: { get: () => { reads.maxBytes += 1; return budget; } },
+      onChunk: { get: () => { reads.onChunk += 1; return observer; } },
+      assertBeforeMutation: { get: () => { reads.assertBeforeMutation += 1; return assertion; } },
+    });
+    const pending = copyFileHandle(
+      f.source, f.target, Object.create(inherited) as CopyFileHandleOptions,
+    );
+    try {
+      await entered.promise;
+      expect(reads).toEqual({ signal: 1, maxBytes: 1, onChunk: 1, assertBeforeMutation: 1 });
+      signal = replacement.signal;
+      observer = replacementChunk;
+      assertion = replacementAuthority;
+      budget = 0;
+      replacement.abort(new Error("late signal"));
+    } finally {
+      release.resolve();
+    }
+    await expect(pending).resolves.toBe(f.content.length);
+    expect(reads).toEqual({ signal: 1, maxBytes: 1, onChunk: 1, assertBeforeMutation: 1 });
+    expect(onChunk).toHaveBeenCalled();
+    expect(observerReceiver).toMatchObject({
+      maxBytes: f.content.length, sizeHint: f.content.length,
+      targetPosition: 0, signal: selected.signal, onChunk,
+    });
+    expect(authority).toHaveBeenCalled();
+    expect(replacementChunk).not.toHaveBeenCalled();
+    expect(replacementAuthority).not.toHaveBeenCalled();
+    expect(await fs.readFile(f.targetPath)).toEqual(f.content);
+    await expect(f.source.stat()).resolves.toMatchObject({ size: f.content.length });
+    await expect(f.target.stat()).resolves.toMatchObject({ size: f.content.length });
+  });
+
   it.each(["observer", "authority", "async-observer", "async-authority"] as const)(
     "refuses the current chunk after %s rejection without cleanup or target mutation", async kind => {
       const f = await fixture();
@@ -167,9 +224,12 @@ describe("borrowed FileHandle copying", () => {
 
   it("enforces zero, exact, invalid, and initially exceeded byte budgets before target mutation", async () => {
     const f = await fixture("1234", "unchanged");
+    const inspect = vi.spyOn(f.source, "stat");
     for (const maxBytes of [-1, NaN, 1.5]) {
       await expect(copyFileHandle(f.source, f.target, { maxBytes })).rejects.toBeInstanceOf(RangeError);
     }
+    expect(inspect).not.toHaveBeenCalled();
+    inspect.mockRestore();
     for (const maxBytes of [0, 3]) {
       await expect(copyFileHandle(f.source, f.target, { maxBytes })).rejects.toMatchObject({ code: "too-large" });
     }
@@ -209,7 +269,9 @@ describe("borrowed FileHandle copying", () => {
     const f = await fixture();
     const aborted = new Error("synthetic pre-abort");
     const inspect = vi.spyOn(f.source, "stat");
-    await expect(copyFileHandle(f.source, f.target, { signal: AbortSignal.abort(aborted) })).rejects.toBe(aborted);
+    await expect(copyFileHandle(f.source, f.target, {
+      signal: AbortSignal.abort(aborted), maxBytes: -1,
+    })).rejects.toBe(aborted);
     expect(inspect).not.toHaveBeenCalled();
     expect(await fs.readFile(f.targetPath, "utf8")).toBe(f.prior);
   });
