@@ -22,7 +22,7 @@ if (backend) {
 
 | Backend | Operation                                                  | Source preparation                                                                                                          |
 | ------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `apfs`  | One native directory clone                                 | `createCloneSource` creates an empty directory.                                                                             |
+| `apfs`  | Native bulk clone, then directory timestamp repair         | `createCloneSource` creates an empty directory.                                                                             |
 | `btrfs` | One native writable subvolume snapshot                     | `createCloneSource` creates a subvolume; an ordinary directory is not a snapshot source. No `btrfs` executable is required. |
 | `refs`  | Native directory traversal with parallel file block clones | `createCloneSource` creates an empty directory on ReFS, including Dev Drive volumes.                                        |
 | `xfs`   | Native directory traversal with parallel file reflinks     | `createCloneSource` creates an empty directory. The XFS volume must support reflinks.                                       |
@@ -57,7 +57,7 @@ Apple [strongly discourages general directory cloning](https://github.com/apple-
 
 Automatic copying does not recover from permission errors, I/O errors, cancellation, or rejected source contents such as ReFS named streams. A failed clone must leave the destination absent before fallback can create it; otherwise copying fails rather than merging into a partial tree.
 
-ReFS and XFS cloning use 16 workers by default; `concurrency` accepts integers from 1 through 32 and bounds native file-clone workers. APFS and Btrfs use their bulk operation. Portable byte copying is sequential with one 128 KiB buffer.
+ReFS and XFS cloning use 16 workers by default; `concurrency` accepts integers from 1 through 32 and bounds native file-clone workers. Btrfs uses its bulk operation. APFS uses a bulk clone followed by native directory-entry enumeration to restore directory timestamps; known regular files and symbolic links need no additional stat or open. Portable byte copying is sequential with one 128 KiB buffer.
 
 Clones preserve file contents, empty directories, timestamps, executable modes where supported, and literal symbolic links. Editing a clone does not modify its source. Unsupported filesystem operations fail; callers may choose their own copy or checkout fallback after the failed operation has settled.
 

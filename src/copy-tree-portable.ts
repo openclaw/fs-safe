@@ -81,7 +81,10 @@ export async function copyOwnedTree(
         } else if (child.isFile()) {
           await copyFile(childSource, childTarget, child);
         } else if (child.isSymbolicLink()) {
-          const link = await fsp.readlink(childSource);
+          const link =
+            process.platform === "win32"
+              ? await fsp.readlink(childSource)
+              : await fsp.readlink(childSource, { encoding: "buffer" });
           let type: "dir" | "file" | undefined;
           if (process.platform === "win32") {
             // Older Node releases infer link type from the destination, where a

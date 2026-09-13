@@ -158,11 +158,18 @@ describe("directory copying", () => {
     async () => {
       const { source, destination } = await copyFixture();
       await fs.symlink("missing-target", path.join(source, "dangling"));
+      const rawTarget = Buffer.from([0xff]);
+      await fs.symlink(rawTarget, path.join(source, "raw-link"));
       await copyTree(source, destination);
       const copied = path.join(destination, "dangling");
       expect(await fs.readlink(copied)).toBe("missing-target");
       expect((await fs.lstat(copied)).isSymbolicLink()).toBe(true);
       await expect(fs.stat(copied)).rejects.toMatchObject({ code: "ENOENT" });
+      for (const directory of [source, destination]) {
+        expect(await fs.readlink(path.join(directory, "raw-link"), { encoding: "buffer" })).toEqual(
+          rawTarget,
+        );
+      }
     },
   );
 

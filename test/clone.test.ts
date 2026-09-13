@@ -233,9 +233,23 @@ describe("native directory cloning", () => {
       throw error;
     }
     await fs.symlink("missing-target", path.join(source, "dangling"), "file");
+    const outside = path.join(directory, "outside");
+    const outsideTarget = path.join("..", "outside");
+    await fs.mkdir(outside);
+    await fs.writeFile(path.join(outside, "payload"), "outside contents");
+    await fs.utimes(outside, 1_600_000_000, 1_600_000_000);
+    await fs.symlink(outsideTarget, path.join(source, "directory-link"), "dir");
+    const outsideBefore = await fs.stat(outside, { bigint: true });
     await copyTree(source, destination, { clone: "always" });
     expect(await fs.readlink(path.join(destination, "link"))).toBe("payload");
     expect(await fs.readlink(path.join(destination, "dangling"))).toBe("missing-target");
+    expect(await fs.readlink(path.join(destination, "directory-link"))).toBe(outsideTarget);
+    const outsideAfter = await fs.stat(outside, { bigint: true });
+    expect(outsideAfter.mtimeNs).toBe(1_600_000_000_000_000_000n);
+    // Reapplying an equal mtime still changes ctime if traversal follows this link.
+    expect(outsideAfter.ctimeNs).toBe(outsideBefore.ctimeNs);
+    expect(await fs.readdir(outside)).toEqual(["payload"]);
+    expect(await fs.readFile(path.join(outside, "payload"), "utf8")).toBe("outside contents");
     await fs.writeFile(path.join(destination, "payload"), "clone edit");
     expect(await fs.readFile(path.join(destination, "link"), "utf8")).toBe("clone edit");
     expect(await fs.readFile(path.join(source, "payload"), "utf8")).toBe("original");

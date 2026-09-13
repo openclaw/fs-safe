@@ -384,7 +384,7 @@ pub(crate) fn open_cleanup_directory(parent_fd: i32, name: &CStr) -> NativeResul
 }
 
 #[cfg(target_os = "macos")]
-fn open_cleanup_directory(parent_fd: i32, name: &CStr) -> NativeResult<OwnedFd> {
+pub(crate) fn open_cleanup_directory(parent_fd: i32, name: &CStr) -> NativeResult<OwnedFd> {
     let child = rustix::fs::openat(
         borrowed(parent_fd),
         name,
