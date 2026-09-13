@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
@@ -9,6 +10,12 @@ export async function registerCore({ api: a, workspace: w, register: add, contra
   const data = Buffer.from(' {"ok":true,"label":"synthetic benchmark"}\n');
   const input = path.join(w, "input.json");
   fs.writeFileSync(input, data, { mode: 0o600 });
+  if (process.platform === "win32") {
+    const acl = a.createIcaclsResetCommand(input, { isDir: false });
+    assert(acl, "Cannot resolve the benchmark fixture's Windows principal");
+    const result = spawnSync(acl.command, acl.args, { windowsHide: true, timeout: 30_000, stdio: "ignore" });
+    assert.equal(result.status, 0, "Cannot set the benchmark fixture's private Windows ACL");
+  }
   fs.mkdirSync(path.join(w, "tree", "nested"), { recursive: true });
   for (let i = 0; i < 100; i++) fs.writeFileSync(path.join(w, "tree", `entry-${i}`), data);
   fs.writeFileSync(path.join(w, "tree", "nested", "entry"), data);
