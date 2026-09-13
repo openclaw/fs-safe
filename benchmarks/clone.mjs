@@ -5,11 +5,13 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { copyTree, probeTreeClone } from "../dist/copy.js";
 
-const [sourceArgument, parentArgument, samplesArgument = "3"] = process.argv.slice(2);
+const [sourceArgument, parentArgument, samplesArgument = "3", policy = "always"] = process.argv.slice(2);
 assert(
   sourceArgument && parentArgument,
-  "Usage: node benchmarks/clone.mjs SOURCE DESTINATION_PARENT [SAMPLES]",
+  "Usage: node benchmarks/clone.mjs SOURCE DESTINATION_PARENT [SAMPLES] [auto|always|never]",
 );
+assert(["auto", "always", "never"].includes(policy), "Unknown copy policy");
+const workerCounts = [1, 4, 16];
 const samples = Number(samplesArgument);
 assert(
   Number.isSafeInteger(samples) && samples >= 1 && samples <= 20,
@@ -24,7 +26,7 @@ assert(
   "Destination parent must be outside the source tree",
 );
 const backend = probeTreeClone(parent);
-assert(backend, "Destination parent has no native tree-clone support");
+assert(policy !== "always" || backend, "Destination parent has no native tree-clone support");
 const output = await fs.mkdtemp(path.join(parent, "fs-safe-clone-benchmark-"));
 console.log(`Retaining benchmark outputs at ${output}`);
 
@@ -51,11 +53,11 @@ async function inventory(directory, prefix = "") {
 const expected = await inventory(source);
 const results = [];
 for (let sample = 0; sample < samples; sample++) {
-  // Alternate ordering so every 16-worker measurement is not always warmer.
-  for (const concurrency of sample % 2 ? [16, 1] : [1, 16]) {
+  // Alternate ordering so the highest worker count is not always warmer.
+  for (const concurrency of sample % 2 ? [...workerCounts].reverse() : workerCounts) {
     const destination = path.join(output, `workers-${concurrency}-sample-${sample + 1}`);
     const started = performance.now();
-    await copyTree(source, destination, { clone: "always", concurrency });
+    await copyTree(source, destination, { clone: policy, concurrency });
     const seconds = (performance.now() - started) / 1000;
     assert.deepEqual(
       await inventory(destination),
@@ -74,7 +76,7 @@ for (let sample = 0; sample < samples; sample++) {
   }
 }
 assert.deepEqual(await inventory(source), expected, "Source changed during benchmark");
-const medians = [1, 16].map((concurrency) => {
+const medians = workerCounts.map((concurrency) => {
   const times = results
     .filter((result) => result.concurrency === concurrency)
     .map((result) => result.seconds)
@@ -87,6 +89,7 @@ const medians = [1, 16].map((concurrency) => {
 });
 const report = {
   backend,
+  policy,
   source,
   output,
   samples,
@@ -96,4 +99,4 @@ const report = {
   allPathsAndBytesMatch: true,
 };
 await fs.writeFile(path.join(output, "results.json"), `${JSON.stringify(report, null, 2)}\n`);
-console.log(JSON.stringify({ backend, medians, allPathsAndBytesMatch: true }));
+console.log(JSON.stringify({ backend, policy, medians, allPathsAndBytesMatch: true }));

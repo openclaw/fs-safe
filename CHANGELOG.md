@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Speed up Windows directory byte copies with bounded parallelism, reusable 1 MiB buffers, and native transfers between checked handles in automatic mode. Honor copy concurrency across portable backends and settle admitted writes before reporting failures or cancellation.
+
 - Preserve Unicode Windows paths during fallback permission inspection by reading structured SID and access-mask facts instead of localized command output.
 - Check the complete encoded newline before Root append, avoiding duplicated or missing separators in UTF-16LE files on Windows and other platforms.
 - Extend `Root.copyIn` with guarded Root sources, exclusive publication, settled cancellation, exact publication receipts, and optional native file cloning while keeping copied data independent. Share `clone: "auto" | "always" | "never"` with `copyTree`; Root keeps its `"never"` default, which uses ordinary reads and writes without clone or copy-offload calls.

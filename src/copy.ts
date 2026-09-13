@@ -133,7 +133,11 @@ async function materializeTree(
     assertStagedDirectoryCurrent(parent.receipt);
     if (original) assertStagedDirectoryCurrent(original.receipt);
     if (!cloned && original) {
-      await copyOwnedTree(original, target, options.signal);
+      await copyOwnedTree(original, target, {
+        signal: options.signal,
+        concurrency: options.concurrency ?? (process.platform === "win32" ? 4 : 1),
+        copyFileContents: process.platform === "win32" ? native?.copyFileContents : undefined,
+      });
       options.signal?.throwIfAborted();
       assertStagedDirectoryCurrent(parent.receipt);
       assertStagedDirectoryCurrent(original.receipt);
