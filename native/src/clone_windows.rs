@@ -452,38 +452,6 @@ fn copy_tree(
     let mut directories = Vec::new();
     std::thread::scope(|scope| -> NativeResult<()> {
         let mut workers = Vec::new();
-        for _ in 0..concurrency {
-            let worker = std::thread::Builder::new().spawn_scoped(scope, || {
-                loop {
-                    let job = receiver.lock().unwrap().recv();
-                    let Ok(job) = job else {
-                        break;
-                    };
-                    if failed.load(Ordering::Acquire) {
-                        continue;
-                    }
-                    let result = std::panic::catch_unwind(|| clone_file(job, cancelled))
-                        .unwrap_or_else(|_| Err(native_error("EIO", "clone worker panicked")));
-                    if let Err(error) = result {
-                        failed.store(true, Ordering::Release);
-                        first_error.lock().unwrap().get_or_insert(error);
-                    }
-                }
-            });
-            match worker {
-                Ok(worker) => workers.push(worker),
-                Err(error) => {
-                    drop(sender);
-                    for worker in workers {
-                        let _ = worker.join();
-                    }
-                    return Err(native_error(
-                        "EIO",
-                        format!("start ReFS clone worker: {error}"),
-                    ));
-                }
-            }
-        }
         let traversal: NativeResult<()> = (|| {
             let mut pending = vec![(source, target)];
             while let Some((source, target)) = pending.pop() {
@@ -515,6 +483,36 @@ fn copy_tree(
                         let destination = create_directory(target.0.0, &job.name)?;
                         pending.push((child, destination));
                     } else {
+                        if workers.len() < concurrency {
+                            let worker = std::thread::Builder::new()
+                                .spawn_scoped(scope, || {
+                                    loop {
+                                        let job = receiver.lock().unwrap().recv();
+                                        let Ok(job) = job else {
+                                            break;
+                                        };
+                                        if failed.load(Ordering::Acquire) {
+                                            continue;
+                                        }
+                                        let result =
+                                            std::panic::catch_unwind(|| clone_file(job, cancelled))
+                                                .unwrap_or_else(|_| {
+                                                    Err(native_error(
+                                                        "EIO",
+                                                        "clone worker panicked",
+                                                    ))
+                                                });
+                                        if let Err(error) = result {
+                                            failed.store(true, Ordering::Release);
+                                            first_error.lock().unwrap().get_or_insert(error);
+                                        }
+                                    }
+                                })
+                                .map_err(|error| {
+                                    native_error("EIO", format!("start ReFS clone worker: {error}"))
+                                })?;
+                            workers.push(worker);
+                        }
                         sender
                             .send(job)
                             .map_err(|_| native_error("EIO", "clone worker queue closed"))?;
@@ -698,6 +696,32 @@ mod tests {
             let source_path = root.join("source");
             let source = directory(&source_path);
             let source_fd = descriptor(&source);
+            let cancelled = AtomicBool::new(false);
+            clone_tree(source_fd, parent_fd, "empty-copy", &cancelled, 32).unwrap();
+            assert_eq!(fs::read_dir(root.join("empty-copy")).unwrap().count(), 0);
+            fs::create_dir_all(source_path.join("nested/empty")).unwrap();
+            let fixed_time = UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000);
+            for name in ["nested/empty", "nested", ""] {
+                OpenOptions::new()
+                    .write(true)
+                    .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+                    .open(source_path.join(name))
+                    .unwrap()
+                    .set_times(std::fs::FileTimes::new().set_modified(fixed_time))
+                    .unwrap();
+            }
+            clone_tree(source_fd, parent_fd, "directories-copy", &cancelled, 32).unwrap();
+            for name in ["nested/empty", "nested", ""] {
+                let path = root.join("directories-copy").join(name);
+                assert!(path.is_dir());
+                assert_eq!(fs::metadata(path).unwrap().modified().unwrap(), fixed_time);
+            }
+            assert_eq!(
+                fs::read_dir(root.join("directories-copy/nested/empty"))
+                    .unwrap()
+                    .count(),
+                0
+            );
             let source_file = source_path.join("large");
             let size = 0x8000_0000_u64 + 4097;
             let offsets = [0, 0x8000_0000 - 16, size - 16];
@@ -723,7 +747,6 @@ mod tests {
                     file.write_all(&[17 + index as u8; 16]).unwrap();
                 }
             }
-            let cancelled = AtomicBool::new(false);
             clone_tree(source_fd, parent_fd, "copy", &cancelled, 8).unwrap();
             let copied = root.join("copy/large");
             assert_eq!(fs::metadata(&copied).unwrap().len(), size);
