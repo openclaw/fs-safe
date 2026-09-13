@@ -143,6 +143,9 @@ jobs:
       - name: Test Bun runtime
         run: pnpm test:bun
 
+      - name: Require Bun native helper
+        run: bun scripts/native-mode-smoke.mjs require
+
       - name: Test directory copying and native cloning
         run: pnpm test test/clone.test.ts test/copy-tree.test.ts
 
