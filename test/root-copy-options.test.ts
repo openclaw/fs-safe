@@ -372,7 +372,8 @@ describe.skipIf(!nativeAvailable)("Root.copyIn native transfer", () => {
       };
       __setNativeLoaderForTest(() => ({ ...native, copyFileExclusive: observeCopy }));
     }
-    const copy = await fixture(Buffer.alloc(128 * 1024 + 1, 0x5a));
+    const content = Buffer.alloc(128 * 1024 + 1, 0x5a);
+    const copy = await fixture(content);
     __setFsSafeTestHooksForTest({
       async afterOpen(candidate, handle) {
         if (candidate === copy.sourcePath) await handle.read(Buffer.alloc(31), 0, 31, null);
@@ -381,7 +382,7 @@ describe.skipIf(!nativeAvailable)("Root.copyIn native transfer", () => {
     await copy.destination.copyIn("target", {
       root: copy.source, relativePath: "input",
     }, { overwrite: false, clone });
-    expect(await fs.readFile(copy.target)).toEqual(copy.content);
+    expect((await fs.readFile(copy.target)).equals(content)).toBe(true);
     if (copyFile) {
       if (clone === "never") expect(method).toBe("copy");
       else if (process.platform === "darwin" && probeTreeClone(copy.destinationDirectory) === "apfs") {
@@ -389,7 +390,7 @@ describe.skipIf(!nativeAvailable)("Root.copyIn native transfer", () => {
       }
     }
     await fs.writeFile(copy.target, "independent destination");
-    expect(await fs.readFile(copy.sourcePath)).toEqual(copy.content);
+    expect((await fs.readFile(copy.sourcePath)).equals(content)).toBe(true);
     expect(await fs.readdir(copy.destinationDirectory)).toEqual(["target"]);
   });
 
@@ -397,7 +398,8 @@ describe.skipIf(!nativeAvailable)("Root.copyIn native transfer", () => {
     "honors clone=always only when the source and destination filesystem support it",
     async () => {
       configureFsSafeNative({ mode: "require" });
-      const copy = await fixture(Buffer.alloc(128 * 1024 + 1, 0x5a));
+      const content = Buffer.alloc(128 * 1024 + 1, 0x5a);
+      const copy = await fixture(content);
       const probe = path.join(copy.destinationDirectory, "clone-probe");
       const supported = process.platform === "darwin" ? probeTreeClone(copy.destinationDirectory) === "apfs"
         : await fs.copyFile(copy.sourcePath, probe, fsSync.constants.COPYFILE_FICLONE_FORCE).then(
@@ -413,14 +415,14 @@ describe.skipIf(!nativeAvailable)("Root.copyIn native transfer", () => {
       }, { overwrite: false, clone: "always" });
       if (supported) {
         await expect(pending).resolves.toBeUndefined();
-        expect(await fs.readFile(copy.target)).toEqual(copy.content);
+        expect((await fs.readFile(copy.target)).equals(content)).toBe(true);
         if (process.platform === "darwin") {
           const [sourceMetadata, targetMetadata] = await readCloneFileMetadata([copy.sourcePath, copy.target]);
           expect(sourceMetadata?.cloneId).toBeTruthy();
           expect(targetMetadata?.cloneId).toBe(sourceMetadata?.cloneId);
         }
         await fs.writeFile(copy.target, "independent destination");
-        expect(await fs.readFile(copy.sourcePath)).toEqual(copy.content);
+        expect((await fs.readFile(copy.sourcePath)).equals(content)).toBe(true);
       } else {
         await expect(pending).rejects.toMatchObject({ code: "unsupported-platform" });
         expect(await fs.readdir(copy.destinationDirectory)).toEqual([]);
