@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix package consumer smoke and lifecycle tests with standalone `@pnpm/exe` installations, preserving the pinned pnpm version and isolated consumer configuration.
+
 ## 0.10.0 - 2026-09-13
 
 ### Highlights

@@ -123,7 +123,9 @@ collection uses the actual seven collected native tarballs instead. Run it with
 `pnpm package:collect` after assembling all seven real bindings; missing targets
 fail collection. `pnpm package:collect --allow-host-only` exercises the same
 lifecycle boundary locally but proves only the host. Both collection commands
-require the pnpm lifecycle CLI path; direct `node` invocation is unsupported. Archive
+require the pnpm lifecycle CLI path; JavaScript CLIs run through Node and standalone
+`@pnpm/exe` binaries run directly. Shell/cmd shims and PATH fallback are not used;
+direct `node` invocation without lifecycle metadata is unsupported. Archive
 codecs and their dependencies are packed from the installed dependency graph.
 
 PR CI builds and executes four host targets: Linux x64 glibc, Linux x64 musl
