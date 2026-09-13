@@ -9,7 +9,7 @@ import { assertStagedDirectoryCurrent, openStagedDirectory } from "./staged-dire
 export { readCloneFileMetadata, type CloneFileMetadata } from "./clone-metadata.js";
 export type { CopyCloneMode } from "./copy-policy.js";
 
-export type TreeCloneBackend = "apfs" | "btrfs" | "refs" | "xfs";
+export type TreeCloneBackend = "apfs" | "btrfs" | "refs" | "xfs" | "zfs";
 export type CopyTreeOptions = {
   clone?: CopyCloneMode;
   signal?: AbortSignal;

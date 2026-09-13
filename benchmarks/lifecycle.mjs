@@ -13,7 +13,7 @@ export async function registerLifecycle({ api: a, workspace: w, native, binding,
   const cloneTarget = path.join(w, "clone-target");
   const clonePreparation = path.join(w, "clone-preparation");
   const cloneSkip = !cloneBackend
-    ? "Native directory cloning requires APFS, Btrfs, ReFS, or XFS."
+    ? "Native directory cloning requires APFS, Btrfs, ReFS, XFS, or ZFS."
     : undefined;
   if (cloneBackend) {
     await a.createCloneSource(cloneSource);

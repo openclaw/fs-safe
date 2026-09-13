@@ -18,6 +18,7 @@
 - Classify structured Windows ACL SID facts without a redundant account lookup, preserving fail-closed permission checks when account discovery is unavailable.
 - Reject negative, `NaN`, and negative-infinite file-lock stale thresholds before acquisition; negative thresholds can no longer force a live lock into stale recovery.
 - XFS clones preserve user extended attributes on read-only files and directories while retaining their exact modes and ACLs.
+- Add Linux ZFS directory cloning through the existing bounded file-reflink traversal, with independent destinations, metadata preservation, and strict no-copy-fallback behavior when cloning is required.
 - Confirm EOF when Linux copy offload initially reports zero bytes, so automatic file copies fall back to reading available data instead of publishing an empty file.
 - Avoid allocating zero-filled ranges during automatic Linux directory byte copies with the native binding, preserving file lengths, contents, metadata, and cancellation settlement without cloning or copy offload.
 - Preserve fractional access and modification timestamps during directory byte copying, including dates before 1970 on Unix, to the precision supported by Node and the destination filesystem.
