@@ -8,14 +8,17 @@ import { useRealTempDirs } from "./helpers/vitest.js";
 const { tempRoot } = useRealTempDirs();
 afterEach(() => vi.restoreAllMocks());
 
-it.each(["setup-abort", "setup-error", "read-abort", "read-error", "filter-error", "close-only"] as const)(
+it.each([
+  "setup-abort", "setup-error", "read-abort", "read-error", "filter-error", "filter-undefined",
+  "close-only", "iterator-return", "iterator-throw", "iterator-throw-undefined",
+] as const)(
   "retains walk and close failures after %s",
   async (phase) => {
     const directory = await tempRoot("fs-safe-walk-close-failure-");
     await fs.writeFile(path.join(directory, "entry"), "value");
     const capability = await root(directory);
     const controller = new AbortController();
-    const primaryFailure = new Error(`${phase} failed`);
+    const primaryFailure = phase.endsWith("undefined") ? undefined : new Error(`${phase} failed`);
     const closeFailure = new Error("directory close failed");
     let closeAttempts = 0;
     const opendir = fs.opendir.bind(fs);
@@ -47,7 +50,7 @@ it.each(["setup-abort", "setup-error", "read-abort", "read-error", "filter-error
       signal: controller.signal,
       onDirectoryError: phase.endsWith("abort") ? "skip-and-report" : "throw",
       entryFilter: () => {
-        if (phase === "filter-error") throw primaryFailure;
+        if (phase === "filter-error" || phase === "filter-undefined") throw primaryFailure;
         return "include";
       },
     });
@@ -56,7 +59,16 @@ it.each(["setup-abort", "setup-error", "read-abort", "read-error", "filter-error
         // Complete the real walk so close-only failures occur at EOF.
       }
     };
-    if (phase === "close-only") {
+    if (phase.startsWith("iterator-")) {
+      expect((await iterator.next()).value).toMatchObject({ kind: "file", size: 5 });
+      if (phase === "iterator-return") {
+        await expect(iterator.return()).rejects.toBe(closeFailure);
+      } else {
+        await expect(iterator.throw(primaryFailure)).rejects.toMatchObject({
+          name: "SuppressedError", error: closeFailure, suppressed: primaryFailure,
+        });
+      }
+    } else if (phase === "close-only") {
       await expect(consume()).rejects.toBe(closeFailure);
     } else {
       await expect(consume()).rejects.toMatchObject({

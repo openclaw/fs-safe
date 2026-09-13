@@ -127,8 +127,13 @@ export async function listDirectoryForWalk(
     await assertCurrent();
     names?.sort();
   } catch (error) {
-    await using cleanup = { [Symbol.asyncDispose]: close };
-    throw normalizeDirectoryError(error);
+    const operationError = normalizeDirectoryError(error);
+    try {
+      await close();
+    } catch (closeError) {
+      throw createSuppressedError(closeError, operationError, "directory setup and close both failed");
+    }
+    throw operationError;
   }
 
   const prepareBatch = async (sortedNames: readonly string[]) => {

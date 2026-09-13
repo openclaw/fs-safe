@@ -3,6 +3,7 @@ import { FsSafeError } from "./errors.js";
 import { resolveRootPath } from "./root-path.js";
 import type { RootDirectoryListing, RootDirectoryListingOptions } from "./root-directory-list.js";
 import type { DirEntry, PathStat } from "./types.js";
+import { createSuppressedError } from "./suppressed-error.js";
 
 export type RootWalkSymlinkPolicy = "skip" | "follow-within-root";
 export type RootWalkLimitBehavior = "truncate" | "throw";
@@ -151,8 +152,10 @@ export async function* walkRoot(
       yield onDirectoryError(directory, error);
       return;
     }
-    {
-      await using ownedListing = listing;
+    // A thrown undefined still needs to be retained if closing also fails.
+    let failed = false;
+    let operationError: unknown;
+    try {
       while (true) {
         let next: Awaited<ReturnType<RootDirectoryListing["next"]>>;
         try {
@@ -212,6 +215,19 @@ export async function* walkRoot(
         }
         yield* visit(child, depth + 1);
         if (truncated) return;
+      }
+    } catch (error) {
+      failed = true;
+      operationError = error;
+      throw error;
+    } finally {
+      try {
+        await listing[Symbol.asyncDispose]();
+      } catch (closeError) {
+        if (failed) {
+          throw createSuppressedError(closeError, operationError, "directory walk and close both failed");
+        }
+        throw closeError;
       }
     }
   }

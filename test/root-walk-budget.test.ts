@@ -134,7 +134,7 @@ it("rejects a directory replaced across filesystem iterator yields", async () =>
   await expect(iterator.next()).rejects.toMatchObject({ code: "path-mismatch" });
 });
 
-it.each(["sorted", "filesystem"] as const)("preserves filesystem-supported case aliases in %s order", async (order, context) => {
+it.for(["sorted", "filesystem"] as const)("preserves filesystem-supported case aliases in %s order", async (order, context) => {
   const directory = await tempRoot("fs-safe-walk-case-");
   await fs.mkdir(path.join(directory, "nested"));
   await fs.writeFile(path.join(directory, "nested", "value"), "value");
@@ -242,6 +242,7 @@ it.each(["between-yields", "during-metadata", "symlink-root", "ancestor-alias"] 
     await fs.mkdir(directory, { recursive: true });
     await fs.writeFile(path.join(directory, "a"), "a");
     await fs.writeFile(path.join(directory, "b"), "b");
+    const original = await fs.stat(directory, { bigint: true });
     const capability = await root(directory);
     const replace = async () => {
       if (phase === "ancestor-alias") {
@@ -262,19 +263,40 @@ it.each(["between-yields", "during-metadata", "symlink-root", "ancestor-alias"] 
     const iterator = capability.walk("", {
       order: phase === "during-metadata" ? "sorted" : "filesystem", symlinkPolicy: "skip", maxEntries: 2,
     });
-    if (phase === "during-metadata") {
-      observeChildMetadata(directory, (name) => {
-        if (name === "a") {
-          fsSync.renameSync(directory, path.join(container, "moved"));
-          fsSync.mkdirSync(directory);
-          fsSync.writeFileSync(path.join(directory, "b"), "replacement");
+    try {
+      if (phase === "during-metadata") {
+        observeChildMetadata(directory, (name) => {
+          if (name === "a") {
+            fsSync.renameSync(directory, path.join(container, "moved"));
+            fsSync.mkdirSync(directory);
+            fsSync.writeFileSync(path.join(directory, "b"), "replacement");
+          }
+        });
+      } else {
+        const first = (await iterator.next()).value;
+        expect(first).toMatchObject({ kind: "file", size: 1 });
+        expect(["a", "b"]).toContain(first.relativePath);
+        try {
+          await replace();
+        } catch (error) {
+          const failure = error as NodeJS.ErrnoException;
+          if (phase !== "ancestor-alias" || process.platform !== "win32" ||
+            failure.syscall !== "rename" || !["EPERM", "EACCES"].includes(failure.code ?? "")) throw error;
+          expect(failure).toMatchObject({ code: expect.stringMatching(/^(?:EPERM|EACCES)$/), syscall: "rename" });
+          const unchanged = await fs.stat(directory, { bigint: true });
+          expect({ dev: unchanged.dev, ino: unchanged.ino }).toEqual({ dev: original.dev, ino: original.ino });
+          expect(await fs.readdir(container)).toEqual(["parent"]);
+          expect((await iterator.next()).value).toEqual({
+            relativePath: first.relativePath === "a" ? "b" : "a", kind: "file", size: 1,
+          });
+          expect((await iterator.next()).done).toBe(true);
+          return;
         }
-      });
-    } else {
-      expect((await iterator.next()).value).toEqual({ relativePath: "a", kind: "file", size: 1 });
-      await replace();
+      }
+      await expect(iterator.next()).rejects.toMatchObject({ code: "path-mismatch" });
+    } finally {
+      await iterator.return();
     }
-    await expect(iterator.next()).rejects.toMatchObject({ code: "path-mismatch" });
   },
 );
 
