@@ -1,13 +1,18 @@
 import fs from "node:fs";
 import path from "node:path";
 import { assertAbsolutePathInput } from "./absolute-path.js";
+import { copyOwnedTree } from "./copy-tree-portable.js";
 import { FsSafeError } from "./errors.js";
 import { getNativeBinding, requireNativeBinding } from "./native.js";
 import { assertStagedDirectoryCurrent, openStagedDirectory } from "./staged-directory.js";
 export { readCloneFileMetadata, type CloneFileMetadata } from "./clone-metadata.js";
 
-export type TreeCloneBackend = "apfs" | "btrfs" | "refs";
-export type CloneTreeOptions = { signal?: AbortSignal; concurrency?: number };
+export type TreeCloneBackend = "apfs" | "btrfs" | "refs" | "xfs";
+export type CopyTreeOptions = {
+  clone?: "auto" | "always" | "never";
+  signal?: AbortSignal;
+  concurrency?: number;
+};
 
 /** Inspect an existing real directory without creating probe files. */
 export function probeTreeClone(parentPath: string): TreeCloneBackend | undefined {
@@ -21,41 +26,61 @@ export function probeTreeClone(parentPath: string): TreeCloneBackend | undefined
   }
 }
 
-/** Create an empty clone source: a Btrfs subvolume or an ordinary APFS/ReFS directory. */
+/** Create an empty clone source: a Btrfs subvolume or an ordinary supported directory. */
 export async function createCloneSource(
   destination: string,
-  options: Pick<CloneTreeOptions, "signal"> = {},
+  options: Pick<CopyTreeOptions, "signal"> = {},
 ): Promise<void> {
-  await clone(undefined, destination, options);
+  await materializeTree(undefined, destination, options, "always");
 }
 
-/** Clone an immutable, caller-owned tree into an absent destination, without byte-copy fallback. */
-export async function cloneTree(
+/** Copy an immutable, caller-owned tree, preferring native cloning unless configured otherwise. */
+export async function copyTree(
   source: string,
   destination: string,
-  options: CloneTreeOptions = {},
+  options: CopyTreeOptions = {},
 ): Promise<void> {
-  await clone(source, destination, options);
+  options.signal?.throwIfAborted();
+  const policy = options.clone ?? "auto";
+  if (policy !== "auto" && policy !== "always" && policy !== "never") {
+    throw new FsSafeError("invalid-path", "copy clone policy must be auto, always, or never");
+  }
+  await materializeTree(source, destination, options, policy);
 }
 
-async function clone(
+function cloneUnavailable(error: unknown): boolean {
+  if (error instanceof FsSafeError && error.code === "unsupported-platform") return true;
+  if (!(error instanceof Error) || !("code" in error)) return false;
+  // ENOTSUP also describes unsupported contents (for example named streams).
+  // Only capability failures may select a byte copy, never lossy source errors.
+  return error.code === "CLONE_UNAVAILABLE" || error.code === "EXDEV" || error.code === "ENOSYS";
+}
+
+async function materializeTree(
   source: string | undefined,
   destination: string,
-  options: CloneTreeOptions,
+  options: CopyTreeOptions,
+  policy: NonNullable<CopyTreeOptions["clone"]>,
 ): Promise<void> {
   options.signal?.throwIfAborted();
   const concurrency = options.concurrency ?? 16;
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 32) {
     throw new FsSafeError("invalid-path", "clone concurrency must be an integer between 1 and 32");
   }
-  const native = requireNativeBinding();
+  const native =
+    policy === "always"
+      ? requireNativeBinding()
+      : policy === "auto"
+        ? getNativeBinding()
+        : undefined;
   const target = assertAbsolutePathInput(destination);
   const name = path.basename(target);
   if (!name) throw new FsSafeError("invalid-path", "clone destination must name a child directory");
   const parent = openStagedDirectory(path.dirname(target));
   let original: ReturnType<typeof openStagedDirectory> | undefined;
   try {
-    if (!native.probeTreeClone(parent.fd)) {
+    const supported = native?.probeTreeClone(parent.fd);
+    if (!supported && policy === "always") {
       throw new FsSafeError(
         "unsupported-platform",
         "destination filesystem does not support tree cloning",
@@ -77,28 +102,43 @@ async function clone(
     }
     assertStagedDirectoryCurrent(parent.receipt);
     options.signal?.throwIfAborted();
+    let cloned = false;
     // napi-rs uses the supplied signal's onabort property. Give it a private
     // signal so caller handlers and other admitted native operations stay intact.
-    const cancellation = options.signal ? new AbortController() : undefined;
+    const cancellation = options.signal && supported ? new AbortController() : undefined;
     const abort = () => cancellation?.abort();
     options.signal?.addEventListener("abort", abort, { once: true });
     try {
-      await native.cloneTree(
-        original?.fd ?? null,
-        parent.fd,
-        name,
-        concurrency,
-        cancellation?.signal,
-      );
+      if (native && supported) {
+        await native.cloneTree(
+          original?.fd ?? null,
+          parent.fd,
+          name,
+          concurrency,
+          cancellation?.signal,
+        );
+        cloned = true;
+      }
     } catch (error) {
       options.signal?.throwIfAborted();
-      throw error;
+      if (policy !== "auto" || !cloneUnavailable(error)) {
+        if (error instanceof Error && "code" in error && error.code === "CLONE_UNAVAILABLE") {
+          throw new FsSafeError("unsupported-platform", error.message, { cause: error });
+        }
+        throw error;
+      }
     } finally {
       options.signal?.removeEventListener("abort", abort);
     }
     options.signal?.throwIfAborted();
     assertStagedDirectoryCurrent(parent.receipt);
     if (original) assertStagedDirectoryCurrent(original.receipt);
+    if (!cloned && original) {
+      await copyOwnedTree(original, target, options.signal);
+      options.signal?.throwIfAborted();
+      assertStagedDirectoryCurrent(parent.receipt);
+      assertStagedDirectoryCurrent(original.receipt);
+    }
   } finally {
     try {
       if (original) fs.closeSync(original.fd);

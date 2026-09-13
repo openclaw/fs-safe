@@ -256,7 +256,7 @@ pub fn read_at(reader: &IndependentReader, buffer: &mut [u8], offset: u64) -> Na
 }
 
 #[cfg(target_os = "linux")]
-fn create_exclusive_target(root_fd: i32, rel_path: &str) -> NativeResult<OwnedFd> {
+pub(crate) fn create_exclusive_target(root_fd: i32, rel_path: &str) -> NativeResult<OwnedFd> {
     let flags = OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC;
     let fd = open_beneath(root_fd, rel_path, flags.bits() as i32)?;
     // SAFETY: open_beneath returned a fresh descriptor owned by this call.
@@ -370,7 +370,7 @@ pub fn owned_tree_removal_available(parent_fd: i32) -> bool {
 }
 
 #[cfg(target_os = "linux")]
-fn open_cleanup_directory(parent_fd: i32, name: &CStr) -> NativeResult<OwnedFd> {
+pub(crate) fn open_cleanup_directory(parent_fd: i32, name: &CStr) -> NativeResult<OwnedFd> {
     use rustix::fs::{ResolveFlags, openat2};
 
     openat2(

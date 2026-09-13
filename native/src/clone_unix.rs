@@ -7,7 +7,11 @@ pub fn probe(parent_fd: i32) -> NativeResult<Option<String>> {
     let stats = rustix::fs::fstatfs(borrowed(parent_fd))
         .map_err(|error| os_error(error, "inspect clone filesystem"))?;
     #[cfg(target_os = "linux")]
-    let supported = (stats.f_type as u64 == 0x9123_683e).then_some("btrfs");
+    let supported = match stats.f_type as u64 {
+        0x9123_683e => Some("btrfs"),
+        0x5846_5342 => Some("xfs"),
+        _ => None,
+    };
     #[cfg(target_os = "macos")]
     let supported = stats.f_fstypename[..5]
         .iter()
@@ -20,7 +24,7 @@ pub fn probe(parent_fd: i32) -> NativeResult<Option<String>> {
 fn require_supported(parent_fd: i32) -> NativeResult<()> {
     if probe(parent_fd)?.is_none() {
         return Err(native_error(
-            "ENOTSUP",
+            "CLONE_UNAVAILABLE",
             "directory cloning is unavailable on this filesystem",
         ));
     }
@@ -78,6 +82,14 @@ pub fn create_source(parent_fd: i32, basename: &str) -> NativeResult<()> {
     require_supported(parent_fd)?;
     #[cfg(target_os = "linux")]
     {
+        if probe(parent_fd)?.as_deref() == Some("xfs") {
+            return rustix::fs::mkdirat(
+                borrowed(parent_fd),
+                basename,
+                rustix::fs::Mode::from_bits_retain(0o700),
+            )
+            .map_err(|error| os_error(error, "create XFS clone source directory"));
+        }
         const CREATE: rustix::ioctl::Opcode =
             rustix::ioctl::opcode::write::<BtrfsVolumeArgs>(0x94, 14);
         btrfs_mutation::<CREATE>(parent_fd, basename, 0)
@@ -111,11 +123,20 @@ pub fn clone_tree(
     }
     #[cfg(target_os = "linux")]
     {
+        if probe(parent_fd)?.as_deref() == Some("xfs") {
+            return crate::clone_linux::clone_tree(
+                source_fd,
+                parent_fd,
+                basename,
+                cancelled,
+                _concurrency,
+            );
+        }
         // Btrfs assigns inode 256 to subvolume roots. Snapshotting an ordinary
         // directory must fail rather than silently changing the operation.
         if source.st_ino != 256 {
             return Err(native_error(
-                "ENOTSUP",
+                "CLONE_UNAVAILABLE",
                 "Btrfs directory cloning requires a subvolume source",
             ));
         }
@@ -130,7 +151,7 @@ pub fn clone_tree(
             .map_err(|_| native_error("EINVAL", "clone destination contains a NUL byte"))?;
         // CLONE_ACL can copy the root ACL, but directory clones can lose both
         // source and inherited descendant ACLs. Callers own eligibility; see
-        // docs/clone.md for Apple's directory-clone warning and XNU references.
+        // docs/copy.md for Apple's directory-clone warning and XNU references.
         // Both descriptors stay pinned until this bulk operation settles.
         const CLONE_NOFOLLOW: u32 = 0x0001;
         const CLONE_ACL: u32 = 0x0004;
@@ -149,7 +170,16 @@ pub fn clone_tree(
                     .raw_os_error()
                     .unwrap_or(libc::EIO),
             );
-            return Err(os_error(error, "clone APFS directory"));
+            return Err(
+                if error == rustix::io::Errno::NOTSUP || error == rustix::io::Errno::OPNOTSUPP {
+                    native_error(
+                        "CLONE_UNAVAILABLE",
+                        format!("clone APFS directory: {error}"),
+                    )
+                } else {
+                    os_error(error, "clone APFS directory")
+                },
+            );
         }
     }
     // These bulk operations cannot be interrupted once dispatched. Report

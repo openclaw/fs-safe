@@ -46,9 +46,9 @@
       "types": "./dist/root.d.ts",
       "default": "./dist/root.js"
     },
-    "./clone": {
-      "types": "./dist/clone.d.ts",
-      "default": "./dist/clone.js"
+    "./copy": {
+      "types": "./dist/copy.d.ts",
+      "default": "./dist/copy.js"
     },
     "./config": {
       "types": "./dist/config.d.ts",

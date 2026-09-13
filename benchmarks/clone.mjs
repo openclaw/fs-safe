@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { cloneTree, probeTreeClone } from "../dist/clone.js";
+import { copyTree, probeTreeClone } from "../dist/copy.js";
 
 const [sourceArgument, parentArgument, samplesArgument = "3"] = process.argv.slice(2);
 assert(
@@ -55,7 +55,7 @@ for (let sample = 0; sample < samples; sample++) {
   for (const concurrency of sample % 2 ? [16, 1] : [1, 16]) {
     const destination = path.join(output, `workers-${concurrency}-sample-${sample + 1}`);
     const started = performance.now();
-    await cloneTree(source, destination, { concurrency });
+    await copyTree(source, destination, { clone: "always", concurrency });
     const seconds = (performance.now() - started) / 1000;
     assert.deepEqual(
       await inventory(destination),
