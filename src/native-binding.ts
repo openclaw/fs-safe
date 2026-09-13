@@ -78,6 +78,11 @@ export interface NativeWindowsSecurityFacts {
 }
 
 export interface NativeBinding {
+  /** Internal: input remains private, unpooled and immutable until the reader is released. */
+  openZipBufferNative(buffer: Buffer, limits: TarMeterLimits, signal?: AbortSignal): Promise<{
+    readonly entries: NativeArchiveEntry[];
+    readEntry(index: number, maxBytes: number, signal?: AbortSignal): Promise<Buffer>;
+  }>;
   readCloneFileMetadata(paths: string[]): Promise<(Buffer | null)[]>;
   probeTreeClone(parentFd: number): "apfs" | "btrfs" | "refs" | null;
   cloneTree(

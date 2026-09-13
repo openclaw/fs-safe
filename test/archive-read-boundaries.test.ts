@@ -352,14 +352,13 @@ describe("bounded archive reads", () => {
     }));
     let manifest: Array<{ index: number; path: string; kind: string; size: number; mode: number }> = [];
     let readError: Error | undefined;
-    const inspectArchiveNative = vi.fn(async () => manifest);
-    const readArchiveEntryNative = vi.fn(async () => {
+    const readEntry = vi.fn(async () => {
       if (readError) throw readError;
       return Buffer.from("value");
     });
+    const openZipBufferNative = vi.fn(async () => ({ entries: manifest, readEntry }));
     __setNativeLoaderForTest(() => ({
-      inspectArchiveNative,
-      readArchiveEntryNative,
+      openZipBufferNative,
     }) as unknown as NativeBinding);
     configureFsSafeNative({ mode: "require" });
     const regular = { index: 0, path: "value.txt", kind: "file", size: 5, mode: 0o644 };
@@ -386,14 +385,12 @@ describe("bounded archive reads", () => {
     readError = undefined;
     await expect(readArchiveEntry(archivePath, "value.txt", { maxBytes: 5 }))
       .resolves.toEqual(Buffer.from("value"));
-    expect(readArchiveEntryNative).toHaveBeenLastCalledWith(
-      expect.any(String),
-      "zip",
-      "./value.txt",
-      5,
+    expect(openZipBufferNative).toHaveBeenLastCalledWith(
+      expect.any(Buffer),
       resolveTarMeterLimits(),
       expect.any(AbortSignal),
     );
+    expect(readEntry).toHaveBeenLastCalledWith(0, 5, expect.any(AbortSignal));
   });
 
   it("requires native support for explicitly selected zstd and bzip2 TAR reads", async () => {

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Read native ZIP entries from the retained, admitted input buffer and reuse the parsed directory, eliminating temporary disk staging and archive handoff copies while preserving validation.
 - Add `@openclaw/fs-safe/clone` for native APFS directory clones, Btrfs subvolume preparation and snapshots, and parallel ReFS tree cloning, with exclusive destinations and cancellation that waits for native writes to settle.
 - Give the full documentation-build smoke test a bounded longer runtime so slow Windows runners do not hit the default unit-test deadline.
 - Add byte limits and cooperative cancellation to `sha256File`, preserving descriptor ownership and waiting for native work to stop before rejecting.

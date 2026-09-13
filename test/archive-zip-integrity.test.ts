@@ -70,10 +70,17 @@ for (const mode of ["off", "auto", "require"] as const) {
       if (mode !== "off") {
         // The shared loader uses native/<host artifact>, never a registry binary.
         // FS_SAFE_NATIVE_MODE=require makes a missing local build fail the suite.
-        read = vi.fn(native!.readArchiveEntryNative.bind(native));
+        read = vi.fn();
         extract = vi.fn(native!.extractArchiveNative.bind(native));
         __setNativeLoaderForTest(() => ({
-          ...native!, readArchiveEntryNative: read, extractArchiveNative: extract,
+          ...native!, extractArchiveNative: extract,
+          openZipBufferNative: async (...args) => {
+            const reader = await native!.openZipBufferNative(...args);
+            return { entries: reader.entries, readEntry: (...params) => {
+              read(...params);
+              return reader.readEntry(...params);
+            } };
+          },
         }));
       }
     });
