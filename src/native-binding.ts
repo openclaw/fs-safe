@@ -83,10 +83,23 @@ export interface NativeBinding {
     readonly entries: NativeArchiveEntry[];
     readEntry(index: number, maxBytes: number, signal?: AbortSignal): Promise<Buffer>;
   }>;
+  readCloneFileMetadata(paths: string[]): Promise<(Buffer | null)[]>;
+  probeTreeClone(parentFd: number): "apfs" | "btrfs" | "refs" | null;
+  cloneTree(
+    sourceFd: number | null,
+    parentFd: number,
+    basename: string,
+    concurrency: number,
+    signal?: AbortSignal,
+  ): Promise<void>;
   // POSIX-only direct-child staging; the matching Windows binary omits these methods.
   createStagedFile?(parentFd: number, basename: string): number;
   stagedFileMatches?(parentFd: number, basename: string, fileFd: number): boolean;
-  removeStagedFile?(parentFd: number, basename: string, fileFd: number): "removed" | "name-absent" | "preserved";
+  removeStagedFile?(
+    parentFd: number,
+    basename: string,
+    fileFd: number,
+  ): "removed" | "name-absent" | "preserved";
   cloneFileExclusive(sourceFd: number, targetRootFd: number, targetRelPath: string): number;
   copyFileRangeExclusive(
     sourceFd: number,

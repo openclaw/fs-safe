@@ -135,6 +135,25 @@ jobs:
       - name: Build and stage host binding
         run: pnpm native:build
 
+      - name: Test native directory cloning
+        run: pnpm test test/clone.test.ts
+
+      - name: Test native Btrfs snapshots
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y btrfs-progs
+          fixture=$(mktemp -d "$RUNNER_TEMP/fs-safe-btrfs.XXXXXX")
+          mkdir "$fixture/mount"
+          truncate -s 1G "$fixture/volume.img"
+          mkfs.btrfs -q "$fixture/volume.img"
+          sudo mount -o loop "$fixture/volume.img" "$fixture/mount"
+          trap 'sudo umount "$fixture/mount"' EXIT
+          sudo chown "$(id -u):$(id -g)" "$fixture/mount"
+          FS_SAFE_CLONE_TEST_ROOT="$fixture/mount" pnpm test test/clone.test.ts
+
       - name: Smoke method benchmarks with native binding
         run: pnpm benchmark:methods --mode require --iterations 1 --samples 1 --warmup 0
 

@@ -6,7 +6,7 @@ export const sections = [
   ["Root API", ["root.md", "reading.md", "writing.md", "walk.md", "path-scope.md"]],
   ["Atomic & temp", ["atomic.md", "staged-file.md", "durability.md", "output.md", "json.md", "temp.md", "archive.md"]],
   ["Stores", ["store.md", "json-store.md", "file-store.md", "private-file-store.md"]],
-  ["Specialized", ["secret-file.md", "secure-file.md", "permissions.md", "regular-file.md", "sidecar-lock.md", "local-roots.md"]],
+  ["Specialized", ["clone.md", "secret-file.md", "secure-file.md", "permissions.md", "regular-file.md", "sidecar-lock.md", "local-roots.md"]],
   ["Path & filename", ["path.md", "filename.md", "install-path.md"]],
   ["Reference", ["errors.md", "types.md", "public-api.md", "testing.md", "timing.md", "advanced.md", "test-hooks.md", "migrating-to-0.5.md", "migrating-to-0.6.md", "contributing.md"]],
 ];

@@ -134,6 +134,20 @@
       ],
       "errorCodes": {}
     },
+    "./clone": {
+      "runtime": [
+        "cloneTree",
+        "createCloneSource",
+        "probeTreeClone",
+        "readCloneFileMetadata"
+      ],
+      "types": [
+        "CloneFileMetadata",
+        "CloneTreeOptions",
+        "TreeCloneBackend"
+      ],
+      "errorCodes": {}
+    },
     "./config": {
       "runtime": [
         "configureFsSafeLocks",
