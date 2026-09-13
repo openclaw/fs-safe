@@ -16,6 +16,7 @@ export {
   type RootCopySource,
   type RootCreateJsonOptions,
   type RootCreateOptions,
+  type RootCreateStreamOptions,
   type RootDefaults,
   type RootMkdirOptions,
   type RootMoveOptions,

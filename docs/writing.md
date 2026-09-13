@@ -154,6 +154,61 @@ try {
 }
 ```
 
+### Streamed creation
+
+Pass an `AsyncIterable<Uint8Array>` to `create()` when bytes come from a database,
+network response, or another incremental producer. Buffers are accepted chunks.
+The writer consumes each chunk completely before requesting the next one; it
+does not collect the full input in memory or expose a writable descriptor.
+
+```ts
+async function* snapshotChunks(): AsyncGenerator<Uint8Array> {
+  yield Buffer.from("first stored chunk\n");
+  yield Buffer.from("second stored chunk\n");
+}
+
+await fs.create("restored/config.txt", snapshotChunks(), {
+  mode: 0o600,
+  maxBytes: 8 * 1024 * 1024,
+  durable: false,
+  signal: AbortSignal.timeout(30_000),
+});
+```
+
+`RootCreateStreamOptions` keeps `mkdir`, `mode`, `durable`,
+`assertBeforeMutation`, `denyMutations`, and `mutationSymlinks` from buffered
+creation and adds `maxBytes` and `signal`. Byte chunks have no encoding option;
+streamed creation uses strict publication identity and does not support
+`renameIdentity: "verify-content-with-lock"`. Existing Root defaults apply,
+including explicit `maxBytes`; with no byte cap at either level, input size is
+unlimited. Zero permits an empty input only. Invalid limits reject before I/O.
+
+Unlike buffered creation's JavaScript fallback, streamed creation stages all
+chunks before publishing the final name. Native mode uses no-replace rename;
+the JavaScript fallback hardlinks the completed stage and removes its temporary
+name in the same JavaScript turn. That fallback requires a filesystem supporting
+hardlinks; other processes may briefly observe both names. An existing or
+concurrently created destination is preserved. Existing-target preflight does
+not consume the input. The final mode and durability policy use the same guarded
+writer as other Root operations.
+
+Cancellation checks run before and after producer pulls, before content writes,
+and before publication. `assertBeforeMutation` also rechecks current application
+authority after producer waits and before each partial write. The operation
+waits for any pending producer pull or filesystem write, then awaits the
+producer's `return()` and cleans only the owned unpublished stage. Pass the same
+signal into a producer that may stall: an arbitrary async iterator cannot be
+forcibly interrupted, so cancellation waits for its pending work and cleanup to
+settle. Do not mutate a yielded chunk until the next pull. Producer errors retain
+their original value when cleanup succeeds.
+
+An aborted or failed operation can leave created parent directories. If a
+stage's identity or parent cannot be verified during cleanup, the existing
+guarded cleanup preserves it. After publication, later verification or cleanup
+failures preserve the destination; rejection does not prove that no file was
+created. Cancellation arriving after publication does not undo the completed
+file. Application recovery remains caller-owned.
+
 ### `fs.writeJson(rel, value, options?)`
 
 `JSON.stringify(value, replacer, space)` + atomic write. Adds a trailing newline by default.
@@ -319,9 +374,9 @@ try {
 Options are `{ denyMutations?, mkdir?, mode?, writeMode? }`, where `writeMode`
 is `"replace"` (default), `"append"`, or `"update"`. `replace` truncates existing
 files; `update` keeps existing contents. Streaming writes go directly to the
-destination — there is no atomic-rename step. If you need both streaming and
-atomicity, write to a sibling temp yourself and rename when done; the
-[`atomic`](atomic.md) helpers can do this for you.
+destination — there is no atomic-rename step. For exclusive publication of a
+complete stream, use [`create()`](#streamed-creation). For streamed replacement,
+the [`atomic`](atomic.md) helpers provide a staged writer.
 
 On POSIX, existing-target opens use `O_NONBLOCK` as an admission safeguard so
 a no-reader FIFO cannot stall regular-file validation. This does not change

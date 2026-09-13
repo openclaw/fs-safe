@@ -12,6 +12,7 @@
 - Fix package consumer smoke and lifecycle tests with standalone `@pnpm/exe` installations, preserving the pinned pnpm version and isolated consumer configuration.
 - Report native Windows disk-full and sharing failures as `ENOSPC` and `EBUSY`, and return ReFS worker-start failures after joining admitted workers instead of panicking across the native boundary.
 - Add bounded recursive `Root.remove` with entry and depth limits, cancellation, missing-target handling, and exact directory/leaf identity checks without repeated sibling scans.
+- Add a streamed `Root.create` overload for async byte iterables, with bounded consumption, settled cancellation, and exclusive publication of completed contents through the existing guarded writer.
 
 ## 0.10.0 - 2026-09-13
 

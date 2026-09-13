@@ -95,8 +95,9 @@ export async function runPinnedWriteWindows(
     } catch (error) {
       closeWriteFd(targetFd);
       targetFd = undefined;
-      // Copies preserve the published name for caller-owned recovery.
-      if (params.input.kind !== "file") {
+      // Staged copies and streamed creates preserve publication for caller recovery.
+      if (params.input.kind === "buffer" ||
+        (params.input.kind === "stream" && !params.input.stageBeforePublish)) {
         removeNativeCreatedFileIfStillPinned({
           parentPath,
           parentFd,

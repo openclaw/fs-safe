@@ -28,6 +28,7 @@ import {
   type RenameIdentityPolicy,
   runPinnedWriteHelper,
   runPinnedWriteWithRenamePolicy,
+  type PinnedWriteInput,
 } from "./pinned-write.js";
 import { getNativeBinding } from "./native.js";
 import { validatePinnedOperationPayload } from "./pinned-operation.js";
@@ -77,12 +78,13 @@ import { inheritWriteTargetMode } from "./root-write-mode.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 import { createCopyPublicationObserver, onCopyPublication, type CopyPublicationOptions } from "./copy-publication.js";
 import { writeAllToFile } from "./write-file-handle.js";
+import { createInputOptions, rethrowCreateInputError, rootWriteInput, type RootWriteParams } from "./root-create-input.js";
 import { assertFinalSymlinkRejected, mutationSymlinkResolution, readSymlinkResolution, type MutationSymlinkPolicy, type SymlinkPolicy } from "./root-symlink-policy.js";
 
 import {
   mergeReadOptions, readDefaults,
   type HardlinkPolicy, type RootAppendOptions, type RootCopyOptions, type RootCopySource,
-  type RootCreateJsonOptions, type RootCreateOptions, type RootDefaults,
+  type RootCreateJsonOptions, type RootCreateOptions, type RootCreateStreamOptions, type RootDefaults,
   type RootMkdirOptions, type RootMoveOptions, type RootOpenOptions,
   type RootOpenWritableOptions, type RootReadOptions, type RootRemoveOptions,
   type RootWriteJsonOptions, type RootWriteOptions,
@@ -90,7 +92,7 @@ import {
 import { composeMutationAssertions, MutationAuthorityError, rethrowMutationAuthorityError } from "./mutation-authority.js";
 export type {
   HardlinkPolicy, RootAppendOptions, RootCopyOptions, RootCopySource, RootCreateJsonOptions,
-  RootCreateOptions, RootDefaults, RootMkdirOptions, RootMoveOptions,
+  RootCreateOptions, RootCreateStreamOptions, RootDefaults, RootMkdirOptions, RootMoveOptions,
   RootOpenOptions, RootOpenWritableOptions, RootOptions, RootReadOptions,
   RootRemoveOptions, RootWriteJsonOptions, RootWriteOptions, WritableOpenMode,
 } from "./root-options.js";
@@ -316,6 +318,7 @@ export interface Root {
     data: string | Buffer,
     options?: RootCreateOptions,
   ): Promise<void>;
+  create(relativePath: string, data: AsyncIterable<Uint8Array>, options?: RootCreateStreamOptions): Promise<void>;
   writeJson(
     relativePath: string,
     data: unknown,
@@ -506,10 +509,12 @@ export class RootHandle implements Root {
     }).catch(rethrowMutationAuthorityError);
   }
 
+  async create(relativePath: string, data: string | Buffer, options?: RootCreateOptions): Promise<void>;
+  async create(relativePath: string, data: AsyncIterable<Uint8Array>, options?: RootCreateStreamOptions): Promise<void>;
   async create(
     relativePath: string,
-    data: string | Buffer,
-    options: RootCreateOptions = {},
+    data: string | Buffer | AsyncIterable<Uint8Array>,
+    options: RootCreateOptions & RootCreateStreamOptions = {},
   ): Promise<void> {
     assertValidRootDestinationPath(relativePath);
     await writeFileInRoot(this.context, {
@@ -517,10 +522,10 @@ export class RootHandle implements Root {
       data,
       mkdir: this.defaults.mkdir,
       mode: this.defaults.mode,
-      ...this.mutationOptions(options),
+      ...this.mutationOptions(createInputOptions(data, options, this.defaults.maxBytes)),
       durable: options.durable ?? this.defaults.durable ?? true,
       overwrite: false,
-    }).catch(rethrowMutationAuthorityError);
+    }).catch(rethrowMutationAuthorityError).catch(rethrowCreateInputError);
   }
 
   async writeJson(
@@ -1050,14 +1055,15 @@ async function mkdirPathInRoot(
 
 async function writeFileInRoot(
   root: RootContext,
-  params: RootWriteOptions & { relativePath: string; data: string | Buffer },
+  params: RootWriteParams,
 ): Promise<void> {
+  const input = rootWriteInput(params);
   await serializePathWrite(rootWriteQueueKey(root, params.relativePath), async () => {
     if (
-      process.platform === "win32" &&
+      input.kind === "buffer" && process.platform === "win32" &&
       (params.renameIdentity === "verify-content-with-lock" || !getNativeBinding())
     ) {
-      await writeFileFallback(root, params);
+      await writeFileFallback(root, { ...params, data: input.data });
       return;
     }
 
@@ -1071,7 +1077,7 @@ async function writeFileInRoot(
     );
 
     await serializePathWrite(pinned.targetPath, async () => {
-      await commitPinnedWriteInRoot(root, pinned, params);
+      await commitPinnedWriteInRoot(root, pinned, params, input);
     });
   });
 }
@@ -1079,7 +1085,8 @@ async function writeFileInRoot(
 async function commitPinnedWriteInRoot(
   root: RootContext,
   pinned: PinnedWriteTarget,
-  params: RootWriteOptions & { data: string | Buffer },
+  params: RootWriteParams,
+  input: PinnedWriteInput,
 ): Promise<void> {
   let verifyingPublication = false;
   try {
@@ -1094,7 +1101,8 @@ async function commitPinnedWriteInRoot(
       sync: params.durable !== false,
       overwrite: params.overwrite,
       rejectFinalSymlink: params.mutationSymlinks !== undefined,
-      input: { kind: "buffer", data: params.data, encoding: params.encoding },
+      input,
+      maxBytes: params.maxBytes,
       rootIdentity: root.rootIdentity,
       assertBeforeMutation: params.assertBeforeMutation,
       verifyPublished: async (fd, expectedIdentity, parentGuard) => {

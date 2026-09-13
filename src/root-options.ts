@@ -64,6 +64,10 @@ export type RootWriteJsonOptions = RootWriteOptions & {
 };
 
 export type RootCreateOptions = Omit<RootWriteOptions, "overwrite">;
+export type RootCreateStreamOptions = Omit<RootCreateOptions, "encoding" | "renameIdentity"> & {
+  maxBytes?: number;
+  signal?: AbortSignal;
+};
 export type RootCreateJsonOptions = Omit<RootWriteJsonOptions, "overwrite">;
 
 export type RootAppendOptions = RootWriteOptions & {

@@ -156,6 +156,12 @@ const opened = await fs.open("notes/today.txt");
 await fs.create("notes/README.md", "seed\n"); // throws if it already exists
 ```
 
+`create()` also accepts an `AsyncIterable<Uint8Array>` for large or incrementally
+produced files. Streamed creates keep the destination absent until all chunks
+are written, support `maxBytes` and `signal`, and recheck mutation authority
+before writes and publication. See [streamed creation](docs/writing.md#streamed-creation)
+for producer ownership and cancellation semantics.
+
 `write()` replaces file contents by default; pass `{ overwrite: false }` or use `create()` when an existing file should be an error. `move()` defaults to no clobber because it can otherwise delete an unrelated target while also consuming the source. Pass `{ overwrite: true }` when replacing the target is intended.
 
 Mutating methods accept `assertBeforeMutation: () => void` for live lease or

@@ -4,7 +4,6 @@ import fsSync, { type BigIntStats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { Readable } from "node:stream";
 import { normalizeMaxBytes } from "./byte-budget.js";
 import { createAsyncDirectoryGuard, createNearestExistingDirectoryGuard, inspectDirectoryIdentity, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
@@ -27,7 +26,7 @@ import { publishCopyStage } from "./publish-copy-stage.js";
 
 export type PinnedWriteInput =
   | { kind: "buffer"; data: string | Buffer; encoding?: BufferEncoding }
-  | { kind: "stream"; stream: Readable }
+  | { kind: "stream"; stream: AsyncIterable<Uint8Array | string>; stageBeforePublish?: boolean }
   | CopyFileInput;
 
 function byteLength(input: string | Buffer, encoding: BufferEncoding | undefined): number {
@@ -58,7 +57,7 @@ function assertWithinMaxBytes(bytes: number, maxBytes: number | undefined): void
 }
 
 async function writeStreamToHandle(
-  stream: Readable,
+  stream: AsyncIterable<Uint8Array | string>,
   handle: FileHandle,
   maxBytes: number | undefined,
   assertBeforeMutation?: () => void,
@@ -175,7 +174,8 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
     ? await createAsyncDirectoryGuard(parentPath, { bigint: true })
     : await createNearestExistingDirectoryGuard(params.rootPath, parentPath, { bigint: true });
   const targetPath = path.join(parentPath, params.basename);
-  if (params.overwrite === false && params.input.kind !== "file") {
+  if (params.overwrite === false && (params.input.kind === "buffer" ||
+    (params.input.kind === "stream" && !params.input.stageBeforePublish))) {
     const assertBeforeMutation = () => {
       assertFinalSymlinkRejected(targetPath, params.rejectFinalSymlink);
       params.assertBeforeMutation?.();

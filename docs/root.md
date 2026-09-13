@@ -120,6 +120,14 @@ fs.ensureRoot(options?)                  // accepts "" / "." as the root itself
 
 `write`, `create`, `append`, `writeJson`, and `createJson` accept `mode?: number`; use `0o600` for credentials and other private state. `writeJson` also accepts the same options as `JSON.stringify` plus `trailingNewline?: boolean` (defaults `true` so the file ends in `\n`).
 
+`create` also accepts `AsyncIterable<Uint8Array>` with `RootCreateStreamOptions`:
+the same path, authority, mode, and durability options, plus `maxBytes` and
+`signal`, without `encoding` or `renameIdentity`. It consumes one chunk at a
+time and publishes the completed file exclusively. The byte cap inherits an
+explicit `Root.defaults.maxBytes`; without either cap, consumption is unlimited.
+See [streamed creation](writing.md#streamed-creation) for cancellation,
+cleanup, and filesystem requirements.
+
 `append` accepts `prependNewlineIfNeeded: true` to separate text from existing
 content when neither side supplies a newline. String data uses its `encoding`
 for the newline check, including UTF-16LE; Buffer data uses a single LF byte.
