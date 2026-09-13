@@ -144,7 +144,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y btrfs-progs
+          sudo apt-get install -y btrfs-progs strace
           fixture=$(mktemp -d "$RUNNER_TEMP/fs-safe-btrfs.XXXXXX")
           mkdir "$fixture/mount"
           truncate -s 1G "$fixture/volume.img"
@@ -153,6 +153,10 @@ jobs:
           trap 'sudo umount "$fixture/mount"' EXIT
           sudo chown "$(id -u):$(id -g)" "$fixture/mount"
           FS_SAFE_CLONE_TEST_ROOT="$fixture/mount" pnpm test test/clone.test.ts
+
+      - name: Prove Linux copy offload EOF fallback
+        if: runner.os == 'Linux'
+        run: node scripts/copy-offload-eof-proof.mjs
 
       - name: Test XFS cloning and unavailable-reflink fallback
         if: runner.os == 'Linux'

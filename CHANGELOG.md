@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Confirm EOF when Linux copy offload initially reports zero bytes, so automatic file copies fall back to reading available data instead of publishing an empty file.
 - Preserve fractional access and modification timestamps during directory byte copying, including dates before 1970 on Unix, to the precision supported by Node and the destination filesystem.
 - Fix package consumer smoke and lifecycle tests with standalone `@pnpm/exe` installations, preserving the pinned pnpm version and isolated consumer configuration.
 
