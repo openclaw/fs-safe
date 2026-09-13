@@ -65,6 +65,8 @@ On Linux, automatic byte copying also uses the native binding when available. It
 
 Clones preserve file contents, empty directories, timestamps, executable modes where supported, and literal symbolic links. Editing a clone does not modify its source. Unsupported filesystem operations fail; callers may choose their own copy or checkout fallback after the failed operation has settled.
 
+Native Windows byte copies can store large zero-filled chunks as sparse ranges when the destination is initially empty and its filesystem supports sparse files. This still reads every source byte and creates an independent copy.
+
 The ReFS backend rejects files with alternate data streams and unsupported reparse-point types instead of silently losing their contents. Symbolic links and junctions are preserved.
 
 XFS preserves regular-file and directory modes, timestamps, extended attributes, and ACLs. It rejects special files, symlink extended attributes, non-UTF-8 names, and directory nesting deeper than 128 levels. Hardlinked source files become independent reflinked files. Portable byte copying preserves file contents, empty directories, modes where supported, file and directory timestamps, and literal symbolic links; it does not promise ownership, ACL, extended-attribute, alternate-stream, or sparse-layout preservation. On Windows, byte copying rejects unresolved symbolic links because Node does not expose their file/directory link type; resolved links keep their literal target and source type. POSIX dangling links are preserved. Choose a copying policy that meets the caller's metadata requirements; automatic copying can select either path.

@@ -26,6 +26,7 @@
 - Fix package consumer smoke and lifecycle tests with standalone `@pnpm/exe` installations, preserving the pinned pnpm version and isolated consumer configuration.
 - Report native Windows disk-full and sharing failures as `ENOSPC` and `EBUSY`, and return ReFS worker-start failures after joining admitted workers instead of panicking across the native boundary.
 - Reduce Windows copy allocation overhead by sizing native file buffers to small inputs, reusing directory enumeration buffers, and starting ReFS workers only as file jobs arrive.
+- Keep large zero-filled ranges sparse during native Windows byte copies into empty files, preserving exact lengths, independent contents, caller cursors, and existing-target overwrite behavior.
 - Add bounded recursive `Root.remove` with entry and depth limits, cancellation, missing-target handling, and exact directory/leaf identity checks without repeated sibling scans.
 - Add a streamed `Root.create` overload for async byte iterables, with bounded consumption, settled cancellation, and exclusive publication of completed contents through the existing guarded writer.
 - Add `Root.entries()` for guarded nonrecursive directory iteration that reports child symlinks, supports cancellation, and bounds entry counts and sorted-name collection while leaving traversal and link policy with the caller.
