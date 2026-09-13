@@ -274,7 +274,9 @@ an abort reason or authority refusal carrying `ENOENT` is not treated as absence
 Authority is rechecked immediately before each direct `unlink` or `rmdir`
 dispatch. Directory handles close before their directories are removed, including
 on Windows. If both traversal and close fail, `SuppressedError` retains both
-failures.
+failures. Directory-stream filesystem errors use the same removal codes as
+`unlink` and `rmdir`, with the original error in `cause`; caller abort and
+authority refusals retain their original values.
 
 Removal is incremental, not atomic. A later budget, cancellation, identity, or
 filesystem failure does not restore already removed entries. As with existing

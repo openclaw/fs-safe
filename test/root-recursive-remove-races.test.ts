@@ -90,12 +90,12 @@ it.each([false, true].flatMap(recursive => ["file", "directory"].map(kind => ({ 
 
 it("retains intermediate ancestor identities when the immediate parent is moved into a replacement", async () => {
   const directory = await tempRoot("fs-safe-remove-intermediate-ancestor-");
-  await fs.mkdir(path.join(directory, "a/b/tree"), { recursive: true });
-  await fs.writeFile(path.join(directory, "a/b/tree/value"), "preserve");
+  await fs.mkdir(path.join(directory, "a/b"), { recursive: true });
+  await fs.writeFile(path.join(directory, "a/b/value"), "preserve");
   const scoped = await root(directory);
   let changed = false;
   __setFsSafeTestHooksForTest({
-    async beforeRootFallbackMutation(operation, target) {
+    async beforeRootFallbackMutation(operation) {
       if (operation !== "remove" || changed) return;
       changed = true;
       await fs.rename(path.join(directory, "a"), path.join(directory, "saved-a"));
@@ -103,9 +103,10 @@ it("retains intermediate ancestor identities when the immediate parent is moved 
       await fs.rename(path.join(directory, "saved-a/b"), path.join(directory, "a/b"));
     },
   });
-  await expect(scoped.remove("a/b/tree", { recursive: true, force: true })).rejects.toMatchObject({ code: "path-mismatch" });
+  // A file target keeps Windows directory enumeration handles out of the rename fixture.
+  await expect(scoped.remove("a/b/value", { recursive: true, force: true })).rejects.toMatchObject({ code: "path-mismatch" });
   expect(changed).toBe(true);
-  expect(await fs.readFile(path.join(directory, "a/b/tree/value"), "utf8")).toBe("preserve");
+  expect(await fs.readFile(path.join(directory, "a/b/value"), "utf8")).toBe("preserve");
 });
 
 it.each([false, true])("stops after a missing parent even if an escaping link appears (force=%s)", async force => {
@@ -244,11 +245,31 @@ it("does not round the identity of a leaf before removal", async () => {
   expect(await fs.readdir(tree)).toHaveLength(2);
 });
 
+it.each(["opendir", "read"] as const)("maps %s permission failures to the removal error contract", async phase => {
+  const { tree, scoped } = await fixture();
+  const denied = Object.assign(new Error("directory access denied"), { code: "EACCES" });
+  let closed = 0;
+  const opendir = fs.opendir.bind(fs);
+  vi.spyOn(fs, "opendir").mockImplementation(async (...args) => {
+    if (phase === "opendir") throw denied;
+    const handle = await opendir(...args);
+    vi.spyOn(handle, "read").mockRejectedValueOnce(denied);
+    const close = handle.close.bind(handle);
+    vi.spyOn(handle, "close").mockImplementation(async () => { await close(); closed += 1; });
+    return handle;
+  });
+  await expect(scoped.remove("tree", { recursive: true, force: true })).rejects.toMatchObject({
+    code: "not-removable", cause: denied,
+  });
+  expect(closed).toBe(phase === "read" ? 1 : 0);
+  expect((await fs.readdir(tree)).sort()).toEqual(["first", "second"]);
+});
+
 it.each(["abort", "read", "close"] as const)("retains disposal failures after %s and closes before removing directories", async failure => {
   const { tree, scoped } = await fixture();
   const controller = new AbortController();
-  const primary = new Error("operation failed");
-  const closeFailure = new Error("close failed");
+  const primary = Object.assign(new Error("operation failed"), { code: "EACCES" });
+  const closeFailure = Object.assign(new Error("close failed"), { code: "EIO" });
   let closeAttempts = 0;
   const opendir = fs.opendir.bind(fs);
   vi.spyOn(fs, "opendir").mockImplementation(async (...args) => {
@@ -264,8 +285,13 @@ it.each(["abort", "read", "close"] as const)("retains disposal failures after %s
     return handle;
   });
   const pending = scoped.remove("tree", { recursive: true, signal: controller.signal });
-  if (failure === "close") await expect(pending).rejects.toBe(closeFailure);
-  else await expect(pending).rejects.toMatchObject({ name: "SuppressedError", error: closeFailure, suppressed: primary });
+  const normalizedClose = { code: "not-removable", cause: closeFailure };
+  if (failure === "close") await expect(pending).rejects.toMatchObject(normalizedClose);
+  else await expect(pending).rejects.toMatchObject({
+    name: "SuppressedError",
+    error: normalizedClose,
+    suppressed: failure === "read" ? { code: "not-removable", cause: primary } : primary,
+  });
   expect(closeAttempts).toBe(1);
   expect((await fs.stat(tree)).isDirectory()).toBe(true);
 });

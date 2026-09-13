@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { root } from "../src/root.js";
-import { useRealTempDirs } from "./helpers/vitest.js";
+import { itPosix, itWin32, useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
 const directoryLink = process.platform === "win32" ? "junction" : "dir";
@@ -69,6 +69,28 @@ it("follows only allowed input parents and rejects a final directory alias", asy
   await scoped.remove("alias/nested", options);
   expect(await fs.readdir(path.join(directory, "tree"))).toEqual([]);
   expect((await fs.lstat(path.join(directory, "alias"))).isSymbolicLink()).toBe(true);
+});
+
+itWin32.each([
+  { kind: "file", stored: "Parent/value", relative: "parent/value" },
+  { kind: "directory", stored: "Tree", relative: "tree" },
+])("accepts Windows casing for a $kind target and its parents", async ({ kind, stored, relative }) => {
+  const directory = await tempRoot("fs-safe-remove-case-");
+  const target = path.join(directory, stored);
+  await fs.mkdir(kind === "file" ? path.dirname(target) : target, { recursive: true });
+  await fs.writeFile(kind === "file" ? target : path.join(target, "value"), "value");
+  const scoped = await root(directory);
+  await scoped.remove(relative, { recursive: true, mutationSymlinks: "reject" });
+  await expect(fs.stat(target)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+itPosix("keeps POSIX admission spelling case-sensitive", async () => {
+  const directory = await tempRoot("fs-safe-remove-posix-case-");
+  await fs.mkdir(path.join(directory, "Tree"));
+  await fs.writeFile(path.join(directory, "Tree/value"), "preserve");
+  const scoped = await root(directory);
+  await expect(scoped.remove("tree", { recursive: true })).rejects.toBeTruthy();
+  expect(await fs.readFile(path.join(directory, "Tree/value"), "utf8")).toBe("preserve");
 });
 
 it.each([0, 1, 3])("counts the target and limits observed entries to %i", async maxEntries => {

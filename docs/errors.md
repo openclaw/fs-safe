@@ -121,7 +121,7 @@ type FsSafeErrorCode =
 | `not-file` | Read or copy targeted a non-regular file, or a path walk found a non-directory ancestor. | Target was a directory, FIFO, socket, device, or an existing file was followed by another segment. |
 | `not-found` | The target does not exist (or its parent does not, with `mkdir: false`). | Typical missing-file case. |
 | `not-owned` | A secure file owner check failed. | File is owned by another UID. |
-| `not-removable` | `remove()` couldn't `unlink`/`rmdir` for a reason other than non-empty. | Permissions, device busy, immutable bit. |
+| `not-removable` | `remove()` couldn't inspect a directory stream or `unlink`/`rmdir` for a reason other than non-empty. | Permissions, device busy, immutable bit; the original filesystem error remains in `cause`. |
 | `outside-workspace` | Path resolves outside the configured root. | `..` traversal; absolute path outside the root; symlink resolved out. |
 | `path-alias` | A path alias check failed (e.g. canonical-real-path moved out of the root). | Symlink resolution lands outside the root. |
 | `path-mismatch` | Post-open identity check failed: the opened fd does not match the resolved path. | TOCTOU — something else swapped the path between resolve and open. |

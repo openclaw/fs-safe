@@ -12,7 +12,7 @@ import { assertMutationNotDenied } from "./deny-mutations.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup } from "./file-identity.js";
 import { MutationAuthorityError } from "./mutation-authority.js";
-import { isNotFoundPathError } from "./path.js";
+import { isNotFoundPathError, isPathInside } from "./path.js";
 import { assertRootIdentityCurrent, type RootContext } from "./root-context.js";
 import { normalizeRemoveGuardError, normalizeRemovePathError, rootPathChangedError } from "./root-errors.js";
 import type { RootRemoveOptions } from "./root-options.js";
@@ -108,7 +108,7 @@ export async function removePathInRootFallback(
       }
       throw normalizeRemoveGuardError(error);
     }
-    if (guard.realPath !== ancestor) {
+    if (!isPathInside(guard.realPath, ancestor) || !isPathInside(ancestor, guard.realPath)) {
       throw new FsSafeError("path-mismatch", "removal ancestor changed during operation");
     }
     guards.push(guard);
@@ -155,21 +155,24 @@ export async function removePathInRootFallback(
         if (options.force && isNotFoundPathError(error)) return;
         throw normalizeRemovePathError(error);
       }
-      if (directoryGuard.realPath !== target || !sameFileIdentityForCleanup(directoryGuard.stat, initial)) {
+      if (!isPathInside(directoryGuard.realPath, target) || !isPathInside(target, directoryGuard.realPath) ||
+        !sameFileIdentityForCleanup(directoryGuard.stat, initial)) {
         throw new FsSafeError("path-mismatch", "removal directory changed during operation");
       }
       guards.push(directoryGuard);
       try {
         assertCurrent();
         assertNotAborted(options.signal);
-        const handle = await fs.opendir(target, { bufferSize: 1 });
+        const handle = await fs.opendir(target, { bufferSize: 1 }).catch(error => {
+          throw normalizeRemovePathError(error);
+        });
         let failed = false;
         let operationError: unknown;
         try {
           while (true) {
             assertCurrent();
             assertNotAborted(options.signal);
-            const entry = await handle.read();
+            const entry = await handle.read().catch(error => { throw normalizeRemovePathError(error); });
             assertCurrent();
             assertNotAborted(options.signal);
             if (!entry) break;
@@ -184,8 +187,9 @@ export async function removePathInRootFallback(
             // Close before rmdir, including on Windows and after revocation.
             await handle.close();
           } catch (error) {
-            if (failed) throw createSuppressedError(error, operationError, "recursive removal and close both failed");
-            throw error;
+            const closeError = normalizeRemovePathError(error);
+            if (failed) throw createSuppressedError(closeError, operationError, "recursive removal and close both failed");
+            throw closeError;
           }
         }
       } finally {
