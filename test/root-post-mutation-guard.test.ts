@@ -30,9 +30,9 @@ it.each(["remove", "move-source", "move-target"].flatMap(operation =>
       if (!missing) await fs.mkdir(parent);
     };
     if (operation === "remove") {
-      const remove = fs.rm.bind(fs);
-      vi.spyOn(fs, "rm").mockImplementationOnce(async (file, options) => {
-        await remove(file, options);
+      const unlink = fs.unlink.bind(fs);
+      vi.spyOn(fs, "unlink").mockImplementationOnce(async (file) => {
+        await unlink(file);
         await replaceParent(sourceDir);
       });
       await expect(scoped.remove("source/value")).rejects.toMatchObject({

@@ -34,6 +34,7 @@ export async function mkdirPathComponentsWithGuards(params: {
   rootReal: string;
   targetPath: string;
   beforeComponent?: (componentPath: string) => Promise<void> | void;
+  assertBeforeMutation?: () => void;
   mode?: number;
   rejectSymlinks?: boolean;
 }): Promise<string> {
@@ -50,6 +51,7 @@ export async function mkdirPathComponentsWithGuards(params: {
     const parentGuard = await createAsyncDirectoryGuard(current);
     await assertAsyncDirectoryGuard(parentGuard);
     await params.beforeComponent?.(next);
+    params.assertBeforeMutation?.();
     try {
       await fs.mkdir(next, { mode: params.mode });
     } catch (error) {

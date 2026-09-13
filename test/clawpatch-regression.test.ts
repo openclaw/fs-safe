@@ -438,7 +438,7 @@ describe("clawpatch regression coverage", () => {
     vi.spyOn(fs, "open").mockImplementation(async (...args) => {
       const handle = await realOpen(...args);
       if (path.basename(String(args[0])) === "created.txt") {
-        vi.spyOn(handle, "writeFile").mockRejectedValueOnce(
+        vi.spyOn(handle, "write").mockRejectedValueOnce(
           Object.assign(new Error("test write failure"), { code: "EIO" }),
         );
       }

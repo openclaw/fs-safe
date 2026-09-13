@@ -48,6 +48,7 @@ export async function runPinnedWriteNative(binding: NativeBinding, params: Pinne
       throw new FsSafeError("path-mismatch", "root path changed during native write");
     }
     if (params.mkdir) {
+      params.assertBeforeMutation?.();
       binding.mkdirBeneath(root.fd, params.relativeParentPath, 0o777);
     }
     parentFd = binding.openBeneath(

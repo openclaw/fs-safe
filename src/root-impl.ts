@@ -75,6 +75,24 @@ import { verifyAtomicWriteResult } from "./root-write-verification.js";
 import { inheritWriteTargetMode } from "./root-write-mode.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 import { onCopyPublication, type CopyPublicationOptions } from "./copy-publication.js";
+import { writeAllToFile } from "./write-file-handle.js";
+
+import {
+  mergeReadOptions, readDefaults,
+  type HardlinkPolicy, type RootAppendOptions, type RootCopyOptions,
+  type RootCreateJsonOptions, type RootCreateOptions, type RootDefaults,
+  type RootMkdirOptions, type RootMoveOptions, type RootOpenOptions,
+  type RootOpenWritableOptions, type RootReadOptions, type RootRemoveOptions,
+  type RootWriteJsonOptions, type RootWriteOptions, type SymlinkPolicy,
+} from "./root-options.js";
+import { composeMutationAssertions, rethrowMutationAuthorityError } from "./mutation-authority.js";
+export type {
+  HardlinkPolicy, RootAppendOptions, RootCopyOptions, RootCreateJsonOptions,
+  RootCreateOptions, RootDefaults, RootMkdirOptions, RootMoveOptions,
+  RootOpenOptions, RootOpenWritableOptions, RootOptions, RootReadOptions,
+  RootRemoveOptions, RootWriteJsonOptions, RootWriteOptions, SymlinkPolicy, WritableOpenMode,
+} from "./root-options.js";
+export { DEFAULT_ROOT_MAX_BYTES } from "./root-options.js";
 
 export type { DenyMutationPolicy } from "./deny-mutations.js";
 export type { RenameIdentityPolicy } from "./pinned-write.js";
@@ -87,69 +105,6 @@ export type OpenResult = {
   stat: Stats;
   [Symbol.asyncDispose](): Promise<void>;
 };
-
-export type RootOptions = {
-  rootDir: string;
-  defaults?: RootDefaults;
-};
-
-export type SymlinkPolicy = "reject" | "follow-within-root";
-export type HardlinkPolicy = "reject" | "allow";
-export type WritableOpenMode = "replace" | "append" | "update";
-
-export type RootDefaults = {
-  durable?: boolean;
-  hardlinks?: HardlinkPolicy;
-  maxBytes?: number;
-  mkdir?: boolean;
-  mode?: number;
-  denyMutations?: DenyMutationPolicy;
-  nonBlockingRead?: boolean;
-  renameIdentity?: RenameIdentityPolicy;
-  symlinks?: SymlinkPolicy;
-};
-
-export type RootReadOptions = Pick<
-  RootDefaults,
-  "hardlinks" | "maxBytes" | "nonBlockingRead" | "symlinks"
->;
-
-export type RootOpenOptions = Omit<RootReadOptions, "maxBytes">;
-
-export type RootWriteOptions = Pick<RootDefaults, "denyMutations" | "durable" | "mkdir" | "mode" | "renameIdentity"> & {
-  encoding?: BufferEncoding;
-  overwrite?: boolean;
-};
-
-export type RootOpenWritableOptions = Pick<RootDefaults, "denyMutations" | "mkdir" | "mode"> & {
-  writeMode?: WritableOpenMode;
-};
-
-export type RootCopyOptions = Pick<RootDefaults, "denyMutations" | "durable" | "maxBytes" | "mkdir" | "mode"> & {
-  sourceHardlinks?: HardlinkPolicy;
-};
-
-export type RootWriteJsonOptions = RootWriteOptions & {
-  replacer?: Parameters<typeof JSON.stringify>[1];
-  space?: Parameters<typeof JSON.stringify>[2];
-  trailingNewline?: boolean;
-};
-
-export type RootCreateOptions = Omit<RootWriteOptions, "overwrite">;
-export type RootCreateJsonOptions = Omit<RootWriteJsonOptions, "overwrite">;
-
-export type RootAppendOptions = RootWriteOptions & {
-  prependNewlineIfNeeded?: boolean;
-};
-
-export type RootMoveOptions = Pick<RootDefaults, "denyMutations"> & {
-  overwrite?: boolean;
-};
-
-export type RootRemoveOptions = Pick<RootDefaults, "denyMutations">;
-export type RootMkdirOptions = Pick<RootDefaults, "denyMutations">;
-
-type RootReadParams = Omit<RootReadOptions, "nonBlockingRead">;
 
 function logWarn(message: string): void {
   if (process.env.FS_SAFE_DEBUG_WARNINGS === "1") {
@@ -177,8 +132,6 @@ const OPEN_APPEND_CREATE_FLAGS =
   fsConstants.O_CREAT |
   fsConstants.O_EXCL |
   (SUPPORTS_NOFOLLOW ? fsConstants.O_NOFOLLOW : 0);
-
-export const DEFAULT_ROOT_MAX_BYTES = 16 * 1024 * 1024;
 
 function pathStatFromStats(stat: Stats): PathStat {
   return {
@@ -423,9 +376,10 @@ export class RootHandle implements Root {
     };
   }
 
-  private mutationOptions<T extends { denyMutations?: DenyMutationPolicy }>(options: T): T {
+  private mutationOptions<T extends { denyMutations?: DenyMutationPolicy; assertBeforeMutation?: () => void }>(options: T): T {
     return {
       ...options,
+      assertBeforeMutation: composeMutationAssertions(this.defaults.assertBeforeMutation, options.assertBeforeMutation),
       denyMutations: mergeDenyMutationPolicies(
         this.defaults.denyMutations,
         options.denyMutations,
@@ -506,7 +460,7 @@ export class RootHandle implements Root {
       ...this.mutationOptions(options),
       append: writeMode === "append",
       truncateExisting: writeMode === "replace",
-    });
+    }).catch(rethrowMutationAuthorityError);
   }
 
   async append(relativePath: string, data: string | Buffer, options: RootAppendOptions = {}): Promise<void> {
@@ -518,7 +472,7 @@ export class RootHandle implements Root {
       mode: this.defaults.mode,
       ...this.mutationOptions(options),
       durable: options.durable ?? this.defaults.durable ?? true,
-    });
+    }).catch(rethrowMutationAuthorityError);
   }
 
   async remove(relativePath: string, options: RootRemoveOptions = {}): Promise<void> {
@@ -526,7 +480,7 @@ export class RootHandle implements Root {
     await removePathInRoot(this.context, {
       relativePath,
       ...this.mutationOptions(options),
-    });
+    }).catch(rethrowMutationAuthorityError);
   }
 
   async mkdir(relativePath: string, options: RootMkdirOptions = {}): Promise<void> {
@@ -534,7 +488,7 @@ export class RootHandle implements Root {
     await mkdirPathInRoot(this.context, {
       relativePath,
       ...this.mutationOptions(options),
-    });
+    }).catch(rethrowMutationAuthorityError);
   }
 
   async ensureRoot(options: RootMkdirOptions = {}): Promise<void> {
@@ -542,7 +496,7 @@ export class RootHandle implements Root {
       relativePath: "",
       allowRoot: true,
       ...this.mutationOptions(options),
-    });
+    }).catch(rethrowMutationAuthorityError);
   }
 
   async write(
@@ -559,7 +513,7 @@ export class RootHandle implements Root {
       renameIdentity: this.defaults.renameIdentity,
       ...this.mutationOptions(options),
       durable: options.durable ?? this.defaults.durable ?? true,
-    });
+    }).catch(rethrowMutationAuthorityError);
   }
 
   async create(
@@ -576,7 +530,7 @@ export class RootHandle implements Root {
       ...this.mutationOptions(options),
       durable: options.durable ?? this.defaults.durable ?? true,
       overwrite: false,
-    });
+    }).catch(rethrowMutationAuthorityError);
   }
 
   async writeJson(
@@ -615,7 +569,7 @@ export class RootHandle implements Root {
       ...copyOptions,
       durable: options.durable ?? this.defaults.durable ?? true,
       verifyPublished: (options as CopyPublicationOptions)[onCopyPublication],
-    });
+    }).catch(rethrowMutationAuthorityError);
   }
 
   async exists(relativePath: string): Promise<boolean> {
@@ -655,7 +609,7 @@ export class RootHandle implements Root {
     assertValidRootRelativePath(fromRelative);
     assertValidRootDestinationPath(toRelative);
     validatePinnedOperationPayload({ from: fromRelative, to: toRelative });
-    const { denyMutations } = this.mutationOptions(options);
+    const { denyMutations, assertBeforeMutation } = this.mutationOptions(options);
     await assertMoveMutationAllowed(this.context, {
       fromRelative,
       toRelative,
@@ -664,31 +618,16 @@ export class RootHandle implements Root {
     await movePathFallback(this.context, {
       fromRelative,
       denyMutations,
+      assertBeforeMutation,
       overwrite: options.overwrite ?? false,
       toRelative,
-    });
+    }).catch(rethrowMutationAuthorityError);
   }
   walk(relativePath: string, options: RootWalkOptions): AsyncIterableIterator<RootWalkEntry> {
     assertValidRootRelativePath(relativePath);
     return walkRoot(this, relativePath, options);
   }
 }
-function readDefaults(defaults: RootDefaults): RootReadParams {
-  return {
-    hardlinks: defaults.hardlinks,
-    maxBytes: normalizeMaxBytes(defaults.maxBytes, { defaultValue: DEFAULT_ROOT_MAX_BYTES }),
-    symlinks: defaults.symlinks,
-  };
-}
-
-function mergeReadOptions(defaults: RootDefaults, options: RootReadOptions): RootReadParams {
-  const merged = readDefaults(defaults);
-  if (options.hardlinks !== undefined) merged.hardlinks = options.hardlinks;
-  merged.maxBytes = normalizeMaxBytes(options.maxBytes, { defaultValue: merged.maxBytes });
-  if (options.symlinks !== undefined) merged.symlinks = options.symlinks;
-  return merged;
-}
-
 export async function root(
   rootDir: string,
   defaults: RootDefaults = {},
@@ -801,10 +740,11 @@ function rootWriteQueueKey(root: RootContext, relativePath: string): string {
 
 type PinnedWriteTarget = { rootReal: string; targetPath: string; relativeParentPath: string; basename: string; mode: number };
 
-async function prepareRootWriteTarget(rootReal: string, targetPath: string): Promise<string> {
+async function prepareRootWriteTarget(rootReal: string, targetPath: string, assertBeforeMutation?: () => void): Promise<string> {
   const parentPath = await mkdirPathComponentsWithGuards({
     rootReal,
     targetPath: path.dirname(targetPath),
+    assertBeforeMutation,
   });
   // Continue through the guarded walk's real parent instead of re-entering
   // the original path through a symlinked component.
@@ -856,6 +796,7 @@ async function openWritableFileInRoot(
     mkdir?: boolean;
     mode?: number;
     denyMutations?: DenyMutationPolicy;
+    assertBeforeMutation?: () => void;
     truncateExisting?: boolean;
     append?: boolean;
   },
@@ -866,7 +807,7 @@ async function openWritableFileInRoot(
   });
   let ioPath = params.mkdir === false
     ? resolved
-    : await prepareRootWriteTarget(rootReal, resolved);
+    : await prepareRootWriteTarget(rootReal, resolved, params.assertBeforeMutation);
   try {
     const resolvedRealPath = fsSync.realpathSync.native(ioPath);
     if (!isPathInside(rootWithSep, resolvedRealPath)) {
@@ -898,6 +839,7 @@ async function openWritableFileInRoot(
       if (!isNotFoundPathError(err)) {
         throw err;
       }
+      params.assertBeforeMutation?.();
       handle = await fs.open(ioPath, createFlags, mode);
       createdForWrite = true;
     }
@@ -961,6 +903,7 @@ async function openWritableFileInRoot(
     // Truncate only after boundary and identity checks complete. This avoids
     // irreversible side effects if a symlink target changes before validation.
     if (params.append !== true && params.truncateExisting !== false && !createdForWrite) {
+      params.assertBeforeMutation?.();
       await handle.truncate(0);
     }
     return {
@@ -992,6 +935,7 @@ async function appendFileInRoot(
     mkdir?: boolean;
     mode?: number;
     denyMutations?: DenyMutationPolicy;
+    assertBeforeMutation?: () => void;
     prependNewlineIfNeeded?: boolean;
   },
 ): Promise<void> {
@@ -1000,9 +944,20 @@ async function appendFileInRoot(
     mkdir: params.mkdir,
     mode: params.mode,
     denyMutations: params.denyMutations,
+    assertBeforeMutation: params.assertBeforeMutation,
     truncateExisting: false,
     append: true,
   });
+  let dispatched = false;
+  // Reverse disposal order closes the handle before path cleanup and retains both failures.
+  await using cleanup = {
+    async [Symbol.asyncDispose]() {
+      if (!dispatched && target.createdForWrite) {
+        await removePathIfIdentityUnchanged(target.realPath, target.stat);
+      }
+    },
+  };
+  await using handle = target.handle;
   try {
     let prefix = "";
     if (
@@ -1019,25 +974,26 @@ async function appendFileInRoot(
       }
     }
 
-    if (typeof params.data === "string") {
-      await target.handle.appendFile(`${prefix}${params.data}`, params.encoding ?? "utf8");
-    } else {
-      const payload =
-        prefix.length > 0 ? Buffer.concat([Buffer.from(prefix, "utf8"), params.data]) : params.data;
-      await target.handle.appendFile(payload);
-    }
+    const payload = typeof params.data === "string" ? `${prefix}${params.data}`
+      : prefix.length > 0 ? Buffer.concat([Buffer.from(prefix, "utf8"), params.data]) : params.data;
+    await writeAllToFile(target.handle, payload, {
+      encoding: params.encoding,
+      assertBeforeMutation: () => { params.assertBeforeMutation?.(); dispatched = true; },
+    });
+    // A successful empty append still creates the file, as Node's appendFile does.
+    dispatched = true;
     if (params.durable !== false) await target.handle.sync();
     if (params.durable !== false && target.createdForWrite) {
       await syncDirectoryBestEffort(path.dirname(target.realPath));
     }
-  } finally {
-    await target.handle.close().catch(() => {});
+  } catch (error) {
+    rethrowMutationAuthorityError(error);
   }
 }
 
 async function removePathInRoot(
   root: RootContext,
-  params: { relativePath: string; denyMutations?: DenyMutationPolicy },
+  params: RootRemoveOptions & { relativePath: string },
 ): Promise<void> {
   validatePinnedOperationPayload({ relativePath: params.relativePath });
   const resolved = await resolvePinnedPathInRoot(root, {
@@ -1046,7 +1002,7 @@ async function removePathInRoot(
     remove: true,
   });
   try {
-    await removePathFallback(resolved);
+    await removePathFallback(resolved, params.assertBeforeMutation);
   } catch (error) {
     throw normalizePinnedPathError(error);
   }
@@ -1058,12 +1014,13 @@ async function mkdirPathInRoot(
     relativePath: string;
     allowRoot?: boolean;
     denyMutations?: DenyMutationPolicy;
+    assertBeforeMutation?: () => void;
   },
 ): Promise<void> {
   validatePinnedOperationPayload({ relativePath: params.relativePath });
   const resolved = await resolvePinnedPathInRoot(root, params);
   try {
-    await mkdirPathFallback(resolved);
+    await mkdirPathFallback(resolved, params.assertBeforeMutation);
   } catch (error) {
     throw normalizePinnedPathError(error);
   }
@@ -1115,6 +1072,7 @@ async function commitPinnedWriteInRoot(
       overwrite: params.overwrite,
       input: { kind: "buffer", data: params.data, encoding: params.encoding },
       rootIdentity: root.rootIdentity,
+      assertBeforeMutation: params.assertBeforeMutation,
       verifyPublished: async (fd, expectedIdentity, parentGuard) => {
         verifyingPublication = true;
         try {
@@ -1155,6 +1113,7 @@ async function copyFileInRoot(
     mkdir?: boolean;
     mode?: number;
     denyMutations?: DenyMutationPolicy;
+    assertBeforeMutation?: () => void;
     sourceHardlinks?: HardlinkPolicy;
     durable?: boolean;
     verifyPublished?: CopyPublicationOptions[typeof onCopyPublication];
@@ -1197,6 +1156,7 @@ async function copyFileInRoot(
             verifyPublished: params.verifyPublished,
             input: { kind: "stream", stream: source.handle.createReadStream() },
             rootIdentity: root.rootIdentity,
+            assertBeforeMutation: params.assertBeforeMutation,
           });
         } catch (error) {
           throw normalizePinnedWriteError(error);
@@ -1234,12 +1194,10 @@ async function removePathIfIdentityUnchanged(
   identity: FileIdentityStat,
 ): Promise<void> {
   const parentGuard = await createAsyncDirectoryGuard(path.dirname(targetPath));
-  const current = fsSync.lstatSync(targetPath);
-  if (current.isSymbolicLink() || !sameFileIdentityForCleanup(current, identity)) {
-    return;
-  }
   await withAsyncDirectoryGuards([parentGuard], async () => {
-    await fs.rm(targetPath);
+    const current = fsSync.lstatSync(targetPath);
+    if (current.isSymbolicLink() || !sameFileIdentityForCleanup(current, identity)) return;
+    await fs.unlink(targetPath);
   });
 }
 
@@ -1394,19 +1352,21 @@ async function prepareRemoveGuard(targetPath: string) {
   }
 }
 
-async function removePathFallback(resolved: { resolved: string }): Promise<void> {
+async function removePathFallback(resolved: { resolved: string }, assertBeforeMutation?: () => void): Promise<void> {
   const guard = await prepareRemoveGuard(resolved.resolved);
   try {
-    await (fsSync.lstatSync(resolved.resolved).isDirectory() ? fs.rmdir(resolved.resolved) : fs.rm(resolved.resolved));
+    const isDirectory = fsSync.lstatSync(resolved.resolved).isDirectory();
+    assertBeforeMutation?.();
+    await (isDirectory ? fs.rmdir(resolved.resolved) : fs.unlink(resolved.resolved));
   } catch (error) {
     throw normalizeRemovePathError(error);
   }
   await assertAsyncDirectoryGuard(guard).catch(error => { throw normalizeRemoveGuardError(error); });
 }
 
-async function mkdirPathFallback(resolved: { rootReal: string; resolved: string }): Promise<void> {
+async function mkdirPathFallback(resolved: { rootReal: string; resolved: string }, assertBeforeMutation?: () => void): Promise<void> {
   await mkdirPathComponentsWithGuards({
-    rootReal: resolved.rootReal, targetPath: resolved.resolved,
+    rootReal: resolved.rootReal, targetPath: resolved.resolved, assertBeforeMutation,
     beforeComponent: async (componentPath) => await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("mkdir", componentPath),
   });
 }
@@ -1484,6 +1444,7 @@ async function movePathFallback(
   params: {
     fromRelative: string;
     denyMutations?: DenyMutationPolicy;
+    assertBeforeMutation?: () => void;
     toRelative: string;
     overwrite: boolean;
   },
@@ -1554,6 +1515,7 @@ async function movePathFallback(
   await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("move", target.resolved);
   await assertAsyncDirectoryGuard(sourceParentGuard);
   await assertAsyncDirectoryGuard(targetParentGuard);
+  params.assertBeforeMutation?.();
   try {
     await fs.rename(source.resolved, target.resolved);
   } catch (error) {
@@ -1590,6 +1552,7 @@ async function writeFileFallback(
     // Private, writable placeholder: Windows cannot rename over a read-only file.
     mode: 0o600,
     denyMutations: params.denyMutations,
+    assertBeforeMutation: params.assertBeforeMutation,
     truncateExisting: false,
   });
   const destinationPath = target.realPath;
@@ -1607,10 +1570,13 @@ async function writeFileFallback(
   try {
     if (target.createdForWrite) placeholderIdentity = fsSync.fstatSync(target.handle.fd, { bigint: true });
     tempPath = buildAtomicWriteTempPath(destinationPath);
+    params.assertBeforeMutation?.();
     writtenHandle = await fs.open(tempPath, OPEN_WRITE_CREATE_FLAGS, 0o600);
     writtenIdentity = fsSync.fstatSync(writtenHandle.fd, { bigint: true });
     unregisterTempPath = registerTempPathForExit(tempPath, { identity: writtenIdentity, singleLinkFile: true });
-    await writtenHandle.writeFile(params.data, params.encoding ?? "utf8");
+    await writeAllToFile(writtenHandle, params.data, {
+      encoding: params.encoding, assertBeforeMutation: params.assertBeforeMutation,
+    });
     if (params.durable !== false) await writtenHandle.sync();
     const commitTempPath = tempPath;
     const commitHandle = writtenHandle;
@@ -1627,6 +1593,7 @@ async function writeFileFallback(
       }
       // Windows cannot replace a destination while its old handle remains open.
       await target.handle.close();
+      params.assertBeforeMutation?.();
       await fs.rename(commitTempPath, destinationPath);
       tempPath = null;
       published = true;
@@ -1683,7 +1650,7 @@ async function writeMissingFileFallback(
   });
   const targetPath = params.mkdir === false
     ? resolved
-    : await prepareRootWriteTarget(rootReal, resolved);
+    : await prepareRootWriteTarget(rootReal, resolved, params.assertBeforeMutation);
   const parentGuard = await createAsyncDirectoryGuard(path.dirname(targetPath), { bigint: true });
   let created = false;
   let createdIdentity: BigIntStats | undefined;
@@ -1693,12 +1660,15 @@ async function writeMissingFileFallback(
     const { handle, writtenStat } = await withAsyncDirectoryGuards(
       [parentGuard],
       async () => {
+        params.assertBeforeMutation?.();
         const handle = await fs.open(targetPath, OPEN_WRITE_CREATE_FLAGS, params.mode ?? 0o600).catch((error) => recordExclusiveCreateFailure(error, targetPath));
         writtenHandle = handle;
         created = true;
         const writtenStat = fsSync.fstatSync(handle.fd, { bigint: true });
         createdIdentity = writtenStat;
-        await handle.writeFile(params.data, params.encoding ?? "utf8");
+        await writeAllToFile(handle, params.data, {
+          encoding: params.encoding, assertBeforeMutation: params.assertBeforeMutation,
+        });
         if (params.durable !== false) await handle.sync();
         return { handle, writtenStat };
       },

@@ -245,7 +245,7 @@ describe("Root exclusive-create denial (synthetic Windows/errno; real files)", (
       const handle = await realOpen(...args);
       if (args[0] === lockPath && exclusive(args[1])) {
         attempts += 1;
-        if (operation === "write") vi.spyOn(handle, "writeFile").mockRejectedValue(error);
+        if (operation === "write") vi.spyOn(handle, "write").mockRejectedValue(error);
         else {
           const realStat = fs.fstatSync.bind(fs);
           vi.spyOn(fs, "fstatSync").mockImplementation((fd, options) => {
