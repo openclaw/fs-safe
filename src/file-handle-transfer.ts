@@ -16,6 +16,22 @@ export type CopyFileHandleOptions = {
   assertBeforeMutation?: () => void;
 };
 
+function copyCallbackReceiver(options: CopyFileHandleOptions): Record<PropertyKey, unknown> {
+  const receiver: Record<PropertyKey, unknown> = {};
+  // Preserve the former spread receiver's extra state without re-reading the
+  // four options that supply transfer authority. Define data properties so an
+  // enumerable __proto__ key cannot alter the receiver's prototype.
+  for (const key of Reflect.ownKeys(options)) {
+    if (key === "maxBytes" || key === "signal" || key === "onChunk" || key === "assertBeforeMutation") continue;
+    if (Object.getOwnPropertyDescriptor(options, key)?.enumerable) {
+      Object.defineProperty(receiver, key, {
+        value: Reflect.get(options, key), enumerable: true, writable: true, configurable: true,
+      });
+    }
+  }
+  return receiver;
+}
+
 /** Copies caller-owned regular files from offset zero without moving either cursor. */
 export async function copyFileHandle(
   source: FileHandle,
@@ -52,12 +68,13 @@ export async function copyFileHandle(
     throw new FsSafeError("path-alias", "copy source and target handles refer to the same file");
   }
   const sizeHint = Number(sourceStat.size);
-  const onChunkThis = onChunk ? {
-    maxBytes, sizeHint, targetPosition: 0, assertBeforeMutation, signal, onChunk,
+  const callbackState = onChunk ? copyCallbackReceiver(options) : undefined;
+  const callbackThis = onChunk ? {
+    ...callbackState, maxBytes, sizeHint, targetPosition: 0, assertBeforeMutation, signal, onChunk,
   } : undefined;
   return await transferFileHandleCore(
     source, target, sizeHint, maxBytes, 0,
-    signal, onChunk, assertBeforeMutation, onChunkThis,
+    signal, onChunk, assertBeforeMutation, callbackThis,
   ).catch(rethrowMutationAuthorityError);
 }
 
@@ -88,7 +105,7 @@ async function transferFileHandleCore(
   signal: AbortSignal | undefined,
   onChunk: CopyFileHandleOptions["onChunk"],
   assertBeforeMutation: CopyFileHandleOptions["assertBeforeMutation"],
-  onChunkThis: unknown,
+  callbackThis: unknown,
 ): Promise<number> {
   const limit = maxBytes ?? Infinity;
   const buffer = Buffer.allocUnsafe(Math.min(256 * 1024, Math.max(64 * 1024, sizeHint)));
@@ -96,7 +113,7 @@ async function transferFileHandleCore(
     ? undefined
     : () => {
       signal?.throwIfAborted();
-      assertBeforeMutation?.();
+      if (assertBeforeMutation) Reflect.apply(assertBeforeMutation, callbackThis, []);
     };
   let position = 0;
   while (true) {
@@ -110,7 +127,7 @@ async function transferFileHandleCore(
     }
     if (bytesRead === 0) return position;
     const chunk = buffer.subarray(0, bytesRead);
-    if (onChunk) assertSynchronousCallbackResult(Reflect.apply(onChunk, onChunkThis, [chunk]), "onChunk");
+    if (onChunk) assertSynchronousCallbackResult(Reflect.apply(onChunk, callbackThis, [chunk]), "onChunk");
     await writeAllToFile(target, chunk, {
       position: targetPosition === undefined ? undefined : targetPosition + position,
       assertBeforeMutation: beforeWrite,

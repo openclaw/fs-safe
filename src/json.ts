@@ -316,9 +316,9 @@ function readRootStructuredFileSyncInternal<T>(
         ? fsSync.readFileSync(opened.fd, "utf8")
         : readFileDescriptorBoundedSync(opened.fd, maxBytes).toString("utf8");
     const parse = parser.parse;
-    const parsed = parse(raw);
+    const parsed = Reflect.apply(parse, parser, [raw]);
     const validate = parser.validate;
-    if (validate && !validate(parsed)) {
+    if (validate && !Reflect.apply(validate, parser, [parsed])) {
       return {
         ok: false,
         reason: "invalid",

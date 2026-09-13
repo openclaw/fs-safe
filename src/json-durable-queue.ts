@@ -357,7 +357,7 @@ export async function loadJsonDurableQueueEntry<T>(params: {
       maxBytes: params.maxBytes,
     });
     const read = params.read;
-    const result = read ? await read(raw, paths.jsonPath) : { entry: raw };
+    const result = read ? await Reflect.apply(read, params, [raw, paths.jsonPath]) : { entry: raw };
     if (result.migrated) {
       await writeJsonDurableQueueEntry({
         filePath: claimedPath,

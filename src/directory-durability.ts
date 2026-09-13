@@ -438,7 +438,7 @@ export async function ensureDurableDirectory(
     if (!targetExists) {
       const create = options.create;
       if (create) {
-        await create(directoryPath);
+        await Reflect.apply(create, options, [directoryPath]);
       } else {
         const created = await ensureAbsoluteDirectory(directoryPath, {
           mode: options.mode,

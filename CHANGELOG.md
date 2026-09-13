@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Preserve established callback receivers while retaining single-read pathname and transfer-authority snapshots across structured JSON, durable directory and queue, sibling staging, and borrowed-handle flows.
 - Snapshot root traversal symlink-rejection policy with admitted paths so caller mutation cannot change an in-flight resolution.
 - Reject NTFS alternate-data-stream and directory-index pathname aliases across guarded Root, FileStore, archive, JSON queue, sidecar lock, secret, secure-read, atomic publication, temp, permission, install, trash, and output boundaries before filesystem access. Preserve rooted drive paths, including valid extended namespace drive roots without widening volume-root mutation authority, independent device/network policies, intentional output-name sanitization, existing failure shapes, and ordinary colon-bearing POSIX names; native relative and archive paths enforce the same Windows rule.
 - Inspect complete inherited local Windows ACLs through the existing native descriptor reader, avoiding PowerShell startup while preserving the public SID classifier, explicit injections, .NET normalization, and structured fallback diagnostics.

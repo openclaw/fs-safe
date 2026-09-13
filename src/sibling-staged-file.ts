@@ -82,7 +82,7 @@ export async function writeCallbackSibling<T>(params: {
   };
 
   try {
-    const result = await write(tempPath);
+    const result = await Reflect.apply(write, params, [tempPath]);
     await assertParent();
     const before = await inspectPath(tempPath);
     try {
@@ -101,7 +101,7 @@ export async function writeCallbackSibling<T>(params: {
     identity = opened;
     unregister = registerTempPathForExit(tempPath, { identity, singleLinkFile: true });
 
-    const rawFilePath = resolveFinalPath(result);
+    const rawFilePath = Reflect.apply(resolveFinalPath, params, [result]);
     assertNoWindowsPathAlias(rawFilePath, "filesystem", "final path uses a Windows filesystem namespace alias");
     const filePath = path.resolve(rawFilePath);
     assertNoWindowsPathAlias(filePath, "filesystem", "final path uses a Windows filesystem namespace alias");
