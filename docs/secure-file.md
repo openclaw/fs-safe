@@ -21,6 +21,7 @@ The helper:
 - rejects every non-regular preview and, by default, symlink paths
 - opens POSIX paths no-follow and nonblocking before reading, then verifies the opened fd still matches the path and realpath; a FIFO swap cannot block before `timeoutMs` owns the byte read
 - optionally requires the real path to live under one of `trust.trustedDirs`
+- rejects hardlink aliases using descriptor, pathname, and realpath link counts, then rechecks the descriptor after reading before returning bytes
 - rejects hard-to-verify or unsafe permissions unless `permissions.allowInsecure` is set
 - rejects files owned by another POSIX uid
 - enforces `maxBytes` before and after reading
@@ -73,6 +74,7 @@ type SecureFileReadOptions = {
 | `not-found` | The path could not be stat'd before open. |
 | `not-file` | The opened target is not a regular file. |
 | `symlink` | The path is a symlink and `trust.allowSymlink` is false. |
+| `hardlink` | The descriptor, pathname, or realpath has more than one link. |
 | `path-mismatch` | The path or realpath changed between open and verification, or filesystem identity could not be verified after bounded re-inspection. |
 | `outside-workspace` | `realPath` is outside `trust.trustedDirs`. |
 | `permission-unverified` | Required mode/ACL checks could not be completed. |

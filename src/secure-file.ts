@@ -1,4 +1,4 @@
-import fsSync, { type Stats } from "node:fs";
+import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -70,8 +70,18 @@ function label(options: SecureFileReadOptions): string {
   return options.label ?? "Secure file";
 }
 
+function assertNotHardlinked(
+  options: SecureFileReadOptions,
+  stat: Pick<BigIntStats, "nlink">,
+): void {
+  if (stat.nlink > 1n) {
+    throw new FsSafeError("hardlink", `${label(options)} must not be hardlinked: ${options.filePath}`);
+  }
+}
+
 async function openSecureHandle(options: SecureFileReadOptions, maxBytes: number | undefined): Promise<{
   handle: FileHandle;
+  identity: Pick<BigIntStats, "dev" | "ino">;
   pathStat: Stats;
   realPath: string;
 }> {
@@ -117,6 +127,7 @@ async function openSecureHandle(options: SecureFileReadOptions, maxBytes: number
       throw new FsSafeError("not-file", `${label(options)} must be a file: ${options.filePath}`);
     }
     const openedIdentity = await inspectFileIdentity(() => fsSync.fstatSync(handle.fd, { bigint: true }));
+    assertNotHardlinked(options, openedIdentity);
     await inspectFileIdentity(async () => {
       const pathStat = options.trust?.allowSymlink
         ? fsSync.statSync(options.filePath, { bigint: true })
@@ -124,14 +135,19 @@ async function openSecureHandle(options: SecureFileReadOptions, maxBytes: number
       if (!options.trust?.allowSymlink && pathStat.isSymbolicLink()) {
         throw new FsSafeError("symlink", `${label(options)} must not be a symlink: ${options.filePath}`);
       }
+      assertNotHardlinked(options, pathStat);
       return pathStat;
     }, openedIdentity);
     const realPath = fsSync.realpathSync.native(options.filePath);
-    await inspectFileIdentity(() => fsSync.statSync(realPath, { bigint: true }), openedIdentity);
+    await inspectFileIdentity(() => {
+      const realPathStat = fsSync.statSync(realPath, { bigint: true });
+      assertNotHardlinked(options, realPathStat);
+      return realPathStat;
+    }, openedIdentity);
     if (maxBytes !== undefined && openedStat.size > maxBytes) {
       throw new FsSafeError("too-large", `${label(options)} exceeded maxBytes (${maxBytes}).`);
     }
-    return { handle, pathStat: openedStat, realPath };
+    return { handle, identity: openedIdentity, pathStat: openedStat, realPath };
   } catch (err) {
     await handle.close().catch(() => undefined);
     throw err;
@@ -264,6 +280,14 @@ export async function readSecureFile(
       options.io?.timeoutMs,
       maxBytes,
     );
+    const finalIdentity = await inspectFileIdentity(
+      () => fsSync.fstatSync(opened.handle.fd, { bigint: true }),
+      opened.identity,
+    );
+    if (!finalIdentity.isFile()) {
+      throw new FsSafeError("not-file", `${label(options)} must remain a file: ${options.filePath}`);
+    }
+    assertNotHardlinked(options, finalIdentity);
     return { buffer, realPath: opened.realPath, stat: opened.pathStat, permissions };
   } finally {
     await opened.handle.close().catch(() => undefined);
