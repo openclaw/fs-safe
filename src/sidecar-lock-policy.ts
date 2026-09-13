@@ -1,6 +1,8 @@
 import fsSync from "node:fs";
 import type { SidecarLockRetryOptions } from "./sidecar-lock-types.js";
 
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
+
 function assertFiniteNonNegative(value: number, label: string): void {
   if (!Number.isFinite(value) || value < 0) {
     throw new RangeError(`${label} must be a finite non-negative number`);
@@ -39,6 +41,15 @@ export function validateSidecarLockStaleMs(staleMs: number | undefined): void {
   // consumers.
   if (staleMs === undefined || staleMs === Number.POSITIVE_INFINITY) return;
   assertFiniteNonNegative(staleMs, "lock staleMs");
+}
+
+export function validateSidecarLockCompromiseCheckIntervalMs(intervalMs: number | undefined): void {
+  if (intervalMs === undefined || intervalMs === 0) return;
+  if (!Number.isFinite(intervalMs) || intervalMs < 1 || intervalMs > MAX_TIMER_DELAY_MS) {
+    throw new RangeError(
+      `lock compromiseCheckIntervalMs must be 0 or a finite number between 1 and ${MAX_TIMER_DELAY_MS}`,
+    );
+  }
 }
 
 export function computeSidecarLockDelayMs(retry: SidecarLockRetryOptions, attempt: number): number {

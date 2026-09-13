@@ -19,6 +19,7 @@ import {
   maxTransientLockDenials,
   sidecarLockPayloadCreatedAtMs,
   validateSidecarLockStaleMs,
+  validateSidecarLockCompromiseCheckIntervalMs,
   validateSidecarLockRetryOptions,
   validateSidecarLockTimeoutMs,
 } from "./sidecar-lock-policy.js";
@@ -218,6 +219,7 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
   validateSidecarLockTimeoutMs(timeoutMs);
   const staleMs = options.staleMs ?? defaults.staleMs ?? 30_000;
   validateSidecarLockStaleMs(staleMs);
+  validateSidecarLockCompromiseCheckIntervalMs(options.compromiseCheckIntervalMs);
   const normalizedTargetPath = normalizeTargetPath(targetPath);
   const lockPath = boundedLockPath(options.lockPath ?? `${normalizedTargetPath}.lock`, options.lockRoot);
   const heldLocks = getSyncHeldLocks();

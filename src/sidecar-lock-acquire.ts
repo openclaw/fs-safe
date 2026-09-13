@@ -15,6 +15,7 @@ import {
   maxTransientLockDenials,
   validateSidecarLockStaleMs,
   validateSidecarLockRetryOptions,
+  validateSidecarLockCompromiseCheckIntervalMs,
   validateSidecarLockTimeoutMs,
 } from "./sidecar-lock-policy.js";
 import {
@@ -90,6 +91,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
   validateSidecarLockRetryOptions(retry);
   validateSidecarLockTimeoutMs(options.timeoutMs);
   validateSidecarLockStaleMs(options.staleMs);
+  validateSidecarLockCompromiseCheckIntervalMs(options.compromiseCheckIntervalMs);
   context.ensureExitCleanupRegistered();
   const normalizedTargetPath = await resolveNormalizedTargetPath(options.targetPath, options.lockRoot);
   const lockPath = options.lockPath ?? `${normalizedTargetPath}.lock`;

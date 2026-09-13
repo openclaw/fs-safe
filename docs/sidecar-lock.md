@@ -86,7 +86,7 @@ type FileLockAcquireOptions<TPayload extends Record<string, unknown>> = {
   lockRoot?: Root;
   retainOnExit?: boolean;               // keep the sidecar across process exit (default false)
   onCompromised?: (info: { lockPath: string; normalizedTargetPath: string }) => void;
-  compromiseCheckIntervalMs?: number;
+  compromiseCheckIntervalMs?: number;    // 0/omitted disables; otherwise 1..2_147_483_647
 };
 
 type FileLockRetryOptions = {
@@ -246,6 +246,12 @@ captured at acquisition. Set `compromiseCheckIntervalMs` together with
 `onCompromised` for a cheap periodic check; the callback fires once after the
 sidecar no longer matches or after a verification I/O failure. This is
 detection, not revocation of work already in progress.
+
+The compromise-check interval is validated before payload evaluation or
+filesystem acquisition. Omit it or pass `0` to disable monitoring; enabled
+intervals must be finite and between 1 and 2,147,483,647 milliseconds. Values
+outside that range are rejected instead of being clamped by Node.js to an
+unexpectedly tight polling loop.
 
 ## Synchronous locks
 
