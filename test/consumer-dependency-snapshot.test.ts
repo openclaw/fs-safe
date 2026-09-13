@@ -19,7 +19,7 @@ it("materializes pnpm hardlinked files as independent registry payload entries",
   await mkdir(join(installed, "dist", "esm"));
   await mkdir(artifacts);
   await writeFile(join(installed, "package.json"), '{"name":"hardlinked-codec","version":"1.0.0"}');
-  for (let index = 0; index < 20; index++) {
+  for (let index = 0; index < 2; index++) {
     const source = join(installed, "dist", "cjs", `${index}.d.ts`);
     await writeFile(source, "export {};\n");
     await link(source, join(installed, "dist", "esm", `${index}.d.ts`));
@@ -30,7 +30,13 @@ it("materializes pnpm hardlinked files as independent registry payload entries",
     expect(entry.type).not.toBe("Link");
     if (entry.type === "File") files.push(entry.path);
   } });
-  expect(files).toHaveLength(41);
+  expect(files.sort()).toEqual([
+    "package/dist/cjs/0.d.ts",
+    "package/dist/cjs/1.d.ts",
+    "package/dist/esm/0.d.ts",
+    "package/dist/esm/1.d.ts",
+    "package/package.json",
+  ]);
 });
 
 it("snapshots installed payloads without source packing rules or dependency links", async () => {
