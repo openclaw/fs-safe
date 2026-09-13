@@ -181,7 +181,7 @@ async function mergeTree(params: MergeParams, publication?: readonly ArchivePubl
               throw createArchiveSymlinkTraversalError(originalPath);
             }
           } catch (error) {
-            // copyIn alone owns cleanup; no receipt permits archive-layer unlink.
+            // copyIn cleans unpublished stages; merge never gains rollback authority.
             if (error instanceof FsSafeError && (error.code === "hardlink" || error.code === "path-alias")) {
               throw createArchiveSymlinkTraversalError(originalPath);
             }

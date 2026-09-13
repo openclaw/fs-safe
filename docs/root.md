@@ -132,7 +132,9 @@ and parent-directory fsync calls. Use it only for reconstructible data: a crash
 may lose the write or leave the previous file. See [Writing](writing.md#write-options)
 for platform details.
 
-`copyIn` accepts a trusted absolute source path or a file within another Root:
+`copyIn` accepts a `RootCopySource`: a trusted absolute source path or a file
+within another Root. The guarded form supplies `root` with only its `open` and
+`stat` read capabilities, plus `relativePath`:
 
 ```ts
 const source = await root("/srv/templates");
@@ -149,7 +151,8 @@ await destination.copyIn("config/settings.json", {
 ```
 
 The source Root applies its read policies, including confinement and symlink
-handling. `sourceHardlinks` overrides its hardlink policy. The admitted source
+handling. `sourceHardlinks` overrides its hardlink policy only when supplied;
+otherwise the source Root default is retained. The admitted source
 descriptor stays open through copying and source-identity verification; copying
 does not consume its current file position. Both forms enforce `maxBytes` while
 reading, including when a file grows after admission, and use bounded buffers.
@@ -168,7 +171,8 @@ fallback links the completed stage and removes its temporary name in the same
 JavaScript turn; the filesystem must support hardlinks. Other processes can
 briefly observe both names. The source is never hardlinked to the destination.
 
-`clone` chooses the file-data transfer strategy and defaults to `"never"`:
+`clone` chooses the file-data transfer strategy through `CopyFileCloneMode`
+and defaults to `"never"`:
 
 | Value | Behavior |
 | --- | --- |
@@ -187,11 +191,16 @@ admitted reads and native work to settle, then cleans only the owned unpublished
 stage. The final authority check runs before publication. Once publication has
 occurred, later cancellation or verification failure preserves the destination.
 The synchronous optional `onDestinationPublished` callback receives a frozen
-`{ path, dev, ino }` receipt with exact bigint identity immediately after
+`RootCopyPublicationReceipt` containing `{ path, dev, ino }`, with exact bigint identity immediately after
 publication, before later checks can fail. Callback errors also preserve the
 published file. This receipt records an outcome; it does not authorize removing
 a file that another actor may have edited. Application recovery and cooperative
 locking remain caller-owned.
+
+When upgrading from 0.9.0, account for completed destinations retained after a
+post-publication source-verification failure, even with the existing call
+signature. Recovery must inspect current destination state rather than assume
+a rejected copy left no file.
 
 Root operations that choose a new destination reject a leading Windows
 drive-relative spelling such as `C:name` on every platform. This applies to

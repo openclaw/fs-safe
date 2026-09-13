@@ -65,7 +65,8 @@ describe("Root.copyIn source and clone options", () => {
     (["never", "auto"] as const).map(clone => ({ source, clone }))))(
     "copies all $source bytes independently of source offset with clone=$clone and native off",
     async ({ source, clone }) => {
-      const content = Buffer.from(Array.from({ length: 256 * 1024 + 31 }, (_, index) => index % 251));
+      const pattern = Buffer.from(Array.from({ length: 251 }, (_, index) => index));
+      const content = Buffer.alloc(256 * 1024 + 31).fill(pattern);
       const copy = await fixture(content);
       await fs.writeFile(copy.target, "previous target");
       let admitted: FileHandle | undefined;
@@ -82,10 +83,10 @@ describe("Root.copyIn source and clone options", () => {
       }, { clone, mode: 0o640 });
 
       expect(admitted?.fd).toBe(-1);
-      expect(await fs.readFile(copy.target)).toEqual(content);
+      expect((await fs.readFile(copy.target)).equals(content)).toBe(true);
       if (process.platform !== "win32") expect((await fs.stat(copy.target)).mode & 0o777).toBe(0o640);
       await fs.writeFile(copy.target, "independent destination");
-      expect(await fs.readFile(copy.sourcePath)).toEqual(content);
+      expect((await fs.readFile(copy.sourcePath)).equals(content)).toBe(true);
       expect(await fs.readdir(copy.destinationDirectory)).toEqual(["target"]);
     },
   );
@@ -121,6 +122,30 @@ describe("Root.copyIn source and clone options", () => {
       root: copy.source, relativePath: "../outside",
     })).rejects.toMatchObject({ code: "outside-workspace" });
     expect(await fs.readdir(copy.destinationDirectory)).toEqual([]);
+  });
+
+  it.each([
+    { sourcePolicy: "allow", override: undefined, allowed: true },
+    { sourcePolicy: "allow", override: "reject", allowed: false },
+    { sourcePolicy: "reject", override: "allow", allowed: true },
+  ] as const)("honors source hardlink policy $sourcePolicy with override $override", async ({ sourcePolicy, override, allowed }) => {
+    const copy = await fixture();
+    const alias = path.join(copy.sourceDirectory, "alias");
+    await fs.link(copy.sourcePath, alias);
+    const source = await root(copy.sourceDirectory, { hardlinks: sourcePolicy });
+    const pending = copy.destination.copyIn("target", { root: source, relativePath: "input" }, {
+      sourceHardlinks: override,
+    });
+    if (allowed) {
+      await expect(pending).resolves.toBeUndefined();
+      expect(await fs.readFile(copy.target, "utf8")).toBe(copy.content);
+      await fs.writeFile(copy.target, "independent copy");
+    } else {
+      await expect(pending).rejects.toMatchObject({ code: "hardlink" });
+      expect(await fs.readdir(copy.destinationDirectory)).toEqual([]);
+    }
+    expect(await fs.readFile(copy.sourcePath, "utf8")).toBe(copy.content);
+    expect(await fs.readFile(alias, "utf8")).toBe(copy.content);
   });
 
   it.skipIf(process.platform === "win32").each(["reject", "follow-within-root"] as const)(

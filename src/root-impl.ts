@@ -1129,7 +1129,7 @@ async function copyFileInRoot(
       hardlinks: params.sourceHardlinks,
     }));
   } else {
-    source = await params.source.root.open(params.source.relativePath, { hardlinks: params.sourceHardlinks });
+    source = await params.source.root.open(params.source.relativePath, params.sourceHardlinks === undefined ? undefined : { hardlinks: params.sourceHardlinks });
     try {
       sourceIdentity = await inspectFileIdentity(() => fsSync.fstatSync(source.handle.fd, { bigint: true }));
     } catch (error) {
