@@ -128,8 +128,10 @@ pub fn clone_tree(
     {
         let name = std::ffi::CString::new(basename)
             .map_err(|_| native_error("EINVAL", "clone destination contains a NUL byte"))?;
-        // sys/clonefile.h: preserve literal symlinks and source ACLs. Both
-        // descriptors remain pinned by the caller until this operation settles.
+        // CLONE_ACL can copy the root ACL, but directory clones can lose both
+        // source and inherited descendant ACLs. Callers own eligibility; see
+        // docs/clone.md for Apple's directory-clone warning and XNU references.
+        // Both descriptors stay pinned until this bulk operation settles.
         const CLONE_NOFOLLOW: u32 = 0x0001;
         const CLONE_ACL: u32 = 0x0004;
         check_cancelled(cancelled)?;

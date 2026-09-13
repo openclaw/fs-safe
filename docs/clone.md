@@ -27,6 +27,14 @@ Source and destination must be on a filesystem that supports cloning between the
 
 Btrfs preserves native subvolume snapshot semantics: nested subvolume contents are not included. Prepare source-only templates without nested subvolumes. This API does not recursively snapshot a hierarchy of subvolumes.
 
+### APFS permissions
+
+APFS directory cloning does not guarantee descendant ACL preservation. With the `CLONE_ACL` flag used here, live macOS testing preserved the source root's ACL but dropped an explicit ACL on a source descendant. Destination ACL inheritance was also omitted below the cloned root. `probeTreeClone` checks filesystem support only; neither it nor `cloneTree` checks whether these ACL semantics meet the caller's permission policy. A successful clone is not proof of source ACL preservation or normal file-creation inheritance throughout the tree.
+
+Callers that require source ACL preservation or destination ACL inheritance must use a creation path that preserves their permission policy. For example, a private Git template cache can prohibit custom descendant ACLs and decline cloning when the destination parent has inheritable ACL entries, the template root carries ACLs, or ACL inspection fails; it must also account for policy changes during cloning. Checking only the source root cannot establish that an arbitrary tree has no descendant ACLs. This library does not inspect or repair ACLs after a clone.
+
+Apple [strongly discourages general directory cloning](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/man/man2/clonefile.2). The [XNU directory-clone authorizer notes unfinished descendant ACL inheritance](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/vfs/vfs_subr.c#L8879); this is one verified limitation, not Apple's stated complete rationale. The bulk operation remains useful for controlled, immutable templates whose callers accept its metadata semantics.
+
 ## API
 
 `TreeCloneBackend` is the `"apfs" | "btrfs" | "refs"` union returned by the probe. `CloneTreeOptions` contains the optional `signal` and `concurrency` arguments.
