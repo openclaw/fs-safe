@@ -44,17 +44,17 @@ afterEach(() => {
 describe("archive timeout lifetime", () => {
   it("preserves prompt deadlines around non-mutating work", async () => {
     let finished = false;
-    const startedAt = Date.now();
+    const release = Promise.withResolvers<void>();
+    const work = release.promise.then(() => { finished = true; });
 
-    await expect(
-      withExtractionDeadline(1, "extract tar", async () => {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        finished = true;
-      }),
-    ).rejects.toThrow("extract tar timed out after 1ms");
-
-    expect(Date.now() - startedAt).toBeLessThan(75);
-    expect(finished).toBe(false);
+    try {
+      await expect(withExtractionDeadline(1, "extract tar", () => work))
+        .rejects.toThrow("extract tar timed out after 1ms");
+      expect(finished).toBe(false);
+    } finally {
+      release.resolve();
+      await work;
+    }
   });
 
   it("joins a destination mutation already in flight at the deadline", async () => {
