@@ -65,6 +65,7 @@ Operational filesystem failures such as permissions or I/O errors are rethrown.
 | Export | Page | Notes |
 |---|---|---|
 | `readFileDescriptorBounded`, `readFileDescriptorBoundedSync`, `readFileHandleBounded` | – | Incremental whole-file reads for already-open descriptors/handles. They consume at most `maxBytes + 1`, do not close the input, and throw `FsSafeError("too-large")` on overflow. |
+| `readFileWindowFully`, `readFileWindowFullySync`, `ReadFileWindowOptions` | [positional-read.md](positional-read.md) | Fill a caller-owned buffer at an explicit file position, completing short reads and returning the EOF count without moving or closing the descriptor. |
 | `openRootFile`, `openRootFileSync`, `canUseRootFileOpen`, `matchRootFileOpenFailure`, related types | – | Low-level root-bounded open; rejects every symlink component by default, with `rejectSymlinks: false` for explicit in-root following. |
 | `appendRegularFile`, `appendRegularFileSync`, `readRegularFile`, `readRegularFileSync`, `statRegularFile`, `statRegularFileSync`, `resolveRegularFileAppendFlags`, `AppendRegularFileOptions`, `RegularFileStatResult` | [regular-file.md](regular-file.md) | Type-checked regular-file I/O. |
 | `sameFileIdentity`, `FileIdentityStat` | – | Compare two stats for same-inode equality. |
