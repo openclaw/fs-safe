@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Confirm EOF when Linux copy offload initially reports zero bytes, so automatic file copies fall back to reading available data instead of publishing an empty file.
+
 ## 0.10.0 - 2026-09-13
 
 ### Highlights
