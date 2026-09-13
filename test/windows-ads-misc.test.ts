@@ -185,18 +185,19 @@ itPosix("preserves legal POSIX colon paths across install, trash, and permission
   const root = await tempRoot("fs-safe-posix-colon-misc-");
   vi.spyOn(os, "homedir").mockReturnValue(root);
   const baseDir = path.join(root, "packages:stable");
-  const target = path.join(baseDir, "package:payload");
-  await fs.mkdir(baseDir);
+  const installDir = path.join(baseDir, "package:payload");
+  const target = path.join(installDir, "content:payload.txt");
+  await fs.mkdir(installDir, { recursive: true });
   await fs.writeFile(target, "content", "utf8");
 
   expect(resolveSafeInstallDir({
     baseDir,
     id: "package:payload",
     invalidNameMessage: "invalid package",
-  })).toEqual({ ok: true, path: target });
+  })).toEqual({ ok: true, path: installDir });
   await expect(assertCanonicalPathWithinBase({
     baseDir,
-    candidatePath: target,
+    candidatePath: installDir,
     boundaryLabel: "install directory",
   })).resolves.toBeUndefined();
   await expect(safeStat(target)).resolves.toMatchObject({ ok: true });

@@ -255,7 +255,7 @@ itPosix("preserves POSIX colon paths across guards, containment, and probes", as
     targetPath: nested,
   })).resolves.toBe(nested);
   expect(isPathInsideWithRealpath(rootDir, nested)).toBe(true);
-  expect(safeRealpathSync(nested)).toBe(nested);
+  expect(safeRealpathSync(nested)).toBe(fsSync.realpathSync(nested));
   expect(safeStatSync(nested)?.isDirectory()).toBe(true);
   await expect(pathExists(nested)).resolves.toBe(true);
   expect(pathExistsSync(nested)).toBe(true);
