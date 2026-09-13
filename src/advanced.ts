@@ -17,6 +17,11 @@ export {
   readFileHandleBounded,
 } from "./bounded-read.js";
 export {
+  readFileWindowFully,
+  readFileWindowFullySync,
+  type ReadFileWindowOptions,
+} from "./positional-read.js";
+export {
   assertNoUnsafeDeviceReadPath,
   isUnsafeDeviceReadPath,
   matchUnsafeDeviceReadPath,

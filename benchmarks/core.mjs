@@ -55,6 +55,15 @@ export async function registerCore({ api: a, workspace: w, register: add, contra
   for (const name of ["readRegularFile", "readRegularFileSync", "statRegularFile", "statRegularFileSync"]) add(name, () => a[name](name.startsWith("stat") ? input : { filePath: input }), { sync: name.endsWith("Sync") });
   for (const name of ["appendRegularFile", "appendRegularFileSync"]) add(name, () => a[name]({ filePath: path.join(w, "append.txt"), content: data }), { sync: name.endsWith("Sync"), before: () => fs.writeFileSync(path.join(w, "append.txt"), data) });
   for (const name of ["openRootFile", "openRootFileSync"]) add(name, () => a[name]({ absolutePath: input, rootPath: w, boundaryLabel: "benchmark" }), { sync: name.endsWith("Sync"), verify: (r) => assert(r.ok), after: (r) => { if (r?.ok) fs.closeSync(r.fd); } });
+  for (const name of ["readFileWindowFully", "readFileWindowFullySync"]) {
+    const sync = name.endsWith("Sync");
+    const buffer = Buffer.alloc(data.length - 1);
+    add(name, (opened) => a[name](opened, buffer, 1), {
+      sync, before: () => sync ? fs.openSync(input, "r") : fsp.open(input, "r"),
+      after: (_, opened) => sync ? fs.closeSync(opened) : opened.close(),
+      verify: (count) => { assert.equal(count, buffer.length); assert.deepEqual(buffer, data.subarray(1)); },
+    });
+  }
   for (const size of [128, 64 * 1024, 1024 * 1024, 2 * 1024 * 1024, 16 * 1024 * 1024, 32 * 1024 * 1024]) {
     const divisor = size > 1024 * 1024 ? 10 : 1;
     const filePath = path.join(w, `bytes-${size}`);
