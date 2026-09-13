@@ -75,6 +75,7 @@ import { verifyAtomicWriteResult } from "./root-write-verification.js";
 import { inheritWriteTargetMode } from "./root-write-mode.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 import { onCopyPublication, type CopyPublicationOptions } from "./copy-publication.js";
+import { writeAllToFile } from "./write-file-handle.js";
 
 import {
   mergeReadOptions, readDefaults,
@@ -973,15 +974,14 @@ async function appendFileInRoot(
       }
     }
 
-    params.assertBeforeMutation?.();
+    const payload = typeof params.data === "string" ? `${prefix}${params.data}`
+      : prefix.length > 0 ? Buffer.concat([Buffer.from(prefix, "utf8"), params.data]) : params.data;
+    await writeAllToFile(target.handle, payload, {
+      encoding: params.encoding,
+      assertBeforeMutation: () => { params.assertBeforeMutation?.(); dispatched = true; },
+    });
+    // A successful empty append still creates the file, as Node's appendFile does.
     dispatched = true;
-    if (typeof params.data === "string") {
-      await target.handle.appendFile(`${prefix}${params.data}`, params.encoding ?? "utf8");
-    } else {
-      const payload =
-        prefix.length > 0 ? Buffer.concat([Buffer.from(prefix, "utf8"), params.data]) : params.data;
-      await target.handle.appendFile(payload);
-    }
     if (params.durable !== false) await target.handle.sync();
     if (params.durable !== false && target.createdForWrite) {
       await syncDirectoryBestEffort(path.dirname(target.realPath));
@@ -1194,12 +1194,10 @@ async function removePathIfIdentityUnchanged(
   identity: FileIdentityStat,
 ): Promise<void> {
   const parentGuard = await createAsyncDirectoryGuard(path.dirname(targetPath));
-  const current = fsSync.lstatSync(targetPath);
-  if (current.isSymbolicLink() || !sameFileIdentityForCleanup(current, identity)) {
-    return;
-  }
   await withAsyncDirectoryGuards([parentGuard], async () => {
-    await fs.rm(targetPath);
+    const current = fsSync.lstatSync(targetPath);
+    if (current.isSymbolicLink() || !sameFileIdentityForCleanup(current, identity)) return;
+    await fs.unlink(targetPath);
   });
 }
 
@@ -1359,7 +1357,7 @@ async function removePathFallback(resolved: { resolved: string }, assertBeforeMu
   try {
     const isDirectory = fsSync.lstatSync(resolved.resolved).isDirectory();
     assertBeforeMutation?.();
-    await (isDirectory ? fs.rmdir(resolved.resolved) : fs.rm(resolved.resolved));
+    await (isDirectory ? fs.rmdir(resolved.resolved) : fs.unlink(resolved.resolved));
   } catch (error) {
     throw normalizeRemovePathError(error);
   }
@@ -1576,8 +1574,9 @@ async function writeFileFallback(
     writtenHandle = await fs.open(tempPath, OPEN_WRITE_CREATE_FLAGS, 0o600);
     writtenIdentity = fsSync.fstatSync(writtenHandle.fd, { bigint: true });
     unregisterTempPath = registerTempPathForExit(tempPath, { identity: writtenIdentity, singleLinkFile: true });
-    params.assertBeforeMutation?.();
-    await writtenHandle.writeFile(params.data, params.encoding ?? "utf8");
+    await writeAllToFile(writtenHandle, params.data, {
+      encoding: params.encoding, assertBeforeMutation: params.assertBeforeMutation,
+    });
     if (params.durable !== false) await writtenHandle.sync();
     const commitTempPath = tempPath;
     const commitHandle = writtenHandle;
@@ -1667,8 +1666,9 @@ async function writeMissingFileFallback(
         created = true;
         const writtenStat = fsSync.fstatSync(handle.fd, { bigint: true });
         createdIdentity = writtenStat;
-        params.assertBeforeMutation?.();
-        await handle.writeFile(params.data, params.encoding ?? "utf8");
+        await writeAllToFile(handle, params.data, {
+          encoding: params.encoding, assertBeforeMutation: params.assertBeforeMutation,
+        });
         if (params.durable !== false) await handle.sync();
         return { handle, writtenStat };
       },

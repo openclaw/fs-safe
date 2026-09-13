@@ -53,47 +53,56 @@ describe.each(routes)("Root mutation authority: $name", ({ mode, windows }) => {
       const target = operation === "create" ? "created" : "target";
       const expired = Object.assign(new Error("owner expired"), { code: "EEXIST" });
       let active = true;
-      let writes = 0;
-      const open = fs.open.bind(fs);
-      vi.spyOn(fs, "open").mockImplementation(async (...args: Parameters<typeof fs.open>) => {
-        const handle = await open(...args);
-        const writeFile = handle.writeFile.bind(handle);
-        vi.spyOn(handle, "writeFile").mockImplementation(async (...writeArgs) => {
-          await writeFile(...writeArgs);
-          active = false;
-        });
-        // Exclusive creation is visible before content is written. Its owner must
-        // remove that empty file when authority expired during the open itself.
-        if (operation === "create" && mode === "off" && String(args[0]) === path.join(directory, target)) {
-          active = false;
-        }
-        const write = handle.write.bind(handle);
-        vi.spyOn(handle, "write").mockImplementation((async (...writeArgs: Parameters<typeof handle.write>) => {
-          const result = await write(...writeArgs);
-          writes++;
-          active = false;
-          return result;
-        }) as typeof handle.write);
-        return handle;
-      });
-      const writeSync = fsSync.writeSync.bind(fsSync);
-      vi.spyOn(fsSync, "writeSync").mockImplementation(((...args: Parameters<typeof fsSync.writeSync>) => {
-        const result = writeSync(...args);
-        writes++;
-        active = false;
-        return result;
-      }) as typeof fsSync.writeSync);
-      const assertBeforeMutation = () => { if (!active) throw expired; };
+      const assertBeforeMutation = () => {
+        const createdTarget = operation === "create" && mode === "off" && fsSync.existsSync(path.join(directory, target));
+        const preparedStage = fsSync.readdirSync(directory).some((name) =>
+          name !== "source" && name !== "target" && fsSync.lstatSync(path.join(directory, name)).size > 0);
+        if (createdTarget || preparedStage) active = false;
+        if (!active) throw expired;
+      };
       const pending = operation === "copyIn"
         ? scoped.copyIn(target, path.join(directory, "source"), { assertBeforeMutation })
         : scoped[operation](target, "replacement", { assertBeforeMutation });
       await expect(pending).rejects.toBe(expired);
       expect(active).toBe(false);
-      if (operation === "copyIn") expect(writes).toBe(1);
       expect(await fs.readFile(path.join(directory, "target"), "utf8")).toBe("original");
       expect((await fs.readdir(directory)).sort()).toEqual(["source", "target"]);
     },
   );
+
+  it.each(["short", "stalled"] as const)("preserves bytes and cleanup through %s writes", async (behavior) => {
+    const { directory, scoped } = await fixture();
+    configure();
+    let writes = 0;
+    const open = fs.open.bind(fs);
+    vi.spyOn(fs, "open").mockImplementation(async (...args: Parameters<typeof fs.open>) => {
+      const handle = await open(...args);
+      const write = handle.write.bind(handle);
+      vi.spyOn(handle, "write").mockImplementation((async (buffer, offset, length, position) => {
+        writes++;
+        return behavior === "stalled" ? { bytesWritten: 0, buffer }
+          : await write(buffer, offset, Math.min(length, 3), position);
+      }) as typeof handle.write);
+      return handle;
+    });
+    const write = fsSync.write.bind(fsSync);
+    vi.spyOn(fsSync, "write").mockImplementation(((fd, buffer, offset, length, position, callback) => {
+      writes++;
+      if (behavior === "stalled") callback(null, 0, buffer);
+      else write(fd, buffer, offset, Math.min(length, 3), position, callback);
+    }) as typeof fsSync.write);
+    const content = "é:🙂";
+    const pending = scoped.write("target", content, { encoding: "utf16le" });
+    if (behavior === "stalled") {
+      await expect(pending).rejects.toMatchObject({ code: "helper-failed" });
+      expect(await fs.readFile(path.join(directory, "target"), "utf8")).toBe("original");
+    } else {
+      await pending;
+      expect(await fs.readFile(path.join(directory, "target"))).toEqual(Buffer.from(content, "utf16le"));
+    }
+    expect(writes).toBeGreaterThan(0);
+    expect((await fs.readdir(directory)).sort()).toEqual(["source", "target"]);
+  });
 });
 
 it.each(["mkdir", "remove", "move"] as const)(
@@ -209,20 +218,17 @@ it.skipIf(!nativeAvailable || process.platform === "win32")("preserves native cl
   let active = true;
   let temporaryName: string | undefined;
   const expired = new Error("owner expired");
-  const writeSync = fsSync.writeSync.bind(fsSync);
-  vi.spyOn(fsSync, "writeSync").mockImplementation(((...args: Parameters<typeof fsSync.writeSync>) => {
-    const result = writeSync(...args);
-    if (active) {
-      temporaryName = fsSync.readdirSync(directory).find((name) => name.startsWith(".fs-safe-"));
-      expect(temporaryName).toBeDefined();
-      fsSync.renameSync(path.join(directory, temporaryName!), path.join(directory, "saved-stage"));
-      fsSync.writeFileSync(path.join(directory, temporaryName!), "replacement-owned-by-another-operation");
-      active = false;
-    }
-    return result;
-  }) as typeof fsSync.writeSync);
   await expect(scoped.copyIn("target", path.join(directory, "source"), {
-    assertBeforeMutation: () => { if (!active) throw expired; },
+    assertBeforeMutation: () => {
+      temporaryName = fsSync.readdirSync(directory).find((name) =>
+        name !== "source" && name !== "target" && fsSync.lstatSync(path.join(directory, name)).size > 0);
+      if (active && temporaryName) {
+        fsSync.renameSync(path.join(directory, temporaryName), path.join(directory, "saved-stage"));
+        fsSync.writeFileSync(path.join(directory, temporaryName), "replacement-owned-by-another-operation");
+        active = false;
+      }
+      if (!active) throw expired;
+    },
   })).rejects.toMatchObject({
     details: { phase: "prepare", cleanup: { status: "preserved", resources: "closed" } },
     cause: { cause: expired },

@@ -5,7 +5,8 @@
 - Read native ZIP entries from the retained, admitted input buffer and reuse the parsed directory, eliminating temporary disk staging and archive handoff copies while preserving validation.
 - Add `@openclaw/fs-safe/clone` for native APFS directory clones, Btrfs subvolume preparation and snapshots, and parallel ReFS tree cloning, with exclusive destinations and cancellation that waits for native writes to settle.
 - Add async and sync positional reads that fill caller-owned buffers through short reads, stop at EOF, preserve descriptor offsets and ownership, and support cooperative async cancellation.
-- Add composed Root `assertBeforeMutation` callbacks that recheck live caller authority immediately before filesystem mutation dispatch, preserving refusal errors and owned cleanup across native and JavaScript writers.
+- Add composed Root `assertBeforeMutation` callbacks that recheck live caller authority immediately before filesystem mutation dispatch, including each buffered-write chunk and direct file removal, preserving refusal errors and owned cleanup across native and JavaScript writers.
+
 - Give the full documentation-build smoke test a bounded longer runtime so slow Windows runners do not hit the default unit-test deadline.
 - Add byte limits and cooperative cancellation to `sha256File`, preserving descriptor ownership and waiting for native work to stop before rejecting.
 

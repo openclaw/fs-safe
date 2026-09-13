@@ -20,6 +20,7 @@ import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { cleanupPinnedFilePath } from "./replace-file-temp-owner.js";
 import { withSidecarLock } from "./sidecar-lock.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
+import { writeAllToFile } from "./write-file-handle.js";
 
 export type PinnedWriteInput =
   | { kind: "buffer"; data: string | Buffer; encoding?: BufferEncoding }
@@ -63,19 +64,7 @@ async function writeStreamToHandle(
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
     bytes += buffer.byteLength;
     assertWithinMaxBytes(bytes, maxBytes);
-    let offset = 0;
-    while (offset < buffer.byteLength) {
-      assertBeforeMutation?.();
-      const { bytesWritten } = await handle.write(
-        buffer,
-        offset,
-        buffer.byteLength - offset,
-      );
-      if (bytesWritten <= 0) {
-        throw new FsSafeError("helper-failed", "fallback stream write made no progress");
-      }
-      offset += bytesWritten;
-    }
+    await writeAllToFile(handle, buffer, { assertBeforeMutation });
   }
 }
 
@@ -209,12 +198,9 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
           byteLength(params.input.data, params.input.encoding),
           params.maxBytes,
         );
-        params.assertBeforeMutation?.();
-        if (typeof params.input.data === "string") {
-          await handle.writeFile(params.input.data, params.input.encoding ?? "utf8");
-        } else {
-          await handle.writeFile(params.input.data);
-        }
+        await writeAllToFile(handle, params.input.data, {
+          encoding: params.input.encoding, assertBeforeMutation: params.assertBeforeMutation,
+        });
       } else {
         await writeStreamToHandle(params.input.stream, handle, params.maxBytes, params.assertBeforeMutation);
       }
@@ -262,12 +248,9 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
         byteLength(params.input.data, params.input.encoding),
         params.maxBytes,
       );
-      params.assertBeforeMutation?.();
-      if (typeof params.input.data === "string") {
-        await handle.writeFile(params.input.data, params.input.encoding ?? "utf8");
-      } else {
-        await handle.writeFile(params.input.data);
-      }
+      await writeAllToFile(handle, params.input.data, {
+        encoding: params.input.encoding, assertBeforeMutation: params.assertBeforeMutation,
+      });
     } else {
       await writeStreamToHandle(params.input.stream, handle, params.maxBytes, params.assertBeforeMutation);
     }

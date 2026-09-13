@@ -35,7 +35,7 @@ describe.runIf(native)("staged ownership failure boundaries", () => {
     const moved = `${directory}-moved`;
     const failure = Object.assign(new Error(`injected ${operation}`), { code: "EIO" });
     const method = {
-      fstat: "fstatSync", chmod: "fchmodSync", write: "writeSync", sync: "fsyncSync",
+      fstat: "fstatSync", chmod: "fchmodSync", write: "write", sync: "fsyncSync",
     }[operation] as "fstatSync";
     const original = fsSync[method];
     let createdFd: number | undefined;
@@ -194,7 +194,7 @@ describe.runIf(native)("staged ownership failure boundaries", () => {
         throw unlinkFailure;
       },
     }));
-    vi.spyOn(fsSync, "writeSync").mockImplementation(() => {
+    vi.spyOn(fsSync, "write").mockImplementation(() => {
       throw writeFailure;
     });
     const error = await stageFileInDirectory({ directory, content: "x" }).catch((value: unknown) => value);

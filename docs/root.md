@@ -150,8 +150,10 @@ await fs.write("config.json", "{}\n", {
 The callback runs synchronously after awaited preparation, immediately before
 each Root-owned mutation is dispatched: parent creation, file creation and
 content writes (including private staging and streamed chunks), publication,
-truncation, append, move, and removal. Native calls that perform multiple
-filesystem steps are one dispatch. No asynchronous wait separates the check
+truncation, append, move, and removal. Buffered writes use bounded chunks and
+recheck before every partial-write submission; file removal submits a direct
+unlink request. Native calls that perform multiple filesystem steps are one
+dispatch. No asynchronous wait separates the check
 from that dispatch. A thrown value rejects the operation unchanged; an async
 or thenable-returning callback rejects with `TypeError` before that mutation.
 Synchronous return values are ignored. Callbacks can run multiple times and

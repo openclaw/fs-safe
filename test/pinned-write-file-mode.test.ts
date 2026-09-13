@@ -26,16 +26,11 @@ describe.skipIf(process.platform === "win32")("fallback final file mode", () => 
         const handle = await open(...args);
         if (!(await handle.stat()).isFile()) return handle;
         const chmod = handle.chmod.bind(handle);
-        const writeFile = handle.writeFile.bind(handle);
         const write = handle.write.bind(handle);
         const sync = handle.sync.bind(handle);
         vi.spyOn(handle, "chmod").mockImplementation(async (mode) => {
           events.push("chmod");
           await chmod(mode);
-        });
-        vi.spyOn(handle, "writeFile").mockImplementation(async (...args) => {
-          events.push("write");
-          await writeFile(...args);
         });
         vi.spyOn(handle, "write").mockImplementation((async (...args: Parameters<typeof handle.write>) => {
           events.push("write");
