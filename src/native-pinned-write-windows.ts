@@ -46,6 +46,7 @@ export async function runPinnedWriteWindows(
   let completed = false;
   try {
     tempName = `.fs-safe-${randomUUID()}.tmp`;
+    params.assertBeforeMutation?.();
     tempFd = binding.openBeneath(
       parentFd,
       tempName,
@@ -59,8 +60,9 @@ export async function runPinnedWriteWindows(
     // can remove owner access. Keep the unpublished inode private and
     // reopenable until the published name has been identity-fenced.
     fsSync.fchmodSync(tempFd, 0o600);
-    await writeNativeInput(tempFd, params.input, params.maxBytes);
+    await writeNativeInput(tempFd, params.input, params.maxBytes, params.assertBeforeMutation);
     if (params.sync !== false) syncFileBestEffortSync(tempFd);
+    params.assertBeforeMutation?.();
     if (params.overwrite === false) {
       binding.renameNoReplace(parentFd, tempName, parentFd, params.basename);
     } else {

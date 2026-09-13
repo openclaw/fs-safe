@@ -39,6 +39,7 @@ export async function writeNativeInput(
   fd: number,
   input: PinnedWriteInput,
   maxBytes?: number,
+  assertBeforeMutation?: () => void,
 ): Promise<void> {
   let bytes = 0;
   const write = (data: Buffer) => {
@@ -46,6 +47,7 @@ export async function writeNativeInput(
     if (maxBytes !== undefined && bytes > maxBytes) {
       throw new FsSafeError("too-large", `file exceeds limit of ${maxBytes} bytes (got at least ${bytes})`);
     }
+    assertBeforeMutation?.();
     writeNativeFd(fd, data);
   };
   if (input.kind === "buffer") {

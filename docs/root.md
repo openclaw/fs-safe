@@ -18,6 +18,7 @@ const fs = await root("/srv/workspace", {
 function root(rootDir: string, defaults?: RootDefaults): Promise<Root>;
 
 type RootDefaults = {
+  assertBeforeMutation?: () => void; // synchronous caller authority check at mutation dispatch
   durable?: boolean;               // fsync write/create/writeJson/createJson/append/copyIn; default true
   hardlinks?: "reject" | "allow";  // refuse files with nlink > 1 on read; defaults to "reject"
   denyMutations?: DenyMutationPolicy; // absolute paths/prefixes mutation methods may not change
@@ -39,7 +40,7 @@ type DenyMutationPolicy = {
 
 The root directory is pinned with exact bigint device/inode identities. A changed root rejects subsequent operations; an unknown Windows identity that remains unverifiable after bounded reinspection rejects construction with `path-mismatch`.
 
-`defaults` apply to every method on the returned handle. Per-call options on individual methods override the defaults for that call only, except `denyMutations`: root and per-call deny entries are merged so a call cannot clear a root-level deny.
+`defaults` apply to every method on the returned handle. Per-call options on individual methods override the defaults for that call only, except `denyMutations` and `assertBeforeMutation`: deny entries are merged, and the root assertion runs before the per-call assertion. A call cannot clear either root-level restriction.
 
 Every `maxBytes` value must be a non-negative safe integer or positive `Infinity`. Zero is an active zero-byte cap; `Infinity` explicitly disables the cap. An omitted or explicitly `undefined` per-call value preserves the configured Root default instead of clearing it.
 
@@ -132,6 +133,47 @@ derive portable destination names from host files must sanitize or map that
 basename first.
 
 `openWritable` opens a writable file with options `mode?: number` and `writeMode?: "replace" | "append" | "update"`. `replace` truncates existing files and is the default; `update` keeps existing contents. Use it for streaming output. Prefer `await using` for cleanup.
+
+### Live mutation authority
+
+All mutation methods accept `assertBeforeMutation?: () => void`. Use it when a
+lease, operation owner, or cancellation state can expire while filesystem
+preparation is awaiting I/O:
+
+```ts
+const controller = new AbortController();
+await fs.write("config.json", "{}\n", {
+  assertBeforeMutation: () => controller.signal.throwIfAborted(),
+});
+```
+
+The callback runs synchronously after awaited preparation, immediately before
+each Root-owned mutation is dispatched: parent creation, file creation and
+content writes (including private staging and streamed chunks), publication,
+truncation, append, move, and removal. Native calls that perform multiple
+filesystem steps are one dispatch. No asynchronous wait separates the check
+from that dispatch. A thrown value rejects the operation unchanged; an async
+or thenable-returning callback rejects with `TypeError` before that mutation.
+Synchronous return values are ignored. Callbacks can run multiple times and
+must inspect current authority each time.
+
+Already dispatched I/O cannot be revoked. Identity-checked cleanup, final
+permissions, and durability finish under the existing operation owner even
+after authority expires. Sidecar lock acquisition, recovery, and release for
+`renameIdentity: "verify-content-with-lock"` are lock bookkeeping outside this
+callback; content mutations still recheck after the lock is acquired. An
+operation may leave already-created parent directories when a later check
+rejects. A no-op such as `ensureRoot()` on the existing root does not require a
+callback invocation. This is a dispatch fence, not a filesystem transaction or
+a replacement for root confinement.
+
+If cleanup also fails or cannot prove ownership of an entry, the existing
+structured cleanup error takes precedence and retains the authority refusal
+as its cause.
+
+For `openWritable()`, the callback covers the library's parent creation,
+exclusive creation, and truncation. The returned raw `FileHandle` belongs to
+the caller, which must check authority before its own later writes.
 
 All mutation methods accept `denyMutations?: { paths?: string[]; prefixes?: string[] }`. Entries must be absolute paths. `paths` blocks those exact paths; `prefixes` blocks those paths and their descendants. fs-safe preserves path strings exactly and canonicalizes through existing ancestors before comparing, so a symlinked ancestor to a denied location is still denied. Denied mutations throw `FsSafeError` with code `denied-path`. Use this for caller-specific sensitive paths, not as a replacement for the root boundary, symlink, or hardlink checks.
 

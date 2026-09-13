@@ -56,6 +56,7 @@ async function writeStreamToHandle(
   stream: Readable,
   handle: FileHandle,
   maxBytes: number | undefined,
+  assertBeforeMutation?: () => void,
 ): Promise<void> {
   let bytes = 0;
   for await (const chunk of stream) {
@@ -64,6 +65,7 @@ async function writeStreamToHandle(
     assertWithinMaxBytes(bytes, maxBytes);
     let offset = 0;
     while (offset < buffer.byteLength) {
+      assertBeforeMutation?.();
       const { bytesWritten } = await handle.write(
         buffer,
         offset,
@@ -89,6 +91,7 @@ export type PinnedWriteParams = {
   mode: number;
   sync?: boolean;
   overwrite?: boolean;
+  assertBeforeMutation?: () => void;
   maxBytes?: number;
   input: PinnedWriteInput;
   rootIdentity?: FileIdentityStat;
@@ -168,6 +171,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
     parentPath = await mkdirPathComponentsWithGuards({
       rootReal: params.rootPath,
       targetPath: parentPath,
+      assertBeforeMutation: params.assertBeforeMutation,
       beforeComponent: async (componentPath) =>
         await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("mkdir", componentPath),
     });
@@ -179,12 +183,14 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
   if (params.overwrite === false) {
     const handle = await withAsyncDirectoryGuards(
       [parentGuard],
-      async () =>
-        await fs.open(
+      async () => {
+        params.assertBeforeMutation?.();
+        return await fs.open(
           targetPath,
           fsSync.constants.O_WRONLY | fsSync.constants.O_CREAT | fsSync.constants.O_EXCL,
           params.mode,
-        ),
+        );
+      },
       {
         onPostGuardFailure: async (openedHandle) => {
           // The parent failed verification, so targetPath may now resolve
@@ -203,13 +209,14 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
           byteLength(params.input.data, params.input.encoding),
           params.maxBytes,
         );
+        params.assertBeforeMutation?.();
         if (typeof params.input.data === "string") {
           await handle.writeFile(params.input.data, params.input.encoding ?? "utf8");
         } else {
           await handle.writeFile(params.input.data);
         }
       } else {
-        await writeStreamToHandle(params.input.stream, handle, params.maxBytes);
+        await writeStreamToHandle(params.input.stream, handle, params.maxBytes, params.assertBeforeMutation);
       }
       // Content writes may clear set-ID bits; finalize them through the owned fd.
       await handle.chmod(params.mode);
@@ -246,6 +253,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
   let readHandle: FileHandle | undefined;
   let renamed = false;
   try {
+    params.assertBeforeMutation?.();
     handle = await fs.open(tempPath, tempFlags, params.mode);
     let verificationIdentity = fsSync.fstatSync(handle.fd, { bigint: true });
     tempIdentity = verificationIdentity;
@@ -254,13 +262,14 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
         byteLength(params.input.data, params.input.encoding),
         params.maxBytes,
       );
+      params.assertBeforeMutation?.();
       if (typeof params.input.data === "string") {
         await handle.writeFile(params.input.data, params.input.encoding ?? "utf8");
       } else {
         await handle.writeFile(params.input.data);
       }
     } else {
-      await writeStreamToHandle(params.input.stream, handle, params.maxBytes);
+      await writeStreamToHandle(params.input.stream, handle, params.maxBytes, params.assertBeforeMutation);
     }
     tempStat = fsSync.fstatSync(handle.fd);
     const tempPathStat = fsSync.lstatSync(tempPath);
@@ -272,6 +281,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
     if (params.sync !== false) await syncFileBestEffort(handle);
     let verifiedIdentity: FileIdentityStat = expectedTempStat;
     await withAsyncDirectoryGuards([parentGuard], async () => {
+      params.assertBeforeMutation?.();
       await fs.rename(tempPath, targetPath);
       renamed = true;
       await getFsSafeTestHooks()?.afterPinnedWriteFallbackRename?.(targetPath);

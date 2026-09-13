@@ -148,6 +148,12 @@ await fs.create("notes/README.md", "seed\n"); // throws if it already exists
 
 `write()` replaces file contents by default; pass `{ overwrite: false }` or use `create()` when an existing file should be an error. `move()` defaults to no clobber because it can otherwise delete an unrelated target while also consuming the source. Pass `{ overwrite: true }` when replacing the target is intended.
 
+Mutating methods accept `assertBeforeMutation: () => void` for live lease or
+cancellation checks immediately before filesystem dispatch. Root defaults and
+per-call checks compose; cleanup and already-dispatched work still settle.
+See [live mutation authority](docs/root.md#live-mutation-authority) for the exact
+scope, including raw writable handles and lock bookkeeping.
+
 Use `ensureRoot()` when a computed relative directory target resolves to the root itself (`""` or `"."`) and you want the operation to be accepted. `root()` still requires the trusted root directory to already exist.
 
 ## Reading

@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import type { AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
+import { MutationAuthorityError } from "./mutation-authority.js";
 import type { FileIdentityStat } from "./file-identity.js";
 import type { NativeBinding } from "./native-binding.js";
 import { writeNativeInput } from "./native-operations.js";
@@ -70,6 +71,7 @@ class NativeStagedFile implements StagedFile {
   readonly #portableNames: boolean;
   readonly #publishedMode: number;
   readonly #sync: boolean;
+  readonly #assertBeforeMutation?: () => void;
   readonly #name = `.fs-safe-${randomUUID()}.tmp`;
   #state: State = { status: "open", publication: NOT_PUBLISHED };
   #receipt?: StagedFileReceipt;
@@ -81,6 +83,7 @@ class NativeStagedFile implements StagedFile {
     portableNames: boolean,
     publishedMode: number,
     sync: boolean,
+    assertBeforeMutation?: () => void,
   ) {
     this.#binding = binding;
     this.#parentFd = parentFd;
@@ -88,6 +91,7 @@ class NativeStagedFile implements StagedFile {
     this.#portableNames = portableNames;
     this.#publishedMode = publishedMode;
     this.#sync = sync;
+    this.#assertBeforeMutation = assertBeforeMutation;
   }
 
   // Takes ownership of parentFd, including all construction and preparation failures.
@@ -101,10 +105,11 @@ class NativeStagedFile implements StagedFile {
     // Public staging uses portable names; existing POSIX writes accept literal names.
     portableNames = true,
     sync = true,
+    assertBeforeMutation?: () => void,
   ): Promise<NativeStagedFile> {
     let staged: NativeStagedFile;
     try {
-      staged = new NativeStagedFile(binding, parentFd, directory, portableNames, mode, sync);
+      staged = new NativeStagedFile(binding, parentFd, directory, portableNames, mode, sync, assertBeforeMutation);
     } catch (error) {
       try {
         fs.closeSync(parentFd);
@@ -127,7 +132,7 @@ class NativeStagedFile implements StagedFile {
     // This owner never escapes. Only the internal verifier borrows its fd;
     // public descriptor methods remain await-free and cannot race disposal.
     await using staged = await NativeStagedFile.create(
-      binding, parentFd, directory, params.input, params.mode, params.maxBytes, false, params.sync,
+      binding, parentFd, directory, params.input, params.mode, params.maxBytes, false, params.sync, params.assertBeforeMutation,
     );
     const published = await staged.publish(params.basename, { overwrite: params.overwrite !== false });
     const identity = published.staged.identity;
@@ -185,10 +190,11 @@ class NativeStagedFile implements StagedFile {
       // The exclusive open performs no fallible post-open checks. Store its fd
       // before every subsequent operation, including the first metadata read.
       const state = this.#open();
+      this.#assertBeforeMutation?.();
       state.fileFd = this.#binding.createStagedFile(this.#parentFd, this.#name);
       const fd = state.fileFd;
       fs.fchmodSync(fd, 0o600);
-      await writeNativeInput(fd, input, maxBytes);
+      await writeNativeInput(fd, input, maxBytes, this.#assertBeforeMutation);
       if (this.#sync) syncFileBestEffortSync(fd);
       const stat = fs.fstatSync(fd, { bigint: true });
       this.#receipt = Object.freeze({
@@ -237,6 +243,7 @@ class NativeStagedFile implements StagedFile {
         throw new FsSafeError("invalid-path", "publication needs a distinct basename and explicit overwrite policy");
       }
       this.#assertCurrent();
+      this.#assertBeforeMutation?.();
       try {
         if (overwrite) {
           this.#binding.renameReplace(this.#parentFd, this.#name, this.#parentFd, basename);
@@ -275,6 +282,7 @@ class NativeStagedFile implements StagedFile {
       assertStagedDirectoryCurrent(this.#directory);
       return receipt;
     } catch (error) {
+      if (error instanceof MutationAuthorityError) throw error;
       // Closure rejects further use, not the recorded outcome of an earlier publication.
       const publication = this.#state.status === "closed"
         ? this.#state.receipt.publication
