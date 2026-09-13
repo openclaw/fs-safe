@@ -91,7 +91,8 @@ try {
   for (const c of cases) {
     if (args.filter && !c.name.includes(args.filter)) continue;
     if (c.skip) { results.push({ name: c.name, skipped: c.skip }); continue; }
-    const iterations = c.sync && !c.before && !c.after ? args.iterations * (c.batch ?? 1) : Math.max(1, Math.floor(args.iterations / (c.divisor ?? 1)));
+    const iterations = Math.max(1, Math.floor(args.iterations / (c.divisor ?? 1))) *
+      (c.sync && !c.before && !c.after ? (c.batch ?? 1) : 1);
     const once = async (timed) => {
       const input = await c.before?.();
       let output;

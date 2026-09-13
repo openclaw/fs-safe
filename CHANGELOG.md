@@ -3,7 +3,7 @@
 ## Unreleased
 
 - Add `copyFileHandle` for bounded transfers between caller-owned regular-file handles, preserving both cursors and source observation before target writes while sharing Root's portable copy machinery.
-
+- Apply benchmark iteration reductions consistently to synchronous operations, verify hash digests, and cover sorted/early-stop directory iteration and explicit mixed-tree copy policies.
 - Add `sha256FileSync()` for bounded SHA-256 hashing of pathnames and borrowed file descriptors without changing their current positions, with exact pathname admission checks and no native binding requirement.
 - Keep synchronous store writers open through publication and verify exact inode identities, rejecting substituted files even when Windows reports opaque or numerically indistinguishable pathname metadata.
 

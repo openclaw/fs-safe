@@ -31,6 +31,10 @@ cases exclude later close/release, which have their own rows. Representative
 payload assertions run outside measurement. Reads cover 128 B, 64 KiB, 1 MiB,
 2 MiB, the default Root budget of 16 MiB, and an explicit 32 MiB budget;
 writes compare both durability settings without changing package defaults.
+Hash cases verify the digest as well as the byte count outside measurement.
+Directory iteration includes full and early-stop scans in filesystem and sorted
+order. Tree-copy cases use explicit auto, never, and supported always policies
+over 64 small files, one 1 MiB file, and nested and empty directories.
 ZIP reads and extraction also cover 1 MiB and 16 MiB stored and deflated members
 to expose payload integrity costs beyond tiny archive fixtures.
 The native directory-open case times admission separately from descriptor close.

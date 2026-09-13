@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
@@ -46,7 +47,20 @@ export async function registerCore({ api: a, workspace: w, register: add, contra
   });
   add("Root.list/names-100", () => safe.list("tree"));
   add("Root.list/metadata-100", () => safe.list("tree", { withFileTypes: true }));
-  add("Root.entries", async () => { const entries = []; for await (const entry of safe.entries("tree", { maxEntries: 101 })) entries.push(entry); return entries; }, { verify: (r) => assert.equal(r.length, 101) });
+  const entryNames = [...Array.from({ length: 100 }, (_, i) => `entry-${i}`), "nested"].sort();
+  for (const order of ["filesystem", "sorted"]) {
+    add(order === "filesystem" ? "Root.entries" : "Root.entries/sorted", async () => {
+      const entries = [];
+      for await (const entry of safe.entries("tree", { order, maxEntries: 101 })) entries.push(entry);
+      return entries;
+    }, { verify: (entries) => assert.deepEqual(order === "sorted" ? entries.map(entry => entry.name) : entries.map(entry => entry.name).sort(), entryNames) });
+    add(`Root.entries/first/${order}`, async () => {
+      for await (const entry of safe.entries("tree", { order, maxEntries: 101 })) return entry;
+    }, { verify: (entry) => {
+      assert(entryNames.includes(entry?.name));
+      if (order === "sorted") assert.equal(entry.name, entryNames[0]);
+    } });
+  }
   add("Root.walk", async () => { const entries = []; for await (const entry of safe.walk("tree", { symlinkPolicy: "skip" })) entries.push(entry); return entries; });
   for (const name of ["walkDirectory", "walkDirectorySync"]) add(name, () => a[name](path.join(w, "tree")), { sync: name.endsWith("Sync"), verify: (r) => assert.equal(r.entries.length, 102) });
   add("readLocalFileSafely", () => a.readLocalFileSafely({ filePath: input, maxBytes: 1024 }));
@@ -69,6 +83,7 @@ export async function registerCore({ api: a, workspace: w, register: add, contra
     const divisor = size > 1024 * 1024 ? 10 : 1;
     const filePath = path.join(w, `bytes-${size}`);
     const payload = Buffer.alloc(size, 120);
+    const digest = createHash("sha256").update(payload).digest("hex");
     fs.writeFileSync(filePath, payload);
     for (const name of ["readFileDescriptorBounded", "readFileDescriptorBoundedSync", "readFileHandleBounded"]) {
       const handle = name === "readFileHandleBounded";
@@ -79,7 +94,7 @@ export async function registerCore({ api: a, workspace: w, register: add, contra
     }
     add(`Root.readBytes/${size}`, () => safe.readBytes(`bytes-${size}`, size > 16 * 1024 * 1024 ? { maxBytes: size } : undefined), { divisor, verify: (r) => assert.deepEqual(r, payload) });
     for (const name of ["sha256File", "sha256FileSync"]) {
-      add(`${name}/${size}`, () => a[name](filePath), { divisor, sync: name.endsWith("Sync"), verify: (r) => assert.equal(r.bytes, size) });
+      add(`${name}/${size}`, () => a[name](filePath), { divisor, sync: name.endsWith("Sync"), verify: (r) => assert.deepEqual(r, { bytes: size, digest }) });
     }
     const copyPath = path.join(w, `handle-copy-${size}`);
     add(`copyFileHandle/${size}`, ({ source, target }) => a.copyFileHandle(source, target), {
