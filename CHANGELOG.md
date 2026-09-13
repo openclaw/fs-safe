@@ -2,52 +2,75 @@
 
 ## Unreleased
 
-- Performance: read TAR members from a retained private input buffer, removing temporary-file staging in native and JavaScript modes and redundant native admission/replay for plain TAR while preserving complete framing, trailer, and limit validation.
+## 0.10.0 - 2026-09-12
 
-- Read native ZIP entries from the retained, admitted input buffer and reuse the parsed directory, eliminating temporary disk staging and archive handoff copies while preserving validation.
-- Add `copyTree` in `@openclaw/fs-safe/copy` with `clone: "auto"` (default), `"always"`, and `"never"` policies, combining portable byte copying with native APFS directory clones, Btrfs snapshots, and parallel ReFS and XFS reflinks. Destinations are exclusive and cancellation waits for admitted writes to settle. Preserve XFS file and directory xattrs and ACLs; document APFS descendant ACL limits and caller-owned permission checks.
-- Add async and sync positional reads that fill caller-owned buffers through short reads, stop at EOF, preserve descriptor offsets and ownership, and support cooperative async cancellation.
-- Add composed Root `assertBeforeMutation` callbacks that recheck live caller authority immediately before filesystem mutation dispatch, including each buffered-write chunk and direct file removal, preserving refusal errors and owned cleanup across native and JavaScript writers.
-- Add `follow-parents-within-root` reads and opt-in `mutationSymlinks` policies, following contained directory aliases while rejecting final symlinks at absolute root entry, open, and publication boundaries.
-- Bound Root walk metadata batches by the global entry budget, stopping at directories and symlinks before descent, and add `order: "filesystem"` for single-entry streaming with bounded lookahead; preserve sorted traversal and fast unbounded snapshots, share equivalent root/directory checks, and retain both operation and close failures during disposal.
+### Highlights
 
-- Give the full documentation-build smoke test a bounded longer runtime so slow Windows runners do not hit the default unit-test deadline.
-- Add byte limits and cooperative cancellation to `sha256File`, preserving descriptor ownership and waiting for native work to stop before rejecting.
+- **Faster ZIP and TAR reads:** read archive members without temporary disk snapshots, reuse admitted native buffers, and reduce integrity-check and decompression overhead while retaining full validation.
+- **Directory copies with native acceleration:** use `copyTree` to prefer or require APFS clones, Btrfs snapshots, or parallel ReFS/XFS reflinks, or choose portable byte copying for controlled, immutable templates and checkouts.
+- **Reuse buffers for file reads:** new async and sync positional readers fill caller-owned buffers without changing the file's current offset; hashing gains byte limits and cancellation.
+- **Walk large directories incrementally:** Root walks bound metadata work by the entry budget, with an opt-in filesystem-order stream for directories too wide to enumerate up front.
+- **Recheck live access authority:** Root mutations can verify caller-owned leases or cancellation immediately before dispatch, and new symlink policies allow contained parent-directory aliases while rejecting final symlinks.
 
-- Report failed parent-directory checks after JavaScript fallback moves and removals, including moved source parents, instead of silently reporting success.
+### Compatibility and upgrade notes
 
-- Resolve Windows ACL principal names such as `constructor` and `__proto__` as real dictionary keys, without skipping SID lookup or dropping translated entries.
-- Reduce directory-walk overhead by sharing synchronous entry classification and reusing each joined path, avoiding an extra promise per async entry.
-- Skip invalid delivered-marker names during durable queue batch loading, preserving malformed files while continuing to load valid pending entries.
-- Forward archive deadlines through a separate abort signal for each native pass, so completed inspection cannot mask cancellation of extraction.
-- Honor Root durability defaults and per-call overrides in the Windows JavaScript write/create fallback, and preserve unowned staging replacements when a write or sync fails.
-- Preserve Linux native directory-only open flags so non-directories are rejected by the kernel before FIFO blocking or truncation, while removing the redundant post-open stat.
-- Close publication descriptors when initial inspection fails, and relinquish descriptor numbers before potentially failing closes so cleanup cannot close a reused descriptor.
-- Require a verified descriptor identity before inheriting an existing write target's mode, including bounded reinspection of transient unknown Windows identities.
-- Expand leading home-directory prefixes before resolving parent segments, so `~/../file` resolves against the home directory's parent; keep tildes elsewhere in a relative path literal.
-- Shorten only the home directory and its descendants in error messages, preserving sibling paths that share the same string prefix.
-- Accelerate ZIP integrity checks with Node's native CRC32 on Node 22.2 and newer, retaining checksum validation and compatibility with earlier Node 22 versions.
-- Reuse the strict UTF-8 decoder while streaming TAR metadata through WebAssembly, reducing per-member allocation without changing filename validation or BOM handling.
-- Read JavaScript ZIP members directly from the admitted in-memory archive, avoiding an unused disk snapshot while preserving byte limits, identity checks, and ZIP integrity validation.
-- Batch JavaScript SHA-256 reads for larger files in bounded buffers up to 256 KiB, reducing asynchronous filesystem calls while preserving descriptor ownership and offsets.
-- Read durable queue entries through the shared bounded buffer, using the admitted file size to reduce filesystem calls and chunk copies while retaining exact identity and byte-limit checks.
-- Preserve recreated temporary paths when an exit-cleanup lookup observed the original name missing; absence no longer authorizes a forced removal.
-- Pin Root directory identities as bigint values, reject indistinguishable numeric inode replacements, and fail closed after bounded retries when Windows root identity remains unknown.
+- **Ambiguous paths may now reject.** Reads preserve actual symlink and parent traversal instead of normalizing it away; mutations reject ambiguous symlink/parent combinations. Use the new explicit parent-alias policies when that behavior is intended.
+- **Mutation failures are reported more accurately.** Failed parent-directory checks after fallback moves and removals now reject instead of reporting success. Treat rejection after dispatch as a potentially completed mutation, not proof that nothing changed.
+- **Windows fallback writes honor durability settings.** Root defaults and per-call overrides now apply to JavaScript write/create fallbacks. Use `durable: false` explicitly for reconstructible data when syncing is unnecessary.
 
-- Speed up POSIX containment checks with trailing root separators and filename helpers while preserving traversal rejection, Unicode handling, reserved names, and collision-resistant install names.
-- Bound speculative read allocations for large or exhausted files, and accelerate synchronous bounded reads of regular files up to 16 MiB without extra chunk copies; retain one-read async performance through the default Root byte budget.
-- Read the checked canonical Root path after symlink/parent traversal, preserve raw components in absolute reads, and resume alias inspection when parent components cancel a missing prefix.
-- Preserve raw filesystem traversal in local-root selection and reads, including home expansion, while retaining final-symlink rejection for `requireFile`.
-- Reject ambiguous symlink/parent combinations in Root mutations instead of silently writing to the separately normalized target.
-- Preserve raw symlink and parent components in `openRootFile` and `openRootFileSync`, so validation cannot normalize away a rejected link or open a different in-root file.
-- Add a method-by-method benchmark with callable API coverage checks, native/fallback reports, and separate fixture timing.
-- Report the resolved target's size when Root walking follows a symlink, so size filters and returned entry metadata describe the same object.
-- Keep zero-delay lock retries finite when a large backoff factor overflows, preventing synchronous waits from bypassing retry and timeout budgets.
-- Fence move-fallback staging publication and cleanup to its initially admitted identity, preserve later substituted paths after copy failures, and reject writes that make no progress.
-- Honor finite timeouts and retry delays above Node's single-timer limit by rearming bounded timers instead of expiring after approximately 1 ms.
+### Archive reads
+
+- Retain admitted ZIP input buffers and parsed directories across native inspection and selected-member reads, removing disk staging and archive handoff copies. JavaScript ZIP reads also consume the admitted in-memory archive directly.
+- Retain native TAR input and admitted member offsets. Plain TAR copies only the selected range after complete validation; gzip, zstd, and bzip2 replay bounded decompression with framing, trailer, padding, and limit checks intact. JavaScript TAR/gzip reads also avoid disk staging, with gzip output chunks matched to the WASM input window.
+- Accelerate ZIP integrity checks with Node's native CRC32 on Node 22.2 and newer, retaining checksum validation and compatibility with earlier Node 22 versions. Reuse the strict UTF-8 decoder for TAR metadata without changing filename validation or BOM handling.
+- Give each native archive pass its own abort signal so completed inspection cannot mask an extraction deadline.
+
+### File reads, hashing, and directory walks
+
+- Add `readFileWindowFully()` and `readFileWindowFullySync()` to fill caller-owned buffers through short reads, stop at EOF, and preserve descriptor offsets and ownership. Async cancellation waits for the pending read to settle before the buffer can be reused.
+- Bound speculative allocations for large or exhausted files and accelerate synchronous bounded reads of regular files up to 16 MiB without extra chunk copies; retain one-read async performance through the default Root byte budget.
+- Add byte limits and cooperative cancellation to `sha256File`, preserving descriptor ownership and waiting for native work to stop before rejecting. Batch larger JavaScript hash reads in bounded buffers up to 256 KiB to reduce filesystem calls.
+- Bound Root walk metadata batches by the global entry budget and stop batches at directories and symlinks before descent. Add `order: "filesystem"` for incremental directory streaming with bounded lookahead; sorted traversal remains the default, and unbounded sorted walks retain fast snapshots.
+- Reduce walk overhead by sharing equivalent directory checks and synchronous entry classification, reusing joined paths, and avoiding an extra promise per async entry. Preserve both operation and close failures during disposal, and report a followed symlink target's size consistently in filters and returned metadata.
+- Speed up POSIX containment and filename helpers while preserving traversal rejection, Unicode handling, reserved names, and collision-resistant install names.
+
+### Directory copying and native cloning
+
+- Add `copyTree` in `@openclaw/fs-safe/copy` with `clone: "auto"` (default), `"always"`, and `"never"` policies. Automatic copying prefers native cloning and falls back to byte copying only when the binding or filesystem capability is unavailable, or cloning cannot cross filesystems; strict cloning never falls back, and ordinary copying avoids clone and copy-offload calls. Destinations must be absent, and cancellation waits for admitted writes to settle.
+- Support APFS directory clones, Btrfs subvolume preparation and snapshots, and parallel ReFS/XFS reflinks through `probeTreeClone` and `createCloneSource`. Preserve XFS file and directory extended attributes and ACLs, and restore directory timestamps after APFS bulk cloning.
+- Add batched `readCloneFileMetadata` for APFS clone IDs and file metadata. These are point-in-time observations, not authorization or proof that later contents remain unchanged.
+- Document metadata and filesystem limits: APFS directory cloning does not guarantee descendant ACL preservation or inheritance, Btrfs snapshots omit nested subvolume contents, and ReFS rejects unsupported reparse points and alternate data streams. Portable copying does not promise ownership, ACL, extended-attribute, alternate-stream, or sparse-layout preservation. Callers retain responsibility for source immutability, permission policy, and recovery after a failed or aborted copy.
+
+### Root policies and path safety
+
+- Add composed Root `assertBeforeMutation` callbacks that recheck live caller authority immediately before mutation dispatch, including each buffered-write chunk and direct file removal. Root-level and per-call checks both apply; refusal errors and owned cleanup are preserved across native and JavaScript writers.
+- Add `symlinks: "follow-parents-within-root"` for reads and opt-in `mutationSymlinks` policies, following contained directory aliases while rejecting final symlinks at absolute root entry, open, and publication boundaries.
+- Preserve checked canonical and raw traversal in Root, absolute-path, local-root, and `openRootFile`/`openRootFileSync` reads, including home expansion and parent components that cancel a missing prefix. Validation can no longer normalize away a rejected link or select a different in-root file; local `requireFile` reads retain final-symlink rejection.
+- Pin Root directory identities as bigint values, reject indistinguishable numeric inode replacements, and fail closed after bounded retries when Windows root identity remains unknown. Require a verified opened identity before inheriting an existing write target's mode.
+- Preserve Linux native directory-only open flags so the kernel rejects non-directories before FIFO blocking or truncation, while removing the redundant post-open stat.
+- Expand leading home-directory prefixes before resolving parent segments, so `~/../file` resolves against the home directory's parent; keep other tildes literal. Shorten only the home directory and its descendants in error messages, preserving similarly prefixed sibling paths.
+- Resolve Windows ACL principal names such as `constructor` and `__proto__` as real dictionary keys, preserving SID lookup and translated entries.
+
+### Writes, moves, and cleanup
+
+- Preserve unowned staging replacements after Windows fallback write or sync failures, and retain exact parent-directory identities so owned partial-file cleanup works even when Windows directory indexes exceed numeric precision.
+- Report failed post-operation parent checks after fallback moves and removals, including moved source parents, instead of silently reporting success.
+- Close publication descriptors when initial inspection fails and relinquish descriptor numbers before potentially failing closes, preventing cleanup from closing a reused descriptor.
+- Keep move-fallback publication and cleanup tied to the initially admitted staging identity, preserve substituted paths after copy failures, and reject writes that make no progress.
+- Preserve recreated temporary paths after exit cleanup observes the original name missing; absence no longer authorizes removal of a later replacement.
 - Allow explicitly authorized filesystem-root descendants in Trash moves and keep reservation-directory names bounded for long source filenames.
 
-- Retain exact parent-directory identities in JavaScript fallback writes so failure cleanup removes owned partial files even when Windows directory indexes exceed numeric precision.
+### Locks and durable queues
+
+- Honor finite timeouts and retry delays above Node's single-timer limit by rearming bounded timers instead of expiring after approximately 1 ms.
+- Keep zero-delay lock retries finite when a large backoff factor overflows, preserving retry and timeout budgets.
+- Skip invalid delivered-marker names during durable queue batch loading, preserving malformed files while continuing to load valid pending entries.
+- Read durable queue entries through the shared bounded buffer and admitted file-size hint, reducing filesystem calls and chunk copies while retaining exact identity and byte-limit checks.
+
+### Validation and maintenance
+
+- Add a method-by-method benchmark with callable API coverage checks, native/fallback reports, and fixture setup outside measurement.
+- Give the full documentation-build smoke test a bounded longer runtime on slow Windows runners. Validate retained native archive buffers across concurrent reads and forced garbage collection; use efficient byte comparisons in large-buffer coverage tests without relaxing timeouts.
 
 ## 0.9.0 - 2026-09-11
 
