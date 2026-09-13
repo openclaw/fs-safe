@@ -1,6 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { normalizeOptionalString } from "./string-coerce.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 function hasHomePrefix(input: string): boolean {
   return input === "~" || input.startsWith("~/") ||
@@ -23,7 +24,11 @@ export function resolveEffectiveHomeDir(
   homedir: () => string = os.homedir,
 ): string | undefined {
   const raw = resolveRawHomeDir(env, homedir);
-  return raw ? path.resolve(raw) : undefined;
+  if (!raw) return undefined;
+  assertNoWindowsPathAlias(raw, "filesystem", "home path uses a Windows filesystem namespace alias");
+  const resolved = path.resolve(raw);
+  assertNoWindowsPathAlias(resolved, "filesystem", "home path uses a Windows filesystem namespace alias");
+  return resolved;
 }
 
 function resolveRawHomeDir(env: NodeJS.ProcessEnv, homedir: () => string): string | undefined {
@@ -68,7 +73,9 @@ export function resolveRequiredHomeDir(
   env: NodeJS.ProcessEnv = process.env,
   homedir: () => string = os.homedir,
 ): string {
-  return resolveEffectiveHomeDir(env, homedir) ?? path.resolve(process.cwd());
+  const resolved = resolveEffectiveHomeDir(env, homedir) ?? path.resolve(process.cwd());
+  assertNoWindowsPathAlias(resolved, "filesystem", "home path uses a Windows filesystem namespace alias");
+  return resolved;
 }
 
 export function expandHomePrefix(
@@ -102,13 +109,18 @@ export function resolveHomeRelativePath(
   if (!input) {
     return input;
   }
+  assertNoWindowsPathAlias(input, "filesystem", "path uses a Windows filesystem namespace alias");
   if (!hasHomePrefix(input)) {
-    return path.resolve(input);
+    const resolved = path.resolve(input);
+    assertNoWindowsPathAlias(resolved, "filesystem", "path uses a Windows filesystem namespace alias");
+    return resolved;
   }
   const expanded = expandHomePrefix(input, {
     home: resolveRequiredHomeDir(opts?.env ?? process.env, opts?.homedir ?? os.homedir),
     env: opts?.env,
     homedir: opts?.homedir,
   });
-  return path.resolve(expanded);
+  const resolved = path.resolve(expanded);
+  assertNoWindowsPathAlias(resolved, "filesystem", "path uses a Windows filesystem namespace alias");
+  return resolved;
 }

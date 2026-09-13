@@ -2,6 +2,11 @@
 
 `acquireFileLock()` and `withFileLock()` provide a cross-process file lock with retry and process-exit cleanup. The lock is implemented as a sidecar file (e.g. `state.json` ↔ `state.json.lock`) — only one acquirer can create the sidecar with `O_CREAT | O_EXCL` at a time.
 
+On Windows, both the target and an explicitly supplied `lockPath` reject NTFS
+alternate-stream and directory-index namespace spellings before parent creation,
+in-process reentrant lookup, or sidecar access. Rooted drive paths retain their
+normal meaning, and ordinary colon-bearing POSIX paths remain valid.
+
 ```ts
 import { acquireFileLock } from "@openclaw/fs-safe/file-lock";
 

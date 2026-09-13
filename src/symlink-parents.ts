@@ -2,6 +2,7 @@ import fsSync from "node:fs";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { hasNodeErrorCode, isPathRelativeEscape } from "./path.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type AssertNoSymlinkParentsOptions = {
   rootDir: string;
@@ -17,8 +18,20 @@ function resolvePathWalk(params: AssertNoSymlinkParentsOptions): {
   root: string;
   segments: string[];
 } | null {
-  const root = path.resolve(params.rootDir);
-  const target = path.resolve(params.targetPath);
+  const rawRootDir = params.rootDir;
+  assertNoWindowsPathAlias(
+    rawRootDir,
+    "filesystem",
+    "root dir uses a Windows filesystem namespace alias",
+  );
+  const rawTargetPath = params.targetPath;
+  assertNoWindowsPathAlias(
+    rawTargetPath,
+    "filesystem",
+    "target path uses a Windows filesystem namespace alias",
+  );
+  const root = path.resolve(rawRootDir);
+  const target = path.resolve(rawTargetPath);
   const relative = path.relative(root, target);
   if (isPathRelativeEscape(relative)) {
     if (params.allowOutsideRoot) {

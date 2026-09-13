@@ -9,6 +9,7 @@ import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 import { registerTempPathForExit, type TempPathRegistration } from "./temp-cleanup.js";
 import { serializePathWrite } from "./write-queue.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 function assertRegularFile(stat: BigIntStats): void {
   if (stat.isSymbolicLink()) {
@@ -44,7 +45,17 @@ export async function writeCallbackSibling<T>(params: {
   syncTempFile: boolean;
   syncParentDir: boolean;
 }): Promise<{ filePath: string; result: T }> {
-  const parent = path.dirname(params.tempPath);
+  const tempPath = params.tempPath;
+  assertNoWindowsPathAlias(tempPath, "filesystem", "sibling temp path uses a Windows filesystem namespace alias");
+  const parent = path.dirname(tempPath);
+  assertNoWindowsPathAlias(parent, "filesystem", "sibling temp parent uses a Windows filesystem namespace alias");
+  const write = params.write;
+  const resolveFinalPath = params.resolveFinalPath;
+  const mode = params.mode;
+  const ignoreModeError = params.ignoreModeError;
+  const maxBytes = params.maxBytes;
+  const syncTempFile = params.syncTempFile;
+  const syncParentDir = params.syncParentDir;
   const guard = await createAsyncDirectoryGuard(parent);
   const parentIdentity = await inspectFileIdentity(() => fsSync.lstatSync(parent, { bigint: true }));
   const assertParent = async () => {
@@ -63,21 +74,21 @@ export async function writeCallbackSibling<T>(params: {
     const opened = await inspectStage(() => fsSync.fstatSync(handle!.fd, { bigint: true }), identity);
     const current = await inspectPath(pathname, opened);
     if (
-      params.maxBytes !== undefined &&
-      (opened.size > params.maxBytes || current.size > params.maxBytes)
+      maxBytes !== undefined &&
+      (opened.size > maxBytes || current.size > maxBytes)
     ) {
-      throw new FsSafeError("too-large", `sibling temp exceeds maxBytes (${params.maxBytes})`);
+      throw new FsSafeError("too-large", `sibling temp exceeds maxBytes (${maxBytes})`);
     }
   };
 
   try {
-    const result = await params.write(params.tempPath);
+    const result = await write(tempPath);
     await assertParent();
-    const before = await inspectPath(params.tempPath);
+    const before = await inspectPath(tempPath);
     try {
       // No create/truncate flags; O_NONBLOCK also bounds a FIFO swap during open.
-      const access = params.syncTempFile ? fsSync.constants.O_RDWR : fsSync.constants.O_RDONLY;
-      handle = await fs.open(params.tempPath, access | resolveReadOpenFlags());
+      const access = syncTempFile ? fsSync.constants.O_RDWR : fsSync.constants.O_RDONLY;
+      handle = await fs.open(tempPath, access | resolveReadOpenFlags());
     } catch (error) {
       if ((error as NodeJS.ErrnoException)?.code === "ELOOP") {
         throw new FsSafeError("symlink", "symlink sibling temp not allowed", { cause: error });
@@ -85,38 +96,41 @@ export async function writeCallbackSibling<T>(params: {
       throw error;
     }
     const opened = await inspectStage(() => fsSync.fstatSync(handle!.fd, { bigint: true }), before);
-    await inspectPath(params.tempPath, opened);
+    await inspectPath(tempPath, opened);
     await assertParent();
     identity = opened;
-    unregister = registerTempPathForExit(params.tempPath, { identity, singleLinkFile: true });
+    unregister = registerTempPathForExit(tempPath, { identity, singleLinkFile: true });
 
-    const filePath = path.resolve(params.resolveFinalPath(result));
+    const rawFilePath = resolveFinalPath(result);
+    assertNoWindowsPathAlias(rawFilePath, "filesystem", "final path uses a Windows filesystem namespace alias");
+    const filePath = path.resolve(rawFilePath);
+    assertNoWindowsPathAlias(filePath, "filesystem", "final path uses a Windows filesystem namespace alias");
     if (path.dirname(filePath) !== parent) {
       throw new Error("Final path must be in the sibling temp directory.");
     }
-    if (filePath === params.tempPath) {
+    if (filePath === tempPath) {
       throw new FsSafeError("invalid-path", "final path must differ from the sibling temp path");
     }
     await serializePathWrite(filePath, async () => {
-      await assertCurrent(params.tempPath);
-      if (params.mode !== undefined) {
+      await assertCurrent(tempPath);
+      if (mode !== undefined) {
         try {
-          await handle!.chmod(params.mode);
+          await handle!.chmod(mode);
         } catch (error) {
-          if (!params.ignoreModeError) throw error;
+          if (!ignoreModeError) throw error;
         }
       }
-      if (params.syncTempFile) {
-        await assertCurrent(params.tempPath);
+      if (syncTempFile) {
+        await assertCurrent(tempPath);
         await syncFileBestEffort(handle!);
       }
-      await assertCurrent(params.tempPath);
-      await fs.rename(params.tempPath, filePath);
+      await assertCurrent(tempPath);
+      await fs.rename(tempPath, filePath);
       // A later verification failure never authorizes rollback of the final name.
       renamed = true;
       unregister!();
       await assertCurrent(filePath);
-      if (params.syncParentDir) await syncDirectoryBestEffort(parent);
+      if (syncParentDir) await syncDirectoryBestEffort(parent);
       await assertCurrent(filePath);
     });
     return { filePath, result };
@@ -129,8 +143,8 @@ export async function writeCallbackSibling<T>(params: {
         try {
           await assertParent();
           await inspectStage(() => fsSync.fstatSync(handle!.fd, { bigint: true }), identity);
-          await inspectPath(params.tempPath, identity);
-          await fs.unlink(params.tempPath);
+          await inspectPath(tempPath, identity);
+          await fs.unlink(tempPath);
           unregister?.();
         } catch (error) {
           // Preserve observed substitutes; retry only operational cleanup failures.

@@ -5,6 +5,7 @@ import type { PermissionCheck, PermissionCheckOptions, SafeStatResult } from "./
 import { normalizeLowercaseStringOrEmpty } from "./string-coerce.js";
 import { resolveWindowsSystemCommand } from "./windows-command.js";
 import { inspectWindowsOwner, type WindowsOwnerSummary } from "./windows-owner.js";
+import { hasWindowsPathAlias } from "./windows-path-alias.js";
 
 export type PermissionExec = (
   command: string,
@@ -119,8 +120,6 @@ export async function inspectWindowsPermissions(params: {
   bits: number | null;
   opts?: PermissionCheckOptions;
 }): Promise<PermissionCheck> {
-  const native = inspectWindowsPermissionsNative(params);
-  if (native) return native;
   const unverified: PermissionCheck = {
     ok: true,
     isSymlink: params.stat.isSymlink,
@@ -133,6 +132,14 @@ export async function inspectWindowsPermissions(params: {
     worldReadable: false,
     groupReadable: false,
   };
+  if (hasWindowsPathAlias(params.targetPath, "filesystem", "win32")) {
+    return {
+      ...unverified,
+      error: "Path uses a Windows filesystem namespace alias",
+    };
+  }
+  const native = inspectWindowsPermissionsNative(params);
+  if (native) return native;
   const owner = await inspectWindowsOwner({
     targetPath: params.targetPath,
     env: params.opts?.env,
@@ -313,6 +320,10 @@ function summarizeWindowsOwnerAcl(owner: WindowsOwnerSummary): WindowsAclSummary
 export async function inspectWindowsAcl(targetPath: string, opts?: { env?: NodeJS.ProcessEnv; exec?: PermissionExec; currentUserSid?: string; principalSids?: Record<string, string>; principalTranslationFailed?: boolean }): Promise<WindowsAclSummary> {
   if (opts?.principalTranslationFailed) {
     const error = new Error("Windows ACL principal SID translation failed");
+    return summarizeWindowsOwnerAcl({ error: String(error), errorCause: error });
+  }
+  if (hasWindowsPathAlias(targetPath, "filesystem", "win32")) {
+    const error = new Error("Path uses a Windows filesystem namespace alias");
     return summarizeWindowsOwnerAcl({ error: String(error), errorCause: error });
   }
   const owner = await inspectWindowsOwner({ targetPath, env: opts?.env, exec: opts?.exec ?? defaultPermissionExec });

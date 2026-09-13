@@ -82,12 +82,20 @@ export function createFileLockManager(key: string): FileLockManager {
   const manager = createSidecarLockManager(key);
   return {
     acquire: async (targetPath, options) => {
-      const { managerKey: _managerKey, ...acquireOptions } = options;
-      return await manager.acquire({ ...withLockDefaults(acquireOptions), targetPath });
+      const { managerKey: _managerKey, lockPath, ...acquireOptions } = options;
+      return await manager.acquire({
+        ...withLockDefaults(acquireOptions),
+        ...(lockPath === undefined ? {} : { lockPath }),
+        targetPath,
+      });
     },
     withLock: async (targetPath, options, fn) => {
-      const { managerKey: _managerKey, ...acquireOptions } = options;
-      return await manager.withLock({ ...withLockDefaults(acquireOptions), targetPath }, fn);
+      const { managerKey: _managerKey, lockPath, ...acquireOptions } = options;
+      return await manager.withLock({
+        ...withLockDefaults(acquireOptions),
+        ...(lockPath === undefined ? {} : { lockPath }),
+        targetPath,
+      }, fn);
     },
     drain: manager.drain,
     reset: manager.reset,

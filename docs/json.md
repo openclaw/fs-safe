@@ -38,6 +38,13 @@ Use `readJson` when missing-or-malformed is a programmer error you want to surfa
 
 `JsonFileReadError` carries `cause` so you can inspect whether the underlying failure was an `ENOENT`, a `SyntaxError`, or something else.
 
+On Windows, filesystem path inputs reject NTFS alternate-stream and
+directory-index namespace spellings such as `file:stream` and
+`dir::$INDEX_ALLOCATION`; ordinary colon-bearing POSIX names remain valid.
+Strict standalone readers retain `JsonFileReadError` and expose the
+`invalid-path` rejection as its cause, lenient `tryReadJson*` calls return
+`null`, and root-bounded readers report an `open`/`validation` failure.
+
 ## Reading
 
 ### `readJson<T>(filePath, options?)`

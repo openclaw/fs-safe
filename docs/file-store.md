@@ -90,13 +90,16 @@ or converts one caller-supplied key onto another:
   are rejected.
 - Windows drive-relative segments such as `C:name` or `C:` are rejected
   anywhere in a key, including `a/C:name`.
+- On Windows, every other colon is rejected too, preventing a key from naming
+  an NTFS alternate stream or directory-index alias. POSIX keeps accepting
+  ordinary colon-bearing segments that are not drive-relative spellings.
 - No segment may end in an ASCII dot or space.
 
 Violations report `invalid-path` when key validation is reached. Ordinary nested
 keys, NFC Unicode such as `café/日本語.txt`, `.hidden`, `a..b`, and internal spaces
-such as `internal space/a b.txt` are accepted. Colons elsewhere, such as the
-timestamp in `logs/2026-08-02T10:30:00Z.log`, remain lexically valid; filesystem
-success still depends on the platform and the underlying Root policies.
+such as `internal space/a b.txt` are accepted. On POSIX, colons elsewhere, such
+as the timestamp in `logs/2026-08-02T10:30:00Z.log`, remain lexically valid;
+Windows rejects that spelling as stream syntax.
 
 Validation retains each method's operation order. Async reads, `exists`, and
 `remove` open the root first: if the root is missing, strict methods report

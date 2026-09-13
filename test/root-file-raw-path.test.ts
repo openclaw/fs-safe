@@ -34,7 +34,7 @@ it.each(["async", "sync"].flatMap(mode => [false, true].map(rejectSymlinks => ({
 );
 
 it.runIf(process.platform === "win32").each(["async", "sync"])(
-  "%s preserves drive-relative inputs",
+  "%s rejects drive-relative inputs before opening",
   async mode => {
     const dir = await tempRoot("fs-safe-root-file-drive-");
     const target = path.join(dir, "value");
@@ -43,9 +43,11 @@ it.runIf(process.platform === "win32").each(["async", "sync"])(
     const driveRelative = `${drive}${path.relative(path.resolve(drive), target)}`;
     const params = { rootPath: dir, absolutePath: driveRelative, boundaryLabel: "fixture" };
     const opened = mode === "async" ? await openRootFile(params) : openRootFileSync(params);
-    expect(opened.ok).toBe(true);
-    if (!opened.ok) throw opened.error;
-    try { expect(fsSync.readFileSync(opened.fd, "utf8")).toBe("drive-relative bytes"); }
-    finally { fsSync.closeSync(opened.fd); }
+    expect(opened).toMatchObject({
+      ok: false,
+      reason: "validation",
+      error: { code: "invalid-path", details: { reason: "windows-path-alias" } },
+    });
+    await expect(fs.readFile(target, "utf8")).resolves.toBe("drive-relative bytes");
   },
 );

@@ -234,13 +234,16 @@ describe("FileStore portable grammar", () => {
     }
   });
 
-  it("accepts timestamp colons lexically on every platform", async () => {
+  it("accepts timestamp colons on POSIX and rejects Windows stream syntax", async () => {
     const rootDir = await tempRoot("fs-safe-store-timestamp-");
     const key = "logs/2026-08-02T10:30:00Z.log";
     const store = fileStore({ rootDir });
-    expect(store.path(key)).toBe(path.join(rootDir, key));
-    expect(fileStoreSync({ rootDir }).path(key)).toBe(path.join(rootDir, key));
-    if (process.platform !== "win32") {
+    if (process.platform === "win32") {
+      expectFsSafeErrorSync(() => store.path(key), "invalid-path");
+      expectFsSafeErrorSync(() => fileStoreSync({ rootDir }).path(key), "invalid-path");
+    } else {
+      expect(store.path(key)).toBe(path.join(rootDir, key));
+      expect(fileStoreSync({ rootDir }).path(key)).toBe(path.join(rootDir, key));
       await store.writeText(key, "timestamp");
       await expect(store.readText(key)).resolves.toBe("timestamp");
     }

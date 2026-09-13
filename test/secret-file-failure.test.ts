@@ -129,6 +129,30 @@ describe("secret file refusal paths", () => {
     );
   });
 
+  itWin32("rejects a canonical stream alias before opening the async secret", async () => {
+    const root = await tempRoot("fs-safe-secret-canonical-ads-");
+    const filePath = path.join(root, "token");
+    await fs.writeFile(filePath, "secret");
+    const realpath = fsSync.realpathSync.native;
+    const canonicalize = vi.spyOn(fsSync.realpathSync, "native").mockImplementation(
+      (candidate, options) => candidate === filePath
+        ? `${filePath}:stream`
+        : realpath(candidate, options as never),
+    );
+    const open = vi.spyOn(fs, "open");
+
+    await expect(readSecretFile(filePath, "token")).rejects.toMatchObject({
+      code: "invalid-path",
+      category: "policy",
+      cause: expect.objectContaining({
+        code: "invalid-path",
+        details: { reason: "windows-path-alias" },
+      }),
+    });
+    expect(canonicalize).toHaveBeenCalledWith(filePath);
+    expect(open).not.toHaveBeenCalled();
+  });
+
   itPosix("rejects a secret path retargeted after the preview in sync and async readers", async () => {
     const root = await tempRoot("fs-safe-secret-preview-retarget-");
     const originalPath = path.join(root, "original");

@@ -37,6 +37,10 @@ isPathInside("/srv/uploads", "/srv/uploads");                // true (root itsel
 ```
 
 The check is platform-aware: on Windows, paths are normalized for case and separator before comparison.
+It is a lexical comparison, not a filesystem-admission boundary: it does not
+reject Windows alternate data streams or index-allocation aliases. Use a
+filesystem operation such as `root()` when a caller-controlled path will be
+opened or mutated.
 
 ### `isPathInsideWithRealpath(rootDir, target, opts?)`
 
@@ -54,6 +58,9 @@ type Options = {
 ```
 
 Does not throw on missing inputs — `realpath` failures are absorbed by the underlying `safeRealpathSync`. By default (`requireRealpath: true`) the function returns `false` when either input cannot be resolved. Pass `{ requireRealpath: false }` to fall back to the lexical answer from `isPathInside` instead.
+On Windows it returns `false` for namespace aliases in either raw input or in
+a canonical value returned by `realpath` or the supplied cache. The
+`requireRealpath: false` fallback does not admit those aliases.
 
 ### `isWithinDir(rootDir, targetPath)`
 
@@ -79,12 +86,16 @@ if (real === null) return notFound();
 ```
 
 All `realpath` failures collapse to `null` — there is no distinction between `ENOENT`, `EACCES`, and other I/O errors. Use `fs.realpathSync` directly if you need to branch on the error code.
+This convenience wrapper preserves ordinary Node `realpath` semantics; it is
+not a caller-path admission boundary on its own.
 
 ### `safeStatSync(targetPath)`
 
 Synchronous `stat` that returns `Stats` on success and `null` on any failure,
 including missing paths and permission errors. Use `fs.statSync` directly when
 the distinction matters.
+Like `safeRealpathSync`, it does not apply the pathname-admission policy used
+by the higher-level filesystem boundaries.
 
 ```ts
 const stat = safeStatSync("/srv/uploads/photo.jpg");

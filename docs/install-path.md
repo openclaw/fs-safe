@@ -22,7 +22,7 @@ function resolveSafeInstallDir(params: {
 }): { ok: true; path: string } | { ok: false; error: string };
 ```
 
-Computes the absolute install directory for `id` under `baseDir`, after running `id` through `nameEncoder` (`safeDirName` by default). Verifies the result stays inside `baseDir` — anything that would escape returns `{ ok: false, error: invalidNameMessage }`.
+Computes the absolute install directory for `id` under `baseDir`, after running `id` through `nameEncoder` (`safeDirName` by default). Verifies the result stays inside `baseDir` — anything that would escape returns `{ ok: false, error: invalidNameMessage }`. On Windows, contained alternate-stream and filesystem-namespace aliases are rejected with the same result.
 
 ```ts
 const r = resolveSafeInstallDir({
@@ -60,7 +60,7 @@ function assertCanonicalPathWithinBase(params: {
 }): Promise<void>;
 ```
 
-Throws if the candidate resolves outside `baseDir` after `realpath`. The `boundaryLabel` is included in the error message ("Invalid path: must stay within {boundaryLabel}").
+Throws if the candidate resolves outside `baseDir` after `realpath`. On Windows it also throws for alternate-stream or filesystem-namespace aliases in the base, candidate, or canonical path. The `boundaryLabel` is included in the containment-shaped error message ("Invalid path: must stay within {boundaryLabel}").
 
 ```ts
 await assertCanonicalPathWithinBase({

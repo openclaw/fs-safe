@@ -3,6 +3,7 @@ import { isUnsafeDeviceReadPath } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type PinnedOpenSyncFailureReason = "path" | "validation" | "io";
 
@@ -32,40 +33,52 @@ export function openPinnedFileSync(params: {
   allowedType?: PinnedOpenSyncAllowedType;
   ioFs?: PinnedOpenSyncFs;
 }): PinnedOpenSyncResult {
+  const filePath = params.filePath;
+  const resolvedPath = params.resolvedPath;
   const ioFs = params.ioFs ?? fs;
   const allowedType = params.allowedType ?? "file";
+  const rejectPathSymlink = params.rejectPathSymlink === true;
+  const statPolicy = {
+    rejectHardlinks: params.rejectHardlinks,
+    maxBytes: params.maxBytes,
+  };
   const openReadFlags = resolveReadOpenFlags({ constants: ioFs.constants });
   let fd: number | null = null;
   try {
-    if (isUnsafeDeviceReadPath(params.filePath)) {
+    assertNoWindowsPathAlias(filePath, "filesystem", "file path uses a Windows filesystem namespace alias");
+    if (resolvedPath !== undefined) {
+      assertNoWindowsPathAlias(resolvedPath, "filesystem", "resolved path uses a Windows filesystem namespace alias");
+    }
+    if (isUnsafeDeviceReadPath(filePath)) {
       return { ok: false, reason: "validation" };
     }
-    if (params.rejectPathSymlink) {
-      const candidateStat = ioFs.lstatSync(params.filePath);
+    if (rejectPathSymlink) {
+      const candidateStat = ioFs.lstatSync(filePath);
       if (candidateStat.isSymbolicLink()) {
         return { ok: false, reason: "validation" };
       }
     }
 
-    const realPath = params.resolvedPath ?? ioFs.realpathSync(params.filePath);
+    const realPath = resolvedPath ?? ioFs.realpathSync(filePath);
+    assertNoWindowsPathAlias(realPath, "filesystem", "resolved path uses a Windows filesystem namespace alias");
     if (isUnsafeDeviceReadPath(realPath)) {
       return { ok: false, reason: "validation" };
     }
     const preOpenStat = inspectFileIdentitySync(() => {
       const stat = ioFs.lstatSync(realPath, { bigint: true });
-      assertAllowedStat(stat, allowedType, params);
+      assertAllowedStat(stat, allowedType, statPolicy);
       return stat;
     });
     fd = ioFs.openSync(realPath, openReadFlags);
     const openedStat = ioFs.fstatSync(fd);
     const identity = inspectFileIdentitySync(() => {
       const stat = ioFs.fstatSync(fd!, { bigint: true });
-      assertAllowedStat(stat, allowedType, params);
+      assertAllowedStat(stat, allowedType, statPolicy);
       return stat;
     }, preOpenStat);
     inspectFileIdentitySync(() => {
       const stat = ioFs.lstatSync(realPath, { bigint: true });
-      assertAllowedStat(stat, allowedType, params);
+      assertAllowedStat(stat, allowedType, statPolicy);
       return stat;
     }, identity);
 

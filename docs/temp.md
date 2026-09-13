@@ -189,6 +189,14 @@ type TempWorkspaceOptions = {
 };
 ```
 
+On Windows, caller-provided workspace roots and workspace leaf names reject
+NTFS alternate-stream and directory-index namespace spellings before directory
+creation or file access. The lower-level temp and sibling helpers apply the
+same admission to supplied roots, sibling directories, and callback-selected
+final paths. Prefixes and `tempFile()` filenames keep their documented
+sanitization behavior; ordinary colon-bearing POSIX roots and leaf names remain
+valid.
+
 ## Advanced temp primitives
 
 When you don't need the stable workspace abstraction, the lower-level temp-file

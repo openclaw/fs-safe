@@ -27,6 +27,7 @@ import {
   type PublishFileExclusiveSyncFailurePolicy,
 } from "./publish-file-failure.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type {
   PublishFileExclusiveCleanup,
@@ -36,10 +37,7 @@ export type {
   PublishFileExclusiveSyncFailurePolicy,
 } from "./publish-file-failure.js";
 
-export type PublishFileExclusiveStrategy =
-  | "link-or-copy"
-  | "link-required"
-  | "rename-noreplace";
+export type PublishFileExclusiveStrategy = "link-or-copy" | "link-required" | "rename-noreplace";
 
 export type PublishFileExclusiveResult = {
   method: "hardlink" | "exclusive-copy" | "rename-noreplace";
@@ -47,29 +45,13 @@ export type PublishFileExclusiveResult = {
   directorySync: DirectorySyncOutcome;
 };
 
-const HARDLINK_FALLBACK_CODES = new Set([
-  "EPERM",
-  "EXDEV",
-  "ENOTSUP",
-  "EOPNOTSUPP",
-  "ENOSYS",
-]);
-const NATIVE_COPY_FALLBACK_CODES = new Set([
-  "EINVAL",
-  "ENOSYS",
-  "ENOTSUP",
-  "EOPNOTSUPP",
-  "EPERM",
-  "EXDEV",
-]);
-
+const HARDLINK_FALLBACK_CODES = new Set(["EPERM", "EXDEV", "ENOTSUP", "EOPNOTSUPP", "ENOSYS"]);
+const NATIVE_COPY_FALLBACK_CODES = new Set(["EINVAL", "ENOSYS", "ENOTSUP", "EOPNOTSUPP", "EPERM", "EXDEV"]);
 export function isHardlinkFallbackError(error: unknown): boolean {
   return HARDLINK_FALLBACK_CODES.has((error as NodeJS.ErrnoException | undefined)?.code ?? "");
 }
 
-function sourceOpenFlags(): number {
-  return resolveReadOpenFlags();
-}
+function sourceOpenFlags(): number { return resolveReadOpenFlags(); }
 
 function directoryOpenFlags(): number {
   return (
@@ -292,11 +274,28 @@ export async function publishFileExclusive(params: {
   onSyncFailure?: PublishFileExclusiveSyncFailurePolicy;
   parentReceipt?: DirectoryReceipt;
 }): Promise<PublishFileExclusiveResult> {
-  const sourcePath = path.resolve(params.sourcePath);
-  const targetPath = path.resolve(params.targetPath);
+  const sourcePathInput = params.sourcePath;
+  assertNoWindowsPathAlias(sourcePathInput, "filesystem", "publication source uses a Windows filesystem namespace alias");
+  const targetPathInput = params.targetPath;
+  assertNoWindowsPathAlias(targetPathInput, "filesystem", "publication target uses a Windows filesystem namespace alias");
+  const parentReceiptInput = params.parentReceipt;
+  const parentReceipt = parentReceiptInput
+    ? { path: parentReceiptInput.path, realPath: parentReceiptInput.realPath,
+        identity: parentReceiptInput.identity }
+    : undefined;
+  if (parentReceipt) {
+    assertNoWindowsPathAlias(parentReceipt.path, "filesystem", "publication parent uses a Windows filesystem namespace alias");
+  }
+  const sourcePath = path.resolve(sourcePathInput);
+  const targetPath = path.resolve(targetPathInput);
+  assertNoWindowsPathAlias(sourcePath, "filesystem", "publication source uses a Windows filesystem namespace alias");
+  assertNoWindowsPathAlias(targetPath, "filesystem", "publication target uses a Windows filesystem namespace alias");
   const parentPath = path.dirname(targetPath);
-  if (params.parentReceipt && path.resolve(params.parentReceipt.path) !== parentPath) {
+  if (parentReceipt && path.resolve(parentReceipt.path) !== parentPath) {
     throw new FsSafeError("path-mismatch", "publication parent receipt does not match target parent");
+  }
+  if (parentReceipt) {
+    assertNoWindowsPathAlias(parentReceipt.realPath, "filesystem", "publication parent uses a Windows filesystem namespace alias");
   }
 
   const sourcePathStat = fsSync.lstatSync(sourcePath);
@@ -307,27 +306,29 @@ export async function publishFileExclusive(params: {
   let parent: Awaited<ReturnType<typeof pinDirectory>> | undefined;
   let sourceNativeParent: Awaited<ReturnType<typeof openNativeParent>> | undefined;
   let targetNativeParent: Awaited<ReturnType<typeof openNativeParent>> | undefined;
+  const strategy = params.strategy;
   const failure: PublishFailureState = {
-    phase: params.strategy === "rename-noreplace" ? "rename-create" : "hardlink-create",
+    phase: strategy === "rename-noreplace" ? "rename-create" : "hardlink-create",
     targetCreated: false,
     preserveTarget: false,
   };
   try {
-    parent = await pinDirectory(params.parentReceipt ?? parentPath, {
+    parent = await pinDirectory(parentReceipt ?? parentPath, {
       label: "publication parent",
     });
     const sourceIdentity = fsSync.fstatSync(source.fd);
     const sourceExactIdentity = fsSync.fstatSync(source.fd, { bigint: true });
     const sourcePathExactIdentity = fsSync.lstatSync(sourcePath, { bigint: true });
+    const expectedSourceIdentity = params.expectedSourceIdentity;
     if (
       sourcePathExactIdentity.isSymbolicLink() ||
       !sourcePathExactIdentity.isFile() ||
       !sameFileIdentity(sourcePathExactIdentity, sourceExactIdentity) ||
-      (params.expectedSourceIdentity &&
+      (expectedSourceIdentity &&
         !sameFileIdentity(
-          params.expectedSourceIdentity,
-          typeof params.expectedSourceIdentity.dev === "bigint" ||
-            typeof params.expectedSourceIdentity.ino === "bigint"
+          expectedSourceIdentity,
+          typeof expectedSourceIdentity.dev === "bigint" ||
+            typeof expectedSourceIdentity.ino === "bigint"
             ? sourceExactIdentity
             : sourceIdentity,
         ))
@@ -337,7 +338,7 @@ export async function publishFileExclusive(params: {
     await parent.assertCurrent();
     await assertPinnedSourceCurrent({ sourcePath, handle: source, identity: sourceExactIdentity });
 
-    const native = params.strategy === "rename-noreplace"
+    const native = strategy === "rename-noreplace"
       ? requireNativeBinding()
       : getNativeBinding();
     if (native) {
@@ -345,7 +346,7 @@ export async function publishFileExclusive(params: {
       targetNativeParent = await openNativeParent(targetPath);
     }
 
-    if (params.strategy === "rename-noreplace") {
+    if (strategy === "rename-noreplace") {
       const binding = requireNativeBinding();
       binding.renameNoReplace(
         sourceNativeParent!.handle.fd,
@@ -432,7 +433,7 @@ export async function publishFileExclusive(params: {
       if (
         failure.targetCreated ||
         !isHardlinkFallbackError(error) ||
-        params.strategy === "link-required"
+        strategy === "link-required"
       ) {
         throw error;
       }

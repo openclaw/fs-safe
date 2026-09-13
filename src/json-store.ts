@@ -5,6 +5,7 @@ import {
   type JsonStore,
   type JsonStoreLockOptions,
 } from "./json-document-store.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type JsonStoreOptions<T> = JsonFileStoreOptions & {
   filePath: string;
@@ -15,7 +16,10 @@ export type JsonStoreOptions<T> = JsonFileStoreOptions & {
 export type { JsonFileStoreOptions, JsonStore, JsonStoreLockOptions };
 
 export function jsonStore<T>(options: JsonStoreOptions<T>): JsonStore<T> {
-  const filePath = path.resolve(options.filePath);
+  const filePathInput = options.filePath;
+  assertNoWindowsPathAlias(filePathInput);
+  const filePath = path.resolve(filePathInput);
+  assertNoWindowsPathAlias(filePath);
   return fileStore({
     rootDir: path.dirname(filePath),
     private: true,

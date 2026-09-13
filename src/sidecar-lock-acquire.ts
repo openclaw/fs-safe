@@ -34,6 +34,7 @@ import {
 import type { SidecarLockAcquireOptions, SidecarLockHandle } from "./sidecar-lock-types.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { sleep } from "./timing.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 type SidecarFileHandle = Pick<NativeFileHandle, "fd" | "close" | "stat" | "writeFile">;
 
@@ -66,6 +67,7 @@ type SidecarLockAcquisitionContext = {
 
 async function resolveNormalizedTargetPath(targetPath: string, lockRoot?: Root): Promise<string> {
   const resolved = path.resolve(targetPath);
+  assertNoWindowsPathAlias(resolved);
   const dir = path.dirname(resolved);
   if (lockRoot) {
     // The target is an arbitration key, not necessarily inside the lock Root.
@@ -73,14 +75,22 @@ async function resolveNormalizedTargetPath(targetPath: string, lockRoot?: Root):
     await lockRoot.resolve(".");
     const parent = await canonicalPathFromExistingAncestor(dir);
     await lockRoot.resolve(".");
-    return path.join(parent, path.basename(resolved));
+    assertNoWindowsPathAlias(parent);
+    const normalized = path.join(parent, path.basename(resolved));
+    assertNoWindowsPathAlias(normalized);
+    return normalized;
   }
   await fs.mkdir(dir, { recursive: true });
+  let parent: string;
   try {
-    return path.join(fsSync.realpathSync.native(dir), path.basename(resolved));
+    parent = fsSync.realpathSync.native(dir);
   } catch {
     return resolved;
   }
+  assertNoWindowsPathAlias(parent);
+  const normalized = path.join(parent, path.basename(resolved));
+  assertNoWindowsPathAlias(normalized);
+  return normalized;
 }
 
 export async function acquireSidecarLock<TPayload extends Record<string, unknown>>(
@@ -92,9 +102,14 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
   validateSidecarLockTimeoutMs(options.timeoutMs);
   validateSidecarLockStaleMs(options.staleMs);
   validateSidecarLockCompromiseCheckIntervalMs(options.compromiseCheckIntervalMs);
+  const targetPath = options.targetPath;
+  const explicitLockPath = options.lockPath;
+  assertNoWindowsPathAlias(targetPath);
+  if (explicitLockPath !== undefined) assertNoWindowsPathAlias(explicitLockPath);
   context.ensureExitCleanupRegistered();
-  const normalizedTargetPath = await resolveNormalizedTargetPath(options.targetPath, options.lockRoot);
-  const lockPath = options.lockPath ?? `${normalizedTargetPath}.lock`;
+  const normalizedTargetPath = await resolveNormalizedTargetPath(targetPath, options.lockRoot);
+  const lockPath = explicitLockPath ?? `${normalizedTargetPath}.lock`;
+  assertNoWindowsPathAlias(lockPath);
   let held = context.held.get(normalizedTargetPath);
   if (
     held &&

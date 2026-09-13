@@ -56,6 +56,57 @@ fn invalid_path(message: impl Into<String>) -> Error<String> {
     native_error("EINVAL", message)
 }
 
+#[inline]
+fn is_windows_path_separator(byte: u8) -> bool {
+    byte == b'\\' || byte == b'/'
+}
+
+#[inline]
+fn is_ascii_drive_letter(byte: u8) -> bool {
+    byte.is_ascii_alphabetic()
+}
+
+fn windows_filesystem_path_has_forbidden_colon(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    // A rooted ASCII drive designator is the only colon-bearing Windows
+    // filesystem syntax that is not an alternate stream or namespace alias.
+    // Keep device-path policy separate: recognizing \\.\C:\ here does not
+    // authorize device paths at any call site that already rejects them.
+    let allowed_drive_colon = if bytes.len() >= 3
+        && is_ascii_drive_letter(bytes[0])
+        && bytes[1] == b':'
+        && is_windows_path_separator(bytes[2])
+    {
+        Some(1)
+    } else if bytes.len() >= 7
+        && is_windows_path_separator(bytes[0])
+        && is_windows_path_separator(bytes[1])
+        && (bytes[2] == b'?' || bytes[2] == b'.')
+        && is_windows_path_separator(bytes[3])
+        && is_ascii_drive_letter(bytes[4])
+        && bytes[5] == b':'
+        && is_windows_path_separator(bytes[6])
+    {
+        Some(5)
+    } else {
+        None
+    };
+
+    bytes
+        .iter()
+        .enumerate()
+        .any(|(index, byte)| *byte == b':' && Some(index) != allowed_drive_colon)
+}
+
+pub(crate) fn validate_windows_filesystem_path(path: &str) -> NativeResult<()> {
+    if cfg!(windows) && windows_filesystem_path_has_forbidden_colon(path) {
+        return Err(invalid_path(
+            "Windows filesystem path contains alternate stream syntax",
+        ));
+    }
+    Ok(())
+}
+
 fn validate_relative_path_with_separators(
     path: &str,
     allow_root: bool,
@@ -63,6 +114,11 @@ fn validate_relative_path_with_separators(
 ) -> NativeResult<()> {
     if path.as_bytes().contains(&0) {
         return Err(invalid_path("relative path contains a NUL byte"));
+    }
+    if cfg!(windows) && path.as_bytes().contains(&b':') {
+        return Err(invalid_path(
+            "relative path contains Windows alternate stream syntax",
+        ));
     }
     if path.is_empty() || path == "." {
         return if allow_root {
@@ -244,6 +300,46 @@ mod tests {
             assert!(validate_relative_path("..\\literal", false).is_ok());
         }
         assert!(validate_portable_relative_path("..\\escape", false).is_err());
+    }
+
+    #[test]
+    fn windows_filesystem_paths_only_allow_rooted_drive_colons() {
+        assert!(!windows_filesystem_path_has_forbidden_colon(r"C:\payload"));
+        assert!(!windows_filesystem_path_has_forbidden_colon("C:/payload"));
+        assert!(!windows_filesystem_path_has_forbidden_colon(
+            r"\\?\C:\payload"
+        ));
+        assert!(!windows_filesystem_path_has_forbidden_colon(
+            r"\\.\C:\payload"
+        ));
+
+        assert!(windows_filesystem_path_has_forbidden_colon("C:payload"));
+        assert!(windows_filesystem_path_has_forbidden_colon(
+            r"C:\payload:hidden"
+        ));
+        assert!(windows_filesystem_path_has_forbidden_colon(
+            r"\\server\share\payload:hidden"
+        ));
+        assert!(windows_filesystem_path_has_forbidden_colon(
+            r"\\?\UNC\server\share\payload:hidden"
+        ));
+        assert!(windows_filesystem_path_has_forbidden_colon(
+            r"directory::$INDEX_ALLOCATION"
+        ));
+    }
+
+    #[test]
+    fn host_relative_paths_apply_windows_colon_rules() {
+        if cfg!(windows) {
+            assert!(validate_relative_path("payload:hidden", false).is_err());
+            assert!(validate_portable_relative_path("payload:hidden", false).is_err());
+            assert!(validate_windows_filesystem_path(r"C:\payload:hidden").is_err());
+            assert!(validate_windows_filesystem_path(r"C:\payload").is_ok());
+        } else {
+            assert!(validate_relative_path("payload:hidden", false).is_ok());
+            assert!(validate_portable_relative_path("payload:hidden", false).is_ok());
+            assert!(validate_windows_filesystem_path("payload:hidden").is_ok());
+        }
     }
 }
 

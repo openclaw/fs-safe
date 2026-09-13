@@ -7,6 +7,7 @@ import { syncDirectory } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup, sha256Hex } from "./file-identity.js";
 import { serializePathWrite } from "./write-queue.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type DurableQueueEntryPathsLike = {
   jsonPath: string;
@@ -14,11 +15,61 @@ export type DurableQueueEntryPathsLike = {
   processingPath?: string;
 };
 
+export type ValidatedDurableQueueEntryPaths = Readonly<{
+  jsonPath: string;
+  deliveredPath: string;
+  processingPath: string;
+}>;
+
+const validatedDurableQueueEntryPaths = new WeakSet<object>();
+
+function assertQueuePathString(value: unknown, label: string): asserts value is string {
+  if (typeof value !== "string") {
+    throw new FsSafeError("invalid-path", `${label} must be a string`);
+  }
+}
+
+export function validateDurableQueueEntryPaths(
+  paths: DurableQueueEntryPathsLike,
+): ValidatedDurableQueueEntryPaths {
+  const jsonPath: unknown = paths.jsonPath;
+  const deliveredPath: unknown = paths.deliveredPath;
+  const requestedProcessingPath: unknown = paths.processingPath;
+  assertQueuePathString(jsonPath, "queue JSON path");
+  assertQueuePathString(deliveredPath, "queue delivered path");
+  if (requestedProcessingPath !== undefined) {
+    assertQueuePathString(requestedProcessingPath, "queue processing path");
+  }
+  assertNoWindowsPathAlias(jsonPath);
+  assertNoWindowsPathAlias(deliveredPath);
+  if (requestedProcessingPath !== undefined) {
+    assertNoWindowsPathAlias(requestedProcessingPath);
+  }
+  const processingPath = requestedProcessingPath || processingPathFromJsonPath(jsonPath);
+  const validated = Object.freeze({ deliveredPath, jsonPath, processingPath });
+  validatedDurableQueueEntryPaths.add(validated);
+  return validated;
+}
+
+function ownDurableQueueEntryPaths(
+  paths: DurableQueueEntryPathsLike,
+): ValidatedDurableQueueEntryPaths {
+  if (validatedDurableQueueEntryPaths.has(paths)) {
+    return paths as ValidatedDurableQueueEntryPaths;
+  }
+  return validateDurableQueueEntryPaths(paths);
+}
+
+function processingPathFromJsonPath(jsonPath: string): string {
+  return jsonPath.endsWith(".json")
+    ? `${jsonPath.slice(0, -".json".length)}.processing`
+    : `${jsonPath}.processing`;
+}
+
 export function durableQueueProcessingPath(paths: DurableQueueEntryPathsLike): string {
-  if (paths.processingPath) return paths.processingPath;
-  return paths.jsonPath.endsWith(".json")
-    ? `${paths.jsonPath.slice(0, -".json".length)}.processing`
-    : `${paths.jsonPath}.processing`;
+  const processingPath = paths.processingPath;
+  if (processingPath) return processingPath;
+  return processingPathFromJsonPath(paths.jsonPath);
 }
 
 async function regularQueueFileIdentity(filePath: string): Promise<BigIntStats | null> {
@@ -31,18 +82,20 @@ async function regularQueueFileIdentity(filePath: string): Promise<BigIntStats |
 }
 
 async function withQueueEntryLock<T>(
-  paths: DurableQueueEntryPathsLike,
+  paths: ValidatedDurableQueueEntryPaths,
   run: () => Promise<T>,
 ): Promise<T> {
+  const resolvedJsonPath = path.resolve(paths.jsonPath);
+  assertNoWindowsPathAlias(resolvedJsonPath);
   return await serializePathWrite(paths.jsonPath, async () =>
-    await withQueueTransferLock(path.resolve(paths.jsonPath), run));
+    await withQueueTransferLock(resolvedJsonPath, run));
 }
 
 async function claimDurableQueueEntryUnlocked(
-  paths: DurableQueueEntryPathsLike,
+  paths: ValidatedDurableQueueEntryPaths,
   options: { skipUnowned?: boolean } = {},
 ): Promise<string | null> {
-  const processingPath = durableQueueProcessingPath(paths);
+  const processingPath = paths.processingPath;
   await recoverDurableQueueRetirement({ jsonPath: paths.jsonPath, processingPath });
   const existingProcessing = await regularQueueFileIdentity(processingPath);
   if (existingProcessing) {
@@ -86,23 +139,28 @@ export async function claimDurableQueueEntry(
   paths: DurableQueueEntryPathsLike,
   options: { skipUnowned?: boolean } = {},
 ): Promise<string | null> {
-  if (!(await lstatOrNull(path.dirname(paths.jsonPath)))) return null;
-  return await withQueueEntryLock(paths, async () => await claimDurableQueueEntryUnlocked(paths, options));
+  const validatedPaths = ownDurableQueueEntryPaths(paths);
+  if (!(await lstatOrNull(path.dirname(validatedPaths.jsonPath)))) return null;
+  return await withQueueEntryLock(
+    validatedPaths,
+    async () => await claimDurableQueueEntryUnlocked(validatedPaths, options),
+  );
 }
 
 export async function completeDeliveredQueueEntry(
   paths: DurableQueueEntryPathsLike,
 ): Promise<boolean> {
-  if (!(await lstatOrNull(path.dirname(paths.deliveredPath)))) return false;
-  return await withQueueEntryLock(paths, async () => {
-    if (!(await regularQueueFileIdentity(paths.deliveredPath))) return false;
-    if (await regularQueueFileIdentity(durableQueueProcessingPath(paths))) {
-      await fs.unlink(paths.deliveredPath);
-      await syncDirectory(path.dirname(paths.deliveredPath));
+  const validatedPaths = ownDurableQueueEntryPaths(paths);
+  if (!(await lstatOrNull(path.dirname(validatedPaths.deliveredPath)))) return false;
+  return await withQueueEntryLock(validatedPaths, async () => {
+    if (!(await regularQueueFileIdentity(validatedPaths.deliveredPath))) return false;
+    if (await regularQueueFileIdentity(validatedPaths.processingPath)) {
+      await fs.unlink(validatedPaths.deliveredPath);
+      await syncDirectory(path.dirname(validatedPaths.deliveredPath));
       return false;
     }
-    await fs.unlink(paths.deliveredPath);
-    await syncDirectory(path.dirname(paths.deliveredPath));
+    await fs.unlink(validatedPaths.deliveredPath);
+    await syncDirectory(path.dirname(validatedPaths.deliveredPath));
     return true;
   });
 }
@@ -110,17 +168,18 @@ export async function completeDeliveredQueueEntry(
 export async function acknowledgeDurableQueueEntry(
   paths: DurableQueueEntryPathsLike,
 ): Promise<void> {
-  if (!(await lstatOrNull(path.dirname(paths.jsonPath)))) return;
-  await withQueueEntryLock(paths, async () => {
-    const processingPath = durableQueueProcessingPath(paths);
+  const validatedPaths = ownDurableQueueEntryPaths(paths);
+  if (!(await lstatOrNull(path.dirname(validatedPaths.jsonPath)))) return;
+  await withQueueEntryLock(validatedPaths, async () => {
+    const processingPath = validatedPaths.processingPath;
     const processing = await regularQueueFileIdentity(processingPath);
-    const delivered = await regularQueueFileIdentity(paths.deliveredPath);
+    const delivered = await regularQueueFileIdentity(validatedPaths.deliveredPath);
     if (!processing) {
       if (delivered) {
-        await fs.unlink(paths.deliveredPath);
+        await fs.unlink(validatedPaths.deliveredPath);
       }
-      await syncDirectory(path.dirname(paths.deliveredPath));
-      if (await regularQueueFileIdentity(paths.jsonPath)) {
+      await syncDirectory(path.dirname(validatedPaths.deliveredPath));
+      if (await regularQueueFileIdentity(validatedPaths.jsonPath)) {
         throw new FsSafeError(
           "path-mismatch",
           "queue acknowledgement requires a processing claim",
@@ -128,11 +187,11 @@ export async function acknowledgeDurableQueueEntry(
       }
       return;
     }
-    if (delivered) await fs.unlink(paths.deliveredPath);
-    await fs.rename(processingPath, paths.deliveredPath);
-    await syncDirectory(path.dirname(paths.deliveredPath));
-    await fs.unlink(paths.deliveredPath);
-    await syncDirectory(path.dirname(paths.deliveredPath));
+    if (delivered) await fs.unlink(validatedPaths.deliveredPath);
+    await fs.rename(processingPath, validatedPaths.deliveredPath);
+    await syncDirectory(path.dirname(validatedPaths.deliveredPath));
+    await fs.unlink(validatedPaths.deliveredPath);
+    await syncDirectory(path.dirname(validatedPaths.deliveredPath));
   });
 }
 
@@ -140,14 +199,19 @@ export async function moveDurableQueueEntryToFailed(params: {
   paths: DurableQueueEntryPathsLike;
   failedPath: string;
 }): Promise<void> {
-  await withQueueEntryLock(params.paths, async () => {
-    const processingPath = durableQueueProcessingPath(params.paths);
+  const pathsInput = params.paths;
+  const paths = ownDurableQueueEntryPaths(pathsInput);
+  const failedPath: unknown = params.failedPath;
+  assertQueuePathString(failedPath, "failed queue path");
+  assertNoWindowsPathAlias(failedPath);
+  await withQueueEntryLock(paths, async () => {
+    const processingPath = paths.processingPath;
     const processing = await regularQueueFileIdentity(processingPath);
-    const existingFailed = await regularQueueFileIdentity(params.failedPath);
+    const existingFailed = await regularQueueFileIdentity(failedPath);
     if (!processing && existingFailed) {
-      await syncDirectory(path.dirname(params.failedPath));
+      await syncDirectory(path.dirname(failedPath));
       await syncDirectory(path.dirname(processingPath));
-      const recoveredFailed = await regularQueueFileIdentity(params.failedPath);
+      const recoveredFailed = await regularQueueFileIdentity(failedPath);
       if (
         !recoveredFailed ||
         !sameFileIdentityForCleanup(existingFailed, recoveredFailed)
@@ -157,7 +221,7 @@ export async function moveDurableQueueEntryToFailed(params: {
           "failed queue destination changed during recovery",
         );
       }
-      if (await regularQueueFileIdentity(params.paths.jsonPath)) {
+      if (await regularQueueFileIdentity(paths.jsonPath)) {
         throw new FsSafeError(
           "already-exists",
           "failed queue destination already exists",
@@ -168,23 +232,23 @@ export async function moveDurableQueueEntryToFailed(params: {
 
     const sourcePath = processing
       ? processingPath
-      : await claimDurableQueueEntryUnlocked(params.paths);
+      : await claimDurableQueueEntryUnlocked(paths);
     if (!sourcePath) {
       throw Object.assign(new Error("queue entry does not exist"), { code: "ENOENT" });
     }
     const source = await regularQueueFileIdentity(sourcePath);
-    const failed = await regularQueueFileIdentity(params.failedPath);
+    const failed = await regularQueueFileIdentity(failedPath);
     if (failed) {
       if (source && sameFileIdentityForCleanup(source, failed)) {
-        await syncDirectory(path.dirname(params.failedPath));
+        await syncDirectory(path.dirname(failedPath));
         await fs.unlink(sourcePath);
         await syncDirectory(path.dirname(sourcePath));
         return;
       }
       throw new FsSafeError("already-exists", "failed queue destination already exists");
     }
-    await fs.link(sourcePath, params.failedPath);
-    await syncDirectory(path.dirname(params.failedPath));
+    await fs.link(sourcePath, failedPath);
+    await syncDirectory(path.dirname(failedPath));
     await fs.unlink(sourcePath);
     await syncDirectory(path.dirname(sourcePath));
   });

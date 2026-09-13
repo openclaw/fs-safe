@@ -21,9 +21,10 @@ import { isNotFoundPathError, resolveSafeRelativePath, splitSafeRelativePath } f
 import { throwFsSafeReadError } from "./root-errors.js";
 import { root, type OpenResult, type ReadResult, type Root, type RootReadOptions } from "./root.js";
 import { DEFAULT_ROOT_MAX_BYTES } from "./root-impl.js";
-import { readRegularFile } from "./regular-file.js";
 import { matchRootFileOpenFailure, openRootFileSync, type RootFileOpenFailure } from "./root-file.js";
 import { writeSecretFileAtomic } from "./secret-file.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
+import { readFileStoreCopySource } from "./file-store-copy-source.js";
 
 export type FileStoreOptions = {
   rootDir: string;
@@ -151,34 +152,6 @@ function handleSyncStoreReadOpenFailure(opened: RootFileOpenFailure): null {
   });
 }
 
-async function readFileStoreCopySource(params: {
-  sourcePath: string;
-  maxBytes?: number;
-}): Promise<Buffer> {
-  const sourceStat = syncFs.lstatSync(params.sourcePath);
-  if (sourceStat.isSymbolicLink() || !sourceStat.isFile()) {
-    throw new FsSafeError("not-file", "source path is not a file");
-  }
-  assertFileStoreMaxBytes(sourceStat.size, params.maxBytes);
-  try {
-    return (await readRegularFile({ filePath: params.sourcePath, maxBytes: params.maxBytes }))
-      .buffer;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("regular file") || message.includes("not a regular file")) {
-      throw new FsSafeError("not-file", "source path is not a file", {
-        cause: error instanceof Error ? error : undefined,
-      });
-    }
-    if (params.maxBytes !== undefined && message.includes(`exceeds ${params.maxBytes} bytes`)) {
-      throw new FsSafeError("too-large", `file exceeds maximum size of ${params.maxBytes} bytes`, {
-        cause: error instanceof Error ? error : undefined,
-      });
-    }
-    throw error;
-  }
-}
-
 async function copyIntoRoot(params: {
   rootDir: string;
   relativePath: string;
@@ -191,6 +164,7 @@ async function copyIntoRoot(params: {
 }): Promise<string> {
   const relativePath = assertRelativePath(params.relativePath);
   const destination = resolveStorePath(params.rootDir, relativePath);
+  assertNoWindowsPathAlias(params.sourcePath, "filesystem", "source path uses a Windows filesystem namespace alias");
   const sourceStat = syncFs.lstatSync(params.sourcePath);
   if (sourceStat.isSymbolicLink() || !sourceStat.isFile()) {
     throw new FsSafeError("not-file", "source path is not a file");
@@ -213,7 +187,10 @@ async function copyIntoRoot(params: {
 }
 
 export function fileStore(options: FileStoreOptions): FileStore {
-  const rootDir = path.resolve(options.rootDir);
+  const rootDirInput = options.rootDir;
+  assertNoWindowsPathAlias(rootDirInput, "filesystem", "store root uses a Windows filesystem namespace alias");
+  const rootDir = path.resolve(rootDirInput);
+  assertNoWindowsPathAlias(rootDir, "filesystem", "store root uses a Windows filesystem namespace alias");
   const privateMode = options.private ?? false;
   const dirMode = options.dirMode ?? 0o700;
   const mode = options.mode ?? 0o600;
@@ -424,7 +401,10 @@ export function fileStore(options: FileStoreOptions): FileStore {
 }
 
 export function fileStoreSync(options: FileStoreOptions): FileStoreSync {
-  const rootDir = path.resolve(options.rootDir);
+  const rootDirInput = options.rootDir;
+  assertNoWindowsPathAlias(rootDirInput, "filesystem", "store root uses a Windows filesystem namespace alias");
+  const rootDir = path.resolve(rootDirInput);
+  assertNoWindowsPathAlias(rootDir, "filesystem", "store root uses a Windows filesystem namespace alias");
   const privateMode = options.private ?? false;
   const dirMode = options.dirMode ?? 0o700;
   const mode = options.mode ?? 0o600;

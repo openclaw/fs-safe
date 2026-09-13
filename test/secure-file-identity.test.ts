@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readSecureFile } from "../src/secure-file.js";
-import { useTempDirs } from "./helpers/vitest.js";
+import { itWin32, useTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useTempDirs();
 afterEach(() => vi.restoreAllMocks());
@@ -56,6 +56,41 @@ describe("secure file exact identity", () => {
     });
     await expect(readSecureFile({ filePath, permissions: { allowInsecure: true } }))
       .rejects.toMatchObject({ code: "path-mismatch" });
+  });
+
+  itWin32("rejects a canonical stream alias before reading and closes the handle", async () => {
+    const root = await tempRoot("fs-safe-secure-canonical-ads-");
+    const filePath = path.join(root, "secret");
+    await fs.writeFile(filePath, "secret", { mode: 0o600 });
+    let opened: fs.FileHandle | undefined;
+    let close: ReturnType<typeof vi.spyOn> | undefined;
+    let read: ReturnType<typeof vi.spyOn> | undefined;
+    let readFile: ReturnType<typeof vi.spyOn> | undefined;
+    const open = onNextOpen((handle) => {
+      opened = handle;
+      close = vi.spyOn(handle, "close");
+      read = vi.spyOn(handle, "read");
+      readFile = vi.spyOn(handle, "readFile");
+    });
+    const realpath = fsSync.realpathSync.native;
+    const canonicalize = vi.spyOn(fsSync.realpathSync, "native").mockImplementation(
+      (candidate, options) => candidate === filePath
+        ? `${filePath}:stream`
+        : realpath(candidate, options as never),
+    );
+
+    await expect(readSecureFile({ filePath, permissions: { allowInsecure: true } }))
+      .rejects.toMatchObject({
+        code: "invalid-path",
+        category: "policy",
+        details: { reason: "windows-path-alias" },
+      });
+    expect(canonicalize).toHaveBeenCalledWith(filePath);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(read).not.toHaveBeenCalled();
+    expect(readFile).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(opened?.fd).toBe(-1);
   });
 
   it("rejects an allowed symlink retargeted after open", async () => {

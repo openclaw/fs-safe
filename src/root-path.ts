@@ -16,6 +16,7 @@ import {
 } from "./root-path-existing.js";
 import { resolveSymlinkHopPath, resolveSymlinkHopPathSync } from "./root-path-symlink.js";
 import { assertNoDriveRelativePathSegments } from "./safe-path-segment.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export { resolvePathViaExistingAncestorSync } from "./root-path-existing.js";
 
@@ -75,14 +76,19 @@ export async function resolveRootPath(
 async function resolveRootPathInternal(
   params: ResolveRootPathParams,
 ): Promise<ResolvedRootPath> {
-  assertValidRootPathInputs(params);
-  params = { ...params, absolutePath: absolutePathWithRawSegments(params.absolutePath) };
-  const rootPath = path.resolve(params.rootPath);
-  const absolutePath = path.resolve(params.absolutePath);
-  const rootCanonicalPath = params.rootCanonicalPath
-    ? path.resolve(params.rootCanonicalPath)
+  const input = captureValidRootPathInputs(params);
+  const rawAbsolutePath = absolutePathWithRawSegments(input.absolutePath);
+  const rootPath = path.resolve(input.rootPath);
+  const absolutePath = path.resolve(rawAbsolutePath);
+  const rootCanonicalPath = input.rootCanonicalPath
+    ? path.resolve(input.rootCanonicalPath)
     : await resolvePathViaExistingAncestor(rootPath);
-  return resolveRootPathLexicalAsync(prepareRootTraversal(params, rootPath, rootCanonicalPath, absolutePath));
+  assertNoWindowsPathAlias(rootPath);
+  assertNoWindowsPathAlias(absolutePath);
+  assertNoWindowsPathAlias(rootCanonicalPath);
+  return resolveRootPathLexicalAsync(
+    prepareRootTraversal(params, rootPath, rootCanonicalPath, absolutePath, rawAbsolutePath),
+  );
 }
 
 export function resolveRootPathSync(params: ResolveRootPathParams): ResolvedRootPath {
@@ -94,14 +100,19 @@ export function resolveRootPathSync(params: ResolveRootPathParams): ResolvedRoot
 }
 
 function resolveRootPathSyncInternal(params: ResolveRootPathParams): ResolvedRootPath {
-  assertValidRootPathInputs(params);
-  params = { ...params, absolutePath: absolutePathWithRawSegments(params.absolutePath) };
-  const rootPath = path.resolve(params.rootPath);
-  const absolutePath = path.resolve(params.absolutePath);
-  const rootCanonicalPath = params.rootCanonicalPath
-    ? path.resolve(params.rootCanonicalPath)
+  const input = captureValidRootPathInputs(params);
+  const rawAbsolutePath = absolutePathWithRawSegments(input.absolutePath);
+  const rootPath = path.resolve(input.rootPath);
+  const absolutePath = path.resolve(rawAbsolutePath);
+  const rootCanonicalPath = input.rootCanonicalPath
+    ? path.resolve(input.rootCanonicalPath)
     : resolvePathViaExistingAncestorSync(rootPath);
-  return resolveRootPathLexicalSync(prepareRootTraversal(params, rootPath, rootCanonicalPath, absolutePath));
+  assertNoWindowsPathAlias(rootPath);
+  assertNoWindowsPathAlias(absolutePath);
+  assertNoWindowsPathAlias(rootCanonicalPath);
+  return resolveRootPathLexicalSync(
+    prepareRootTraversal(params, rootPath, rootCanonicalPath, absolutePath, rawAbsolutePath),
+  );
 }
 
 function prepareRootTraversal(
@@ -109,8 +120,9 @@ function prepareRootTraversal(
   rootPath: string,
   rootCanonicalPath: string,
   absolutePath: string,
+  rawAbsolutePath: string,
 ): LexicalResolutionParams {
-  let raw = params.absolutePath;
+  let raw = rawAbsolutePath;
   if (rawPathRelativeToRoot(rootPath, raw) === undefined) {
     const relative = rawPathRelativeToRoot(rootCanonicalPath, raw)
       ?? rawPathRelativeToCanonicalRoot(raw, rootCanonicalPath, params);
@@ -120,8 +132,11 @@ function prepareRootTraversal(
     raw = `${rootPath}${path.sep}${relative}`;
   }
   return {
-    params: raw === params.absolutePath ? params : { ...params, absolutePath: raw },
-    rootPath, rootCanonicalPath, absolutePath,
+    params,
+    rawAbsolutePath: raw,
+    rootPath,
+    rootCanonicalPath,
+    absolutePath,
   };
 }
 
@@ -132,15 +147,32 @@ function sanitizeRootPathError(error: unknown): unknown {
   return error;
 }
 
-function assertValidRootPathInputs(params: ResolveRootPathParams): void {
-  assertNoNulPathInput(params.rootPath, "root path contains a NUL byte");
-  assertNoNulPathInput(params.absolutePath, "absolute path contains a NUL byte");
-  assertNoEmbeddedDriveRelativeSegment(params.rootPath, "root path");
-  assertNoEmbeddedDriveRelativeSegment(params.absolutePath, "absolute path");
-  if (params.rootCanonicalPath !== undefined) {
-    assertNoNulPathInput(params.rootCanonicalPath, "canonical root path contains a NUL byte");
-    assertNoEmbeddedDriveRelativeSegment(params.rootCanonicalPath, "canonical root path");
+function captureValidRootPathInputs(params: ResolveRootPathParams): {
+  rootPath: string;
+  absolutePath: string;
+  rootCanonicalPath?: string;
+} {
+  const rootPath = params.rootPath;
+  assertNoNulPathInput(rootPath, "root path contains a NUL byte");
+  const absolutePath = params.absolutePath;
+  assertNoNulPathInput(absolutePath, "absolute path contains a NUL byte");
+  assertNoWindowsPathAlias(rootPath, "filesystem", "root path uses a Windows filesystem namespace alias");
+  assertNoWindowsPathAlias(absolutePath, "filesystem", "absolute path uses a Windows filesystem namespace alias");
+  assertNoEmbeddedDriveRelativeSegment(rootPath, "root path");
+  assertNoEmbeddedDriveRelativeSegment(absolutePath, "absolute path");
+  const rootCanonicalPath = params.rootCanonicalPath;
+  if (rootCanonicalPath !== undefined) {
+    assertNoNulPathInput(rootCanonicalPath, "canonical root path contains a NUL byte");
+    assertNoWindowsPathAlias(
+      rootCanonicalPath,
+      "filesystem",
+      "canonical root path uses a Windows filesystem namespace alias",
+    );
+    assertNoEmbeddedDriveRelativeSegment(rootCanonicalPath, "canonical root path");
   }
+  return rootCanonicalPath === undefined
+    ? { rootPath, absolutePath }
+    : { rootPath, absolutePath, rootCanonicalPath };
 }
 
 function assertNoEmbeddedDriveRelativeSegment(filePath: string, label: string): void {
@@ -175,11 +207,12 @@ type LexicalTraversalContext = {
 
 function createLexicalTraversalState(params: {
   params: ResolveRootPathParams;
+  rawAbsolutePath: string;
   rootPath: string;
   rootCanonicalPath: string;
   absolutePath: string;
 }): LexicalTraversalState {
-  const rawAbsolutePath = params.params.absolutePath;
+  const rawAbsolutePath = params.rawAbsolutePath;
   const relative = rawPathRelativeToRoot(params.rootPath, rawAbsolutePath);
   if (relative === undefined) throw new Error("Path traversal must begin at the root");
   const segments = splitTraversalSegments(relative);
@@ -196,6 +229,7 @@ function createLexicalTraversalState(params: {
 
 function createLexicalTraversalContext(params: {
   params: ResolveRootPathParams;
+  rawAbsolutePath: string;
   rootPath: string;
   rootCanonicalPath: string;
   absolutePath: string;
@@ -332,6 +366,7 @@ function assertResolvedLinkDirectory(pathname: string, isLast: boolean): void {
 
 type LexicalResolutionParams = {
   params: ResolveRootPathParams;
+  rawAbsolutePath: string;
   absolutePath: string;
   rootPath: string;
   rootCanonicalPath: string;

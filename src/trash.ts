@@ -4,6 +4,7 @@ import path from "node:path";
 import { sameFileIdentity } from "./file-identity.js";
 import { guardedRenameSync, guardedRmSync } from "./guarded-mutation.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
+import { hasWindowsPathAlias } from "./windows-path-alias.js";
 
 export type MovePathToTrashOptions = {
   allowedRoots?: Iterable<string>;
@@ -29,16 +30,34 @@ function isSameOrChildPath(candidate: string, parent: string): boolean {
   return candidate === parent || candidate.startsWith(parent.endsWith(path.sep) ? parent : `${parent}${path.sep}`);
 }
 
-function resolveAllowedTrashRoots(allowedRoots?: Iterable<string>): string[] {
-  const roots = [...(allowedRoots ?? [os.homedir(), os.tmpdir()])].flatMap((root) => {
+function assertNoTrashPathAlias(value: string, label: string): void {
+  if (hasWindowsPathAlias(value, "filesystem")) {
+    throw new Error(`Refusing to trash ${label} using a Windows filesystem namespace alias: ${value}`);
+  }
+}
+
+function collectAllowedTrashRoots(allowedRoots?: Iterable<string>): string[] {
+  const roots = [...(allowedRoots ?? [os.homedir(), os.tmpdir()])];
+  for (const root of roots) assertNoTrashPathAlias(root, "allowed root");
+  return roots;
+}
+
+function resolveAllowedTrashRoots(allowedRoots: readonly string[]): string[] {
+  const roots = allowedRoots.flatMap((root) => {
+    assertNoTrashPathAlias(root, "allowed root");
     const lexicalRoot = path.resolve(root);
+    assertNoTrashPathAlias(lexicalRoot, "allowed root");
+    let realRoot: string;
     try {
       // Keep both spellings: broken symlink targets cannot be realpathed and
       // may only compare equal to the caller's lexical allowed root.
-      return [path.resolve(fs.realpathSync.native(root)), lexicalRoot];
+      realRoot = fs.realpathSync.native(root);
     } catch {
       return [lexicalRoot];
     }
+    const resolvedRealRoot = path.resolve(realRoot);
+    assertNoTrashPathAlias(resolvedRealRoot, "allowed root");
+    return [resolvedRealRoot, lexicalRoot];
   });
   return [...new Set(roots)];
 }
@@ -51,20 +70,30 @@ type TrashTargetGuard = {
 };
 
 function resolveTrashTargetPath(targetPath: string): { path: string; resolved: boolean } {
+  assertNoTrashPathAlias(targetPath, "target path");
+  let realPath: string;
   try {
-    return { path: path.resolve(fs.realpathSync.native(targetPath)), resolved: true };
+    realPath = fs.realpathSync.native(targetPath);
   } catch {
     // Broken symlinks are valid trash targets. Fall back to the lexical path,
     // then rely on lstat identity so the move renames the symlink itself.
-    return { path: path.resolve(targetPath), resolved: false };
+    const lexicalPath = path.resolve(targetPath);
+    assertNoTrashPathAlias(lexicalPath, "target path");
+    return { path: lexicalPath, resolved: false };
   }
+  const resolvedPath = path.resolve(realPath);
+  assertNoTrashPathAlias(resolvedPath, "target path");
+  return { path: resolvedPath, resolved: true };
 }
 
 function assertAllowedTrashTarget(
   targetPath: string,
-  allowedRoots?: Iterable<string>,
+  allowedRoots: readonly string[],
 ): TrashTargetGuard {
-  const stat = fs.lstatSync(path.resolve(targetPath));
+  assertNoTrashPathAlias(targetPath, "target path");
+  const lexicalTarget = path.resolve(targetPath);
+  assertNoTrashPathAlias(lexicalTarget, "target path");
+  const stat = fs.lstatSync(lexicalTarget);
   const resolvedTarget = resolveTrashTargetPath(targetPath);
   const resolvedTargetPath = resolvedTarget.path;
   const isAllowed = resolveAllowedTrashRoots(allowedRoots).some(
@@ -74,7 +103,7 @@ function assertAllowedTrashTarget(
     throw new Error(`Refusing to trash path outside allowed roots: ${targetPath}`);
   }
   return {
-    path: path.resolve(targetPath),
+    path: lexicalTarget,
     realPath: resolvedTargetPath,
     realPathResolved: resolvedTarget.resolved,
     stat,
@@ -97,7 +126,9 @@ function assertTrashTargetGuard(guard: TrashTargetGuard): void {
 
 function resolveTrashDir(): string {
   const homeDir = os.homedir();
+  assertNoTrashPathAlias(homeDir, "home directory");
   const trashDir = path.join(homeDir, ".Trash");
+  assertNoTrashPathAlias(trashDir, "trash directory");
   fs.mkdirSync(trashDir, { recursive: true, mode: 0o700 });
   const trashDirStat = fs.lstatSync(trashDir);
   if (!trashDirStat.isDirectory() || trashDirStat.isSymbolicLink()) {
@@ -105,6 +136,8 @@ function resolveTrashDir(): string {
   }
   const realHome = path.resolve(fs.realpathSync.native(homeDir));
   const resolvedTrashDir = path.resolve(fs.realpathSync.native(trashDir));
+  assertNoTrashPathAlias(realHome, "home directory");
+  assertNoTrashPathAlias(resolvedTrashDir, "trash directory");
   if (resolvedTrashDir === realHome || !isSameOrChildPath(resolvedTrashDir, realHome)) {
     throw new Error(`Trash directory escaped home directory: ${trashDir}`);
   }
@@ -112,7 +145,9 @@ function resolveTrashDir(): string {
 }
 
 function trashBaseName(targetPath: string): string {
+  assertNoTrashPathAlias(targetPath, "target path");
   const resolvedTargetPath = path.resolve(targetPath);
+  assertNoTrashPathAlias(resolvedTargetPath, "target path");
   if (resolvedTargetPath === path.parse(resolvedTargetPath).root) {
     throw new Error(`Refusing to trash root path: ${targetPath}`);
   }
@@ -124,8 +159,12 @@ function trashBaseName(targetPath: string): string {
 }
 
 function resolveContainedPath(root: string, leaf: string): string {
+  assertNoTrashPathAlias(root, "destination root");
+  assertNoTrashPathAlias(leaf, "destination name");
   const resolvedRoot = path.resolve(root);
   const resolvedPath = path.resolve(resolvedRoot, leaf);
+  assertNoTrashPathAlias(resolvedRoot, "destination root");
+  assertNoTrashPathAlias(resolvedPath, "destination path");
   if (!isSameOrChildPath(resolvedPath, resolvedRoot) || resolvedPath === resolvedRoot) {
     throw new Error(`Trash destination escaped trash directory: ${resolvedPath}`);
   }
@@ -133,10 +172,14 @@ function resolveContainedPath(root: string, leaf: string): string {
 }
 
 function reserveTrashDestination(trashDir: string, base: string, timestamp: number): string {
+  assertNoTrashPathAlias(trashDir, "trash directory");
+  assertNoTrashPathAlias(base, "destination name");
   const containerPrefix = resolveContainedPath(trashDir, `.fs-safe-trash-${timestamp}-`);
   const container = fs.mkdtempSync(containerPrefix);
   const resolvedContainer = path.resolve(container);
   const resolvedTrashDir = path.resolve(trashDir);
+  assertNoTrashPathAlias(resolvedContainer, "destination container");
+  assertNoTrashPathAlias(resolvedTrashDir, "trash directory");
   if (
     resolvedContainer === resolvedTrashDir ||
     !isSameOrChildPath(resolvedContainer, resolvedTrashDir)
@@ -149,6 +192,7 @@ function reserveTrashDestination(trashDir: string, base: string, timestamp: numb
 function copyTrashTargetSync(target: TrashTargetGuard, dest: string): void {
   if (target.stat.isSymbolicLink()) {
     const linkTarget = fs.readlinkSync(target.path);
+    assertNoTrashPathAlias(linkTarget, "symlink target");
     assertTrashTargetGuard(target);
     fs.symlinkSync(linkTarget, dest);
     return;
@@ -190,8 +234,10 @@ export async function movePathToTrash(
   options: MovePathToTrashOptions = {},
 ): Promise<string> {
   // Avoid resolving external trash helpers through the service PATH during cleanup.
+  assertNoTrashPathAlias(targetPath, "target path");
+  const allowedRoots = collectAllowedTrashRoots(options.allowedRoots);
   const base = trashBaseName(targetPath);
-  const target = assertAllowedTrashTarget(targetPath, options.allowedRoots);
+  const target = assertAllowedTrashTarget(targetPath, allowedRoots);
   const trashDir = resolveTrashDir();
   const timestamp = Date.now();
   for (let attempt = 0; attempt < TRASH_DESTINATION_RETRY_LIMIT; attempt += 1) {

@@ -11,7 +11,10 @@ use napi::{Env, Error, Result, Status};
 use napi_derive::napi;
 
 use crate::tar_meter::{TarMetadataMeter, TarMeterLimits, MAX_SAFE_INTEGER, MAX_MANIFEST_BYTES};
-use crate::{NativeResult, native_error, platform, validate_portable_relative_path};
+use crate::{
+    NativeResult, native_error, platform, validate_portable_relative_path,
+    validate_windows_filesystem_path,
+};
 
 #[napi(object)]
 #[derive(Clone)]
@@ -450,6 +453,8 @@ pub fn inspect_archive_native(
     let limits = InspectLimits {
         tar: limits.checked()?,
     };
+    validate_windows_filesystem_path(&path)
+        .map_err(|error| Error::new(Status::InvalidArg, error.reason))?;
     let cancelled = cancellation(&signal);
     Ok(AsyncTask::with_signal(
         InspectTask {
@@ -648,6 +653,8 @@ pub fn extract_archive_native(
         parse_format(&kind).map_err(|error| Error::new(Status::InvalidArg, error.reason))?;
     let cancelled = cancellation(&signal);
     let limits = limits.checked()?;
+    validate_windows_filesystem_path(&path)
+        .map_err(|error| Error::new(Status::InvalidArg, error.reason))?;
     Ok(AsyncTask::with_signal(
         ExtractTask {
             path,
@@ -1025,6 +1032,8 @@ pub fn read_archive_entry_native(
         parse_format(&kind).map_err(|error| Error::new(Status::InvalidArg, error.reason))?;
     let cancelled = cancellation(&signal);
     let limits = limits.checked()?;
+    validate_windows_filesystem_path(&path)
+        .map_err(|error| Error::new(Status::InvalidArg, error.reason))?;
     Ok(AsyncTask::with_signal(
         ReadEntryTask {
             path,

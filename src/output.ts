@@ -7,6 +7,7 @@ import { fitFileNameToPortableComponent, sanitizeUntrustedFileName } from "./fil
 import { isPathInside } from "./path.js";
 import { root } from "./root.js";
 import { tempFile } from "./temp-target.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type ExternalFileWriteOptions<T = void> = {
   rootDir: string;
@@ -82,8 +83,15 @@ export async function writeExternalFileWithinRoot<T = void>(
   options: ExternalFileWriteOptions<T>,
 ): Promise<ExternalFileWriteResult<T>> {
   const maxBytes = normalizeMaxBytes(options.maxBytes);
-  const targetRoot = await root(options.rootDir);
+  const rootDir = options.rootDir;
+  assertNoWindowsPathAlias(rootDir, "filesystem", "output root uses a Windows filesystem namespace alias");
   const requestedTargetPath = options.path;
+  assertNoWindowsPathAlias(
+    path.dirname(requestedTargetPath),
+    "filesystem",
+    "output target parent uses a Windows filesystem namespace alias",
+  );
+  const targetRoot = await root(rootDir);
   if (requestedTargetPath.length === 0) {
     throw new FsSafeError("invalid-path", "target path is required");
   }
@@ -95,7 +103,9 @@ export async function writeExternalFileWithinRoot<T = void>(
   });
   assertFileTargetPath(rawTargetPath);
   const targetPath = sanitizedTargetPath(rawTargetPath, options.fallbackFileName);
+  assertNoWindowsPathAlias(targetPath, "filesystem", "output target uses a Windows filesystem namespace alias");
   const finalPath = await targetRoot.resolve(targetPath);
+  assertNoWindowsPathAlias(finalPath, "filesystem", "output target uses a Windows filesystem namespace alias");
   if (options.staging === "sibling") {
     const parentPath = path.dirname(targetPath);
     if (parentPath !== ".") {
@@ -148,7 +158,9 @@ async function writeExternalFileViaSibling<T>(params: {
   maxBytes?: number;
   mode?: number;
 }): Promise<T> {
+  assertNoWindowsPathAlias(params.finalPath, "filesystem", "output target uses a Windows filesystem namespace alias");
   const finalPath = path.resolve(params.finalPath);
+  assertNoWindowsPathAlias(finalPath, "filesystem", "output target uses a Windows filesystem namespace alias");
   const { result } = await writeCallbackSibling({
     tempPath: buildSiblingTempPath(finalPath, params.fallbackFileName),
     write: params.write,

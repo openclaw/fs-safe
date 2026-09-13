@@ -7,6 +7,7 @@ import { FsSafeError } from "./errors.js";
 import { getNativeBinding, type NativeBinding } from "./native.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type Sha256FileInput = string | FileHandle;
 
@@ -82,6 +83,7 @@ async function hashPath(
   filePath: string,
   options: Sha256FileOptions,
 ): Promise<Sha256FileResult> {
+  assertNoWindowsPathAlias(filePath, "filesystem", "SHA-256 path uses a Windows filesystem namespace alias");
   const before = await inspectFileIdentity(async () => {
     const stat = fsSync.lstatSync(filePath, { bigint: true });
     if (stat.isSymbolicLink()) {

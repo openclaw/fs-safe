@@ -34,6 +34,7 @@ import { getNativeBinding, type NativeBinding } from "./native.js";
 import type { NativeArchiveEntry } from "./native-binding.js";
 import { admitZipBuffer } from "./archive-zip-admission.js";
 import { resolveExtractLimits, resolveTarMeterLimits } from "./archive-limits.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 const ZIP_UNIX_FILE_TYPE_MASK = 0o170000;
 const ZIP_UNIX_SYMLINK_TYPE = 0o120000;
@@ -92,7 +93,9 @@ async function readStreamBounded(
 }
 
 async function readArchiveInput(archivePath: string): Promise<Buffer> {
+  assertNoWindowsPathAlias(archivePath);
   const resolved = fsSync.realpathSync.native(archivePath);
+  assertNoWindowsPathAlias(resolved);
   const before = await inspectFileIdentity(async () => {
     const stat = fsSync.lstatSync(archivePath, { bigint: true });
     if (stat.isSymbolicLink() || !stat.isFile()) {
@@ -251,6 +254,7 @@ export async function readArchiveEntry(
     throw new Error(`unsupported archive: ${archivePath}`);
   }
   const requestedEntry = normalizedRequestedEntry(entryPath);
+  assertNoWindowsPathAlias(archivePath, "filesystem", "archive source uses a Windows filesystem namespace alias");
   const buffer = await readArchiveInput(archivePath);
   const physicalCount = kind === "zip"
     ? admitZipBuffer(buffer, resolveExtractLimits())

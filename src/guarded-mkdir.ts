@@ -5,6 +5,7 @@ import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard } from "./director
 import { FsSafeError } from "./errors.js";
 import { isNotFoundPathError, isPathRelativeEscape } from "./path.js";
 import { directoryComponentNotDirectoryError } from "./root-errors.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 function isSameOrChildPath(candidate: string, parent: string): boolean {
   const parentPrefix = parent.endsWith(path.sep) ? parent : `${parent}${path.sep}`;
@@ -13,7 +14,13 @@ function isSameOrChildPath(candidate: string, parent: string): boolean {
 
 async function realpathOrThrowNotFile(target: string): Promise<string> {
   try {
-    return path.resolve(fsSync.realpathSync.native(target));
+    const canonical = fsSync.realpathSync.native(target);
+    assertNoWindowsPathAlias(
+      canonical,
+      "filesystem",
+      "canonical directory uses a Windows filesystem namespace alias",
+    );
+    return path.resolve(canonical);
   } catch (error) {
     if (isNotFoundPathError(error)) {
       // A dangling symlink (or a component removed between lstat and
@@ -38,9 +45,27 @@ export async function mkdirPathComponentsWithGuards(params: {
   mode?: number;
   rejectSymlinks?: boolean;
 }): Promise<string> {
-  const root = path.resolve(params.rootReal);
-  const rootCanonical = path.resolve(fsSync.realpathSync.native(root));
-  const target = path.resolve(params.targetPath);
+  const rawRootReal = params.rootReal;
+  assertNoWindowsPathAlias(
+    rawRootReal,
+    "filesystem",
+    "root directory uses a Windows filesystem namespace alias",
+  );
+  const rawTargetPath = params.targetPath;
+  assertNoWindowsPathAlias(
+    rawTargetPath,
+    "filesystem",
+    "target directory uses a Windows filesystem namespace alias",
+  );
+  const root = path.resolve(rawRootReal);
+  const rawRootCanonical = fsSync.realpathSync.native(root);
+  assertNoWindowsPathAlias(
+    rawRootCanonical,
+    "filesystem",
+    "canonical root directory uses a Windows filesystem namespace alias",
+  );
+  const rootCanonical = path.resolve(rawRootCanonical);
+  const target = path.resolve(rawTargetPath);
   const relative = path.relative(root, target);
   if (isPathRelativeEscape(relative)) {
     throw new FsSafeError("outside-workspace", "directory is outside workspace root");
@@ -49,6 +74,11 @@ export async function mkdirPathComponentsWithGuards(params: {
   for (const part of relative.split(path.sep).filter(Boolean)) {
     const next = path.join(current, part);
     const parentGuard = await createAsyncDirectoryGuard(current);
+    assertNoWindowsPathAlias(
+      parentGuard.realPath,
+      "filesystem",
+      "canonical parent directory uses a Windows filesystem namespace alias",
+    );
     await assertAsyncDirectoryGuard(parentGuard);
     await params.beforeComponent?.(next);
     params.assertBeforeMutation?.();
@@ -83,12 +113,22 @@ export async function mkdirPathComponentsWithGuards(params: {
       if (!targetStat.isDirectory()) {
         throw directoryComponentNotDirectoryError();
       }
-      await createAsyncDirectoryGuard(nextReal);
+      const nextGuard = await createAsyncDirectoryGuard(nextReal);
+      assertNoWindowsPathAlias(
+        nextGuard.realPath,
+        "filesystem",
+        "canonical directory uses a Windows filesystem namespace alias",
+      );
       await assertAsyncDirectoryGuard(parentGuard);
       current = nextReal;
       continue;
     }
-    await createAsyncDirectoryGuard(next);
+    const nextGuard = await createAsyncDirectoryGuard(next);
+    assertNoWindowsPathAlias(
+      nextGuard.realPath,
+      "filesystem",
+      "canonical directory uses a Windows filesystem namespace alias",
+    );
     await assertAsyncDirectoryGuard(parentGuard);
     current = next;
   }

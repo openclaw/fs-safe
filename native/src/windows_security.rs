@@ -4,6 +4,8 @@ use napi_derive::napi;
 use crate::into_napi;
 #[cfg(not(windows))]
 use crate::native_error;
+#[cfg(windows)]
+use crate::validate_windows_filesystem_path;
 
 #[napi(object)]
 pub struct WindowsAceFlags {
@@ -59,7 +61,11 @@ fn ace_flags(raw: u8) -> WindowsAceFlags {
 #[napi(js_name = "createPrivateDirectory")]
 pub fn create_private_directory(env: Env, path: String) -> Result<()> {
     #[cfg(windows)]
-    return into_napi(env, windows::create_private_directory(&path));
+    return into_napi(
+        env,
+        validate_windows_filesystem_path(&path)
+            .and_then(|()| windows::create_private_directory(&path)),
+    );
     #[cfg(not(windows))]
     {
         let _ = path;
@@ -76,7 +82,10 @@ pub fn create_private_directory(env: Env, path: String) -> Result<()> {
 #[napi(js_name = "readOwnerAndDacl")]
 pub fn read_owner_and_dacl(env: Env, path: String) -> Result<WindowsSecurityFacts> {
     #[cfg(windows)]
-    return into_napi(env, windows::read_owner_and_dacl(&path));
+    return into_napi(
+        env,
+        validate_windows_filesystem_path(&path).and_then(|()| windows::read_owner_and_dacl(&path)),
+    );
     #[cfg(not(windows))]
     {
         let _ = path;

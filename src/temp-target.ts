@@ -6,6 +6,7 @@ import { sameFileIdentityForCleanup, type FileIdentityStat } from "./file-identi
 import { assertSafePathSegment, sanitizeSafePathSegment, trimHyphenEdges } from "./safe-path-segment.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
 import { registerTempPathForExit } from "./temp-cleanup.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type TempFile = {
   dir: string;
@@ -99,7 +100,9 @@ export function buildRandomTempFilePath(params: {
   const uuid = params.uuid
     ? assertSafePathSegment(params.uuid.trim(), { label: "temp uuid" })
     : crypto.randomUUID();
-  return path.join(rootDir, `${prefix}-${now}-${uuid}${extension}`);
+  const filePath = path.join(rootDir, `${prefix}-${now}-${uuid}${extension}`);
+  assertNoWindowsPathAlias(filePath, "filesystem", "temp file path uses a Windows filesystem namespace alias");
+  return filePath;
 }
 
 function isNodeErrorWithCode(err: unknown, code: string): boolean {
@@ -138,7 +141,14 @@ async function cleanupTempDir(
 }
 
 function resolveTempRoot(rootDir?: string): string {
-  return path.resolve(rootDir ?? resolveSecureTempRoot({ fallbackPrefix: "fs-safe" }));
+  if (rootDir !== undefined) {
+    assertNoWindowsPathAlias(rootDir, "filesystem", "temp root uses a Windows filesystem namespace alias");
+  }
+  const selectedRoot = rootDir ?? resolveSecureTempRoot({ fallbackPrefix: "fs-safe" });
+  assertNoWindowsPathAlias(selectedRoot, "filesystem", "temp root uses a Windows filesystem namespace alias");
+  const resolvedRoot = path.resolve(selectedRoot);
+  assertNoWindowsPathAlias(resolvedRoot, "filesystem", "temp root uses a Windows filesystem namespace alias");
+  return resolvedRoot;
 }
 
 export async function tempFile(params: {
@@ -150,12 +160,16 @@ export async function tempFile(params: {
   const rootDir = resolveTempRoot(params.rootDir);
   const prefix = `${sanitizePrefix(params.prefix)}-`;
   const dir = await fs.mkdtemp(path.join(rootDir, prefix));
+  assertNoWindowsPathAlias(dir, "filesystem", "temp directory uses a Windows filesystem namespace alias");
   // Windows file indexes can exceed Number.MAX_SAFE_INTEGER. Cleanup receipts
   // must retain the exact identity or adjacent directories can compare equal.
   const identity = fsSync.lstatSync(dir, { bigint: true });
   const unregisterTempDir = registerTempPathForExit(dir, { recursive: true, identity });
-  const file = (fileName?: string) =>
-    path.join(dir, sanitizeTempFileName(fileName ?? params.fileName ?? "download.bin"));
+  const file = (fileName?: string) => {
+    const filePath = path.join(dir, sanitizeTempFileName(fileName ?? params.fileName ?? "download.bin"));
+    assertNoWindowsPathAlias(filePath, "filesystem", "temp file path uses a Windows filesystem namespace alias");
+    return filePath;
+  };
   const cleanup = async () => {
     try {
       await cleanupTempDir(dir, identity, params.onCleanupError);

@@ -15,6 +15,7 @@ import { ROOT_PATH_ALIAS_POLICIES, resolveRootPath } from "./root-path.js";
 import { outsideWorkspaceError, rootPathChangedError } from "./root-errors.js";
 import { isDriveRelativePath } from "./safe-path-segment.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type RootContext = {
   rootDir: string;
@@ -28,6 +29,11 @@ export const ensureTrailingSep = (value: string) =>
 
 export function assertValidRootRelativePath(relativePath: string): void {
   assertNoNulPathInput(relativePath, "relative path contains a NUL byte");
+  assertNoWindowsPathAlias(
+    relativePath,
+    "filesystem",
+    "relative path uses a Windows filesystem namespace alias",
+  );
 }
 
 export function assertValidRootDestinationPath(relativePath: string): void {
@@ -43,6 +49,7 @@ const WINDOWS_PARENT_COMPONENT = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
 
 export async function expandRelativePathWithHome(relativePath: string): Promise<string> {
   const rawHome = process.env.HOME || process.env.USERPROFILE || os.homedir();
+  assertNoWindowsPathAlias(rawHome, "filesystem", "home path uses a Windows filesystem namespace alias");
   if (cachedHomePath?.raw !== rawHome) {
     let realHome = rawHome;
     try {
@@ -52,20 +59,29 @@ export async function expandRelativePathWithHome(relativePath: string): Promise<
     }
     cachedHomePath = { raw: rawHome, real: realHome };
   }
-  if (relativePath === "~") return cachedHomePath.real;
-  if (relativePath.startsWith("~/") || (path.sep === "\\" && relativePath.startsWith("~\\"))) {
-    return `${ensureTrailingSep(cachedHomePath.real)}${relativePath.slice(2)}`;
+  if (relativePath === "~") {
+    assertNoWindowsPathAlias(cachedHomePath.real, "filesystem", "home path uses a Windows filesystem namespace alias");
+    return cachedHomePath.real;
   }
+  if (relativePath.startsWith("~/") || (path.sep === "\\" && relativePath.startsWith("~\\"))) {
+    const expanded = `${ensureTrailingSep(cachedHomePath.real)}${relativePath.slice(2)}`;
+    assertNoWindowsPathAlias(expanded, "filesystem", "expanded path uses a Windows filesystem namespace alias");
+    return expanded;
+  }
+  assertNoWindowsPathAlias(relativePath, "filesystem", "relative path uses a Windows filesystem namespace alias");
   return relativePath;
 }
 
 export async function resolveRootContext(rootDir: string): Promise<RootContext> {
   assertNoNulPathInput(rootDir, "root dir contains a NUL byte");
+  assertNoWindowsPathAlias(rootDir, "filesystem", "root dir uses a Windows filesystem namespace alias");
   const lexicalRoot = path.resolve(rootDir);
+  assertNoWindowsPathAlias(lexicalRoot, "filesystem", "root dir uses a Windows filesystem namespace alias");
   let rootReal: string;
   let rootIdentity: { dev: bigint; ino: bigint };
   try {
     rootReal = fs.realpathSync.native(rootDir);
+    assertNoWindowsPathAlias(rootReal, "filesystem", "canonical root path uses a Windows filesystem namespace alias");
     const rootStat = await inspectFileIdentity(() => {
       const stat = fs.statSync(rootReal, { bigint: true });
       if (!stat.isDirectory()) throw new FsSafeError("invalid-path", "root dir is not a directory");
@@ -143,7 +159,9 @@ export async function resolvePathInRoot(
   assertValidRootRelativePath(relativePath);
   await assertRootIdentityCurrent(root);
   const expanded = await expandRelativePathWithHome(relativePath);
+  assertNoWindowsPathAlias(expanded, "filesystem", "expanded path uses a Windows filesystem namespace alias");
   let resolved = path.resolve(root.rootWithSep, expanded);
+  assertNoWindowsPathAlias(resolved, "filesystem", "resolved path uses a Windows filesystem namespace alias");
   if (!options?.resolveCanonical && !isPathInside(root.rootWithSep, resolved)) {
     throw outsideWorkspaceError();
   }
@@ -153,6 +171,7 @@ export async function resolvePathInRoot(
   const rawAbsolutePath = path.isAbsolute(expanded)
     ? expanded
     : `${root.rootWithSep}${expanded}`;
+  assertNoWindowsPathAlias(rawAbsolutePath, "filesystem", "resolved path uses a Windows filesystem namespace alias");
   try {
     const resolution = {
       absolutePath: rawAbsolutePath,

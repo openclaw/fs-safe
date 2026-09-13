@@ -71,6 +71,9 @@ type JsonStore<T> = {
 
 `jsonStore({ filePath })` resolves `rootDir = dirname(filePath)` and calls
 `fileStore({ rootDir, private: true }).json(basename(filePath), options)`.
+On Windows, the factory rejects NTFS alternate-stream and directory-index
+namespace spellings before resolving the path or preparing its private parent;
+ordinary colon-bearing POSIX paths remain valid.
 
 `durable: false` keeps sibling-temp replace/rename behavior but skips the
 temp-file and parent-directory `fsync` calls. Use it only for reconstructible

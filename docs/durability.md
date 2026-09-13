@@ -53,6 +53,13 @@ propagate.
 discard both unsupported outcomes and failures. Use them only when the primary
 write remains useful without a crash-durability promise.
 
+On Windows, pathname inputs and supplied directory receipts reject NTFS
+alternate-stream and directory-index namespace spellings before opening,
+creating, hashing, or publishing anything. This applies to directory
+durability, `publishFileExclusive()`, and the pathname overload of
+`sha256File()`; the already-open `FileHandle` overload is unchanged. Ordinary
+colon-bearing POSIX paths remain valid.
+
 ## Pinned directories
 
 `pinDirectory()` rejects final symlinks and non-directories. On POSIX it opens

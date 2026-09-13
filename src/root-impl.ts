@@ -80,6 +80,7 @@ import { createCopyPublicationObserver, onCopyPublication, type CopyPublicationO
 import { writeAllToFile } from "./write-file-handle.js";
 import { createInputOptions, rethrowCreateInputError, rootWriteInput, type RootWriteParams } from "./root-create-input.js";
 import { assertFinalSymlinkRejected, mutationSymlinkResolution, readSymlinkResolution, type MutationSymlinkPolicy, type SymlinkPolicy } from "./root-symlink-policy.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 import {
   mergeReadOptions, readDefaults,
@@ -257,6 +258,7 @@ async function openVerifiedLocalFile(
         throw error;
       });
     const { realPath } = resolved;
+    assertNoWindowsPathAlias(realPath, "filesystem", "resolved file path uses a Windows filesystem namespace alias");
     let resolvedStat: BigIntStats | undefined = resolved.stat;
     await inspectPathIdentity(async () => {
       // Reuse the post-realpath observation; unknown Windows identities still
@@ -733,8 +735,10 @@ export async function readLocalFileSafely(params: {
 }
 
 export async function openLocalFileSafely(params: { filePath: string }): Promise<OpenResult> {
-  assertNoNulPathInput(params.filePath, "file path contains a NUL byte");
-  return (await openVerifiedLocalFile(params.filePath)).opened;
+  const filePath = params.filePath;
+  assertNoNulPathInput(filePath, "file path contains a NUL byte");
+  assertNoWindowsPathAlias(filePath, "filesystem", "file path uses a Windows filesystem namespace alias");
+  return (await openVerifiedLocalFile(filePath)).opened;
 }
 
 export type WritableOpenResult = {
@@ -913,6 +917,7 @@ async function openWritableFileInRoot(
     }
 
     const realPath = await resolveOpenedFileRealPathForHandle(handle, ioPath);
+    assertNoWindowsPathAlias(realPath, "filesystem", "resolved file path uses a Windows filesystem namespace alias");
     realPathForCleanup = realPath;
     const realStat = fsSync.statSync(realPath);
     if (!sameFileIdentity(stat, realStat)) {
@@ -1150,6 +1155,7 @@ async function copyFileInRoot(
   let sourceIdentity: BigIntStats;
   if (typeof params.source === "string") {
     assertNoNulPathInput(params.source, "source path contains a NUL byte");
+    assertNoWindowsPathAlias(params.source, "filesystem", "source path uses a Windows filesystem namespace alias");
     ({ opened: source, identity: sourceIdentity } = await openVerifiedLocalFile(params.source, {
       hardlinks: params.sourceHardlinks,
     }));

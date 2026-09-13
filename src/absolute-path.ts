@@ -10,6 +10,7 @@ import {
 import { FsSafeError, type FsSafeErrorCode } from "./errors.js";
 import { pathExists } from "./fs.js";
 import { resolveRootPath } from "./root-path.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type AbsolutePathSymlinkPolicy = "reject" | "follow";
 
@@ -224,13 +225,17 @@ export function assertAbsolutePathInput(filePath: string): string {
   if (filePath.includes("\0")) {
     throw new FsSafeError("invalid-path", "path must not contain NUL bytes");
   }
+  assertNoWindowsPathAlias(filePath);
   if (!path.isAbsolute(filePath)) {
     throw new FsSafeError("invalid-path", "path must be absolute");
   }
-  return path.normalize(filePath);
+  const normalized = path.normalize(filePath);
+  assertNoWindowsPathAlias(normalized);
+  return normalized;
 }
 
 export async function findExistingAncestor(filePath: string): Promise<string | null> {
+  assertNoWindowsPathAlias(filePath);
   return (await findExistingAncestorWithStat(filePath))?.path ?? null;
 }
 
@@ -238,7 +243,9 @@ async function findExistingAncestorWithStat(filePath: string): Promise<{
   path: string;
   stat: Stats;
 } | null> {
+  assertNoWindowsPathAlias(filePath);
   let current = path.resolve(filePath);
+  assertNoWindowsPathAlias(current);
   while (true) {
     try {
       return { path: current, stat: fsSync.lstatSync(current) };
@@ -340,18 +347,28 @@ export async function ensureAbsoluteDirectory(
 }
 
 export async function canonicalPathFromExistingAncestor(filePath: string): Promise<string> {
+  assertNoWindowsPathAlias(filePath);
   const ancestor = await findExistingAncestor(filePath);
   if (!ancestor) {
-    return path.resolve(filePath);
+    const resolved = path.resolve(filePath);
+    assertNoWindowsPathAlias(resolved);
+    return resolved;
   }
   let canonicalAncestor = ancestor;
+  let resolvedAncestor: string | undefined;
   try {
-    canonicalAncestor = fsSync.realpathSync.native(ancestor);
+    resolvedAncestor = fsSync.realpathSync.native(ancestor);
   } catch {
     // Keep lexical path when the existing ancestor cannot be canonicalized.
   }
+  if (resolvedAncestor !== undefined) {
+    assertNoWindowsPathAlias(resolvedAncestor);
+    canonicalAncestor = resolvedAncestor;
+  }
   const relative = path.relative(ancestor, filePath);
-  return relative ? path.join(canonicalAncestor, relative) : canonicalAncestor;
+  const canonicalPath = relative ? path.join(canonicalAncestor, relative) : canonicalAncestor;
+  assertNoWindowsPathAlias(canonicalPath);
+  return canonicalPath;
 }
 
 export async function resolveAbsolutePathForRead(
@@ -363,6 +380,7 @@ export async function resolveAbsolutePathForRead(
   let canonicalPath: string;
   try {
     canonicalPath = fsSync.realpathSync.native(normalized);
+    assertNoWindowsPathAlias(canonicalPath);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       throw new FsSafeError("not-found", "path not found", { cause: err });

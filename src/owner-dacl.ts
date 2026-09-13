@@ -1,5 +1,6 @@
 import { FsSafeError } from "./errors.js";
 import { getNativeBinding } from "./native.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type WindowsAceFlags = {
   raw: number;
@@ -39,6 +40,12 @@ export function readOwnerAndDacl(targetPath: string): OwnerAndDaclResult {
   if (process.platform !== "win32") {
     return { status: "unsupported-platform", platform: process.platform };
   }
+
+  assertNoWindowsPathAlias(
+    targetPath,
+    "filesystem",
+    "owner and DACL path uses a Windows filesystem namespace alias",
+  );
 
   const native = getNativeBinding();
   if (!native) {

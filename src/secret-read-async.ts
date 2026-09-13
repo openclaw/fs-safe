@@ -13,6 +13,7 @@ import {
   trimSecretFileContent,
   type SecretFileReadOptions,
 } from "./secret-read-policy.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export async function readSecretFile(
   filePath: string,
@@ -48,6 +49,7 @@ export async function readSecretFile(
   let raw: string;
   try {
     const realPath = fsSync.realpathSync.native(resolvedPath);
+    assertNoWindowsPathAlias(realPath, "filesystem", `${label} file path uses a Windows filesystem namespace alias`);
     assertNoUnsafeDeviceReadPath(realPath);
     handle = await fs.open(realPath, resolveReadOpenFlags());
     const openedHandle = handle;

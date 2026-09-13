@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { FsSafeError } from "./errors.js";
 import { isDriveRelativePath } from "./safe-path-segment.js";
+import { assertNoWindowsPathAlias, hasWindowsPathAlias } from "./windows-path-alias.js";
 
 export {
   assertNoUnsafeDeviceReadPath,
@@ -119,11 +120,23 @@ export function isPathInsideWithRealpath(
   candidatePath: string,
   opts?: { requireRealpath?: boolean; cache?: Map<string, string> },
 ): boolean {
+  if (
+    hasWindowsPathAlias(basePath, "filesystem") ||
+    hasWindowsPathAlias(candidatePath, "filesystem")
+  ) {
+    return false;
+  }
   if (!isPathInside(basePath, candidatePath)) {
     return false;
   }
   const baseReal = safeRealpathSync(basePath, opts?.cache);
   const candidateReal = safeRealpathSync(candidatePath, opts?.cache);
+  if (
+    (baseReal !== null && hasWindowsPathAlias(baseReal, "filesystem")) ||
+    (candidateReal !== null && hasWindowsPathAlias(candidateReal, "filesystem"))
+  ) {
+    return false;
+  }
   if (!baseReal || !candidateReal) {
     return opts?.requireRealpath === false;
   }
@@ -163,10 +176,16 @@ export function splitSafeRelativePath(relativePath: string): string[] {
       throw new FsSafeError("invalid-path", "relative path must not contain a drive letter");
     }
   }
+  assertNoWindowsPathAlias(
+    relativePath,
+    "relative",
+    "relative path uses a Windows filesystem namespace alias",
+  );
   return segments;
 }
 
 export function resolveSafeRelativePath(rootDir: string, relativePath: string): string {
+  assertNoWindowsPathAlias(rootDir, "filesystem", "root dir uses a Windows filesystem namespace alias");
   const root = path.resolve(rootDir);
   const target = path.resolve(root, ...splitSafeRelativePath(relativePath));
   if (!isPathInside(root, target)) {

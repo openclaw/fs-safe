@@ -6,6 +6,7 @@ import { expandHomePrefix, resolveRequiredHomeDir } from "./home-dir.js";
 import { isFileUrl, safeFileURLToPath } from "./local-file-access.js";
 import { ROOT_PATH_ALIAS_POLICIES, resolveRootPathSync } from "./root-path.js";
 import { root, type HardlinkPolicy, type ReadResult, type SymlinkPolicy } from "./root.js";
+import { assertNoWindowsPathAlias, isWindowsPathAliasError } from "./windows-path-alias.js";
 
 export type LocalRootsPathResult = {
   path: string;
@@ -46,13 +47,17 @@ function resolveLocalPathInput(input: string, label: string): string {
   if (input.includes("\0")) {
     throw new FsSafeError("invalid-path", `${label} must not contain NUL bytes`);
   }
+  assertNoWindowsPathAlias(input, "filesystem", `${label} uses a Windows filesystem namespace alias`);
   const homePrefix = input === "~" || input.startsWith("~/") ||
     (path.sep === "\\" && input.startsWith("~\\"));
   const expanded = homePrefix ? `${resolveRequiredHomeDir()}${path.sep}${input.slice(2)}` : input;
+  assertNoWindowsPathAlias(expanded, "filesystem", `${label} uses a Windows filesystem namespace alias`);
   if (path.isAbsolute(expanded)) return expanded;
   const drive = path.parse(expanded).root;
   const base = drive ? path.resolve(drive) : process.cwd();
-  return `${base}${path.sep}${expanded.slice(drive.length)}`;
+  const resolved = `${base}${path.sep}${expanded.slice(drive.length)}`;
+  assertNoWindowsPathAlias(resolved, "filesystem", `${label} uses a Windows filesystem namespace alias`);
+  return resolved;
 }
 
 function resolveLocalRootInput(input: string, label: string): string {
@@ -66,13 +71,17 @@ function resolveLocalRootInput(input: string, label: string): string {
   if (resolved.includes("\0")) {
     throw new FsSafeError("invalid-path", `${label} entry must not contain NUL bytes`);
   }
+  assertNoWindowsPathAlias(resolved, "filesystem", `${label} entry uses a Windows filesystem namespace alias`);
   if (!path.isAbsolute(resolved)) {
     throw new FsSafeError("invalid-path", `${label} entries must be absolute paths: ${input}`);
   }
-  return path.resolve(resolved);
+  const absolute = path.resolve(resolved);
+  assertNoWindowsPathAlias(absolute, "filesystem", `${label} entry uses a Windows filesystem namespace alias`);
+  return absolute;
 }
 
 function resolveRootRealSync(rootDir: string): string | null {
+  let realPath: string;
   try {
     // Configured roots may themselves be symlinks. Follow only this trusted
     // root entry, then use its canonical directory for containment checks.
@@ -80,18 +89,26 @@ function resolveRootRealSync(rootDir: string): string | null {
     if (!stat.isDirectory()) {
       return null;
     }
-    return fsSync.realpathSync(rootDir);
+    realPath = fsSync.realpathSync(rootDir);
   } catch {
     return null;
   }
+  assertNoWindowsPathAlias(realPath, "filesystem", "local root uses a Windows filesystem namespace alias");
+  return realPath;
 }
 
 export function resolveLocalPathFromRootsSync(
   options: ResolveLocalPathFromRootsSyncOptions,
 ): LocalRootsPathResult | null {
   const label = options.label ?? "local roots";
-  const requestedPath = resolveLocalPathInput(options.filePath, "file path");
   const rootDirs = options.roots.map((rootEntry) => resolveLocalRootInput(rootEntry, label));
+  let requestedPath: string;
+  try {
+    requestedPath = resolveLocalPathInput(options.filePath, "file path");
+  } catch (error) {
+    if (isWindowsPathAliasError(error)) return null;
+    throw error;
+  }
 
   for (const rootDir of rootDirs) {
     const rootReal = resolveRootRealSync(rootDir);
@@ -132,8 +149,14 @@ export async function readLocalFileFromRoots(
 ): Promise<LocalRootsReadResult | null> {
   const maxBytes = normalizeMaxBytes(options.maxBytes);
   const label = options.label ?? "local roots";
-  const requestedPath = resolveLocalPathInput(options.filePath, "file path");
   const rootDirs = options.roots.map((rootEntry) => resolveLocalRootInput(rootEntry, label));
+  let requestedPath: string;
+  try {
+    requestedPath = resolveLocalPathInput(options.filePath, "file path");
+  } catch (error) {
+    if (isWindowsPathAliasError(error)) return null;
+    throw error;
+  }
 
   for (const rootDir of rootDirs) {
     let scopedRoot: Awaited<ReturnType<typeof root>>;

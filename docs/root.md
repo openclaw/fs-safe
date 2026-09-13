@@ -219,6 +219,16 @@ source)` can reject a legal POSIX basename such as `c:photo.png`; callers that
 derive portable destination names from host files must sanitize or map that
 basename first.
 
+On Windows, every Root pathname admission also rejects NTFS alternate-data-stream
+and directory-index aliases: relative names containing `:`, or absolute names
+with a colon beyond the single rooted drive designator, fail with
+`invalid-path` before filesystem access. This includes spellings such as
+`file:stream`, `dir::$INDEX_ALLOCATION`, and `dir:$I30:$INDEX_ALLOCATION`.
+Rooted drive, UNC, and extended-drive paths keep their existing handling, and
+the separate device/network policies remain in force. Ordinary colon-bearing
+names remain valid on POSIX where the operation's existing drive-relative rule
+does not otherwise reject them.
+
 `openWritable` opens a writable file with options `mode?: number` and `writeMode?: "replace" | "append" | "update"`. `replace` truncates existing files and is the default; `update` keeps existing contents. Use it for streaming output. Prefer `await using` for cleanup.
 
 `remove` leaves non-empty directories unchanged unless `recursive: true` is

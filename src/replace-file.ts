@@ -33,6 +33,7 @@ import { AsyncAtomicTempOwner, SyncAtomicTempOwner } from "./replace-file-temp-o
 import { assertSafePathPrefix } from "./safe-path-segment.js";
 import { sleep, sleepSync } from "./timing.js";
 import { serializePathWrite } from "./write-queue.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type ReplaceFileAtomicFileSystem = {
   promises: Pick<
@@ -222,6 +223,7 @@ function validateReplaceFilePath(filePath: string): void {
   if (!filePath || filePath.includes("\0")) {
     throw new Error("Atomic replace file path must be non-empty.");
   }
+  assertNoWindowsPathAlias(filePath, "filesystem", "atomic replace path uses a Windows filesystem namespace alias");
 }
 
 function validateRestoreOptions(options: ReplaceFileAtomicBaseOptions): void {
@@ -240,7 +242,7 @@ function buildReplaceTempPath(filePath: string, tempPrefix?: string): string {
   return path.join(dir, `${safePrefix}.${process.pid}.${randomUUID()}.tmp`);
 }
 
-async function resolveMode(options: ReplaceFileAtomicOptions): Promise<number> {
+async function resolveMode(options: ReplaceFileAtomicOptions, filePath: string): Promise<number> {
   const defaultMode = options.mode ?? 0o600;
   if (!options.preserveExistingMode) {
     return defaultMode;
@@ -248,7 +250,7 @@ async function resolveMode(options: ReplaceFileAtomicOptions): Promise<number> {
   const fsModule = options.fileSystem?.promises ?? fs;
   let stat: import("node:fs").Stats | null;
   try {
-    stat = fsModule === fs ? syncFs.lstatSync(options.filePath) : await fsModule.lstat(options.filePath);
+    stat = fsModule === fs ? syncFs.lstatSync(filePath) : await fsModule.lstat(filePath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return defaultMode;
@@ -258,7 +260,7 @@ async function resolveMode(options: ReplaceFileAtomicOptions): Promise<number> {
   return stat ? inheritedRegularFileMode(stat) : defaultMode;
 }
 
-function resolveModeSync(options: ReplaceFileAtomicSyncOptions): number {
+function resolveModeSync(options: ReplaceFileAtomicSyncOptions, filePath: string): number {
   const defaultMode = options.mode ?? 0o600;
   if (!options.preserveExistingMode) {
     return defaultMode;
@@ -266,7 +268,7 @@ function resolveModeSync(options: ReplaceFileAtomicSyncOptions): number {
   const fsModule = options.fileSystem ?? syncFs;
   let stat: Stats | undefined;
   try {
-    stat = fsModule.lstatSync(options.filePath);
+    stat = fsModule.lstatSync(filePath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
       throw error;
@@ -295,30 +297,32 @@ export async function replaceFileAtomicWithDirectorySync(
   const filePath = options.filePath;
   validateReplaceFilePath(filePath);
   validateRestoreOptions(options);
-  validateRenameIdentity(options.renameIdentity);
+  const renameIdentity = options.renameIdentity;
+  validateRenameIdentity(renameIdentity);
   return await serializePathWrite(path.resolve(filePath), async () => {
-    if (options.renameIdentity !== "verify-content-with-lock") {
-      return await replaceFileAtomicUnserialized(options, syncParent);
+    if (renameIdentity !== "verify-content-with-lock") {
+      return await replaceFileAtomicUnserialized(options, filePath, renameIdentity, syncParent);
     }
     await (options.fileSystem?.promises ?? fs).mkdir(path.dirname(filePath), {
       recursive: true,
       mode: options.dirMode ?? 0o700,
     });
     return await withAtomicRenameIdentityLock(filePath, async () =>
-      await replaceFileAtomicUnserialized(options, syncParent));
+      await replaceFileAtomicUnserialized(options, filePath, renameIdentity, syncParent));
   });
 }
 
 async function replaceFileAtomicUnserialized(
   options: ReplaceFileAtomicOptions,
+  filePath: string,
+  renameIdentity: RenameIdentityPolicy | undefined,
   syncParent?: (directoryPath: string) => Promise<unknown>,
 ): Promise<ReplaceFileAtomicResult> {
-  const filePath = options.filePath;
   const fsModule = options.fileSystem?.promises ?? fs;
   const dir = path.dirname(filePath);
   const dirMode = options.dirMode ?? 0o700;
-  const mode = await resolveMode(options);
-  const expectedHash = atomicExpectedContentHash(options.renameIdentity, options.content);
+  const mode = await resolveMode(options, filePath);
+  const expectedHash = atomicExpectedContentHash(renameIdentity, options.content);
   const tempPath = buildReplaceTempPath(filePath, options.tempPrefix);
   const tempOwner = new AsyncAtomicTempOwner(tempPath);
   let originalError: unknown;
@@ -393,27 +397,29 @@ export function replaceFileAtomicSync(
   const filePath = options.filePath;
   validateReplaceFilePath(filePath);
   validateRestoreOptions(options);
-  validateRenameIdentity(options.renameIdentity);
-  if (options.renameIdentity !== "verify-content-with-lock") {
-    return replaceFileAtomicSyncUnserialized(options);
+  const renameIdentity = options.renameIdentity;
+  validateRenameIdentity(renameIdentity);
+  if (renameIdentity !== "verify-content-with-lock") {
+    return replaceFileAtomicSyncUnserialized(options, filePath, renameIdentity);
   }
   (options.fileSystem ?? syncFs).mkdirSync(path.dirname(filePath), {
     recursive: true,
     mode: options.dirMode ?? 0o700,
   });
   return withAtomicRenameIdentityLockSync(filePath, () =>
-    replaceFileAtomicSyncUnserialized(options));
+    replaceFileAtomicSyncUnserialized(options, filePath, renameIdentity));
 }
 
 function replaceFileAtomicSyncUnserialized(
   options: ReplaceFileAtomicSyncOptions,
+  filePath: string,
+  renameIdentity: RenameIdentityPolicy | undefined,
 ): ReplaceFileAtomicResult {
-  const filePath = options.filePath;
   const fsModule = options.fileSystem ?? syncFs;
   const dir = path.dirname(filePath);
   const dirMode = options.dirMode ?? 0o700;
-  const mode = resolveModeSync(options);
-  const expectedHash = atomicExpectedContentHash(options.renameIdentity, options.content);
+  const mode = resolveModeSync(options, filePath);
+  const expectedHash = atomicExpectedContentHash(renameIdentity, options.content);
   const fchmodSync = options.fileSystem?.fchmodSync ?? (
     options.fileSystem === undefined ? syncFs.fchmodSync : undefined
   );

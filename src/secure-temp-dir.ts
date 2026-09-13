@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { tmpdir as getOsTmpDir } from "node:os";
 import path from "node:path";
 import { assertSafePathSegment } from "./safe-path-segment.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 type MaybeNodeError = { code?: string };
 
@@ -38,6 +39,7 @@ function isNodeErrorWithCode(err: unknown, code: string): err is MaybeNodeError 
 }
 
 export function resolveSecureTempRoot(options: ResolveSecureTempRootOptions): string {
+  const platform = options.platform ?? process.platform;
   const fallbackPrefix = assertSafePathSegment(options.fallbackPrefix, {
     allowDotPrefix: true,
     label: "fallback temp prefix",
@@ -59,9 +61,19 @@ export function resolveSecureTempRoot(options: ResolveSecureTempRootOptions): st
         return undefined;
       }
     });
-  const tmpdir = typeof options.tmpdir === "function" ? options.tmpdir : getOsTmpDir;
-  const platform = options.platform ?? process.platform;
+  const injectedTmpdir = options.tmpdir;
+  const tmpdir = typeof injectedTmpdir === "function" ? injectedTmpdir : getOsTmpDir;
   const uid = getuid();
+  const preferredDir = options.preferredDir;
+
+  if (preferredDir !== undefined) {
+    assertNoWindowsPathAlias(
+      preferredDir,
+      "filesystem",
+      "preferred temp directory uses a Windows filesystem namespace alias",
+      platform,
+    );
+  }
 
   const isSecureDirForUser = (st: { mode?: number; uid?: number }): boolean => {
     if (uid === undefined) {
@@ -78,9 +90,22 @@ export function resolveSecureTempRoot(options: ResolveSecureTempRootOptions): st
 
   const fallback = (): string => {
     const base = tmpdir();
+    assertNoWindowsPathAlias(
+      base,
+      "filesystem",
+      "system temp directory uses a Windows filesystem namespace alias",
+      platform,
+    );
     const suffix = uid === undefined ? fallbackPrefix : `${fallbackPrefix}-${uid}`;
     const joiner = platform === "win32" ? path.win32.join : path.join;
-    return joiner(base, suffix);
+    const fallbackPath = joiner(base, suffix);
+    assertNoWindowsPathAlias(
+      fallbackPath,
+      "filesystem",
+      "fallback temp directory uses a Windows filesystem namespace alias",
+      platform,
+    );
+    return fallbackPath;
   };
 
   const isTrustedTmpDir = (st: SecureDirStat): boolean => {
@@ -88,6 +113,12 @@ export function resolveSecureTempRoot(options: ResolveSecureTempRootOptions): st
   };
 
   const resolveDirState = (candidatePath: string): "available" | "missing" | "invalid" => {
+    assertNoWindowsPathAlias(
+      candidatePath,
+      "filesystem",
+      "temp directory uses a Windows filesystem namespace alias",
+      platform,
+    );
     try {
       const candidate = lstatSync(candidatePath);
       if (!isTrustedTmpDir(candidate)) {
@@ -104,6 +135,12 @@ export function resolveSecureTempRoot(options: ResolveSecureTempRootOptions): st
   };
 
   const tryRepairWritableBits = (candidatePath: string): boolean => {
+    assertNoWindowsPathAlias(
+      candidatePath,
+      "filesystem",
+      "temp directory uses a Windows filesystem namespace alias",
+      platform,
+    );
     try {
       const st = lstatSync(candidatePath);
       if (!st.isDirectory() || st.isSymbolicLink()) {
@@ -165,33 +202,33 @@ export function resolveSecureTempRoot(options: ResolveSecureTempRootOptions): st
     return ensureTrustedFallbackDir();
   }
 
-  if (!options.preferredDir) {
+  if (!preferredDir) {
     return ensureTrustedFallbackDir();
   }
 
-  const existingPreferredState = resolveDirState(options.preferredDir);
+  const existingPreferredState = resolveDirState(preferredDir);
   if (existingPreferredState === "available") {
-    return options.preferredDir;
+    return preferredDir;
   }
   if (existingPreferredState === "invalid") {
-    if (tryRepairWritableBits(options.preferredDir)) {
-      return options.preferredDir;
+    if (tryRepairWritableBits(preferredDir)) {
+      return preferredDir;
     }
     return ensureTrustedFallbackDir();
   }
 
   try {
-    const preferredParentDir = path.dirname(options.preferredDir);
+    const preferredParentDir = path.dirname(preferredDir);
     accessSync(preferredParentDir, TMP_DIR_ACCESS_MODE);
-    mkdirSync(options.preferredDir, { recursive: true, mode: 0o700 });
-    chmodSync(options.preferredDir, 0o700);
+    mkdirSync(preferredDir, { recursive: true, mode: 0o700 });
+    chmodSync(preferredDir, 0o700);
     if (
-      resolveDirState(options.preferredDir) !== "available" &&
-      !tryRepairWritableBits(options.preferredDir)
+      resolveDirState(preferredDir) !== "available" &&
+      !tryRepairWritableBits(preferredDir)
     ) {
       return ensureTrustedFallbackDir();
     }
-    return options.preferredDir;
+    return preferredDir;
   } catch {
     return ensureTrustedFallbackDir();
   }

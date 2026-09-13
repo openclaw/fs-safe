@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Reject NTFS alternate-data-stream and directory-index pathname aliases across guarded Root, FileStore, archive, JSON queue, sidecar lock, secret, secure-read, atomic publication, temp, permission, install, trash, and output boundaries before filesystem access. Preserve rooted drive paths, independent device/network policies, intentional output-name sanitization, existing failure shapes, and ordinary colon-bearing POSIX names; native relative and archive paths enforce the same Windows rule.
 - Restrict atomic replacement mode inheritance to ordinary rwx bits from an existing non-symlink regular file, preventing symlink, file-type, and special-bit permission laundering.
 - Reject hardlinked `readSecureFile()` inputs before reading and recheck the pinned descriptor after reading so bytes are not returned while a late additional alias remains.
 - Reject invalid or Node-overflowing lock compromise-check intervals before acquisition and serialize asynchronous checks, preventing high-frequency or overlapping filesystem polling loops.
