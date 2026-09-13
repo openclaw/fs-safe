@@ -53,23 +53,30 @@ describe("directory copying", () => {
         bytes.fill(index + 77, 1024 * 1024);
         contents.set(name, bytes);
         await fs.writeFile(path.join(source, name), bytes);
-        const seconds = (index % 2 === 0 ? 1_600_000_000 : -315_619_200) + index;
+        // Windows Node stats wrap pre-epoch seconds; use post-2038 dates there.
+        const alternate = process.platform === "win32" ? 2_200_000_000 : -315_619_200;
+        const seconds = (index % 2 === 0 ? 1_600_000_000 : alternate) + index;
         await fs.utimes(
           path.join(source, name),
           String(seconds + 0.125375),
           String(seconds + 0.875625),
         );
-        timestamps.set(name, await fs.stat(path.join(source, name), { bigint: true }));
+        const expected = await fs.stat(path.join(source, name), { bigint: true });
+        expect(expected.mtimeNs / 1_000_000_000n).toBe(BigInt(Math.trunc(seconds + 0.875625)));
+        timestamps.set(name, expected);
       }
       const directories = ["", "empty", "nested", path.join("nested", "deep")];
       for (const [index, name] of directories.entries()) {
-        const seconds = index % 2 === 0 ? 1_500_000_000 : -315_619_200;
+        const alternate = process.platform === "win32" ? 2_200_000_000 : -315_619_200;
+        const seconds = index % 2 === 0 ? 1_500_000_000 : alternate;
         await fs.utimes(
           path.join(source, name),
           String(seconds + 0.125375),
           String(seconds + 0.875625),
         );
-        timestamps.set(name, await fs.stat(path.join(source, name), { bigint: true }));
+        const expected = await fs.stat(path.join(source, name), { bigint: true });
+        expect(expected.mtimeNs / 1_000_000_000n).toBe(BigInt(Math.trunc(seconds + 0.875625)));
+        timestamps.set(name, expected);
       }
 
       await copyTree(source, destination, { clone, concurrency });

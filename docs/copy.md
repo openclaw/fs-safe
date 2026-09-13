@@ -77,7 +77,7 @@ An already aborted signal prevents dispatch. In-flight cancellation stops cancel
 
 Completion is not a crash-durability guarantee. The API is suitable for reconstructible templates and checkouts; it does not sync every file or replace application-level publication and recovery rules.
 
-Byte copying retains fractional file and directory access/modification timestamps, including dates before 1970, to the precision supported by Node's timestamp APIs and the destination filesystem.
+Byte copying retains fractional file and directory access/modification timestamps to the precision supported by Node's timestamp APIs and the destination filesystem. This includes dates before 1970 on Unix. On Windows, [Node's unsigned stat seconds](https://github.com/nodejs/node/blob/v26.8.2/src/node_file-inl.h#L93-L104) can report pre-1970 timestamps as dates about 136 years later; byte copying inherits that upstream limitation.
 
 ## Platform tests and benchmarks
 

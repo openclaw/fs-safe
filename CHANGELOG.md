@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Preserve fractional access and modification timestamps during directory byte copying, including dates before 1970, to the precision supported by Node and the destination filesystem.
+- Preserve fractional access and modification timestamps during directory byte copying, including dates before 1970 on Unix, to the precision supported by Node and the destination filesystem.
 - Fix package consumer smoke and lifecycle tests with standalone `@pnpm/exe` installations, preserving the pinned pnpm version and isolated consumer configuration.
 
 ## 0.10.0 - 2026-09-13
