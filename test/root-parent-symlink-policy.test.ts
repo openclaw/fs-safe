@@ -230,6 +230,57 @@ it.each(["read", "open"] as const)("%s rejects a final symlink introduced after 
   expect(await fs.readFile(`${target}.original`, "utf8")).toBe("original");
 });
 
+it.each(["append", "create"].flatMap(method => ["symlink", "authority"].map(refusal => ({ method, refusal }))))(
+  "$method rechecks $refusal between short writes with both mutation guards enabled", async ({ method, refusal }) => {
+    configureFsSafeNative({ mode: "off" });
+    const { actual, safe } = await fixture();
+    const name = method === "append" ? "value" : "created";
+    const target = path.join(actual, name);
+    const saved = `${target}.saved`;
+    const expired = new Error("mutation owner expired after the first write");
+    let active = true;
+    let writes = 0;
+    const assertBeforeMutation = vi.fn(() => {
+      if (!active) throw expired;
+    });
+    const open = fs.open.bind(fs);
+    vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+      const handle = await open(...args);
+      if (String(args[0]) !== target) return handle;
+      const write = handle.write.bind(handle);
+      vi.spyOn(handle, "write").mockImplementation((async (buffer, offset, length, position) => {
+        writes++;
+        const result = await write(buffer, offset, writes === 1 ? Math.min(length, 2) : length, position);
+        if (writes === 1) {
+          await fs.rename(target, saved);
+          if (refusal === "symlink") await fs.symlink(saved, target, "file");
+          else {
+            await fs.writeFile(target, "replacement");
+            active = false;
+          }
+        }
+        return result;
+      }) as typeof handle.write);
+      return handle;
+    });
+
+    const options = { mkdir: false, durable: false, mutationSymlinks: parentPolicy, assertBeforeMutation };
+    const pending = method === "append"
+      ? safe.append(`alias/${name}`, "abcdef", options)
+      : safe.create(`alias/${name}`, "abcdef", options);
+    if (refusal === "symlink") await expect(pending).rejects.toMatchObject({ code: "symlink" });
+    else await expect(pending).rejects.toBe(expired);
+    expect(assertBeforeMutation).toHaveBeenCalled();
+    expect(writes).toBe(1);
+    expect(await fs.readFile(saved, "utf8")).toBe(method === "append" ? "originalab" : "ab");
+    if (refusal === "symlink") expect(await fs.readlink(target)).toBe(saved);
+    else expect(await fs.readFile(target, "utf8")).toBe("replacement");
+    expect((await fs.readdir(actual)).sort()).toEqual(
+      method === "append" ? ["value", "value.saved"] : ["created", "created.saved", "value"],
+    );
+  },
+);
+
 for (const mode of ["off", "require"] as const) {
   it.skipIf(mode === "require" && !nativeAvailable)(`write rejects a final symlink introduced during staging (native ${mode})`, async () => {
     configureFsSafeNative({ mode });
@@ -255,12 +306,13 @@ for (const mode of ["off", "require"] as const) {
         return handle;
       });
     } else {
-      const write = fsSync.writeSync.bind(fsSync);
-      vi.spyOn(fsSync, "writeSync").mockImplementation((fd, buffer, ...rest) => {
-        const written = write(fd, buffer, ...rest as []);
-        if (fsSync.fstatSync(fd).isFile()) swap();
-        return written;
-      });
+      const write = fsSync.write.bind(fsSync);
+      vi.spyOn(fsSync, "write").mockImplementation(((fd, buffer, offset, length, position, callback) => {
+        write(fd, buffer, offset, length, position, (error, bytesWritten, writtenBuffer) => {
+          if (!error && bytesWritten > 0 && fsSync.fstatSync(fd).isFile()) swap();
+          callback(error, bytesWritten, writtenBuffer);
+        });
+      }) as typeof fsSync.write);
     }
     await expect(safe.write("alias/value", "changed", { mutationSymlinks: parentPolicy })).rejects.toBeTruthy();
     expect(swapped).toBe(true);
