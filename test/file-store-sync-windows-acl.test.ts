@@ -126,15 +126,18 @@ describe.skipIf(process.platform !== "win32")("sync store real Windows ACL proof
         rename(from, to);
         if (to !== target) return;
         if (writerFd === undefined) throw new Error("publication writer was not captured");
+        // Preserve existing access rules in a protected test baseline so restore cannot add parent ACEs.
+        windowsCommand("icacls.exe", [target, "/inheritance:d", "/q"], env, "protect-fixture-acl");
         beforeDenial = fstat(writerFd, { bigint: true });
         close(open(target, fsSync.constants.O_RDONLY));
         const facts: unknown = JSON.parse(powershell([
           "$ErrorActionPreference='Stop'",
           "$section=[Security.AccessControl.AccessControlSections]::Access",
           "$acl=[IO.File]::GetAccessControl($env:FS_SAFE_ACL_PROOF_TARGET,$section)",
-          "@{sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;sddl=$acl.GetSecurityDescriptorSddlForm($section)}|ConvertTo-Json -Compress",
+          "@{sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;sddl=$acl.GetSecurityDescriptorSddlForm($section);protected=$acl.AreAccessRulesProtected}|ConvertTo-Json -Compress",
         ].join(";"), env, "query-acl").trim());
         if (!facts || typeof facts !== "object" || !("sid" in facts) || !("sddl" in facts) ||
+          !("protected" in facts) || facts.protected !== true ||
           typeof facts.sid !== "string" || !/^S-\d+(?:-\d+)+$/i.test(facts.sid) ||
           typeof facts.sddl !== "string" || !facts.sddl.startsWith("D:")) {
           throw new Error("Windows ACL proof returned invalid security facts");
@@ -217,7 +220,8 @@ describe.skipIf(process.platform !== "win32")("sync store real Windows ACL proof
       verifierOpenCode: isNodeError(verifierOpenError) ? verifierOpenError.code : null,
       observedOpaquePath, metadataProjected, libraryCode, dataReadsDuringWrite: reads,
       retainedWriterSurvivedDenial: true, writerClosedAfterRejection: true,
-      originalDaclRestored: true, restoreMethod: "icacls-save-restore", exactSddlMatched: true,
+      aclBaseline: "protected-existing-access-rules", baselineDaclRestored: true,
+      restoreMethod: "icacls-save-restore", exactSddlMatched: true,
       publishedIdentityAndModePreserved: true,
       publishedBytes: Buffer.byteLength(contents), sha256: createHash("sha256").update(contents).digest("hex"),
     }));
