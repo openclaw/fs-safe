@@ -6,7 +6,12 @@ import {
   isPathInside,
 } from "./path.js";
 import { root as openRoot } from "./root.js";
-import { assertNoWindowsPathAlias, hasWindowsPathAlias } from "./windows-path-alias.js";
+import {
+  assertNoWindowsPathAlias,
+  hasWindowsPathAlias,
+  pathForWindowsFilesystem,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 import { resolvePathWithinRoot } from "./root-paths-lexical.js";
 import {
   assertNoSymlinkSegments,
@@ -65,7 +70,9 @@ async function resolveRealPathIfExists(
 ): Promise<string | undefined | typeof INVALID_REAL_PATH> {
   if (hasWindowsPathAlias(targetPath, "filesystem")) return INVALID_REAL_PATH;
   try {
-    const realPath = fsSync.realpathSync.native(targetPath);
+    const realPath = fsSync.realpathSync.native(
+      pathForWindowsFilesystem(targetPath),
+    );
     return hasWindowsPathAlias(realPath, "filesystem") ? INVALID_REAL_PATH : realPath;
   } catch {
     return undefined;
@@ -75,11 +82,12 @@ async function resolveRealPathIfExists(
 async function resolveTrustedRootRealPath(rootDir: string): Promise<string | undefined> {
   if (hasWindowsPathAlias(rootDir, "filesystem")) return undefined;
   try {
-    const rootLstat = fsSync.lstatSync(rootDir);
+    const operationPath = pathForWindowsFilesystem(rootDir);
+    const rootLstat = fsSync.lstatSync(operationPath);
     if (!rootLstat.isDirectory() || rootLstat.isSymbolicLink()) {
       return undefined;
     }
-    const realPath = fsSync.realpathSync.native(rootDir);
+    const realPath = fsSync.realpathSync.native(operationPath);
     return hasWindowsPathAlias(realPath, "filesystem") ? undefined : realPath;
   } catch {
     return undefined;
@@ -92,7 +100,8 @@ async function validateCanonicalPathWithinRoot(params: {
   expect: "directory" | "file";
 }): Promise<"ok" | "not-found" | "invalid"> {
   try {
-    const candidateLstat = fsSync.lstatSync(params.candidatePath);
+    const operationPath = pathForWindowsFilesystem(params.candidatePath);
+    const candidateLstat = fsSync.lstatSync(operationPath);
     if (candidateLstat.isSymbolicLink()) {
       return "invalid";
     }
@@ -105,7 +114,7 @@ async function validateCanonicalPathWithinRoot(params: {
     if (params.expect === "file" && candidateLstat.nlink > 1) {
       return "invalid";
     }
-    const candidateRealPath = fsSync.realpathSync.native(params.candidatePath);
+    const candidateRealPath = fsSync.realpathSync.native(operationPath);
     if (hasWindowsPathAlias(candidateRealPath, "filesystem")) return "invalid";
     return isPathInside(params.rootRealPath, candidateRealPath) ? "ok" : "invalid";
   } catch (err) {
@@ -133,7 +142,7 @@ export async function resolveWritablePathWithinRoot(params: {
     return lexical;
   }
 
-  const rootDir = path.resolve(rootDirInput);
+  const rootDir = resolvePathPreservingWindowsRoot(rootDirInput);
   const rootRealPath = await resolveTrustedRootRealPath(rootDir);
   if (!rootRealPath) {
     return invalidPath(scopeLabel);
@@ -251,7 +260,7 @@ async function resolveCheckedPathsWithinRoot(
     return invalidPath(scopeLabel);
   }
   const requestedPaths = [...params.requestedPaths];
-  const rootDir = path.resolve(rootDirInput);
+  const rootDir = resolvePathPreservingWindowsRoot(rootDirInput);
   if (hasWindowsPathAlias(rootDir, "filesystem")) return invalidPath(scopeLabel);
   const rootRealPathResult = await resolveRealPathIfExists(rootDir);
   if (rootRealPathResult === INVALID_REAL_PATH) return invalidPath(scopeLabel);
@@ -291,7 +300,9 @@ async function resolveCheckedPathsWithinRoot(
       return lexicalPathResult;
     }
     try {
-      const resolvedExistingPath = fsSync.realpathSync.native(raw);
+      const resolvedExistingPath = fsSync.realpathSync.native(
+        pathForWindowsFilesystem(raw),
+      );
       if (hasWindowsPathAlias(resolvedExistingPath, "filesystem")) {
         return lexicalPathResult;
       }
@@ -336,7 +347,9 @@ async function resolveCheckedPathsWithinRoot(
             scopeLabel,
           });
           const existingPath = await resolveNearestExistingPath(pathResult.fallbackPath);
-          const existingRealPath = fsSync.realpathSync.native(existingPath);
+          const existingRealPath = fsSync.realpathSync.native(
+            pathForWindowsFilesystem(existingPath),
+          );
           if (
             hasWindowsPathAlias(existingRealPath, "filesystem") ||
             !isPathInside(rootRealPath, existingRealPath)

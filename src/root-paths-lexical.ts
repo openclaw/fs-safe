@@ -1,6 +1,10 @@
 import path from "node:path";
 import { isPathRelativeEscape } from "./path.js";
-import { hasWindowsPathAlias } from "./windows-path-alias.js";
+import {
+  hasWindowsPathAlias,
+  resolvePathFromBasePreservingWindowsRoot,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 function invalidPath(scopeLabel: string): { ok: false; error: string } {
   return { ok: false, error: `Invalid path: must stay within ${scopeLabel}` };
@@ -9,6 +13,10 @@ function invalidPath(scopeLabel: string): { ok: false; error: string } {
 function pathStaysWithinRoot(rootDir: string, candidatePath: string): boolean {
   const relative = path.relative(rootDir, candidatePath);
   return Boolean(relative) && !isPathRelativeEscape(relative);
+}
+
+function resolvePathAgainstRoot(root: string, requestedPath: string): string {
+  return resolvePathFromBasePreservingWindowsRoot(root, requestedPath);
 }
 
 export function resolvePathWithinRoot(params: {
@@ -29,12 +37,12 @@ export function resolvePathWithinRoot(params: {
   ) {
     return invalidPath(scopeLabel);
   }
-  const root = path.resolve(rootDir);
+  const root = resolvePathPreservingWindowsRoot(rootDir);
   if (hasWindowsPathAlias(root, "filesystem")) return invalidPath(scopeLabel);
   const raw = requestedPath.trim();
   if (!raw) {
     if (!defaultFileName) return { ok: false, error: "path is required" };
-    const defaultPath = path.resolve(root, defaultFileName);
+    const defaultPath = resolvePathAgainstRoot(root, defaultFileName);
     if (
       hasWindowsPathAlias(defaultPath, "filesystem") ||
       !pathStaysWithinRoot(root, defaultPath)
@@ -43,7 +51,7 @@ export function resolvePathWithinRoot(params: {
     }
     return { ok: true, path: defaultPath };
   }
-  const resolved = path.resolve(root, raw);
+  const resolved = resolvePathAgainstRoot(root, raw);
   if (
     hasWindowsPathAlias(resolved, "filesystem") ||
     !pathStaysWithinRoot(root, resolved)

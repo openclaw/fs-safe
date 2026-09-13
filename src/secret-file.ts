@@ -23,7 +23,10 @@ import {
 } from "./secret-read-policy.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import { serializePathWrite } from "./write-queue.js";
-import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
+import {
+  assertNoWindowsPathAlias,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 export const PRIVATE_SECRET_DIR_MODE = 0o700;
 export const PRIVATE_SECRET_FILE_MODE = 0o600;
@@ -196,8 +199,8 @@ async function ensurePrivateDirectory(
   targetDir: string,
   mode: number,
 ): Promise<{ rootGuard: AsyncDirectoryGuard<BigIntStats>; parentGuard: AsyncDirectoryGuard<BigIntStats> }> {
-  const resolvedRoot = path.resolve(rootDir);
-  const resolvedTarget = path.resolve(targetDir);
+  const resolvedRoot = resolvePathPreservingWindowsRoot(rootDir);
+  const resolvedTarget = resolvePathPreservingWindowsRoot(targetDir);
   let rootStat = await inspectPrivateDirectory(resolvedRoot, "root").catch((error) => {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     return undefined;
@@ -325,7 +328,7 @@ export async function prepareSecretFileWrite(
   assertNoWindowsPathAlias(filePath, "filesystem", "private secret path uses a Windows filesystem namespace alias");
   const mode = params.mode ?? PRIVATE_SECRET_FILE_MODE;
   const dirMode = params.dirMode ?? PRIVATE_SECRET_DIR_MODE;
-  const resolvedRoot = path.resolve(rootDir);
+  const resolvedRoot = resolvePathPreservingWindowsRoot(rootDir);
   const resolvedFile = path.resolve(filePath);
   assertNoWindowsPathAlias(resolvedRoot, "filesystem", "private secret root uses a Windows filesystem namespace alias");
   assertNoWindowsPathAlias(resolvedFile, "filesystem", "private secret path uses a Windows filesystem namespace alias");

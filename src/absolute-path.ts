@@ -10,7 +10,11 @@ import {
 import { FsSafeError, type FsSafeErrorCode } from "./errors.js";
 import { pathExists } from "./fs.js";
 import { resolveRootPath } from "./root-path.js";
-import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
+import {
+  assertNoWindowsPathAlias,
+  pathForWindowsFilesystem,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 export type AbsolutePathSymlinkPolicy = "reject" | "follow";
 
@@ -143,7 +147,7 @@ async function directoryGuardFailure(
   }
 
   try {
-    const stat = fsSync.lstatSync(dir);
+    const stat = fsSync.lstatSync(pathForWindowsFilesystem(dir));
     const failure = classifyExistingDirectorySegment(stat, scopeLabel);
     if (failure) {
       return failure;
@@ -166,7 +170,7 @@ async function resolveTrustedDirectoryPrefix(
   let current = root;
   let currentStat: Stats;
   try {
-    currentStat = fsSync.lstatSync(current);
+    currentStat = fsSync.lstatSync(pathForWindowsFilesystem(current));
   } catch (err) {
     const failure = classifyDirectoryLookupError(err, scopeLabel);
     if (failure) {
@@ -191,7 +195,7 @@ async function resolveTrustedDirectoryPrefix(
     }
     const next = path.join(current, segment);
     try {
-      const nextStat = fsSync.lstatSync(next);
+      const nextStat = fsSync.lstatSync(pathForWindowsFilesystem(next));
       const segmentFailure = classifyExistingDirectorySegment(nextStat, scopeLabel);
       if (segmentFailure) {
         return segmentFailure;
@@ -244,11 +248,14 @@ async function findExistingAncestorWithStat(filePath: string): Promise<{
   stat: Stats;
 } | null> {
   assertNoWindowsPathAlias(filePath);
-  let current = path.resolve(filePath);
+  let current = resolvePathPreservingWindowsRoot(filePath);
   assertNoWindowsPathAlias(current);
   while (true) {
     try {
-      return { path: current, stat: fsSync.lstatSync(current) };
+      return {
+        path: current,
+        stat: fsSync.lstatSync(pathForWindowsFilesystem(current)),
+      };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
         throw err;
@@ -350,14 +357,16 @@ export async function canonicalPathFromExistingAncestor(filePath: string): Promi
   assertNoWindowsPathAlias(filePath);
   const ancestor = await findExistingAncestor(filePath);
   if (!ancestor) {
-    const resolved = path.resolve(filePath);
+    const resolved = resolvePathPreservingWindowsRoot(filePath);
     assertNoWindowsPathAlias(resolved);
     return resolved;
   }
   let canonicalAncestor = ancestor;
   let resolvedAncestor: string | undefined;
   try {
-    resolvedAncestor = fsSync.realpathSync.native(ancestor);
+    resolvedAncestor = fsSync.realpathSync.native(
+      pathForWindowsFilesystem(ancestor),
+    );
   } catch {
     // Keep lexical path when the existing ancestor cannot be canonicalized.
   }
@@ -379,7 +388,9 @@ export async function resolveAbsolutePathForRead(
   const normalized = assertAbsolutePathInput(filePath);
   let canonicalPath: string;
   try {
-    canonicalPath = fsSync.realpathSync.native(normalized);
+    canonicalPath = fsSync.realpathSync.native(
+      pathForWindowsFilesystem(normalized),
+    );
     assertNoWindowsPathAlias(canonicalPath);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
@@ -400,7 +411,7 @@ export async function resolveAbsolutePathForWrite(
   const symlinks = resolveSymlinkPolicy(options.symlinks);
   const normalized = assertAbsolutePathInput(filePath);
   const parentDir = path.dirname(normalized);
-  const parentExists = await pathExists(parentDir);
+  const parentExists = await pathExists(pathForWindowsFilesystem(parentDir));
   if (symlinks === "reject") {
     const filesystemRoot = path.parse(normalized).root;
     await resolveRootPath({

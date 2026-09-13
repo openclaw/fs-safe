@@ -23,7 +23,10 @@ import { root, type OpenResult, type ReadResult, type Root, type RootReadOptions
 import { DEFAULT_ROOT_MAX_BYTES } from "./root-impl.js";
 import { matchRootFileOpenFailure, openRootFileSync, type RootFileOpenFailure } from "./root-file.js";
 import { writeSecretFileAtomic } from "./secret-file.js";
-import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
+import {
+  assertNoWindowsPathAlias,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 import { readFileStoreCopySource } from "./file-store-copy-source.js";
 
 export type FileStoreOptions = {
@@ -189,7 +192,7 @@ async function copyIntoRoot(params: {
 export function fileStore(options: FileStoreOptions): FileStore {
   const rootDirInput = options.rootDir;
   assertNoWindowsPathAlias(rootDirInput, "filesystem", "store root uses a Windows filesystem namespace alias");
-  const rootDir = path.resolve(rootDirInput);
+  const rootDir = resolvePathPreservingWindowsRoot(rootDirInput);
   assertNoWindowsPathAlias(rootDir, "filesystem", "store root uses a Windows filesystem namespace alias");
   const privateMode = options.private ?? false;
   const dirMode = options.dirMode ?? 0o700;
@@ -403,7 +406,7 @@ export function fileStore(options: FileStoreOptions): FileStore {
 export function fileStoreSync(options: FileStoreOptions): FileStoreSync {
   const rootDirInput = options.rootDir;
   assertNoWindowsPathAlias(rootDirInput, "filesystem", "store root uses a Windows filesystem namespace alias");
-  const rootDir = path.resolve(rootDirInput);
+  const rootDir = resolvePathPreservingWindowsRoot(rootDirInput);
   assertNoWindowsPathAlias(rootDir, "filesystem", "store root uses a Windows filesystem namespace alias");
   const privateMode = options.private ?? false;
   const dirMode = options.dirMode ?? 0o700;

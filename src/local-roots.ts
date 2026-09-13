@@ -6,7 +6,12 @@ import { expandHomePrefix, resolveRequiredHomeDir } from "./home-dir.js";
 import { isFileUrl, safeFileURLToPath } from "./local-file-access.js";
 import { ROOT_PATH_ALIAS_POLICIES, resolveRootPathSync } from "./root-path.js";
 import { root, type HardlinkPolicy, type ReadResult, type SymlinkPolicy } from "./root.js";
-import { assertNoWindowsPathAlias, isWindowsPathAliasError } from "./windows-path-alias.js";
+import {
+  assertNoWindowsPathAlias,
+  isWindowsPathAliasError,
+  pathForWindowsFilesystem,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 export type LocalRootsPathResult = {
   path: string;
@@ -75,7 +80,7 @@ function resolveLocalRootInput(input: string, label: string): string {
   if (!path.isAbsolute(resolved)) {
     throw new FsSafeError("invalid-path", `${label} entries must be absolute paths: ${input}`);
   }
-  const absolute = path.resolve(resolved);
+  const absolute = resolvePathPreservingWindowsRoot(resolved);
   assertNoWindowsPathAlias(absolute, "filesystem", `${label} entry uses a Windows filesystem namespace alias`);
   return absolute;
 }
@@ -85,11 +90,12 @@ function resolveRootRealSync(rootDir: string): string | null {
   try {
     // Configured roots may themselves be symlinks. Follow only this trusted
     // root entry, then use its canonical directory for containment checks.
-    const stat = fsSync.statSync(rootDir);
+    const operationPath = pathForWindowsFilesystem(rootDir);
+    const stat = fsSync.statSync(operationPath);
     if (!stat.isDirectory()) {
       return null;
     }
-    realPath = fsSync.realpathSync(rootDir);
+    realPath = fsSync.realpathSync(operationPath);
   } catch {
     return null;
   }
@@ -135,7 +141,7 @@ export function resolveLocalPathFromRootsSync(
     if (candidate.exists && options.requireFile === true && candidate.kind !== "file") continue;
     if (candidate.exists && options.requireFile === true) {
       try {
-        if (!fsSync.lstatSync(requestedPath).isFile()) continue;
+        if (!fsSync.lstatSync(pathForWindowsFilesystem(requestedPath)).isFile()) continue;
       } catch { continue; }
     }
     return { path: candidate.canonicalPath, root: rootReal };

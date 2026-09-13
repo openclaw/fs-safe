@@ -6,7 +6,10 @@ import { sameFileIdentityForCleanup, type FileIdentityStat } from "./file-identi
 import { assertSafePathSegment, sanitizeSafePathSegment, trimHyphenEdges } from "./safe-path-segment.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
 import { registerTempPathForExit } from "./temp-cleanup.js";
-import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
+import {
+  assertNoWindowsPathAlias,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 export type TempFile = {
   dir: string;
@@ -146,7 +149,7 @@ function resolveTempRoot(rootDir?: string): string {
   }
   const selectedRoot = rootDir ?? resolveSecureTempRoot({ fallbackPrefix: "fs-safe" });
   assertNoWindowsPathAlias(selectedRoot, "filesystem", "temp root uses a Windows filesystem namespace alias");
-  const resolvedRoot = path.resolve(selectedRoot);
+  const resolvedRoot = resolvePathPreservingWindowsRoot(selectedRoot);
   assertNoWindowsPathAlias(resolvedRoot, "filesystem", "temp root uses a Windows filesystem namespace alias");
   return resolvedRoot;
 }

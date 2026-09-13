@@ -1,3 +1,4 @@
+import path from "node:path";
 import { FsSafeError } from "./errors.js";
 
 export type WindowsPathAliasKind = "filesystem" | "relative";
@@ -40,6 +41,95 @@ function rootedDriveColonIndex(value: string): number {
   }
 
   return -1;
+}
+
+function isBareWindowsNamespaceDrive(value: string): boolean {
+  return (
+    value.length === 6 &&
+    isSeparator(value.charCodeAt(0)) &&
+    isSeparator(value.charCodeAt(1)) &&
+    (value.charCodeAt(2) === QUESTION_MARK || value.charCodeAt(2) === DOT) &&
+    isSeparator(value.charCodeAt(3)) &&
+    isAsciiLetter(value.charCodeAt(4)) &&
+    value.charCodeAt(5) === COLON
+  );
+}
+
+/**
+ * Resolve a path without letting Node erase the separator from an exact
+ * extended-length drive root such as `\\?\C:\`. Bare `\\?\C:` input remains
+ * unchanged so the surrounding alias admission rejects it.
+ */
+export function resolvePathPreservingWindowsRoot(value: string): string {
+  if (
+    value.length === 7 &&
+    process.platform === "win32" &&
+    rootedDriveColonIndex(value) === 5
+  ) {
+    return value.includes("/") ? value.replaceAll("/", "\\") : value;
+  }
+  const resolved = path.resolve(value);
+  if (
+    resolved.length === 6 &&
+    process.platform === "win32" &&
+    isBareWindowsNamespaceDrive(resolved) &&
+    !hasWindowsPathAlias(value, "filesystem")
+  ) {
+    return `${resolved}\\`;
+  }
+  return resolved;
+}
+
+/**
+ * Resolve path segments against a base while preserving a namespaced drive
+ * root when Node normalizes a legitimate rooted input back to that root.
+ * Raw bare namespace drives stay bare so admission checks still reject them.
+ */
+export function resolvePathFromBasePreservingWindowsRoot(
+  base: string,
+  ...segments: string[]
+): string {
+  const resolved = path.resolve(base, ...segments);
+  if (
+    resolved.length !== 6 ||
+    process.platform !== "win32" ||
+    !isBareWindowsNamespaceDrive(resolved)
+  ) {
+    return resolved;
+  }
+  if (
+    hasWindowsPathAlias(base, "filesystem") ||
+    segments.some((segment) => hasWindowsPathAlias(segment, "filesystem"))
+  ) {
+    return resolved;
+  }
+  return `${resolved}\\`;
+}
+
+/**
+ * Adapt an admitted namespaced drive root for Node's Windows filesystem layer.
+ * Node removes the root separator from these paths during filesystem dispatch,
+ * so use the equivalent ordinary drive root for the operation. This is not an
+ * admission check: callers must validate attacker-controlled input first.
+ */
+export function pathForWindowsFilesystem(value: string): string {
+  if (
+    process.platform !== "win32" ||
+    rootedDriveColonIndex(value) !== 5
+  ) {
+    return value;
+  }
+  if (value.length === 7) {
+    return `${value[4]}:\\`;
+  }
+  const resolved = path.resolve(value);
+  if (
+    isBareWindowsNamespaceDrive(resolved) &&
+    !hasWindowsPathAlias(value, "filesystem")
+  ) {
+    return `${resolved[4]}:\\`;
+  }
+  return value;
 }
 
 /** Returns true when a Windows pathname can address an alternate filesystem namespace. */

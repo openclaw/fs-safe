@@ -80,7 +80,10 @@ import { createCopyPublicationObserver, onCopyPublication, type CopyPublicationO
 import { writeAllToFile } from "./write-file-handle.js";
 import { createInputOptions, rethrowCreateInputError, rootWriteInput, type RootWriteParams } from "./root-create-input.js";
 import { assertFinalSymlinkRejected, mutationSymlinkResolution, readSymlinkResolution, type MutationSymlinkPolicy, type SymlinkPolicy } from "./root-symlink-policy.js";
-import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
+import {
+  assertNoWindowsPathAlias,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 import {
   mergeReadOptions, readDefaults,
@@ -651,7 +654,7 @@ export function rootFromDirectoryGuard(
 ): Root {
   normalizeMaxBytes(defaults.maxBytes);
   return new RootHandle({
-    rootDir: path.resolve(guard.dir),
+    rootDir: resolvePathPreservingWindowsRoot(guard.dir),
     rootIdentity: { dev: guard.stat.dev, ino: guard.stat.ino },
     rootReal: guard.realPath,
     rootWithSep: ensureTrailingSep(guard.realPath),

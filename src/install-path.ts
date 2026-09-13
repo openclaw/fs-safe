@@ -2,7 +2,11 @@ import { createHash } from "node:crypto";
 import fsSync from "node:fs";
 import path from "node:path";
 import { isPathInside } from "./path.js";
-import { hasWindowsPathAlias } from "./windows-path-alias.js";
+import {
+  hasWindowsPathAlias,
+  pathForWindowsFilesystem,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 export function safeDirName(input: string): string {
   const trimmed = input.trim();
@@ -49,7 +53,7 @@ export function resolveSafeInstallDir(params: {
   if (hasWindowsPathAlias(targetDir, "filesystem")) {
     return { ok: false, error: params.invalidNameMessage };
   }
-  const resolvedBase = path.resolve(baseDir);
+  const resolvedBase = resolvePathPreservingWindowsRoot(baseDir);
   const resolvedTarget = path.resolve(targetDir);
   if (
     hasWindowsPathAlias(resolvedBase, "filesystem") ||
@@ -85,17 +89,18 @@ export async function assertCanonicalPathWithinBase(params: {
 
   assertAdmittedPath(baseDirInput);
   assertAdmittedPath(candidatePathInput);
-  const baseDir = path.resolve(baseDirInput);
-  const candidatePath = path.resolve(candidatePathInput);
+  const baseDir = resolvePathPreservingWindowsRoot(baseDirInput);
+  const candidatePath = resolvePathPreservingWindowsRoot(candidatePathInput);
   assertAdmittedPath(baseDir);
   assertAdmittedPath(candidatePath);
   if (!isPathInside(baseDir, candidatePath)) {
     throw invalidPath();
   }
 
-  const baseLstat = fsSync.lstatSync(baseDir);
+  const baseOperationPath = pathForWindowsFilesystem(baseDir);
+  const baseLstat = fsSync.lstatSync(baseOperationPath);
   if (baseLstat.isSymbolicLink()) {
-    const baseStat = fsSync.statSync(baseDir);
+    const baseStat = fsSync.statSync(baseOperationPath);
     if (!baseStat.isDirectory()) {
       throw new Error(
         `Invalid ${boundaryLabel}: base directory must resolve to a directory`,
@@ -104,26 +109,27 @@ export async function assertCanonicalPathWithinBase(params: {
   } else if (!baseLstat.isDirectory()) {
     throw new Error(`Invalid ${boundaryLabel}: base directory must be a directory`);
   }
-  const baseRealPath = fsSync.realpathSync.native(baseDir);
+  const baseRealPath = fsSync.realpathSync.native(baseOperationPath);
   assertAdmittedPath(baseRealPath);
 
   const validateDirectory = async (dirPath: string): Promise<void> => {
     assertAdmittedPath(dirPath);
-    const resolvedDirPath = path.resolve(dirPath);
+    const resolvedDirPath = resolvePathPreservingWindowsRoot(dirPath);
     assertAdmittedPath(resolvedDirPath);
-    const dirLstat = fsSync.lstatSync(dirPath);
+    const operationPath = pathForWindowsFilesystem(dirPath);
+    const dirLstat = fsSync.lstatSync(operationPath);
     if (dirLstat.isSymbolicLink()) {
       if (resolvedDirPath !== baseDir) {
         throw new Error(`Invalid path: must stay within ${boundaryLabel}`);
       }
-      const dirStat = fsSync.statSync(dirPath);
+      const dirStat = fsSync.statSync(operationPath);
       if (!dirStat.isDirectory()) {
         throw new Error(`Invalid path: must stay within ${boundaryLabel}`);
       }
     } else if (!dirLstat.isDirectory()) {
       throw new Error(`Invalid path: must stay within ${boundaryLabel}`);
     }
-    const dirRealPath = fsSync.realpathSync.native(dirPath);
+    const dirRealPath = fsSync.realpathSync.native(operationPath);
     assertAdmittedPath(dirRealPath);
     if (!isPathInside(baseRealPath, dirRealPath)) {
       throw invalidPath();

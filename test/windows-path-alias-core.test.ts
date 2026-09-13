@@ -5,6 +5,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { fileStore, fileStoreSync } from "../src/file-store.js";
+import { isPathInside, resolveSafeRelativePath } from "../src/path.js";
 import { safeFileURLToPath, trySafeFileURLToPath } from "../src/local-file-access.js";
 import { readLocalFileFromRoots, resolveLocalPathFromRootsSync } from "../src/local-roots.js";
 import { openPinnedFileSync } from "../src/pinned-open.js";
@@ -20,7 +21,12 @@ import {
   statRegularFileSync,
 } from "../src/regular-file.js";
 import { root } from "../src/root.js";
-import { ensureDirectoryWithinRoot, pathScope, resolvePathsWithinRoot } from "../src/root-paths.js";
+import { resolveRootPath, resolveRootPathSync } from "../src/root-path.js";
+import {
+  ensureDirectoryWithinRoot,
+  pathScope,
+  resolvePathsWithinRoot,
+} from "../src/root-paths.js";
 import { readSecretFile, tryReadSecretFile } from "../src/secret-read-async.js";
 import {
   createSecretFileAtomic,
@@ -33,6 +39,9 @@ import { readSecureFile } from "../src/secure-file.js";
 import {
   assertNoWindowsPathAlias,
   hasWindowsPathAlias,
+  pathForWindowsFilesystem,
+  resolvePathFromBasePreservingWindowsRoot,
+  resolvePathPreservingWindowsRoot,
 } from "../src/windows-path-alias.js";
 
 describe("Windows filesystem namespace alias classifier", () => {
@@ -69,6 +78,168 @@ describe("Windows filesystem namespace alias classifier", () => {
 });
 
 describe.skipIf(process.platform !== "win32")("Windows namespace alias admissions", () => {
+  it.each(["\\\\?\\C:\\", "\\\\.\\C:\\", "//?/C:/"])(
+    "preserves an admitted exact namespace drive root %s",
+    (value) => {
+      expect(resolvePathPreservingWindowsRoot(value)).toBe(path.win32.normalize(value));
+      expect(pathForWindowsFilesystem(value)).toBe("C:\\");
+    },
+  );
+
+  it.each(["\\\\?\\C:\\", "\\\\.\\C:\\"])(
+    "preserves %s when relative resolution returns to the root",
+    (rootDir) => {
+      for (const relativePath of ["", ".", "./", "child/.."]) {
+        expect(
+          resolvePathPreservingWindowsRoot(`${rootDir}${relativePath}`),
+          `single ${relativePath}`,
+        ).toBe(rootDir);
+        expect(
+          resolvePathFromBasePreservingWindowsRoot(rootDir, relativePath),
+          `multi ${relativePath}`,
+        ).toBe(rootDir);
+      }
+      expect(resolvePathFromBasePreservingWindowsRoot(`${rootDir}child`, ".."))
+        .toBe(rootDir);
+      expect(resolvePathFromBasePreservingWindowsRoot(rootDir, "child", ".."))
+        .toBe(rootDir);
+      expect(resolvePathFromBasePreservingWindowsRoot("D:\\workspace", rootDir))
+        .toBe(rootDir);
+      expect(isPathInside(rootDir, `${rootDir}.`)).toBe(true);
+      expect(isPathInside(`${rootDir}.`, `${rootDir}child`)).toBe(true);
+    },
+  );
+
+  it("keeps base-drive semantics and bare namespace rejection during relative resolution", () => {
+    expect(resolvePathFromBasePreservingWindowsRoot("D:\\workspace", "\\child"))
+      .toBe("D:\\child");
+    expect(resolvePathFromBasePreservingWindowsRoot("D:\\workspace", "\\\\?\\C:"))
+      .toBe("\\\\?\\C:");
+    expect(hasWindowsPathAlias(
+      resolvePathFromBasePreservingWindowsRoot("C:\\bad:stream", "\\\\?\\C:\\"),
+      "filesystem",
+    )).toBe(true);
+    expect(resolvePathFromBasePreservingWindowsRoot("\\\\server\\share\\", "child"))
+      .toBe("\\\\server\\share\\child");
+  });
+
+  it("normalizes mixed separators and does not repair traversal above a namespace root", () => {
+    expect(resolvePathPreservingWindowsRoot("//?/c:/./")).toBe("\\\\?\\c:\\");
+    expect(resolvePathPreservingWindowsRoot("\\\\?\\C:\\..")).toBe("\\\\?\\");
+    expect(pathForWindowsFilesystem("//?/c:/./")).toBe("c:\\");
+    expect(pathForWindowsFilesystem("\\\\?\\C:\\..")).toBe("\\\\?\\C:\\..");
+  });
+
+  it.each([
+    "\\\\?\\C:",
+    "\\\\.\\C:",
+    "\\\\?\\C:\\child:stream\\..",
+    "\\\\?\\C:\\child::$INDEX_ALLOCATION\\..",
+  ])("does not normalize an invalid alias into an admitted root: %s", (value) => {
+    expect(hasWindowsPathAlias(resolvePathPreservingWindowsRoot(value), "filesystem"))
+      .toBe(true);
+    expect(pathForWindowsFilesystem(value)).toBe(value);
+  });
+
+  it.each([
+    "child:stream\\..",
+    "child::$INDEX_ALLOCATION\\..",
+  ])("does not normalize an invalid relative alias into an admitted root: %s", (value) => {
+    expect(hasWindowsPathAlias(
+      resolvePathFromBasePreservingWindowsRoot("\\\\?\\C:\\", value),
+      "filesystem",
+    )).toBe(true);
+  });
+
+  it.each(["", ".", "./"])(
+    "keeps an exact namespace root for safe relative input %j",
+    (relativePath) => {
+      expect(resolveSafeRelativePath("\\\\?\\C:\\", relativePath))
+        .toBe("\\\\?\\C:\\");
+    },
+  );
+
+  it.each(["\\\\?\\C:\\", "\\\\.\\C:\\"])(
+    "preserves root-returning forms through async and sync root resolution for %s",
+    async (rootDir) => {
+      const directoryStat = {
+        isDirectory: () => true,
+        isFile: () => false,
+        isSymbolicLink: () => false,
+      } as fsSync.Stats;
+      const lstat = vi.spyOn(fsSync, "lstatSync").mockReturnValue(directoryStat);
+      const stat = vi.spyOn(fsSync, "statSync").mockReturnValue(directoryStat);
+      const expected = {
+        absolutePath: rootDir,
+        canonicalPath: rootDir,
+        rootPath: rootDir,
+        rootCanonicalPath: rootDir,
+        relativePath: "",
+        exists: true,
+        kind: "directory",
+      };
+
+      try {
+        for (const field of ["rootPath", "absolutePath", "rootCanonicalPath"] as const) {
+          for (const suffix of [".", "./", "child\\.."]) {
+            const params = {
+              rootPath: rootDir,
+              absolutePath: rootDir,
+              rootCanonicalPath: rootDir,
+              boundaryLabel: "namespace root",
+              [field]: `${rootDir}${suffix}`,
+            };
+            await expect(resolveRootPath(params), `${field} ${suffix}`).resolves.toEqual(expected);
+            expect(resolveRootPathSync(params), `${field} ${suffix}`).toEqual(expected);
+          }
+        }
+      } finally {
+        lstat.mockRestore();
+        stat.mockRestore();
+      }
+    },
+  );
+
+  it.each(["rootPath", "absolutePath", "rootCanonicalPath"] as const)(
+    "rejects aliases in %s before root-resolution filesystem access",
+    async (field) => {
+      const lstat = vi.spyOn(fsSync, "lstatSync");
+      const stat = vi.spyOn(fsSync, "statSync");
+
+      try {
+        for (const alias of [
+          "\\\\?\\C:",
+          "\\\\.\\C:",
+          "\\\\?\\C:\\child:stream\\..",
+          "\\\\?\\C:\\child::$INDEX_ALLOCATION\\..",
+        ]) {
+          const params = {
+            rootPath: "\\\\?\\C:\\",
+            absolutePath: "\\\\?\\C:\\",
+            rootCanonicalPath: "\\\\?\\C:\\",
+            boundaryLabel: "namespace root",
+            [field]: alias,
+          };
+          await expect(resolveRootPath(params)).rejects.toMatchObject({
+            code: "invalid-path",
+            details: { reason: "windows-path-alias" },
+          });
+          expect(() => resolveRootPathSync(params)).toThrow(
+            expect.objectContaining({
+              code: "invalid-path",
+              details: { reason: "windows-path-alias" },
+            }),
+          );
+        }
+        expect(lstat).not.toHaveBeenCalled();
+        expect(stat).not.toHaveBeenCalled();
+      } finally {
+        lstat.mockRestore();
+        stat.mockRestore();
+      }
+    },
+  );
+
   it("preserves byte-limit validation before pathname admission", async () => {
     const alias = "C:\\missing.txt:hidden";
     const lstat = vi.spyOn(fsSync, "lstatSync");

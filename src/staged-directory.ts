@@ -1,9 +1,9 @@
 import fs from "node:fs";
-import path from "node:path";
 import type { DirectoryReceipt } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
 import type { FileIdentityStat } from "./file-identity.js";
 import type { StagedFileReceipt } from "./staged-file-types.js";
+import { resolvePathPreservingWindowsRoot } from "./windows-path-alias.js";
 
 type DirectorySnapshot = StagedFileReceipt["directory"];
 
@@ -23,7 +23,7 @@ export function describeStagedDirectory(fd: number, pathname: string): Directory
     throw new FsSafeError("not-file", "staging parent must be a directory");
   }
   const receipt = Object.freeze({
-    path: path.resolve(pathname),
+    path: resolvePathPreservingWindowsRoot(pathname),
     realPath: fs.realpathSync(pathname),
     identity: Object.freeze({ dev: identity.dev, ino: identity.ino }),
   });
@@ -46,7 +46,9 @@ export function openStagedDirectory(directory: string | DirectoryReceipt): {
   receipt: DirectorySnapshot;
 } {
   // Copy supplied facts before any asynchronous work; receipts are not authority.
-  const pathname = path.resolve(typeof directory === "string" ? directory : directory.path);
+  const pathname = resolvePathPreservingWindowsRoot(
+    typeof directory === "string" ? directory : directory.path,
+  );
   const expected = typeof directory === "string" ? undefined : {
     realPath: directory.realPath, dev: directory.identity.dev, ino: directory.identity.ino,
   };

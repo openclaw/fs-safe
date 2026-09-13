@@ -5,7 +5,7 @@ import path from "node:path";
 import { ensureAbsoluteDirectory } from "./absolute-path.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity, type FileIdentityStat } from "./file-identity.js";
-import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
+import { assertNoWindowsPathAlias, pathForWindowsFilesystem, resolvePathPreservingWindowsRoot } from "./windows-path-alias.js";
 
 export type DirectorySyncOutcome =
   | { status: "synced" }
@@ -108,15 +108,16 @@ async function createDirectoryReceipt(directoryPath: string, label: string): Pro
     "filesystem",
     `${label} path uses a Windows filesystem namespace alias`,
   );
-  const resolvedPath = path.resolve(directoryPath);
+  const resolvedPath = resolvePathPreservingWindowsRoot(directoryPath);
   assertNoWindowsPathAlias(
     resolvedPath,
     "filesystem",
     `${label} path uses a Windows filesystem namespace alias`,
   );
-  const identity = fsSync.lstatSync(resolvedPath);
+  const operationPath = pathForWindowsFilesystem(resolvedPath);
+  const identity = fsSync.lstatSync(operationPath);
   assertDirectory(identity, resolvedPath, label);
-  const realPath = fsSync.realpathSync.native(resolvedPath);
+  const realPath = fsSync.realpathSync.native(operationPath);
   assertNoWindowsPathAlias(
     realPath,
     "filesystem",
@@ -135,15 +136,16 @@ function createDirectoryReceiptSync(directoryPath: string, label: string): Direc
     "filesystem",
     `${label} path uses a Windows filesystem namespace alias`,
   );
-  const resolvedPath = path.resolve(directoryPath);
+  const resolvedPath = resolvePathPreservingWindowsRoot(directoryPath);
   assertNoWindowsPathAlias(
     resolvedPath,
     "filesystem",
     `${label} path uses a Windows filesystem namespace alias`,
   );
-  const identity = fsSync.lstatSync(resolvedPath);
+  const operationPath = pathForWindowsFilesystem(resolvedPath);
+  const identity = fsSync.lstatSync(operationPath);
   assertDirectory(identity, resolvedPath, label);
-  const realPath = fsSync.realpathSync(resolvedPath);
+  const realPath = fsSync.realpathSync(operationPath);
   assertNoWindowsPathAlias(
     realPath,
     "filesystem",
@@ -161,9 +163,10 @@ async function assertDirectoryReceiptCurrent(
   label: string,
 ): Promise<void> {
   assertDirectoryReceiptPaths(receipt, label);
-  const currentIdentity = fsSync.lstatSync(receipt.path);
+  const operationPath = pathForWindowsFilesystem(receipt.path);
+  const currentIdentity = fsSync.lstatSync(operationPath);
   assertDirectory(currentIdentity, receipt.path, label);
-  const realPath = fsSync.realpathSync.native(receipt.path);
+  const realPath = fsSync.realpathSync.native(operationPath);
   assertNoWindowsPathAlias(
     realPath,
     "filesystem",
@@ -182,9 +185,10 @@ async function assertDirectoryReceiptCurrent(
 
 function assertDirectoryReceiptCurrentSync(receipt: DirectoryReceipt, label: string): void {
   assertDirectoryReceiptPaths(receipt, label);
-  const currentIdentity = fsSync.lstatSync(receipt.path);
+  const operationPath = pathForWindowsFilesystem(receipt.path);
+  const currentIdentity = fsSync.lstatSync(operationPath);
   assertDirectory(currentIdentity, receipt.path, label);
-  const realPath = fsSync.realpathSync(receipt.path);
+  const realPath = fsSync.realpathSync(operationPath);
   assertNoWindowsPathAlias(
     realPath,
     "filesystem",
@@ -272,7 +276,7 @@ export async function pinDirectory(
       ? await createDirectoryReceipt(directory, label)
       : ownDirectoryReceipt(directory);
   await assertDirectoryReceiptCurrent(receipt, label);
-  const handle = await fs.open(receipt.path, directoryOpenFlags());
+  const handle = await fs.open(pathForWindowsFilesystem(receipt.path), directoryOpenFlags());
   try {
     await assertOpenDirectoryCurrent(handle, receipt, label);
     return new PinnedDirectoryImpl(handle, receipt, label);
@@ -320,7 +324,7 @@ export function syncDirectorySync(
   assertDirectoryReceiptCurrentSync(receipt, label);
   let descriptor: number;
   try {
-    descriptor = fsSync.openSync(receipt.path, directoryOpenFlags());
+    descriptor = fsSync.openSync(pathForWindowsFilesystem(receipt.path), directoryOpenFlags());
   } catch (error) {
     if (!isWindowsDirectoryOpenUnsupported(error)) {
       throw error;
@@ -375,7 +379,7 @@ async function findExistingAncestorReceipt(
     "filesystem",
     `${label} path uses a Windows filesystem namespace alias`,
   );
-  let currentPath = path.resolve(targetPath);
+  let currentPath = resolvePathPreservingWindowsRoot(targetPath);
   assertNoWindowsPathAlias(
     currentPath,
     "filesystem",
@@ -407,7 +411,7 @@ export async function ensureDurableDirectory(
     "filesystem",
     `${label} path uses a Windows filesystem namespace alias`,
   );
-  const directoryPath = path.resolve(requestedDirectoryPath);
+  const directoryPath = resolvePathPreservingWindowsRoot(requestedDirectoryPath);
   assertNoWindowsPathAlias(
     directoryPath,
     "filesystem",

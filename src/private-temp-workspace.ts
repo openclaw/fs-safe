@@ -26,7 +26,11 @@ import {
   type TempWorkspaceCleanupResult,
   type TempWorkspaceCleanupSafety,
 } from "./temp-workspace-owner.js";
-import { assertNoWindowsPathAlias, hasWindowsPathAlias } from "./windows-path-alias.js";
+import {
+  assertNoWindowsPathAlias,
+  hasWindowsPathAlias,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 export type {
   TempWorkspaceCleanupResult,
@@ -169,7 +173,7 @@ async function createTempWorkspace(
   const dirMode = options.dirMode ?? 0o700;
   const mode = options.mode ?? 0o600;
   const cleanupSafety = resolveTempWorkspaceCleanupSafety(options.cleanupSafety);
-  const requestedRoot = path.resolve(rootDir);
+  const requestedRoot = resolvePathPreservingWindowsRoot(rootDir);
   assertNoWindowsPathAlias(requestedRoot, "filesystem", "temp workspace root uses a Windows filesystem namespace alias");
   let root = requestedRoot;
   try {
@@ -282,7 +286,7 @@ function createTempWorkspaceSync(
   const dirMode = options.dirMode ?? 0o700;
   const mode = options.mode ?? 0o600;
   const cleanupSafety = resolveTempWorkspaceCleanupSafety(options.cleanupSafety);
-  const requestedRoot = path.resolve(rootDir);
+  const requestedRoot = resolvePathPreservingWindowsRoot(rootDir);
   assertNoWindowsPathAlias(requestedRoot, "filesystem", "temp workspace root uses a Windows filesystem namespace alias");
   let root = requestedRoot;
   try {

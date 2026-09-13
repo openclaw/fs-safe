@@ -4,7 +4,10 @@ import path from "node:path";
 import { sameFileIdentity } from "./file-identity.js";
 import { guardedRenameSync, guardedRmSync } from "./guarded-mutation.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
-import { hasWindowsPathAlias } from "./windows-path-alias.js";
+import {
+  hasWindowsPathAlias,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 export type MovePathToTrashOptions = {
   allowedRoots?: Iterable<string>;
@@ -45,7 +48,7 @@ function collectAllowedTrashRoots(allowedRoots?: Iterable<string>): string[] {
 function resolveAllowedTrashRoots(allowedRoots: readonly string[]): string[] {
   const roots = allowedRoots.flatMap((root) => {
     assertNoTrashPathAlias(root, "allowed root");
-    const lexicalRoot = path.resolve(root);
+    const lexicalRoot = resolvePathPreservingWindowsRoot(root);
     assertNoTrashPathAlias(lexicalRoot, "allowed root");
     let realRoot: string;
     try {
@@ -55,7 +58,8 @@ function resolveAllowedTrashRoots(allowedRoots: readonly string[]): string[] {
     } catch {
       return [lexicalRoot];
     }
-    const resolvedRealRoot = path.resolve(realRoot);
+    assertNoTrashPathAlias(realRoot, "allowed root");
+    const resolvedRealRoot = resolvePathPreservingWindowsRoot(realRoot);
     assertNoTrashPathAlias(resolvedRealRoot, "allowed root");
     return [resolvedRealRoot, lexicalRoot];
   });

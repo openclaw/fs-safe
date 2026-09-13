@@ -1,5 +1,8 @@
 import path from "node:path";
-import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
+import {
+  assertNoWindowsPathAlias,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 export type QueueValidationRoot = {
   path: string;
@@ -7,7 +10,7 @@ export type QueueValidationRoot = {
 };
 
 export function resolveQueueFilesystemPath(value: string): string {
-  const resolved = path.resolve(value);
+  const resolved = resolvePathPreservingWindowsRoot(value);
   assertNoWindowsPathAlias(resolved);
   return resolved;
 }

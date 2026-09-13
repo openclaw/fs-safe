@@ -15,7 +15,12 @@ import { ROOT_PATH_ALIAS_POLICIES, resolveRootPath } from "./root-path.js";
 import { outsideWorkspaceError, rootPathChangedError } from "./root-errors.js";
 import { isDriveRelativePath } from "./safe-path-segment.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
-import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
+import {
+  assertNoWindowsPathAlias,
+  pathForWindowsFilesystem,
+  resolvePathFromBasePreservingWindowsRoot,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 export type RootContext = {
   rootDir: string;
@@ -53,7 +58,7 @@ export async function expandRelativePathWithHome(relativePath: string): Promise<
   if (cachedHomePath?.raw !== rawHome) {
     let realHome = rawHome;
     try {
-      realHome = fs.realpathSync.native(rawHome);
+      realHome = fs.realpathSync.native(pathForWindowsFilesystem(rawHome));
     } catch {
       // If the home dir cannot be canonicalized, keep lexical expansion behavior.
     }
@@ -75,12 +80,12 @@ export async function expandRelativePathWithHome(relativePath: string): Promise<
 export async function resolveRootContext(rootDir: string): Promise<RootContext> {
   assertNoNulPathInput(rootDir, "root dir contains a NUL byte");
   assertNoWindowsPathAlias(rootDir, "filesystem", "root dir uses a Windows filesystem namespace alias");
-  const lexicalRoot = path.resolve(rootDir);
+  const lexicalRoot = resolvePathPreservingWindowsRoot(rootDir);
   assertNoWindowsPathAlias(lexicalRoot, "filesystem", "root dir uses a Windows filesystem namespace alias");
   let rootReal: string;
   let rootIdentity: { dev: bigint; ino: bigint };
   try {
-    rootReal = fs.realpathSync.native(rootDir);
+    rootReal = fs.realpathSync.native(pathForWindowsFilesystem(rootDir));
     assertNoWindowsPathAlias(rootReal, "filesystem", "canonical root path uses a Windows filesystem namespace alias");
     const rootStat = await inspectFileIdentity(() => {
       const stat = fs.statSync(rootReal, { bigint: true });
@@ -160,7 +165,7 @@ export async function resolvePathInRoot(
   await assertRootIdentityCurrent(root);
   const expanded = await expandRelativePathWithHome(relativePath);
   assertNoWindowsPathAlias(expanded, "filesystem", "expanded path uses a Windows filesystem namespace alias");
-  let resolved = path.resolve(root.rootWithSep, expanded);
+  let resolved = resolvePathFromBasePreservingWindowsRoot(root.rootWithSep, expanded);
   assertNoWindowsPathAlias(resolved, "filesystem", "resolved path uses a Windows filesystem namespace alias");
   if (!options?.resolveCanonical && !isPathInside(root.rootWithSep, resolved)) {
     throw outsideWorkspaceError();

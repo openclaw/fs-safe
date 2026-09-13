@@ -6,7 +6,11 @@ import {
   resolvePathViaExistingAncestor,
   resolvePathViaExistingAncestorSync,
 } from "./root-path-existing.js";
-import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
+import {
+  assertNoWindowsPathAlias,
+  resolvePathFromBasePreservingWindowsRoot,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 type ResolveSymlinkHopOptions = {
   rejectUnresolved?: boolean;
@@ -27,19 +31,26 @@ function normalizeSymlinkResolutionError(
   if (!isNotFoundPathError(error)) throw error;
 }
 
+function resolveSymlinkTargetPath(symlinkPath: string, linkTarget: string): string {
+  const linkDir = resolvePathPreservingWindowsRoot(path.dirname(symlinkPath));
+  return resolvePathFromBasePreservingWindowsRoot(linkDir, linkTarget);
+}
+
 export async function resolveSymlinkHopPath(
   symlinkPath: string,
   options: ResolveSymlinkHopOptions = {},
 ): Promise<string> {
   try {
-    const realPath = path.resolve(fs.realpathSync.native(symlinkPath));
+    const rawRealPath = fs.realpathSync.native(symlinkPath);
+    assertNoWindowsPathAlias(rawRealPath, "filesystem", "resolved symlink path uses a Windows filesystem namespace alias");
+    const realPath = resolvePathPreservingWindowsRoot(rawRealPath);
     assertNoWindowsPathAlias(realPath, "filesystem", "resolved symlink path uses a Windows filesystem namespace alias");
     return realPath;
   } catch (error) {
     normalizeSymlinkResolutionError(error, options);
     const linkTarget = fs.readlinkSync(symlinkPath);
     assertNoWindowsPathAlias(linkTarget, "filesystem", "symlink target uses a Windows filesystem namespace alias");
-    const resolved = await resolvePathViaExistingAncestor(path.resolve(path.dirname(symlinkPath), linkTarget));
+    const resolved = await resolvePathViaExistingAncestor(resolveSymlinkTargetPath(symlinkPath, linkTarget));
     assertNoWindowsPathAlias(resolved, "filesystem", "resolved symlink path uses a Windows filesystem namespace alias");
     return resolved;
   }
@@ -50,14 +61,16 @@ export function resolveSymlinkHopPathSync(
   options: ResolveSymlinkHopOptions = {},
 ): string {
   try {
-    const realPath = path.resolve(fs.realpathSync(symlinkPath));
+    const rawRealPath = fs.realpathSync(symlinkPath);
+    assertNoWindowsPathAlias(rawRealPath, "filesystem", "resolved symlink path uses a Windows filesystem namespace alias");
+    const realPath = resolvePathPreservingWindowsRoot(rawRealPath);
     assertNoWindowsPathAlias(realPath, "filesystem", "resolved symlink path uses a Windows filesystem namespace alias");
     return realPath;
   } catch (error) {
     normalizeSymlinkResolutionError(error, options);
     const linkTarget = fs.readlinkSync(symlinkPath);
     assertNoWindowsPathAlias(linkTarget, "filesystem", "symlink target uses a Windows filesystem namespace alias");
-    const resolved = resolvePathViaExistingAncestorSync(path.resolve(path.dirname(symlinkPath), linkTarget));
+    const resolved = resolvePathViaExistingAncestorSync(resolveSymlinkTargetPath(symlinkPath, linkTarget));
     assertNoWindowsPathAlias(resolved, "filesystem", "resolved symlink path uses a Windows filesystem namespace alias");
     return resolved;
   }

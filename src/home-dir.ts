@@ -1,7 +1,10 @@
 import os from "node:os";
 import path from "node:path";
 import { normalizeOptionalString } from "./string-coerce.js";
-import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
+import {
+  assertNoWindowsPathAlias,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 function hasHomePrefix(input: string): boolean {
   return input === "~" || input.startsWith("~/") ||
@@ -26,7 +29,7 @@ export function resolveEffectiveHomeDir(
   const raw = resolveRawHomeDir(env, homedir);
   if (!raw) return undefined;
   assertNoWindowsPathAlias(raw, "filesystem", "home path uses a Windows filesystem namespace alias");
-  const resolved = path.resolve(raw);
+  const resolved = resolvePathPreservingWindowsRoot(raw);
   assertNoWindowsPathAlias(resolved, "filesystem", "home path uses a Windows filesystem namespace alias");
   return resolved;
 }
@@ -111,7 +114,7 @@ export function resolveHomeRelativePath(
   }
   assertNoWindowsPathAlias(input, "filesystem", "path uses a Windows filesystem namespace alias");
   if (!hasHomePrefix(input)) {
-    const resolved = path.resolve(input);
+    const resolved = resolvePathPreservingWindowsRoot(input);
     assertNoWindowsPathAlias(resolved, "filesystem", "path uses a Windows filesystem namespace alias");
     return resolved;
   }
@@ -120,7 +123,7 @@ export function resolveHomeRelativePath(
     env: opts?.env,
     homedir: opts?.homedir,
   });
-  const resolved = path.resolve(expanded);
+  const resolved = resolvePathPreservingWindowsRoot(expanded);
   assertNoWindowsPathAlias(resolved, "filesystem", "path uses a Windows filesystem namespace alias");
   return resolved;
 }

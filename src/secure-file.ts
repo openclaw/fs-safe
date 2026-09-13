@@ -23,7 +23,10 @@ import {
 } from "./permissions.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 import { scheduleTimeout } from "./timing.js";
-import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
+import {
+  assertNoWindowsPathAlias,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 export type SecureFileReadOptions = {
   filePath: string;
@@ -188,7 +191,7 @@ async function assertTrustedDirs(options: SecureFileReadOptions, realPath: strin
   const trusted = await Promise.all(
     options.trust.trustedDirs.map(async (dir) => {
       assertNoWindowsPathAlias(dir, "filesystem", "trusted directory uses a Windows filesystem namespace alias");
-      const resolved = path.resolve(dir);
+      const resolved = resolvePathPreservingWindowsRoot(dir);
       assertNoWindowsPathAlias(resolved, "filesystem", "trusted directory uses a Windows filesystem namespace alias");
       let realPath: string;
       try {

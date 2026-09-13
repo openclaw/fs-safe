@@ -3,7 +3,13 @@ import path from "node:path";
 
 import { FsSafeError } from "./errors.js";
 import { isDriveRelativePath } from "./safe-path-segment.js";
-import { assertNoWindowsPathAlias, hasWindowsPathAlias } from "./windows-path-alias.js";
+import {
+  assertNoWindowsPathAlias,
+  hasWindowsPathAlias,
+  pathForWindowsFilesystem,
+  resolvePathFromBasePreservingWindowsRoot,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 export {
   assertNoUnsafeDeviceReadPath,
@@ -57,8 +63,14 @@ export function isSymlinkOpenError(value: unknown): boolean {
 
 export function isPathInside(root: string, target: string): boolean {
   if (process.platform === "win32") {
-    const rootForCompare = normalizeWindowsPathForComparison(path.win32.resolve(root));
-    const targetForCompare = normalizeWindowsPathForComparison(path.win32.resolve(target));
+    const resolvedRoot = path.win32.resolve(root);
+    const resolvedTarget = path.win32.resolve(target);
+    const rootForCompare = normalizeWindowsPathForComparison(
+      resolvedRoot.length === 6 ? resolvePathPreservingWindowsRoot(root) : resolvedRoot,
+    );
+    const targetForCompare = normalizeWindowsPathForComparison(
+      resolvedTarget.length === 6 ? resolvePathPreservingWindowsRoot(target) : resolvedTarget,
+    );
     const relative = path.win32.relative(rootForCompare, targetForCompare);
     const firstSegment = relative.split(path.win32.sep)[0];
     return (
@@ -106,7 +118,7 @@ export function safeRealpathSync(targetPath: string, cache?: Map<string, string>
     return cached;
   }
   try {
-    const resolved = fs.realpathSync(targetPath);
+    const resolved = fs.realpathSync(pathForWindowsFilesystem(targetPath));
     cache?.set(targetPath, resolved);
     cache?.set(resolved, resolved);
     return resolved;
@@ -145,7 +157,7 @@ export function isPathInsideWithRealpath(
 
 export function safeStatSync(targetPath: string): fs.Stats | null {
   try {
-    return fs.statSync(targetPath);
+    return fs.statSync(pathForWindowsFilesystem(targetPath));
   } catch {
     return null;
   }
@@ -186,8 +198,11 @@ export function splitSafeRelativePath(relativePath: string): string[] {
 
 export function resolveSafeRelativePath(rootDir: string, relativePath: string): string {
   assertNoWindowsPathAlias(rootDir, "filesystem", "root dir uses a Windows filesystem namespace alias");
-  const root = path.resolve(rootDir);
-  const target = path.resolve(root, ...splitSafeRelativePath(relativePath));
+  const root = resolvePathPreservingWindowsRoot(rootDir);
+  const target = resolvePathFromBasePreservingWindowsRoot(
+    root,
+    ...splitSafeRelativePath(relativePath),
+  );
   if (!isPathInside(root, target)) {
     throw new FsSafeError("outside-workspace", "relative path escapes root");
   }

@@ -6,7 +6,10 @@ import { resolveMutationComparablePaths } from "../src/deny-mutations.js";
 import { expectFsSafeError } from "./helpers/security.js";
 import { useTempDirs } from "./helpers/vitest.js";
 import { root as openRoot } from "../src/index.js";
-import { resolvePathViaExistingAncestor } from "../src/root-path-existing.js";
+import {
+  resolvePathViaExistingAncestor,
+  resolvePathViaExistingAncestorSync,
+} from "../src/root-path-existing.js";
 
 const skipOnWindows = process.platform === "win32";
 const { tempDirs, tempRoot } = useTempDirs();
@@ -19,20 +22,82 @@ afterEach(async () => {
 
 describe("root denyMutations policies", () => {
   it.runIf(process.platform === "win32")(
-    "uses the root ancestor canonicalizer for drive-relative and UNC roots",
+    "uses the root ancestor canonicalizer for rooted drive and UNC paths",
     async () => {
       vi.spyOn(fsSync, "lstatSync").mockImplementation(() => {
         throw Object.assign(new Error("missing"), { code: "ENOENT" });
       });
 
-      for (const input of ["C:foo", "\\\\?\\C:\\", "\\\\server\\share"]) {
-        const normalized = path.resolve(input);
+      for (const input of [
+        "C:\\foo",
+        "\\\\?\\C:\\",
+        "\\\\.\\C:\\",
+        "\\\\?\\C:\\foo",
+        "\\\\server\\share",
+      ]) {
+        const normalized = input === "\\\\?\\C:\\" || input === "\\\\.\\C:\\"
+          ? path.win32.normalize(input)
+          : path.resolve(input);
         const rootCanonical = await resolvePathViaExistingAncestor(input);
         const denyCanonical = await resolveMutationComparablePaths(input);
 
         expect(rootCanonical, input).toBe(normalized);
         expect(denyCanonical, input).toEqual(new Set([normalized]));
       }
+    },
+  );
+
+  it.runIf(process.platform === "win32")(
+    "rejects drive-relative roots before filesystem lookup",
+    async () => {
+      const lstat = vi.spyOn(fsSync, "lstatSync");
+      const exists = vi.spyOn(fsSync, "existsSync");
+      const realpath = vi.spyOn(fsSync, "realpathSync");
+
+      for (const input of ["C:foo", "C:", "\\\\?\\C:", "\\\\.\\C:"]) {
+        await expect(resolvePathViaExistingAncestor(input)).rejects.toMatchObject({
+          code: "invalid-path",
+          details: { reason: "windows-path-alias" },
+        });
+        expect(() => resolvePathViaExistingAncestorSync(input)).toThrow(
+          expect.objectContaining({
+            code: "invalid-path",
+            details: { reason: "windows-path-alias" },
+          }),
+        );
+        await expect(resolveMutationComparablePaths(input)).rejects.toMatchObject({
+          code: "invalid-path",
+          details: { reason: "windows-path-alias" },
+        });
+      }
+
+      expect(lstat).not.toHaveBeenCalled();
+      expect(exists).not.toHaveBeenCalled();
+      expect(realpath).not.toHaveBeenCalled();
+    },
+  );
+
+  it.runIf(process.platform === "win32")(
+    "rejects canonical aliases instead of falling back to the lexical path",
+    async () => {
+      vi.spyOn(fsSync, "lstatSync").mockReturnValue({} as fsSync.Stats);
+      vi.spyOn(fsSync.realpathSync, "native").mockReturnValue("C:\\safe:payload");
+
+      await expect(resolvePathViaExistingAncestor("C:\\safe")).rejects.toMatchObject({
+        code: "invalid-path",
+        details: { reason: "windows-path-alias" },
+      });
+
+      vi.restoreAllMocks();
+      vi.spyOn(fsSync, "existsSync").mockReturnValue(true);
+      vi.spyOn(fsSync, "realpathSync").mockReturnValue("C:\\safe:payload");
+
+      expect(() => resolvePathViaExistingAncestorSync("C:\\safe")).toThrow(
+        expect.objectContaining({
+          code: "invalid-path",
+          details: { reason: "windows-path-alias" },
+        }),
+      );
     },
   );
 

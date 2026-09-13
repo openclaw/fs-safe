@@ -18,7 +18,10 @@ import { ensureTrailingSep } from "./root-context.js";
 import { RootHandle } from "./root-impl.js";
 import { prepareSecretFileWrite } from "./secret-file.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
-import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
+import {
+  assertNoWindowsPathAlias,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 export type SyncParentGuard = SyncDirectoryGuard;
 
@@ -191,8 +194,8 @@ export function ensureStoreDirectorySync(params: {
 }): SyncParentGuard {
   assertNoWindowsPathAlias(params.rootDir, "filesystem", "store root uses a Windows filesystem namespace alias");
   assertNoWindowsPathAlias(params.targetDir, "filesystem", "store path uses a Windows filesystem namespace alias");
-  const rootDir = path.resolve(params.rootDir);
-  const dir = path.resolve(params.targetDir);
+  const rootDir = resolvePathPreservingWindowsRoot(params.rootDir);
+  const dir = resolvePathPreservingWindowsRoot(params.targetDir);
   assertNoWindowsPathAlias(rootDir, "filesystem", "store root uses a Windows filesystem namespace alias");
   assertNoWindowsPathAlias(dir, "filesystem", "store path uses a Windows filesystem namespace alias");
   const relative = path.relative(rootDir, dir);

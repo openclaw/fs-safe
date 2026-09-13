@@ -5,7 +5,11 @@ import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard } from "./director
 import { FsSafeError } from "./errors.js";
 import { isNotFoundPathError, isPathRelativeEscape } from "./path.js";
 import { directoryComponentNotDirectoryError } from "./root-errors.js";
-import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
+import {
+  assertNoWindowsPathAlias,
+  pathForWindowsFilesystem,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 function isSameOrChildPath(candidate: string, parent: string): boolean {
   const parentPrefix = parent.endsWith(path.sep) ? parent : `${parent}${path.sep}`;
@@ -14,13 +18,15 @@ function isSameOrChildPath(candidate: string, parent: string): boolean {
 
 async function realpathOrThrowNotFile(target: string): Promise<string> {
   try {
-    const canonical = fsSync.realpathSync.native(target);
+    const canonical = fsSync.realpathSync.native(
+      pathForWindowsFilesystem(target),
+    );
     assertNoWindowsPathAlias(
       canonical,
       "filesystem",
       "canonical directory uses a Windows filesystem namespace alias",
     );
-    return path.resolve(canonical);
+    return resolvePathPreservingWindowsRoot(canonical);
   } catch (error) {
     if (isNotFoundPathError(error)) {
       // A dangling symlink (or a component removed between lstat and
@@ -57,15 +63,17 @@ export async function mkdirPathComponentsWithGuards(params: {
     "filesystem",
     "target directory uses a Windows filesystem namespace alias",
   );
-  const root = path.resolve(rawRootReal);
-  const rawRootCanonical = fsSync.realpathSync.native(root);
+  const root = resolvePathPreservingWindowsRoot(rawRootReal);
+  const rawRootCanonical = fsSync.realpathSync.native(
+    pathForWindowsFilesystem(root),
+  );
   assertNoWindowsPathAlias(
     rawRootCanonical,
     "filesystem",
     "canonical root directory uses a Windows filesystem namespace alias",
   );
-  const rootCanonical = path.resolve(rawRootCanonical);
-  const target = path.resolve(rawTargetPath);
+  const rootCanonical = resolvePathPreservingWindowsRoot(rawRootCanonical);
+  const target = resolvePathPreservingWindowsRoot(rawTargetPath);
   const relative = path.relative(root, target);
   if (isPathRelativeEscape(relative)) {
     throw new FsSafeError("outside-workspace", "directory is outside workspace root");

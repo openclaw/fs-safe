@@ -2,12 +2,15 @@ import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { assertNoNulPathInput, isPathInside } from "./path.js";
 import { resolvePathViaExistingAncestor } from "./root-path-existing.js";
-import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
+import {
+  assertNoWindowsPathAlias,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 export async function resolveMutationComparablePaths(rawPath: string): Promise<Set<string>> {
   assertNoNulPathInput(rawPath, "path contains a NUL byte");
   assertNoWindowsPathAlias(rawPath, "filesystem", "mutation path uses a Windows filesystem namespace alias");
-  const resolved = path.resolve(rawPath);
+  const resolved = resolvePathPreservingWindowsRoot(rawPath);
   assertNoWindowsPathAlias(resolved, "filesystem", "mutation path uses a Windows filesystem namespace alias");
   const canonical = await resolvePathViaExistingAncestor(resolved);
   assertNoWindowsPathAlias(canonical, "filesystem", "mutation path uses a Windows filesystem namespace alias");

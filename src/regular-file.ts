@@ -17,7 +17,10 @@ import {
   isNonRegularWriteOpenErrorSync,
   resolveNonblockingWriteFlag,
 } from "./write-open-flags.js";
-import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
+import {
+  assertNoWindowsPathAlias,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 export type RegularFileStatResult = { missing: true } | { missing: false; stat: Stats };
 
@@ -283,7 +286,7 @@ export async function appendRegularFile(options: AppendRegularFileOptions): Prom
   const filePath = options.filePath;
   assertNoWindowsPathAlias(filePath, "filesystem", "file path uses a Windows filesystem namespace alias");
   if (options.rejectSymlinkParents === true) {
-    const resolvedDir = path.resolve(path.dirname(filePath));
+    const resolvedDir = resolvePathPreservingWindowsRoot(path.dirname(filePath));
     await assertNoSymlinkParents({
       rootDir: path.parse(resolvedDir).root,
       targetPath: resolvedDir,
@@ -367,7 +370,7 @@ export function appendRegularFileSync(options: AppendRegularFileOptions): void {
   const filePath = options.filePath;
   assertNoWindowsPathAlias(filePath, "filesystem", "file path uses a Windows filesystem namespace alias");
   if (options.rejectSymlinkParents === true) {
-    const resolvedDir = path.resolve(path.dirname(filePath));
+    const resolvedDir = resolvePathPreservingWindowsRoot(path.dirname(filePath));
     assertNoSymlinkParentsSync({
       rootDir: path.parse(resolvedDir).root,
       targetPath: resolvedDir,
