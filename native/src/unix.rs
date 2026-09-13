@@ -914,13 +914,13 @@ fn cleanup_clone_stage(
         }
     }
     let remove_directory = || -> NativeResult<()> {
-        if let Some(stage) = stage {
-            if !directory_name_matches_fd(parent_fd, name, stage.as_raw_fd())? {
-                return Err(native_error(
-                    "EIO",
-                    "private clone directory identity changed",
-                ));
-            }
+        if let Some(stage) = stage
+            && !directory_name_matches_fd(parent_fd, name, stage.as_raw_fd())?
+        {
+            return Err(native_error(
+                "EIO",
+                "private clone directory identity changed",
+            ));
         }
         rustix::fs::unlinkat(borrowed(parent_fd), name, AtFlags::REMOVEDIR)
             .map_err(|error| os_error(error, "remove private clone directory"))

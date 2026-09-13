@@ -24,10 +24,14 @@ describe.skipIf(process.platform === "win32")("POSIX canonical paths", () => {
     const directory = await tempRoot("fs-safe-realpath-parent-");
     fs.mkdirSync(path.join(directory, "target", "child"), { recursive: true });
     fs.symlinkSync("target/child", path.join(directory, "link"));
+    expect(realpathSync(path.join(directory, "link"))).toBe(path.join(directory, "target", "child"));
     // path.join would erase the component whose ordering is being tested.
     const input = `${directory}/link/..`;
     expect(realpathSync.native(input)).toBe(path.join(directory, "target"));
     expect(realpathSync(input)).toBe(directory);
+    fs.symlinkSync("link/..", path.join(directory, "indirect"));
+    expect(realpathSync.native(path.join(directory, "indirect"))).toBe(path.join(directory, "target"));
+    expect(realpathSync(path.join(directory, "indirect"))).toBe(directory);
   });
 
   it.skipIf(process.getuid?.() === 0)("resolves restrictive leaves without granting read permission", async () => {

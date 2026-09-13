@@ -34,17 +34,23 @@ node --version
 ## Bun runtime
 
 Bun 1.4.2 can run the same public APIs and load the matching native package.
-On macOS and Linux, fs-safe uses Bun's built-in `bun:ffi` to call the system
-`realpath` implementation. This works around Bun path-resolution defects that
+On macOS and Linux, fs-safe uses its Rust N-API addon to call the system
+`realpath` implementation for native resolution. Ordinary resolution follows
+Node's component walk, including lexical normalization of expanded symlink
+targets, in Rust, with a 1,024-link expansion limit that returns `ELOOP` for
+excessive or cyclic expansion. This works around Bun path-resolution defects that
 otherwise reject restrictive permissions and confuse literal POSIX backslashes
 with directory separators. The OS still resolves symlinks and canonical file
 names; fs-safe retains its confinement and file-identity checks.
 
-This adapter requires Bun's normal JIT-enabled runtime; `--jitless` is not
-supported. It loads only an absolute system-library path, needs no extra npm
-dependency or compiler, and also works when optional npm dependencies are
-omitted. Native mode `off` continues to disable fs-safe's optional N-API helper;
-the Bun runtime adapter supplies ordinary path resolution in every mode.
+This works with `bun --jitless` and needs no runtime FFI or JIT. Use native mode
+`auto` or `require` with the matching addon installed. `FS_SAFE_NATIVE_MODE=off`
+still disables all addon loading; `auto` without the addon falls back to Bun's
+resolver. Those configurations retain Bun 1.4.2's limitations with restrictive
+permissions, sockets, literal backslashes, and symlink/parent traversal. Use
+Node if you need full compatibility without the addon. On Bun POSIX, `require`
+also rejects canonicalization when the addon or its canonicalizer is unavailable.
+
 Node and Windows use their existing runtime canonicalizers. On Windows, Bun's
 recursive directory creation receives an absolute spelling that preserves raw
 path components, working around its rejection of existing relative `.` and `..`
@@ -52,8 +58,9 @@ directories. Public paths and caller-supplied filesystem adapters remain unchang
 
 The upstream fix is tracked in [Bun #42374](https://github.com/oven-sh/bun/pull/42374).
 The adapter can be removed when the supported Bun baseline includes that fix.
-Run the full suite in real Bun workers with `pnpm test:bun` after building the
-package. See [contributing](contributing.md) for the Node/pnpm build toolchain.
+Run native compatibility checks with `pnpm test:bun:native` after building the
+package and addon. See [contributing](contributing.md) for the Node/pnpm toolchain
+and the broader diagnostic suite.
 
 ## TypeScript
 

@@ -34,9 +34,12 @@ of the same Rust parser used by native. `off` still disables the optional native
 filesystem helper; it does not disable this portable parser. ZIP fallback still requires
 optional `jszip`, and zstd/bzip2 remain native-only.
 
-On Bun, the [runtime path adapter](install.md#bun-runtime) uses Bun's built-in
-FFI and system libc for POSIX canonicalization in every mode. It does not load
-the optional N-API package or change containment and identity policy.
+On Bun macOS/Linux, the [runtime path adapter](install.md#bun-runtime) uses the
+same Rust addon for system canonicalization in `auto` and `require`. No JIT is
+needed. With `off` or a missing addon in `auto`, Bun's own resolver retains its
+path and permission limitations. Canonicalization in `require` fails with
+`helper-unavailable` if the addon or its canonicalizer is missing, including
+when admitting a temp workspace. Containment and identity checks stay intact.
 
 Configure the mode once during startup. Loading is lazy and cached; changing from `auto` to `require` after a failed load changes failure policy but does not repeatedly probe the binary.
 
@@ -61,7 +64,7 @@ change the mode policy of existing fallback-capable APIs.
 
 The native layer exposes policy-free filesystem mechanisms: beneath-root
 open/mkdir/link, replace and no-replace rename, identity reads, archive decode/execution,
-clone/copy/hash workers, and Windows security descriptor calls. The TypeScript
+clone/copy/hash workers, POSIX canonicalization, and Windows security descriptor calls. The TypeScript
 layer owns policy, retries, filters, budgets, modes, cleanup, error
 normalization, and the decision to fall back.
 

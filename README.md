@@ -59,7 +59,7 @@ pnpm add @openclaw/fs-safe
 
 Node 22 or newer. Core root/path/json/temp helpers avoid framework dependencies. With all optional dependencies omitted, public subpaths remain safe to import and non-archive fallback-capable operations work in `auto` or `off`. Native-only features remain unavailable, and operations needing the binding in `require` mode fail with `helper-unavailable`. TAR/gzip fallback uses the bundled WASM build of the same Rust parser as native and works with optional dependencies omitted. ZIP fallback still needs optional `jszip`. See the [0.6 migration guide](docs/migrating-to-0.6.md).
 
-Bun 1.4.2 is also supported with the [Bun runtime requirements](docs/install.md#bun-runtime), including a JIT-enabled runtime on macOS and Linux.
+Bun 1.4.2 is also supported with the [Bun runtime requirements](docs/install.md#bun-runtime), including the matching Rust addon on macOS and Linux. JIT-disabled Bun works too.
 
 The package installs one prebuilt native binding for the current supported target. It
 supplies fd-relative and atomic no-replace primitives that Node does not expose
