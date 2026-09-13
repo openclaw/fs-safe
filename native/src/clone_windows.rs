@@ -453,7 +453,7 @@ fn copy_tree(
     std::thread::scope(|scope| -> NativeResult<()> {
         let mut workers = Vec::new();
         for _ in 0..concurrency {
-            workers.push(scope.spawn(|| {
+            let worker = std::thread::Builder::new().spawn_scoped(scope, || {
                 loop {
                     let job = receiver.lock().unwrap().recv();
                     let Ok(job) = job else {
@@ -462,12 +462,27 @@ fn copy_tree(
                     if failed.load(Ordering::Acquire) {
                         continue;
                     }
-                    if let Err(error) = clone_file(job, cancelled) {
+                    let result = std::panic::catch_unwind(|| clone_file(job, cancelled))
+                        .unwrap_or_else(|_| Err(native_error("EIO", "clone worker panicked")));
+                    if let Err(error) = result {
                         failed.store(true, Ordering::Release);
                         first_error.lock().unwrap().get_or_insert(error);
                     }
                 }
-            }));
+            });
+            match worker {
+                Ok(worker) => workers.push(worker),
+                Err(error) => {
+                    drop(sender);
+                    for worker in workers {
+                        let _ = worker.join();
+                    }
+                    return Err(native_error(
+                        "EIO",
+                        format!("start ReFS clone worker: {error}"),
+                    ));
+                }
+            }
         }
         let traversal: NativeResult<()> = (|| {
             let mut pending = vec![(source, target)];
@@ -514,15 +529,17 @@ fn copy_tree(
         }
         drop(sender);
         // All writes must settle before cancellation or error becomes visible to JS.
+        let mut joined = Ok(());
         for worker in workers {
-            worker
-                .join()
-                .map_err(|_| native_error("EIO", "clone worker panicked"))?;
+            if worker.join().is_err() {
+                joined = Err(native_error("EIO", "clone worker panicked"));
+            }
         }
         traversal?;
         if let Some(error) = first_error.lock().unwrap().take() {
             return Err(error);
         }
+        joined?;
         check_cancelled(cancelled)?;
         for (directory, info) in directories.into_iter().rev() {
             check_cancelled(cancelled)?;
@@ -732,6 +749,7 @@ mod tests {
                 let _writer = OpenOptions::new().write(true).open(&source_file).unwrap();
                 let error =
                     clone_tree(source_fd, parent_fd, "writer-copy", &cancelled, 8).unwrap_err();
+                assert_eq!(error.status, "EBUSY");
                 assert!(error.reason.contains("Windows error 32"), "{error}");
             }
             assert!(!root.join("writer-copy").exists());

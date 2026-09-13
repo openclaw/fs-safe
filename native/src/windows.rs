@@ -7,8 +7,9 @@ use std::ptr::{null, null_mut};
 
 use windows_sys::Win32::Foundation::{
     CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS,
-    ERROR_FILE_EXISTS, ERROR_FILE_NOT_FOUND, ERROR_NO_MORE_FILES, ERROR_PATH_NOT_FOUND, GENERIC_READ,
-    GetLastError, HANDLE, INVALID_HANDLE_VALUE,
+    ERROR_DISK_FULL, ERROR_FILE_EXISTS, ERROR_FILE_NOT_FOUND, ERROR_HANDLE_DISK_FULL,
+    ERROR_LOCK_VIOLATION, ERROR_NO_MORE_FILES, ERROR_PATH_NOT_FOUND, ERROR_SHARING_VIOLATION,
+    GENERIC_READ, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
@@ -233,6 +234,8 @@ pub(crate) fn win_error(code: u32, operation: &str) -> napi::Error<String> {
     let typed = match code {
         ERROR_FILE_EXISTS | ERROR_ALREADY_EXISTS => "EEXIST",
         ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND => "ENOENT",
+        ERROR_DISK_FULL | ERROR_HANDLE_DISK_FULL => "ENOSPC",
+        ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION => "EBUSY",
         // Node/libuv reports Windows ERROR_ACCESS_DENIED from filesystem opens
         // as EPERM. Keep the native path aligned so callers can apply the same
         // operation-specific policy after adding their own path provenance.
@@ -996,6 +999,22 @@ mod tests {
     #[test]
     fn maps_access_denied_to_node_filesystem_eperm() {
         assert_eq!(win_error(ERROR_ACCESS_DENIED, "test").status, "EPERM");
+    }
+
+    #[test]
+    fn maps_disk_full_and_sharing_failures_to_node_filesystem_errors() {
+        for (code, expected) in [
+            (ERROR_DISK_FULL, "ENOSPC"),
+            (ERROR_HANDLE_DISK_FULL, "ENOSPC"),
+            (ERROR_SHARING_VIOLATION, "EBUSY"),
+            (ERROR_LOCK_VIOLATION, "EBUSY"),
+        ] {
+            assert_eq!(
+                win_error(code, "copy file").status,
+                expected,
+                "Windows error {code}"
+            );
+        }
     }
 
     #[test]

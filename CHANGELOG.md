@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Report native Windows disk-full and sharing failures as `ENOSPC` and `EBUSY`, and return ReFS worker-start failures after joining admitted workers instead of panicking across the native boundary.
+
 ## 0.10.0 - 2026-09-13
 
 ### Highlights
