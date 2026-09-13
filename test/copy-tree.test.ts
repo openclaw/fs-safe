@@ -1,6 +1,7 @@
-import fs from "node:fs/promises";
+import fsSync from "node:fs";
+import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative } from "../src/config.js";
 import { copyTree } from "../src/copy.js";
 import {
@@ -13,6 +14,7 @@ import { useRealTempDirs } from "./helpers/vitest.js";
 const { tempRoot } = useRealTempDirs();
 beforeEach(() => configureFsSafeNative({ mode: "off" }));
 afterEach(() => {
+  vi.restoreAllMocks();
   configureFsSafeNative({ mode: "auto" });
   __resetNativeLoaderForTest();
 });
@@ -28,24 +30,56 @@ async function copyFixture() {
 }
 
 describe("directory copying", () => {
-  it.for([
-    { label: "automatic cloning by default", clone: undefined },
-    { label: "cloning disabled", clone: "never" as const },
-  ])("copies without a native binding with $label", async ({ clone }) => {
-    const { source, destination } = await copyFixture();
-    const original = path.join(source, "payload");
-    const copied = path.join(destination, "payload");
-    await fs.utimes(original, 1_600_000_000, 1_600_000_000);
-    if (process.platform !== "win32") await fs.chmod(original, 0o751);
+  it.for(
+    [
+      { label: "automatic cloning by default", clone: undefined },
+      { label: "cloning disabled", clone: "never" as const },
+    ].flatMap((policy) => [1, 4, 32].map((concurrency) => ({ ...policy, concurrency }))),
+  )(
+    "copies without a native binding with $label and $concurrency workers",
+    async ({ clone, concurrency }) => {
+      const { source, destination } = await copyFixture();
+      const original = path.join(source, "payload");
+      const copied = path.join(destination, "payload");
+      await fs.utimes(original, 1_600_000_000, 1_600_000_000);
+      if (process.platform !== "win32") await fs.chmod(original, 0o751);
+      await fs.mkdir(path.join(source, "nested", "deep"), { recursive: true });
+      const contents = new Map<string, Buffer>();
+      for (let index = 0; index < 12; index++) {
+        const parent = ["", "nested", path.join("nested", "deep")][index % 3]!;
+        const name = path.join(parent, `file-${index}`);
+        const bytes = Buffer.alloc(1024 * 1024 + 17 + index, index + 1);
+        bytes.fill(index + 77, 1024 * 1024);
+        contents.set(name, bytes);
+        await fs.writeFile(path.join(source, name), bytes);
+        await fs.utimes(path.join(source, name), 1_600_000_000 + index, 1_600_000_000 + index);
+      }
+      const directories = ["", "empty", "nested", path.join("nested", "deep")];
+      for (const name of directories) {
+        await fs.utimes(path.join(source, name), 1_500_000_000, 1_500_000_000);
+      }
 
-    await copyTree(source, destination, { clone });
-    expect(await fs.readFile(copied, "utf8")).toBe("original");
-    expect(await fs.readdir(path.join(destination, "empty"))).toEqual([]);
-    expect((await fs.stat(copied)).mtimeMs).toBe(1_600_000_000_000);
-    if (process.platform !== "win32") expect((await fs.stat(copied)).mode & 0o777).toBe(0o751);
-    await fs.writeFile(copied, "independent edit");
-    expect(await fs.readFile(original, "utf8")).toBe("original");
-  });
+      await copyTree(source, destination, { clone, concurrency });
+      for (const [name, bytes] of contents) {
+        expect((await fs.readFile(path.join(destination, name))).equals(bytes), name).toBe(true);
+        expect((await fs.stat(path.join(destination, name))).mtimeMs, name).toBe(
+          (await fs.stat(path.join(source, name))).mtimeMs,
+        );
+      }
+      for (const name of directories) {
+        expect((await fs.stat(path.join(destination, name))).mtimeMs, name).toBe(1_500_000_000_000);
+      }
+      expect(await fs.readFile(copied, "utf8")).toBe("original");
+      expect(await fs.readdir(path.join(destination, "empty"))).toEqual([]);
+      expect((await fs.stat(copied)).mtimeMs).toBe(1_600_000_000_000);
+      if (process.platform !== "win32") expect((await fs.stat(copied)).mode & 0o777).toBe(0o751);
+      await fs.writeFile(copied, "independent edit");
+      expect(await fs.readFile(original, "utf8")).toBe("original");
+      const [parallelFile, parallelBytes] = contents.entries().next().value!;
+      await fs.writeFile(path.join(destination, parallelFile), "independent parallel edit");
+      expect((await fs.readFile(path.join(source, parallelFile))).equals(parallelBytes)).toBe(true);
+    },
+  );
 
   it("requires native cloning when the policy is always", async () => {
     const { source, destination } = await copyFixture();
@@ -90,25 +124,16 @@ describe("directory copying", () => {
     },
   );
 
-  it("never invokes the native clone operation when cloning is disabled", async (context) => {
+  it("does not load native copy or clone helpers when cloning is disabled", async () => {
     configureFsSafeNative({ mode: "auto" });
-    const binding = getNativeBinding();
-    if (!binding) {
-      context.skip("native binding unavailable");
-      return;
-    }
     const { source, destination } = await copyFixture();
-    let nativeCalls = 0;
-    __setNativeLoaderForTest(() => ({
-      ...binding,
-      probeTreeClone: () => "xfs",
-      async cloneTree() {
-        nativeCalls++;
-        throw new Error("native cloning must not run");
-      },
-    }));
+    let nativeLoads = 0;
+    __setNativeLoaderForTest(() => {
+      nativeLoads++;
+      throw new Error("native helpers must not load");
+    });
     await copyTree(source, destination, { clone: "never" });
-    expect(nativeCalls).toBe(0);
+    expect(nativeLoads).toBe(0);
     expect(await fs.readFile(path.join(destination, "payload"), "utf8")).toBe("original");
   });
 
@@ -207,6 +232,32 @@ describe("directory copying", () => {
     await fs.writeFile(original, bytes);
     const controller = new AbortController();
     const reason = new Error("cancel after partial byte copy");
+    const written = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const open = fs.open.bind(fs);
+    let writes = 0;
+    let copiedFd: number | undefined;
+    const openSpy = vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+      const handle = await open(...args);
+      if (args[0] === copied && args[1] === "wx") {
+        copiedFd = handle.fd;
+        const write = handle.write.bind(handle);
+        // This fixture exercises the buffer overload and forwards the real write.
+        vi.spyOn(handle, "write").mockImplementation((async (
+          buffer: Buffer,
+          offset: number,
+          length: number,
+          position: number | null,
+        ) => {
+          const result = await write(buffer, offset, length, position);
+          writes++;
+          written.resolve();
+          await release.promise;
+          return result;
+        }) as FileHandle["write"]);
+      }
+      return handle;
+    });
     let settled = false;
     const pending = copyTree(source, destination, {
       clone: "never",
@@ -221,32 +272,37 @@ describe("directory copying", () => {
         return error;
       },
     );
-    let observedPartialWrite = false;
-    const deadline = performance.now() + 2000;
     try {
-      while (!settled && performance.now() < deadline) {
-        const stat = await fs.stat(copied).catch((error: unknown) => {
-          if (error instanceof Error && "code" in error && error.code === "ENOENT")
-            return undefined;
-          throw error;
-        });
-        if (stat && stat.size > 0 && stat.size < bytes.length / 2) {
-          observedPartialWrite = true;
-          controller.abort(reason);
-          break;
-        }
-        await new Promise<void>((resolve) => setImmediate(resolve));
-      }
-      expect(observedPartialWrite).toBe(true);
+      await Promise.race([
+        written.promise,
+        pending.then((error) => {
+          throw error ?? new Error("copy completed before the held write");
+        }),
+      ]);
+      const partial = await fs.stat(copied);
+      expect(partial.size).toBeGreaterThan(0);
+      expect(partial.size).toBeLessThan(bytes.length / 2);
+      controller.abort(reason);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(settled).toBe(false);
+      expect(fsSync.fstatSync(copiedFd!).isFile()).toBe(true);
+      release.resolve();
       expect(await pending).toBe(reason);
       expect((await fs.stat(copied)).size).toBeLessThan(bytes.length);
+      const afterAbort = await fs.readFile(copied);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(writes).toBe(1);
+      expect((await fs.readFile(copied)).equals(afterAbort)).toBe(true);
+      openSpy.mockRestore();
       await fs.rm(destination, { recursive: true });
       await copyTree(source, destination, { clone: "never" });
       expect((await fs.readFile(copied)).equals(bytes)).toBe(true);
       expect((await fs.readFile(original)).equals(bytes)).toBe(true);
     } finally {
       controller.abort(reason);
+      release.resolve();
       await pending;
+      openSpy.mockRestore();
     }
   });
 
@@ -256,4 +312,108 @@ describe("directory copying", () => {
     await expect(copyTree(source, destination, { clone: "sometimes" })).rejects.toThrow();
     await expect(fs.access(destination)).rejects.toMatchObject({ code: "ENOENT" });
   });
+
+  it.runIf(process.platform === "win32").each(["abort", "file error"] as const)(
+    "joins admitted native file writes after %s without exceeding concurrency",
+    async (stop, context) => {
+      configureFsSafeNative({ mode: "auto" });
+      const binding = getNativeBinding();
+      if (!binding) {
+        context.skip("native binding unavailable");
+        return;
+      }
+      const { source, destination } = await copyFixture();
+      for (let index = 0; index < 4; index++) {
+        await fs.writeFile(path.join(source, `file-${index}`), `distinct contents ${index}`);
+      }
+      const entered = Promise.withResolvers<void>();
+      const fail = Promise.withResolvers<void>();
+      const failed = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const controller = new AbortController();
+      const reason = Object.assign(new Error(`copy stopped by ${stop}`), { code: "EIO" });
+      const calls: { sourceFd: number; targetFd: number; signal?: AbortSignal }[] = [];
+      let active = 0;
+      let peakActive = 0;
+      let writes = 0;
+      __setNativeLoaderForTest(() => ({
+        ...binding,
+        probeTreeClone: () => null,
+        async copyFileContents(sourceFd, targetFd, signal) {
+          const index = calls.push({ sourceFd, targetFd, signal }) - 1;
+          active++;
+          peakActive = Math.max(peakActive, active);
+          if (calls.length === 2) entered.resolve();
+          try {
+            if (index === 1) {
+              await fail.promise;
+              failed.resolve();
+              throw reason;
+            }
+            await release.promise;
+            expect(fsSync.fstatSync(sourceFd).isFile()).toBe(true);
+            expect(fsSync.fstatSync(targetFd).isFile()).toBe(true);
+            fsSync.writeFileSync(targetFd, fsSync.readFileSync(sourceFd));
+            writes++;
+          } finally {
+            active--;
+          }
+        },
+      }));
+      let settled = false;
+      const pending = copyTree(source, destination, {
+        concurrency: 2,
+        signal: controller.signal,
+      }).then(
+        () => {
+          settled = true;
+          return undefined;
+        },
+        (error: unknown) => {
+          settled = true;
+          return error;
+        },
+      );
+      try {
+        await Promise.race([
+          entered.promise,
+          pending.then((error) => {
+            throw error ?? new Error("copy settled before two admissions");
+          }),
+        ]);
+        expect(calls[0]!.signal).not.toBe(controller.signal);
+        expect(calls[0]!.signal).not.toBe(calls[1]!.signal);
+        if (stop === "abort") controller.abort(reason);
+        fail.resolve();
+        await failed.promise;
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(settled).toBe(false);
+        expect(active).toBe(1);
+        expect(calls).toHaveLength(2);
+        expect(peakActive).toBe(2);
+        expect(calls[0]!.signal?.aborted).toBe(true);
+        release.resolve();
+        expect(await pending).toBe(reason);
+        expect(active).toBe(0);
+        expect(writes).toBe(1);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(calls).toHaveLength(2);
+        expect(writes).toBe(1);
+        __resetNativeLoaderForTest();
+        await fs.rm(destination, { recursive: true });
+        await copyTree(source, destination, { clone: "never", concurrency: 2 });
+        for (const name of await fs.readdir(source)) {
+          if (name === "empty") continue;
+          expect(await fs.readFile(path.join(destination, name))).toEqual(
+            await fs.readFile(path.join(source, name)),
+          );
+        }
+      } finally {
+        controller.abort(reason);
+        fail.resolve();
+        release.resolve();
+        await pending;
+      }
+    },
+  );
 });

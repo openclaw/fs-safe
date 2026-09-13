@@ -14,6 +14,8 @@ mod clone_linux;
 mod clone_unix;
 #[cfg(windows)]
 mod clone_windows;
+#[cfg(windows)]
+mod copy_windows;
 mod owned_tree;
 #[cfg(unix)]
 mod staged_file;
@@ -212,6 +214,8 @@ pub use archive::{
 pub use fast_file::{
     FileHash, NativeCopyResult, clone_file_exclusive, copy_file_range_exclusive, sha256_file,
 };
+#[cfg(windows)]
+pub use copy_windows::copy_file_contents;
 pub use owned_tree::{
     NativeOwnedTreeRemovalResult, owned_tree_removal_available, remove_owned_tree,
     remove_owned_tree_sync,
