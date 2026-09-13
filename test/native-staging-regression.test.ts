@@ -1,7 +1,6 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { configureFsSafeNative } from "../src/native-config.js";
 import { stageFileInDirectory } from "../src/advanced.js";
@@ -137,7 +136,8 @@ describe.runIf(nativeAvailable)("native staged write abort", () => {
     const abort = new Error("stream aborted after parent move");
     let tempName = "";
     const sentinels = new Map<string, Awaited<ReturnType<typeof fs.lstat>>>();
-    const stream = Readable.from((async function* () {
+    // Pull directly so the parent move follows the completed write, without Readable prefetch.
+    const stream = (async function* () {
       yield Buffer.from("partially written");
       tempName = (await fs.readdir(parent)).find((name) => name !== "final")!;
       expect(await fs.readFile(path.join(parent, tempName), "utf8")).toBe("partially written");
@@ -148,7 +148,7 @@ describe.runIf(nativeAvailable)("native staged write abort", () => {
         sentinels.set(name, await fs.lstat(path.join(parent, name)));
       }
       throw abort;
-    })());
+    })();
     await expect(runPinnedWriteHelper({
       rootPath: parent,
       relativeParentPath: "",
