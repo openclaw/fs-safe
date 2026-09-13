@@ -2,18 +2,14 @@
 
 ## Unreleased
 
-- Speed up Windows directory byte copies with bounded parallelism, reusable 1 MiB buffers, and native transfers between checked handles in automatic mode. Honor copy concurrency across portable backends and settle admitted writes before reporting failures or cancellation.
-
-- Preserve Unicode Windows paths during fallback permission inspection by reading structured SID and access-mask facts instead of localized command output.
-- Check the complete encoded newline before Root append, avoiding duplicated or missing separators in UTF-16LE files on Windows and other platforms.
-- Extend `Root.copyIn` with guarded Root sources, exclusive publication, settled cancellation, exact publication receipts, and optional native file cloning while keeping copied data independent. Share `clone: "auto" | "always" | "never"` with `copyTree`; Root keeps its `"never"` default, which uses ordinary reads and writes without clone or copy-offload calls.
-
-## 0.10.0 - 2026-09-12
+## 0.10.0 - 2026-09-13
 
 ### Highlights
 
 - **Faster ZIP and TAR reads:** read archive members without temporary disk snapshots, reuse admitted native buffers, and reduce integrity-check and decompression overhead while retaining full validation.
 - **Directory copies with native acceleration:** use `copyTree` to prefer or require APFS clones, Btrfs snapshots, or parallel ReFS/XFS reflinks, or choose portable byte copying for controlled, immutable templates and checkouts.
+- **Guarded file copies:** copy from checked Root sources with exclusive publication, cancellation that waits for writes, and optional native cloning; copied data stays independent of its source.
+- **Faster Windows byte copies:** reuse bounded buffers and parallelize directory copying, with native transfers between checked handles in automatic mode.
 - **Reuse buffers for file reads:** new async and sync positional readers fill caller-owned buffers without changing the file's current offset; hashing gains byte limits and cancellation.
 - **Walk large directories incrementally:** Root walks bound metadata work by the entry budget, with an opt-in filesystem-order stream for directories too wide to enumerate up front.
 - **Recheck live access authority:** Root mutations can verify caller-owned leases or cancellation immediately before dispatch, and new symlink policies allow contained parent-directory aliases while rejecting final symlinks.
@@ -40,9 +36,11 @@
 - Reduce walk overhead by sharing equivalent directory checks and synchronous entry classification, reusing joined paths, and avoiding an extra promise per async entry. Preserve both operation and close failures during disposal, and report a followed symlink target's size consistently in filters and returned metadata.
 - Speed up POSIX containment and filename helpers while preserving traversal rejection, Unicode handling, reserved names, and collision-resistant install names.
 
-### Directory copying and native cloning
+### File and directory copying
 
+- Extend `Root.copyIn` with guarded Root sources, exclusive publication, settled cancellation, exact publication receipts, and optional native file cloning while keeping copied data independent. Share `clone: "auto" | "always" | "never"` with `copyTree`; Root keeps its `"never"` default, which uses ordinary reads and writes without clone or copy-offload calls.
 - Add `copyTree` in `@openclaw/fs-safe/copy` with `clone: "auto"` (default), `"always"`, and `"never"` policies. Automatic copying prefers native cloning and falls back to byte copying only when the binding or filesystem capability is unavailable, or cloning cannot cross filesystems; strict cloning never falls back, and ordinary copying avoids clone and copy-offload calls. Destinations must be absent, and cancellation waits for admitted writes to settle.
+- Speed up Windows directory byte copies with bounded parallelism, reusable 1 MiB buffers, and native transfers between checked handles in automatic mode. Honor copy concurrency across portable backends and settle admitted writes before reporting failures or cancellation.
 - Support APFS directory clones, Btrfs subvolume preparation and snapshots, and parallel ReFS/XFS reflinks through `probeTreeClone` and `createCloneSource`. Preserve XFS file and directory extended attributes and ACLs, and restore directory timestamps after APFS bulk cloning.
 - Add batched `readCloneFileMetadata` for APFS clone IDs and file metadata. These are point-in-time observations, not authorization or proof that later contents remain unchanged.
 - Document metadata and filesystem limits: APFS directory cloning does not guarantee descendant ACL preservation or inheritance, Btrfs snapshots omit nested subvolume contents, and ReFS rejects unsupported reparse points and alternate data streams. Portable copying does not promise ownership, ACL, extended-attribute, alternate-stream, or sparse-layout preservation. Callers retain responsibility for source immutability, permission policy, and recovery after a failed or aborted copy.
@@ -56,9 +54,11 @@
 - Preserve Linux native directory-only open flags so the kernel rejects non-directories before FIFO blocking or truncation, while removing the redundant post-open stat.
 - Expand leading home-directory prefixes before resolving parent segments, so `~/../file` resolves against the home directory's parent; keep other tildes literal. Shorten only the home directory and its descendants in error messages, preserving similarly prefixed sibling paths.
 - Resolve Windows ACL principal names such as `constructor` and `__proto__` as real dictionary keys, preserving SID lookup and translated entries.
+- Preserve Unicode Windows paths during fallback permission inspection by reading structured SID and access-mask facts instead of localized command output.
 
 ### Writes, moves, and cleanup
 
+- Check the complete encoded newline before Root append, avoiding duplicated or missing separators in UTF-16LE files on Windows and other platforms.
 - Preserve unowned staging replacements after Windows fallback write or sync failures, and retain exact parent-directory identities so owned partial-file cleanup works even when Windows directory indexes exceed numeric precision.
 - Report failed post-operation parent checks after fallback moves and removals, including moved source parents, instead of silently reporting success.
 - Close publication descriptors when initial inspection fails and relinquish descriptor numbers before potentially failing closes, preventing cleanup from closing a reused descriptor.
