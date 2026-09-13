@@ -297,6 +297,11 @@ component again before publication or removal. These checks preserve the existin
 they do not make check-and-rename atomic against another process. Callers do not
 need a separate `realpath()` or final `lstat()` preflight.
 
+For methods that accept absolute paths, the same final-component rule applies
+when a path enters the root through an alias outside its lexical spelling. A directory alias may
+lead to a regular file inside the root; an absolute final file or directory
+symlink is rejected before its canonical target replaces the original path.
+
 Text helpers default to UTF-8. Pass `encoding` per call to `readText`, `readJson`, `write`, `create`, or `append` when you need another encoding.
 
 ## Common patterns

@@ -111,6 +111,44 @@ it.each(["async", "sync"] as const)("openRootFile %s uses the explicit symlink p
   expect(final).toMatchObject({ ok: false, reason: "validation", error: { code: "symlink" } });
 });
 
+const absoluteAliasCases = [
+  { kind: "file" as const, suffix: "" },
+  ...["", "/", "/."].map(suffix => ({ kind: "directory" as const, suffix })),
+];
+
+async function absoluteAliasFixture(kind: "file" | "directory", suffix: string) {
+  const { directory, actual, safe } = await fixture();
+  const outside = await tempRoot("fs-safe-root-entry-alias-");
+  const parentAlias = path.join(outside, "parent");
+  const finalAlias = path.join(outside, "final");
+  await fs.symlink(actual, parentAlias, directoryLink);
+  await fs.symlink(kind === "file" ? path.join(actual, "value") : actual, finalAlias, kind === "file" ? "file" : directoryLink);
+  return { directory, safe, parentPath: path.join(parentAlias, "value"), finalPath: `${finalAlias}${suffix}` };
+}
+
+it.each(absoluteAliasCases)("readAbsolute preserves the final $kind alias$suffix policy at absolute root entry", async ({ kind, suffix }) => {
+  const { safe, parentPath, finalPath } = await absoluteAliasFixture(kind, suffix);
+  expect((await safe.readAbsolute(parentPath, { symlinks: parentPolicy })).buffer.toString()).toBe("original");
+  await expect(safe.readAbsolute(finalPath, { symlinks: parentPolicy })).rejects.toMatchObject({ code: "symlink" });
+});
+
+it.each(["async", "sync"].flatMap(mode => absoluteAliasCases.map(entry => ({ mode, ...entry }))))(
+  "openRootFile $mode preserves the final $kind alias$suffix policy at absolute root entry",
+  async ({ mode, kind, suffix }) => {
+    const { directory, parentPath, finalPath } = await absoluteAliasFixture(kind, suffix);
+    const open = mode === "async" ? openRootFile : openRootFileSync;
+    const params = { rootPath: directory, boundaryLabel: "fixture", symlinks: parentPolicy };
+    const opened = await open({ ...params, absolutePath: parentPath });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) throw opened.error;
+    try { expect(fsSync.readFileSync(opened.fd, "utf8")).toBe("original"); }
+    finally { fsSync.closeSync(opened.fd); }
+    const final = await open({ ...params, absolutePath: finalPath, allowedType: kind });
+    if (final.ok) fsSync.closeSync(final.fd);
+    expect(final).toMatchObject({ ok: false, reason: "validation", error: { code: "symlink" } });
+  },
+);
+
 const mutations = ["write", "create", "append", "openWritable", "copyIn", "move-source", "move-target", "remove", "mkdir"] as const;
 type Mutation = (typeof mutations)[number];
 
@@ -147,23 +185,33 @@ it.each(mutations)("%s honors parent-only mutation policy and explicit rejection
   }
 });
 
-it.each(mutations)("%s leaves final file, directory, and dangling symlinks untouched", async method => {
-  const { directory, actual, safe } = await fixture();
-  const source = path.join(directory, "source");
-  await fs.writeFile(source, "source");
-  const targets = [
-    { name: "file-link", target: path.join(actual, "value"), kind: "file" as const },
-    { name: "directory-link", target: actual, kind: directoryLink },
-    { name: "dangling-link", target: path.join(actual, "missing"), kind: "file" as const },
-  ];
-  for (const { name, target, kind } of targets) {
-    await fs.symlink(target, path.join(actual, name), kind);
-    await expect(mutate(safe, method, `alias/${name}`, source, { mutationSymlinks: parentPolicy })).rejects.toBeTruthy();
-    expect((await fs.lstat(path.join(actual, name))).isSymbolicLink()).toBe(true);
+it.each(mutations.flatMap(method => ["contained", "absolute root entry"].map(location => ({ method, location }))))(
+  "$method leaves final file, directory, and dangling symlinks untouched ($location)", async ({ method, location }) => {
+    const { directory, actual, safe } = await fixture();
+    const source = path.join(directory, "source");
+    await fs.writeFile(source, "source");
+    const linkDirectory = location === "contained" ? actual : await tempRoot("fs-safe-mutation-entry-alias-");
+    // These methods already reject absolute inputs before resolving aliases.
+    const code = location === "absolute root entry" && ["move-source", "move-target", "remove", "mkdir"].includes(method)
+      ? "invalid-path" : "symlink";
+    const targets = [
+      { name: "file-link", target: path.join(actual, "value"), kind: "file" as const },
+      { name: "directory-link", target: actual, kind: directoryLink },
+      { name: "dangling-link", target: path.join(actual, "missing"), kind: "file" as const },
+    ];
+    for (const { name, target, kind } of targets) {
+      const link = path.join(linkDirectory, name);
+      await fs.symlink(target, link, kind);
+      const input = location === "contained" ? `alias/${name}` : link;
+      for (const suffix of kind === directoryLink ? ["", "/", "/."] : [""]) {
+        await expect(mutate(safe, method, `${input}${suffix}`, source, { mutationSymlinks: parentPolicy })).rejects.toMatchObject({ code });
+        expect((await fs.lstat(link)).isSymbolicLink()).toBe(true);
+      }
+    }
+    expect(await fs.readFile(path.join(actual, "value"), "utf8")).toBe("original");
+    expect(await fs.readFile(source, "utf8")).toBe("source");
   }
-  expect(await fs.readFile(path.join(actual, "value"), "utf8")).toBe("original");
-  expect(await fs.readFile(source, "utf8")).toBe("source");
-});
+);
 
 it.each(["read", "open"] as const)("%s rejects a final symlink introduced after preview", async method => {
   const { actual, safe } = await fixture();
