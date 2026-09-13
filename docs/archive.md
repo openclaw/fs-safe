@@ -571,12 +571,19 @@ limits. It does not apply payload budgets to unrequested members. ZIP
 inputs retain the archive subpath's 256 MiB compressed-input ceiling.
 With a native binding it uses the same Rust decoders as extraction, including
 zstd and bzip2 TAR. Without native it retains the JS ZIP/TAR/gzip implementation.
-Both ZIP readers consume the admitted buffer directly. The native ZIP reader
-retains the private allocation and parsed directory across worker-thread
-inspection and reading, without a disk snapshot or an extra archive-byte copy.
+Archive member reads retain their private in-memory input without a disk
+snapshot. The native ZIP reader retains the private allocation and parsed directory across worker-thread
+inspection and reading without an extra archive-byte copy.
 Decompression still allocates its bounded output; Node receives that native
 allocation without another copy where external buffers are supported.
-TAR decoders and replay retain their private disk snapshot.
+Native TAR retains the fully admitted member offsets alongside the same input
+allocation. Plain TAR copies only the selected payload range after full archive
+validation. Gzip, zstd, and bzip2 replay bounded decompression and still validate
+all framing, trailers, and physical padding before returning. The JavaScript
+TAR/gzip fallback streams views of the private input into the shared WASM parser
+for admission and replay; WASM transport and selected output still require copies.
+Returned buffers own their bytes, so changing a result cannot modify an archive
+reader or retain an unrelated part of the input through its backing ArrayBuffer.
 
 Requested paths and effective member names use extraction's canonical pre-strip
 identity: backslashes become `/`, and repeated separators and `.` components

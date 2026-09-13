@@ -29,8 +29,8 @@ for (const mode of ["off", "require"] as const) {
         const native = paxNative!;
         inspectNative = vi.fn(native.inspectArchiveNative.bind(native));
         extractNative = vi.fn(native.extractArchiveNative.bind(native));
-        readNative = vi.fn(native.readArchiveEntryNative.bind(native));
-        __setNativeLoaderForTest(() => ({ ...native, inspectArchiveNative: inspectNative, extractArchiveNative: extractNative, readArchiveEntryNative: readNative }));
+        readNative = vi.fn(native.openTarBufferNative.bind(native));
+        __setNativeLoaderForTest(() => ({ ...native, inspectArchiveNative: inspectNative, extractArchiveNative: extractNative, openTarBufferNative: readNative }));
       }
     });
 
@@ -46,7 +46,7 @@ for (const mode of ["off", "require"] as const) {
       expect(await readArchiveEntry(archivePath, name, { maxBytes: expected.length })).toEqual(expected);
       expect(await readArchiveEntry(archivePath, "sentinel", { maxBytes: 3 })).toEqual(Buffer.from("end"));
       if (mode === "require") {
-        expect(inspectNative).toHaveBeenCalledTimes(3);
+        expect(inspectNative).toHaveBeenCalledTimes(1);
         expect(extractNative).toHaveBeenCalledTimes(1);
         expect(readNative).toHaveBeenCalledTimes(2);
       }

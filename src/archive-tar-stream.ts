@@ -1,11 +1,18 @@
 import fs from "node:fs";
-import { Writable } from "node:stream";
+import { Readable, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGunzip } from "node:zlib";
-import { GzipInput, validateGzipContainerTail } from "./archive-gzip-tail.js";
+import { GzipInput, validateGzipBufferTail, validateGzipContainerTail } from "./archive-gzip-tail.js";
 import { ArchiveFormatError } from "./archive-errors.js";
 import type { TarMeterLimits } from "./archive-limits.js";
 import { TarParserStream, type AdmittedTarMember } from "./archive-tar-wasm.js";
+
+/** Buffers are private immutable snapshots, just like the staged file route. */
+type TarInput = { archivePath: string; archiveBuffer?: never } | { archiveBuffer: Buffer; archivePath?: never };
+
+function* bufferChunks(buffer: Buffer): Generator<Buffer> {
+  for (let offset = 0; offset < buffer.length; offset += 65536) yield buffer.subarray(offset, offset + 65536);
+}
 
 async function gzipFile(filePath: string): Promise<boolean> {
   const handle = await fs.promises.open(filePath, "r");
@@ -16,14 +23,18 @@ async function gzipFile(filePath: string): Promise<boolean> {
   } finally { await handle.close(); }
 }
 
-async function withTarStream<T>(params: {
-  archivePath: string; limits: TarMeterLimits; signal?: AbortSignal;
+async function withTarStream<T>(params: TarInput & {
+  limits: TarMeterLimits; signal?: AbortSignal;
   onMember?: (entry: AdmittedTarMember) => void;
 }, consume: (parser: TarParserStream) => Promise<T>): Promise<T> {
-  const gzip = await gzipFile(params.archivePath);
+  const buffer = params.archiveBuffer;
+  const gzip = buffer !== undefined ? buffer[0] === 31 && buffer[1] === 139 : await gzipFile(params.archivePath!);
   const parser = new TarParserStream(params.limits, params.onMember);
-  const input = fs.createReadStream(params.archivePath, { highWaterMark: 65536 });
-  const decoder = gzip ? createGunzip() : undefined;
+  const input = buffer !== undefined
+    ? Readable.from(bufferChunks(buffer), { objectMode: false, highWaterMark: 65536 })
+    : fs.createReadStream(params.archivePath!, { highWaterMark: 65536 });
+  // Match the WASM input window for buffered reads instead of emitting 16 KiB chunks.
+  const decoder = gzip ? createGunzip(buffer === undefined ? undefined : { chunkSize: 65536 }) : undefined;
   const gzipInput = decoder ? new GzipInput(decoder) : undefined;
   const destroy = (error?: Error) => {
     input.destroy(error); gzipInput?.destroy(error); decoder?.destroy(error); parser.destroy(error);
@@ -41,7 +52,10 @@ async function withTarStream<T>(params: {
     const result = await consume(parser);
     const error = await settled;
     if (error) throw error;
-    if (gzipInput) await validateGzipContainerTail(params.archivePath, gzipInput.tailOffset, params.signal);
+    if (gzipInput) {
+      if (buffer !== undefined) await validateGzipBufferTail(buffer, gzipInput.tailOffset, params.signal);
+      else await validateGzipContainerTail(params.archivePath!, gzipInput.tailOffset, params.signal);
+    }
     return result;
   } finally {
     destroy();
@@ -49,8 +63,8 @@ async function withTarStream<T>(params: {
   }
 }
 
-export async function inspectTar(params: {
-  archivePath: string; limits: TarMeterLimits; signal?: AbortSignal;
+export async function inspectTar(params: TarInput & {
+  limits: TarMeterLimits; signal?: AbortSignal;
   onMember?: (entry: AdmittedTarMember) => void;
 }): Promise<void> {
   await withTarStream(params, async (parser) => {
@@ -59,9 +73,9 @@ export async function inspectTar(params: {
 }
 
 /** Replay in physical order, retaining at most one decoded chunk. Every range
- * comes from complete admission of the immutable staged input. */
-export async function replayTar<T extends AdmittedTarMember>(params: {
-  archivePath: string; limits: TarMeterLimits; signal?: AbortSignal;
+ * comes from complete admission of the immutable input. */
+export async function replayTar<T extends AdmittedTarMember>(params: TarInput & {
+  limits: TarMeterLimits; signal?: AbortSignal;
   members: readonly T[];
   consume(member: T, payload: AsyncIterable<Buffer>): Promise<void>;
 }): Promise<void> {
