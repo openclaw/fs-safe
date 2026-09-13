@@ -33,7 +33,7 @@ import {
 } from "./archive-limits.js";
 import { assertPortableArchiveKind, resolveArchiveKind } from "./archive-kind.js";
 import {
-  prepareArchiveDestinationDir,
+  prepareArchiveDestinationGuard,
   preparePrivateArchiveOutputPath,
   withStagedArchiveDestination,
 } from "./archive-staging.js";
@@ -224,7 +224,8 @@ async function extractZip(params: {
     deadline: params.deadline,
   });
   try {
-    const destinationRealDir = await prepareArchiveDestinationDir(params.destDir);
+    const destinationGuard = await prepareArchiveDestinationGuard(params.destDir);
+    const destinationRealDir = destinationGuard.realPath;
     params.deadline.check();
     const buffer = await fs.readFile(stagedArchive.path, { signal: params.deadline.signal });
     params.deadline.check();
@@ -300,8 +301,7 @@ async function extractZip(params: {
           entries: acceptedEntries,
           durable: params.durable,
           sourceDir: stagingRealDir,
-          destinationDir: params.destDir,
-          destinationRealDir,
+          destinationGuard,
           deadline: params.deadline,
         });
         params.deadline.check();
@@ -369,7 +369,8 @@ async function extractWasmTar(params: {
   await inspectTar({ archivePath: params.archivePath, limits: tarLimits, signal: deadline.signal,
     onMember: (entry) => { manifest.push(entry); } });
   deadline.check();
-  const destinationRealDir = await prepareArchiveDestinationDir(options.destDir);
+  const destinationGuard = await prepareArchiveDestinationGuard(options.destDir);
+  const destinationRealDir = destinationGuard.realPath;
   await withStagedArchiveDestination({ destinationRealDir, run: async (stagingPath) => {
     const stagingDir = fsSync.realpathSync.native(stagingPath);
     const planEntry = createTarEntryPlanner({ ...options, rootDir: destinationRealDir, limits: params.limits });
@@ -394,8 +395,8 @@ async function extractWasmTar(params: {
       },
     });
     deadline.check();
-    await mergePlannedArchiveIntoDestination({ entries: accepted, sourceDir: stagingDir,
-      destinationDir: options.destDir, destinationRealDir, deadline, durable: options.durable });
+    await mergePlannedArchiveIntoDestination({ entries: accepted, sourceDir: stagingDir, destinationGuard,
+      deadline, durable: options.durable });
     deadline.check();
   } });
 }

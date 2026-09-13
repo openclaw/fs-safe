@@ -1,4 +1,4 @@
-import fsSync from "node:fs";
+import fsSync, { type BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
@@ -23,9 +23,12 @@ import { getFsSafeTestHooks } from "./test-hooks.js";
 import { mkdirPathComponentsWithGuards } from "./guarded-mkdir.js";
 import { expandRelativePathWithHome } from "./root-context.js";
 import { resolveRootPath } from "./root-path.js";
+import { inspectFileIdentitySync } from "./strict-file-identity.js";
 
 const ERROR_ARCHIVE_ENTRY_TRAVERSES_SYMLINK = "archive entry traverses symlink in destination";
 const ARCHIVE_STAGING_MODE = 0o700;
+
+export type ArchiveDirectoryGuard = AsyncDirectoryGuard<BigIntStats>;
 
 function checkExtractionDeadline(deadline?: ExtractionDeadline): void {
   deadline?.check();
@@ -40,9 +43,9 @@ function symlinkTraversalError(originalPath: string): ArchiveSecurityError {
   );
 }
 
-export async function createDirectoryIdentityGuard(dir: string): Promise<AsyncDirectoryGuard> {
+export async function createDirectoryIdentityGuard(dir: string): Promise<ArchiveDirectoryGuard> {
   try {
-    return await createAsyncDirectoryGuard(dir);
+    return await createAsyncDirectoryGuard(dir, { bigint: true });
   } catch (err) {
     if (err instanceof FsSafeError && err.code === "not-file") {
       throw new ArchiveSecurityError("destination-symlink", "archive destination is a symlink");
@@ -51,11 +54,11 @@ export async function createDirectoryIdentityGuard(dir: string): Promise<AsyncDi
   }
 }
 
-export async function assertDirectoryIdentityGuard(guard: AsyncDirectoryGuard): Promise<void> {
+export async function assertDirectoryIdentityGuard(guard: ArchiveDirectoryGuard): Promise<void> {
   try {
     await assertAsyncDirectoryGuard(guard);
   } catch (err) {
-    if (err instanceof FsSafeError) {
+    if (err instanceof FsSafeError || isNotFoundPathError(err)) {
       throw new ArchiveSecurityError(
         "destination-symlink-traversal",
         "archive destination changed during extraction",
@@ -65,34 +68,51 @@ export async function assertDirectoryIdentityGuard(guard: AsyncDirectoryGuard): 
   }
 }
 
-export async function prepareArchiveDestinationDir(destDir: string): Promise<string> {
-  const stat = fsSync.lstatSync(destDir);
-  if (stat.isSymbolicLink()) {
-    throw new ArchiveSecurityError("destination-symlink", "archive destination is a symlink");
-  }
-  if (!stat.isDirectory()) {
-    throw new ArchiveSecurityError(
-      "destination-not-directory",
-      "archive destination is not a directory",
-    );
+export async function prepareArchiveDestinationGuard(destDir: string): Promise<ArchiveDirectoryGuard> {
+  let stat: BigIntStats;
+  try {
+    stat = inspectFileIdentitySync(() => {
+      const observed = fsSync.lstatSync(destDir, { bigint: true });
+      if (observed.isSymbolicLink()) {
+        throw new ArchiveSecurityError("destination-symlink", "archive destination is a symlink");
+      }
+      if (!observed.isDirectory()) {
+        throw new ArchiveSecurityError(
+          "destination-not-directory",
+          "archive destination is not a directory",
+        );
+      }
+      return observed;
+    });
+  } catch (err) {
+    if (err instanceof ArchiveSecurityError) throw err;
+    if (err instanceof FsSafeError) {
+      throw new ArchiveSecurityError(
+        "destination-symlink-traversal",
+        "archive destination changed during extraction",
+      );
+    }
+    throw err;
   }
   const realPath = fsSync.realpathSync.native(destDir);
-  const realStat = fsSync.statSync(realPath);
-  const postStat = fsSync.lstatSync(destDir);
-  if (
-    realStat.dev !== stat.dev ||
-    realStat.ino !== stat.ino ||
-    postStat.isSymbolicLink() ||
-    !postStat.isDirectory() ||
-    postStat.dev !== stat.dev ||
-    postStat.ino !== stat.ino
-  ) {
-    throw new ArchiveSecurityError(
-      "destination-symlink-traversal",
-      "archive destination changed during extraction",
-    );
+  const guard: ArchiveDirectoryGuard = { dir: destDir, realPath, stat };
+  try {
+    inspectFileIdentitySync(() => fsSync.statSync(realPath, { bigint: true }), stat);
+    inspectFileIdentitySync(() => fsSync.lstatSync(destDir, { bigint: true }), stat);
+  } catch (err) {
+    if (err instanceof FsSafeError) {
+      throw new ArchiveSecurityError(
+        "destination-symlink-traversal",
+        "archive destination changed during extraction",
+      );
+    }
+    throw err;
   }
-  return realPath;
+  return guard;
+}
+
+export async function prepareArchiveDestinationDir(destDir: string): Promise<string> {
+  return (await prepareArchiveDestinationGuard(destDir)).realPath;
 }
 
 async function assertNoSymlinkTraversal(params: {
@@ -169,14 +189,14 @@ export async function prepareArchiveOutputPath(params: ArchiveOutputPathParams):
 
 export async function preparePrivateArchiveOutputPath(
   params: ArchiveOutputPathParams, assertGuards?: () => Promise<void>,
-  destinationGuard?: AsyncDirectoryGuard,
+  destinationGuard?: ArchiveDirectoryGuard,
 ): Promise<void> {
   await prepareOutputPath(params, assertGuards, true, destinationGuard);
 }
 
 async function prepareOutputPath(
   params: ArchiveOutputPathParams, assertGuards?: () => Promise<void>, privateWorkingMode = false,
-  existingDestinationGuard?: AsyncDirectoryGuard,
+  existingDestinationGuard?: ArchiveDirectoryGuard,
 ): Promise<void> {
   checkExtractionDeadline(params.deadline);
   const targetRoot = privateWorkingMode ? {

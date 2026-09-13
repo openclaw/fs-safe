@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { gzipSync } from "node:zlib";
@@ -77,6 +78,29 @@ for (const mode of ["off", "require"] as const) {
           const bytes = tarFixture(entries);
           return setup(format === "gzip" ? gzipSync(bytes) : bytes, "tar");
         }
+
+        it("rejects destination replacement from an entry filter before publication", async () => {
+          const options = await fixture([{ path: "payload", body: "secret" }]);
+          const admittedDestination = `${options.destDir}-admitted`;
+          let replaced = false;
+          const entryFilter = vi.fn<ArchiveEntryFilter>(() => {
+            if (!replaced) {
+              fsSync.renameSync(options.destDir, admittedDestination);
+              fsSync.mkdirSync(options.destDir);
+              replaced = true;
+            }
+            return "extract";
+          });
+
+          await expect(extractArchive({ ...options, entryFilter })).rejects.toMatchObject(
+            securityError("destination-symlink-traversal"),
+          );
+
+          expect(entryFilter).toHaveBeenCalledTimes(1);
+          expect(await fs.readdir(options.destDir)).toEqual([]);
+          expect(await fs.readdir(admittedDestination)).toEqual(["sentinel"]);
+          expect(await fs.readFile(path.join(admittedDestination, "sentinel"), "utf8")).toBe("unchanged");
+        });
 
         it.each(aliases)("blocks excluded subtree alias %s before and after stripping", async (alias) => {
           for (const stripComponents of [0, 1]) {

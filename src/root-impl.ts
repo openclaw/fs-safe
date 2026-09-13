@@ -635,6 +635,21 @@ export async function root(
   return new RootHandle(await resolveRootContext(rootDir), defaults);
 }
 
+// Internal callers that already hold an exact admitted directory capability must
+// not recapture a different filesystem object while constructing the Root.
+export function rootFromDirectoryGuard(
+  guard: { readonly dir: string; readonly realPath: string; readonly stat: BigIntStats },
+  defaults: RootDefaults = {},
+): Root {
+  normalizeMaxBytes(defaults.maxBytes);
+  return new RootHandle({
+    rootDir: path.resolve(guard.dir),
+    rootIdentity: { dev: guard.stat.dev, ino: guard.stat.ino },
+    rootReal: guard.realPath,
+    rootWithSep: ensureTrailingSep(guard.realPath),
+  }, defaults);
+}
+
 async function openFileInRoot(
   root: RootContext,
   params: RootOpenOptions & { relativePath: string },

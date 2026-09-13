@@ -5,13 +5,16 @@ import { afterEach, describe, expect, it } from "vitest";
 import { itPosix } from "./helpers/vitest.js";
 import {
   ArchiveSecurityError,
+  assertDirectoryIdentityGuard,
   createArchiveSymlinkTraversalError,
   mergeExtractedTreeIntoDestination,
+  prepareArchiveDestinationGuard,
   prepareArchiveDestinationDir,
   prepareArchiveOutputPath,
   withStagedArchiveDestination,
 } from "../src/archive-staging.js";
 import { isPathInside } from "../src/path.js";
+import { rootFromDirectoryGuard } from "../src/root-impl.js";
 
 const directorySymlinkType = process.platform === "win32" ? "junction" : undefined;
 const tempDirs = new Set<string>();
@@ -41,6 +44,52 @@ describe("archive-staging helpers", () => {
       await fs.mkdir(destDir, { recursive: true });
 
       await expect(prepareArchiveDestinationDir(destDir)).resolves.toBe(await fs.realpath(destDir));
+    });
+  });
+
+  it("retains lossless destination identity in the internal guard", async () => {
+    await withTempDir("fs-safe-archive-staging-", async (rootDir) => {
+      const destDir = path.join(rootDir, "dest");
+      await fs.mkdir(destDir, { recursive: true });
+
+      const guard = await prepareArchiveDestinationGuard(destDir);
+
+      expect(guard.realPath).toBe(await fs.realpath(destDir));
+      expect(typeof guard.stat.dev).toBe("bigint");
+      expect(typeof guard.stat.ino).toBe("bigint");
+    });
+  });
+
+  it("binds the publication Root to the admitted destination identity", async () => {
+    await withTempDir("fs-safe-archive-staging-", async (rootDir) => {
+      const destDir = path.join(rootDir, "dest");
+      const admittedDir = path.join(rootDir, "admitted");
+      await fs.mkdir(destDir);
+      const guard = await prepareArchiveDestinationGuard(destDir);
+
+      await fs.rename(destDir, admittedDir);
+      await fs.mkdir(destDir);
+
+      const targetRoot = rootFromDirectoryGuard(guard);
+      await expect(targetRoot.stat(".")).rejects.toMatchObject({ code: "path-mismatch" });
+      await expect(assertDirectoryIdentityGuard(guard)).rejects.toMatchObject({
+        code: "destination-symlink-traversal",
+      } satisfies Partial<ArchiveSecurityError>);
+    });
+  });
+
+  it("normalizes a disappeared admitted destination as a traversal race", async () => {
+    await withTempDir("fs-safe-archive-staging-", async (rootDir) => {
+      const destDir = path.join(rootDir, "dest");
+      const admittedDir = path.join(rootDir, "admitted");
+      await fs.mkdir(destDir);
+      const guard = await prepareArchiveDestinationGuard(destDir);
+
+      await fs.rename(destDir, admittedDir);
+
+      await expect(assertDirectoryIdentityGuard(guard)).rejects.toMatchObject({
+        code: "destination-symlink-traversal",
+      } satisfies Partial<ArchiveSecurityError>);
     });
   });
 

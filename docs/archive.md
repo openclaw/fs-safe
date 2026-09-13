@@ -222,6 +222,13 @@ record and are then cleared; local PAX on unsupported types and GNU sparse
 
 If `kind` is omitted, the helper calls `resolveArchiveKind(archivePath)` and throws if the extension is not recognized. Pass `kind` explicitly when the archive name doesn't carry the type (e.g. content-addressed names). Archive inputs must remain regular files from preview through descriptor admission; POSIX opens are no-follow and nonblocking, so a FIFO swap cannot stall before deadline checks resume. A positive finite `timeoutMs` is a wall-clock budget; zero, negative, `NaN`, and infinity disable the deadline. Non-mutating work rejects promptly when the budget expires. If a live destination mutation is already in flight, rejection waits only for that mutation and any rollback to finish; no later destination mutation can begin.
 
+Extraction captures the destination's lossless filesystem identity before any
+entry filter runs and retains that capability through final publication. If a
+filter or concurrent actor renames or replaces the destination, extraction
+rejects with `destination-symlink-traversal` before publishing into the
+replacement. This check uses bigint device and inode identities so large native
+identifiers cannot compare equal after JavaScript number rounding.
+
 The destination merge is nontransactional: each file is published atomically,
 but completed files and directories can remain when a later copy, post-copy
 check, mode application, or deadline fails. This also applies to

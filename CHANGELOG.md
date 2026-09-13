@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Retain the original archive destination's exact bigint identity from admission through publication, rejecting destination replacement from entry filters or concurrent actors before extracted files can be published into the replacement.
 - Classify structured Windows ACL SID facts without a redundant account lookup, preserving fail-closed permission checks when account discovery is unavailable.
 - Reject negative, `NaN`, and negative-infinite file-lock stale thresholds before acquisition; negative thresholds can no longer force a live lock into stale recovery.
 - XFS clones preserve user extended attributes on read-only files and directories while retaining their exact modes and ACLs.

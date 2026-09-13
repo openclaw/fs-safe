@@ -6,14 +6,14 @@ import {
   assertDirectoryIdentityGuard, assertResolvedInsideDestination,
   createDirectoryIdentityGuard, createArchiveSymlinkTraversalError,
   preparePrivateArchiveOutputPath,
+  type ArchiveDirectoryGuard,
 } from "./archive-staging.js";
-import { type AsyncDirectoryGuard } from "./directory-guard.js";
 import { type DirectoryModeOwner } from "./directory-mode-owner.js";
 import { pinNodeDirectoryForMode } from "./directory-mode-node.js";
 import { FsSafeError } from "./errors.js";
 import { formatErrorDetail } from "./error-detail.js";
 import { isPathInside } from "./path.js";
-import { root } from "./root.js";
+import { rootFromDirectoryGuard } from "./root-impl.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import { onCopyPublication, type CopyPublicationOptions } from "./copy-publication.js";
 import { syncFileBestEffortSync } from "./file-sync.js";
@@ -26,25 +26,30 @@ type MergeParams = {
   destinationRealDir: string;
   deadline?: ExtractionDeadline;
 };
+type GuardedMergeParams = Pick<MergeParams, "sourceDir" | "deadline"> & {
+  destinationGuard: ArchiveDirectoryGuard;
+};
 
 export async function mergePlannedArchiveIntoDestination(
-  params: MergeParams & { entries: readonly ArchivePublicationEntry[]; durable?: boolean },
+  params: GuardedMergeParams & { entries: readonly ArchivePublicationEntry[]; durable?: boolean },
 ): Promise<void> {
   await mergeTree(params, params.entries, params.durable === true);
 }
 
 export async function mergeExtractedTreeIntoDestination(params: MergeParams): Promise<void> {
-  await mergeTree(params);
+  const destinationGuard = await createDirectoryIdentityGuard(params.destinationRealDir);
+  await mergeTree({ sourceDir: params.sourceDir, deadline: params.deadline, destinationGuard });
 }
 
-async function mergeTree(params: MergeParams, publication?: readonly ArchivePublicationEntry[], durable = true): Promise<void> {
+async function mergeTree(params: GuardedMergeParams, publication?: readonly ArchivePublicationEntry[], durable = true): Promise<void> {
   const publishedFiles: ArchivePublishedFile[] = [];
   const publishedDirectories: ArchivePublishedDirectory[] = [];
   const check = () => params.deadline?.check();
   check();
-  const destinationGuard = await createDirectoryIdentityGuard(params.destinationRealDir);
-  check();
-  const targetRoot = await root(params.destinationRealDir);
+  const { destinationGuard } = params;
+  const destinationDir = destinationGuard.dir;
+  const destinationRealDir = destinationGuard.realPath;
+  const targetRoot = rootFromDirectoryGuard(destinationGuard);
   check();
   const sourceGuard = await createDirectoryIdentityGuard(params.sourceDir);
   check();
@@ -59,7 +64,7 @@ async function mergeTree(params: MergeParams, publication?: readonly ArchivePubl
     }
     plan!.set(stagedPath, entry);
   }
-  const ancestors: Array<{ guard: AsyncDirectoryGuard; owner: DirectoryModeOwner }> = [];
+  const ancestors: Array<{ guard: ArchiveDirectoryGuard; owner: DirectoryModeOwner }> = [];
   const assertGuards = async () => {
     await assertDirectoryIdentityGuard(destinationGuard);
     check();
@@ -81,7 +86,7 @@ async function mergeTree(params: MergeParams, publication?: readonly ArchivePubl
       const sourcePath = path.join(sourceDir, entry.name);
       const relPath = path.relative(params.sourceDir, sourcePath);
       const originalPath = relPath.split(path.sep).join("/");
-      const destinationPath = path.join(params.destinationDir, relPath);
+      const destinationPath = path.join(destinationDir, relPath);
       const sourceStat = fsSync.lstatSync(sourcePath);
       check();
       if (sourceStat.isSymbolicLink()) throw createArchiveSymlinkTraversalError(originalPath);
@@ -98,7 +103,8 @@ async function mergeTree(params: MergeParams, publication?: readonly ArchivePubl
       }
       const mode = plan ? planned?.mode ?? 0o755 : sourceStat.mode & 0o777;
       await preparePrivateArchiveOutputPath({
-        ...params, relPath, outPath: destinationPath, originalPath, isDirectory: kind === "directory",
+        destinationDir, destinationRealDir, deadline: params.deadline,
+        relPath, outPath: destinationPath, originalPath, isDirectory: kind === "directory",
       }, assertGuards, destinationGuard);
       check();
       if (kind === "directory") {
@@ -134,7 +140,7 @@ async function mergeTree(params: MergeParams, publication?: readonly ArchivePubl
                 await assertDirectoryIdentityGuard(guard);
                 check();
                 await assertResolvedInsideDestination({
-                  destinationRealDir: params.destinationRealDir, targetPath: destinationPath, originalPath,
+                  destinationRealDir, targetPath: destinationPath, originalPath,
                 });
                 check();
               } });
@@ -172,7 +178,7 @@ async function mergeTree(params: MergeParams, publication?: readonly ArchivePubl
             check();
             await assertGuards();
             await assertResolvedInsideDestination({
-              destinationRealDir: params.destinationRealDir, targetPath: destinationPath, originalPath,
+              destinationRealDir, targetPath: destinationPath, originalPath,
             });
             check();
             const stat = fsSync.lstatSync(destinationPath);

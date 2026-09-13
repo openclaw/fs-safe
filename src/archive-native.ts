@@ -18,7 +18,7 @@ import {
 } from "./archive-limits.js";
 import type { ExtractArchiveOptions } from "./archive-options.js";
 import {
-  prepareArchiveDestinationDir,
+  prepareArchiveDestinationGuard,
   withStagedArchiveDestination,
 } from "./archive-staging.js";
 import { mergePlannedArchiveIntoDestination } from "./archive-merge.js";
@@ -65,7 +65,8 @@ export async function extractNativeArchive(params: {
     const physicalCount = params.kind === "zip"
       ? await admitZipFile(stagedArchive.path, limits, params.deadline, (entry) => { zipEntries.push(entry); })
       : undefined;
-    const destinationRealDir = await prepareArchiveDestinationDir(params.destDir);
+    const destinationGuard = await prepareArchiveDestinationGuard(params.destDir);
+    const destinationRealDir = destinationGuard.realPath;
     await withStagedArchiveDestination({
       destinationRealDir,
       run: async (stagingDir) => {
@@ -138,8 +139,7 @@ export async function extractNativeArchive(params: {
           entries: plan,
           durable: params.durable,
           sourceDir: stagingDir,
-          destinationDir: params.destDir,
-          destinationRealDir,
+          destinationGuard,
           deadline: params.deadline,
         });
         params.deadline.check();

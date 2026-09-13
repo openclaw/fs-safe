@@ -1,8 +1,12 @@
 import fsSync from "node:fs";
 import path from "node:path";
 import { ownExtractionDestinationMutation, type ExtractionDeadline } from "./archive-deadline.js";
-import { assertDirectoryIdentityGuard, assertResolvedInsideDestination, createArchiveSymlinkTraversalError } from "./archive-staging.js";
-import type { AsyncDirectoryGuard } from "./directory-guard.js";
+import {
+  assertDirectoryIdentityGuard,
+  assertResolvedInsideDestination,
+  createArchiveSymlinkTraversalError,
+  type ArchiveDirectoryGuard,
+} from "./archive-staging.js";
 import { pinNodeDirectoryForMode } from "./directory-mode-node.js";
 import { pinDirectory, syncDirectory, type PinnedDirectory } from "./directory-durability.js";
 import { syncFileBestEffort } from "./file-sync.js";
@@ -16,25 +20,25 @@ import { FsSafeError } from "./errors.js";
 export type ArchivePublishedFile = {
   relativePath: string;
   identity: PublishedWriteIdentity;
-  guards: readonly AsyncDirectoryGuard[];
+  guards: readonly ArchiveDirectoryGuard[];
 };
 export type ArchivePublishedDirectory = {
-  guard: AsyncDirectoryGuard;
-  parents: readonly AsyncDirectoryGuard[];
+  guard: ArchiveDirectoryGuard;
+  parents: readonly ArchiveDirectoryGuard[];
   mode: number;
 };
 
 export async function finalizeArchivePublication(params: {
   targetRoot: Root;
-  destinationGuard: AsyncDirectoryGuard;
-  sourceGuard: AsyncDirectoryGuard;
+  destinationGuard: ArchiveDirectoryGuard;
+  sourceGuard: ArchiveDirectoryGuard;
   files: readonly ArchivePublishedFile[];
   directories: readonly ArchivePublishedDirectory[];
   durable: boolean;
   deadline?: ExtractionDeadline;
 }): Promise<void> {
   const check = () => params.deadline?.check();
-  const assertGuards = async (guards: readonly AsyncDirectoryGuard[]) => {
+  const assertGuards = async (guards: readonly ArchiveDirectoryGuard[]) => {
     for (const guard of [params.destinationGuard, ...guards, params.sourceGuard]) {
       await assertDirectoryIdentityGuard(guard);
       check();
