@@ -19,6 +19,7 @@
 - Reject negative, `NaN`, and negative-infinite file-lock stale thresholds before acquisition; negative thresholds can no longer force a live lock into stale recovery.
 - XFS clones preserve user extended attributes on read-only files and directories while retaining their exact modes and ACLs.
 - Confirm EOF when Linux copy offload initially reports zero bytes, so automatic file copies fall back to reading available data instead of publishing an empty file.
+- Avoid allocating zero-filled ranges during automatic Linux directory byte copies with the native binding, preserving file lengths, contents, metadata, and cancellation settlement without cloning or copy offload.
 - Preserve fractional access and modification timestamps during directory byte copying, including dates before 1970 on Unix, to the precision supported by Node and the destination filesystem.
 - Support Bun POSIX path resolution for restrictive permissions, literal backslashes, sockets, and symlink/parent traversal through the existing Rust addon, including JIT-disabled Bun; preserve native-off policy and identity checks, document addon-free runtime limitations, and add Bun compatibility checks.
 - Fix relative file publication and queue writes on Bun for Windows by preserving raw components in absolute recursive-mkdir inputs.

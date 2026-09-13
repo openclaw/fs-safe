@@ -16,6 +16,8 @@ mod clone_unix;
 mod clone_windows;
 #[cfg(windows)]
 mod copy_windows;
+#[cfg(target_os = "linux")]
+mod copy_linux;
 #[cfg(unix)]
 mod file_copy;
 mod owned_tree;
@@ -220,6 +222,8 @@ pub use fast_file::{
 };
 #[cfg(windows)]
 pub use copy_windows::copy_file_contents;
+#[cfg(target_os = "linux")]
+pub use copy_linux::copy_file_contents;
 #[cfg(unix)]
 pub use file_copy::{NativeFileCopyResult, copy_file_exclusive};
 pub use owned_tree::{

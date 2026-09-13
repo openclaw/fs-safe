@@ -61,6 +61,8 @@ Automatic copying does not recover from permission errors, I/O errors, cancellat
 
 On Windows, automatic byte copying uses the native binding when available to transfer data between the already-checked file handles in 1 MiB chunks. This accelerates NTFS and cross-volume copies without reopening source or destination pathnames. The native worker finishes before its descriptors are closed or cancellation is reported. `clone: "never"` and native-disabled copies use JavaScript read/write loops with reusable buffers: at most 1 MiB per active file on Windows, or 128 KiB elsewhere. Both paths wait for all admitted writes after cancellation or failure and restore directory timestamps only after their file copies finish.
 
+On Linux, automatic byte copying also uses the native binding when available. It reads in 1 MiB chunks and leaves leading and trailing zero-filled portions of each chunk unwritten in the new file, avoiding their allocation on filesystems that support sparse files. A final size update preserves trailing holes and all-zero files. This path uses reads and writes, without cloning or copy offload; it still reads the full logical contents and does not promise identical sparse extent layout. `clone: "never"` retains the JavaScript byte-copy path.
+
 Clones preserve file contents, empty directories, timestamps, executable modes where supported, and literal symbolic links. Editing a clone does not modify its source. Unsupported filesystem operations fail; callers may choose their own copy or checkout fallback after the failed operation has settled.
 
 The ReFS backend rejects files with alternate data streams and unsupported reparse-point types instead of silently losing their contents. Symbolic links and junctions are preserved.
