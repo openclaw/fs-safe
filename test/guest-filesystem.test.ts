@@ -49,22 +49,26 @@ describe.skipIf(process.platform === "win32")("guest filesystem protocol", () =>
     expect(await fs.readFile(path.join(root, "nested", basename))).toEqual(payload);
   });
 
-  it.each([0o600, 0o644])("preserves existing write mode %i and source copy mode", async (mode) => {
+  it.each([
+    { mode: 0o600, basename: "value", length: 5 },
+    { mode: 0o644, basename: "n".repeat(240), length: 240 },
+  ])("preserves write and copy mode $mode for $length-byte basenames", async ({ mode, basename }) => {
     const root = await tempRoot("fs-safe-guest-modes-");
-    const target = path.join(root, "value");
+    const target = path.join(root, basename);
     await fs.writeFile(target, "before");
     await fs.chmod(target, mode);
 
-    const write = runGuest(["write", root, "", "value", "0"], "after");
+    const write = runGuest(["write", root, "", basename, "0"], "after");
     expect(write.error).toBeUndefined();
     expect(write.status, write.stderr.toString()).toBe(0);
     expect(await fs.readFile(target, "utf8")).toBe("after");
     expect((await fs.stat(target)).mode & 0o777).toBe(mode);
 
-    const copy = runGuest(["copy", root, "", "value", root, "", "copy", "0"]);
+    const copy = runGuest(["copy", root, "", basename, root, "", "copy", "0"]);
     expect(copy.error).toBeUndefined();
     expect(copy.status, copy.stderr.toString()).toBe(0);
     expect((await fs.stat(path.join(root, "copy"))).mode & 0o777).toBe(mode);
+    expect((await fs.readdir(root)).sort()).toEqual([basename, "copy"].sort());
   });
 
   it.each([

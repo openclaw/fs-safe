@@ -36,9 +36,11 @@ describe.skipIf(process.platform === "win32")("guest filesystem cross-device rec
     };
   }
 
-  it("publishes a copied directory before removing its source after EXDEV", async () => {
+  it("publishes a directory with a long destination basename before removing its source after EXDEV", async () => {
     const payload = Buffer.alloc(65_573, 0x6b);
     const { source, destination, args } = await fixture(payload);
+    const basename = "d".repeat(240);
+    args[6] = basename;
     await fs.chmod(path.join(source, "tree", "nested", "file.txt"), 0o751);
     await fs.symlink("nested/file.txt", path.join(source, "tree", "alias"));
 
@@ -46,11 +48,32 @@ describe.skipIf(process.platform === "win32")("guest filesystem cross-device rec
 
     expect(result.error).toBeUndefined();
     expect(result.status, result.stderr.toString()).toBe(0);
-    expect(await fs.readFile(path.join(destination, "moved", "nested", "file.txt"))).toEqual(payload);
-    expect((await fs.stat(path.join(destination, "moved", "nested", "file.txt"))).mode & 0o777).toBe(0o751);
-    expect(await fs.readlink(path.join(destination, "moved", "alias"))).toBe("nested/file.txt");
+    expect(await fs.readFile(path.join(destination, basename, "nested", "file.txt"))).toEqual(payload);
+    expect((await fs.stat(path.join(destination, basename, "nested", "file.txt"))).mode & 0o777).toBe(0o751);
+    expect(await fs.readlink(path.join(destination, basename, "alias"))).toBe("nested/file.txt");
     expect(await fs.readdir(source)).toEqual([]);
-    expect(await fs.readdir(destination)).toEqual(["moved"]);
+    expect(await fs.readdir(destination)).toEqual([basename]);
+  });
+
+  it("atomically replaces a long destination basename during a file move after EXDEV", async () => {
+    const payload = Buffer.alloc(65_573, 0x6b);
+    const { source, destination } = await fixture(payload);
+    const basename = "f".repeat(240);
+    const sourceFile = path.join(source, "tree", "nested", "file.txt");
+    const destinationFile = path.join(destination, basename);
+    await fs.chmod(sourceFile, 0o751);
+    await fs.writeFile(destinationFile, "previous");
+
+    const result = runGuest([
+      "rename", source, "tree/nested", "file.txt", destination, "", basename, "0",
+    ], undefined, FORCE_EXDEV);
+
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr.toString()).toBe(0);
+    expect(await fs.readFile(destinationFile)).toEqual(payload);
+    expect((await fs.stat(destinationFile)).mode & 0o777).toBe(0o751);
+    expect(await fs.readdir(path.dirname(sourceFile))).toEqual([]);
+    expect(await fs.readdir(destination)).toEqual([basename]);
   });
 
   it("retains the source and removes destination staging when a copied child is hardlinked", async () => {

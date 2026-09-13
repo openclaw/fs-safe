@@ -62,16 +62,29 @@ try {
   assert.deepEqual(readFileSync(join(workspace, "published.bin")), payload);
   assert.equal(readFileSync(join(workspace, "contender.bin"), "utf8"), "contender");
 
+  const longName = "n".repeat(240);
+  run(["write", workspace, "long-names", longName, "1"], payload);
+  assert.deepEqual(readFileSync(join(workspace, "long-names", longName)), payload);
+  assert.deepEqual(readdirSync(join(workspace, "long-names")), [longName]);
+
   if (process.argv.includes("--cross-device")) {
     assert.equal(process.platform, "linux", "cross-device proof requires Linux /dev/shm");
     crossDeviceRoot = mkdtempSync("/dev/shm/fs-safe-guest-package-");
     assert.notEqual(statSync(workspace).dev, statSync(crossDeviceRoot).dev);
+    const fileName = "f".repeat(240);
+    writeFileSync(join(crossDeviceRoot, fileName), "previous");
+    run(["rename", workspace, "long-names", longName, crossDeviceRoot, "", fileName, "0"]);
+    assert.deepEqual(readFileSync(join(crossDeviceRoot, fileName)), payload);
+    assert.equal(statSync(join(crossDeviceRoot, fileName)).mode & 0o777, 0o600);
+    assert.deepEqual(readdirSync(join(workspace, "long-names")), []);
+    const directoryName = "d".repeat(240);
     mkdirSync(join(workspace, "tree"));
     writeFileSync(join(workspace, "tree", "payload.bin"), payload);
-    run(["rename", workspace, "", "tree", crossDeviceRoot, "", "moved", "0"]);
-    assert.deepEqual(readFileSync(join(crossDeviceRoot, "moved", "payload.bin")), payload);
+    run(["rename", workspace, "", "tree", crossDeviceRoot, "", directoryName, "0"]);
+    assert.deepEqual(readFileSync(join(crossDeviceRoot, directoryName, "payload.bin")), payload);
     assert.equal(readdirSync(workspace).includes("tree"), false);
-    console.log("guest installed-package real cross-device directory move passed");
+    assert.deepEqual(readdirSync(crossDeviceRoot).sort(), [directoryName, fileName].sort());
+    console.log("guest installed-package real cross-device file and directory moves with long basenames passed");
   }
   console.log("guest installed-package Python protocol and standalone rename fragment passed");
 } finally {
