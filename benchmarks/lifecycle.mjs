@@ -13,19 +13,20 @@ export async function registerLifecycle({ api: a, workspace: w, native, binding,
   const cloneTarget = path.join(w, "clone-target");
   const clonePreparation = path.join(w, "clone-preparation");
   const cloneSkip = !cloneBackend
-    ? "Native directory cloning requires APFS, Btrfs, or ReFS."
+    ? "Native directory cloning requires APFS, Btrfs, ReFS, or XFS."
     : undefined;
   if (cloneBackend) {
     await a.createCloneSource(cloneSource);
-    fs.writeFileSync(path.join(cloneSource, "payload"), "clone benchmark");
+  } else {
+    fs.mkdirSync(cloneSource);
   }
+  fs.writeFileSync(path.join(cloneSource, "payload"), "clone benchmark");
   add("createCloneSource", () => a.createCloneSource(clonePreparation), {
     skip: cloneSkip,
     verify: () => assert(fs.statSync(clonePreparation).isDirectory()),
     after: () => fs.rmSync(clonePreparation, { recursive: true, force: true }),
   });
-  add("cloneTree", () => a.cloneTree(cloneSource, cloneTarget), {
-    skip: cloneSkip,
+  add("copyTree", () => a.copyTree(cloneSource, cloneTarget), {
     verify: () =>
       assert.equal(fs.readFileSync(path.join(cloneTarget, "payload"), "utf8"), "clone benchmark"),
     after: () => fs.rmSync(cloneTarget, { recursive: true, force: true }),

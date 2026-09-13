@@ -136,16 +136,16 @@
       ],
       "errorCodes": {}
     },
-    "./clone": {
+    "./copy": {
       "runtime": [
-        "cloneTree",
+        "copyTree",
         "createCloneSource",
         "probeTreeClone",
         "readCloneFileMetadata"
       ],
       "types": [
         "CloneFileMetadata",
-        "CloneTreeOptions",
+        "CopyTreeOptions",
         "TreeCloneBackend"
       ],
       "errorCodes": {}

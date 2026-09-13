@@ -135,8 +135,8 @@ jobs:
       - name: Build and stage host binding
         run: pnpm native:build
 
-      - name: Test native directory cloning
-        run: pnpm test test/clone.test.ts
+      - name: Test directory copying and native cloning
+        run: pnpm test test/clone.test.ts test/copy-tree.test.ts
 
       - name: Test native Btrfs snapshots
         if: runner.os == 'Linux'
@@ -153,6 +153,38 @@ jobs:
           trap 'sudo umount "$fixture/mount"' EXIT
           sudo chown "$(id -u):$(id -g)" "$fixture/mount"
           FS_SAFE_CLONE_TEST_ROOT="$fixture/mount" pnpm test test/clone.test.ts
+
+      - name: Test XFS cloning and unavailable-reflink fallback
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y xfsprogs e2fsprogs attr acl
+          fixture=$(mktemp -d "$RUNNER_TEMP/fs-safe-xfs.XXXXXX")
+          cleanup() {
+            for reflink in 1 0; do
+              if mountpoint -q "$fixture/mount-$reflink"; then
+                sudo umount "$fixture/mount-$reflink"
+              fi
+            done
+          }
+          trap cleanup EXIT
+          for reflink in 1 0; do
+            mount="$fixture/mount-$reflink"
+            mkdir "$mount"
+            truncate -s 1G "$fixture/volume-$reflink.img"
+            mkfs.xfs -q -m "reflink=$reflink" "$fixture/volume-$reflink.img"
+            sudo mount -o loop "$fixture/volume-$reflink.img" "$mount"
+            sudo chown "$(id -u):$(id -g)" "$mount"
+            if [[ "$reflink" == 1 ]]; then
+              node scripts/clone-xfs-proof.mjs "$mount"
+              TMPDIR="$mount" FS_SAFE_CLONE_TEST_ROOT="$mount" pnpm test test/clone.test.ts test/copy-tree.test.ts
+            else
+              node scripts/clone-xfs-proof.mjs "$mount" no-reflink
+              TMPDIR="$mount" pnpm test test/copy-tree.test.ts
+            fi
+            sudo umount "$mount"
+          done
 
       - name: Smoke method benchmarks with native binding
         run: pnpm benchmark:methods --mode require --iterations 1 --samples 1 --warmup 0

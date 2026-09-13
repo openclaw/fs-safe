@@ -240,7 +240,7 @@ contract. Low-level helpers that OpenClaw needs to compose higher-level APIs are
 | `@openclaw/fs-safe/file-lock` | async/sync sidecar locks, root-bounded sidecars, ownership verification, and stale policy |
 | `@openclaw/fs-safe/permissions` | POSIX mode and Windows ACL inspection, raw owner/ACE facts, private-directory creation, and remediation helpers |
 | `@openclaw/fs-safe/walk` | budget-bounded directory walking with symlink policy, filters, and truncation accounting; not root-bounded |
-| `@openclaw/fs-safe/clone`       | native APFS directory clones and clone metadata, Btrfs subvolume snapshots, and parallel ReFS block cloning; see [directory cloning](docs/clone.md)                                                                                                                                            |
+| `@openclaw/fs-safe/copy` | directory copying with `clone: "auto"`, `"always"`, or `"never"`; native APFS, Btrfs, ReFS, and XFS cloning, portable byte copying, and clone metadata; see [directory copying](docs/copy.md) |
 | `@openclaw/fs-safe/archive` | policy-driven ZIP/TAR extraction, clamp/filter policy, metadata/path-depth limits, native gzip/zstd/bzip2, and bounded entry reads |
 | `@openclaw/fs-safe/advanced` | lower-level composition helpers such as path scopes, root-file open, bounded descriptor reads, install paths, filename sanitizing, temp-file targets, sibling-temp writes, local-root readers, regular-file helpers, `pathExists`, and `withTimeout`; less stable than focused public subpaths |
 | `@openclaw/fs-safe/errors` | `FsSafeError`, closed codes/categories, causes, and operation-specific details receipts |

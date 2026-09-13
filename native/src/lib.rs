@@ -8,6 +8,8 @@ mod archive_gzip;
 mod fast_file;
 mod clone_tree;
 mod clone_metadata;
+#[cfg(target_os = "linux")]
+mod clone_linux;
 #[cfg(unix)]
 mod clone_unix;
 #[cfg(windows)]

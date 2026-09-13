@@ -132,7 +132,7 @@ type FsSafeErrorCode =
 | `symlink` | Path component is a symlink, policy is `reject`. | Caller followed a symlink they shouldn't have, or `symlinks: "reject"` is set. |
 | `timeout` | An operation with a wall-clock budget overran. | Secure file read or timed operation exceeded `timeoutMs`. |
 | `too-large` | A read or bounded walk exceeded its configured budget. | Caller gave a too-permissive file or traversal limit. |
-| `unsupported-platform` | The destination filesystem cannot perform the requested operation. | `createCloneSource` and `cloneTree` emit this code when the native probe finds no supported cloning backend. Callers can select their own checkout or copy fallback after the operation settles. |
+| `unsupported-platform` | The platform or filesystem cannot perform the requested operation. | `createCloneSource` and `copyTree({ clone: "always" })` require native cloning support. The default `copyTree({ clone: "auto" })` selects portable byte copying when cloning is unavailable; unsupported source contents or metadata still fail. See [directory copying](copy.md) for backend limits and fallback behavior. |
 
 Secret writes reject invalid `mode` / `dirMode` values with `invalid-path` before directory creation. Existing secret directories with a mode different from the requested `dirMode` report `insecure-permissions` without chmod; a created directory whose descriptor ownership no longer matches its initializing effective user reports `not-owned`.
 

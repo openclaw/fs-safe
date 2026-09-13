@@ -1,15 +1,11 @@
+import { execFileSync } from "node:child_process";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, assert, describe, expect, it, type TestContext } from "vitest";
-import {
-  cloneTree,
-  createCloneSource,
-  probeTreeClone,
-  readCloneFileMetadata,
-} from "../src/clone.js";
 import { configureFsSafeNative } from "../src/config.js";
+import { copyTree, createCloneSource, probeTreeClone, readCloneFileMetadata } from "../src/copy.js";
 import {
   __resetNativeLoaderForTest,
   __setNativeLoaderForTest,
@@ -29,7 +25,7 @@ async function cloneFixture(context: TestContext) {
   const backend = probeTreeClone(parent);
   if (!backend) {
     if (explicitParent) throw new Error("FS_SAFE_CLONE_TEST_ROOT requires native clone support");
-    context.skip("native APFS, Btrfs, or ReFS volume unavailable");
+    context.skip("native APFS, Btrfs, ReFS, or XFS volume unavailable");
     throw new Error("unreachable");
   }
   const directory = await fs.mkdtemp(path.join(parent, "fs-safe-clone-"));
@@ -50,7 +46,7 @@ describe("native directory cloning", () => {
     configureFsSafeNative({ mode: "off" });
     expect(probeTreeClone(directory)).toBeUndefined();
     await expect(createCloneSource(destination)).rejects.toThrow();
-    await expect(cloneTree(source, destination)).rejects.toThrow();
+    await expect(copyTree(source, destination, { clone: "always" })).rejects.toThrow();
     expect(await fs.readdir(directory)).toEqual(["source"]);
     expect(await fs.readFile(path.join(source, "payload"), "utf8")).toBe("original");
   });
@@ -62,7 +58,9 @@ describe("native directory cloning", () => {
     await fs.mkdir(source);
     const signal = AbortSignal.abort(new Error("caller canceled cloning"));
     await expect(createCloneSource(destination, { signal })).rejects.toThrow("caller canceled");
-    await expect(cloneTree(source, destination, { signal })).rejects.toThrow("caller canceled");
+    await expect(copyTree(source, destination, { clone: "always", signal })).rejects.toThrow(
+      "caller canceled",
+    );
     expect(await fs.readdir(directory)).toEqual(["source"]);
   });
 
@@ -76,7 +74,7 @@ describe("native directory cloning", () => {
     const destination = path.join(directory, "destination");
     await fs.mkdir(source);
     await fs.writeFile(path.join(source, "payload"), "original");
-    await expect(cloneTree(source, destination)).rejects.toThrow();
+    await expect(copyTree(source, destination, { clone: "always" })).rejects.toThrow();
     await expect(createCloneSource(destination)).rejects.toThrow();
     expect(await fs.readdir(directory)).toEqual(["source"]);
   });
@@ -88,7 +86,9 @@ describe("native directory cloning", () => {
       const source = path.join(directory, "source");
       const destination = path.join(directory, "destination");
       await fs.mkdir(source);
-      await expect(cloneTree(source, destination, { concurrency })).rejects.toThrow();
+      await expect(
+        copyTree(source, destination, { clone: "always", concurrency }),
+      ).rejects.toThrow();
       expect(await fs.readdir(directory)).toEqual(["source"]);
     },
   );
@@ -120,7 +120,10 @@ describe("native directory cloning", () => {
     }));
     const controller = new AbortController();
     let settled = false;
-    const pending = cloneTree(source, destination, { signal: controller.signal }).then(
+    const pending = copyTree(source, destination, {
+      clone: "always",
+      signal: controller.signal,
+    }).then(
       () => {
         settled = true;
         return undefined;
@@ -150,9 +153,12 @@ describe("native directory cloning", () => {
     }
   });
 
-  it.for([1, 8])(
-    "preserves tree data and metadata with concurrency %s and independent writes",
-    async (concurrency, context) => {
+  it.for([
+    { label: "one worker", concurrency: 1 },
+    { label: "default workers", concurrency: undefined },
+  ])(
+    "preserves tree data and metadata with $label and independent writes",
+    async ({ concurrency }, context) => {
       const { source, destination } = await cloneFixture(context);
       await fs.mkdir(path.join(source, "nested"));
       await fs.mkdir(path.join(source, "empty-directory"));
@@ -173,17 +179,28 @@ describe("native directory cloning", () => {
         await fs.chmod(original, 0o751);
         await fs.chmod(path.join(source, "nested"), 0o750);
       }
+      const directories = ["", "nested", "empty-directory"];
+      for (const name of directories) {
+        await fs.utimes(path.join(source, name), 1_600_000_000, 1_600_000_000);
+      }
       const controller = new AbortController();
       let callerAborts = 0;
       controller.signal.onabort = () => {
         callerAborts++;
       };
-      await cloneTree(source, destination, { concurrency, signal: controller.signal });
+      await copyTree(source, destination, {
+        clone: "always",
+        concurrency,
+        signal: controller.signal,
+      });
       controller.abort();
       expect(callerAborts).toBe(1);
       for (const [name, bytes] of contents) {
         expect((await fs.readFile(path.join(destination, name))).equals(bytes), name).toBe(true);
         expect((await fs.stat(path.join(destination, name))).mtimeMs).toBe(1_600_000_000_000);
+      }
+      for (const name of directories) {
+        expect((await fs.stat(path.join(destination, name))).mtimeMs, name).toBe(1_600_000_000_000);
       }
       expect(await fs.readdir(path.join(destination, "empty-directory"))).toEqual([]);
       if (process.platform !== "win32") {
@@ -192,7 +209,7 @@ describe("native directory cloning", () => {
       }
       await fs.writeFile(cloned, "independent edit");
       expect((await fs.readFile(original)).equals(payload)).toBe(true);
-      await expect(cloneTree(source, destination)).rejects.toThrow();
+      await expect(copyTree(source, destination, { clone: "always" })).rejects.toThrow();
       await expect(createCloneSource(destination)).rejects.toThrow();
       expect(await fs.readFile(cloned, "utf8")).toBe("independent edit");
       expect(await fs.readdir(destination)).not.toContain("source");
@@ -216,15 +233,31 @@ describe("native directory cloning", () => {
       throw error;
     }
     await fs.symlink("missing-target", path.join(source, "dangling"), "file");
-    await cloneTree(source, destination);
+    const outside = path.join(directory, "outside");
+    const outsideTarget = path.join("..", "outside");
+    await fs.mkdir(outside);
+    await fs.writeFile(path.join(outside, "payload"), "outside contents");
+    await fs.utimes(outside, 1_600_000_000, 1_600_000_000);
+    await fs.symlink(outsideTarget, path.join(source, "directory-link"), "dir");
+    const outsideBefore = await fs.stat(outside, { bigint: true });
+    await copyTree(source, destination, { clone: "always" });
     expect(await fs.readlink(path.join(destination, "link"))).toBe("payload");
     expect(await fs.readlink(path.join(destination, "dangling"))).toBe("missing-target");
+    expect(await fs.readlink(path.join(destination, "directory-link"))).toBe(outsideTarget);
+    const outsideAfter = await fs.stat(outside, { bigint: true });
+    expect(outsideAfter.mtimeNs).toBe(1_600_000_000_000_000_000n);
+    // Reapplying an equal mtime still changes ctime if traversal follows this link.
+    expect(outsideAfter.ctimeNs).toBe(outsideBefore.ctimeNs);
+    expect(await fs.readdir(outside)).toEqual(["payload"]);
+    expect(await fs.readFile(path.join(outside, "payload"), "utf8")).toBe("outside contents");
     await fs.writeFile(path.join(destination, "payload"), "clone edit");
     expect(await fs.readFile(path.join(destination, "link"), "utf8")).toBe("clone edit");
     expect(await fs.readFile(path.join(source, "payload"), "utf8")).toBe("original");
     const alias = path.join(directory, "source-alias");
     await fs.symlink(source, alias, process.platform === "win32" ? "junction" : "dir");
-    await expect(cloneTree(alias, path.join(directory, "alias-clone"))).rejects.toThrow();
+    await expect(
+      copyTree(alias, path.join(directory, "alias-clone"), { clone: "always" }),
+    ).rejects.toThrow();
     await expect(fs.access(path.join(directory, "alias-clone"))).rejects.toMatchObject({
       code: "ENOENT",
     });
@@ -236,7 +269,7 @@ describe("native directory cloning", () => {
     const ordinary = path.join(directory, "ordinary");
     await fs.mkdir(ordinary);
     await fs.writeFile(path.join(ordinary, "payload"), "original");
-    await expect(cloneTree(ordinary, destination)).rejects.toThrow();
+    await expect(copyTree(ordinary, destination, { clone: "always" })).rejects.toThrow();
     await expect(fs.access(destination)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await fs.readFile(path.join(ordinary, "payload"), "utf8")).toBe("original");
   });
@@ -247,17 +280,87 @@ describe("native directory cloning", () => {
     const original = path.join(source, "payload");
     await fs.writeFile(original, "main data");
     await fs.writeFile(`${original}:metadata`, "named stream data");
-    await expect(cloneTree(source, destination)).rejects.toThrow();
+    await expect(copyTree(source, destination, { clone: "always" })).rejects.toThrow();
     expect(await fs.readFile(original, "utf8")).toBe("main data");
     expect(await fs.readFile(`${original}:metadata`, "utf8")).toBe("named stream data");
     await expect(fs.access(destination)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("removes a failed XFS clone without altering its source and permits retry", async (context) => {
+    const { source, destination, backend } = await cloneFixture(context);
+    if (backend !== "xfs") context.skip("XFS-specific partial clone cleanup");
+    const readonly = path.join(source, "readonly");
+    const copiedReadonly = path.join(destination, "readonly");
+    await fs.mkdir(readonly);
+    await fs.writeFile(path.join(readonly, "payload"), "read-only directory contents");
+    const nested = path.join(source, "nested");
+    const fifo = path.join(nested, "unsupported-fifo");
+    await fs.mkdir(nested);
+    await fs.writeFile(path.join(source, "payload"), "original");
+    execFileSync("mkfifo", [fifo]);
+    await fs.chmod(readonly, 0o555);
+    try {
+      await expect(copyTree(source, destination, { clone: "always" })).rejects.toThrow();
+      expect((await fs.lstat(fifo)).isFIFO()).toBe(true);
+      expect(await fs.readFile(path.join(source, "payload"), "utf8")).toBe("original");
+      expect((await fs.stat(readonly)).mode & 0o777).toBe(0o555);
+      await expect(fs.access(destination)).rejects.toMatchObject({ code: "ENOENT" });
+
+      await fs.unlink(fifo);
+      await copyTree(source, destination, { clone: "always" });
+      expect(await fs.readFile(path.join(destination, "payload"), "utf8")).toBe("original");
+      expect(await fs.readdir(path.join(destination, "nested"))).toEqual([]);
+      expect(await fs.readFile(path.join(copiedReadonly, "payload"), "utf8")).toBe(
+        "read-only directory contents",
+      );
+      expect((await fs.stat(copiedReadonly)).mode & 0o777).toBe(0o555);
+    } finally {
+      await fs.chmod(readonly, 0o755);
+      await fs.chmod(copiedReadonly, 0o755).catch((error: unknown) => {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+      });
+    }
+  });
+
+  it("preserves XFS file and directory extended attributes and ACLs", async (context) => {
+    const { source, destination, backend } = await cloneFixture(context);
+    if (backend !== "xfs") context.skip("XFS-specific extended metadata");
+    await fs.mkdir(path.join(source, "nested"));
+    await fs.writeFile(path.join(source, "nested", "payload"), "original");
+    const entries = ["", "nested", path.join("nested", "payload")];
+    for (const name of entries) {
+      const original = path.join(source, name);
+      execFileSync("setfattr", ["-n", "user.fs-safe-clone", "-v", `metadata:${name}`, original]);
+      execFileSync("setfacl", [
+        "-m",
+        name === path.join("nested", "payload") ? "u:65534:r--" : "u:65534:r-x,d:u:65534:r-x",
+        original,
+      ]);
+    }
+
+    await copyTree(source, destination, { clone: "always" });
+    for (const name of entries) {
+      const cloned = path.join(destination, name);
+      expect(
+        execFileSync("getfattr", ["--only-values", "-n", "user.fs-safe-clone", cloned], {
+          encoding: "utf8",
+        }),
+      ).toBe(`metadata:${name}`);
+      const aclOptions = ["--omit-header", "--numeric", "--absolute-names"];
+      expect(execFileSync("getfacl", [...aclOptions, cloned], { encoding: "utf8" })).toBe(
+        execFileSync("getfacl", [...aclOptions, path.join(source, name)], { encoding: "utf8" }),
+      );
+    }
+    expect(await fs.readFile(path.join(destination, "nested", "payload"), "utf8")).toBe("original");
+  });
+
   it("rejects cloning a tree into itself or its descendants", async (context) => {
     const { source } = await cloneFixture(context);
     await fs.writeFile(path.join(source, "payload"), "original");
-    await expect(cloneTree(source, source)).rejects.toThrow();
-    await expect(cloneTree(source, path.join(source, "child"))).rejects.toThrow();
+    await expect(copyTree(source, source, { clone: "always" })).rejects.toThrow();
+    await expect(
+      copyTree(source, path.join(source, "child"), { clone: "always" }),
+    ).rejects.toThrow();
     expect(await fs.readdir(source)).toEqual(["payload"]);
   });
 
@@ -268,7 +371,7 @@ describe("native directory cloning", () => {
     const cloned = path.join(destination, "payload");
     await fs.writeFile(original, Buffer.alloc(1024 * 1024, 0x5a));
     await fs.symlink("payload", path.join(source, "link"));
-    await cloneTree(source, destination);
+    await copyTree(source, destination, { clone: "always" });
     const [originalMetadata, clonedMetadata, linkMetadata, missingMetadata] =
       await readCloneFileMetadata([
         original,

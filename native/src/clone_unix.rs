@@ -7,7 +7,11 @@ pub fn probe(parent_fd: i32) -> NativeResult<Option<String>> {
     let stats = rustix::fs::fstatfs(borrowed(parent_fd))
         .map_err(|error| os_error(error, "inspect clone filesystem"))?;
     #[cfg(target_os = "linux")]
-    let supported = (stats.f_type as u64 == 0x9123_683e).then_some("btrfs");
+    let supported = match stats.f_type as u64 {
+        0x9123_683e => Some("btrfs"),
+        0x5846_5342 => Some("xfs"),
+        _ => None,
+    };
     #[cfg(target_os = "macos")]
     let supported = stats.f_fstypename[..5]
         .iter()
@@ -20,7 +24,7 @@ pub fn probe(parent_fd: i32) -> NativeResult<Option<String>> {
 fn require_supported(parent_fd: i32) -> NativeResult<()> {
     if probe(parent_fd)?.is_none() {
         return Err(native_error(
-            "ENOTSUP",
+            "CLONE_UNAVAILABLE",
             "directory cloning is unavailable on this filesystem",
         ));
     }
@@ -30,6 +34,97 @@ fn require_supported(parent_fd: i32) -> NativeResult<()> {
 fn check_cancelled(cancelled: &AtomicBool) -> NativeResult<()> {
     if cancelled.load(Ordering::Relaxed) {
         return Err(native_error("Cancelled", "directory cloning aborted"));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn restore_apfs_directory_timestamps(
+    source_fd: i32,
+    parent_fd: i32,
+    name: &std::ffi::CStr,
+    source_root: &rustix::fs::Stat,
+    cancelled: &AtomicBool,
+) -> NativeResult<()> {
+    use crate::unix::open_cleanup_directory;
+    use rustix::fs::{AtFlags, Dir, FileType, Stat, Timespec, Timestamps};
+    use std::os::fd::{AsRawFd, OwnedFd};
+
+    struct Directory {
+        entries: Dir,
+        target: OwnedFd,
+        times: Timestamps,
+    }
+
+    fn directory(source: OwnedFd, target: OwnedFd, metadata: &Stat) -> NativeResult<Directory> {
+        let times = Timestamps {
+            last_access: Timespec {
+                tv_sec: metadata.st_atime,
+                tv_nsec: metadata.st_atime_nsec,
+            },
+            last_modification: Timespec {
+                tv_sec: metadata.st_mtime,
+                tv_nsec: metadata.st_mtime_nsec,
+            },
+        };
+        // This stream owns the freshly opened source fd. Capture timestamps
+        // before reading it, since readdir can update source access time.
+        let entries = Dir::new(source)
+            .map_err(|error| os_error(error, "open APFS clone directory stream"))?;
+        Ok(Directory {
+            entries,
+            target,
+            times,
+        })
+    }
+
+    check_cancelled(cancelled)?;
+    let source = open_cleanup_directory(source_fd, c".")?;
+    let target = open_cleanup_directory(parent_fd, name)?;
+    let mut stack = vec![directory(source, target, source_root)?];
+    // APFS resets timestamps on nested directories as well as the clone root.
+    // Repair directories bottom-up; regular file data and metadata remain the
+    // bulk clone's responsibility. The stack retains only active ancestors.
+    while let Some(parent) = stack.last_mut() {
+        check_cancelled(cancelled)?;
+        if let Some(entry) = parent.entries.next() {
+            let entry =
+                entry.map_err(|error| os_error(error, "read APFS clone directory entry"))?;
+            let name = entry.file_name();
+            if matches!(name.to_bytes(), b"." | b"..") {
+                continue;
+            }
+            let source_parent = parent
+                .entries
+                .fd()
+                .map_err(|error| os_error(error, "inspect APFS source directory stream"))?;
+            let kind = if entry.file_type() == FileType::Unknown {
+                let metadata =
+                    rustix::fs::statat(source_parent, name, AtFlags::SYMLINK_NOFOLLOW)
+                        .map_err(|error| os_error(error, "classify APFS clone directory entry"))?;
+                FileType::from_raw_mode(metadata.st_mode)
+            } else {
+                entry.file_type()
+            };
+            if !kind.is_dir() {
+                continue;
+            }
+            let source = open_cleanup_directory(source_parent.as_raw_fd(), name)?;
+            let metadata = rustix::fs::fstat(&source)
+                .map_err(|error| os_error(error, "inspect APFS clone source directory"))?;
+            if metadata.st_ino != entry.ino() {
+                return Err(native_error(
+                    "path-mismatch",
+                    "APFS source directory changed after enumeration",
+                ));
+            }
+            let target = open_cleanup_directory(parent.target.as_raw_fd(), name)?;
+            stack.push(directory(source, target, &metadata)?);
+        } else {
+            let completed = stack.pop().unwrap();
+            rustix::fs::futimens(&completed.target, &completed.times)
+                .map_err(|error| os_error(error, "preserve APFS clone directory timestamps"))?;
+        }
     }
     Ok(())
 }
@@ -78,6 +173,14 @@ pub fn create_source(parent_fd: i32, basename: &str) -> NativeResult<()> {
     require_supported(parent_fd)?;
     #[cfg(target_os = "linux")]
     {
+        if probe(parent_fd)?.as_deref() == Some("xfs") {
+            return rustix::fs::mkdirat(
+                borrowed(parent_fd),
+                basename,
+                rustix::fs::Mode::from_bits_retain(0o700),
+            )
+            .map_err(|error| os_error(error, "create XFS clone source directory"));
+        }
         const CREATE: rustix::ioctl::Opcode =
             rustix::ioctl::opcode::write::<BtrfsVolumeArgs>(0x94, 14);
         btrfs_mutation::<CREATE>(parent_fd, basename, 0)
@@ -111,11 +214,20 @@ pub fn clone_tree(
     }
     #[cfg(target_os = "linux")]
     {
+        if probe(parent_fd)?.as_deref() == Some("xfs") {
+            return crate::clone_linux::clone_tree(
+                source_fd,
+                parent_fd,
+                basename,
+                cancelled,
+                _concurrency,
+            );
+        }
         // Btrfs assigns inode 256 to subvolume roots. Snapshotting an ordinary
         // directory must fail rather than silently changing the operation.
         if source.st_ino != 256 {
             return Err(native_error(
-                "ENOTSUP",
+                "CLONE_UNAVAILABLE",
                 "Btrfs directory cloning requires a subvolume source",
             ));
         }
@@ -130,7 +242,7 @@ pub fn clone_tree(
             .map_err(|_| native_error("EINVAL", "clone destination contains a NUL byte"))?;
         // CLONE_ACL can copy the root ACL, but directory clones can lose both
         // source and inherited descendant ACLs. Callers own eligibility; see
-        // docs/clone.md for Apple's directory-clone warning and XNU references.
+        // docs/copy.md for Apple's directory-clone warning and XNU references.
         // Both descriptors stay pinned until this bulk operation settles.
         const CLONE_NOFOLLOW: u32 = 0x0001;
         const CLONE_ACL: u32 = 0x0004;
@@ -149,8 +261,24 @@ pub fn clone_tree(
                     .raw_os_error()
                     .unwrap_or(libc::EIO),
             );
-            return Err(os_error(error, "clone APFS directory"));
+            return Err(
+                if error == rustix::io::Errno::NOTSUP || error == rustix::io::Errno::OPNOTSUPP {
+                    native_error(
+                        "CLONE_UNAVAILABLE",
+                        format!("clone APFS directory: {error}"),
+                    )
+                } else {
+                    os_error(error, "clone APFS directory")
+                },
+            );
         }
+        restore_apfs_directory_timestamps(
+            source_fd,
+            parent_fd,
+            name.as_c_str(),
+            &source,
+            cancelled,
+        )?;
     }
     // These bulk operations cannot be interrupted once dispatched. Report
     // cancellation only after their writes settle; recovery may then proceed.
