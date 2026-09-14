@@ -6,6 +6,8 @@
 - Preserve established callback receivers while retaining single-read pathname and transfer-authority snapshots across structured JSON, durable directory and queue, sibling staging, and borrowed-handle flows.
 - Snapshot root traversal symlink-rejection policy with admitted paths so caller mutation cannot change an in-flight resolution.
 - Reject NTFS alternate-data-stream and directory-index pathname aliases across guarded Root, directory-identity, FileStore, archive, JSON queue, sidecar lock, secret, secure-read, atomic publication, temp, permission, install, trash, and output boundaries before filesystem access. Preserve rooted drive paths, including valid extended namespace drive roots without widening volume-root mutation authority, independent device/network policies, intentional output-name sanitization, existing failure shapes, and ordinary colon-bearing POSIX names; native relative and archive paths enforce the same Windows rule.
+- Speed up archive extraction and TAR inspection by batching private input staging through reusable buffers capped at 512 KiB; keep source identity checks, complete short I/O, and cleanup, while bounding growth probes to one excess byte and checking cancellation after reads.
+
 - Batch large borrowed-handle and JavaScript Root file transfers through reusable 512 KiB buffers, reducing filesystem calls while retaining byte limits, cancellation, and per-write authority checks; cap scratch allocation to small byte budgets plus their overflow probe.
 - Batch native ZIP metadata admission through bounded, operation-local read-ahead buffers, reducing per-entry filesystem calls while preserving complete record validation, short-read handling, cancellation, and stable scanner views.
 
