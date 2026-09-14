@@ -8,8 +8,9 @@ use std::sync::OnceLock;
 
 use windows_sys::Win32::Foundation::{
     CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS,
-    ERROR_DISK_FULL, ERROR_FILE_EXISTS, ERROR_FILE_NOT_FOUND, ERROR_HANDLE_DISK_FULL,
-    ERROR_LOCK_VIOLATION, ERROR_NO_MORE_FILES, ERROR_PATH_NOT_FOUND, ERROR_SHARING_VIOLATION,
+    ERROR_CALL_NOT_IMPLEMENTED, ERROR_DISK_FULL, ERROR_FILE_EXISTS, ERROR_FILE_NOT_FOUND,
+    ERROR_HANDLE_DISK_FULL, ERROR_INVALID_FUNCTION, ERROR_INVALID_PARAMETER, ERROR_LOCK_VIOLATION,
+    ERROR_NOT_SUPPORTED, ERROR_NO_MORE_FILES, ERROR_PATH_NOT_FOUND, ERROR_SHARING_VIOLATION,
     GENERIC_READ, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Storage::FileSystem::{
@@ -252,6 +253,23 @@ pub(crate) fn win_error(code: u32, operation: &str) -> napi::Error<String> {
 fn nt_error(status: i32, operation: &str) -> napi::Error<String> {
     // SAFETY: converting an NTSTATUS does not dereference application memory.
     win_error(unsafe { RtlNtStatusToDosError(status) }, operation)
+}
+
+fn rename_win_error(code: u32, operation: &str) -> napi::Error<String> {
+    let typed = match code {
+        ERROR_INVALID_FUNCTION | ERROR_NOT_SUPPORTED | ERROR_CALL_NOT_IMPLEMENTED => "ENOTSUP",
+        ERROR_INVALID_PARAMETER => "EINVAL",
+        _ => return win_error(code, operation),
+    };
+    native_error(
+        typed,
+        format!("{operation} failed with Windows error {code}"),
+    )
+}
+
+fn rename_nt_error(status: i32, operation: &str) -> napi::Error<String> {
+    // SAFETY: converting an NTSTATUS does not dereference application memory.
+    rename_win_error(unsafe { RtlNtStatusToDosError(status) }, operation)
 }
 
 pub(crate) fn handle_is_reparse(handle: HANDLE) -> NativeResult<bool> {
@@ -532,7 +550,7 @@ fn set_rename_information(
         {
             return Err(native_error("EEXIST", "rename destination already exists"));
         }
-        return Err(nt_error(status, operation));
+        return Err(rename_nt_error(status, operation));
     }
     Ok(())
 }
@@ -1192,6 +1210,26 @@ mod tests {
                 "Windows error {code}"
             );
         }
+    }
+
+    #[test]
+    fn maps_unsupported_rename_information_to_typed_errors() {
+        for (code, expected) in [
+            (ERROR_INVALID_FUNCTION, "ENOTSUP"),
+            (ERROR_NOT_SUPPORTED, "ENOTSUP"),
+            (ERROR_CALL_NOT_IMPLEMENTED, "ENOTSUP"),
+            (ERROR_INVALID_PARAMETER, "EINVAL"),
+        ] {
+            assert_eq!(
+                rename_win_error(code, "rename file").status,
+                expected,
+                "Windows error {code}"
+            );
+        }
+        assert_eq!(
+            rename_win_error(ERROR_DISK_FULL, "rename file").status,
+            "ENOSPC"
+        );
     }
 
     #[test]
