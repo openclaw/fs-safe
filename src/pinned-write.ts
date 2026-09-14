@@ -100,8 +100,42 @@ export type PinnedWriteParams = {
   ) => Promise<void>;
 };
 
+const PINNED_WRITE_SNAPSHOT_KEYS: readonly PropertyKey[] = [
+  "rootPath", "relativeParentPath", "basename", "maxBytes", "rootIdentity",
+];
+const RENAME_POLICY_SNAPSHOT_KEYS: readonly PropertyKey[] = ["targetPath", "renameIdentity"];
+type OwnedPinnedWriteParams = Omit<
+  PinnedWriteParams,
+  "rootPath" | "relativeParentPath" | "basename" | "maxBytes" | "rootIdentity"
+>;
+
+function copyOwnEnumerableExcept(
+  source: object,
+  excluded: readonly PropertyKey[],
+): Record<PropertyKey, unknown> {
+  const owned: Record<PropertyKey, unknown> = {};
+  for (const key of Reflect.ownKeys(source)) {
+    // Node 22's object-rest fast path can read excluded accessors eagerly.
+    // Exclude before even inspecting the descriptor so named authority and
+    // pathname fields remain single-read snapshots on every supported Node.
+    if (excluded.includes(key)) continue;
+    if (!Object.getOwnPropertyDescriptor(source, key)?.enumerable) continue;
+    Object.defineProperty(owned, key, {
+      value: Reflect.get(source, key),
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+  }
+  return owned;
+}
+
 export async function runPinnedWriteHelper(params: PinnedWriteParams): Promise<FileIdentityStat> {
-  const { rootPath, relativeParentPath, basename, maxBytes, rootIdentity, ...ownedParams } = params;
+  const { rootPath, relativeParentPath, basename, maxBytes, rootIdentity } = params;
+  const ownedParams = copyOwnEnumerableExcept(
+    params,
+    PINNED_WRITE_SNAPSHOT_KEYS,
+  ) as OwnedPinnedWriteParams;
   const normalizedParams: PinnedWriteParams = {
     ...ownedParams,
     rootPath,
@@ -150,7 +184,11 @@ export async function runPinnedWriteWithRenamePolicy(
     renameIdentity?: RenameIdentityPolicy;
   },
 ): Promise<FileIdentityStat> {
-  const { targetPath, renameIdentity, ...writeParams } = params;
+  const { targetPath, renameIdentity } = params;
+  const writeParams = copyOwnEnumerableExcept(
+    params,
+    RENAME_POLICY_SNAPSHOT_KEYS,
+  ) as PinnedWriteParams;
   if (renameIdentity !== "verify-content-with-lock") {
     return await runPinnedWriteHelper(writeParams);
   }

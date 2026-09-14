@@ -12,7 +12,12 @@ import {
   __setNativeLoaderForTest,
   type NativeBinding,
 } from "../src/native.js";
-import { runPinnedWriteHelper, type PinnedWriteParams } from "../src/pinned-write.js";
+import {
+  runPinnedWriteHelper,
+  runPinnedWriteWithRenamePolicy,
+  type PinnedWriteParams,
+  type RenameIdentityPolicy,
+} from "../src/pinned-write.js";
 import { realpathSync } from "../src/realpath.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
@@ -265,5 +270,127 @@ describe("pinned write parameter snapshots", () => {
       ino: 1,
     });
     await expect(fs.readFile(path.join(rootPath, "value"), "utf8")).resolves.toBe("payload");
+  });
+
+  it("retains inherited and non-enumerable named snapshots", async () => {
+    const rootPath = await tempRoot("fs-safe-pinned-named-");
+    const rootIdentity = await fs.lstat(rootPath, { bigint: true });
+    const prototype = Object.defineProperties({}, {
+      rootPath: { get: () => rootPath },
+      relativeParentPath: { get: () => "" },
+      maxBytes: { get: () => 1024 },
+    });
+    const params = Object.assign(Object.create(prototype), {
+      mkdir: false,
+      mode: 0o600,
+      sync: false,
+      overwrite: false,
+      input: { kind: "buffer" as const, data: "payload" },
+    });
+    Object.defineProperties(params, {
+      basename: { get: () => "value" },
+      rootIdentity: { get: () => rootIdentity },
+    });
+    configureFsSafeNative({ mode: "off" });
+
+    await runPinnedWriteHelper(params as PinnedWriteParams);
+
+    await expect(fs.readFile(path.join(rootPath, "value"), "utf8")).resolves.toBe("payload");
+  });
+
+  it("preserves own enumerable callback state without copying hidden extras", async () => {
+    const rootPath = await tempRoot("fs-safe-pinned-receiver-");
+    const stateSymbol = Symbol("state");
+    let getterReceiver: unknown;
+    let callbackReceiver: Record<PropertyKey, unknown> | undefined;
+    let hiddenReads = 0;
+    const params = baseParams({
+      rootPath,
+      sync: false,
+      overwrite: true,
+      onPublished: function (this: Record<PropertyKey, unknown>) {
+        callbackReceiver = this;
+      },
+    });
+    Object.defineProperties(params, {
+      callbackState: {
+        enumerable: true,
+        get() {
+          getterReceiver = this;
+          return "state";
+        },
+      },
+      [stateSymbol]: { enumerable: true, value: "symbol-state" },
+      ["__proto__"]: { enumerable: true, value: "proto-state" },
+      hiddenState: {
+        enumerable: false,
+        get() {
+          hiddenReads += 1;
+          return "hidden";
+        },
+      },
+    });
+    configureFsSafeNative({ mode: "off" });
+
+    await runPinnedWriteHelper(params);
+
+    expect(getterReceiver).toBe(params);
+    expect(hiddenReads).toBe(0);
+    expect(callbackReceiver?.callbackState).toBe("state");
+    expect(callbackReceiver?.[stateSymbol]).toBe("symbol-state");
+    expect(Object.getPrototypeOf(callbackReceiver)).toBe(Object.prototype);
+    expect(Object.hasOwn(callbackReceiver ?? {}, "__proto__")).toBe(true);
+    expect(callbackReceiver?.__proto__).toBe("proto-state");
+  });
+
+  it.each([
+    { label: "default", renameIdentity: undefined },
+    { label: "strict", renameIdentity: "strict" as const },
+    { label: "verify-content", renameIdentity: "verify-content-with-lock" as const },
+  ])("reads rename-wrapper exclusions once for $label policy", async ({ label, renameIdentity }) => {
+    const rootPath = await tempRoot(`fs-safe-pinned-wrapper-${label}-`);
+    const basename = "value";
+    const targetPath = path.join(rootPath, basename);
+    const reads = new Map<string, number>();
+    let callbackReceiver: Record<PropertyKey, unknown> | undefined;
+    const once = <T>(name: string, value: T): (() => T) => () => {
+      const count = (reads.get(name) ?? 0) + 1;
+      reads.set(name, count);
+      if (count > 1) throw new Error(`${name} read more than once`);
+      return value;
+    };
+    const coreParams = {
+      rootPath,
+      relativeParentPath: "",
+      basename,
+      mkdir: false,
+      mode: 0o600,
+      sync: false,
+      overwrite: true,
+      input: { kind: "buffer" as const, data: "payload" },
+      onPublished: function (this: Record<PropertyKey, unknown>) {
+        callbackReceiver = this;
+      },
+    };
+    const namedDescriptors = {
+      targetPath: { enumerable: label === "default", get: once("targetPath", targetPath) },
+      renameIdentity: {
+        enumerable: label === "default",
+        get: once("renameIdentity", renameIdentity as RenameIdentityPolicy | undefined),
+      },
+    };
+    const params = (
+      label === "verify-content"
+        ? Object.assign(Object.create(Object.defineProperties({}, namedDescriptors)), coreParams)
+        : Object.defineProperties(coreParams, namedDescriptors)
+    ) as PinnedWriteParams & { targetPath: string; renameIdentity?: RenameIdentityPolicy };
+    configureFsSafeNative({ mode: "off" });
+
+    await runPinnedWriteWithRenamePolicy(params);
+
+    expect(Object.fromEntries(reads)).toEqual({ targetPath: 1, renameIdentity: 1 });
+    expect(Object.hasOwn(callbackReceiver ?? {}, "targetPath")).toBe(false);
+    expect(Object.hasOwn(callbackReceiver ?? {}, "renameIdentity")).toBe(false);
+    await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("payload");
   });
 });
