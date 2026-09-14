@@ -45,6 +45,12 @@ export async function registerPaths({ api: a, workspace: w, register: add, contr
   const rootParams = { absolutePath: input, rootPath: w, boundaryLabel: "benchmark" };
   for (const name of ["resolveRootPath", "resolveRootPathSync", "assertNoPathAliasEscape"]) add(name, () => a[name](rootParams), { sync: name.endsWith("Sync") });
   add("resolvePathViaExistingAncestorSync", () => a.resolvePathViaExistingAncestorSync(input), { sync: true });
+  add("resolvePathPrefixSync", () => a.resolvePathPrefixSync(input), {
+    sync: true, verify: result => assert.deepEqual(result.unresolvedSegments, []),
+  });
+  add("resolvePathPrefixSync/missing", () => a.resolvePathPrefixSync(`${w}${path.sep}future${path.sep}..${path.sep}input.json`), {
+    sync: true, verify: result => assert.deepEqual(result.unresolvedSegments, ["future", "..", "input.json"]),
+  });
   for (const name of ["resolveLocalPathFromRootsSync", "readLocalFileFromRoots"]) add(name, () => a[name]({ filePath: input, roots: [w] }), { sync: name.endsWith("Sync") });
   const base = { rootDir: w, scopeLabel: "benchmark" };
   for (const name of ["resolvePathWithinRoot", "resolveWritablePathWithinRoot", "ensureDirectoryWithinRoot"]) add(name, () => a[name]({ ...base, requestedPath: name === "ensureDirectoryWithinRoot" ? "tree" : "input.json" }), { sync: name === "resolvePathWithinRoot" });

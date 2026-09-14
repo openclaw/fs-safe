@@ -56,6 +56,10 @@ prefix preparation. See [in-place writes](in-place-write.md).
 for local ASCII-case observations. An unavailable answer remains `undefined`;
 the caller selects any fallback. See [path case probing](path-case.md).
 
+`resolvePathPrefixSync` and `ResolvedPathPrefix` separate a canonical existing
+path prefix from its raw unresolved suffix after physical symlink traversal.
+See [resolving path prefixes](path-prefix.md).
+
 ## Guest source
 
 `@openclaw/fs-safe/guest` exports `GUEST_FILESYSTEM_PYTHON`,
