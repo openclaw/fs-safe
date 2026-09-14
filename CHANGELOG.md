@@ -48,6 +48,8 @@
 - Add exact directory identity observations and synchronous assertions for caller-owned staging and recovery flows, preserving bigint identities, optional canonical-path checks, bounded Windows identity admission, final-symlink rejection with trailing separators, and original filesystem errors.
 - Add `overwriteFileHandle()` for in-place replacement through a borrowed regular-file handle, with prefix-only rollback preparation, growth-before-overwrite ordering, unchanged descriptor ownership and cursor, and a synchronous once-only pre-write admission callback.
 
+- Add synchronous path-local ASCII case probing with read-only mode, exact identity observations, owned temporary-file cleanup, and an explicit unknown result instead of operating-system guesses.
+
 ## 0.10.0 - 2026-09-13
 
 ### Highlights

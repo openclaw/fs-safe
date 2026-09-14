@@ -52,6 +52,10 @@ replacement through a borrowed regular-file handle. Its once-only `beforeWrite`
 callback admits the complete write and any required best-effort rollback after
 prefix preparation. See [in-place writes](in-place-write.md).
 
+`probePathCaseInsensitiveSync` and `ProbePathCaseOptions` are advanced exports
+for local ASCII-case observations. An unavailable answer remains `undefined`;
+the caller selects any fallback. See [path case probing](path-case.md).
+
 ## Guest source
 
 `@openclaw/fs-safe/guest` exports `GUEST_FILESYSTEM_PYTHON`,

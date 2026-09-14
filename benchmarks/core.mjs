@@ -24,6 +24,10 @@ export async function registerCore({ api: a, workspace: w, register: add, contra
   const directoryIdentity = { dev: directoryStat.dev, ino: directoryStat.ino, realPath: fs.realpathSync.native(w) };
   add("readDirectoryIdentity", () => a.readDirectoryIdentity(w), { verify: (result) => assert.deepEqual(result, directoryIdentity) });
   add("assertDirectoryIdentitySync", () => a.assertDirectoryIdentitySync(w, directoryIdentity), { sync: true });
+  const caseInsensitive = fs.existsSync(path.join(w, "INPUT.JSON"));
+  add("probePathCaseInsensitiveSync", () => a.probePathCaseInsensitiveSync(input, { allowTemporaryProbe: false }), {
+    sync: true, verify: (observed) => assert.equal(observed, caseInsensitive),
+  });
   contract("Root", safe);
   add("root", () => a.root(w));
   for (const name of ["resolve", "read", "readBytes", "readText", "readJson", "exists", "stat"]) {

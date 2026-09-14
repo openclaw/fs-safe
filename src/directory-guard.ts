@@ -150,7 +150,7 @@ function directoryEntryPath(dir: string): string {
   return end === rootLength || end === dir.length ? dir : dir.slice(0, end);
 }
 
-function inspectDirectoryIdentitySync(
+export function inspectDirectoryIdentitySync(
   dir: string,
   expected?: Pick<BigIntStats, "dev" | "ino">,
 ): BigIntStats {
