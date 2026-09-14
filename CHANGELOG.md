@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Resolve explicit relative asynchronous sidecar paths against the caller's working directory before the first await, and retain that path and `lockRoot` snapshot through acquisition, reclaim, verification, and release.
+
 ## 0.11.0 - 2026-09-14
 
 ### Highlights
