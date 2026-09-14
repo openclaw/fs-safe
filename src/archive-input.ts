@@ -84,11 +84,15 @@ export async function stageArchiveFileForExtraction(params: {
         ? fsConstants.O_NOFOLLOW
         : 0);
     output = await fs.open(staged.path, flags, 0o600);
-    const buffer = Buffer.allocUnsafe(64 * 1024);
+    const buffer = Buffer.allocUnsafe(Math.min(
+      512 * 1024, Math.max(64 * 1024, Number(opened.size)), params.limits.maxArchiveBytes + 1,
+    ));
     let written = 0;
     while (true) {
       params.deadline.check();
-      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+      const length = Math.min(buffer.length, params.limits.maxArchiveBytes - written + 1);
+      const { bytesRead } = await handle.read(buffer, 0, length, null);
+      params.deadline.check();
       if (bytesRead === 0) break;
       written += bytesRead;
       if (written > params.limits.maxArchiveBytes) {

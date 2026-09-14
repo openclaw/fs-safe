@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Speed up archive extraction and TAR inspection by batching private input staging through reusable buffers capped at 512 KiB; keep source identity checks, complete short I/O, and cleanup, while bounding growth probes to one excess byte and checking cancellation after reads.
+
 - Batch large borrowed-handle and JavaScript Root file transfers through reusable 512 KiB buffers, reducing filesystem calls while retaining byte limits, cancellation, and per-write authority checks; cap scratch allocation to small byte budgets plus their overflow probe.
 
 - Batch native ZIP metadata admission through bounded, operation-local read-ahead buffers, reducing per-entry filesystem calls while preserving complete record validation, short-read handling, cancellation, and stable scanner views.

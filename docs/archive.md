@@ -126,6 +126,12 @@ untrusted authority rejects explicitly instead of silently accepting a wrong
 mode. Other unsupported search-only routes also fail closed. Windows retains
 its existing bounded lack of POSIX mode enforcement.
 
+Extraction and TAR inspection first copy the admitted source into a private
+staging file. This copy reuses at most 512 KiB of scratch space, reduced for
+small inputs and capped by the archive byte limit plus one overflow-probe byte.
+Each read stays within the remaining budget plus that probe; deadline checks
+surround reads, and short writes finish before the buffer is reused.
+
 Native extraction is deliberately split into two phases. Rust first reports an
 entry manifest without creating paths. TypeScript validates paths, applies
 `stripComponents`, filters, limits, and mode policy, then passes an explicit
