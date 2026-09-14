@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Speed up JavaScript TAR admission by copying each WASM input window once across member events, and read selected plain-TAR payloads directly from the fully admitted private snapshot without a second parser pass; preserve independent output buffers, complete framing, path validation, and limits.
+
 - Add bounded copy benchmark shapes and explicit worker matrices for comparisons at equal concurrency across native cloning and ordinary copying.
 
 - Inspect complete inherited local Windows ACLs through the existing native descriptor reader, avoiding PowerShell startup while preserving the public SID classifier, explicit injections, .NET normalization, and structured fallback diagnostics.

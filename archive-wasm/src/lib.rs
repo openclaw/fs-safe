@@ -1,5 +1,5 @@
 //! Private ABI. Each JavaScript parser owns a separate, import-free instance.
-//! No caller-supplied pointer is dereferenced; only lengths into our fixed inbox.
+//! No caller-supplied pointer is dereferenced; only bounded ranges into our fixed inbox.
 use fs_safe_archive_core::{TarMetadataMeter, TarMeterLimits, TarMember};
 use std::cell::RefCell;
 
@@ -46,11 +46,12 @@ pub extern "C" fn init(entries: f64, metadata: f64, decoded: f64, manifest: f64,
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn push(length: usize) -> i32 {
+pub extern "C" fn push(offset: usize, length: usize) -> i32 {
     STATE.with_borrow_mut(|s| {
-        if length == 0 || length > s.input.len() || !s.error.is_empty() { return -1; }
+        if length == 0 || offset >= s.input.len() || length > s.input.len() - offset
+            || !s.error.is_empty() { return -1; }
         let Some(parser) = &mut s.parser else { return -1; };
-        match parser.push(&s.input[..length]) {
+        match parser.push(&s.input[offset..offset + length]) {
             Ok(used) => { s.member = parser.take_member(); used as i32 }
             Err(error) => { s.error = error.to_string(); s.parser = None; -1 }
         }

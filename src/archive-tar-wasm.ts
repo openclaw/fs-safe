@@ -10,7 +10,7 @@ type Abi = {
   memory: { buffer: ArrayBuffer };
   input_ptr(): number;
   init(entries: number, metadata: number, decoded: number, manifest: number, windows: number): number;
-  push(length: number): number;
+  push(offset: number, length: number): number;
   finish(): number;
   dispose(): void;
   text_ptr(): number;
@@ -73,18 +73,21 @@ export class TarParserStream extends Transform {
   override _transform(chunk: Buffer, _encoding: BufferEncoding, callback: TransformCallback): void {
     try {
       const abi = this.abi!;
-      for (let offset = 0; offset < chunk.length;) {
+      for (let offset = 0; offset < chunk.length; offset += 65536) {
         const length = Math.min(65536, chunk.length - offset);
         this.bytes(abi.input_ptr(), length).set(chunk.subarray(offset, offset + length));
-        const used = abi.push(length);
-        if (used < 0) throw parserError(this.text());
-        if (used === 0 || used > length) throw new ArchiveFormatError("TAR WASM made no progress");
-        offset += used;
-        const type = abi.member_type();
-        if (type >= 0) this.onMember?.({
-          path: this.text(), type: types.get(type) ?? "Unsupported", size: abi.member_size(),
-          mode: abi.member_mode(), offset: abi.member_offset(),
-        });
+        // A member event can stop before the end of this already-copied inbox.
+        for (let consumed = 0; consumed < length;) {
+          const used = abi.push(consumed, length - consumed);
+          if (used < 0) throw parserError(this.text());
+          if (used === 0 || used > length - consumed) throw new ArchiveFormatError("TAR WASM made no progress");
+          consumed += used;
+          const type = abi.member_type();
+          if (type >= 0) this.onMember?.({
+            path: this.text(), type: types.get(type) ?? "Unsupported", size: abi.member_size(),
+            mode: abi.member_mode(), offset: abi.member_offset(),
+          });
+        }
       }
       callback(null, chunk);
     } catch (error) { callback(error instanceof Error ? error : new Error(String(error))); }
