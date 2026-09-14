@@ -30,10 +30,13 @@ type DirectoryIdentity = Readonly<{
 }>;
 ```
 
-Both operations reject a final symlink or a non-directory. Parent aliases are
-resolved when observing the canonical path; these helpers do not confine a path
-to a root or reject every symlink ancestor. Keep the application's path policy,
-or use the [Root API](root.md) for paths that must remain beneath a root.
+Both operations reject a final symlink or a non-directory, including paths with
+one or more trailing separators. Filesystem, drive, and UNC roots remain valid.
+Parent aliases and `..` retain their filesystem traversal meaning; POSIX
+backslashes and whitespace remain literal filename characters. These helpers do
+not confine a path to a root or reject every symlink ancestor. Keep the
+application's path policy, or use the [Root API](root.md) for paths that must
+remain beneath a root.
 
 ## Checking the selected path
 

@@ -39,7 +39,7 @@
 - Add a streamed `Root.create` overload for async byte iterables, with bounded consumption, settled cancellation, and exclusive publication of completed contents through the existing guarded writer.
 - Add `Root.entries()` for guarded nonrecursive directory iteration that reports child symlinks, supports cancellation, and bounds entry counts and sorted-name collection while leaving traversal and link policy with the caller.
 
-- Add exact directory identity observations and synchronous assertions for caller-owned staging and recovery flows, preserving bigint identities, optional canonical-path checks, bounded Windows identity admission, and original filesystem errors.
+- Add exact directory identity observations and synchronous assertions for caller-owned staging and recovery flows, preserving bigint identities, optional canonical-path checks, bounded Windows identity admission, final-symlink rejection with trailing separators, and original filesystem errors.
 
 ## 0.10.0 - 2026-09-13
 
