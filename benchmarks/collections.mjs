@@ -68,7 +68,10 @@ export async function registerCollections({ api: a, workspace: w, register: add 
   }
   for (const [kind, name] of [["ascii", `${"a".repeat(195)}.txt`], ["unicode", `${"é".repeat(80)}.txt`]]) {
     const targetPath = path.join(w, name);
-    const write = async file => fs.promises.writeFile(file, "data");
+    const write = async file => {
+      assert.ok(Buffer.byteLength(path.basename(file)) <= 255);
+      await fs.promises.writeFile(file, "data");
+    };
     const verify = () => assert.equal(fs.readFileSync(targetPath, "utf8"), "data");
     const after = () => fs.rmSync(targetPath, { force: true });
     add(`writeViaSiblingTempPath/long-name-${kind}`, () => a.writeViaSiblingTempPath({ rootDir: w, targetPath, writeTemp: write }), {

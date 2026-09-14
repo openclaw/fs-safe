@@ -28,6 +28,8 @@ describe("path normalization fast paths", () => {
       expect(lowerCaseNfc(value), JSON.stringify(value)).toBe(nfc.toLowerCase().normalize("NFC"));
       expect(maxNormalizedUtf8Bytes(value), JSON.stringify(value))
         .toBe(Math.max(Buffer.byteLength(nfc), Buffer.byteLength(nfd)));
+      expect(maxNormalizedUtf8Bytes(value, true), JSON.stringify(value))
+        .toBe(Math.max(Buffer.byteLength(value), Buffer.byteLength(nfc), Buffer.byteLength(nfd)));
     }
   });
 

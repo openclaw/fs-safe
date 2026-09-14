@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fit callback staging filenames by their raw UTF-8 length as well as NFC/NFD lengths, preventing `ENAMETOOLONG` for valid destination names whose Unicode normalization is shorter.
+
 - Reduce repeated name-validation work for archives, store keys, and temporary filenames while preserving Unicode byte limits, canonical spelling, and collision rules; extend method benchmarks to large name collections and rejected inputs.
 - Fix method benchmarks so expected synchronous rejections are handled during timed calls as well as warmup.
 
