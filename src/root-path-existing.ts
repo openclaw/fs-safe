@@ -6,10 +6,11 @@ import { isNotFoundPathError, isPathInside } from "./path.js";
 import { realpathSync } from "./realpath.js";
 
 export function absolutePathWithRawSegments(candidate: string): string {
-  if (path.isAbsolute(candidate)) return candidate;
-  const drive = path.parse(candidate).root;
+  const raw = path.sep === "\\" ? candidate.replaceAll("/", "\\") : candidate;
+  const drive = path.parse(raw).root;
+  if (path.isAbsolute(raw) && !(path.sep === "\\" && drive === "\\")) return raw;
   const base = drive ? path.resolve(drive) : process.cwd();
-  return `${base}${path.sep}${candidate.slice(drive.length)}`;
+  return `${base}${base.endsWith(path.sep) ? "" : path.sep}${raw.slice(drive.length)}`;
 }
 
 export function rawPathRelativeToCanonicalRoot(
