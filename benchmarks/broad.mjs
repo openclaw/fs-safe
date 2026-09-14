@@ -110,10 +110,18 @@ export async function registerBroad({ api: a, workspace: w, register: add, onCle
   const queueDir = path.join(w, "broad-queue"), failedDir = path.join(w, "broad-failed");
   await a.ensureJsonDurableQueueDirs({ queueDir, failedDir });
   const queuePaths = Array.from({ length: 100 }, (_, id) => a.resolveJsonDurableQueueEntryPaths(queueDir, `entry-${id}`));
-  add("loadPendingJsonDurableQueueEntries/100", () => a.loadPendingJsonDurableQueueEntries({ queueDir, tempPrefix: "bench" }), {
-    divisor: 100,
-    before: () => { for (const [id, paths] of queuePaths.entries()) fs.writeFileSync(paths.jsonPath, JSON.stringify({ id })); },
-    verify: entries => assert.deepEqual(entries.map(entry => entry.id).sort((a, b) => a - b), Array.from({ length: 100 }, (_, i) => i)),
-    after: async () => { for (const paths of queuePaths) await a.ackJsonDurableQueueEntry(paths); },
-  });
+  for (const resumed of [false, true]) {
+    add(`loadPendingJsonDurableQueueEntries/100${resumed ? "-resumed" : ""}`, () => a.loadPendingJsonDurableQueueEntries({ queueDir, tempPrefix: "bench" }), {
+      divisor: 100,
+      before: async () => {
+        for (const [id, paths] of queuePaths.entries()) fs.writeFileSync(paths.jsonPath, JSON.stringify({ id }));
+        if (resumed) {
+          const claimed = await a.loadPendingJsonDurableQueueEntries({ queueDir, tempPrefix: "bench" });
+          assert.equal(claimed.length, queuePaths.length);
+        }
+      },
+      verify: entries => assert.deepEqual(entries.map(entry => entry.id).sort((a, b) => a - b), Array.from({ length: 100 }, (_, i) => i)),
+      after: async () => { for (const paths of queuePaths) await a.ackJsonDurableQueueEntry(paths); },
+    });
+  }
 }

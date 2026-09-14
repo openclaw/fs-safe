@@ -37,8 +37,9 @@ Hash cases verify the digest as well as the byte count outside measurement.
 The broader cases add lexical paths at depths 0/8/32, batches of 100/1,000
 paths, 1,000-entry listings and walks, private/public stores through 1 MiB with
 both durability settings, 1,000-item JSON documents and concurrent updates,
-contended/distinct lock groups, and loading 100 claimed queue entries. Queue
-fixtures are acknowledged outside timing; lock-group timings include release.
+contended/distinct lock groups, and loading 100 fresh or resumed queue claims.
+Resumed fixtures are first claimed outside timing to expose retry durability costs.
+Queue fixtures are acknowledged outside timing; lock-group timings include release.
 Scaling cases add 1/8/32 concurrent Root and FileStore reads, batches of 100
 lock-manager constructions with 0/32/128 retained locks, and scans of 100/1,000 unexpired
 store entries. Forced permission-error replacement cases exercise the public
