@@ -1,0 +1,111 @@
+{
+  "schema": 1,
+  "name": "pr323-optimized-producer-fix-windows-paired-proof",
+  "revisions": {
+    "baseline": "4b9b537aa06914e0b0d90e99db47420e432129eb",
+    "candidate": "abc61e8bb7feda23cc5b2ed7b02174130a117cb5"
+  },
+  "runtime": {
+    "runner": "windows-latest",
+    "platform": "win32",
+    "architecture": "x64",
+    "node": "22.23.2",
+    "pnpm": "11.25.0",
+    "nativeMode": "off"
+  },
+  "layout": {
+    "baselineCheckout": "checkout-a",
+    "candidateCheckout": "checkout-b",
+    "baselineCargoTarget": "cargo-out-a",
+    "candidateCargoTarget": "cargo-out-b"
+  },
+  "workloads": [
+    {
+      "id": "writeSiblingTempFile/direct/64B",
+      "api": "sibling",
+      "isolation": "direct",
+      "payloadBytes": 64
+    },
+    {
+      "id": "writeSiblingTempFile/direct/1MiB",
+      "api": "sibling",
+      "isolation": "direct",
+      "payloadBytes": 1048576
+    },
+    {
+      "id": "writeSiblingTempFile/private/64B",
+      "api": "sibling",
+      "isolation": "private",
+      "payloadBytes": 64
+    },
+    {
+      "id": "writeSiblingTempFile/private/1MiB",
+      "api": "sibling",
+      "isolation": "private",
+      "payloadBytes": 1048576
+    },
+    {
+      "id": "writeExternalFileWithinRoot/direct/64B",
+      "api": "output",
+      "isolation": "direct",
+      "payloadBytes": 64
+    },
+    {
+      "id": "writeExternalFileWithinRoot/direct/1MiB",
+      "api": "output",
+      "isolation": "direct",
+      "payloadBytes": 1048576
+    },
+    {
+      "id": "writeExternalFileWithinRoot/private/64B",
+      "api": "output",
+      "isolation": "private",
+      "payloadBytes": 64
+    },
+    {
+      "id": "writeExternalFileWithinRoot/private/1MiB",
+      "api": "output",
+      "isolation": "private",
+      "payloadBytes": 1048576
+    }
+  ],
+  "sampling": {
+    "blocks": 192,
+    "cohorts": 16,
+    "blocksPerCohort": 12,
+    "processesPerBlock": 8,
+    "expectedFreshProcesses": 1536,
+    "warmupCallsPerWorkload": 16,
+    "timedCallsPerWorkload": 16,
+    "abPatterns": [
+      "ABBA",
+      "BAAB"
+    ],
+    "aaPatterns": [
+      "A0A1A1A0",
+      "A1A0A0A1"
+    ],
+    "aaRevision": "baseline",
+    "quartetOrder": "balanced A/B-first and A/A-first within every cohort",
+    "workloadRotation": "cyclic Latin square across rounds and balanced eight-position quartet starts",
+    "scheduleSeed": 3439918481
+  },
+  "analysis": {
+    "bootstrapIterations": 20000,
+    "bootstrapSeed": 131798071,
+    "movingBlockLength": 4,
+    "stratification": "sixteen chronological cohorts",
+    "withinBlock": "mean each child then equal-weight the two processes in each arm",
+    "estimator": "median paired block log ratios and absolute differences",
+    "confidenceLevel": 0.95,
+    "relativeRegressionPercent": 5,
+    "absoluteRegressionMicroseconds": 5,
+    "gate": "regression is material only when both relative and absolute thresholds are exceeded",
+    "aaCalibration": "both intervals contain zero and exclude material bias in both directions"
+  },
+  "experiment": "producer-fix",
+  "trees": {
+    "baseline": "153e82ac74396454bab2b3c2028987887be0af10",
+    "candidate": "270d78d740868aeb9f65cbb632b906a11d07f9cd"
+  }
+}

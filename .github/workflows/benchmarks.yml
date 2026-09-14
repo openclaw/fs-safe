@@ -1,4 +1,4 @@
-name: Final integration paired Windows performance proofs
+name: PR 323 optimized candidate prospective Windows proofs
 
 on:
   workflow_dispatch:
@@ -7,57 +7,94 @@ permissions:
   contents: read
 
 jobs:
-  archive-paired-proof:
-    name: Windows Node 22 paired archive proof
+  verify-proof:
+    name: Verify frozen proof harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.25.0
+          run_install: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.23.2"
+      - run: rustup target add wasm32-unknown-unknown
+      - run: pnpm install --frozen-lockfile
+      - name: Check frozen plans and schedules without sampling
+        run: node scripts/pr323-optimized-proof-selfcheck.mjs
+      - name: Repository check
+        run: pnpm check
+      - run: git diff --check
+
+  paired-proof:
+    name: Windows Node 22 ${{ matrix.experiment }} proof
+    needs: verify-proof
     runs-on: windows-latest
-    timeout-minutes: 55
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        experiment: [producer-fix, producer-final, archive-final]
     defaults:
       run:
         shell: pwsh
     steps:
-      - name: Check out proof harness
+      - name: Check out frozen proof harness
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           version: 11.25.0
           run_install: false
-
-      - name: Set up exact Node 22 runtime
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22.23.2"
           architecture: x64
+      - run: rustup target add wasm32-unknown-unknown
 
-      - name: Add portable TAR parser target
-        run: rustup target add wasm32-unknown-unknown
-
-      - name: Create isolated proof root
+      - name: Create fresh isolated proof root
+        env:
+          EXPERIMENT: ${{ matrix.experiment }}
         run: |
-          $root = Join-Path $env:RUNNER_TEMP ('archive-paired-proof-' + [guid]::NewGuid().ToString('N'))
-          [void](New-Item -ItemType Directory -Path $root)
-          [void](New-Item -ItemType Directory -Path (Join-Path $root 'evidence'))
-          "ARCHIVE_PROOF_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $proofRoot = Join-Path $env:RUNNER_TEMP ('pr323-optimized-' + $env:EXPERIMENT + '-' + [guid]::NewGuid().ToString('N'))
+          [void](New-Item -ItemType Directory -Path $proofRoot)
+          [void](New-Item -ItemType Directory -Path (Join-Path $proofRoot 'evidence'))
+          "OPTIMIZED_PROOF_ROOT=$proofRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Validate provenance and build exact revisions
+      - name: Build and attest exact frozen revisions
+        env:
+          EXPERIMENT: ${{ matrix.experiment }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $baseline = 'a49e2d7033e73a40b592881e0863e6acc3649175'
-          $candidate = '760687563312d818ac31523e0ddb08b87f3347c2'
-          $baselineRepo = Join-Path $env:ARCHIVE_PROOF_ROOT 'checkout-a'
-          $candidateRepo = Join-Path $env:ARCHIVE_PROOF_ROOT 'checkout-b'
-          $baselineCargo = Join-Path $env:ARCHIVE_PROOF_ROOT 'cargo-out-a'
-          $candidateCargo = Join-Path $env:ARCHIVE_PROOF_ROOT 'cargo-out-b'
-          $receiptPath = Join-Path $env:ARCHIVE_PROOF_ROOT 'evidence/build-provenance.json'
+          $planPath = Join-Path $env:GITHUB_WORKSPACE ('scripts/pr323-optimized-' + $env:EXPERIMENT + '-plan.json')
+          $plan = Get-Content -LiteralPath $planPath -Raw | ConvertFrom-Json
+          if ($plan.experiment -ne $env:EXPERIMENT) { throw 'Experiment plan mismatch.' }
+          $baseline = $plan.revisions.baseline
+          $candidate = $plan.revisions.candidate
+          if ($candidate -ne 'abc61e8bb7feda23cc5b2ed7b02174130a117cb5') { throw 'Candidate mismatch.' }
+          $baselineRepo = Join-Path $env:OPTIMIZED_PROOF_ROOT 'checkout-a'
+          $candidateRepo = Join-Path $env:OPTIMIZED_PROOF_ROOT 'checkout-b'
+          $baselineCargo = Join-Path $env:OPTIMIZED_PROOF_ROOT 'cargo-out-a'
+          $candidateCargo = Join-Path $env:OPTIMIZED_PROOF_ROOT 'cargo-out-b'
+          $receiptPath = Join-Path $env:OPTIMIZED_PROOF_ROOT 'evidence/build-provenance.json'
           $receipt = [ordered]@{
             schema = 1
             passed = $false
+            experiment = $env:EXPERIMENT
             baselineCommit = $baseline
             candidateCommit = $candidate
+            expectedTrees = $plan.trees
+            runId = $env:GITHUB_RUN_ID
+            runAttempt = $env:GITHUB_RUN_ATTEMPT
+            proofCommit = $env:GITHUB_SHA
+            proofRef = $env:GITHUB_REF
             checkoutLeafNames = @('checkout-a', 'checkout-b')
             cargoTargetLeafNames = @('cargo-out-a', 'cargo-out-b')
             commands = @()
@@ -69,24 +106,23 @@ jobs:
             if ($code -ne 0) { throw "$Program failed with exit $code" }
           }
           try {
-            if ($baselineRepo.Length -ne $candidateRepo.Length) { throw 'Checkout paths are not equal length.' }
-            if ($baselineCargo.Length -ne $candidateCargo.Length) { throw 'Cargo target paths are not equal length.' }
+            if ($baselineRepo.Length -ne $candidateRepo.Length) { throw 'Checkout paths differ in length.' }
+            if ($baselineCargo.Length -ne $candidateCargo.Length) { throw 'Cargo paths differ in length.' }
             Run-Checked 'git' @('cat-file', '-e', "$baseline^{commit}")
             Run-Checked 'git' @('cat-file', '-e', "$candidate^{commit}")
             $mergeBase = (& git merge-base $baseline $candidate).Trim()
-            if ($LASTEXITCODE -ne 0) { throw 'git merge-base failed.' }
+            if ($LASTEXITCODE -ne 0 -or $mergeBase -ne $baseline) { throw 'Baseline is not the merge-base.' }
             $receipt.mergeBase = $mergeBase
-            if ($mergeBase -ne $baseline) { throw 'Frozen baseline is not the candidate merge-base.' }
-            & git merge-base --is-ancestor $baseline $candidate
-            $ancestorCode = $LASTEXITCODE
-            $receipt.baselineIsAncestor = $ancestorCode -eq 0
-            if ($ancestorCode -ne 0) { throw 'Frozen baseline is not a candidate ancestor.' }
+            Run-Checked 'git' @('merge-base', '--is-ancestor', $baseline, $candidate)
+            $receipt.baselineIsAncestor = $true
             Run-Checked 'git' @('worktree', 'add', '--detach', $baselineRepo, $baseline)
             Run-Checked 'git' @('worktree', 'add', '--detach', $candidateRepo, $candidate)
             foreach ($build in @(
-              @{ repo = $baselineRepo; cargo = $baselineCargo; label = 'baseline' },
-              @{ repo = $candidateRepo; cargo = $candidateCargo; label = 'candidate' }
+              @{ repo = $baselineRepo; cargo = $baselineCargo; label = 'baseline'; tree = $plan.trees.baseline },
+              @{ repo = $candidateRepo; cargo = $candidateCargo; label = 'candidate'; tree = $plan.trees.candidate }
             )) {
+              $actualTree = (& git -C $build.repo rev-parse 'HEAD^{tree}').Trim()
+              if ($LASTEXITCODE -ne 0 -or $actualTree -ne $build.tree) { throw 'Source tree differs from frozen plan.' }
               Push-Location $build.repo
               try {
                 $env:CARGO_TARGET_DIR = $build.cargo
@@ -103,16 +139,13 @@ jobs:
             $receipt.pnpm = (& pnpm --version).Trim()
             $receipt.rustc = (& rustc --version).Trim()
             $receipt.cargo = (& cargo --version).Trim()
-            if ($receipt.node -ne 'v22.23.2') { throw "Unexpected Node runtime: $($receipt.node)" }
-            if ($receipt.pnpm -ne '11.25.0') { throw "Unexpected pnpm runtime: $($receipt.pnpm)" }
+            if ($receipt.node -ne 'v22.23.2' -or $receipt.pnpm -ne '11.25.0') { throw 'Toolchain version mismatch.' }
             $receipt.baselineHead = (& git -C $baselineRepo rev-parse HEAD).Trim()
             $receipt.candidateHead = (& git -C $candidateRepo rev-parse HEAD).Trim()
-            if ($receipt.baselineHead -ne $baseline -or $receipt.candidateHead -ne $candidate) {
-              throw 'A proof checkout does not match its frozen revision.'
-            }
+            if ($receipt.baselineHead -ne $baseline -or $receipt.candidateHead -ne $candidate) { throw 'HEAD mismatch.' }
             $receipt.passed = $true
-            "ARCHIVE_PROOF_BASELINE=$baselineRepo" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-            "ARCHIVE_PROOF_CANDIDATE=$candidateRepo" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            "OPTIMIZED_PROOF_BASELINE=$baselineRepo" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            "OPTIMIZED_PROOF_CANDIDATE=$candidateRepo" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           } catch {
             $receipt.error = $_.Exception.Message
             throw
@@ -120,384 +153,27 @@ jobs:
             $receipt | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $receiptPath
           }
 
-      - name: Run immutable paired archive proof
+      - name: Run exactly one frozen experiment
         env:
-          FS_SAFE_NATIVE_MODE: off
+          FS_SAFE_NATIVE_MODE: "off"
+          EXPERIMENT: ${{ matrix.experiment }}
         run: |
-          node scripts/archive-paired-proof.mjs `
-            --mode production `
-            --plan scripts/archive-paired-proof-plan.json `
-            --baseline-dir $env:ARCHIVE_PROOF_BASELINE `
-            --candidate-dir $env:ARCHIVE_PROOF_CANDIDATE `
-            --output (Join-Path $env:ARCHIVE_PROOF_ROOT 'evidence/benchmark')
+          $plan = 'scripts/pr323-optimized-' + $env:EXPERIMENT + '-plan.json'
+          $arguments = @('--mode', 'production', '--plan', $plan,
+            '--baseline-dir', $env:OPTIMIZED_PROOF_BASELINE,
+            '--candidate-dir', $env:OPTIMIZED_PROOF_CANDIDATE,
+            '--output', (Join-Path $env:OPTIMIZED_PROOF_ROOT 'evidence/benchmark'))
+          if ($env:EXPERIMENT -eq 'archive-final') {
+            & node scripts/pr323-optimized-archive-proof.mjs @arguments
+          } else {
+            & node scripts/pr323-optimized-producer-proof.mjs --experiment $env:EXPERIMENT @arguments
+          }
           exit $LASTEXITCODE
 
-      - name: Upload curated proof evidence
-        id: proof-artifact
-        if: always() && env.ARCHIVE_PROOF_ROOT != ''
+      - name: Upload complete curated evidence including failures
+        if: always() && env.OPTIMIZED_PROOF_ROOT != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: archive-whole-family-paired-proof-${{ github.run_id }}-${{ github.run_attempt }}
-          # Excludes checkouts, dependencies, Cargo outputs, and fixture bytes.
-          path: ${{ env.ARCHIVE_PROOF_ROOT }}/evidence/
+          name: pr323-optimized-${{ matrix.experiment }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.OPTIMIZED_PROOF_ROOT }}/evidence/
           if-no-files-found: error
-
-      - name: Summarize paired proof
-        if: always()
-        env:
-          PROOF_ARTIFACT_URL: ${{ steps.proof-artifact.outputs.artifact-url }}
-          PROOF_JOB_STATUS: ${{ job.status }}
-        run: |
-          $lines = @(
-            '## Final integration whole-family paired Windows archive proof', '',
-            "Job status: $env:PROOF_JOB_STATUS", '',
-            'Frozen baseline: `a49e2d7033e73a40b592881e0863e6acc3649175`',
-            'Frozen candidate: `760687563312d818ac31523e0ddb08b87f3347c2`',
-            'Node 22.23.2, pnpm 11.25.0, `FS_SAFE_NATIVE_MODE=off`.',
-            '192 paired blocks; 1,536 fresh single-variant processes; 16 warmup and 16 timed calls per workload.',
-            'Gate: fixed 20,000-draw, cohort-stratified moving-block bootstrap; a regression is material only above both 5% and 5 microseconds.',
-            'A normal pass also requires the independent A0/A1 calibration to contain zero and exclude material bias in both directions.', ''
-            'Every one of the four archive workloads must classify as ACCEPT.', ''
-          )
-          $reportPath = Join-Path $env:ARCHIVE_PROOF_ROOT 'evidence/benchmark/report.json'
-          if (Test-Path -LiteralPath $reportPath) {
-            $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
-            $lines += "Proof classification: **$($report.classification)**"
-            foreach ($result in $report.results) {
-              $lines += "- $($result.workload): $($result.classification); A/B $([math]::Round($result.ab.point.relativePercent, 3))%; A/A calibrated = $($result.aa.calibrated)"
-            }
-          } else {
-            $lines += 'Proof classification: **INCOMPLETE** (no final report).'
-          }
-          if ($env:PROOF_ARTIFACT_URL) { $lines += "[Curated evidence]($env:PROOF_ARTIFACT_URL)" }
-          $lines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
-
-  producer-isolation-paired-proof:
-    name: Windows Node 22 paired producer-isolation proof
-    runs-on: windows-latest
-    timeout-minutes: 90
-    defaults:
-      run:
-        shell: pwsh
-    steps:
-      - name: Check out proof harness
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        with:
-          version: 11.25.0
-          run_install: false
-
-      - name: Set up exact Node 22 runtime
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "22.23.2"
-          architecture: x64
-
-      - name: Add portable TAR parser target
-        run: rustup target add wasm32-unknown-unknown
-
-      - name: Create isolated proof root
-        run: |
-          $root = Join-Path $env:RUNNER_TEMP ('producer-isolation-paired-proof-' + [guid]::NewGuid().ToString('N'))
-          [void](New-Item -ItemType Directory -Path $root)
-          [void](New-Item -ItemType Directory -Path (Join-Path $root 'evidence'))
-          "PRODUCER_PROOF_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-
-      - name: Validate provenance and build exact revisions
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $baseline = 'a49e2d7033e73a40b592881e0863e6acc3649175'
-          $candidate = '760687563312d818ac31523e0ddb08b87f3347c2'
-          $baselineRepo = Join-Path $env:PRODUCER_PROOF_ROOT 'checkout-a'
-          $candidateRepo = Join-Path $env:PRODUCER_PROOF_ROOT 'checkout-b'
-          $baselineCargo = Join-Path $env:PRODUCER_PROOF_ROOT 'cargo-out-a'
-          $candidateCargo = Join-Path $env:PRODUCER_PROOF_ROOT 'cargo-out-b'
-          $receiptPath = Join-Path $env:PRODUCER_PROOF_ROOT 'evidence/build-provenance.json'
-          $receipt = [ordered]@{
-            schema = 1
-            passed = $false
-            baselineCommit = $baseline
-            candidateCommit = $candidate
-            checkoutLeafNames = @('checkout-a', 'checkout-b')
-            cargoTargetLeafNames = @('cargo-out-a', 'cargo-out-b')
-            commands = @()
-          }
-          function Run-Checked([string]$Program, [string[]]$Arguments) {
-            & $Program @Arguments
-            $code = $LASTEXITCODE
-            $receipt.commands += [ordered]@{ program = $Program; arguments = $Arguments; exitCode = $code }
-            if ($code -ne 0) { throw "$Program failed with exit $code" }
-          }
-          try {
-            if ($baselineRepo.Length -ne $candidateRepo.Length) { throw 'Checkout paths are not equal length.' }
-            if ($baselineCargo.Length -ne $candidateCargo.Length) { throw 'Cargo target paths are not equal length.' }
-            Run-Checked 'git' @('cat-file', '-e', "$baseline^{commit}")
-            Run-Checked 'git' @('cat-file', '-e', "$candidate^{commit}")
-            $mergeBase = (& git merge-base $baseline $candidate).Trim()
-            if ($LASTEXITCODE -ne 0) { throw 'git merge-base failed.' }
-            $receipt.mergeBase = $mergeBase
-            if ($mergeBase -ne $baseline) { throw 'Frozen baseline is not the candidate merge-base.' }
-            & git merge-base --is-ancestor $baseline $candidate
-            $ancestorCode = $LASTEXITCODE
-            $receipt.baselineIsAncestor = $ancestorCode -eq 0
-            if ($ancestorCode -ne 0) { throw 'Frozen baseline is not a candidate ancestor.' }
-            Run-Checked 'git' @('worktree', 'add', '--detach', $baselineRepo, $baseline)
-            Run-Checked 'git' @('worktree', 'add', '--detach', $candidateRepo, $candidate)
-            foreach ($build in @(
-              @{ repo = $baselineRepo; cargo = $baselineCargo; label = 'baseline' },
-              @{ repo = $candidateRepo; cargo = $candidateCargo; label = 'candidate' }
-            )) {
-              Push-Location $build.repo
-              try {
-                $env:CARGO_TARGET_DIR = $build.cargo
-                Run-Checked 'pnpm' @('install', '--frozen-lockfile')
-                Run-Checked 'pnpm' @('build')
-              } finally {
-                Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue
-                Pop-Location
-              }
-            }
-            $receipt.checkoutPathLengths = @($baselineRepo.Length, $candidateRepo.Length)
-            $receipt.cargoTargetPathLengths = @($baselineCargo.Length, $candidateCargo.Length)
-            $receipt.node = (& node --version).Trim()
-            $receipt.pnpm = (& pnpm --version).Trim()
-            $receipt.rustc = (& rustc --version).Trim()
-            $receipt.cargo = (& cargo --version).Trim()
-            if ($receipt.node -ne 'v22.23.2') { throw "Unexpected Node runtime: $($receipt.node)" }
-            if ($receipt.pnpm -ne '11.25.0') { throw "Unexpected pnpm runtime: $($receipt.pnpm)" }
-            $receipt.baselineHead = (& git -C $baselineRepo rev-parse HEAD).Trim()
-            $receipt.candidateHead = (& git -C $candidateRepo rev-parse HEAD).Trim()
-            if ($receipt.baselineHead -ne $baseline -or $receipt.candidateHead -ne $candidate) {
-              throw 'A proof checkout does not match its frozen revision.'
-            }
-            $receipt.passed = $true
-            "PRODUCER_PROOF_BASELINE=$baselineRepo" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-            "PRODUCER_PROOF_CANDIDATE=$candidateRepo" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          } catch {
-            $receipt.error = $_.Exception.Message
-            throw
-          } finally {
-            $receipt | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $receiptPath
-          }
-
-      - name: Run immutable paired producer-isolation proof
-        env:
-          FS_SAFE_NATIVE_MODE: off
-        run: |
-          node scripts/producer-isolation-paired-proof.mjs `
-            --mode production `
-            --plan scripts/producer-isolation-paired-proof-plan.json `
-            --baseline-dir $env:PRODUCER_PROOF_BASELINE `
-            --candidate-dir $env:PRODUCER_PROOF_CANDIDATE `
-            --output (Join-Path $env:PRODUCER_PROOF_ROOT 'evidence/benchmark')
-          exit $LASTEXITCODE
-
-      - name: Upload curated producer-isolation proof evidence
-        id: proof-artifact
-        if: always() && env.PRODUCER_PROOF_ROOT != ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: producer-isolation-paired-proof-${{ github.run_id }}-${{ github.run_attempt }}
-          # Excludes checkouts, dependencies, Cargo outputs, and fixture/workspace bytes.
-          path: ${{ env.PRODUCER_PROOF_ROOT }}/evidence/
-          if-no-files-found: error
-
-      - name: Summarize paired producer-isolation proof
-        if: always()
-        env:
-          PROOF_ARTIFACT_URL: ${{ steps.proof-artifact.outputs.artifact-url }}
-          PROOF_JOB_STATUS: ${{ job.status }}
-        run: |
-          $lines = @(
-            '## Producer-isolation paired Windows proof', '',
-            "Job status: $env:PROOF_JOB_STATUS", '',
-            'Frozen baseline: `a49e2d7033e73a40b592881e0863e6acc3649175`',
-            'Frozen candidate: `760687563312d818ac31523e0ddb08b87f3347c2`',
-            'Node 22.23.2, pnpm 11.25.0, `FS_SAFE_NATIVE_MODE=off`.',
-            '192 paired blocks in 16 chronological cohorts; 1,536 fresh single-variant processes; 16 warmup and 16 timed calls per workload.',
-            'Eight workloads: sibling helper/output × direct/private producer × 64B/1MiB.',
-            'Gate: fixed 20,000-draw, cohort-stratified moving-block bootstrap; a regression is material only above both 5% and 5 microseconds.',
-            'A normal pass also requires independent A0/A1 calibration and every workload classification must be ACCEPT.', ''
-          )
-          $reportPath = Join-Path $env:PRODUCER_PROOF_ROOT 'evidence/benchmark/report.json'
-          if (Test-Path -LiteralPath $reportPath) {
-            $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
-            $lines += "Proof classification: **$($report.classification)**"
-            foreach ($result in $report.results) {
-              $lines += "- $($result.workload): $($result.classification); A/B $([math]::Round($result.ab.point.relativePercent, 3))%; A/A calibrated = $($result.aa.calibrated)"
-            }
-          } else {
-            $lines += 'Proof classification: **INCOMPLETE** (no final report).'
-          }
-          if ($env:PROOF_ARTIFACT_URL) { $lines += "[Curated evidence]($env:PROOF_ARTIFACT_URL)" }
-          $lines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
-
-  transfer-overwrite-paired-proof:
-    name: Windows Node 22 paired transfer/overwrite proof
-    runs-on: windows-latest
-    timeout-minutes: 55
-    defaults:
-      run:
-        shell: pwsh
-    steps:
-      - name: Check out proof harness
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        with:
-          version: 11.25.0
-          run_install: false
-
-      - name: Set up exact Node 22 runtime
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "22.23.2"
-          architecture: x64
-
-      - name: Add portable TAR parser target
-        run: rustup target add wasm32-unknown-unknown
-
-      - name: Create isolated proof root
-        run: |
-          $root = Join-Path $env:RUNNER_TEMP ('transfer-overwrite-paired-proof-' + [guid]::NewGuid().ToString('N'))
-          [void](New-Item -ItemType Directory -Path $root)
-          [void](New-Item -ItemType Directory -Path (Join-Path $root 'evidence'))
-          "TRANSFER_PROOF_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-
-      - name: Validate provenance and build exact revisions
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $baseline = 'a49e2d7033e73a40b592881e0863e6acc3649175'
-          $candidate = '760687563312d818ac31523e0ddb08b87f3347c2'
-          $baselineRepo = Join-Path $env:TRANSFER_PROOF_ROOT 'checkout-a'
-          $candidateRepo = Join-Path $env:TRANSFER_PROOF_ROOT 'checkout-b'
-          $baselineCargo = Join-Path $env:TRANSFER_PROOF_ROOT 'cargo-out-a'
-          $candidateCargo = Join-Path $env:TRANSFER_PROOF_ROOT 'cargo-out-b'
-          $receiptPath = Join-Path $env:TRANSFER_PROOF_ROOT 'evidence/build-provenance.json'
-          $receipt = [ordered]@{
-            schema = 1
-            passed = $false
-            baselineCommit = $baseline
-            candidateCommit = $candidate
-            checkoutLeafNames = @('checkout-a', 'checkout-b')
-            cargoTargetLeafNames = @('cargo-out-a', 'cargo-out-b')
-            commands = @()
-          }
-          function Run-Checked([string]$Program, [string[]]$Arguments) {
-            & $Program @Arguments
-            $code = $LASTEXITCODE
-            $receipt.commands += [ordered]@{ program = $Program; arguments = $Arguments; exitCode = $code }
-            if ($code -ne 0) { throw "$Program failed with exit $code" }
-          }
-          try {
-            if ($baselineRepo.Length -ne $candidateRepo.Length) { throw 'Checkout paths are not equal length.' }
-            if ($baselineCargo.Length -ne $candidateCargo.Length) { throw 'Cargo target paths are not equal length.' }
-            Run-Checked 'git' @('cat-file', '-e', "$baseline^{commit}")
-            Run-Checked 'git' @('cat-file', '-e', "$candidate^{commit}")
-            $mergeBase = (& git merge-base $baseline $candidate).Trim()
-            if ($LASTEXITCODE -ne 0) { throw 'git merge-base failed.' }
-            $receipt.mergeBase = $mergeBase
-            if ($mergeBase -ne $baseline) { throw 'Frozen baseline is not the candidate merge-base.' }
-            & git merge-base --is-ancestor $baseline $candidate
-            $ancestorCode = $LASTEXITCODE
-            $receipt.baselineIsAncestor = $ancestorCode -eq 0
-            if ($ancestorCode -ne 0) { throw 'Frozen baseline is not a candidate ancestor.' }
-            Run-Checked 'git' @('worktree', 'add', '--detach', $baselineRepo, $baseline)
-            Run-Checked 'git' @('worktree', 'add', '--detach', $candidateRepo, $candidate)
-            foreach ($build in @(
-              @{ repo = $baselineRepo; cargo = $baselineCargo; label = 'baseline' },
-              @{ repo = $candidateRepo; cargo = $candidateCargo; label = 'candidate' }
-            )) {
-              Push-Location $build.repo
-              try {
-                $env:CARGO_TARGET_DIR = $build.cargo
-                Run-Checked 'pnpm' @('install', '--frozen-lockfile')
-                Run-Checked 'pnpm' @('build')
-              } finally {
-                Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue
-                Pop-Location
-              }
-            }
-            $receipt.checkoutPathLengths = @($baselineRepo.Length, $candidateRepo.Length)
-            $receipt.cargoTargetPathLengths = @($baselineCargo.Length, $candidateCargo.Length)
-            $receipt.node = (& node --version).Trim()
-            $receipt.pnpm = (& pnpm --version).Trim()
-            $receipt.rustc = (& rustc --version).Trim()
-            $receipt.cargo = (& cargo --version).Trim()
-            if ($receipt.node -ne 'v22.23.2') { throw "Unexpected Node runtime: $($receipt.node)" }
-            if ($receipt.pnpm -ne '11.25.0') { throw "Unexpected pnpm runtime: $($receipt.pnpm)" }
-            $receipt.baselineHead = (& git -C $baselineRepo rev-parse HEAD).Trim()
-            $receipt.candidateHead = (& git -C $candidateRepo rev-parse HEAD).Trim()
-            if ($receipt.baselineHead -ne $baseline -or $receipt.candidateHead -ne $candidate) {
-              throw 'A proof checkout does not match its frozen revision.'
-            }
-            $receipt.passed = $true
-            "TRANSFER_PROOF_BASELINE=$baselineRepo" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-            "TRANSFER_PROOF_CANDIDATE=$candidateRepo" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          } catch {
-            $receipt.error = $_.Exception.Message
-            throw
-          } finally {
-            $receipt | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $receiptPath
-          }
-
-      - name: Run immutable paired transfer/overwrite proof
-        env:
-          FS_SAFE_NATIVE_MODE: off
-        run: |
-          node scripts/transfer-overwrite-paired-proof.mjs `
-            --mode production `
-            --plan scripts/transfer-overwrite-paired-proof-plan.json `
-            --baseline-dir $env:TRANSFER_PROOF_BASELINE `
-            --candidate-dir $env:TRANSFER_PROOF_CANDIDATE `
-            --output (Join-Path $env:TRANSFER_PROOF_ROOT 'evidence/benchmark')
-          exit $LASTEXITCODE
-
-      - name: Upload curated transfer/overwrite proof evidence
-        id: proof-artifact
-        if: always() && env.TRANSFER_PROOF_ROOT != ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: transfer-overwrite-paired-proof-${{ github.run_id }}-${{ github.run_attempt }}
-          # Excludes checkouts, dependencies, Cargo outputs, and fixture bytes.
-          path: ${{ env.TRANSFER_PROOF_ROOT }}/evidence/
-          if-no-files-found: error
-
-      - name: Summarize paired transfer/overwrite proof
-        if: always()
-        env:
-          PROOF_ARTIFACT_URL: ${{ steps.proof-artifact.outputs.artifact-url }}
-          PROOF_JOB_STATUS: ${{ job.status }}
-        run: |
-          $lines = @(
-            '## Borrowed-handle transfer/overwrite paired Windows proof', '',
-            "Job status: $env:PROOF_JOB_STATUS", '',
-            'Frozen baseline: `a49e2d7033e73a40b592881e0863e6acc3649175`',
-            'Frozen candidate: `760687563312d818ac31523e0ddb08b87f3347c2`',
-            'Node 22.23.2, pnpm 11.25.0, `FS_SAFE_NATIVE_MODE=off`.',
-            '96 paired blocks; 768 fresh single-variant processes; 16 warmup and 16 timed calls per workload.',
-            'Workloads: overwrite 64B absent/getter and copy 64B uncapped/onChunk.',
-            'Gate: fixed 20,000-draw, cohort-stratified moving-block bootstrap; a regression is material only above both 5% and 5 microseconds.',
-            'A normal pass also requires the independent A0/A1 calibration to contain zero and exclude material bias in both directions.', ''
-          )
-          $reportPath = Join-Path $env:TRANSFER_PROOF_ROOT 'evidence/benchmark/report.json'
-          if (Test-Path -LiteralPath $reportPath) {
-            $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
-            $lines += "Proof classification: **$($report.classification)**"
-            foreach ($result in $report.results) {
-              $lines += "- $($result.workload): $($result.classification); A/B $([math]::Round($result.ab.point.relativePercent, 3))%; A/A calibrated = $($result.aa.calibrated)"
-            }
-          } else {
-            $lines += 'Proof classification: **INCOMPLETE** (no final report).'
-          }
-          if ($env:PROOF_ARTIFACT_URL) { $lines += "[Curated evidence]($env:PROOF_ARTIFACT_URL)" }
-          $lines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8

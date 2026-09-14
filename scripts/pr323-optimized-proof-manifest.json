@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "candidate": "abc61e8bb7feda23cc5b2ed7b02174130a117cb5",
+  "candidateTree": "270d78d740868aeb9f65cbb632b906a11d07f9cd",
+  "preservedProofCommit": "556c3455b4e78fcc6a6d74243316c15200bdf78b",
+  "filesSha256Lf": {
+    ".github/workflows/benchmarks.yml": "8c42bc94264bcc14a9e269d1cb4b5efe2cbd13467e6949e2eceb2b7df7f5e9b5",
+    "scripts/pr323-optimized-archive-final-plan.json": "a3c1a02485cf6a2f648115856e2d79a655a4c9038f95a352b017fbe97153946e",
+    "scripts/pr323-optimized-archive-proof.mjs": "4909e4f6a644e338ee13f90b76b4120edcc3e6b355355172fb127c5d80e82e23",
+    "scripts/pr323-optimized-producer-final-plan.json": "297e1881a64f9ebf9f00752c892ff7377518c17fa3fcd938491b22ea5809ee28",
+    "scripts/pr323-optimized-producer-fix-plan.json": "7f4c9eb5bde424ba8ec523ee75aa3754673572fa4cc5e00f28d82c4e7af4486f",
+    "scripts/pr323-optimized-producer-proof.mjs": "7055523937b6f646eb555c75544e076fd4eb0442f54e3f2470f1b58b884face9",
+    "scripts/pr323-optimized-proof-protocol.md": "610fc933df7ee1fe3055c5c16f3e67a073c3512a2e81a8a15e8764af342a3c9f",
+    "scripts/pr323-optimized-proof-selfcheck.mjs": "7e91c889897a187551f335c7b744b8411c5fe0e3bd1eb86f234944ef09b8cc8d"
+  }
+}

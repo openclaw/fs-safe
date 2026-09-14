@@ -1,0 +1,89 @@
+{
+  "schema": 1,
+  "name": "pr323-optimized-archive-final-windows-paired-proof",
+  "revisions": {
+    "baseline": "a49e2d7033e73a40b592881e0863e6acc3649175",
+    "candidate": "abc61e8bb7feda23cc5b2ed7b02174130a117cb5"
+  },
+  "runtime": {
+    "runner": "windows-latest",
+    "platform": "win32",
+    "architecture": "x64",
+    "node": "22.23.2",
+    "pnpm": "11.25.0",
+    "nativeMode": "off"
+  },
+  "layout": {
+    "baselineCheckout": "checkout-a",
+    "candidateCheckout": "checkout-b",
+    "baselineCargoTarget": "cargo-out-a",
+    "candidateCargoTarget": "cargo-out-b"
+  },
+  "workloads": [
+    {
+      "id": "readArchiveEntry/gzip-512-members",
+      "operation": "read",
+      "fixture": "many.tgz",
+      "entryPath": "entry-511",
+      "payloadBytes": 64
+    },
+    {
+      "id": "inspectTarArchive/gzip-512-members",
+      "operation": "inspect",
+      "fixture": "many.tgz",
+      "manifestEntries": 512
+    },
+    {
+      "id": "readArchiveEntry/tar-1MiB",
+      "operation": "read",
+      "fixture": "large-1048576.tar",
+      "entryPath": "payload.bin",
+      "payloadBytes": 1048576
+    },
+    {
+      "id": "readArchiveEntry/gzip-1MiB",
+      "operation": "read",
+      "fixture": "large-1048576.tgz",
+      "entryPath": "payload.bin",
+      "payloadBytes": 1048576
+    }
+  ],
+  "sampling": {
+    "blocks": 192,
+    "cohorts": 4,
+    "blocksPerCohort": 48,
+    "processesPerBlock": 8,
+    "expectedFreshProcesses": 1536,
+    "warmupCallsPerWorkload": 16,
+    "timedCallsPerWorkload": 16,
+    "abPatterns": [
+      "ABBA",
+      "BAAB"
+    ],
+    "aaPatterns": [
+      "A0A1A1A0",
+      "A1A0A0A1"
+    ],
+    "aaRevision": "baseline",
+    "workloadRotation": "cyclic Latin square across rounds and balanced quartet starts",
+    "scheduleSeed": 1134928982
+  },
+  "analysis": {
+    "bootstrapIterations": 20000,
+    "bootstrapSeed": 2864476891,
+    "movingBlockLength": 4,
+    "stratification": "four chronological cohorts",
+    "withinBlock": "mean each child then equal-weight the two processes in each arm",
+    "estimator": "median paired block log ratios and absolute differences",
+    "confidenceLevel": 0.95,
+    "relativeRegressionPercent": 5,
+    "absoluteRegressionMicroseconds": 5,
+    "gate": "regression is material only when both relative and absolute thresholds are exceeded",
+    "aaCalibration": "both intervals contain zero and exclude material bias in both directions"
+  },
+  "experiment": "archive-final",
+  "trees": {
+    "baseline": "db6bad9fee3cd059635932643c4dd5cd32da6eaf",
+    "candidate": "270d78d740868aeb9f65cbb632b906a11d07f9cd"
+  }
+}
