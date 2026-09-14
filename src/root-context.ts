@@ -43,6 +43,9 @@ const POSIX_PARENT_COMPONENT = /(?:^|\/)\.\.(?:\/|$)/;
 const WINDOWS_PARENT_COMPONENT = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
 
 export async function expandRelativePathWithHome(relativePath: string): Promise<string> {
+  const homeOnly = relativePath === "~";
+  const homePrefix = relativePath.startsWith("~/") || (path.sep === "\\" && relativePath.startsWith("~\\"));
+  if (!homeOnly && !homePrefix) return relativePath;
   const rawHome = process.env.HOME || process.env.USERPROFILE || os.homedir();
   if (cachedHomePath?.raw !== rawHome) {
     let realHome = rawHome;
@@ -53,11 +56,7 @@ export async function expandRelativePathWithHome(relativePath: string): Promise<
     }
     cachedHomePath = { raw: rawHome, real: realHome };
   }
-  if (relativePath === "~") return cachedHomePath.real;
-  if (relativePath.startsWith("~/") || (path.sep === "\\" && relativePath.startsWith("~\\"))) {
-    return `${ensureTrailingSep(cachedHomePath.real)}${relativePath.slice(2)}`;
-  }
-  return relativePath;
+  return homeOnly ? cachedHomePath.real : `${ensureTrailingSep(cachedHomePath.real)}${relativePath.slice(2)}`;
 }
 
 export async function resolveRootContext(rootDir: string): Promise<RootContext> {

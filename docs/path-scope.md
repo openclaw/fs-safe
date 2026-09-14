@@ -1,6 +1,6 @@
 # pathScope()
 
-`pathScope()` is an advanced helper with the same boundary semantics as `root()`, but it operates on **absolute paths** the caller already trusts and returns plain `{ ok, path }` results instead of throwing. Use it when you want the boundary check up front before handing an absolute path to another library.
+`pathScope()` prepares absolute paths and returns plain `{ ok, path }` results. `resolve()` and `resolveAll()` check lexical containment without touching the filesystem; `existing()`, `files()`, and `writable()` add the filesystem checks described below. Use it to prepare paths before handing them to another library, whose file-opening and mutation behavior still applies.
 
 ```ts
 import { pathScope } from "@openclaw/fs-safe/advanced";

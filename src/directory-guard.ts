@@ -139,6 +139,10 @@ export async function inspectDirectoryIdentity(dir: string, expected?: Pick<BigI
 
 function directoryEntryPath(dir: string): string {
   const windows = process.platform === "win32";
+  if (typeof dir === "string") {
+    const last = dir[dir.length - 1];
+    if (last !== "/" && (!windows || last !== "\\")) return dir;
+  }
   let rootLength = (windows ? path.win32 : path.posix).parse(dir).root.length;
   if (windows && /^[\\/]{2}[?.][\\/]UNC[\\/]/i.test(dir)) {
     // Node parses the namespace prefix as the root; retain the complete UNC share instead.

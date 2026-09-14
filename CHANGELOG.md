@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reduce repeated path work in POSIX path-scoping helpers and Root operations while preserving root exclusion, traversal checks, live directory identities, and home-prefix behavior; broaden method benchmarks across path batches, directories, stores, queues, and contention.
+
 - Complete short gzip-header reads before classifying staged archives, preventing valid gzip files from being misread as TAR after a partial filesystem read.
 
 - Speed up JavaScript gzip extraction and TAR inspection by matching file-backed decoder output to the existing 64 KiB WASM input window, preserving backpressure, decoded-byte limits, trailer validation, and cancellation cleanup.

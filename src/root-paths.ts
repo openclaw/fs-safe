@@ -58,6 +58,9 @@ function invalidPath(scopeLabel: string): InvalidPathResult {
 }
 
 function pathStaysWithinRoot(rootDir: string, candidatePath: string): boolean {
+  if (process.platform !== "win32") {
+    return candidatePath !== rootDir && isPathInside(rootDir, candidatePath);
+  }
   const relative = path.relative(rootDir, candidatePath);
   return Boolean(relative) && !isPathRelativeEscape(relative);
 }

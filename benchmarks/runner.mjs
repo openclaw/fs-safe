@@ -11,6 +11,7 @@ import { registerCore } from "./core.mjs";
 import { registerPaths } from "./paths.mjs";
 import { registerLifecycle } from "./lifecycle.mjs";
 import { registerArchives } from "./archives.mjs";
+import { registerBroad } from "./broad.mjs";
 
 const args = { iterations: 100, samples: 5, warmup: 5, mode: "off", "copy-shape": "mixed", "copy-files": 64, "copy-file-bytes": 4096 };
 for (let i = 2; i < process.argv.length; i++) {
@@ -92,6 +93,7 @@ try {
   await registerPaths(context);
   await registerLifecycle(context);
   await registerArchives(context);
+  await registerBroad(context);
   const covered = new Set(cases.flatMap((c) => c.covers));
   const required = [...exportsByName.keys(), ...[...contracts].flatMap(([type, keys]) => keys.map((key) => `${type}.${key}`))];
   const missing = required.filter((name) => !covered.has(name) && !exclusions.has(name));

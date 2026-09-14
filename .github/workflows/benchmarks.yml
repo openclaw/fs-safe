@@ -5,11 +5,96 @@ on:
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
+    inputs:
+      method_audit:
+        description: Run the complete callable-method matrix
+        type: boolean
+        default: false
+      platform:
+        description: Method-audit platform
+        type: choice
+        options: [all, linux, macos, windows]
+        default: all
+      compare_ref:
+        description: Optional baseline Git ref for the same runner and harness
+        type: string
+        default: ""
+      iterations:
+        description: Method-audit iterations
+        type: string
+        default: "20"
+      samples:
+        description: Method-audit samples
+        type: string
+        default: "5"
 
 permissions:
   contents: read
 
 jobs:
+  method-audit:
+    if: github.event_name == 'workflow_dispatch' && inputs.method_audit
+    name: Method audit (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.platform == 'linux' && '["ubuntu-latest"]' || inputs.platform == 'macos' && '["macos-15"]' || inputs.platform == 'windows' && '["windows-latest"]' || '["ubuntu-latest","macos-15","windows-latest"]') }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      METHOD_ITERATIONS: ${{ inputs.iterations }}
+      METHOD_SAMPLES: ${{ inputs.samples }}
+      BASE_REF: ${{ inputs.compare_ref }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.25.0
+          run_install: false
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Add portable TAR parser target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Build candidate
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+          pnpm native:build
+      - name: Build baseline
+        if: inputs.compare_ref != ''
+        run: |
+          git fetch --no-tags -- origin "$BASE_REF"
+          git worktree add --detach "$RUNNER_TEMP/fs-safe-method-baseline" FETCH_HEAD
+          cd "$RUNNER_TEMP/fs-safe-method-baseline"
+          pnpm install --frozen-lockfile
+          pnpm build
+          pnpm native:build
+      - name: Measure all methods
+        run: |
+          mkdir -p artifacts/method-audit
+          for mode in off require; do
+            if [[ -n "$BASE_REF" ]]; then
+              pnpm benchmark:methods --mode "$mode" --dist "$RUNNER_TEMP/fs-safe-method-baseline/dist" --iterations "$METHOD_ITERATIONS" --samples "$METHOD_SAMPLES" --warmup 3 --json "artifacts/method-audit/baseline-$mode.json"
+            fi
+            pnpm benchmark:methods --mode "$mode" --iterations "$METHOD_ITERATIONS" --samples "$METHOD_SAMPLES" --warmup 3 --json "artifacts/method-audit/candidate-$mode.json"
+          done
+      - name: Upload method measurements
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: method-audit-${{ matrix.os }}-${{ github.run_id }}
+          path: artifacts/method-audit/
+          if-no-files-found: warn
+
   benchmark:
     name: Node 22 benchmarks
     runs-on: ubuntu-latest
