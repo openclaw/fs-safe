@@ -3,6 +3,7 @@ import fs, { type BigIntStats } from "node:fs";
 import { tmpdir as getOsTmpDir } from "node:os";
 import path from "node:path";
 import { resolveEffectiveUid } from "./effective-uid.js";
+import { realpathSync } from "./realpath.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { assertSafePathSegment } from "./safe-path-segment.js";
 
@@ -106,7 +107,7 @@ function captureOperationProbeDirectory(
   if (!isTrustedOperationProbeDirectory(before, uid)) {
     throw new Error("Operation probe directory is not trusted.");
   }
-  const realPath = fs.realpathSync.native(candidatePath);
+  const realPath = realpathSync.native(candidatePath);
   const after = fs.lstatSync(candidatePath, { bigint: true });
   const canonical = fs.lstatSync(realPath, { bigint: true });
   if (
@@ -129,7 +130,7 @@ function isOperationProbeDirectoryCurrent(
   if (
     !sameExactIdentity(before, receipt) ||
     !isTrustedOperationProbeDirectory(before, uid) ||
-    fs.realpathSync.native(candidatePath) !== receipt.realPath
+    realpathSync.native(candidatePath) !== receipt.realPath
   ) {
     return false;
   }

@@ -445,8 +445,11 @@ directory itself. It requires the selected path to be a writable, non-symlink
 directory. On POSIX, an owner UID must be present and match the effective user;
 available mode bits must not grant group/world write access. It creates or
 repairs the fallback to mode `0o700` where mode bits apply. If it cannot
-establish that state, it throws an ordinary `Error`; there is no native mode
-or `helper-unavailable` branch on this API.
+establish that state, it throws an ordinary `Error`; there is no separate native
+mutation mode or direct `helper-unavailable` branch on this API. On Bun POSIX,
+however, its canonical-path checks use the shared resolver and therefore honor
+the configured native-helper mode so restrictive directories keep Bun's
+supported behavior.
 
 Default POSIX writability checks use `fs.accessSync` only when the process can
 report matching real/effective user and group IDs and the effective user is not
