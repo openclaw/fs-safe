@@ -63,13 +63,29 @@ export async function registerLifecycle({ api: a, workspace: w, native, binding,
     fs.mkdirSync(directory);
     const flags = fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY ?? 0);
     const rootFd = fs.openSync(w, flags);
+    const rootIdentity = fs.fstatSync(rootFd);
+    const directoryIdentity = fs.statSync(directory);
     onCleanup(() => fs.closeSync(rootFd));
+    add("native.fstatIdentity/directory", () => binding.fstatIdentity(rootFd), {
+      sync: true,
+      verify: (identity) => {
+        assert.equal(identity.isDirectory, true);
+        assert.equal(identity.dev, rootIdentity.dev);
+        assert.equal(identity.ino, rootIdentity.ino);
+      },
+    });
     add("native.openBeneath/directory", () => binding.openBeneath(rootFd, "native-directory", flags), {
       sync: true,
-      verify: (opened) => assert.ok(fs.fstatSync(opened.fd).isDirectory()),
+      verify: (opened) => {
+        const identity = fs.fstatSync(opened.fd);
+        assert.equal(identity.isDirectory(), true);
+        assert.equal(identity.dev, directoryIdentity.dev);
+        assert.equal(identity.ino, directoryIdentity.ino);
+      },
       after: (opened) => { if (opened) fs.closeSync(opened.fd); },
     });
   } else {
+    add("native.fstatIdentity/directory", () => {}, { skip: "native binding unavailable" });
     add("native.openBeneath/directory", () => {}, { skip: "native binding unavailable" });
   }
   const input = path.join(w, "input.json");

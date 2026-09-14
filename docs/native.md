@@ -55,7 +55,10 @@ whether a path, archive entry, mode, owner, or cleanup policy is acceptable.
   `FILE_OPEN_REPARSE_POINT`, then explicitly rejects reparse points. Rename and
   hardlink operations stay rooted in already-open handles. Owner/DACL reads
   use `GetSecurityInfo`; private directories receive their protected DACL in
-  the `CreateDirectoryW` call itself.
+  the `CreateDirectoryW` call itself. N-API descriptors cross into and out of
+  this layer only through the host executable's paired libuv descriptor bridge;
+  missing or partial exports fail with `ENOTSUP` instead of trying a raw HANDLE
+  or add-on CRT descriptor namespace.
 
 ## Archives
 

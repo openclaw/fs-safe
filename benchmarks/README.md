@@ -67,7 +67,8 @@ to expose payload integrity costs beyond tiny archive fixtures. ZIP admission an
 member reads also cover 512 ASCII and Unicode names with stored and deflated data.
 Filtered ZIP extraction visits all 512 members while skipping their output,
 isolating admission and planning from destination-file writes.
-The native directory-open case times admission separately from descriptor close.
+The native descriptor cases isolate host-fd admission and directory open/return;
+the latter remains timed separately from descriptor close.
 
 For a quick executable coverage check:
 
