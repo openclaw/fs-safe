@@ -22,7 +22,7 @@ import {
 import { isGzipBuffer } from "./archive-gzip-tail.js";
 import { inspectTar, replayTar } from "./archive-tar-stream.js";
 import type { AdmittedTarMember } from "./archive-tar-wasm.js";
-import { loadZipArchiveWithPreflight } from "./archive-zip-preflight.js";
+import { loadAdmittedZipArchive } from "./archive-zip-loader.js";
 import {
   createZipIntegrityTransform,
   normalizeZipIntegrityError,
@@ -134,12 +134,8 @@ async function readArchiveInput(archivePath: string): Promise<Buffer> {
   }
 }
 
-async function readZipEntry(buffer: Buffer, entryPath: string, maxBytes: number): Promise<Buffer> {
-  const archive = await loadZipArchiveWithPreflight(buffer, {
-    maxArchiveBytes: DEFAULT_MAX_ARCHIVE_BYTES_ZIP,
-    maxEntryBytes: maxBytes,
-    maxExtractedBytes: maxBytes,
-  });
+async function readZipEntry(buffer: Buffer, entryPath: string, maxBytes: number, physicalCount: number): Promise<Buffer> {
+  const archive = await loadAdmittedZipArchive(buffer, physicalCount);
   let entry: ZipEntry | undefined;
   // JSZip keys retain some aliases and may use Unicode Path metadata. Scan the
   // effective entries once, after raw ZIP admission has rejected collisions.
@@ -270,6 +266,6 @@ export async function readArchiveEntry(
   const native = getNativeBinding();
   if (native) return await readNativeBufferEntry(native, buffer, kind, requestedEntry, entryPath, options.maxBytes, physicalCount);
   assertPortableArchiveKind(kind);
-  return kind === "zip" ? await readZipEntry(buffer, requestedEntry, options.maxBytes)
+  return kind === "zip" ? await readZipEntry(buffer, requestedEntry, options.maxBytes, physicalCount!)
     : await readTarEntry(buffer, requestedEntry, options.maxBytes);
 }

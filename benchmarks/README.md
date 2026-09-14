@@ -40,7 +40,8 @@ over 64 small files, one 1 MiB file, and nested and empty directories.
 TAR/gzip member reads cover 1 MiB and 16 MiB payloads; 512-member read and
 inspection cases expose metadata-event transport costs.
 ZIP reads and extraction also cover 1 MiB and 16 MiB stored and deflated members
-to expose payload integrity costs beyond tiny archive fixtures.
+to expose payload integrity costs beyond tiny archive fixtures. ZIP admission and
+member reads also cover 512 ASCII and Unicode names with stored and deflated data.
 The native directory-open case times admission separately from descriptor close.
 
 For a quick executable coverage check:

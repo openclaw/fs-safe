@@ -581,7 +581,9 @@ inputs retain the archive subpath's 256 MiB compressed-input ceiling.
 With a native binding it uses the same Rust decoders as extraction, including
 zstd and bzip2 TAR. Without native it retains the JS ZIP/TAR/gzip implementation.
 Archive member reads retain their private in-memory input without a disk
-snapshot. The native ZIP reader retains the private allocation and parsed directory across worker-thread
+snapshot. JavaScript ZIP member reads reuse their completed physical admission
+when loading the decoder, which still checks its decoded names and entry count.
+The native ZIP reader retains the private allocation and parsed directory across worker-thread
 inspection and reading without an extra archive-byte copy.
 Decompression still allocates its bounded output; Node receives that native
 allocation without another copy where external buffers are supported.

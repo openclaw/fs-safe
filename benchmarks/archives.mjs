@@ -49,6 +49,24 @@ export async function registerArchives({ api: a, workspace: w, register: add }) 
     add(`readArchiveEntry/${kind}`, () => a.readArchiveEntry(archivePath, "entry.json", { maxBytes: 1024 }), { divisor: 10 });
     if (kind !== "zip") add(`inspectTarArchive/${kind}`, () => a.inspectTarArchive({ archivePath, timeoutMs: 30_000 }), { divisor: 10 });
   }
+  for (const unicode of [false, true]) {
+    for (const compression of ["STORE", "DEFLATE"]) {
+      const manyZip = new JSZip();
+      const names = Array.from({ length: 512 }, (_, i) => `entry-${i}${unicode ? "-café" : ""}`);
+      const payload = Buffer.alloc(64, 42);
+      for (const name of names) manyZip.file(name, payload, { createFolders: false });
+      const bytes = await manyZip.generateAsync({ type: "nodebuffer", compression });
+      const label = `zip-512-${unicode ? "unicode" : "ascii"}-${compression.toLowerCase()}`;
+      const archivePath = path.join(w, `${label}.zip`);
+      fs.writeFileSync(archivePath, bytes);
+      add(`readArchiveEntry/${label}`, () => a.readArchiveEntry(archivePath, names.at(-1), { maxBytes: 64 }), {
+        divisor: 10, verify: result => assert.ok(result.equals(payload)),
+      });
+      add(`loadZipArchiveWithPreflight/${label}`, () => a.loadZipArchiveWithPreflight(bytes), {
+        divisor: 10, verify: result => assert.equal(Object.keys(result.files).length, names.length),
+      });
+    }
+  }
   const manySource = path.join(w, "tar-many-source");
   fs.mkdirSync(manySource);
   const names = Array.from({ length: 512 }, (_, index) => `entry-${index}`);
