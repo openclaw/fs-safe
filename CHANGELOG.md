@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Preserve files refreshed while expiry pruning prepares removal by rechecking current file type and modification time immediately before guarded deletion, without requiring read access.
 - Speed up repeated lock-manager construction without rescanning held locks, and initialize legacy reference counts at acquisition and release so same-owner nested handles retain the outer lock.
 
 ## 0.11.0 - 2026-09-14
