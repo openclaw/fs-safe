@@ -65,9 +65,6 @@ function resolveManagerState(key: string): SidecarLockManagerState {
     // Backfill state created by fs-safe versions that predate reclaim guards.
     state.reclaimCleanupRegistered ??= false;
     state.reclaimGuards ??= new Set();
-    for (const held of state.held.values()) {
-      held.refCount ??= 1;
-    }
   }
   return state;
 }
@@ -208,6 +205,8 @@ async function releaseHeldLock(
     await held.releasePromise;
     return true;
   }
+  // Older package copies can add holders after this manager was constructed.
+  held.refCount ??= 1;
   if (options.force) {
     held.refCount = 0;
   } else if (!options.retry && held.refCount > 0) {
