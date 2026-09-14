@@ -28,10 +28,13 @@ describe("fitFileNameToPortableComponent", () => {
     `${"a".repeat(195)}.json`,
     `${"é".repeat(100)}.json`,
     `${"가".repeat(65)}.json`,
+    `${"K".repeat(80)}.json`,
+    `${"\u037e".repeat(120)}.json`,
   ])("fits %s under NFC and NFD byte limits while preserving the extension", (fileName) => {
     const fitted = fitFileNameToPortableComponent({ prefix, fileName, suffix });
     expect(fitted).toMatch(/\.json$/u);
     expect(normalizedBytes(`${prefix}${fitted}${suffix}`)).toBeLessThanOrEqual(255);
+    expect(Buffer.byteLength(`${prefix}${fitted}${suffix}`)).toBeLessThanOrEqual(255);
     expect(fitted.length).toBeLessThan(fileName.length);
   });
 });

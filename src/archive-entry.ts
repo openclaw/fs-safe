@@ -3,11 +3,10 @@ import { ArchiveSecurityError } from "./archive-errors.js";
 import { isWindowsReservedDeviceName } from "./device-path.js";
 import { formatErrorDetail } from "./error-detail.js";
 import { resolveSafeBaseDir } from "./path.js";
+import { lowerCaseNfc, maxNormalizedUtf8Bytes } from "./unicode-path.js";
 
 export function isWindowsDrivePath(value: string): boolean {
-  return normalizeArchiveEntryPath(value)
-    .split("/")
-    .some((segment) => /^[a-zA-Z]:/.test(segment));
+  return /(?:^|\/)[a-zA-Z]:/.test(normalizeArchiveEntryPath(value));
 }
 
 export function normalizeArchiveEntryPath(raw: string): string {
@@ -54,12 +53,7 @@ export function validateArchiveEntryPath(
   }
   const normalized = path.posix.normalize(slashNormalized);
   if (
-    normalized.split("/").some((segment) =>
-      Math.max(
-        Buffer.byteLength(segment.normalize("NFC")),
-        Buffer.byteLength(segment.normalize("NFD")),
-      ) > 255
-    )
+    normalized.split("/").some((segment) => maxNormalizedUtf8Bytes(segment) > 255)
   ) {
     throw new ArchiveSecurityError(
       "entry-path",
@@ -111,7 +105,7 @@ export function createArchiveOutputPathTracker(): (entryPath: string, originalPa
     // Archive policy must not depend on the destination volume's case or
     // Unicode-normalization behavior. Otherwise the JavaScript and native
     // writers can disagree about which of two colliding entries wins.
-    const collisionKey = normalized.normalize("NFC").toLowerCase().normalize("NFC");
+    const collisionKey = lowerCaseNfc(normalized);
     if (seen.has(collisionKey)) {
       throw new ArchiveSecurityError(
         "entry-path",

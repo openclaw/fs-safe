@@ -61,7 +61,7 @@ hazards but does not trim Windows-normalized trailing dots or spaces; reject or
 rewrite those when cross-platform filename uniqueness matters.
 `staging: "workspace"` passes the sanitized basename to the producer.
 `staging: "sibling"` embeds that basename in its randomized temporary name.
-When the complete temporary component would exceed 255 bytes under NFC or NFD,
+When the complete temporary component would exceed 255 bytes as written or under NFC or NFD,
 only the embedded tail is shortened, preserving its extension when possible;
 short callback paths remain unchanged. The final target and returned `path` use
 the destination basename, sanitized

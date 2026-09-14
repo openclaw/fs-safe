@@ -159,6 +159,21 @@ describe.skipIf(process.platform !== "win32")("Windows namespace alias admission
     },
   );
 
+  it.each([
+    ["\\\\?\\C:\\", "\\\\?\\C:\\"],
+    ["\\\\.\\C:\\", "\\\\.\\C:\\"],
+    ["//?/C:/", "\\\\?\\C:\\"],
+  ])(
+    "keeps FileStore paths inside an exact namespace drive root %s",
+    (rootDir, expectedRoot) => {
+      for (const createStore of [fileStore, fileStoreSync]) {
+        const store = createStore({ rootDir });
+        expect(store.rootDir).toBe(expectedRoot);
+        expect(store.path("safe.txt")).toBe(`${expectedRoot}safe.txt`);
+      }
+    },
+  );
+
   it.each(["\\\\?\\C:\\", "\\\\.\\C:\\"])(
     "preserves root-returning forms through async and sync root resolution for %s",
     async (rootDir) => {
