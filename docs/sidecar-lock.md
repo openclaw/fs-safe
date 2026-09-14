@@ -106,7 +106,11 @@ Asynchronous acquisition snapshots `targetPath`, an explicit `lockPath`, and
 `lockRoot` before its first asynchronous operation. Relative path spellings are
 resolved against the working directory captured at that point, and the resulting
 absolute paths remain fixed through retries, stale recovery, verification, and
-release even if the process later changes its working directory.
+release even if the process later changes its working directory. An explicit,
+fully qualified `lockPath` retains its caller-supplied spelling; current-drive-
+rooted and drive-relative Windows paths are resolved at the snapshot boundary.
+The snapshot adds no normalization beyond what is required to remove that cwd or
+current-drive dependency.
 
 The complete serialized sidecar must fit within 1 MiB (1,048,576 UTF-8 bytes),
 including pretty-printed JSON, newlines, and the internal ownership token's

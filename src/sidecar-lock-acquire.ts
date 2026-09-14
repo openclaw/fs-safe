@@ -66,6 +66,13 @@ type SidecarLockAcquisitionContext = {
   ): Promise<boolean>;
 };
 
+function isCwdIndependentAbsolutePath(filePath: string): boolean {
+  if (!path.isAbsolute(filePath)) return false;
+  // A leading separator on Windows is rooted on the process's current drive.
+  // Drive-qualified, UNC, and namespace roots are longer and need no cwd state.
+  return process.platform !== "win32" || path.parse(filePath).root.length > 1;
+}
+
 async function resolveNormalizedTargetPath(resolved: string, lockRoot?: Root): Promise<string> {
   const dir = path.dirname(resolved);
   if (lockRoot) {
@@ -97,9 +104,11 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
   const requestedTargetPath = options.targetPath;
   const requestedLockPath = options.lockPath;
   const lockRoot = options.lockRoot;
+  const targetPathIsAbsolute = path.isAbsolute(requestedTargetPath);
+  const lockPathIsCwdIndependent =
+    requestedLockPath === undefined || isCwdIndependentAbsolutePath(requestedLockPath);
   const callerCwd =
-    path.isAbsolute(requestedTargetPath) &&
-    (requestedLockPath === undefined || path.isAbsolute(requestedLockPath))
+    targetPathIsAbsolute && lockPathIsCwdIndependent
       ? undefined
       : process.cwd();
   const resolvedTargetPath =
@@ -109,9 +118,9 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
   const resolvedLockPath =
     requestedLockPath === undefined
       ? undefined
-      : callerCwd === undefined
-        ? path.resolve(requestedLockPath)
-        : path.resolve(callerCwd, requestedLockPath);
+      : lockPathIsCwdIndependent
+        ? requestedLockPath
+        : path.resolve(callerCwd!, requestedLockPath);
   const normalizedTargetPath = await resolveNormalizedTargetPath(resolvedTargetPath, lockRoot);
   const lockPath = resolvedLockPath ?? `${normalizedTargetPath}.lock`;
   let held = context.held.get(normalizedTargetPath);

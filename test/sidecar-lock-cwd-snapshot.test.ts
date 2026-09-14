@@ -10,6 +10,124 @@ import { useRealTempDirs } from "./helpers/vitest.js";
 const { tempRoot } = useRealTempDirs();
 
 describe("async sidecar cwd snapshots", () => {
+  it("retains already-absolute explicit lock path spellings", async () => {
+    const base = await tempRoot("fs-safe-sidecar-absolute-spelling-");
+    const locks = path.join(base, "locks");
+    await fs.mkdir(locks);
+    const manager = createSidecarLockManager(`absolute-spelling:${base}`);
+    const previousCwd = process.cwd();
+    const cases = [
+      {
+        targetPath: path.join(base, "state-0.json"),
+        lockPath: `${locks}${path.sep}${path.sep}doubled.lock`,
+      },
+      {
+        targetPath: "state-1.json",
+        lockPath: `${locks}${path.sep}..${path.sep}dot-segment.lock`,
+      },
+      ...(process.platform === "win32"
+        ? [{
+            targetPath: path.join(base, "state-2.json"),
+            lockPath: path.toNamespacedPath(path.join(locks, "namespace.lock")),
+          }]
+        : []),
+    ];
+
+    try {
+      process.chdir(base);
+      for (const [index, { targetPath, lockPath }] of cases.entries()) {
+        const held = await manager.acquire({
+          targetPath,
+          lockPath,
+          staleMs: 30_000,
+          payload: () => ({ owner: `absolute-${index}` }),
+        });
+        expect(held.lockPath).toBe(lockPath);
+        await expect(held.verifyStillHeld()).resolves.toBe(true);
+        await held.release();
+        await expect(fs.stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+      }
+    } finally {
+      process.chdir(previousCwd);
+      await manager.drain();
+    }
+  });
+
+  it.runIf(process.platform === "win32")(
+    "pins a current-drive-rooted explicit lock path before cwd can change",
+    async () => {
+      const before = await tempRoot("fs-safe-sidecar-rooted-before-");
+      const after = await tempRoot("fs-safe-sidecar-rooted-after-");
+      const manager = createSidecarLockManager(`rooted-lock:${before}`);
+      const previousCwd = process.cwd();
+
+      try {
+        process.chdir(before);
+        for (const [index, separator] of ["\\", "/"].entries()) {
+          const absoluteLockPath = path.join(before, `state-${index}.lock`);
+          const driveRoot = path.parse(absoluteLockPath).root;
+          const rootedLockPath = absoluteLockPath
+            .slice(driveRoot.length - 1)
+            .replaceAll("\\", separator);
+          const pending = manager.acquire({
+            targetPath: path.join(before, `state-${index}.json`),
+            lockPath: rootedLockPath,
+            staleMs: 30_000,
+            payload: () => ({ owner: `current-drive-root-${index}` }),
+          });
+          process.chdir(after);
+
+          const held = await pending;
+          expect(held.lockPath).toBe(absoluteLockPath);
+          await expect(held.verifyStillHeld()).resolves.toBe(true);
+          process.chdir(before);
+          await held.release();
+          await expect(fs.stat(absoluteLockPath)).rejects.toMatchObject({ code: "ENOENT" });
+        }
+      } finally {
+        process.chdir(previousCwd);
+        await manager.drain();
+      }
+    },
+  );
+
+  it.runIf(process.platform === "win32")(
+    "pins a drive-relative explicit lock path before cwd can change",
+    async ({ skip }) => {
+      const before = await tempRoot("fs-safe-sidecar-drive-before-");
+      const after = await tempRoot("fs-safe-sidecar-drive-after-");
+      if (!/^[A-Za-z]:[\\/]$/u.test(path.parse(before).root)) {
+        skip();
+      }
+      await fs.mkdir(path.join(before, "locks"));
+      const absoluteLockPath = path.join(before, "locks", "state.lock");
+      const drive = path.parse(absoluteLockPath).root.slice(0, 2);
+      const driveRelativeLockPath = `${drive}locks${path.sep}state.lock`;
+      const manager = createSidecarLockManager(`drive-lock:${before}`);
+      const previousCwd = process.cwd();
+
+      try {
+        process.chdir(before);
+        const pending = manager.acquire({
+          targetPath: path.join(before, "state.json"),
+          lockPath: driveRelativeLockPath,
+          staleMs: 30_000,
+          payload: () => ({ owner: "drive-relative" }),
+        });
+        process.chdir(after);
+
+        const held = await pending;
+        expect(held.lockPath).toBe(absoluteLockPath);
+        await expect(held.verifyStillHeld()).resolves.toBe(true);
+        await held.release();
+        await expect(fs.stat(absoluteLockPath)).rejects.toMatchObject({ code: "ENOENT" });
+      } finally {
+        process.chdir(previousCwd);
+        await manager.drain();
+      }
+    },
+  );
+
   it("pins a relative explicit lock path through acquisition, verification, and release", async () => {
     const before = await tempRoot("fs-safe-sidecar-cwd-before-");
     const after = await tempRoot("fs-safe-sidecar-cwd-after-");
