@@ -417,7 +417,7 @@ type ResolveSecureTempRootOptions = {
 
   // Platform/test adapters; production callers normally omit these.
   platform?: NodeJS.Platform;
-  getuid?: () => number | undefined;
+  getuid?: () => number | undefined;  // effective uid override; legacy name
   tmpdir?: () => string;
   accessSync?: typeof import("node:fs").accessSync;
   chmodSync?: typeof import("node:fs").chmodSync;
@@ -434,15 +434,19 @@ type ResolveSecureTempRootOptions = {
 };
 ```
 
-When `process.getuid()` is available, the fallback is
-`<tmpdir>/<fallbackPrefix>-<uid>`. Without a UID (including Windows), it is
-`<tmpdir>/<fallbackPrefix>`; no username is appended. The helper never returns
-the shared `os.tmpdir()` directory itself. It requires the selected path to be
-a writable, non-symlink directory and, when UID/mode facts are available,
-owned by the current user without group/world write bits. It creates or repairs
-the fallback to mode `0o700` where mode bits apply. If it cannot establish that
-state, it throws an ordinary `Error`; there is no native mode or
-`helper-unavailable` branch on this API.
+On POSIX, the fallback is `<tmpdir>/<fallbackPrefix>-<effective-uid>`, using
+`process.geteuid()`. The legacy-named `getuid` adapter is retained for
+compatibility, but its result is treated as the effective UID. Missing,
+throwing, negative, fractional, or unsafe-integer effective identities fail
+closed on POSIX. On Windows, the fallback is
+`<tmpdir>/<fallbackPrefix>` unless the existing adapter supplies an identity;
+no username is appended. The helper never returns the shared `os.tmpdir()`
+directory itself. It requires the selected path to be a writable, non-symlink
+directory. On POSIX, an owner UID must be present and match the effective user;
+available mode bits must not grant group/world write access. It creates or
+repairs the fallback to mode `0o700` where mode bits apply. If it cannot
+establish that state, it throws an ordinary `Error`; there is no native mode
+or `helper-unavailable` branch on this API.
 
 ## Common patterns
 

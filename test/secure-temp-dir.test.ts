@@ -1,8 +1,13 @@
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveSecureTempRoot, type ResolveSecureTempRootOptions } from "../src/secure-temp-dir.js";
+import { itPosix } from "./helpers/vitest.js";
 
 type TmpDirOptions = ResolveSecureTempRootOptions;
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function nodeErrorWithCode(code: string) {
   const err = new Error(code) as Error & { code?: string };
@@ -131,6 +136,95 @@ describe("resolveSecureTempRoot", () => {
 
     expect(resolved).toBe(path.join("/var/fallback", "example-501"));
     expect(tmpdir).toHaveBeenCalled();
+  });
+
+  it("uses the injected identity as the effective uid for naming and admission", () => {
+    const realUid = typeof process.getuid === "function" ? process.getuid() : 1000;
+    const effectiveUid = realUid + 1;
+    const fallbackPath = path.join("/var/fallback", `example-${effectiveUid}`);
+    const lstatSync = vi.fn((target: string) => {
+      expect(target).toBe(fallbackPath);
+      return secureDirStat(effectiveUid);
+    });
+
+    expect(resolveSecureTempRoot({
+      accessSync: vi.fn(),
+      chmodSync: vi.fn(),
+      fallbackPrefix: "example",
+      getuid: () => effectiveUid,
+      lstatSync,
+      mkdirSync: vi.fn(),
+      platform: "linux",
+      tmpdir: () => "/var/fallback",
+    })).toBe(fallbackPath);
+    expect(lstatSync).toHaveBeenCalledTimes(1);
+  });
+
+  itPosix("uses the process effective uid instead of its real uid", () => {
+    const actualUid = process.geteuid!();
+    const effectiveUid = actualUid === 0 ? 1 : actualUid - 1;
+    const fallbackPath = path.join("/var/fallback", `example-${effectiveUid}`);
+    const getuid = vi.spyOn(process, "getuid").mockReturnValue(actualUid);
+    const geteuid = vi.spyOn(process, "geteuid").mockReturnValue(effectiveUid);
+
+    expect(resolveSecureTempRoot({
+      accessSync: vi.fn(),
+      chmodSync: vi.fn(),
+      fallbackPrefix: "example",
+      lstatSync: vi.fn((target: string) => {
+        expect(target).toBe(fallbackPath);
+        return secureDirStat(effectiveUid);
+      }),
+      mkdirSync: vi.fn(),
+      tmpdir: () => "/var/fallback",
+    })).toBe(fallbackPath);
+    expect(geteuid).toHaveBeenCalledTimes(1);
+    expect(getuid).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["missing", () => undefined],
+    ["throwing", () => { throw new Error("identity unavailable"); }],
+    ["negative", () => -1],
+    ["fractional", () => 501.5],
+    ["unsafe integer", () => Number.MAX_SAFE_INTEGER + 1],
+  ] as const)("fails closed for a %s effective uid on POSIX", (_label, getuid) => {
+    const lstatSync = vi.fn(() => secureDirStat());
+    expect(() => resolveSecureTempRoot({
+      fallbackPrefix: "example",
+      getuid,
+      lstatSync,
+      platform: "linux",
+    })).toThrow("Unable to determine effective user identity");
+    expect(lstatSync).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["different", secureDirStat(502)],
+    ["missing", { ...makeDirStat(), uid: undefined }],
+  ])("rejects a preferred directory with %s owner identity", (_label, preferredStat) => {
+    const { resolved } = resolveWithMocks({
+      fallbackLstatSync: vi.fn(() => secureDirStat(501)),
+      lstatSync: vi.fn(() => preferredStat),
+      uid: 501,
+    });
+
+    expect(resolved).toBe(path.join("/var/fallback", "example-501"));
+  });
+
+  it("preserves the uid-less Windows fallback without an adapter", () => {
+    const fallbackPath = path.win32.join("C:\\Temp", "example");
+    const chmodSync = vi.fn();
+    expect(resolveSecureTempRoot({
+      accessSync: vi.fn(),
+      chmodSync,
+      fallbackPrefix: "example",
+      lstatSync: vi.fn(() => ({ ...makeDirStat({ mode: 0o40777 }), uid: undefined })),
+      mkdirSync: vi.fn(),
+      platform: "win32",
+      tmpdir: () => "C:\\Temp",
+    })).toBe(fallbackPath);
+    expect(chmodSync).not.toHaveBeenCalled();
   });
 
   it("repairs broad permissions before accepting a directory", () => {

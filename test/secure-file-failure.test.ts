@@ -141,7 +141,7 @@ describe("secure file inspection failures", () => {
       const actual = await handle.stat();
       vi.spyOn(fsSync, "fstatSync").mockReturnValueOnce({
         ...actual,
-        uid: (process.getuid?.() ?? actual.uid) + 1,
+        uid: (process.geteuid?.() ?? actual.uid) + 1,
         isDirectory: () => false,
         isFile: () => true,
         isSymbolicLink: () => false,
@@ -149,5 +149,74 @@ describe("secure file inspection failures", () => {
       return handle;
     });
     await expect(readSecureFile({ filePath })).rejects.toMatchObject({ code: "not-owned" });
+  });
+
+  itPosix("fails closed when the descriptor owner uid is unavailable", async () => {
+    const root = await tempRoot("fs-safe-secure-missing-owner-");
+    const filePath = path.join(root, "secret");
+    await fs.writeFile(filePath, "secret", { mode: 0o600 });
+    const realOpen = fs.open.bind(fs);
+    vi.spyOn(fs, "open").mockImplementationOnce(async (...args) => {
+      const handle = await realOpen(...args);
+      const actual = await handle.stat();
+      vi.spyOn(fsSync, "fstatSync").mockReturnValueOnce({
+        ...actual,
+        uid: undefined,
+        isDirectory: () => false,
+        isFile: () => true,
+        isSymbolicLink: () => false,
+      } as never);
+      return handle;
+    });
+
+    await expect(readSecureFile({ filePath })).rejects.toMatchObject({
+      code: "permission-unverified",
+      category: "operational",
+    });
+  });
+
+  itPosix("uses the effective uid when the real and effective identities differ", async () => {
+    const root = await tempRoot("fs-safe-secure-effective-owner-");
+    const filePath = path.join(root, "secret");
+    await fs.writeFile(filePath, "secret", { mode: 0o600 });
+    const ownerUid = fsSync.statSync(filePath).uid;
+    const getuid = vi.spyOn(process, "getuid").mockReturnValue(ownerUid + 1);
+    const geteuid = vi.spyOn(process, "geteuid").mockReturnValue(ownerUid);
+
+    const result = await readSecureFile({ filePath });
+    expect(result.buffer.toString()).toBe("secret");
+    expect(geteuid).toHaveBeenCalledTimes(1);
+    expect(getuid).not.toHaveBeenCalled();
+  });
+
+  itPosix("rejects an owner that matches only the real uid", async () => {
+    const root = await tempRoot("fs-safe-secure-real-owner-");
+    const filePath = path.join(root, "secret");
+    await fs.writeFile(filePath, "secret", { mode: 0o600 });
+    const ownerUid = fsSync.statSync(filePath).uid;
+    const getuid = vi.spyOn(process, "getuid").mockReturnValue(ownerUid);
+    vi.spyOn(process, "geteuid").mockReturnValue(ownerUid + 1);
+
+    await expect(readSecureFile({ filePath })).rejects.toMatchObject({
+      code: "not-owned",
+      message: expect.stringContaining(`effective user (uid=${ownerUid + 1})`),
+    });
+    expect(getuid).not.toHaveBeenCalled();
+  });
+
+  itPosix("fails closed when the effective uid is unavailable", async () => {
+    const root = await tempRoot("fs-safe-secure-missing-effective-owner-");
+    const filePath = path.join(root, "secret");
+    await fs.writeFile(filePath, "secret", { mode: 0o600 });
+    const ownerUid = fsSync.statSync(filePath).uid;
+    const getuid = vi.spyOn(process, "getuid").mockReturnValue(ownerUid);
+    vi.spyOn(process, "geteuid").mockReturnValue(undefined as never);
+
+    await expect(readSecureFile({ filePath })).rejects.toMatchObject({
+      code: "permission-unverified",
+      category: "operational",
+      message: expect.stringContaining("owner identity could not be verified"),
+    });
+    expect(getuid).not.toHaveBeenCalled();
   });
 });

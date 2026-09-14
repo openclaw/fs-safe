@@ -23,11 +23,15 @@ The helper:
 - optionally requires the real path to live under one of `trust.trustedDirs`
 - rejects hardlink aliases using descriptor, pathname, and realpath link counts, then rechecks the descriptor after reading before returning bytes
 - rejects hard-to-verify or unsafe permissions unless `permissions.allowInsecure` is set
-- rejects files owned by another POSIX uid
+- rejects files owned by a POSIX uid other than the process's effective uid
 - enforces `maxBytes` before and after reading
 - closes the handle on success, error, and timeout
 
 On POSIX, unsafe permissions mean group/world writable, and group/world readable unless `permissions.allowReadableByOthers` is true. On Windows, the helper uses the ACL inspection helpers from [`permissions`](permissions.md) and refuses the read if ACLs cannot be verified.
+
+POSIX ownership is compared with `process.geteuid()`, not the real UID. If the
+effective identity or the opened file's owner identity is unavailable or
+invalid, the read fails with `permission-unverified`.
 
 Descriptor, pathname, and realpath identity checks use lossless bigint stats internally. The returned `stat` remains a normal Node `Stats` object with numeric fields. A zero Windows device or inode is unverified, never a match: the helper re-inspects that identity once using the same descriptor or pathname, then rejects persistent ambiguity with `path-mismatch`. A definite mismatch rejects immediately; retries retain known identity components and still enforce symlink policy.
 
@@ -62,7 +66,11 @@ type SecureFileReadOptions = {
 
 `permissions.allowInsecure` is a migration escape hatch. Prefer fixing permissions and using [`formatPermissionRemediation`](permissions.md) to show the user what to run. `trust.allowNetworkPath` is off by default because UNC paths are remote authority, not local filesystem input. `inject` is for tests and platform adapters; production callers usually leave it unset.
 
-`permissions.allowInsecure` bypasses only permission checks. Neither it nor `inject.platform` changes filesystem identity verification, which always uses the actual process platform. `trust.allowSymlink` permits an alias but still requires its target and realpath to match the opened descriptor.
+`permissions.allowInsecure` bypasses only permission checks, including the
+owner check. Neither it nor `inject.platform` changes filesystem identity
+verification, which always uses the actual process platform.
+`trust.allowSymlink` permits an alias but still requires its target and
+realpath to match the opened descriptor.
 
 ## Errors
 
@@ -77,9 +85,9 @@ type SecureFileReadOptions = {
 | `hardlink` | The descriptor, pathname, or realpath has more than one link. |
 | `path-mismatch` | The path or realpath changed between open and verification, or filesystem identity could not be verified after bounded re-inspection. |
 | `outside-workspace` | `realPath` is outside `trust.trustedDirs`. |
-| `permission-unverified` | Required mode/ACL checks could not be completed. |
+| `permission-unverified` | Required mode, owner, or ACL checks could not be completed. |
 | `insecure-permissions` | Mode bits or ACLs grant broader access than allowed. |
-| `not-owned` | POSIX owner uid is not the current process uid. |
+| `not-owned` | POSIX owner uid is not the process's effective uid. |
 | `too-large` | File size or bytes read exceeded `maxBytes`. |
 | `timeout` | `timeoutMs` elapsed while reading. |
 

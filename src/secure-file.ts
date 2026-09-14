@@ -6,6 +6,7 @@ import path from "node:path";
 import { readFileHandleBounded } from "./bounded-read.js";
 import { normalizeMaxBytes } from "./byte-budget.js";
 import { assertNoUnsafeDeviceReadPath } from "./device-path.js";
+import { resolveEffectiveUid } from "./effective-uid.js";
 import { FsSafeError } from "./errors.js";
 import { isWindowsDriveLetterPath, isWindowsNetworkPath } from "./local-file-access.js";
 import { isPathInside, isSymlinkOpenError } from "./path.js";
@@ -233,10 +234,25 @@ async function assertSecurePermissions(
   if (writableByOthers || (!options.permissions?.allowReadableByOthers && readableByOthers)) {
     throw new FsSafeError("insecure-permissions", `${label(options)} permissions are too open: ${realPath}`);
   }
-  if (platform !== "win32" && typeof process.getuid === "function" && stat.uid != null) {
-    const uid = process.getuid();
+  if (platform !== "win32") {
+    let uid: number | undefined;
+    try {
+      uid = resolveEffectiveUid({ platform });
+    } catch (cause) {
+      throw new FsSafeError(
+        "permission-unverified",
+        `${label(options)} owner identity could not be verified for the effective user: ${realPath}`,
+        { cause },
+      );
+    }
+    if (uid === undefined || !Number.isSafeInteger(stat.uid) || stat.uid < 0) {
+      throw new FsSafeError(
+        "permission-unverified",
+        `${label(options)} owner identity could not be verified for the effective user: ${realPath}`,
+      );
+    }
     if (stat.uid !== uid) {
-      throw new FsSafeError("not-owned", `${label(options)} must be owned by the current user (uid=${uid}): ${realPath}`);
+      throw new FsSafeError("not-owned", `${label(options)} must be owned by the effective user (uid=${uid}): ${realPath}`);
     }
   }
   return permissions;

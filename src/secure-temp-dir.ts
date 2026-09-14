@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { tmpdir as getOsTmpDir } from "node:os";
 import path from "node:path";
+import { resolveEffectiveUid } from "./effective-uid.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { assertSafePathSegment } from "./safe-path-segment.js";
 
@@ -17,6 +18,7 @@ export type ResolveSecureTempRootOptions = {
   accessSync?: (path: string, mode?: number) => void;
   chmodSync?: (path: string, mode: number) => void;
   fallbackPrefix: string;
+  /** Effective UID adapter; the historical name is retained for compatibility. */
   getuid?: () => number | undefined;
   lstatSync?: (path: string) => SecureDirStat;
   mkdirSync?: (path: string, opts: { recursive: boolean; mode?: number }) => void;
@@ -52,24 +54,22 @@ export function resolveSecureTempRoot(options: ResolveSecureTempRootOptions): st
   const warn = options.warn ?? ((message: string) => console.warn(message));
   const warningPrefix = options.warningPrefix ?? "[fs-safe]";
   const unsafeFallbackLabel = options.unsafeFallbackLabel ?? "secure temp dir";
-  const getuid =
-    options.getuid ??
-    (() => {
-      try {
-        return typeof process.getuid === "function" ? process.getuid() : undefined;
-      } catch {
-        return undefined;
-      }
-    });
   const tmpdir = typeof options.tmpdir === "function" ? options.tmpdir : getOsTmpDir;
   const platform = options.platform ?? process.platform;
-  const uid = getuid();
+  let uid: number | undefined;
+  try {
+    uid = resolveEffectiveUid({ getuid: options.getuid, platform });
+  } catch (cause) {
+    throw new Error(`Unable to determine effective user identity for ${unsafeFallbackLabel}.`, {
+      cause,
+    });
+  }
 
   const isSecureDirForUser = (st: { mode?: number; uid?: number }): boolean => {
     if (uid === undefined) {
-      return true;
+      return platform === "win32";
     }
-    if (typeof st.uid === "number" && st.uid !== uid) {
+    if (st.uid !== uid) {
       return false;
     }
     if (typeof st.mode === "number" && (st.mode & 0o022) !== 0) {
@@ -111,7 +111,7 @@ export function resolveSecureTempRoot(options: ResolveSecureTempRootOptions): st
       if (!st.isDirectory() || st.isSymbolicLink()) {
         return false;
       }
-      if (uid !== undefined && typeof st.uid === "number" && st.uid !== uid) {
+      if (uid !== undefined && st.uid !== uid) {
         return false;
       }
       if (typeof st.mode !== "number") {
