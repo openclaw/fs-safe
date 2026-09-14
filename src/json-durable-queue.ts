@@ -1,8 +1,6 @@
 import fs, { type BigIntStats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
-import { normalizeMaxBytes } from "./byte-budget.js";
-import { readBoundedAsync } from "./bounded-read.js";
 import { syncDirectory } from "./directory-durability.js";
 import { syncQueueDirectoryCreation } from "./json-durable-queue-directory.js";
 import {
@@ -10,15 +8,17 @@ import {
   acknowledgeDurableQueueEntry,
   claimDurableQueueEntry,
   completeDeliveredQueueEntry,
+  migrateDurableQueueEntry,
   moveDurableQueueEntryToFailed,
 } from "./json-durable-queue-ownership.js";
+import { withJsonDurableQueueEntry } from "./json-durable-queue-read.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
-import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { realpathSync } from "./realpath.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { replaceFileAtomicWithDirectorySync } from "./replace-file.js";
 import { assertSafePathSegment } from "./safe-path-segment.js";
-import { inspectFileIdentity } from "./strict-file-identity.js";
+
+export { DEFAULT_JSON_DURABLE_QUEUE_ENTRY_MAX_BYTES } from "./json-durable-queue-read.js";
 
 export type JsonDurableQueueEntryPaths = {
   jsonPath: string;
@@ -43,8 +43,6 @@ type QueueValidationRoot = {
   path: string;
   allowSymlinkBase: boolean;
 };
-
-export const DEFAULT_JSON_DURABLE_QUEUE_ENTRY_MAX_BYTES = 16 * 1024 * 1024;
 
 function assertSafeQueueEntryId(id: string): void {
   assertSafePathSegment(id, { label: "queue entry id" });
@@ -284,82 +282,39 @@ export async function writeJsonDurableQueueEntry(params: {
   entry: unknown;
   tempPrefix: string;
 }): Promise<void> {
+  await writeQueueEntry(params);
+}
+
+async function writeQueueEntry(
+  params: Parameters<typeof writeJsonDurableQueueEntry>[0],
+  beforeRename?: () => Promise<void>,
+): Promise<void> {
   await replaceFileAtomicWithDirectorySync({
     filePath: params.filePath,
     content: stringifyJsonDocument(params.entry, null, 2),
     mode: 0o600,
     tempPrefix: params.tempPrefix,
     syncTempFile: true,
+    beforeRename,
   }, syncDirectory);
-}
-
-async function inspectQueueEntry(
-  inspect: () => BigIntStats,
-  maxBytes: number,
-  expected?: BigIntStats,
-): Promise<BigIntStats> {
-  let inspectionFailed = false;
-  try {
-    return await inspectFileIdentity(async () => {
-      try {
-        const stat = inspect();
-        if (stat.isSymbolicLink() || !stat.isFile()) {
-          throw new Error("queue entry is not a regular file");
-        }
-        if (stat.nlink > 1n) throw new Error("queue entry hardlinks are not allowed");
-        if (stat.size > maxBytes) throw new Error(`queue entry exceeds ${maxBytes} bytes`);
-        return stat;
-      } catch (error) {
-        inspectionFailed = true;
-        throw error;
-      }
-    }, expected);
-  } catch (error) {
-    // Translate only the identity helper's rejection, never inspection errors.
-    if (inspectionFailed) throw error;
-    throw new Error("queue entry changed during read", { cause: error });
-  }
-}
-
-async function readBoundedUtf8File(params: {
-  filePath: string;
-  maxBytes: number;
-}): Promise<string> {
-  const inspectPath = () => fs.lstatSync(params.filePath, { bigint: true });
-  const initialStat = await inspectQueueEntry(inspectPath, params.maxBytes);
-  const handle = await fs.promises.open(params.filePath, resolveReadOpenFlags());
-  try {
-    const openedStat = await inspectQueueEntry(
-      () => fs.fstatSync(handle.fd, { bigint: true }), params.maxBytes, initialStat,
-    );
-    await inspectQueueEntry(inspectPath, params.maxBytes, openedStat);
-    const bytes = await readBoundedAsync(
-      params.maxBytes,
-      async (buffer, length) => (await handle.read(buffer, 0, length, null)).bytesRead,
-      {
-        initialSize: openedStat.size >= 0n && Number.isSafeInteger(Number(openedStat.size))
-          ? Number(openedStat.size) : undefined,
-        createLimitError: () => new Error(`queue entry exceeds ${params.maxBytes} bytes`),
-      },
-    );
-    return bytes.toString("utf8");
-  } finally {
-    await handle.close();
-  }
 }
 
 export async function readJsonDurableQueueEntry<T>(
   filePath: string,
   options: { maxBytes?: number } = {},
 ): Promise<T> {
-  return JSON.parse(
-    await readBoundedUtf8File({
-      filePath,
-      maxBytes: normalizeMaxBytes(options.maxBytes, {
-        defaultValue: DEFAULT_JSON_DURABLE_QUEUE_ENTRY_MAX_BYTES,
-      })!,
-    }),
-  ) as T;
+  return await withJsonDurableQueueEntry<T, T>(filePath, options, async (entry) => entry);
+}
+
+async function migrateClaimedQueueEntry(params: {
+  paths: JsonDurableQueueEntryPaths;
+  identity: BigIntStats;
+  entry: unknown;
+  tempPrefix: string;
+}): Promise<void> {
+  await migrateDurableQueueEntry(params.paths, params.identity, async (filePath, assertCurrent) => {
+    await writeQueueEntry({ filePath, entry: params.entry, tempPrefix: params.tempPrefix }, assertCurrent);
+  });
 }
 
 export async function ackJsonDurableQueueEntry(paths: JsonDurableQueueEntryPaths): Promise<void> {
@@ -375,18 +330,17 @@ export async function loadJsonDurableQueueEntry<T>(params: {
   try {
     const claimedPath = await claimDurableQueueEntry(params.paths);
     if (!claimedPath) return null;
-    const raw = await readJsonDurableQueueEntry<T>(claimedPath, {
+    return await withJsonDurableQueueEntry<T, T>(claimedPath, {
       maxBytes: params.maxBytes,
+    }, async (raw, identity) => {
+      const result = params.read ? await params.read(raw, params.paths.jsonPath) : { entry: raw };
+      if (result.migrated) {
+        await migrateClaimedQueueEntry({
+          paths: params.paths, identity, entry: result.entry, tempPrefix: params.tempPrefix,
+        });
+      }
+      return result.entry;
     });
-    const result = params.read ? await params.read(raw, params.paths.jsonPath) : { entry: raw };
-    if (result.migrated) {
-      await writeJsonDurableQueueEntry({
-        filePath: claimedPath,
-        entry: result.entry,
-        tempPrefix: params.tempPrefix,
-      });
-    }
-    return result.entry;
   } catch (error) {
     if (getErrorCode(error) === "ENOENT") {
       return null;
@@ -443,21 +397,27 @@ export async function loadPendingJsonDurableQueueEntries<T>(
     const paths = resolveJsonDurableQueueEntryPaths(options.queueDir, id);
     const claimedPath = await claimDurableQueueEntry(paths, { skipUnowned: true });
     if (!claimedPath) continue;
-    let result: JsonDurableQueueReadResult<T>;
+    let migrationStarted = false;
     try {
-      const raw = await readJsonDurableQueueEntry<T>(claimedPath, { maxBytes: options.maxBytes });
-      result = options.read ? await options.read(raw, paths.jsonPath) : { entry: raw };
-    } catch {
+      const entry = await withJsonDurableQueueEntry<T, T>(
+        claimedPath,
+        { maxBytes: options.maxBytes },
+        async (raw, identity) => {
+          const result = options.read ? await options.read(raw, paths.jsonPath) : { entry: raw };
+          if (result.migrated) {
+            migrationStarted = true;
+            await migrateClaimedQueueEntry({
+              paths, identity, entry: result.entry, tempPrefix: options.tempPrefix,
+            });
+          }
+          return result.entry;
+        },
+      );
+      entries.push(entry);
+    } catch (error) {
+      if (migrationStarted) throw error;
       continue;
     }
-    if (result.migrated) {
-      await writeJsonDurableQueueEntry({
-        filePath: claimedPath,
-        entry: result.entry,
-        tempPrefix: options.tempPrefix,
-      });
-    }
-    entries.push(result.entry);
   }
   return entries;
 }

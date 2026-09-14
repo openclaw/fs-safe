@@ -6,6 +6,7 @@ import path from "node:path";
 import { syncDirectory } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup, sha256Hex } from "./file-identity.js";
+import { inspectFileIdentity } from "./strict-file-identity.js";
 import { serializePathWrite } from "./write-queue.js";
 
 export type DurableQueueEntryPathsLike = {
@@ -47,12 +48,19 @@ async function claimDurableQueueEntryUnlocked(
   const existingProcessing = await regularQueueFileIdentity(processingPath);
   if (existingProcessing) {
     const pending = await lstatOrNull(paths.jsonPath);
-    if (
-      pending &&
+    const retiresPending = pending !== null &&
       !pending.isSymbolicLink() &&
       pending.isFile() &&
-      sameFileIdentityForCleanup(pending, existingProcessing)
+      sameFileIdentityForCleanup(pending, existingProcessing);
+    if (
+      !retiresPending ||
+      path.resolve(path.dirname(processingPath)) !== path.resolve(path.dirname(paths.jsonPath))
     ) {
+      // An existing claim can contain a migration whose publication sync failed.
+      // Retirement already syncs this edge when both names share a parent.
+      await syncDirectory(path.dirname(processingPath));
+    }
+    if (retiresPending) {
       await retireDurableQueueSource({ jsonPath: paths.jsonPath, processingPath });
     }
     return processingPath;
@@ -68,7 +76,9 @@ async function claimDurableQueueEntryUnlocked(
     await fs.link(paths.jsonPath, processingPath);
   } catch (error) {
     if (getErrorCode(error) === "EEXIST") {
-      return (await regularQueueFileIdentity(processingPath)) ? processingPath : null;
+      if (!(await regularQueueFileIdentity(processingPath))) return null;
+      await syncDirectory(path.dirname(processingPath));
+      return processingPath;
     }
     if (getErrorCode(error) === "ENOENT") return null;
     throw error;
@@ -88,6 +98,39 @@ export async function claimDurableQueueEntry(
 ): Promise<string | null> {
   if (!(await lstatOrNull(path.dirname(paths.jsonPath)))) return null;
   return await withQueueEntryLock(paths, async () => await claimDurableQueueEntryUnlocked(paths, options));
+}
+
+// The caller retains its read descriptor until this migration settles.
+export async function migrateDurableQueueEntry<T>(
+  paths: DurableQueueEntryPathsLike,
+  expected: BigIntStats,
+  run: (filePath: string, assertCurrent: () => Promise<void>) => Promise<T>,
+): Promise<T> {
+  return await withQueueEntryLock(paths, async () => {
+    const processingPath = durableQueueProcessingPath(paths);
+    const assertCurrent = async (): Promise<void> => {
+      try {
+        await inspectFileIdentity(() => {
+          const current = fsSync.lstatSync(processingPath, { bigint: true });
+          if (current.isSymbolicLink() || !current.isFile() || current.nlink !== 1n) {
+            throw new FsSafeError(
+              "path-mismatch", "queue migration requires its original processing claim",
+            );
+          }
+          return current;
+        }, expected);
+      } catch (error) {
+        if (getErrorCode(error) === "ENOENT") {
+          throw new FsSafeError(
+            "path-mismatch", "queue processing claim disappeared before migration", { cause: error },
+          );
+        }
+        throw error;
+      }
+    };
+    await assertCurrent();
+    return await run(processingPath, assertCurrent);
+  });
 }
 
 export async function completeDeliveredQueueEntry(

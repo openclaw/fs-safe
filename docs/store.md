@@ -72,11 +72,20 @@ Loading serializes consumers for one ID through a sidecar lock, then creates `pr
 
 Queue and failed directory creation fsyncs every newly-created parent edge from the leaf toward the trusted root. Enqueue and migration writes fsync the temp file and parent; claim, acknowledgement, quarantine, delivered-marker cleanup, and retirement transitions fsync every affected directory and propagate real sync failures. A transition may already be visible when a post-mutation sync fails, so retry the same operation to complete its crash-recovery state. Acknowledgement retries resync the queue directory even when both `.processing` and `.delivered` marker names are already absent, before reporting completion or rejecting a newer pending generation; quarantine retries with only failed evidence resync that destination before repairing the vanished queue source.
 
-`writeJsonDurableQueueEntry()` and migrations share strict parent synchronization inside the atomic writer's retained descriptor and per-path serialization lifetime, followed by published-file identity verification. If sync fails after publication, the write rejects without rolling back the published JSON; retrying writes the entry again and must complete its own sync. This is not a rollback, deduplication, or exactly-once guarantee. The generic `replaceFileAtomic({ syncParentDir: true })` option remains best-effort.
+`writeJsonDurableQueueEntry()` and migrations share strict parent synchronization inside the atomic writer's retained descriptor and per-path serialization lifetime, followed by published-file identity verification. If sync fails after publication, the write rejects without rolling back the published JSON; retrying `writeJsonDurableQueueEntry()` writes the entry again and must complete its own sync. Loader retries resync an existing processing claim's parent under the transfer lock before calling `read`, even when a version-dependent callback would no longer request migration. Fresh claims and same-directory source retirement already complete that sync. This is not a rollback, deduplication, or exactly-once guarantee. The generic `replaceFileAtomic({ syncParentDir: true })` option remains best-effort.
 
 Batch loading skips invalid entry names, malformed, oversized, or unreadable entry content, and caller `read` callback failures. Initially unowned pending entries (hardlinks or unverifiable identities), symlinks, non-files, and absent pending entries are also skipped. Claim, transfer-lock, retirement, and migration write/publication/durability failures reject the batch with the original error, even if earlier entries succeeded. Migration in both loaders strictly syncs the parent directory after successful publication. Visible transitions and earlier processing claims remain for retry; a rejected batch does not acknowledge or roll them back.
 
 Failed destinations are create-only. Quarantine publishes the claimed file by hardlink, so the queue and failed directories must share a filesystem with hardlink support. If `failed/<id>.json` already exists, quarantine rejects while preserving both that earlier evidence and the current claimed entry instead of overwriting either file. The `read` callback continues to receive the logical `.json` path even though bytes are read and migrations are written through the claimed path.
+
+Migrations stay bound to the exact processing file opened for that load. The
+read descriptor remains pinned while the callback runs outside the transfer
+lock; after the callback returns, migration reacquires the lock and rechecks the
+claim before publication. If another consumer acknowledged, quarantined, or
+replaced that claim, the migration rejects with `FsSafeError("path-mismatch")`
+and leaves the newer generation or failed evidence intact. A stale migration
+rejects both single and batch loads; ordinary callback failures retain their
+existing single-load rejection and batch-skip behavior.
 
 Queue entry reads verify lossless file identities before opening, on the opened
 descriptor, and at the current pathname before reading bytes. POSIX opens are

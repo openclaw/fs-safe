@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Keep durable-queue migrations bound to the pinned processing generation, rejecting stale callbacks after acknowledgement, quarantine, or replacement; resync resumed claims so conditional migrations cannot bypass a failed publication sync on retry.
 - Speed up repeated lock-manager construction without rescanning held locks, and initialize legacy reference counts at acquisition and release so same-owner nested handles retain the outer lock.
 
 ## 0.11.0 - 2026-09-14
