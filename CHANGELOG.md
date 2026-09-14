@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Resolve explicit relative asynchronous sidecar paths against the caller's working directory before the first await, and retain that path and `lockRoot` snapshot through acquisition, reclaim, verification, and release.
+- Improve large atomic copy-fallback replacements by batching restore snapshots and synchronous source reads into reusable buffers; preserve restore limits, short-read handling, identity checks, and rollback behavior.
 
 - Reduce repeated path work in POSIX path-scoping helpers and Root operations while preserving root exclusion, traversal checks, live directory identities, and home-prefix behavior; broaden method benchmarks across path batches, directories, stores, queues, and contention.
 

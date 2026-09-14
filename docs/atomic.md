@@ -146,6 +146,11 @@ than `maxRestoreBytes` fails with `too-large` before mutation. A missing
 destination has no original to restore and follows the exclusive-create copy
 fallback.
 
+Restore snapshots use the pinned file's size as an allocation hint, with an
+initial allocation capped at 16 MiB plus the overflow byte. Reads continue
+through short reads and EOF, grow only as data arrives, and enforce the same
+`maxRestoreBytes` budget even if the destination grows after its size was read.
+
 ### Sync variant
 
 `replaceFileAtomicSync` accepts the same base options, a synchronous
