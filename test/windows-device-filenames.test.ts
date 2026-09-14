@@ -5,9 +5,13 @@ import {
   isWindowsReservedDeviceName,
   WINDOWS_RESERVED_DEVICE_NAMES,
 } from "../src/device-path.js";
-import { sanitizeUntrustedFileName } from "../src/filename.js";
+import {
+  sanitizeUntrustedFileName,
+  suffixWindowsReservedDeviceName,
+} from "../src/filename.js";
 import { writeSiblingTempFile, writeViaSiblingTempPath } from "../src/sibling-temp.js";
 import { sanitizeTempFileName, tempFile } from "../src/temp-target.js";
+import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -28,12 +32,53 @@ function expectPortableSanitizedName(input: string): string {
 }
 
 describe("Windows device-safe generated filenames", () => {
+  it.each([
+    "ordinary-safe-name.json",
+    "console.txt",
+    "COM0.log",
+    "COM10.log",
+    "LPT0.log",
+    "PRNTER.txt",
+    "CLOCK$$.txt",
+    "CONOUT.txt",
+  ])("keeps the non-device near miss %s exact", (name) => {
+    expect(suffixWindowsReservedDeviceName(name)).toBe(name);
+    expect(sanitizeUntrustedFileName(name, "fallback.bin")).toBe(name);
+  });
+
+  it("preserves ignored padding and extensions while suffixing the original stem", () => {
+    expect(suffixWindowsReservedDeviceName("cOn   .TxT")).toBe("cOn   _.TxT");
+    expect(suffixWindowsReservedDeviceName("NUL...")).toBe("NUL_...");
+  });
+
+  it("preserves Unicode casing behavior and non-ASCII initial near misses", () => {
+    expect(suffixWindowsReservedDeviceName("con\u0131n$.txt")).toBe("con\u0131n$_.txt");
+    for (const name of ["\u017fON.txt", "\u212aON.txt", "\uff23ON.txt"]) {
+      expect(suffixWindowsReservedDeviceName(name)).toBe(name);
+      expect(sanitizeUntrustedFileName(name, "fallback.bin")).toBe(name);
+    }
+  });
+
+  it("keeps malformed surrogate input behavior bounded and device-safe", () => {
+    const leadingLoneSurrogate = "\ud800ON.txt";
+    expect(suffixWindowsReservedDeviceName(leadingLoneSurrogate)).toBe(leadingLoneSurrogate);
+    expect(sanitizeUntrustedFileName(leadingLoneSurrogate, "fallback.bin"))
+      .toBe(leadingLoneSurrogate);
+
+    const truncatedLoneSurrogate = `${"a".repeat(199)}\ud800x`;
+    expect(sanitizeUntrustedFileName(truncatedLoneSurrogate, "fallback.bin"))
+      .toBe("a".repeat(199));
+  });
+
   it.each([199, 200])(
     "keeps a padded reserved basename safe at the %i-code-unit boundary",
     (length) => {
-      const input = `CON${" ".repeat(length - 3)}`;
+      const input = `CON${" ".repeat(length - 7)}.txt`;
       expect(input).toHaveLength(length);
-      expectPortableSanitizedName(input);
+      const expectedExtension = length === 199 ? ".txt" : ".tx";
+      expect(expectPortableSanitizedName(input)).toBe(
+        `CON${" ".repeat(length - 7)}_${expectedExtension}`,
+      );
     },
   );
 
@@ -56,6 +101,8 @@ describe("Windows device-safe generated filenames", () => {
   it("keeps padding, extensions, and surrogate-safe truncation device-safe", () => {
     expectPortableSanitizedName(`nUl${" ".repeat(197)}.txt`);
     expectPortableSanitizedName(`CON${" ".repeat(196)}😀`);
+    expect(expectPortableSanitizedName(`CON${" ".repeat(195)}😀x`))
+      .toBe(`CON${" ".repeat(195)}😀`);
   });
 
   it.each([...WINDOWS_RESERVED_DEVICE_NAMES])(
@@ -76,9 +123,56 @@ describe("Windows device-safe generated filenames", () => {
       expect(path.basename(target.file("nul.log"))).toBe("nul_.log");
       expect(isWindowsReservedDeviceName(target.path)).toBe(false);
       expect(isWindowsReservedDeviceName(target.file("nul.log"))).toBe(false);
+      await fs.writeFile(target.path, "default");
+      await fs.writeFile(target.file("nul.log"), "named");
+      await expect(fs.readFile(target.path, "utf8")).resolves.toBe("default");
+      await expect(fs.readFile(target.file("nul.log"), "utf8")).resolves.toBe("named");
     } finally {
       await target.cleanup();
     }
+  });
+
+  it("publishes through an ordinary device-safe sibling prefix", async () => {
+    const rootDir = await tempRoot("fs-safe-device-safe-prefix-");
+    const dir = path.join(rootDir, "parent.with.dots");
+    const finalPath = path.join(dir, "published.bin");
+    const published = await writeSiblingTempFile({
+      dir,
+      tempPrefix: "safe-output",
+      writeTemp: async (tempPath) => {
+        await fs.writeFile(tempPath, "published");
+        return finalPath;
+      },
+      resolveFinalPath: (result) => result,
+    });
+
+    expect(published.filePath).toBe(finalPath);
+    await expect(fs.readFile(finalPath, "utf8")).resolves.toBe("published");
+  });
+
+  it("distinguishes a device-looking prefix continuation from a device stem", async () => {
+    const dir = await tempRoot("fs-safe-device-prefix-composition-");
+    const producer = vi.fn(async (tempPath: string) => {
+      await fs.writeFile(tempPath, "safe");
+      return path.join(dir, "published.bin");
+    });
+
+    await expect(writeSiblingTempFile({
+      dir,
+      tempPrefix: "CON-",
+      writeTemp: producer,
+      resolveFinalPath: (result) => result,
+    })).resolves.toMatchObject({ filePath: path.join(dir, "published.bin") });
+    expect(producer).toHaveBeenCalledOnce();
+
+    producer.mockClear();
+    await expect(writeSiblingTempFile({
+      dir,
+      tempPrefix: "CON.",
+      writeTemp: producer,
+      resolveFinalPath: (result) => result,
+    })).rejects.toMatchObject({ code: "invalid-path", category: "policy" });
+    expect(producer).not.toHaveBeenCalled();
   });
 
   it.each([undefined, "private-directory"] as const)(
@@ -109,15 +203,22 @@ describe("Windows device-safe generated filenames", () => {
     const producer = vi.fn(async (tempPath: string) => {
       await fs.writeFile(tempPath, "unexpected");
     });
+    const beforeWrite = vi.fn();
+    __setFsSafeTestHooksForTest({ beforeSiblingTempWrite: beforeWrite });
 
-    await expect(writeViaSiblingTempPath({
-      rootDir,
-      targetPath,
-      tempPrefix: "NUL.",
-      writeTemp: producer,
-    })).rejects.toMatchObject({ code: "invalid-path", category: "policy" });
-    expect(producer).not.toHaveBeenCalled();
-    await expect(fs.access(targetPath)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(fs.readdir(rootDir)).resolves.toEqual([]);
+    try {
+      await expect(writeViaSiblingTempPath({
+        rootDir,
+        targetPath,
+        tempPrefix: "NUL.",
+        writeTemp: producer,
+      })).rejects.toMatchObject({ code: "invalid-path", category: "policy" });
+      expect(beforeWrite).not.toHaveBeenCalled();
+      expect(producer).not.toHaveBeenCalled();
+      await expect(fs.access(targetPath)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(fs.readdir(rootDir)).resolves.toEqual([]);
+    } finally {
+      __setFsSafeTestHooksForTest();
+    }
   });
 });

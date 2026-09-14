@@ -29,8 +29,10 @@ In order:
 
 If truncation itself exposes a reserved-device basename after Windows ignores
 trailing spaces or dots, the result is shortened once more and receives the
-same underscore suffix. The returned component therefore remains at most 200
-UTF-16 code units and is never a Windows reserved-device alias.
+same underscore suffix. A name that reaches the sanitization branch therefore
+remains at most 200 UTF-16 code units and is never a Windows reserved-device
+alias. `fallbackName` is returned verbatim for empty or path-alias input, so
+callers must supply a fallback that already satisfies their filename policy.
 
 That's it. The function stays intentionally small: it removes traversal and
 the most obvious cross-platform device and character hazards, but it is not a
