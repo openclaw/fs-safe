@@ -17,6 +17,18 @@ export async function registerArchives({ api: a, workspace: w, register: add }) 
   const gzipPath = path.join(w, "fixture.tgz");
   await tar.c({ cwd: source, file: tarPath, portable: true }, ["entry.json"]);
   await tar.c({ cwd: source, file: gzipPath, portable: true, gzip: true }, ["entry.json"]);
+  const paddedGzipPath = path.join(w, "zero-padded.tgz");
+  fs.writeFileSync(paddedGzipPath, Buffer.concat([fs.readFileSync(gzipPath), Buffer.alloc(64 * 1024 * 1024)]));
+  add("readArchiveEntry/gzip-64MiB-zero-padding", () => a.readArchiveEntry(paddedGzipPath, "entry.json", { maxBytes: 1024 }), {
+    divisor: 100, verify: result => assert.equal(result.toString(), '{"ok":true}'),
+  });
+  add("inspectTarArchive/gzip-64MiB-zero-padding", () => a.inspectTarArchive({ archivePath: paddedGzipPath, timeoutMs: 30_000 }), {
+    divisor: 100, verify: entries => {
+      assert.equal(entries.length, 1);
+      assert.equal(entries[0].path, "entry.json");
+      assert.equal(entries[0].size, 11);
+    },
+  });
   const destination = path.join(w, "archive-destination");
   fs.mkdirSync(destination);
   const simple = {
