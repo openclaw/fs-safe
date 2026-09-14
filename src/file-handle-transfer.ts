@@ -58,7 +58,7 @@ export async function transferFileHandle(
   options: CopyFileHandleOptions & { sizeHint: number; targetPosition?: number },
 ): Promise<number> {
   const maxBytes = options.maxBytes ?? Infinity;
-  const buffer = Buffer.allocUnsafe(Math.min(256 * 1024, Math.max(64 * 1024, options.sizeHint)));
+  const buffer = Buffer.allocUnsafe(Math.min(512 * 1024, Math.max(64 * 1024, options.sizeHint), maxBytes + 1));
   let position = 0;
   while (true) {
     options.signal?.throwIfAborted();

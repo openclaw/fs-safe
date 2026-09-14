@@ -120,7 +120,9 @@ before the affected write. `assertBeforeMutation` runs immediately before every
 partial-write submission and must inspect current authority each time.
 
 The helper reuses Root copying's bounded read buffer and completes positive
-short reads and writes. A zero-progress write rejects with `helper-failed`.
+short reads and writes. JavaScript file transfers use at most 512 KiB of scratch
+space, reduced for smaller source-size hints and capped by a finite byte budget
+plus its one-byte overflow probe. A zero-progress write rejects with `helper-failed`.
 Cancellation is checked before I/O, after source reads, and before each write;
 admitted reads and writes settle before rejection. A rejected operation can
 leave a copied prefix. There is no rollback or pathname cleanup.

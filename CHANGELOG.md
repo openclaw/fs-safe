@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Batch large borrowed-handle and JavaScript Root file transfers through reusable 512 KiB buffers, reducing filesystem calls while retaining byte limits, cancellation, and per-write authority checks; cap scratch allocation to small byte budgets plus their overflow probe.
+
 - Batch native ZIP metadata admission through bounded, operation-local read-ahead buffers, reducing per-entry filesystem calls while preserving complete record validation, short-read handling, cancellation, and stable scanner views.
 
 - Avoid repeating physical ZIP admission during JavaScript member reads and reduce ZIP filename-validation allocations across both backends, preserving raw and decoded name checks, entry limits, CRC validation, and error ordering.

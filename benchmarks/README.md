@@ -34,6 +34,8 @@ payload assertions run outside measurement. Reads cover 128 B, 64 KiB, 1 MiB,
 2 MiB, the default Root budget of 16 MiB, and an explicit 32 MiB budget;
 writes compare both durability settings without changing package defaults.
 Hash cases verify the digest as well as the byte count outside measurement.
+Borrowed-handle transfers and Root byte-copy cases cover the same payload sizes;
+the Root cases use `clone: "never"` and `durable: false` to expose transfer costs.
 Directory iteration includes full and early-stop scans in filesystem and sorted
 order. Tree-copy cases use explicit auto, never, and supported always policies
 over 64 small files, one 1 MiB file, and nested and empty directories.

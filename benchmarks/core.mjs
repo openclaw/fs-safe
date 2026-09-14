@@ -118,6 +118,10 @@ export async function registerCore({ api: a, workspace: w, register: add, contra
       after: (_, { source, target }) => Promise.all([source.close(), target.close()]),
       verify: (bytes) => { assert.equal(bytes, size); assert.deepEqual(fs.readFileSync(copyPath), payload); },
     });
+    const rootCopyName = `root-copy-${size}`;
+    add(`Root.copyIn/${size}/clone=never/durable=false`, () => safe.copyIn(rootCopyName, filePath, {
+      clone: "never", durable: false, maxBytes: size,
+    }), { divisor, verify: () => assert.deepEqual(fs.readFileSync(path.join(w, rootCopyName)), payload) });
   }
   for (const name of ["tryReadJson", "tryReadJsonSync", "readJson", "readJsonSync", "readJsonIfExists"]) add(name, () => a[name](input), { sync: name.endsWith("Sync"), verify: (r) => assert.equal(r.ok, true) });
   for (const name of ["readRootJsonSync", "readRootJsonObjectSync", "readRootStructuredFileSync"]) add(name, () => a[name]({ rootDir: w, relativePath: "input.json", boundaryLabel: "benchmark", parse: JSON.parse }), { sync: true, verify: (r) => assert(r.ok) });
