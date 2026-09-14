@@ -1,7 +1,7 @@
 import { classifyArchiveParserError } from "./archive-parser-errors.js";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
-import { Readable } from "node:stream";
+import { Readable, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { readBoundedAsync } from "./bounded-read.js";
 import {
@@ -138,9 +138,23 @@ async function readZipEntry(buffer: Buffer, entryPath: string, maxBytes: number,
     typeof entry.nodeStream === "function"
       ? entry.nodeStream()
       : Readable.from(await entry.async("nodebuffer"));
+  const chunks: Buffer[] = [];
+  let total = 0;
+  const destination = new Writable({
+    write(chunk: Buffer, _encoding, callback) {
+      total += chunk.length;
+      if (total > maxBytes) {
+        callback(new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT));
+        return;
+      }
+      chunks.push(chunk);
+      callback();
+    },
+  });
   try {
-    // Own the complete decoder route so a byte-limit failure joins source teardown.
-    return await pipeline(stream, integrity, async (source) => await readStreamBounded(source, maxBytes));
+    // Iterator teardown can mask limit errors on Node 22; keep them in stream callbacks.
+    await pipeline(stream, integrity, destination);
+    return Buffer.concat(chunks, total);
   } catch (error) {
     throw normalizeZipIntegrityError(error);
   }
