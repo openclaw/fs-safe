@@ -20,6 +20,7 @@ it.each(["STORE", "DEFLATE"] as const)("joins the %s decoder source when a selec
   const load = JSZip.loadAsync.bind(JSZip);
   let source: Readable | undefined;
   let cleanupFinished = false;
+  let cleanupError: Error | null | undefined;
   vi.spyOn(JSZip, "loadAsync").mockImplementation(async (...args) => {
     const archive = await load(...args);
     const entry = archive.files.value!;
@@ -28,6 +29,7 @@ it.each(["STORE", "DEFLATE"] as const)("joins the %s decoder source when a selec
       source = nodeStream(...params) as Readable;
       const destroy = source._destroy.bind(source);
       vi.spyOn(source, "_destroy").mockImplementation((error, callback) => {
+        cleanupError = error;
         setImmediate(() => { cleanupFinished = true; destroy(error, callback); });
       });
       return source;
@@ -35,12 +37,15 @@ it.each(["STORE", "DEFLATE"] as const)("joins the %s decoder source when a selec
     return archive;
   });
   try {
-    await expect(readArchiveEntry(archivePath, "value", { maxBytes: 1 })).rejects.toMatchObject({
+    const operation = readArchiveEntry(archivePath, "value", { maxBytes: 1 });
+    await expect(operation).rejects.toMatchObject({
+      name: "ArchiveLimitError",
       code: "archive-entry-extracted-size-exceeds-limit",
     });
     expect(source).toBeDefined();
     expect(source!.destroyed).toBe(true);
     expect(cleanupFinished).toBe(true);
+    await expect(operation).rejects.toBe(cleanupError);
   } finally {
     source?.destroy();
   }
