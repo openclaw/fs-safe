@@ -1,5 +1,5 @@
 import path from "node:path";
-import { isPathRelativeEscape } from "./path.js";
+import { isPathInside, isPathRelativeEscape } from "./path.js";
 import {
   hasWindowsPathAlias,
   resolvePathFromBasePreservingWindowsRoot,
@@ -11,6 +11,9 @@ function invalidPath(scopeLabel: string): { ok: false; error: string } {
 }
 
 function pathStaysWithinRoot(rootDir: string, candidatePath: string): boolean {
+  if (process.platform !== "win32") {
+    return candidatePath !== rootDir && isPathInside(rootDir, candidatePath);
+  }
   const relative = path.relative(rootDir, candidatePath);
   return Boolean(relative) && !isPathRelativeEscape(relative);
 }

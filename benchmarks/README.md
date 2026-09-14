@@ -34,6 +34,11 @@ payload assertions run outside measurement. Reads cover 128 B, 64 KiB, 1 MiB,
 2 MiB, the default Root budget of 16 MiB, and an explicit 32 MiB budget;
 writes compare both durability settings without changing package defaults.
 Hash cases verify the digest as well as the byte count outside measurement.
+The broader cases add lexical paths at depths 0/8/32, batches of 100/1,000
+paths, 1,000-entry listings and walks, private/public stores through 1 MiB with
+both durability settings, 1,000-item JSON documents and concurrent updates,
+contended/distinct lock groups, and loading 100 claimed queue entries. Queue
+fixtures are acknowledged outside timing; lock-group timings include release.
 Borrowed-handle transfers and Root byte-copy cases cover the same payload sizes;
 the Root cases use `clone: "never"` and `durable: false` to expose transfer costs.
 Directory iteration includes full and early-stop scans in filesystem and sorted
@@ -53,6 +58,14 @@ For a quick executable coverage check:
 ```sh
 pnpm benchmark:methods --mode off --iterations 1 --samples 1 --warmup 0
 ```
+
+The `benchmarks` workflow also has an optional manual method audit. Set
+`method_audit=true`, choose `platform=all|linux|macos|windows`, and optionally
+provide `compare_ref`. It builds both revisions on the same runner and uses
+the candidate harness for both, saving JSON reports for JavaScript and native
+modes. `iterations` and `samples` control the measurement budget. These full
+sweeps identify candidates; use interleaved focused measurements before claiming
+a speedup, especially for storage-sensitive operations.
 
 Use `--filter readFileDescriptorBounded` to repeat one family. Filtered reports
 are marked explicitly and do not imply all cases ran. `--dist /absolute/dist`

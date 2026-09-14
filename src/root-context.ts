@@ -54,6 +54,12 @@ const POSIX_PARENT_COMPONENT = /(?:^|\/)\.\.(?:\/|$)/;
 const WINDOWS_PARENT_COMPONENT = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
 
 export async function expandRelativePathWithHome(relativePath: string): Promise<string> {
+  const homeOnly = relativePath === "~";
+  const homePrefix = relativePath.startsWith("~/") || (path.sep === "\\" && relativePath.startsWith("~\\"));
+  if (!homeOnly && !homePrefix) {
+    assertNoWindowsPathAlias(relativePath, "filesystem", "relative path uses a Windows filesystem namespace alias");
+    return relativePath;
+  }
   const rawHome = process.env.HOME || process.env.USERPROFILE || os.homedir();
   assertNoWindowsPathAlias(rawHome, "filesystem", "home path uses a Windows filesystem namespace alias");
   if (cachedHomePath?.raw !== rawHome) {
@@ -65,17 +71,13 @@ export async function expandRelativePathWithHome(relativePath: string): Promise<
     }
     cachedHomePath = { raw: rawHome, real: realHome };
   }
-  if (relativePath === "~") {
+  if (homeOnly) {
     assertNoWindowsPathAlias(cachedHomePath.real, "filesystem", "home path uses a Windows filesystem namespace alias");
     return cachedHomePath.real;
   }
-  if (relativePath.startsWith("~/") || (path.sep === "\\" && relativePath.startsWith("~\\"))) {
-    const expanded = `${ensureTrailingSep(cachedHomePath.real)}${relativePath.slice(2)}`;
-    assertNoWindowsPathAlias(expanded, "filesystem", "expanded path uses a Windows filesystem namespace alias");
-    return expanded;
-  }
-  assertNoWindowsPathAlias(relativePath, "filesystem", "relative path uses a Windows filesystem namespace alias");
-  return relativePath;
+  const expanded = `${ensureTrailingSep(cachedHomePath.real)}${relativePath.slice(2)}`;
+  assertNoWindowsPathAlias(expanded, "filesystem", "expanded path uses a Windows filesystem namespace alias");
+  return expanded;
 }
 
 export async function resolveRootContext(rootDir: string): Promise<RootContext> {
