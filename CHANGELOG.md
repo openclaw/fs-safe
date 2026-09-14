@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Preserve existing destinations when guest cross-device symlink moves fail by staging links privately before atomic replacement, with cleanup on creation or publication failure.
 - Keep durable-queue migrations bound to the pinned processing generation, rejecting stale callbacks after acknowledgement, quarantine, or replacement; resync resumed claims so conditional migrations cannot bypass a failed publication sync on retry.
 - Preserve files refreshed while expiry pruning prepares removal by rechecking current file type and modification time immediately before guarded deletion, without requiring read access.
 - Speed up JavaScript gzip container-padding validation with bounded buffer comparisons and one lazy reusable zero window, preserving complete suffix checks, short-read handling, and cancellation cadence.
