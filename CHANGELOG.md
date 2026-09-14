@@ -6,6 +6,7 @@
 - Preserve established callback receivers while retaining single-read pathname and transfer-authority snapshots across structured JSON, durable directory and queue, sibling staging, and borrowed-handle flows.
 - Snapshot root traversal symlink-rejection policy with admitted paths so caller mutation cannot change an in-flight resolution.
 - Reject NTFS alternate-data-stream and directory-index pathname aliases across guarded Root, directory-identity, FileStore, archive, JSON queue, sidecar lock, secret, secure-read, atomic publication, temp, permission, install, trash, and output boundaries before filesystem access. Preserve rooted drive paths, including valid extended namespace drive roots without widening volume-root mutation authority, independent device/network policies, intentional output-name sanitization, existing failure shapes, and ordinary colon-bearing POSIX names; native relative and archive paths enforce the same Windows rule.
+- Batch large borrowed-handle and JavaScript Root file transfers through reusable 512 KiB buffers, reducing filesystem calls while retaining byte limits, cancellation, and per-write authority checks; cap scratch allocation to small byte budgets plus their overflow probe.
 - Batch native ZIP metadata admission through bounded, operation-local read-ahead buffers, reducing per-entry filesystem calls while preserving complete record validation, short-read handling, cancellation, and stable scanner views.
 
 - Avoid repeating physical ZIP admission during JavaScript member reads and reduce ZIP filename-validation allocations across both backends, preserving raw and decoded name checks, entry limits, CRC validation, and error ordering.
@@ -45,6 +46,7 @@
 - Add `Root.entries()` for guarded nonrecursive directory iteration that reports child symlinks, supports cancellation, and bounds entry counts and sorted-name collection while leaving traversal and link policy with the caller.
 
 - Add exact directory identity observations and synchronous assertions for caller-owned staging and recovery flows, preserving bigint identities, optional canonical-path checks, bounded Windows identity admission, final-symlink rejection with trailing separators, and original filesystem errors.
+- Add `overwriteFileHandle()` for in-place replacement through a borrowed regular-file handle, with prefix-only rollback preparation, growth-before-overwrite ordering, unchanged descriptor ownership and cursor, and a synchronous once-only pre-write admission callback.
 
 ## 0.10.0 - 2026-09-13
 

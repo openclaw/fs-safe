@@ -59,6 +59,29 @@ describe("borrowed FileHandle copying", () => {
     expect(digest.digest("hex")).toBe(createHash("sha256").update(f.content).digest("hex"));
   });
 
+  it("batches large transfers through one bounded buffer", async () => {
+    const content = Buffer.alloc(3 * 1024 * 1024 + 31, 7);
+    content[1024 * 1024] = 11;
+    content[2 * 1024 * 1024] = 13;
+    content[content.length - 1] = 17;
+    const f = await fixture(content, "");
+    const read = vi.spyOn(f.source, "read");
+    expect(await copyFileHandle(f.source, f.target)).toBe(content.length);
+    expect((await fs.readFile(f.targetPath)).equals(content)).toBe(true);
+    expect(read.mock.calls.length).toBeLessThan(10);
+    const buffer = read.mock.calls[0]![0];
+    expect(buffer.byteLength).toBeLessThanOrEqual(512 * 1024);
+    for (const call of read.mock.calls) expect(call[0]).toBe(buffer);
+  });
+
+  it.each([0, 3, 65_536])("caps scratch allocation to the %i-byte budget plus its overflow probe", async (maxBytes) => {
+    const f = await fixture(Buffer.alloc(maxBytes, 7), "");
+    const read = vi.spyOn(f.source, "read");
+    expect(await copyFileHandle(f.source, f.target, { maxBytes })).toBe(maxBytes);
+    expect(read.mock.calls[0]![0].byteLength).toBeLessThanOrEqual(maxBytes + 1);
+    expect((await fs.readFile(f.targetPath)).equals(f.content)).toBe(true);
+  });
+
   it("observes source bytes before a pending target write and settles that write before cancellation", async () => {
     const f = await fixture("source", "");
     const controller = new AbortController();

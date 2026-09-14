@@ -108,7 +108,7 @@ async function transferFileHandleCore(
   callbackThis: unknown,
 ): Promise<number> {
   const limit = maxBytes ?? Infinity;
-  const buffer = Buffer.allocUnsafe(Math.min(256 * 1024, Math.max(64 * 1024, sizeHint)));
+  const buffer = Buffer.allocUnsafe(Math.min(512 * 1024, Math.max(64 * 1024, sizeHint), limit + 1));
   const beforeWrite = signal === undefined && assertBeforeMutation === undefined
     ? undefined
     : () => {
