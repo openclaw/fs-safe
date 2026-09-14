@@ -95,6 +95,7 @@ mod windows {
     use std::ffi::c_void;
     use std::mem::zeroed;
     use std::os::windows::ffi::OsStrExt;
+    use std::path::{Path, PathBuf};
     use std::ptr::{null, null_mut};
 
     use windows_sys::Win32::Foundation::{
@@ -108,23 +109,30 @@ mod windows {
     use windows_sys::Win32::Security::{
         ACCESS_ALLOWED_ACE, ACCESS_DENIED_ACE, ACE_HEADER, ACL, CONTAINER_INHERIT_ACE,
         CreateWellKnownSid, DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetLengthSid,
-        GetTokenInformation, InitializeSecurityDescriptor, IsValidSid, IsWellKnownSid,
-        OBJECT_INHERIT_ACE, OWNER_SECURITY_INFORMATION, PSID, SE_DACL_PROTECTED,
-        SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, SECURITY_MAX_SID_SIZE,
+        GetSecurityDescriptorControl, GetTokenInformation, InitializeSecurityDescriptor,
+        IsValidSid, IsWellKnownSid, OBJECT_INHERIT_ACE, OWNER_SECURITY_INFORMATION, PSID,
+        SE_DACL_PROTECTED, SECURITY_DESCRIPTOR, SECURITY_MAX_SID_SIZE,
         SetSecurityDescriptorControl, SetSecurityDescriptorDacl, SetSecurityDescriptorOwner,
         TOKEN_QUERY, TOKEN_USER, TokenUser, WinAnonymousSid, WinAuthenticatedUserSid,
         WinBuiltinAdministratorsSid, WinBuiltinGuestsSid, WinBuiltinUsersSid, WinInteractiveSid,
         WinLocalSystemSid, WinNetworkSid, WinWorldSid,
     };
     use windows_sys::Win32::Storage::FileSystem::{
-        CreateDirectoryW, CreateFileW, FILE_ALL_ACCESS, FILE_FLAG_BACKUP_SEMANTICS,
-        FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        GetFinalPathNameByHandleW, OPEN_EXISTING,
+        CreateFileW, FILE_ADD_SUBDIRECTORY, FILE_ALL_ACCESS, FILE_ATTRIBUTE_DIRECTORY,
+        FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS,
+        FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ,
+        FILE_SHARE_WRITE, FILE_TRAVERSE, GetFinalPathNameByHandleW, OPEN_EXISTING,
     };
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
     use super::{WindowsAccessControlEntry, WindowsSecurityFacts, ace_flags};
-    use crate::{NativeResult, native_error};
+    use crate::{
+        NativeResult, native_error,
+        windows::{
+            HandleFileIdentity, OwnedHandle, handle_attributes, handle_file_identity,
+            mark_handle_for_deletion, nt_create_directory_relative,
+        },
+    };
 
     const GENERIC_READ: u32 = 0x8000_0000;
     const GENERIC_WRITE: u32 = 0x4000_0000;
@@ -143,6 +151,9 @@ mod windows {
     const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
     const ACCESS_DENIED_ACE_TYPE: u8 = 1;
     const SECURITY_DESCRIPTOR_REVISION: u32 = 1;
+    const FINAL_PATH_STACK_WCHARS: usize = 512;
+    const MAX_FINAL_PATH_WCHARS: usize = 32 * 1024;
+    const MAX_FINAL_PATH_ATTEMPTS: usize = 4;
 
     fn wide(value: &str) -> NativeResult<Vec<u16>> {
         if value.encode_utf16().any(|unit| unit == 0) {
@@ -170,6 +181,11 @@ mod windows {
     struct TokenSid {
         _buffer: Vec<u8>,
         sid: PSID,
+    }
+
+    struct HandleSecurityInspection {
+        facts: WindowsSecurityFacts,
+        dacl_protected: bool,
     }
 
     fn current_user_sid() -> NativeResult<TokenSid> {
@@ -313,7 +329,7 @@ mod windows {
         )))
     }
 
-    fn open_security_handle(path: &[u16]) -> NativeResult<HANDLE> {
+    fn open_security_handle(path: &[u16]) -> NativeResult<OwnedHandle> {
         let handle = unsafe {
             CreateFileW(
                 path.as_ptr(),
@@ -331,30 +347,214 @@ mod windows {
                 "open path for locality check",
             ));
         }
-        Ok(handle)
+        Ok(OwnedHandle(handle))
     }
 
-    fn is_local_handle(handle: HANDLE) -> NativeResult<bool> {
-        let needed = unsafe { GetFinalPathNameByHandleW(handle, null_mut(), 0, 0) };
-        if needed == 0 {
-            return Err(win_error(unsafe { GetLastError() }, "size final path"));
+    fn split_parent(path: &str) -> NativeResult<(PathBuf, String)> {
+        if path.encode_utf16().any(|unit| unit == 0) {
+            return Err(native_error("EINVAL", "Windows path contains a NUL byte"));
         }
-        let mut buffer = vec![0_u16; needed as usize + 1];
-        let written = unsafe {
-            GetFinalPathNameByHandleW(handle, buffer.as_mut_ptr(), buffer.len() as u32, 0)
+        for component in path.split(['/', '\\']).filter(|component| !component.is_empty()) {
+            if component.ends_with([' ', '.']) {
+                return Err(native_error(
+                    "EINVAL",
+                    "private directory path components must not end with a space or period",
+                ));
+            }
+        }
+        let target = Path::new(path);
+        let name = target
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| native_error("EINVAL", "private directory requires a child name"))?;
+        crate::validate_relative_path(name, false)?;
+        if name.contains(['/', '\\']) {
+            return Err(native_error(
+                "EINVAL",
+                "private directory requires a direct child name",
+            ));
+        }
+        let parent = target
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        Ok((parent.to_path_buf(), name.to_owned()))
+    }
+
+    fn open_private_directory_parent(
+        path: &Path,
+    ) -> NativeResult<(OwnedHandle, HandleFileIdentity)> {
+        let path = path
+            .to_str()
+            .ok_or_else(|| native_error("EINVAL", "Windows parent path is not valid UTF-8"))?;
+        let path = wide(path)?;
+        let handle = unsafe {
+            CreateFileW(
+                path.as_ptr(),
+                FILE_READ_ATTRIBUTES | FILE_ADD_SUBDIRECTORY | FILE_TRAVERSE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                null(),
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                null_mut(),
+            )
         };
-        if written == 0 || written as usize >= buffer.len() {
-            return Err(win_error(unsafe { GetLastError() }, "resolve final path"));
+        if handle == INVALID_HANDLE_VALUE {
+            return Err(win_error(
+                unsafe { GetLastError() },
+                "open private directory parent",
+            ));
         }
-        let final_path = String::from_utf16_lossy(&buffer[..written as usize]);
+        let owned = OwnedHandle(handle);
+        let attributes = handle_attributes(owned.0)?;
+        if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(native_error(
+                "ELOOP",
+                "private directory parent must not be a reparse point",
+            ));
+        }
+        if attributes & FILE_ATTRIBUTE_DIRECTORY == 0 {
+            return Err(native_error(
+                "ENOTDIR",
+                "private directory parent is not a directory",
+            ));
+        }
+        if !is_local_handle(owned.0)? {
+            return Err(native_error(
+                "ENOTSUP",
+                "private directories require a local filesystem",
+            ));
+        }
+        let identity = handle_file_identity(owned.0)?;
+        Ok((owned, identity))
+    }
+
+    fn open_private_directory_path(path: &str) -> NativeResult<OwnedHandle> {
+        let path = wide(path)?;
+        let handle = unsafe {
+            CreateFileW(
+                path.as_ptr(),
+                FILE_READ_ATTRIBUTES,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                null(),
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                null_mut(),
+            )
+        };
+        if handle == INVALID_HANDLE_VALUE {
+            return Err(win_error(
+                unsafe { GetLastError() },
+                "open private directory through its public path",
+            ));
+        }
+        Ok(OwnedHandle(handle))
+    }
+
+    fn final_private_directory_identity<Locality>(
+        handle: HANDLE,
+        locality: &mut Locality,
+    ) -> NativeResult<HandleFileIdentity>
+    where
+        Locality: FnMut(HANDLE) -> NativeResult<bool>,
+    {
+        let attributes = handle_attributes(handle)?;
+        if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(native_error(
+                "ELOOP",
+                "created private directory path became a reparse point",
+            ));
+        }
+        if !locality(handle)? {
+            return Err(native_error(
+                "ENOTSUP",
+                "created private directory path must resolve to a local filesystem",
+            ));
+        }
+        if attributes & FILE_ATTRIBUTE_DIRECTORY == 0 {
+            return Err(native_error(
+                "ENOTDIR",
+                "created private directory path no longer names a directory",
+            ));
+        }
+        handle_file_identity(handle)
+    }
+
+    fn final_path_with_query<Query>(handle: HANDLE, mut query: Query) -> NativeResult<String>
+    where
+        Query: FnMut(HANDLE, &mut [u16]) -> NativeResult<usize>,
+    {
+        let mut stack = [0_u16; FINAL_PATH_STACK_WCHARS];
+        let mut heap = Vec::new();
+        let mut capacity = FINAL_PATH_STACK_WCHARS;
+        for attempt in 0..MAX_FINAL_PATH_ATTEMPTS {
+            let buffer: &mut [u16] = if attempt == 0 {
+                &mut stack
+            } else {
+                if capacity > MAX_FINAL_PATH_WCHARS {
+                    return Err(native_error("ENAMETOOLONG", "final Windows path is too long"));
+                }
+                heap.try_reserve_exact(capacity.saturating_sub(heap.len()))
+                    .map_err(|_| native_error("ENOMEM", "allocate final Windows path buffer"))?;
+                heap.resize(capacity, 0);
+                &mut heap
+            };
+            let written = query(handle, buffer)?;
+            if written == 0 {
+                return Err(native_error("EIO", "final Windows path query returned zero"));
+            }
+            if written < buffer.len() {
+                return Ok(String::from_utf16_lossy(&buffer[..written]));
+            }
+            capacity = if written > buffer.len() {
+                written
+            } else {
+                buffer
+                    .len()
+                    .checked_mul(2)
+                    .ok_or_else(|| native_error("ENAMETOOLONG", "final Windows path is too long"))?
+            };
+            if capacity > MAX_FINAL_PATH_WCHARS {
+                return Err(native_error("ENAMETOOLONG", "final Windows path is too long"));
+            }
+        }
+        Err(native_error(
+            "EIO",
+            "final Windows path changed during bounded retries",
+        ))
+    }
+
+    fn is_local_handle_with_query<Query>(handle: HANDLE, query: Query) -> NativeResult<bool>
+    where
+        Query: FnMut(HANDLE, &mut [u16]) -> NativeResult<usize>,
+    {
+        let final_path = final_path_with_query(handle, query)?;
         Ok(!final_path.starts_with(r"\\?\UNC\")
             && (!final_path.starts_with(r"\\") || final_path.starts_with(r"\\?\")))
     }
 
-    pub fn read_owner_and_dacl(path: &str) -> NativeResult<WindowsSecurityFacts> {
-        let path = wide(path)?;
-        let current = current_user_sid()?;
-        let handle = open_security_handle(&path)?;
+    fn is_local_handle(handle: HANDLE) -> NativeResult<bool> {
+        is_local_handle_with_query(handle, |handle, buffer| {
+            let written = unsafe {
+                GetFinalPathNameByHandleW(
+                    handle,
+                    buffer.as_mut_ptr(),
+                    buffer.len() as u32,
+                    0,
+                )
+            };
+            if written == 0 {
+                return Err(win_error(unsafe { GetLastError() }, "resolve final path"));
+            }
+            Ok(written as usize)
+        })
+    }
+
+    fn read_owner_and_dacl_handle(
+        handle: HANDLE,
+        current: &TokenSid,
+    ) -> NativeResult<HandleSecurityInspection> {
         let local = is_local_handle(handle).unwrap_or(false);
         let mut owner = null_mut();
         let mut dacl: *mut ACL = null_mut();
@@ -372,10 +572,18 @@ mod windows {
             )
         };
         if status != 0 {
-            unsafe { CloseHandle(handle) };
             return Err(win_error(status, "read owner and DACL"));
         }
         let result = (|| {
+            let mut control = 0_u16;
+            let mut revision = 0_u32;
+            if unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) } == 0
+            {
+                return Err(win_error(
+                    unsafe { GetLastError() },
+                    "read security descriptor control",
+                ));
+            }
             let owner_class = if unsafe { EqualSid(owner, current.sid) } != 0 {
                 "current-user"
             } else if unsafe { IsWellKnownSid(owner, WinLocalSystemSid) } != 0 {
@@ -437,15 +645,132 @@ mod windows {
                     }
                 }
             }
-            Ok(facts)
+            Ok(HandleSecurityInspection {
+                facts,
+                dacl_protected: control & SE_DACL_PROTECTED != 0,
+            })
         })();
         unsafe { LocalFree(descriptor) };
-        unsafe { CloseHandle(handle) };
         result
     }
 
-    pub fn create_private_directory(path: &str) -> NativeResult<()> {
-        let path_wide = wide(path)?;
+    pub fn read_owner_and_dacl(path: &str) -> NativeResult<WindowsSecurityFacts> {
+        let path = wide(path)?;
+        let current = current_user_sid()?;
+        let handle = open_security_handle(&path)?;
+        read_owner_and_dacl_handle(handle.0, &current).map(|inspection| inspection.facts)
+    }
+
+    fn verify_private_directory_association<FinalLocality>(
+        path: &str,
+        parent_path: &Path,
+        parent: &OwnedHandle,
+        parent_identity: HandleFileIdentity,
+        created_identity: HandleFileIdentity,
+        final_locality: &mut FinalLocality,
+    ) -> NativeResult<()>
+    where
+        FinalLocality: FnMut(HANDLE) -> NativeResult<bool>,
+    {
+        if handle_file_identity(parent.0)? != parent_identity {
+            return Err(native_error(
+                "EIO",
+                "retained private directory parent identity changed",
+            ));
+        }
+        let (_named_parent, named_parent_identity) = open_private_directory_parent(parent_path)?;
+        if named_parent_identity != parent_identity {
+            return Err(native_error(
+                "EIO",
+                "private directory parent changed during validation",
+            ));
+        }
+        let named = open_private_directory_path(path)?;
+        if final_private_directory_identity(named.0, final_locality)? != created_identity {
+            return Err(native_error(
+                "EIO",
+                "private directory named association changed during validation",
+            ));
+        }
+        Ok(())
+    }
+
+    fn created_directory_identity(handle: HANDLE) -> NativeResult<HandleFileIdentity> {
+        let attributes = handle_attributes(handle)?;
+        if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(native_error(
+                "ELOOP",
+                "created private directory became a reparse point",
+            ));
+        }
+        if attributes & FILE_ATTRIBUTE_DIRECTORY == 0 {
+            return Err(native_error(
+                "ENOTDIR",
+                "created private directory handle is not a directory",
+            ));
+        }
+        handle_file_identity(handle)
+    }
+
+    fn validate_private_directory_facts(
+        inspection: &HandleSecurityInspection,
+    ) -> NativeResult<()> {
+        let facts = &inspection.facts;
+        if !inspection.dacl_protected
+            || facts.owner_class != "current-user"
+            || facts.world_readable
+            || facts.world_writable
+            || facts.group_readable
+            || facts.group_writable
+            || facts.fallback_required
+        {
+            return Err(native_error(
+                "EACCES",
+                "filesystem did not enforce the private directory DACL",
+            ));
+        }
+        Ok(())
+    }
+
+    fn with_private_directory_cleanup_error(
+        error: napi::Error<String>,
+        cleanup: NativeResult<()>,
+    ) -> napi::Error<String> {
+        match cleanup {
+            Ok(()) => error,
+            Err(cleanup) => native_error(
+                error.status,
+                format!(
+                    "{}; private directory cleanup failed ({}): {}",
+                    error.reason, cleanup.status, cleanup.reason
+                ),
+            ),
+        }
+    }
+
+    fn create_private_directory_with_hooks<
+        AfterCreate,
+        QueryCreated,
+        AfterValidation,
+        Inspect,
+        FinalLocality,
+    >(
+        path: &str,
+        mut after_create: AfterCreate,
+        mut query_created: QueryCreated,
+        mut after_validation: AfterValidation,
+        mut inspect: Inspect,
+        mut final_locality: FinalLocality,
+    ) -> NativeResult<()>
+    where
+        AfterCreate: FnMut(),
+        QueryCreated: FnMut(HANDLE) -> NativeResult<HandleFileIdentity>,
+        AfterValidation: FnMut(),
+        Inspect: FnMut(HANDLE, &TokenSid) -> NativeResult<HandleSecurityInspection>,
+        FinalLocality: FnMut(HANDLE) -> NativeResult<bool>,
+    {
+        let (parent_path, name) = split_parent(path)?;
+        let (parent, parent_identity) = open_private_directory_parent(&parent_path)?;
         let current = current_user_sid()?;
         let system = well_known_sid(WinLocalSystemSid)?;
         let administrators = well_known_sid(WinBuiltinAdministratorsSid)?;
@@ -469,7 +794,6 @@ mod windows {
         if status != 0 {
             return Err(win_error(status, "build private directory DACL"));
         }
-        let mut created = false;
         let result = (|| {
             let mut descriptor: SECURITY_DESCRIPTOR = unsafe { zeroed() };
             let descriptor_ptr = (&mut descriptor as *mut SECURITY_DESCRIPTOR).cast();
@@ -490,40 +814,585 @@ mod windows {
                     "build private directory security descriptor",
                 ));
             }
-            let attributes = SECURITY_ATTRIBUTES {
-                nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
-                lpSecurityDescriptor: descriptor_ptr,
-                bInheritHandle: 0,
-            };
-            if unsafe { CreateDirectoryW(path_wide.as_ptr(), &attributes) } == 0 {
-                return Err(win_error(
-                    unsafe { GetLastError() },
-                    "create private directory",
-                ));
-            }
-            created = true;
-            let facts = read_owner_and_dacl(path)?;
-            if facts.owner_class != "current-user"
-                || facts.world_readable
-                || facts.world_writable
-                || facts.group_readable
-                || facts.group_writable
-                || facts.fallback_required
-            {
-                return Err(native_error(
-                    "EACCES",
-                    "filesystem did not enforce the private directory DACL",
-                ));
-            }
-            Ok(())
+            let created =
+                nt_create_directory_relative(parent.0, &name, descriptor_ptr).map_err(|error| {
+                    if error.status == "EPERM" {
+                        native_error("EACCES", error.reason)
+                    } else {
+                        error
+                    }
+                })?;
+            let operation = (|| {
+                after_create();
+                let created_identity = query_created(created.0)?;
+                let inspection = inspect(created.0, &current)?;
+                validate_private_directory_facts(&inspection)?;
+                after_validation();
+                verify_private_directory_association(
+                    path,
+                    &parent_path,
+                    &parent,
+                    parent_identity,
+                    created_identity,
+                    &mut final_locality,
+                )
+            })();
+            operation.map_err(|error| {
+                with_private_directory_cleanup_error(error, mark_handle_for_deletion(created.0))
+            })
         })();
         unsafe { LocalFree(acl.cast()) };
-        if created && result.is_err() {
-            unsafe {
-                windows_sys::Win32::Storage::FileSystem::RemoveDirectoryW(path_wide.as_ptr())
-            };
-        }
         result
+    }
+
+    pub fn create_private_directory(path: &str) -> NativeResult<()> {
+        create_private_directory_with_hooks(
+            path,
+            || {},
+            created_directory_identity,
+            || {},
+            read_owner_and_dacl_handle,
+            is_local_handle,
+        )
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use std::cell::Cell;
+        use std::fs::{self, OpenOptions};
+        use std::os::windows::fs::OpenOptionsExt;
+        use std::os::windows::io::AsRawHandle;
+        use std::path::{Path, PathBuf};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE,
+            FILE_SHARE_READ, FILE_SHARE_WRITE,
+        };
+
+        use super::*;
+
+        fn temp_root(label: &str) -> PathBuf {
+            let base = fs::canonicalize(std::env::temp_dir()).unwrap();
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let root = base.join(format!(
+                "fs-safe-private-directory-{label}-{}-{nonce}",
+                std::process::id()
+            ));
+            fs::create_dir(&root).unwrap();
+            root
+        }
+
+        fn ordinary_win32_path(path: &Path) -> PathBuf {
+            let path = path.to_str().unwrap();
+            if let Some(path) = path.strip_prefix(r"\\?\UNC\") {
+                PathBuf::from(format!(r"\\{path}"))
+            } else if let Some(path) = path.strip_prefix(r"\\?\") {
+                PathBuf::from(path)
+            } else {
+                PathBuf::from(path)
+            }
+        }
+
+        fn path_identity(path: &Path) -> HandleFileIdentity {
+            let handle = OpenOptions::new()
+                .read(true)
+                .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+                .open(path)
+                .unwrap();
+            handle_file_identity(handle.as_raw_handle() as HANDLE).unwrap()
+        }
+
+        fn replace_directory(target: &Path, original: &Path) -> HandleFileIdentity {
+            fs::rename(target, original).unwrap();
+            fs::create_dir(target).unwrap();
+            fs::write(target.join("keep"), b"replacement").unwrap();
+            path_identity(target)
+        }
+
+        fn write_final_path_result(path: &str, buffer: &mut [u16]) -> usize {
+            let units = path.encode_utf16().collect::<Vec<_>>();
+            let required = units.len() + 1;
+            if buffer.len() < required {
+                return required;
+            }
+            buffer[..units.len()].copy_from_slice(&units);
+            buffer[units.len()] = 0;
+            units.len()
+        }
+
+        #[test]
+        fn final_path_query_uses_stack_and_bounded_fallbacks() {
+            let handle = null_mut();
+            let short = r"\\?\C:\short";
+            let mut capacities = Vec::new();
+            assert!(
+                is_local_handle_with_query(handle, |_, buffer| {
+                    capacities.push(buffer.len());
+                    Ok(write_final_path_result(short, buffer))
+                })
+                .unwrap()
+            );
+            assert_eq!(capacities, [FINAL_PATH_STACK_WCHARS]);
+            for (path, expected) in [
+                (r"\\?\UNC\server\share\private", false),
+                (r"\\server\share\private", false),
+                (r"\\?\C:\private", true),
+            ] {
+                assert_eq!(
+                    is_local_handle_with_query(handle, |_, buffer| {
+                        Ok(write_final_path_result(path, buffer))
+                    })
+                    .unwrap(),
+                    expected
+                );
+            }
+
+            let long = format!(r"\\?\C:\{}", "a".repeat(FINAL_PATH_STACK_WCHARS));
+            capacities.clear();
+            assert!(
+                is_local_handle_with_query(handle, |_, buffer| {
+                    capacities.push(buffer.len());
+                    Ok(write_final_path_result(&long, buffer))
+                })
+                .unwrap()
+            );
+            assert_eq!(
+                capacities,
+                [FINAL_PATH_STACK_WCHARS, long.encode_utf16().count() + 1]
+            );
+
+            let prefix = r"\\?\C:\";
+            let boundary = format!(
+                "{prefix}{}",
+                "a".repeat(MAX_FINAL_PATH_WCHARS - 1 - prefix.encode_utf16().count())
+            );
+            capacities.clear();
+            assert!(
+                is_local_handle_with_query(handle, |_, buffer| {
+                    capacities.push(buffer.len());
+                    Ok(write_final_path_result(&boundary, buffer))
+                })
+                .unwrap()
+            );
+            assert_eq!(capacities, [FINAL_PATH_STACK_WCHARS, MAX_FINAL_PATH_WCHARS]);
+
+            let too_long = final_path_with_query(handle, |_, _| {
+                Ok(MAX_FINAL_PATH_WCHARS + 1)
+            })
+            .unwrap_err();
+            assert_eq!(too_long.status, "ENAMETOOLONG");
+            assert_eq!(too_long.reason, "final Windows path is too long");
+
+            let zero = final_path_with_query(handle, |_, _| Ok(0)).unwrap_err();
+            assert_eq!(zero.status, "EIO");
+            assert_eq!(zero.reason, "final Windows path query returned zero");
+        }
+
+        #[test]
+        fn creates_private_directory_with_validated_dacl() {
+            let root = temp_root("success");
+            let target = root.join("private");
+            let protected = Cell::new(false);
+            create_private_directory_with_hooks(
+                target.to_str().unwrap(),
+                || {},
+                created_directory_identity,
+                || {},
+                |handle, current| {
+                    let inspection = read_owner_and_dacl_handle(handle, current)?;
+                    protected.set(inspection.dacl_protected);
+                    Ok(inspection)
+                },
+                is_local_handle,
+            )
+            .unwrap();
+            assert!(protected.get());
+
+            let facts = read_owner_and_dacl(target.to_str().unwrap()).unwrap();
+            assert_eq!(facts.owner_class, "current-user");
+            assert_eq!(facts.owner_sid, facts.current_user_sid);
+            assert!(facts.dacl_present);
+            assert!(facts.is_local);
+            assert!(facts.ace_list_complete);
+            assert!(!facts.fallback_required);
+            assert!(!facts.world_readable);
+            assert!(!facts.world_writable);
+            assert!(!facts.group_readable);
+            assert!(!facts.group_writable);
+            assert_eq!(facts.aces.len(), 3);
+
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn rejects_an_unprotected_created_directory_and_cleans_its_handle() {
+            let root = temp_root("unprotected-dacl");
+            let target = root.join("private");
+
+            let error = create_private_directory_with_hooks(
+                target.to_str().unwrap(),
+                || {},
+                created_directory_identity,
+                || panic!("unprotected DACL must stop before final validation"),
+                |handle, current| {
+                    let mut inspection = read_owner_and_dacl_handle(handle, current)?;
+                    assert!(inspection.dacl_protected);
+                    inspection.dacl_protected = false;
+                    Ok(inspection)
+                },
+                is_local_handle,
+            )
+            .unwrap_err();
+            assert_eq!(error.status, "EACCES");
+            assert_eq!(
+                error.reason,
+                "filesystem did not enforce the private directory DACL"
+            );
+            assert!(!target.try_exists().unwrap());
+
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn collision_preserves_the_existing_directory() {
+            let root = temp_root("collision");
+            let target = root.join("private");
+            fs::create_dir(&target).unwrap();
+            fs::write(target.join("keep"), b"existing").unwrap();
+            let identity = path_identity(&target);
+
+            let error = create_private_directory(target.to_str().unwrap()).unwrap_err();
+            assert_eq!(error.status, "EEXIST");
+            assert_eq!(path_identity(&target), identity);
+            assert_eq!(fs::read(target.join("keep")).unwrap(), b"existing");
+
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn rejects_ambiguous_trailing_leaf_forms_before_creation() {
+            let root = temp_root("ambiguous-leaf");
+            for name in ["private.", "private "] {
+                let target = root.join(name);
+                let error = create_private_directory(target.to_str().unwrap()).unwrap_err();
+                assert_eq!(error.status, "EINVAL");
+                assert!(fs::read_dir(&root).unwrap().next().is_none());
+            }
+
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn rejects_dot_and_ambiguous_parent_components_before_creation() {
+            let root = temp_root("ambiguous-components");
+            for component in [".", "..", "parent.", "parent "] {
+                let target = format!(r"{}\{}\private", root.display(), component);
+                let error = create_private_directory(&target).unwrap_err();
+                assert_eq!(error.status, "EINVAL");
+                assert!(fs::read_dir(&root).unwrap().next().is_none());
+            }
+
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn ambiguous_normalized_collision_preserves_the_existing_directory() {
+            let root = temp_root("normalized-collision");
+            let existing = root.join("private");
+            fs::create_dir(&existing).unwrap();
+            fs::write(existing.join("keep"), b"existing").unwrap();
+            let identity = path_identity(&existing);
+
+            for name in ["private.", "private "] {
+                let error =
+                    create_private_directory(root.join(name).to_str().unwrap()).unwrap_err();
+                assert_eq!(error.status, "EINVAL");
+                assert_eq!(path_identity(&existing), identity);
+                assert_eq!(fs::read(existing.join("keep")).unwrap(), b"existing");
+            }
+
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn ordinary_win32_parent_alias_does_not_touch_its_normalized_collision() {
+            let canonical_root = temp_root("parent-alias");
+            let root = ordinary_win32_path(&canonical_root);
+            assert!(!root.to_str().unwrap().starts_with(r"\\?\"));
+            let parent = root.join("parent");
+            let collision = parent.join("private");
+            fs::create_dir(&parent).unwrap();
+            fs::create_dir(&collision).unwrap();
+            fs::write(collision.join("keep"), b"existing").unwrap();
+            let parent_identity = path_identity(&parent);
+            let collision_identity = path_identity(&collision);
+
+            let target = root.join("parent.").join("private");
+            let error = create_private_directory(target.to_str().unwrap()).unwrap_err();
+            assert_eq!(error.status, "EINVAL");
+            assert_eq!(path_identity(&parent), parent_identity);
+            assert_eq!(path_identity(&collision), collision_identity);
+            assert_eq!(fs::read(collision.join("keep")).unwrap(), b"existing");
+            assert_eq!(fs::read_dir(&parent).unwrap().count(), 1);
+
+            fs::remove_dir_all(canonical_root).unwrap();
+        }
+
+        #[test]
+        fn substitution_before_validation_preserves_the_exact_replacement() {
+            let root = temp_root("before-validation");
+            let target = root.join("private");
+            let original = root.join("original");
+            let mut replacement = None;
+            let created_handle = Cell::new(null_mut());
+
+            let error = create_private_directory_with_hooks(
+                target.to_str().unwrap(),
+                || replacement = Some(replace_directory(&target, &original)),
+                |handle| {
+                    created_handle.set(handle);
+                    created_directory_identity(handle)
+                },
+                || {},
+                |handle, current| {
+                    assert_eq!(handle, created_handle.get());
+                    read_owner_and_dacl_handle(handle, current)
+                },
+                is_local_handle,
+            )
+            .unwrap_err();
+            assert_eq!(error.status, "EIO");
+            assert_eq!(path_identity(&target), replacement.unwrap());
+            assert_eq!(fs::read(target.join("keep")).unwrap(), b"replacement");
+            assert!(!original.try_exists().unwrap());
+
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn substitution_after_validation_preserves_the_exact_replacement() {
+            let root = temp_root("after-validation");
+            let target = root.join("private");
+            let original = root.join("original");
+            let mut replacement = None;
+
+            let error = create_private_directory_with_hooks(
+                target.to_str().unwrap(),
+                || {},
+                created_directory_identity,
+                || replacement = Some(replace_directory(&target, &original)),
+                read_owner_and_dacl_handle,
+                is_local_handle,
+            )
+            .unwrap_err();
+            assert_eq!(error.status, "EIO");
+            assert_eq!(path_identity(&target), replacement.unwrap());
+            assert_eq!(fs::read(target.join("keep")).unwrap(), b"replacement");
+            assert!(!original.exists());
+
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn substitution_after_validation_preserves_an_empty_replacement() {
+            let root = temp_root("empty-replacement");
+            let target = root.join("private");
+            let original = root.join("original");
+            let mut replacement = None;
+
+            let error = create_private_directory_with_hooks(
+                target.to_str().unwrap(),
+                || {},
+                created_directory_identity,
+                || {
+                    fs::rename(&target, &original).unwrap();
+                    fs::create_dir(&target).unwrap();
+                    replacement = Some(path_identity(&target));
+                },
+                read_owner_and_dacl_handle,
+                is_local_handle,
+            )
+            .unwrap_err();
+            assert_eq!(error.status, "EIO");
+            assert_eq!(path_identity(&target), replacement.unwrap());
+            assert!(fs::read_dir(&target).unwrap().next().is_none());
+            assert!(!original.try_exists().unwrap());
+
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn parent_substitution_is_detected_without_deleting_its_child() {
+            let root = temp_root("parent-substitution");
+            let parent = root.join("parent");
+            let original_parent = root.join("original-parent");
+            let target = parent.join("private");
+            let moved_created = root.join("moved-created");
+            fs::create_dir(&parent).unwrap();
+            let original_parent_identity = path_identity(&parent);
+            let mut replacement_parent = None;
+            let mut replacement_child = None;
+
+            let error = create_private_directory_with_hooks(
+                target.to_str().unwrap(),
+                || {},
+                created_directory_identity,
+                || {
+                    fs::rename(&target, &moved_created).unwrap();
+                    fs::rename(&parent, &original_parent).unwrap();
+                    fs::create_dir(&parent).unwrap();
+                    fs::create_dir(&target).unwrap();
+                    fs::write(target.join("keep"), b"replacement").unwrap();
+                    replacement_parent = Some(path_identity(&parent));
+                    replacement_child = Some(path_identity(&target));
+                },
+                read_owner_and_dacl_handle,
+                is_local_handle,
+            )
+            .unwrap_err();
+            assert_eq!(error.status, "EIO");
+            assert_eq!(
+                error.reason,
+                "private directory parent changed during validation"
+            );
+            assert_eq!(path_identity(&original_parent), original_parent_identity);
+            assert_eq!(path_identity(&parent), replacement_parent.unwrap());
+            assert_eq!(path_identity(&target), replacement_child.unwrap());
+            assert_eq!(fs::read(target.join("keep")).unwrap(), b"replacement");
+            assert!(!moved_created.try_exists().unwrap());
+            assert!(!original_parent.join("private").try_exists().unwrap());
+
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn inspection_failure_preserves_a_substituted_directory() {
+            let root = temp_root("inspection-failure");
+            let target = root.join("private");
+            let original = root.join("original");
+            let mut replacement = None;
+
+            let error = create_private_directory_with_hooks(
+                target.to_str().unwrap(),
+                || replacement = Some(replace_directory(&target, &original)),
+                created_directory_identity,
+                || panic!("failed inspection must stop before final validation"),
+                |_, _| {
+                    Err(native_error(
+                        "inspection-failed",
+                        "injected inspection failure",
+                    ))
+                },
+                is_local_handle,
+            )
+            .unwrap_err();
+            assert_eq!(error.status, "inspection-failed");
+            assert_eq!(error.reason, "injected inspection failure");
+            assert_eq!(path_identity(&target), replacement.unwrap());
+            assert_eq!(fs::read(target.join("keep")).unwrap(), b"replacement");
+            assert!(!original.exists());
+
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn stable_created_identity_query_failure_preserves_a_substitution() {
+            let root = temp_root("stable-identity-query-failure");
+            let target = root.join("private");
+            let original = root.join("original");
+            let mut replacement = None;
+
+            let error = create_private_directory_with_hooks(
+                target.to_str().unwrap(),
+                || replacement = Some(replace_directory(&target, &original)),
+                |_| {
+                    Err(native_error(
+                        "ENOTSUP",
+                        "stable 128-bit Windows file identity is unavailable (injected)",
+                    ))
+                },
+                || panic!("failed identity query must stop before validation"),
+                |_, _| panic!("failed identity query must stop before ACL inspection"),
+                is_local_handle,
+            )
+            .unwrap_err();
+            assert_eq!(error.status, "ENOTSUP");
+            assert_eq!(
+                error.reason,
+                "stable 128-bit Windows file identity is unavailable (injected)"
+            );
+            assert_eq!(path_identity(&target), replacement.unwrap());
+            assert_eq!(fs::read(target.join("keep")).unwrap(), b"replacement");
+            assert!(!original.exists());
+
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn final_handle_long_path_failure_preserves_a_substitution() {
+            let root = temp_root("final-long-path-failure");
+            let target = root.join("private");
+            let original = root.join("original");
+            let mut replacement = None;
+            let mut locality_queried = false;
+
+            let error = create_private_directory_with_hooks(
+                target.to_str().unwrap(),
+                || {},
+                created_directory_identity,
+                || replacement = Some(replace_directory(&target, &original)),
+                read_owner_and_dacl_handle,
+                |handle| {
+                    locality_queried = true;
+                    is_local_handle_with_query(handle, |_, _| Ok(MAX_FINAL_PATH_WCHARS + 1))
+                },
+            )
+            .unwrap_err();
+            assert_eq!(error.status, "ENAMETOOLONG");
+            assert_eq!(error.reason, "final Windows path is too long");
+            assert!(locality_queried);
+            assert_eq!(path_identity(&target), replacement.unwrap());
+            assert_eq!(fs::read(target.join("keep")).unwrap(), b"replacement");
+            assert!(!original.try_exists().unwrap());
+
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn inspection_and_cleanup_failures_are_both_reported() {
+            let root = temp_root("cleanup-failure");
+            let target = root.join("private");
+
+            let error = create_private_directory_with_hooks(
+                target.to_str().unwrap(),
+                || fs::write(target.join("blocker"), b"keep").unwrap(),
+                created_directory_identity,
+                || panic!("failed inspection must stop before final validation"),
+                |_, _| {
+                    Err(native_error(
+                        "inspection-failed",
+                        "injected inspection failure",
+                    ))
+                },
+                is_local_handle,
+            )
+            .unwrap_err();
+            assert_eq!(error.status, "inspection-failed");
+            assert!(error.reason.starts_with("injected inspection failure;"));
+            assert!(
+                error
+                    .reason
+                    .contains("private directory cleanup failed (EIO):")
+            );
+            assert_eq!(fs::read(target.join("blocker")).unwrap(), b"keep");
+
+            fs::remove_dir_all(root).unwrap();
+        }
     }
 }
 
