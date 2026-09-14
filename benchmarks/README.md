@@ -46,6 +46,10 @@ filesystem adapter with 128 B, 1 MiB, and 16 MiB payloads, both restoration
 policies, and both sync/async methods. Temp-file and parent syncing are disabled
 for these cases; `restore-original` still includes its required destination
 sync. Fixture reset remains outside timing.
+Name-collection cases cover ASCII, NFC, and decomposed paths at depths 1/8/32;
+rejected paths and store keys; 2,048-member ZIPs with shallow/deep ASCII and
+Unicode names; and long callback-output filenames. Expected synchronous
+rejections use the checked per-call timing path, including during measurement.
 Borrowed-handle transfers and Root byte-copy cases cover the same payload sizes;
 the Root cases use `clone: "never"` and `durable: false` to expose transfer costs.
 Directory iteration includes full and early-stop scans in filesystem and sorted
@@ -65,6 +69,8 @@ For a quick executable coverage check:
 ```sh
 pnpm benchmark:methods --mode off --iterations 1 --samples 1 --warmup 0
 ```
+
+Use `--filter rejected` to exercise the synchronous rejection workloads.
 
 The `benchmarks` workflow also has an optional manual method audit. Set
 `method_audit=true`, choose `platform=all|linux|macos|windows`, and optionally

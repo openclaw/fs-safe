@@ -6,6 +6,7 @@ import { normalizeMaxBytes } from "./byte-budget.js";
 import { readFileDescriptorBoundedSync } from "./bounded-read.js";
 import { FsSafeError } from "./errors.js";
 import { assertFileStoreMaxBytes } from "./file-store-limit.js";
+import { assertRelativePath, resolveStorePath } from "./file-store-path.js";
 import { pruneExpiredStoreEntries, type FileStorePruneOptions } from "./file-store-prune.js";
 export type { FileStorePruneOptions } from "./file-store-prune.js";
 import {
@@ -17,7 +18,7 @@ import {
 import { writeFileSyncAtomic } from "./file-store-sync-write.js";
 import { createJsonStore, type JsonFileStoreOptions, type JsonStore } from "./json-document-store.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
-import { isNotFoundPathError, resolveSafeRelativePath, splitSafeRelativePath } from "./path.js";
+import { isNotFoundPathError } from "./path.js";
 import { throwFsSafeReadError } from "./root-errors.js";
 import { root, type OpenResult, type ReadResult, type Root, type RootReadOptions } from "./root.js";
 import { DEFAULT_ROOT_MAX_BYTES } from "./root-impl.js";
@@ -96,27 +97,6 @@ export type FileStoreSync = {
     options?: FileStoreWriteOptions & { trailingNewline?: boolean },
   ): string;
 };
-
-function assertRelativePath(relativePath: string): string {
-  const raw = relativePath.trim();
-  if (!raw || raw !== relativePath) {
-    throw new FsSafeError("invalid-path", "store key must be non-empty and unpadded");
-  }
-  const segments = splitSafeRelativePath(raw);
-  if (
-    segments.length === 0 ||
-    segments.join("/") !== raw ||
-    raw.normalize("NFC") !== raw ||
-    segments.some((segment) => /[ .]$/u.test(segment))
-  ) {
-    throw new FsSafeError("invalid-path", "store key must use one canonical relative spelling");
-  }
-  return raw;
-}
-
-function resolveStorePath(rootDir: string, relativePath: string): string {
-  return resolveSafeRelativePath(rootDir, assertRelativePath(relativePath));
-}
 
 function isNotFound(error: unknown): boolean {
   return error instanceof FsSafeError ? error.code === "not-found" : isNotFoundPathError(error);

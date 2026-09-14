@@ -3,66 +3,62 @@
 ## Unreleased
 
 - Resolve explicit relative asynchronous sidecar paths against the caller's working directory before the first await, and retain that path and `lockRoot` snapshot through acquisition, reclaim, verification, and release.
-- Improve large atomic copy-fallback replacements by batching restore snapshots and synchronous source reads into reusable buffers; preserve restore limits, short-read handling, identity checks, and rollback behavior.
 
-- Reduce repeated path work in POSIX path-scoping helpers and Root operations while preserving root exclusion, traversal checks, live directory identities, and home-prefix behavior; broaden method benchmarks across path batches, directories, stores, queues, and contention.
+## 0.11.0 - 2026-09-14
 
-- Create non-native asynchronous raw sidecars with mode `0o600` at the exclusive open, preventing permissive umasks from exposing lock payloads without adding a pathname `chmod` fallback.
+### Highlights
 
-- Complete short gzip-header reads before classifying staged archives, preventing valid gzip files from being misread as TAR after a partial filesystem read.
+- **Faster archive-heavy workloads:** reduce repeated ZIP admission, batch native ZIP metadata reads, and reuse TAR parser input and admitted payload ranges. Archive extraction and inspection also benefit from larger reusable staging and transfer buffers.
+- **More capable filesystem roots:** iterate one directory with `Root.entries()`, remove trees with bounded or explicitly unlimited `Root.remove()`, and create complete files from async byte streams with `Root.create()`.
+- **Reuse handles for copying, overwriting, and hashing:** add `copyFileHandle()`, `overwriteFileHandle()`, and `sha256FileSync()` while preserving caller-owned descriptors and file positions.
+- **Faster Windows permissions and copying:** inspect inherited ACLs without PowerShell startup when the native binding is available, reduce copy allocations, and preserve large zero-filled ranges in empty destination files.
+- **Safer publication and private files:** tighten hardlink, inode, permission, archive-destination, and lock validation; add private producer workspaces for callback writes and fix staging of long Unicode filenames.
 
-- Speed up JavaScript gzip extraction and TAR inspection by matching file-backed decoder output to the existing 64 KiB WASM input window, preserving backpressure, decoded-byte limits, trailer validation, and cancellation cleanup.
+### Compatibility and upgrade notes
 
-- Speed up archive extraction and TAR inspection by batching private input staging through reusable buffers capped at 512 KiB; keep source identity checks, complete short I/O, and cleanup, while bounding growth probes to one excess byte and checking cancellation after reads.
+- `readSecureFile()` now rejects hardlinked inputs and rechecks the opened file after reading. Synchronous store publication rejects substituted or unverifiable file identities, including opaque Windows identities.
+- Invalid lock stale thresholds and compromise-check intervals now reject before acquisition. Asynchronous compromise checks no longer overlap or turn overflowing timer values into rapid polling loops.
+- Inherited atomic-replacement modes include only ordinary rwx bits from an existing non-symlink regular file. JavaScript raw sidecars are created with mode `0o600`, so a permissive umask cannot expose their payloads.
+- Bun gains additional POSIX path support through the existing Rust binding, including with JIT disabled. Native-off policy remains explicit; addon-free limitations are documented. Node.js remains supported from version 22.
 
-- Batch large borrowed-handle and JavaScript Root file transfers through reusable 512 KiB buffers, reducing filesystem calls while retaining byte limits, cancellation, and per-write authority checks; cap scratch allocation to small byte budgets plus their overflow probe.
+### Directory and file workflows
 
-- Batch native ZIP metadata admission through bounded, operation-local read-ahead buffers, reducing per-entry filesystem calls while preserving complete record validation, short-read handling, cancellation, and stable scanner views.
+- Add guarded, nonrecursive `Root.entries()` with child-symlink reporting, cancellation, entry limits, and bounded sorted-name collection. Traversal and link policy remain with the caller.
+- Extend `Root.remove()` with recursive traversal, entry/depth budgets, sorted or filesystem order, cancellation, and missing-target handling. Callers may explicitly choose unlimited recursive-removal budgets; exact directory/leaf identity checks remain in place, and `force` continues sibling cleanup when a child directory disappears.
+- Add a `Root.create()` overload for async byte iterables. Input consumption is bounded, cancellation settles pending work, and completed contents are published exclusively through the existing guarded writer.
+- Add `copyFileHandle()` for bounded regular-file transfers and `overwriteFileHandle()` for in-place replacement with prefix-only rollback preparation, growth-before-overwrite ordering, and a once-only synchronous pre-write admission callback. Both preserve caller ownership and cursors.
+- Add `sha256FileSync()` for bounded hashing of pathnames and borrowed descriptors, with exact pathname admission and no native-binding requirement.
+- Add exact directory-identity observations and synchronous assertions for caller-owned staging and recovery, retaining bigint precision, optional canonical-path checks, and final-symlink rejection even with trailing separators.
+- Add `probePathCaseInsensitiveSync()` for local ASCII-case observations, with a read-only option, owned temporary probes, and an explicit unknown result instead of operating-system guesses.
+- Add opt-in `producerIsolation: "private-directory"` to sibling callback writes and external sibling outputs. Cleanup ownership is established before the producer runs, allowing partial failures to be cleaned without changing existing defaults or publication checks.
 
-- Avoid repeating physical ZIP admission during JavaScript member reads and reduce ZIP filename-validation allocations across both backends, preserving raw and decoded name checks, entry limits, CRC validation, and error ordering.
+### Archive and path performance
 
-- Speed up JavaScript TAR admission by copying each WASM input window once across member events, and read selected plain-TAR payloads directly from the fully admitted private snapshot without a second parser pass; preserve independent output buffers, complete framing, path validation, and limits.
+- Avoid repeating physical ZIP admission during JavaScript member reads. Reduce filename-validation allocations across both backends, and group native ZIP metadata reads into bounded buffers while retaining complete record, CRC, limit, and cancellation checks.
+- Copy each JavaScript TAR WASM input window once across member events. Read selected plain-TAR payloads directly from the fully admitted private snapshot instead of parsing it a second time.
+- Batch private archive-input staging through reusable buffers capped at 512 KiB. Match file-backed JavaScript gzip output to the 64 KiB WASM input window for faster extraction and TAR inspection; retain short-I/O handling, framing validation, bounded growth probes, and settled cancellation.
+- Reduce repeated POSIX path-scoping and Root work, reuse checked store keys, and avoid redundant name normalization. Root exclusion, canonical spelling, Unicode byte limits, collision rules, home expansion, and live filesystem identity checks are preserved.
+- Complete short gzip-header reads before classifying staged archives, preventing valid gzip files from being mistaken for TAR.
+- Fit callback staging names using their original UTF-8 length as well as NFC/NFD lengths. Valid destination names whose normalization is shorter no longer fail with `ENAMETOOLONG` when a staging prefix is added; the final target spelling is preserved.
 
-- Add bounded copy benchmark shapes and explicit worker matrices for comparisons at equal concurrency across native cloning and ordinary copying.
+### Copy performance and filesystem fidelity
 
-- Export the caller-launched Linux/macOS Python guest filesystem program and shared no-replace rename fragment through `@openclaw/fs-safe/guest`, preserving OpenClaw's protocol, adding basename syntax checks before filesystem operations, and using short independent staging names so writes and cross-device moves support long legal basenames.
+- Batch large borrowed-handle and JavaScript Root transfers through reusable 512 KiB buffers, retaining byte limits, cancellation, and per-write authority checks. Small byte budgets also bound scratch allocation and the overflow probe.
+- Batch atomic copy-fallback restore snapshots and synchronous source reads into reusable buffers, reducing reads and full-buffer copies while preserving restore budgets, short reads, identity checks, original modes, and rollback behavior.
+- Share portable directory-copy workers across sibling directories, with bounded deferred completion, joined cancellation, and bottom-up timestamp restoration. Preserve fractional timestamps, including pre-1970 dates on Unix, to the precision supported by Node and the destination filesystem.
+- Add Linux ZFS directory cloning through the bounded reflink traversal, with independent destinations, metadata preservation, and no byte-copy fallback when cloning is required. XFS clones now preserve user extended attributes on read-only files and directories, along with their modes and ACLs.
+- Preserve large zero-filled ranges without allocating them during native Linux automatic directory byte copies and native Windows byte copies into empty files. Exact lengths, contents, cancellation settlement, and existing-target overwrite behavior remain intact.
+- Confirm EOF when Linux copy offload initially reports zero bytes, so automatic copying reads available data instead of publishing an empty file.
+- Size Windows native copy buffers to small inputs, reuse directory-enumeration buffers, and start ReFS workers as file jobs arrive. Report disk-full and sharing failures as `ENOSPC` and `EBUSY`; worker-start failures join admitted workers before returning instead of panicking across the native boundary.
 
-- Inspect complete inherited local Windows ACLs through the existing native descriptor reader, avoiding PowerShell startup while preserving the public SID classifier, explicit injections, .NET normalization, and structured fallback diagnostics.
+### Permissions, compatibility, and tooling
 
-- Add `copyFileHandle` for bounded transfers between caller-owned regular-file handles, preserving both cursors and source observation before target writes while sharing Root's portable copy machinery.
-- Apply benchmark iteration reductions consistently to synchronous operations, verify hash digests, initialize private Windows fixture ACLs, and cover sorted/early-stop directory iteration and explicit mixed-tree copy policies.
-- Add `sha256FileSync()` for bounded SHA-256 hashing of pathnames and borrowed file descriptors without changing their current positions, with exact pathname admission checks and no native binding requirement.
-- Keep synchronous store writers open through publication and verify exact inode identities, rejecting substituted files even when Windows reports opaque or numerically indistinguishable pathname metadata.
-
-- Restrict atomic replacement mode inheritance to ordinary rwx bits from an existing non-symlink regular file, preventing symlink, file-type, and special-bit permission laundering.
-- Reject hardlinked `readSecureFile()` inputs before reading and recheck the pinned descriptor after reading so bytes are not returned while a late additional alias remains.
-- Reject invalid or Node-overflowing lock compromise-check intervals before acquisition and serialize asynchronous checks, preventing high-frequency or overlapping filesystem polling loops.
-- Retain the original archive destination's exact bigint identity from admission through publication, rejecting destination replacement from entry filters or concurrent actors before extracted files can be published into the replacement.
-- Classify structured Windows ACL SID facts without a redundant account lookup, preserving fail-closed permission checks when account discovery is unavailable.
-- Reject negative, `NaN`, and negative-infinite file-lock stale thresholds before acquisition; negative thresholds can no longer force a live lock into stale recovery.
-- XFS clones preserve user extended attributes on read-only files and directories while retaining their exact modes and ACLs.
-- Add Linux ZFS directory cloning through the existing bounded file-reflink traversal, with independent destinations, metadata preservation, and strict no-copy-fallback behavior when cloning is required.
-- Confirm EOF when Linux copy offload initially reports zero bytes, so automatic file copies fall back to reading available data instead of publishing an empty file.
-- Avoid allocating zero-filled ranges during automatic Linux directory byte copies with the native binding, preserving file lengths, contents, metadata, and cancellation settlement without cloning or copy offload.
-- Preserve fractional access and modification timestamps during directory byte copying, including dates before 1970 on Unix, to the precision supported by Node and the destination filesystem.
-- Support Bun POSIX path resolution for restrictive permissions, literal backslashes, sockets, and symlink/parent traversal through the existing Rust addon, including JIT-disabled Bun; preserve native-off policy and identity checks, document addon-free runtime limitations, and add Bun compatibility checks.
-- Fix relative file publication and queue writes on Bun for Windows by preserving raw components in absolute recursive-mkdir inputs.
-- Fix package consumer smoke and lifecycle tests with standalone `@pnpm/exe` installations, preserving the pinned pnpm version and isolated consumer configuration.
-- Report native Windows disk-full and sharing failures as `ENOSPC` and `EBUSY`, and return ReFS worker-start failures after joining admitted workers instead of panicking across the native boundary.
-- Reduce Windows copy allocation overhead by sizing native file buffers to small inputs, reusing directory enumeration buffers, and starting ReFS workers only as file jobs arrive.
-- Keep large zero-filled ranges sparse during native Windows byte copies into empty files, preserving exact lengths, independent contents, caller cursors, and existing-target overwrite behavior.
-- Add bounded recursive `Root.remove` with entry and depth limits, cancellation, missing-target handling, and exact directory/leaf identity checks without repeated sibling scans.
-- Share portable directory-copy workers across sibling directories, with bounded deferred directory completion, joined cancellation, and bottom-up timestamp restoration.
-- Add a streamed `Root.create` overload for async byte iterables, with bounded consumption, settled cancellation, and exclusive publication of completed contents through the existing guarded writer.
-- Add `Root.entries()` for guarded nonrecursive directory iteration that reports child symlinks, supports cancellation, and bounds entry counts and sorted-name collection while leaving traversal and link policy with the caller.
-
-- Add exact directory identity observations and synchronous assertions for caller-owned staging and recovery flows, preserving bigint identities, optional canonical-path checks, bounded Windows identity admission, final-symlink rejection with trailing separators, and original filesystem errors.
-- Add `overwriteFileHandle()` for in-place replacement through a borrowed regular-file handle, with prefix-only rollback preparation, growth-before-overwrite ordering, unchanged descriptor ownership and cursor, and a synchronous once-only pre-write admission callback.
-- Add opt-in `producerIsolation: "private-directory"` to callback sibling writes and external sibling outputs, owning private workspace cleanup before the producer runs so partial failures can be cleaned while preserving file admission, publication checks, and existing defaults.
-
-- Add synchronous path-local ASCII case probing with read-only mode, exact identity observations, owned temporary-file cleanup, and an explicit unknown result instead of operating-system guesses.
-
-- Add sorted recursive removal and explicit unlimited entry/depth budgets through `Root.remove`, with caller-relative failure context, preserved mutation authority and cancellation settlement, and continued sibling cleanup when a child directory disappears under `force`.
+- Inspect complete inherited local Windows ACLs through the native descriptor reader when available, preserving SID classification, explicit test injections, .NET normalization, and structured fallback diagnostics. Classify canonical SID facts directly without a redundant account lookup, retaining fail-closed behavior when discovery is unavailable.
+- Retain the admitted archive destination's exact bigint identity through publication, rejecting replacements introduced by entry filters or concurrent actors before files can be published into them.
+- Support Bun POSIX resolution for restrictive permissions, literal backslashes, sockets, and symlink/parent traversal. Preserve raw path components in absolute recursive-mkdir inputs to fix relative publication and queue writes on Bun for Windows.
+- Export the caller-launched Python guest filesystem program and shared no-replace rename fragment through `@openclaw/fs-safe/guest`. The Linux/macOS protocol validates basenames before filesystem operations and uses short independent staging names for long-basename writes and cross-device moves.
+- Support standalone `@pnpm/exe` in consumer smoke and lifecycle tests while retaining the declared pnpm version and isolated consumer configuration. Strengthen exact-inode durability checks and batch independent native ACL test observations.
+- Expand method benchmarks to 557 representative workloads across Linux, macOS, and Windows, with native/JavaScript modes, equal-concurrency copy comparisons, large collections, contention, and explicit platform exclusions. Verify returned data and digests, initialize private Windows fixture ACLs, apply synchronous iteration reductions consistently, and handle expected synchronous rejections during timed calls as well as warmup.
 
 ## 0.10.0 - 2026-09-13
 
