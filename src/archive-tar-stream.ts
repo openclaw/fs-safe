@@ -33,8 +33,8 @@ async function withTarStream<T>(params: TarInput & {
   const input = buffer !== undefined
     ? Readable.from(bufferChunks(buffer), { objectMode: false, highWaterMark: 65536 })
     : fs.createReadStream(params.archivePath!, { highWaterMark: 65536 });
-  // Match the WASM input window for buffered reads instead of emitting 16 KiB chunks.
-  const decoder = gzip ? createGunzip(buffer === undefined ? undefined : { chunkSize: 65536 }) : undefined;
+  // Match the WASM input window for both staged files and buffered reads.
+  const decoder = gzip ? createGunzip({ chunkSize: 65536 }) : undefined;
   const gzipInput = decoder ? new GzipInput(decoder) : undefined;
   const destroy = (error?: Error) => {
     input.destroy(error); gzipInput?.destroy(error); decoder?.destroy(error); parser.destroy(error);

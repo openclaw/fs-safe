@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Speed up JavaScript gzip extraction and TAR inspection by matching file-backed decoder output to the existing 64 KiB WASM input window, preserving backpressure, decoded-byte limits, trailer validation, and cancellation cleanup.
+
 - Speed up archive extraction and TAR inspection by batching private input staging through reusable buffers capped at 512 KiB; keep source identity checks, complete short I/O, and cleanup, while bounding growth probes to one excess byte and checking cancellation after reads.
 
 - Batch large borrowed-handle and JavaScript Root file transfers through reusable 512 KiB buffers, reducing filesystem calls while retaining byte limits, cancellation, and per-write authority checks; cap scratch allocation to small byte budgets plus their overflow probe.
