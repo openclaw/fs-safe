@@ -38,7 +38,7 @@ try {
   const payload = Buffer.from(Array.from({ length: 131_089 }, (_, index) => index % 256));
   run(["write", workspace, "nested", name, "1"], payload);
   assert.deepEqual(run(["read", workspace, "nested", name, String(payload.length)]), payload);
-  run(["create", workspace, "nested", name, "0"], Buffer.from("loser"), 17);
+  run(["create", workspace, "nested", name, "0"], undefined, 17);
   assert.deepEqual(readFileSync(join(workspace, "nested", name)), payload);
   run(["read", workspace, "nested", "missing"], undefined, 2);
   run(["read", workspace, "nested", name, String(payload.length - 1)], undefined, 1);

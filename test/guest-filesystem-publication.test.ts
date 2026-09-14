@@ -16,8 +16,9 @@ describe.skipIf(process.platform === "win32")("guest exclusive publication", () 
     expect(created.status, created.stderr.toString()).toBe(0);
     expect((await fs.stat(path.join(root, basename))).mode & 0o777).toBe(0o600);
 
-    const collision = runGuest(["create", root, "", basename, "0"], "replacement");
+    const collision = runGuest(["create", root, "", basename, "0"]);
     expect(collision.error).toBeUndefined();
+    expect(collision.signal).toBeNull();
     expect(GUEST_FILESYSTEM_CREATE_EXISTS_EXIT_CODE).toBe(17);
     expect(collision.status).toBe(GUEST_FILESYSTEM_CREATE_EXISTS_EXIT_CODE);
     expect(await fs.readFile(path.join(root, basename), "utf8")).toBe("original");
@@ -113,10 +114,11 @@ describe.skipIf(process.platform === "win32")("guest exclusive publication", () 
       "os.open = fail_staging_open",
     ].join("\n");
 
-    const result = runGuest(["create", root, "", "value", "0"], "payload", setup);
+    const result = runGuest(["create", root, "", "value", "0"], undefined, setup);
 
     expect(result.error).toBeUndefined();
-    expect(result.status).not.toBe(0);
+    expect(result.signal).toBeNull();
+    expect(result.status).toBe(1);
     expect(result.stderr.toString()).toContain("injected staging open failure");
     expect(await fs.readdir(root)).toEqual([]);
   });
