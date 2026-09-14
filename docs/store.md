@@ -94,6 +94,11 @@ POSIX retains the read pin through publication. Other readers keep ownership
 of their handles; Windows sharing denials still reject and can be retried after
 those readers close.
 
+Generation arbitration requires consumers to use the transfer lock. As with
+[atomic writes](atomic.md#beforerename), identity checks and pathname replacement
+are separate operations; use a trusted writable parent or OS isolation against
+processes that ignore the lock and mutate queue paths concurrently.
+
 Queue entry reads verify lossless file identities before opening, on the opened
 descriptor, and at the current pathname before reading bytes. POSIX opens are
 nonblocking, so a raced FIFO is rejected rather than stalling a consumer. On Windows, an
