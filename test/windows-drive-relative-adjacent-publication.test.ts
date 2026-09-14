@@ -150,20 +150,25 @@ describe.runIf(process.platform === "win32")(
     );
 
     it("continues to accept current-drive-rooted source and target paths", async () => {
-      const root = await tempRoot("fs-safe-root-relative-publish-");
       const currentRoot = path.parse(process.cwd()).root;
-      if (path.parse(root).root.toLowerCase() !== currentRoot.toLowerCase()) return;
-      const sourcePath = path.join(root, "source.txt");
-      const targetPath = path.join(root, "target.txt");
-      await fs.writeFile(sourcePath, "root-relative");
+      const root = await fs.mkdtemp(
+        path.join(process.cwd(), ".fs-safe-root-relative-publish-"),
+      );
+      try {
+        const sourcePath = path.join(root, "source.txt");
+        const targetPath = path.join(root, "target.txt");
+        await fs.writeFile(sourcePath, "root-relative");
 
-      await publishFileExclusive({
-        sourcePath: sourcePath.slice(currentRoot.length - 1),
-        targetPath: targetPath.slice(currentRoot.length - 1),
-        strategy: "link-or-copy",
-      });
+        await publishFileExclusive({
+          sourcePath: sourcePath.slice(currentRoot.length - 1),
+          targetPath: targetPath.slice(currentRoot.length - 1),
+          strategy: "link-or-copy",
+        });
 
-      await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("root-relative");
+        await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("root-relative");
+      } finally {
+        await fs.rm(root, { recursive: true, force: true });
+      }
     });
 
     it.each([
