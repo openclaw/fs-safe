@@ -35,6 +35,7 @@ type ExternalFileWriteOptions<T = void> = {
   maxBytes?: number;
   mode?: number;
   staging?: "workspace" | "sibling"; // default: "workspace"
+  producerIsolation?: "private-directory"; // opt-in for sibling staging
   fallbackFileName?: string;          // safe staged-name fallback
 };
 
@@ -76,8 +77,8 @@ the temp and destination filesystems may differ, or when an externally produced
 partial file must never appear in the destination directory. The final target
 still appears only after guarded finalization.
 
-`staging: "sibling"` gives the producer a randomized temp path in the target
-directory. Choose it only when that directory itself is the approved writable
+By default, `staging: "sibling"` gives the producer a randomized temp path in
+the target directory. Choose it only when that directory itself is the approved writable
 boundary and same-filesystem atomic replacement is required. After the callback
 returns, fs-safe pins and validates the staged regular file, rejects hardlinks
 and size-limit violations, applies `mode`, fsyncs it, and atomically renames it
@@ -91,10 +92,35 @@ cleanup retry.
 Sibling staging shares the [callback sibling owner](temp.md#sibling-temp-writes):
 it checks exact pre-open, descriptor, and current-path identities, retains the
 descriptor through publication, and never chmods or reads a replacement by path.
-Cleanup preserves unverified paths, including partial output when the callback
-throws before admission. Native-off and Windows operation remain supported with
-the platform limits and non-atomic rename/unlink identity checks described there.
+Without producer isolation, cleanup preserves unverified paths, including partial
+output when the callback throws before admission. Native-off and Windows
+operation remain supported with the platform limits and non-atomic
+rename/unlink identity checks described there.
 When `mode` is omitted, output-sibling staging preserves the producer's mode.
+
+Add `producerIsolation: "private-directory"` to sibling staging when the
+producer can leave partial output before throwing. It receives an initially
+absent file path inside a private child workspace under the target parent, on
+the target filesystem. Directory cleanup ownership is captured before the
+callback. A callback exception triggers owned workspace cleanup, including
+partial output, subject to directory identity checks and I/O failures.
+After success, `Root.move` checks source aliases and moves the output to the
+ordinary sibling path; an escaping symlink can fail with `path-alias` here.
+Rejected output still inside the workspace follows its cleanup contract. Once
+output moves to the sibling path, the existing unadmitted-file retention and
+single-link regular-file admission, mode, file sync, and final rename rules apply.
+
+Exact bigint parent and workspace identities are rechecked before moving
+output to the sibling path to reject observed replacements. Cleanup uses the
+existing [`withTempFile` ownership contract](temp.md#withtempfile). A moved or replaced parent or workspace can
+leave original or replacement paths behind; the option does not promise
+cleanup through a retained directory after a rename. The existing Windows,
+native-off, and JavaScript guard limitations remain, with no additional
+permissions or durability guarantee. See the [producer-isolation contract](temp.md#sibling-temp-writes)
+for cleanup and pathname-race details. The option affects only `staging: "sibling"`;
+with `staging: "workspace"`, it is redundant and harmless because the producer
+already uses a private workspace. Omitting it leaves both staging defaults
+unchanged.
 
 ## Why not pass the final path to the library?
 

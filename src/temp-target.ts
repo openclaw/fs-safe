@@ -15,6 +15,13 @@ export type TempFile = {
   [Symbol.asyncDispose](): Promise<void>;
 };
 
+type TempFileOptions = {
+  rootDir?: string;
+  prefix: string;
+  fileName?: string;
+  onCleanupError?: (error: unknown) => void;
+};
+
 const HYPHEN_CHAR_CODE = 0x2d;
 const DOT_CHAR_CODE = 0x2e;
 const NUMBER_ZERO_CHAR_CODE = 0x30;
@@ -141,12 +148,10 @@ function resolveTempRoot(rootDir?: string): string {
   return path.resolve(rootDir ?? resolveSecureTempRoot({ fallbackPrefix: "fs-safe" }));
 }
 
-export async function tempFile(params: {
-  rootDir?: string;
-  prefix: string;
-  fileName?: string;
-  onCleanupError?: (error: unknown) => void;
-}): Promise<TempFile> {
+export async function createOwnedTempFile(params: TempFileOptions): Promise<{
+  target: TempFile;
+  identity: Readonly<Pick<fsSync.BigIntStats, "dev" | "ino">>;
+}> {
   const rootDir = resolveTempRoot(params.rootDir);
   const prefix = `${sanitizePrefix(params.prefix)}-`;
   const dir = await fs.mkdtemp(path.join(rootDir, prefix));
@@ -164,21 +169,23 @@ export async function tempFile(params: {
     }
   };
   return {
-    dir,
-    path: file(),
-    file,
-    cleanup,
-    [Symbol.asyncDispose]: cleanup,
+    target: {
+      dir,
+      path: file(),
+      file,
+      cleanup,
+      [Symbol.asyncDispose]: cleanup,
+    },
+    identity: Object.freeze({ dev: identity.dev, ino: identity.ino }),
   };
 }
 
+export async function tempFile(params: TempFileOptions): Promise<TempFile> {
+  return (await createOwnedTempFile(params)).target;
+}
+
 export async function withTempFile<T>(
-  params: {
-    rootDir?: string;
-    prefix: string;
-    fileName?: string;
-    onCleanupError?: (error: unknown) => void;
-  },
+  params: TempFileOptions,
   fn: (tmpPath: string) => Promise<T>,
 ): Promise<T> {
   const target = await tempFile(params);

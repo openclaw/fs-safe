@@ -2,12 +2,18 @@ import { syncFileBestEffort } from "./file-sync.js";
 import fsSync, { type BigIntStats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
-import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard } from "./directory-guard.js";
+import {
+  assertAsyncDirectoryGuard,
+  assertDirectoryIdentitySync,
+  createAsyncDirectoryGuard,
+} from "./directory-guard.js";
 import { syncDirectoryBestEffort } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
+import { root } from "./root.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 import { registerTempPathForExit, type TempPathRegistration } from "./temp-cleanup.js";
+import { createOwnedTempFile } from "./temp-target.js";
 import { serializePathWrite } from "./write-queue.js";
 
 function assertRegularFile(stat: BigIntStats): void {
@@ -30,12 +36,43 @@ async function inspectStage(inspect: () => BigIntStats, expected?: BigIntStats) 
   }, expected);
 }
 
+// Own the workspace before the producer can leave partial output. The finished
+// file still enters the ordinary sibling admission and publication lifecycle.
+async function writeIsolatedProducer<T>(params: {
+  tempPath: string;
+  write: (tempPath: string) => Promise<T>;
+  assertParent: () => void;
+}): Promise<T> {
+  const targetRoot = await root(path.dirname(params.tempPath));
+  const { target, identity } = await createOwnedTempFile({
+    rootDir: targetRoot.rootReal,
+    prefix: "fs-safe-output",
+    fileName: path.basename(params.tempPath),
+  });
+  const assertCurrent = () => {
+    params.assertParent();
+    assertDirectoryIdentitySync(target.dir, { ...identity, realPath: target.dir });
+  };
+  try {
+    assertCurrent();
+    const result = await params.write(target.path);
+    assertCurrent();
+    await targetRoot.move(path.relative(targetRoot.rootReal, target.path), path.basename(params.tempPath), {
+      assertBeforeMutation: assertCurrent,
+    });
+    return result;
+  } finally {
+    await target.cleanup();
+  }
+}
+
 // Callback paths are not owned until all three admission observations agree.
 // Keep one descriptor and one exact identity through mode, sync, rename and cleanup.
 // Read/write access is needed only when the caller requests file synchronization.
 export async function writeCallbackSibling<T>(params: {
   tempPath: string;
   write: (tempPath: string) => Promise<T>;
+  producerIsolation?: "private-directory";
   resolveFinalPath: (result: T) => string;
   mode?: number;
   /** Preserve the caller's historical best-effort mode behavior. */
@@ -45,12 +82,8 @@ export async function writeCallbackSibling<T>(params: {
   syncParentDir: boolean;
 }): Promise<{ filePath: string; result: T }> {
   const parent = path.dirname(params.tempPath);
-  const guard = await createAsyncDirectoryGuard(parent);
-  const parentIdentity = await inspectFileIdentity(() => fsSync.lstatSync(parent, { bigint: true }));
-  const assertParent = async () => {
-    await assertAsyncDirectoryGuard(guard);
-    await inspectFileIdentity(() => fsSync.lstatSync(parent, { bigint: true }), parentIdentity);
-  };
+  const guard = await createAsyncDirectoryGuard(parent, { bigint: true });
+  const assertParent = () => assertAsyncDirectoryGuard(guard);
   let handle: FileHandle | undefined;
   let identity: BigIntStats | undefined;
   let unregister: TempPathRegistration | undefined;
@@ -71,7 +104,17 @@ export async function writeCallbackSibling<T>(params: {
   };
 
   try {
-    const result = await params.write(params.tempPath);
+    const result = params.producerIsolation === "private-directory"
+      ? await writeIsolatedProducer({
+          tempPath: params.tempPath,
+          write: params.write,
+          assertParent: () => assertDirectoryIdentitySync(parent, {
+            dev: guard.stat.dev,
+            ino: guard.stat.ino,
+            realPath: guard.realPath,
+          }),
+        })
+      : await params.write(params.tempPath);
     await assertParent();
     const before = await inspectPath(params.tempPath);
     try {

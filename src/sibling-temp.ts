@@ -16,6 +16,8 @@ import { getFsSafeTestHooks } from "./test-hooks.js";
 export type WriteSiblingTempFileOptions<T> = {
   dir: string;
   writeTemp: (tempPath: string) => Promise<T>;
+  /** Own a private sibling workspace before invoking the producer. */
+  producerIsolation?: "private-directory";
   resolveFinalPath: (result: T) => string;
   tempPrefix?: string;
   dirMode?: number;
@@ -56,6 +58,7 @@ export async function writeSiblingTempFile<T>(
   return await writeCallbackSibling({
     tempPath: buildTempPath(dir, options.tempPrefix),
     write: options.writeTemp,
+    producerIsolation: options.producerIsolation,
     resolveFinalPath: options.resolveFinalPath,
     mode: options.mode,
     ignoreModeError: true,

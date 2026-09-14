@@ -262,8 +262,8 @@ const result = await writeSiblingTempFile<string>({
 // result.filePath, result.result (returned by writeTemp)
 ```
 
-`writeSiblingTempFile` chooses a random, initially absent sibling name in `dir`
-and calls `writeTemp()`. After the callback succeeds, it validates the produced
+By default, `writeSiblingTempFile` chooses a random, initially absent sibling
+name in `dir` and calls `writeTemp()`. After the callback succeeds, it validates the produced
 regular file before taking ownership: symlinks, directories, other non-regular
 files, hardlinks, and changes between the pre-open pathname, opened descriptor,
 and current pathname are rejected. The callback must finish and close its
@@ -292,12 +292,40 @@ Omitting either option or passing `false` skips that sync, never the identity
 checks. Parent synchronization can be unsupported or fail without rejecting
 the write, so success is not a strict crash-durability receipt.
 
-Cleanup only unlinks an admitted file while the parent, pathname identity, and
-single-link regular-file checks still agree. Observed substitutes are preserved,
+Without producer isolation, cleanup only unlinks an admitted file while the
+parent, pathname identity, and single-link regular-file checks still agree.
+Observed substitutes are preserved,
 including during process-exit cleanup. Operational cleanup failures retain an
 identity-bound exit retry. If the callback throws or admission fails, no file
 has been adopted: even a regular partial file is left for caller-directed
-recovery. The helper never recursively removes a sibling temp.
+recovery. The helper never recursively removes a sibling temp file path.
+
+Set `producerIsolation: "private-directory"` in `WriteSiblingTempFileOptions`
+when the producer can leave partial output before throwing. The callback then
+receives an initially absent file path inside a private child workspace under
+`dir`, on the same filesystem as the final target. fs-safe captures directory
+cleanup ownership before invoking the callback. A callback exception triggers
+owned workspace cleanup, including partial output, subject to directory
+identity checks and I/O failures. The callback must still finish and close its
+writer before returning.
+
+After the callback succeeds, `Root.move` checks source aliases and moves the
+output to the ordinary sibling path before file admission. An escaping symlink
+can fail with `path-alias` at this step. Rejected output still inside the owned
+workspace follows its cleanup contract. Once output moves to the sibling path,
+failures before file adoption retain it for caller-directed recovery, as above.
+File admission, requested modes, sync options, and final rename keep their
+existing contracts; `resolveFinalPath(result)` still names a direct child of `dir`.
+
+The isolated path retains exact bigint identities for both the parent and the
+workspace and rechecks them before moving output to the sibling path. An
+observed replacement is rejected. Cleanup uses the existing
+[`withTempFile` ownership contract](#withtempfile), backed by [`tempFile`](#tempfile):
+moving or replacing the parent or workspace can leave the original or
+replacement paths in place. This option does not promise cleanup through a
+retained directory after a rename, stronger permissions, or additional crash
+durability. Omitting it preserves the direct sibling callback path and
+unadmitted partial-file retention.
 
 On POSIX, admission uses no-follow and nonblocking open flags, so a FIFO swap
 does not block the helper. Windows retains Node's guarded pathname-open behavior
@@ -440,6 +468,7 @@ import fs from "node:fs/promises";
 
 const r = await writeSiblingTempFile({
   dir: "/srv/cache",
+  producerIsolation: "private-directory",
   writeTemp: async (tempPath) => {
     const handle = await fs.open(tempPath, "w");
     try {
