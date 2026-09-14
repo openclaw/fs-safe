@@ -2,8 +2,8 @@
   "schema": 1,
   "name": "archive-whole-family-windows-paired-proof",
   "revisions": {
-    "baseline": "1a4625cc01a1fa04992533a37516b83e982b6fcd",
-    "candidate": "a01d01e3173c9d2ee03d264298a2fa28d5e9c214"
+    "baseline": "a49e2d7033e73a40b592881e0863e6acc3649175",
+    "candidate": "760687563312d818ac31523e0ddb08b87f3347c2"
   },
   "runtime": {
     "runner": "windows-latest",

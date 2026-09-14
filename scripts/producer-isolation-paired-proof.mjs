@@ -12,9 +12,9 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
-const BASELINE = "1a4625cc01a1fa04992533a37516b83e982b6fcd";
-const CANDIDATE = "a01d01e3173c9d2ee03d264298a2fa28d5e9c214";
-const PLAN_SHA256 = "50a3ac520e7ccdac7cb1caba93fb0c83c09f13e321f759425bc2db55e0cbde26";
+const BASELINE = "a49e2d7033e73a40b592881e0863e6acc3649175";
+const CANDIDATE = "760687563312d818ac31523e0ddb08b87f3347c2";
+const PLAN_SHA256 = "1c97add7bc3fd1d4f17373885688039be6a5e70148acda34d5dbaa74cc921492";
 const CHILD_TIMEOUT_MS = 180_000;
 const SMOKE = Object.freeze({
   blocks: 1,
@@ -96,11 +96,11 @@ function validatePlan(planPath, mode) {
   assert.equal(plan.runtime.node, "22.23.2");
   assert.equal(plan.runtime.pnpm, "11.25.0");
   assert.equal(plan.runtime.nativeMode, "off");
-  assert.equal(plan.sampling.blocks, 48);
-  assert.equal(plan.sampling.cohorts, 4);
+  assert.equal(plan.sampling.blocks, 192);
+  assert.equal(plan.sampling.cohorts, 16);
   assert.equal(plan.sampling.blocksPerCohort, 12);
   assert.equal(plan.sampling.processesPerBlock, 8);
-  assert.equal(plan.sampling.expectedFreshProcesses, 384);
+  assert.equal(plan.sampling.expectedFreshProcesses, 1_536);
   assert.equal(plan.sampling.warmupCallsPerWorkload, 16);
   assert.equal(plan.sampling.timedCallsPerWorkload, 16);
   assert.deepEqual(plan.sampling.abPatterns, ["ABBA", "BAAB"]);

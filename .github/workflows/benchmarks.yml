@@ -46,8 +46,8 @@ jobs:
       - name: Validate provenance and build exact revisions
         run: |
           $ErrorActionPreference = 'Stop'
-          $baseline = '1a4625cc01a1fa04992533a37516b83e982b6fcd'
-          $candidate = 'a01d01e3173c9d2ee03d264298a2fa28d5e9c214'
+          $baseline = 'a49e2d7033e73a40b592881e0863e6acc3649175'
+          $candidate = '760687563312d818ac31523e0ddb08b87f3347c2'
           $baselineRepo = Join-Path $env:ARCHIVE_PROOF_ROOT 'checkout-a'
           $candidateRepo = Join-Path $env:ARCHIVE_PROOF_ROOT 'checkout-b'
           $baselineCargo = Join-Path $env:ARCHIVE_PROOF_ROOT 'cargo-out-a'
@@ -151,8 +151,8 @@ jobs:
           $lines = @(
             '## Final integration whole-family paired Windows archive proof', '',
             "Job status: $env:PROOF_JOB_STATUS", '',
-            'Frozen baseline: `1a4625cc01a1fa04992533a37516b83e982b6fcd`',
-            'Frozen candidate: `a01d01e3173c9d2ee03d264298a2fa28d5e9c214`',
+            'Frozen baseline: `a49e2d7033e73a40b592881e0863e6acc3649175`',
+            'Frozen candidate: `760687563312d818ac31523e0ddb08b87f3347c2`',
             'Node 22.23.2, pnpm 11.25.0, `FS_SAFE_NATIVE_MODE=off`.',
             '192 paired blocks; 1,536 fresh single-variant processes; 16 warmup and 16 timed calls per workload.',
             'Gate: fixed 20,000-draw, cohort-stratified moving-block bootstrap; a regression is material only above both 5% and 5 microseconds.',
@@ -175,7 +175,7 @@ jobs:
   producer-isolation-paired-proof:
     name: Windows Node 22 paired producer-isolation proof
     runs-on: windows-latest
-    timeout-minutes: 55
+    timeout-minutes: 90
     defaults:
       run:
         shell: pwsh
@@ -211,8 +211,8 @@ jobs:
       - name: Validate provenance and build exact revisions
         run: |
           $ErrorActionPreference = 'Stop'
-          $baseline = '1a4625cc01a1fa04992533a37516b83e982b6fcd'
-          $candidate = 'a01d01e3173c9d2ee03d264298a2fa28d5e9c214'
+          $baseline = 'a49e2d7033e73a40b592881e0863e6acc3649175'
+          $candidate = '760687563312d818ac31523e0ddb08b87f3347c2'
           $baselineRepo = Join-Path $env:PRODUCER_PROOF_ROOT 'checkout-a'
           $candidateRepo = Join-Path $env:PRODUCER_PROOF_ROOT 'checkout-b'
           $baselineCargo = Join-Path $env:PRODUCER_PROOF_ROOT 'cargo-out-a'
@@ -316,10 +316,10 @@ jobs:
           $lines = @(
             '## Producer-isolation paired Windows proof', '',
             "Job status: $env:PROOF_JOB_STATUS", '',
-            'Frozen baseline: `1a4625cc01a1fa04992533a37516b83e982b6fcd`',
-            'Frozen candidate: `a01d01e3173c9d2ee03d264298a2fa28d5e9c214`',
+            'Frozen baseline: `a49e2d7033e73a40b592881e0863e6acc3649175`',
+            'Frozen candidate: `760687563312d818ac31523e0ddb08b87f3347c2`',
             'Node 22.23.2, pnpm 11.25.0, `FS_SAFE_NATIVE_MODE=off`.',
-            '48 paired blocks; 384 fresh single-variant processes; 16 warmup and 16 timed calls per workload.',
+            '192 paired blocks in 16 chronological cohorts; 1,536 fresh single-variant processes; 16 warmup and 16 timed calls per workload.',
             'Eight workloads: sibling helper/output × direct/private producer × 64B/1MiB.',
             'Gate: fixed 20,000-draw, cohort-stratified moving-block bootstrap; a regression is material only above both 5% and 5 microseconds.',
             'A normal pass also requires independent A0/A1 calibration and every workload classification must be ACCEPT.', ''
@@ -376,8 +376,8 @@ jobs:
       - name: Validate provenance and build exact revisions
         run: |
           $ErrorActionPreference = 'Stop'
-          $baseline = '1a4625cc01a1fa04992533a37516b83e982b6fcd'
-          $candidate = 'a01d01e3173c9d2ee03d264298a2fa28d5e9c214'
+          $baseline = 'a49e2d7033e73a40b592881e0863e6acc3649175'
+          $candidate = '760687563312d818ac31523e0ddb08b87f3347c2'
           $baselineRepo = Join-Path $env:TRANSFER_PROOF_ROOT 'checkout-a'
           $candidateRepo = Join-Path $env:TRANSFER_PROOF_ROOT 'checkout-b'
           $baselineCargo = Join-Path $env:TRANSFER_PROOF_ROOT 'cargo-out-a'
@@ -481,8 +481,8 @@ jobs:
           $lines = @(
             '## Borrowed-handle transfer/overwrite paired Windows proof', '',
             "Job status: $env:PROOF_JOB_STATUS", '',
-            'Frozen baseline: `1a4625cc01a1fa04992533a37516b83e982b6fcd`',
-            'Frozen candidate: `a01d01e3173c9d2ee03d264298a2fa28d5e9c214`',
+            'Frozen baseline: `a49e2d7033e73a40b592881e0863e6acc3649175`',
+            'Frozen candidate: `760687563312d818ac31523e0ddb08b87f3347c2`',
             'Node 22.23.2, pnpm 11.25.0, `FS_SAFE_NATIVE_MODE=off`.',
             '96 paired blocks; 768 fresh single-variant processes; 16 warmup and 16 timed calls per workload.',
             'Workloads: overwrite 64B absent/getter and copy 64B uncapped/onChunk.',

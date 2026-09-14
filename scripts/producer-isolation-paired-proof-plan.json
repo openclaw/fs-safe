@@ -2,8 +2,8 @@
   "schema": 1,
   "name": "producer-isolation-windows-paired-proof",
   "revisions": {
-    "baseline": "1a4625cc01a1fa04992533a37516b83e982b6fcd",
-    "candidate": "a01d01e3173c9d2ee03d264298a2fa28d5e9c214"
+    "baseline": "a49e2d7033e73a40b592881e0863e6acc3649175",
+    "candidate": "760687563312d818ac31523e0ddb08b87f3347c2"
   },
   "runtime": {
     "runner": "windows-latest",
@@ -30,11 +30,11 @@
     { "id": "writeExternalFileWithinRoot/private/1MiB", "api": "output", "isolation": "private", "payloadBytes": 1048576 }
   ],
   "sampling": {
-    "blocks": 48,
-    "cohorts": 4,
+    "blocks": 192,
+    "cohorts": 16,
     "blocksPerCohort": 12,
     "processesPerBlock": 8,
-    "expectedFreshProcesses": 384,
+    "expectedFreshProcesses": 1536,
     "warmupCallsPerWorkload": 16,
     "timedCallsPerWorkload": 16,
     "abPatterns": ["ABBA", "BAAB"],
@@ -42,13 +42,13 @@
     "aaRevision": "baseline",
     "quartetOrder": "balanced A/B-first and A/A-first within every cohort",
     "workloadRotation": "cyclic Latin square across rounds and balanced eight-position quartet starts",
-    "scheduleSeed": 78590213
+    "scheduleSeed": 915202601
   },
   "analysis": {
     "bootstrapIterations": 20000,
-    "bootstrapSeed": 78602347,
+    "bootstrapSeed": 915202602,
     "movingBlockLength": 4,
-    "stratification": "four chronological cohorts",
+    "stratification": "sixteen chronological cohorts",
     "withinBlock": "mean each child then equal-weight the two processes in each arm",
     "estimator": "median paired block log ratios and absolute differences",
     "confidenceLevel": 0.95,
