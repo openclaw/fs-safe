@@ -6,6 +6,7 @@ import { GzipInput, isGzipBuffer, validateGzipBufferTail, validateGzipContainerT
 import { ArchiveFormatError } from "./archive-errors.js";
 import type { TarMeterLimits } from "./archive-limits.js";
 import { TarParserStream, type AdmittedTarMember } from "./archive-tar-wasm.js";
+import { readFileWindowFully } from "./positional-read.js";
 
 /** Buffers are private immutable snapshots, just like the staged file route. */
 type TarInput = { archivePath: string; archiveBuffer?: never } | { archiveBuffer: Buffer; archivePath?: never };
@@ -18,7 +19,7 @@ async function gzipFile(filePath: string): Promise<boolean> {
   const handle = await fs.promises.open(filePath, "r");
   try {
     const magic = Buffer.alloc(2);
-    const { bytesRead } = await handle.read(magic, 0, 2, 0);
+    const bytesRead = await readFileWindowFully(handle, magic, 0);
     return bytesRead === 2 && isGzipBuffer(magic);
   } finally { await handle.close(); }
 }

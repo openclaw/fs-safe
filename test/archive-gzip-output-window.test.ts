@@ -23,6 +23,29 @@ async function fixture(bytes: Buffer) {
   return { archivePath, destDir, timeoutMs: 10_000 };
 }
 
+it("recognizes gzip when the two-byte header arrives in short reads", async () => {
+  const input = await fixture(gzipSync(tarFixture([{ path: "value", body: "payload" }])));
+  const open = fs.open.bind(fs);
+  const requested: number[] = [];
+  vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+    const handle = await open(...args);
+    if (String(args[0]) === input.archivePath) {
+      const read = handle.read.bind(handle);
+      vi.spyOn(handle, "read").mockImplementation(async (buffer, offset, length, position) => {
+        requested.push(length);
+        return await read(buffer, offset, Math.min(length, 1), position);
+      });
+    }
+    return handle;
+  });
+  const members: string[] = [];
+  await inspectTar({ archivePath: input.archivePath, limits: resolveTarMeterLimits(),
+    onMember: entry => { members.push(entry.path); },
+  });
+  expect(members).toEqual(["value"]);
+  expect(requested).toEqual([2, 1]);
+});
+
 it("feeds file-backed gzip output to the parser in bounded 64 KiB windows", async () => {
   const payload = Buffer.alloc(1024 * 1024, 7);
   const raw = tarFixture([{ path: "value", body: payload }]);

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Complete short gzip-header reads before classifying staged archives, preventing valid gzip files from being misread as TAR after a partial filesystem read.
+
 - Speed up JavaScript gzip extraction and TAR inspection by matching file-backed decoder output to the existing 64 KiB WASM input window, preserving backpressure, decoded-byte limits, trailer validation, and cancellation cleanup.
 
 - Speed up archive extraction and TAR inspection by batching private input staging through reusable buffers capped at 512 KiB; keep source identity checks, complete short I/O, and cleanup, while bounding growth probes to one excess byte and checking cancellation after reads.
