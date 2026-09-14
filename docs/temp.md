@@ -309,13 +309,18 @@ owned workspace cleanup, including partial output, subject to directory
 identity checks and I/O failures. The callback must still finish and close its
 writer before returning.
 
-After the callback succeeds, `Root.move` checks source aliases and moves the
-output to the ordinary sibling path before file admission. An escaping symlink
-can fail with `path-alias` at this step. Rejected output still inside the owned
-workspace follows its cleanup contract. Once output moves to the sibling path,
-failures before file adoption retain it for caller-directed recovery, as above.
-File admission, requested modes, sync options, and final rename keep their
-existing contracts; `resolveFinalPath(result)` still names a direct child of `dir`.
+After the callback succeeds, an available native helper uses guarded
+no-replace `Root.move`. Native-off operation admits the completed regular file
+through one retained descriptor. On Windows, that branch first requests write-only
+access so admission does not request completed-file data reads; access or provider
+rejections fall back to the historical read-only or read/write open before admission.
+It then creates the randomized sibling with an atomic
+no-clobber hard link, verifies the expected two-link transition, and removes the
+private name before continuing. An escaping symlink fails with `path-alias`, and
+a filesystem without either handoff reports `helper-unavailable`. The retained
+descriptor carries file admission, requested modes, sync options, and final
+rename with their existing contracts; `resolveFinalPath(result)` still names a
+direct child of `dir`.
 
 The isolated path retains exact bigint identities for both the parent and the
 workspace and rechecks them before moving output to the sibling path. An

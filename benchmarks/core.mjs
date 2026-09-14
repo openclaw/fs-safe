@@ -74,9 +74,41 @@ export async function registerCore({ api: a, workspace: w, register: add, contra
     verify: () => assert.equal(fs.existsSync(path.join(w, "remove-tree-unbounded")), false),
     after: () => fs.rmSync(path.join(w, "remove-tree-unbounded"), { recursive: true, force: true }),
   });
-  add("Root.move", () => safe.move("move-from", "move-to"), {
-    before: () => fs.writeFileSync(path.join(w, "move-from"), data), after: () => fs.rmSync(path.join(w, "move-to"), { force: true }),
+  const moveFrom = path.join(w, "move-from");
+  const moveTo = path.join(w, "move-to");
+  const cleanMoveFixture = () => {
+    fs.rmSync(moveFrom, { force: true });
+    fs.rmSync(moveTo, { force: true });
+  };
+  const prepareMoveFixture = () => {
+    cleanMoveFixture();
+    fs.writeFileSync(moveFrom, data);
+  };
+  prepareMoveFixture();
+  let noReplaceRejectionCode;
+  try {
+    await safe.move("move-from", "move-to");
+  } catch (error) {
+    noReplaceRejectionCode = error?.code;
+    if (noReplaceRejectionCode !== "helper-unavailable") throw error;
+  } finally {
+    cleanMoveFixture();
+  }
+  add("Root.move/overwrite=true", () => safe.move("move-from", "move-to", { overwrite: true }), {
+    before: prepareMoveFixture, after: cleanMoveFixture,
   });
+  if (noReplaceRejectionCode === undefined) {
+    add("Root.move/overwrite=false/success", () => safe.move("move-from", "move-to"), {
+      before: prepareMoveFixture, after: cleanMoveFixture,
+    });
+  } else {
+    add("Root.move/overwrite=false/helper-unavailable", () => safe.move("move-from", "move-to"), {
+      expectError: true,
+      before: prepareMoveFixture,
+      verify: (error) => assert.equal(error?.code, "helper-unavailable"),
+      after: cleanMoveFixture,
+    });
+  }
   add("Root.list/names-100", () => safe.list("tree"));
   add("Root.list/metadata-100", () => safe.list("tree", { withFileTypes: true }));
   const entryNames = [...Array.from({ length: 100 }, (_, i) => `entry-${i}`), "nested"].sort();

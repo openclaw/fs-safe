@@ -16,13 +16,6 @@ import type { PinnedWriteParams } from "./pinned-write.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
 
-export function sameNativeIdentity(
-  left: Pick<FileIdentityStat, "dev" | "ino">,
-  right: Pick<FileIdentityStat, "dev" | "ino">,
-): boolean {
-  return left.dev === right.dev && left.ino === right.ino;
-}
-
 function closeWriteFd(fd: number | undefined): unknown {
   if (fd === undefined) return;
   try {

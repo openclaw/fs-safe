@@ -112,7 +112,7 @@ fs.createJson(rel, value, options?)      // create() variant of writeJson
 fs.append(rel, data, options?)           // append text/buffer; syncs before close by default
 fs.copyIn(rel, sourceAbsPath, options?)  // copy from outside the root, atomically, with size cap
 fs.openWritable(rel, options?)           // FileHandle for streaming writes; supports await using
-fs.move(from, to, options?)              // rename within the root; defaults to no clobber
+fs.move(from, to, options?)              // rename within the root; native-backed no clobber by default
 fs.remove(rel, options?)                 // unlink file, rmdir, or bounded recursive removal
 fs.mkdir(rel, options?)                  // mkdir -p (creates missing parents)
 fs.ensureRoot(options?)                  // accepts "" / "." as the root itself

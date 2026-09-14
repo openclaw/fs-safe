@@ -78,6 +78,7 @@ import { serializePathWrite } from "./write-queue.js";
 import { verifyAtomicWriteResult } from "./root-write-verification.js";
 import { inheritWriteTargetMode } from "./root-write-mode.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
+import { movePathNoReplaceNative } from "./root-move-noreplace.js";
 import { createCopyPublicationObserver, onCopyPublication, type CopyPublicationOptions } from "./copy-publication.js";
 import { writeAllToFile } from "./write-file-handle.js";
 import { createInputOptions, rethrowCreateInputError, rootWriteInput, type RootWriteParams } from "./root-create-input.js";
@@ -1467,11 +1468,12 @@ async function movePathFallback(
     ...mutationSymlinkResolution(params.mutationSymlinks),
   });
   await assertMutationNotDenied(source.resolved, params.denyMutations, { protectAncestors: true });
-  await resolvePinnedRootPathInRoot(root, {
+  const pinnedSource = await resolvePinnedRootPathInRoot(root, {
     relativePath: params.fromRelative,
     policy: PATH_ALIAS_POLICIES.strict,
     mutationSymlinks: params.mutationSymlinks,
   });
+  let pinnedTarget: Awaited<ReturnType<typeof resolvePinnedRootPathInRoot>> | undefined;
   const target = await resolveGuardedWritePathInRoot(root, {
     relativePath: params.toRelative,
     denyMutations: params.denyMutations,
@@ -1479,10 +1481,11 @@ async function movePathFallback(
     allowFinalSymlink: true,
     protectDeniedAncestors: true,
     shouldAssertNoPathAlias: async (resolvedTarget) => {
-      await resolvePinnedRootPathInRoot(root, {
+      pinnedTarget = await resolvePinnedRootPathInRoot(root, {
         relativePath: params.toRelative,
         policy: PATH_ALIAS_POLICIES.unlinkTarget,
       });
+      if (!params.overwrite) return true;
       let targetStat: Stats | undefined;
       try { targetStat = fsSync.lstatSync(resolvedTarget.resolved); } catch { /* Advisory lookup. */ }
       return !(
@@ -1512,17 +1515,16 @@ async function movePathFallback(
     throw new FsSafeError("invalid-path", "directory moves require overwrite: true");
   }
   if (!params.overwrite) {
-    try {
-      fsSync.lstatSync(target.resolved);
-      throw new FsSafeError("already-exists", "destination exists");
-    } catch (error) {
-      if (error instanceof FsSafeError) {
-        throw error;
-      }
-      if (!isNotFoundPathError(error)) {
-        throw error;
-      }
+    if (!pinnedTarget) {
+      throw new FsSafeError("path-mismatch", "destination admission was not completed");
     }
+    await movePathNoReplaceNative(root, params, {
+      sourcePath: source.resolved,
+      sourceParentPath: path.dirname(pinnedSource.canonicalPath),
+      targetPath: target.resolved,
+      targetParentPath: path.dirname(pinnedTarget.canonicalPath),
+    });
+    return;
   }
 
   const sourceParentGuard = await createAsyncDirectoryGuard(path.dirname(source.resolved));

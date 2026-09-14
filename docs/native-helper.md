@@ -15,7 +15,7 @@ consumer Rust build.
 import { configureFsSafeNative } from "@openclaw/fs-safe/config";
 
 configureFsSafeNative({ mode: "auto" });    // default
-configureFsSafeNative({ mode: "off" });     // guarded JavaScript only
+configureFsSafeNative({ mode: "off" });     // guarded JavaScript; reject native-only operations
 configureFsSafeNative({ mode: "require" }); // fail closed when the binding is unavailable
 ```
 
@@ -25,8 +25,8 @@ The equivalent environment variables are `FS_SAFE_NATIVE_MODE` and `OPENCLAW_FS_
 
 | Mode | Behavior |
 |---|---|
-| `auto` | Prefer native primitives when the current platform package loads; otherwise silently use the guarded JavaScript path. |
-| `off` | Do not load a native package. Use the guarded JavaScript path deterministically. |
+| `auto` | Prefer native primitives when the current platform package loads; otherwise use guarded JavaScript where a safe fallback exists and reject native-only operations. |
+| `off` | Do not load a native package. Use guarded JavaScript where safe and reject native-only operations deterministically. |
 | `require` | Throw `FsSafeError("helper-unavailable")` instead of falling back when an operation needs the native binding and it cannot load. |
 
 TAR/gzip in the guarded JavaScript path uses a bundled, import-free WASM build
@@ -72,10 +72,13 @@ normalization, and the decision to fall back.
 - macOS 15.4 and newer prefer `O_RESOLVE_BENEATH`; older kernels resolve components with `O_NOFOLLOW` and restart in-root symlinks from the pinned root descriptor. Both routes use an `F_GETPATH` post-open escape detector and report `best-effort` because directory rename races are not atomic with that check. Publication uses `renameat` for replacement and `renameatx_np(RENAME_EXCL)` for no-replace; owned-tree cleanup uses descriptor-relative `openat`/`unlinkat`.
 - Windows uses handle-relative `NtCreateFile`, rejects reparse points during root-bounded traversal, uses `FileRenameInfoEx` with replacement selected explicitly by the TypeScript policy layer, and deletes owned trees through exact opened handles with `FileDispositionInfoEx`; symlink/reparse entries in owned trees are removed as leaves and never traversed. Descriptors crossing N-API are converted only by the host executable's paired `uv_get_osfhandle` and `uv_open_osfhandle` exports. A runtime without both exports is unsupported for these native operations; the binding never guesses a raw HANDLE or uses a foreign CRT descriptor table.
 
-Native primitives back create-only and replacing pinned writes, async sidecar creation,
-guarded publication, archive acceleration, and direct Windows ACL operations.
-Equivalent JavaScript paths remain available for documented fallback-capable
-features. See [Native architecture](native.md#javascript-fallback-guarantees-and-delta)
+Native primitives back create-only and replacing pinned writes, no-clobber
+`Root.move()`, async sidecar creation, guarded publication, archive acceleration,
+and direct Windows ACL operations. No-clobber moves fail with
+`helper-unavailable` when descriptor-relative parent admission or the atomic
+no-replace rename is unavailable; they never use a check followed by a replacing
+rename. Equivalent JavaScript paths remain available for documented
+fallback-capable features. See [Native architecture](native.md#javascript-fallback-guarantees-and-delta)
 for the exact difference.
 
 The guarded JavaScript mutation path is detection-based, not containment-atomic.

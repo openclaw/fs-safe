@@ -56,7 +56,7 @@ describe("@openclaw/fs-safe", () => {
     expect(stat.isFile).toBe(true);
 
     await expect(root.list("nested")).resolves.toEqual(["file.txt"]);
-    await root.move("nested/file.txt", "nested/renamed.txt");
+    await root.move("nested/file.txt", "nested/renamed.txt", { overwrite: true });
     await expect(root.read("nested/renamed.txt")).resolves.toMatchObject({
       realPath: expect.stringContaining("renamed.txt"),
     });
@@ -89,8 +89,8 @@ describe("@openclaw/fs-safe", () => {
     await root.copyIn("nested/copied.txt", sourcePath, { maxBytes: 16 });
     await expect(root.stat("nested/file.txt")).resolves.toMatchObject({ isFile: true });
     await expect(root.list("nested")).resolves.toEqual(["copied.txt", "file.txt"]);
-    await root.move("nested/file.txt", "nested/moved.txt");
-    await expect(root.readText("nested/moved.txt")).resolves.toBe("hello");
+    await expect(root.move("nested/file.txt", "nested/moved.txt")).rejects.toMatchObject({ code: "helper-unavailable" });
+    await expect(root.readText("nested/file.txt")).resolves.toBe("hello");
     await root.remove("nested/copied.txt");
     await expect(root.exists("nested/copied.txt")).resolves.toBe(false);
   });
@@ -334,7 +334,7 @@ describe("@openclaw/fs-safe", () => {
     const outside = await tempRoot("fs-safe-outside-");
     await root.write("from.txt", "move me");
 
-    await root.move("from.txt", "to.txt");
+    await root.move("from.txt", "to.txt", { overwrite: true });
     await expect(readFile(path.join(rootPath, "to.txt"), "utf8")).resolves.toBe("move me");
 
     await writeFile(path.join(outside, "secret.txt"), "secret");

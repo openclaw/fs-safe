@@ -139,18 +139,19 @@ not bypass the byte limit.
 
 | Mode | Native loading | Fallback |
 |---|---|---|
-| `auto` | Try once, cache the result | Use guarded JavaScript when unavailable |
+| `auto` | Try once, cache the result | Use guarded JavaScript when safe; reject native-only operations |
 | `require` | Try once, cache the result | Throw `FsSafeError("helper-unavailable")` |
-| `off` | Never attempt a binding load | Always use guarded JavaScript |
+| `off` | Never attempt a binding load | Use guarded JavaScript when safe; reject native-only operations |
 
 `sha256FileSync()` is a synchronous Node implementation in all three modes and
 does not load the binding. Use asynchronous `sha256File()` for native hashing
 and cancellation that can respond while JavaScript callbacks run.
 
-Features without a safe JavaScript implementation, including zstd/bzip2 TAR,
-Windows private-directory creation, and [retained-directory staging](staged-file.md),
-fail with `helper-unavailable` when native support is absent or off. Staging
-is currently Linux/macOS only and rejects Windows with `unsupported-platform`.
+Features without a safe JavaScript implementation, including no-clobber
+`Root.move()`, zstd/bzip2 TAR, Windows private-directory creation, and
+[retained-directory staging](staged-file.md), fail with `helper-unavailable`
+when native support is absent or off. Staging is currently Linux/macOS only and
+rejects Windows with `unsupported-platform`.
 
 The staged-file owner also serves POSIX native pinned writes, including streaming.
 Unpublished files remain at `0600`; requested modes are applied through the
@@ -187,7 +188,7 @@ remain TypeScript-owned. What changes is the syscall strength or availability:
 
 | Capability | Native path | Guarded JavaScript path |
 |---|---|---|
-| Root-relative opens/mutations | Descriptor-relative beneath operations. Pinned writes create parents and publish both replacement and no-replace targets relative to open directory descriptors. Linux reports `kernel-atomic`; macOS and Windows report `best-effort`. macOS uses `O_RESOLVE_BENEATH` when available plus an `F_GETPATH` detector, while Windows rejects reparse traversal in the object-manager call. | Reports `best-effort`: component-wise alias checks, no-follow opens where Node exposes them, private temp/rename, and post-operation identity verification. A same-privilege peer can replace a writable parent after a guard assertion but before Node resolves the pathname mutation; the mutation may land outside the intended root before the post-check detects it. |
+| Root-relative opens/mutations | Descriptor-relative beneath operations. Pinned writes create parents and publish both replacement and no-replace targets relative to open directory descriptors. No-clobber `Root.move()` admits both parents and uses the native no-replace rename. Linux reports `kernel-atomic`; macOS and Windows report `best-effort`. macOS uses `O_RESOLVE_BENEATH` when available plus an `F_GETPATH` detector, while Windows rejects reparse traversal in the object-manager call. | Reports `best-effort`: component-wise alias checks, no-follow opens where Node exposes them, private temp/rename, and post-operation identity verification. No-clobber `Root.move()` is unsupported because a check followed by a replacing rename is unsafe. A same-privilege peer can replace a writable parent after a guard assertion but before Node resolves another pathname mutation; the mutation may land outside the intended root before the post-check detects it. |
 | ZIP/TAR/gzip | Rust streaming decode and fd-relative output creation. | Optional JSZip or bundled WASM TAR into guarded private staging, then the same guarded merge policy. |
 | Zstd/bzip2 TAR | Supported. | Unsupported; typed `helper-unavailable`. |
 | Publication copy | Clone, Linux `copy_file_range`, async native SHA-256. | Exclusive `wx` byte loop and Node SHA-256 with the same content/identity fences. |

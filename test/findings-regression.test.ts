@@ -82,7 +82,7 @@ describe("security finding regressions", () => {
         await fsp.symlink(outside, path.join(base, "nested"), "dir");
       },
     });
-    await expect(scoped.move("from.txt", "nested/moved.txt")).rejects.toBeTruthy();
+    await expect(scoped.move("from.txt", "nested/moved.txt", { overwrite: true })).rejects.toBeTruthy();
     await expect(fsp.stat(path.join(outside, "moved.txt"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
