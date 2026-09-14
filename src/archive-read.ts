@@ -2,6 +2,7 @@ import { classifyArchiveParserError } from "./archive-parser-errors.js";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { readBoundedAsync } from "./bounded-read.js";
 import {
   ArchiveFormatError,
@@ -54,35 +55,12 @@ function normalizedRequestedEntry(entryPath: string): string {
 }
 
 async function readStreamBounded(
-  stream: NodeJS.ReadableStream | AsyncIterable<unknown>,
+  stream: AsyncIterable<unknown>,
   maxBytes: number,
 ): Promise<Buffer> {
-  if (!(Symbol.asyncIterator in Object(stream))) {
-    return await new Promise<Buffer>((resolve, reject) => {
-      const readable = stream as NodeJS.ReadableStream;
-      const chunks: Buffer[] = [];
-      let total = 0;
-      readable.on("data", (chunk: unknown) => {
-        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
-        total += buffer.length;
-        if (total > maxBytes) {
-          readable.pause();
-          reject(
-            new ArchiveLimitError(
-              ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT,
-            ),
-          );
-          return;
-        }
-        chunks.push(buffer);
-      });
-      readable.once("end", () => resolve(Buffer.concat(chunks, total)));
-      readable.once("error", reject);
-    });
-  }
   const chunks: Buffer[] = [];
   let total = 0;
-  for await (const chunk of stream as AsyncIterable<unknown>) {
+  for await (const chunk of stream) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
     total += buffer.length;
     if (total > maxBytes) {
@@ -155,13 +133,17 @@ async function readZipEntry(buffer: Buffer, entryPath: string, maxBytes: number,
   ) {
     throw new Error(`archive entry is a link: ${formatErrorDetail(entryPath)}`);
   }
+  const integrity = createZipIntegrityTransform(entry);
   const stream: NodeJS.ReadableStream =
     typeof entry.nodeStream === "function"
       ? entry.nodeStream()
       : Readable.from(await entry.async("nodebuffer"));
-  const integrity = createZipIntegrityTransform(entry);
-  stream.once("error", (error: Error) => integrity.destroy(normalizeZipIntegrityError(error)));
-  return await readStreamBounded(stream.pipe(integrity), maxBytes);
+  try {
+    // Own the complete decoder route so a byte-limit failure joins source teardown.
+    return await pipeline(stream, integrity, async (source) => await readStreamBounded(source, maxBytes));
+  } catch (error) {
+    throw normalizeZipIntegrityError(error);
+  }
 }
 
 async function readTarEntry(archiveBuffer: Buffer, entryPath: string, maxBytes: number): Promise<Buffer> {

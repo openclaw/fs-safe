@@ -272,19 +272,19 @@ pub(crate) fn copy_file_ranges(
             Ok(_) if offset > max_bytes => {
                 return Err(native_error("too-large", "copy input exceeds maxBytes"));
             }
-            Ok(0) if offset == 0 => {
+            Ok(0) => {
                 // Some kernel/filesystem combinations report zero without
                 // reaching EOF. Confirm with pread, preserving both cursors.
                 let mut byte = [0_u8; 1];
                 loop {
                     check_cancelled()?;
-                    let read = rustix::io::pread(borrowed(source_fd), &mut byte, 0);
+                    let read = rustix::io::pread(borrowed(source_fd), &mut byte, offset);
                     check_cancelled()?;
                     match read {
-                        Ok(0) => return Ok(RangeCopyOutcome::Complete(0)),
+                        Ok(0) => return Ok(RangeCopyOutcome::Complete(offset)),
                         Ok(_) => {
                             return Ok(RangeCopyOutcome::Unsupported {
-                                offset: 0,
+                                offset,
                                 error: native_error(
                                     "ENOTSUP",
                                     "copy_file_range returned zero before EOF",
@@ -296,7 +296,6 @@ pub(crate) fn copy_file_ranges(
                     }
                 }
             }
-            Ok(0) => return Ok(RangeCopyOutcome::Complete(offset)),
             Ok(_) => {}
             Err(rustix::io::Errno::INTR) => continue,
             Err(error) => {
