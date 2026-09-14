@@ -55,6 +55,19 @@ export async function registerCore({ api: a, workspace: w, register: add, contra
     }
   }
   add("Root.mkdir", () => safe.mkdir("new-dir"), { after: () => fs.rmdirSync(path.join(w, "new-dir")) });
+  for (const durable of [true, false]) {
+    for (const name of ["write", "writeJson"]) {
+      const rel = `root-${name.toLowerCase()}-compatibility.json`;
+      const expected = name === "writeJson" ? Buffer.from('{"ok":true}\n') : data;
+      add(`Root.${name}/renameIdentity=verify-content-with-lock/durable=${durable}`, () =>
+        safe[name](rel, name === "writeJson" ? { ok: true } : data, {
+          durable, renameIdentity: "verify-content-with-lock",
+        }), {
+          divisor: 10,
+          verify: () => assert.deepEqual(fs.readFileSync(path.join(w, rel)), expected),
+        });
+    }
+  }
   add("Root.ensureRoot", () => safe.ensureRoot());
   add("Root.remove", () => safe.remove("remove.txt"), { before: () => fs.writeFileSync(path.join(w, "remove.txt"), data) });
   for (const order of ["filesystem", "sorted"]) {

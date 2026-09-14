@@ -129,24 +129,33 @@ export async function runPinnedWriteWithRenamePolicy(
   const relativeTargetPath = writeParams.relativeParentPath
     ? `${writeParams.relativeParentPath}/${writeParams.basename}`
     : writeParams.basename;
+  return await withPinnedWriteRenameIdentityLock({
+    rootPath: writeParams.rootPath, targetPath, relativeTargetPath,
+  }, async () => await runPinnedWriteHelper({
+    ...writeParams,
+    onRenameIdentityMismatch: "verify-content",
+  }));
+}
+
+export async function withPinnedWriteRenameIdentityLock<T>(
+  params: { rootPath: string; targetPath: string; relativeTargetPath: string },
+  run: () => Promise<T>,
+): Promise<T> {
   const lockPath = path.join(
-    writeParams.rootPath,
-    `.fs-safe-write-${sha256Hex(relativeTargetPath)}.lock`,
+    params.rootPath,
+    `.fs-safe-write-${sha256Hex(params.relativeTargetPath)}.lock`,
   );
   return await withSidecarLock(
-    writeParams.rootPath,
+    params.rootPath,
     {
-      managerKey: `fs-safe.write:${targetPath}`,
+      managerKey: `fs-safe.write:${params.targetPath}`,
       lockPath,
       staleMs: 30_000,
       timeoutMs: 5_000,
       payload: () => ({ pid: process.pid, createdAt: new Date().toISOString() }),
       retry: { retries: 5, minTimeout: 100, maxTimeout: 2_000, factor: 2 },
     },
-    async () => await runPinnedWriteHelper({
-      ...writeParams,
-      onRenameIdentityMismatch: "verify-content",
-    }),
+    run,
   );
 }
 
