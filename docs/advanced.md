@@ -89,6 +89,12 @@ receipts remain numeric. Custom `ioFs` adapters must honor `{ bigint: true }` fo
 Windows identities receive one re-inspection without reopening, then fail
 validation if still unknown.
 
+On Windows, these existing-object readers retain their historical support for a
+leading drive-relative spelling such as `C:existing.txt`: it is anchored to that
+drive before confinement and namespace admission. Additional colons remain in
+the anchored spelling, so alternate-stream and directory-index aliases are still
+rejected before opening.
+
 The explicit `symlinks` policy takes precedence over the existing `rejectSymlinks`
 boolean. Without `symlinks`, `rejectSymlinks: false` retains its existing behavior
 of following contained links, and omission still rejects all symlink components.

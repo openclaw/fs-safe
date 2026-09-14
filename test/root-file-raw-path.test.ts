@@ -1,7 +1,7 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { openRootFile, openRootFileSync } from "../src/root-file.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
@@ -34,7 +34,7 @@ it.each(["async", "sync"].flatMap(mode => [false, true].map(rejectSymlinks => ({
 );
 
 it.runIf(process.platform === "win32").each(["async", "sync"])(
-  "%s rejects drive-relative inputs before opening",
+  "%s preserves drive-relative inputs while rejecting their stream aliases",
   async mode => {
     const dir = await tempRoot("fs-safe-root-file-drive-");
     const target = path.join(dir, "value");
@@ -43,11 +43,74 @@ it.runIf(process.platform === "win32").each(["async", "sync"])(
     const driveRelative = `${drive}${path.relative(path.resolve(drive), target)}`;
     const params = { rootPath: dir, absolutePath: driveRelative, boundaryLabel: "fixture" };
     const opened = mode === "async" ? await openRootFile(params) : openRootFileSync(params);
-    expect(opened).toMatchObject({
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) throw opened.error;
+    try { expect(fsSync.readFileSync(opened.fd, "utf8")).toBe("drive-relative bytes"); }
+    finally { fsSync.closeSync(opened.fd); }
+
+    const streamParams = { ...params, absolutePath: `${driveRelative}:hidden` };
+    const stream = mode === "async" ? await openRootFile(streamParams) : openRootFileSync(streamParams);
+    expect(stream).toMatchObject({
       ok: false,
       reason: "validation",
       error: { code: "invalid-path", details: { reason: "windows-path-alias" } },
     });
     await expect(fs.readFile(target, "utf8")).resolves.toBe("drive-relative bytes");
+  },
+);
+
+it.runIf(process.platform === "win32").each(["async", "sync"])(
+  "%s preserves raw parent traversal in drive-relative inputs",
+  async mode => {
+    const dir = await tempRoot("fs-safe-root-file-drive-parent-");
+    await fs.mkdir(path.join(dir, "deep", "dir"), { recursive: true });
+    await fs.writeFile(path.join(dir, "value"), "lexical bytes");
+    await fs.writeFile(path.join(dir, "deep", "value"), "canonical bytes");
+    await fs.symlink(path.join(dir, "deep", "dir"), path.join(dir, "link"), "junction");
+    const drive = path.parse(dir).root.slice(0, 2);
+    const relativeDir = path.relative(path.resolve(drive), dir);
+    const driveRelative = `${drive}${relativeDir}${path.sep}link${path.sep}..${path.sep}value`;
+    const params = {
+      rootPath: dir,
+      absolutePath: driveRelative,
+      boundaryLabel: "fixture",
+      rejectSymlinks: false,
+    };
+    const opened = mode === "async" ? await openRootFile(params) : openRootFileSync(params);
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) throw opened.error;
+    try { expect(fsSync.readFileSync(opened.fd, "utf8")).toBe("canonical bytes"); }
+    finally { fsSync.closeSync(opened.fd); }
+  },
+);
+
+it.runIf(process.platform === "win32").each(["async", "sync"])(
+  "%s rejects a traversed drive-relative stream component before filesystem access",
+  async mode => {
+    const dir = await tempRoot("fs-safe-root-file-drive-stream-parent-");
+    const drive = path.parse(dir).root.slice(0, 2);
+    const relativeDir = path.relative(path.resolve(drive), dir);
+    const driveRelative = `${drive}${relativeDir}${path.sep}blocked:stream${path.sep}..${path.sep}value`;
+    const lstat = vi.spyOn(fsSync, "lstatSync");
+    const stat = vi.spyOn(fsSync, "statSync");
+    const exists = vi.spyOn(fsSync, "existsSync");
+    const readlink = vi.spyOn(fsSync, "readlinkSync");
+    const realpath = vi.spyOn(fsSync.realpathSync, "native");
+    const open = vi.spyOn(fsSync, "openSync");
+    const fstat = vi.spyOn(fsSync, "fstatSync");
+    try {
+      const params = { rootPath: dir, absolutePath: driveRelative, boundaryLabel: "fixture" };
+      const opened = mode === "async" ? await openRootFile(params) : openRootFileSync(params);
+      expect(opened).toMatchObject({
+        ok: false,
+        reason: "validation",
+        error: { code: "invalid-path", details: { reason: "windows-path-alias" } },
+      });
+      for (const probe of [lstat, stat, exists, readlink, realpath, open, fstat]) {
+        expect(probe).not.toHaveBeenCalled();
+      }
+    } finally {
+      vi.restoreAllMocks();
+    }
   },
 );

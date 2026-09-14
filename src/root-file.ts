@@ -82,8 +82,8 @@ export function openRootFileSync(params: OpenRootFileSyncParams): RootFileOpenRe
   const rawAbsolutePath = params.absolutePath;
   let resolved: ResolvedRootFilePath | RootFileOpenResult;
   try {
-    assertNoWindowsPathAlias(rawAbsolutePath);
     const absolutePath = absoluteRootFilePath(rawAbsolutePath);
+    assertNoWindowsPathAlias(absolutePath);
     resolved = mapResolvedRootPath(absolutePath, resolveRootPathSync({
       absolutePath,
       rootPath: params.rootPath,
@@ -181,8 +181,8 @@ export async function openRootFile(
   const rawAbsolutePath = params.absolutePath;
   let resolved: ResolvedRootFilePath | RootFileOpenResult;
   try {
-    assertNoWindowsPathAlias(rawAbsolutePath);
     const absolutePath = absoluteRootFilePath(rawAbsolutePath);
+    assertNoWindowsPathAlias(absolutePath);
     resolved = mapResolvedRootPath(absolutePath, await resolveRootPath({
       absolutePath,
       rootPath: params.rootPath,

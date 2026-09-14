@@ -58,6 +58,12 @@ and `walkDirectory` (documented as a non-boundary traversal helper) are outside
 this pathname-admission guarantee. Output helpers continue to sanitize an
 untrusted basename, then validate the resulting path.
 
+The low-level existing-object readers `openRootFile()` and
+`openRootFileSync()` preserve their historical Windows drive-relative input:
+they anchor its leading drive designator before this admission check. The raw
+suffix remains unnormalized, and any additional colon is still rejected before
+filesystem access.
+
 ### Symlinks (read side)
 
 `open()` and `read()` use `fs.open` with `O_NOFOLLOW` on POSIX where available. The library then `fstat`s the open fd and `realpath`s the original input, asserting the two refer to the same inode. A symlink swap that happens between resolve and open will fail at the identity check rather than silently following the new target.
