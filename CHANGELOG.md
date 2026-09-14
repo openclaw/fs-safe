@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix automatic Linux file copies truncating when `copy_file_range` reports zero after partial progress; confirm EOF at the current offset before completing or resuming the guarded byte-copy fallback.
+
 ## 0.11.0 - 2026-09-14
 
 ### Highlights
