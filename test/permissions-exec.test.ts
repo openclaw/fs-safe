@@ -18,6 +18,7 @@ import { inspectPathPermissions } from "../src/permissions.js";
 import { readSecureFile } from "../src/secure-file.js";
 
 const tempDirs: string[] = [];
+const itSimulatedWindows = it.skipIf(process.platform === "win32");
 
 beforeEach(() => {
   configureFsSafeNative({ mode: "off" });
@@ -103,7 +104,7 @@ describe("Windows permission command execution", () => {
     expect(getPermissionCommandFailure(null, command, 10)).toBeUndefined();
   });
 
-  it.each(["structured", "raw"])("preserves a %s owner timeout through a failed secure read", async (kind) => {
+  itSimulatedWindows.each(["structured", "raw"])("preserves a %s owner timeout through a simulated Windows secure read", async (kind) => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-permission-owner-detail-"));
     tempDirs.push(dir);
     const target = path.join(dir, "secret.json");
@@ -145,7 +146,7 @@ describe("Windows permission command execution", () => {
     expect(exec).toHaveBeenCalledTimes(1);
   });
 
-  it("preserves structured-query stderr and exit status through a secure read", async () => {
+  itSimulatedWindows("preserves structured-query stderr and exit status through a simulated Windows secure read", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-permission-acl-detail-"));
     tempDirs.push(dir);
     const target = path.join(dir, "secret.json");
@@ -265,7 +266,7 @@ describe("Windows permission command execution", () => {
       }), "permission-unverified");
   });
 
-  it("inspects permissions once for one secure read", async () => {
+  itSimulatedWindows("inspects permissions once for one simulated Windows secure read", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-permission-count-"));
     tempDirs.push(dir);
     const target = path.join(dir, "secret.json");

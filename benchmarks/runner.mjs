@@ -8,6 +8,7 @@ import { performance } from "node:perf_hooks";
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { registerCore } from "./core.mjs";
+import { measuredSecureFileFeatures } from "./secure-file-contract.mjs";
 import { registerPaths } from "./paths.mjs";
 import { registerLifecycle } from "./lifecycle.mjs";
 import { registerArchives } from "./archives.mjs";
@@ -39,6 +40,7 @@ if (args["copy-concurrency"] !== undefined) {
 }
 const packageRoot = path.resolve(import.meta.dirname, "..");
 const dist = path.resolve(args.dist ?? path.join(packageRoot, "dist"));
+const measuredFeatures = measuredSecureFileFeatures(dist);
 const manifest = JSON.parse(fs.readFileSync(path.join(packageRoot, "package.json"), "utf8"));
 const harnessHash = createHash("sha256");
 for (const name of fs.readdirSync(import.meta.dirname).filter((name) => name.endsWith(".mjs")).sort()) {
@@ -88,7 +90,7 @@ const contract = (name, object) => {
   contracts.set(name, [...properties].sort());
 };
 const cleanups = [];
-const context = { api, workspace, native, binding, register, exclude, contract, args, onCleanup: (fn) => cleanups.push(fn) };
+const context = { api, workspace, native, binding, measuredFeatures, register, exclude, contract, args, onCleanup: (fn) => cleanups.push(fn) };
 let cleanup;
 try {
   cleanup = await registerCore(context);

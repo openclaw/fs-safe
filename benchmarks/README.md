@@ -70,6 +70,16 @@ isolating admission and planning from destination-file writes.
 The native descriptor cases isolate host-fd admission and directory open/return;
 the latter remains timed separately from descriptor close.
 
+Windows secure-read rows distinguish the measured JavaScript contract from the
+loaded addon's capabilities. A build containing `secure-file-windows.js` uses
+`readSecureFile/descriptor-acl` when its descriptor capability is available, or
+`readSecureFile/permission-unverified` for a verified expected rejection when
+it is not. Older builds use `readSecureFile/legacy-pathname-acl` and verify a
+successful read, including in native-off mode. All successful rows check the
+returned bytes. Detection uses the selected `--dist` directory, so a saved
+current build is not mistaken for a legacy baseline. These labels retain
+`readSecureFile` callable coverage; rejection timing is not successful-read timing.
+
 For a quick executable coverage check:
 
 ```sh

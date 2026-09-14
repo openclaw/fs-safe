@@ -229,7 +229,7 @@ describe("secure file reads", () => {
     expect(result.realPath).toBe(await fs.realpath(filePath));
   });
 
-  itWin32.each(["ascii", "café-日本"])("reads and inspects a validated Windows ACL at %s paths", async (name) => {
+  itWin32.each(["ascii", "café-日本"])("fails closed without descriptor ACL support at %s Windows paths", async (name) => {
     useWindowsPermissionFallback();
     const parent = path.join(root, name);
     await fs.mkdir(parent);
@@ -237,38 +237,28 @@ describe("secure file reads", () => {
     await fs.writeFile(filePath, '{"token":"ok"}', { mode: 0o600 });
     await secureWindowsTestFile(filePath);
 
-    const result = await readSecureFile({
+    await expect(readSecureFile({
       filePath,
       label: "test secret",
       io: { maxBytes: 1024 },
-    });
-
-    expect(result.buffer.toString("utf8")).toBe('{"token":"ok"}');
-    expect(result.permissions).toMatchObject({
-      source: "windows-acl",
-      ownerTrusted: true,
-    });
+    })).rejects.toMatchObject({ code: "permission-unverified" });
+    // Standalone pathname reporting deliberately retains its fallback.
     await expect(inspectWindowsAcl(filePath)).resolves.toMatchObject({ ok: true, untrustedWorld: [], untrustedGroup: [] });
     await expect(inspectPathPermissions(parent)).resolves.toMatchObject({ source: "windows-acl" });
   }, 60_000);
 
-  itWin32("treats an extended-length local Windows path as local", async () => {
+  itWin32("fails closed for an extended-length path without descriptor ACL support", async () => {
+    useWindowsPermissionFallback();
     const filePath = path.join(root, "extended-secret.json");
     await fs.writeFile(filePath, '{"token":"ok"}', { mode: 0o600 });
     await secureWindowsTestFile(filePath);
     const extendedPath = `\\\\?\\${path.resolve(filePath)}`;
 
-    const result = await readSecureFile({
+    await expect(readSecureFile({
       filePath: extendedPath,
       label: "extended-path secret",
       io: { maxBytes: 1024 },
-    });
-
-    expect(result.buffer.toString("utf8")).toBe('{"token":"ok"}');
-    expect(result.permissions).toMatchObject({
-      source: "windows-acl",
-      ownerTrusted: true,
-    });
+    })).rejects.toMatchObject({ code: "permission-unverified" });
   }, 60_000);
 
   it("rejects symlinks and files outside trusted dirs", async () => {
@@ -332,7 +322,7 @@ describe("secure file reads", () => {
       }), "too-large");
   });
 
-  it("uses structured Windows ACL facts for secure reads", async () => {
+  it.skipIf(process.platform === "win32")("uses structured ACL facts for simulated Windows secure reads", async () => {
     useWindowsPermissionFallback();
     const filePath = path.join(root, "windows-secret.txt");
     await fs.writeFile(filePath, "secret");
