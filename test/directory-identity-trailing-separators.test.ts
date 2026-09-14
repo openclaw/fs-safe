@@ -127,7 +127,7 @@ describe("projected Windows root spelling compatibility", () => {
       return root;
     });
 
-    for (const observedPath of [root, root + "\\\\"]) {
+    for (const observedPath of spellings) {
       await expect(readDirectoryIdentity(observedPath)).resolves.toEqual(expected);
       expect(assertDirectoryIdentitySync(observedPath, expected)).toBeUndefined();
     }
