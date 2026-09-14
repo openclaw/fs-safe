@@ -448,6 +448,23 @@ repairs the fallback to mode `0o700` where mode bits apply. If it cannot
 establish that state, it throws an ordinary `Error`; there is no native mode
 or `helper-unavailable` branch on this API.
 
+Default POSIX writability checks use `fs.accessSync` only when the process can
+report matching real/effective user and group IDs and the effective user is not
+root. Root, split-credential, and unobservable-credential processes instead
+prove their current effective operation rights by exclusively creating and
+removing a random private empty file. That bounded probe retains exact bigint
+file and directory identities, rechecks the directory's canonical path,
+ownership, and mode before cleanup, and never removes recursively. An uncertain
+identity or cleanup fails closed; an object without an established receipt is
+left untouched. The result is a point-in-time admission, not a retained lease.
+
+Supplying `accessSync` keeps the historical adapter authoritative and disables
+the automatic credential classification and operation probe; pair it with the
+other adapters when testing virtual paths. Windows continues to use
+`fs.accessSync` by default. The legacy `getuid` adapter controls ownership
+admission and fallback naming, but default POSIX probe selection always
+classifies the process's actual credential getters.
+
 ## Common patterns
 
 ### Build something, atomically place it
