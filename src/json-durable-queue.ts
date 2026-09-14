@@ -309,12 +309,15 @@ export async function readJsonDurableQueueEntry<T>(
 async function migrateClaimedQueueEntry(params: {
   paths: JsonDurableQueueEntryPaths;
   identity: BigIntStats;
+  releaseReadPin: () => Promise<void>;
   entry: unknown;
   tempPrefix: string;
 }): Promise<void> {
-  await migrateDurableQueueEntry(params.paths, params.identity, async (filePath, assertCurrent) => {
-    await writeQueueEntry({ filePath, entry: params.entry, tempPrefix: params.tempPrefix }, assertCurrent);
-  });
+  await migrateDurableQueueEntry(
+    params.paths, params.identity, params.releaseReadPin, async (filePath, beforePublish) => {
+      await writeQueueEntry({ filePath, entry: params.entry, tempPrefix: params.tempPrefix }, beforePublish);
+    },
+  );
 }
 
 export async function ackJsonDurableQueueEntry(paths: JsonDurableQueueEntryPaths): Promise<void> {
@@ -332,11 +335,11 @@ export async function loadJsonDurableQueueEntry<T>(params: {
     if (!claimedPath) return null;
     return await withJsonDurableQueueEntry<T, T>(claimedPath, {
       maxBytes: params.maxBytes,
-    }, async (raw, identity) => {
+    }, async (raw, identity, releaseReadPin) => {
       const result = params.read ? await params.read(raw, params.paths.jsonPath) : { entry: raw };
       if (result.migrated) {
         await migrateClaimedQueueEntry({
-          paths: params.paths, identity, entry: result.entry, tempPrefix: params.tempPrefix,
+          paths: params.paths, identity, releaseReadPin, entry: result.entry, tempPrefix: params.tempPrefix,
         });
       }
       return result.entry;
@@ -402,12 +405,12 @@ export async function loadPendingJsonDurableQueueEntries<T>(
       const entry = await withJsonDurableQueueEntry<T, T>(
         claimedPath,
         { maxBytes: options.maxBytes },
-        async (raw, identity) => {
+        async (raw, identity, releaseReadPin) => {
           const result = options.read ? await options.read(raw, paths.jsonPath) : { entry: raw };
           if (result.migrated) {
             migrationStarted = true;
             await migrateClaimedQueueEntry({
-              paths, identity, entry: result.entry, tempPrefix: options.tempPrefix,
+              paths, identity, releaseReadPin, entry: result.entry, tempPrefix: options.tempPrefix,
             });
           }
           return result.entry;

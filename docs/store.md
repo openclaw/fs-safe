@@ -87,6 +87,13 @@ and leaves the newer generation or failed evidence intact. A stale migration
 rejects both single and batch loads; ordinary callback failures retain their
 existing single-load rejection and batch-skip behavior.
 
+On Windows, migration releases its read pin once at this publication boundary
+because an open target can block replacement. It rechecks the exact pathname
+identity after the asynchronous close while still holding the transfer lock.
+POSIX retains the read pin through publication. Other readers keep ownership
+of their handles; Windows sharing denials still reject and can be retried after
+those readers close.
+
 Queue entry reads verify lossless file identities before opening, on the opened
 descriptor, and at the current pathname before reading bytes. POSIX opens are
 nonblocking, so a raced FIFO is rejected rather than stalling a consumer. On Windows, an

@@ -100,11 +100,12 @@ export async function claimDurableQueueEntry(
   return await withQueueEntryLock(paths, async () => await claimDurableQueueEntryUnlocked(paths, options));
 }
 
-// The caller retains its read descriptor until this migration settles.
+// The caller retains its read pin until this owner releases it or migration settles.
 export async function migrateDurableQueueEntry<T>(
   paths: DurableQueueEntryPathsLike,
   expected: BigIntStats,
-  run: (filePath: string, assertCurrent: () => Promise<void>) => Promise<T>,
+  releaseReadPin: () => Promise<void>,
+  run: (filePath: string, beforePublish: () => Promise<void>) => Promise<T>,
 ): Promise<T> {
   return await withQueueEntryLock(paths, async () => {
     const processingPath = durableQueueProcessingPath(paths);
@@ -129,7 +130,15 @@ export async function migrateDurableQueueEntry<T>(
       }
     };
     await assertCurrent();
-    return await run(processingPath, assertCurrent);
+    return await run(processingPath, async () => {
+      await assertCurrent();
+      if (process.platform === "win32") {
+        // Windows cannot replace our still-open target. Keep the transfer lock
+        // across release and reject changes made while the async close settles.
+        await releaseReadPin();
+        await assertCurrent();
+      }
+    });
   });
 }
 

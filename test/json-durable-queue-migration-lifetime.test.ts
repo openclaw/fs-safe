@@ -86,6 +86,16 @@ function expectOpen(record: TrackedRead) {
   expect(fsSync.fstatSync(record.handle.fd).isFile()).toBe(true);
 }
 
+function expectPublicationPin(record: TrackedRead) {
+  if (process.platform !== "win32") {
+    expectOpen(record);
+    return;
+  }
+  expect(record.closed).toBe(true);
+  expect(record.closeCalls).toBe(1);
+  expect(record.handle.fd).toBe(-1);
+}
+
 function expectClosed(tracker: ReturnType<typeof trackProcessingReads>, count: number) {
   expect(tracker.records).toHaveLength(count);
   expect(tracker.active).toBe(0);
@@ -127,14 +137,14 @@ async function advanceClaim(subject: Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe.each(["single", "batch"] as const)("%s queue migration descriptor lifetime", (loader) => {
-  it("retains the read descriptor through its callback and successful publication", async () => {
+  it("retains the read descriptor until its platform's publication boundary", async () => {
     const { paths, load } = await fixture(loader);
     const tracker = trackProcessingReads([paths.processingPath!]);
     const rename = fs.rename.bind(fs);
     let published = false;
     vi.spyOn(fs, "rename").mockImplementation(async (source, destination) => {
       if (destination === paths.processingPath) {
-        expectOpen(tracker.records[0]!);
+        expectPublicationPin(tracker.records[0]!);
         published = true;
       }
       await rename(source, destination);
@@ -218,7 +228,7 @@ describe.each(["single", "batch"] as const)("%s queue migration descriptor lifet
     const rename = fs.rename.bind(fs);
     vi.spyOn(fs, "rename").mockImplementation(async (source, destination) => {
       if (destination === paths.processingPath) {
-        expectOpen(tracker.records[0]!);
+        expectPublicationPin(tracker.records[0]!);
         throw failure;
       }
       await rename(source, destination);

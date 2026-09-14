@@ -176,6 +176,22 @@ export async function registerLifecycle({ api: a, workspace: w, native, binding,
   add("readJsonDurableQueueEntry", () => a.readJsonDurableQueueEntry(queue.jsonPath), { before: resetQueue, verify: (r) => assert(r.ok) });
   add("loadJsonDurableQueueEntry", () => a.loadJsonDurableQueueEntry({ paths: queue, tempPrefix: "bench" }), { before: resetQueue, verify: (r) => assert(r.ok) });
   add("loadPendingJsonDurableQueueEntries", () => a.loadPendingJsonDurableQueueEntries({ queueDir, tempPrefix: "bench" }), { before: resetQueue, verify: (r) => assert.equal(r.length, 1) });
+  for (const batch of [false, true]) {
+    const method = batch ? "loadPendingJsonDurableQueueEntries" : "loadJsonDurableQueueEntry";
+    const migrated = { ok: true, migrated: true };
+    add(`${method}/migration`, () => a[method]({
+      ...(batch ? { queueDir } : { paths: queue }),
+      tempPrefix: "bench",
+      read: async (entry) => ({ entry: { ...entry, migrated: true }, migrated: true }),
+    }), {
+      before: resetQueue,
+      verify: (result) => {
+        assert.deepEqual(result, batch ? [migrated] : migrated);
+        assert.deepEqual(JSON.parse(fs.readFileSync(queue.processingPath, "utf8")), migrated);
+        assert.equal(fs.existsSync(queue.jsonPath), false);
+      },
+    });
+  }
   const claim = async () => { resetQueue(); await a.loadJsonDurableQueueEntry({ paths: queue, tempPrefix: "bench" }); };
   add("ackJsonDurableQueueEntry", () => a.ackJsonDurableQueueEntry(queue), { before: claim });
   add("moveJsonDurableQueueEntryToFailed", () => a.moveJsonDurableQueueEntryToFailed({ queueDir, failedDir, id: "fixture" }), { before: claim });

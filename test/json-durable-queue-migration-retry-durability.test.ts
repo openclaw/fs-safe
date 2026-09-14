@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as directoryDurability from "../src/directory-durability.js";
 import {
   loadJsonDurableQueueEntry,
   loadPendingJsonDurableQueueEntries,
@@ -15,9 +16,11 @@ type Loader = "single" | "batch";
 type Read = (entry: Entry) => Promise<JsonDurableQueueReadResult<Entry>>;
 
 const { tempRoot } = useRealTempDirs();
+const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform")!;
 beforeEach(() => configureFsSafeNative({ mode: "off" }));
 afterEach(() => {
   vi.restoreAllMocks();
+  Object.defineProperty(process, "platform", originalPlatform);
   configureFsSafeNative({ mode: "auto" });
 });
 
@@ -37,20 +40,29 @@ function observeDirectorySyncs(
   beforeSync?: () => void,
   syncEvent = "queue-sync",
 ) {
+  const syncDirectory = directoryDurability.syncDirectory;
+  vi.spyOn(directoryDurability, "syncDirectory").mockImplementation(async (...args) => {
+    const target = typeof args[0] === "string" ? args[0] : args[0].path;
+    if (path.resolve(target) !== directoryPath) return await syncDirectory(...args);
+    try {
+      const outcome = await syncDirectory(...args);
+      // The owner also accepts unsupported Windows directory synchronization.
+      events.push(syncEvent);
+      return outcome;
+    } catch (error) {
+      events.push(`${syncEvent}-failed`);
+      throw error;
+    }
+  });
+  if (!beforeSync) return;
   const open = fs.open.bind(fs);
   vi.spyOn(fs, "open").mockImplementation(async (...args) => {
     const handle = await open(...args);
     if (path.resolve(args[0].toString()) === directoryPath) {
       const sync = handle.sync.bind(handle);
       vi.spyOn(handle, "sync").mockImplementation(async () => {
-        try {
-          beforeSync?.();
-          await sync();
-          events.push(syncEvent);
-        } catch (error) {
-          events.push(`${syncEvent}-failed`);
-          throw error;
-        }
+        beforeSync();
+        await sync();
       });
     }
     return handle;
@@ -181,5 +193,30 @@ it.each(["same-parent", "separate-parent"] as const)("repairs a duplicate claim 
   await expect(fs.access(paths.jsonPath)).rejects.toMatchObject({ code: "ENOENT" });
   await expect(fs.lstat(processingPath, { bigint: true })).resolves.toMatchObject({
     dev: claimedIdentity.dev, ino: claimedIdentity.ino, nlink: 1n,
+  });
+});
+
+describe("directory sync observation", () => {
+  it.each(["EPERM", "EINVAL"])("records Windows %s as an accepted unsupported outcome", async (code) => {
+    const directoryPath = await tempRoot("fs-safe-sync-observation-");
+    const failure = Object.assign(new Error("directory sync unsupported"), { code });
+    const events: string[] = [];
+    Object.defineProperty(process, "platform", { value: "win32" });
+    observeDirectorySyncs(directoryPath, events, () => { throw failure; });
+
+    await expect(directoryDurability.syncDirectory(directoryPath))
+      .resolves.toEqual({ status: "unsupported", code });
+    expect(events).toEqual(["queue-sync"]);
+  });
+
+  it("preserves deliberate Windows EIO failures", async () => {
+    const directoryPath = await tempRoot("fs-safe-sync-observation-");
+    const failure = Object.assign(new Error("injected directory sync failure"), { code: "EIO" });
+    const events: string[] = [];
+    Object.defineProperty(process, "platform", { value: "win32" });
+    observeDirectorySyncs(directoryPath, events, () => { throw failure; });
+
+    await expect(directoryDurability.syncDirectory(directoryPath)).rejects.toBe(failure);
+    expect(events).toEqual(["queue-sync-failed"]);
   });
 });

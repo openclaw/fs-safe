@@ -37,7 +37,7 @@ async function inspectQueueEntry(
 export async function withJsonDurableQueueEntry<T, R>(
   filePath: string,
   options: { maxBytes?: number },
-  run: (entry: T, identity: BigIntStats) => Promise<R>,
+  run: (entry: T, identity: BigIntStats, releaseReadPin: () => Promise<void>) => Promise<R>,
 ): Promise<R> {
   const maxBytes = normalizeMaxBytes(options.maxBytes, {
     defaultValue: DEFAULT_JSON_DURABLE_QUEUE_ENTRY_MAX_BYTES,
@@ -45,6 +45,9 @@ export async function withJsonDurableQueueEntry<T, R>(
   const inspectPath = () => fs.lstatSync(filePath, { bigint: true });
   const initialStat = await inspectQueueEntry(inspectPath, maxBytes);
   const handle = await fs.promises.open(filePath, resolveReadOpenFlags());
+  let closePromise: Promise<void> | undefined;
+  const releaseReadPin = (): Promise<void> =>
+    closePromise ??= (async () => { await handle.close(); })();
   try {
     const openedStat = await inspectQueueEntry(
       () => fs.fstatSync(handle.fd, { bigint: true }), maxBytes, initialStat,
@@ -59,10 +62,10 @@ export async function withJsonDurableQueueEntry<T, R>(
         createLimitError: () => new Error(`queue entry exceeds ${maxBytes} bytes`),
       },
     );
-    // Retain the read descriptor through migration so an unlinked inode cannot
-    // be recycled into a newer claim with the same dev/ino receipt.
-    return await run(JSON.parse(bytes.toString("utf8")) as T, openedStat);
+    // The migration owner may release this pin only at the verified publication
+    // boundary; until then an unlinked inode cannot be recycled into a new claim.
+    return await run(JSON.parse(bytes.toString("utf8")) as T, openedStat, releaseReadPin);
   } finally {
-    await handle.close();
+    await releaseReadPin();
   }
 }

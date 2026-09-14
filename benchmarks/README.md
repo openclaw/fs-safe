@@ -39,6 +39,8 @@ paths, 1,000-entry listings and walks, private/public stores through 1 MiB with
 both durability settings, 1,000-item JSON documents and concurrent updates,
 contended/distinct lock groups, and loading 100 fresh or resumed queue claims.
 Resumed fixtures are first claimed outside timing to expose retry durability costs.
+Single and batch migration cases include callback execution and durable replacement,
+then verify the returned entry and the published processing file outside timing.
 Queue fixtures are acknowledged outside timing; lock-group timings include release.
 Scaling cases add 1/8/32 concurrent Root and FileStore reads, batches of 100
 lock-manager constructions with 0/32/128 retained locks, and scans of 100/1,000 unexpired
