@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Frozen paired proof for PR #323. Production sample counts and gates come from
+// Frozen whole-family archive proof. Production sample counts and gates come from
 // the committed plan and cannot be overridden by arguments or environment.
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
@@ -12,9 +12,9 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
-const BASELINE = "49e78da32cdac9714417b735ab2f50bfc1392ec8";
-const CANDIDATE = "1d1dda92fcea8c5aa7f9fb05d974007e25a3967e";
-const PLAN_SHA256 = "de66f6910aef46b6192ec19a5b36fde8dd23810d0508030a3943335d838ec77f";
+const BASELINE = "1a4625cc01a1fa04992533a37516b83e982b6fcd";
+const CANDIDATE = "a01d01e3173c9d2ee03d264298a2fa28d5e9c214";
+const PLAN_SHA256 = "4749b9a40f03ce1fcb457496f81e114ee30e796be8f4218da2ec0fa057181f91";
 const CHILD_TIMEOUT_MS = 120_000;
 const SMOKE = Object.freeze({
   blocks: 1,
@@ -155,8 +155,10 @@ function validatePlan(planPath, mode) {
   assert.equal(plan.runtime.node, "22.23.2");
   assert.equal(plan.runtime.pnpm, "11.25.0");
   assert.equal(plan.runtime.nativeMode, "off");
-  assert.equal(plan.sampling.blocks, 48);
-  assert.equal(plan.sampling.expectedFreshProcesses, 384);
+  assert.equal(plan.sampling.blocks, 192);
+  assert.equal(plan.sampling.cohorts, 4);
+  assert.equal(plan.sampling.blocksPerCohort, 48);
+  assert.equal(plan.sampling.expectedFreshProcesses, 1_536);
   assert.equal(plan.sampling.processesPerBlock, 8);
   assert.equal(plan.sampling.warmupCallsPerWorkload, 16);
   assert.equal(plan.sampling.timedCallsPerWorkload, 16);
@@ -330,7 +332,7 @@ function buildSchedule(plan, sample) {
   const blocks = [];
   for (let cohort = 0; cohort < sample.cohorts; cohort += 1) {
     const count = sample.blocksPerCohort;
-    assert(count === 1 || count === 12, "only the frozen production or structural smoke schedule is allowed");
+    assert(count === 1 || count === 48, "only the frozen production or structural smoke schedule is allowed");
     const half = Math.floor(count / 2);
     const quartetOrders = shuffle([...Array(half).fill("ab-first"),
       ...Array(count - half).fill("aa-first")], random);
@@ -340,7 +342,7 @@ function buildSchedule(plan, sample) {
     } else {
       // Opposite orientations share a base rotation. This makes label × Latin
       // start-position counts exactly equal within every chronological cohort.
-      const pairBases = shuffle([0, 1, 2, 3, cohort % 4, (cohort + 1) % 4], random);
+      const pairBases = shuffle(Array.from({ length: count / 2 }, (_unused, index) => index % 4), random);
       const pairs = pairBases.map((baseRotation) => {
         const abFirst = random() < 0.5 ? 0 : 1;
         const aaFirst = random() < 0.5 ? 0 : 1;
@@ -380,19 +382,19 @@ function buildSchedule(plan, sample) {
     }
   }
   assert.equal(blocks.length, sample.blocks);
-  if (sample.blocksPerCohort === 12) {
+  if (sample.blocksPerCohort === 48) {
     for (let cohort = 0; cohort < sample.cohorts; cohort += 1) {
       const cohortBlocks = blocks.filter((block) => block.cohort === cohort);
-      assert.equal(cohortBlocks.filter((block) => block.abPattern === "ABBA").length, 6);
-      assert.equal(cohortBlocks.filter((block) => block.aaPattern === "A0A1A1A0").length, 6);
-      assert.equal(cohortBlocks.filter((block) => block.quartetOrder === "ab-first").length, 6);
+      assert.equal(cohortBlocks.filter((block) => block.abPattern === "ABBA").length, 24);
+      assert.equal(cohortBlocks.filter((block) => block.aaPattern === "A0A1A1A0").length, 24);
+      assert.equal(cohortBlocks.filter((block) => block.quartetOrder === "ab-first").length, 24);
       for (const [comparison, labels] of [["ab", ["A", "B"]], ["aa", ["A0", "A1"]]]) {
         for (const label of labels) {
           const rotations = cohortBlocks.flatMap((block) => block.processOrder)
             .filter((entry) => entry.comparison === comparison && entry.label === label)
             .map((entry) => entry.rotation);
           assert.deepEqual([0, 1, 2, 3].map((rotation) =>
-            rotations.filter((value) => value === rotation).length), [6, 6, 6, 6]);
+            rotations.filter((value) => value === rotation).length), [24, 24, 24, 24]);
         }
       }
     }
@@ -621,7 +623,7 @@ function classifyWorkload(records, intervals, plan) {
 
 function renderMarkdownReport(report) {
   const lines = [
-    "# PR #323 paired Windows archive proof",
+    "# Whole-family paired Windows archive proof",
     "",
     `Classification: **${report.classification}**`,
     "",

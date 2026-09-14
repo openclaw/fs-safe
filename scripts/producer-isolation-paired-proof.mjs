@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Frozen paired proof for the borrowed-handle transfer/overwrite refinement.
-// Production sampling and gates are committed and cannot be overridden.
+// Frozen paired proof for the producer-isolation integration. Production
+// sampling and gates are committed and cannot be overridden.
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
@@ -14,8 +14,8 @@ import { parseArgs } from "node:util";
 
 const BASELINE = "1a4625cc01a1fa04992533a37516b83e982b6fcd";
 const CANDIDATE = "a01d01e3173c9d2ee03d264298a2fa28d5e9c214";
-const PLAN_SHA256 = "f5cb9b861538910a19f4caad26c759ae1e2fa4fa9aa9ec90777c3d514255eeb0";
-const CHILD_TIMEOUT_MS = 120_000;
+const PLAN_SHA256 = "50a3ac520e7ccdac7cb1caba93fb0c83c09f13e321f759425bc2db55e0cbde26";
+const CHILD_TIMEOUT_MS = 180_000;
 const SMOKE = Object.freeze({
   blocks: 1,
   cohorts: 1,
@@ -96,21 +96,25 @@ function validatePlan(planPath, mode) {
   assert.equal(plan.runtime.node, "22.23.2");
   assert.equal(plan.runtime.pnpm, "11.25.0");
   assert.equal(plan.runtime.nativeMode, "off");
-  assert.equal(plan.sampling.blocks, 96);
+  assert.equal(plan.sampling.blocks, 48);
   assert.equal(plan.sampling.cohorts, 4);
-  assert.equal(plan.sampling.blocksPerCohort, 24);
+  assert.equal(plan.sampling.blocksPerCohort, 12);
   assert.equal(plan.sampling.processesPerBlock, 8);
-  assert.equal(plan.sampling.expectedFreshProcesses, 768);
+  assert.equal(plan.sampling.expectedFreshProcesses, 384);
   assert.equal(plan.sampling.warmupCallsPerWorkload, 16);
   assert.equal(plan.sampling.timedCallsPerWorkload, 16);
   assert.deepEqual(plan.sampling.abPatterns, ["ABBA", "BAAB"]);
   assert.deepEqual(plan.sampling.aaPatterns, ["A0A1A1A0", "A1A0A0A1"]);
   assert.equal(plan.sampling.aaRevision, "baseline");
   assert.deepEqual(plan.workloads, [
-    { id: "overwriteFileHandle/64B/absent", operation: "overwrite", payloadBytes: 64, callback: "absent" },
-    { id: "overwriteFileHandle/64B/getter", operation: "overwrite", payloadBytes: 64, callback: "getter" },
-    { id: "copyFileHandle/64B/uncapped", operation: "copy", payloadBytes: 64, callback: "uncapped" },
-    { id: "copyFileHandle/64B/onChunk", operation: "copy", payloadBytes: 64, callback: "onChunk" },
+    { id: "writeSiblingTempFile/direct/64B", api: "sibling", isolation: "direct", payloadBytes: 64 },
+    { id: "writeSiblingTempFile/direct/1MiB", api: "sibling", isolation: "direct", payloadBytes: 1_048_576 },
+    { id: "writeSiblingTempFile/private/64B", api: "sibling", isolation: "private", payloadBytes: 64 },
+    { id: "writeSiblingTempFile/private/1MiB", api: "sibling", isolation: "private", payloadBytes: 1_048_576 },
+    { id: "writeExternalFileWithinRoot/direct/64B", api: "output", isolation: "direct", payloadBytes: 64 },
+    { id: "writeExternalFileWithinRoot/direct/1MiB", api: "output", isolation: "direct", payloadBytes: 1_048_576 },
+    { id: "writeExternalFileWithinRoot/private/64B", api: "output", isolation: "private", payloadBytes: 64 },
+    { id: "writeExternalFileWithinRoot/private/1MiB", api: "output", isolation: "private", payloadBytes: 1_048_576 },
   ]);
   assert.equal(plan.analysis.bootstrapIterations, 20_000);
   assert.equal(plan.analysis.movingBlockLength, 4);
@@ -166,9 +170,10 @@ function fingerprintBuildInputs(repo) {
 
 async function fingerprintRepository(repo) {
   const fixed = [
-    "package.json", "pnpm-lock.yaml", "src/advanced.ts", "src/file-handle-transfer.ts",
-    "src/overwrite-file-handle.ts", "src/mutation-authority.ts", "src/write-file-handle.ts",
-    "dist/advanced.js", "dist/file-handle-transfer.js", "dist/overwrite-file-handle.js",
+    "package.json", "pnpm-lock.yaml", "src/advanced.ts", "src/output.ts",
+    "src/sibling-staged-file.ts", "src/sibling-temp.ts", "src/temp-target.ts",
+    "dist/advanced.js", "dist/output.js",
+    "dist/sibling-staged-file.js", "dist/sibling-temp.js", "dist/temp-target.js",
     "dist/native-config.js", "dist/native.js",
   ];
   const distFiles = [];
@@ -189,7 +194,7 @@ async function fingerprintRepository(repo) {
     if (fsSync.existsSync(absolute)) files[name] = fileSha256(absolute);
     else missing.push(name);
   }
-  assert.deepEqual(missing, [], "required transfer/overwrite sources or build outputs are missing");
+  assert.deepEqual(missing, [], "required producer-isolation sources or build outputs are missing");
   return { files, missing, manifestSha256: sha256(json({ files, missing })) };
 }
 
@@ -198,6 +203,7 @@ function validateRepositories(plan, baselineDir, candidateDir, mode) {
   const candidate = fsSync.realpathSync(candidateDir);
   for (const repo of [baseline, candidate]) {
     assert(fsSync.statSync(path.join(repo, "dist/advanced.js")).isFile(), "checkout is not built");
+    assert(fsSync.statSync(path.join(repo, "dist/output.js")).isFile(), "checkout is not built");
   }
   if (mode === "production") {
     assert.equal(path.basename(baseline), plan.layout.baselineCheckout);
@@ -220,17 +226,17 @@ function validateRepositories(plan, baselineDir, candidateDir, mode) {
 
 function createFixtures(fixtureDir, workloads) {
   fsSync.mkdirSync(fixtureDir);
-  const payload = Buffer.alloc(64, 0x61);
-  const sentinel = Buffer.alloc(64, 0x62);
-  const source = path.join(fixtureDir, "source-64.bin");
-  fsSync.writeFileSync(source, payload, { flag: "wx", mode: 0o600 });
-  const manifest = {
-    schema: 1,
-    workloadIds: workloads.map(({ id }) => id),
-    payload: { bytes: 64, fillByte: 0x61, sha256: sha256(payload), fullBase64: payload.toString("base64") },
-    sentinel: { bytes: 64, fillByte: 0x62, sha256: sha256(sentinel), fullBase64: sentinel.toString("base64") },
-    files: { "source-64.bin": { bytes: 64, sha256: fileSha256(source) } },
-  };
+  const files = {};
+  const payloads = {};
+  for (const size of [...new Set(workloads.map(({ payloadBytes }) => payloadBytes))]) {
+    const payload = Buffer.alloc(size, 0x61);
+    const name = `payload-${size}.bin`;
+    const file = path.join(fixtureDir, name);
+    fsSync.writeFileSync(file, payload, { flag: "wx", mode: 0o600 });
+    files[name] = { bytes: size, sha256: fileSha256(file) };
+    payloads[String(size)] = { bytes: size, fillByte: 0x61, sha256: sha256(payload), file: name };
+  }
+  const manifest = { schema: 1, workloadIds: workloads.map(({ id }) => id), payloads, files };
   writeExclusive(path.join(fixtureDir, "manifest.json"), manifest);
   return manifest;
 }
@@ -243,14 +249,9 @@ function fixtureHashes(fixtureDir, manifest) {
 function snapshotSystem(label, directory) {
   const disk = typeof fsSync.statfsSync === "function" ? fsSync.statfsSync(directory) : null;
   return {
-    label,
-    wallTime: new Date().toISOString(),
-    monotonicNs: process.hrtime.bigint(),
-    uptimeSeconds: os.uptime(),
-    loadAverage: os.loadavg(),
-    freeMemoryBytes: os.freemem(),
-    totalMemoryBytes: os.totalmem(),
-    processResourceUsage: process.resourceUsage(),
+    label, wallTime: new Date().toISOString(), monotonicNs: process.hrtime.bigint(),
+    uptimeSeconds: os.uptime(), loadAverage: os.loadavg(), freeMemoryBytes: os.freemem(),
+    totalMemoryBytes: os.totalmem(), processResourceUsage: process.resourceUsage(),
     cpuTimes: os.cpus().map(({ speed, times }) => ({ speed, times })),
     disk: disk ? { blockSize: disk.bsize, blocks: disk.blocks, freeBlocks: disk.bfree,
       availableBlocks: disk.bavail, files: disk.files, freeFiles: disk.ffree } : null,
@@ -262,7 +263,7 @@ function buildSchedule(plan, sample) {
   const blocks = [];
   for (let cohort = 0; cohort < sample.cohorts; cohort += 1) {
     const count = sample.blocksPerCohort;
-    assert(count === 1 || count === 24, "only the frozen production or structural smoke schedule is allowed");
+    assert(count === 1 || count === 12, "only the frozen production or structural smoke schedule is allowed");
     const half = Math.floor(count / 2);
     const quartetOrders = shuffle([
       ...Array(half).fill("ab-first"), ...Array(count - half).fill("aa-first"),
@@ -271,7 +272,9 @@ function buildSchedule(plan, sample) {
     if (count === 1) {
       definitions.push({ baseRotation: 0, abChoice: 0, aaChoice: 0 });
     } else {
-      const pairBases = shuffle(Array.from({ length: count / 2 }, (_unused, index) => index % 4), random);
+      // Opposite quartet orientations at starts zero/four exactly balance every
+      // label over all eight Latin positions within each chronological cohort.
+      const pairBases = shuffle([0, 4, 0, 4, 0, 4], random);
       const pairs = pairBases.map((baseRotation) => {
         const abFirst = random() < 0.5 ? 0 : 1;
         const aaFirst = random() < 0.5 ? 0 : 1;
@@ -289,13 +292,13 @@ function buildSchedule(plan, sample) {
       const aaPattern = plan.sampling.aaPatterns[definition.aaChoice];
       const ab = [...abPattern].map((label, index) => ({
         comparison: "ab", label, revision: label === "A" ? BASELINE : CANDIDATE,
-        rotation: (definition.baseRotation + index) % 4,
+        rotation: (definition.baseRotation + index) % 8,
       }));
       const aaLabels = aaPattern === "A0A1A1A0"
         ? ["A0", "A1", "A1", "A0"] : ["A1", "A0", "A0", "A1"];
       const aa = aaLabels.map((label, index) => ({
         comparison: "aa", label, revision: BASELINE,
-        rotation: (definition.baseRotation + index) % 4,
+        rotation: (definition.baseRotation + index) % 8,
       }));
       const quartetOrder = quartetOrders[local];
       blocks.push({
@@ -306,19 +309,19 @@ function buildSchedule(plan, sample) {
     }
   }
   assert.equal(blocks.length, sample.blocks);
-  if (sample.blocksPerCohort === 24) {
+  if (sample.blocksPerCohort === 12) {
     for (let cohort = 0; cohort < sample.cohorts; cohort += 1) {
       const cohortBlocks = blocks.filter((block) => block.cohort === cohort);
-      assert.equal(cohortBlocks.filter(({ abPattern }) => abPattern === "ABBA").length, 12);
-      assert.equal(cohortBlocks.filter(({ aaPattern }) => aaPattern === "A0A1A1A0").length, 12);
-      assert.equal(cohortBlocks.filter(({ quartetOrder }) => quartetOrder === "ab-first").length, 12);
+      assert.equal(cohortBlocks.filter(({ abPattern }) => abPattern === "ABBA").length, 6);
+      assert.equal(cohortBlocks.filter(({ aaPattern }) => aaPattern === "A0A1A1A0").length, 6);
+      assert.equal(cohortBlocks.filter(({ quartetOrder }) => quartetOrder === "ab-first").length, 6);
       for (const [comparison, labels] of [["ab", ["A", "B"]], ["aa", ["A0", "A1"]]]) {
         for (const label of labels) {
           const rotations = cohortBlocks.flatMap(({ processOrder }) => processOrder)
             .filter((entry) => entry.comparison === comparison && entry.label === label)
             .map(({ rotation }) => rotation);
-          assert.deepEqual([0, 1, 2, 3].map((rotation) =>
-            rotations.filter((value) => value === rotation).length), [12, 12, 12, 12]);
+          assert.deepEqual([...Array(8).keys()].map((rotation) =>
+            rotations.filter((value) => value === rotation).length), Array(8).fill(3));
         }
       }
     }
@@ -362,8 +365,7 @@ async function spawnChild(configuration) {
     });
   });
   return {
-    ...result,
-    durationNs: Number(process.hrtime.bigint() - started),
+    ...result, durationNs: Number(process.hrtime.bigint() - started),
     stdout: Buffer.concat(result.stdout).toString("utf8"),
     stderr: Buffer.concat(result.stderr).toString("utf8"),
   };
@@ -394,13 +396,9 @@ function aggregateBlocks(plan, receipts) {
       const control0Ns = mean(a0);
       const control1Ns = mean(a1);
       result.get(workload.id).push({
-        block, cohort,
-        childMeansNs: { a, b, a0, a1 },
-        baselineNs, candidateNs, control0Ns, control1Ns,
-        abLogRatio: Math.log(candidateNs / baselineNs),
-        abDeltaNs: candidateNs - baselineNs,
-        aaLogRatio: Math.log(control1Ns / control0Ns),
-        aaDeltaNs: control1Ns - control0Ns,
+        block, cohort, childMeansNs: { a, b, a0, a1 }, baselineNs, candidateNs, control0Ns, control1Ns,
+        abLogRatio: Math.log(candidateNs / baselineNs), abDeltaNs: candidateNs - baselineNs,
+        aaLogRatio: Math.log(control1Ns / control0Ns), aaDeltaNs: control1Ns - control0Ns,
       });
     }
   }
@@ -458,39 +456,36 @@ function classifyWorkload(records, draws, plan) {
   const abAbsolute = confidence(draws.abDeltaNs, (value) => value / 1_000);
   const aaRelative = confidence(draws.aaLogRatio, (value) => Math.expm1(value) * 100);
   const aaAbsolute = confidence(draws.aaDeltaNs, (value) => value / 1_000);
-  const aaRelativeContainsZero = aaRelative.lower <= 0 && aaRelative.upper >= 0;
-  const aaAbsoluteContainsZero = aaAbsolute.lower <= 0 && aaAbsolute.upper >= 0;
-  const aaRelativeEquivalent = aaRelative.lower >= -relativeGate && aaRelative.upper <= relativeGate;
-  const aaAbsoluteEquivalent = aaAbsolute.lower >= -absoluteGate && aaAbsolute.upper <= absoluteGate;
-  const aaCalibrated = aaRelativeContainsZero && aaAbsoluteContainsZero &&
-    (aaRelativeEquivalent || aaAbsoluteEquivalent);
-  const abExcludesRegression = abRelative.upper <= relativeGate || abAbsolute.upper <= absoluteGate;
-  const abProvesRegression = abRelative.lower > relativeGate && abAbsolute.lower > absoluteGate;
-  const classification = aaCalibrated && abExcludesRegression ? "ACCEPT"
-    : aaCalibrated && abProvesRegression ? "REGRESSION" : "INCONCLUSIVE";
+  const relativeContainsZero = aaRelative.lower <= 0 && aaRelative.upper >= 0;
+  const absoluteContainsZero = aaAbsolute.lower <= 0 && aaAbsolute.upper >= 0;
+  const relativeEquivalent = aaRelative.lower >= -relativeGate && aaRelative.upper <= relativeGate;
+  const absoluteEquivalent = aaAbsolute.lower >= -absoluteGate && aaAbsolute.upper <= absoluteGate;
+  const calibrated = relativeContainsZero && absoluteContainsZero &&
+    (relativeEquivalent || absoluteEquivalent);
+  const excludesRegression = abRelative.upper <= relativeGate || abAbsolute.upper <= absoluteGate;
+  const provesRegression = abRelative.lower > relativeGate && abAbsolute.lower > absoluteGate;
+  const classification = calibrated && excludesRegression ? "ACCEPT"
+    : calibrated && provesRegression ? "REGRESSION" : "INCONCLUSIVE";
   return {
     classification,
     baselineMicroseconds: median(records.map(({ baselineNs }) => baselineNs)) / 1_000,
     candidateMicroseconds: median(records.map(({ candidateNs }) => candidateNs)) / 1_000,
     ab: { point: metricPoint(records, "ab"), confidenceInterval: {
       relativePercent: abRelative, absoluteMicroseconds: abAbsolute,
-    }, excludesMaterialRegression: abExcludesRegression, provesMaterialRegression: abProvesRegression },
+    }, excludesMaterialRegression: excludesRegression, provesMaterialRegression: provesRegression },
     aa: { point: metricPoint(records, "aa"), confidenceInterval: {
       relativePercent: aaRelative, absoluteMicroseconds: aaAbsolute,
-    }, relativeContainsZero: aaRelativeContainsZero, absoluteContainsZero: aaAbsoluteContainsZero,
-    relativeEquivalent: aaRelativeEquivalent, absoluteEquivalent: aaAbsoluteEquivalent,
-    calibrated: aaCalibrated },
+    }, relativeContainsZero, absoluteContainsZero, relativeEquivalent, absoluteEquivalent, calibrated },
   };
 }
 
 function renderMarkdownReport(report) {
   const lines = [
-    "# Borrowed-handle transfer/overwrite paired Windows proof", "",
+    "# Producer-isolation paired Windows proof", "",
     `Classification: **${report.classification}**`, "",
     `Mode: ${report.mode}${report.notPerformanceEvidence ? " (structural smoke; not performance evidence)" : ""}`,
     `Fresh single-variant processes: ${report.freshProcesses}`,
-    `Baseline: \`${report.revisions.baseline}\``,
-    `Candidate: \`${report.revisions.candidate}\``, "",
+    `Baseline: \`${report.revisions.baseline}\``, `Candidate: \`${report.revisions.candidate}\``, "",
   ];
   if (report.mode === "production") {
     lines.push("| Workload | Result | A/B point | A/B relative 95% CI | A/B absolute 95% CI | A/A calibrated |",
@@ -523,7 +518,6 @@ async function childMain(encoded) {
   let originalNodeExtension;
   let resetNativeConfig;
   let resetNativeLoader;
-  const handles = [];
   try {
     assert.equal(process.env.FS_SAFE_NATIVE_MODE, "off");
     assert.equal(receipt.runtime.node, config.expectedRuntime.node);
@@ -546,6 +540,7 @@ async function childMain(encoded) {
       };
     }
     const advanced = await import(pathToFileURL(path.join(config.repoDir, "dist/advanced.js")).href);
+    const output = await import(pathToFileURL(path.join(config.repoDir, "dist/output.js")).href);
     const nativeConfig = await import(pathToFileURL(path.join(config.repoDir, "dist/native-config.js")).href);
     const native = await import(pathToFileURL(path.join(config.repoDir, "dist/native.js")).href);
     resetNativeConfig = nativeConfig.__resetFsSafeNativeConfigForTest;
@@ -558,52 +553,59 @@ async function childMain(encoded) {
     assert.equal(nativeConfig.getFsSafeNativeConfig().mode, "off");
     assert.equal(native.getNativeBinding(), undefined);
 
-    const payload = Buffer.from(manifest.payload.fullBase64, "base64");
-    const sentinel = Buffer.from(manifest.sentinel.fullBase64, "base64");
-    const sourcePath = path.join(config.fixtureDir, "source-64.bin");
+    const childRoot = path.join(config.workDir, `child-${String(config.launchOrdinal).padStart(3, "0")}`);
+    await fs.mkdir(childRoot);
+    const payloads = new Map(Object.entries(manifest.payloads).map(([size, definition]) => {
+      const payload = fsSync.readFileSync(path.join(config.fixtureDir, definition.file));
+      assert.equal(payload.length, definition.bytes);
+      assert.equal(sha256(payload), definition.sha256);
+      return [size, payload];
+    }));
     const workloads = [];
     for (const workload of config.workloads) {
-      const targetPath = path.join(config.fixtureDir,
-        `target-${String(config.launchOrdinal).padStart(3, "0")}-${workload.id.replaceAll("/", "-")}.bin`);
-      fsSync.writeFileSync(targetPath, sentinel, { flag: "wx", mode: 0o600 });
-      const target = await fs.open(targetPath, "r+");
-      handles.push(target);
-      const source = workload.operation === "copy" ? await fs.open(sourcePath, "r") : null;
-      if (source) handles.push(source);
-      let callbackCalls = 0;
-      let getterCalls = 0;
-      let observedBytes = 0;
-      let receiver;
-      const marker = `marker-${config.launchOrdinal}-${workload.id}`;
-      const options = { marker };
-      function callback(chunk) {
-        callbackCalls += 1;
-        receiver = this;
-        if (chunk) observedBytes += chunk.byteLength;
-      }
-      if (workload.callback === "getter") {
-        Object.defineProperty(options, "beforeWrite", {
-          enumerable: true,
-          get() { getterCalls += 1; return callback; },
-        });
-      }
-      if (workload.callback === "onChunk") options.onChunk = callback;
-      const run = workload.operation === "overwrite"
-        ? () => advanced.overwriteFileHandle(target, payload, options)
-        : () => advanced.copyFileHandle(source, target, options);
+      const workloadDir = path.join(childRoot, workload.id.replaceAll("/", "-"));
+      await fs.mkdir(workloadDir);
+      const finalPath = path.join(workloadDir, "final.bin");
+      const payload = payloads.get(String(workload.payloadBytes));
       const samplesNs = [];
       const positions = [];
       const rounds = [];
       let verifiedCalls = 0;
+      let writerCalls = 0;
+      let resolverCalls = 0;
+      let cleanupChecks = 0;
       workloads.push({
-        ...workload, targetPath, samplesNs, positions, rounds,
+        ...workload, samplesNs, positions, rounds,
         async once(timed, position, round) {
-          await target.write(sentinel, 0, sentinel.length, 0);
-          await target.truncate(sentinel.length);
-          callbackCalls = 0;
-          getterCalls = 0;
-          observedBytes = 0;
-          receiver = undefined;
+          let producedPath;
+          let writerReceiver;
+          let resolverReceiver;
+          let resolverResult;
+          const resultToken = { workload: workload.id, call: verifiedCalls };
+          const writer = async function (pathname) {
+            writerCalls += 1;
+            producedPath = pathname;
+            writerReceiver = this;
+            await fs.writeFile(pathname, payload, { flag: "wx", mode: 0o600 });
+            return resultToken;
+          };
+          const resolver = function (result) {
+            resolverCalls += 1;
+            resolverReceiver = this;
+            resolverResult = result;
+            return finalPath;
+          };
+          const isolation = workload.isolation === "private" ? "private-directory" : undefined;
+          const options = workload.api === "sibling" ? {
+            dir: workloadDir, chmodDir: false, writeTemp: writer,
+            resolveFinalPath: resolver, producerIsolation: isolation,
+          } : {
+            rootDir: workloadDir, path: "final.bin", staging: "sibling",
+            write: writer, producerIsolation: isolation,
+          };
+          const run = workload.api === "sibling"
+            ? () => advanced.writeSiblingTempFile(options)
+            : () => output.writeExternalFileWithinRoot(options);
           const started = process.hrtime.bigint();
           const result = await run();
           const finished = process.hrtime.bigint();
@@ -614,30 +616,34 @@ async function childMain(encoded) {
             positions.push(position);
             rounds.push(round);
           }
-          assert.equal(result, workload.operation === "copy" ? payload.length : undefined);
-          const actual = Buffer.alloc(payload.length);
-          const { bytesRead } = await target.read(actual, 0, actual.length, 0);
-          assert.equal(bytesRead, payload.length);
-          assert(actual.equals(payload), `${workload.id} wrote different bytes`);
-          assert.equal((await target.stat()).size, payload.length);
-          if (workload.callback === "absent" || workload.callback === "uncapped") {
-            assert.equal(callbackCalls, 0);
-            assert.equal(getterCalls, 0);
-            assert.equal(receiver, undefined);
-          } else if (workload.callback === "getter") {
-            assert.equal(getterCalls, 1);
-            assert.equal(callbackCalls, 1);
-            assert.equal(receiver, options);
-          } else {
-            assert.equal(getterCalls, 0);
-            assert.equal(callbackCalls, 1);
-            assert.equal(observedBytes, payload.length);
-            assert.equal(receiver.marker, marker);
-            assert.notEqual(receiver, options);
+          assert.equal(path.resolve(result.filePath ?? result.path), finalPath);
+          assert.equal(result.result, resultToken);
+          assert.equal(resolverResult, workload.api === "sibling" ? resultToken : undefined);
+          assert.equal(writerCalls, verifiedCalls + 1);
+          assert.equal(resolverCalls, workload.api === "sibling" ? verifiedCalls + 1 : 0);
+          assert(writerReceiver && writerReceiver !== options);
+          const outerReceiver = Object.hasOwn(writerReceiver, "resolveFinalPath") &&
+            Object.hasOwn(writerReceiver, "syncTempFile");
+          const oldPrivateSemantics = config.revision === BASELINE && workload.isolation === "private";
+          assert.equal(outerReceiver, !oldPrivateSemantics);
+          if (workload.api === "sibling") {
+            assert(resolverReceiver && resolverReceiver !== options);
+            assert.equal(writerReceiver === resolverReceiver, !oldPrivateSemantics);
           }
+          if (workload.isolation === "direct") {
+            assert.equal(path.dirname(producedPath), workloadDir);
+          } else {
+            assert.notEqual(path.dirname(producedPath), workloadDir);
+            assert.equal(path.dirname(path.dirname(producedPath)), workloadDir);
+          }
+          assert.equal(sha256(await fs.readFile(finalPath)), manifest.payloads[String(workload.payloadBytes)].sha256);
+          await assert.rejects(fs.lstat(producedPath), { code: "ENOENT" });
+          await fs.unlink(finalPath);
+          assert.deepEqual(await fs.readdir(workloadDir), []);
+          cleanupChecks += 1;
           verifiedCalls += 1;
         },
-        summary() { return { verifiedCalls, finalTargetSha256: fileSha256(targetPath) }; },
+        summary() { return { verifiedCalls, writerCalls, resolverCalls, cleanupChecks }; },
       });
     }
     const roundOrder = (round) => workloads.map((_unused, index) =>
@@ -659,6 +665,9 @@ async function childMain(encoded) {
       samplesNs: workload.samplesNs, timedPositions: workload.positions, timedRounds: workload.rounds,
       validation: workload.summary(),
     }));
+    await fs.rm(childRoot, { recursive: true });
+    await assert.rejects(fs.lstat(childRoot), { code: "ENOENT" });
+    receipt.childWorkspaceRemoved = true;
     receipt.fixtureHashesAfter = fixtureHashes(config.fixtureDir, manifest);
     assert.deepEqual(receipt.fixtureHashesAfter, receipt.fixtureHashesBefore);
     assert.equal(fileSha256(manifestPath), receipt.fixtureManifestSha256);
@@ -671,7 +680,6 @@ async function childMain(encoded) {
   } catch (error) {
     receipt.error = errorInfo(error);
   } finally {
-    await Promise.all(handles.map((handle) => handle.close().catch(() => undefined)));
     try { resetNativeLoader?.(); } catch (error) { receipt.resetNativeLoaderError = errorInfo(error); }
     try { resetNativeConfig?.(); } catch (error) { receipt.resetNativeConfigError = errorInfo(error); }
     if (originalNodeExtension) Module._extensions[".node"] = originalNodeExtension;
@@ -706,12 +714,15 @@ async function orchestratorMain(values) {
       bootstrapIterations: plan.analysis.bootstrapIterations,
     } : SMOKE;
     assert.equal(sample.blocks, sample.cohorts * sample.blocksPerCohort);
-    const fixtureDir = path.join(path.dirname(path.dirname(output)), "transfer-overwrite-fixtures");
+    const proofRoot = path.dirname(path.dirname(output));
+    const fixtureDir = path.join(proofRoot, "producer-isolation-fixtures");
+    const workDir = path.join(proofRoot, "producer-isolation-workspaces");
     const childReceiptDir = path.join(output, "child-receipts");
     const privateFixtureManifest = path.join(fixtureDir, "manifest.json");
     const evidencePlan = path.join(output, "plan.json");
     const evidenceFixtureManifest = path.join(output, "fixture-manifest.json");
     fsSync.mkdirSync(childReceiptDir);
+    fsSync.mkdirSync(workDir);
     fsSync.copyFileSync(planPath, evidencePlan, fsSync.constants.COPYFILE_EXCL);
     const manifest = createFixtures(fixtureDir, plan.workloads);
     fsSync.copyFileSync(privateFixtureManifest, evidenceFixtureManifest, fsSync.constants.COPYFILE_EXCL);
@@ -739,8 +750,7 @@ async function orchestratorMain(values) {
       latinRotation: plan.sampling.workloadRotation, blocks: sanitizedSchedule(schedule),
     });
     const integrityBefore = {
-      harnessRawSha256: fileSha256(harnessPath),
-      planRawSha256: fileSha256(planPath),
+      harnessRawSha256: fileSha256(harnessPath), planRawSha256: fileSha256(planPath),
       evidencePlanRawSha256: fileSha256(evidencePlan),
       privateFixtureManifestSha256: fileSha256(privateFixtureManifest),
       evidenceFixtureManifestSha256: fileSha256(evidenceFixtureManifest),
@@ -765,10 +775,10 @@ async function orchestratorMain(values) {
       fixtureHashesBefore: fixtureHashes(fixtureDir, manifest),
       interpretation: [
         "Smoke mode is structural self-test only and cannot change production plan values.",
-        "Each child loads one revision only and validates content, callback count, and receiver outside timing.",
+        "Each child loads one revision only and times complete public calls with payloads and fixture directories prepared first.",
+        "Result identity, content, callback receiver, staging location, and cleanup are validated outside timing.",
+        "All samples are fresh and retained; no old evidence, retry, filtering, pooling, or adaptive extension is used.",
         "FS_SAFE_NATIVE_MODE=off is configured and asserted; loader and .node tripwires must remain untouched.",
-        "All calls and children are retained; there is no retry, filtering, pooling, or adaptive extension.",
-        "A/B and A0/A1 use the same sampled block indices in every bootstrap draw.",
       ],
     });
 
@@ -787,7 +797,7 @@ async function orchestratorMain(values) {
         const receiptPath = path.join(childReceiptDir, receiptName);
         const repoDir = processPlan.revision === BASELINE ? repositories.baseline : repositories.candidate;
         const configuration = {
-          repoDir, fixtureDir, receiptPath, workloads: plan.workloads,
+          repoDir, fixtureDir, workDir, receiptPath, workloads: plan.workloads,
           warmupCalls: sample.warmupCallsPerWorkload,
           timedCalls: sample.timedCallsPerWorkload,
           launchOrdinal, block: block.block, cohort: block.cohort, slot,
@@ -830,7 +840,7 @@ async function orchestratorMain(values) {
     const expectedProcesses = sample.blocks * plan.sampling.processesPerBlock;
     assert.equal(receipts.length, expectedProcesses);
     if (mode === "production") assert.equal(receipts.length, plan.sampling.expectedFreshProcesses);
-    assert(receipts.every((receipt) => receipt.workloads.length === 4));
+    assert(receipts.every((receipt) => receipt.workloads.length === 8 && receipt.childWorkspaceRemoved));
     assert(receipts.every((receipt) => receipt.runtime.node === expectedChildRuntime.node &&
       receipt.runtime.platform === expectedChildRuntime.platform &&
       receipt.runtime.arch === expectedChildRuntime.arch &&
@@ -841,22 +851,23 @@ async function orchestratorMain(values) {
       workload.timedCalls === sample.timedCallsPerWorkload &&
       workload.samplesNs.length === sample.timedCallsPerWorkload &&
       workload.validation.verifiedCalls === sample.warmupCallsPerWorkload + sample.timedCallsPerWorkload &&
-      workload.validation.finalTargetSha256 === manifest.payload.sha256)));
+      workload.validation.cleanupChecks === workload.validation.verifiedCalls)));
     if (mode === "production") {
       const workloadIds = plan.workloads.map(({ id }) => id);
       for (const receipt of receipts) {
         for (const orders of [receipt.warmupRoundOrders, receipt.timedRoundOrders]) {
           assert.equal(orders.length, 16);
-          assert(orders.every((order) => order.length === 4 &&
+          assert(orders.every((order) => order.length === 8 &&
             [...order].sort().join("\0") === [...workloadIds].sort().join("\0")));
           for (const workloadId of workloadIds) {
             const positions = orders.map((order) => order.indexOf(workloadId));
-            assert.deepEqual([0, 1, 2, 3].map((position) =>
-              positions.filter((value) => value === position).length), [4, 4, 4, 4]);
+            assert.deepEqual([...Array(8).keys()].map((position) =>
+              positions.filter((value) => value === position).length), Array(8).fill(2));
           }
         }
       }
     }
+    assert.deepEqual(await fs.readdir(workDir), [], "child workspace root retained entries");
     const rawSamples = receipts.flatMap((receipt) => receipt.workloads.flatMap((workload) =>
       workload.samplesNs.map((durationNs, sampleIndex) => ({
         launchOrdinal: receipt.launchOrdinal, block: receipt.block, cohort: receipt.cohort,
@@ -906,7 +917,7 @@ async function orchestratorMain(values) {
     assert.deepEqual(integrityAfter, integrityBefore, "harness, plan, or fixture manifest changed during proof");
     assert.deepEqual(fixtureHashesAfter,
       Object.fromEntries(Object.entries(manifest.files).map(([name, entry]) => [name, entry.sha256])),
-      "source fixture changed during proof");
+      "payload fixtures changed during proof");
     const classification = mode === "smoke" ? "SMOKE_ONLY"
       : results.every((result) => result.classification === "ACCEPT") ? "ACCEPT"
         : results.some((result) => result.classification === "REGRESSION") ? "REGRESSION" : "INCONCLUSIVE";
@@ -921,8 +932,8 @@ async function orchestratorMain(values) {
         movingBlockLength: plan.analysis.movingBlockLength, stratification: plan.analysis.stratification,
         pairedAbAndAaIndices: true, intervalsAreMarginalPerWorkload: true } : null,
       interpretation: mode === "production" ? [
-        "All timing samples and children are retained; arithmetic child means are equal-weighted within each arm.",
-        "Intervals are marginal per workload and do not claim simultaneous family-wise coverage.",
+        "All timing samples and children are new and retained; arithmetic child means are equal-weighted within each arm.",
+        "Every one of the eight workload classifications must be ACCEPT.",
         "Acceptance is evidence against the defined dual-threshold regression on this hosted Windows environment, not universal proof of zero slowdown.",
       ] : ["Structural smoke only; timing values are not performance evidence."],
       results, fixtureHashesAfter, fingerprintsAfter, buildInputsAfter,

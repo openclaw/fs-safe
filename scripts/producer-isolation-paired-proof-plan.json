@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "name": "archive-whole-family-windows-paired-proof",
+  "name": "producer-isolation-windows-paired-proof",
   "revisions": {
     "baseline": "1a4625cc01a1fa04992533a37516b83e982b6fcd",
     "candidate": "a01d01e3173c9d2ee03d264298a2fa28d5e9c214"
@@ -20,51 +20,33 @@
     "candidateCargoTarget": "cargo-out-b"
   },
   "workloads": [
-    {
-      "id": "readArchiveEntry/gzip-512-members",
-      "operation": "read",
-      "fixture": "many.tgz",
-      "entryPath": "entry-511",
-      "payloadBytes": 64
-    },
-    {
-      "id": "inspectTarArchive/gzip-512-members",
-      "operation": "inspect",
-      "fixture": "many.tgz",
-      "manifestEntries": 512
-    },
-    {
-      "id": "readArchiveEntry/tar-1MiB",
-      "operation": "read",
-      "fixture": "large-1048576.tar",
-      "entryPath": "payload.bin",
-      "payloadBytes": 1048576
-    },
-    {
-      "id": "readArchiveEntry/gzip-1MiB",
-      "operation": "read",
-      "fixture": "large-1048576.tgz",
-      "entryPath": "payload.bin",
-      "payloadBytes": 1048576
-    }
+    { "id": "writeSiblingTempFile/direct/64B", "api": "sibling", "isolation": "direct", "payloadBytes": 64 },
+    { "id": "writeSiblingTempFile/direct/1MiB", "api": "sibling", "isolation": "direct", "payloadBytes": 1048576 },
+    { "id": "writeSiblingTempFile/private/64B", "api": "sibling", "isolation": "private", "payloadBytes": 64 },
+    { "id": "writeSiblingTempFile/private/1MiB", "api": "sibling", "isolation": "private", "payloadBytes": 1048576 },
+    { "id": "writeExternalFileWithinRoot/direct/64B", "api": "output", "isolation": "direct", "payloadBytes": 64 },
+    { "id": "writeExternalFileWithinRoot/direct/1MiB", "api": "output", "isolation": "direct", "payloadBytes": 1048576 },
+    { "id": "writeExternalFileWithinRoot/private/64B", "api": "output", "isolation": "private", "payloadBytes": 64 },
+    { "id": "writeExternalFileWithinRoot/private/1MiB", "api": "output", "isolation": "private", "payloadBytes": 1048576 }
   ],
   "sampling": {
-    "blocks": 192,
+    "blocks": 48,
     "cohorts": 4,
-    "blocksPerCohort": 48,
+    "blocksPerCohort": 12,
     "processesPerBlock": 8,
-    "expectedFreshProcesses": 1536,
+    "expectedFreshProcesses": 384,
     "warmupCallsPerWorkload": 16,
     "timedCallsPerWorkload": 16,
     "abPatterns": ["ABBA", "BAAB"],
     "aaPatterns": ["A0A1A1A0", "A1A0A0A1"],
     "aaRevision": "baseline",
-    "workloadRotation": "cyclic Latin square across rounds and balanced quartet starts",
-    "scheduleSeed": 69133717
+    "quartetOrder": "balanced A/B-first and A/A-first within every cohort",
+    "workloadRotation": "cyclic Latin square across rounds and balanced eight-position quartet starts",
+    "scheduleSeed": 78590213
   },
   "analysis": {
     "bootstrapIterations": 20000,
-    "bootstrapSeed": 69145689,
+    "bootstrapSeed": 78602347,
     "movingBlockLength": 4,
     "stratification": "four chronological cohorts",
     "withinBlock": "mean each child then equal-weight the two processes in each arm",

@@ -2,8 +2,8 @@
   "schema": 1,
   "name": "borrowed-handle-transfer-overwrite-windows-paired-proof",
   "revisions": {
-    "baseline": "49e78da32cdac9714417b735ab2f50bfc1392ec8",
-    "candidate": "1d1dda92fcea8c5aa7f9fb05d974007e25a3967e"
+    "baseline": "1a4625cc01a1fa04992533a37516b83e982b6fcd",
+    "candidate": "a01d01e3173c9d2ee03d264298a2fa28d5e9c214"
   },
   "runtime": {
     "runner": "windows-latest",
