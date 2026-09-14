@@ -366,6 +366,12 @@ fsyncs the completed file, and atomically renames it over the target. Choose it
 when the destination directory is itself the writable boundary and atomic
 replacement matters.
 
+For sibling producers that can leave partial output before throwing, opt in to
+`producerIsolation: "private-directory"`. The callback writes inside an owned
+private workspace on the target filesystem, allowing cleanup after producer
+failure while preserving sibling publication behavior. See [external outputs](docs/output.md)
+for the identity checks and cleanup limits.
+
 Use it when the final filename is known before the external writer runs. If the
 filename depends on sniffing the produced bytes, write to a private temp
 workspace first, then finalize through the normal root APIs after validation.

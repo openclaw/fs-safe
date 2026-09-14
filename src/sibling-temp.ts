@@ -20,6 +20,8 @@ import {
 export type WriteSiblingTempFileOptions<T> = {
   dir: string;
   writeTemp: (tempPath: string) => Promise<T>;
+  /** Own a private sibling workspace before invoking the producer. */
+  producerIsolation?: "private-directory";
   resolveFinalPath: (result: T) => string;
   tempPrefix?: string;
   dirMode?: number;
@@ -51,6 +53,7 @@ export async function writeSiblingTempFile<T>(
   assertNoWindowsPathAlias(dirInput, "filesystem", "sibling temp directory uses a Windows filesystem namespace alias");
   const dir = resolvePathPreservingWindowsRoot(dirInput);
   assertNoWindowsPathAlias(dir, "filesystem", "sibling temp directory uses a Windows filesystem namespace alias");
+  const producerIsolation = options.producerIsolation;
   await fs.mkdir(recursiveMkdirPath(dir), { recursive: true, mode: options.dirMode ?? 0o700 });
   if (options.chmodDir !== false) {
     await applyDirectoryMode({
@@ -63,6 +66,7 @@ export async function writeSiblingTempFile<T>(
   return await writeCallbackSibling({
     tempPath: buildTempPath(dir, options.tempPrefix),
     write: options.writeTemp,
+    producerIsolation,
     resolveFinalPath: options.resolveFinalPath,
     mode: options.mode,
     ignoreModeError: true,

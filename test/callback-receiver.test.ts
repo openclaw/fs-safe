@@ -122,60 +122,73 @@ describe("snapshotted callback receivers", () => {
     await expect(loadJsonDurableQueueEntry(params)).resolves.toBeNull();
   });
 
-  it("retains both sibling callback receivers while snapshots survive mutations during the writer", async () => {
-    const rootDir = await tempRoot("fs-safe-sibling-receiver-");
-    const tempPath = path.join(rootDir, "stage.tmp");
-    const finalPath = path.join(rootDir, "final");
-    let requestedTemp = tempPath;
-    const reads = { write: 0, resolveFinalPath: 0, tempPath: 0 };
-    const replacement = vi.fn(() => path.join(rootDir, "unused"));
-    let resolver = function (this: unknown, value: string) {
-      expect(this).toBe(params);
-      expect(value).toBe("written");
-      return finalPath;
-    };
-    let writer = async function (this: unknown, pathname: string) {
-      expect(this).toBe(params);
-      expect(pathname).toBe(tempPath);
-      resolver = replacement;
-      requestedTemp = path.join(rootDir, "unused.tmp");
-      await fs.writeFile(pathname, "content");
-      return "written";
-    };
-    const params = Object.assign(Object.create(Object.defineProperties({}, {
-      write: { get() { reads.write++; return writer; } },
-      resolveFinalPath: { get() { reads.resolveFinalPath++; return resolver; } },
-      tempPath: { get() { reads.tempPath++; return requestedTemp; } },
-    })), { syncTempFile: false, syncParentDir: false });
-    const pending = writeCallbackSibling(params);
-    const replacementWriter = vi.fn(async () => "replacement");
-    writer = replacementWriter;
-    await expect(pending).resolves.toEqual({ filePath: finalPath, result: "written" });
-    expect(reads).toEqual({ write: 1, resolveFinalPath: 1, tempPath: 1 });
-    expect(replacementWriter).not.toHaveBeenCalled();
-    expect(replacement).not.toHaveBeenCalled();
-    expect(await fs.readFile(finalPath, "utf8")).toBe("content");
-  });
-
-  it("preserves the public sibling wrapper's shared internal receiver", async () => {
-    const dir = await tempRoot("fs-safe-sibling-wrapper-receiver-");
-    let receiver: unknown;
-    const options = {
-      dir,
-      writeTemp: async function (this: unknown, pathname: string) {
-        receiver = this;
-        expect(this).toMatchObject({ tempPath: pathname });
+  it.each([undefined, "private-directory"] as const)(
+    "retains both sibling callback receivers while snapshots survive mutations during the writer: %s",
+    async (producerIsolation) => {
+      const rootDir = await tempRoot("fs-safe-sibling-receiver-");
+      const tempPath = path.join(rootDir, "stage.tmp");
+      const finalPath = path.join(rootDir, "final");
+      let requestedTemp = tempPath;
+      let requestedIsolation = producerIsolation;
+      const reads = { write: 0, producerIsolation: 0, resolveFinalPath: 0, tempPath: 0 };
+      const replacement = vi.fn(() => path.join(rootDir, "unused"));
+      let resolver = function (this: unknown, value: string) {
+        expect(this).toBe(params);
+        expect(value).toBe("written");
+        return finalPath;
+      };
+      let writer = async function (this: unknown, pathname: string) {
+        expect(this).toBe(params);
+        if (producerIsolation === undefined) expect(pathname).toBe(tempPath);
+        else expect(path.dirname(pathname)).not.toBe(rootDir);
+        resolver = replacement;
+        requestedTemp = path.join(rootDir, "unused.tmp");
         await fs.writeFile(pathname, "content");
-        return "final";
-      },
-      resolveFinalPath: function (this: unknown, name: string) {
-        expect(this).toBe(receiver);
-        expect(this).not.toBe(options);
-        return path.join(dir, name);
-      },
-    };
-    await expect(writeSiblingTempFile(options)).resolves.toMatchObject({ result: "final" });
-  });
+        return "written";
+      };
+      const params = Object.assign(Object.create(Object.defineProperties({}, {
+        write: { get() { reads.write++; return writer; } },
+        producerIsolation: { get() { reads.producerIsolation++; return requestedIsolation; } },
+        resolveFinalPath: { get() { reads.resolveFinalPath++; return resolver; } },
+        tempPath: { get() { reads.tempPath++; return requestedTemp; } },
+      })), { syncTempFile: false, syncParentDir: false });
+      const pending = writeCallbackSibling(params);
+      const replacementWriter = vi.fn(async () => "replacement");
+      writer = replacementWriter;
+      requestedIsolation = producerIsolation === undefined ? "private-directory" : undefined;
+      await expect(pending).resolves.toEqual({ filePath: finalPath, result: "written" });
+      expect(reads).toEqual({ write: 1, producerIsolation: 1, resolveFinalPath: 1, tempPath: 1 });
+      expect(replacementWriter).not.toHaveBeenCalled();
+      expect(replacement).not.toHaveBeenCalled();
+      expect(await fs.readFile(finalPath, "utf8")).toBe("content");
+    },
+  );
+
+  it.each([undefined, "private-directory"] as const)(
+    "preserves the public sibling wrapper's shared internal receiver: %s",
+    async (producerIsolation) => {
+      const dir = await tempRoot("fs-safe-sibling-wrapper-receiver-");
+      let receiver: unknown;
+      const options = {
+        dir,
+        writeTemp: async function (this: unknown, pathname: string) {
+          receiver = this;
+          expect(this).toHaveProperty("tempPath");
+          if (producerIsolation === undefined) expect(this).toMatchObject({ tempPath: pathname });
+          else expect(pathname).not.toBe((this as { tempPath: string }).tempPath);
+          await fs.writeFile(pathname, "content");
+          return "final";
+        },
+        resolveFinalPath: function (this: unknown, name: string) {
+          expect(this).toBe(receiver);
+          expect(this).not.toBe(options);
+          return path.join(dir, name);
+        },
+        producerIsolation,
+      };
+      await expect(writeSiblingTempFile(options)).resolves.toMatchObject({ result: "final" });
+    },
+  );
 
   it("preserves the direct transfer authority receiver while freezing the selected assertion", async () => {
     const rootDir = await tempRoot("fs-safe-transfer-receiver-");

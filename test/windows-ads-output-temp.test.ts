@@ -29,28 +29,35 @@ const aliasError = {
 };
 
 describe("Windows filesystem namespace admission for output and temp helpers", () => {
-  itWin32("rejects output roots and target parents before invoking a writer", async () => {
-    const root = await tempRoot("fs-safe-ads-output-");
-    const bucket = path.join(root, "bucket");
-    await fs.mkdir(bucket);
-    const writer = vi.fn(async (candidate: string) => {
-      await fs.writeFile(candidate, "unexpected");
-    });
+  itWin32.each([undefined, "private-directory"] as const)(
+    "rejects output roots and target parents before invoking a writer: %s",
+    async (producerIsolation) => {
+      const root = await tempRoot("fs-safe-ads-output-");
+      const bucket = path.join(root, "bucket");
+      await fs.mkdir(bucket);
+      const writer = vi.fn(async (candidate: string) => {
+        await fs.writeFile(candidate, "unexpected");
+      });
 
-    await expect(writeExternalFileWithinRoot({
-      rootDir: `${root}::$INDEX_ALLOCATION`,
-      path: "payload.bin",
-      write: writer,
-    })).rejects.toMatchObject(aliasError);
-    await expect(writeExternalFileWithinRoot({
-      rootDir: root,
-      path: path.join("bucket::$INDEX_ALLOCATION", "payload.bin"),
-      write: writer,
-    })).rejects.toMatchObject(aliasError);
+      await expect(writeExternalFileWithinRoot({
+        rootDir: `${root}::$INDEX_ALLOCATION`,
+        path: "payload.bin",
+        staging: "sibling",
+        producerIsolation,
+        write: writer,
+      })).rejects.toMatchObject(aliasError);
+      await expect(writeExternalFileWithinRoot({
+        rootDir: root,
+        path: path.join("bucket::$INDEX_ALLOCATION", "payload.bin"),
+        staging: "sibling",
+        producerIsolation,
+        write: writer,
+      })).rejects.toMatchObject(aliasError);
 
-    expect(writer).not.toHaveBeenCalled();
-    await expect(fs.readdir(bucket)).resolves.toEqual([]);
-  });
+      expect(writer).not.toHaveBeenCalled();
+      await expect(fs.readdir(bucket)).resolves.toEqual([]);
+    },
+  );
 
   itWin32("preserves output byte-limit validation before pathname admission", async () => {
     const writer = vi.fn(async () => undefined);
@@ -86,20 +93,32 @@ describe("Windows filesystem namespace admission for output and temp helpers", (
     await expect(writeSiblingTempFile({
       dir: `${root}::$INDEX_ALLOCATION`,
       writeTemp,
+      producerIsolation: "private-directory",
       resolveFinalPath: () => path.join(root, "final.bin"),
     })).rejects.toMatchObject(aliasError);
     expect(writeTemp).not.toHaveBeenCalled();
 
     const tempPath = path.join(root, "stage.tmp");
+    const finalAlias = path.join(root, "final.bin:hidden");
+    const producer = vi.fn(async (candidate: string) => await fs.writeFile(candidate, "staged"));
+    const lstat = vi.spyOn(fsSync, "lstatSync");
+    const open = vi.spyOn(fs, "open");
+    const rename = vi.spyOn(fs, "rename");
     await expect(writeCallbackSibling({
       tempPath,
-      write: async (candidate) => await fs.writeFile(candidate, "staged"),
-      resolveFinalPath: () => path.join(root, "final.bin:hidden"),
+      write: producer,
+      producerIsolation: "private-directory",
+      resolveFinalPath: () => finalAlias,
       syncTempFile: false,
       syncParentDir: false,
     })).rejects.toMatchObject(aliasError);
+    expect(producer).toHaveBeenCalledOnce();
+    expect(lstat.mock.calls.some(([candidate]) => String(candidate) === finalAlias)).toBe(false);
+    expect(open.mock.calls.some(([candidate]) => String(candidate) === finalAlias)).toBe(false);
+    expect(rename.mock.calls.some(([from, to]) =>
+      String(from) === finalAlias || String(to) === finalAlias)).toBe(false);
     await expect(fs.stat(tempPath)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(fs.stat(path.join(root, "final.bin:hidden"))).rejects.toMatchObject({
+    await expect(fs.stat(finalAlias)).rejects.toMatchObject({
       code: "ENOENT",
     });
   });

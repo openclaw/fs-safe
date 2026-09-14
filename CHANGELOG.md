@@ -53,6 +53,7 @@
 
 - Add exact directory identity observations and synchronous assertions for caller-owned staging and recovery flows, preserving bigint identities, optional canonical-path checks, bounded Windows identity admission, final-symlink rejection with trailing separators, and original filesystem errors.
 - Add `overwriteFileHandle()` for in-place replacement through a borrowed regular-file handle, with prefix-only rollback preparation, growth-before-overwrite ordering, unchanged descriptor ownership and cursor, and a synchronous once-only pre-write admission callback.
+- Add opt-in `producerIsolation: "private-directory"` to callback sibling writes and external sibling outputs, owning private workspace cleanup before the producer runs so partial failures can be cleaned while preserving file admission, publication checks, and existing defaults.
 
 ## 0.10.0 - 2026-09-13
 

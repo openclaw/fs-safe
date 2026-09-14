@@ -16,6 +16,8 @@ export type ExternalFileWriteOptions<T = void> = {
   maxBytes?: number;
   mode?: number;
   staging?: "workspace" | "sibling";
+  /** Isolate sibling producers; workspace staging is already private. */
+  producerIsolation?: "private-directory";
   fallbackFileName?: string;
 };
 
@@ -91,6 +93,7 @@ export async function writeExternalFileWithinRoot<T = void>(
     "filesystem",
     "output target parent uses a Windows filesystem namespace alias",
   );
+  const producerIsolation = options.producerIsolation;
   const targetRoot = await root(rootDir);
   if (requestedTargetPath.length === 0) {
     throw new FsSafeError("invalid-path", "target path is required");
@@ -115,6 +118,7 @@ export async function writeExternalFileWithinRoot<T = void>(
     const result = await writeExternalFileViaSibling({
       finalPath: siblingFinalPath,
       write: options.write,
+      producerIsolation,
       fallbackFileName: options.fallbackFileName,
       maxBytes,
       mode: options.mode,
@@ -154,6 +158,7 @@ function buildSiblingTempPath(targetPath: string, fallbackFileName?: string): st
 async function writeExternalFileViaSibling<T>(params: {
   finalPath: string;
   write: (filePath: string) => Promise<T>;
+  producerIsolation?: "private-directory";
   fallbackFileName?: string;
   maxBytes?: number;
   mode?: number;
@@ -164,6 +169,7 @@ async function writeExternalFileViaSibling<T>(params: {
   const { result } = await writeCallbackSibling({
     tempPath: buildSiblingTempPath(finalPath, params.fallbackFileName),
     write: params.write,
+    producerIsolation: params.producerIsolation,
     resolveFinalPath: () => finalPath,
     mode: params.mode,
     maxBytes: params.maxBytes,
