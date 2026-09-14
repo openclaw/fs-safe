@@ -1,6 +1,6 @@
 # Atomic writes
 
-`@openclaw/fs-safe/atomic` re-exports the lower-level helpers that `root()`'s write methods are built on. Reach for them when you have an absolute path you trust and want sibling-temp + rename without setting up a `Root`, or when you need finer control over `fsync`, mode preservation, or pre-rename hooks.
+`@openclaw/fs-safe/atomic` re-exports the lower-level helpers that `root()`'s write methods are built on. Reach for them when you have a path you trust and want sibling-temp + rename without setting up a `Root`, or when you need finer control over `fsync`, mode preservation, or pre-rename hooks.
 
 ```ts
 import {
@@ -19,6 +19,14 @@ Write `content` to a sibling temp file in the destination directory, apply the p
 On POSIX, the parent is opened with no-follow and directory-only flags, checked against its pre-open identity, and mode-adjusted through that descriptor. A replacement symlink is rejected rather than followed. If the directory cannot be opened for descriptor access, the operation fails closed instead of retrying by pathname. Windows does not enforce POSIX directory modes and Node cannot consistently open directory descriptors there, so `dirMode` is passed only to `mkdir`; no pathname `chmod` fallback is attempted.
 
 Async replacements to the same destination are serialized inside the current process, so two overlapping `replaceFileAtomic()` calls do not interleave their temp-write/rename phases. Use a sidecar lock when multiple processes may write the same target.
+
+Relative paths retain their literal suffix so `.` and `..` keep Node's existing
+filesystem semantics. On Windows, an ordinary drive-relative destination such
+as `C:.\\state.json` is captured at entry by anchoring the drive's current
+directory without normalizing that suffix. The anchored absolute spelling is
+used for staging, locks, callbacks, publication, and cleanup. Any additional
+colon remains visible and is rejected as a filesystem namespace alias before
+I/O; malformed namespace-drive spellings remain rejected.
 
 ```ts
 import { replaceFileAtomic } from "@openclaw/fs-safe/atomic";
@@ -174,6 +182,8 @@ await replaceDirectoryAtomic({
 The helper renames `targetDir` to a generated backup path, renames `stagedDir → targetDir`, then removes the backup. If the second rename fails, it tries to restore the original target before rethrowing.
 Concurrent replacements of the same resolved target are serialized inside the
 current process so their backup, commit, and cleanup phases cannot interleave.
+On Windows, ordinary drive-relative staged and target paths are anchored at
+entry before namespace-alias admission and resolution.
 `backupPrefix`, when supplied, is sanitized as one path prefix and cannot contain
 path separators or NUL bytes; the generated backup tail is randomized.
 
@@ -248,6 +258,8 @@ await movePathWithCopyFallback({
 ```
 
 Use it when source and destination might live on different filesystems (containers, tmpfs, separate volumes).
+On Windows, ordinary drive-relative `from` and `to` paths are anchored at entry;
+publication receipts report the resulting absolute destination.
 The hardlink policy is captured when the move starts. Changing or reusing the
 options object later does not change the policy of an in-flight move.
 `sourceHardlinks: "reject"` performs a recursive preflight capped at 50,000
@@ -337,7 +349,7 @@ preserves the existing move and source-identity behavior.
 
 | `Root` methods | `atomic` helpers |
 |---|---|
-| Take relative paths, bound to a `rootDir`. | Take absolute paths, no boundary. |
+| Take relative paths, bound to a `rootDir`. | Take trusted absolute or relative paths, no boundary. |
 | Throw `FsSafeError` with `code`. | Throw `FsSafeError` *or* the underlying `NodeJS.ErrnoException`, depending on failure point. |
 | Atomicity, mode, hooks, fsync are sane defaults. | Caller controls all of the above. |
 | `mkdir`, identity check, hardlink reject built in. | No root boundary; `movePathWithCopyFallback` has explicit `sourceHardlinks` policy, while other helpers expose their own narrower checks. |

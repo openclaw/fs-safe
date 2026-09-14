@@ -102,6 +102,12 @@ target. It pins the source with nonblocking `O_NOFOLLOW`, optionally verifies
 `expectedSourceIdentity`, tries a hardlink first, then synchronizes the target
 parent directory.
 
+Trusted relative source and target paths are resolved to absolute paths before
+authority checks. On Windows, ordinary drive-relative operands are anchored at
+entry before namespace-alias admission. A caller-supplied `parentReceipt` must
+still name the resolved target parent and is not relaxed by this compatibility
+rule.
+
 For example, a backup archive is complete before publication. If directory
 sync fails, keeping that complete file is more useful than conditionally
 deleting it by pathname:

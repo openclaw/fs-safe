@@ -1,6 +1,6 @@
 # JSON store
 
-`jsonStore` is exported from `@openclaw/fs-safe/store`. It is the absolute-path
+`jsonStore` is exported from `@openclaw/fs-safe/store`. It is the single-path
 convenience wrapper for `fileStore(...).json(...)`: a small read-modify-write
 handle around a single JSON file. It bakes in atomic writes, explicit fallback
 reads, and optional cross-process locking via
@@ -72,8 +72,9 @@ type JsonStore<T> = {
 `jsonStore({ filePath })` resolves `rootDir = dirname(filePath)` and calls
 `fileStore({ rootDir, private: true }).json(basename(filePath), options)`.
 On Windows, the factory rejects NTFS alternate-stream and directory-index
-namespace spellings before resolving the path or preparing its private parent;
-ordinary colon-bearing POSIX paths remain valid.
+namespace spellings before preparing its private parent. An ordinary
+drive-relative path is anchored at entry and `store.filePath` exposes the
+resulting absolute path; ordinary colon-bearing POSIX paths remain valid.
 
 `durable: false` keeps sibling-temp replace/rename behavior but skips the
 temp-file and parent-directory `fsync` calls. Use it only for reconstructible

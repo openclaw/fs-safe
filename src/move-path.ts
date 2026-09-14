@@ -20,6 +20,7 @@ import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { realpathSync } from "./realpath.js";
 import { cleanupPinnedFilePath } from "./replace-file-temp-owner.js";
 import { createMoveStageOwner } from "./move-path-stage.js";
+import { admitStandalonePublicationPath } from "./standalone-publication-path.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type MovePathPublicationReceipt = Readonly<{
@@ -330,10 +331,14 @@ function assertSynchronousResult(returned: unknown, name: string): void {
 export async function movePathWithCopyFallback(
   options: MovePathWithCopyFallbackOptions,
 ): Promise<void> {
-  const from = options.from;
-  const to = options.to;
-  assertNoWindowsPathAlias(from, "filesystem", "move source uses a Windows filesystem namespace alias");
-  assertNoWindowsPathAlias(to, "filesystem", "move destination uses a Windows filesystem namespace alias");
+  const from = admitStandalonePublicationPath(
+    options.from,
+    "move source uses a Windows filesystem namespace alias",
+  );
+  const to = admitStandalonePublicationPath(
+    options.to,
+    "move destination uses a Windows filesystem namespace alias",
+  );
   const sourcePath = path.resolve(from);
   const targetPath = path.resolve(to);
   assertNoWindowsPathAlias(sourcePath, "filesystem", "move source uses a Windows filesystem namespace alias");

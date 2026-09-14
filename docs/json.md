@@ -41,6 +41,10 @@ Use `readJson` when missing-or-malformed is a programmer error you want to surfa
 On Windows, filesystem path inputs reject NTFS alternate-stream and
 directory-index namespace spellings such as `file:stream` and
 `dir::$INDEX_ALLOCATION`; ordinary colon-bearing POSIX names remain valid.
+Standalone JSON writers preserve their released support for an ordinary
+drive-relative destination by anchoring its leading drive designator at entry
+without normalizing the remaining suffix. Any additional colon is still
+rejected before filesystem access.
 Strict standalone readers retain `JsonFileReadError` and expose the
 `invalid-path` rejection as its cause, lenient `tryReadJson*` calls return
 `null`, and root-bounded readers report an `open`/`validation` failure.

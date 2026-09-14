@@ -26,6 +26,7 @@ import {
   type PublishFileExclusiveCleanup,
   type PublishFileExclusiveSyncFailurePolicy,
 } from "./publish-file-failure.js";
+import { admitStandalonePublicationPath } from "./standalone-publication-path.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
@@ -274,10 +275,8 @@ export async function publishFileExclusive(params: {
   onSyncFailure?: PublishFileExclusiveSyncFailurePolicy;
   parentReceipt?: DirectoryReceipt;
 }): Promise<PublishFileExclusiveResult> {
-  const sourcePathInput = params.sourcePath;
-  assertNoWindowsPathAlias(sourcePathInput, "filesystem", "publication source uses a Windows filesystem namespace alias");
-  const targetPathInput = params.targetPath;
-  assertNoWindowsPathAlias(targetPathInput, "filesystem", "publication target uses a Windows filesystem namespace alias");
+  const sourcePathInput = admitStandalonePublicationPath(params.sourcePath, "publication source uses a Windows filesystem namespace alias");
+  const targetPathInput = admitStandalonePublicationPath(params.targetPath, "publication target uses a Windows filesystem namespace alias");
   const parentReceiptInput = params.parentReceipt;
   const parentReceipt = parentReceiptInput
     ? { path: parentReceiptInput.path, realPath: parentReceiptInput.realPath,

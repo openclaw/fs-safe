@@ -64,6 +64,15 @@ they anchor its leading drive designator before this admission check. The raw
 suffix remains unnormalized, and any additional colon is still rejected before
 filesystem access.
 
+Trusted-path standalone publication APIs retain the same drive-relative
+compatibility. This includes the atomic file, text, JSON, JSON store/direct
+queue writer, directory-replacement, move, and exclusive-publication helpers.
+They capture the drive's current directory at publication entry and carry the
+anchored spelling through their remaining checks, locks, callbacks, receipts,
+publication, and cleanup. File writers preserve the raw suffix. Root-relative
+APIs and caller-constructed relative directory receipts continue to reject
+drive designators.
+
 ### Symlinks (read side)
 
 `open()` and `read()` use `fs.open` with `O_NOFOLLOW` on POSIX where available. The library then `fstat`s the open fd and `realpath`s the original input, asserting the two refer to the same inode. A symlink swap that happens between resolve and open will fail at the identity check rather than silently following the new target.

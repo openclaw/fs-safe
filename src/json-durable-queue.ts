@@ -25,8 +25,12 @@ import { realpathSync } from "./realpath.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { replaceFileAtomicWithDirectorySync } from "./replace-file.js";
 import { assertSafePathSegment } from "./safe-path-segment.js";
+import { admitStandalonePublicationPath } from "./standalone-publication-path.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
-import { assertNoWindowsPathAlias, hasWindowsPathAlias } from "./windows-path-alias.js";
+import {
+  assertNoWindowsPathAlias,
+  hasWindowsPathAlias,
+} from "./windows-path-alias.js";
 
 export type JsonDurableQueueEntryPaths = {
   jsonPath: string;
@@ -253,10 +257,9 @@ export async function writeJsonDurableQueueEntry(params: {
   entry: unknown;
   tempPrefix: string;
 }): Promise<void> {
-  const filePath = params.filePath;
+  const filePath = admitStandalonePublicationPath(params.filePath);
   const entry = params.entry;
   const tempPrefix = params.tempPrefix;
-  assertNoWindowsPathAlias(filePath);
   await replaceFileAtomicWithDirectorySync({
     filePath,
     content: stringifyJsonDocument(entry, null, 2),

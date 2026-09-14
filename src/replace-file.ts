@@ -32,9 +32,9 @@ import {
 } from "./replace-file-rename-policy.js";
 import { AsyncAtomicTempOwner, SyncAtomicTempOwner } from "./replace-file-temp-owner.js";
 import { assertSafePathPrefix } from "./safe-path-segment.js";
+import { admitStandalonePublicationPath } from "./standalone-publication-path.js";
 import { sleep, sleepSync } from "./timing.js";
 import { serializePathWrite } from "./write-queue.js";
-import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type ReplaceFileAtomicFileSystem = {
   promises: Pick<
@@ -220,11 +220,14 @@ function renameWithRetrySync(params: {
   throw new Error("Atomic rename retry loop exhausted.");
 }
 
-function validateReplaceFilePath(filePath: string): void {
+function validateReplaceFilePath(filePath: string): string {
   if (!filePath || filePath.includes("\0")) {
     throw new Error("Atomic replace file path must be non-empty.");
   }
-  assertNoWindowsPathAlias(filePath, "filesystem", "atomic replace path uses a Windows filesystem namespace alias");
+  return admitStandalonePublicationPath(
+    filePath,
+    "atomic replace path uses a Windows filesystem namespace alias",
+  );
 }
 
 function validateRestoreOptions(options: ReplaceFileAtomicBaseOptions): void {
@@ -291,8 +294,7 @@ export async function replaceFileAtomicWithDirectorySync(
   options: ReplaceFileAtomicOptions,
   syncParent?: (directoryPath: string) => Promise<unknown>,
 ): Promise<ReplaceFileAtomicResult> {
-  const filePath = options.filePath;
-  validateReplaceFilePath(filePath);
+  const filePath = validateReplaceFilePath(options.filePath);
   validateRestoreOptions(options);
   const renameIdentity = options.renameIdentity;
   validateRenameIdentity(renameIdentity);
@@ -391,8 +393,7 @@ async function replaceFileAtomicUnserialized(
 }
 
 export function replaceFileAtomicSync(options: ReplaceFileAtomicSyncOptions): ReplaceFileAtomicResult {
-  const filePath = options.filePath;
-  validateReplaceFilePath(filePath);
+  const filePath = validateReplaceFilePath(options.filePath);
   validateRestoreOptions(options);
   const renameIdentity = options.renameIdentity;
   validateRenameIdentity(renameIdentity);

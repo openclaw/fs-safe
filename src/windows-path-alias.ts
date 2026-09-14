@@ -56,6 +56,25 @@ function isBareWindowsNamespaceDrive(value: string): boolean {
 }
 
 /**
+ * Capture an ordinary Windows drive-relative path without normalizing its raw
+ * suffix. This is only for public APIs whose existing contract accepts such
+ * paths; callers must still run namespace-alias admission on the result.
+ */
+export function anchorWindowsDriveRelativePath(value: string): string {
+  if (process.platform !== "win32" || path.isAbsolute(value)) return value;
+  if (
+    value.length < 2 ||
+    !isAsciiLetter(value.charCodeAt(0)) ||
+    value.charCodeAt(1) !== COLON
+  ) {
+    return value;
+  }
+  const drive = value.slice(0, 2);
+  const base = path.resolve(drive);
+  return `${base}${path.sep}${value.slice(2)}`;
+}
+
+/**
  * Resolve a path without letting Node erase the separator from an exact
  * extended-length drive root such as `\\?\C:\`. Bare `\\?\C:` input remains
  * unchanged so the surrounding alias admission rejects it.

@@ -9,6 +9,7 @@ import { readRegularFile, readRegularFileSync, statRegularFile } from "./regular
 import { openRootFileSync, type RootFileOpenFailure } from "./root-file.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
+import { admitStandalonePublicationPath } from "./standalone-publication-path.js";
 import { writeTextAtomic, type WriteTextAtomicOptions } from "./text-atomic.js";
 import { sleep } from "./timing.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
@@ -188,18 +189,18 @@ export function tryReadJsonSync<T = unknown>(
 }
 
 export function writeJsonSync(pathname: string, data: unknown) {
-  assertNoWindowsPathAlias(pathname);
+  const filePath = admitStandalonePublicationPath(pathname);
   // Keep literal parent segments so staging follows the same symlinks as the target.
-  const tmpPath = path.format({ ...path.parse(pathname), base: `.fs-safe-${randomUUID()}.tmp` });
+  const tmpPath = path.format({ ...path.parse(filePath), base: `.fs-safe-${randomUUID()}.tmp` });
   const payload = `${stringifyJsonDocument(data, null, 2)}\n`;
 
-  fsSync.mkdirSync(recursiveMkdirPath(path.dirname(pathname)), { recursive: true, mode: JSON_DIR_MODE });
+  fsSync.mkdirSync(recursiveMkdirPath(path.dirname(filePath)), { recursive: true, mode: JSON_DIR_MODE });
   try {
     const tempIdentity = writeTempJsonFile(tmpPath, payload);
     trySetSecureMode(tmpPath, tempIdentity);
-    renameJsonFileWithFallback(tmpPath, pathname);
-    trySetSecureMode(pathname, tempIdentity);
-    trySyncDirectory(pathname);
+    renameJsonFileWithFallback(tmpPath, filePath);
+    trySetSecureMode(filePath, tempIdentity);
+    trySyncDirectory(filePath);
   } finally {
     try {
       fsSync.rmSync(tmpPath, { force: true });
@@ -447,8 +448,9 @@ export async function writeJson(
   value: unknown,
   options?: WriteJsonOptions,
 ) {
+  const admittedPath = admitStandalonePublicationPath(filePath);
   const text = stringifyJsonDocument(value, null, 2);
-  await writeTextAtomic(filePath, text, {
+  await writeTextAtomic(admittedPath, text, {
     mode: options?.mode,
     dirMode: options?.dirMode,
     trailingNewline: options?.trailingNewline,

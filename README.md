@@ -391,8 +391,8 @@ const store = files.json("settings.json", { lock: true });
 await store.updateOr({ enabled: false }, (current) => ({ ...current, enabled: true }));
 ```
 
-`jsonStore({ filePath })` is the absolute-path convenience wrapper for the same
-primitive.
+`jsonStore({ filePath })` is the single-path convenience wrapper for the same
+primitive and exposes its resolved absolute path.
 
 Use `update()` when missing state is part of your model; use `updateOr()` for
 the common merge-into-defaults case. Standalone helpers use options bags

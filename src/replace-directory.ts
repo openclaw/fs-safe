@@ -4,6 +4,7 @@ import path from "node:path";
 import { guardedRename, guardedRm } from "./guarded-mutation.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { assertSafePathPrefix } from "./safe-path-segment.js";
+import { admitStandalonePublicationPath } from "./standalone-publication-path.js";
 import { serializePathWrite } from "./write-queue.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
@@ -16,10 +17,14 @@ export type ReplaceDirectoryAtomicOptions = {
 export async function replaceDirectoryAtomic(
   options: ReplaceDirectoryAtomicOptions,
 ): Promise<void> {
-  const stagedDirInput = options.stagedDir;
-  const targetDirInput = options.targetDir;
-  assertNoWindowsPathAlias(stagedDirInput, "filesystem", "staged directory uses a Windows filesystem namespace alias");
-  assertNoWindowsPathAlias(targetDirInput, "filesystem", "target directory uses a Windows filesystem namespace alias");
+  const stagedDirInput = admitStandalonePublicationPath(
+    options.stagedDir,
+    "staged directory uses a Windows filesystem namespace alias",
+  );
+  const targetDirInput = admitStandalonePublicationPath(
+    options.targetDir,
+    "target directory uses a Windows filesystem namespace alias",
+  );
   const stagedDir = path.resolve(stagedDirInput);
   const targetDir = path.resolve(targetDirInput);
   assertNoWindowsPathAlias(stagedDir, "filesystem", "staged directory uses a Windows filesystem namespace alias");

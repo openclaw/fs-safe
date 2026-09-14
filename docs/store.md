@@ -32,7 +32,7 @@ import {
 | Durable JSON queue helpers | Append/load/ack JSON entry files using atomic writes and delivered markers. |
 | [Private file-store mode](private-file-store.md) | `fileStore({ private: true })` for credentials, tokens, and per-agent state at `0600` files under `0700` directories. |
 
-`fileStore().json("rel.json")` and `jsonStore({ filePath })` are intentionally separate primitives. Use `fileStore().json(...)` when JSON state lives alongside other files in the same managed directory; use `jsonStore({ filePath })` when you have a single absolute path and want the keyed JSON shape directly.
+`fileStore().json("rel.json")` and `jsonStore({ filePath })` are intentionally separate primitives. Use `fileStore().json(...)` when JSON state lives alongside other files in the same managed directory; use `jsonStore({ filePath })` when you have one trusted path, resolved to an absolute path at construction, and want the keyed JSON shape directly.
 
 ## Picking a shape
 
@@ -73,6 +73,10 @@ Loading serializes consumers for one ID through a sidecar lock, then creates `pr
 Queue and failed directory creation fsyncs every newly-created parent edge from the leaf toward the trusted root. Enqueue and migration writes fsync the temp file and parent; claim, acknowledgement, quarantine, delivered-marker cleanup, and retirement transitions fsync every affected directory and propagate real sync failures. A transition may already be visible when a post-mutation sync fails, so retry the same operation to complete its crash-recovery state. Acknowledgement retries resync the queue directory even when both `.processing` and `.delivered` marker names are already absent, before reporting completion or rejecting a newer pending generation; quarantine retries with only failed evidence resync that destination before repairing the vanished queue source.
 
 `writeJsonDurableQueueEntry()` and migrations share strict parent synchronization inside the atomic writer's retained descriptor and per-path serialization lifetime, followed by published-file identity verification. If sync fails after publication, the write rejects without rolling back the published JSON; retrying writes the entry again and must complete its own sync. This is not a rollback, deduplication, or exactly-once guarantee. The generic `replaceFileAtomic({ syncParentDir: true })` option remains best-effort.
+
+The direct queue writer accepts trusted relative paths. On Windows it anchors
+an ordinary drive-relative `filePath` before publication and strict parent
+sync. Other queue lifecycle APIs retain their own root/path admission contracts.
 
 Batch loading skips invalid entry names, malformed, oversized, or unreadable entry content, and caller `read` callback failures. Initially unowned pending entries (hardlinks or unverifiable identities), symlinks, non-files, and absent pending entries are also skipped. Claim, transfer-lock, retirement, and migration write/publication/durability failures reject the batch with the original error, even if earlier entries succeeded. Migration in both loaders strictly syncs the parent directory after successful publication. Visible transitions and earlier processing claims remain for retry; a rejected batch does not acknowledge or roll them back.
 
