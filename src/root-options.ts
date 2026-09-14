@@ -81,6 +81,7 @@ export type RootMoveOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyM
 export type RootRemoveOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks"> & {
   recursive?: boolean;
   force?: boolean;
+  order?: "filesystem" | "sorted";
   maxEntries?: number;
   maxDepth?: number;
   signal?: AbortSignal;

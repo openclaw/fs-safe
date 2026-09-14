@@ -222,8 +222,10 @@ basename first.
 `openWritable` opens a writable file with options `mode?: number` and `writeMode?: "replace" | "append" | "update"`. `replace` truncates existing files and is the default; `update` keeps existing contents. Use it for streaming output. Prefer `await using` for cleanup.
 
 `remove` leaves non-empty directories unchanged unless `recursive: true` is
-provided. Recursive removal streams entries in filesystem order with finite
-`maxEntries` (100,000 by default) and `maxDepth` (64 by default) budgets. It never
+provided. Recursive removal defaults to streaming entries in filesystem order;
+`order: "sorted"` processes each directory's children lexicographically. The
+`maxEntries` (100,000 by default) and `maxDepth` (64 by default) budgets accept
+explicit `Infinity` when the caller needs unlimited traversal. It never
 follows discovered symlinks; an explicit `mutationSymlinks` policy rejects them,
 while the omitted policy unlinks them. `force: true` ignores missing targets,
 and `signal` stops further work after admitted I/O and resource cleanup settle.

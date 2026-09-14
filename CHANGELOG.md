@@ -52,6 +52,8 @@
 - Add exact directory identity observations and synchronous assertions for caller-owned staging and recovery flows, preserving bigint identities, optional canonical-path checks, bounded Windows identity admission, final-symlink rejection with trailing separators, and original filesystem errors.
 - Add `overwriteFileHandle()` for in-place replacement through a borrowed regular-file handle, with prefix-only rollback preparation, growth-before-overwrite ordering, unchanged descriptor ownership and cursor, and a synchronous once-only pre-write admission callback.
 
+- Add sorted recursive removal and explicit unlimited entry/depth budgets through `Root.remove`, with caller-relative failure context, preserved mutation authority and cancellation settlement, and continued sibling cleanup when a child directory disappears under `force`.
+
 ## 0.10.0 - 2026-09-13
 
 ### Highlights

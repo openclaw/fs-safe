@@ -2,6 +2,7 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { FsSafeError } from "../src/errors.js";
 import { root } from "../src/root.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
@@ -175,6 +176,66 @@ it.each([false, true])("handles a directory disappearing before its guard is adm
   await expect(fs.lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
+it.each([false, true])("continues sorted siblings when a directory vanishes before enumeration (force=%s)", async force => {
+  const { directory, tree, scoped } = await fixture();
+  const vanished = path.join(tree, "a-dir");
+  await fs.mkdir(vanished);
+  const opendir = fs.opendir.bind(fs);
+  vi.spyOn(fs, "opendir").mockImplementation(async (...args) => {
+    if (String(args[0]) === vanished) await fs.rmdir(vanished);
+    return await opendir(...args);
+  });
+
+  const pending = scoped.remove("tree", { recursive: true, order: "sorted", force });
+  if (force) {
+    await pending;
+    expect(await fs.readdir(directory)).toEqual([]);
+  } else {
+    await expect(pending).rejects.toMatchObject({ code: "not-found" });
+    expect((await fs.readdir(tree)).sort()).toEqual(["first", "second"]);
+  }
+});
+
+it("rejects a replacement after a tolerated missing directory observation", async () => {
+  const { directory, tree, scoped } = await fixture();
+  const target = path.join(tree, "a-dir");
+  await fs.mkdir(target);
+  const opendir = fs.opendir.bind(fs);
+  vi.spyOn(fs, "opendir").mockImplementation(async (...args) => {
+    if (String(args[0]) === target) {
+      await fs.rename(target, path.join(directory, "saved-a"));
+      await fs.mkdir(target);
+      await fs.writeFile(path.join(target, "replacement"), "preserve");
+      throw Object.assign(new Error("directory disappeared before it was replaced"), { code: "ENOENT" });
+    }
+    return await opendir(...args);
+  });
+
+  await expect(scoped.remove("tree", { recursive: true, order: "sorted", force: true }))
+    .rejects.toMatchObject({ code: "path-mismatch" });
+  expect(await fs.readFile(path.join(target, "replacement"), "utf8")).toBe("preserve");
+  expect((await fs.readdir(tree)).sort()).toEqual(["a-dir", "first", "second"]);
+});
+
+it("keeps collected children when a missing read leaves the directory present", async () => {
+  const { tree, scoped } = await fixture();
+  const opendir = fs.opendir.bind(fs);
+  vi.spyOn(fs, "opendir").mockImplementation(async (...args) => {
+    const handle = await opendir(...args);
+    const read = handle.read.bind(handle);
+    let reads = 0;
+    vi.spyOn(handle, "read").mockImplementation(async () => {
+      if (++reads === 2) throw Object.assign(new Error("directory read disappeared"), { code: "ENOENT" });
+      return await read();
+    });
+    return handle;
+  });
+
+  await expect(scoped.remove("tree", { recursive: true, order: "sorted", force: true }))
+    .rejects.toMatchObject({ code: "not-empty", details: { phase: "remove" } });
+  expect((await fs.readdir(tree)).sort()).toEqual(["first", "second"]);
+});
+
 it("keeps a replacement file observed during awaited removal preparation", async () => {
   const { directory, tree, scoped } = await fixture();
   let replaced: string | undefined;
@@ -245,7 +306,7 @@ it("does not round the identity of a leaf before removal", async () => {
   expect(await fs.readdir(tree)).toHaveLength(2);
 });
 
-it.each(["opendir", "read"] as const)("maps %s permission failures to the removal error contract", async phase => {
+it.each((["filesystem", "sorted"] as const).flatMap(order => ["opendir", "read"].map(phase => ({ order, phase }))))("maps $phase permission failures to the removal error contract ($order)", async ({ order, phase }) => {
   const { tree, scoped } = await fixture();
   const denied = Object.assign(new Error("directory access denied"), { code: "EACCES" });
   let closed = 0;
@@ -258,14 +319,74 @@ it.each(["opendir", "read"] as const)("maps %s permission failures to the remova
     vi.spyOn(handle, "close").mockImplementation(async () => { await close(); closed += 1; });
     return handle;
   });
-  await expect(scoped.remove("tree", { recursive: true, force: true })).rejects.toMatchObject({
+  await expect(scoped.remove("tree", { recursive: true, force: true, order })).rejects.toMatchObject({
     code: "not-removable", cause: denied,
+    message: "path could not be removed",
+    details: { operation: "remove", phase: "enumerate", relativePath: "" },
   });
   expect(closed).toBe(phase === "read" ? 1 : 0);
   expect((await fs.readdir(tree)).sort()).toEqual(["first", "second"]);
 });
 
-it.each(["abort", "read", "close"] as const)("retains disposal failures after %s and closes before removing directories", async failure => {
+it("reports the failing descendant relative to an aliased removal target", async () => {
+  const directory = await tempRoot("fs-safe-remove-error-alias-");
+  const outside = await tempRoot("fs-safe-remove-error-outside-");
+  await fs.mkdir(path.join(directory, "real/tree/nested"), { recursive: true });
+  await fs.writeFile(path.join(outside, "sentinel"), "outside");
+  await fs.symlink(path.join(directory, "real"), path.join(directory, "alias"), process.platform === "win32" ? "junction" : "dir");
+  await fs.symlink(outside, path.join(directory, "real/tree/nested/link"), process.platform === "win32" ? "junction" : "dir");
+  const scoped = await root(directory);
+
+  await expect(scoped.remove("alias/tree", {
+    recursive: true,
+    order: "sorted",
+    mutationSymlinks: "follow-parents-within-root",
+  })).rejects.toMatchObject({
+    code: "symlink",
+    message: "final symlink not allowed",
+    details: { operation: "remove", phase: "inspect", relativePath: path.join("nested", "link") },
+  });
+  expect(await fs.readFile(path.join(outside, "sentinel"), "utf8")).toBe("outside");
+});
+
+it.each(["inspect", "remove"] as const)("keeps %s failures distinct from enumeration failures", async phase => {
+  const { tree, scoped } = await fixture();
+  const denied = Object.assign(new Error("entry access denied"), { code: "EACCES" });
+  if (phase === "remove") {
+    vi.spyOn(fs, "unlink").mockRejectedValueOnce(denied);
+  } else {
+    const lstat = fsSync.lstatSync.bind(fsSync);
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
+      if (String(args[0]) === path.join(tree, "first")) throw denied;
+      return lstat(...args);
+    });
+  }
+
+  await expect(scoped.remove("tree", { recursive: true, order: "sorted" })).rejects.toMatchObject({
+    code: "not-removable",
+    message: "path could not be removed",
+    cause: denied,
+    details: { operation: "remove", phase, relativePath: "first" },
+  });
+  expect((await fs.readdir(tree)).sort()).toEqual(["first", "second"]);
+});
+
+it("preserves caller-owned typed authority errors without attaching removal context", async () => {
+  const { tree, scoped } = await fixture();
+  const details = Object.freeze({ caller: true });
+  const reason = new FsSafeError("not-found", "caller refused", { details });
+
+  await expect(scoped.remove("tree", {
+    recursive: true,
+    order: "sorted",
+    force: true,
+    assertBeforeMutation() { throw reason; },
+  })).rejects.toBe(reason);
+  expect(reason.details).toBe(details);
+  expect((await fs.readdir(tree)).sort()).toEqual(["first", "second"]);
+});
+
+it.each(["abort", "read", "missing-read-abort", "close"] as const)("retains disposal failures after %s and closes before removing directories", async failure => {
   const { tree, scoped } = await fixture();
   const controller = new AbortController();
   const primary = Object.assign(new Error("operation failed"), { code: "EACCES" });
@@ -282,9 +403,13 @@ it.each(["abort", "read", "close"] as const)("retains disposal failures after %s
     });
     if (failure === "abort") controller.abort(primary);
     if (failure === "read") vi.spyOn(handle, "read").mockRejectedValueOnce(primary);
+    if (failure === "missing-read-abort") vi.spyOn(handle, "read").mockImplementationOnce(async () => {
+      controller.abort(primary);
+      throw Object.assign(new Error("missing directory observation"), { code: "ENOENT" });
+    });
     return handle;
   });
-  const pending = scoped.remove("tree", { recursive: true, signal: controller.signal });
+  const pending = scoped.remove("tree", { recursive: true, force: failure === "missing-read-abort", signal: controller.signal });
   const normalizedClose = { code: "not-removable", cause: closeFailure };
   if (failure === "close") await expect(pending).rejects.toMatchObject(normalizedClose);
   else await expect(pending).rejects.toMatchObject({

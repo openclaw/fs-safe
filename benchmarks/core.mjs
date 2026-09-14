@@ -53,6 +53,23 @@ export async function registerCore({ api: a, workspace: w, register: add, contra
   add("Root.mkdir", () => safe.mkdir("new-dir"), { after: () => fs.rmdirSync(path.join(w, "new-dir")) });
   add("Root.ensureRoot", () => safe.ensureRoot());
   add("Root.remove", () => safe.remove("remove.txt"), { before: () => fs.writeFileSync(path.join(w, "remove.txt"), data) });
+  for (const order of ["filesystem", "sorted"]) {
+    const rel = `remove-tree-${order}`;
+    add(`Root.remove/recursive-${order}`, () => safe.remove(rel, { recursive: true, order, maxEntries: 103 }), {
+      divisor: 10,
+      before: () => fs.cpSync(path.join(w, "tree"), path.join(w, rel), { recursive: true }),
+      verify: () => assert.equal(fs.existsSync(path.join(w, rel)), false),
+      after: () => fs.rmSync(path.join(w, rel), { recursive: true, force: true }),
+    });
+  }
+  add("Root.remove/recursive-sorted-unbounded", () => safe.remove("remove-tree-unbounded", {
+    recursive: true, order: "sorted", maxEntries: Infinity, maxDepth: Infinity,
+  }), {
+    divisor: 10,
+    before: () => fs.cpSync(path.join(w, "tree"), path.join(w, "remove-tree-unbounded"), { recursive: true }),
+    verify: () => assert.equal(fs.existsSync(path.join(w, "remove-tree-unbounded")), false),
+    after: () => fs.rmSync(path.join(w, "remove-tree-unbounded"), { recursive: true, force: true }),
+  });
   add("Root.move", () => safe.move("move-from", "move-to"), {
     before: () => fs.writeFileSync(path.join(w, "move-from"), data), after: () => fs.rmSync(path.join(w, "move-to"), { force: true }),
   });
