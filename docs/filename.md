@@ -1,6 +1,6 @@
 # Filenames
 
-`sanitizeUntrustedFileName(name, fallback)` reduces a filename string from an untrusted source to one traversal-free path segment. Use it as a thin first pass before storing user-supplied names; pair with [`safeDirName`](install-path.md#safedirname) when you need stricter directory-name handling.
+`sanitizeUntrustedFileName(name, fallback)` reduces a filename string from an untrusted source to one traversal-free path segment. Use it as a thin first pass before storing user-supplied names; use [`safePathSegmentHashedV2`](install-path.md#safepathsegmenthashedv2) when mapping untrusted install IDs to separate directory names.
 
 ```ts
 import { sanitizeUntrustedFileName } from "@openclaw/fs-safe/advanced";
@@ -92,5 +92,5 @@ await fs.write(`uploads/${safe}`, body); // fs is a Root() handle; rejects trave
 
 ## See also
 
-- [Install path helpers](install-path.md) — `safeDirName`, `safePathSegmentHashed` for directory-segment sanitization.
+- [Install path helpers](install-path.md) — legacy directory-segment sanitizers and `safePathSegmentHashedV2` for untrusted install IDs.
 - [`root()`](root.md) — the boundary you'll write into after sanitizing.
