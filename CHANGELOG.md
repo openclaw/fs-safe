@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Destroy and join JavaScript ZIP decoder sources before rejecting bounded member reads, preventing abandoned decoders and retained archive buffers after byte-limit failures.
+
 ## 0.11.0 - 2026-09-14
 
 ### Highlights
