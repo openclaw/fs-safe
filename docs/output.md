@@ -104,19 +104,23 @@ absent file path inside a private child workspace under the target parent, on
 the target filesystem. Directory cleanup ownership is captured before the
 callback. A callback exception triggers owned workspace cleanup, including
 partial output, subject to directory identity checks and I/O failures.
-After success, `Root.move` checks source aliases and moves the output to the
-ordinary sibling path; an escaping symlink can fail with `path-alias` here.
-Rejected output still inside the workspace follows its cleanup contract. Once
-output moves to the sibling path, the existing unadmitted-file retention and
-single-link regular-file admission, mode, file sync, and final rename rules apply.
+After success, an available native helper uses guarded no-replace `Root.move`.
+With native mode off, the helper opens and identity-fences the completed regular
+file, creates the randomized sibling through an atomic no-clobber hard link,
+verifies its temporary two-link state, then removes the private name. This keeps
+the handoff zero-copy while preserving the ordinary retained-descriptor, mode,
+file-sync, and final-rename lifecycle. Escaping symlinks still fail with
+`path-alias`; filesystems without hard-link support fail with
+`helper-unavailable`.
 
 Exact bigint parent and workspace identities are rechecked before moving
 output to the sibling path to reject observed replacements. Cleanup uses the
 existing [`withTempFile` ownership contract](temp.md#withtempfile). A moved or replaced parent or workspace can
 leave original or replacement paths behind; the option does not promise
-cleanup through a retained directory after a rename. The existing Windows,
-native-off, and JavaScript guard limitations remain, with no additional
-permissions or durability guarantee. See the [producer-isolation contract](temp.md#sibling-temp-writes)
+cleanup through a retained directory after a rename. The existing Windows and
+JavaScript pathname-guard limitations remain, with no additional permissions or
+durability guarantee. Native-off publication is supported only where hard links
+are available. See the [producer-isolation contract](temp.md#sibling-temp-writes)
 for cleanup and pathname-race details. The option affects only `staging: "sibling"`;
 with `staging: "workspace"`, it is redundant and harmless because the producer
 already uses a private workspace. Omitting it leaves both staging defaults

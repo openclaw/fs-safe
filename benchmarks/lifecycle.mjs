@@ -103,7 +103,15 @@ export async function registerLifecycle({ api: a, workspace: w, native, binding,
       : fs.writeFileSync(path.join(secretRoot, "secret-out"), data, { mode: 0o600 }),
   });
   add("writeExternalFileWithinRoot", () => a.writeExternalFileWithinRoot({ rootDir: w, path: "external-out", write: (p) => fsp.writeFile(p, data) }));
+  add("writeExternalFileWithinRoot/isolated-sibling", () => a.writeExternalFileWithinRoot({
+    rootDir: w, path: "external-isolated-out", staging: "sibling",
+    producerIsolation: "private-directory", write: (p) => fsp.writeFile(p, data),
+  }));
   add("writeSiblingTempFile", () => a.writeSiblingTempFile({ dir: w, writeTemp: (p) => fsp.writeFile(p, data), resolveFinalPath: () => output }));
+  add("writeSiblingTempFile/isolated", () => a.writeSiblingTempFile({
+    dir: w, producerIsolation: "private-directory", writeTemp: (p) => fsp.writeFile(p, data),
+    resolveFinalPath: () => output,
+  }));
   add("writeViaSiblingTempPath", () => a.writeViaSiblingTempPath({ rootDir: w, targetPath: output, writeTemp: (p) => fsp.writeFile(p, data) }));
   const tempOptions = { rootDir: w, prefix: "fixture" };
   add("resolveSecureTempRoot", () => a.resolveSecureTempRoot({ preferredDir: secretRoot, fallbackPrefix: "fs-safe-benchmark" }), { sync: true });
