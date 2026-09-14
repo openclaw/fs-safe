@@ -112,6 +112,11 @@ export async function registerLifecycle({ api: a, workspace: w, native, binding,
     const type = `TempWorkspace${suffix}`;
     const sync = suffix === "Sync";
     add(name, () => a[name](tempOptions), { sync, after: (r) => r?.cleanup() });
+    add(`${name}/mode-correction`, () => a[name]({ ...tempOptions, dirMode: 0o750 }), {
+      sync,
+      skip: process.platform === "win32" ? "Windows does not initialize POSIX directory modes." : undefined,
+      after: (r) => r?.cleanup(),
+    });
     add(`withTempWorkspace${suffix}`, () => a[`withTempWorkspace${suffix}`](tempOptions, sync ? () => 1 : async () => 1), { sync, before: () => {} });
     const tmp = await a[name](tempOptions);
     contract(type, tmp);

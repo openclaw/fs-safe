@@ -16,6 +16,46 @@ import {
 
 A private workspace is a directory created at mode `0o700` under a caller-provided temp root. It is unique per call (random suffix). Calling `cleanup()` or leaving an `await using` scope moves an unchanged workspace through a private quarantine before removal. Descriptor-bounded cleanup prevents recursive traversal of substitutions; the compatible JavaScript fallback has the narrower race contract documented below.
 
+On POSIX, workspace creation verifies the supplied root and its canonical
+ancestors before creating a child. Each existing directory must be owned by the
+effective user or root. Group/world-writable directories must also have the
+sticky bit, so ordinary system temp directories remain usable without changing
+their modes. Foreign-owned directories and non-sticky writable ancestors reject
+with `not-owned` or `insecure-permissions`; unavailable effective-user identity
+rejects with `permission-unverified`. Existing supplied directories keep their
+permissions. Missing root components are created at `0o700` and initialized
+from their first exact security snapshot; if a restrictive umask changes that
+mode, correction uses a verified directory descriptor.
+
+The new child's exact identity, type, owner, private bits, and complete `0o7777`
+mode are checked before mode initialization. When its creation mode already
+matches `dirMode` (including the default `0o700`), creation avoids an extra mode
+descriptor and chmod. A restrictive umask or an explicit different `dirMode`
+uses the verified descriptor path to correct and recheck the mode. Permission
+failures propagate. POSIX `dirMode` must not grant group/world write access; it
+only controls the new workspace, not existing supplied directories. Final
+adoption rechecks complete ancestry, retained cleanup-parent authority, and then
+the original child's fresh owner/private/requested-mode state before cleanup is
+registered. Parent or child replacements observed during creation reject before
+cleanup ownership is registered. Unverified artifacts are left in place for
+caller-directed recovery.
+
+On Windows, POSIX mode/UID metadata does not establish ACL privacy, and these
+factories neither claim nor initialize a POSIX `dirMode`; every requested value
+uses the identity-only path without opening a mode descriptor or applying chmod.
+Callers must supply a root with trusted ACLs that protect its children and
+ancestors; exact pathname identity checks still apply. `cleanupSafety` controls
+removal capability, not Windows ACL admission.
+
+Root aliases already present at entry retain their historical support and are
+canonicalized. Callers remain responsible for choosing trusted root paths and
+excluding hostile peers with the same filesystem authority. Node's pathname
+`mkdir`/`mkdtemp` calls do not atomically return a creation descriptor: identity
+checks detect observed substitutions but cannot prove provenance against every
+same-privilege replacement before the first observation. Descriptor chmod
+cannot be redirected to a subsequently substituted pathname. Native bounded
+cleanup does not upgrade the creation operation to an atomic namespace boundary.
+
 ### `tempWorkspace`
 
 The compact factory. Returns:
@@ -183,7 +223,7 @@ try {
 type TempWorkspaceOptions = {
   rootDir: string;          // parent directory for workspaces
   prefix: string;           // dir prefix (sanitized)
-  dirMode?: number;         // dir mode; default 0o700
+  dirMode?: number;         // new workspace mode; default 0o700; no POSIX group/world write
   mode?: number;            // file write mode; default 0o600
   cleanupSafety?: "compatible" | "require-bounded"; // default compatible
 };

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Verify POSIX temp-workspace root ownership and ancestor permissions before child creation, preserve existing roots and trusted sticky-temp modes, and apply mismatched new-directory permissions through verified descriptors before cleanup adoption. Exact `0o700` creation skips redundant descriptor-mode work while restrictive umasks still use the correction path; final adoption rechecks ancestry, retained cleanup authority, and fresh child owner/private/requested-mode state. Reject insecure supplied roots, writable workspace modes, and observed creation-time replacements in async and sync factories; retain Windows identity checks without treating POSIX modes as ACL privacy or initializing them.
 - Preserve existing destinations when guest cross-device symlink moves fail by staging links privately before atomic replacement, with cleanup on creation or publication failure.
 - Keep durable-queue migrations bound to the pinned processing generation, rejecting stale callbacks after acknowledgement, quarantine, or replacement; release the verified read pin at Windows publication so migrations can replace their target; resync resumed claims so conditional migrations cannot bypass a failed publication sync on retry.
 - Keep Windows native filesystem descriptors in the host runtime's libuv table, rejecting missing or partial bridges instead of guessing raw HANDLE or add-on CRT namespaces.

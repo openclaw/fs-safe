@@ -10,8 +10,7 @@ import {
 } from "./file-store.js";
 import { FsSafeError } from "./errors.js";
 import { isNotFoundPathError } from "./path.js";
-import { realpathSync } from "./realpath.js";
-import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
+import { inspectDirectoryIdentitySync } from "./directory-guard.js";
 import { throwFsSafeReadError } from "./root-errors.js";
 import {
   matchRootFileOpenFailure,
@@ -28,6 +27,14 @@ import {
   type TempWorkspaceCleanupResult,
   type TempWorkspaceCleanupSafety,
 } from "./temp-workspace-owner.js";
+import {
+  admitTempWorkspaceChild,
+  admitTempWorkspaceChildSync,
+  admitTempWorkspaceRoot,
+  admitTempWorkspaceRootSync,
+  inspectAdmittedTempWorkspaceChild,
+  validateTempWorkspaceDirMode,
+} from "./temp-workspace-admission.js";
 
 export type {
   TempWorkspaceCleanupResult,
@@ -136,55 +143,33 @@ function throwTempWorkspaceOpenFailure(failure: RootFileOpenFailure): never {
   });
 }
 
-async function ensurePrivateDirectory(dir: string, mode: number): Promise<void> {
-  await fs.mkdir(recursiveMkdirPath(dir), { recursive: true, mode });
-  const stat = fsSync.statSync(dir);
-  if (!stat.isDirectory()) {
-    throw new Error(`Temp root must be a directory: ${dir}`);
-  }
-  await fs.chmod(dir, mode).catch(() => undefined);
-}
-
-function ensurePrivateDirectorySync(dir: string, mode: number): void {
-  fsSync.mkdirSync(recursiveMkdirPath(dir), { recursive: true, mode });
-  const stat = fsSync.statSync(dir);
-  if (!stat.isDirectory()) {
-    throw new Error(`Temp root must be a directory: ${dir}`);
-  }
-  try {
-    fsSync.chmodSync(dir, mode);
-  } catch {
-    // Best-effort on platforms that do not enforce POSIX modes.
-  }
-}
-
 async function createTempWorkspace(
   options: TempWorkspaceOptions,
 ): Promise<TempWorkspace> {
   const dirMode = options.dirMode ?? 0o700;
+  validateTempWorkspaceDirMode(dirMode);
   const mode = options.mode ?? 0o600;
   const cleanupSafety = resolveTempWorkspaceCleanupSafety(options.cleanupSafety);
-  const requestedRoot = path.resolve(options.rootDir);
-  let root = requestedRoot;
-  try {
-    root = realpathSync.native(requestedRoot);
-  } catch {
-    root = requestedRoot;
-  }
-  await ensurePrivateDirectory(root, dirMode);
+  const admission = await admitTempWorkspaceRoot(options.rootDir);
+  const root = admission.dir;
   const capability = new TempWorkspaceCleanupCapability(root, cleanupSafety);
   let dir: string;
   let stat: fsSync.BigIntStats;
   let cleanupOwner: TempWorkspaceCleanupOwner | undefined;
   let unregisterTempDir: () => void;
   try {
+    admission.assertAncestry();
     dir = await fs.mkdtemp(path.join(root, sanitizeTempPrefix(options.prefix)));
-    await fs.chmod(dir, dirMode).catch(() => undefined);
-    stat = fsSync.lstatSync(dir, { bigint: true });
-    if (stat.isSymbolicLink() || !stat.isDirectory()) {
-      throw new Error(`Temp workspace must be a directory: ${dir}`);
-    }
+    admission.assertCurrent();
     if (capability.parent) capability.assertCurrent();
+    stat = inspectDirectoryIdentitySync(dir);
+    const modeInitialization = admitTempWorkspaceChild(dir, stat, admission, dirMode);
+    if (modeInitialization) await modeInitialization;
+    // Final adoption order is deliberate: complete ancestry, retained cleanup
+    // parent, then the original child identity and its fresh security state.
+    admission.assertAncestry();
+    if (capability.parent) capability.assertCurrent();
+    stat = inspectAdmittedTempWorkspaceChild(dir, stat, admission.ownerUid, dirMode);
     cleanupOwner = new TempWorkspaceCleanupOwner(dir, stat, capability);
     unregisterTempDir = registerTempPathForExit(dir, {
       cleanupSync: () => cleanupOwner!.cleanupSync(),
@@ -268,33 +253,28 @@ export function tempWorkspaceSync(
   options: TempWorkspaceOptions,
 ): TempWorkspaceSync {
   const dirMode = options.dirMode ?? 0o700;
+  validateTempWorkspaceDirMode(dirMode);
   const mode = options.mode ?? 0o600;
   const cleanupSafety = resolveTempWorkspaceCleanupSafety(options.cleanupSafety);
-  const requestedRoot = path.resolve(options.rootDir);
-  let root = requestedRoot;
-  try {
-    root = realpathSync.native(requestedRoot);
-  } catch {
-    root = requestedRoot;
-  }
-  ensurePrivateDirectorySync(root, dirMode);
+  const admission = admitTempWorkspaceRootSync(options.rootDir);
+  const root = admission.dir;
   const capability = new TempWorkspaceCleanupCapability(root, cleanupSafety);
   let dir: string;
   let stat: fsSync.BigIntStats;
   let cleanupOwner: TempWorkspaceCleanupOwner | undefined;
   let unregisterTempDir: () => void;
   try {
+    admission.assertAncestry();
     dir = fsSync.mkdtempSync(path.join(root, sanitizeTempPrefix(options.prefix)));
-    try {
-      fsSync.chmodSync(dir, dirMode);
-    } catch {
-      // Best-effort on platforms that do not enforce POSIX modes.
-    }
-    stat = fsSync.lstatSync(dir, { bigint: true });
-    if (stat.isSymbolicLink() || !stat.isDirectory()) {
-      throw new Error(`Temp workspace must be a directory: ${dir}`);
-    }
+    admission.assertCurrent();
     if (capability.parent) capability.assertCurrent();
+    stat = inspectDirectoryIdentitySync(dir);
+    admitTempWorkspaceChildSync(dir, stat, admission, dirMode);
+    // Match async adoption: complete ancestry and retained cleanup authority
+    // precede the original child's final identity and security-state check.
+    admission.assertAncestry();
+    if (capability.parent) capability.assertCurrent();
+    stat = inspectAdmittedTempWorkspaceChild(dir, stat, admission.ownerUid, dirMode);
     cleanupOwner = new TempWorkspaceCleanupOwner(dir, stat, capability);
     unregisterTempDir = registerTempPathForExit(dir, {
       cleanupSync: () => cleanupOwner!.cleanupSync(),
