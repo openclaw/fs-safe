@@ -42,6 +42,11 @@ their own pinned-open flow, not substitutes for the higher-level `Root` verbs.
 regular files without taking over their cursors, lifetime, or publication.
 See [borrowed-handle transfers](copy.md#borrowed-filehandle-transfers).
 
+`readDirectoryIdentity`, `assertDirectoryIdentitySync`, and `DirectoryIdentity`
+provide exact directory observations without owning a descriptor or a mutation.
+The assertion accepts an observed path and optional expected canonical path;
+see [directory identity](directory-identity.md).
+
 ## Guest source
 
 `@openclaw/fs-safe/guest` exports `GUEST_FILESYSTEM_PYTHON`,

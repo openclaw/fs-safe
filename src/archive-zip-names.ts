@@ -29,8 +29,10 @@ export function zipExtraFields(bytes: Buffer): Map<number, Buffer> {
   return critical;
 }
 
+const utf8Decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+
 function utf8(bytes: Buffer): string {
-  try { return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes); }
+  try { return utf8Decoder.decode(bytes); }
   catch { return zipFormat("invalid UTF-8 name"); }
 }
 
@@ -38,10 +40,10 @@ function key(name: string): string {
   return stripArchivePath(name, 0) ?? "";
 }
 
-function originalName(name: Buffer, flags: number): string | undefined {
+function originalName(name: Buffer, rawName: string, flags: number): string | undefined {
   // ASCII path syntax is encoding-independent. Do not reinterpret legacy bytes
   // as UTF-8 (native ZIP uses CP437); the selected decoder still validates its name.
-  validateArchiveEntryPath(Array.from(name, (byte) => byte < 128 ? String.fromCharCode(byte) : "_").join(""));
+  validateArchiveEntryPath(rawName.replace(/[\x80-\xff]/g, "_"));
   if (!(flags & 0x800)) return undefined;
   const decoded = utf8(name); validateArchiveEntryPath(decoded);
   return decoded;
@@ -63,15 +65,18 @@ export function admitZipNames(params: {
 }): string | undefined {
   const { central, local, flags, centralExtra, localExtra, seen } = params;
   if (!central.length || !local.length) zipFormat("empty entry name");
-  const centralUtf8 = originalName(central, flags); const localUtf8 = originalName(local, flags);
+  const centralRaw = central.toString("latin1"); const localRaw = local.toString("latin1");
+  const centralUtf8 = originalName(central, centralRaw, flags); const localUtf8 = originalName(local, localRaw, flags);
   const centralUnicode = unicodeName(central, centralExtra); const localUnicode = unicodeName(local, localExtra);
-  if (key(central.toString("latin1")) !== key(local.toString("latin1"))) {
+  const centralKey = key(centralRaw);
+  if (centralKey !== key(localRaw)) {
     zipFormat("central and local names disagree");
   }
   const interpretations = [centralUtf8, localUtf8, centralUnicode, localUnicode].filter(
     (value): value is string => value !== undefined,
   );
-  if (interpretations.some((value) => key(value) !== key(interpretations[0]!))) {
+  const interpretationKey = interpretations.length ? key(interpretations[0]!) : undefined;
+  if (interpretations.some((value) => key(value) !== interpretationKey)) {
     zipFormat("conflicting Unicode name interpretations");
   }
   // JSZip checks the central Unicode field against the local name. A slash-only
@@ -83,7 +88,7 @@ export function admitZipNames(params: {
   if (!centralUnicode && localUnicode && key(localUnicode) !== key(local.toString("utf8"))) {
     zipFormat("local-only Unicode override changes the name");
   }
-  const identities = new Set([key(central.toString("latin1"))]);
+  const identities = new Set([centralKey]);
   if (centralUnicode !== undefined) identities.add(key(Buffer.from(centralUnicode).toString("latin1")));
   if ([...identities].some((identity) => seen.has(identity))) {
     throw new ArchiveSecurityError("entry-path", "zip archive contains duplicate or colliding entry names");

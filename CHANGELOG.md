@@ -5,7 +5,10 @@
 - Preserve single-read pinned-write pathname and identity snapshots on Node.js 22 by excluding named accessors before copying remaining caller-owned options.
 - Preserve established callback receivers while retaining single-read pathname and transfer-authority snapshots across structured JSON, durable directory and queue, sibling staging, and borrowed-handle flows.
 - Snapshot root traversal symlink-rejection policy with admitted paths so caller mutation cannot change an in-flight resolution.
-- Reject NTFS alternate-data-stream and directory-index pathname aliases across guarded Root, FileStore, archive, JSON queue, sidecar lock, secret, secure-read, atomic publication, temp, permission, install, trash, and output boundaries before filesystem access. Preserve rooted drive paths, including valid extended namespace drive roots without widening volume-root mutation authority, independent device/network policies, intentional output-name sanitization, existing failure shapes, and ordinary colon-bearing POSIX names; native relative and archive paths enforce the same Windows rule.
+- Reject NTFS alternate-data-stream and directory-index pathname aliases across guarded Root, directory-identity, FileStore, archive, JSON queue, sidecar lock, secret, secure-read, atomic publication, temp, permission, install, trash, and output boundaries before filesystem access. Preserve rooted drive paths, including valid extended namespace drive roots without widening volume-root mutation authority, independent device/network policies, intentional output-name sanitization, existing failure shapes, and ordinary colon-bearing POSIX names; native relative and archive paths enforce the same Windows rule.
+- Batch native ZIP metadata admission through bounded, operation-local read-ahead buffers, reducing per-entry filesystem calls while preserving complete record validation, short-read handling, cancellation, and stable scanner views.
+
+- Avoid repeating physical ZIP admission during JavaScript member reads and reduce ZIP filename-validation allocations across both backends, preserving raw and decoded name checks, entry limits, CRC validation, and error ordering.
 - Speed up JavaScript TAR admission by copying each WASM input window once across member events, and read selected plain-TAR payloads directly from the fully admitted private snapshot without a second parser pass; preserve independent output buffers, complete framing, path validation, and limits.
 
 - Add bounded copy benchmark shapes and explicit worker matrices for comparisons at equal concurrency across native cloning and ordinary copying.
@@ -40,6 +43,8 @@
 - Share portable directory-copy workers across sibling directories, with bounded deferred directory completion, joined cancellation, and bottom-up timestamp restoration.
 - Add a streamed `Root.create` overload for async byte iterables, with bounded consumption, settled cancellation, and exclusive publication of completed contents through the existing guarded writer.
 - Add `Root.entries()` for guarded nonrecursive directory iteration that reports child symlinks, supports cancellation, and bounds entry counts and sorted-name collection while leaving traversal and link policy with the caller.
+
+- Add exact directory identity observations and synchronous assertions for caller-owned staging and recovery flows, preserving bigint identities, optional canonical-path checks, bounded Windows identity admission, final-symlink rejection with trailing separators, and original filesystem errors.
 
 ## 0.10.0 - 2026-09-13
 

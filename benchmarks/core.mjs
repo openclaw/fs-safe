@@ -20,6 +20,10 @@ export async function registerCore({ api: a, workspace: w, register: add, contra
   for (let i = 0; i < 100; i++) fs.writeFileSync(path.join(w, "tree", `entry-${i}`), data);
   fs.writeFileSync(path.join(w, "tree", "nested", "entry"), data);
   const safe = await a.root(w);
+  const directoryStat = fs.lstatSync(w, { bigint: true });
+  const directoryIdentity = { dev: directoryStat.dev, ino: directoryStat.ino, realPath: fs.realpathSync.native(w) };
+  add("readDirectoryIdentity", () => a.readDirectoryIdentity(w), { verify: (result) => assert.deepEqual(result, directoryIdentity) });
+  add("assertDirectoryIdentitySync", () => a.assertDirectoryIdentitySync(w, directoryIdentity), { sync: true });
   contract("Root", safe);
   add("root", () => a.root(w));
   for (const name of ["resolve", "read", "readBytes", "readText", "readJson", "exists", "stat"]) {

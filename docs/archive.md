@@ -133,7 +133,7 @@ accepted-entry plan back to Rust. Rust owns raw-stream admission, decompression,
 and fd-relative `mkdirBeneath`/exclusive-open writes. This keeps filter policy identical
 between native and JavaScript paths rather than reimplementing it in Rust.
 
-ZIP extraction and bounded reads admit every physical central-directory record and its referenced local header before either decoder can normalize or collapse names. Raw names and valid Unicode Path names must pass traversal checks before stripping, filtering, or selecting a requested member; duplicate or colliding names reject with `entry-path`, even in unrelated or skipped members. Materially conflicting local/central or Unicode interpretations, malformed critical metadata, and ambiguous framing reject with `ArchiveFormatError`. Harmless separator and dot-component equivalence is allowed only after validation. Ordinary legacy filename decoding remains backend-selected.
+ZIP extraction and bounded reads admit every physical central-directory record and its referenced local header before either decoder can normalize or collapse names. Raw names and valid Unicode Path names must pass traversal checks before stripping, filtering, or selecting a requested member; duplicate or colliding names reject with `entry-path`, even in unrelated or skipped members. Materially conflicting local/central or Unicode interpretations, malformed critical metadata, and ambiguous framing reject with `ArchiveFormatError`. Harmless separator and dot-component equivalence is allowed only after validation. Ordinary legacy filename decoding remains backend-selected. Native ZIP extraction groups nearby metadata reads into at most two 4 KiB read-ahead buffers per admission pass; larger records retain separately bounded reads. Buffered record views remain stable across eviction, and cached work periodically yields for deadline checks.
 
 `stripComponents` removes leading nonempty, non-`.` path components after
 normalizing separators. For example, `./pkg/hello.txt` with
@@ -581,7 +581,9 @@ inputs retain the archive subpath's 256 MiB compressed-input ceiling.
 With a native binding it uses the same Rust decoders as extraction, including
 zstd and bzip2 TAR. Without native it retains the JS ZIP/TAR/gzip implementation.
 Archive member reads retain their private in-memory input without a disk
-snapshot. The native ZIP reader retains the private allocation and parsed directory across worker-thread
+snapshot. JavaScript ZIP member reads reuse their completed physical admission
+when loading the decoder, which still checks its decoded names and entry count.
+The native ZIP reader retains the private allocation and parsed directory across worker-thread
 inspection and reading without an extra archive-byte copy.
 Decompression still allocates its bounded output; Node receives that native
 allocation without another copy where external buffers are supported.

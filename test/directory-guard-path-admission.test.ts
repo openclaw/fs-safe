@@ -2,6 +2,7 @@ import type { Stats } from "node:fs";
 import fsSync from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  assertDirectoryIdentitySync,
   assertAsyncDirectoryGuard,
   assertSyncDirectoryGuard,
   type AnyAsyncDirectoryGuard,
@@ -10,6 +11,7 @@ import {
   createNearestExistingSyncDirectoryGuard,
   createSyncDirectoryGuard,
   inspectDirectoryIdentity,
+  readDirectoryIdentity,
 } from "../src/directory-guard.js";
 import * as realpath from "../src/realpath.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
@@ -94,6 +96,69 @@ afterEach(() => {
 });
 
 describe("directory guard Windows pathname admission", () => {
+  it("admits public identity paths before receipt access or filesystem work", async () => {
+    const directory = await tempRoot("fs-safe-directory-public-raw-");
+    simulateWindows();
+    const alias = `${directory}:stream`;
+    const reads = { dev: 0, ino: 0, realPath: 0 };
+    const expected = Object.defineProperties({}, {
+      dev: { get() { reads.dev += 1; throw new Error("dev must not be read"); } },
+      ino: { get() { reads.ino += 1; throw new Error("ino must not be read"); } },
+      realPath: { get() { reads.realPath += 1; throw new Error("realPath must not be read"); } },
+    }) as Parameters<typeof assertDirectoryIdentitySync>[1];
+    const lstat = vi.spyOn(fsSync, "lstatSync");
+    const canonicalize = vi.spyOn(realpath.realpathSync, "native");
+
+    await expect(readDirectoryIdentity(alias)).rejects.toMatchObject(aliasError);
+    expect(() => assertDirectoryIdentitySync(alias, expected))
+      .toThrow(expect.objectContaining(aliasError));
+    expect(reads).toEqual({ dev: 0, ino: 0, realPath: 0 });
+    expect(lstat).not.toHaveBeenCalled();
+    expect(canonicalize).not.toHaveBeenCalled();
+  });
+
+  it("snapshots public identity receipts and admits their canonical path before I/O", async () => {
+    const directory = await tempRoot("fs-safe-directory-public-receipt-");
+    const stable = await readDirectoryIdentity(directory);
+    simulateWindows();
+    const reads = { dev: 0, ino: 0, realPath: 0 };
+    const expected = {
+      get dev() { reads.dev += 1; return stable.dev; },
+      get ino() { reads.ino += 1; return stable.ino; },
+      get realPath() { reads.realPath += 1; return `${stable.realPath}:stream`; },
+    };
+    const lstat = vi.spyOn(fsSync, "lstatSync");
+
+    expect(() => assertDirectoryIdentitySync(directory, expected))
+      .toThrow(expect.objectContaining(aliasError));
+    expect(reads).toEqual({ dev: 1, ino: 1, realPath: 1 });
+    expect(lstat).not.toHaveBeenCalled();
+  });
+
+  it("reads valid public identity receipt fields once and rejects canonical aliases", async () => {
+    const directory = await tempRoot("fs-safe-directory-public-canonical-");
+    const stable = await readDirectoryIdentity(directory);
+    const reads = { dev: 0, ino: 0, realPath: 0 };
+    const expected = {
+      get dev() { reads.dev += 1; return stable.dev; },
+      get ino() { reads.ino += 1; return stable.ino; },
+      get realPath() { reads.realPath += 1; return stable.realPath; },
+    };
+
+    expect(assertDirectoryIdentitySync(directory, expected)).toBeUndefined();
+    expect(reads).toEqual({ dev: 1, ino: 1, realPath: 1 });
+
+    simulateWindows();
+    const alias = `${directory}:stream`;
+    const canonicalize = vi.spyOn(realpath.realpathSync, "native").mockReturnValue(alias);
+    expect(() => assertDirectoryIdentitySync(directory, stable))
+      .toThrow(expect.objectContaining(aliasError));
+    expect(canonicalize).toHaveBeenCalledTimes(1);
+    canonicalize.mockClear();
+    await expect(readDirectoryIdentity(directory)).rejects.toMatchObject(aliasError);
+    expect(canonicalize).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects raw aliases before identity or canonical filesystem work", async () => {
     const directory = await tempRoot("fs-safe-directory-guard-raw-");
     simulateWindows();
