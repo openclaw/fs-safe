@@ -1,5 +1,6 @@
 import syncFs, { type BigIntStats, type Stats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
+import { readBoundedAsync, readBoundedSync } from "./bounded-read.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { readOwnedCopySource, readOwnedCopySourceSync } from "./replace-file-copy-source.js";
@@ -39,7 +40,6 @@ const OPEN_READ_FLAGS = resolveReadOpenFlags();
 const OPEN_READ_WRITE_FLAGS = syncFs.constants.O_RDWR | NOFOLLOW;
 const OPEN_WRITE_EXCLUSIVE_FLAGS =
   syncFs.constants.O_WRONLY | syncFs.constants.O_CREAT | syncFs.constants.O_EXCL | NOFOLLOW;
-const READ_CHUNK_BYTES = 64 * 1024;
 
 function notFound(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === "ENOENT";
@@ -181,36 +181,29 @@ export function assertDestinationHardlinkPolicySync(
   }
 }
 
-async function readBounded(handle: FileHandle, maxBytes: number): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  let position = 0;
-  while (position <= maxBytes) {
-    const buffer = Buffer.allocUnsafe(Math.min(READ_CHUNK_BYTES, maxBytes - position + 1));
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
-    if (bytesRead === 0) break;
-    position += bytesRead;
-    if (position > maxBytes) {
-      throw new FsSafeError("too-large", `Atomic replace restore snapshot exceeds maxRestoreBytes (${maxBytes})`);
-    }
-    chunks.push(buffer.subarray(0, bytesRead));
-  }
-  return Buffer.concat(chunks, position);
+function restoreReadOptions(stat: Stats, maxBytes: number) {
+  return {
+    initialSize: Number.isSafeInteger(stat.size) && stat.size >= 0 ? stat.size : undefined,
+    createLimitError: () => new FsSafeError("too-large", `Atomic replace restore snapshot exceeds maxRestoreBytes (${maxBytes})`),
+  };
 }
 
-function readBoundedSync(fsModule: SyncFallbackFs, fd: number, maxBytes: number): Buffer {
-  const chunks: Buffer[] = [];
+async function readRestoreSnapshot(handle: FileHandle, maxBytes: number, stat: Stats): Promise<Buffer> {
   let position = 0;
-  while (position <= maxBytes) {
-    const buffer = Buffer.allocUnsafe(Math.min(READ_CHUNK_BYTES, maxBytes - position + 1));
-    const bytesRead = fsModule.readSync(fd, buffer, 0, buffer.length, position);
-    if (bytesRead === 0) break;
+  return await readBoundedAsync(maxBytes, async (buffer, length) => {
+    const { bytesRead } = await handle.read(buffer, 0, length, position);
     position += bytesRead;
-    if (position > maxBytes) {
-      throw new FsSafeError("too-large", `Atomic replace restore snapshot exceeds maxRestoreBytes (${maxBytes})`);
-    }
-    chunks.push(buffer.subarray(0, bytesRead));
-  }
-  return Buffer.concat(chunks, position);
+    return bytesRead;
+  }, restoreReadOptions(stat, maxBytes));
+}
+
+function readRestoreSnapshotSync(fsModule: SyncFallbackFs, fd: number, maxBytes: number, stat: Stats): Buffer {
+  let position = 0;
+  return readBoundedSync(maxBytes, (buffer, length) => {
+    const bytesRead = fsModule.readSync(fd, buffer, 0, length, position);
+    position += bytesRead;
+    return bytesRead;
+  }, restoreReadOptions(stat, maxBytes));
 }
 
 async function writeAll(handle: FileHandle, data: Buffer): Promise<void> {
@@ -261,8 +254,9 @@ async function replacePinnedWithRestore(
   maxRestoreBytes: number,
   replacementMode: number,
 ): Promise<void> {
-  const originalMode = (fsModule === fs ? syncFs.fstatSync(handle.fd) : await handle.stat()).mode;
-  const original = await readBounded(handle, maxRestoreBytes);
+  const originalStat = fsModule === fs ? syncFs.fstatSync(handle.fd) : await handle.stat();
+  const originalMode = originalStat.mode;
+  const original = await readRestoreSnapshot(handle, maxRestoreBytes, originalStat);
   try {
     await writeAll(handle, replacement);
     await handle.chmod(replacementMode);
@@ -290,8 +284,9 @@ function replacePinnedWithRestoreSync(
   replacementMode: number,
   fchmodSync?: (fd: number, mode: number) => void,
 ): void {
-  const originalMode = fsModule.fstatSync(fd).mode;
-  const original = readBoundedSync(fsModule, fd, maxRestoreBytes);
+  const originalStat = fsModule.fstatSync(fd);
+  const originalMode = originalStat.mode;
+  const original = readRestoreSnapshotSync(fsModule, fd, maxRestoreBytes, originalStat);
   try {
     writeAllSync(fsModule, fd, replacement);
     fchmodSync?.(fd, replacementMode);

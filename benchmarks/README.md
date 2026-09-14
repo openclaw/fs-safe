@@ -39,6 +39,13 @@ paths, 1,000-entry listings and walks, private/public stores through 1 MiB with
 both durability settings, 1,000-item JSON documents and concurrent updates,
 contended/distinct lock groups, and loading 100 claimed queue entries. Queue
 fixtures are acknowledged outside timing; lock-group timings include release.
+Scaling cases add 1/8/32 concurrent Root and FileStore reads, batches of 100
+lock-manager constructions with 0/32/128 retained locks, and scans of 100/1,000 unexpired
+store entries. Forced permission-error replacement cases exercise the public
+filesystem adapter with 128 B, 1 MiB, and 16 MiB payloads, both restoration
+policies, and both sync/async methods. Temp-file and parent syncing are disabled
+for these cases; `restore-original` still includes its required destination
+sync. Fixture reset remains outside timing.
 Borrowed-handle transfers and Root byte-copy cases cover the same payload sizes;
 the Root cases use `clone: "never"` and `durable: false` to expose transfer costs.
 Directory iteration includes full and early-stop scans in filesystem and sorted

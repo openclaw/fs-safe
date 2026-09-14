@@ -1,5 +1,6 @@
 import syncFs, { type BigIntStats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
+import { readBoundedSync } from "./bounded-read.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
@@ -12,7 +13,6 @@ type SyncSourceFileSystem = Pick<
 >;
 
 const OPEN_READ_FLAGS = resolveReadOpenFlags();
-const READ_CHUNK_BYTES = 64 * 1024;
 
 function assertSourcePreview(source: import("node:fs").Stats, src: string): void {
   if (source.isSymbolicLink()) {
@@ -54,17 +54,13 @@ function openSourceSync(fsModule: SyncSourceFileSystem, src: string): number {
   }
 }
 
-function readAllSync(fsModule: SyncSourceFileSystem, fd: number): Buffer {
-  const chunks: Buffer[] = [];
+function readAllSync(fsModule: SyncSourceFileSystem, fd: number, size: number): Buffer {
   let position = 0;
-  while (true) {
-    const buffer = Buffer.allocUnsafe(READ_CHUNK_BYTES);
-    const bytesRead = fsModule.readSync(fd, buffer, 0, buffer.length, position);
-    if (bytesRead === 0) break;
+  return readBoundedSync(Infinity, (buffer, length) => {
+    const bytesRead = fsModule.readSync(fd, buffer, 0, length, position);
     position += bytesRead;
-    chunks.push(buffer.subarray(0, bytesRead));
-  }
-  return Buffer.concat(chunks, position);
+    return bytesRead;
+  }, { initialSize: Number.isSafeInteger(size) && size >= 0 ? size : undefined });
 }
 
 export async function readOwnedCopySource(params: {
@@ -129,7 +125,7 @@ export function readOwnedCopySourceSync(params: {
     if (opened.nlink !== 1) {
       throw new FsSafeError("hardlink", `Hardlinked copy fallback source not allowed: ${params.src}`);
     }
-    return { replacement: readAllSync(params.fsModule, fd), mode: opened.mode };
+    return { replacement: readAllSync(params.fsModule, fd, opened.size), mode: opened.mode };
   } finally {
     try {
       params.fsModule.closeSync(fd);
