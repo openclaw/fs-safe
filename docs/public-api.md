@@ -47,6 +47,11 @@ provide exact directory observations without owning a descriptor or a mutation.
 The assertion accepts an observed path and optional expected canonical path;
 see [directory identity](directory-identity.md).
 
+`overwriteFileHandle` and `OverwriteFileHandleOptions` provide in-place byte
+replacement through a borrowed regular-file handle. Its once-only `beforeWrite`
+callback admits the complete write and any required best-effort rollback after
+prefix preparation. See [in-place writes](in-place-write.md).
+
 ## Guest source
 
 `@openclaw/fs-safe/guest` exports `GUEST_FILESYSTEM_PYTHON`,

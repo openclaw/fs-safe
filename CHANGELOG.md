@@ -42,6 +42,7 @@
 - Add `Root.entries()` for guarded nonrecursive directory iteration that reports child symlinks, supports cancellation, and bounds entry counts and sorted-name collection while leaving traversal and link policy with the caller.
 
 - Add exact directory identity observations and synchronous assertions for caller-owned staging and recovery flows, preserving bigint identities, optional canonical-path checks, bounded Windows identity admission, final-symlink rejection with trailing separators, and original filesystem errors.
+- Add `overwriteFileHandle()` for in-place replacement through a borrowed regular-file handle, with prefix-only rollback preparation, growth-before-overwrite ordering, unchanged descriptor ownership and cursor, and a synchronous once-only pre-write admission callback.
 
 ## 0.10.0 - 2026-09-13
 

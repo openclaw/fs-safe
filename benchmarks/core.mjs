@@ -118,6 +118,13 @@ export async function registerCore({ api: a, workspace: w, register: add, contra
       after: (_, { source, target }) => Promise.all([source.close(), target.close()]),
       verify: (bytes) => { assert.equal(bytes, size); assert.deepEqual(fs.readFileSync(copyPath), payload); },
     });
+    const overwritePath = path.join(w, `handle-overwrite-${size}`);
+    add(`overwriteFileHandle/${size}`, (handle) => a.overwriteFileHandle(handle, payload), {
+      divisor,
+      before: async () => { await fsp.writeFile(overwritePath, "original", { mode: 0o600 }); return await fsp.open(overwritePath, "r+"); },
+      after: (_, handle) => handle.close(),
+      verify: () => assert.deepEqual(fs.readFileSync(overwritePath), payload),
+    });
   }
   for (const name of ["tryReadJson", "tryReadJsonSync", "readJson", "readJsonSync", "readJsonIfExists"]) add(name, () => a[name](input), { sync: name.endsWith("Sync"), verify: (r) => assert.equal(r.ok, true) });
   for (const name of ["readRootJsonSync", "readRootJsonObjectSync", "readRootStructuredFileSync"]) add(name, () => a[name]({ rootDir: w, relativePath: "input.json", boundaryLabel: "benchmark", parse: JSON.parse }), { sync: true, verify: (r) => assert(r.ok) });
