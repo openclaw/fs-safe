@@ -6,6 +6,7 @@ import { GzipInput, isGzipBuffer, validateGzipBufferTail, validateGzipContainerT
 import { ArchiveFormatError } from "./archive-errors.js";
 import type { TarMeterLimits } from "./archive-limits.js";
 import { TarParserStream, type AdmittedTarMember } from "./archive-tar-wasm.js";
+import { readFileWindowFully } from "./positional-read.js";
 
 /** Buffers are private immutable snapshots, just like the staged file route. */
 type TarInput = { archivePath: string; archiveBuffer?: never } | { archiveBuffer: Buffer; archivePath?: never };
@@ -18,7 +19,7 @@ async function gzipFile(filePath: string): Promise<boolean> {
   const handle = await fs.promises.open(filePath, "r");
   try {
     const magic = Buffer.alloc(2);
-    const { bytesRead } = await handle.read(magic, 0, 2, 0);
+    const bytesRead = await readFileWindowFully(handle, magic, 0);
     return bytesRead === 2 && isGzipBuffer(magic);
   } finally { await handle.close(); }
 }
@@ -33,8 +34,8 @@ async function withTarStream<T>(params: TarInput & {
   const input = buffer !== undefined
     ? Readable.from(bufferChunks(buffer), { objectMode: false, highWaterMark: 65536 })
     : fs.createReadStream(params.archivePath!, { highWaterMark: 65536 });
-  // Match the WASM input window for buffered reads instead of emitting 16 KiB chunks.
-  const decoder = gzip ? createGunzip(buffer === undefined ? undefined : { chunkSize: 65536 }) : undefined;
+  // Match the WASM input window for both staged files and buffered reads.
+  const decoder = gzip ? createGunzip({ chunkSize: 65536 }) : undefined;
   const gzipInput = decoder ? new GzipInput(decoder) : undefined;
   const destroy = (error?: Error) => {
     input.destroy(error); gzipInput?.destroy(error); decoder?.destroy(error); parser.destroy(error);

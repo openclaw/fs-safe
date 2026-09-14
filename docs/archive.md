@@ -367,7 +367,9 @@ bypass validation. Decompression remains streaming; no complete decoded archive
 is retained in memory or written to a decoded spool.
 
 The WASM transport has a fixed 64 KiB input buffer, one pending member event,
-and a 256 MiB maximum linear memory per isolated parser instance. Metadata is
+and a 256 MiB maximum linear memory per isolated parser instance. JavaScript
+gzip decoding emits chunks of at most 64 KiB for both staged files and buffered
+inputs, matching that input window. Metadata is
 bounded before allocation; allocation failure rejects. Stream backpressure
 bounds queued chunks, and completion/error destroys the instance's parser
 state. The manifest retains the existing charged budget below; linear memory

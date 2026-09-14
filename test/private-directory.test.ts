@@ -9,7 +9,7 @@ import {
   __setNativeLoaderForTest,
   type NativeBinding,
 } from "../src/native.js";
-import { executePermissionCommand } from "../src/permission-exec.js";
+import { DEFAULT_PERMISSION_EXEC_TIMEOUT_MS, executePermissionCommand } from "../src/permission-exec.js";
 import { inspectPathPermissions, inspectWindowsAcl } from "../src/permissions.js";
 import { createPrivateDirectory } from "../src/private-directory.js";
 import { expectFsSafeError } from "./helpers/security.js";
@@ -130,5 +130,7 @@ describe("createPrivateDirectory", () => {
         }
       }
     },
+    // The initial inspection and parallel comparisons each allow a bounded command phase.
+    2 * DEFAULT_PERMISSION_EXEC_TIMEOUT_MS + 5000,
   );
 });
