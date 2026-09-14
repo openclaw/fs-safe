@@ -25,7 +25,7 @@ async function cloneFixture(context: TestContext) {
   const backend = probeTreeClone(parent);
   if (!backend) {
     if (explicitParent) throw new Error("FS_SAFE_CLONE_TEST_ROOT requires native clone support");
-    context.skip("native APFS, Btrfs, ReFS, or XFS volume unavailable");
+    context.skip("native APFS, Btrfs, ReFS, XFS, or ZFS volume unavailable");
     throw new Error("unreachable");
   }
   const directory = await fs.mkdtemp(path.join(parent, "fs-safe-clone-"));
@@ -286,9 +286,9 @@ describe("native directory cloning", () => {
     await expect(fs.access(destination)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("removes a failed XFS clone without altering its source and permits retry", async (context) => {
+  it("removes a failed Linux reflink clone without altering its source and permits retry", async (context) => {
     const { source, destination, backend } = await cloneFixture(context);
-    if (backend !== "xfs") context.skip("XFS-specific partial clone cleanup");
+    if (backend !== "xfs" && backend !== "zfs") context.skip("Linux reflink partial clone cleanup");
     const readonly = path.join(source, "readonly");
     const copiedReadonly = path.join(destination, "readonly");
     await fs.mkdir(readonly);
@@ -327,10 +327,10 @@ describe("native directory cloning", () => {
     { label: "read-only files", fileMode: 0o444, directoryMode: 0o755 },
     { label: "read-only directories", fileMode: 0o644, directoryMode: 0o555 },
   ])(
-    "preserves XFS extended attributes and ACLs on $label",
+    "preserves Linux reflink extended attributes and ACLs on $label",
     async ({ fileMode, directoryMode }, context) => {
       const { source, destination, backend } = await cloneFixture(context);
-      if (backend !== "xfs") context.skip("XFS-specific extended metadata");
+      if (backend !== "xfs" && backend !== "zfs") context.skip("Linux reflink extended metadata");
       await fs.mkdir(path.join(source, "nested"));
       await fs.writeFile(path.join(source, "nested", "payload"), "original");
       const entries = ["", "nested", path.join("nested", "payload")];
@@ -383,10 +383,10 @@ describe("native directory cloning", () => {
     },
   );
 
-  it("preserves XFS directory attributes when umask removes owner-write", async (context) => {
+  it("preserves Linux reflink directory attributes when umask removes owner-write", async (context) => {
     const { source, destination, backend } = await cloneFixture(context);
-    if (backend !== "xfs" || process.getuid?.() === 0)
-      context.skip("requires unprivileged XFS attribute permissions");
+    if ((backend !== "xfs" && backend !== "zfs") || process.getuid?.() === 0)
+      context.skip("requires unprivileged Linux reflink attribute permissions");
     execFileSync("setfattr", ["-n", "user.fs-safe-clone", "-v", "original", source]);
     execFileSync(
       process.execPath,

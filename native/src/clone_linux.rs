@@ -14,7 +14,8 @@ use crate::{NativeResult, native_error};
 const MAX_DEPTH: usize = 128;
 
 fn stat(fd: i32) -> NativeResult<Stat> {
-    rustix::fs::fstat(borrowed(fd)).map_err(|error| os_error(error, "inspect XFS clone entry"))
+    rustix::fs::fstat(borrowed(fd))
+        .map_err(|error| os_error(error, "inspect Linux reflink clone entry"))
 }
 
 fn same_identity(left: &Stat, right: &Stat) -> bool {
@@ -32,7 +33,7 @@ fn unchanged(before: &Stat, after: &Stat) -> NativeResult<()> {
     {
         return Err(native_error(
             "path-mismatch",
-            "XFS clone source changed during cloning",
+            "Linux reflink clone source changed during cloning",
         ));
     }
     Ok(())
@@ -62,7 +63,7 @@ fn xattr_names(fd: i32) -> NativeResult<Vec<CString>> {
         }
         result => result,
     }
-    .map_err(|error| os_error(error, "list XFS clone extended attributes"))?;
+    .map_err(|error| os_error(error, "list Linux reflink clone extended attributes"))?;
     buffer.truncate(length);
     buffer
         .split_inclusive(|&byte| byte == 0)
@@ -83,8 +84,9 @@ fn copy_metadata(source_fd: i32, target_fd: i32, metadata: &Stat) -> NativeResul
         } else {
             0o600
         };
-        rustix::fs::fchmod(borrowed(target_fd), Mode::from_bits_retain(mode))
-            .map_err(|error| os_error(error, "prepare XFS clone attribute permissions"))?;
+        rustix::fs::fchmod(borrowed(target_fd), Mode::from_bits_retain(mode)).map_err(|error| {
+            os_error(error, "prepare Linux reflink clone attribute permissions")
+        })?;
     }
     for inherited in xattr_names(target_fd)? {
         if !names.contains(&inherited) {
@@ -102,16 +104,19 @@ fn copy_metadata(source_fd: i32, target_fd: i32, metadata: &Stat) -> NativeResul
             if is_acl != acl {
                 continue;
             }
-            let length =
-                rustix::fs::fgetxattr(borrowed(source_fd), name.as_c_str(), value.as_mut_slice())
-                    .map_err(|error| os_error(error, "read XFS clone extended attribute"))?;
+            let length = rustix::fs::fgetxattr(
+                borrowed(source_fd),
+                name.as_c_str(),
+                value.as_mut_slice(),
+            )
+            .map_err(|error| os_error(error, "read Linux reflink clone extended attribute"))?;
             rustix::fs::fsetxattr(
                 borrowed(target_fd),
                 name.as_c_str(),
                 &value[..length],
                 XattrFlags::empty(),
             )
-            .map_err(|error| os_error(error, "preserve XFS clone extended attribute"))?;
+            .map_err(|error| os_error(error, "preserve Linux reflink clone extended attribute"))?;
         }
         Ok(())
     };
@@ -121,10 +126,10 @@ fn copy_metadata(source_fd: i32, target_fd: i32, metadata: &Stat) -> NativeResul
     // can interfere with metadata preservation.
     copy_attributes(false)?;
     rustix::fs::fchmod(borrowed(target_fd), Mode::from_raw_mode(metadata.st_mode))
-        .map_err(|error| os_error(error, "preserve XFS clone mode"))?;
+        .map_err(|error| os_error(error, "preserve Linux reflink clone mode"))?;
     copy_attributes(true)?;
     rustix::fs::futimens(borrowed(target_fd), &timestamps(metadata))
-        .map_err(|error| os_error(error, "preserve XFS clone timestamps"))?;
+        .map_err(|error| os_error(error, "preserve Linux reflink clone timestamps"))?;
     unchanged(metadata, &stat(source_fd)?)
 }
 
@@ -155,7 +160,10 @@ fn clone_file(job: FileJob) -> NativeResult<()> {
     let opened = stat(source.as_raw_fd())?;
     unchanged(&job.metadata, &opened)?;
     if !FileType::from_raw_mode(opened.st_mode).is_file() {
-        return Err(native_error("path-mismatch", "XFS clone file changed type"));
+        return Err(native_error(
+            "path-mismatch",
+            "Linux reflink clone file changed type",
+        ));
     }
     let target = create_exclusive_target(job.target_parent.as_raw_fd(), &job.name)?;
     // This is deliberately the strict primitive: preserve its errno and never
@@ -164,10 +172,10 @@ fn clone_file(job: FileJob) -> NativeResult<()> {
         if error == rustix::io::Errno::OPNOTSUPP {
             native_error(
                 "CLONE_UNAVAILABLE",
-                format!("clone XFS file extents: {error}"),
+                format!("clone Linux reflink file extents: {error}"),
             )
         } else {
-            os_error(error, "clone XFS file extents")
+            os_error(error, "clone Linux reflink file extents")
         }
     })?;
     copy_metadata(source.as_raw_fd(), target.as_raw_fd(), &job.metadata)
@@ -201,7 +209,7 @@ impl Work<'_> {
         self.state.0.lock().unwrap().pending += 1;
         if self.sender.send(job).is_err() {
             self.state.0.lock().unwrap().pending -= 1;
-            return Err(native_error("EIO", "XFS clone worker stopped"));
+            return Err(native_error("EIO", "Linux reflink clone worker stopped"));
         }
         Ok(())
     }
@@ -226,7 +234,7 @@ fn clone_symlink(
     unchanged(metadata, &stat(source.as_raw_fd())?)?;
     // O_PATH pins the link itself, so readlinkat never resolves its target.
     let target = rustix::fs::readlinkat(&source, "", Vec::new())
-        .map_err(|error| os_error(error, "read XFS clone symbolic link"))?;
+        .map_err(|error| os_error(error, "read Linux reflink clone symbolic link"))?;
     // Linux does not provide f*xattr for O_PATH symlink descriptors. The only
     // path lookup here uses a pinned parent and a validated literal child,
     // with a no-follow operation and identity checks around it. Callers must
@@ -238,23 +246,28 @@ fn clone_symlink(
         Ok(_) | Err(rustix::io::Errno::RANGE) => {
             return Err(native_error(
                 "ENOTSUP",
-                "XFS cloning cannot preserve symbolic-link extended attributes",
+                "Linux reflink cloning cannot preserve symbolic-link extended attributes",
             ));
         }
         Err(error) => return Err(os_error(error, "inspect symbolic-link extended attributes")),
     }
     let current = rustix::fs::statat(borrowed(source_parent), name, AtFlags::SYMLINK_NOFOLLOW)
-        .map_err(|error| os_error(error, "reinspect XFS clone symbolic link"))?;
+        .map_err(|error| os_error(error, "reinspect Linux reflink clone symbolic link"))?;
     unchanged(metadata, &current)?;
     rustix::fs::symlinkat(target.as_c_str(), borrowed(target_parent), name)
-        .map_err(|error| os_error(error, "create XFS clone symbolic link"))?;
+        .map_err(|error| os_error(error, "create Linux reflink clone symbolic link"))?;
     rustix::fs::utimensat(
         borrowed(target_parent),
         name,
         &timestamps(metadata),
         AtFlags::SYMLINK_NOFOLLOW,
     )
-    .map_err(|error| os_error(error, "preserve XFS clone symbolic-link timestamps"))?;
+    .map_err(|error| {
+        os_error(
+            error,
+            "preserve Linux reflink clone symbolic-link timestamps",
+        )
+    })?;
     unchanged(metadata, &stat(source.as_raw_fd())?)
 }
 
@@ -268,42 +281,44 @@ fn walk(
     if depth > MAX_DEPTH {
         return Err(native_error(
             "ENAMETOOLONG",
-            "XFS clone directory nesting exceeds 128 levels",
+            "Linux reflink clone directory nesting exceeds 128 levels",
         ));
     }
     let metadata = stat(source.as_raw_fd())?;
     let mut directory = Dir::read_from(&source)
-        .map_err(|error| os_error(error, "open XFS clone directory stream"))?;
+        .map_err(|error| os_error(error, "open Linux reflink clone directory stream"))?;
     for entry in &mut directory {
         work.check()?;
-        let entry = entry.map_err(|error| os_error(error, "read XFS clone directory entry"))?;
+        let entry =
+            entry.map_err(|error| os_error(error, "read Linux reflink clone directory entry"))?;
         let name = entry.file_name();
         if matches!(name.to_bytes(), b"." | b"..") {
             continue;
         }
-        let name_str = name
-            .to_str()
-            .map_err(|_| native_error("ENOTSUP", "XFS clone names must be valid UTF-8"))?;
+        let name_str = name.to_str().map_err(|_| {
+            native_error("ENOTSUP", "Linux reflink clone names must be valid UTF-8")
+        })?;
         let child = rustix::fs::statat(&source, name, AtFlags::SYMLINK_NOFOLLOW)
-            .map_err(|error| os_error(error, "inspect XFS clone child"))?;
+            .map_err(|error| os_error(error, "inspect Linux reflink clone child"))?;
         if child.st_dev != metadata.st_dev {
             return Err(native_error(
                 "EXDEV",
-                "XFS clone source contains another filesystem",
+                "Linux reflink clone source contains another filesystem",
             ));
         }
         if child.st_ino as u64 != entry.ino() {
             return Err(native_error(
                 "path-mismatch",
-                "XFS clone entry changed after enumeration",
+                "Linux reflink clone entry changed after enumeration",
             ));
         }
         match FileType::from_raw_mode(child.st_mode) {
             FileType::Directory => {
                 let opened = open_cleanup_directory(source.as_raw_fd(), name)?;
                 unchanged(&child, &stat(opened.as_raw_fd())?)?;
-                rustix::fs::mkdirat(&target, name, Mode::from_bits_retain(0o700))
-                    .map_err(|error| os_error(error, "create XFS clone child directory"))?;
+                rustix::fs::mkdirat(&target, name, Mode::from_bits_retain(0o700)).map_err(
+                    |error| os_error(error, "create Linux reflink clone child directory"),
+                )?;
                 let created = open_cleanup_directory(target.as_raw_fd(), name)?;
                 walk(Arc::new(opened), Arc::new(created), work, depth + 1)?;
             }
@@ -319,7 +334,7 @@ fn walk(
             _ => {
                 return Err(native_error(
                     "ENOTSUP",
-                    "XFS cloning supports regular files, directories, and symbolic links",
+                    "Linux reflink cloning supports regular files, directories, and symbolic links",
                 ));
             }
         }
@@ -334,35 +349,37 @@ fn prepare_cleanup(directory_fd: i32, depth: usize) -> NativeResult<()> {
     if depth > MAX_DEPTH + 1 {
         return Err(native_error(
             "ENAMETOOLONG",
-            "XFS clone cleanup nesting exceeded",
+            "Linux reflink clone cleanup nesting exceeded",
         ));
     }
     rustix::fs::fchmod(borrowed(directory_fd), Mode::from_bits_retain(0o700))
         .map_err(|error| os_error(error, "restore owned clone cleanup permissions"))?;
     let mut directory = Dir::read_from(borrowed(directory_fd))
-        .map_err(|error| os_error(error, "open XFS clone cleanup directory"))?;
+        .map_err(|error| os_error(error, "open Linux reflink clone cleanup directory"))?;
     for entry in &mut directory {
-        let entry = entry.map_err(|error| os_error(error, "read XFS clone cleanup entry"))?;
+        let entry =
+            entry.map_err(|error| os_error(error, "read Linux reflink clone cleanup entry"))?;
         let name = entry.file_name();
         if matches!(name.to_bytes(), b"." | b"..") {
             continue;
         }
-        let current = rustix::fs::statat(borrowed(directory_fd), name, AtFlags::SYMLINK_NOFOLLOW)
-            .map_err(|error| os_error(error, "inspect XFS clone cleanup entry"))?;
+        let current =
+            rustix::fs::statat(borrowed(directory_fd), name, AtFlags::SYMLINK_NOFOLLOW)
+                .map_err(|error| os_error(error, "inspect Linux reflink clone cleanup entry"))?;
         if !FileType::from_raw_mode(current.st_mode).is_dir() {
             continue;
         }
         if current.st_ino as u64 != entry.ino() {
             return Err(native_error(
                 "path-mismatch",
-                "XFS clone cleanup entry changed",
+                "Linux reflink clone cleanup entry changed",
             ));
         }
         let child = open_cleanup_directory(directory_fd, name)?;
         if !same_identity(&current, &stat(child.as_raw_fd())?) {
             return Err(native_error(
                 "path-mismatch",
-                "XFS clone cleanup directory changed",
+                "Linux reflink clone cleanup directory changed",
             ));
         }
         prepare_cleanup(child.as_raw_fd(), depth + 1)?;
@@ -380,12 +397,12 @@ pub fn clone_tree(
     if stat(source_fd)?.st_dev != stat(parent_fd)?.st_dev {
         return Err(native_error(
             "EXDEV",
-            "XFS clone source and destination must share a filesystem",
+            "Linux reflink clone source and destination must share a filesystem",
         ));
     }
     let source = Arc::new(open_cleanup_directory(source_fd, c".")?);
     rustix::fs::mkdirat(borrowed(parent_fd), basename, Mode::from_bits_retain(0o700))
-        .map_err(|error| os_error(error, "create XFS clone destination"))?;
+        .map_err(|error| os_error(error, "create Linux reflink clone destination"))?;
     let name = CString::new(basename)
         .map_err(|_| native_error("EINVAL", "clone destination contains a NUL byte"))?;
     let target = Arc::new(open_cleanup_directory(parent_fd, name.as_c_str())?);
@@ -409,7 +426,7 @@ pub fn clone_tree(
                         Ok(())
                     } else {
                         std::panic::catch_unwind(|| clone_file(job)).unwrap_or_else(|_| {
-                            Err(native_error("EIO", "XFS clone worker panicked"))
+                            Err(native_error("EIO", "Linux reflink clone worker panicked"))
                         })
                     };
                     let mut current = state.0.lock().unwrap();
@@ -429,7 +446,7 @@ pub fn clone_tree(
                     }
                     return Err(native_error(
                         "EIO",
-                        format!("start XFS clone worker: {error}"),
+                        format!("start Linux reflink clone worker: {error}"),
                     ));
                 }
             }
@@ -447,7 +464,7 @@ pub fn clone_tree(
         let mut joined = Ok(());
         for worker in workers {
             if worker.join().is_err() {
-                joined = Err(native_error("EIO", "XFS clone worker panicked"));
+                joined = Err(native_error("EIO", "Linux reflink clone worker panicked"));
             }
         }
         result.and(settled).and(joined)

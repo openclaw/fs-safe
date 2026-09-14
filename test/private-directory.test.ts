@@ -2,8 +2,6 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { expectFsSafeError } from "./helpers/security.js";
-import { itPosix } from "./helpers/vitest.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import {
   __resetNativeLoaderForTest,
@@ -14,6 +12,8 @@ import {
 import { executePermissionCommand } from "../src/permission-exec.js";
 import { inspectPathPermissions, inspectWindowsAcl } from "../src/permissions.js";
 import { createPrivateDirectory } from "../src/private-directory.js";
+import { expectFsSafeError } from "./helpers/security.js";
+import { itPosix } from "./helpers/vitest.js";
 
 let native: NativeBinding | undefined;
 try {
@@ -33,7 +33,9 @@ afterEach(async () => {
   vi.restoreAllMocks();
   __resetFsSafeNativeConfigForTest();
   __resetNativeLoaderForTest();
-  await Promise.all(tempDirs.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
+  await Promise.all(
+    tempDirs.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })),
+  );
 });
 
 describe("createPrivateDirectory", () => {
@@ -48,7 +50,10 @@ describe("createPrivateDirectory", () => {
     const root = await tempRoot();
     const target = path.join(root, "fallback");
     configureFsSafeNative({ mode: "off" });
-    await expectFsSafeError(createPrivateDirectory(target, { platform: "win32" }), "helper-unavailable");
+    await expectFsSafeError(
+      createPrivateDirectory(target, { platform: "win32" }),
+      "helper-unavailable",
+    );
     await expect(fs.stat(target)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -97,14 +102,28 @@ describe("createPrivateDirectory", () => {
       await fs.symlink(target, junction, "junction");
       const readOwnerAndDacl = vi.fn(native!.readOwnerAndDacl);
       __setNativeLoaderForTest(() => ({ ...native!, readOwnerAndDacl }));
-      for (const pathname of [target, file, junction]) {
-        readOwnerAndDacl.mockClear();
-        const summary = await inspectWindowsAcl(pathname);
-        expect(readOwnerAndDacl).toHaveBeenCalledTimes(pathname === junction ? 0 : 1);
-        const fallback = await inspectWindowsAcl(pathname, { exec: executePermissionCommand });
+      const inspections = [target, file, junction].map((pathname) => ({
+        pathname,
+        summary: inspectWindowsAcl(pathname),
+        fallback: inspectWindowsAcl(pathname, { exec: executePermissionCommand }),
+      }));
+      // These independent reads share one fixture. Join every process before
+      // asserting so a failed read cannot race fixture cleanup.
+      const settled = await Promise.allSettled(
+        inspections.flatMap(({ summary, fallback }) => [summary, fallback]),
+      );
+      for (const result of settled) {
+        if (result.status === "rejected") throw result.reason;
+      }
+      expect(readOwnerAndDacl.mock.calls.map(([pathname]) => pathname).sort()).toEqual(
+        [target, file].sort(),
+      );
+      for (const inspection of inspections) {
+        const summary = await inspection.summary;
+        const fallback = await inspection.fallback;
         expect(summary.ok).toBe(true);
         expect(summary).toEqual(fallback);
-        if (pathname !== junction) {
+        if (inspection.pathname !== junction) {
           expect(summary.trusted).toHaveLength(3);
           expect(summary.untrustedWorld).toEqual([]);
           expect(summary.untrustedGroup).toEqual([]);

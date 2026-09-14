@@ -21,6 +21,7 @@
 - Classify structured Windows ACL SID facts without a redundant account lookup, preserving fail-closed permission checks when account discovery is unavailable.
 - Reject negative, `NaN`, and negative-infinite file-lock stale thresholds before acquisition; negative thresholds can no longer force a live lock into stale recovery.
 - XFS clones preserve user extended attributes on read-only files and directories while retaining their exact modes and ACLs.
+- Add Linux ZFS directory cloning through the existing bounded file-reflink traversal, with independent destinations, metadata preservation, and strict no-copy-fallback behavior when cloning is required.
 - Confirm EOF when Linux copy offload initially reports zero bytes, so automatic file copies fall back to reading available data instead of publishing an empty file.
 - Avoid allocating zero-filled ranges during automatic Linux directory byte copies with the native binding, preserving file lengths, contents, metadata, and cancellation settlement without cloning or copy offload.
 - Preserve fractional access and modification timestamps during directory byte copying, including dates before 1970 on Unix, to the precision supported by Node and the destination filesystem.
@@ -29,6 +30,7 @@
 - Fix package consumer smoke and lifecycle tests with standalone `@pnpm/exe` installations, preserving the pinned pnpm version and isolated consumer configuration.
 - Report native Windows disk-full and sharing failures as `ENOSPC` and `EBUSY`, and return ReFS worker-start failures after joining admitted workers instead of panicking across the native boundary.
 - Reduce Windows copy allocation overhead by sizing native file buffers to small inputs, reusing directory enumeration buffers, and starting ReFS workers only as file jobs arrive.
+- Keep large zero-filled ranges sparse during native Windows byte copies into empty files, preserving exact lengths, independent contents, caller cursors, and existing-target overwrite behavior.
 - Add bounded recursive `Root.remove` with entry and depth limits, cancellation, missing-target handling, and exact directory/leaf identity checks without repeated sibling scans.
 - Share portable directory-copy workers across sibling directories, with bounded deferred directory completion, joined cancellation, and bottom-up timestamp restoration.
 - Add a streamed `Root.create` overload for async byte iterables, with bounded consumption, settled cancellation, and exclusive publication of completed contents through the existing guarded writer.

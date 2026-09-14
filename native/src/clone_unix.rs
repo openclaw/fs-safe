@@ -10,6 +10,7 @@ pub fn probe(parent_fd: i32) -> NativeResult<Option<String>> {
     let supported = match stats.f_type as u64 {
         0x9123_683e => Some("btrfs"),
         0x5846_5342 => Some("xfs"),
+        0x2fc1_2fc1 => Some("zfs"),
         _ => None,
     };
     #[cfg(target_os = "macos")]
@@ -173,13 +174,13 @@ pub fn create_source(parent_fd: i32, basename: &str) -> NativeResult<()> {
     require_supported(parent_fd)?;
     #[cfg(target_os = "linux")]
     {
-        if probe(parent_fd)?.as_deref() == Some("xfs") {
+        if matches!(probe(parent_fd)?.as_deref(), Some("xfs" | "zfs")) {
             return rustix::fs::mkdirat(
                 borrowed(parent_fd),
                 basename,
                 rustix::fs::Mode::from_bits_retain(0o700),
             )
-            .map_err(|error| os_error(error, "create XFS clone source directory"));
+            .map_err(|error| os_error(error, "create Linux clone source directory"));
         }
         const CREATE: rustix::ioctl::Opcode =
             rustix::ioctl::opcode::write::<BtrfsVolumeArgs>(0x94, 14);
@@ -214,7 +215,7 @@ pub fn clone_tree(
     }
     #[cfg(target_os = "linux")]
     {
-        if probe(parent_fd)?.as_deref() == Some("xfs") {
+        if matches!(probe(parent_fd)?.as_deref(), Some("xfs" | "zfs")) {
             return crate::clone_linux::clone_tree(
                 source_fd,
                 parent_fd,

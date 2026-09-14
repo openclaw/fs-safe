@@ -101,7 +101,7 @@ export interface NativeBinding {
     readEntry(index: number, maxBytes: number, signal?: AbortSignal): Promise<Buffer>;
   }>;
   readCloneFileMetadata(paths: string[]): Promise<(Buffer | null)[]>;
-  probeTreeClone(parentFd: number): "apfs" | "btrfs" | "refs" | "xfs" | null;
+  probeTreeClone(parentFd: number): "apfs" | "btrfs" | "refs" | "xfs" | "zfs" | null;
   cloneTree(
     sourceFd: number | null,
     parentFd: number,
