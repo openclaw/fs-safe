@@ -205,6 +205,17 @@ function directoryOperationPath(dir: string): string {
   return pathForWindowsFilesystem(directoryEntryPath(dir));
 }
 
+export function inspectDirectoryIdentitySync(
+  dir: string,
+  expected?: Pick<BigIntStats, "dev" | "ino">,
+): BigIntStats {
+  const operationPath = directoryOperationPath(dir);
+  const expectedIdentity = expected === undefined
+    ? undefined
+    : { dev: expected.dev, ino: expected.ino };
+  return inspectDirectoryIdentityAtPathSync(operationPath, expectedIdentity);
+}
+
 function inspectDirectoryIdentityAtPathSync(
   operationPath: string,
   expected?: Pick<BigIntStats, "dev" | "ino">,

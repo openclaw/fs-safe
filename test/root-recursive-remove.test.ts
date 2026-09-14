@@ -119,7 +119,7 @@ it("permits an empty directory at the depth limit but leaves deeper entries unto
   await expect(fs.stat(path.join(directory, "empty"))).rejects.toMatchObject({ code: "ENOENT" });
 });
 
-it("bounds wide-tree metadata work without rescanning remaining siblings", async () => {
+it.each(["filesystem", "sorted"] as const)("bounds wide-tree metadata work without rescanning remaining siblings (%s)", async order => {
   const directory = await tempRoot("fs-safe-recursive-wide-");
   const tree = path.join(directory, "tree");
   const width = 256;
@@ -127,18 +127,27 @@ it("bounds wide-tree metadata work without rescanning remaining siblings", async
   await Promise.all(Array.from({ length: width }, (_, index) => fs.writeFile(path.join(tree, `file-${index}`), "value")));
   const scoped = await root(directory);
   const metadata = vi.spyOn(fsSync, "lstatSync");
-  await scoped.remove("tree", { recursive: true, maxEntries: width + 1 });
+  await scoped.remove("tree", { recursive: true, maxEntries: width + 1, order });
   // Allow constant guard overhead per entry, but reject quadratic sibling admission.
   expect(metadata.mock.calls.length).toBeLessThan(width * 40);
   expect(await fs.readdir(directory)).toEqual([]);
 });
 
-it.each([-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])("rejects invalid removal budgets %s before I/O", async value => {
+it.each([-1, 1.5, Number.NaN, Number.NEGATIVE_INFINITY])("rejects invalid removal budgets %s before I/O", async value => {
   const { directory, scoped } = await fixture();
   for (const name of ["maxEntries", "maxDepth"] as const) {
     await expect(scoped.remove("tree", { recursive: true, [name]: value })).rejects.toBeInstanceOf(RangeError);
   }
   await expect(scoped.remove("tree", { maxEntries: 5 })).rejects.toBeInstanceOf(TypeError);
+  expect(await fs.readFile(path.join(directory, "tree/nested/value"), "utf8")).toBe("original");
+});
+
+it("rejects invalid or nonrecursive ordering before mutation", async () => {
+  const { directory, scoped } = await fixture();
+  // JavaScript consumers can supply values outside the declared option union.
+  // @ts-expect-error invalid runtime option
+  await expect(scoped.remove("tree", { recursive: true, order: "alphabetical" })).rejects.toBeInstanceOf(TypeError);
+  await expect(scoped.remove("tree", { order: "sorted" })).rejects.toBeInstanceOf(TypeError);
   expect(await fs.readFile(path.join(directory, "tree/nested/value"), "utf8")).toBe("original");
 });
 

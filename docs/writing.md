@@ -303,16 +303,30 @@ await fs.remove("scratch/finished-job", {
 | --- | --- |
 | `recursive` | `false`; opt in to removing non-empty directories. |
 | `force` | `false`; `true` tolerates missing targets and vanished child entries. Other errors still reject. |
+| `order` | `"filesystem"`; `"sorted"` collects and sorts child names lexicographically before descending. Requires `recursive: true`. |
 | `maxEntries` | `100_000` in recursive mode; counts the requested target and every encountered child, including directories and symlinks. |
 | `maxDepth` | `64` in recursive mode; the requested target has depth 0 and each child adds one. An empty directory at the limit can be removed. |
 | `signal` | Stops traversal and new mutations when aborted. Already dispatched work settles and directory handles close before rejection. |
 
-Budgets must be non-negative safe integers and require `recursive: true`.
-An entry or depth limit throws `too-large` before processing the over-budget
-entry; one directory-entry lookahead detects a limit without loading all names
-or inspecting later siblings. Each directory is streamed once in filesystem
-order. Recursion uses memory and open directory handles proportional to depth,
-not directory width. Newly added entries can make the final `rmdir` fail with
+Budgets must be non-negative safe integers or explicit `Infinity`, and require
+`recursive: true`. Omitted budgets retain their finite defaults. An entry or
+depth limit throws `too-large` before processing the over-budget entry.
+
+The default filesystem order streams each directory once, using memory and open
+handles proportional to depth rather than directory width. Sorted order also
+enumerates each directory once, but collects its names before descending and
+deletes directories after their children. It uses JavaScript's default string
+sort, not locale collation. Collected names consume the shared entry budget,
+including sibling names still pending while an earlier directory is traversed.
+With a finite budget, collection overflow rejects before processing that
+directory's children; one extra name distinguishes an exact limit from overflow.
+An `Infinity` entry budget uses a bulk name read while retaining the opened
+directory handle and identity checks. Sorted mode retains collected names, so
+unlimited budgets also permit unlimited name storage.
+
+Sorted traversal preserves lexicographic processing, not the incidental syscall
+timing of a caller that repeatedly rescans parent directories. Each child is
+inspected when visited. Newly added entries can make the final `rmdir` fail with
 `not-empty`; the operation does not retry indefinitely.
 
 Recursive removal never follows a discovered symlink or junction. With an
@@ -332,6 +346,33 @@ on Windows. If both traversal and close fail, `SuppressedError` retains both
 failures. Directory-stream filesystem errors use the same removal codes as
 `unlink` and `rmdir`, with the original error in `cause`; caller abort and
 authority refusals retain their original values.
+
+When `force: true` encounters a missing directory during an `opendir` or read,
+it closes any open stream and reaches the ordinary final target check. The
+surviving ancestors and original target identity are checked again; a replacement
+is never accepted as a missing directory. An actually vanished child does not
+prevent processing later siblings.
+
+Filesystem failures normalized by the recursive removal owner and its direct
+symlink rejections carry additional `FsSafeError.details` context:
+
+```ts
+type RemoveFailureDetails = {
+  operation: "remove";
+  phase: "enumerate" | "inspect" | "remove";
+  relativePath: string;
+};
+```
+
+`relativePath` is relative to the requested removal target, using host path
+separators: `""` identifies that target and `"nested/link"` identifies a child
+on POSIX. It does not replace caller spelling with the canonical Root path.
+`enumerate` covers directory stream operations, `inspect` covers initial child
+observations, and `remove` covers final identity checks and unlink/rmdir failures.
+The existing error codes, messages, and causes remain unchanged. Errors that
+already have their own identity, including caller authority and cancellation
+reasons, are propagated without adding or changing their details. Context is
+diagnostic; it is not permission to retry or mutate an entry.
 
 Removal is incremental, not atomic. A later budget, cancellation, identity, or
 filesystem failure does not restore already removed entries. As with existing

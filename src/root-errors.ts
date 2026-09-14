@@ -1,12 +1,12 @@
-import { FsSafeError } from "./errors.js";
+import { FsSafeError, type FsSafeErrorDetails } from "./errors.js";
 import { hasNodeErrorCode, isNodeError, isNotFoundPathError } from "./path.js";
 
 const REMOVE_NOT_EMPTY_CODES = new Set(["ENOTEMPTY", "EEXIST"]);
 
-export function fileNotFoundError(cause?: unknown): FsSafeError {
+export function fileNotFoundError(cause?: unknown, details?: FsSafeErrorDetails): FsSafeError {
   return cause === undefined
-    ? new FsSafeError("not-found", "file not found")
-    : new FsSafeError("not-found", "file not found", { cause });
+    ? new FsSafeError("not-found", "file not found", { details })
+    : new FsSafeError("not-found", "file not found", { cause, details });
 }
 
 export function outsideWorkspaceError(): FsSafeError {
@@ -43,40 +43,41 @@ export function normalizePinnedWriteError(error: unknown): Error {
   });
 }
 
-export function normalizePinnedPathError(error: unknown): Error {
+export function normalizePinnedPathError(error: unknown, details?: FsSafeErrorDetails): Error {
   if (error instanceof FsSafeError) {
     return error;
   }
   return new FsSafeError("path-alias", "path is not under root", {
     cause: error instanceof Error ? error : undefined,
+    details,
   });
 }
 
-export function normalizeRemoveGuardError(error: unknown): Error {
+export function normalizeRemoveGuardError(error: unknown, details?: FsSafeErrorDetails): Error {
   if (error instanceof FsSafeError) {
     return error;
   }
   if (isNotFoundPathError(error)) {
-    return fileNotFoundError(error instanceof Error ? error : undefined);
+    return fileNotFoundError(error instanceof Error ? error : undefined, details);
   }
-  return normalizePinnedPathError(error);
+  return normalizePinnedPathError(error, details);
 }
 
-export function normalizeRemovePathError(error: unknown): Error {
+export function normalizeRemovePathError(error: unknown, details?: FsSafeErrorDetails): Error {
   if (error instanceof FsSafeError) {
     return error;
   }
   if (!isNodeError(error) || typeof error.code !== "string") {
-    return normalizePinnedPathError(error);
+    return normalizePinnedPathError(error, details);
   }
   const cause = error instanceof Error ? error : undefined;
   if (isNotFoundPathError(error)) {
-    return fileNotFoundError(cause);
+    return fileNotFoundError(cause, details);
   }
   if (REMOVE_NOT_EMPTY_CODES.has(error.code)) {
-    return new FsSafeError("not-empty", "directory is not empty", { cause });
+    return new FsSafeError("not-empty", "directory is not empty", { cause, details });
   }
-  return new FsSafeError("not-removable", "path could not be removed", { cause });
+  return new FsSafeError("not-removable", "path could not be removed", { cause, details });
 }
 
 export function throwFsSafeReadError(error: unknown, label: string): never {

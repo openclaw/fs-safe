@@ -11,6 +11,7 @@ import {
   createNearestExistingSyncDirectoryGuard,
   createSyncDirectoryGuard,
   inspectDirectoryIdentity,
+  inspectDirectoryIdentitySync,
   readDirectoryIdentity,
 } from "../src/directory-guard.js";
 import * as realpath from "../src/realpath.js";
@@ -110,6 +111,8 @@ describe("directory guard Windows pathname admission", () => {
     const canonicalize = vi.spyOn(realpath.realpathSync, "native");
 
     await expect(readDirectoryIdentity(alias)).rejects.toMatchObject(aliasError);
+    expect(() => inspectDirectoryIdentitySync(alias, expected))
+      .toThrow(expect.objectContaining(aliasError));
     expect(() => assertDirectoryIdentitySync(alias, expected))
       .toThrow(expect.objectContaining(aliasError));
     expect(reads).toEqual({ dev: 0, ino: 0, realPath: 0 });
@@ -194,6 +197,10 @@ describe("directory guard Windows pathname admission", () => {
     await expect(inspectDirectoryIdentity(erasedAlias)).rejects.toMatchObject(aliasError);
     await expect(inspectDirectoryIdentity(erasedAlias, exact.stat))
       .rejects.toMatchObject(aliasError);
+    expect(() => inspectDirectoryIdentitySync(erasedAlias))
+      .toThrow(expect.objectContaining(aliasError));
+    expect(() => inspectDirectoryIdentitySync(erasedAlias, exact.stat))
+      .toThrow(expect.objectContaining(aliasError));
     expect(lstat).not.toHaveBeenCalled();
   });
 

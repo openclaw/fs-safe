@@ -25,14 +25,20 @@ const DEFAULT_MAX_ENTRIES = 100_000;
 const DEFAULT_MAX_DEPTH = 64;
 
 export function validateRemoveOptions(options: RootRemoveOptions): void {
+  if (options.order !== undefined && options.order !== "filesystem" && options.order !== "sorted") {
+    throw new TypeError("remove order must be filesystem or sorted");
+  }
   for (const key of ["maxEntries", "maxDepth"] as const) {
     const value = options[key];
-    if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) {
+    if (value !== undefined && value !== Number.POSITIVE_INFINITY && (!Number.isSafeInteger(value) || value < 0)) {
       throw new RangeError(`${key} must be a non-negative safe integer`);
     }
   }
   if (!options.recursive && (options.maxEntries !== undefined || options.maxDepth !== undefined)) {
     throw new TypeError("remove budgets require recursive: true");
+  }
+  if (!options.recursive && options.order !== undefined) {
+    throw new TypeError("remove order requires recursive: true");
   }
 }
 
@@ -89,6 +95,11 @@ export async function removePathInRootFallback(
 
   const maxEntries = options.maxEntries ?? DEFAULT_MAX_ENTRIES;
   const maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
+  const details = (target: string, phase: "enumerate" | "inspect" | "remove") => ({
+    operation: "remove",
+    phase,
+    relativePath: path.relative(targetPath, target),
+  });
   let examined = 0;
   const rootGuard = await createAsyncDirectoryGuard(root.rootReal, { bigint: true });
   if (!sameFileIdentityForCleanup(rootGuard.stat, root.rootIdentity)) throw rootPathChangedError();
@@ -130,21 +141,23 @@ export async function removePathInRootFallback(
       return inspectFileIdentitySync(() => fsSync.lstatSync(target, { bigint: true }), expected);
     } catch (error) {
       if (options.force && isNotFoundPathError(error)) return;
-      throw normalizeRemovePathError(error);
+      throw normalizeRemovePathError(error, details(target, expected ? "remove" : "inspect"));
     }
   };
 
-  async function visit(target: string, depth: number): Promise<void> {
+  async function visit(target: string, depth: number, entryCounted = false): Promise<void> {
     assertNotAborted(options.signal);
-    if (examined >= maxEntries || depth > maxDepth) {
-      throw new FsSafeError("too-large", "recursive removal budget exceeded");
+    if ((!entryCounted && examined >= maxEntries) || depth > maxDepth) {
+      throw new FsSafeError("too-large", "recursive removal budget exceeded", {
+        details: details(target, "inspect"),
+      });
     }
-    examined += 1;
+    if (!entryCounted) examined += 1;
     await assertMutationNotDenied(target, options.denyMutations, { protectAncestors: true });
     assertNotAborted(options.signal);
     const initial = inspect(target);
     if (!initial) return;
-    assertFinalSymlinkRejected(target, options.mutationSymlinks !== undefined);
+    assertFinalSymlinkRejected(target, options.mutationSymlinks !== undefined, details(target, "inspect"));
     if (initial.isDirectory()) {
       let directoryGuard: AsyncDirectoryGuard<BigIntStats>;
       try {
@@ -153,7 +166,7 @@ export async function removePathInRootFallback(
         assertCurrent();
         assertNotAborted(options.signal);
         if (options.force && isNotFoundPathError(error)) return;
-        throw normalizeRemovePathError(error);
+        throw normalizeRemovePathError(error, details(target, "inspect"));
       }
       if (!isPathInside(directoryGuard.realPath, target) || !isPathInside(target, directoryGuard.realPath) ||
         !sameFileIdentityForCleanup(directoryGuard.stat, initial)) {
@@ -164,49 +177,97 @@ export async function removePathInRootFallback(
         assertCurrent();
         assertNotAborted(options.signal);
         const handle = await fs.opendir(target, { bufferSize: 1 }).catch(error => {
-          throw normalizeRemovePathError(error);
-        });
-        let failed = false;
-        let operationError: unknown;
-        try {
-          while (true) {
-            assertCurrent();
+          if (options.force && isNotFoundPathError(error)) {
             assertNotAborted(options.signal);
-            const entry = await handle.read().catch(error => { throw normalizeRemovePathError(error); });
-            assertCurrent();
-            assertNotAborted(options.signal);
-            if (!entry) break;
-            await visit(path.join(target, entry.name), depth + 1);
+            return undefined;
           }
-        } catch (error) {
-          failed = true;
-          operationError = error instanceof MutationAuthorityError ? error.rejection : error;
-          throw error;
-        } finally {
+          throw normalizeRemovePathError(error, details(target, "enumerate"));
+        });
+        if (handle) {
+          let failed = false;
+          let operationError: unknown;
           try {
-            // Close before rmdir, including on Windows and after revocation.
-            await handle.close();
+            let names: string[] | undefined = options.order === "sorted" ? [] : undefined;
+            if (names && maxEntries === Infinity) {
+              assertCurrent();
+              assertNotAborted(options.signal);
+              const snapshot = await fs.readdir(target).catch(error => {
+                if (options.force && isNotFoundPathError(error)) return undefined;
+                throw normalizeRemovePathError(error, details(target, "enumerate"));
+              });
+              assertNotAborted(options.signal);
+              if (snapshot) {
+                assertCurrent();
+                names = snapshot;
+                examined += names.length;
+              }
+            } else {
+              while (true) {
+                assertCurrent();
+                assertNotAborted(options.signal);
+                const entry = await handle.read().catch(error => {
+                  if (options.force && isNotFoundPathError(error)) return undefined;
+                  throw normalizeRemovePathError(error, details(target, "enumerate"));
+                });
+                if (entry === undefined) {
+                  assertNotAborted(options.signal);
+                  if (names) names.length = 0;
+                  break;
+                }
+                assertCurrent();
+                assertNotAborted(options.signal);
+                if (!entry) break;
+                if (names) {
+                  if (examined >= maxEntries) {
+                    throw new FsSafeError("too-large", "recursive removal budget exceeded", {
+                      details: details(path.join(target, entry.name), "enumerate"),
+                    });
+                  }
+                  examined += 1;
+                  names.push(entry.name);
+                } else {
+                  await visit(path.join(target, entry.name), depth + 1);
+                }
+              }
+            }
+            if (names) {
+              for (const name of names.sort()) {
+                await visit(path.join(target, name), depth + 1, true);
+              }
+            }
           } catch (error) {
-            const closeError = normalizeRemovePathError(error);
-            if (failed) throw createSuppressedError(closeError, operationError, "recursive removal and close both failed");
-            throw closeError;
+            failed = true;
+            operationError = error instanceof MutationAuthorityError ? error.rejection : error;
+            throw error;
+          } finally {
+            try {
+              // Close before rmdir, including on Windows and after revocation.
+              await handle.close();
+            } catch (error) {
+              const closeError = normalizeRemovePathError(error, details(target, "enumerate"));
+              if (failed) throw createSuppressedError(closeError, operationError, "recursive removal and close both failed");
+              throw closeError;
+            }
           }
         }
       } finally {
         guards.pop();
       }
     }
+    // A tolerated missing-directory observation still rechecks its target and ancestors.
     await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("remove", target);
     await assertMutationNotDenied(target, options.denyMutations, { protectAncestors: true });
     assertNotAborted(options.signal);
     if (!inspect(target, initial)) return;
-    assertFinalSymlinkRejected(target, options.mutationSymlinks !== undefined);
+    assertFinalSymlinkRejected(target, options.mutationSymlinks !== undefined, details(target, "remove"));
     assertNotAborted(options.signal);
     options.assertBeforeMutation?.();
     try {
       await (initial.isDirectory() ? fs.rmdir(target) : fs.unlink(target));
     } catch (error) {
-      if (!(options.force && isNotFoundPathError(error))) throw normalizeRemovePathError(error);
+      if (!(options.force && isNotFoundPathError(error))) {
+        throw normalizeRemovePathError(error, details(target, "remove"));
+      }
     }
     assertCurrent();
     assertNotAborted(options.signal);
