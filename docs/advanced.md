@@ -33,6 +33,7 @@ The exports group into a handful of themes. Each documented helper has its own p
 | `resolveRootPath`, `resolveRootPathSync`, `ResolvedRootPath`, `ROOT_PATH_ALIAS_POLICIES`, `RootPathAliasPolicy` | – | Resolve a root directory honoring alias policy. |
 | `resolvePathViaExistingAncestorSync` | – | Walk to an existing ancestor for paths whose tail does not yet exist. |
 | `probePathCaseInsensitiveSync`, `ProbePathCaseOptions` | [path-case.md](path-case.md) | Observe local ASCII-case behavior with explicit read-only mode and owned temporary-probe cleanup. |
+| `probePathSuffixAliasesSync`, `ProbePathSuffixAliasesOptions` | [path-suffix-aliases.md](path-suffix-aliases.md) | Compare complete missing suffixes through owned directory probes on the current filesystem; unavailable observations return `undefined`. |
 
 `ensureDirectoryWithinRoot({ rootDir, requestedPath, scopeLabel, defaultDirName?, mode? })`
 returns `{ ok: true, path }` or `{ ok: false, error: string, diagnostic?: FsSafeError }`.

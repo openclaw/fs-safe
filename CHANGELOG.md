@@ -68,6 +68,8 @@
 
 - Add sorted recursive removal and explicit unlimited entry/depth budgets through `Root.remove`, with caller-relative failure context, preserved mutation authority and cancellation settlement, and continued sibling cleanup when a child directory disappears under `force`.
 
+- Add synchronous whole-suffix case and Unicode alias probing through owned temporary directories, with caller-supplied case policy, exact identity checks, and an explicit unknown result when observation or cleanup cannot complete.
+
 ## 0.10.0 - 2026-09-13
 
 ### Highlights

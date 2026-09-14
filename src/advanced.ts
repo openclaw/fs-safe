@@ -5,6 +5,7 @@ export { createAsyncLock } from "./async-lock.js";
 export { copyFileHandle, type CopyFileHandleOptions } from "./file-handle-transfer.js";
 export { overwriteFileHandle, type OverwriteFileHandleOptions } from "./overwrite-file-handle.js";
 export { probePathCaseInsensitiveSync, type ProbePathCaseOptions } from "./path-case.js";
+export { probePathSuffixAliasesSync, type ProbePathSuffixAliasesOptions } from "./path-suffix-aliases.js";
 export {
   readDirectoryIdentity,
   assertDirectoryIdentitySync,
