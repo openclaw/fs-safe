@@ -1,5 +1,5 @@
 import path from "node:path";
-import { WINDOWS_RESERVED_DEVICE_NAMES } from "./device-path.js";
+import { isWindowsReservedDeviceName, WINDOWS_RESERVED_DEVICE_NAMES } from "./device-path.js";
 import { maxNormalizedUtf8Bytes } from "./unicode-path.js";
 
 const INVALID_FILE_NAME_CHARACTERS = /[\u0000-\u001f\u007f-\u009f<>:"/\\|?*]/g;
@@ -16,7 +16,7 @@ function trimWindowsIgnoredSuffix(value: string): string {
   return end === value.length ? value : value.slice(0, end);
 }
 
-function suffixWindowsReservedDeviceName(fileName: string): string {
+export function suffixWindowsReservedDeviceName(fileName: string): string {
   const extensionIndex = fileName.indexOf(".");
   const baseNameEnd = extensionIndex < 0 ? fileName.length : extensionIndex;
   const baseName = fileName.slice(0, baseNameEnd);
@@ -28,6 +28,16 @@ function suffixWindowsReservedDeviceName(fileName: string): string {
 }
 
 const PORTABLE_FILE_NAME_BYTES = 255;
+const UNTRUSTED_FILE_NAME_CODE_UNITS = 200;
+
+function truncateWithoutSplittingSurrogatePair(value: string, maxLength: number): string {
+  let truncated = value.slice(0, maxLength);
+  const trailingCodeUnit = truncated.charCodeAt(truncated.length - 1);
+  if (trailingCodeUnit >= 0xd800 && trailingCodeUnit <= 0xdbff) {
+    truncated = truncated.slice(0, -1);
+  }
+  return truncated;
+}
 
 function normalizedFileNameBytes(value: string): number {
   return maxNormalizedUtf8Bytes(value, true);
@@ -82,11 +92,12 @@ export function sanitizeUntrustedFileName(fileName: string, fallbackName: string
     return fallbackName;
   }
   base = suffixWindowsReservedDeviceName(base);
-  if (base.length > 200) {
-    base = base.slice(0, 200);
-    const trailingCodeUnit = base.charCodeAt(base.length - 1);
-    if (trailingCodeUnit >= 0xd800 && trailingCodeUnit <= 0xdbff) {
-      base = base.slice(0, -1);
+  if (base.length > UNTRUSTED_FILE_NAME_CODE_UNITS) {
+    base = truncateWithoutSplittingSurrogatePair(base, UNTRUSTED_FILE_NAME_CODE_UNITS);
+    if (isWindowsReservedDeviceName(base)) {
+      base = suffixWindowsReservedDeviceName(
+        truncateWithoutSplittingSurrogatePair(base, UNTRUSTED_FILE_NAME_CODE_UNITS - 1),
+      );
     }
   }
   return base;
