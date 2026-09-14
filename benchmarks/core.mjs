@@ -28,6 +28,9 @@ export async function registerCore({ api: a, workspace: w, register: add, contra
   add("probePathCaseInsensitiveSync", () => a.probePathCaseInsensitiveSync(input, { allowTemporaryProbe: false }), {
     sync: true, verify: (observed) => assert.equal(observed, caseInsensitive),
   });
+  add("probePathSuffixAliasesSync", () => a.probePathSuffixAliasesSync({
+    directory: w, left: "Future.sqlite", right: "future.sqlite",
+  }), { sync: true, divisor: 10, verify: (observed) => assert.equal(observed, caseInsensitive) });
   contract("Root", safe);
   add("root", () => a.root(w));
   for (const name of ["resolve", "read", "readBytes", "readText", "readJson", "exists", "stat"]) {

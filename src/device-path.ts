@@ -75,7 +75,7 @@ function trimTrailingWindowsSeparators(value: string): string {
   return end === value.length ? value : value.slice(0, end);
 }
 
-function trimTrailingWindowsIgnoredChars(value: string): string {
+export function trimTrailingWindowsIgnoredChars(value: string): string {
   let end = value.length;
   while (end > 0) {
     const charCode = value.charCodeAt(end - 1);

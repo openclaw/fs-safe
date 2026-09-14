@@ -56,6 +56,11 @@ prefix preparation. See [in-place writes](in-place-write.md).
 for local ASCII-case observations. An unavailable answer remains `undefined`;
 the caller selects any fallback. See [path case probing](path-case.md).
 
+`probePathSuffixAliasesSync` and `ProbePathSuffixAliasesOptions` compare complete
+missing relative suffixes through owned directory probes, with optional caller
+case policy and an explicit `undefined` result for observation or cleanup
+uncertainty. See [path suffix alias probing](path-suffix-aliases.md).
+
 ## Guest source
 
 `@openclaw/fs-safe/guest` exports `GUEST_FILESYSTEM_PYTHON`,

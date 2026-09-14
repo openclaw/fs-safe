@@ -67,6 +67,10 @@
 - Support standalone `@pnpm/exe` in consumer smoke and lifecycle tests while retaining the declared pnpm version and isolated consumer configuration. Strengthen exact-inode durability checks and batch independent native ACL test observations.
 - Expand method benchmarks to 557 representative workloads across Linux, macOS, and Windows, with native/JavaScript modes, equal-concurrency copy comparisons, large collections, contention, and explicit platform exclusions. Verify returned data and digests, initialize private Windows fixture ACLs, apply synchronous iteration reductions consistently, and handle expected synchronous rejections during timed calls as well as warmup.
 
+- Add synchronous whole-suffix case and Unicode alias probing through owned temporary directories, with caller-supplied case policy, exact identity checks, and an explicit unknown result when observation or cleanup cannot complete.
+
+- Keep reserved-name checks responsive on long inputs by sharing linear Windows trailing-dot/space trimming between filename sanitization and suffix-alias probes.
+
 ## 0.10.0 - 2026-09-13
 
 ### Highlights
