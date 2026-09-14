@@ -268,9 +268,18 @@ await fs.move("incoming/foo.txt", "archive/foo.txt", { overwrite: true });
 
 Both `from` and `to` are bounded; `..` in either is rejected.
 
-The JavaScript fallback checks both parent directories before and after the
-rename. A failed post-operation check rejects even though the rename may
-already have completed; rejection does not imply rollback.
+The default no-clobber mode requires the native helper. It admits both parent
+directory descriptors and performs a descriptor-relative no-replace rename, so
+a competitor that creates the target first is preserved and the source remains
+in place. If the helper or safe parent admission is unavailable, the call fails
+with `helper-unavailable`; it never falls back to a check followed by a
+replacing rename. After dispatch it rechecks both parent identities, so a
+post-operation rejection can mean the no-replace rename completed. Directory
+moves continue to require `overwrite: true`.
+
+For `{ overwrite: true }`, the JavaScript path checks both parent directories
+before and after the rename. A failed post-operation check rejects even though
+the rename may already have completed; rejection does not imply rollback.
 
 ### `fs.remove(rel)`
 

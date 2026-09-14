@@ -158,7 +158,7 @@ async function mutate(safe: Root, method: Mutation, relative: string, source: st
     try { await opened.handle.writeFile("changed"); }
     finally { await opened.handle.close(); }
   } else if (method === "copyIn") await safe.copyIn(relative, source, options);
-  else if (method === "move-source") await safe.move(relative, "moved", options);
+  else if (method === "move-source") await safe.move(relative, "moved", { ...options, overwrite: true });
   else if (method === "move-target") await safe.move("source", relative, { ...options, overwrite: true });
   else if (method === "remove" || method === "mkdir") await safe[method](relative, options);
   else await safe[method](relative, "changed", options);

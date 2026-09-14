@@ -1,24 +1,23 @@
 import fsSync from "node:fs";
-import fs from "node:fs/promises";
 import path from "node:path";
-import { inspectDirectoryIdentity } from "./directory-guard.js";
-import { FsSafeError } from "./errors.js";
 import type { FileIdentityStat } from "./file-identity.js";
-import { runPinnedWriteWindows, sameNativeIdentity } from "./native-pinned-write-windows.js";
+import { runPinnedWriteWindows } from "./native-pinned-write-windows.js";
+import { openNativeParentAdmission, openNativeRootAdmission } from "./native-parent-admission.js";
 import { assertNativeStaging, writeNativeStage, type NativeStagingBinding } from "./native-staged-file.js";
 import type { NativeBinding } from "./native.js";
 import type { PinnedWriteParams } from "./pinned-write.js";
-import { describeStagedDirectory, exactIdentityMatches } from "./staged-directory.js";
-import { inspectFileIdentitySync } from "./strict-file-identity.js";
-import { realpathSync } from "./realpath.js";
 
 export async function runPinnedWriteNative(binding: NativeBinding, params: PinnedWriteParams): Promise<FileIdentityStat> {
   const windows = process.platform === "win32";
   if (!windows) {
     assertNativeStaging(binding);
   }
-  const directoryFlags = fsSync.constants.O_RDONLY | (fsSync.constants.O_DIRECTORY ?? 0);
-  const root = await fs.open(params.rootPath, directoryFlags);
+  const rootAdmission = await openNativeRootAdmission(binding, {
+    rootPath: params.rootPath,
+    rootIdentity: params.rootIdentity,
+    operation: "native write",
+  });
+  const root = rootAdmission.root;
   await using posixRoot = windows ? undefined : root;
   let parentFd: number | undefined;
   let windowsOwnsDirectories = false;
@@ -32,52 +31,20 @@ export async function runPinnedWriteNative(binding: NativeBinding, params: Pinne
     },
   };
   try {
-    const exactRoot = typeof params.rootIdentity?.dev === "bigint" && typeof params.rootIdentity.ino === "bigint"
-      ? { dev: params.rootIdentity.dev, ino: params.rootIdentity.ino } : undefined;
-    let rootMatches: boolean;
-    if (exactRoot) {
-      inspectFileIdentitySync(() => fsSync.fstatSync(root.fd, { bigint: true }), exactRoot);
-      rootMatches = true;
-    } else if (windows) {
-      const identity = binding.fstatIdentity(root.fd);
-      rootMatches = !params.rootIdentity || sameNativeIdentity(params.rootIdentity, identity);
-    } else {
-      const identity = fsSync.fstatSync(root.fd, { bigint: true });
-      rootMatches = !params.rootIdentity || exactIdentityMatches(params.rootIdentity, identity);
-    }
-    if (!rootMatches) {
-      throw new FsSafeError("path-mismatch", "root path changed during native write");
-    }
     if (params.mkdir) {
       params.assertBeforeMutation?.();
       binding.mkdirBeneath(root.fd, params.relativeParentPath, 0o777);
     }
-    parentFd = binding.openBeneath(
-      root.fd,
+    const parent = await openNativeParentAdmission(
+      binding,
+      rootAdmission,
       params.relativeParentPath,
-      directoryFlags,
-    ).fd;
-    const parentPath = realpathSync.native(
-      params.relativeParentPath
-        ? path.join(params.rootPath, ...params.relativeParentPath.split("/"))
-        : params.rootPath,
     );
-    const directory = windows ? undefined : describeStagedDirectory(parentFd, parentPath);
-    const parentPathStat = exactRoot
-      ? await inspectDirectoryIdentity(parentPath, inspectFileIdentitySync(() => fsSync.fstatSync(parentFd!, { bigint: true })))
-      : fsSync.lstatSync(parentPath);
-    if (windows && !exactRoot) {
-      const parentIdentity = binding.fstatIdentity(parentFd);
-      if (parentPathStat.isSymbolicLink() || !sameNativeIdentity(parentPathStat, parentIdentity)) {
-        throw new FsSafeError("path-mismatch", "native write parent changed during resolution");
-      }
-    } else if (!windows && (parentPathStat.isSymbolicLink() || !exactIdentityMatches(parentPathStat, directory!.identity))) {
-      throw new FsSafeError("path-mismatch", "native write parent changed during resolution");
-    }
-    const verificationGuard = { dir: parentPath, realPath: parentPath, stat: parentPathStat };
+    parentFd = parent.fd;
+    const verificationGuard = parent.guard;
     if (params.overwrite === false) {
       try {
-        fsSync.lstatSync(path.join(parentPath, params.basename));
+        fsSync.lstatSync(path.join(parent.guard.realPath, params.basename));
         throw Object.assign(new Error("destination already exists"), { code: "EEXIST" });
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
@@ -93,7 +60,7 @@ export async function runPinnedWriteNative(binding: NativeBinding, params: Pinne
     const ownedParent = parentFd;
     parentFd = undefined;
     return await writeNativeStage(
-      binding as NativeStagingBinding, ownedParent, directory!, params, verificationGuard,
+      binding as NativeStagingBinding, ownedParent, parent.stagedDirectory!, params, verificationGuard,
     );
   } finally {
     if (windows && !windowsOwnsDirectories) {

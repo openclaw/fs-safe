@@ -103,6 +103,8 @@ describe("platform fallback coverage", () => {
 
   it("maps Windows fallback mutation failures to stable FsSafeError codes", async () => {
     const { root: openRoot } = await importRootForPlatform("win32");
+    const { configureFsSafeNative } = await import("../src/native-config.js");
+    configureFsSafeNative({ mode: "off" });
     const rootDir = await tempRoot("fs-safe-win-errors-");
     const scoped = await openRoot(rootDir, { mkdir: true });
 
@@ -137,7 +139,7 @@ describe("platform fallback coverage", () => {
     await expect(scoped.move("source.txt", "existing.txt"))
       .rejects.toMatchObject({ code: "already-exists" });
     await expect(scoped.move("source.txt", "missing-parent/moved.txt"))
-      .rejects.toMatchObject({ code: "not-found" });
+      .rejects.toMatchObject({ code: "helper-unavailable" });
 
     await expect(fs.readFile(path.join(rootDir, "source.txt"), "utf8")).resolves.toBe("source");
     await expect(fs.readFile(path.join(rootDir, "existing.txt"), "utf8")).resolves.toBe("existing");

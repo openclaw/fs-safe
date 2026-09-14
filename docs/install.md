@@ -127,9 +127,10 @@ the matching binary. Consumers do not run a native build, download code at
 runtime, or execute a postinstall step. Omitting optional dependencies keeps
 non-archive fallback-capable operations working in `auto` or `off`. Native-only
 features, including strict owned-tree temp cleanup, retained-directory staging,
-atomic `rename-noreplace`, zstd/bzip2 TAR handling, and Windows private-directory
-creation, remain unavailable. Operations needing the binding in `require` mode fail with
-`helper-unavailable` when the matching package is absent or incompatible.
+atomic `rename-noreplace` (including the default no-clobber `Root.move()`),
+zstd/bzip2 TAR handling, and Windows private-directory creation, remain
+unavailable. Operations without a safe fallback fail with `helper-unavailable`
+when the matching package is absent, incompatible, or disabled.
 
 Upgrading an existing 0.5 consumer? Follow [Migrating to 0.6](migrating-to-0.6.md)
 before deploying with native mode `require` or native-only features.
@@ -138,15 +139,15 @@ before deploying with native mode `require` or native-only features.
 
 The platform native binaries provide fd-relative open/link/mkdir primitives,
 atomic no-replace rename, and file identity checks. The default is `auto`: use
-the matching binary when it loads, otherwise silently keep the guarded
-JavaScript path. Platforms without one of the seven published targets therefore
-continue through the documented fallback in `auto` mode.
+the matching binary when it loads, otherwise use the guarded JavaScript path
+where a safe fallback exists. Native-only operations fail with
+`helper-unavailable`.
 
 ```ts
 import { configureFsSafeNative } from "@openclaw/fs-safe/config";
 
 configureFsSafeNative({ mode: "auto" });    // default
-configureFsSafeNative({ mode: "off" });     // guarded JavaScript only
+configureFsSafeNative({ mode: "off" });     // guarded JavaScript; reject native-only operations
 configureFsSafeNative({ mode: "require" }); // fail closed if unavailable
 ```
 

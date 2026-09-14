@@ -60,7 +60,7 @@ await fs.move("notes/today.txt", "notes/archive/today.txt", { overwrite: true })
 await fs.remove("notes/archive/today.txt");
 ```
 
-`move()` defaults to no clobber. Pass `{ overwrite: true }` when replacing the target is intentional. `remove()` works on files and empty directories. For non-empty directories, list and remove children first or use [`replaceDirectoryAtomic`](atomic.md#replacedirectoryatomic).
+`move()` defaults to no clobber. That mode requires the native helper so a concurrent target cannot be replaced between an absence check and the rename; without it, the call fails with `helper-unavailable`. Pass `{ overwrite: true }` when replacing the target is intentional. `remove()` works on files and empty directories. For non-empty directories, list and remove children first or use [`replaceDirectoryAtomic`](atomic.md#replacedirectoryatomic).
 
 ## 5. Inspect
 

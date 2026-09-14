@@ -57,7 +57,7 @@ This is a **library-level guardrail**, not OS-level isolation. It does not repla
 pnpm add @openclaw/fs-safe
 ```
 
-Node 22 or newer. Core root/path/json/temp helpers avoid framework dependencies. With all optional dependencies omitted, public subpaths remain safe to import and non-archive fallback-capable operations work in `auto` or `off`. Native-only features remain unavailable, and operations needing the binding in `require` mode fail with `helper-unavailable`. TAR/gzip fallback uses the bundled WASM build of the same Rust parser as native and works with optional dependencies omitted. ZIP fallback still needs optional `jszip`. See the [0.6 migration guide](docs/migrating-to-0.6.md).
+Node 22 or newer. Core root/path/json/temp helpers avoid framework dependencies. With all optional dependencies omitted, public subpaths remain safe to import and fallback-capable operations work in `auto` or `off`. Native-only features, including no-clobber `Root.move()`, remain unavailable and fail with `helper-unavailable`. TAR/gzip fallback uses the bundled WASM build of the same Rust parser as native and works with optional dependencies omitted. ZIP fallback still needs optional `jszip`. See the [0.6 migration guide](docs/migrating-to-0.6.md).
 
 Bun 1.4.2 is also supported with the [Bun runtime requirements](docs/install.md#bun-runtime), including the matching Rust addon on macOS and Linux. JIT-disabled Bun works too.
 
@@ -164,7 +164,7 @@ are written, support `maxBytes` and `signal`, and recheck mutation authority
 before writes and publication. See [streamed creation](docs/writing.md#streamed-creation)
 for producer ownership and cancellation semantics.
 
-`write()` replaces file contents by default; pass `{ overwrite: false }` or use `create()` when an existing file should be an error. `move()` defaults to no clobber because it can otherwise delete an unrelated target while also consuming the source. Pass `{ overwrite: true }` when replacing the target is intended.
+`write()` replaces file contents by default; pass `{ overwrite: false }` or use `create()` when an existing file should be an error. `move()` defaults to no clobber because it can otherwise delete an unrelated target while also consuming the source. No-clobber moves require the native helper so the collision decision and rename are one descriptor-relative operation; they fail with `helper-unavailable` rather than falling back to a replacing rename. Pass `{ overwrite: true }` when replacing the target is intended.
 
 Mutating methods accept `assertBeforeMutation: () => void` for live lease or
 cancellation checks immediately before filesystem dispatch. Root defaults and

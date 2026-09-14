@@ -143,7 +143,7 @@ describe("drive-relative relative paths", () => {
         }
         expect(walked).toEqual(["c:folder/entry.txt"]);
 
-        await root.move("c:move.txt", "moved.txt");
+        await root.move("c:move.txt", "moved.txt", { overwrite: true });
         await expect(readFile(path.join(rootDir, "moved.txt"), "utf8")).resolves.toBe("move");
         await root.remove("c:remove.txt");
         await expect(root.exists("c:remove.txt")).resolves.toBe(false);

@@ -45,7 +45,7 @@ it.each(["remove", "move-source", "move-target"].flatMap(operation =>
         await rename(from, to);
         await replaceParent(operation === "move-source" ? sourceDir : targetDir);
       });
-      await expect(scoped.move("source/value", "target/value")).rejects.toMatchObject({
+      await expect(scoped.move("source/value", "target/value", { overwrite: true })).rejects.toMatchObject({
         code: missing ? "path-alias" : "path-mismatch",
         message: expect.not.stringContaining(dir),
       });
