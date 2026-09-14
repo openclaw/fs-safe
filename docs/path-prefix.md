@@ -51,6 +51,11 @@ the remaining suffix, so revisiting a link with a shorter suffix is permitted.
 Traversing through a non-directory, including `file/..`, `file/.`, or `file/`,
 rejects with `ENOTDIR`.
 
+Dot and parent components require the directory's search permission before
+they are collapsed. Native realpath alone does not establish this permission
+on every platform. Empty components from repeated or trailing separators do
+not introduce a `.` lookup.
+
 This is a read-only path observation. It neither pins files nor creates a root
 boundary, authorizes access, or guarantees a consistent snapshot during
 concurrent changes. Results can become stale immediately. Use a guarded Root

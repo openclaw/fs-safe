@@ -37,9 +37,13 @@ export function resolvePathPrefixSync(input: string): ResolvedPathPrefix {
 
   while (remaining.length > 0) {
     const segment = remaining.shift()!;
-    if (segment === "" || segment === ".") continue;
-    if (segment === "..") {
-      if (resolved !== rawRoot(resolved)) resolved = path.dirname(resolved);
+    if (segment === "") continue;
+    if (segment === "." || segment === "..") {
+      const atRoot = resolved === rawRoot(resolved);
+      const lookup = segment === ".." && atRoot ? "." : segment;
+      // lstat(dir) does not test search permission, and realpath may erase dots.
+      fs.lstatSync(`${resolved}${resolved.endsWith(path.sep) ? "" : path.sep}${lookup}`, { bigint: true });
+      if (segment === ".." && !atRoot) resolved = path.dirname(resolved);
       continue;
     }
     const candidate = path.join(resolved, segment);

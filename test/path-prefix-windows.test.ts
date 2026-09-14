@@ -41,6 +41,7 @@ describe("Windows UNC path spelling with a simulated filesystem", () => {
       const directoryStat = fs.lstatSync(process.cwd(), { bigint: true });
       const present = new Set([root, root.slice(0, -1), `${root}child`]);
       vi.spyOn(fs, "lstatSync").mockImplementation(input => {
+        if ([`${root}child\\..`, `${root}.`].includes(String(input))) return directoryStat;
         if (present.has(String(input))) return directoryStat;
         if (String(input) === `${root}future`) throw Object.assign(new Error("missing fixture"), { code: "ENOENT" });
         throw Object.assign(new Error("unexpected lookup outside the fixture share"), { code: "EIO" });

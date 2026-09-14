@@ -36,10 +36,15 @@ describe("resolvePathPrefixSync", () => {
   );
 
   it.each(["absolute", "relative"])("resolves %s link/.. from the physical target", async form => {
-    const directory = await tempRoot("fs-safe-prefix-parent-");
+    const rawDirectory = form === "relative"
+      ? fs.mkdtempSync(path.join(process.cwd(), ".fs-safe-prefix-parent-"))
+      : await tempRoot("fs-safe-prefix-parent-");
+    if (form === "relative") tempDirs.push(rawDirectory);
+    const directory = realpathSync.native(rawDirectory);
     fs.mkdirSync(path.join(directory, "deep", "dir"), { recursive: true });
     fs.symlinkSync(path.join(directory, "deep", "dir"), path.join(directory, "link"), directoryLink);
-    const prefix = form === "relative" ? path.relative(process.cwd(), directory) : directory;
+    const prefix = form === "relative" ? path.relative(process.cwd(), rawDirectory) : directory;
+    expect(path.isAbsolute(prefix)).toBe(form === "absolute");
     const input = `${prefix}${path.sep}link${path.sep}..${path.sep}future`;
     const result = resolvePathPrefixSync(input);
     expect(result.existingPath).toBe(path.join(directory, "deep"));
@@ -131,6 +136,63 @@ describe("resolvePathPrefixSync", () => {
     fs.symlinkSync("file/../future", path.join(directory, "alias"));
     expect(() => resolvePathPrefixSync(path.join(directory, "alias")))
       .toThrow(expect.objectContaining({ code: "ENOTDIR" }));
+  });
+
+  itPosix.skipIf(process.getuid?.() === 0).each(["/.", "/..", "/../live", "/../future", "//../live", "/./.."])(
+    "requires directory search permission for raw traversal %s",
+    async suffix => {
+      const directory = await tempRoot("fs-safe-prefix-denied-traversal-");
+      const blocked = path.join(directory, "blocked");
+      const alias = path.join(directory, "alias");
+      fs.mkdirSync(blocked);
+      fs.symlinkSync(`blocked${suffix}`, alias);
+      fs.writeFileSync(path.join(directory, "live"), "kept");
+      fs.chmodSync(blocked, 0o000);
+      try {
+        expect(fs.lstatSync(blocked).isDirectory()).toBe(true);
+        for (const input of [`${blocked}${suffix}`, alias]) {
+          expect(() => fs.statSync(input)).toThrow(expect.objectContaining({ code: "EACCES" }));
+          expect(() => resolvePathPrefixSync(input)).toThrow(expect.objectContaining({ code: "EACCES" }));
+        }
+      } finally {
+        fs.chmodSync(blocked, 0o700);
+      }
+    },
+  );
+
+  itPosix.skipIf(process.getuid?.() === 0).each(["/", "//", "///"])(
+    "keeps the filesystem's trailing-separator behavior for %s",
+    async suffix => {
+      const directory = await tempRoot("fs-safe-prefix-denied-separator-");
+      const blocked = path.join(directory, "blocked");
+      fs.mkdirSync(blocked);
+      fs.chmodSync(blocked, 0o000);
+      try {
+        const input = `${blocked}${suffix}`;
+        expect(fs.statSync(input).isDirectory()).toBe(true);
+        expect(resolvePathPrefixSync(input)).toEqual({
+          absolutePath: input, existingPath: blocked, unresolvedSegments: [],
+        });
+      } finally {
+        fs.chmodSync(blocked, 0o700);
+      }
+    },
+  );
+
+  itPosix.skipIf(process.getuid?.() === 0)("permits dot traversal with search-only directory access", async () => {
+    const directory = await tempRoot("fs-safe-prefix-search-only-");
+    const searchOnly = path.join(directory, "search");
+    const live = path.join(directory, "live");
+    fs.mkdirSync(searchOnly);
+    fs.writeFileSync(live, "kept");
+    fs.chmodSync(searchOnly, 0o100);
+    try {
+      expect(() => fs.readdirSync(searchOnly)).toThrow(expect.objectContaining({ code: "EACCES" }));
+      expect(resolvePathPrefixSync(`${searchOnly}/.`).existingPath).toBe(searchOnly);
+      expect(resolvePathPrefixSync(`${searchOnly}/../live`).existingPath).toBe(live);
+    } finally {
+      fs.chmodSync(searchOnly, 0o700);
+    }
   });
 
   it.each(["EACCES", "EIO", "ELOOP", "ENOTDIR"])("propagates %s from entry inspection", async code => {

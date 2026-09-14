@@ -4,7 +4,7 @@
 
 - Reduce repeated path work in POSIX path-scoping helpers and Root operations while preserving root exclusion, traversal checks, live directory identities, and home-prefix behavior; broaden method benchmarks across path batches, directories, stores, queues, and contention.
 
-- Add `resolvePathPrefixSync()` for physical symlink traversal with a canonical existing prefix and raw missing suffix, preserving dangling aliases and parent traversal while propagating ambiguous resolution failures; anchor Windows root-relative inputs without normalizing their components.
+- Add `resolvePathPrefixSync()` for physical symlink traversal with a canonical existing prefix and raw missing suffix, preserving dangling aliases, parent traversal, and directory search permissions while propagating ambiguous resolution failures; anchor Windows root-relative inputs without normalizing their components.
 
 - Complete short gzip-header reads before classifying staged archives, preventing valid gzip files from being misread as TAR after a partial filesystem read.
 
