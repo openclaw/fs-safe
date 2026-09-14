@@ -15,18 +15,20 @@ import { parseArgs } from "node:util";
 const EXPERIMENTS = Object.freeze({
   "producer-fix": {
     baseline: "4b9b537aa06914e0b0d90e99db47420e432129eb",
-    planSha256: "7f4c9eb5bde424ba8ec523ee75aa3754673572fa4cc5e00f28d82c4e7af4486f",
+    candidate: "abc61e8bb7feda23cc5b2ed7b02174130a117cb5",
+    planSha256: "baafa33b06719be34b68500aa3390e1331a49a40197c31ac25808eb74991950f",
   },
   "producer-final": {
-    baseline: "a49e2d7033e73a40b592881e0863e6acc3649175",
-    planSha256: "297e1881a64f9ebf9f00752c892ff7377518c17fa3fcd938491b22ea5809ee28",
+    baseline: "4b1afa00d6aee35753b5c25cc8555e3329657d34",
+    candidate: "eb6e155153c45b3ba41c1d45e60dd3697aa663dd",
+    planSha256: "4b2f78937a911f5e7b7c324029e1e514c8737f9660be60b933c88be84333e184",
   },
 });
 const experimentArgument = process.argv.indexOf("--experiment");
 const EXPERIMENT = experimentArgument > 1 ? process.argv[experimentArgument + 1] : undefined;
 assert(Object.hasOwn(EXPERIMENTS, EXPERIMENT), "a frozen --experiment is required");
 const BASELINE = EXPERIMENTS[EXPERIMENT].baseline;
-const CANDIDATE = "abc61e8bb7feda23cc5b2ed7b02174130a117cb5";
+const CANDIDATE = EXPERIMENTS[EXPERIMENT].candidate;
 const PLAN_SHA256 = EXPERIMENTS[EXPERIMENT].planSha256;
 const CHILD_TIMEOUT_MS = 180_000;
 const SMOKE = Object.freeze({
@@ -638,7 +640,7 @@ async function childMain(encoded) {
           assert(writerReceiver && writerReceiver !== options);
           const outerReceiver = Object.hasOwn(writerReceiver, "resolveFinalPath") &&
             Object.hasOwn(writerReceiver, "syncTempFile");
-          const oldPrivateSemantics = config.revision === "a49e2d7033e73a40b592881e0863e6acc3649175" &&
+          const oldPrivateSemantics = config.revision === "4b1afa00d6aee35753b5c25cc8555e3329657d34" &&
             workload.isolation === "private";
           assert.equal(outerReceiver, !oldPrivateSemantics);
           if (workload.api === "sibling") {

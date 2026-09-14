@@ -2,8 +2,8 @@
   "schema": 1,
   "name": "pr323-optimized-archive-final-windows-paired-proof",
   "revisions": {
-    "baseline": "a49e2d7033e73a40b592881e0863e6acc3649175",
-    "candidate": "abc61e8bb7feda23cc5b2ed7b02174130a117cb5"
+    "baseline": "4b1afa00d6aee35753b5c25cc8555e3329657d34",
+    "candidate": "eb6e155153c45b3ba41c1d45e60dd3697aa663dd"
   },
   "runtime": {
     "runner": "windows-latest",
@@ -66,11 +66,11 @@
     ],
     "aaRevision": "baseline",
     "workloadRotation": "cyclic Latin square across rounds and balanced quartet starts",
-    "scheduleSeed": 1134928982
+    "scheduleSeed": 409032349
   },
   "analysis": {
     "bootstrapIterations": 20000,
-    "bootstrapSeed": 2864476891,
+    "bootstrapSeed": 3805737781,
     "movingBlockLength": 4,
     "stratification": "four chronological cohorts",
     "withinBlock": "mean each child then equal-weight the two processes in each arm",
@@ -83,7 +83,7 @@
   },
   "experiment": "archive-final",
   "trees": {
-    "baseline": "db6bad9fee3cd059635932643c4dd5cd32da6eaf",
-    "candidate": "270d78d740868aeb9f65cbb632b906a11d07f9cd"
+    "baseline": "c68cbea94eb3f6b480e41205390c8423cc9b7473",
+    "candidate": "bad73e65da8cbb1edde081aff6ea2cef5c47cead"
   }
 }

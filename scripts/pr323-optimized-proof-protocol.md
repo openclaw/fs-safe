@@ -8,13 +8,16 @@ Do not dispatch until the coordinator confirms that the candidate is on origin.
 | Experiment | Baseline A | Candidate B | Question |
 | --- | --- | --- | --- |
 | producer-fix | `4b9b537aa06914e0b0d90e99db47420e432129eb` | `abc61e8bb7feda23cc5b2ed7b02174130a117cb5` | What is the optimization effect? |
-| producer-final | `a49e2d7033e73a40b592881e0863e6acc3649175` | `abc61e8bb7feda23cc5b2ed7b02174130a117cb5` | Does the final producer family exclude material regression? |
-| archive-final | `a49e2d7033e73a40b592881e0863e6acc3649175` | `abc61e8bb7feda23cc5b2ed7b02174130a117cb5` | Does the final archive family exclude material regression? |
+| producer-final | `4b1afa00d6aee35753b5c25cc8555e3329657d34` | `eb6e155153c45b3ba41c1d45e60dd3697aa663dd` | Does the final producer family exclude material regression? |
+| archive-final | `4b1afa00d6aee35753b5c25cc8555e3329657d34` | `eb6e155153c45b3ba41c1d45e60dd3697aa663dd` | Does the final archive family exclude material regression? |
 
 The frozen trees are `153e82ac74396454bab2b3c2028987887be0af10`
-(pre-optimization), `db6bad9fee3cd059635932643c4dd5cd32da6eaf`
-(final baseline), and `270d78d740868aeb9f65cbb632b906a11d07f9cd`
-(optimized candidate). Every checkout must match both its commit and tree.
+(pre-optimization), `270d78d740868aeb9f65cbb632b906a11d07f9cd`
+(optimization candidate), `c68cbea94eb3f6b480e41205390c8423cc9b7473`
+(final baseline), and `bad73e65da8cbb1edde081aff6ea2cef5c47cead`
+(final merged candidate). Every checkout must match both its commit and tree.
+The original causal optimization pair is retained; only the final comparisons
+include the subsequent main integration.
 
 All experiments use Windows x64, Node 22.23.2, pnpm 11.25.0, and native mode
 off. Each job builds its two exact clean revisions before timing, using equal
@@ -45,9 +48,9 @@ calls in each arm and 192 scheduled blocks as the analysis units.
 
 | Experiment | Schedule seed | Bootstrap seed |
 | --- | ---: | ---: |
-| producer-fix | 3439918481 | 131798071 |
-| producer-final | 1804116462 | 4204186074 |
-| archive-final | 1134928982 | 2864476891 |
+| producer-fix | 1049630630 | 2913561417 |
+| producer-final | 3531893591 | 1745143147 |
+| archive-final | 409032349 | 3805737781 |
 
 These six seeds were generated before any new timing and are fixed. The sample
 sizes preserve the already reviewed complete-family protocols. No formal power
@@ -98,10 +101,11 @@ and archive facade imports load these modules, so facade-import identity alone
 does not establish unchanged timed execution.
 
 Transfer may carry the original ACCEPT only after a fresh non-timing attestation
-proves that the complete emitted JavaScript delta is confined to these two
-modules, all other compiled runtime and relevant compiler/dependency inputs are
-unchanged, the transfer operation dependency closure is identical, and neither
-changed function is invoked by the four complete transfer workload shapes.
+proves that the complete emitted JavaScript delta is confined to the
+producer and sidecar modules plus the three #351 modules listed below, all
+other compiled runtime and relevant compiler/dependency inputs are unchanged,
+the transfer operation dependency closure is identical, and none of the changed
+functions is invoked by the four complete transfer workload shapes.
 The attestation must retain source/build/output manifests and instrumented
 structural receipts; instrumentation must not run during performance sampling.
 Any attestation failure yields HOLD; it does not silently add another timed
@@ -132,8 +136,9 @@ load tripwires must remain untouched. Reject dirty or ambiguous build inputs.
 Producer result identity, callback counts, receiver behavior, staging location,
 payload hash, disappearance of producer path, and final cleanup are verified
 outside timing. Historical private callback semantics are keyed to the exact
-historical revision `a49e2d7033e73a40b592881e0863e6acc3649175`, not the A label;
-the 4b9 baseline already has current receiver semantics.
+final baseline revision `4b1afa00d6aee35753b5c25cc8555e3329657d34`, not the A
+label; the 4b9 baseline already has current receiver semantics. Main #350/#351
+did not change the historical baseline's producer receiver behavior.
 
 Independently reconstruct every schedule and raw sample from child receipts,
 verify exact workload/call/launch totals and no omissions or duplicates, and
@@ -142,3 +147,36 @@ cohort/position balance and chronology; report instability without filtering.
 Artifact availability and successful Actions completion do not alone imply
 ACCEPT. Provide separate fix-effect, producer-final, archive-final, transfer
 carry, and overall ACCEPT/HOLD/REJECT conclusions.
+
+## Main integration and preserved cancellation
+
+The earlier protocol at proof commit `3d5dfc4a4f36576249b1eaf41579d5485f67f008`
+was dispatched as run
+[34814119938](https://github.com/openclaw/fs-safe/actions/runs/34814119938).
+The coordinator reported new main immediately after dispatch. That run was
+cancelled during preliminary dependency installation, before repository checks
+or any Windows timing job. It has no performance artifact or observations and
+is preserved as cancelled evidence. This replacement uses new independent seeds.
+
+Main #351 changes `bounded-read.ts`, `replace-file-copy-fallback.ts`, and
+`replace-file-copy-source.ts`. Fresh exact builds before dispatch compare
+210dde2 -> 4b1afa0 and abc61 -> eb6e155. Both deltas emit only those three runtime
+JS files, and the new module bytes match between arms. Every non-changelog file
+in the merge delta exactly matches main; the changelog delta is the same two
+additive lines as main. Its only conflict was the changelog union.
+
+The pre-dispatch attestation executes all 16 public workload shapes once on
+each of these four fresh builds with in-memory function probes and no benchmark
+clocks. Copy-fallback modules are not loaded, sync bounded reads and sidecar
+acquisition are not called, and transfer/archive do not call producer functions.
+The nine-file compiled transfer operation closure matches original hosted bytes
+on both final arms. Targeted merged-candidate checks pass 50 tests with 10 skips
+across copy-fallback batching, producer isolation and callback receiver files.
+
+This establishes no observed runtime interaction for these workload shapes,
+not equivalence of unrelated atomic fallback workloads. Local builds use Node
+26.8.2 for source/compiled structural checks; all performance samples still
+require hosted Node 22.23.2. Local WASM differs from the old hosted binary and
+is never represented as measured. Its complete build inputs and local output
+are unchanged across the merge. The attestation summary SHA-256 is
+`80ceb1ef03972441e0bfba5607174586a7496d236f23c7e6a4e6b5b303a8336f`.

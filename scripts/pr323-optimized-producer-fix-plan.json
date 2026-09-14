@@ -88,11 +88,11 @@
     "aaRevision": "baseline",
     "quartetOrder": "balanced A/B-first and A/A-first within every cohort",
     "workloadRotation": "cyclic Latin square across rounds and balanced eight-position quartet starts",
-    "scheduleSeed": 3439918481
+    "scheduleSeed": 1049630630
   },
   "analysis": {
     "bootstrapIterations": 20000,
-    "bootstrapSeed": 131798071,
+    "bootstrapSeed": 2913561417,
     "movingBlockLength": 4,
     "stratification": "sixteen chronological cohorts",
     "withinBlock": "mean each child then equal-weight the two processes in each arm",

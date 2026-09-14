@@ -1,16 +1,20 @@
 {
   "schema": 1,
-  "candidate": "abc61e8bb7feda23cc5b2ed7b02174130a117cb5",
-  "candidateTree": "270d78d740868aeb9f65cbb632b906a11d07f9cd",
+  "candidate": "eb6e155153c45b3ba41c1d45e60dd3697aa663dd",
+  "candidateTree": "bad73e65da8cbb1edde081aff6ea2cef5c47cead",
+  "optimizationCandidate": "abc61e8bb7feda23cc5b2ed7b02174130a117cb5",
   "preservedProofCommit": "556c3455b4e78fcc6a6d74243316c15200bdf78b",
+  "cancelledProofCommit": "3d5dfc4a4f36576249b1eaf41579d5485f67f008",
+  "cancelledRun": 34814119938,
+  "mergeAttestationSha256": "80ceb1ef03972441e0bfba5607174586a7496d236f23c7e6a4e6b5b303a8336f",
   "filesSha256Lf": {
-    ".github/workflows/benchmarks.yml": "8c42bc94264bcc14a9e269d1cb4b5efe2cbd13467e6949e2eceb2b7df7f5e9b5",
-    "scripts/pr323-optimized-archive-final-plan.json": "a3c1a02485cf6a2f648115856e2d79a655a4c9038f95a352b017fbe97153946e",
-    "scripts/pr323-optimized-archive-proof.mjs": "4909e4f6a644e338ee13f90b76b4120edcc3e6b355355172fb127c5d80e82e23",
-    "scripts/pr323-optimized-producer-final-plan.json": "297e1881a64f9ebf9f00752c892ff7377518c17fa3fcd938491b22ea5809ee28",
-    "scripts/pr323-optimized-producer-fix-plan.json": "7f4c9eb5bde424ba8ec523ee75aa3754673572fa4cc5e00f28d82c4e7af4486f",
-    "scripts/pr323-optimized-producer-proof.mjs": "7055523937b6f646eb555c75544e076fd4eb0442f54e3f2470f1b58b884face9",
-    "scripts/pr323-optimized-proof-protocol.md": "610fc933df7ee1fe3055c5c16f3e67a073c3512a2e81a8a15e8764af342a3c9f",
+    ".github/workflows/benchmarks.yml": "8cb80e284cda141b954d457766814a18b0ed62a75e18716bb0629f6d0071d2de",
+    "scripts/pr323-optimized-archive-final-plan.json": "331f0f2a7e12ef126a32814139bebfdfb426dbcd06f717d704236f4b0f205668",
+    "scripts/pr323-optimized-archive-proof.mjs": "f22b1384c79d8c906b963ba1d4f80005f3146dd5f8a48175242c3fc5d03d1382",
+    "scripts/pr323-optimized-producer-final-plan.json": "4b2f78937a911f5e7b7c324029e1e514c8737f9660be60b933c88be84333e184",
+    "scripts/pr323-optimized-producer-fix-plan.json": "baafa33b06719be34b68500aa3390e1331a49a40197c31ac25808eb74991950f",
+    "scripts/pr323-optimized-producer-proof.mjs": "c002dab06be116f7460a9a85b9af8754403b8fa51bb93b1fca22fc0a5cf40ded",
+    "scripts/pr323-optimized-proof-protocol.md": "feaa453de366a82573495893ea49b1b9a3560b15e5b7dbedb87e931486a8bf7b",
     "scripts/pr323-optimized-proof-selfcheck.mjs": "7e91c889897a187551f335c7b744b8411c5fe0e3bd1eb86f234944ef09b8cc8d"
   }
 }

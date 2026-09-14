@@ -78,7 +78,8 @@ jobs:
           if ($plan.experiment -ne $env:EXPERIMENT) { throw 'Experiment plan mismatch.' }
           $baseline = $plan.revisions.baseline
           $candidate = $plan.revisions.candidate
-          if ($candidate -ne 'abc61e8bb7feda23cc5b2ed7b02174130a117cb5') { throw 'Candidate mismatch.' }
+          $expectedCandidate = if ($env:EXPERIMENT -eq 'producer-fix') { 'abc61e8bb7feda23cc5b2ed7b02174130a117cb5' } else { 'eb6e155153c45b3ba41c1d45e60dd3697aa663dd' }
+          if ($candidate -ne $expectedCandidate) { throw 'Candidate mismatch.' }
           $baselineRepo = Join-Path $env:OPTIMIZED_PROOF_ROOT 'checkout-a'
           $candidateRepo = Join-Path $env:OPTIMIZED_PROOF_ROOT 'checkout-b'
           $baselineCargo = Join-Path $env:OPTIMIZED_PROOF_ROOT 'cargo-out-a'
