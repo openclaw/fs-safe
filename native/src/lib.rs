@@ -23,6 +23,8 @@ mod file_copy;
 mod owned_tree;
 #[cfg(unix)]
 mod realpath;
+#[cfg(target_os = "macos")]
+mod darwin_security;
 #[cfg(unix)]
 mod staged_file;
 use fs_safe_archive_core::tar_meter;

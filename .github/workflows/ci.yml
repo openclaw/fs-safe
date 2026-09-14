@@ -152,6 +152,14 @@ jobs:
       - name: Test directory copying and native cloning
         run: pnpm test test/clone.test.ts test/copy-tree.test.ts
 
+      - name: Test Darwin descriptor ACLs with required Node and Bun bindings
+        if: runner.os == 'macOS'
+        env:
+          FS_SAFE_NATIVE_MODE: require
+        run: |
+          pnpm test test/darwin-acl-native.test.ts
+          bun node_modules/vitest/vitest.mjs run --config scripts/bun-native-vitest.config.ts test/darwin-acl-native.test.ts
+
       - name: Test native Btrfs snapshots
         if: runner.os == 'Linux'
         shell: bash
