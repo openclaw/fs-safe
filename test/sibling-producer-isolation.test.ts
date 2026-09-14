@@ -116,6 +116,51 @@ for (const api of ["temp", "output"] as const) {
       await expect(fs.lstat(path.dirname(produced))).rejects.toMatchObject({ code: "ENOENT" });
     });
 
+    if (api === "temp") {
+      it("reuses the admitted parent guard instead of recapturing the private producer root", async () => {
+        const f = await fixture();
+        const parentReal = fsSync.realpathSync.native(f.dir);
+        const originalLstat = fsSync.lstatSync;
+        const originalRealpath = fsSync.realpathSync.native;
+        const originalStat = fsSync.statSync;
+        const originalMkdtemp = fs.mkdtemp.bind(fs);
+        const samePath = (left: string, right: string) => process.platform === "win32"
+          ? path.normalize(left).toLowerCase() === path.normalize(right).toLowerCase()
+          : path.normalize(left) === path.normalize(right);
+        let parentLstats = 0;
+        let parentRealpaths = 0;
+        let parentStats = 0;
+        let callsAtMkdtemp: { lstat: number; realpath: number; stat: number } | undefined;
+        vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
+          if (!callsAtMkdtemp && samePath(String(args[0]), f.dir)) parentLstats++;
+          return originalLstat(...args);
+        });
+        vi.spyOn(fsSync.realpathSync, "native").mockImplementation((...args) => {
+          if (!callsAtMkdtemp && samePath(String(args[0]), f.dir)) parentRealpaths++;
+          return originalRealpath(...args);
+        });
+        vi.spyOn(fsSync, "statSync").mockImplementation((...args) => {
+          if (!callsAtMkdtemp && samePath(String(args[0]), parentReal)) parentStats++;
+          return originalStat(...args);
+        });
+        vi.spyOn(fs, "mkdtemp").mockImplementation(async (...args) => {
+          callsAtMkdtemp ??= {
+            lstat: parentLstats,
+            realpath: parentRealpaths,
+            stat: parentStats,
+          };
+          return await originalMkdtemp(...args);
+        });
+
+        await expect(f.run(async (candidate) => {
+          await fs.writeFile(candidate, "isolated");
+        })).resolves.toMatchObject({ filePath: f.final });
+
+        expect(callsAtMkdtemp).toEqual({ lstat: 1, realpath: 1, stat: 0 });
+        await expect(fs.readFile(f.final, "utf8")).resolves.toBe("isolated");
+      });
+    }
+
     it("rejects a replaced creation receipt before invoking the producer", async () => {
       const f = await fixture();
       const lstat = fsSync.lstatSync;

@@ -6,11 +6,12 @@ import {
   assertAsyncDirectoryGuard,
   assertDirectoryIdentitySync,
   createAsyncDirectoryGuard,
+  type AsyncDirectoryGuard,
 } from "./directory-guard.js";
 import { syncDirectoryBestEffort } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
-import { root } from "./root.js";
+import { rootFromDirectoryGuard } from "./root-impl.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 import { registerTempPathForExit, type TempPathRegistration } from "./temp-cleanup.js";
 import { createOwnedTempFile } from "./temp-target.js";
@@ -43,13 +44,15 @@ async function writeIsolatedProducer<T>(params: {
   tempPath: string;
   write: (tempPath: string) => Promise<T>;
   writeReceiver: unknown;
+  parentGuard: AsyncDirectoryGuard<BigIntStats>;
   assertParent: () => void;
 }): Promise<T> {
   const tempPath = params.tempPath;
   const write = params.write;
   const writeReceiver = params.writeReceiver;
+  const parentGuard = params.parentGuard;
   const assertParent = params.assertParent;
-  const targetRoot = await root(path.dirname(tempPath));
+  const targetRoot = rootFromDirectoryGuard(parentGuard);
   const { target, identity } = await createOwnedTempFile({
     rootDir: targetRoot.rootReal,
     prefix: "fs-safe-output",
@@ -126,6 +129,7 @@ export async function writeCallbackSibling<T>(params: {
           tempPath,
           write,
           writeReceiver: params,
+          parentGuard: guard,
           assertParent: () => assertDirectoryIdentitySync(parent, {
             dev: guard.stat.dev,
             ino: guard.stat.ino,
