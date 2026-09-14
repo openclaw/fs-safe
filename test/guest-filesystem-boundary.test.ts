@@ -17,7 +17,7 @@ describe.skipIf(process.platform === "win32")("guest filesystem boundaries", () 
       ? [operation, root, "", "../outside", "0", "1"]
       : [operation, root, "created", "../outside", "1"];
 
-    const result = runGuest(args, "replacement");
+    const result = runGuest(args);
 
     expect(result.error).toBeUndefined();
     expect(result.status).not.toBe(0);
@@ -39,7 +39,7 @@ describe.skipIf(process.platform === "win32")("guest filesystem boundaries", () 
       : operation === "copy" || operation === "rename"
         ? [operation, root, "", "source", root, "alias", "created", "1"]
         : [operation, root, "alias", "created", "1"];
-    const result = runGuest(args, "payload");
+    const result = runGuest(args);
     expect(result.error).toBeUndefined();
     expect(result.status).not.toBe(0);
     expect(await fs.readdir(outside)).toEqual([]);
@@ -48,7 +48,7 @@ describe.skipIf(process.platform === "win32")("guest filesystem boundaries", () 
 
   it("rejects relative parent traversal before creating directories", async () => {
     const root = await tempRoot("fs-safe-guest-parent-traversal-");
-    const result = runGuest(["write", root, "created/../outside", "value", "1"], "payload");
+    const result = runGuest(["write", root, "created/../outside", "value", "1"]);
     expect(result.error).toBeUndefined();
     expect(result.status).not.toBe(0);
     expect(result.stderr.toString()).toContain("path traversal is not allowed");

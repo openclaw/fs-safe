@@ -1,26 +1,14 @@
 import path from "node:path";
-import { WINDOWS_RESERVED_DEVICE_NAMES } from "./device-path.js";
+import { trimTrailingWindowsIgnoredChars, WINDOWS_RESERVED_DEVICE_NAMES } from "./device-path.js";
 import { maxNormalizedUtf8Bytes } from "./unicode-path.js";
 
 const INVALID_FILE_NAME_CHARACTERS = /[\u0000-\u001f\u007f-\u009f<>:"/\\|?*]/g;
-
-function trimWindowsIgnoredSuffix(value: string): string {
-  let end = value.length;
-  while (end > 0) {
-    const character = value.charCodeAt(end - 1);
-    if (character !== 0x20 && character !== 0x2e) {
-      break;
-    }
-    end -= 1;
-  }
-  return end === value.length ? value : value.slice(0, end);
-}
 
 function suffixWindowsReservedDeviceName(fileName: string): string {
   const extensionIndex = fileName.indexOf(".");
   const baseNameEnd = extensionIndex < 0 ? fileName.length : extensionIndex;
   const baseName = fileName.slice(0, baseNameEnd);
-  const deviceBaseName = trimWindowsIgnoredSuffix(baseName);
+  const deviceBaseName = trimTrailingWindowsIgnoredChars(baseName);
   if (!WINDOWS_RESERVED_DEVICE_NAMES.has(deviceBaseName.toUpperCase())) {
     return fileName;
   }

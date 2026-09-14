@@ -164,21 +164,19 @@ it("returns unknown when all generated probe names already exist", async () => {
 it.each([
   ["BB", "bB", 0],
   ["KB", "kB", 8],
-] as const)("never materializes requested lookups through a generated alias (%s / %s)", async (left, right, firstByte) => {
+] as const)("never materializes requested lookups through a generated alias (%s / %s)", async (left, right, firstIndex) => {
   const directory = await tempRoot("fs-safe-suffix-forbidden-alias-");
   const expected = directObservation(directory, left, right);
-  const randomBytes = crypto.randomBytes;
-  const descriptor = Object.getOwnPropertyDescriptor(crypto, "randomBytes")!;
+  const randomInt = crypto.randomInt;
+  const descriptor = Object.getOwnPropertyDescriptor(crypto, "randomInt")!;
   const mkdir = fs.mkdirSync;
-  let injected = false;
+  const forcedIndices = [firstIndex, 1];
+  let injected = 0;
   let requestedLookupExisted = false;
   const rootNames: string[] = [];
-  Object.defineProperty(crypto, "randomBytes", { ...descriptor, value: (size: number) => {
-    if (!injected && size === 2) {
-      injected = true;
-      return Buffer.from([firstByte, 1]);
-    }
-    return randomBytes(size);
+  Object.defineProperty(crypto, "randomInt", { ...descriptor, value: (max: number) => {
+    if (injected < forcedIndices.length) return forcedIndices[injected++]!;
+    return randomInt(max);
   } });
   syncBuiltinESMExports();
   vi.spyOn(fs, "mkdirSync").mockImplementation((candidate, options) => {
@@ -189,13 +187,13 @@ it.each([
   });
   try {
     expect(probePathSuffixAliasesSync({ directory, left, right })).toBe(expected);
-    expect(injected).toBe(true);
+    expect(injected).toBe(forcedIndices.length);
     expect(requestedLookupExisted).toBe(false);
     const forbidden = new Set([left, right].map(value => value.normalize("NFC").toLowerCase()));
     expect(rootNames.some(name => forbidden.has(name.normalize("NFC").toLowerCase()))).toBe(false);
     expect(fs.readdirSync(directory)).toEqual([]);
   } finally {
-    Object.defineProperty(crypto, "randomBytes", descriptor);
+    Object.defineProperty(crypto, "randomInt", descriptor);
     syncBuiltinESMExports();
   }
 });

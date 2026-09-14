@@ -70,6 +70,8 @@
 
 - Add synchronous whole-suffix case and Unicode alias probing through owned temporary directories, with caller-supplied case policy, exact identity checks, and an explicit unknown result when observation or cleanup cannot complete.
 
+- Keep reserved-name checks responsive on long inputs by sharing linear Windows trailing-dot/space trimming between filename sanitization and suffix-alias probes.
+
 ## 0.10.0 - 2026-09-13
 
 ### Highlights

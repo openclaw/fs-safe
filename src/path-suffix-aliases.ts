@@ -1,8 +1,8 @@
-import { randomBytes } from "node:crypto";
+import { randomInt } from "node:crypto";
 import fs, { type BigIntStats } from "node:fs";
 import path from "node:path";
 import { assertDirectoryIdentitySync, inspectDirectoryIdentitySync } from "./directory-guard.js";
-import { WINDOWS_RESERVED_DEVICE_NAMES } from "./device-path.js";
+import { trimTrailingWindowsIgnoredChars, WINDOWS_RESERVED_DEVICE_NAMES } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup } from "./file-identity.js";
 import { hasNodeErrorCode } from "./path.js";
@@ -48,10 +48,7 @@ function areAsciiCaseVariants(left: string | undefined, right: string | undefine
 }
 
 function isWindowsReservedPathComponent(value: string): boolean {
-  const stem = value
-    .split(".", 1)[0]!
-    .replace(/[ .]+$/u, "")
-    .toUpperCase();
+  const stem = trimTrailingWindowsIgnoredChars(value.split(".", 1)[0]!).toUpperCase();
   return WINDOWS_RESERVED_DEVICE_NAMES.has(stem);
 }
 
@@ -114,11 +111,10 @@ function createNormalizationProbePairs(
     );
   });
   for (let attempt = 0; attempt < 24 && mutableAscii.length > 0; attempt += 1) {
-    const entropy = randomBytes(mutableAscii.length);
     const replacements = new Map(
-      mutableAscii.map((source, index) => [
+      mutableAscii.map(source => [
         source,
-        String.fromCharCode("a".charCodeAt(0) + (entropy[index]! % 26)),
+        String.fromCharCode("a".charCodeAt(0) + randomInt(26)),
       ]),
     );
     addPair(replaceAscii(left, replacements), replaceAscii(right, replacements));
@@ -142,13 +138,10 @@ function createAsciiCaseProbePairs(
 }
 
 function createPrivateProbeName(nameLength: number): string {
-  const entropy = randomBytes(nameLength);
-  return [...entropy]
-    .map((value, index) => {
-      const alphabet = index === 0 ? PROBE_FIRST_ALPHABET : PROBE_ALPHABET;
-      return alphabet[value % alphabet.length];
-    })
-    .join("");
+  return Array.from({ length: nameLength }, (_, index) => {
+    const alphabet = index === 0 ? PROBE_FIRST_ALPHABET : PROBE_ALPHABET;
+    return alphabet[randomInt(alphabet.length)];
+  }).join("");
 }
 
 function createPrivateProbeNames(
