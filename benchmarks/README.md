@@ -42,6 +42,8 @@ inspection cases expose metadata-event transport costs.
 ZIP reads and extraction also cover 1 MiB and 16 MiB stored and deflated members
 to expose payload integrity costs beyond tiny archive fixtures. ZIP admission and
 member reads also cover 512 ASCII and Unicode names with stored and deflated data.
+Filtered ZIP extraction visits all 512 members while skipping their output,
+isolating admission and planning from destination-file writes.
 The native directory-open case times admission separately from descriptor close.
 
 For a quick executable coverage check:

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Batch native ZIP metadata admission through bounded, operation-local read-ahead buffers, reducing per-entry filesystem calls while preserving complete record validation, short-read handling, cancellation, and stable scanner views.
+
 - Avoid repeating physical ZIP admission during JavaScript member reads and reduce ZIP filename-validation allocations across both backends, preserving raw and decoded name checks, entry limits, CRC validation, and error ordering.
 
 - Speed up JavaScript TAR admission by copying each WASM input window once across member events, and read selected plain-TAR payloads directly from the fully admitted private snapshot without a second parser pass; preserve independent output buffers, complete framing, path validation, and limits.

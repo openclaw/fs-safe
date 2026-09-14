@@ -65,6 +65,15 @@ export async function registerArchives({ api: a, workspace: w, register: add }) 
       add(`loadZipArchiveWithPreflight/${label}`, () => a.loadZipArchiveWithPreflight(bytes), {
         divisor: 10, verify: result => assert.equal(Object.keys(result.files).length, names.length),
       });
+      add(`extractArchive/${label}-skip-all`, async () => {
+        let inspected = 0;
+        await a.extractArchive({ archivePath, destDir: destination, timeoutMs: 30_000,
+          entryFilter: () => { inspected++; return "skip"; }, onFiltered: "skip-entry" });
+        return inspected;
+      }, { divisor: 10, verify: inspected => {
+        assert.equal(inspected, names.length);
+        assert.deepEqual(fs.readdirSync(destination), []);
+      } });
     }
   }
   const manySource = path.join(w, "tar-many-source");

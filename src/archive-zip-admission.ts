@@ -26,7 +26,11 @@ export function admitZipBuffer(input: Uint8Array, limits: ResolvedArchiveExtract
   return step.value;
 }
 
-/** The extraction input is already private and staged; read only bounded metadata. */
+const METADATA_WINDOW_BYTES = 4096;
+const CACHED_READS_PER_YIELD = 32;
+type MetadataWindow = { offset: number; bytes: Buffer };
+
+/** The extraction input is private and immutable; read bounded metadata windows. */
 export async function admitZipFile(
   archivePath: string, limits: ResolvedArchiveExtractLimits, deadline: ExtractionDeadline,
   onEntry?: (entry: ZipDirectoryEntry) => void,
@@ -40,20 +44,51 @@ export async function admitZipFile(
   try {
     checkSize(opened.stat.size, limits);
     const scan = scanZipDirectory(opened.stat.size, limits, onEntry);
+    // Separate windows keep alternating central and local records hot. Never
+    // refill a buffer: the scanner can retain its views after cache eviction.
+    const windows: MetadataWindow[] = [];
+    let cachedReads = 0;
     let step = scan.next();
     while (!step.done) {
+      deadline.check();
       const { offset, length } = step.value;
-      const bytes = Buffer.alloc(length);
-      let received = 0;
-      while (received < length) {
-        deadline.check();
-        const count = await new Promise<number>((resolve, reject) => {
-          fs.read(opened.fd, bytes, received, length - received, offset + received,
-            (error, count) => error ? reject(error) : resolve(count));
-        });
-        deadline.check();
-        if (!count) zipFormat("truncated staged record");
-        received += count;
+      const cached = windows.findIndex(window => offset >= window.offset &&
+        length <= window.bytes.length - (offset - window.offset));
+      let bytes: Buffer;
+      if (cached !== -1) {
+        if (++cachedReads >= CACHED_READS_PER_YIELD) {
+          cachedReads = 0;
+          await new Promise<void>(resolve => setImmediate(resolve));
+          deadline.check();
+        }
+        const window = windows[cached]!;
+        if (cached === 1) windows.reverse();
+        bytes = window.bytes.subarray(offset - window.offset, offset - window.offset + length);
+      } else {
+        const cacheable = length > 0 && length <= METADATA_WINDOW_BYTES;
+        const capacity = cacheable ? Math.min(METADATA_WINDOW_BYTES, opened.stat.size - offset) : length;
+        const buffer = Buffer.alloc(capacity);
+        let received = 0;
+        while (received < capacity) {
+          deadline.check();
+          const count = await new Promise<number>((resolve, reject) => {
+            fs.read(opened.fd, buffer, received, capacity - received, offset + received,
+              (error, count) => error ? reject(error) : resolve(count));
+          });
+          cachedReads = 0;
+          deadline.check();
+          if (!count) {
+            if (received < length) zipFormat("truncated staged record");
+            break;
+          }
+          received += count;
+        }
+        const filled = buffer.subarray(0, received);
+        bytes = filled.subarray(0, length);
+        if (cacheable) {
+          windows.unshift({ offset, bytes: filled });
+          if (windows.length > 2) windows.pop();
+        }
       }
       step = scan.next(bytes);
     }
