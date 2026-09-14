@@ -102,6 +102,12 @@ type FileLockRetryOptions = {
 
 `payload` is a function so you can re-evaluate it on each retry (e.g. timestamp, PID).
 
+Asynchronous acquisition snapshots `targetPath`, an explicit `lockPath`, and
+`lockRoot` before its first asynchronous operation. Relative path spellings are
+resolved against the working directory captured at that point, and the resulting
+absolute paths remain fixed through retries, stale recovery, verification, and
+release even if the process later changes its working directory.
+
 The complete serialized sidecar must fit within 1 MiB (1,048,576 UTF-8 bytes),
 including pretty-printed JSON, newlines, and the internal ownership token's
 trailing whitespace. The limit counts bytes, not string characters. Oversized

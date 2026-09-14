@@ -66,8 +66,7 @@ type SidecarLockAcquisitionContext = {
   ): Promise<boolean>;
 };
 
-async function resolveNormalizedTargetPath(targetPath: string, lockRoot?: Root): Promise<string> {
-  const resolved = path.resolve(targetPath);
+async function resolveNormalizedTargetPath(resolved: string, lockRoot?: Root): Promise<string> {
   const dir = path.dirname(resolved);
   if (lockRoot) {
     // The target is an arbitration key, not necessarily inside the lock Root.
@@ -95,8 +94,26 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
   validateSidecarLockStaleMs(options.staleMs);
   validateSidecarLockCompromiseCheckIntervalMs(options.compromiseCheckIntervalMs);
   context.ensureExitCleanupRegistered();
-  const normalizedTargetPath = await resolveNormalizedTargetPath(options.targetPath, options.lockRoot);
-  const lockPath = options.lockPath ?? `${normalizedTargetPath}.lock`;
+  const requestedTargetPath = options.targetPath;
+  const requestedLockPath = options.lockPath;
+  const lockRoot = options.lockRoot;
+  const callerCwd =
+    path.isAbsolute(requestedTargetPath) &&
+    (requestedLockPath === undefined || path.isAbsolute(requestedLockPath))
+      ? undefined
+      : process.cwd();
+  const resolvedTargetPath =
+    callerCwd === undefined
+      ? path.resolve(requestedTargetPath)
+      : path.resolve(callerCwd, requestedTargetPath);
+  const resolvedLockPath =
+    requestedLockPath === undefined
+      ? undefined
+      : callerCwd === undefined
+        ? path.resolve(requestedLockPath)
+        : path.resolve(callerCwd, requestedLockPath);
+  const normalizedTargetPath = await resolveNormalizedTargetPath(resolvedTargetPath, lockRoot);
+  const lockPath = resolvedLockPath ?? `${normalizedTargetPath}.lock`;
   let held = context.held.get(normalizedTargetPath);
   if (
     held &&
@@ -181,8 +198,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
       const payload = await options.payload();
       const { raw, ownershipToken } = serializeSidecarLockPayload(payload);
       try {
-        if (options.lockRoot) {
-          const lockRoot = options.lockRoot;
+        if (lockRoot) {
           const relativeLockPath = relativeSidecarLockPath(lockRoot, lockPath);
           const observation = fileObservation();
           try {
@@ -239,7 +255,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
           snapshot,
           acquiredAt: Date.now(),
           metadata: options.metadata ?? {},
-          lockRoot: options.lockRoot,
+          lockRoot,
           retainOnExit: options.retainOnExit,
           parsePayload: options.parsePayload,
         };
@@ -294,12 +310,12 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
             // Root-created records retain the creator's byte/token receipt;
             // partial direct writes use the exclusive descriptor's identity.
             await removeSidecarLockIfUnchanged(lockPath, failedSnapshot, {
-              lockRoot: options.lockRoot,
+              lockRoot,
               parsePayload: options.parsePayload,
             });
           } else if (createdSnapshot) {
             await removeSidecarLockIfUnchanged(lockPath, createdSnapshot, {
-              lockRoot: options.lockRoot,
+              lockRoot,
               parsePayload: options.parsePayload,
             });
           }
@@ -328,7 +344,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
         let lockFileOpenDenied = false;
         try {
           rawSnapshot = await readSidecarLockRawSnapshot(lockPath, {
-            lockRoot: options.lockRoot,
+            lockRoot,
             rejectNonFile: true,
             discardObservation: "changed",
             onOpenFailure: (error) => { lockFileOpenDenied = isTransientLockFileDenial(error, lockPath); },
@@ -360,7 +376,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
         ) {
           if (
             !(await sidecarLockSnapshotStillPresent(lockPath, snapshot, {
-              lockRoot: options.lockRoot,
+              lockRoot,
               parsePayload: options.parsePayload,
             }))
           ) {
@@ -379,7 +395,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
               normalizedTargetPath,
               snapshot,
               shouldRemoveStaleLock: options.shouldRemoveStaleLock,
-              lockRoot: options.lockRoot,
+              lockRoot,
               parsePayload: options.parsePayload,
             });
             if (removal === "removed" || removal === "changed") {
