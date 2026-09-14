@@ -4,6 +4,11 @@
 export { createAsyncLock } from "./async-lock.js";
 export { copyFileHandle, type CopyFileHandleOptions } from "./file-handle-transfer.js";
 export {
+  readDirectoryIdentity,
+  assertDirectoryIdentitySync,
+  type DirectoryIdentity,
+} from "./directory-guard.js";
+export {
   stageFileInDirectory,
   type StagedFile,
   type StagedFileReceipt,

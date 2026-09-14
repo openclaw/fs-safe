@@ -70,6 +70,7 @@ Operational filesystem failures such as permissions or I/O errors are rethrown.
 | `openRootFile`, `openRootFileSync`, `canUseRootFileOpen`, `matchRootFileOpenFailure`, related types | – | Low-level root-bounded open; rejects every symlink component by default, with `symlinks: "follow-parents-within-root"` for contained parent aliases or `"follow-within-root"` for final links too. |
 | `appendRegularFile`, `appendRegularFileSync`, `readRegularFile`, `readRegularFileSync`, `statRegularFile`, `statRegularFileSync`, `resolveRegularFileAppendFlags`, `AppendRegularFileOptions`, `RegularFileStatResult` | [regular-file.md](regular-file.md) | Type-checked regular-file I/O. |
 | `sameFileIdentity`, `FileIdentityStat` | – | Compare two stats for same-inode equality. |
+| `readDirectoryIdentity`, `assertDirectoryIdentitySync`, `DirectoryIdentity` | [directory-identity.md](directory-identity.md) | Observe exact bigint directory identity and synchronously check a caller-selected path, optionally retaining its canonical path. |
 | `pathExists`, `pathExistsSync` | – | Boolean existence check that does not throw on `ENOENT`. |
 | `assertNoSymlinkParents`, `assertNoSymlinkParentsSync`, `AssertNoSymlinkParentsOptions` | – | Reject paths whose ancestor chain contains symlinks. |
 | `assertNoHardlinkedFinalPath`, `assertNoPathAliasEscape`, `PATH_ALIAS_POLICIES`, `PathAliasPolicy` | – | Hardlink/alias defense building blocks. |
