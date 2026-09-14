@@ -52,6 +52,7 @@ await fs.remove("notes/archive/today.txt");
 |---|---|
 | [`root()`](root.md) | One boundary for read/write/move/remove and bounded recursive walking inside a trusted directory. |
 | [`@openclaw/fs-safe/config`](config.md) | Process-global native helper and lock-option defaults. |
+| [`@openclaw/fs-safe/guest`](guest.md) | Python filesystem source for caller-owned guest transports, with admitted roots and descriptor-relative operations. |
 | [Native helper policy](native-helper.md) | Choose `auto`, `off`, or `require` for platform-native primitives. |
 | [Native architecture](native.md) | Understand the thin syscall layer, beneath model, platform mechanisms, and fallback boundary. |
 | [`replaceFileAtomic`](atomic.md) | Sibling-temp + rename, fsync hooks, mode preservation, copy fallback. |

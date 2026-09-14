@@ -4,6 +4,10 @@ import { Writable } from "node:stream";
 import type { Gunzip } from "node:zlib";
 import { ArchiveFormatError } from "./archive-errors.js";
 
+export function isGzipBuffer(input: Uint8Array): boolean {
+  return input[0] === 31 && input[1] === 139;
+}
+
 function assertConsumedBoundary(consumed: number, size: number): void {
   if (!Number.isSafeInteger(consumed) || consumed <= 0 || consumed > size) {
     throw new ArchiveFormatError("invalid gzip consumed-input boundary");

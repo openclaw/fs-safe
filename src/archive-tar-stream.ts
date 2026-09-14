@@ -2,7 +2,7 @@ import fs from "node:fs";
 import { Readable, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGunzip } from "node:zlib";
-import { GzipInput, validateGzipBufferTail, validateGzipContainerTail } from "./archive-gzip-tail.js";
+import { GzipInput, isGzipBuffer, validateGzipBufferTail, validateGzipContainerTail } from "./archive-gzip-tail.js";
 import { ArchiveFormatError } from "./archive-errors.js";
 import type { TarMeterLimits } from "./archive-limits.js";
 import { TarParserStream, type AdmittedTarMember } from "./archive-tar-wasm.js";
@@ -19,7 +19,7 @@ async function gzipFile(filePath: string): Promise<boolean> {
   try {
     const magic = Buffer.alloc(2);
     const { bytesRead } = await handle.read(magic, 0, 2, 0);
-    return bytesRead === 2 && magic[0] === 31 && magic[1] === 139;
+    return bytesRead === 2 && isGzipBuffer(magic);
   } finally { await handle.close(); }
 }
 
@@ -28,7 +28,7 @@ async function withTarStream<T>(params: TarInput & {
   onMember?: (entry: AdmittedTarMember) => void;
 }, consume: (parser: TarParserStream) => Promise<T>): Promise<T> {
   const buffer = params.archiveBuffer;
-  const gzip = buffer !== undefined ? buffer[0] === 31 && buffer[1] === 139 : await gzipFile(params.archivePath!);
+  const gzip = buffer !== undefined ? isGzipBuffer(buffer) : await gzipFile(params.archivePath!);
   const parser = new TarParserStream(params.limits, params.onMember);
   const input = buffer !== undefined
     ? Readable.from(bufferChunks(buffer), { objectMode: false, highWaterMark: 65536 })

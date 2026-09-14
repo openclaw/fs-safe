@@ -589,8 +589,11 @@ Native TAR retains the fully admitted member offsets alongside the same input
 allocation. Plain TAR copies only the selected payload range after full archive
 validation. Gzip, zstd, and bzip2 replay bounded decompression and still validate
 all framing, trailers, and physical padding before returning. The JavaScript
-TAR/gzip fallback streams views of the private input into the shared WASM parser
-for admission and replay; WASM transport and selected output still require copies.
+TAR/gzip fallback copies each input window into WASM once, consuming member
+events at offsets within that window. After full admission, plain TAR copies the
+selected range directly from its private snapshot; gzip still replays bounded
+decompression through the parser. WASM transport and selected output still
+require copies.
 Returned buffers own their bytes, so changing a result cannot modify an archive
 reader or retain an unrelated part of the input through its backing ArrayBuffer.
 

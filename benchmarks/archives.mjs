@@ -49,8 +49,35 @@ export async function registerArchives({ api: a, workspace: w, register: add }) 
     add(`readArchiveEntry/${kind}`, () => a.readArchiveEntry(archivePath, "entry.json", { maxBytes: 1024 }), { divisor: 10 });
     if (kind !== "zip") add(`inspectTarArchive/${kind}`, () => a.inspectTarArchive({ archivePath, timeoutMs: 30_000 }), { divisor: 10 });
   }
+  const manySource = path.join(w, "tar-many-source");
+  fs.mkdirSync(manySource);
+  const names = Array.from({ length: 512 }, (_, index) => `entry-${index}`);
+  const memberPayload = Buffer.alloc(64, 42);
+  for (const name of names) fs.writeFileSync(path.join(manySource, name), memberPayload);
+  for (const gzip of [false, true]) {
+    const archivePath = path.join(w, `many.${gzip ? "tgz" : "tar"}`);
+    await tar.c({ cwd: manySource, file: archivePath, portable: true, gzip }, names);
+    const label = `${gzip ? "gzip" : "tar"}-512-members`;
+    add(`readArchiveEntry/${label}`, () => a.readArchiveEntry(archivePath, names.at(-1), { maxBytes: 64 }), {
+      divisor: 10, verify: result => assert.ok(result.equals(memberPayload)),
+    });
+    add(`inspectTarArchive/${label}`, () => a.inspectTarArchive({ archivePath, timeoutMs: 30_000 }), {
+      divisor: 10, verify: entries => assert.equal(entries.length, names.length),
+    });
+  }
   for (const size of [1024 * 1024, 16 * 1024 * 1024]) {
     const payload = Buffer.alloc(size, 0x61);
+    const tarSource = path.join(w, `tar-source-${size}`);
+    fs.mkdirSync(tarSource);
+    fs.writeFileSync(path.join(tarSource, "payload.bin"), payload);
+    for (const gzip of [false, true]) {
+      const archivePath = path.join(w, `large-${size}.${gzip ? "tgz" : "tar"}`);
+      await tar.c({ cwd: tarSource, file: archivePath, portable: true, gzip }, ["payload.bin"]);
+      add(`readArchiveEntry/${gzip ? "gzip" : "tar"}-${size / 1024 / 1024}MiB`,
+        () => a.readArchiveEntry(archivePath, "payload.bin", { maxBytes: size }), {
+          divisor: 10, verify: result => assert.ok(result.equals(payload)),
+        });
+    }
     for (const compression of ["STORE", "DEFLATE"]) {
       const largeZip = new JSZip();
       largeZip.file("payload.bin", payload);

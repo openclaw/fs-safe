@@ -19,6 +19,7 @@ import {
   ArchiveLimitError,
   ARCHIVE_LIMIT_ERROR_CODE,
 } from "./archive-limits.js";
+import { isGzipBuffer } from "./archive-gzip-tail.js";
 import { inspectTar, replayTar } from "./archive-tar-stream.js";
 import type { AdmittedTarMember } from "./archive-tar-wasm.js";
 import { loadZipArchiveWithPreflight } from "./archive-zip-preflight.js";
@@ -187,6 +188,16 @@ async function readTarEntry(archiveBuffer: Buffer, entryPath: string, maxBytes: 
     throw new Error(`archive entry is not a file: ${formatErrorDetail(entryPath)}`);
   }
   if (selected.size > maxBytes) throw new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT);
+  if (!isGzipBuffer(archiveBuffer)) {
+    // Complete admission already validated this private snapshot through EOF.
+    // Copy the admitted payload so the result cannot expose or mutate its input.
+    const end = selected.offset + selected.size;
+    if (!Number.isSafeInteger(selected.offset) || selected.offset < 0 ||
+        !Number.isSafeInteger(end) || end < selected.offset || end > archiveBuffer.length) {
+      throw new ArchiveFormatError("invalid admitted TAR range");
+    }
+    return Buffer.from(archiveBuffer.subarray(selected.offset, end));
+  }
   let result: Buffer | undefined;
   await replayTar({ archiveBuffer, limits, members: [selected], async consume(_member, payload) {
     result = await readStreamBounded(payload, maxBytes);

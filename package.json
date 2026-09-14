@@ -50,6 +50,10 @@
       "types": "./dist/copy.d.ts",
       "default": "./dist/copy.js"
     },
+    "./guest": {
+      "types": "./dist/guest.d.ts",
+      "default": "./dist/guest.js"
+    },
     "./config": {
       "types": "./dist/config.d.ts",
       "default": "./dist/config.js"

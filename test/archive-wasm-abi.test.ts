@@ -7,7 +7,7 @@ const module = new WebAssembly.Module(readFileSync(new URL("../dist/archive-pars
 function parser() {
   return new WebAssembly.Instance(module).exports as unknown as {
     memory: WebAssembly.Memory; input_ptr(): number; init(a: number, b: number, c: number, d: number, windows: number): number;
-    push(length: number): number; finish(): number; dispose(): void; text_ptr(): number; text_len(): number;
+    push(offset: number, length: number): number; finish(): number; dispose(): void; text_ptr(): number; text_len(): number;
     member_type(): number;
   };
 }
@@ -19,13 +19,16 @@ it("has no imports, rejects invalid limits and inbox lengths, and bounds linear 
   expect(WebAssembly.Module.imports(module)).toEqual([]);
   const p = parser();
   for (const value of [NaN, Infinity, -1]) expect(p.init(value, 1024, 10000, 4096, 0)).toBe(-1);
-  expect(p.push(1)).toBe(-1);
+  expect(p.push(0, 1)).toBe(-1);
   expect(p.init(10, 1024, 10000, 4096, 0)).toBe(0);
-  for (const length of [0, 65537, -1, 0x7fffffff]) expect(p.push(length)).toBe(-1);
+  for (const length of [0, 65537, -1, 0x7fffffff]) expect(p.push(0, length)).toBe(-1);
+  for (const [offset, length] of [[-1, 1], [65536, 1], [65535, 2], [0x7fffffff, 1], [1, 65536]]) {
+    expect(p.push(offset!, length!)).toBe(-1);
+  }
   expect(p.input_ptr() + 65536).toBeLessThanOrEqual(p.memory.buffer.byteLength);
   expect(() => p.memory.grow(4096)).toThrow();
   p.dispose();
-  expect(p.push(1)).toBe(-1);
+  expect(p.push(0, 1)).toBe(-1);
   expect(p.finish()).toBe(-1);
 });
 it("keeps concurrent parser states isolated and consumes one bounded event at a time", () => {
@@ -41,7 +44,7 @@ it("keeps concurrent parser states isolated and consumes one bounded event at a 
       if (offset === bytes[i]!.length) return;
       const chunk = bytes[i]!.subarray(offset, offset + 7);
       new Uint8Array(p.memory.buffer, p.input_ptr(), chunk.length).set(chunk);
-      const used = p.push(chunk.length);
+      const used = p.push(0, chunk.length);
       expect(used).toBeGreaterThan(0);
       expect(used).toBeLessThanOrEqual(chunk.length);
       offsets[i]! += used;
@@ -59,9 +62,9 @@ it("fails metadata allocation within the memory ceiling without accepting its bo
     block.write(`${size.toString(8).padStart(11, "0")}\0`, 124);
   } }], false).subarray(0, 512);
   new Uint8Array(p.memory.buffer, p.input_ptr(), 512).set(header);
-  expect(p.push(512)).toBe(-1);
+  expect(p.push(0, 512)).toBe(-1);
   expect(text(p)).toContain("archive-meta-entry-size-exceeds-limit");
-  expect(p.push(1)).toBe(-1);
+  expect(p.push(0, 1)).toBe(-1);
   p.dispose();
 });
 
@@ -81,7 +84,7 @@ it("applies the host Windows path policy to raw names even when overridden", () 
     while (offset < fixture.length) {
       const bytes = fixture.subarray(offset, offset + 512);
       new Uint8Array(p.memory.buffer, p.input_ptr(), bytes.length).set(bytes);
-      const used = p.push(bytes.length);
+      const used = p.push(0, bytes.length);
       if (used < 0) break;
       offset += used;
     }
@@ -89,4 +92,24 @@ it("applies the host Windows path policy to raw names even when overridden", () 
     else { expect(offset).toBe(fixture.length); expect(p.finish()).toBe(0); }
     p.dispose();
   }
+});
+
+it("consumes multiple member events from one copied inbox range", () => {
+  const p = parser();
+  const bytes = tarFixture(Array.from({ length: 20 }, (_, i) => ({ path: `entry-${i}`, body: "payload" })));
+  expect(p.init(20, 1024, bytes.length, 8192, 0)).toBe(0);
+  const start = 127;
+  new Uint8Array(p.memory.buffer, p.input_ptr() + start, bytes.length).set(bytes);
+  const names: string[] = [];
+  let consumed = 0;
+  while (consumed < bytes.length) {
+    const used = p.push(start + consumed, bytes.length - consumed);
+    expect(used).toBeGreaterThan(0);
+    expect(used).toBeLessThanOrEqual(bytes.length - consumed);
+    consumed += used;
+    if (p.member_type() >= 0) names.push(text(p));
+  }
+  expect(names).toEqual(Array.from({ length: 20 }, (_, i) => `entry-${i}`));
+  expect(p.finish()).toBe(0);
+  p.dispose();
 });

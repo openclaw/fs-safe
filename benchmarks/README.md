@@ -37,6 +37,8 @@ Hash cases verify the digest as well as the byte count outside measurement.
 Directory iteration includes full and early-stop scans in filesystem and sorted
 order. Tree-copy cases use explicit auto, never, and supported always policies
 over 64 small files, one 1 MiB file, and nested and empty directories.
+TAR/gzip member reads cover 1 MiB and 16 MiB payloads; 512-member read and
+inspection cases expose metadata-event transport costs.
 ZIP reads and extraction also cover 1 MiB and 16 MiB stored and deflated members
 to expose payload integrity costs beyond tiny archive fixtures.
 The native directory-open case times admission separately from descriptor close.
