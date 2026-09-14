@@ -125,6 +125,13 @@ All routes preserve `wx` semantics and the same source/target identity and
 SHA-256 fencing. Native hashing and Linux whole-file copying run on N-API async
 workers rather than the JavaScript event loop.
 
+Linux range copying confirms every zero-byte result with a positioned source
+read at the current transfer offset, including after earlier calls copied data.
+If readable bytes remain, automatic Root copying resumes its byte loop from
+that offset; exclusive publication removes its partial target before retrying
+the guarded byte-copy fallback. EOF checks preserve descriptor cursors and do
+not bypass the byte limit.
+
 ## Mode semantics
 
 | Mode | Native loading | Fallback |
