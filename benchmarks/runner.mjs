@@ -13,6 +13,7 @@ import { registerLifecycle } from "./lifecycle.mjs";
 import { registerArchives } from "./archives.mjs";
 import { registerBroad } from "./broad.mjs";
 import { registerScaling } from "./scaling.mjs";
+import { registerCollections } from "./collections.mjs";
 
 const args = { iterations: 100, samples: 5, warmup: 5, mode: "off", "copy-shape": "mixed", "copy-files": 64, "copy-file-bytes": 4096 };
 for (let i = 2; i < process.argv.length; i++) {
@@ -96,6 +97,7 @@ try {
   await registerArchives(context);
   await registerBroad(context);
   await registerScaling(context);
+  await registerCollections(context);
   const covered = new Set(cases.flatMap((c) => c.covers));
   const required = [...exportsByName.keys(), ...[...contracts].flatMap(([type, keys]) => keys.map((key) => `${type}.${key}`))];
   const missing = required.filter((name) => !covered.has(name) && !exclusions.has(name));
@@ -131,7 +133,7 @@ try {
     await once(false);
     for (let sample = 0; sample < args.samples; sample++) {
       let elapsed = 0;
-      if (c.sync && !c.before && !c.after) {
+      if (c.sync && !c.before && !c.after && !c.expectError) {
         const start = performance.now();
         for (let i = 0; i < iterations; i++) c.run();
         elapsed = performance.now() - start;

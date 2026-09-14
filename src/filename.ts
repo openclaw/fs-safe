@@ -1,5 +1,6 @@
 import path from "node:path";
 import { WINDOWS_RESERVED_DEVICE_NAMES } from "./device-path.js";
+import { maxNormalizedUtf8Bytes as normalizedFileNameBytes } from "./unicode-path.js";
 
 const INVALID_FILE_NAME_CHARACTERS = /[\u0000-\u001f\u007f-\u009f<>:"/\\|?*]/g;
 
@@ -27,13 +28,6 @@ function suffixWindowsReservedDeviceName(fileName: string): string {
 }
 
 const PORTABLE_FILE_NAME_BYTES = 255;
-
-function normalizedFileNameBytes(value: string): number {
-  return Math.max(
-    Buffer.byteLength(value.normalize("NFC"), "utf8"),
-    Buffer.byteLength(value.normalize("NFD"), "utf8"),
-  );
-}
 
 /** Keeps short names exact and trims only the filename tail of a composite temp name. */
 export function fitFileNameToPortableComponent(params: {
