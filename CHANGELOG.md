@@ -8,6 +8,8 @@
 - Reject NTFS alternate-data-stream and directory-index pathname aliases across guarded Root, directory-identity, FileStore, archive, JSON queue, sidecar lock, secret, secure-read, atomic publication, temp, permission, install, trash, and output boundaries before filesystem access. Preserve rooted drive paths, including valid extended namespace drive roots without widening volume-root mutation authority, independent device/network policies, intentional output-name sanitization, existing failure shapes, and ordinary colon-bearing POSIX names; native relative and archive paths enforce the same Windows rule.
 - Reduce repeated path work in POSIX path-scoping helpers and Root operations while preserving root exclusion, traversal checks, live directory identities, and home-prefix behavior; broaden method benchmarks across path batches, directories, stores, queues, and contention.
 
+- Create non-native asynchronous raw sidecars with mode `0o600` at the exclusive open, preventing permissive umasks from exposing lock payloads without adding a pathname `chmod` fallback.
+
 - Complete short gzip-header reads before classifying staged archives, preventing valid gzip files from being misread as TAR after a partial filesystem read.
 
 - Speed up JavaScript gzip extraction and TAR inspection by matching file-backed decoder output to the existing 64 KiB WASM input window, preserving backpressure, decoded-byte limits, trailer validation, and cancellation cleanup.

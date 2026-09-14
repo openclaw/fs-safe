@@ -7,6 +7,8 @@ alternate-stream and directory-index namespace spellings before parent creation,
 in-process reentrant lookup, or sidecar access. Rooted drive paths retain their
 normal meaning, and ordinary colon-bearing POSIX paths remain valid.
 
+JavaScript raw-sidecar creation passes mode `0o600` to that exclusive open. On POSIX, the process umask may further restrict the new file but cannot add group or other access. No pathname `chmod` fallback is used.
+
 ```ts
 import { acquireFileLock } from "@openclaw/fs-safe/file-lock";
 

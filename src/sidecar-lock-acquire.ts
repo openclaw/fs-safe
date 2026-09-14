@@ -232,7 +232,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
           try {
             handle =
               (await createNativeExclusiveFile(lockPath, 0o600)) ??
-              (await fs.open(lockPath, "wx"));
+              (await fs.open(lockPath, "wx", 0o600));
           } catch (createError) {
             lockFileCreateDenied = isTransientLockFileDenial(createError, lockPath);
             throw createError;
