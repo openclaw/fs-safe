@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "name": "pr323-archive-path-admission-windows-paired-proof",
+  "name": "borrowed-handle-transfer-overwrite-windows-paired-proof",
   "revisions": {
     "baseline": "49e78da32cdac9714417b735ab2f50bfc1392ec8",
     "candidate": "1d1dda92fcea8c5aa7f9fb05d974007e25a3967e"
@@ -21,50 +21,48 @@
   },
   "workloads": [
     {
-      "id": "readArchiveEntry/gzip-512-members",
-      "operation": "read",
-      "fixture": "many.tgz",
-      "entryPath": "entry-511",
-      "payloadBytes": 64
+      "id": "overwriteFileHandle/64B/absent",
+      "operation": "overwrite",
+      "payloadBytes": 64,
+      "callback": "absent"
     },
     {
-      "id": "inspectTarArchive/gzip-512-members",
-      "operation": "inspect",
-      "fixture": "many.tgz",
-      "manifestEntries": 512
+      "id": "overwriteFileHandle/64B/getter",
+      "operation": "overwrite",
+      "payloadBytes": 64,
+      "callback": "getter"
     },
     {
-      "id": "readArchiveEntry/tar-1MiB",
-      "operation": "read",
-      "fixture": "large-1048576.tar",
-      "entryPath": "payload.bin",
-      "payloadBytes": 1048576
+      "id": "copyFileHandle/64B/uncapped",
+      "operation": "copy",
+      "payloadBytes": 64,
+      "callback": "uncapped"
     },
     {
-      "id": "readArchiveEntry/gzip-1MiB",
-      "operation": "read",
-      "fixture": "large-1048576.tgz",
-      "entryPath": "payload.bin",
-      "payloadBytes": 1048576
+      "id": "copyFileHandle/64B/onChunk",
+      "operation": "copy",
+      "payloadBytes": 64,
+      "callback": "onChunk"
     }
   ],
   "sampling": {
-    "blocks": 48,
+    "blocks": 96,
     "cohorts": 4,
-    "blocksPerCohort": 12,
+    "blocksPerCohort": 24,
     "processesPerBlock": 8,
-    "expectedFreshProcesses": 384,
+    "expectedFreshProcesses": 768,
     "warmupCallsPerWorkload": 16,
     "timedCallsPerWorkload": 16,
     "abPatterns": ["ABBA", "BAAB"],
     "aaPatterns": ["A0A1A1A0", "A1A0A0A1"],
     "aaRevision": "baseline",
+    "quartetOrder": "balanced A/B-first and A/A-first within every cohort",
     "workloadRotation": "cyclic Latin square across rounds and balanced quartet starts",
-    "scheduleSeed": 52613329
+    "scheduleSeed": 342119501
   },
   "analysis": {
     "bootstrapIterations": 20000,
-    "bootstrapSeed": 52625411,
+    "bootstrapSeed": 342119502,
     "movingBlockLength": 4,
     "stratification": "four chronological cohorts",
     "withinBlock": "mean each child then equal-weight the two processes in each arm",

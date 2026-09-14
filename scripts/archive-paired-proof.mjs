@@ -12,9 +12,9 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
-const BASELINE = "aa3d50a59a490a394359c07c553be038f75bed5e";
-const CANDIDATE = "da136696dcce3d7ed07f3adb711c089a0466bace";
-const PLAN_SHA256 = "48cc1fcfe51cf4b498da8842e2d59d7d375b24a3b5bb99e1e3ee932cfd86c984";
+const BASELINE = "49e78da32cdac9714417b735ab2f50bfc1392ec8";
+const CANDIDATE = "1d1dda92fcea8c5aa7f9fb05d974007e25a3967e";
+const PLAN_SHA256 = "de66f6910aef46b6192ec19a5b36fde8dd23810d0508030a3943335d838ec77f";
 const CHILD_TIMEOUT_MS = 120_000;
 const SMOKE = Object.freeze({
   blocks: 1,
