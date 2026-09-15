@@ -58,6 +58,18 @@ export async function registerCore({ api: a, workspace: w, binding, measuredFeat
   add("Root.mkdir", () => safe.mkdir("new-dir"), { after: () => fs.rmdirSync(path.join(w, "new-dir")) });
   add("Root.ensureRoot", () => safe.ensureRoot());
   add("Root.remove", () => safe.remove("remove.txt"), { before: () => fs.writeFileSync(path.join(w, "remove.txt"), data) });
+  for (const depth of [8, 32]) {
+    const segments = [`remove-depth-${depth}`, ...Array.from({ length: depth - 1 }, (_, index) => String(index))];
+    const rel = path.join(...segments, "remove.txt");
+    const target = path.join(w, rel);
+    add(`Root.remove/depth-${depth}`, () => safe.remove(rel), {
+      before: () => {
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, data);
+      },
+      verify: () => assert.equal(fs.existsSync(target), false),
+    });
+  }
   for (const order of ["filesystem", "sorted"]) {
     const rel = `remove-tree-${order}`;
     add(`Root.remove/recursive-${order}`, () => safe.remove(rel, { recursive: true, order, maxEntries: 103 }), {
