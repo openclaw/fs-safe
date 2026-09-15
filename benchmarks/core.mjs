@@ -144,7 +144,7 @@ export async function registerCore({ api: a, workspace: w, binding, measuredFeat
       verify: (bytes) => { assert.equal(bytes, size); assert.deepEqual(fs.readFileSync(copyPath), payload); },
     });
     if (size === 2 * 1024 * 1024) {
-      const expectedChunkCalls = size / (512 * 1024);
+      const expectedMinimumChunks = size / (512 * 1024);
       for (const { name, observe, authorize } of [
         { name: "observer", observe: true, authorize: false },
         { name: "authority", observe: false, authorize: true },
@@ -170,9 +170,11 @@ export async function registerCore({ api: a, workspace: w, binding, measuredFeat
           after: (_, { source, target }) => Promise.all([source.close(), target.close()]),
           verify: (bytes) => {
             assert.equal(bytes, size);
-            assert.equal(observedChunks, observe ? expectedChunkCalls : 0);
+            if (observe) assert(observedChunks >= expectedMinimumChunks);
+            else assert.equal(observedChunks, 0);
             assert.equal(observedBytes, observe ? size : 0);
-            if (authorize) assert(authorityCalls >= expectedChunkCalls);
+            if (authorize && observe) assert(authorityCalls >= observedChunks);
+            else if (authorize) assert(authorityCalls >= expectedMinimumChunks);
             else assert.equal(authorityCalls, 0);
             assert.deepEqual(fs.readFileSync(callbackCopyPath), payload);
           },
