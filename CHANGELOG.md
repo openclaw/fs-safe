@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Reduce retained decoded buffers when reading gzip TAR entries in JavaScript by filling one owned result buffer from the fully admitted payload size, preserving complete archive validation and independent returned bytes.
 - Avoid repeated relative-path resolution for normalized Windows drive-path descendants, retaining the existing comparison for UNC paths and colon-bearing components.
 - Add `safePathSegmentHashedV2` for untrusted install identifiers, hashing every trimmed ID with domain-separated SHA-256 into a fixed lowercase segment; preserve the legacy encoder's output and document its deterministic aliases and explicit migration requirements.
 - Keep filename truncation, temp-file sanitization, and completed sibling callback paths from producing Windows reserved-device aliases; invalid callback components now reject before invoking a producer.
