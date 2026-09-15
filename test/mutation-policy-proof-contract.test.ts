@@ -3,6 +3,7 @@ import fs, { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { extendedCase } from "../scripts/mutation-policy-proof-cases.mjs";
 import {
   canonicalReceipt,
   expectedFinalReceiptContract,
@@ -43,7 +44,7 @@ function workerReceipt(
     },
     passed: true,
     provenance,
-    schema: "fs-safe-mutation-policy-worker-v1",
+    schema: "fs-safe-mutation-policy-worker-v2",
     ...overrides,
   } as WorkerReceiptFixture & Record<string, unknown>;
 }
@@ -57,7 +58,7 @@ function pendingReceipt(overrides: Record<string, unknown> = {}) {
     proof: "mutation-policy-public-behavior",
     provenance: null,
     runtime: { arch: "x64", libuv: "1", node: "v24.1.0", platform: "linux", v8: "1" },
-    schema: "fs-safe-mutation-policy-proof-v1",
+    schema: "fs-safe-mutation-policy-proof-v2",
     status: "pending",
     ...overrides,
   };
@@ -72,7 +73,9 @@ function observationsForCase(name: string, backend: string) {
     privilegeModel: process.platform === "win32" ? "no-elevation-requested" : "posix-nonroot",
   };
   let specific: Record<string, boolean | number | string>;
-  if (name === "allowed-mkdir") {
+  if (extendedCase(name)) {
+    specific = extendedCase(name).observations;
+  } else if (name === "allowed-mkdir") {
     specific = { route: "shared-missing-parent", targetDirectory: true };
   } else if (name === "allowed-open-writable" || name === "allowed-append") {
     specific = { route: "shared-missing-parent", targetBytes: 30 };
@@ -92,8 +95,11 @@ function observationsForCase(name: string, backend: string) {
       mkdirAttempts: 1,
       route: "exact-parent-optimized",
     };
-  } else if (name.endsWith("replacement-authority-fence")) {
-    specific = { authoritySwap: true, mutationSubmissions: 0, route: "component-walk-authority" };
+  } else if (name === "parent-replacement-authority-fence") {
+    specific = { authoritySwap: true, childMkdirSubmissions: 0, route: "component-walk-authority" };
+  } else if (name === "root-replacement-authority-fence") {
+    specific = { authoritySwap: true, originalParentEmpty: true, replacementParentEmpty: true,
+      route: "component-walk-authority" };
   } else if (name === "stale-missing-parent-recapture") {
     specific = {
       currentParentUsed: true,
@@ -101,11 +107,12 @@ function observationsForCase(name: string, backend: string) {
       staleParentUnused: true,
     };
   } else if (name === "denied-parent-redirect") {
-    specific = { deniedBeforeDispatch: true, redirectInjected: true, route: "full-policy-refresh" };
+    specific = { deniedParentEmpty: true, displacedParentEmpty: true, rejectedCode: "denied-path",
+      redirectInjected: true, route: "full-policy-refresh" };
   } else if (name === "deny-spelling-drift") {
     specific = {
       denySpellingAppeared: true,
-      mutationSubmissionsAfterDrift: 0,
+      nextComponentMkdirSubmissions: 0,
       route: "shared-policy-refresh",
     };
   } else if (name === "native-config-drift") {
@@ -176,7 +183,7 @@ function passedReceipt(overrides: Record<string, unknown> = {}) {
       platform: process.platform,
       v8: "1",
     },
-    schema: "fs-safe-mutation-policy-proof-v1",
+    schema: "fs-safe-mutation-policy-proof-v2",
     status: "passed",
     ...overrides,
   };
@@ -326,6 +333,37 @@ describe("mutation policy hosted proof contract", () => {
     }
   });
 
+  it("requires every exact observation and rejects the old dispatch overclaims", () => {
+    const valid = passedReceipt();
+    expect(Buffer.byteLength(canonicalReceipt(valid))).toBeLessThan(28 * 1024);
+    for (let index = 0; index < valid.cases.length; index += 1) {
+      for (const [key, value] of Object.entries(valid.cases[index]!.observations)) {
+        const changed = passedReceipt();
+        const variableCount = key === "safeMkdirs" || (key === "authorityCalls" &&
+          valid.cases[index]!.case.startsWith("post-create-") && valid.cases[index]!.case.endsWith("forced"));
+        changed.cases[index]!.observations[key] = typeof value === "boolean" ? !value :
+          typeof value === "number" ? (variableCount ? 0 : value + 1) : "wrong";
+        expect(validateFinalReceiptText(canonicalReceipt(changed)), `${index}:${key}`).toBeNull();
+      }
+    }
+    for (const [name, key] of [
+      ["root-replacement-authority-fence", "mutationSubmissions"],
+      ["parent-replacement-authority-fence", "mutationSubmissions"],
+      ["denied-parent-redirect", "deniedBeforeDispatch"],
+      ["deny-spelling-drift", "mutationSubmissionsAfterDrift"],
+    ] as const) {
+      const changed = passedReceipt();
+      const target = changed.cases.find(entry => entry.case === name);
+      if (!target) {
+        expect([process.platform, name]).toEqual(["win32", "root-replacement-authority-fence"]);
+        continue;
+      }
+      target.observations[key] = true;
+      expect(validateFinalReceiptText(canonicalReceipt(changed))).toBeNull();
+    }
+    expect(validateFinalReceiptText(canonicalReceipt({ ...valid, schema: "fs-safe-mutation-policy-proof-v1" }))).toBeNull();
+  });
+
   it("requires exact, non-duplicated coordinator arguments", () => {
     const hash = "1".repeat(40);
     const args = [
@@ -364,7 +402,7 @@ describe("mutation policy hosted proof contract", () => {
     expect(source).toContain('import.meta.resolve("@openclaw/fs-safe")');
     expect(source).toContain('await import("@openclaw/fs-safe")');
     expect(source).toContain('resolved.endsWith("/dist/index.js")');
-    expect(source).not.toContain("@openclaw/fs-safe/test-hooks");
+    expect(source).toContain('from "./mutation-policy-proof-cases.mjs"');
     expect(source).not.toContain("beforeRootFallbackMutation");
     expect(source).toContain('fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-mutation-policy-proof-")');
     expect(source).toContain("fs.realpath(createdDirectory)");

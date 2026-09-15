@@ -5,10 +5,11 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { EXTENDED_CASES, extendedCase, executeExtendedCase } from "./mutation-policy-proof-cases.mjs";
 
 const PROOF = "mutation-policy-public-behavior";
-const SCHEMA = "fs-safe-mutation-policy-proof-v1";
-const WORKER_SCHEMA = "fs-safe-mutation-policy-worker-v1";
+const SCHEMA = "fs-safe-mutation-policy-proof-v2";
+const WORKER_SCHEMA = "fs-safe-mutation-policy-worker-v2";
 const RECEIPT_MAX_BYTES = 32 * 1024;
 const WORKER_MAX_BYTES = 4 * 1024;
 const WORKER_TIMEOUT_MS = 15_000;
@@ -47,6 +48,7 @@ const ALL_CASES = Object.freeze([
   "pinned-create-require",
   "pinned-copy-in-off",
   "pinned-copy-in-require",
+  ...EXTENDED_CASES.map(entry => entry.name),
 ]);
 
 const POSIX_ONLY_CASES = new Set([
@@ -103,7 +105,20 @@ const HASH_BINDINGS = Object.freeze({
   publicPackageManifest: "package.json",
   dependencyLock: "pnpm-lock.yaml",
   proofHarness: "scripts/mutation-policy-proof.mjs",
+  proofCases: "scripts/mutation-policy-proof-cases.mjs",
   proofWorkflow: ".github/workflows/mutation-policy-proof.yml",
+  proofContractTests: "test/mutation-policy-proof-contract.test.ts",
+  proofCaseContractTests: "test/mutation-policy-proof-cases-contract.test.ts",
+  publicTestHooksSource: "src/test-hooks.ts",
+  publicTestHooksBuilt: "dist/test-hooks.js",
+  nativeStageSource: "src/native-staged-file.ts",
+  nativeStageBuilt: "dist/native-staged-file.js",
+  nativeOperationsSource: "src/native-operations.ts",
+  nativeOperationsBuilt: "dist/native-operations.js",
+  writeHandleSource: "src/write-file-handle.ts",
+  writeHandleBuilt: "dist/write-file-handle.js",
+  stageCleanupSource: "src/replace-file-temp-owner.ts",
+  stageCleanupBuilt: "dist/replace-file-temp-owner.js",
   optimizedMutationTests: "test/root-shared-js-mutation-policy.test.ts",
   completeParentTests: "test/root-shared-js-complete-parent.test.ts",
   missingParentTests: "test/root-shared-js-missing-parent.test.ts",
@@ -236,7 +251,11 @@ function exactKeys(value, expected) {
 }
 
 function expectedCaseNames(platform) {
-  return ALL_CASES.filter((caseName) => platform !== "win32" || !POSIX_ONLY_CASES.has(caseName));
+  return ALL_CASES.filter((caseName) => {
+    const extension = extendedCase(caseName);
+    if (extension) return (platform === "win32") === (extension.platform === "win32");
+    return platform !== "win32" || !POSIX_ONLY_CASES.has(caseName);
+  });
 }
 
 function expectedCoverage(platform) {
@@ -261,6 +280,9 @@ function expectedCoverage(platform) {
       "os-eexist-classification",
       "parent-identity-fences",
       ...(platform === "win32" ? [] : ["posix-pinned-off-and-require"]),
+      ...(platform === "win32"
+        ? ["windows-buffer-write-refusal-and-placeholder-cleanup"]
+        : ["posix-pinned-parent-denial-and-replacement", "posix-pinned-write-refusal-epochs"]),
       "selected-destination-authority-boundary",
     ],
     limitations: platform === "win32"
@@ -269,10 +291,12 @@ function expectedCoverage(platform) {
         "posix-pinned-routes-not-applicable",
         "root-replacement-not-hosted-on-windows",
         "stale-receipt-refresh-bound-to-hashed-internal-tests",
+        "compat-require-buffer-route-does-not-load-native-addon",
       ]
       : [
         "awaited-admission-seams-bound-to-hashed-internal-tests",
         "stale-receipt-refresh-bound-to-hashed-internal-tests",
+        "redirect-injection-uses-built-public-test-hook-after-preflight",
       ],
   };
 }
@@ -362,7 +386,9 @@ function validateSuccessfulObservations(caseName, backend, observations, platfor
     privilegeModel: platform === "win32" ? "no-elevation-requested" : "posix-nonroot",
   };
   let specific;
-  if (caseName === "allowed-mkdir") {
+  if (extendedCase(caseName)) {
+    specific = extendedCase(caseName).observations;
+  } else if (caseName === "allowed-mkdir") {
     specific = { route: "shared-missing-parent", targetDirectory: true };
   } else if (caseName === "allowed-open-writable" || caseName === "allowed-append") {
     specific = { route: "shared-missing-parent", targetBytes: PAYLOAD.length };
@@ -385,9 +411,11 @@ function validateSuccessfulObservations(caseName, backend, observations, platfor
       mkdirAttempts: 1,
       route: "exact-parent-optimized",
     };
-  } else if (caseName === "parent-replacement-authority-fence" ||
-    caseName === "root-replacement-authority-fence") {
-    specific = { authoritySwap: true, mutationSubmissions: 0, route: "component-walk-authority" };
+  } else if (caseName === "parent-replacement-authority-fence") {
+    specific = { authoritySwap: true, childMkdirSubmissions: 0, route: "component-walk-authority" };
+  } else if (caseName === "root-replacement-authority-fence") {
+    specific = { authoritySwap: true, originalParentEmpty: true, replacementParentEmpty: true,
+      route: "component-walk-authority" };
   } else if (caseName === "stale-missing-parent-recapture") {
     specific = {
       currentParentUsed: true,
@@ -395,11 +423,12 @@ function validateSuccessfulObservations(caseName, backend, observations, platfor
       staleParentUnused: true,
     };
   } else if (caseName === "denied-parent-redirect") {
-    specific = { deniedBeforeDispatch: true, redirectInjected: true, route: "full-policy-refresh" };
+    specific = { deniedParentEmpty: true, displacedParentEmpty: true, rejectedCode: "denied-path",
+      redirectInjected: true, route: "full-policy-refresh" };
   } else if (caseName === "deny-spelling-drift") {
     specific = {
       denySpellingAppeared: true,
-      mutationSubmissionsAfterDrift: 0,
+      nextComponentMkdirSubmissions: 0,
       route: "shared-policy-refresh",
     };
   } else if (caseName === "native-config-drift") {
@@ -754,6 +783,7 @@ function nativeTargetLabel() {
 }
 
 function expectedBackend(caseName) {
+  if (extendedCase(caseName)) return extendedCase(caseName).backend;
   if (REQUIRE_CASES.has(caseName)) return "pinned-native/require";
   if (PINNED_CASES.has(caseName)) return "pinned-js/off";
   if (caseName === "native-config-drift") return "shared-js/off-to-auto";
@@ -883,7 +913,8 @@ async function runCoordinator(config) {
         provenance.binding.nativeTarget,
       ], {
         cwd: repository,
-        env: { ...process.env, FS_SAFE_NATIVE_MODE: "off", OPENCLAW_FS_SAFE_NATIVE_MODE: "off" },
+        env: { ...process.env, FS_SAFE_NATIVE_MODE: "off", OPENCLAW_FS_SAFE_NATIVE_MODE: "off",
+          ...(caseName.startsWith("pinned-policy-") ? { NODE_ENV: "test" } : {}) },
       });
       invariant(run.reaped && !run.timedOut, "WORKER_TIMEOUT");
       invariant(!run.overflow && run.spawnCode === undefined, "WORKER_TRANSPORT_FAILED");
@@ -1163,7 +1194,7 @@ async function parentReplacementCase(api, fixture) {
   invariant(swapped && childMkdirs === 0, "PARENT_REPLACEMENT_DISPATCHED");
   invariant((await io(fs.readdir(parent))).length === 0 && (await io(fs.readdir(saved))).length === 0,
     "PARENT_REPLACEMENT_MUTATED");
-  return { authoritySwap: true, mutationSubmissions: childMkdirs, route: "component-walk-authority" };
+  return { authoritySwap: true, childMkdirSubmissions: childMkdirs, route: "component-walk-authority" };
 }
 
 async function rootReplacementCase(api, fixture) {
@@ -1194,7 +1225,8 @@ async function rootReplacementCase(api, fixture) {
       await io(fs.rename(saved, scope), "ROOT_RESTORE_RENAME_TIMEOUT");
     }
   }
-  return { authoritySwap: true, mutationSubmissions: 0, route: "component-walk-authority" };
+  return { authoritySwap: true, originalParentEmpty: true, replacementParentEmpty: true,
+    route: "component-walk-authority" };
 }
 
 async function staleMissingParentCase(api, fixture) {
@@ -1261,7 +1293,8 @@ async function deniedRedirectCase(api, fixture) {
   invariant(redirected, "DENIED_REDIRECT_NOT_INJECTED");
   invariant((await io(fs.readdir(denied))).length === 0 && (await io(fs.readdir(saved))).length === 0,
     "DENIED_REDIRECT_MUTATED");
-  return { deniedBeforeDispatch: true, redirectInjected: true, route: "full-policy-refresh" };
+  return { deniedParentEmpty: true, displacedParentEmpty: true, rejectedCode: "denied-path",
+    redirectInjected: true, route: "full-policy-refresh" };
 }
 
 async function denySpellingDriftCase(api, fixture) {
@@ -1289,7 +1322,7 @@ async function denySpellingDriftCase(api, fixture) {
   } finally { restore(); }
   invariant(appeared && secondMkdirs === 0, "DENY_DRIFT_DISPATCHED");
   invariant((await io(fs.readdir(first))).length === 0, "DENY_DRIFT_MUTATED");
-  return { denySpellingAppeared: true, mutationSubmissionsAfterDrift: 0, route: "shared-policy-refresh" };
+  return { denySpellingAppeared: true, nextComponentMkdirSubmissions: secondMkdirs, route: "shared-policy-refresh" };
 }
 
 async function configDriftCase(api, fixture) {
@@ -1438,6 +1471,10 @@ async function pinnedCase(api, operation, fixture) {
 }
 
 async function executeWorkerCase(caseName, api, fixture) {
+  const extension = extendedCase(caseName);
+  if (extension) return await executeExtendedCase(extension, api, fixture, {
+    io, invariant, expectFailure, PAYLOAD,
+  });
   if (caseName === "allowed-mkdir") return await allowedCase(api, "mkdir", fixture);
   if (caseName === "allowed-open-writable") return await allowedCase(api, "open", fixture);
   if (caseName === "allowed-append") return await allowedCase(api, "append", fixture);
@@ -1487,8 +1524,11 @@ async function runWorker(argv) {
       "WORKER_PROVENANCE_ARGUMENT");
     invariant(target === nativeTargetLabel(), "WORKER_NATIVE_TARGET");
     invariant(process.versions.node.split(".")[0] === "24", "NODE_MAJOR_MISMATCH");
-    if (process.platform !== "win32") invariant(process.getuid() !== 0, "WORKER_PRIVILEGED");
+    if (process.platform !== "win32") {
+      invariant(process.getuid() !== 0 && process.geteuid() !== 0, "WORKER_PRIVILEGED");
+    }
     if (POSIX_ONLY_CASES.has(caseName)) invariant(process.platform !== "win32", "CASE_PLATFORM_MISMATCH");
+    invariant(expectedCaseNames(process.platform).includes(caseName), "CASE_PLATFORM_MISMATCH");
     const addonPath = path.resolve(`packages/${target}/fs-safe-native.node`);
     const addon = await hashFile(process.cwd(), path.relative(process.cwd(), addonPath), MAX_ADDON_BYTES);
     invariant(addon.sha256 === addonSha256, "WORKER_ADDON_HASH_MISMATCH");
@@ -1498,7 +1538,7 @@ async function runWorker(argv) {
     const api = await import("@openclaw/fs-safe");
     invariant(typeof api.root === "function" && typeof api.configureFsSafeNative === "function" &&
       typeof api.getFsSafeNativeConfig === "function", "PUBLIC_EXPORTS_MISSING");
-    const mode = REQUIRE_CASES.has(caseName) ? "require" : "off";
+    const mode = backend.endsWith("/require") ? "require" : "off";
     api.configureFsSafeNative({ mode });
     invariant(api.getFsSafeNativeConfig().mode === mode, "NATIVE_MODE_NOT_SELECTED");
     const loadedBefore = await addonLoaded(addonPath);
@@ -1507,8 +1547,8 @@ async function runWorker(argv) {
     const observations = await withFixture(caseName, async (fixture) =>
       await executeWorkerCase(caseName, api, fixture));
     const loadedAfter = await addonLoaded(addonPath);
-    if (REQUIRE_CASES.has(caseName)) invariant(loadedAfter, "REQUIRED_ADDON_NOT_LOADED");
-    else invariant(!loadedAfter, "OFF_ROUTE_LOADED_ADDON");
+    if (backend === "pinned-native/require") invariant(loadedAfter, "REQUIRED_ADDON_NOT_LOADED");
+    else invariant(!loadedAfter, "UNEXPECTED_ADDON_LOADED");
     await new Promise((resolve) => setImmediate(resolve));
     invariant(unhandled === undefined, "UNHANDLED_REJECTION");
     receipt.observations = {

@@ -21,6 +21,7 @@
 
 ### Validation and tooling
 
+- Version mutation-policy proof receipts to distinguish observed preservation from scoped JavaScript mkdir counters, and add bounded public-package pinned-policy rejection, state-selected write-refusal, and Windows buffer-write/placeholder-cleanup cases with explicit built test-hook provenance.
 - Separate the reviewed manual method-audit harness from immutable candidate and baseline checkouts, validate and resolve dispatch inputs before platform fan-out, and support Node 22/24 plus rebuild and same-artifact controls without changing the ordinary PR/schedule benchmark job.
 - Add versioned, mutation-checked benchmark provenance for trusted reviewed revisions, including harness/source identities, measurement and report-file receipts, manifests, lockfiles, dist trees, bounded dependency layouts, native addons, and runner metadata; this detects accidental drift but is not a sandbox for hostile benchmark code.
 - Bind filename-sanitizer benchmark expectations to the measured revision's tracked source, validate all 17 profile rows before filtering, strengthen four long-name endpoint checks, add paired shared-mutation-admission fixtures with 60 portable and 96 Windows rows, and cover temp-workspace mode correction plus existing/missing roots at depths 4/8/32.

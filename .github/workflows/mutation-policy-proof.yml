@@ -25,7 +25,14 @@ on:
       - test/root-shared-js-missing-parent.test.ts
       - test/root-shared-js-mutation-policy.test.ts
       - test/mutation-policy-proof-contract.test.ts
+      - test/mutation-policy-proof-cases-contract.test.ts
       - scripts/mutation-policy-proof.mjs
+      - scripts/mutation-policy-proof-cases.mjs
+      - src/test-hooks.ts
+      - src/native-staged-file.ts
+      - src/native-operations.ts
+      - src/write-file-handle.ts
+      - src/replace-file-temp-owner.ts
       - .github/workflows/mutation-policy-proof.yml
       - package.json
       - pnpm-lock.yaml
@@ -95,7 +102,7 @@ jobs:
       - name: Run bounded public mutation proof
         id: proof
         if: always()
-        timeout-minutes: 4
+        timeout-minutes: 6
         shell: bash
         env:
           MUTATION_POLICY_RECEIPT: ${{ runner.temp }}/mutation-policy-proof-${{ runner.os }}.json
@@ -121,7 +128,7 @@ jobs:
           valid=$?
           if [[ $valid -ne 0 ]]; then
             fallback="$MUTATION_POLICY_RECEIPT.fallback"
-            printf '%s\n' '{"cases":[],"coverage":{"complementary":[],"hosted":[],"limitations":[]},"failure":{"code":"RECEIPT_INVALID","kind":"proof","stage":"workflow-fallback"},"passed":false,"proof":"mutation-policy-public-behavior","provenance":null,"runtime":{"arch":"unknown","libuv":"unknown","node":"unknown","platform":"unknown","v8":"unknown"},"schema":"fs-safe-mutation-policy-proof-v1","status":"failed"}' > "$fallback"
+            printf '%s\n' '{"cases":[],"coverage":{"complementary":[],"hosted":[],"limitations":[]},"failure":{"code":"RECEIPT_INVALID","kind":"proof","stage":"workflow-fallback"},"passed":false,"proof":"mutation-policy-public-behavior","provenance":null,"runtime":{"arch":"unknown","libuv":"unknown","node":"unknown","platform":"unknown","v8":"unknown"},"schema":"fs-safe-mutation-policy-proof-v2","status":"failed"}' > "$fallback"
             mv -f "$fallback" "$MUTATION_POLICY_RECEIPT"
             exit 1
           fi
