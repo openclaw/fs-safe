@@ -46,7 +46,8 @@ import { cleanupPinnedFilePath } from "./replace-file-temp-owner.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { realpathSync } from "./realpath.js";
 import { isNonRegularWriteOpenError, resolveNonblockingWriteFlag } from "./write-open-flags.js";
-import { resolveRootPath } from "./root-path.js";
+import { resolveRootPath, resolveRootPathForRemoval } from "./root-path.js";
+import { RemovalPathReceipts } from "./root-remove-receipt.js";
 import { openRootDirectoryListing, listDirectoryPath, pathStatFromStats } from "./root-directory-list.js";
 import { entriesInRoot, type RootEntriesOptions } from "./root-entries.js";
 import {
@@ -1030,14 +1031,16 @@ async function removePathInRoot(
   params: RootRemoveOptions & { relativePath: string },
 ): Promise<void> {
   validatePinnedOperationPayload({ relativePath: params.relativePath });
+  const removalReceipts = params.recursive ? undefined : new RemovalPathReceipts();
   const resolved = await resolvePinnedPathInRoot(root, {
     relativePath: params.relativePath,
     denyMutations: params.denyMutations,
     mutationSymlinks: params.mutationSymlinks,
     remove: true,
+    removalReceipts,
   });
   try {
-    await removePathInRootFallback(root, resolved.resolved, params);
+    await removePathInRootFallback(root, resolved.resolved, params, removalReceipts);
   } catch (error) {
     if (params.recursive) throw error;
     throw normalizePinnedPathError(error);
@@ -1309,6 +1312,7 @@ async function resolvePinnedPathInRoot(
     denyMutations?: DenyMutationPolicy;
     mutationSymlinks?: MutationSymlinkPolicy;
     remove?: boolean;
+    removalReceipts?: RemovalPathReceipts;
   },
 ): Promise<{ rootReal: string; resolved: string; relativePosix: string }> {
   return await resolvePinnedOperationPathInRoot(root, {
@@ -1318,6 +1322,7 @@ async function resolvePinnedPathInRoot(
     protectDenyMutationAncestors: params.remove === true,
     relativePath: params.relativePath,
     policy: params.remove ? PATH_ALIAS_POLICIES.unlinkTarget : PATH_ALIAS_POLICIES.strict,
+    removalReceipts: params.removalReceipts,
   });
 }
 
@@ -1330,12 +1335,14 @@ async function resolvePinnedOperationPathInRoot(
     denyMutations?: DenyMutationPolicy;
     mutationSymlinks?: MutationSymlinkPolicy;
     protectDenyMutationAncestors: boolean;
+    removalReceipts?: RemovalPathReceipts;
   },
 ): Promise<{ rootReal: string; resolved: string; relativePosix: string }> {
   const resolved = await resolvePinnedRootPathInRoot(root, {
     relativePath: params.relativePath,
     policy: params.policy,
     mutationSymlinks: params.mutationSymlinks,
+    removalReceipts: params.removalReceipts,
   });
   const relativeResolved = path.relative(resolved.rootReal, resolved.canonicalPath);
   if ((relativeResolved === "" || relativeResolved === ".") && params.allowRoot === true) {
@@ -1368,14 +1375,15 @@ async function resolvePinnedRootPathInRoot(
     relativePath: string;
     policy: (typeof PATH_ALIAS_POLICIES)[keyof typeof PATH_ALIAS_POLICIES];
     mutationSymlinks?: MutationSymlinkPolicy;
+    removalReceipts?: RemovalPathReceipts;
   },
 ): Promise<{ rootReal: string; rootWithSep: string; canonicalPath: string }> {
-  await assertRootIdentityCurrent(root);
+  await assertRootIdentityCurrent(root, params.removalReceipts?.observeRoot);
   const rootReal = root.rootReal;
   let resolved;
   try {
     const expandedPath = await expandRelativePathWithHome(params.relativePath);
-    resolved = await resolveRootPath({
+    const resolution = {
       absolutePath: path.isAbsolute(expandedPath)
         ? expandedPath
         : `${ensureTrailingSep(rootReal)}${expandedPath}`,
@@ -1384,7 +1392,8 @@ async function resolvePinnedRootPathInRoot(
       boundaryLabel: "root",
       policy: params.policy,
       ...mutationSymlinkResolution(params.mutationSymlinks),
-    });
+    };
+    resolved = await (params.removalReceipts ? resolveRootPathForRemoval(resolution, params.removalReceipts) : resolveRootPath(resolution));
   } catch (err) {
     if (err instanceof FsSafeError && err.code === "symlink") throw err;
     throw new FsSafeError("path-alias", "path alias escape blocked", { cause: err });

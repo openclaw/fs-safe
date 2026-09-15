@@ -43,11 +43,11 @@ export function assertDirectoryIdentitySync(
   }
 }
 
-export function createAsyncDirectoryGuard(dir: string, options: { bigint: true }): Promise<AsyncDirectoryGuard<BigIntStats>>;
+export function createAsyncDirectoryGuard(dir: string, options: { bigint: true; initial?: BigIntStats }): Promise<AsyncDirectoryGuard<BigIntStats>>;
 export function createAsyncDirectoryGuard(dir: string, options?: { bigint?: false }): Promise<AsyncDirectoryGuard>;
 export function createAsyncDirectoryGuard(dir: string, options: { bigint: boolean }): Promise<AnyAsyncDirectoryGuard>;
-export async function createAsyncDirectoryGuard(dir: string, options?: { bigint?: boolean }): Promise<AnyAsyncDirectoryGuard> {
-  const stat = options?.bigint ? inspectDirectoryIdentitySync(dir) : fsSync.lstatSync(dir);
+export async function createAsyncDirectoryGuard(dir: string, options?: { bigint?: boolean; initial?: BigIntStats }): Promise<AnyAsyncDirectoryGuard> {
+  const stat = options?.bigint ? inspectDirectoryIdentitySync(dir, undefined, options.initial) : fsSync.lstatSync(dir);
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw directoryComponentNotDirectoryError();
   }
@@ -157,12 +157,17 @@ function directoryEntryPath(dir: string): string {
 export function inspectDirectoryIdentitySync(
   dir: string,
   expected?: Pick<BigIntStats, "dev" | "ino">,
+  initial?: BigIntStats,
+  platform: NodeJS.Platform = process.platform,
 ): BigIntStats {
   // A trailing separator makes lstat follow a final directory symlink.
   const entryPath = directoryEntryPath(dir);
   return inspectFileIdentitySync(() => {
-    const stat = fsSync.lstatSync(entryPath, { bigint: true });
+    // Internal traversal receipts can supply the first observation. Any retry
+    // still reads the pathname and retains the strict observer's known bits.
+    const stat = initial ?? fsSync.lstatSync(entryPath, { bigint: true });
+    initial = undefined;
     if (stat.isSymbolicLink() || !stat.isDirectory()) throw directoryComponentNotDirectoryError();
     return stat;
-  }, expected);
+  }, expected, platform);
 }

@@ -3,9 +3,9 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
-  assertAsyncDirectoryGuard,
   assertSyncDirectoryGuard,
   createAsyncDirectoryGuard,
+  inspectDirectoryIdentitySync,
   type AsyncDirectoryGuard,
 } from "./directory-guard.js";
 import { assertMutationNotDenied } from "./deny-mutations.js";
@@ -16,6 +16,12 @@ import { isNotFoundPathError, isPathInside } from "./path.js";
 import { assertRootIdentityCurrent, type RootContext } from "./root-context.js";
 import { normalizeRemoveGuardError, normalizeRemovePathError, rootPathChangedError } from "./root-errors.js";
 import type { RootRemoveOptions } from "./root-options.js";
+import {
+  assertRemovalDirectoryCurrent,
+  createRemovalDirectoryAssertion,
+  type RemovalDirectoryAssertion,
+} from "./root-remove-identity.js";
+import type { RemovalPathReceipts } from "./root-remove-receipt.js";
 import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { createSuppressedError } from "./suppressed-error.js";
@@ -51,21 +57,205 @@ function assertNotAborted(signal: AbortSignal | undefined): void {
   }
 }
 
-async function removeOne(root: RootContext, targetPath: string, options: RootRemoveOptions): Promise<void> {
-  let guard;
+type RemovalDirectoryReceipt = RemovalDirectoryAssertion;
+
+type NonrecursiveRemovalAdmission = Readonly<{
+  assertAfterMutation(): void;
+  assertCurrent(): void;
+}>;
+
+function removalAncestorChanged(error?: unknown): FsSafeError {
+  return new FsSafeError("path-mismatch", "removal ancestor changed during operation", {
+    cause: error instanceof Error ? error : undefined,
+  });
+}
+
+function sameCanonicalDirectory(left: string, right: string): boolean {
+  return isPathInside(left, right) && isPathInside(right, left);
+}
+
+function assertExactRemovalReceiptPrefixCurrent(
+  rootGuard: AsyncDirectoryGuard<BigIntStats>,
+  intermediates: readonly RemovalDirectoryReceipt[],
+): void {
   try {
-    guard = await createAsyncDirectoryGuard(path.dirname(targetPath));
+    assertSyncDirectoryGuard(rootGuard);
+    for (const receipt of intermediates) {
+      inspectDirectoryIdentitySync(receipt.path, receipt);
+    }
   } catch (error) {
-    if (options.force && isNotFoundPathError(error)) {
-      await assertRootIdentityCurrent(root);
+    // force tolerates a vanished leaf, never a lost traversal boundary.
+    throw removalAncestorChanged(error);
+  }
+}
+
+async function assertMissingRemovalPrefixCurrent(
+  rootGuard: AsyncDirectoryGuard<BigIntStats>,
+  intermediates: readonly RemovalDirectoryReceipt[],
+): Promise<void> {
+  if (intermediates.length === 0) {
+    assertExactRemovalReceiptPrefixCurrent(rootGuard, intermediates);
+    return;
+  }
+
+  const deepest = intermediates[intermediates.length - 1]!;
+  assertExactRemovalReceiptPrefixCurrent(rootGuard, intermediates.slice(0, -1));
+  let deepestGuard: AsyncDirectoryGuard<BigIntStats>;
+  try {
+    deepestGuard = await createAsyncDirectoryGuard(deepest.path, { bigint: true });
+  } catch (error) {
+    throw removalAncestorChanged(error);
+  }
+  if (!sameFileIdentityForCleanup(deepestGuard.stat, deepest) ||
+    !sameCanonicalDirectory(deepestGuard.realPath, deepest.path)) {
+    throw removalAncestorChanged();
+  }
+}
+
+async function captureNonrecursiveRemovalAdmission(
+  root: RootContext,
+  targetPath: string,
+  options: RootRemoveOptions,
+  receipts?: RemovalPathReceipts,
+): Promise<NonrecursiveRemovalAdmission | undefined> {
+  const parentPath = path.dirname(targetPath);
+  if (!isPathInside(root.rootReal, parentPath)) {
+    throw new FsSafeError("path-mismatch", "removal parent is outside the retained root");
+  }
+
+  const retained = receipts?.complete(root.rootReal, targetPath);
+  let rootGuard: AsyncDirectoryGuard<BigIntStats>;
+  try {
+    // A complete, exactly spelled parent canonicalization below also proves
+    // Root's canonical route. Retain Root's earlier exact identity either way.
+    rootGuard = retained && parentPath !== root.rootReal
+      ? { dir: root.rootReal, realPath: root.rootReal, stat: retained.rootStat }
+      : await createAsyncDirectoryGuard(root.rootReal, { bigint: true, initial: retained?.rootStat });
+  } catch (error) {
+    // force may tolerate a missing target or parent, never a missing Root.
+    if (options.force && isNotFoundPathError(error)) await assertRootIdentityCurrent(root);
+    throw normalizeRemoveGuardError(error);
+  }
+  if (!sameFileIdentityForCleanup(rootGuard.stat, root.rootIdentity)) throw rootPathChangedError();
+
+  if (parentPath === root.rootReal) {
+    const rootAssertion = createRemovalDirectoryAssertion(
+      rootGuard.dir,
+      rootGuard.stat,
+      rootGuard.realPath,
+    );
+    return Object.freeze({
+      assertAfterMutation(): void {
+        // Here Root is also the immediate parent, so retain its established
+        // post-dispatch error classification while checking it only once.
+        assertRemovalDirectoryCurrent(rootAssertion);
+      },
+      assertCurrent(): void {
+        try {
+          assertRemovalDirectoryCurrent(rootAssertion);
+        } catch (error) {
+          throw removalAncestorChanged(error);
+        }
+      },
+    });
+  }
+
+  const intermediates: RemovalDirectoryReceipt[] = [];
+  const retainedDirectories = retained?.directories;
+  const freshSegments = retainedDirectories
+    ? undefined
+    : path.relative(root.rootReal, parentPath).split(path.sep).filter(Boolean).slice(0, -1);
+  const intermediateCount = retainedDirectories ? Math.max(0, retainedDirectories.length - 1) : freshSegments!.length;
+  let freshAncestor = root.rootReal;
+  for (let index = 0; index < intermediateCount; index += 1) {
+    const retainedDirectory = retainedDirectories?.[index];
+    const ancestor = retainedDirectory?.path ?? (freshAncestor = path.join(freshAncestor, freshSegments![index]!));
+    try {
+      const stat = inspectDirectoryIdentitySync(ancestor, undefined, retainedDirectory?.stat);
+      intermediates.push(createRemovalDirectoryAssertion(ancestor, stat));
+    } catch (error) {
+      if (isNotFoundPathError(error)) {
+        await assertMissingRemovalPrefixCurrent(rootGuard, intermediates);
+        assertNotAborted(options.signal);
+        if (options.force) return undefined;
+      }
+      throw normalizeRemoveGuardError(error);
+    }
+  }
+
+  let parentGuard: AsyncDirectoryGuard<BigIntStats>;
+  try {
+    parentGuard = await createAsyncDirectoryGuard(retained?.parent?.path ?? parentPath, {
+      bigint: true,
+      initial: retained?.parent?.stat,
+    });
+  } catch (error) {
+    if (isNotFoundPathError(error)) {
+      await assertMissingRemovalPrefixCurrent(rootGuard, intermediates);
       assertNotAborted(options.signal);
-      return;
+      if (options.force) return undefined;
     }
     throw normalizeRemoveGuardError(error);
   }
+  if (!sameCanonicalDirectory(parentGuard.realPath, parentPath)) {
+    throw removalAncestorChanged();
+  }
+  const canonicalParentCoversRoot = retained !== undefined && parentGuard.realPath === parentPath;
+  if (retained && !canonicalParentCoversRoot) {
+    try {
+      rootGuard = await createAsyncDirectoryGuard(root.rootReal, { bigint: true, initial: retained.rootStat });
+    } catch (error) {
+      if (options.force && isNotFoundPathError(error)) await assertRootIdentityCurrent(root);
+      throw normalizeRemoveGuardError(error);
+    }
+  }
+
+  const rootAssertion = createRemovalDirectoryAssertion(
+    rootGuard.dir,
+    rootGuard.stat,
+    canonicalParentCoversRoot ? undefined : rootGuard.realPath,
+  );
+  const parentAssertion = createRemovalDirectoryAssertion(
+    parentGuard.dir,
+    parentGuard.stat,
+    parentGuard.realPath,
+  );
+
+  const assertPrefixCurrent = (): void => {
+    try {
+      assertRemovalDirectoryCurrent(rootAssertion);
+      for (const assertion of intermediates) assertRemovalDirectoryCurrent(assertion);
+    } catch (error) {
+      throw removalAncestorChanged(error);
+    }
+  };
+
+  return Object.freeze({
+    assertAfterMutation(): void {
+      assertPrefixCurrent();
+      // Preserve the established nonrecursive post-dispatch mapping for the
+      // immediate parent: disappearance is `not-found`, while replacements
+      // retain their directory-guard classification. Earlier lost ancestry
+      // remains a fail-closed `path-mismatch`.
+      assertRemovalDirectoryCurrent(parentAssertion);
+    },
+    assertCurrent(): void {
+      assertPrefixCurrent();
+      try {
+        assertRemovalDirectoryCurrent(parentAssertion);
+      } catch (error) {
+        throw removalAncestorChanged(error);
+      }
+    },
+  });
+}
+
+async function removeOne(root: RootContext, targetPath: string, options: RootRemoveOptions, receipts?: RemovalPathReceipts): Promise<void> {
+  const admission = await captureNonrecursiveRemovalAdmission(root, targetPath, options, receipts);
+  if (!admission) return;
   try {
     await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("remove", targetPath);
-    await assertAsyncDirectoryGuard(guard);
+    admission.assertCurrent();
   } catch (error) {
     throw normalizeRemoveGuardError(error);
   }
@@ -78,7 +268,11 @@ async function removeOne(root: RootContext, targetPath: string, options: RootRem
   } catch (error) {
     if (!(options.force && isNotFoundPathError(error))) throw normalizeRemovePathError(error);
   }
-  await assertAsyncDirectoryGuard(guard).catch(error => { throw normalizeRemoveGuardError(error); });
+  try {
+    admission.assertAfterMutation();
+  } catch (error) {
+    throw normalizeRemoveGuardError(error);
+  }
   assertNotAborted(options.signal);
 }
 
@@ -86,10 +280,11 @@ export async function removePathInRootFallback(
   root: RootContext,
   targetPath: string,
   options: RootRemoveOptions,
+  receipts?: RemovalPathReceipts,
 ): Promise<void> {
   assertNotAborted(options.signal);
   if (!options.recursive) {
-    await removeOne(root, targetPath, options);
+    await removeOne(root, targetPath, options, receipts);
     return;
   }
 
