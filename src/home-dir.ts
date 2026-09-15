@@ -130,6 +130,50 @@ function resolveExpandedHomePath(
   return resolved;
 }
 
+function admitFinalHomePath(
+  resolved: string,
+  platform: NodeJS.Platform | string | undefined,
+): string {
+  assertNoWindowsPathAliasForPlatform(
+    resolved,
+    "filesystem",
+    PATH_ALIAS_MESSAGE,
+    platform,
+  );
+  return resolved;
+}
+
+function finishOrdinaryHomePath(input: string, resolved: string): string {
+  const resolvedPlatform = process.platform;
+  if (resolved === input && resolvedPlatform !== undefined) return resolved;
+  return admitFinalHomePath(resolved, resolvedPlatform);
+}
+
+function repairAndFinishOrdinaryHomePath(input: string, resolved: string): string {
+  return finishOrdinaryHomePath(input, repairResolvedWindowsRoot(input, resolved));
+}
+
+function resolveHomePathCold(
+  input: string,
+  opts: { env?: NodeJS.ProcessEnv; homedir?: () => string } | undefined,
+  rawPlatform: NodeJS.Platform | string | undefined,
+  ordinaryRawAdmitted: boolean,
+): string {
+  if (ordinaryRawAdmitted) {
+    return finishOrdinaryHomePath(input, resolvePathPreservingWindowsRoot(input));
+  }
+  assertNoWindowsPathAliasForPlatform(input, "filesystem", PATH_ALIAS_MESSAGE, rawPlatform);
+  if (!hasHomePrefix(input)) {
+    const resolved = resolvePathPreservingWindowsRoot(input);
+    // This cold branch was not admitted as an ordinary rooted drive. Recheck
+    // even an unchanged result because the live platform can change between
+    // raw admission and resolved-path admission. Passing undefined preserves
+    // the classifier's default process.platform read.
+    return admitFinalHomePath(resolved, process.platform);
+  }
+  return resolveExpandedHomePath(input, opts);
+}
+
 export function resolveHomeRelativePath(
   input: string,
   opts?: {
@@ -146,43 +190,14 @@ export function resolveHomeRelativePath(
   const ordinaryRawAdmitted = rawPlatform === "win32" &&
     typeof input === "string" &&
     isOrdinaryRootedWindowsDrivePath(input);
-  if (ordinaryRawAdmitted) {
-    // Keep the overwhelmingly common rooted-drive path close to path.resolve
-    // itself. Seven-byte inputs retain the general helper's observable
-    // namespace-root preflight; a rare six-byte result retains its repair.
-    const usedGeneralResolver = input.length === 7;
-    const resolved = usedGeneralResolver
-      ? resolvePathPreservingWindowsRoot(input)
-      : path.resolve(input);
-    const repaired = !usedGeneralResolver && resolved.length === 6
-      ? repairResolvedWindowsRoot(input, resolved)
-      : resolved;
-    const resolvedPlatform = process.platform;
-    if (repaired !== input || resolvedPlatform === undefined) {
-      assertNoWindowsPathAliasForPlatform(
-        repaired,
-        "filesystem",
-        PATH_ALIAS_MESSAGE,
-        resolvedPlatform,
-      );
-    }
-    return repaired;
+  // Keep the overwhelmingly common rooted-drive path close to path.resolve
+  // itself. Seven-byte inputs retain the general helper's observable
+  // namespace-root preflight; a rare six-byte result retains its repair.
+  if (!ordinaryRawAdmitted || input.length === 7) {
+    return resolveHomePathCold(input, opts, rawPlatform, ordinaryRawAdmitted);
   }
-  assertNoWindowsPathAliasForPlatform(input, "filesystem", PATH_ALIAS_MESSAGE, rawPlatform);
-  if (!hasHomePrefix(input)) {
-    const resolved = resolvePathPreservingWindowsRoot(input);
-    const resolvedPlatform = process.platform;
-    // This cold branch was not admitted as an ordinary rooted drive. Recheck
-    // even an unchanged result because the live platform can change between
-    // raw admission and resolved-path admission. Passing undefined preserves
-    // the classifier's default process.platform read.
-    assertNoWindowsPathAliasForPlatform(
-      resolved,
-      "filesystem",
-      PATH_ALIAS_MESSAGE,
-      resolvedPlatform,
-    );
-    return resolved;
-  }
-  return resolveExpandedHomePath(input, opts);
+  const resolved = path.resolve(input);
+  return resolved.length === 6
+    ? repairAndFinishOrdinaryHomePath(input, resolved)
+    : finishOrdinaryHomePath(input, resolved);
 }

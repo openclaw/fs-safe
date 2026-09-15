@@ -35,7 +35,14 @@ describe("Windows home-path admission fast path", () => {
     "z:\\safe\\nested\\file.txt",
     "D:/safe/nested/file.txt",
   ])("preserves an unchanged ordinary rooted drive path: %s", (input) => {
-    setPlatform("win32");
+    let reads = 0;
+    Object.defineProperty(process, "platform", {
+      configurable: true,
+      get: () => {
+        reads += 1;
+        return "win32";
+      },
+    });
     resolveToInput();
     const opts = Object.defineProperties({}, {
       env: { get: () => { throw new Error("must not read env"); } },
@@ -45,6 +52,23 @@ describe("Windows home-path admission fast path", () => {
     expect(resolveHomeRelativePath(input, opts)).toBe(input);
     expect(path.resolve).toHaveBeenCalledOnce();
     expect(path.resolve).toHaveBeenCalledWith(input);
+    expect(reads).toBe(2);
+  });
+
+  it("preserves the repair-helper platform read for an ordinary six-character path", () => {
+    let reads = 0;
+    Object.defineProperty(process, "platform", {
+      configurable: true,
+      get: () => {
+        reads += 1;
+        return "win32";
+      },
+    });
+    resolveToInput();
+
+    expect(resolveHomeRelativePath("C:\\abc")).toBe("C:\\abc");
+    expect(path.resolve).toHaveBeenCalledOnce();
+    expect(reads).toBe(3);
   });
 
   it("fully admits a changed resolver result", () => {
@@ -89,6 +113,17 @@ describe("Windows home-path admission fast path", () => {
     const boxed = new String("C:\\safe\\nested\\file.txt");
 
     expect(() => resolveHomeRelativePath(boxed as unknown as string)).toThrow(TypeError);
+  });
+
+  it("rejects a boxed raw alias before resolution", () => {
+    setPlatform("win32");
+    const resolve = vi.spyOn(path, "resolve");
+    const boxed = new String("C:\\safe\\file.txt:stream");
+
+    expect(() => resolveHomeRelativePath(boxed as unknown as string)).toThrow(
+      expect.objectContaining({ code: "invalid-path" }),
+    );
+    expect(resolve).not.toHaveBeenCalled();
   });
 
   it("preserves platform reads when the resolved-path read is undefined", () => {
@@ -240,6 +275,29 @@ describe("Windows home-path admission fast path", () => {
     expect(path.resolve).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    ["backslash", "\\\\?\\C:\\", "\\\\?\\C:\\"],
+    ["slash", "//?/C:/", "\\\\?\\C:\\"],
+  ] as const)("preserves an exact seven-character %s namespace root without resolving", (
+    _spelling,
+    input,
+    expected,
+  ) => {
+    let reads = 0;
+    Object.defineProperty(process, "platform", {
+      configurable: true,
+      get: () => {
+        reads += 1;
+        return "win32";
+      },
+    });
+    const resolve = vi.spyOn(path, "resolve");
+
+    expect(resolveHomeRelativePath(input)).toBe(expected);
+    expect(resolve).not.toHaveBeenCalled();
+    expect(reads).toBe(3);
+  });
+
   it("keeps valid namespace roots on the full admission path", () => {
     setPlatform("win32");
     resolveToInput();
@@ -277,7 +335,14 @@ describe("Windows home-path admission fast path", () => {
     expect(events).toEqual(["env", "homedir", "env", "homedir"]);
   });
 
-  it("returns empty input before platform or option access", () => {
+  it.each([
+    ["empty string", ""],
+    ["undefined", undefined],
+    ["null", null],
+    ["false", false],
+    ["zero", 0],
+    ["NaN", Number.NaN],
+  ] as const)("returns falsy %s before platform or option access", (_name, input) => {
     Object.defineProperty(process, "platform", {
       configurable: true,
       get: () => { throw new Error("must not read platform"); },
@@ -287,6 +352,6 @@ describe("Windows home-path admission fast path", () => {
       homedir: { get: () => { throw new Error("must not read homedir"); } },
     });
 
-    expect(resolveHomeRelativePath("", opts)).toBe("");
+    expect(Object.is(resolveHomeRelativePath(input as unknown as string, opts), input)).toBe(true);
   });
 });
