@@ -23,6 +23,7 @@ export default {
       "test/root-mutation-*.test.ts",
       "test/native-mutation-policy-integration.test.ts",
       "test/pinned-mutation-fast-path.test.ts",
+      "test/root-shared-js-bun-deoptimization.test.ts",
       "test/file-lock*.test.ts",
       "test/clone.test.ts",
       "test/copy-tree.test.ts",

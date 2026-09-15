@@ -40,10 +40,7 @@ import { readOpenedFileSafely, type ReadResult } from "./read-opened-file.js";
 import { cleanupPinnedFilePath } from "./replace-file-temp-owner.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { realpathSync } from "./realpath.js";
-import {
-  mkdirPathFallback,
-  prepareRootWriteTarget,
-} from "./root-directory-creation.js";
+import { mkdirPathFallback, prepareRootWriteTarget } from "./root-directory-creation.js";
 import { isNonRegularWriteOpenError, resolveNonblockingWriteFlag } from "./write-open-flags.js";
 import { resolveRootPath } from "./root-path.js";
 import { admitPathInsideRoot } from "./root-boundary.js";
@@ -91,6 +88,7 @@ import {
   takeRootWriteSelection,
   type PinnedWriteTarget,
 } from "./root-write-admission.js";
+import { prepareSharedRootWriteTarget } from "./root-write-complete-parent.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 import { createCopyPublicationObserver, onCopyPublication, type CopyPublicationOptions } from "./copy-publication.js";
 import { writeAllToFile } from "./write-file-handle.js";
@@ -811,18 +809,14 @@ async function openWritableFileInRoot(
   const { resolved } = guardedTarget?.resolvedPath ?? await resolveGuardedWritePathInRoot(root, {
     relativePath: params.relativePath,
   });
-  const mutationAdmission = guardedTarget?.mutationAdmission;
-  if (mutationAdmission) {
-    await getFsSafeTestHooks()?.beforePinnedWriteParentAdmission?.(resolved);
-  }
-  let ioPath = params.mkdir === false
-    ? guardedTarget?.targetPath ?? resolved
-    : await prepareRootWriteTarget(
-      root,
-      resolved,
-      params.assertBeforeMutation,
-      mutationAdmission,
-    );
+  const prepared = guardedTarget ? await prepareSharedRootWriteTarget(root, {
+    relativePath: params.relativePath, guardedTarget, mkdir: params.mkdir,
+    assertBeforeMutation: params.assertBeforeMutation,
+  }) : undefined;
+  const mutationAdmission = prepared?.mutationAdmission;
+  const preparedParent = prepared?.preparedParent;
+  let ioPath = prepared?.targetPath ?? (params.mkdir === false ? resolved :
+    await prepareRootWriteTarget(root, resolved, params.assertBeforeMutation));
   const operationTargetPath = ioPath;
   try {
     assertFinalSymlinkRejected(ioPath, params.mutationSymlinks !== undefined);
@@ -853,7 +847,12 @@ async function openWritableFileInRoot(
   const createFlags = params.append ? OPEN_APPEND_CREATE_FLAGS : OPEN_WRITE_CREATE_FLAGS;
   try {
     writePathSelection = guardedTarget
-      ? await prepareGuardedRootWritePathSelection(guardedTarget, ioPath, operationTargetPath)
+      ? await prepareGuardedRootWritePathSelection(
+        guardedTarget,
+        ioPath,
+        operationTargetPath,
+        preparedParent,
+      )
       : undefined;
     try {
       if (writePathSelection) assertRootWritePathSelectionSync(root, writePathSelection);
@@ -1665,20 +1664,21 @@ async function writeMissingFileFallback(
   const { resolved } = guardedTarget?.resolvedPath ?? await resolveGuardedWritePathInRoot(root, {
     relativePath: params.relativePath,
   });
-  const mutationAdmission = guardedTarget?.mutationAdmission;
-  if (mutationAdmission) {
-    await getFsSafeTestHooks()?.beforePinnedWriteParentAdmission?.(resolved);
-  }
-  const targetPath = params.mkdir === false
-    ? guardedTarget?.targetPath ?? resolved
-    : await prepareRootWriteTarget(
-      root,
-      resolved,
-      params.assertBeforeMutation,
-      mutationAdmission,
-    );
+  const prepared = guardedTarget ? await prepareSharedRootWriteTarget(root, {
+    relativePath: params.relativePath, guardedTarget, mkdir: params.mkdir,
+    assertBeforeMutation: params.assertBeforeMutation,
+  }) : undefined;
+  const mutationAdmission = prepared?.mutationAdmission;
+  const preparedParent = prepared?.preparedParent;
+  const targetPath = prepared?.targetPath ?? (params.mkdir === false ? resolved :
+    await prepareRootWriteTarget(root, resolved, params.assertBeforeMutation));
   const pathSelection = guardedTarget
-    ? await prepareGuardedRootWritePathSelection(guardedTarget, targetPath)
+    ? await prepareGuardedRootWritePathSelection(
+      guardedTarget,
+      targetPath,
+      targetPath,
+      preparedParent,
+    )
     : undefined;
   const parentGuard = pathSelection?.parentGuard ??
     await createAsyncDirectoryGuard(path.dirname(targetPath), { bigint: true });

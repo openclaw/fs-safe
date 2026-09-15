@@ -28,6 +28,10 @@ import {
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { realpathSync } from "./realpath.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
+import {
+  assertPreparedRootWriteParentCurrent,
+  type PreparedRootWriteParent,
+} from "./root-write-complete-parent.js";
 
 export type PinnedWriteTarget = Readonly<{
   rootReal: string;
@@ -42,6 +46,13 @@ export type GuardedWritePath = Awaited<ReturnType<typeof resolvePathInRoot>>;
 
 export type SelectedRootWriteTargetAdmission = Readonly<{
   authorize(selectedTargetPath: string): Promise<void>;
+}>;
+
+export type GuardedRootWriteTarget = Readonly<{
+  resolvedPath: GuardedWritePath;
+  targetPath: string;
+  mutationAdmission?: PinnedWriteMutationAdmission;
+  selectedTargetAdmission?: SelectedRootWriteTargetAdmission;
 }>;
 
 export type RootWritePathSelection = Readonly<{
@@ -182,27 +193,58 @@ export function assertRootWriteSelectionSync(
   assertSyncDirectoryGuard(selection.parentGuard);
 }
 
-async function authorizeRootWritePathSelection(selection: RootWritePathSelection): Promise<void> {
+async function authorizeRootWritePathSelection(
+  selection: RootWritePathSelection,
+  afterAwait?: (selectedAdmissionPending: boolean) => void,
+): Promise<void> {
+  const selectedAdmissionPending = !sameNormalizedPathSpelling(
+    selection.operationTargetPath,
+    selection.selectedPath,
+  );
   await selection.mutationAdmission.authorize(Object.freeze({
     targetPath: selection.operationTargetPath,
     mutationPath: selection.operationTargetPath,
     phase: "parent" as const,
   }));
-  if (!sameNormalizedPathSpelling(selection.operationTargetPath, selection.selectedPath)) {
+  afterAwait?.(selectedAdmissionPending);
+  if (selectedAdmissionPending) {
     await selection.selectedTargetAdmission.authorize(selection.selectedPath);
+    afterAwait?.(false);
   }
 }
 
 export async function prepareRootWritePathSelection(params: Omit<
   RootWritePathSelection,
   "parentGuard"
->): Promise<RootWritePathSelection> {
+> & Readonly<{
+  preparedParent?: PreparedRootWriteParent;
+}>): Promise<RootWritePathSelection> {
+  const { preparedParent, ...selectionParams } = params;
+  if (preparedParent && (
+    !sameNormalizedPathSpelling(preparedParent.operationTargetPath, params.operationTargetPath) ||
+    !sameNormalizedPathSpelling(preparedParent.parentGuard.dir, path.dirname(params.operationTargetPath))
+  )) throw writeSelectionChanged();
   const selection: RootWritePathSelection = Object.freeze({
-    ...params,
-    parentGuard: await createAsyncDirectoryGuard(path.dirname(params.selectedPath), { bigint: true }),
+    ...selectionParams,
+    parentGuard: preparedParent?.parentGuard ??
+      await createAsyncDirectoryGuard(path.dirname(params.selectedPath), { bigint: true }),
   });
-  await authorizeRootWritePathSelection(selection);
-  await assertAsyncDirectoryGuard(selection.parentGuard);
+  await authorizeRootWritePathSelection(
+    selection,
+    preparedParent
+      ? (selectedAdmissionPending) => assertPreparedRootWriteParentCurrent(
+        preparedParent,
+        !selectedAdmissionPending,
+      )
+      : undefined,
+  );
+  if (preparedParent) {
+    if (!sameNormalizedPathSpelling(preparedParent.selectedTargetPath, params.selectedPath)) {
+      throw writeSelectionChanged();
+    }
+  } else {
+    await assertAsyncDirectoryGuard(selection.parentGuard);
+  }
   return selection;
 }
 
@@ -213,6 +255,7 @@ export async function prepareGuardedRootWritePathSelection(
   } | undefined,
   selectedPath: string,
   operationTargetPath = selectedPath,
+  preparedParent?: PreparedRootWriteParent,
 ): Promise<RootWritePathSelection | undefined> {
   if (!guarded?.mutationAdmission) return undefined;
   if (!guarded.selectedTargetAdmission) throw writeSelectionChanged();
@@ -221,6 +264,7 @@ export async function prepareGuardedRootWritePathSelection(
     selectedTargetAdmission: guarded.selectedTargetAdmission,
     operationTargetPath,
     selectedPath,
+    preparedParent,
   });
 }
 
@@ -301,12 +345,7 @@ export async function resolveGuardedWritePathInRoot(
 export async function resolveGuardedWriteTargetInRoot(
   root: RootContext,
   params: GuardedWritePathOptions,
-): Promise<{
-  resolvedPath: GuardedWritePath;
-  targetPath: string;
-  mutationAdmission?: PinnedWriteMutationAdmission;
-  selectedTargetAdmission?: SelectedRootWriteTargetAdmission;
-}> {
+): Promise<GuardedRootWriteTarget> {
   const policy = params.denyMutations === undefined && params.mutationSymlinks === undefined
     ? undefined
     : snapshotPinnedMutationPolicy(params.denyMutations, params.mutationSymlinks);
