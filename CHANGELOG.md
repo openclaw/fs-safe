@@ -9,10 +9,17 @@
 - Reuse operation-local mutation-policy observations for ordinary Node.js POSIX writes, retaining exact bigint directory guards and an already-complete guarded parent while refreshing full ordered admission when route, deny-path, Root identity, missing-component, or configuration evidence changes; synchronous guard-bound authorization, fused post-create receipt validation, exclusive direct-child native mkdir provenance, and immutable suffix offsets avoid redundant awaited observation passes and depth-quadratic segment-array copies while collisions, legacy native helpers, followed aliases, complex routes, Bun, and ineligible Windows paths retain full admission.
 - Bound full resolver admission across deep missing-parent creation for ordinary Node.js Windows shared-JavaScript mutations with exact canonical routes, reject-symlink policy, bigint Root identity, and fully observed in-root deny entries. The optimization is scoped to one guarded directory walk and advances only through owned `mkdir` receipts with current exact parent/child identities; collisions, callbacks, aliases, ambiguous spellings, incomplete observations, and all final selection, open, staging, publication, hardlink, and cleanup fences continue through full admission.
 
+### Archive performance
+
+- Reuse canonical archive paths when no components are stripped, retaining validation and filter order.
+- Avoid temporary ZIP collision-identity collections while checking both raw and Unicode identities before recording them.
+- Size native archive entry reservations from bounded member-size hints so small ZIP and compressed TAR results do not reserve the caller's larger byte budget.
+
 ### Validation and tooling
 
 - Separate the reviewed manual method-audit harness from immutable candidate and baseline checkouts, validate and resolve dispatch inputs before platform fan-out, and support Node 22/24 plus rebuild and same-artifact controls without changing the ordinary PR/schedule benchmark job.
 - Add versioned, mutation-checked benchmark provenance for trusted reviewed revisions, including harness/source identities, measurement and report-file receipts, manifests, lockfiles, dist trees, bounded dependency layouts, native addons, and runner metadata; this detects accidental drift but is not a sandbox for hostile benchmark code.
+- Bind filename-sanitizer benchmark expectations to the measured revision's tracked source, validate all 17 profile rows before filtering, strengthen four long-name endpoint checks, add paired shared-mutation-admission fixtures with 60 portable and 96 Windows rows, and cover temp-workspace mode correction plus existing/missing roots at depths 4/8/32.
 
 ## 0.12.0 - 2026-09-15
 

@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import {
+  registerRootWriteMutationAdmission,
+  registerSharedMutationAdmission,
+} from "./shared-mutation-admission.mjs";
 
 async function settledValues(pending) {
   const results = await Promise.allSettled(pending);
@@ -26,137 +30,8 @@ export async function registerScaling({ api: a, workspace: w, register: add, onC
       }
     }
   }
-
-  const mutationDenied = path.join(w, "mutation-admission-denied");
-  fs.mkdirSync(mutationDenied);
-  const mutationOptions = {
-    denyMutations: { prefixes: [mutationDenied] },
-    mutationSymlinks: "reject",
-    durable: false,
-  };
-  for (const depth of [1, 8, 32]) {
-    const components = Array.from({ length: depth - 1 }, (_, index) => `d${index}`);
-    const existingParent = path.join(w, `mutation-admission-existing-${depth}`, ...components);
-    const existingRelative = path.relative(w, path.join(existingParent, "value"));
-    fs.mkdirSync(existingParent, { recursive: true });
-    fs.writeFileSync(path.join(existingParent, "value"), "original");
-    add(`Root.write/mutation-admission/existing/depth=${depth}`, () =>
-      root.write(existingRelative, "replacement", mutationOptions), {
-      divisor: 10,
-      verify: () => assert.equal(fs.readFileSync(path.join(existingParent, "value"), "utf8"), "replacement"),
-    });
-
-    const missingRoot = path.join(w, `mutation-admission-missing-${depth}`);
-    const missingTarget = path.join(missingRoot, ...components, "value");
-    const missingRelative = path.relative(w, missingTarget);
-    add(`Root.write/mutation-admission/mkdir/depth=${depth}`, () =>
-      root.write(missingRelative, "replacement", mutationOptions), {
-      divisor: 10,
-      before: () => fs.rmSync(missingRoot, { recursive: true, force: true }),
-      verify: () => assert.equal(fs.readFileSync(missingTarget, "utf8"), "replacement"),
-      after: () => fs.rmSync(missingRoot, { recursive: true, force: true }),
-    });
-  }
-
-  const sharedAdmissionPolicy = {
-    denyMutations: { prefixes: [mutationDenied] },
-    mutationSymlinks: "reject",
-  };
-  let sharedAdmissionFixture = 0;
-  const addSharedAdmissionPair = ({ name, mode, depth, layout, run, verify }) => {
-    for (const policy of ["none", "enabled"]) {
-      const fixtureRoot = path.join(w, `ma-${sharedAdmissionFixture++}`);
-      const parent = path.join(
-        fixtureRoot,
-        ...Array.from({ length: depth - 1 }, (_, index) => `d${index + 1}`),
-      );
-      const target = path.join(parent, "value");
-      const relative = path.relative(w, target);
-      const options = policy === "enabled" ? sharedAdmissionPolicy : {};
-      const modeLabel = mode === undefined ? "" : `/mode=${mode}`;
-      add(`${name}/shared-js-mutation-admission${modeLabel}/${layout}/policy=${policy}/depth=${depth}`,
-        () => run(relative, options), {
-          divisor: 10,
-          before: () => {
-            fs.rmSync(fixtureRoot, { recursive: true, force: true });
-            if (layout === "missing-parent") return;
-            fs.mkdirSync(parent, { recursive: true });
-            if (layout === "existing-target") fs.writeFileSync(target, "original");
-          },
-          verify: result => verify(result, target, layout),
-          after: async result => {
-            await result?.handle?.close();
-            fs.rmSync(fixtureRoot, { recursive: true, force: true });
-          },
-        });
-    }
-  };
-
-  for (const depth of [1, 8, 32]) {
-    for (const writeMode of ["update", "append", "replace"]) {
-      for (const layout of ["existing-target", "missing-parent"]) {
-        addSharedAdmissionPair({
-          name: "Root.openWritable", mode: writeMode, depth, layout,
-          run: (relative, options) => root.openWritable(relative, { ...options, writeMode }),
-          verify: (result, target, fixtureLayout) => {
-            assert(result?.handle);
-            assert.equal(fs.readFileSync(target, "utf8"),
-              fixtureLayout === "existing-target" && writeMode !== "replace" ? "original" : "");
-          },
-        });
-      }
-    }
-    for (const layout of ["existing-target", "missing-parent"]) {
-      addSharedAdmissionPair({
-        name: "Root.append", depth, layout,
-        run: (relative, options) => root.append(relative, "payload", { ...options, durable: false }),
-        verify: (_, target, fixtureLayout) => assert.equal(
-          fs.readFileSync(target, "utf8"),
-          fixtureLayout === "existing-target" ? "originalpayload" : "payload",
-        ),
-      });
-    }
-    for (const layout of ["existing-parent", "missing-parent"]) {
-      addSharedAdmissionPair({
-        name: "Root.mkdir", depth, layout,
-        run: (relative, options) => root.mkdir(relative, options),
-        verify: (_, target) => assert(fs.statSync(target).isDirectory()),
-      });
-    }
-  }
-
-  if (process.platform === "win32") {
-    const bufferOperations = [
-      {
-        name: "Root.write", mode: "overwrite", existingLayout: "existing-target",
-        run: (relative, options) => root.write(relative, Buffer.from("payload"), {
-          ...options, durable: false, overwrite: true, renameIdentity: "verify-content-with-lock",
-        }),
-      },
-      {
-        name: "Root.write", mode: "exclusive", existingLayout: "existing-parent",
-        run: (relative, options) => root.write(relative, Buffer.from("payload"), {
-          ...options, durable: false, overwrite: false, renameIdentity: "verify-content-with-lock",
-        }),
-      },
-      {
-        name: "Root.create", mode: "exclusive", existingLayout: "existing-parent",
-        run: (relative, options) => root.create(relative, Buffer.from("payload"), {
-          ...options, durable: false, renameIdentity: "verify-content-with-lock",
-        }),
-      },
-    ];
-    for (const depth of [1, 8, 32]) {
-      for (const operation of bufferOperations) {
-        for (const layout of [operation.existingLayout, "missing-parent"]) {
-          addSharedAdmissionPair({
-            ...operation, depth, layout,
-            verify: (_, target) => assert.equal(fs.readFileSync(target, "utf8"), "payload"),
-          });
-        }
-      }
-    }
-  }
+  registerRootWriteMutationAdmission({ root, workspace: w, register: add });
+  registerSharedMutationAdmission({ root, workspace: w, register: add });
 
   const renameDenied = () => { throw Object.assign(new Error("benchmark forces copy fallback"), { code: "EPERM" }); };
   const asyncFs = { promises: { ...fs.promises, rename: async () => renameDenied() } };
