@@ -20,10 +20,11 @@ function sameDirectoryFacts(left: BigIntStats, right: BigIntStats): boolean {
 }
 
 function inspectGuardCurrent(parent: AnyAsyncDirectoryGuard): BigIntStats {
-  if (typeof parent.stat.dev !== "bigint" || typeof parent.stat.ino !== "bigint") {
+  const { dev, ino } = parent.stat;
+  if (typeof dev !== "bigint" || typeof ino !== "bigint") {
     throw new TypeError("exact directory guard required for mutation evidence");
   }
-  const stat = inspectDirectoryIdentitySync(parent.dir, parent.stat);
+  const stat = inspectDirectoryIdentitySync(parent.dir, { dev, ino });
   if (realpathSync.native(parent.dir) !== parent.realPath) {
     throw new FsSafeError("path-mismatch", "directory changed during operation");
   }
