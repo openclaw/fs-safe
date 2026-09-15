@@ -15,6 +15,8 @@ import {
   validateDispatchInputs,
   validatePlanHash,
 } from "./method-audit-plan.mjs";
+import { profileForFilenameSource } from "./filename-fallback-profile.mjs";
+import { measuredSourceBinding } from "./measured-distribution.mjs";
 
 const MAX_FILE_BYTES = 256 * 1024 * 1024;
 const DIST_LIMITS = Object.freeze({ maxEntries: 20_000, maxBytes: 1024 * 1024 * 1024 });
@@ -291,7 +293,30 @@ function gitCheckoutIdentity(root, expected, role) {
   if (manifestHash !== expected.manifestHash || lockfileHash !== expected.lockfileHash) {
     fail(`${role} manifest or lockfile does not match the resolved source`);
   }
-  return { commit, tree, manifestHash, lockfileHash };
+  const identity = { commit, tree, manifestHash, lockfileHash };
+  const expectsFilenameSource = expected.filenameSourceBlob !== undefined ||
+    expected.filenameSourceHash !== undefined || expected.filenameFallbackProfile !== undefined;
+  if (!expectsFilenameSource) return identity;
+  const filenameSourceBlob = normalizeSha(
+    `${role} filename source blob`,
+    gitText(root, ["rev-parse", "HEAD:src/filename.ts"]),
+  );
+  const filenameSourceHash = hashFile(path.join(root, "src", "filename.ts")).sha256;
+  const filenameFallbackProfile = profileForFilenameSource(
+    filenameSourceBlob,
+    fs.readFileSync(path.join(root, "src", "filename.ts")),
+  );
+  if (filenameSourceBlob !== expected.filenameSourceBlob ||
+      filenameSourceHash !== expected.filenameSourceHash ||
+      filenameFallbackProfile !== expected.filenameFallbackProfile) {
+    fail(`${role} filename source does not match the resolved source blob`);
+  }
+  return {
+    ...identity,
+    filenameSourceBlob,
+    filenameSourceHash,
+    filenameFallbackProfile,
+  };
 }
 
 function installationSnapshot(root, source, role) {
@@ -365,12 +390,17 @@ function createSnapshot(plan, roots) {
   };
 }
 
-function trackedBlob(root, commit, file) {
+function trackedBlobIdentity(root, commit, file) {
   const listing = git(root, ["ls-tree", "-z", commit, "--", file], { buffer: true }).stdout;
   const record = listing.toString("utf8").replace(/\0$/u, "");
-  const match = /^(100644|100755) blob [0-9a-f]{40}\t(.+)$/u.exec(record);
-  if (!match || match[2] !== file) fail(`${file} is missing or unsafe at ${commit}`);
-  return git(root, ["show", `${commit}:${file}`], { buffer: true }).stdout;
+  const match = /^(100644|100755) blob ([0-9a-f]{40})\t(.+)$/u.exec(record);
+  if (!match || match[3] !== file) fail(`${file} is missing or unsafe at ${commit}`);
+  const bytes = git(root, ["cat-file", "blob", match[2]], { buffer: true }).stdout;
+  return { blob: match[2], hash: sha256(bytes), bytes };
+}
+
+function trackedBlob(root, commit, file) {
+  return trackedBlobIdentity(root, commit, file).bytes;
 }
 
 function sourceResolution(root, requestedRef, commit, matchedRef = null) {
@@ -381,6 +411,7 @@ function sourceResolution(root, requestedRef, commit, matchedRef = null) {
   }
   const resolvedCommit = normalizeSha("resolved commit", gitText(root, ["rev-parse", "--verify", `${commit}^{commit}`]));
   const tree = normalizeSha("resolved tree", gitText(root, ["rev-parse", "--verify", `${resolvedCommit}^{tree}`]));
+  const filenameSource = trackedBlobIdentity(root, resolvedCommit, "src/filename.ts");
   return {
     requestedRef: requestedRef || null,
     matchedRef,
@@ -388,6 +419,9 @@ function sourceResolution(root, requestedRef, commit, matchedRef = null) {
     tree,
     manifestHash: sha256(trackedBlob(root, resolvedCommit, "package.json")),
     lockfileHash: sha256(trackedBlob(root, resolvedCommit, "pnpm-lock.yaml")),
+    filenameSourceBlob: filenameSource.blob,
+    filenameSourceHash: filenameSource.hash,
+    filenameFallbackProfile: profileForFilenameSource(filenameSource.blob, filenameSource.bytes),
   };
 }
 
@@ -508,6 +542,7 @@ function runnerInvocation(plan, reportPlan, roots, outputRoot) {
     reportFile: reportPath,
     mode: reportPlan.mode,
     settings: plan.settings,
+    measuredSource: measuredSourceBinding(plan, reportPlan),
   });
   return {
     executable: process.execPath,

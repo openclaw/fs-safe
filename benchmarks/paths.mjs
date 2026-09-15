@@ -2,8 +2,18 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { registerFilenameFallbackBenchmarks } from "./filename-fallback-profile.mjs";
 
-export async function registerPaths({ api: a, workspace: w, register: add, contract, exclude, args, native }) {
+export async function registerPaths({
+  api: a,
+  workspace: w,
+  register: add,
+  contract,
+  exclude,
+  args,
+  native,
+  measuredProfiles,
+}) {
   const input = path.join(w, "input.json");
   const error = Object.assign(new Error("synthetic"), { code: "ENOENT" });
   const simple = {
@@ -16,7 +26,7 @@ export async function registerPaths({ api: a, workspace: w, register: add, contr
     assertNoWindowsNetworkPath: [input], basenameFromMediaSource: [pathToFileURL(input).href],
     hasEncodedFileUrlSeparator: ["file:///workspace/a%20b.json"], isWindowsDriveLetterPath: ["C:\\workspace\\file", "win32"],
     isWindowsNetworkPath: ["\\\\server\\share\\file", "win32"], safeFileURLToPath: [pathToFileURL(input).href], trySafeFileURLToPath: [pathToFileURL(input).href],
-    safeDirName: ["package/module"], safePathSegmentHashed: ["ordinary-safe-name"], sanitizeUntrustedFileName: ["ordinary-safe-name.json", "fallback"],
+    safeDirName: ["package/module"], safePathSegmentHashed: ["ordinary-safe-name"],
     sanitizeTempFileName: ["ordinary-safe-name.json"], resolveRegularFileAppendFlags: [],
     sameFileIdentity: [{ dev: 1, ino: 123 }, { dev: 1, ino: 123 }],
     resolveSafeInstallDir: [{ baseDir: w, id: "module", invalidNameMessage: "invalid" }],
@@ -29,6 +39,12 @@ export async function registerPaths({ api: a, workspace: w, register: add, contr
     categorizeFsSafeError: ["outside-workspace"],
   };
   for (const [name, values] of Object.entries(simple)) add(name, () => a[name](...values), { sync: true, batch: 100 });
+  registerFilenameFallbackBenchmarks({
+    sanitize: a.sanitizeUntrustedFileName,
+    register: add,
+    expectedProfile: measuredProfiles.expectedFilenameFallback,
+    observedProfile: measuredProfiles.observedFilenameFallback,
+  });
   add("safePathSegmentHashedV2", () => a.safePathSegmentHashedV2("ordinary-safe-name"), {
     sync: true,
     batch: 100,
