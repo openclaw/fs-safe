@@ -110,20 +110,30 @@ it.skipIf(process.platform === "win32")(
     const rootDir = await tempRoot("fs-safe-stat-list-fused-receipt-");
     const selected = path.join(rootDir, "selected");
     await fs.mkdir(selected);
-    await fs.writeFile(path.join(rootDir, "direct"), "inside");
-    await fs.writeFile(path.join(selected, "value"), "inside");
+    const direct = path.join(rootDir, "direct");
+    const nested = path.join(selected, "value");
+    await fs.writeFile(direct, "inside");
+    await fs.writeFile(nested, "inside");
     const capability = await root(rootDir);
+    const promotes = (pathname: string): number => {
+      const { dev, ino } = fsSync.lstatSync(pathname);
+      return Number.isSafeInteger(dev) && dev >= 0 &&
+        Number.isSafeInteger(ino) && ino >= 0 ? 0 : 1;
+    };
+    const directPromotions = promotes(direct);
+    const selectedPromotions = promotes(selected);
+    const nestedPromotions = promotes(nested);
     const lstat = vi.spyOn(fsSync, "lstatSync");
     const realpath = vi.spyOn(realpathSync, "native");
     try {
       await expect(capability.stat("direct")).resolves.toMatchObject({ isFile: true });
-      expect(lstat).toHaveBeenCalledTimes(4);
+      expect(lstat).toHaveBeenCalledTimes(4 + directPromotions);
       expect(realpath).toHaveBeenCalledTimes(1);
 
       lstat.mockClear();
       realpath.mockClear();
       await expect(capability.stat("selected/value")).resolves.toMatchObject({ isFile: true });
-      expect(lstat).toHaveBeenCalledTimes(6);
+      expect(lstat).toHaveBeenCalledTimes(6 + selectedPromotions + nestedPromotions);
       expect(realpath).toHaveBeenCalledTimes(2);
 
       lstat.mockClear();
@@ -131,7 +141,7 @@ it.skipIf(process.platform === "win32")(
       await expect(capability.list("selected", { withFileTypes: true })).resolves.toEqual([
         expect.objectContaining({ name: "value", isFile: true }),
       ]);
-      expect(lstat).toHaveBeenCalledTimes(5);
+      expect(lstat).toHaveBeenCalledTimes(5 + selectedPromotions);
       expect(realpath).toHaveBeenCalledTimes(2);
     } finally {
       lstat.mockRestore();

@@ -13,6 +13,7 @@ import type { RootContext } from "./root-context.js";
 import { fileNotFoundError } from "./root-errors.js";
 import type { RootPathObservationReceipt } from "./root-path.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
+import { inspectStatObservationSync, type StatObservationReceipt } from "./stat-observation.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import type { PathStat } from "./types.js";
 
@@ -30,11 +31,11 @@ export async function statResolvedPathInRoot(
       admittedTarget = true;
       const beforeObservation = getFsSafeTestHooks()?.beforeRootStatObservation;
       if (beforeObservation) await beforeObservation(resolvedPath);
-      let observed: BigIntStats;
+      let observed: StatObservationReceipt;
       try {
-        observed = inspectFileIdentitySync(
-          () => fsSync.lstatSync(resolvedPath, { bigint: true }),
-          receipt.targetStat,
+        observed = inspectStatObservationSync(
+          bigint => bigint ? fsSync.lstatSync(resolvedPath, { bigint: true }) : fsSync.lstatSync(resolvedPath),
+          receipt.target.identity,
         );
       } catch (error) {
         if (isNotFoundPathError(error)) {
@@ -44,11 +45,11 @@ export async function statResolvedPathInRoot(
         }
         throw error;
       }
-      if (observed.isSymbolicLink()) {
+      if (observed.stat.isSymbolicLink()) {
         throw new FsSafeError("path-mismatch", "file changed during operation");
       }
       assertRootPathObservationReceiptCurrent(root, receipt);
-      return pathStatFromStats(observed);
+      return pathStatFromStats(observed.stat);
     }
     const guardPath = resolvedPath === root.rootReal ? root.rootReal : path.dirname(resolvedPath);
     const parentGuard = guardPath === root.rootReal && root.rootGuard

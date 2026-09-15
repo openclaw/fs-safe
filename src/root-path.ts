@@ -1,6 +1,6 @@
 import fs, { type BigIntStats } from "node:fs";
 import path from "node:path";
-import type { AsyncDirectoryGuard } from "./directory-guard.js";
+import type { DirectoryObservationGuard } from "./directory-guard.js";
 import { formatErrorDetail, shortPath } from "./error-detail.js";
 import { FsSafeError } from "./errors.js";
 import {
@@ -18,7 +18,7 @@ import {
 import { resolveSymlinkHopPath, resolveSymlinkHopPathSync } from "./root-path-symlink.js";
 import { assertNoDriveRelativePathSegments } from "./safe-path-segment.js";
 import { realpathSync } from "./realpath.js";
-import { inspectFileIdentitySync } from "./strict-file-identity.js";
+import { inspectStatObservationSync, type StatObservationReceipt } from "./stat-observation.js";
 
 export { resolvePathViaExistingAncestorSync } from "./root-path-existing.js";
 
@@ -70,15 +70,15 @@ export type RootPathObservationKind = "stat" | "directory";
 /** An exact receipt owned by one stat/list operation. Never cache it. */
 export type RootPathObservationReceipt = {
   kind: RootPathObservationKind;
-  rootGuard: AsyncDirectoryGuard<BigIntStats>;
-  directoryGuard: AsyncDirectoryGuard<BigIntStats>;
+  rootGuard: DirectoryObservationGuard;
+  directoryGuard: DirectoryObservationGuard;
   targetPath: string;
-  targetStat: BigIntStats;
+  target: StatObservationReceipt;
 };
 
 export type RootPathObservationRequest = {
   kind: RootPathObservationKind;
-  rootGuard: AsyncDirectoryGuard<BigIntStats>;
+  rootGuard: DirectoryObservationGuard;
 };
 
 export type ObservedRootPath = {
@@ -232,9 +232,9 @@ type LexicalTraversalObservation = {
   request: RootPathObservationRequest;
   targetIndex: number;
   directoryIndex: number;
-  directoryGuard?: AsyncDirectoryGuard<BigIntStats>;
+  directoryGuard?: DirectoryObservationGuard;
   targetPath?: string;
-  targetStat?: BigIntStats;
+  target?: StatObservationReceipt;
 };
 
 
@@ -301,21 +301,19 @@ function createLexicalTraversalObservation(
   };
 }
 
-function inspectObservedTraversalEntry(pathname: string, directorySlot: boolean): BigIntStats {
-  let first: BigIntStats | undefined = fs.lstatSync(pathname, { bigint: true });
+function inspectObservedTraversalEntry(
+  pathname: string,
+  directorySlot: boolean,
+): { stat: fs.Stats | BigIntStats; identity?: StatObservationReceipt["identity"] } {
+  const first = process.platform === "win32"
+    ? fs.lstatSync(pathname, { bigint: true }) : fs.lstatSync(pathname);
   // Preserve the general resolver's symlink handling and error precedence.
   // Directory slots must also preserve ordinary non-directory handling before
   // Windows zero identities can turn the observation into a policy failure.
-  if (first.isSymbolicLink() || (directorySlot && !first.isDirectory())) return first;
+  if (first.isSymbolicLink() || (directorySlot && !first.isDirectory())) return { stat: first };
   try {
-    return inspectFileIdentitySync(() => {
-      const observed = first;
-      if (observed) {
-        first = undefined;
-        return observed;
-      }
-      return fs.lstatSync(pathname, { bigint: true });
-    });
+    return inspectStatObservationSync(bigint => bigint
+      ? fs.lstatSync(pathname, { bigint: true }) : fs.lstatSync(pathname), undefined, first);
   } catch (error) {
     if (error instanceof FsSafeError && error.code === "path-mismatch") {
       throw new RootPathObservationError(error);
@@ -327,9 +325,9 @@ function inspectObservedTraversalEntry(pathname: string, directorySlot: boolean)
 function captureObservedDirectory(
   context: LexicalTraversalContext,
   observation: LexicalTraversalObservation,
-  stat: BigIntStats,
+  observed: StatObservationReceipt,
 ): void {
-  if (!stat.isDirectory()) {
+  if (!observed.stat.isDirectory()) {
     observation.enabled = false;
     return;
   }
@@ -347,7 +345,7 @@ function captureObservedDirectory(
   observation.directoryGuard = {
     dir: context.state.canonicalCursor,
     realPath,
-    stat,
+    ...observed,
   };
 }
 
@@ -508,13 +506,13 @@ async function resolveRootPathLexicalAsync(
       continue;
     }
     let stat: fs.Stats | BigIntStats;
+    let observed: ReturnType<typeof inspectObservedTraversalEntry> | undefined;
     try {
       const directorySlot = observation?.enabled === true && idx === observation.directoryIndex;
       const targetSlot = observation?.enabled === true && idx === observation.targetIndex;
       const observeExactly = directorySlot || targetSlot;
-      stat = observeExactly
-        ? inspectObservedTraversalEntry(state.lexicalCursor, directorySlot)
-        : fs.lstatSync(state.lexicalCursor);
+      if (observeExactly) observed = inspectObservedTraversalEntry(state.lexicalCursor, directorySlot);
+      stat = observed ? observed.stat : fs.lstatSync(state.lexicalCursor);
     } catch (error) {
       if (handleLexicalLstatFailure(context, error, segment)) continue;
       throw error;
@@ -534,11 +532,12 @@ async function resolveRootPathLexicalAsync(
       advanceCanonicalCursorForSegment(context, segment);
       if (observation?.enabled && isSymbolicLink) observation.enabled = false;
       if (observation?.enabled && idx === observation.directoryIndex) {
-        captureObservedDirectory(context, observation, stat as BigIntStats);
+        if (observed?.identity) captureObservedDirectory(context, observation, observed as StatObservationReceipt);
+        else observation.enabled = false;
       }
       if (observation?.enabled && idx === observation.targetIndex) {
         observation.targetPath = state.canonicalCursor;
-        observation.targetStat = stat as BigIntStats;
+        observation.target = observed?.identity ? observed as StatObservationReceipt : undefined;
       }
       if (state.preserveFinalSymlink) break;
       continue;
@@ -557,9 +556,9 @@ async function resolveRootPathLexicalAsync(
   }
 
   const completeObservation = observation?.enabled === true && observation.directoryGuard !== undefined &&
-    observation.targetPath === state.canonicalCursor && observation.targetStat !== undefined;
+    observation.targetPath === state.canonicalCursor && observation.target !== undefined;
   const kind = completeObservation
-    ? { exists: true, kind: toResolvedKind(observation.targetStat!) }
+    ? { exists: true, kind: toResolvedKind(observation.target!.stat) }
     : await getPathKind(state.canonicalCursor, state.preserveFinalSymlink);
   if (completeObservation && observationOutput) {
     observationOutput.receipt = {
@@ -567,7 +566,7 @@ async function resolveRootPathLexicalAsync(
       rootGuard: observation.request.rootGuard,
       directoryGuard: observation.directoryGuard!,
       targetPath: observation.targetPath!,
-      targetStat: observation.targetStat!,
+      target: observation.target!,
     };
   }
   return finalizeLexicalResolution(context, kind);

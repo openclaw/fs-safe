@@ -1,7 +1,12 @@
 import fs, { type BigIntStats } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { inspectDirectoryIdentity, type AsyncDirectoryGuard } from "./directory-guard.js";
+import {
+  inspectDirectoryIdentity,
+  inspectDirectoryObservationSync,
+  type AsyncDirectoryGuard,
+  type DirectoryObservationGuard,
+} from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import {
@@ -138,17 +143,17 @@ export async function assertRootIdentityCurrent(root: RootContext): Promise<void
  */
 export async function createRootObservationGuard(
   root: RootContext,
-): Promise<AsyncDirectoryGuard<BigIntStats> | undefined> {
+): Promise<DirectoryObservationGuard | undefined> {
   if (typeof root.rootIdentity.dev !== "bigint" || typeof root.rootIdentity.ino !== "bigint") {
     await assertRootIdentityCurrent(root);
     return undefined;
   }
   try {
-    const stat = await inspectDirectoryIdentity(root.rootReal, {
+    const observed = await inspectDirectoryObservationSync(root.rootReal, {
       dev: root.rootIdentity.dev,
       ino: root.rootIdentity.ino,
     });
-    return { dir: root.rootReal, realPath: root.rootReal, stat };
+    return { dir: root.rootReal, realPath: root.rootReal, ...observed };
   } catch (error) {
     throw rootPathChangedError(error instanceof Error ? error : undefined);
   }

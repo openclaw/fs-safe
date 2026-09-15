@@ -5,10 +5,11 @@ import path from "node:path";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import {
   assertAsyncDirectoryGuard,
-  assertDirectoryIdentitySync,
+  assertDirectoryObservationGuardSync,
   createAsyncDirectoryGuard,
-  inspectDirectoryIdentitySync,
+  inspectDirectoryObservationSync,
   type AsyncDirectoryGuard,
+  type DirectoryObservationGuard,
 } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { isNotFoundPathError, isPathInside } from "./path.js";
@@ -64,13 +65,15 @@ function directoryChangedError(error: unknown): FsSafeError {
 
 export async function assertRootDirectoryObservationGuard(
   root: RootContext,
-  guard: RootDirectoryObservationGuard,
+  guard: RootDirectoryObservationGuard | DirectoryObservationGuard,
 ): Promise<void> {
+  const identity = "identity" in guard ? guard.identity : guard.stat;
   const guardPinsRoot = guard.dir === root.rootReal &&
-    guard.stat.dev === root.rootIdentity.dev && guard.stat.ino === root.rootIdentity.ino;
+    identity.dev === root.rootIdentity.dev && identity.ino === root.rootIdentity.ino;
   if (guardPinsRoot) {
     try {
-      await assertAsyncDirectoryGuard(guard);
+      if ("identity" in guard) assertDirectoryObservationGuardSync(guard);
+      else await assertAsyncDirectoryGuard(guard);
     } catch (error) {
       throw rootPathChangedError(error instanceof Error ? error : undefined);
     }
@@ -78,18 +81,19 @@ export async function assertRootDirectoryObservationGuard(
   }
   await assertRootIdentityCurrent(root);
   try {
-    await assertAsyncDirectoryGuard(guard);
+    if ("identity" in guard) assertDirectoryObservationGuardSync(guard);
+    else await assertAsyncDirectoryGuard(guard);
   } catch (error) {
     throw directoryChangedError(error);
   }
 }
 
 function sameObservationDirectory(
-  left: RootDirectoryObservationGuard,
-  right: RootDirectoryObservationGuard,
+  left: DirectoryObservationGuard,
+  right: DirectoryObservationGuard,
 ): boolean {
   return left.dir === right.dir && left.realPath === right.realPath &&
-    left.stat.dev === right.stat.dev && left.stat.ino === right.stat.ino;
+    left.identity.dev === right.identity.dev && left.identity.ino === right.identity.ino;
 }
 
 /**
@@ -104,35 +108,24 @@ export function assertRootPathObservationReceiptCurrent(
 ): void {
   const { rootGuard, directoryGuard } = receipt;
   if (rootGuard.dir !== root.rootReal || rootGuard.realPath !== root.rootReal ||
-    rootGuard.stat.dev !== root.rootIdentity.dev || rootGuard.stat.ino !== root.rootIdentity.ino) {
+    rootGuard.identity.dev !== root.rootIdentity.dev || rootGuard.identity.ino !== root.rootIdentity.ino) {
     throw rootPathChangedError();
   }
   if (sameObservationDirectory(rootGuard, directoryGuard)) {
     try {
-      assertDirectoryIdentitySync(rootGuard.dir, {
-        dev: rootGuard.stat.dev,
-        ino: rootGuard.stat.ino,
-        realPath: rootGuard.realPath,
-      });
+      assertDirectoryObservationGuardSync(rootGuard);
     } catch (error) {
       throw rootPathChangedError(error instanceof Error ? error : undefined);
     }
     return;
   }
   try {
-    inspectDirectoryIdentitySync(rootGuard.dir, {
-      dev: rootGuard.stat.dev,
-      ino: rootGuard.stat.ino,
-    });
+    inspectDirectoryObservationSync(rootGuard.dir, rootGuard.identity);
   } catch (error) {
     throw rootPathChangedError(error instanceof Error ? error : undefined);
   }
   try {
-    assertDirectoryIdentitySync(directoryGuard.dir, {
-      dev: directoryGuard.stat.dev,
-      ino: directoryGuard.stat.ino,
-      realPath: directoryGuard.realPath,
-    });
+    assertDirectoryObservationGuardSync(directoryGuard);
   } catch (error) {
     throw directoryChangedError(error);
   }
@@ -172,11 +165,11 @@ export async function listDirectoryPath(
   withFileTypes: boolean,
   receipt?: RootPathObservationReceipt,
 ): Promise<string[] | DirEntry[]> {
-  let guard: RootDirectoryObservationGuard;
+  let guard: RootDirectoryObservationGuard | DirectoryObservationGuard;
   if (receipt) {
     if (receipt.kind !== "directory" || receipt.targetPath !== directory ||
       receipt.directoryGuard.dir !== directory ||
-      !receipt.targetStat.isDirectory()) {
+      !receipt.target.stat.isDirectory()) {
       throw new FsSafeError("path-mismatch", "directory observation receipt does not match target");
     }
     guard = receipt.directoryGuard;
@@ -192,19 +185,19 @@ export async function listDirectoryPath(
 
 function listGuardedDirectoryPath(
   root: RootContext,
-  guard: RootDirectoryObservationGuard,
+  guard: RootDirectoryObservationGuard | DirectoryObservationGuard,
   withFileTypes: true,
   receipt?: RootPathObservationReceipt,
 ): Promise<DirEntry[]>;
 function listGuardedDirectoryPath(
   root: RootContext,
-  guard: RootDirectoryObservationGuard,
+  guard: RootDirectoryObservationGuard | DirectoryObservationGuard,
   withFileTypes: boolean,
   receipt?: RootPathObservationReceipt,
 ): Promise<string[] | DirEntry[]>;
 async function listGuardedDirectoryPath(
   root: RootContext,
-  guard: RootDirectoryObservationGuard,
+  guard: RootDirectoryObservationGuard | DirectoryObservationGuard,
   withFileTypes: boolean,
   receipt?: RootPathObservationReceipt,
 ): Promise<string[] | DirEntry[]> {
