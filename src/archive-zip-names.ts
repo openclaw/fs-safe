@@ -1,3 +1,4 @@
+import { types } from "node:util";
 import { ArchiveFormatError, ArchiveSecurityError } from "./archive-errors.js";
 import { stripArchivePath, validateArchiveEntryPath } from "./archive-entry.js";
 import { updateCrc32 } from "./archive-crc32.js";
@@ -65,15 +66,21 @@ export function admitZipNames(params: {
 }): string | undefined {
   const { central, local, flags, centralExtra, localExtra, seen } = params;
   if (!central.length || !local.length) zipFormat("empty entry name");
-  const sameName = central.equals(local);
-  const centralRaw = central.toString("latin1"); const localRaw = sameName ? centralRaw : local.toString("latin1");
+  // Reuse only within this synchronous call; shared backing bytes can change
+  // concurrently even though admission does not yield while checking names.
+  const sameName = !types.isSharedArrayBuffer(central.buffer) &&
+    !types.isSharedArrayBuffer(local.buffer) && central.equals(local);
+  const centralRaw = central.toString("latin1");
+  const localRaw = sameName ? centralRaw : local.toString("latin1");
   const centralUtf8 = originalName(central, centralRaw, flags);
   const localUtf8 = sameName ? centralUtf8 : originalName(local, localRaw, flags);
   const centralUnicode = unicodeName(central, centralExtra);
   const centralField = centralExtra.get(0x7075); const localField = localExtra.get(0x7075);
-  // Only identical name bytes and Unicode fields share their CRC-bound admission.
-  const sameUnicode = centralField === localField ||
-    (centralField !== undefined && localField !== undefined && centralField.equals(localField));
+  // Only immutable identical fields share their CRC-bound name admission.
+  const sameUnicode = (!centralField || !types.isSharedArrayBuffer(centralField.buffer)) &&
+    (!localField || !types.isSharedArrayBuffer(localField.buffer)) &&
+    (centralField === localField ||
+      (centralField !== undefined && localField !== undefined && centralField.equals(localField)));
   const localUnicode = sameName && sameUnicode ? centralUnicode : unicodeName(local, localExtra);
   const centralKey = key(centralRaw);
   if (!sameName && centralKey !== key(localRaw)) {
@@ -88,7 +95,7 @@ export function admitZipNames(params: {
   }
   // JSZip checks the central Unicode field against the local name. A slash-only
   // spelling difference must not make one decoder ignore a meaningful override.
-  if (centralUnicode && !sameName &&
+  if (centralUnicode && !central.equals(local) &&
       key(centralUnicode) !== key(local.toString("utf8"))) {
     zipFormat("Unicode override disagrees with local decoder name");
   }

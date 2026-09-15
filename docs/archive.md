@@ -144,7 +144,8 @@ ZIP extraction and bounded reads admit every physical central-directory record a
 Within one ZIP entry, identical local and central name bytes reuse the same
 decoded validation. Unicode Path admission is shared only when both the raw names
 and the complete Unicode fields match; different fields still verify their own
-CRC and interpretation. Decoded name validation is not reused across entries or archives.
+CRC and interpretation. Shared backing memory is checked independently. Decoded
+name validation is not reused across entries or archives.
 
 `stripComponents` removes leading nonempty, non-`.` path components after
 normalizing separators. For example, `./pkg/hello.txt` with

@@ -24,6 +24,10 @@ describe("ZIP metadata framing and encoding", () => {
     const bytes = zipRecords([entry]);
     expect(admit(bytes)).toBe(1);
     expect(Object.keys((await loadZipArchiveWithPreflight(bytes)).files)).toHaveLength(1);
+    const shared = new Uint8Array(new SharedArrayBuffer(bytes.length));
+    shared.set(bytes);
+    expect(admit(shared)).toBe(1);
+    expect(Object.keys((await loadZipArchiveWithPreflight(shared)).files)).toHaveLength(1);
   });
   it("preserves classic prefixes, empty archives, views, and count hints", async () => {
     const bytes = zipRecords([{ name: "good" }], { prefix: Buffer.from("self-extracting prefix") });
@@ -31,6 +35,9 @@ describe("ZIP metadata framing and encoding", () => {
     expect(Object.keys((await loadZipArchiveWithPreflight(bytes)).files)).toEqual(["good"]);
     const backing = Buffer.concat([Buffer.alloc(13, 255), bytes, Buffer.alloc(9, 255)]);
     expect(admit(new Uint8Array(backing.buffer, backing.byteOffset + 13, bytes.length))).toBe(1);
+    const shared = new Uint8Array(new SharedArrayBuffer(bytes.length));
+    shared.set(bytes);
+    expect(Object.keys((await loadZipArchiveWithPreflight(shared)).files)).toEqual(["good"]);
     expect(admit(zipRecords([]))).toBe(0);
     expect(await loadZipArchiveWithPreflight(zipRecords([]))).toMatchObject({ files: {} });
     expect(readZipCentralDirectoryEntryCount(Buffer.from("invalid"))).toBeNull();

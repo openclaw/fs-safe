@@ -125,9 +125,14 @@ function matchPosixDeviceReadPath(
 
 function normalizeWindowsDeviceBaseName(filePath: string): string {
   const normalized = trimTrailingWindowsSeparators(filePath.replace(/\//g, "\\"));
-  const lastSegment = normalized.split("\\").filter(Boolean).at(-1) ?? normalized;
-  const withoutStream = lastSegment.split(":")[0] ?? lastSegment;
-  const stem = withoutStream.split(".")[0] ?? withoutStream;
+  const start = normalized.lastIndexOf("\\") + 1;
+  const stream = normalized.indexOf(":", start);
+  const extension = normalized.indexOf(".", start);
+  const end = Math.min(
+    stream < 0 ? normalized.length : stream,
+    extension < 0 ? normalized.length : extension,
+  );
+  const stem = normalized.slice(start, end);
   return trimTrailingWindowsIgnoredChars(stem).toUpperCase();
 }
 
