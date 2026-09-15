@@ -123,9 +123,10 @@ export async function copyOwnedTree(
     from: string,
     to: string,
     parentChildren?: Set<Promise<void>>,
+    sourceStat?: fs.BigIntStats,
   ): Promise<void> {
     signal?.throwIfAborted();
-    const stat = await fsp.lstat(from, { bigint: true });
+    const stat = sourceStat ?? (await fsp.lstat(from, { bigint: true }));
     // Exclusive admission prevents merging a pre-existing directory, including
     // any destination left by an unsuccessful native clone.
     await fsp.mkdir(to, { mode: 0o700 });
@@ -137,15 +138,15 @@ export async function copyOwnedTree(
       if (!exactIdentityMatches(stat, original.receipt.identity)) {
         throw new FsSafeError("path-mismatch", "copy source directory changed while opening");
       }
-      for (const entry of await fsp.readdir(from, { withFileTypes: true })) {
+      for (const name of await fsp.readdir(from)) {
         signal?.throwIfAborted();
         assertStagedDirectoryCurrent(target.receipt);
         assertStagedDirectoryCurrent(original.receipt);
-        const childSource = path.join(from, entry.name);
-        const childTarget = path.join(to, entry.name);
+        const childSource = path.join(from, name);
+        const childTarget = path.join(to, name);
         const child = await fsp.lstat(childSource, { bigint: true });
         if (child.isDirectory()) {
-          await copyDirectory(childSource, childTarget, children);
+          await copyDirectory(childSource, childTarget, children, child);
         } else if (child.isFile()) {
           await schedule(() => copyFile(childSource, childTarget, child), children);
         } else if (child.isSymbolicLink()) {
