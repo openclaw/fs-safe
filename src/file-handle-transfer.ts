@@ -103,14 +103,10 @@ export async function copyFileHandle(
   const callbackThis = copyTransferReceiver(
     options, maxBytes, sizeHint, signal, onChunk, assertBeforeMutation,
   );
-  const beforeWrite = signal == null
-    ? assertBeforeMutation
-    : assertBeforeMutation === undefined
-      ? () => signal.throwIfAborted()
-      : () => {
-        signal.throwIfAborted();
-        assertBeforeMutation();
-      };
+  const beforeWrite = () => {
+    signal?.throwIfAborted();
+    assertBeforeMutation?.();
+  };
   return await transferFileHandleCore(
     source, target, sizeHint, maxBytes, 0,
     signal, onChunk, beforeWrite, callbackThis,

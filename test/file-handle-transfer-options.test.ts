@@ -322,4 +322,39 @@ describe("borrowed FileHandle option snapshots", () => {
     expect(callbackPropertyReads).toEqual([]);
     expect(await fs.readFile(f.targetPath)).toEqual(f.content);
   });
+
+  it.each([
+    { name: "observer-only", withSignal: false },
+    { name: "signal-plus-observer", withSignal: true },
+  ])("keeps the early authority snapshot after receiver mutation ($name)", async ({ withSignal }) => {
+    const f = await fixture("short writes", "");
+    const write = f.target.write.bind(f.target);
+    vi.spyOn(f.target, "write").mockImplementation(async (buffer, offset, length, position) =>
+      await write(buffer, offset, Math.min(length, 2), position));
+    const controller = new AbortController();
+    const lateAuthority = vi.fn(() => { throw new Error("late authority must stay inert"); });
+    const reads = { signal: 0, maxBytes: 0, onChunk: 0, assertBeforeMutation: 0 };
+    let receiver: Record<PropertyKey, unknown> | undefined;
+    const backing: CopyFileHandleOptions = {
+      ...(withSignal ? { signal: controller.signal } : {}),
+      onChunk(this: Record<PropertyKey, unknown>) {
+        receiver = this;
+        this.assertBeforeMutation = lateAuthority;
+        backing.assertBeforeMutation = lateAuthority;
+      },
+    };
+    const options = new Proxy(backing, {
+      get(target, key, proxyReceiver) {
+        if (key in reads) reads[key as keyof typeof reads] += 1;
+        return Reflect.get(target, key, proxyReceiver);
+      },
+    });
+
+    await expect(copyFileHandle(f.source, f.target, options)).resolves.toBe(f.content.length);
+    expect(reads).toEqual({ signal: 1, maxBytes: 1, onChunk: 1, assertBeforeMutation: 1 });
+    expect(receiver).toBeDefined();
+    expect(receiver).not.toBe(options);
+    expect(lateAuthority).not.toHaveBeenCalled();
+    expect(await fs.readFile(f.targetPath)).toEqual(f.content);
+  });
 });
