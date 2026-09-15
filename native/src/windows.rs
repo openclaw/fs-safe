@@ -9,16 +9,17 @@ use std::sync::OnceLock;
 use windows_sys::Win32::Foundation::{
     CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS,
     ERROR_DISK_FULL, ERROR_FILE_EXISTS, ERROR_FILE_NOT_FOUND, ERROR_HANDLE_DISK_FULL,
-    ERROR_LOCK_VIOLATION, ERROR_NO_MORE_FILES, ERROR_PATH_NOT_FOUND, ERROR_SHARING_VIOLATION,
-    GENERIC_READ, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
+    ERROR_INVALID_FUNCTION, ERROR_INVALID_PARAMETER, ERROR_LOCK_VIOLATION, ERROR_NO_MORE_FILES,
+    ERROR_NOT_SUPPORTED, ERROR_PATH_NOT_FOUND, ERROR_SHARING_VIOLATION, GENERIC_READ, GetLastError,
+    HANDLE, INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
     FILE_ATTRIBUTE_TAG_INFO, FILE_DISPOSITION_FLAG_DELETE,
     FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
     FILE_DISPOSITION_INFO_EX, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_ID_BOTH_DIR_INFO,
-    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FileAttributeTagInfo,
-    FileDispositionInfoEx, FileIdBothDirectoryInfo, FileIdBothDirectoryRestartInfo,
+    FILE_ID_INFO, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FileAttributeTagInfo,
+    FileDispositionInfoEx, FileIdBothDirectoryInfo, FileIdBothDirectoryRestartInfo, FileIdInfo,
     GetFileInformationByHandle, GetFileInformationByHandleEx, ReOpenFile,
     SetFileInformationByHandle,
 };
@@ -35,6 +36,7 @@ const O_TRUNC: i32 = 0x0200;
 const O_EXCL: i32 = 0x0400;
 
 const DELETE_ACCESS: u32 = 0x0001_0000;
+const READ_CONTROL: u32 = 0x0002_0000;
 const SYNCHRONIZE_ACCESS: u32 = 0x0010_0000;
 const FILE_LIST_DIRECTORY: u32 = 0x0000_0001;
 const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
@@ -254,7 +256,10 @@ fn nt_error(status: i32, operation: &str) -> napi::Error<String> {
     win_error(unsafe { RtlNtStatusToDosError(status) }, operation)
 }
 
-pub(crate) fn handle_is_reparse(handle: HANDLE) -> NativeResult<bool> {
+fn handle_attribute_tag_information(
+    handle: HANDLE,
+    operation: &str,
+) -> NativeResult<FILE_ATTRIBUTE_TAG_INFO> {
     // SAFETY: info is a valid output buffer for the supplied class.
     let mut info: FILE_ATTRIBUTE_TAG_INFO = unsafe { zeroed() };
     let ok = unsafe {
@@ -267,9 +272,17 @@ pub(crate) fn handle_is_reparse(handle: HANDLE) -> NativeResult<bool> {
     };
     if ok == 0 {
         // SAFETY: GetLastError has no memory safety preconditions.
-        return Err(win_error(unsafe { GetLastError() }, "inspect opened path"));
+        return Err(win_error(unsafe { GetLastError() }, operation));
     }
-    Ok(info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+    Ok(info)
+}
+
+pub(crate) fn handle_is_reparse(handle: HANDLE) -> NativeResult<bool> {
+    Ok(
+        handle_attribute_tag_information(handle, "inspect opened path")?.FileAttributes
+            & FILE_ATTRIBUTE_REPARSE_POINT
+            != 0,
+    )
 }
 
 fn assert_not_reparse(handle: HANDLE) -> NativeResult<()> {
@@ -327,6 +340,46 @@ pub(crate) fn nt_open_relative_with_sharing(
     reparse_policy: ReparsePolicy,
     share_access: u32,
 ) -> NativeResult<OwnedHandle> {
+    nt_open_relative_with_security_descriptor(
+        root,
+        path,
+        desired_access,
+        disposition,
+        options,
+        reparse_policy,
+        share_access,
+        null_mut(),
+        true,
+    )
+}
+
+// Keep the NtCreateFile inputs explicit at this shared native boundary.
+#[allow(clippy::too_many_arguments)]
+fn nt_open_relative_with_security_descriptor(
+    root: HANDLE,
+    path: &str,
+    desired_access: u32,
+    disposition: u32,
+    options: u32,
+    reparse_policy: ReparsePolicy,
+    share_access: u32,
+    security_descriptor: *mut c_void,
+    post_open_reparse_check: bool,
+) -> NativeResult<OwnedHandle> {
+    if !security_descriptor.is_null() && disposition != FILE_CREATE {
+        return Err(native_error(
+            "EINVAL",
+            "a security descriptor is allowed only for exclusive creation",
+        ));
+    }
+    if !post_open_reparse_check
+        && (security_descriptor.is_null() || disposition != FILE_CREATE)
+    {
+        return Err(native_error(
+            "EINVAL",
+            "only secured exclusive creation may defer the first handle query",
+        ));
+    }
     if matches!(reparse_policy, ReparsePolicy::AllowLeaf) {
         crate::validate_relative_path(path, false)?;
         if path.contains(['/', '\\']) {
@@ -348,7 +401,7 @@ pub(crate) fn nt_open_relative_with_sharing(
             // Validated direct child: no intermediate components can reparse.
             ReparsePolicy::AllowLeaf => 0,
         },
-        security_descriptor: null_mut(),
+        security_descriptor,
         security_quality_of_service: null_mut(),
     };
     // SAFETY: all pointers reference initialized, call-scoped storage.
@@ -374,10 +427,36 @@ pub(crate) fn nt_open_relative_with_sharing(
         return Err(nt_error(status, "open path relative to root handle"));
     }
     let owned = OwnedHandle(handle);
-    if matches!(reparse_policy, ReparsePolicy::Reject) {
+    if post_open_reparse_check && matches!(reparse_policy, ReparsePolicy::Reject) {
         assert_not_reparse(owned.0)?;
     }
     Ok(owned)
+}
+
+pub(crate) fn nt_create_directory_relative(
+    root: HANDLE,
+    name: &str,
+    security_descriptor: *mut c_void,
+) -> NativeResult<OwnedHandle> {
+    crate::validate_relative_path(name, false)?;
+    if name.contains(['/', '\\']) || security_descriptor.is_null() {
+        return Err(native_error(
+            "EINVAL",
+            "private directory creation requires a direct child and security descriptor",
+        ));
+    }
+    nt_open_relative_with_security_descriptor(
+        root,
+        name,
+        DELETE_ACCESS | READ_CONTROL | FILE_WRITE_ATTRIBUTES,
+        FILE_CREATE,
+        FILE_DIRECTORY_FILE,
+        ReparsePolicy::Reject,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        security_descriptor,
+        // Exclusive creation must return the exact handle before any fallible query.
+        false,
+    )
 }
 
 fn access_from_flags(flags: i32) -> u32 {
@@ -664,9 +743,50 @@ pub(crate) fn handle_identity(handle: HANDLE) -> NativeResult<(u32, u64, bool)> 
     handle_identity_and_size(handle).map(|(identity, _)| identity)
 }
 
-pub(crate) fn handle_identity_and_size(
-    handle: HANDLE,
-) -> NativeResult<((u32, u64, bool), u64)> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct HandleFileIdentity {
+    volume_serial_number: u64,
+    file_id: [u8; 16],
+}
+
+fn file_identity_error(code: u32) -> napi::Error<String> {
+    if matches!(
+        code,
+        ERROR_INVALID_FUNCTION | ERROR_NOT_SUPPORTED | ERROR_INVALID_PARAMETER
+    ) {
+        native_error(
+            "ENOTSUP",
+            format!(
+                "stable 128-bit Windows file identity is unavailable (Windows error {code})"
+            ),
+        )
+    } else {
+        win_error(code, "inspect stable 128-bit Windows file identity")
+    }
+}
+
+pub(crate) fn handle_file_identity(handle: HANDLE) -> NativeResult<HandleFileIdentity> {
+    // FILE_ID_INFO is available in the supported SDK; filesystems that cannot
+    // supply it fail closed rather than falling back to a narrower identity.
+    let mut info: FILE_ID_INFO = unsafe { zeroed() };
+    if unsafe {
+        GetFileInformationByHandleEx(
+            handle,
+            FileIdInfo,
+            (&mut info as *mut FILE_ID_INFO).cast(),
+            size_of::<FILE_ID_INFO>() as u32,
+        )
+    } == 0
+    {
+        return Err(file_identity_error(unsafe { GetLastError() }));
+    }
+    Ok(HandleFileIdentity {
+        volume_serial_number: info.VolumeSerialNumber,
+        file_id: info.FileId.Identifier,
+    })
+}
+
+fn guarded_handle_information(handle: HANDLE) -> NativeResult<BY_HANDLE_FILE_INFORMATION> {
     // SAFETY: info is a valid output buffer for this API.
     let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { zeroed() };
     if unsafe { GetFileInformationByHandle(handle, &mut info) } == 0 {
@@ -675,12 +795,34 @@ pub(crate) fn handle_identity_and_size(
             "inspect owned directory identity",
         ));
     }
+    Ok(info)
+}
+
+fn identity_from_handle_information(
+    info: &BY_HANDLE_FILE_INFORMATION,
+) -> (u32, u64, bool) {
+    (
+        info.dwVolumeSerialNumber,
+        ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64,
+        info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0,
+    )
+}
+
+pub(crate) fn handle_attributes(handle: HANDLE) -> NativeResult<u32> {
+    // Keep attribute-only guards independent from the larger legacy identity
+    // structure; stable identity remains a separate FileIdInfo query.
+    Ok(
+        handle_attribute_tag_information(handle, "inspect owned directory identity")?
+            .FileAttributes,
+    )
+}
+
+pub(crate) fn handle_identity_and_size(
+    handle: HANDLE,
+) -> NativeResult<((u32, u64, bool), u64)> {
+    let info = guarded_handle_information(handle)?;
     Ok((
-        (
-            info.dwVolumeSerialNumber,
-            ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64,
-            info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0,
-        ),
+        identity_from_handle_information(&info),
         ((info.nFileSizeHigh as u64) << 32) | info.nFileSizeLow as u64,
     ))
 }
@@ -1198,6 +1340,33 @@ mod tests {
     #[test]
     fn maps_access_denied_to_node_filesystem_eperm() {
         assert_eq!(win_error(ERROR_ACCESS_DENIED, "test").status, "EPERM");
+    }
+
+    #[test]
+    fn stable_file_identity_uses_volume_and_all_128_file_id_bits() {
+        let identity = HandleFileIdentity {
+            volume_serial_number: 7,
+            file_id: [0; 16],
+        };
+        let mut different_high_bit = identity;
+        different_high_bit.file_id[15] = 0x80;
+        let mut different_volume = identity;
+        different_volume.volume_serial_number = 8;
+        let mut different_volume_high_bit = identity;
+        different_volume_high_bit.volume_serial_number |= 1_u64 << 63;
+        assert_ne!(identity, different_high_bit);
+        assert_ne!(identity, different_volume);
+        assert_ne!(identity, different_volume_high_bit);
+
+        for code in [
+            ERROR_INVALID_FUNCTION,
+            ERROR_NOT_SUPPORTED,
+            ERROR_INVALID_PARAMETER,
+        ] {
+            let error = file_identity_error(code);
+            assert_eq!(error.status, "ENOTSUP");
+            assert!(error.reason.contains("128-bit Windows file identity"));
+        }
     }
 
     #[test]

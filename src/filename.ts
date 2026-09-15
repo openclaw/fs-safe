@@ -4,8 +4,14 @@ import { maxNormalizedUtf8Bytes } from "./unicode-path.js";
 
 const INVALID_FILE_NAME_CHARACTERS = /[\u0000-\u001f\u007f-\u009f<>:"/\\|?*]/g;
 
-function trimWindowsIgnoredSuffix(value: string): string {
-  let end = value.length;
+function canStartWindowsDeviceName(character: number): boolean {
+  const folded = character | 0x20;
+  return folded === 0x61 || folded === 0x63 || folded === 0x6c ||
+    folded === 0x6e || folded === 0x70;
+}
+
+function windowsDeviceStemEnd(value: string, stemEnd: number): number {
+  let end = stemEnd;
   while (end > 0) {
     const character = value.charCodeAt(end - 1);
     if (character !== 0x20 && character !== 0x2e) {
@@ -13,21 +19,37 @@ function trimWindowsIgnoredSuffix(value: string): string {
     }
     end -= 1;
   }
-  return end === value.length ? value : value.slice(0, end);
+  return end;
 }
 
-function suffixWindowsReservedDeviceName(fileName: string): string {
-  const extensionIndex = fileName.indexOf(".");
-  const baseNameEnd = extensionIndex < 0 ? fileName.length : extensionIndex;
-  const baseName = fileName.slice(0, baseNameEnd);
-  const deviceBaseName = trimWindowsIgnoredSuffix(baseName);
-  if (!WINDOWS_RESERVED_DEVICE_NAMES.has(deviceBaseName.toUpperCase())) {
+export function suffixWindowsReservedDeviceName(fileName: string): string {
+  if (!canStartWindowsDeviceName(fileName.charCodeAt(0))) {
     return fileName;
   }
-  return `${baseName}_${fileName.slice(baseNameEnd)}`;
+  const extensionIndex = fileName.indexOf(".");
+  const baseNameEnd = extensionIndex < 0 ? fileName.length : extensionIndex;
+  const deviceBaseNameEnd = windowsDeviceStemEnd(fileName, baseNameEnd);
+  if (
+    deviceBaseNameEnd === 0 ||
+    deviceBaseNameEnd > 7 ||
+    !WINDOWS_RESERVED_DEVICE_NAMES.has(fileName.slice(0, deviceBaseNameEnd).toUpperCase())
+  ) {
+    return fileName;
+  }
+  return `${fileName.slice(0, baseNameEnd)}_${fileName.slice(baseNameEnd)}`;
 }
 
 const PORTABLE_FILE_NAME_BYTES = 255;
+const UNTRUSTED_FILE_NAME_CODE_UNITS = 200;
+
+function truncateWithoutSplittingSurrogatePair(value: string, maxLength: number): string {
+  let truncated = value.slice(0, maxLength);
+  const trailingCodeUnit = truncated.charCodeAt(truncated.length - 1);
+  if (trailingCodeUnit >= 0xd800 && trailingCodeUnit <= 0xdbff) {
+    truncated = truncated.slice(0, -1);
+  }
+  return truncated;
+}
 
 function normalizedFileNameBytes(value: string): number {
   return maxNormalizedUtf8Bytes(value, true);
@@ -82,11 +104,12 @@ export function sanitizeUntrustedFileName(fileName: string, fallbackName: string
     return fallbackName;
   }
   base = suffixWindowsReservedDeviceName(base);
-  if (base.length > 200) {
-    base = base.slice(0, 200);
-    const trailingCodeUnit = base.charCodeAt(base.length - 1);
-    if (trailingCodeUnit >= 0xd800 && trailingCodeUnit <= 0xdbff) {
-      base = base.slice(0, -1);
+  if (base.length > UNTRUSTED_FILE_NAME_CODE_UNITS) {
+    base = truncateWithoutSplittingSurrogatePair(base, UNTRUSTED_FILE_NAME_CODE_UNITS);
+    if (suffixWindowsReservedDeviceName(base) !== base) {
+      base = suffixWindowsReservedDeviceName(
+        truncateWithoutSplittingSurrogatePair(base, UNTRUSTED_FILE_NAME_CODE_UNITS - 1),
+      );
     }
   }
   return base;

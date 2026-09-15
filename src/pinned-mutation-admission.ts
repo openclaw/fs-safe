@@ -2,6 +2,7 @@ import path from "node:path";
 import { assertMutationNotDenied, type DenyMutationPolicy } from "./deny-mutations.js";
 import { FsSafeError } from "./errors.js";
 import { isPathInside } from "./path.js";
+import { admitPathInsideRoot, type RootBoundaryIdentity } from "./root-boundary.js";
 import type {
   PinnedCreatedDirectoryReceipt,
   PinnedMutationAdmissionReceipt,
@@ -126,6 +127,7 @@ function reusableRequest(request: AdmissionRequest, epoch: Epoch): boolean {
 export async function preparePinnedWriteMutationAdmission(params: {
   rootReal: string;
   rootWithSep: string;
+  rootIdentity?: RootBoundaryIdentity;
   resolvedTargetPath: string;
   defaultRelativeParentPath: string;
   originalPath?: string;
@@ -144,12 +146,14 @@ export async function preparePinnedWriteMutationAdmission(params: {
   let epoch: Epoch | undefined;
   let pending: CreateReceipt | undefined;
   const authorizationToken: PinnedMutationAuthorizationToken = Object.freeze({});
-  const canonicalParent = await resolvePathViaExistingAncestor(path.dirname(params.resolvedTargetPath));
-  if (!isPathInside(params.rootWithSep, canonicalParent)) throw outsideWorkspaceError();
-  const relativeCanonicalParent = path.relative(params.rootReal, canonicalParent);
-  if (path.isAbsolute(relativeCanonicalParent) || relativeCanonicalParent.split(path.sep)[0] === "..") {
-    throw outsideWorkspaceError();
-  }
+  const observedCanonicalParent = await resolvePathViaExistingAncestor(path.dirname(params.resolvedTargetPath));
+  const admittedCanonicalParent = admitPathInsideRoot({
+    rootPath: params.rootReal,
+    candidatePath: observedCanonicalParent,
+    rootIdentity: params.rootIdentity,
+  });
+  if (!admittedCanonicalParent) throw outsideWorkspaceError();
+  const relativeCanonicalParent = admittedCanonicalParent.relativePath;
   const mutationAdmission: PinnedWriteMutationAdmission = Object.freeze({
     rejectParentSymlinks: policy.mutationSymlinks === "reject",
     beginParentWalk: route ? () => {

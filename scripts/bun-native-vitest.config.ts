@@ -21,6 +21,8 @@ export default {
       "test/root-copy-*.test.ts",
       "test/root-parent-symlink-policy.test.ts",
       "test/root-mutation-*.test.ts",
+      "test/native-mutation-policy-integration.test.ts",
+      "test/pinned-mutation-fast-path.test.ts",
       "test/file-lock*.test.ts",
       "test/clone.test.ts",
       "test/copy-tree.test.ts",

@@ -61,6 +61,8 @@ describe("unsafe device read paths", () => {
       "C:\\tmp\\COM¹.txt",
       "C:\\tmp\\LPT³",
       "logs\\COM1",
+      "logs/COM1/",
+      "logs\\archive//nul.txt\\\\",
       "\\\\.\\NUL",
       "\\\\?\\GLOBALROOT\\Device\\HarddiskVolumeShadowCopy1",
     ]) {
@@ -68,8 +70,17 @@ describe("unsafe device read paths", () => {
         reason: "windows-device",
       });
     }
-    expect(isUnsafeDeviceReadPath("C:\\tmp\\normal.txt", { platform: "win32" })).toBe(false);
-    expect(isUnsafeDeviceReadPath("C:\\tmp\\nulled .txt", { platform: "win32" })).toBe(false);
+    for (const filePath of [
+      "C:\\tmp\\normal.txt",
+      "C:\\tmp\\nulled .txt",
+      "NUL/notes.txt",
+      "",
+      "/",
+      "\\\\/\\",
+      "C:\\",
+    ]) {
+      expect(isUnsafeDeviceReadPath(filePath, { platform: "win32" })).toBe(false);
+    }
   });
 
   posixIt("blocks async public file read primitives before open", async () => {

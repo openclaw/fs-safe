@@ -1,6 +1,6 @@
 # Filenames
 
-`sanitizeUntrustedFileName(name, fallback)` reduces a filename string from an untrusted source to one traversal-free path segment. Use it as a thin first pass before storing user-supplied names; pair with [`safeDirName`](install-path.md#safedirname) when you need stricter directory-name handling.
+`sanitizeUntrustedFileName(name, fallback)` reduces a filename string from an untrusted source to one traversal-free path segment. Use it as a thin first pass before storing user-supplied names; use [`safePathSegmentHashedV2`](install-path.md#safepathsegmenthashedv2) when mapping untrusted install IDs to separate directory names.
 
 ```ts
 import { sanitizeUntrustedFileName } from "@openclaw/fs-safe/advanced";
@@ -26,6 +26,13 @@ In order:
 5. If the result is empty, `"."`, or `".."`, return `fallbackName`.
 6. **Suffix Windows reserved basenames.** Compare the part before the first `.` case-insensitively with the Windows device-name set, including `CON`, `PRN`, `AUX`, `NUL`, `CLOCK$`, `CONIN$`, `CONOUT$`, `COM1..9`, `LPT1..9`, and their superscript `¹`, `²`, and `³` variants. Windows-ignored spaces and dots at the end of that basename do not disguise a device name. A match gains `_` before its extension, preserving the original case and extension on every platform.
 7. **Truncate.** If the cleaned segment is longer than 200 UTF-16 code units, take up to the first 200 without splitting a valid Unicode surrogate pair.
+
+If truncation itself exposes a reserved-device basename after Windows ignores
+trailing spaces or dots, the result is shortened once more and receives the
+same underscore suffix. A name that reaches the sanitization branch therefore
+remains at most 200 UTF-16 code units and is never a Windows reserved-device
+alias. `fallbackName` is returned verbatim for empty or path-alias input, so
+callers must supply a fallback that already satisfies their filename policy.
 
 That's it. The function stays intentionally small: it removes traversal and
 the most obvious cross-platform device and character hazards, but it is not a
@@ -92,5 +99,5 @@ await fs.write(`uploads/${safe}`, body); // fs is a Root() handle; rejects trave
 
 ## See also
 
-- [Install path helpers](install-path.md) — `safeDirName`, `safePathSegmentHashed` for directory-segment sanitization.
+- [Install path helpers](install-path.md) — legacy directory-segment sanitizers and `safePathSegmentHashedV2` for untrusted install IDs.
 - [`root()`](root.md) — the boundary you'll write into after sanitizing.

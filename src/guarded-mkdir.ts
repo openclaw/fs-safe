@@ -5,13 +5,13 @@ import {
   assertAsyncDirectoryGuard,
   createAsyncDirectoryGuard,
   inspectDirectoryIdentitySync,
-  type AnyAsyncDirectoryGuard,
   type AsyncDirectoryGuard,
 } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { isNotFoundPathError, isPathRelativeEscape } from "./path.js";
-import { directoryComponentNotDirectoryError } from "./root-errors.js";
+import { directoryComponentNotDirectoryError, rootPathChangedError } from "./root-errors.js";
 import { realpathSync } from "./realpath.js";
+import { admitPathInsideRoot, type RootBoundaryIdentity } from "./root-boundary.js";
 import { checkedMutationDirectory, type MutationDirectoryObservation } from "./pinned-mutation-observation.js";
 import type {
   PinnedCreatedDirectoryReceipt,
@@ -29,36 +29,28 @@ function sameDirectoryFacts(left: BigIntStats, right: BigIntStats): boolean {
     left.nlink === right.nlink;
 }
 
-function inspectGuardCurrent(parent: AnyAsyncDirectoryGuard): BigIntStats {
-  const { dev, ino } = parent.stat;
-  if (typeof dev !== "bigint" || typeof ino !== "bigint") {
-    throw new TypeError("exact directory guard required for mutation evidence");
-  }
-  const stat = inspectDirectoryIdentitySync(parent.dir, { dev, ino });
+function inspectGuardCurrent(parent: AsyncDirectoryGuard<BigIntStats>): BigIntStats {
+  const stat = inspectDirectoryIdentitySync(parent.dir, parent.stat);
   if (realpathSync.native(parent.dir) !== parent.realPath) {
     throw new FsSafeError("path-mismatch", "directory changed during operation");
   }
   return stat;
 }
 
-function exactGuard(
-  parent: AnyAsyncDirectoryGuard,
-): parent is AsyncDirectoryGuard<BigIntStats> {
-  return typeof parent.stat.dev === "bigint" && typeof parent.stat.ino === "bigint";
-}
-
-function observedGuard(parent: AnyAsyncDirectoryGuard): MutationDirectoryObservation {
-  if (!exactGuard(parent)) {
-    throw new TypeError("exact directory guard required for mutation authorization");
-  }
+function observedGuard(parent: AsyncDirectoryGuard<BigIntStats>): MutationDirectoryObservation {
   return checkedMutationDirectory(parent.dir, parent.realPath, parent.stat);
 }
 
+type CreatedDirectoryEvidence = Readonly<{
+  receipt: PinnedCreatedDirectoryReceipt;
+  guard: AsyncDirectoryGuard<BigIntStats>;
+}>;
+
 function createdDirectoryEvidence(
   admission: PinnedMutationAdmissionReceipt,
-  parent: AnyAsyncDirectoryGuard,
+  parent: AsyncDirectoryGuard<BigIntStats>,
   childPath: string,
-): PinnedCreatedDirectoryReceipt | undefined {
+): CreatedDirectoryEvidence | undefined {
   try {
     const parentAfter = inspectGuardCurrent(parent);
     const childBefore = inspectDirectoryIdentitySync(childPath);
@@ -66,10 +58,15 @@ function createdDirectoryEvidence(
     if (realPath !== childPath) return undefined;
     const childAfter = inspectDirectoryIdentitySync(childPath, childBefore);
     if (!sameDirectoryFacts(childBefore, childAfter)) return undefined;
-    return Object.freeze({
+    const child = checkedMutationDirectory(childPath, realPath, childAfter);
+    const receipt = Object.freeze({
       admission,
       parent: checkedMutationDirectory(parent.dir, parent.realPath, parentAfter),
-      child: checkedMutationDirectory(childPath, realPath, childAfter),
+      child,
+    });
+    return Object.freeze({
+      receipt,
+      guard: Object.freeze({ dir: childPath, realPath, stat: childAfter }),
     });
   } catch {
     // Failed optional evidence leaves the existing ordered admission in charge.
@@ -81,9 +78,21 @@ function sameAbsolutePath(left: string, right: string): boolean {
   return path.relative(path.resolve(left), path.resolve(right)) === "";
 }
 
-function isSameOrChildPath(candidate: string, parent: string): boolean {
-  const parentPrefix = parent.endsWith(path.sep) ? parent : `${parent}${path.sep}`;
-  return candidate === parent || candidate.startsWith(parentPrefix);
+type ExactRootIdentity = Readonly<{ dev: bigint; ino: bigint }>;
+
+function suppliedExactRootIdentity(identity: RootBoundaryIdentity | undefined): ExactRootIdentity | undefined {
+  return typeof identity?.dev === "bigint" && typeof identity.ino === "bigint"
+    ? { dev: identity.dev, ino: identity.ino }
+    : undefined;
+}
+
+function assertGuardMatchesRootIdentity(
+  guard: AsyncDirectoryGuard<BigIntStats>,
+  expected: ExactRootIdentity,
+): void {
+  if (guard.stat.dev !== expected.dev || guard.stat.ino !== expected.ino) {
+    throw rootPathChangedError();
+  }
 }
 
 function isPromiseLike<T>(value: T | Promise<T>): value is Promise<T> {
@@ -133,16 +142,40 @@ export async function mkdirPathComponentsWithGuards(params: {
   revalidateParentAfterBeforeComponent?: boolean;
   synchronousAuthorizationIncludesFence?: boolean;
   retainedTargetPath?: string;
+  rootIdentity?: RootBoundaryIdentity;
 }): Promise<string> {
   const root = path.resolve(params.rootReal);
-  const rootCanonical = path.resolve(realpathSync.native(root));
+  const configuredRootGuard = await createAsyncDirectoryGuard(root, { bigint: true });
+  const suppliedIdentity = suppliedExactRootIdentity(params.rootIdentity);
+  const checkedRootIdentity = suppliedIdentity ?? {
+    dev: configuredRootGuard.stat.dev,
+    ino: configuredRootGuard.stat.ino,
+  };
+  assertGuardMatchesRootIdentity(configuredRootGuard, checkedRootIdentity);
+  const rootCanonical = path.resolve(configuredRootGuard.realPath);
+  const rootGuard = rootCanonical === root
+    ? configuredRootGuard
+    : await createAsyncDirectoryGuard(rootCanonical, { bigint: true });
+  assertGuardMatchesRootIdentity(rootGuard, checkedRootIdentity);
+
   const target = path.resolve(params.targetPath);
-  const relative = path.relative(root, target);
-  if (isPathRelativeEscape(relative)) {
+  const admissionParams = {
+    candidatePath: target,
+    rootIdentity: checkedRootIdentity,
+  };
+  // Derive the suffix from the caller's trusted root spelling first. The
+  // canonical spelling is also accepted after both names have been bound to
+  // the same exact root object above.
+  const admittedTarget = admitPathInsideRoot({ rootPath: root, ...admissionParams }) ??
+    (rootCanonical === root
+      ? undefined
+      : admitPathInsideRoot({ rootPath: rootCanonical, ...admissionParams }));
+  if (!admittedTarget || isPathRelativeEscape(admittedTarget.relativePath)) {
     throw new FsSafeError("outside-workspace", "directory is outside workspace root");
   }
-  let current = root;
-  const parts = relative.split(path.sep).filter(Boolean);
+  let current = rootCanonical;
+  let currentGuard: AsyncDirectoryGuard<BigIntStats> = rootGuard;
+  const parts = admittedTarget.relativePath.split(path.sep).filter(Boolean);
   let partRoute: PathSegmentRoute | undefined;
   let retainedTargetPath = params.retainedTargetPath &&
     sameAbsolutePath(path.dirname(params.retainedTargetPath), target)
@@ -152,9 +185,7 @@ export async function mkdirPathComponentsWithGuards(params: {
   for (let index = 0; index < parts.length; index += 1) {
     const part = parts[index]!;
     const next = path.join(current, part);
-    const parentGuard = await createAsyncDirectoryGuard(current, {
-      bigint: params.beforeCreateComponent !== undefined || params.afterCreateComponent !== undefined,
-    });
+    const parentGuard = currentGuard;
     let created = false;
     let createReceipt: PinnedMutationAdmissionReceipt | undefined;
     if (!params.revalidateParentAfterBeforeComponent) {
@@ -218,11 +249,11 @@ export async function mkdirPathComponentsWithGuards(params: {
       }
     }
     let createdAuthorization: PinnedMutationAuthorizationToken | undefined;
-    let createdEvidence: PinnedCreatedDirectoryReceipt | undefined;
+    let createdEvidence: CreatedDirectoryEvidence | undefined;
     if (created && createReceipt && params.afterCreateComponent) {
       createdEvidence = createdDirectoryEvidence(createReceipt, parentGuard, next);
       if (createdEvidence) {
-        createdAuthorization = params.afterCreateComponent(createdEvidence);
+        createdAuthorization = params.afterCreateComponent(createdEvidence.receipt);
       }
     }
     if (params.beforeUseComponent && !createdAuthorization) {
@@ -242,11 +273,17 @@ export async function mkdirPathComponentsWithGuards(params: {
     // Node's recursive mkdir follows symlinks in missing components. Build one
     // segment at a time and realpath-check each segment before descending.
     const nextReal = createdAuthorization && createdEvidence
-      ? createdEvidence.child.canonicalPath
+      ? createdEvidence.receipt.child.canonicalPath
       : await realpathOrThrowNotFile(next);
-    if (!isSameOrChildPath(nextReal, rootCanonical)) {
+    const admittedNextReal = admitPathInsideRoot({
+      rootPath: rootCanonical,
+      candidatePath: nextReal,
+      rootIdentity: checkedRootIdentity,
+    });
+    if (!admittedNextReal) {
       throw new FsSafeError("outside-workspace", "directory escaped workspace root");
     }
+    const admittedNextPath = admittedNextReal.path;
     if (stat?.isSymbolicLink()) {
       // An existing path component may legitimately be a symlink to a real
       // directory inside the root (e.g. a skill-bank layout). We already
@@ -257,22 +294,24 @@ export async function mkdirPathComponentsWithGuards(params: {
       // every subsequent segment. Callers that need the final directory
       // (e.g. to guard it themselves after this function returns) must use
       // the returned resolved path, not their own lexical parent path.
-      const targetStat = fsSync.statSync(nextReal);
+      const targetStat = fsSync.statSync(admittedNextPath);
       if (!targetStat.isDirectory()) {
         throw directoryComponentNotDirectoryError();
       }
-      await createAsyncDirectoryGuard(nextReal);
+      currentGuard = await createAsyncDirectoryGuard(admittedNextPath, { bigint: true });
       await assertAsyncDirectoryGuard(parentGuard);
       retainedTargetPath = undefined;
       retainedParentPath = undefined;
-      current = nextReal;
+      current = admittedNextPath;
       continue;
     }
-    if (!createdAuthorization) {
-      await createAsyncDirectoryGuard(next);
+    if (createdAuthorization && createdEvidence) {
+      currentGuard = createdEvidence.guard;
+    } else {
+      currentGuard = await createAsyncDirectoryGuard(admittedNextPath, { bigint: true });
       await assertAsyncDirectoryGuard(parentGuard);
     }
-    current = next;
+    current = admittedNextPath;
   }
   return current;
 }

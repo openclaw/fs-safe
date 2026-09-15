@@ -2,8 +2,26 @@
 
 ## Unreleased
 
-- Rebind `denyMutations` and explicit mutation-symlink policy to the actual retained parent selected by POSIX-native and pinned-fallback `Root.write`, `Root.create`, and `Root.copyIn`, authorizing missing directory components before creation so contained Linux symlink redirects cannot reuse stale preflight approval.
-- Reuse operation-local mutation-policy observations for ordinary Node.js POSIX writes, retaining an already-complete guarded parent and refreshing full ordered admission when route, deny-path, identity, missing-component, or configuration evidence changes; synchronous guard-bound authorization, fused post-create epoch validation, exclusive direct-child native mkdir provenance, and immutable suffix offsets avoid redundant awaited observation passes and depth-quadratic segment-array copies while collisions, legacy native helpers, complex routes, and Bun/Windows retain full admission.
+- Reuse raw archive path segments during validation, preserving platform checks, normalized component limits, and error order.
+
+- Size Linux native byte-copy scratch buffers from the existing file-size hint, bounded between 4 KiB and 1 MiB, while retaining read-to-EOF, sparse output, and borrowed-descriptor behavior.
+
+- Reuse lexical directory prefixes when producing walk entry paths, preserving traversal order, followed-link spelling, budgets, and directory checks.
+
+- Reuse synchronous ZIP name facts for identical local and central names with non-shared backing buffers, retaining separate Unicode metadata validation and shared-memory handling.
+
+- Bind Windows `readSecureFile()` owner and DACL verification to the already-open descriptor and compare its native 32-bit volume serial and 64-bit file-index projection with Node's bigint receipt before reading. Secure reads now fail closed when the descriptor capability is missing, stale, remote, incomplete, or unsupported instead of authorizing bytes with pathname-based ACL facts.
+- Reuse resolved Windows drive paths during containment comparison instead of normalizing them again, preserving namespace and relative-path comparison behavior.
+- Avoid intermediate segment arrays when classifying Windows device names, preserving existing path, stream, extension, and case handling.
+- Reduce retained decoded buffers when reading gzip TAR entries in JavaScript by filling one owned result buffer from the fully admitted payload size, preserving complete archive validation and independent returned bytes.
+- Avoid repeated relative-path resolution for normalized Windows drive-path descendants, retaining the existing comparison for UNC paths and colon-bearing components.
+- Add `safePathSegmentHashedV2` for untrusted install identifiers, hashing every trimmed ID with domain-separated SHA-256 into a fixed lowercase segment; preserve the legacy encoder's output and document its deterministic aliases and explicit migration requirements.
+- Keep filename truncation, temp-file sanitization, and completed sibling callback paths from producing Windows reserved-device aliases; invalid callback components now reject before invoking a producer.
+- Bind Windows private-directory creation, protected-DACL validation, complete file-identity association checks, and failure cleanup to retained handles, preserving concurrent pathname replacements; reject dot, dot-dot, and trailing-space or trailing-period path components before creation.
+- Bind Windows Root containment that depends on case folding to the Root directory's exact identity, then continue under the trusted Root spelling; exact-case paths retain the lexical fast path without added filesystem observations.
+- Let manually dispatched method audits focus one workload family, select native mode, and repeat baseline/candidate measurements in A-B-B-A order for drift-resistant performance decisions.
+- Rebind `denyMutations` and explicit mutation-symlink policy to the actual retained parent selected by POSIX-native and pinned-fallback `Root.write`, `Root.create`, and `Root.copyIn`; missing-directory admission now preserves the configured Root's exact identity through canonical-parent and per-component containment checks so contained aliases cannot reuse stale preflight approval.
+- Reuse operation-local mutation-policy observations for ordinary Node.js POSIX writes, retaining exact bigint directory guards and an already-complete guarded parent while refreshing full ordered admission when route, deny-path, Root identity, missing-component, or configuration evidence changes; synchronous guard-bound authorization, fused post-create receipt validation, exclusive direct-child native mkdir provenance, and immutable suffix offsets avoid redundant awaited observation passes and depth-quadratic segment-array copies while collisions, legacy native helpers, followed aliases, complex routes, and Bun/Windows retain full admission.
 - Preserve existing destinations when guest cross-device symlink moves fail by staging links privately before atomic replacement, with cleanup on creation or publication failure.
 - Keep durable-queue migrations bound to the pinned processing generation, rejecting stale callbacks after acknowledgement, quarantine, or replacement; release the verified read pin at Windows publication so migrations can replace their target; resync resumed claims so conditional migrations cannot bypass a failed publication sync on retry.
 - Keep Windows native filesystem descriptors in the host runtime's libuv table, rejecting missing or partial bridges instead of guessing raw HANDLE or add-on CRT namespaces.
