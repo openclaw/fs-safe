@@ -1,11 +1,135 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { GUEST_FILESYSTEM_READ_NOT_FOUND_EXIT_CODE } from "../src/guest.js";
+import {
+  GUEST_FILESYSTEM_CREATE_EXISTS_EXIT_CODE,
+  GUEST_FILESYSTEM_READ_NOT_FOUND_EXIT_CODE,
+} from "../src/guest.js";
 import { runGuest } from "./helpers/guest-filesystem.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
+
+const PARENT_CREATION_OPERATIONS = ["write", "create", "copy", "rename", "mkdirp"] as const;
+
+function parentCreationArgs(
+  operation: (typeof PARENT_CREATION_OPERATIONS)[number],
+  workspace: string,
+  mkdir = "1",
+): string[] {
+  if (operation === "mkdirp") return [operation, workspace, "raced/nested"];
+  if (operation === "copy" || operation === "rename") {
+    return [operation, workspace, "", "source.txt", workspace, "raced/nested", "note.txt", mkdir];
+  }
+  return [operation, workspace, "raced/nested", "note.txt", mkdir];
+}
+
+function competingParentSetup(kind: "directory" | "symlink" | "file"): string {
+  const create = kind === "directory"
+    ? ["os.mkdir('raced', 0o777, dir_fd=parent_fd)"]
+    : kind === "symlink"
+      ? ["os.symlink('../outside', 'raced', dir_fd=parent_fd)"]
+      : [
+          "competitor_fd = original_open('raced', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=parent_fd)",
+          "try:",
+          "    os.write(competitor_fd, b'competitor')",
+          "finally:",
+          "    os.close(competitor_fd)",
+        ];
+  // Inject after the actual missing-directory observation, without rewriting the guest source.
+  return [
+    "original_open = os.open",
+    "def open_with_competing_parent(*args, **kwargs):",
+    "    try:",
+    "        return original_open(*args, **kwargs)",
+    "    except FileNotFoundError:",
+    "        if args[0] == 'raced' and kwargs.get('dir_fd') is not None:",
+    "            parent_fd = kwargs['dir_fd']",
+    ...create.map((line) => `            ${line}`),
+    "            sys.stderr.write('competing parent created\\n')",
+    "        raise",
+    "os.open = open_with_competing_parent",
+  ].join("\n");
+}
+
+describe.skipIf(process.platform === "win32")("guest parent creation races", () => {
+  it.each(PARENT_CREATION_OPERATIONS)(
+    "%s accepts a directory created after the missing-parent observation",
+    async (operation) => {
+      const workspace = await tempRoot("fs-safe-guest-parent-race-");
+      await fs.writeFile(path.join(workspace, "source.txt"), "payload");
+
+      const result = runGuest(
+        parentCreationArgs(operation, workspace),
+        "payload",
+        competingParentSetup("directory"),
+      );
+
+      expect(result.error).toBeUndefined();
+      expect(result.status, result.stderr.toString()).toBe(0);
+      expect(result.stderr.toString()).toContain("competing parent created");
+      const nested = path.join(workspace, "raced", "nested");
+      expect(await fs.readdir(nested)).toEqual(operation === "mkdirp" ? [] : ["note.txt"]);
+      if (operation !== "mkdirp") {
+        expect(await fs.readFile(path.join(nested, "note.txt"), "utf8")).toBe("payload");
+      }
+      if (operation === "rename") {
+        await expect(fs.lstat(path.join(workspace, "source.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+      } else {
+        expect(await fs.readFile(path.join(workspace, "source.txt"), "utf8")).toBe("payload");
+      }
+    },
+  );
+
+  it.each(PARENT_CREATION_OPERATIONS.flatMap((operation) =>
+    (["symlink", "file"] as const).map((kind) => ({ operation, kind })),
+  ))("$operation rejects a competing $kind before writing payload", async ({ operation, kind }) => {
+    const root = await tempRoot("fs-safe-guest-parent-race-");
+    const workspace = path.join(root, "workspace");
+    const outside = path.join(root, "outside");
+    await fs.mkdir(workspace);
+    await fs.mkdir(outside);
+    await fs.writeFile(path.join(workspace, "source.txt"), "payload");
+    await fs.writeFile(path.join(outside, "keep.txt"), "unchanged");
+
+    const result = runGuest(
+      parentCreationArgs(operation, workspace),
+      "replacement",
+      competingParentSetup(kind),
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).not.toBe(0);
+    expect(result.status).not.toBe(GUEST_FILESYSTEM_CREATE_EXISTS_EXIT_CODE);
+    expect(result.stderr.toString()).toContain("competing parent created");
+    expect(result.stderr.toString()).toMatch(/NotADirectoryError|Not a directory|Too many levels/i);
+    expect((await fs.readdir(workspace)).sort()).toEqual(["raced", "source.txt"]);
+    expect(await fs.readFile(path.join(workspace, "source.txt"), "utf8")).toBe("payload");
+    expect(await fs.readdir(outside)).toEqual(["keep.txt"]);
+    expect(await fs.readFile(path.join(outside, "keep.txt"), "utf8")).toBe("unchanged");
+    if (kind === "file") {
+      expect(await fs.readFile(path.join(workspace, "raced"), "utf8")).toBe("competitor");
+    } else {
+      expect(await fs.readlink(path.join(workspace, "raced"))).toBe("../outside");
+    }
+  });
+
+  it.each(["write", "create", "copy"] as const)(
+    "%s still rejects a missing parent when mkdir is disabled",
+    async (operation) => {
+      const workspace = await tempRoot("fs-safe-guest-no-mkdir-");
+      await fs.writeFile(path.join(workspace, "source.txt"), "payload");
+      const result = runGuest(parentCreationArgs(operation, workspace, "0"), "replacement");
+
+      expect(result.error).toBeUndefined();
+      expect(result.status).not.toBe(0);
+      expect(result.status).not.toBe(GUEST_FILESYSTEM_CREATE_EXISTS_EXIT_CODE);
+      expect(result.stderr.toString()).toContain("FileNotFoundError");
+      expect(await fs.readdir(workspace)).toEqual(["source.txt"]);
+      expect(await fs.readFile(path.join(workspace, "source.txt"), "utf8")).toBe("payload");
+    },
+  );
+});
 
 describe.skipIf(process.platform === "win32")("guest filesystem protocol", () => {
   it("round-trips binary bytes and literal POSIX names across filesystem operations", async () => {
