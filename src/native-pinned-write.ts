@@ -7,7 +7,11 @@ import type { FileIdentityStat } from "./file-identity.js";
 import { runPinnedWriteWindows, sameNativeIdentity } from "./native-pinned-write-windows.js";
 import { assertNativeStaging, writeNativeStage, type NativeStagingBinding } from "./native-staged-file.js";
 import type { NativeBinding } from "./native.js";
-import type { PinnedWriteParams } from "./pinned-write.js";
+import type {
+  PinnedCreatedDirectoryReceipt,
+  PinnedMutationAdmissionReceipt,
+  PinnedWriteParams,
+} from "./pinned-write.js";
 import {
   assertStagedDirectoryCurrent,
   describeStagedDirectory,
@@ -16,6 +20,8 @@ import {
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { realpathSync } from "./realpath.js";
 import { isNotFoundPathError, isSymlinkOpenError } from "./path.js";
+import { checkedMutationDirectory } from "./pinned-mutation-observation.js";
+import { createPathSegmentRoute, joinPathSegmentRoute, type PathSegmentRoute } from "./path-segment-route.js";
 
 type PosixParentAdmission = {
   parentFd: number;
@@ -30,10 +36,40 @@ function relativeParentSegments(relativeParentPath: string): string[] {
 
 function prospectiveTargetPath(
   parentPath: string,
-  remainingParentSegments: readonly string[],
+  parentRoute: PathSegmentRoute,
+  offset: number,
   basename: string,
 ): string {
-  return path.join(parentPath, ...remainingParentSegments, basename);
+  return joinPathSegmentRoute(parentPath, parentRoute, offset, basename);
+}
+
+function sameAbsolutePath(left: string, right: string): boolean {
+  return path.relative(path.resolve(left), path.resolve(right)) === "";
+}
+
+function assertDirectChildBasename(basename: string): void {
+  if (!basename || basename === "." || basename === ".." || basename.includes("/") ||
+    basename.includes("\0") || (process.platform === "win32" && basename.includes("\\"))) {
+    throw new FsSafeError("invalid-path", "native parent creation requires one direct-child basename");
+  }
+}
+
+function mkdirPolicyChild(
+  binding: NativeBinding,
+  parentFd: number,
+  basename: string,
+  mode: number,
+): boolean {
+  assertDirectChildBasename(basename);
+  const mkdirChild = binding.mkdirChildBeneath;
+  if (typeof mkdirChild === "function") {
+    const created = mkdirChild.call(binding, parentFd, basename, mode);
+    if (typeof created === "boolean") return created;
+  }
+  // Old or malformed optional helpers still execute through the established
+  // recursive primitive, but cannot provide exclusive-creation provenance.
+  binding.mkdirBeneath(parentFd, basename, mode);
+  return false;
 }
 
 async function authorizePinnedMutation(
@@ -43,8 +79,8 @@ async function authorizePinnedMutation(
     mutationPath: string;
     phase: "parent" | "parent-create";
   },
-): Promise<void> {
-  await params.mutationAdmission?.authorize(Object.freeze(request));
+): Promise<PinnedMutationAdmissionReceipt | undefined> {
+  return await params.mutationAdmission?.authorize(Object.freeze(request));
 }
 
 function normalizePolicyParentOpenError(error: unknown, params: PinnedWriteParams): unknown {
@@ -103,6 +139,7 @@ async function capturePolicyAwarePosixParent(
     if (!isNotFoundPathError(error) || !params.mkdir) throw error;
   }
 
+  const segmentRoute = createPathSegmentRoute(segments);
   // The canonical preflight spelling has no intentional symlinks in its
   // existing prefix. Walk missing-parent cases one direct child at a time so
   // every existing/opened object is authorized and every mkdir is authorized
@@ -114,11 +151,14 @@ async function capturePolicyAwarePosixParent(
   let currentPath = params.rootPath;
   let currentDirectory = describeStagedDirectory(rootFd, currentPath);
   try {
-    params.mutationAdmission?.beginParentWalk?.();
-    const initialTarget = prospectiveTargetPath(currentPath, segments, params.basename);
+    let retainedTargetPath = params.mutationAdmission?.beginParentWalk?.();
+    const initialTarget = prospectiveTargetPath(currentPath, segmentRoute, 0, params.basename);
+    if (retainedTargetPath && !sameAbsolutePath(retainedTargetPath, initialTarget)) {
+      retainedTargetPath = undefined;
+    }
     await authorizePinnedMutation(params, {
-      targetPath: initialTarget,
-      mutationPath: initialTarget,
+      targetPath: retainedTargetPath ?? initialTarget,
+      mutationPath: retainedTargetPath ?? initialTarget,
       phase: "parent",
     });
 
@@ -126,27 +166,25 @@ async function capturePolicyAwarePosixParent(
       const segment = segments[index]!;
       const childPath = path.join(currentPath, segment);
       let childFd: number;
-      let created = false;
+      let createdByMkdir = false;
+      let createReceipt: PinnedMutationAdmissionReceipt | undefined;
       try {
         childFd = binding.openBeneath(currentFd, segment, secureDirectoryFlags).fd;
       } catch (openError) {
         if (!isNotFoundPathError(openError)) {
           throw normalizePolicyParentOpenError(openError, params);
         }
-        const targetPath = prospectiveTargetPath(
-          currentPath,
-          segments.slice(index),
-          params.basename,
+        const targetPath = retainedTargetPath ?? prospectiveTargetPath(
+          currentPath, segmentRoute, index, params.basename,
         );
-        await authorizePinnedMutation(params, {
+        createReceipt = await authorizePinnedMutation(params, {
           targetPath,
           mutationPath: childPath,
           phase: "parent-create",
         });
         assertStagedDirectoryCurrent(currentDirectory);
         params.assertBeforeMutation?.();
-        binding.mkdirBeneath(currentFd, segment, 0o777);
-        created = true;
+        createdByMkdir = mkdirPolicyChild(binding, currentFd, segment, 0o777);
         try {
           childFd = binding.openBeneath(currentFd, segment, secureDirectoryFlags).fd;
         } catch (createdOpenError) {
@@ -157,24 +195,26 @@ async function capturePolicyAwarePosixParent(
       let child: PosixParentAdmission;
       try {
         child = await describePosixParent(childFd, childPath);
-        if (created && params.mutationAdmission?.advanceCreatedDirectory) {
-          let parentCurrent = false;
+        if (!sameAbsolutePath(child.parentPath, childPath)) retainedTargetPath = undefined;
+        if (createdByMkdir && createReceipt && params.mutationAdmission?.advanceCreatedDirectory) {
+          let evidence: PinnedCreatedDirectoryReceipt | undefined;
           try {
-            assertStagedDirectoryCurrent(currentDirectory);
-            assertStagedDirectoryCurrent(child.directory);
-            parentCurrent = true;
+            const parentStat = assertStagedDirectoryCurrent(currentDirectory);
+            const childStat = assertStagedDirectoryCurrent(child.directory);
+            evidence = Object.freeze({
+              admission: createReceipt,
+              parent: checkedMutationDirectory(currentPath, currentDirectory.realPath, parentStat),
+              child: checkedMutationDirectory(childPath, child.directory.realPath, childStat),
+            });
           } catch {
             // Leave failed evidence to the full ordered admission below.
           }
-          if (parentCurrent) params.mutationAdmission.advanceCreatedDirectory(
-            Object.freeze({ path: currentPath, realPath: currentDirectory.realPath, ...currentDirectory.identity }),
-            Object.freeze({ path: childPath, realPath: child.parentPath, ...child.directory.identity }),
-          );
+          if (evidence) {
+            params.mutationAdmission.advanceCreatedDirectory(evidence);
+          }
         }
-        const targetPath = prospectiveTargetPath(
-          child.parentPath,
-          segments.slice(index + 1),
-          params.basename,
+        const targetPath = retainedTargetPath ?? prospectiveTargetPath(
+          child.parentPath, segmentRoute, index + 1, params.basename,
         );
         await authorizePinnedMutation(params, {
           targetPath,

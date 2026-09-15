@@ -76,15 +76,27 @@ export type RenameIdentityPolicy = "strict" | "verify-content-with-lock";
 
 export type PublishedWriteIdentity = Readonly<{ dev: bigint; ino: bigint }>;
 
+// Opaque operation-local proof that the immediately preceding parent-create
+// admission belongs to the epoch a directory walk is advancing.
+export type PinnedMutationAdmissionReceipt = Readonly<object>;
+
+// Full post-create facts paired with the exact admission that authorized the
+// mkdir. Every nested object is frozen before it reaches the epoch updater.
+export type PinnedCreatedDirectoryReceipt = Readonly<{
+  admission: PinnedMutationAdmissionReceipt;
+  parent: MutationDirectoryObservation;
+  child: MutationDirectoryObservation;
+}>;
+
 export type PinnedWriteMutationAdmission = Readonly<{
   rejectParentSymlinks: boolean;
-  beginParentWalk?(): void;
+  beginParentWalk?(): string | undefined;
   authorize(request: Readonly<{
     targetPath: string;
     mutationPath: string;
     phase: "parent" | "parent-create";
-  }>): Promise<void>;
-  advanceCreatedDirectory?(parent: MutationDirectoryObservation, child: MutationDirectoryObservation): void;
+  }>): Promise<PinnedMutationAdmissionReceipt | undefined>;
+  advanceCreatedDirectory?(receipt: PinnedCreatedDirectoryReceipt): void;
 }>;
 
 export type PinnedWriteParams = {
@@ -192,21 +204,32 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
         await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("mkdir", componentPath);
       },
     };
-    if (mutationAdmission && params.relativeParentPath) mutationAdmission.beginParentWalk?.();
+    const retainedTargetPath = mutationAdmission && params.relativeParentPath
+      ? mutationAdmission.beginParentWalk?.()
+      : undefined;
     parentPath = await mkdirPathComponentsWithGuards(mutationAdmission ? {
       ...mkdirParams,
       rejectSymlinks: mutationAdmission.rejectParentSymlinks,
       revalidateParentAfterBeforeComponent: true,
+      retainedTargetPath,
       afterCreateComponent: mutationAdmission.advanceCreatedDirectory,
-      beforeCreateComponent: async (componentPath: string, prospectiveParentPath: string) => {
-        await mutationAdmission.authorize(Object.freeze({
-          targetPath: path.join(prospectiveParentPath, params.basename),
+      beforeCreateComponent: async (
+        componentPath: string,
+        prospectiveParentPath: string,
+        retainedTarget: string | undefined,
+      ) => {
+        return await mutationAdmission.authorize(Object.freeze({
+          targetPath: retainedTarget ?? path.join(prospectiveParentPath, params.basename),
           mutationPath: componentPath,
           phase: "parent-create" as const,
         }));
       },
-      beforeUseComponent: async (_componentPath: string, prospectiveParentPath: string) => {
-        const targetPath = path.join(prospectiveParentPath, params.basename);
+      beforeUseComponent: async (
+        _componentPath: string,
+        prospectiveParentPath: string,
+        retainedTarget: string | undefined,
+      ) => {
+        const targetPath = retainedTarget ?? path.join(prospectiveParentPath, params.basename);
         await mutationAdmission.authorize(Object.freeze({
           targetPath,
           mutationPath: targetPath,

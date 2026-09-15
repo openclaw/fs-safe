@@ -2,13 +2,18 @@ import path from "node:path";
 import { assertMutationNotDenied, type DenyMutationPolicy } from "./deny-mutations.js";
 import { FsSafeError } from "./errors.js";
 import { isPathInside } from "./path.js";
-import type { PinnedWriteMutationAdmission } from "./pinned-write.js";
+import type {
+  PinnedCreatedDirectoryReceipt,
+  PinnedMutationAdmissionReceipt,
+  PinnedWriteMutationAdmission,
+} from "./pinned-write.js";
 import { resolvePathViaExistingAncestor } from "./root-path-existing.js";
 import { outsideWorkspaceError } from "./root-errors.js";
 import type { MutationSymlinkPolicy } from "./root-symlink-policy.js";
 import { getFsSafeNativeConfig } from "./native-config.js";
 import {
   advanceMutationObservation, mutationObservationCurrent, observeMutationPath,
+  missingMutationSegments, nextMissingMutationPath,
   type MutationDirectoryObservation, type MutationPathObservation,
 } from "./pinned-mutation-observation.js";
 
@@ -19,6 +24,10 @@ type Epoch = Readonly<{
   target: MutationPathObservation;
   paths: readonly (readonly string[])[];
   prefixes: readonly (readonly string[])[];
+}>;
+type CreateReceipt = PinnedMutationAdmissionReceipt & Readonly<{
+  epoch: Epoch;
+  childPath: string;
 }>;
 
 export type PinnedMutationPolicySnapshot = Readonly<{
@@ -108,8 +117,8 @@ function assertCachedNotDenied(target: string, epoch: Epoch): void {
 function reusableRequest(request: AdmissionRequest, epoch: Epoch): boolean {
   return request.targetPath === epoch.target.path &&
     (request.mutationPath === request.targetPath ||
-      (request.phase === "parent-create" && epoch.target.missing.length > 1 &&
-        request.mutationPath === path.join(epoch.target.ancestor, epoch.target.missing[0]!)));
+      (request.phase === "parent-create" && missingMutationSegments(epoch.target) > 1 &&
+        request.mutationPath === nextMissingMutationPath(epoch.target)));
 }
 
 export async function preparePinnedWriteMutationAdmission(params: {
@@ -131,7 +140,8 @@ export async function preparePinnedWriteMutationAdmission(params: {
   const route = simpleRoute(params.rootReal, params.originalPath);
   let receiptsEnabled = false;
   let epoch: Epoch | undefined;
-  let pending: Readonly<{ epoch: Epoch; childPath: string }> | undefined;
+  let pending: CreateReceipt | undefined;
+  let tentative: Epoch | undefined;
   const canonicalParent = await resolvePathViaExistingAncestor(path.dirname(params.resolvedTargetPath));
   if (!isPathInside(params.rootWithSep, canonicalParent)) throw outsideWorkspaceError();
   const relativeCanonicalParent = path.relative(params.rootReal, canonicalParent);
@@ -140,14 +150,26 @@ export async function preparePinnedWriteMutationAdmission(params: {
   }
   const mutationAdmission: PinnedWriteMutationAdmission = Object.freeze({
     rejectParentSymlinks: policy.mutationSymlinks === "reject",
-    beginParentWalk: route ? () => { receiptsEnabled = true; } : undefined,
+    beginParentWalk: route ? () => {
+      receiptsEnabled = true;
+      return route;
+    } : undefined,
     async authorize(request) {
+      const awaitingValidation = tentative;
+      tentative = undefined;
       pending = undefined;
+      if (awaitingValidation && (awaitingValidation !== epoch || request.phase !== "parent" ||
+        request.targetPath !== awaitingValidation.target.path || request.mutationPath !== request.targetPath)) {
+        epoch = undefined;
+      }
       if (epoch && reusableRequest(request, epoch) && epochCurrent(epoch)) {
         assertCachedNotDenied(request.targetPath, epoch);
         assertCachedNotDenied(request.mutationPath, epoch);
-        if (request.phase === "parent-create") pending = Object.freeze({ epoch, childPath: request.mutationPath });
-        return;
+        if (request.phase === "parent-create") {
+          pending = Object.freeze({ epoch, childPath: request.mutationPath });
+          return pending;
+        }
+        return undefined;
       }
       epoch = undefined;
       const candidate = receiptsEnabled && route === request.targetPath
@@ -172,28 +194,37 @@ export async function preparePinnedWriteMutationAdmission(params: {
         epoch = candidate;
         if (request.phase === "parent-create" && reusableRequest(request, candidate)) {
           pending = Object.freeze({ epoch: candidate, childPath: request.mutationPath });
+          return pending;
         }
       }
+      return undefined;
     },
-    advanceCreatedDirectory: route ? (parent: MutationDirectoryObservation, child: MutationDirectoryObservation) => {
+    advanceCreatedDirectory: route ? (receipt: PinnedCreatedDirectoryReceipt) => {
       const admitted = pending;
       pending = undefined;
-      if (!epoch || !admitted || admitted.epoch !== epoch || admitted.childPath !== child.path ||
-        getFsSafeNativeConfig().mode !== epoch.mode) {
+      tentative = undefined;
+      if (!epoch || !admitted || receipt.admission !== admitted || admitted.epoch !== epoch ||
+        admitted.childPath !== receipt.child.path) {
         epoch = undefined;
         return;
       }
       // The walker calls this only after its live parent fence, exact-parent
       // deny, authority callback, successful mkdir, and exact child checks.
-      const observations = epoch.observations.map((observation) => advanceMutationObservation(observation, parent, child));
+      const observations = epoch.observations.map((observation) =>
+        advanceMutationObservation(observation, receipt.parent, receipt.child));
       if (observations.some((observation) => !observation)) {
         epoch = undefined;
         return;
       }
       const complete = observations as MutationPathObservation[];
       const target = complete.find((observation) => observation.path === epoch!.target.path)!;
+      if (!target || target.missingOffset !== epoch.target.missingOffset + 1) {
+        epoch = undefined;
+        return;
+      }
       const next = Object.freeze({ ...epoch, target, observations: Object.freeze(complete) });
-      epoch = epochCurrent(next) ? next : undefined;
+      epoch = next;
+      tentative = next;
     } : undefined,
   });
   return {

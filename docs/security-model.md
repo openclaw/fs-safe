@@ -83,6 +83,15 @@ prospective directory before `mkdirat`, opens it without following a newly
 introduced link, and authorizes the opened object before continuing. This
 prevents a contained Linux `openat2(RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS)`
 redirect from reusing policy approval for a different in-root subtree.
+For an ordinary unchanged route, operation-local observations may carry that
+admission across a direct-child creation only after exact parent and child
+fences; the immediately following parent authorization validates the complete
+epoch, while stale, redirected, incomplete, or foreign evidence returns to the
+full ordered admission. Native acceleration additionally requires an exclusive
+direct-child mkdir result proving that this syscall created the name; a
+collision, legacy helper, or malformed result performs the guarded walk but
+cannot advance the receipt. That boolean is admission provenance only and does
+not grant ownership for cleanup by pathname.
 
 The opt-in `mutationSymlinks` policy applies independently of read policy.
 `"reject"` rejects symlink components; `"follow-parents-within-root"` resolves

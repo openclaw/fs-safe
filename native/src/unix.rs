@@ -109,6 +109,19 @@ fn open_parent(root_fd: i32, path: &str) -> NativeResult<(OwnedFd, &str)> {
     Ok((unsafe { OwnedFd::from_raw_fd(fd) }, basename))
 }
 
+pub fn mkdir_child_beneath(parent_fd: i32, basename: &str, mode: u32) -> NativeResult<bool> {
+    crate::validate_child_basename(basename)?;
+    match rustix::fs::mkdirat(
+        borrowed(parent_fd),
+        basename,
+        Mode::from_bits_retain(mode as _),
+    ) {
+        Ok(()) => Ok(true),
+        Err(rustix::io::Errno::EXIST) => Ok(false),
+        Err(error) => Err(os_error(error, "mkdirat direct child")),
+    }
+}
+
 pub fn mkdir_beneath(root_fd: i32, rel_path: &str, mode: u32) -> NativeResult<()> {
     if rel_path.is_empty() || rel_path == "." {
         return Ok(());
@@ -1380,6 +1393,37 @@ mod tests {
             )
             .is_err()
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn direct_child_mkdir_reports_exactly_one_race_winner() {
+        let root = temp_root("mkdir-child");
+        let root_handle = std::sync::Arc::new(OpenOptions::new().read(true).open(&root).unwrap());
+        let attempts = (0..16).map(|_| {
+            let parent = std::sync::Arc::clone(&root_handle);
+            std::thread::spawn(move || {
+                mkdir_child_beneath(parent.as_raw_fd(), "raced", 0o700).unwrap()
+            })
+        }).collect::<Vec<_>>();
+        let created = attempts.into_iter()
+            .map(|attempt| attempt.join().unwrap())
+            .filter(|created| *created)
+            .count();
+        assert_eq!(created, 1);
+        assert!(!mkdir_child_beneath(root_handle.as_raw_fd(), "raced", 0o700).unwrap());
+        fs::write(root.join("file"), b"preserve").unwrap();
+        assert!(!mkdir_child_beneath(root_handle.as_raw_fd(), "file", 0o700).unwrap());
+        for invalid in ["", ".", "..", "nested/child", "nul\0child"] {
+            assert_eq!(
+                mkdir_child_beneath(root_handle.as_raw_fd(), invalid, 0o700)
+                    .unwrap_err()
+                    .status,
+                "EINVAL",
+            );
+        }
+        assert_eq!(fs::read(root.join("file")).unwrap(), b"preserve");
+        drop(root_handle);
         fs::remove_dir_all(root).unwrap();
     }
 

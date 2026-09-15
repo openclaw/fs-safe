@@ -7,10 +7,12 @@ import { FsSafeError } from "../src/errors.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import * as native from "../src/native.js";
 import { preparePinnedWriteMutationAdmission, snapshotPinnedMutationPolicy } from "../src/pinned-mutation-admission.js";
+import { checkedMutationDirectory } from "../src/pinned-mutation-observation.js";
 import { resolvePathInRoot, resolveRootContext } from "../src/root-context.js";
 import type { MutationSymlinkPolicy } from "../src/root-symlink-policy.js";
 import { mutationSymlinkResolution } from "../src/root-symlink-policy.js";
 import { realpathSync } from "../src/realpath.js";
+import type { PinnedMutationAdmissionReceipt } from "../src/pinned-write.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -50,7 +52,19 @@ async function prepare(directory: string, originalPath: string, denyMutations?: 
 
 function directoryObservation(pathname: string) {
   const stat = fsSync.lstatSync(pathname, { bigint: true });
-  return Object.freeze({ path: pathname, realPath: fsSync.realpathSync.native(pathname), dev: stat.dev, ino: stat.ino });
+  return checkedMutationDirectory(pathname, fsSync.realpathSync.native(pathname), stat);
+}
+
+function createdDirectoryReceipt(
+  admission: PinnedMutationAdmissionReceipt,
+  parent: string,
+  child: string,
+) {
+  return Object.freeze({
+    admission,
+    parent: directoryObservation(parent),
+    child: directoryObservation(child),
+  });
 }
 
 describe.runIf(process.platform !== "win32" && !process.versions.bun)("operation-local mutation receipts", () => {
@@ -77,15 +91,58 @@ describe.runIf(process.platform !== "win32" && !process.versions.bun)("operation
     let parent = directory;
     for (const part of parts) {
       const child = path.join(parent, part);
-      const parentEvidence = directoryObservation(parent);
-      await receipt.authorize(child);
+      const admissionReceipt = await receipt.authorize(child);
       await fs.mkdir(child);
-      receipt.admission.advanceCreatedDirectory!(parentEvidence, directoryObservation(child));
+      receipt.admission.advanceCreatedDirectory!(createdDirectoryReceipt(admissionReceipt!, parent, child));
       await receipt.authorize();
       parent = child;
     }
     await receipt.authorize();
     expect(receipt.resolveCurrent).toHaveBeenCalledTimes(1);
+  });
+
+  it("advances tentatively without I/O and validates the complete epoch exactly once", async () => {
+    const directory = await tempRoot("fs-safe-policy-receipt-tentative-");
+    const receipt = await prepare(directory, "one/two/value");
+    const first = path.join(directory, "one");
+    const admissionReceipt = await receipt.authorize(first);
+    await fs.mkdir(first);
+    const evidence = createdDirectoryReceipt(admissionReceipt!, directory, first);
+    const lstat = vi.spyOn(fsSync, "lstatSync");
+    const realpath = vi.spyOn(realpathSync, "native");
+
+    receipt.admission.advanceCreatedDirectory!(evidence);
+    expect(lstat).not.toHaveBeenCalled();
+    expect(realpath).not.toHaveBeenCalled();
+
+    await receipt.authorize();
+    expect(lstat).toHaveBeenCalledTimes(3);
+    expect(realpath).toHaveBeenCalledTimes(2);
+    expect(receipt.resolveCurrent).toHaveBeenCalledTimes(1);
+  });
+
+  it("deopts foreign create provenance before reusing checked directory facts", async () => {
+    const directory = await tempRoot("fs-safe-policy-receipt-foreign-");
+    const receipt = await prepare(directory, "one/two/value");
+    const first = path.join(directory, "one");
+    await receipt.authorize(first);
+    await fs.mkdir(first);
+    receipt.admission.advanceCreatedDirectory!(createdDirectoryReceipt(Object.freeze({}), directory, first));
+    await receipt.authorize();
+    expect(receipt.resolveCurrent).toHaveBeenCalledTimes(2);
+  });
+
+  it("validates tentative facts after a created child is replaced", async () => {
+    const directory = await tempRoot("fs-safe-policy-receipt-stale-");
+    const receipt = await prepare(directory, "one/two/value");
+    const first = path.join(directory, "one");
+    const admissionReceipt = await receipt.authorize(first);
+    await fs.mkdir(first);
+    receipt.admission.advanceCreatedDirectory!(createdDirectoryReceipt(admissionReceipt!, directory, first));
+    await fs.rename(first, path.join(directory, "saved"));
+    await fs.mkdir(first);
+    await receipt.authorize();
+    expect(receipt.resolveCurrent).toHaveBeenCalledTimes(2);
   });
 
   it.each(["rebind", "missing appearance"])("refreshes all denied paths after %s", async (change) => {
@@ -123,11 +180,10 @@ describe.runIf(process.platform !== "win32" && !process.versions.bun)("operation
   it("never treats an unexpected deeper child as a directory created by the walk", async () => {
     const directory = await tempRoot("fs-safe-policy-receipt-unexpected-");
     const receipt = await prepare(directory, "one/two/three/value");
-    const parentEvidence = directoryObservation(directory);
     const first = path.join(directory, "one");
-    await receipt.authorize(first);
+    const admissionReceipt = await receipt.authorize(first);
     await fs.mkdir(path.join(first, "two"), { recursive: true });
-    receipt.admission.advanceCreatedDirectory!(parentEvidence, directoryObservation(first));
+    receipt.admission.advanceCreatedDirectory!(createdDirectoryReceipt(admissionReceipt!, directory, first));
     await receipt.authorize();
     expect(receipt.resolveCurrent).toHaveBeenCalledTimes(2);
   });
@@ -137,12 +193,11 @@ describe.runIf(process.platform !== "win32" && !process.versions.bun)("operation
     const parent = path.join(directory, "one");
     await fs.mkdir(parent);
     const receipt = await prepare(directory, "one/two/value");
-    const evidence = directoryObservation(parent);
     const child = path.join(parent, "two");
-    await receipt.authorize(child);
+    const admissionReceipt = await receipt.authorize(child);
     await fs.rename(parent, path.join(directory, "saved"));
     await fs.mkdir(child, { recursive: true });
-    receipt.admission.advanceCreatedDirectory!(evidence, directoryObservation(child));
+    receipt.admission.advanceCreatedDirectory!(createdDirectoryReceipt(admissionReceipt!, parent, child));
     await receipt.authorize();
     expect(receipt.resolveCurrent).toHaveBeenCalledTimes(2);
   });
@@ -157,10 +212,9 @@ describe.runIf(process.platform !== "win32" && !process.versions.bun)("operation
     paths.length = 0;
     prefixes.push(directory);
     const first = path.join(directory, "one");
-    const evidence = directoryObservation(directory);
-    await receipt.authorize(first);
+    const admissionReceipt = await receipt.authorize(first);
     await fs.mkdir(first);
-    receipt.admission.advanceCreatedDirectory!(evidence, directoryObservation(first));
+    receipt.admission.advanceCreatedDirectory!(createdDirectoryReceipt(admissionReceipt!, directory, first));
     await expect(receipt.authorize(deniedParent)).rejects.toMatchObject({ code: "denied-path" });
     expect(receipt.resolveCurrent).toHaveBeenCalledTimes(1);
   });

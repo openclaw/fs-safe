@@ -25,6 +25,34 @@ describe.skipIf(process.platform !== "linux" || !native)("native directory admis
     } finally { fs.closeSync(root); }
   });
 
+  it("reports direct-child creation without collision or descriptor ownership ambiguity", async () => {
+    const dir = await tempRoot("fs-safe-native-mkdir-child-");
+    fs.mkdirSync(path.join(dir, "nested"));
+    fs.writeFileSync(path.join(dir, "file"), "preserve");
+    const root = fs.openSync(dir, directoryFlags);
+    const mkdirChild = native!.mkdirChildBeneath;
+    expect(mkdirChild).toBeTypeOf("function");
+    if (!mkdirChild) throw new Error("native direct-child mkdir is unavailable");
+    try {
+      const descriptorCount = () => fs.readdirSync("/proc/self/fd").length;
+      const before = descriptorCount();
+      expect(mkdirChild.call(native, root, "created", 0o700)).toBe(true);
+      for (let index = 0; index < 128; index += 1) {
+        expect(mkdirChild.call(native, root, "created", 0o700)).toBe(false);
+      }
+      expect(descriptorCount()).toBe(before);
+      expect(mkdirChild.call(native, root, "file", 0o700)).toBe(false);
+      expect(fs.readFileSync(path.join(dir, "file"), "utf8")).toBe("preserve");
+      expect(mkdirChild.call(native, root, "literal\\child", 0o700)).toBe(true);
+      for (const invalid of ["", ".", "..", "nested/child", "/absolute", "nul\0child"]) {
+        expect(() => mkdirChild.call(native, root, invalid, 0o700)).toThrowError(
+          expect.objectContaining({ code: "EINVAL" }),
+        );
+      }
+      expect(fs.readdirSync(path.join(dir, "nested"))).toEqual([]);
+    } finally { fs.closeSync(root); }
+  });
+
   it("rejects regular files before applying a directory open's truncate flag", async () => {
     const dir = await tempRoot("fs-safe-native-directory-type-");
     const target = path.join(dir, "file");

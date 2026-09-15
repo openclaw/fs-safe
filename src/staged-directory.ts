@@ -1,4 +1,4 @@
-import fs from "node:fs";
+import fs, { type BigIntStats } from "node:fs";
 import path from "node:path";
 import type { DirectoryReceipt } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
@@ -32,7 +32,7 @@ export function describeStagedDirectory(fd: number, pathname: string): Directory
   return receipt;
 }
 
-export function assertStagedDirectoryCurrent(receipt: DirectorySnapshot): void {
+export function assertStagedDirectoryCurrent(receipt: DirectorySnapshot): BigIntStats {
   const current = fs.lstatSync(receipt.path, { bigint: true });
   if (
     !current.isDirectory() || !exactIdentityMatches(receipt.identity, current) ||
@@ -40,6 +40,7 @@ export function assertStagedDirectoryCurrent(receipt: DirectorySnapshot): void {
   ) {
     throw new FsSafeError("path-mismatch", "staging directory pathname changed");
   }
+  return current;
 }
 
 export function openStagedDirectory(directory: string | DirectoryReceipt): {

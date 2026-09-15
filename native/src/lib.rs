@@ -95,6 +95,14 @@ fn validate_relative_path(path: &str, allow_root: bool) -> NativeResult<()> {
     validate_relative_path_with_separators(path, allow_root, cfg!(windows))
 }
 
+pub(crate) fn validate_child_basename(path: &str) -> NativeResult<()> {
+    validate_relative_path(path, false)?;
+    if path.contains('/') || (cfg!(windows) && path.contains('\\')) {
+        return Err(invalid_path("operation requires one direct-child basename"));
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_portable_relative_path(path: &str, allow_root: bool) -> NativeResult<()> {
     validate_relative_path_with_separators(path, allow_root, true)
 }
@@ -136,6 +144,20 @@ pub fn mkdir_beneath(env: Env, root_fd: i32, rel_path: String, mode: u32) -> Res
         env,
         validate_relative_path(&rel_path, true)
             .and_then(|()| platform::mkdir_beneath(root_fd, &rel_path, mode)),
+    )
+}
+
+#[napi(js_name = "mkdirChildBeneath")]
+pub fn mkdir_child_beneath(
+    env: Env,
+    parent_fd: i32,
+    basename: String,
+    mode: u32,
+) -> Result<bool> {
+    into_napi(
+        env,
+        validate_child_basename(&basename)
+            .and_then(|()| platform::mkdir_child_beneath(parent_fd, &basename, mode)),
     )
 }
 
@@ -246,10 +268,15 @@ mod tests {
         assert!(validate_relative_path("../escape", false).is_err());
         if cfg!(windows) {
             assert!(validate_relative_path("..\\escape", false).is_err());
+            assert!(validate_child_basename("literal\\child").is_err());
         } else {
             assert!(validate_relative_path("..\\literal", false).is_ok());
+            assert!(validate_child_basename("literal\\child").is_ok());
         }
         assert!(validate_portable_relative_path("..\\escape", false).is_err());
+        for invalid in ["", ".", "..", "nested/child", "nul\0child"] {
+            assert!(validate_child_basename(invalid).is_err());
+        }
     }
 }
 

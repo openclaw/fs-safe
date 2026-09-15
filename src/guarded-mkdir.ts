@@ -1,31 +1,62 @@
-import fsSync from "node:fs";
+import fsSync, { type BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { assertAsyncDirectoryGuard, assertSyncDirectoryGuard, createAsyncDirectoryGuard, inspectDirectoryIdentitySync, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
+import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, inspectDirectoryIdentitySync, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { isNotFoundPathError, isPathRelativeEscape } from "./path.js";
 import { directoryComponentNotDirectoryError } from "./root-errors.js";
 import { realpathSync } from "./realpath.js";
-import type { MutationDirectoryObservation } from "./pinned-mutation-observation.js";
+import { checkedMutationDirectory } from "./pinned-mutation-observation.js";
+import type { PinnedCreatedDirectoryReceipt, PinnedMutationAdmissionReceipt } from "./pinned-write.js";
+import {
+  createPathSegmentRoute,
+  joinPathSegmentRoute,
+  type PathSegmentRoute,
+} from "./path-segment-route.js";
 
-function createdDirectoryEvidence(parent: AnyAsyncDirectoryGuard, childPath: string):
-  readonly [MutationDirectoryObservation, MutationDirectoryObservation] | undefined {
+function sameDirectoryFacts(left: BigIntStats, right: BigIntStats): boolean {
+  return left.dev === right.dev && left.ino === right.ino && left.mode === right.mode &&
+    left.nlink === right.nlink;
+}
+
+function inspectGuardCurrent(parent: AnyAsyncDirectoryGuard): BigIntStats {
+  if (typeof parent.stat.dev !== "bigint" || typeof parent.stat.ino !== "bigint") {
+    throw new TypeError("exact directory guard required for mutation evidence");
+  }
+  const stat = inspectDirectoryIdentitySync(parent.dir, parent.stat);
+  if (realpathSync.native(parent.dir) !== parent.realPath) {
+    throw new FsSafeError("path-mismatch", "directory changed during operation");
+  }
+  return stat;
+}
+
+function createdDirectoryEvidence(
+  admission: PinnedMutationAdmissionReceipt,
+  parent: AnyAsyncDirectoryGuard,
+  childPath: string,
+): PinnedCreatedDirectoryReceipt | undefined {
   try {
-    if (typeof parent.stat.dev !== "bigint" || typeof parent.stat.ino !== "bigint") return undefined;
-    assertSyncDirectoryGuard(parent);
-    const child = inspectDirectoryIdentitySync(childPath);
+    const parentBefore = inspectGuardCurrent(parent);
+    const childBefore = inspectDirectoryIdentitySync(childPath);
     const realPath = realpathSync.native(childPath);
     if (realPath !== childPath) return undefined;
-    inspectDirectoryIdentitySync(childPath, child);
-    assertSyncDirectoryGuard(parent);
-    return [
-      Object.freeze({ path: parent.dir, realPath: parent.realPath, dev: parent.stat.dev, ino: parent.stat.ino }),
-      Object.freeze({ path: childPath, realPath, dev: child.dev, ino: child.ino }),
-    ];
+    const childAfter = inspectDirectoryIdentitySync(childPath, childBefore);
+    const parentAfter = inspectGuardCurrent(parent);
+    if (!sameDirectoryFacts(parentBefore, parentAfter) ||
+      !sameDirectoryFacts(childBefore, childAfter)) return undefined;
+    return Object.freeze({
+      admission,
+      parent: checkedMutationDirectory(parent.dir, parent.realPath, parentAfter),
+      child: checkedMutationDirectory(childPath, realPath, childAfter),
+    });
   } catch {
     // Failed optional evidence leaves the existing ordered admission in charge.
     return undefined;
   }
+}
+
+function sameAbsolutePath(left: string, right: string): boolean {
+  return path.relative(path.resolve(left), path.resolve(right)) === "";
 }
 
 function isSameOrChildPath(candidate: string, parent: string): boolean {
@@ -59,16 +90,19 @@ export async function mkdirPathComponentsWithGuards(params: {
   beforeCreateComponent?: (
     componentPath: string,
     prospectiveTargetPath: string,
-  ) => Promise<void> | void;
+    retainedTargetPath: string | undefined,
+  ) => Promise<PinnedMutationAdmissionReceipt | undefined> | PinnedMutationAdmissionReceipt | undefined;
   beforeUseComponent?: (
     componentPath: string,
     prospectiveTargetPath: string,
+    retainedTargetPath: string | undefined,
   ) => Promise<void> | void;
-  afterCreateComponent?: (parent: MutationDirectoryObservation, child: MutationDirectoryObservation) => void;
+  afterCreateComponent?: (receipt: PinnedCreatedDirectoryReceipt) => void;
   assertBeforeMutation?: () => void;
   mode?: number;
   rejectSymlinks?: boolean;
   revalidateParentAfterBeforeComponent?: boolean;
+  retainedTargetPath?: string;
 }): Promise<string> {
   const root = path.resolve(params.rootReal);
   const rootCanonical = path.resolve(realpathSync.native(root));
@@ -79,11 +113,18 @@ export async function mkdirPathComponentsWithGuards(params: {
   }
   let current = root;
   const parts = relative.split(path.sep).filter(Boolean);
+  let partRoute: PathSegmentRoute | undefined;
+  let retainedTargetPath = params.retainedTargetPath &&
+    sameAbsolutePath(path.dirname(params.retainedTargetPath), target)
+    ? params.retainedTargetPath
+    : undefined;
+  let retainedParentPath = retainedTargetPath ? path.dirname(retainedTargetPath) : undefined;
   for (let index = 0; index < parts.length; index += 1) {
     const part = parts[index]!;
     const next = path.join(current, part);
     const parentGuard = await createAsyncDirectoryGuard(current, { bigint: params.afterCreateComponent !== undefined });
     let created = false;
+    let createReceipt: PinnedMutationAdmissionReceipt | undefined;
     await assertAsyncDirectoryGuard(parentGuard);
     await params.beforeComponent?.(next);
     if (params.revalidateParentAfterBeforeComponent) {
@@ -98,9 +139,15 @@ export async function mkdirPathComponentsWithGuards(params: {
         missing = true;
       }
       if (missing) {
-        await params.beforeCreateComponent(
+        let prospectiveParent = retainedParentPath;
+        if (!prospectiveParent) {
+          partRoute ??= createPathSegmentRoute(parts);
+          prospectiveParent = joinPathSegmentRoute(next, partRoute, index + 1);
+        }
+        createReceipt = await params.beforeCreateComponent(
           next,
-          path.join(next, ...parts.slice(index + 1)),
+          prospectiveParent,
+          retainedTargetPath,
         );
         await assertAsyncDirectoryGuard(parentGuard);
         params.assertBeforeMutation?.();
@@ -124,15 +171,17 @@ export async function mkdirPathComponentsWithGuards(params: {
       }
     }
     const stat = fsSync.lstatSync(next);
-    if (created && params.afterCreateComponent) {
-      const evidence = createdDirectoryEvidence(parentGuard, next);
-      if (evidence) params.afterCreateComponent(...evidence);
+    if (created && createReceipt && params.afterCreateComponent) {
+      const evidence = createdDirectoryEvidence(createReceipt, parentGuard, next);
+      if (evidence) params.afterCreateComponent(evidence);
     }
-    await params.beforeUseComponent?.(
-      next,
-      path.join(next, ...parts.slice(index + 1)),
-    );
     if (params.beforeUseComponent) {
+      let prospectiveParent = retainedParentPath;
+      if (!prospectiveParent) {
+        partRoute ??= createPathSegmentRoute(parts);
+        prospectiveParent = joinPathSegmentRoute(next, partRoute, index + 1);
+      }
+      await params.beforeUseComponent(next, prospectiveParent, retainedTargetPath);
       await assertAsyncDirectoryGuard(parentGuard);
     }
     if ((params.rejectSymlinks && stat.isSymbolicLink()) || (!stat.isSymbolicLink() && !stat.isDirectory())) {
@@ -160,6 +209,8 @@ export async function mkdirPathComponentsWithGuards(params: {
       }
       await createAsyncDirectoryGuard(nextReal);
       await assertAsyncDirectoryGuard(parentGuard);
+      retainedTargetPath = undefined;
+      retainedParentPath = undefined;
       current = nextReal;
       continue;
     }
