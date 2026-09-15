@@ -3,8 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
-import { __resetNativeLoaderForTest, __setNativeLoaderForTest, type NativeBinding } from "../src/native.js";
-import { realpathSync } from "../src/realpath.js";
+import { __resetNativeLoaderForTest } from "../src/native.js";
 import { tempWorkspace, tempWorkspaceSync, type TempWorkspaceOptions } from "../src/temp.js";
 import * as cleanup from "../src/temp-cleanup.js";
 import { TempWorkspaceRetainedChild } from "../src/temp-workspace-descriptor.js";
@@ -49,10 +48,16 @@ for (const variant of ["async", "sync"] as const) {
       let chmods = 0;
       let fstats = 0;
       let lstats = 0;
+      let bigintFstats = 0;
+      let bigintLstats = 0;
       let opensAtFirstChmod: number | undefined;
       let fstatsAtFirstChmod: number | undefined;
       let lstatsAtFirstChmod: number | undefined;
       const childFds = new Set<number>();
+      const projectChildIdentity = (stat: { dev: number | bigint; ino: number | bigint }) => {
+        stat.dev = typeof stat.dev === "bigint" ? 701n : 701;
+        stat.ino = typeof stat.ino === "bigint" ? 1701n : 1701;
+      };
       const openSync = fsSync.openSync.bind(fsSync);
       vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
         const fd = openSync(...args);
@@ -65,13 +70,21 @@ for (const variant of ["async", "sync"] as const) {
       const lstat = fsSync.lstatSync.bind(fsSync);
       vi.spyOn(fsSync, "lstatSync").mockImplementation((name, options) => {
         const stat = lstat(name, options);
-        if (isWorkspaceChild(rootDir, name) && options?.bigint === true) lstats += 1;
+        if (isWorkspaceChild(rootDir, name)) {
+          if (process.platform === "linux") projectChildIdentity(stat);
+          lstats += 1;
+          if (options?.bigint === true) bigintLstats += 1;
+        }
         return stat;
       });
       const fstat = fsSync.fstatSync.bind(fsSync);
       vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
         const stat = fstat(fd, options);
-        if (childFds.has(fd) && options?.bigint === true) fstats += 1;
+        if (childFds.has(fd)) {
+          if (process.platform === "linux") projectChildIdentity(stat);
+          fstats += 1;
+          if (options?.bigint === true) bigintFstats += 1;
+        }
         return stat;
       });
       if (variant === "async") {
@@ -102,6 +115,8 @@ for (const variant of ["async", "sync"] as const) {
         chmods: () => chmods,
         fstats: () => fstats,
         lstats: () => lstats,
+        bigintFstats: () => bigintFstats,
+        bigintLstats: () => bigintLstats,
         opensAtFirstChmod: () => opensAtFirstChmod,
         fstatsAtFirstChmod: () => fstatsAtFirstChmod,
         lstatsAtFirstChmod: () => lstatsAtFirstChmod,
@@ -120,78 +135,16 @@ for (const variant of ["async", "sync"] as const) {
           expect(operations.chmods()).toBe(0);
           expect(operations.fstats()).toBe(1);
           expect(operations.lstats()).toBe(2);
+          if (process.platform === "linux") {
+            expect(operations.bigintFstats()).toBe(0);
+            expect(operations.bigintLstats()).toBe(1);
+          }
           expect(fsSync.lstatSync(workspace.dir).mode & 0o7777).toBe(0o700);
           expect(chmod).not.toHaveBeenCalled();
           expect(chmodSync).not.toHaveBeenCalled();
         } finally {
           await workspace.cleanup();
         }
-      },
-    );
-
-    it.each([
-      ["compatible default", false, 0o700],
-      ["compatible mode correction", false, 0o750],
-      ["native capability probe", true, 0o700],
-    ] as const)(
-      "holds %s to the coalesced admission budget",
-      async (_label, nativeProbe, dirMode) => {
-        const rootDir = await tempRoot("fs-safe-workspace-stat-budget-");
-        let components = 1;
-        for (let current = rootDir; path.dirname(current) !== current; current = path.dirname(current)) {
-          components += 1;
-        }
-        const probe = vi.fn(() => false);
-        if (nativeProbe) {
-          configureFsSafeNative({ mode: "auto" });
-          __setNativeLoaderForTest(() => ({
-            renameNoReplace: vi.fn(),
-            removeOwnedTree: vi.fn(),
-            removeOwnedTreeSync: vi.fn(),
-            ownedTreeRemovalAvailable: probe,
-          }) as unknown as NativeBinding);
-        }
-        let observations = 0;
-        let modeChanges = 0;
-        let measuring = true;
-        const lstat = fsSync.lstatSync.bind(fsSync);
-        vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
-          if (measuring) observations += 1;
-          return lstat(...args);
-        });
-        const fstat = fsSync.fstatSync.bind(fsSync);
-        vi.spyOn(fsSync, "fstatSync").mockImplementation((...args) => {
-          if (measuring) observations += 1;
-          return fstat(...args);
-        });
-        const canonicalize = vi.spyOn(realpathSync, "native");
-        if (variant === "async") {
-          const fchmod = fsSync.fchmod.bind(fsSync);
-          vi.spyOn(fsSync, "fchmod").mockImplementation((fd, mode, callback) => {
-            if (measuring) modeChanges += 1;
-            return fchmod(fd, mode, callback);
-          });
-        } else {
-          const fchmod = fsSync.fchmodSync.bind(fsSync);
-          vi.spyOn(fsSync, "fchmodSync").mockImplementation((fd, mode) => {
-            if (measuring) modeChanges += 1;
-            return fchmod(fd, mode);
-          });
-        }
-        const register = cleanup.registerTempPathForExit.bind(cleanup);
-        vi.spyOn(cleanup, "registerTempPathForExit").mockImplementation((...args) => {
-          measuring = false;
-          return register(...args);
-        });
-        const workspace = await create(rootDir, { dirMode });
-        const modeCorrection = process.platform !== "win32" && dirMode !== 0o700;
-        expect(observations).toBe(2 * components + 8 +
-          (nativeProbe ? 1 : modeCorrection ? 4 : 0));
-        expect(canonicalize).toHaveBeenCalledTimes(4 +
-          (nativeProbe ? 1 : modeCorrection ? 2 : 0));
-        expect(modeChanges).toBe(modeCorrection ? 1 : 0);
-        expect(probe).toHaveBeenCalledTimes(nativeProbe ? 1 : 0);
-        await workspace.cleanup();
       },
     );
 
@@ -283,6 +236,10 @@ for (const variant of ["async", "sync"] as const) {
           expect(operations.chmods()).toBe(1);
           expect(operations.fstats()).toBe(2);
           expect(operations.lstats()).toBe(3);
+          if (process.platform === "linux") {
+            expect(operations.bigintFstats()).toBe(0);
+            expect(operations.bigintLstats()).toBe(1);
+          }
           expect(operations.opensAtFirstChmod()).toBe(1);
           // The retained descriptor and named child are both rebound before
           // the first mutation; constructor retention itself performs no stat.

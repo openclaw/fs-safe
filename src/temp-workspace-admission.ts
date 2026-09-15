@@ -13,9 +13,14 @@ import { FsSafeError } from "./errors.js";
 import { recordFileObservationFailure } from "./file-observation.js";
 import { realpathSync } from "./realpath.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
+import {
+  inspectTempWorkspaceDescriptorIdentitySync,
+  projectTempWorkspaceNumericIdentity,
+} from "./temp-workspace-identity.js";
 import { assertTrustedTempWorkspaceDirectory } from "./temp-workspace-permissions.js";
 
 const WINDOWS = process.platform === "win32";
+const LINUX = process.platform === "linux";
 
 type ExactIdentity = Readonly<{ dev: bigint; ino: bigint }>;
 type NumericIdentity = Readonly<{ dev: number; ino: number }>;
@@ -39,13 +44,13 @@ export type TempWorkspaceRootAdmission = {
   identity: ExactIdentity;
   ownerUid: number | undefined;
   realPath: string;
-  retainCleanupParent(inspectDescriptor: () => BigIntStats): void;
-  prepareCleanupProbe(inspectDescriptor: () => BigIntStats): void;
-  prepareChildCreation(inspectDescriptor?: () => BigIntStats): void;
+  retainCleanupParent(descriptorFd: number): void;
+  prepareCleanupProbe(descriptorFd: number): void;
+  prepareChildCreation(descriptorFd?: number): void;
   assertCurrent(): void;
   assertAncestry(): void;
-  associateCurrent(inspectDescriptor: () => BigIntStats): void;
-  associateAncestry(inspectDescriptor: () => BigIntStats): void;
+  associateCurrent(descriptorFd: number): void;
+  associateAncestry(descriptorFd: number): void;
 };
 
 function effectiveOwner(): number | undefined {
@@ -65,16 +70,10 @@ function effectiveOwner(): number | undefined {
 }
 
 function safeNumericIdentity(stat: Pick<BigIntStats, "dev" | "ino">): NumericIdentity | undefined {
-  const dev = Number(stat.dev);
-  const ino = Number(stat.ino);
-  if (
-    !Number.isSafeInteger(dev) || dev < 0 || BigInt(dev) !== stat.dev ||
-    !Number.isSafeInteger(ino) || ino < 0 || BigInt(ino) !== stat.ino ||
-    (WINDOWS && (dev === 0 || ino === 0))
-  ) {
-    return undefined;
-  }
-  return Object.freeze({ dev, ino });
+  const numeric = projectTempWorkspaceNumericIdentity(stat);
+  return numeric && (!WINDOWS || (numeric.dev !== 0 && numeric.ino !== 0))
+    ? numeric
+    : undefined;
 }
 
 function copyExactDirectoryObservation(stat: BigIntStats): ExactDirectoryObservation {
@@ -189,9 +188,13 @@ function exactIdentityMatches(
 function associateTempWorkspaceRoot(
   entry: DirectorySnapshot,
   ownerUid: number | undefined,
-  inspectDescriptor: () => BigIntStats,
+  descriptorFd: number,
 ): void {
-  const stat = inspectFileIdentitySync(inspectDescriptor, entry.identity);
+  const stat = inspectTempWorkspaceDescriptorIdentitySync(
+    descriptorFd,
+    entry.identity,
+    entry.numericIdentity,
+  );
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw new FsSafeError("not-file", "temp workspace cleanup parent must be a real directory");
   }
@@ -251,9 +254,9 @@ function rootAdmission(chain: DirectorySnapshot[], ownerUid: number | undefined)
     identity: current.identity,
     ownerUid,
     realPath: current.realPath,
-    retainCleanupParent: (inspectDescriptor) => {
+    retainCleanupParent: (descriptorFd) => {
       assertSnapshot(current, ownerUid);
-      associateTempWorkspaceRoot(current, ownerUid, inspectDescriptor);
+      associateTempWorkspaceRoot(current, ownerUid, descriptorFd);
     },
     // The guarded route associated the cleanup parent while retaining it.
     // A native capability probe therefore needs no additional observation.
@@ -261,13 +264,13 @@ function rootAdmission(chain: DirectorySnapshot[], ownerUid: number | undefined)
     prepareChildCreation: () => { assertChain(chain, ownerUid); },
     assertCurrent: () => { assertSnapshot(current, ownerUid); },
     assertAncestry: () => { assertChain(chain, ownerUid); },
-    associateCurrent: (inspectDescriptor) => {
+    associateCurrent: (descriptorFd) => {
       assertSnapshot(current, ownerUid);
-      associateTempWorkspaceRoot(current, ownerUid, inspectDescriptor);
+      associateTempWorkspaceRoot(current, ownerUid, descriptorFd);
     },
-    associateAncestry: (inspectDescriptor) => {
+    associateAncestry: (descriptorFd) => {
       assertChain(chain, ownerUid);
-      associateTempWorkspaceRoot(current, ownerUid, inspectDescriptor);
+      associateTempWorkspaceRoot(current, ownerUid, descriptorFd);
     },
   };
 }
@@ -292,21 +295,26 @@ function canonicalRootAdmission(
     // exact association is completed only at a bounded probe or the mutation
     // boundary below.
     retainCleanupParent: () => {},
-    prepareCleanupProbe: (inspectDescriptor) => {
+    prepareCleanupProbe: (descriptorFd) => {
       // A native feature probe may inspect only a descriptor associated with
       // the originally discovered root. This remains provisional: the named
       // root and complete ancestry are freshly admitted before mutation.
       assertCanonicalRoot(discovery);
-      associateTempWorkspaceRoot(discovery, ownerUid, inspectDescriptor);
+      associateTempWorkspaceRoot(discovery, ownerUid, descriptorFd);
     },
-    prepareChildCreation: (inspectDescriptor) => {
-      const candidate = canonicalAncestry(discovery.dir)
-        .map((dir) => snapshot(dir, ownerUid, dir).entry);
+    prepareChildCreation: (descriptorFd) => {
+      const ancestry = canonicalAncestry(discovery.dir);
+      const candidate = ancestry.map((dir, index) => {
+        if (!LINUX || index !== ancestry.length - 1) return snapshot(dir, ownerUid, dir).entry;
+        const current = inspectSnapshotIdentity(discovery);
+        assertTrustedTempWorkspaceDirectory(current, ownerUid);
+        return discovery;
+      });
       const current = candidate[candidate.length - 1]!;
       exactIdentityMatches(current.identity, discovery.identity);
       assertCanonicalRoot(current);
-      if (inspectDescriptor) {
-        associateTempWorkspaceRoot(current, ownerUid, inspectDescriptor);
+      if (descriptorFd !== undefined) {
+        associateTempWorkspaceRoot(current, ownerUid, descriptorFd);
       }
       // Do not expose even the ancestry receipts until every named and
       // descriptor association at this pre-mutation boundary has succeeded.
@@ -317,16 +325,16 @@ function canonicalRootAdmission(
       assertSnapshot(currentChain[currentChain.length - 1]!, ownerUid);
     },
     assertAncestry: () => { assertChain(chain(), ownerUid); },
-    associateCurrent: (inspectDescriptor) => {
+    associateCurrent: (descriptorFd) => {
       const currentChain = chain();
       const current = currentChain[currentChain.length - 1]!;
       assertSnapshot(current, ownerUid);
-      associateTempWorkspaceRoot(current, ownerUid, inspectDescriptor);
+      associateTempWorkspaceRoot(current, ownerUid, descriptorFd);
     },
-    associateAncestry: (inspectDescriptor) => {
+    associateAncestry: (descriptorFd) => {
       const currentChain = chain();
       assertChain(currentChain, ownerUid);
-      associateTempWorkspaceRoot(currentChain[currentChain.length - 1]!, ownerUid, inspectDescriptor);
+      associateTempWorkspaceRoot(currentChain[currentChain.length - 1]!, ownerUid, descriptorFd);
     },
   };
 }

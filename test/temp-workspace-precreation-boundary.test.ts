@@ -1,4 +1,4 @@
-import fsSync, { type BigIntStats } from "node:fs";
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -167,7 +167,7 @@ for (const variant of ["async", "sync"] as const) {
       const fstat = fsSync.fstatSync.bind(fsSync);
       vi.spyOn(fsSync, "fstatSync").mockImplementation((...args) => {
         const stat = fstat(...args);
-        if (!queued && args[0] === parentFd && args[1]?.bigint === true) {
+        if (!queued && args[0] === parentFd) {
           queued = true;
           queueMicrotask(() => { microtaskRan = true; });
         }
@@ -201,8 +201,10 @@ describe("temp workspace provisional cleanup capability", () => {
     const fstat = fsSync.fstatSync.bind(fsSync);
     return vi.spyOn(fsSync, "fstatSync").mockImplementation((...args) => {
       const stat = fstat(...args);
-      if (args[0] === parentFd() && args[1]?.bigint === true) {
-        (stat as BigIntStats).ino += 1n;
+      if (args[0] === parentFd()) {
+        (stat as { ino: number | bigint }).ino = typeof stat.ino === "bigint"
+          ? stat.ino + 1n
+          : stat.ino + 1;
       }
       return stat;
     });

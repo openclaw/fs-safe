@@ -107,8 +107,10 @@ for (const variant of ["async", "sync"] as const) {
             if (options?.bigint === true) exact += 1;
             else if (exact > 0) {
               numeric += 1;
-              // The second replay is final ancestry adoption, after mkdtemp.
-              if (numeric === 2 && typeof stat.ino === "number") stat.ino += 1;
+              // Linux reuses the discovery receipt once at precreation. Other
+              // POSIX platforms retain the prior exact precreation replay.
+              const finalReplay = process.platform === "linux" ? 3 : 2;
+              if (numeric === finalReplay && typeof stat.ino === "number") stat.ino += 1;
             }
           }
           return stat;
@@ -116,7 +118,7 @@ for (const variant of ["async", "sync"] as const) {
         const fstat = fsSync.fstatSync.bind(fsSync);
         vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
           const stat = fstat(fd, options);
-          if (fd === parentFd && options?.bigint === true) {
+          if (fd === parentFd) {
             projectSafeIdentity(stat, identity);
           }
           return stat;
@@ -124,8 +126,8 @@ for (const variant of ["async", "sync"] as const) {
         const canonicalize = vi.spyOn(realpathSync, "native");
         const register = vi.spyOn(cleanup, "registerTempPathForExit");
         await expect(create(rootDir)).rejects.toMatchObject({ code: "path-mismatch" });
-        expect(exact).toBe(2);
-        expect(numeric).toBe(2);
+        expect(exact).toBe(process.platform === "linux" ? 1 : 2);
+        expect(numeric).toBe(process.platform === "linux" ? 3 : 2);
         expect(canonicalize.mock.calls.filter(([name]) =>
           name === rootDir || name === admittedRoot)).toHaveLength(3);
         expect(register).not.toHaveBeenCalled();
@@ -279,7 +281,7 @@ for (const variant of ["async", "sync"] as const) {
             rootObservationsAfterMode += 1;
             if (rootObservationsAfterMode === 1) events.push("ancestry");
           }
-          if (modeChangeSettled && isChild(name) && options?.bigint === true) {
+          if (modeChangeSettled && isChild(name)) {
             events.push("child-security");
           }
           return stat;
@@ -370,9 +372,17 @@ for (const variant of ["async", "sync"] as const) {
           }
           if (modeChangeSettled && name === child) {
             childObservationsAfterMode += 1;
-            if (finalAncestryObserved && typeof stat?.mode === "bigint") {
-              if (change === "child-mode") stat.mode = (stat.mode & ~0o7777n) | 0o700n;
-              if (change === "child-owner") stat.uid = BigInt(process.geteuid!()) + 1n;
+            if (finalAncestryObserved) {
+              if (change === "child-mode") {
+                (stat as { mode: number | bigint }).mode = typeof stat.mode === "bigint"
+                  ? (stat.mode & ~0o7777n) | 0o700n
+                  : (stat.mode & ~0o7777) | 0o700;
+              }
+              if (change === "child-owner") {
+                (stat as { uid: number | bigint }).uid = typeof stat.uid === "bigint"
+                  ? BigInt(process.geteuid!()) + 1n
+                  : process.geteuid!() + 1;
+              }
             }
           }
           return stat;
@@ -422,9 +432,16 @@ for (const variant of ["async", "sync"] as const) {
         const fstat = fsSync.fstatSync.bind(fsSync);
         vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
           const stat = fstat(fd, options);
-          if (fd === childFd && finalAncestryStarted && typeof stat.mode === "bigint") {
-            if (change === "mode") stat.mode |= 0o022n;
-            else stat.uid = BigInt(process.geteuid!()) + 1n;
+          if (fd === childFd && finalAncestryStarted) {
+            if (change === "mode") {
+              (stat as { mode: number | bigint }).mode = typeof stat.mode === "bigint"
+                ? stat.mode | 0o022n
+                : stat.mode | 0o022;
+            } else {
+              (stat as { uid: number | bigint }).uid = typeof stat.uid === "bigint"
+                ? BigInt(process.geteuid!()) + 1n
+                : process.geteuid!() + 1;
+            }
           }
           return stat;
         });

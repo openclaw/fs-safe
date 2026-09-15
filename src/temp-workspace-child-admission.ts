@@ -1,19 +1,24 @@
-import type { BigIntStats } from "node:fs";
+import type { BigIntStats, Stats } from "node:fs";
 import { inspectDirectoryIdentitySync } from "./directory-guard.js";
 import { pinNodeDirectoryForMode, pinNodeDirectoryForModeSync } from "./directory-mode-node.js";
 import { FsSafeError } from "./errors.js";
 import type { TempWorkspaceRootAdmission } from "./temp-workspace-admission.js";
 import type { TempWorkspaceRetainedChild } from "./temp-workspace-descriptor.js";
+import type { TempWorkspaceIdentityStat } from "./temp-workspace-identity.js";
 import { assertTrustedTempWorkspaceDirectory } from "./temp-workspace-permissions.js";
 
 const WINDOWS = process.platform === "win32";
 
 function assertTempWorkspaceChildState(
-  stat: BigIntStats,
+  stat: BigIntStats | Stats,
   ownerUid: number | undefined,
 ): void {
-  if (typeof stat.dev !== "bigint" || typeof stat.ino !== "bigint" ||
-    (WINDOWS && (stat.dev === 0n || stat.ino === 0n))) {
+  const exactIdentity = typeof stat.dev === "bigint" && typeof stat.ino === "bigint" &&
+    (!WINDOWS || (stat.dev !== 0n && stat.ino !== 0n));
+  const safeLinuxIdentity = process.platform === "linux" &&
+    typeof stat.dev === "number" && Number.isSafeInteger(stat.dev) && stat.dev >= 0 &&
+    typeof stat.ino === "number" && Number.isSafeInteger(stat.ino) && stat.ino >= 0;
+  if (!exactIdentity && !safeLinuxIdentity) {
     throw new FsSafeError("path-mismatch", "temp workspace child identity could not be verified");
   }
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
@@ -29,10 +34,12 @@ export function validateInitialTempWorkspaceChild(
   assertTempWorkspaceChildState(stat, ownerUid);
 }
 
-function childHasRequestedMode(stat: BigIntStats, mode: number): boolean {
+function childHasRequestedMode(stat: BigIntStats | Stats, mode: number): boolean {
   // Windows st_mode does not establish ACL privacy. Creation still validates
   // the exact named object, while the supplied root's ACL remains caller trust.
-  return WINDOWS || Number(stat.mode & 0o7777n) === (mode & 0o7777);
+  return WINDOWS || (typeof stat.mode === "bigint"
+    ? Number(stat.mode & 0o7777n)
+    : stat.mode & 0o7777) === (mode & 0o7777);
 }
 
 function tempWorkspaceChildNeedsModeInitialization(
@@ -106,8 +113,8 @@ export function admitTempWorkspaceChildSync(
 function retainedModeChecks(parent: TempWorkspaceRootAdmission, mode: number) {
   return {
     assertParent: parent.assertCurrent,
-    hasRequestedMode: (stat: BigIntStats) => childHasRequestedMode(stat, mode),
-    validate: (stat: BigIntStats) => assertTempWorkspaceChildState(stat, parent.ownerUid),
+    hasRequestedMode: (stat: TempWorkspaceIdentityStat) => childHasRequestedMode(stat, mode),
+    validate: (stat: TempWorkspaceIdentityStat) => assertTempWorkspaceChildState(stat, parent.ownerUid),
   };
 }
 
@@ -132,10 +139,10 @@ export function admitRetainedTempWorkspaceChildSync(
 }
 
 export function validateAdmittedTempWorkspaceChild(
-  current: BigIntStats,
+  current: TempWorkspaceIdentityStat,
   ownerUid: number | undefined,
   mode: number,
-): BigIntStats {
+): TempWorkspaceIdentityStat {
   assertTempWorkspaceChildState(current, ownerUid);
   if (!childHasRequestedMode(current, mode)) {
     throw new FsSafeError("path-mismatch", "temp workspace final mode could not be verified");

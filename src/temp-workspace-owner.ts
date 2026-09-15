@@ -84,7 +84,7 @@ export class TempWorkspaceCleanupCapability {
     if (childModeAllowsRemoval && parent?.access === "read" && isNativeCleanupBinding(binding)) {
       let probeReady = false;
       try {
-        admission.prepareCleanupProbe(() => fsSync.fstatSync(parent!.fd, { bigint: true }));
+        admission.prepareCleanupProbe(parent.fd);
         probeReady = true;
       } catch (error) {
         // A descriptor that cannot be associated even provisionally must not
@@ -126,10 +126,7 @@ export class TempWorkspaceCleanupCapability {
     if (this.#closed || this.#creationPrepared) {
       throw new FsSafeError("path-mismatch", "temp workspace cleanup parent is unavailable");
     }
-    const inspectDescriptor = this.parent
-      ? () => fsSync.fstatSync(this.parent!.fd, { bigint: true })
-      : undefined;
-    this.#admission.prepareChildCreation(inspectDescriptor);
+    this.#admission.prepareChildCreation(this.parent?.fd);
     // The retained descriptor cannot authorize cleanup until the complete
     // ancestry and its exact descriptor association succeeded together.
     this.#creationPrepared = true;
@@ -139,9 +136,8 @@ export class TempWorkspaceCleanupCapability {
     if (this.#closed || !this.#creationPrepared || !this.parent) {
       throw new FsSafeError("path-mismatch", "temp workspace cleanup parent is unavailable");
     }
-    const inspectDescriptor = () => fsSync.fstatSync(this.parent!.fd, { bigint: true });
-    if (ancestry) this.#admission.associateAncestry(inspectDescriptor);
-    else this.#admission.associateCurrent(inspectDescriptor);
+    if (ancestry) this.#admission.associateAncestry(this.parent.fd);
+    else this.#admission.associateCurrent(this.parent.fd);
   }
 
   admitChildDescriptor(canEnumerate: boolean): boolean {

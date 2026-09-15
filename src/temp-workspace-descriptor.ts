@@ -2,12 +2,20 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { nodeDirectorySearchOnlyFlags } from "./directory-mode-node.js";
-import { inspectDirectoryIdentitySync } from "./directory-guard.js";
 import { assertOwnedDirectory } from "./directory-mode-owner.js";
 import { FsSafeError } from "./errors.js";
 import type { FileIdentityStat } from "./file-identity.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import type { TempWorkspaceRootAdmission } from "./temp-workspace-admission.js";
+import {
+  inspectTempWorkspaceDescriptorIdentitySync,
+  inspectTempWorkspaceDirectoryIdentitySync,
+  projectTempWorkspaceNumericIdentity,
+  type TempWorkspaceNumericIdentity,
+  type TempWorkspaceIdentityStat,
+} from "./temp-workspace-identity.js";
+
+const LINUX = process.platform === "linux";
 
 type DirectoryDescriptorAccess = "read" | "search";
 type OpenedDirectory = {
@@ -18,8 +26,8 @@ type OpenedDirectory = {
 
 type TempWorkspaceChildModeChecks = {
   assertParent(): void;
-  hasRequestedMode(stat: fsSync.BigIntStats): boolean;
-  validate(stat: fsSync.BigIntStats): void;
+  hasRequestedMode(stat: TempWorkspaceIdentityStat): boolean;
+  validate(stat: TempWorkspaceIdentityStat): void;
 };
 
 export type RetainedDirectory = {
@@ -34,7 +42,7 @@ export type RetainedDirectory = {
 
 export type RetainedChildDirectory = { fd: number };
 
-function assertRetainedChildDirectory(stat: fsSync.BigIntStats): void {
+function assertRetainedChildDirectory(stat: TempWorkspaceIdentityStat): void {
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw new FsSafeError("not-file", "temp workspace child must be a real directory");
   }
@@ -97,7 +105,7 @@ export function openTempWorkspaceCleanupParent(
     // (when present) and again with the full pre-mutation ancestry admission.
     // Guarded alias/missing-component routes retain their historical eager
     // association through the admission implementation.
-    admission.retainCleanupParent(() => fsSync.fstatSync(fd, { bigint: true }));
+    admission.retainCleanupParent(fd);
     return {
       fd,
       access: opened.access,
@@ -116,6 +124,7 @@ export function openTempWorkspaceCleanupParent(
 export class TempWorkspaceRetainedChild {
   readonly #dir: string;
   readonly #identity: Readonly<{ dev: bigint; ino: bigint }>;
+  readonly #numericIdentity: TempWorkspaceNumericIdentity | undefined;
   #access: DirectoryDescriptorAccess;
   #fd: number | undefined;
   #modeLease = false;
@@ -128,6 +137,9 @@ export class TempWorkspaceRetainedChild {
     }
     this.#dir = dir;
     this.#identity = Object.freeze({ dev: identity.dev, ino: identity.ino });
+    this.#numericIdentity = LINUX
+      ? projectTempWorkspaceNumericIdentity(this.#identity)
+      : undefined;
     const descriptor = openRetainedDirectory(dir);
     this.#access = descriptor.access;
     this.#proc = descriptor.proc;
@@ -138,21 +150,26 @@ export class TempWorkspaceRetainedChild {
   }
 
   finalizeAdmission(
-    validate: (stat: fsSync.BigIntStats) => void,
-  ): fsSync.BigIntStats {
+    validate: (stat: TempWorkspaceIdentityStat) => void,
+  ): TempWorkspaceIdentityStat {
     this.#assertModeLeaseReleased();
     if (this.#fd === undefined) {
       throw new FsSafeError("path-mismatch", "temp workspace child descriptor is unavailable");
     }
     // A failed revalidation must never leave an earlier receipt transferable.
     this.#transferAuthorized = false;
-    const current = inspectFileIdentitySync(
-      () => fsSync.fstatSync(this.#fd!, { bigint: true }),
+    const current = inspectTempWorkspaceDescriptorIdentitySync(
+      this.#fd,
       this.#identity,
+      this.#numericIdentity,
     );
     assertRetainedChildDirectory(current);
     validate(current);
-    const named = inspectDirectoryIdentitySync(this.#dir, this.#identity);
+    const named = inspectTempWorkspaceDirectoryIdentitySync(
+      this.#dir,
+      this.#identity,
+      this.#numericIdentity,
+    );
     validate(named);
     this.#transferAuthorized = true;
     return named;
@@ -164,14 +181,22 @@ export class TempWorkspaceRetainedChild {
     }
   }
 
-  #inspectModeTarget(fd: number, validate: (stat: fsSync.BigIntStats) => void): fsSync.BigIntStats {
-    const descriptor = inspectFileIdentitySync(
-      () => fsSync.fstatSync(fd, { bigint: true }),
+  #inspectModeTarget(
+    fd: number,
+    validate: (stat: TempWorkspaceIdentityStat) => void,
+  ): TempWorkspaceIdentityStat {
+    const descriptor = inspectTempWorkspaceDescriptorIdentitySync(
+      fd,
       this.#identity,
+      this.#numericIdentity,
     );
     assertRetainedChildDirectory(descriptor);
     validate(descriptor);
-    const named = inspectDirectoryIdentitySync(this.#dir, this.#identity);
+    const named = inspectTempWorkspaceDirectoryIdentitySync(
+      this.#dir,
+      this.#identity,
+      this.#numericIdentity,
+    );
     validate(named);
     return descriptor;
   }
@@ -260,7 +285,6 @@ export class TempWorkspaceRetainedChild {
     this.#transferAuthorized = false;
     this.#modeLease = true;
     try {
-      checks.assertParent();
       const current = this.#inspectModeTarget(fd, checks.validate);
       checks.assertParent();
       if (checks.hasRequestedMode(current)) return;
@@ -297,9 +321,10 @@ export class TempWorkspaceRetainedChild {
       throw error;
     }
     try {
-      const openedStat = inspectFileIdentitySync(
-        () => fsSync.fstatSync(fd, { bigint: true }),
+      const openedStat = inspectTempWorkspaceDescriptorIdentitySync(
+        fd,
         this.#identity,
+        this.#numericIdentity,
       );
       assertRetainedChildDirectory(openedStat);
     } catch (error) {

@@ -145,7 +145,7 @@ describe.runIf(nativeCleanup).each(["async", "sync"] as const)("%s workspace cle
 });
 
 describe.each(["async", "sync"] as const)("%s compatible cleanup receipt reuse", (variant) => {
-  it("pairs each numeric parent replay with its exact retained descriptor", async () => {
+  it("pairs each named parent replay with its retained descriptor", async () => {
     configureFsSafeNative({ mode: "off" });
     const rootDir = await tempRoot("fs-safe-temp-cleanup-receipt-");
     const admittedRoot = fsSync.realpathSync.native(rootDir);
@@ -177,7 +177,7 @@ describe.each(["async", "sync"] as const)("%s compatible cleanup receipt reuse",
     const fstat = fsSync.fstatSync.bind(fsSync);
     vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, statOptions) => {
       const stat = fstat(fd, statOptions);
-      if (fd === parentFd && statOptions?.bigint === true) {
+      if (fd === parentFd) {
         projectSafeIdentity(stat, identity);
         if (measuring) descriptorObservations += 1;
       }

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import fsSync from "node:fs";
+import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
@@ -162,7 +162,7 @@ async function createTempWorkspace(
   const childPrefix = path.join(root, sanitizeTempPrefix(options.prefix));
   const capability = new TempWorkspaceCleanupCapability(root, cleanupSafety, admission, dirMode);
   let dir: string;
-  let stat: fsSync.BigIntStats;
+  let stat: BigIntStats | Stats;
   let retainedChild: TempWorkspaceRetainedChild | undefined;
   let retainChildDescriptor = false;
   let cleanupOwner: TempWorkspaceCleanupOwner | undefined;
@@ -300,7 +300,7 @@ export function tempWorkspaceSync(
   const childPrefix = path.join(root, sanitizeTempPrefix(options.prefix));
   const capability = new TempWorkspaceCleanupCapability(root, cleanupSafety, admission, dirMode);
   let dir: string;
-  let stat: fsSync.BigIntStats;
+  let stat: BigIntStats | Stats;
   let retainedChild: TempWorkspaceRetainedChild | undefined;
   let retainChildDescriptor = false;
   let cleanupOwner: TempWorkspaceCleanupOwner | undefined;
