@@ -68,6 +68,18 @@ describe("ZIP metadata framing and encoding", () => {
     malformed(zipRecords([{ name, extra: unicode, localExtra: unicodePath(name, "other") }]));
     malformed(zipRecords([{ name: "other", localName: name, extra: unicodePath(Buffer.from("other"), "é"), localExtra: unicode }]));
   });
+  it.each(["crc", "version", "utf8"])("checks distinct local Unicode fields even when raw names match: %s", (variant) => {
+    const localExtra = Buffer.from(unicode);
+    if (variant === "crc") localExtra[5] ^= 1;
+    if (variant === "version") localExtra[4] = 2;
+    if (variant === "utf8") localExtra[9] = 0xff;
+    malformed(zipRecords([{ name, extra: unicode, localExtra }]));
+  });
+  it("binds identical Unicode fields to each raw name before canonical comparison", () => {
+    const centralName = Buffer.from("./name");
+    const extra = unicodePath(centralName, "name");
+    malformed(zipRecords([{ name: centralName, localName: "name", extra, localExtra: extra }]));
+  });
   it.each(["end", "local", "central", "offset", "size", "count", "disk", "flags", "extra", "descriptor", "placeholder"])("rejects impossible framing: %s", (variant) => {
     const bytes = zipRecords([{ name: "good", descriptor: variant === "descriptor" || variant === "placeholder" }]);
     const end = bytes.length - 22; const central = bytes.readUInt32LE(end + 16);

@@ -65,23 +65,30 @@ export function admitZipNames(params: {
 }): string | undefined {
   const { central, local, flags, centralExtra, localExtra, seen } = params;
   if (!central.length || !local.length) zipFormat("empty entry name");
-  const centralRaw = central.toString("latin1"); const localRaw = local.toString("latin1");
-  const centralUtf8 = originalName(central, centralRaw, flags); const localUtf8 = originalName(local, localRaw, flags);
-  const centralUnicode = unicodeName(central, centralExtra); const localUnicode = unicodeName(local, localExtra);
+  const sameName = central.equals(local);
+  const centralRaw = central.toString("latin1"); const localRaw = sameName ? centralRaw : local.toString("latin1");
+  const centralUtf8 = originalName(central, centralRaw, flags);
+  const localUtf8 = sameName ? centralUtf8 : originalName(local, localRaw, flags);
+  const centralUnicode = unicodeName(central, centralExtra);
+  const centralField = centralExtra.get(0x7075); const localField = localExtra.get(0x7075);
+  // Only identical name bytes and Unicode fields share their CRC-bound admission.
+  const sameUnicode = centralField === localField ||
+    (centralField !== undefined && localField !== undefined && centralField.equals(localField));
+  const localUnicode = sameName && sameUnicode ? centralUnicode : unicodeName(local, localExtra);
   const centralKey = key(centralRaw);
-  if (centralKey !== key(localRaw)) {
+  if (!sameName && centralKey !== key(localRaw)) {
     zipFormat("central and local names disagree");
   }
   const interpretations = [centralUtf8, localUtf8, centralUnicode, localUnicode].filter(
     (value): value is string => value !== undefined,
   );
   const interpretationKey = interpretations.length ? key(interpretations[0]!) : undefined;
-  if (interpretations.some((value) => key(value) !== interpretationKey)) {
+  if (interpretations.some((value) => value !== interpretations[0] && key(value) !== interpretationKey)) {
     zipFormat("conflicting Unicode name interpretations");
   }
   // JSZip checks the central Unicode field against the local name. A slash-only
   // spelling difference must not make one decoder ignore a meaningful override.
-  if (centralUnicode && !central.equals(local) &&
+  if (centralUnicode && !sameName &&
       key(centralUnicode) !== key(local.toString("utf8"))) {
     zipFormat("Unicode override disagrees with local decoder name");
   }
