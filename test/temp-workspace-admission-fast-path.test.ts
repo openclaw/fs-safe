@@ -43,6 +43,17 @@ for (const variant of ["async", "sync"] as const) {
     function observeChildModeOperations(rootDir: string) {
       let opens = 0;
       let chmods = 0;
+      let opensAtFirstChmod: number | undefined;
+      const childFds = new Set<number>();
+      const openSync = fsSync.openSync.bind(fsSync);
+      vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
+        const fd = openSync(...args);
+        if (isWorkspaceChild(rootDir, args[0])) {
+          opens += 1;
+          childFds.add(fd);
+        }
+        return fd;
+      });
       if (variant === "async") {
         const open = fs.open.bind(fs);
         vi.spyOn(fs, "open").mockImplementation(async (...args) => {
@@ -52,33 +63,29 @@ for (const variant of ["async", "sync"] as const) {
             const chmod = handle.chmod.bind(handle);
             vi.spyOn(handle, "chmod").mockImplementation(async (mode) => {
               chmods += 1;
+              opensAtFirstChmod ??= opens;
               await chmod(mode);
             });
           }
           return handle;
         });
       } else {
-        const childFds = new Set<number>();
-        const open = fsSync.openSync.bind(fsSync);
-        vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
-          const fd = open(...args);
-          if (isWorkspaceChild(rootDir, args[0])) {
-            opens += 1;
-            childFds.add(fd);
-          }
-          return fd;
-        });
         const fchmod = fsSync.fchmodSync.bind(fsSync);
         vi.spyOn(fsSync, "fchmodSync").mockImplementation((fd, mode) => {
           if (childFds.has(fd)) chmods += 1;
+          if (childFds.has(fd)) opensAtFirstChmod ??= opens;
           fchmod(fd, mode);
         });
       }
-      return { opens: () => opens, chmods: () => chmods };
+      return {
+        opens: () => opens,
+        chmods: () => chmods,
+        opensAtFirstChmod: () => opensAtFirstChmod,
+      };
     }
 
     it.runIf(process.platform !== "win32")(
-      "uses the exact default 0700 snapshot without a descriptor or chmod", async () => {
+      "retains one exact default 0700 descriptor without chmod", async () => {
         const rootDir = await tempRoot("fs-safe-workspace-mode-fast-");
         const operations = observeChildModeOperations(rootDir);
         const chmod = vi.spyOn(fs, "chmod");
@@ -86,7 +93,7 @@ for (const variant of ["async", "sync"] as const) {
         const workspace = await create(rootDir);
         try {
           expect(fsSync.lstatSync(workspace.dir).mode & 0o7777).toBe(0o700);
-          expect(operations.opens()).toBe(0);
+          expect(operations.opens()).toBe(1);
           expect(operations.chmods()).toBe(0);
           expect(chmod).not.toHaveBeenCalled();
           expect(chmodSync).not.toHaveBeenCalled();
@@ -126,7 +133,7 @@ for (const variant of ["async", "sync"] as const) {
       const operations = observeChildModeOperations(rootDir);
       const register = vi.spyOn(cleanup, "registerTempPathForExit");
       await expect(create(rootDir)).rejects.toMatchObject({ code: "path-mismatch" });
-      expect(operations.opens()).toBe(0);
+      expect(operations.opens()).toBe(1);
       expect(register).not.toHaveBeenCalled();
       expect(await fs.readFile(path.join(child, "keep"), "utf8")).toBe("replacement");
       expect(fsSync.lstatSync(`${child}.original`).isDirectory()).toBe(true);
@@ -173,8 +180,9 @@ for (const variant of ["async", "sync"] as const) {
         try {
           expect(initialMode).toBe(expectedInitialMode);
           expect(fsSync.lstatSync(workspace.dir).mode & 0o7777).toBe(dirMode);
-          expect(operations.opens()).toBe(1);
+          expect(operations.opens()).toBe(2);
           expect(operations.chmods()).toBe(1);
+          expect(operations.opensAtFirstChmod()).toBe(2);
         } finally {
           if (dirMode === 0) await fs.chmod(workspace.dir, 0o700);
           await workspace.cleanup();
@@ -302,7 +310,7 @@ for (const variant of ["async", "sync"] as const) {
         const chmodSync = vi.spyOn(fsSync, "chmodSync");
         const fchmod = vi.spyOn(fsSync, "fchmodSync");
         const workspace = await create(rootDir, { dirMode });
-        expect(operations.opens()).toBe(0);
+        expect(operations.opens()).toBe(1);
         expect(operations.chmods()).toBe(0);
         expect(chmod).not.toHaveBeenCalled();
         expect(chmodSync).not.toHaveBeenCalled();

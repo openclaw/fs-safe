@@ -5,7 +5,7 @@ import { inspectDirectoryIdentity, inspectDirectoryIdentitySync } from "./direct
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import { assertOwnedDirectory, ownDirectoryMode, type DirectoryModeOwner } from "./directory-mode-owner.js";
 
-function searchOnlyFlags(): { flags: number; proc: boolean } | undefined {
+export function nodeDirectorySearchOnlyFlags(): { flags: number; proc: boolean } | undefined {
   if (process.arch !== "x64" && process.arch !== "arm64") return undefined;
   // Darwin SDK O_SEARCH = O_EXEC (0x40000000) | O_DIRECTORY, on x64/arm64.
   if (process.platform === "darwin") return { flags: 0x40000000, proc: false };
@@ -42,7 +42,7 @@ export async function pinNodeDirectoryForMode(
   let proc = false;
   const handle = await fs.open(dirPath, constants.O_RDONLY | flags).catch(async (error: NodeJS.ErrnoException) => {
     if (error.code !== "EACCES") throw error;
-    const route = searchOnlyFlags();
+    const route = nodeDirectorySearchOnlyFlags();
     if (!route) throw error;
     proc = route.proc;
     return await fs.open(dirPath, route.flags | flags);
@@ -123,7 +123,7 @@ export function pinNodeDirectoryForModeSync(
     fd = fsSync.openSync(dirPath, constants.O_RDONLY | flags);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EACCES") throw error;
-    const route = searchOnlyFlags();
+    const route = nodeDirectorySearchOnlyFlags();
     if (!route) throw error;
     proc = route.proc;
     fd = fsSync.openSync(dirPath, route.flags | flags);

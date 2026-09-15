@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
+import { realpathSync } from "../src/realpath.js";
 import { tempWorkspace, tempWorkspaceSync, type TempWorkspaceOptions } from "../src/temp.js";
 import * as cleanup from "../src/temp-cleanup.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
@@ -21,6 +22,22 @@ for (const variant of ["async", "sync"] as const) {
       const params = { rootDir, prefix: "workspace-", ...options };
       return variant === "async" ? await tempWorkspace(params) : tempWorkspaceSync(params);
     }
+
+    it("canonicalizes only the complete root during each admission pass", async () => {
+      const base = await tempRoot("fs-safe-workspace-canonical-passes-");
+      const rootDir = path.join(base, "one", "two", "three");
+      await fs.mkdir(rootDir, { recursive: true, mode: 0o700 });
+      const canonicalize = vi.spyOn(realpathSync, "native");
+      const workspace = await create(rootDir);
+      try {
+        // Initial alias resolution, cleanup-parent retention, pre-mutation,
+        // post-mutation parent association, and final ancestry validation.
+        expect(canonicalize).toHaveBeenCalledTimes(5);
+      } finally {
+        canonicalize.mockRestore();
+        await workspace.cleanup();
+      }
+    });
 
     it("omits the existing-root replay while keeping missing-component observations linear", async () => {
       const samples = new Map<number, { ancestorObservations: number; total: number }>();
@@ -68,8 +85,18 @@ for (const variant of ["async", "sync"] as const) {
         const events: string[] = [];
         let modeDescriptorClosed = false;
         let rootObservationsAfterClose = 0;
+        let cleanupParentFd: number | undefined;
+        let cleanupParentObserved = false;
+        let modeFd: number | undefined;
         const isChild = (name: unknown): name is string => typeof name === "string" &&
           path.dirname(name) === rootDir && path.basename(name).startsWith("workspace-");
+        const openSync = fsSync.openSync.bind(fsSync);
+        vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
+          const fd = openSync(...args);
+          if (args[0] === rootDir) cleanupParentFd = fd;
+          if (variant === "sync" && isChild(args[0])) modeFd = fd;
+          return fd;
+        });
         if (variant === "async") {
           const open = fs.open.bind(fs);
           vi.spyOn(fs, "open").mockImplementation(async (...args) => {
@@ -85,17 +112,10 @@ for (const variant of ["async", "sync"] as const) {
             return handle;
           });
         } else {
-          let childFd: number | undefined;
-          const open = fsSync.openSync.bind(fsSync);
           const close = fsSync.closeSync.bind(fsSync);
-          vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
-            const fd = open(...args);
-            if (isChild(args[0])) childFd = fd;
-            return fd;
-          });
           vi.spyOn(fsSync, "closeSync").mockImplementation((fd) => {
             close(fd);
-            if (fd === childFd && !modeDescriptorClosed) {
+            if (fd === modeFd && !modeDescriptorClosed) {
               modeDescriptorClosed = true;
               events.push("mode-close");
             }
@@ -107,10 +127,21 @@ for (const variant of ["async", "sync"] as const) {
           if (modeDescriptorClosed && name === rootDir && options?.bigint === true) {
             rootObservationsAfterClose += 1;
             if (rootObservationsAfterClose === 1) events.push("ancestry");
-            if (rootObservationsAfterClose === 2) events.push("cleanup-parent");
           }
           if (modeDescriptorClosed && isChild(name) && options?.bigint === true) {
             events.push("child-security");
+          }
+          return stat;
+        });
+        const fstat = fsSync.fstatSync.bind(fsSync);
+        vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
+          const stat = fstat(fd, options);
+          if (
+            modeDescriptorClosed && rootObservationsAfterClose > 0 &&
+            fd === cleanupParentFd && !cleanupParentObserved
+          ) {
+            cleanupParentObserved = true;
+            events.push("cleanup-parent");
           }
           return stat;
         });
@@ -218,6 +249,50 @@ for (const variant of ["async", "sync"] as const) {
           expect(await fs.readFile(path.join(child, "keep"), "utf8")).toBe("replacement");
           expect(fsSync.statSync(`${child}.original`).isDirectory()).toBe(true);
         }
+      },
+    );
+
+    it.runIf(process.platform !== "win32").each(["mode", "owner"] as const)(
+      "rejects an untrusted final child descriptor %s observation before registration", async (change) => {
+        const base = await tempRoot("fs-safe-workspace-final-descriptor-");
+        const grandparent = path.join(base, "grandparent");
+        const rootDir = path.join(grandparent, "parent", "root");
+        await fs.mkdir(rootDir, { recursive: true, mode: 0o700 });
+        let childFd: number | undefined;
+        let finalAncestryStarted = false;
+        const isChild = (name: unknown): name is string => typeof name === "string" &&
+          path.dirname(name) === rootDir && path.basename(name).startsWith("workspace-");
+        const open = fsSync.openSync.bind(fsSync);
+        vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
+          const fd = open(...args);
+          if (isChild(args[0])) childFd = fd;
+          return fd;
+        });
+        const lstat = fsSync.lstatSync.bind(fsSync);
+        vi.spyOn(fsSync, "lstatSync").mockImplementation((name, options) => {
+          const stat = lstat(name, options);
+          if (name === grandparent && childFd !== undefined) finalAncestryStarted = true;
+          return stat;
+        });
+        const fstat = fsSync.fstatSync.bind(fsSync);
+        vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
+          const stat = fstat(fd, options);
+          if (fd === childFd && finalAncestryStarted && typeof stat.mode === "bigint") {
+            if (change === "mode") stat.mode |= 0o022n;
+            else stat.uid = BigInt(process.geteuid!()) + 1n;
+          }
+          return stat;
+        });
+        const register = vi.spyOn(cleanup, "registerTempPathForExit");
+        await expect(create(rootDir)).rejects.toMatchObject({
+          code: change === "mode" ? "insecure-permissions" : "not-owned",
+        });
+        expect(childFd).toBeDefined();
+        expect(finalAncestryStarted).toBe(true);
+        expect(register).not.toHaveBeenCalled();
+        expect(() => fsSync.fstatSync(childFd!)).toThrowError(
+          expect.objectContaining({ code: "EBADF" }),
+        );
       },
     );
   });

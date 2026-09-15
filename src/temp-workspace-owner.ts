@@ -8,13 +8,18 @@ import { sameFileIdentityForCleanup, type FileIdentityStat } from "./file-identi
 import { withAsyncDirectoryGuards, withSyncDirectoryGuards } from "./guarded-mutation.js";
 import { getNativeBinding, type NativeBinding } from "./native.js";
 import type { NativeOwnedTreeRemovalResult } from "./native-binding.js";
-import { assertStagedDirectoryCurrent, openStagedDirectory } from "./staged-directory.js";
+import type { TempWorkspaceRootAdmission } from "./temp-workspace-admission.js";
+import {
+  openTempWorkspaceCleanupParent,
+  TempWorkspaceRetainedChild,
+  type RetainedChildDirectory,
+  type RetainedDirectory,
+} from "./temp-workspace-descriptor.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
 export type TempWorkspaceCleanupResult = "removed" | "missing" | "identity-mismatch" | "indeterminate";
 export type TempWorkspaceCleanupSafety = "compatible" | "require-bounded";
 
-type RetainedDirectory = ReturnType<typeof openStagedDirectory>;
 type Quarantine = { name: string; path: string; nativeRemoval: boolean };
 
 function isNativeCleanupBinding(
@@ -37,10 +42,31 @@ function nativeRemovalError(result: NativeOwnedTreeRemovalResult): Error | undef
 export class TempWorkspaceCleanupCapability {
   readonly binding: NativeBinding | undefined;
   readonly parent: RetainedDirectory | undefined;
+  readonly #admission: TempWorkspaceRootAdmission;
+  readonly #safety: TempWorkspaceCleanupSafety;
   readonly #ownedTreeRemovalAvailable: boolean;
   #closed = false;
 
-  constructor(root: string, safety: TempWorkspaceCleanupSafety) {
+  constructor(
+    root: string,
+    safety: TempWorkspaceCleanupSafety,
+    admission: TempWorkspaceRootAdmission,
+    dirMode: number,
+  ) {
+    if (path.resolve(root) !== path.resolve(admission.dir)) {
+      throw new FsSafeError("path-mismatch", "temp workspace cleanup parent differs from admitted root");
+    }
+    this.#admission = admission;
+    this.#safety = safety;
+    // POSIX enumeration reopens fd-relative ".", so retaining O_RDONLY before
+    // chmod cannot supply read/search authority that the final mode removes.
+    const childModeAllowsRemoval = process.platform === "win32" || (dirMode & 0o500) === 0o500;
+    if (safety === "require-bounded" && !childModeAllowsRemoval) {
+      throw new FsSafeError(
+        "helper-unavailable",
+        "temp workspace owned-tree cleanup requires owner read and search in dirMode",
+      );
+    }
     let binding: NativeBinding | undefined;
     try {
       binding = getNativeBinding();
@@ -50,15 +76,14 @@ export class TempWorkspaceCleanupCapability {
     this.binding = binding;
     let parent: RetainedDirectory | undefined;
     try {
-      parent = openStagedDirectory(root);
-      assertStagedDirectoryCurrent(parent.receipt);
+      parent = openTempWorkspaceCleanupParent(root, admission);
     } catch {
       if (parent) fsSync.closeSync(parent.fd);
       parent = undefined;
     }
     this.parent = parent;
     let available = false;
-    if (parent && isNativeCleanupBinding(binding)) {
+    if (childModeAllowsRemoval && parent?.access === "read" && isNativeCleanupBinding(binding)) {
       try {
         available = binding.ownedTreeRemovalAvailable(parent.fd) === true;
       } catch {
@@ -79,15 +104,40 @@ export class TempWorkspaceCleanupCapability {
     return !this.#closed && this.#ownedTreeRemovalAvailable;
   }
 
-  assertCurrent(): void {
+  #assertCurrent(ancestry: boolean): void {
     if (this.#closed || !this.parent) {
       throw new FsSafeError("path-mismatch", "temp workspace cleanup parent is unavailable");
     }
-    assertStagedDirectoryCurrent(this.parent.receipt);
-    const current = fsSync.fstatSync(this.parent.fd, { bigint: true });
-    if (!sameFileIdentityForCleanup(current, this.parent.receipt.identity)) {
+    const inspectDescriptor = () => fsSync.fstatSync(this.parent!.fd, { bigint: true });
+    const current = ancestry
+      ? this.#admission.associateAncestry(inspectDescriptor)
+      : this.#admission.associateCurrent(inspectDescriptor);
+    if (
+      path.resolve(current.dir) !== this.parent.receipt.path ||
+      current.realPath !== this.parent.receipt.realPath ||
+      !sameFileIdentityForCleanup(current.stat, this.parent.receipt.identity)
+    ) {
       throw new FsSafeError("path-mismatch", "temp workspace cleanup parent changed");
     }
+  }
+
+  admitChildDescriptor(canEnumerate: boolean): boolean {
+    const bounded = this.canRemoveOwnedTree && canEnumerate;
+    if (this.#safety === "require-bounded" && !bounded) {
+      throw new FsSafeError(
+        "helper-unavailable",
+        "temp workspace owned-tree cleanup requires a readable child descriptor",
+      );
+    }
+    return bounded;
+  }
+
+  assertCurrent(): void {
+    this.#assertCurrent(false);
+  }
+
+  assertAncestryCurrent(): void {
+    this.#assertCurrent(true);
   }
 
   close(): void {
@@ -101,28 +151,23 @@ export class TempWorkspaceCleanupOwner {
   readonly #dir: string;
   readonly #identity: FileIdentityStat;
   readonly #capability: TempWorkspaceCleanupCapability;
-  readonly #directory: RetainedDirectory | undefined;
+  readonly #directory: RetainedChildDirectory | undefined;
   #closed = false;
   #running = false;
   #exitInterrupted = false;
   #result?: TempWorkspaceCleanupResult;
   #pending?: Promise<TempWorkspaceCleanupResult>;
 
-  constructor(dir: string, identity: FileIdentityStat, capability: TempWorkspaceCleanupCapability) {
-    this.#dir = dir;
-    this.#identity = { dev: identity.dev, ino: identity.ino };
+  constructor(
+    retained: TempWorkspaceRetainedChild,
+    capability: TempWorkspaceCleanupCapability,
+    retainDescriptor: boolean,
+  ) {
+    const child = retained.transfer(retainDescriptor);
+    this.#dir = child.dir;
+    this.#identity = child.identity;
     this.#capability = capability;
-    let directory: RetainedDirectory | undefined;
-    if (capability.canRemoveOwnedTree) {
-      directory = openStagedDirectory(dir);
-      const current = fsSync.fstatSync(directory.fd, { bigint: true });
-      if (!sameFileIdentityForCleanup(current, this.#identity)) {
-        fsSync.closeSync(directory.fd);
-        capability.close();
-        throw new FsSafeError("path-mismatch", "temp workspace changed while retaining cleanup authority");
-      }
-    }
-    this.#directory = directory;
+    this.#directory = child.directory;
   }
 
   #repeat(): TempWorkspaceCleanupResult {

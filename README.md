@@ -438,6 +438,9 @@ Compatible creation and cleanup remain available without native support.
 Set `cleanupSafety: "require-bounded"` to require collision-safe quarantine and
 descriptor-bounded recursive cleanup before creating a child. See the
 [temp workspace contract](docs/temp.md).
+On POSIX, bounded cleanup requires owner read and search in the final `dirMode`
+(`0o500`); restrictive modes select compatible fallback or reject `require-bounded`
+before child creation.
 Linux bounded cleanup requires the exact `openat2`/`RESOLVE_NO_XDEV` capability
 at runtime; compatible mode falls back when unavailable, while `require-bounded`
 rejects before child creation.

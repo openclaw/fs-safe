@@ -33,11 +33,13 @@ matches `dirMode` (including the default `0o700`), creation avoids an extra mode
 descriptor and chmod. A restrictive umask or an explicit different `dirMode`
 uses the verified descriptor path to correct and recheck the mode. Permission
 failures propagate. POSIX `dirMode` must not grant group/world write access; it
-only controls the new workspace, not existing supplied directories. Final
-adoption rechecks complete ancestry, retained cleanup-parent authority, and then
-the original child's fresh owner/private/requested-mode state before cleanup is
-registered. Parent or child replacements observed during creation reject before
-cleanup ownership is registered. Unverified artifacts are left in place for
+only controls the new workspace, not existing supplied directories. After the
+first exact child observation, final adoption retains a no-follow child
+descriptor, rechecks complete ancestry and retained cleanup-parent authority,
+and then validates the original child's descriptor and current name for exact
+identity, owner, private bits, and requested mode before cleanup is registered.
+Parent or child replacements observed during creation reject before cleanup
+ownership is registered. Unverified artifacts are left in place for
 caller-directed recovery.
 
 On Windows, POSIX mode/UID metadata does not establish ACL privacy, and these
@@ -116,18 +118,36 @@ verification can still redirect the final pathname removal.
 
 Set `cleanupSafety: "require-bounded"` when that concurrent attacker is in scope.
 Creation then requires native no-replace directory rename, native owned-tree
-removal, and a retained parent descriptor **before** `mkdtemp` creates
-a child. If any capability is unavailable, creation throws
-`FsSafeError("helper-unavailable")`; no child is created and a scoped callback is
-not called. The compatible default retains its fallback even if process-global
-native mode is `require`; select `require-bounded` to make cleanup capability
-mandatory for this API.
+removal, and a readable retained parent descriptor **before** `mkdtemp` creates
+a child. On POSIX, the final requested `dirMode` must also include owner read
+and search (`(dirMode & 0o500) === 0o500`). Preflight failure throws
+`FsSafeError("helper-unavailable")` without creating a child or calling a scoped
+callback. The child descriptor is opened
+while the new directory still has its private creation mode, before an explicit
+`dirMode` can lower access. Retaining a read descriptor does not bypass the
+POSIX final-mode requirement: enumeration reopens the directory relative to
+that descriptor. Compatible mode accepts these restrictive modes but selects
+the JavaScript fallback and does not retain native traversal authority for the
+child, even if the caller later restores its permissions. Windows cleanup
+does not use this POSIX mode gate. A search-only descriptor remains valid identity
+evidence but is never native traversal authority: compatible cleanup selects
+the JavaScript fallback, while `require-bounded` rejects and leaves the
+unregistered child in place for caller-directed recovery. The compatible
+default retains its fallback even if process-global native mode is `require`;
+select `require-bounded` to make cleanup capability mandatory for this API.
 
 On Linux, bounded cleanup requires a successful runtime probe of the exact
 `openat2` child-directory flags, including `RESOLVE_NO_XDEV`, against the retained
 parent descriptor. If the kernel or seccomp policy denies that capability,
 compatible mode uses the guarded JavaScript fallback; `require-bounded` rejects
-before child creation. The probe runs once at creation, without filesystem mutation.
+before child creation. For eligible modes, the probe runs once at creation,
+without filesystem mutation.
+
+Cleanup does not repair POSIX workspace or descendant permissions. In compatible
+mode, a restrictive workspace mode or caller-created unreadable descendants
+can prevent recursive removal; native bounded cleanup can also encounter later
+permission changes or inaccessible descendants. These remain operational
+cleanup failures, with the propagation and recovery behavior described below.
 
 Bounded cleanup checks the parent and public workspace identity, quarantines
 the direct child without replacement, and verifies the quarantine against the

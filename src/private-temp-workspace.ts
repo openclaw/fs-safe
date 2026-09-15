@@ -27,12 +27,15 @@ import {
   type TempWorkspaceCleanupResult,
   type TempWorkspaceCleanupSafety,
 } from "./temp-workspace-owner.js";
+import { TempWorkspaceRetainedChild } from "./temp-workspace-descriptor.js";
 import {
   admitTempWorkspaceChild,
   admitTempWorkspaceChildSync,
   admitTempWorkspaceRoot,
   admitTempWorkspaceRootSync,
   inspectAdmittedTempWorkspaceChild,
+  validateAdmittedTempWorkspaceChild,
+  validateInitialTempWorkspaceChild,
   validateTempWorkspaceDirMode,
 } from "./temp-workspace-admission.js";
 
@@ -152,32 +155,53 @@ async function createTempWorkspace(
   const cleanupSafety = resolveTempWorkspaceCleanupSafety(options.cleanupSafety);
   const admission = await admitTempWorkspaceRoot(options.rootDir);
   const root = admission.dir;
-  const capability = new TempWorkspaceCleanupCapability(root, cleanupSafety);
+  const capability = new TempWorkspaceCleanupCapability(root, cleanupSafety, admission, dirMode);
   let dir: string;
   let stat: fsSync.BigIntStats;
+  let retainedChild: TempWorkspaceRetainedChild | undefined;
+  let retainChildDescriptor = false;
   let cleanupOwner: TempWorkspaceCleanupOwner | undefined;
   let unregisterTempDir: () => void;
   try {
     admission.assertAncestry();
     dir = await fs.mkdtemp(path.join(root, sanitizeTempPrefix(options.prefix)));
-    admission.assertCurrent();
     if (capability.parent) capability.assertCurrent();
+    else admission.assertCurrent();
     stat = inspectDirectoryIdentitySync(dir);
+    validateInitialTempWorkspaceChild(stat, admission.ownerUid);
+    // Retain while the child still has its private creation mode so an
+    // explicit dirMode such as 0 cannot make identity descriptor acquisition fail.
+    retainedChild = new TempWorkspaceRetainedChild(dir, stat);
     const modeInitialization = admitTempWorkspaceChild(dir, stat, admission, dirMode);
     if (modeInitialization) await modeInitialization;
+    retainChildDescriptor = capability.admitChildDescriptor(retainedChild.ensureReadable());
     // Final adoption order is deliberate: complete ancestry, retained cleanup
-    // parent, then the original child identity and its fresh security state.
-    admission.assertAncestry();
-    if (capability.parent) capability.assertCurrent();
+    // parent, then descriptor and named checks of the original child identity.
+    if (capability.parent) capability.assertAncestryCurrent();
+    else admission.assertAncestry();
+    validateAdmittedTempWorkspaceChild(retainedChild.inspectCurrent(), admission.ownerUid, dirMode);
     stat = inspectAdmittedTempWorkspaceChild(dir, stat, admission.ownerUid, dirMode);
-    cleanupOwner = new TempWorkspaceCleanupOwner(dir, stat, capability);
+    cleanupOwner = new TempWorkspaceCleanupOwner(
+      retainedChild,
+      capability,
+      retainChildDescriptor,
+    );
+    retainedChild = undefined;
     unregisterTempDir = registerTempPathForExit(dir, {
       cleanupSync: () => cleanupOwner!.cleanupSync(),
     });
   } catch (error) {
     try {
       if (cleanupOwner) cleanupOwner.cleanupSync();
-      else capability.close();
+      else {
+        const closeErrors: unknown[] = [];
+        try { retainedChild?.close(); } catch (closeError) { closeErrors.push(closeError); }
+        try { capability.close(); } catch (closeError) { closeErrors.push(closeError); }
+        if (closeErrors.length === 1) throw closeErrors[0];
+        if (closeErrors.length > 1) {
+          throw new AggregateError(closeErrors, "temp workspace admission descriptor close failed");
+        }
+      }
     } catch (cleanupError) {
       throw new AggregateError([error, cleanupError], "temp workspace creation and cleanup both failed");
     }
@@ -258,31 +282,50 @@ export function tempWorkspaceSync(
   const cleanupSafety = resolveTempWorkspaceCleanupSafety(options.cleanupSafety);
   const admission = admitTempWorkspaceRootSync(options.rootDir);
   const root = admission.dir;
-  const capability = new TempWorkspaceCleanupCapability(root, cleanupSafety);
+  const capability = new TempWorkspaceCleanupCapability(root, cleanupSafety, admission, dirMode);
   let dir: string;
   let stat: fsSync.BigIntStats;
+  let retainedChild: TempWorkspaceRetainedChild | undefined;
+  let retainChildDescriptor = false;
   let cleanupOwner: TempWorkspaceCleanupOwner | undefined;
   let unregisterTempDir: () => void;
   try {
     admission.assertAncestry();
     dir = fsSync.mkdtempSync(path.join(root, sanitizeTempPrefix(options.prefix)));
-    admission.assertCurrent();
     if (capability.parent) capability.assertCurrent();
+    else admission.assertCurrent();
     stat = inspectDirectoryIdentitySync(dir);
+    validateInitialTempWorkspaceChild(stat, admission.ownerUid);
+    retainedChild = new TempWorkspaceRetainedChild(dir, stat);
     admitTempWorkspaceChildSync(dir, stat, admission, dirMode);
+    retainChildDescriptor = capability.admitChildDescriptor(retainedChild.ensureReadable());
     // Match async adoption: complete ancestry and retained cleanup authority
-    // precede the original child's final identity and security-state check.
-    admission.assertAncestry();
-    if (capability.parent) capability.assertCurrent();
+    // precede descriptor and named child security-state checks.
+    if (capability.parent) capability.assertAncestryCurrent();
+    else admission.assertAncestry();
+    validateAdmittedTempWorkspaceChild(retainedChild.inspectCurrent(), admission.ownerUid, dirMode);
     stat = inspectAdmittedTempWorkspaceChild(dir, stat, admission.ownerUid, dirMode);
-    cleanupOwner = new TempWorkspaceCleanupOwner(dir, stat, capability);
+    cleanupOwner = new TempWorkspaceCleanupOwner(
+      retainedChild,
+      capability,
+      retainChildDescriptor,
+    );
+    retainedChild = undefined;
     unregisterTempDir = registerTempPathForExit(dir, {
       cleanupSync: () => cleanupOwner!.cleanupSync(),
     });
   } catch (error) {
     try {
       if (cleanupOwner) cleanupOwner.cleanupSync();
-      else capability.close();
+      else {
+        const closeErrors: unknown[] = [];
+        try { retainedChild?.close(); } catch (closeError) { closeErrors.push(closeError); }
+        try { capability.close(); } catch (closeError) { closeErrors.push(closeError); }
+        if (closeErrors.length === 1) throw closeErrors[0];
+        if (closeErrors.length > 1) {
+          throw new AggregateError(closeErrors, "temp workspace admission descriptor close failed");
+        }
+      }
     } catch (cleanupError) {
       throw new AggregateError([error, cleanupError], "temp workspace creation and cleanup both failed");
     }
