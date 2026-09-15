@@ -1,6 +1,6 @@
 # Filenames
 
-`sanitizeUntrustedFileName(name, fallback)` reduces a filename string from an untrusted source to one traversal-free path segment. Use it as a thin first pass before storing user-supplied names; pair with [`safeDirName`](install-path.md#safedirname) when you need stricter directory-name handling.
+`sanitizeUntrustedFileName(name, fallback)` reduces a filename string from an untrusted source to one traversal-free path segment. Use it as a thin first pass before storing user-supplied names; use [`safePathSegmentHashedV2`](install-path.md#safepathsegmenthashedv2) when mapping untrusted install IDs to separate directory names.
 
 ```ts
 import { sanitizeUntrustedFileName } from "@openclaw/fs-safe/advanced";
@@ -32,6 +32,12 @@ nonrecursive pipeline. A safe fallback is preserved exactly; path components,
 controls, reserved device names, and overlong fallback names receive the same
 treatment as the primary name. If both candidates are unusable, the function
 returns the fixed safe literal `"file"`.
+
+If truncation itself exposes a reserved-device basename after Windows ignores
+trailing spaces or dots, the result is shortened once more and receives the
+same underscore suffix. A name that reaches the sanitization branch therefore
+remains at most 200 UTF-16 code units and is never a Windows reserved-device
+alias. Fallback names pass through the same checks before they can be returned.
 
 That's it. The function stays intentionally small: it removes traversal and
 the most obvious cross-platform device and character hazards, but it is not a
@@ -100,5 +106,5 @@ await fs.write(`uploads/${safe}`, body); // fs is a Root() handle; rejects trave
 
 ## See also
 
-- [Install path helpers](install-path.md) — `safeDirName`, `safePathSegmentHashed` for directory-segment sanitization.
+- [Install path helpers](install-path.md) — legacy directory-segment sanitizers and `safePathSegmentHashedV2` for untrusted install IDs.
 - [`root()`](root.md) — the boundary you'll write into after sanitizing.

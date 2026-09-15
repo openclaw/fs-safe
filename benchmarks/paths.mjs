@@ -32,6 +32,33 @@ export async function registerPaths({ api: a, workspace: w, register: add, contr
   add("sanitizeUntrustedFileName/fallback", () => a.sanitizeUntrustedFileName("<>", "fallback.json"), {
     sync: true, batch: 100, verify: (result) => assert.equal(result, "fallback.json"),
   });
+  add("safePathSegmentHashedV2", () => a.safePathSegmentHashedV2("ordinary-safe-name"), {
+    sync: true,
+    batch: 100,
+    skip: typeof a.safePathSegmentHashedV2 !== "function"
+      ? "Not exported by this explicitly selected older comparison build."
+      : undefined,
+    verify: (result) => {
+      assert.match(result, /^id-v2-[a-f0-9]{64}$/);
+      assert.equal(result.length, 70);
+    },
+  });
+  add("resolveSafeInstallDir/V2", () => a.resolveSafeInstallDir({
+    baseDir: w,
+    id: "module",
+    invalidNameMessage: "invalid",
+    nameEncoder: a.safePathSegmentHashedV2,
+  }), {
+    sync: true,
+    batch: 100,
+    skip: typeof a.safePathSegmentHashedV2 !== "function"
+      ? "Not exported by this explicitly selected older comparison build."
+      : undefined,
+    verify: (result) => assert.deepEqual(result, {
+      ok: true,
+      path: path.join(w, a.safePathSegmentHashedV2("module")),
+    }),
+  });
   add("isPathInside/trailing-separator", () => a.isPathInside(`${w}${path.sep}`, input), {
     sync: true, batch: 100, verify: (result) => assert.equal(result, true),
   });

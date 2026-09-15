@@ -269,7 +269,8 @@ files, hardlinks, and changes between the pre-open pathname, opened descriptor,
 and current pathname are rejected. The callback must finish and close its
 writer before returning. Its return value is preserved as `result`.
 
-Before either an ordinary or isolated producer runs, the completed staging
+Generated temp filenames suffix Windows reserved-device basenames on every
+platform. Before either an ordinary or isolated producer runs, the completed staging
 name must be a nonempty, non-dot path component with no POSIX or Windows
 separator, C0/C1 control, Windows-invalid punctuation or stream colon. Windows
 reserved devices and trailing-dot/space aliases are rejected on every host.

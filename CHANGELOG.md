@@ -3,6 +3,9 @@
 ## Unreleased
 
 - Sanitize unusable filename fallbacks through the same basename, character, final reserved-device, and length pipeline as primary names, and reject non-component, device, stream, and Windows-aliased sibling callback staging names before invoking producers.
+- Add `safePathSegmentHashedV2` for untrusted install identifiers, hashing every trimmed ID with domain-separated SHA-256 into a fixed lowercase segment; preserve the legacy encoder's output and document its deterministic aliases and explicit migration requirements.
+- Keep filename truncation, temp-file sanitization, and completed sibling callback paths from producing Windows reserved-device aliases; invalid callback components now reject before invoking a producer.
+- Bind Windows private-directory creation, protected-DACL validation, complete file-identity association checks, and failure cleanup to retained handles, preserving concurrent pathname replacements; reject dot, dot-dot, and trailing-space or trailing-period path components before creation.
 - Bind Windows Root containment that depends on case folding to the Root directory's exact identity, then continue under the trusted Root spelling; exact-case paths retain the lexical fast path without added filesystem observations.
 - Let manually dispatched method audits focus one workload family, select native mode, and repeat baseline/candidate measurements in A-B-B-A order for drift-resistant performance decisions.
 - Preserve existing destinations when guest cross-device symlink moves fail by staging links privately before atomic replacement, with cleanup on creation or publication failure.

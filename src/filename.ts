@@ -4,8 +4,14 @@ import { maxNormalizedUtf8Bytes } from "./unicode-path.js";
 
 const INVALID_FILE_NAME_CHARACTERS = /[\u0000-\u001f\u007f-\u009f<>:"/\\|?*]/g;
 
-function trimWindowsIgnoredSuffix(value: string): string {
-  let end = value.length;
+function canStartWindowsDeviceName(character: number): boolean {
+  const folded = character | 0x20;
+  return folded === 0x61 || folded === 0x63 || folded === 0x6c ||
+    folded === 0x6e || folded === 0x70;
+}
+
+function windowsDeviceStemEnd(value: string, stemEnd: number): number {
+  let end = stemEnd;
   while (end > 0) {
     const character = value.charCodeAt(end - 1);
     if (character !== 0x20 && character !== 0x2e) {
@@ -13,18 +19,24 @@ function trimWindowsIgnoredSuffix(value: string): string {
     }
     end -= 1;
   }
-  return end === value.length ? value : value.slice(0, end);
+  return end;
 }
 
-function suffixWindowsReservedDeviceName(fileName: string): string {
-  const extensionIndex = fileName.indexOf(".");
-  const baseNameEnd = extensionIndex < 0 ? fileName.length : extensionIndex;
-  const baseName = fileName.slice(0, baseNameEnd);
-  const deviceBaseName = trimWindowsIgnoredSuffix(baseName);
-  if (!WINDOWS_RESERVED_DEVICE_NAMES.has(deviceBaseName.toUpperCase())) {
+export function suffixWindowsReservedDeviceName(fileName: string): string {
+  if (!canStartWindowsDeviceName(fileName.charCodeAt(0))) {
     return fileName;
   }
-  return `${baseName}_${fileName.slice(baseNameEnd)}`;
+  const extensionIndex = fileName.indexOf(".");
+  const baseNameEnd = extensionIndex < 0 ? fileName.length : extensionIndex;
+  const deviceBaseNameEnd = windowsDeviceStemEnd(fileName, baseNameEnd);
+  if (
+    deviceBaseNameEnd === 0 ||
+    deviceBaseNameEnd > 7 ||
+    !WINDOWS_RESERVED_DEVICE_NAMES.has(fileName.slice(0, deviceBaseNameEnd).toUpperCase())
+  ) {
+    return fileName;
+  }
+  return `${fileName.slice(0, baseNameEnd)}_${fileName.slice(baseNameEnd)}`;
 }
 
 const PORTABLE_FILE_NAME_BYTES = 255;

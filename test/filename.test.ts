@@ -194,6 +194,13 @@ describe("sanitizeUntrustedFileName", () => {
     expect(sanitized).toBe("a".repeat(199));
   });
 
+  it("keeps a truncated device fallback well-formed and device-safe", () => {
+    const sanitized = sanitizeUntrustedFileName("<>", `CON${" ".repeat(196)}😀`);
+    expect(sanitized.isWellFormed()).toBe(true);
+    expect(sanitized).toBe(`CON${" ".repeat(196)}_`);
+    expect(isWindowsReservedDeviceName(sanitized)).toBe(false);
+  });
+
   it.each(["CON", "nul.txt", "CoNiN$.log", "COM¹.dat", "CON_"])(
     "is idempotent for reserved-name result %s",
     (input) => {

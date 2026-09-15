@@ -133,7 +133,7 @@ component is followed by another segment, both helpers throw
 
 | Export | Page | Notes |
 |---|---|---|
-| `safeDirName`, `safePathSegmentHashed`, `resolveSafeInstallDir`, `assertCanonicalPathWithinBase` | [install-path.md](install-path.md) | Build install-target directories from caller-supplied identifiers. |
+| `safeDirName`, `safePathSegmentHashed`, `safePathSegmentHashedV2`, `resolveSafeInstallDir`, `assertCanonicalPathWithinBase` | [install-path.md](install-path.md) | Build install-target directories; use V2 for untrusted identifier mappings. |
 | `sanitizeUntrustedFileName` | [filename.md](filename.md) | Coerce an untrusted string into a safe filename. |
 | `resolveHomeRelativePath` | – | Expand a leading `~` before resolving `.` and `..`; tildes inside relative paths stay literal. |
 
