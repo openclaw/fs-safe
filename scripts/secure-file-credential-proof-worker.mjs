@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
 
 const EXPECTED_CONTENT = Buffer.from("fs-safe split-credential synthetic payload\n", "utf8");
+const STAGED_NODE_PATH =
+  /^\/usr\/local\/lib\/fs-safe-credential-proof-([1-9][0-9]{0,19})-([1-9][0-9]{0,9})-(22\.23\.2|24\.20\.0)\/node$/u;
 const ALLOWED_ARGUMENTS = new Set([
   "case",
   "library-role",
@@ -165,7 +167,11 @@ async function main() {
   const bounded = parseBoolean(args.get("bounded"));
   const expectedNode = args.get("expected-node");
   const expectedNodePath = args.get("node");
-  if (!/^v(?:22\.23\.2|24\.20\.0)$/.test(expectedNode) || !expectedNodePath.startsWith("/opt/")) {
+  const nodePathMatch = STAGED_NODE_PATH.exec(expectedNodePath);
+  if (
+    !/^v(?:22\.23\.2|24\.20\.0)$/u.test(expectedNode) ||
+    nodePathMatch?.[3] !== expectedNode.slice(1)
+  ) {
     fail("INVALID_ARGUMENTS");
   }
 

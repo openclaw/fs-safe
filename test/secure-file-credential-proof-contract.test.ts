@@ -6,6 +6,8 @@ const BASE_HEAD = "914cd7b41388876b55e1cca76b46b8eb01e46364";
 const BASE_TREE = "eb1d05638cd0ec21cea68a8b189ec3e253a8d903";
 const SECURE_FILE_PROOF_INPUT =
   /^ {2}workflow_dispatch:\n {4}inputs:\n {6}secure_file_credential_proof:\n(?: {8}[^\n]*\n)*? {8}default: false\n {8}type: boolean$/mu;
+const STAGED_NODE_PATH =
+  /^\/usr\/local\/lib\/fs-safe-credential-proof-([1-9][0-9]{0,19})-([1-9][0-9]{0,9})-(22\.23\.2|24\.20\.0)\/node$/u;
 
 let sourcePromise: Promise<{ coordinator: string; worker: string; workflow: string }> | undefined;
 
@@ -383,6 +385,27 @@ describe("manual split-credential secure-file proof contract", () => {
     expect(worker).toContain("status.groups.length === 0");
     expect(worker).not.toMatch(/(?:mock|vi\.)/u);
     expect(worker).not.toMatch(/\.\.\/src|\.\.\/dist/u);
+  });
+
+  it("pins worker execution to the exact authenticated Node stage shape", async () => {
+    const { worker } = await sources();
+    expect(worker).toContain(`const STAGED_NODE_PATH =\n  ${STAGED_NODE_PATH};`);
+    expect(worker).toContain("nodePathMatch?.[3] !== expectedNode.slice(1)");
+    expect(worker).not.toContain('expectedNodePath.startsWith("/opt/")');
+    for (const version of ["22.23.2", "24.20.0"]) {
+      expect(`/usr/local/lib/fs-safe-credential-proof-34992461481-1-${version}/node`)
+        .toMatch(STAGED_NODE_PATH);
+    }
+    for (const invalid of [
+      "/opt/fs-safe-credential-proof-1-1-22.23.2/node",
+      "/usr/local/lib/fs-safe-credential-proof-01-1-22.23.2/node",
+      "/usr/local/lib/fs-safe-credential-proof-1-01-22.23.2/node",
+      "/usr/local/lib/fs-safe-credential-proof-1-1-22.23.2/../node",
+      "/usr/local/lib/fs-safe-credential-proof-1-1-22.23.2/node/extra",
+      "/usr/local/lib/fs-safe-credential-proof-1-1-22.23.2/node.exe",
+    ]) {
+      expect(invalid).not.toMatch(STAGED_NODE_PATH);
+    }
   });
 
   it("emits bounded diagnostics, provenance, durations, and only the JSON receipt", async () => {
