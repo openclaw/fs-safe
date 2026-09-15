@@ -13,7 +13,7 @@ import {
   __setNativeLoaderForTest,
   type NativeBinding,
 } from "../src/native.js";
-import * as existingPath from "../src/root-path-existing.js";
+import * as writeAdmission from "../src/root-write-admission.js";
 import { root } from "../src/root.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { resolveWindowsSystemCommand } from "../src/windows-command.js";
@@ -115,27 +115,56 @@ describe.skipIf(process.platform !== "win32")(
       configureFsSafeNative({ mode: "off" });
       const directory = await tempRoot("fs-safe-win-policy-parent-fence-");
       const parent = path.join(directory, "parent");
-      const saved = path.join(directory, "saved");
       const target = path.join(parent, "target");
       await fs.mkdir(parent);
       await fs.writeFile(target, "original");
       let callbacks = 0;
       const safe = await root(directory);
+      const handles: FileHandle[] = [];
+      const realOpen = fs.open.bind(fs);
+      vi.spyOn(fs, "open").mockImplementation(async (...args: Parameters<typeof fs.open>) => {
+        const handle = await realOpen(...args);
+        handles.push(handle);
+        return handle;
+      });
+      let parentChanged = false;
+      let parentInspectionsAfterCallback = 0;
+      let changedIno: bigint | undefined;
+      const lstat = fsSync.lstatSync.bind(fsSync);
+      vi.spyOn(fsSync, "lstatSync").mockImplementation((name, options) => {
+        const stat = lstat(name, options);
+        if (parentChanged && name === parent && options?.bigint === true &&
+          typeof stat.ino === "bigint") {
+          parentInspectionsAfterCallback += 1;
+          changedIno ??= stat.ino === 1n ? 2n : 1n;
+          stat.ino = changedIno;
+        }
+        return stat;
+      });
+      const rename = vi.spyOn(fs, "rename");
 
-      await expect(safe.write("parent/target", Buffer.from("replacement"), {
-        denyMutations: unrelatedPolicy(directory),
-        durable: false,
-        assertBeforeMutation() {
-          if (++callbacks !== callback) return;
-          fsSync.renameSync(parent, saved);
-          fsSync.mkdirSync(parent);
-        },
-      })).rejects.toMatchObject({ code: "path-mismatch" });
+      try {
+        await expect(safe.write("parent/target", Buffer.from("replacement"), {
+          denyMutations: unrelatedPolicy(directory),
+          durable: false,
+          assertBeforeMutation() {
+            if (++callbacks === callback) parentChanged = true;
+          },
+        })).rejects.toMatchObject({ code: "path-mismatch" });
 
-      expect(await fs.readdir(parent)).toEqual([]);
-      const savedEntries = await fs.readdir(saved);
-      expect(await fs.readFile(path.join(saved, "target"), "utf8")).toBe("original");
-      expect(atomicStages(savedEntries)).toHaveLength(boundary === "publication" ? 1 : 0);
+        expect(callbacks).toBe(callback);
+        expect(parentChanged).toBe(true);
+        expect(parentInspectionsAfterCallback).toBeGreaterThan(0);
+        expect(rename).not.toHaveBeenCalled();
+        expect(await fs.readFile(target, "utf8")).toBe("original");
+        const stages = atomicStages(await fs.readdir(parent));
+        // The real cleanup guard also rejects the persistent parent mismatch.
+        expect(stages).toHaveLength(boundary === "publication" ? 1 : 0);
+        expect(handles).toHaveLength(boundary === "publication" ? 2 : 1);
+        expect(handles.every((handle) => handle.fd === -1)).toBe(true);
+      } finally {
+        vi.restoreAllMocks();
+      }
     });
 
     it.each([
@@ -207,11 +236,15 @@ describe.skipIf(process.platform !== "win32")(
       async (boundary, context) => {
         configureFsSafeNative({ mode: "off" });
         const directory = await tempRoot("fs-safe-win-policy-case-sensitive-");
-        spawnSync(
+        const enabled = spawnSync(
           resolveWindowsSystemCommand("fsutil.exe"),
           ["file", "setCaseSensitiveInfo", directory, "enable"],
           { stdio: "ignore", timeout: 10_000, windowsHide: true },
         );
+        if (enabled.error || enabled.status !== 0) {
+          context.skip();
+          return;
+        }
         const selected = path.join(directory, "value");
         const alias = path.join(directory, "VALUE");
         const retarget = path.join(directory, "other");
@@ -223,15 +256,26 @@ describe.skipIf(process.platform !== "win32")(
         try {
           await fs.symlink(selected, alias, "file");
         } catch (error) {
-          if (error && typeof error === "object" && "code" in error && error.code === "EEXIST") {
+          if (error && typeof error === "object" && "code" in error &&
+            (error.code === "EEXIST" || error.code === "EPERM")) {
             context.skip();
             return;
           }
           throw error;
         }
+        const entries = await fs.readdir(directory);
+        expect(entries).toContain("value");
+        expect(entries).toContain("VALUE");
+        const selectedEntry = await fs.lstat(selected, { bigint: true });
+        const aliasEntry = await fs.lstat(alias, { bigint: true });
+        expect(selectedEntry.isFile()).toBe(true);
+        expect(selectedEntry.isSymbolicLink()).toBe(false);
+        expect(aliasEntry.isSymbolicLink()).toBe(true);
+        expect(selectedEntry.dev === aliasEntry.dev && selectedEntry.ino === aliasEntry.ino)
+          .toBe(false);
         const handles: FileHandle[] = [];
         const realOpen = fs.open.bind(fs);
-        vi.spyOn(fs, "open").mockImplementation(async (...args: Parameters<typeof fs.open>) => {
+        const open = vi.spyOn(fs, "open").mockImplementation(async (...args: Parameters<typeof fs.open>) => {
           const handle = await realOpen(...args);
           handles.push(handle);
           return handle;
@@ -241,26 +285,34 @@ describe.skipIf(process.platform !== "win32")(
         let selectedAdmissionChecks = 0;
         if (boundary === "authorization") {
           await fs.symlink(initiallyAllowed, deniedAlias, "file");
-          const resolveExisting = existingPath.resolvePathViaExistingAncestor;
-          let armed = false;
-          vi.spyOn(existingPath, "resolvePathViaExistingAncestor").mockImplementation(
-            async candidate => {
-              const resolved = await resolveExisting(candidate);
-              if (policyRetargeted && path.resolve(candidate) === selected) {
-                selectedAdmissionChecks += 1;
-              }
-              if (armed && !policyRetargeted && path.resolve(candidate) === directory) {
-                policyRetargeted = true;
-                await fs.unlink(deniedAlias);
-                await fs.symlink(selected, deniedAlias, "file");
-              }
-              return resolved;
+          const resolveTarget = writeAdmission.resolveGuardedWriteTargetInRoot;
+          vi.spyOn(writeAdmission, "resolveGuardedWriteTargetInRoot").mockImplementation(
+            async (...args) => {
+              const guarded = await resolveTarget(...args);
+              const admission = guarded.selectedTargetAdmission!;
+              expect(admission).toBeDefined();
+              const authorize = admission.authorize.bind(admission);
+              return {
+                ...guarded,
+                selectedTargetAdmission: Object.freeze({
+                  ...admission,
+                  async authorize(selectedPath: string) {
+                    selectedAdmissionChecks += 1;
+                    expect(selectedPath).toBe(selected);
+                    expect(policyRetargeted).toBe(false);
+                    policyRetargeted = true;
+                    await fs.unlink(deniedAlias);
+                    await fs.symlink(selected, deniedAlias, "file");
+                    await authorize(selectedPath);
+                  },
+                }),
+              };
             },
           );
           __setFsSafeTestHooksForTest({
             beforePinnedWriteParentAdmission() {
               admissions += 1;
-              if (admissions === 1) armed = true;
+              expect(policyRetargeted).toBe(false);
             },
           });
         } else {
@@ -272,9 +324,11 @@ describe.skipIf(process.platform !== "win32")(
             },
           });
         }
+        const callback = vi.fn();
         const safe = await root(directory);
         const opening = safe.openWritable("VALUE", {
           writeMode: "update",
+          assertBeforeMutation: callback,
           denyMutations: boundary === "authorization"
             ? { paths: [deniedAlias] }
             : unrelatedPolicy(directory),
@@ -287,6 +341,8 @@ describe.skipIf(process.platform !== "win32")(
         expect(admissions).toBe(boundary === "authorization" ? 1 : 2);
         expect(policyRetargeted).toBe(boundary === "authorization");
         expect(selectedAdmissionChecks).toBe(boundary === "authorization" ? 1 : 0);
+        expect(callback).not.toHaveBeenCalled();
+        if (boundary === "authorization") expect(open).not.toHaveBeenCalled();
         expect(await fs.readFile(selected, "utf8")).toBe("selected");
         expect(await fs.readFile(retarget, "utf8")).toBe("other");
         expect(handles.every((handle) => handle.fd === -1)).toBe(true);

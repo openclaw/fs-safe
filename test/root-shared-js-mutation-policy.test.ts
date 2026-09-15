@@ -6,7 +6,7 @@ import type { DenyMutationPolicy } from "../src/deny-mutations.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { __resetNativeLoaderForTest } from "../src/native.js";
 import type { MutationSymlinkPolicy } from "../src/root-symlink-policy.js";
-import * as existingPath from "../src/root-path-existing.js";
+import * as writeAdmission from "../src/root-write-admission.js";
 import { root, type Root } from "../src/root.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
@@ -321,28 +321,37 @@ describe("shared JavaScript mutation-policy component admission", () => {
       await fs.writeFile(initiallyAllowed, "allowed");
       await fs.symlink(selected, alias, "file");
       await fs.symlink(initiallyAllowed, deniedAlias, "file");
-      const resolveExisting = existingPath.resolvePathViaExistingAncestor;
-      let armed = false;
+      const resolveTarget = writeAdmission.resolveGuardedWriteTargetInRoot;
       let policyRetargeted = false;
       let selectedAdmissionChecks = 0;
-      vi.spyOn(existingPath, "resolvePathViaExistingAncestor").mockImplementation(async candidate => {
-        const resolved = await resolveExisting(candidate);
-        if (policyRetargeted && path.resolve(candidate) === selected) {
-          selectedAdmissionChecks += 1;
-        }
-        if (armed && !policyRetargeted && path.resolve(candidate) === directory) {
-          policyRetargeted = true;
-          await fs.unlink(deniedAlias);
-          await fs.symlink(selected, deniedAlias, "file");
-        }
-        return resolved;
-      });
+      vi.spyOn(writeAdmission, "resolveGuardedWriteTargetInRoot").mockImplementation(
+        async (...args) => {
+          const guarded = await resolveTarget(...args);
+          const admission = guarded.selectedTargetAdmission!;
+          expect(admission).toBeDefined();
+          const authorize = admission.authorize.bind(admission);
+          return {
+            ...guarded,
+            selectedTargetAdmission: Object.freeze({
+              ...admission,
+              async authorize(selectedPath: string) {
+                selectedAdmissionChecks += 1;
+                expect(selectedPath).toBe(selected);
+                expect(policyRetargeted).toBe(false);
+                policyRetargeted = true;
+                await fs.unlink(deniedAlias);
+                await fs.symlink(selected, deniedAlias, "file");
+                await authorize(selectedPath);
+              },
+            }),
+          };
+        },
+      );
       let admissions = 0;
       __setFsSafeTestHooksForTest({
         beforePinnedWriteParentAdmission() {
           admissions += 1;
           expect(policyRetargeted).toBe(false);
-          armed = true;
         },
       });
       const callback = vi.fn();
