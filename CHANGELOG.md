@@ -58,6 +58,7 @@
 - Expand representative method-audit coverage to 572 workloads across JavaScript/native modes on Linux, macOS, and Windows, including 1,000-entry walks, larger TAR inventories, and small synchronous hashes, with explicit platform exclusions.
 - Allow focused method audits with explicit native mode and balanced A-B-B-A or B-A-A-B measurement ordering.
 - Extend walker coverage for lexical aliases and callback mutation. Keep cancellation fixture setup outside the operation deadline and drain fixture writes before cleanup on slow or failing filesystems.
+- Give the Windows slow physical-package-copy sidecar proof separate setup, operation, child, and teardown budgets with bounded failure diagnostics, preserving ordinary helper deadlines.
 
 ## 0.11.0 - 2026-09-14
 
