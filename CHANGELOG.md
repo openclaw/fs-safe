@@ -19,6 +19,7 @@
 - Destroy and join JavaScript ZIP decoder sources before rejecting bounded member reads, preventing abandoned decoders and retained archive buffers after byte-limit failures while preserving archive error classifications on Node 22 and newer.
 - Fix automatic Linux file copies truncating when `copy_file_range` reports zero after partial progress; confirm EOF at the current offset before completing or resuming the guarded byte-copy fallback.
 - Speed up repeated lock-manager construction without rescanning held locks, and initialize legacy reference counts at acquisition and release so same-owner nested handles retain the outer lock.
+- Complete positive short reads from virtual files that report size zero, preserving byte-limit overflow detection and borrowed-descriptor cursor semantics instead of returning a truncated prefix.
 
 ## 0.11.0 - 2026-09-14
 
