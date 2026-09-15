@@ -4,41 +4,63 @@
 
 - Sanitize unusable filename fallbacks through the same basename, character, final reserved-device, and length pipeline as primary names, and reject non-component, device, stream, and Windows-aliased sibling callback staging names before invoking producers.
 
-- Give the Windows slow physical-package-copy sidecar proof separate setup, test, child, and teardown budgets with bounded child failure diagnostics, while preserving ordinary helper deadlines elsewhere.
+## 0.12.0 - 2026-09-15
 
-- Keep budgeted-walk cancellation fixture setup outside its test deadline, and drain fixture writes before cleanup on slow or failing filesystems.
+### Highlights
 
-- Reuse raw archive path segments during validation, preserving platform checks, normalized component limits, and error order.
+- **Faster archive workloads:** reuse validated ZIP names, batch native plain-TAR reads, and reduce gzip validation and payload-buffer allocations while preserving complete archive checks.
+- **Less overhead in everyday filesystem work:** reduce repeated path resolution, directory-walk work, small-hash allocations, Linux copy buffers, and lock-manager setup.
+- **Stronger Windows file boundaries:** verify secure-file permissions against the descriptor supplying the bytes, retain handles through private-directory creation and cleanup, and check directory identity when Root containment relies on case folding.
+- **Safer queue recovery and cleanup:** prevent stale migrations from replacing newer queue entries, preserve files refreshed during expiry pruning, and keep existing destinations intact when guest symlink moves fail.
+- **Versioned install identifiers:** add `safePathSegmentHashedV2`, which hashes every trimmed ID into a fixed lowercase directory segment and avoids the deterministic aliases of the legacy readable encoder.
 
-- Size Linux native byte-copy scratch buffers from the existing file-size hint, bounded between 4 KiB and 1 MiB, while retaining read-to-EOF, sparse output, and borrowed-descriptor behavior.
+### Compatibility and upgrade notes
 
-- Reuse lexical directory prefixes when producing walk entry paths, preserving traversal order, followed-link spelling, budgets, and directory checks.
+- Windows `readSecureFile()` now requires the matching current native package for descriptor-bound owner and DACL checks. Missing or stale helpers, remote handles, denied access, and unsupported or incomplete permission facts fail closed before reading; there is no pathname ACL-command fallback. Standalone permission-reporting APIs retain their documented fallbacks.
+- Windows private-directory creation rejects explicit `.` and `..` components and components ending in spaces or periods before filesystem operations. Directory association requires the complete file identity; unsupported identity classes fail closed.
+- Windows native descriptor operations require the host runtime's paired libuv descriptor bridge. Missing or partial bridges reject with `ENOTSUP` instead of interpreting descriptors as raw handles or using another runtime's descriptor table.
+- `safePathSegmentHashedV2` is opt-in. Legacy encoder outputs and the default encoder remain unchanged. Switching to V2 changes existing paths: use a new base directory or explicitly migrate after verifying recorded IDs, and do not silently fall back to legacy paths.
 
-- Reuse synchronous ZIP name facts for identical local and central names with non-shared backing buffers, retaining separate Unicode metadata validation and shared-memory handling.
-- Bind Windows `readSecureFile()` owner and DACL verification to the already-open descriptor and compare its native 32-bit volume serial and 64-bit file-index projection with Node's bigint receipt before reading. Secure reads now fail closed when the descriptor capability is missing, stale, remote, incomplete, or unsupported instead of authorizing bytes with pathname-based ACL facts.
-- Reuse resolved Windows drive paths during containment comparison instead of normalizing them again, preserving namespace and relative-path comparison behavior.
-- Avoid intermediate segment arrays when classifying Windows device names, preserving existing path, stream, extension, and case handling.
-- Reduce retained decoded buffers when reading gzip TAR entries in JavaScript by filling one owned result buffer from the fully admitted payload size, preserving complete archive validation and independent returned bytes.
-- Avoid repeated relative-path resolution for normalized Windows drive-path descendants, retaining the existing comparison for UNC paths and colon-bearing components.
-- Add `safePathSegmentHashedV2` for untrusted install identifiers, hashing every trimmed ID with domain-separated SHA-256 into a fixed lowercase segment; preserve the legacy encoder's output and document its deterministic aliases and explicit migration requirements.
-- Speed up bulk lexical path resolution by reusing absolute POSIX root normalization within each batch, and avoid per-segment allocations during drive-letter rejection while preserving path spellings, validation, and error behavior.
-- Keep filename truncation, temp-file sanitization, and completed sibling callback paths from producing Windows reserved-device aliases; invalid callback components now reject before invoking a producer.
-- Bind Windows private-directory creation, protected-DACL validation, complete file-identity association checks, and failure cleanup to retained handles, preserving concurrent pathname replacements; reject dot, dot-dot, and trailing-space or trailing-period path components before creation.
-- Bind Windows Root containment that depends on case folding to the Root directory's exact identity, then continue under the trusted Root spelling; exact-case paths retain the lexical fast path without added filesystem observations.
-- Let manually dispatched method audits focus one workload family, select native mode, and repeat baseline/candidate measurements in A-B-B-A or B-A-A-B order for drift-resistant performance decisions.
-- Preserve existing destinations when guest cross-device symlink moves fail by staging links privately before atomic replacement, with cleanup on creation or publication failure.
-- Keep durable-queue migrations bound to the pinned processing generation, rejecting stale callbacks after acknowledgement, quarantine, or replacement; release the verified read pin at Windows publication so migrations can replace their target; resync resumed claims so conditional migrations cannot bypass a failed publication sync on retry.
-- Keep Windows native filesystem descriptors in the host runtime's libuv table, rejecting missing or partial bridges instead of guessing raw HANDLE or add-on CRT namespaces.
-- Preserve files refreshed while expiry pruning prepares removal by rechecking current file type and modification time immediately before guarded deletion, without requiring read access.
-- Extend standalone walker regression and method-audit coverage with lexical aliases, callback mutation, and 1,000-entry inventories.
-- Speed up JavaScript gzip container-padding validation with bounded buffer comparisons and one lazy reusable zero window, preserving complete suffix checks, short-read handling, and cancellation cadence.
-- Speed up native plain-TAR inspection and extraction with bounded file read-ahead, preserving full framing, payload, trailer, and cancellation checks at parser boundaries.
-- Destroy and join JavaScript ZIP decoder sources before rejecting bounded member reads, preventing abandoned decoders and retained archive buffers after byte-limit failures while preserving archive error classifications on Node 22 and newer.
-- Reuse matching ZIP Unicode Path validation and canonical name interpretations within an entry, retaining independent checks for differing metadata and shared backing memory.
-- Fix automatic Linux file copies truncating when `copy_file_range` reports zero after partial progress; confirm EOF at the current offset before completing or resuming the guarded byte-copy fallback.
-- Speed up small JavaScript SHA-256 hashes by sizing scratch buffers to the file and byte budget, growing when size hints are stale while preserving complete reads, overflow detection, cancellation, and borrowed descriptor ownership.
-- Speed up repeated lock-manager construction without rescanning held locks, and initialize legacy reference counts at acquisition and release so same-owner nested handles retain the outer lock.
-- Complete positive short reads from virtual files that report size zero, preserving byte-limit overflow detection and borrowed-descriptor cursor semantics instead of returning a truncated prefix.
+### Archive performance and reliability
+
+- Reuse identical local and central ZIP name validation within one entry, including matching complete Unicode Path metadata. Differing fields and shared backing memory retain independent checks; CRC, traversal, collision, and interpretation validation remain intact.
+- Reuse raw archive path segments during validation, preserving platform rules, normalized component limits, and error ordering.
+- Speed up native plain-TAR inspection and extraction with bounded file read-ahead, retaining complete framing, payload, trailer, and cancellation checks at parser boundaries.
+- Fill one owned result buffer when reading admitted gzip TAR payloads in JavaScript, reducing retained decoded buffers while preserving complete validation and independent returned bytes.
+- Validate gzip container padding with bounded buffer comparisons and one lazily allocated reusable zero window, preserving complete suffix checks, short-read handling, and cancellation cadence.
+- Destroy and join ZIP decoder sources before rejecting bounded member reads, preventing abandoned decoders and retained archive buffers after byte-limit failures while preserving error classifications on Node 22 and newer.
+
+### Paths, reads, and copying
+
+- Reuse normalized absolute POSIX roots within bulk lexical path resolution and avoid per-segment drive-letter validation allocations, preserving path spellings, validation order, and errors.
+- Reuse resolved Windows drive paths and descendant comparisons, with existing namespace, UNC, and colon-bearing component handling retained. Classify Windows device names without intermediate segment arrays.
+- Reuse lexical directory prefixes while walking, preserving traversal order, followed-link spelling, budgets, callback behavior, and directory checks.
+- Size small JavaScript SHA-256 scratch buffers to the file and byte budget, growing when size hints are stale while preserving complete reads, overflow detection, cancellation, and borrowed-descriptor ownership.
+- Complete positive short reads from virtual files that report size zero instead of returning a truncated prefix. Byte-limit overflow detection and borrowed-descriptor cursor behavior remain intact.
+- Confirm EOF when Linux `copy_file_range` reports zero after partial progress; resume guarded byte copying when readable data remains instead of publishing a truncated copy.
+- Size Linux native byte-copy buffers from existing source-size hints, bounded between 4 KiB and 1 MiB, retaining read-to-EOF behavior, sparse output, and borrowed descriptors.
+
+### Windows security and generated names
+
+- Bind secure-file owner and DACL verification to the open descriptor and compare its native volume serial and file-index projection with Node's bigint receipt before reading.
+- Retain parent and created-directory handles through private-directory creation, protected-DACL validation, complete identity association, and failure cleanup, preserving concurrent pathname replacements.
+- Require differently cased Root prefixes to match the Root directory's exact identity, then continue under its trusted spelling. Exact-case paths retain their lexical fast path.
+- Prevent filename truncation and temp-file sanitization from producing Windows reserved-device aliases. Invalid completed sibling callback components reject before hooks or producers run.
+
+### Queues, locks, and cleanup
+
+- Bind durable-queue migrations to their pinned processing generation, rejecting stale callbacks after acknowledgement, quarantine, or replacement. Release the verified read pin at Windows publication so migrations can replace their target.
+- Resync resumed processing claims under the transfer lock so conditional migrations cannot bypass a failed publication sync on retry.
+- Recheck current file type and modification time immediately before expiry pruning removes a file, preserving fresh replacements and timestamp refreshes without requiring read access.
+- Stage guest cross-device symlink moves privately before atomic replacement, preserving the existing destination and source link when creation or publication fails.
+- Avoid rescanning held locks during repeated lock-manager construction, and initialize legacy reference counts during acquisition and release so nested handles retain the outer lock.
+
+### Validation
+
+- Expand representative method-audit coverage to 572 workloads across JavaScript/native modes on Linux, macOS, and Windows, including 1,000-entry walks, larger TAR inventories, and small synchronous hashes, with explicit platform exclusions.
+- Allow focused method audits with explicit native mode and balanced A-B-B-A or B-A-A-B measurement ordering.
+- Extend walker coverage for lexical aliases and callback mutation. Keep cancellation fixture setup outside the operation deadline and drain fixture writes before cleanup on slow or failing filesystems.
+- Give the Windows slow physical-package-copy sidecar proof separate setup, operation, child, and teardown budgets with bounded failure diagnostics, preserving ordinary helper deadlines.
 
 ## 0.11.0 - 2026-09-14
 
