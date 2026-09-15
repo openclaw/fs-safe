@@ -13,8 +13,8 @@ on:
       platform:
         description: Method-audit platform
         type: choice
-        options: [all, linux, macos, windows]
-        default: all
+        options: ["all", "linux", "macos", "windows"]
+        default: "all"
       compare_ref:
         description: Optional baseline Git ref for the same runner and harness
         type: string
@@ -27,6 +27,24 @@ on:
         description: Method-audit samples
         type: string
         default: "5"
+      filter:
+        description: Optional method-name substring for a focused audit
+        type: string
+        default: ""
+      order:
+        description: Baseline/candidate measurement order
+        type: choice
+        options: ["baseline-candidate", "abba"]
+        default: "baseline-candidate"
+      blocks:
+        description: Number of complete measurement-order blocks
+        type: string
+        default: "1"
+      native_mode:
+        description: Native mode selection
+        type: choice
+        options: ["both", "off", "require"]
+        default: "both"
 
 permissions:
   contents: read
@@ -47,6 +65,10 @@ jobs:
     env:
       METHOD_ITERATIONS: ${{ inputs.iterations }}
       METHOD_SAMPLES: ${{ inputs.samples }}
+      METHOD_FILTER: ${{ inputs.filter }}
+      METHOD_ORDER: ${{ inputs.order }}
+      METHOD_BLOCKS: ${{ inputs.blocks }}
+      METHOD_NATIVE_MODE: ${{ inputs.native_mode }}
       BASE_REF: ${{ inputs.compare_ref }}
     steps:
       - name: Check out
@@ -81,12 +103,59 @@ jobs:
       - name: Measure all methods
         run: |
           mkdir -p artifacts/method-audit
-          for mode in off require; do
-            if [[ -n "$BASE_REF" ]]; then
-              pnpm benchmark:methods --mode "$mode" --dist "$RUNNER_TEMP/fs-safe-method-baseline/dist" --iterations "$METHOD_ITERATIONS" --samples "$METHOD_SAMPLES" --warmup 3 --json "artifacts/method-audit/baseline-$mode.json"
+          if [[ ! "$METHOD_BLOCKS" =~ ^[1-5]$ ]]; then
+            echo "blocks must be an integer from 1 through 5" >&2
+            exit 2
+          fi
+          run_variant() {
+            local label="$1"
+            local dist="$2"
+            local modes=(off require)
+            if [[ "$METHOD_NATIVE_MODE" != "both" ]]; then modes=("$METHOD_NATIVE_MODE"); fi
+            for mode in "${modes[@]}"; do
+              local report="artifacts/method-audit/$label-$mode.json"
+              local args=(--mode "$mode" --iterations "$METHOD_ITERATIONS" --samples "$METHOD_SAMPLES" --warmup 3 --json "$report")
+              if [[ -n "$dist" ]]; then args+=(--dist "$dist"); fi
+              if [[ -n "$METHOD_FILTER" ]]; then args+=(--filter "$METHOD_FILTER"); fi
+              # Git Bash rewrites leading-slash arguments for native programs.
+              # Keep filters byte-exact; RUNNER_TEMP is already a native path.
+              MSYS2_ARG_CONV_EXCL='*' pnpm benchmark:methods "${args[@]}"
+              REPORT_PATH="$report" REPORT_LABEL="$label" REPORT_MODE="$mode" node --input-type=module -e '
+                import fs from "node:fs";
+                const report = JSON.parse(fs.readFileSync(process.env.REPORT_PATH, "utf8"));
+                const measured = Array.isArray(report.results) &&
+                  report.results.some((result) => result.skipped === undefined);
+                if (!measured) {
+                  console.error("No measured cases for filter " +
+                    JSON.stringify(process.env.METHOD_FILTER) + " on " + process.platform + "/" +
+                    process.env.REPORT_MODE + " (" + process.env.REPORT_LABEL + ")");
+                  process.exit(2);
+                }
+              '
+            done
+          }
+          baseline_dist="$RUNNER_TEMP/fs-safe-method-baseline/dist"
+          if [[ "$METHOD_ORDER" == "abba" ]]; then
+            if [[ -z "$BASE_REF" ]]; then
+              echo "ABBA order requires compare_ref" >&2
+              exit 2
             fi
-            pnpm benchmark:methods --mode "$mode" --iterations "$METHOD_ITERATIONS" --samples "$METHOD_SAMPLES" --warmup 3 --json "artifacts/method-audit/candidate-$mode.json"
-          done
+            if [[ -z "$METHOD_FILTER" ]]; then
+              echo "ABBA order requires a focused method filter" >&2
+              exit 2
+            fi
+            for (( block = 1; block <= METHOD_BLOCKS; block += 1 )); do
+              run_variant "block-$block-baseline-a" "$baseline_dist"
+              run_variant "block-$block-candidate-a" ""
+              run_variant "block-$block-candidate-b" ""
+              run_variant "block-$block-baseline-b" "$baseline_dist"
+            done
+          else
+            for (( block = 1; block <= METHOD_BLOCKS; block += 1 )); do
+              if [[ -n "$BASE_REF" ]]; then run_variant "block-$block-baseline" "$baseline_dist"; fi
+              run_variant "block-$block-candidate" ""
+            done
+          fi
       - name: Upload method measurements
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
