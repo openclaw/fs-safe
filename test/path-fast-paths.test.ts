@@ -2,7 +2,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { isPathInside } from "../src/path.js";
+import { isPathInside, normalizeWindowsPathForComparison } from "../src/path.js";
 import { safePathSegmentHashed } from "../src/install-path.js";
 import { sanitizeUntrustedFileName } from "../src/filename.js";
 
@@ -10,6 +10,24 @@ const posixPath = fc.array(fc.constantFrom("a", "ab", ".", "..", "", "é", "two 
   .map((parts) => `/${parts.join("/")}`);
 
 describe("path utility fast paths", () => {
+  it.skipIf(process.platform !== "win32")("matches Windows relative semantics after drive and namespace normalization", () => {
+    const windowsPath = fc.tuple(
+      fc.constantFrom("C:\\", "D:\\", "C:\\safe", "C:\\safe ", "\\\\?\\C:\\safe", "\\\\server\\share\\safe"),
+      fc.array(fc.constantFrom("a", "A", "ab", ".", "..", "", "é", "İ", "two words", "..hidden", "C:", "D:relative"), { maxLength: 8 }),
+      fc.constantFrom("\\", "/"),
+    ).map(([base, parts, separator]) => `${base}${separator}${parts.join(separator)}`);
+    fc.assert(fc.property(windowsPath, windowsPath, (root, other) => {
+      for (const target of [root, `${root}\\child`, `${root}\\..\\neighbor`, other]) {
+        const relative = path.win32.relative(
+          normalizeWindowsPathForComparison(path.win32.resolve(root)),
+          normalizeWindowsPathForComparison(path.win32.resolve(target)),
+        );
+        const expected = relative === "" || (relative !== ".." && !relative.startsWith("..\\") && !path.win32.isAbsolute(relative));
+        expect(isPathInside(root, target), `${root} -> ${target}`).toBe(expected);
+      }
+    }), { numRuns: 4000, seed: 1702 });
+  });
+
   it.skipIf(process.platform === "win32")("matches normalized containment for absolute roots with trailing separators", () => {
     fc.assert(fc.property(posixPath, posixPath, (root, target) => {
       const relative = path.posix.relative(root, target);
