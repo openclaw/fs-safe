@@ -18,6 +18,7 @@
 
 ### Validation and tooling
 
+- Add opt-in, bounded, unscored Windows transfer diagnostics with separate CPU/runtime traces and provenance receipts, preserving the ordinary benchmark runner, workloads, and release gates.
 - Add bounded Node 22/24 Linux receipts using real caller-owned descriptors to prove borrowed file-handle transfers retain their selected policy and stop later write submissions after cancellation or mutation-authority rejection, preserving a canonical pending receipt across interrupted final emission.
 - Separate the reviewed manual method-audit harness from immutable candidate and baseline checkouts, validate and resolve dispatch inputs before platform fan-out, and support Node 22/24 plus rebuild and same-artifact controls without changing the ordinary PR/schedule benchmark job.
 - Add versioned, mutation-checked benchmark provenance for trusted reviewed revisions, including harness/source identities, measurement and report-file receipts, manifests, lockfiles, dist trees, bounded dependency layouts, native addons, and runner metadata; this detects accidental drift but is not a sandbox for hostile benchmark code.

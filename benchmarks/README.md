@@ -219,6 +219,51 @@ report and must not be interpreted as a full installed-tree content hash. The
 addon is resolved relative to the selected measured build, so keep its matching
 platform package available too.
 
+### Unscored transfer diagnostics
+
+For a repeatable transfer pause, the manual workflow also accepts
+`transfer_diagnostics=true` (default: false). It runs only after ordinary method
+measurements and their upload succeed. The diagnostic is deliberately restricted
+to `platform=windows`, `native_mode=off`, `node_version=24`, `filter=copyFileHandle`,
+`iterations=50`, `samples=9`, `blocks=1`, and `order=abba` or `baab`. Supply exact
+40-hex `candidate_ref`, `compare_ref`, and `expected_harness_sha`; use `rebuild`
+for a source comparison or `same-artifact` for an identical-build control.
+Unsupported diagnostic settings fail rather than silently selecting a different
+workload. Ordinary runs with the input left false are unchanged.
+
+Four fresh diagnostic Node processes reuse the same installations, unchanged
+runner arguments, all eleven transfer rows in their original order, three
+warm-ups plus the checked call, and original per-row iteration divisors. Only
+allowlisted CPU-profiler, optimization/deoptimization, GC, and V8 event-tracing
+flags are added directly to those children. No `NODE_OPTIONS`, coverage, or
+compile-cache injection is accepted. The launcher does not instrument production
+functions, change the scored runner, force GC, disable JIT, or take heap snapshots.
+
+The separate `unscored-transfer-diagnostics-<platform>-<run>-<attempt>` artifact
+contains `fs-safe-transfer-diagnostics-v1` receipt metadata with `scored: false`,
+exact arguments and runtime identity, the immutable plan, launcher and executable
+hashes, bound ordinary-study identity, before/after installation snapshots, and
+hash/size/identity receipts for the collected files. Profiles and logs may contain
+synthetic hosted-runner paths and function names, but no environment dump is
+collected. The existing trusted-reviewed-revisions assumption still applies;
+this is not a sandbox for hostile library or harness code.
+
+Each diagnostic child is limited to three minutes, snapshot helpers to two
+minutes, and collection to fifteen minutes with a bounded termination drain.
+Logs are capped at 4 MiB each, other files at 16 MiB, and the working output set
+at 128 MiB/48 files. Output is watched during execution and admitted again after
+exit; the file-size watch is not an OS-level disk quota. Only bounded, unchanged
+files are copied into the published artifact directory. Interrupted or failed
+collection retains a pending/failed receipt, never a successful measurement claim.
+
+`status: collected` means diagnostic evidence was collected, not that a release
+gate passed or that the pause was reproduced. Compare the recorded ordinary and
+diagnostic observer peak sample positions before attributing a trace. Profiles
+identify functions but do not automatically identify exact sample boundaries;
+a GC pause also does not identify which allocation site caused the pressure.
+Never pool these timings with ordinary measurements, subtract profiling overhead,
+drop the preceding rows, or increase warm-up to clear a release gate.
+
 Compare builds on the same host, runtime, filesystem, and native mode. Alternate
 baseline/candidate runs and inspect sample spread; fsync timings and shared-host
 load can dwarf JavaScript changes. Warm-cache sequential latency does not measure
