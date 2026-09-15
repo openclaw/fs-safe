@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Guest filesystem
+
+- Tolerate a concurrently created guest parent directory while preserving no-follow directory admission. Competing files and symlinks still fail before payload writes, and disabled parent creation remains unchanged.
+
 ### Security
 
 - Use the effective POSIX user identity for secure-file ownership checks, failing closed before reading when ownership checks are enabled and the effective identity or descriptor owner cannot be established; descriptor-bound Windows ACL verification is unchanged.
@@ -20,6 +24,7 @@
 - Separate the reviewed manual method-audit harness from immutable candidate and baseline checkouts, validate and resolve dispatch inputs before platform fan-out, and support Node 22/24 plus rebuild and same-artifact controls without changing the ordinary PR/schedule benchmark job.
 - Add versioned, mutation-checked benchmark provenance for trusted reviewed revisions, including harness/source identities, measurement and report-file receipts, manifests, lockfiles, dist trees, bounded dependency layouts, native addons, and runner metadata; this detects accidental drift but is not a sandbox for hostile benchmark code.
 - Bind filename-sanitizer benchmark expectations to the measured revision's tracked source, validate all 17 profile rows before filtering, strengthen four long-name endpoint checks, add paired shared-mutation-admission fixtures with 60 portable and 96 Windows rows, and cover temp-workspace mode correction plus existing/missing roots at depths 4/8/32.
+- Measure ten guest filesystem workloads through the selected build's Python source, with fresh existing/missing-parent fixtures, checked results, interpreter and source receipts, and explicit unsupported-platform skips.
 
 ## 0.12.0 - 2026-09-15
 

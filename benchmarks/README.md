@@ -121,6 +121,44 @@ returned bytes. Detection uses the selected `--dist` directory, so a saved
 current build is not mistaken for a legacy baseline. These labels retain
 `readSecureFile` callable coverage; rejection timing is not successful-read timing.
 
+## Guest filesystem
+
+The `Guest.` filter selects ten Python guest workloads: write, create, copy,
+rename, and mkdirp, each with existing and missing two-component parents.
+Every invocation gets a new fixture; payload operations use 1 KiB of fixed
+bytes. The timer includes one complete `python3 -c` process, parsing the
+selected measured build's `GUEST_FILESYSTEM_PYTHON`, filesystem work, and exit.
+Setup, result/content/source checks, interpreter identity checks, and fixture
+cleanup are outside timing. Every timed call is checked, including staging
+cleanup and source preservation/removal. Each process has a 30-second deadline;
+an error, signal, timeout, or wrong result fails the run rather than becoming a
+latency observation. Raced-directory success/failure controls belong to the
+correctness suite and are not scored as equivalent performance work.
+
+Reports include the exported program's SHA-256 and byte length, bound through
+the selected dist identity, plus the actual Python version, implementation,
+platform, architecture, executable SHA-256 and stat identity. The executable
+path is fixed after an untimed probe and its resolution/stat identity is
+checked before and after each invocation. Standard-library and shared-library
+contents are not hashed; these receipts are not complete runtime attestation.
+Python is probed only when a selected supported row runs. Linux and macOS are
+supported; Windows records ten explicit skips and never launches Python.
+A focused Windows-only guest report has no measured rows and cannot satisfy
+the method-audit evidence requirement for a nonempty measurement set.
+
+For a focused study, use `filter=Guest.`, `iterations=20`, `samples=9`,
+`blocks=3`, and separate `order=abba` and `order=baab` dispatches comparing
+the exact candidate against frozen main. Repeat both orders with identical
+candidate/baseline SHAs and `control=same-artifact`. Use the same reviewed
+harness and interpreter for every arm on each supported platform. Node 24
+and host native mode off suffice for Python timing; the guest program does
+not consume the host native mode. Node 22/24 and native off/require packaging
+checks do not qualify guest execution on Windows. Compare each
+row's median and sample tails with controls; samples remain averages over
+the recorded invocation count, not individual-call tail latencies.
+
+## Running and comparing workloads
+
 For a quick executable coverage check:
 
 ```sh
