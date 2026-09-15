@@ -23,6 +23,8 @@ platform coverage; security and concurrency tests remain separate.
 
 Each row reports microseconds per call, all sample averages, their median, and
 minimum/maximum. Defaults are 100 iterations, five samples, and five warmup calls.
+Each `samplesUs` element is explicitly the average microseconds per call across
+that row's recorded `iterations`; it is not an individual-call latency sample.
 Cheap synchronous functions run batches of 100 calls per requested iteration.
 Expensive archive, durable-store, and large-payload cases use fewer iterations, recorded per row.
 Inputs are synthetic. Fixture setup and cleanup run outside the timer; callback
@@ -34,6 +36,15 @@ payload assertions run outside measurement. Reads cover 128 B, 64 KiB, 1 MiB,
 2 MiB, the default Root budget of 16 MiB, and an explicit 32 MiB budget;
 writes compare both durability settings without changing package defaults.
 Hash cases verify the digest as well as the byte count outside measurement.
+The `tempWorkspace` filter selects 17 rows across asynchronous and synchronous
+creation: two ordinary rows, two requested-`0750` mode rows, one synchronous
+forced-correction row, and 12 existing/missing-root rows at generated depths
+4/8/32. Linux and macOS requested-mode preflights prove whether ordinary or
+forced umask creation starts at `0750` or `0700`; the forced fixture restores
+the process umask on setup, operation, verification, and cleanup failures.
+Every row checks final mode and owner where portable, successful cleanup, and
+path absence outside timing. Depth-row reports also record the actual canonical
+root component count so runner-specific temporary path prefixes remain visible.
 The broader cases add lexical paths at depths 0/8/32, batches of 100/1,000
 paths, 1,000-entry listings and walks, private/public stores through 1 MiB with
 both durability settings, 1,000-item JSON documents and concurrent updates,
@@ -52,14 +63,33 @@ then verify the returned entry and the published processing file outside timing.
 Queue fixtures are acknowledged outside timing; lock-group timings include release.
 Scaling cases add 1/8/32 concurrent Root and FileStore reads, batches of 100
 lock-manager constructions with 0/32/128 retained locks, and scans of 100/1,000 unexpired
-store entries. Forced permission-error replacement cases exercise the public
+store entries. Six `Root.write/mutation-admission/` rows cover policy-bound
+writes through existing and missing parents at depths 1/8/32. The focused
+`shared-js-mutation-admission` family pairs adjacent `policy=none` and
+`policy=enabled` controls for `Root.openWritable` update, append, and replace,
+`Root.append`, and `Root.mkdir` at the same depths and parent layouts. It has
+exactly 60 portable rows: 36 open-writable, 12 append, and 12 mkdir. Windows
+adds 24 `Root.write` and 12 `Root.create` rows for 96 total. All use a divisor
+of 10; fixture reset, result verification, descriptor close, and cleanup stay
+outside timing. Forced permission-error replacement cases exercise the public
 filesystem adapter with 128 B, 1 MiB, and 16 MiB payloads, both restoration
 policies, and both sync/async methods. Temp-file and parent syncing are disabled
 for these cases; `restore-original` still includes its required destination
 sync. Fixture reset remains outside timing.
 Name-collection cases cover ASCII, NFC, and decomposed paths at depths 1/8/32;
 rejected paths and store keys; 2,048-member ZIPs with shallow/deep ASCII and
-Unicode names; and long callback-output filenames. Expected synchronous
+Unicode names; and long callback-output filenames. The 17 filename-sanitizer
+rows include the ordinary and fallback calls plus a 15-row fallback boundary
+matrix. Every row is checked eagerly before filtering or timing against a
+recognized legacy or sanitized profile. Manual method-audit runs independently
+derive the expected profile from the measured revision's tracked
+`src/filename.ts` blob. Standalone runs select the profile through behavioral
+checks and report `binding: "standalone"` with no independently bound expected
+profile. Reports mark rows as `equivalent-output` or `changed-output`. The four
+long-name endpoint rows retain equivalent output and
+verify outside timing that the destination content is exact, the staging file
+is gone, `.txt.part` survives truncation, and both NFC and NFD forms of the
+staging component fit within 255 bytes. Expected synchronous
 rejections use the checked per-call timing path, including during measurement.
 Borrowed-handle transfers and Root byte-copy cases cover the same payload sizes;
 the Root cases use `clone: "never"` and `durable: false` to expose transfer costs.
@@ -152,6 +182,15 @@ addons, and a bounded dependency-layout identity are hashed before and after
 the measurement sequence. A missing report, changed plan, changed covered
 installation identity, unexpected dist hash, or loaded-addon mismatch fails
 finalization.
+
+Each manual report also binds its selected dist to the immutable plan by
+following its report-plan `buildId` to the build's `sourceRole` and then to
+that source's commit, tree, and tracked filename-source blob/hash. The expected filename
+fallback profile comes from that source content, independently of the measured
+behavioral probe; unknown source forms and expectation mismatches fail before
+timing. A same-artifact baseline label therefore inherits the candidate build's
+source expectation. The reviewed harness never reads or hashes an `H/dist`
+directory while making this decision.
 
 This evidence workflow is for trusted, reviewed H/C/B revisions. Candidate and
 baseline build scripts and measured library code execute with the runner
