@@ -124,6 +124,11 @@ manifest, and lockfile (including uncommitted edits), Node version, platform, CP
 mode, and whether the binding loaded. The addon is resolved relative to that build, so
 keep its matching platform package available too.
 
+Filename-fallback matrix reports also identify the detected legacy or sanitized
+fallback profile and the candidate distribution hash. A candidate-equivalent
+distribution must report the sanitized profile. Rows marked `changed-output`
+time a security-contract change and are not equivalent-work speedup evidence.
+
 Compare builds on the same host, runtime, filesystem, and native mode. Alternate
 baseline/candidate runs and inspect sample spread; fsync timings and shared-host
 load can dwarf JavaScript changes. Warm-cache sequential latency does not measure

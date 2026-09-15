@@ -63,6 +63,23 @@ describe("sanitizeUntrustedFileName", () => {
     expect(sanitizeUntrustedFileName("<>", "fallback.bin")).toBe("fallback.bin");
   });
 
+  it.each(["<>", '"*|?', "\u0000\u001f\u007f"])(
+    "keeps a fully removable non-path ASCII candidate unusable: %j",
+    (candidate) => {
+      expect(sanitizeAtPosition("primary", candidate)).toBe("fallback.bin");
+      expect(sanitizeAtPosition("fallback", candidate)).toBe("file");
+    },
+  );
+
+  it("retains the complete sanitizer for mixed and path-like ASCII candidates", () => {
+    expect(sanitizeUntrustedFileName("<>report?.txt", "fallback.bin")).toBe("report.txt");
+    expect(sanitizeUntrustedFileName("<>/nested/final?.txt", "fallback.bin"))
+      .toBe("final.txt");
+    expect(sanitizeUntrustedFileName("<>\\nested\\final?.txt", "fallback.bin"))
+      .toBe("final.txt");
+    expect(sanitizeUntrustedFileName(":", "fallback.bin")).toBe("fallback.bin");
+  });
+
   it("leaves a valid primary name unchanged without exposing an unsafe fallback", () => {
     expect(sanitizeUntrustedFileName("report.txt", "../../outside.txt")).toBe("report.txt");
   });

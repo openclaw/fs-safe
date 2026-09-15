@@ -40,6 +40,16 @@ if (args["copy-concurrency"] !== undefined) {
 }
 const packageRoot = path.resolve(import.meta.dirname, "..");
 const dist = path.resolve(args.dist ?? path.join(packageRoot, "dist"));
+const distributionHash = (directory) => createHash("sha256").update(
+  fs.readdirSync(directory)
+    .filter((name) => /\.(js|wasm)$/.test(name))
+    .sort()
+    .map((name) => name + createHash("sha256").update(fs.readFileSync(path.join(directory, name))).digest("hex"))
+    .join("\n"),
+).digest("hex");
+const distHash = distributionHash(dist);
+const candidateDistHash = distributionHash(path.join(packageRoot, "dist"));
+const distributionIdentity = distHash === candidateDistHash ? "candidate-equivalent" : "comparison";
 const measuredFeatures = measuredSecureFileFeatures(dist);
 const manifest = JSON.parse(fs.readFileSync(path.join(packageRoot, "package.json"), "utf8"));
 const harnessHash = createHash("sha256");
@@ -59,6 +69,21 @@ for (const [subpath, target] of Object.entries(manifest.exports)) {
     api[name] = value;
     exportsByName.set(name, [...(exportsByName.get(name) ?? []), subpath]);
   }
+}
+const fallbackProfileProbe = api.sanitizeUntrustedFileName("<>", "../..");
+assert(
+  fallbackProfileProbe === "../.." || fallbackProfileProbe === "file",
+  `Unknown filename fallback profile: ${JSON.stringify(fallbackProfileProbe)}`,
+);
+const measuredProfiles = {
+  filenameFallbackSanitization: fallbackProfileProbe === "file" ? "sanitized" : "legacy",
+};
+if (distributionIdentity === "candidate-equivalent") {
+  assert.equal(
+    measuredProfiles.filenameFallbackSanitization,
+    "sanitized",
+    "Candidate-equivalent distribution must retain sanitized filename fallbacks",
+  );
 }
 api.configureFsSafeNative({ mode: args.mode });
 const { getNativeBinding } = await import(pathToFileURL(path.join(dist, "native.js")));
@@ -90,7 +115,7 @@ const contract = (name, object) => {
   contracts.set(name, [...properties].sort());
 };
 const cleanups = [];
-const context = { api, workspace, native, binding, measuredFeatures, register, exclude, contract, args, onCleanup: (fn) => cleanups.push(fn) };
+const context = { api, workspace, native, binding, measuredFeatures, measuredProfiles, register, exclude, contract, args, onCleanup: (fn) => cleanups.push(fn) };
 let cleanup;
 try {
   cleanup = await registerCore(context);
@@ -146,14 +171,14 @@ try {
     }
     const sorted = [...samplesUs].sort((a, b) => a - b);
     const medianUs = (sorted[Math.floor((sorted.length - 1) / 2)] + sorted[Math.floor(sorted.length / 2)]) / 2;
-    const result = { name: c.name, iterations, samplesUs, medianUs, minUs: sorted[0], maxUs: sorted.at(-1) };
+    const result = { name: c.name, iterations, samplesUs, medianUs, minUs: sorted[0], maxUs: sorted.at(-1), workloadSemantics: c.workloadSemantics };
     results.push(result);
     process.stderr.write(`${c.name}: ${medianUs.toFixed(2)} us/call\n`);
   }
   const report = {
     schemaVersion: 1,
     copyFixture: { shape: args["copy-shape"], files: args["copy-shape"] === "empty" ? 0 : args["copy-files"], bytesPerFile: args["copy-file-bytes"], extraPayloadBytes: args["copy-shape"] === "mixed" ? 1024 * 1024 : 0, concurrency: args["copy-concurrency"] ?? null },
-    metadata: { harnessHash: harnessDigest, nativeHash, distHash: createHash("sha256").update(fs.readdirSync(dist).filter((name) => /\.(js|wasm)$/.test(name)).sort().map((name) => name + createHash("sha256").update(fs.readFileSync(path.join(dist, name))).digest("hex")).join("\n")).digest("hex"), harnessRevision: execFileSync("git", ["rev-parse", "HEAD"], { cwd: packageRoot, encoding: "utf8" }).trim(), node: process.version, platform: process.platform, arch: process.arch, cpu: os.cpus()[0]?.model, mode: args.mode, native, samples: args.samples, date: new Date().toISOString() },
+    metadata: { harnessHash: harnessDigest, nativeHash, distHash, candidateDistHash, distributionIdentity, measuredProfiles, harnessRevision: execFileSync("git", ["rev-parse", "HEAD"], { cwd: packageRoot, encoding: "utf8" }).trim(), node: process.version, platform: process.platform, arch: process.arch, cpu: os.cpus()[0]?.model, mode: args.mode, native, samples: args.samples, date: new Date().toISOString() },
     coverage: { exports: Object.fromEntries(exportsByName), methods: Object.fromEntries(contracts), exclusions: Object.fromEntries(exclusions), registeredCases: cases.length, filtered: Boolean(args.filter) },
     results,
   };
