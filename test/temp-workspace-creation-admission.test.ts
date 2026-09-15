@@ -284,21 +284,26 @@ for (const variant of ["async", "sync"] as const) {
         const outside = path.join(base, "outside");
         await fs.mkdir(rootDir, { mode: 0o700 });
         await fs.mkdir(outside, { mode: 0o711 });
+        await fs.chmod(outside, 0o711);
+        await fs.writeFile(path.join(outside, "keep"), "outside");
         let child = "";
         let childFd: number | undefined;
-        observeFirstChild(rootDir, (dir) => { child = dir; });
         const open = fsSync.openSync.bind(fsSync);
         vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
           const fd = open(...args);
-          if (args[0] === child) childFd = fd;
+          if (typeof args[0] === "string" && path.dirname(args[0]) === rootDir &&
+            path.basename(args[0]).startsWith("workspace-")) {
+            child = args[0];
+            childFd = fd;
+          }
           return fd;
         });
         const failure = Object.assign(new Error("chmod rejected"), { code: "EPERM" });
-        const beforeChmod = () => {
+        const beforeChmod = vi.fn(() => {
           if (kind === "failure") throw failure;
           fsSync.renameSync(child, `${child}.original`);
           fsSync.symlinkSync(outside, child, "dir");
-        };
+        });
         if (variant === "async") {
           const fchmod = fsSync.fchmod.bind(fsSync);
           vi.spyOn(fsSync, "fchmod").mockImplementation((fd, mode, callback) => {
@@ -313,14 +318,32 @@ for (const variant of ["async", "sync"] as const) {
           });
         }
         const register = vi.spyOn(cleanup, "registerTempPathForExit");
+        const transfer = vi.spyOn(TempWorkspaceRetainedChild.prototype, "transfer");
+        const close = vi.spyOn(fsSync, "closeSync");
         const operation = createWithModeCorrection(rootDir);
         if (kind === "failure") await expect(operation).rejects.toBe(failure);
-        else await expect(operation).rejects.toBeInstanceOf(Error);
+        else await expect(operation).rejects.toMatchObject({ code: "not-file" });
+        expect(beforeChmod).toHaveBeenCalledTimes(1);
         expect(register).not.toHaveBeenCalled();
-        expect(fsSync.statSync(outside).mode & 0o777).toBe(0o711);
+        expect(transfer).not.toHaveBeenCalled();
+        expect(child).not.toBe("");
         expect(childFd).toBeDefined();
-        expect(() => fsSync.fstatSync(childFd!)).toThrow();
-        expect(fsSync.lstatSync(child).isSymbolicLink()).toBe(kind === "replacement");
+        expect(close.mock.calls.filter(([fd]) => fd === childFd)).toHaveLength(1);
+        expect(() => fsSync.fstatSync(childFd!)).toThrowError(
+          expect.objectContaining({ code: "EBADF" }),
+        );
+        expect(fsSync.statSync(outside).mode & 0o7777).toBe(0o711);
+        expect(await fs.readFile(path.join(outside, "keep"), "utf8")).toBe("outside");
+        const childStat = fsSync.lstatSync(child);
+        expect(childStat.isSymbolicLink()).toBe(kind === "replacement");
+        if (kind === "failure") expect(childStat.isDirectory()).toBe(true);
+        else {
+          expect(fsSync.readlinkSync(child)).toBe(outside);
+          const original = fsSync.lstatSync(`${child}.original`);
+          expect(original.isDirectory()).toBe(true);
+          expect(original.isSymbolicLink()).toBe(false);
+          expect(original.mode & 0o7777).toBe(0o750);
+        }
       },
     );
 

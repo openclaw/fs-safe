@@ -41,9 +41,14 @@ describe.runIf(supportsDirectRequestedMode)("sync direct child descriptor admiss
       const direct = vi.spyOn(fsSync, "mkdirSync");
       const mkdtemp = vi.spyOn(fsSync, "mkdtempSync");
       const workspace = tempWorkspaceSync({ rootDir, prefix: "workspace-", dirMode });
-      expect(direct.mock.calls.filter(([name]) => isDirectChild(rootDir, name))).toHaveLength(0);
-      expect(mkdtemp).toHaveBeenCalledTimes(1);
-      expect(workspace.cleanup()).toBe("removed");
+      try {
+        expect(fsSync.lstatSync(workspace.dir).mode & 0o7777).toBe(dirMode);
+        expect(direct.mock.calls.filter(([name]) => isDirectChild(rootDir, name))).toHaveLength(0);
+        expect(mkdtemp).toHaveBeenCalledTimes(1);
+      } finally {
+        fsSync.chmodSync(workspace.dir, 0o700);
+        expect(workspace.cleanup()).toBe("removed");
+      }
     },
   );
 
