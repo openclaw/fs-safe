@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep budgeted-walk cancellation fixture setup outside its test deadline, and drain fixture writes before cleanup on slow or failing filesystems.
+
 - Reuse raw archive path segments during validation, preserving platform checks, normalized component limits, and error order.
 
 - Size Linux native byte-copy scratch buffers from the existing file-size hint, bounded between 4 KiB and 1 MiB, while retaining read-to-EOF, sparse output, and borrowed-descriptor behavior.
