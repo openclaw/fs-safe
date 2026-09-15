@@ -2,6 +2,9 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { realpathSync } from "../src/realpath.js";
+import { resolveRootContext } from "../src/root-context.js";
+import { removePathInRootFallback } from "../src/root-remove.js";
 import { root } from "../src/root.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
@@ -86,3 +89,56 @@ it.each([
     : path.join(movedBoundary, "parent", "candidate");
   await expect(fs.lstat(movedCandidate)).rejects.toMatchObject({ code: "ENOENT" });
 });
+
+it.each([
+  { canonicalizations: 3, parentDepth: 0 },
+  { canonicalizations: 6, parentDepth: 2 },
+  { canonicalizations: 6, parentDepth: 8 },
+])(
+  "keeps nonrecursive parent admission linear at depth $parentDepth",
+  async ({ canonicalizations, parentDepth }) => {
+    const directory = await tempRoot("fs-safe-remove-parent-budget-");
+    const context = await resolveRootContext(directory);
+    const boundaries = [context.rootReal];
+    let parent = context.rootReal;
+    for (let index = 0; index < parentDepth; index += 1) {
+      parent = path.join(parent, `level-${index}`);
+      boundaries.push(parent);
+    }
+    await fs.mkdir(parent, { recursive: true });
+    const candidate = path.join(parent, "candidate");
+    await fs.writeFile(candidate, "value");
+
+    const boundarySet = new Set(boundaries);
+    const identityObservations = new Map(boundaries.map(boundary => [boundary, 0]));
+    const canonicalPaths: string[] = [];
+    const lstat = fsSync.lstatSync.bind(fsSync);
+    const canonicalize = realpathSync.native;
+    vi.spyOn(fsSync, "lstatSync").mockImplementation(((...args: Parameters<typeof fsSync.lstatSync>) => {
+      const observed = String(args[0]);
+      const options = args[1] as { bigint?: boolean } | undefined;
+      if (options?.bigint === true && boundarySet.has(observed)) {
+        identityObservations.set(observed, identityObservations.get(observed)! + 1);
+      }
+      return lstat(...args);
+    }) as typeof fsSync.lstatSync);
+    vi.spyOn(realpathSync, "native").mockImplementation(observed => {
+      const candidatePath = String(observed);
+      if (boundarySet.has(candidatePath)) canonicalPaths.push(candidatePath);
+      return canonicalize(observed);
+    });
+
+    await removePathInRootFallback(context, candidate, {});
+
+    expect(canonicalPaths).toHaveLength(canonicalizations);
+    expect(new Set(canonicalPaths)).toEqual(
+      new Set(parentDepth === 0 ? [context.rootReal] : [context.rootReal, parent]),
+    );
+    for (const observations of identityObservations.values()) {
+      // Unknown Windows identities may take the one bounded retry provided by
+      // the strict identity observer, but work still grows only with depth.
+      expect(observations).toBeGreaterThanOrEqual(3);
+      expect(observations).toBeLessThanOrEqual(6);
+    }
+  },
+);

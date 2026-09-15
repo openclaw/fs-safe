@@ -276,12 +276,12 @@ already have completed; rejection does not imply rollback.
 
 Unlink a file or `rmdir` an empty directory. Non-empty directories throw `not-empty`. For atomic directory replacement, use [`replaceDirectoryAtomic`](atomic.md#replacedirectoryatomic).
 
-Before a nonrecursive JavaScript fallback removal, fs-safe retains the Root and
-each canonical parent-directory identity through the immediate parent. It
-rejects a parent redirected through a symlink or junction before `unlink` or
-`rmdir`, even with `force: true`, and rechecks the retained ancestry after the
-operation settles. The entry may already have been removed when that final
-verification rejects.
+Before a nonrecursive JavaScript fallback removal, fs-safe retains exact
+Root-to-parent directory identities, with canonical endpoint checks at Root and
+the immediate parent. It rejects a parent redirected through a symlink or
+junction before `unlink` or `rmdir`, even with `force: true`, and rechecks the
+retained ancestry after the operation settles. The entry may already have been
+removed when that final verification rejects.
 
 ```ts
 await fs.remove("logs/yesterday.log");
