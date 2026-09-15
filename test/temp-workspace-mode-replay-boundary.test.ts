@@ -57,12 +57,13 @@ for (const variant of ["async", "sync"] as const) {
     it("never chmods a child-name replacement introduced by the fresh parent check", async () => {
       const rootDir = await tempRoot("fs-safe-workspace-mode-child-replay-");
       let child = "";
+      let replacementChild = "";
       let originalChild = "";
       let modeTargetValidated = false;
       let replaced = false;
       let childObservations = 0;
       const lstat = fsSync.lstatSync.bind(fsSync);
-      vi.spyOn(fsSync, "lstatSync").mockImplementation((name, options) => {
+      const lstatSpy = vi.spyOn(fsSync, "lstatSync").mockImplementation((name, options) => {
         const stat = lstat(name, options);
         if (typeof name === "string" && path.dirname(name) === rootDir &&
           path.basename(name).startsWith("workspace-")) {
@@ -70,21 +71,23 @@ for (const variant of ["async", "sync"] as const) {
           childObservations += 1;
           if (childObservations === 2) modeTargetValidated = true;
         } else if (name === rootDir && modeTargetValidated && !replaced) {
-          originalChild = `${child}.original`;
-          fsSync.renameSync(child, originalChild);
-          fsSync.mkdirSync(child, { mode: 0o700 });
-          fsSync.writeFileSync(path.join(child, "keep"), "replacement");
+          replacementChild = child;
+          originalChild = `${replacementChild}.original`;
+          fsSync.renameSync(replacementChild, originalChild);
+          fsSync.mkdirSync(replacementChild, { mode: 0o700 });
+          fsSync.writeFileSync(path.join(replacementChild, "keep"), "replacement");
           replaced = true;
         }
         return stat;
       });
       const register = vi.spyOn(cleanup, "registerTempPathForExit");
       await expect(create(rootDir)).rejects.toMatchObject({ code: "path-mismatch" });
+      lstatSpy.mockRestore();
       expect(replaced).toBe(true);
       expect(register).not.toHaveBeenCalled();
-      expect(fsSync.lstatSync(child).mode & 0o7777).toBe(0o700);
+      expect(lstat(replacementChild).mode & 0o7777).toBe(0o700);
       expect(fsSync.lstatSync(originalChild).mode & 0o7777).toBe(0o750);
-      expect(await fs.readFile(path.join(child, "keep"), "utf8")).toBe("replacement");
+      expect(await fs.readFile(path.join(replacementChild, "keep"), "utf8")).toBe("replacement");
     });
   });
 }
