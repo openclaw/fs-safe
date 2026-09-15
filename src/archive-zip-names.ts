@@ -74,7 +74,14 @@ export function admitZipNames(params: {
   const localRaw = sameName ? centralRaw : local.toString("latin1");
   const centralUtf8 = originalName(central, centralRaw, flags);
   const localUtf8 = sameName ? centralUtf8 : originalName(local, localRaw, flags);
-  const centralUnicode = unicodeName(central, centralExtra); const localUnicode = unicodeName(local, localExtra);
+  const centralUnicode = unicodeName(central, centralExtra);
+  const centralField = centralExtra.get(0x7075); const localField = localExtra.get(0x7075);
+  // Only immutable identical fields share their CRC-bound name admission.
+  const sameUnicode = (!centralField || !types.isSharedArrayBuffer(centralField.buffer)) &&
+    (!localField || !types.isSharedArrayBuffer(localField.buffer)) &&
+    (centralField === localField ||
+      (centralField !== undefined && localField !== undefined && centralField.equals(localField)));
+  const localUnicode = sameName && sameUnicode ? centralUnicode : unicodeName(local, localExtra);
   const centralKey = key(centralRaw);
   if (!sameName && centralKey !== key(localRaw)) {
     zipFormat("central and local names disagree");
@@ -83,7 +90,7 @@ export function admitZipNames(params: {
     (value): value is string => value !== undefined,
   );
   const interpretationKey = interpretations.length ? key(interpretations[0]!) : undefined;
-  if (interpretations.some((value) => key(value) !== interpretationKey)) {
+  if (interpretations.some((value) => value !== interpretations[0] && key(value) !== interpretationKey)) {
     zipFormat("conflicting Unicode name interpretations");
   }
   // JSZip checks the central Unicode field against the local name. A slash-only
