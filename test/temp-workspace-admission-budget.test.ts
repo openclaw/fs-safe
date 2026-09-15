@@ -14,6 +14,7 @@ import * as cleanup from "../src/temp-cleanup.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
+const supportsDirectRequestedMode = process.platform === "linux" || process.platform === "darwin";
 
 function tempWorkspaceSyncWithUmask022(options: Parameters<typeof tempWorkspaceSync>[0]) {
   const previous = process.umask(0o022);
@@ -57,8 +58,8 @@ for (const variant of ["async", "sync"] as const) {
       ["compatible default", false, 0o700, undefined],
       ["compatible requested 0750", false, 0o750, undefined],
       ["native capability probe", true,
-        variant === "sync" && process.platform === "linux" ? 0o750 : 0o700, undefined],
-      ...(variant === "sync" && process.platform === "linux"
+        variant === "sync" && supportsDirectRequestedMode ? 0o750 : 0o700, undefined],
+      ...(variant === "sync" && supportsDirectRequestedMode
         ? [["restrictive umask correction", false, 0o750, 0o077] as const]
         : []),
     ] as const)("holds %s to separate total and BigInt budgets", async (
@@ -120,8 +121,8 @@ for (const variant of ["async", "sync"] as const) {
         return register(...args);
       });
       const options = { rootDir, prefix: "workspace-", dirMode };
-      const directRequestedMode = variant === "sync" && process.platform === "linux" &&
-        dirMode === 0o750 && creationUmask === undefined;
+      const directRequestedMode = variant === "sync" && supportsDirectRequestedMode &&
+        dirMode === 0o750;
       let directInitialMode: number | undefined;
       if (directRequestedMode) {
         const mkdir = fsSync.mkdirSync.bind(fsSync);
@@ -152,8 +153,11 @@ for (const variant of ["async", "sync"] as const) {
       if (directRequestedMode) expect(directInitialMode).toBeDefined();
       const modeCorrection = process.platform !== "win32" && dirMode !== 0o700 &&
         (!directRequestedMode || directInitialMode !== dirMode);
+      const correctionObservations = !modeCorrection ? 0
+        : variant === "async" ? 4
+        : directRequestedMode ? 2 : 3;
       expect(observations).toBe(2 * components + 8 +
-        (nativeProbe ? 1 : 0) + (modeCorrection ? (variant === "sync" ? 3 : 4) : 0));
+        (nativeProbe ? 1 : 0) + correctionObservations);
       if (process.platform === "linux") expect(bigintObservations).toBe(components + 1);
       expect(canonicalize).toHaveBeenCalledTimes(4 +
         (nativeProbe ? 1 : 0) + (modeCorrection ? (variant === "sync" ? 1 : 2) : 0));

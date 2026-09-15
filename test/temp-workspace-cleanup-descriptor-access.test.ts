@@ -85,7 +85,7 @@ describe.runIf(supportsSearchOnlyDirectory)("temp workspace cleanup descriptor a
       let workspace;
       if (variant === "async") {
         workspace = await tempWorkspace(options);
-      } else if (process.platform === "linux") {
+      } else if (process.platform === "linux" || process.platform === "darwin") {
         const previous = process.umask(0o077);
         try {
           workspace = tempWorkspaceSync(options);

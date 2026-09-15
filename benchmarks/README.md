@@ -35,8 +35,9 @@ payload assertions run outside measurement. Reads cover 128 B, 64 KiB, 1 MiB,
 writes compare both durability settings without changing package defaults.
 Hash cases verify the digest as well as the byte count outside measurement.
 The historical `tempWorkspaceSync/mode-correction` row uses the current process
-umask. On Linux it measures exclusive requested-`0750` creation and skips mode
-correction when the observed complete mode already matches. Async and
+umask. On Linux and macOS it uses an untimed same-parent preflight to prove
+exclusive requested-`0750` creation is observed as `0750`, then skips mode
+correction when the timed child's observed complete mode matches. Async and
 non-eligible sync cases retain `mkdtemp`, which requests `0700`; a differing
 observed mode is corrected. The separate
 `tempWorkspaceSync/forced-mode-correction` row applies umask `077` and performs

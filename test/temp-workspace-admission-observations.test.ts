@@ -34,7 +34,7 @@ for (const variant of ["async", "sync"] as const) {
     }
 
     async function createWithModeCorrection(rootDir: string) {
-      if (variant !== "sync" || process.platform !== "linux") {
+      if (variant !== "sync" || (process.platform !== "linux" && process.platform !== "darwin")) {
         return await create(rootDir, { dirMode: 0o750 });
       }
       const previous = process.umask(0o077);

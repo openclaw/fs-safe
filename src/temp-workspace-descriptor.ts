@@ -30,6 +30,8 @@ type TempWorkspaceChildModeChecks = {
   validate(stat: TempWorkspaceIdentityStat): void;
 };
 
+type InitialTempWorkspaceChildReceipt = Readonly<{ stat: fsSync.BigIntStats }>;
+
 export type RetainedDirectory = {
   fd: number;
   access: DirectoryDescriptorAccess;
@@ -130,8 +132,14 @@ export class TempWorkspaceRetainedChild {
   #modeLease = false;
   #proc: boolean;
   #transferAuthorized = false;
+  #initialReceipt: InitialTempWorkspaceChildReceipt | undefined;
 
-  constructor(dir: string, identity: FileIdentityStat) {
+  private constructor(
+    dir: string,
+    identity: FileIdentityStat,
+    descriptor: OpenedDirectory,
+    initialReceipt?: InitialTempWorkspaceChildReceipt,
+  ) {
     if (typeof identity.dev !== "bigint" || typeof identity.ino !== "bigint") {
       throw new FsSafeError("path-mismatch", "temp workspace child identity is incomplete");
     }
@@ -140,19 +148,73 @@ export class TempWorkspaceRetainedChild {
     this.#numericIdentity = LINUX
       ? projectTempWorkspaceNumericIdentity(this.#identity)
       : undefined;
-    const descriptor = openRetainedDirectory(dir);
     this.#access = descriptor.access;
     this.#proc = descriptor.proc;
     // Opening without following the final component pins the child, but does
     // not admit it. Until final descriptor + name validation succeeds this
     // handle may only be inspected, mode-validated, replaced, or closed.
     this.#fd = descriptor.fd;
+    this.#initialReceipt = initialReceipt;
+  }
+
+  static retain(dir: string, identity: FileIdentityStat): TempWorkspaceRetainedChild {
+    if (typeof identity.dev !== "bigint" || typeof identity.ino !== "bigint") {
+      throw new FsSafeError("path-mismatch", "temp workspace child identity is incomplete");
+    }
+    const descriptor = openRetainedDirectory(dir);
+    try {
+      return new TempWorkspaceRetainedChild(dir, identity, descriptor);
+    } catch (error) {
+      closeAfterAdmissionFailure(
+        descriptor.fd,
+        error,
+        "temp workspace child admission and close failed",
+      );
+    }
+  }
+
+  static retainCreated(dir: string): {
+    retained: TempWorkspaceRetainedChild;
+    stat: fsSync.BigIntStats;
+  } {
+    const descriptor = openRetainedDirectory(dir);
+    try {
+      // Only this immediate post-create route installs a receipt. Freezing the
+      // exact fd result keeps its identity and complete mode immutable while
+      // the synchronous caller validates it and decides whether to correct.
+      const stat = fsSync.fstatSync(descriptor.fd, { bigint: true });
+      Object.freeze(stat);
+      const receipt = Object.freeze({ stat });
+      return {
+        retained: new TempWorkspaceRetainedChild(dir, stat, descriptor, receipt),
+        stat,
+      };
+    } catch (error) {
+      closeAfterAdmissionFailure(
+        descriptor.fd,
+        error,
+        "temp workspace created child admission and close failed",
+      );
+    }
+  }
+
+  discardInitialReceipt(): void {
+    this.#initialReceipt = undefined;
+  }
+
+  #consumeInitialReceipt(): fsSync.BigIntStats | undefined {
+    const receipt = this.#initialReceipt;
+    // Clear first so validation failures, procfs checks, and later admission
+    // can never reuse the creation observation.
+    this.#initialReceipt = undefined;
+    return receipt?.stat;
   }
 
   finalizeAdmission(
     validate: (stat: TempWorkspaceIdentityStat) => void,
   ): TempWorkspaceIdentityStat {
     this.#assertModeLeaseReleased();
+    this.discardInitialReceipt();
     if (this.#fd === undefined) {
       throw new FsSafeError("path-mismatch", "temp workspace child descriptor is unavailable");
     }
@@ -184,11 +246,10 @@ export class TempWorkspaceRetainedChild {
   #inspectModeTarget(
     fd: number,
     validate: (stat: TempWorkspaceIdentityStat) => void,
+    initial?: fsSync.BigIntStats,
   ): TempWorkspaceIdentityStat {
-    const descriptor = inspectTempWorkspaceDescriptorIdentitySync(
-      fd,
-      this.#identity,
-      this.#numericIdentity,
+    const descriptor = initial ?? inspectTempWorkspaceDescriptorIdentitySync(
+      fd, this.#identity, this.#numericIdentity,
     );
     assertRetainedChildDirectory(descriptor);
     validate(descriptor);
@@ -245,6 +306,7 @@ export class TempWorkspaceRetainedChild {
 
   async initializeMode(mode: number, checks: TempWorkspaceChildModeChecks): Promise<void> {
     this.#assertModeLeaseReleased();
+    this.discardInitialReceipt();
     if (this.#fd === undefined) {
       throw new FsSafeError("path-mismatch", "temp workspace child descriptor is unavailable");
     }
@@ -285,7 +347,7 @@ export class TempWorkspaceRetainedChild {
     this.#transferAuthorized = false;
     this.#modeLease = true;
     try {
-      const current = this.#inspectModeTarget(fd, checks.validate);
+      const current = this.#inspectModeTarget(fd, checks.validate, this.#consumeInitialReceipt());
       checks.assertParent();
       if (checks.hasRequestedMode(current)) return;
       if (this.#proc) {
@@ -306,6 +368,7 @@ export class TempWorkspaceRetainedChild {
 
   ensureReadable(): boolean {
     this.#assertModeLeaseReleased();
+    this.discardInitialReceipt();
     if (this.canEnumerate) return true;
     if (this.#fd === undefined) {
       throw new FsSafeError("path-mismatch", "temp workspace child descriptor is unavailable");
@@ -362,6 +425,7 @@ export class TempWorkspaceRetainedChild {
     directory: RetainedChildDirectory | undefined;
   } {
     this.#assertModeLeaseReleased();
+    this.discardInitialReceipt();
     if (this.#fd === undefined) {
       throw new FsSafeError("path-mismatch", "temp workspace child descriptor is unavailable");
     }
@@ -396,6 +460,7 @@ export class TempWorkspaceRetainedChild {
 
   close(): void {
     this.#assertModeLeaseReleased();
+    this.discardInitialReceipt();
     if (this.#fd === undefined) return;
     const fd = this.#fd;
     this.#fd = undefined;

@@ -116,7 +116,7 @@ function randomTempWorkspaceChildPath(childPrefix: string): string {
 }
 
 function canCreateTempWorkspaceWithRequestedMode(dirMode: number): boolean {
-  return process.platform === "linux" && dirMode !== 0o700 &&
+  return (process.platform === "linux" || process.platform === "darwin") && dirMode !== 0o700 &&
     (dirMode & 0o700) === 0o700 && (dirMode & 0o7000) === 0 && (dirMode & 0o022) === 0;
 }
 
@@ -220,7 +220,7 @@ async function createTempWorkspace(
     validateInitialTempWorkspaceChild(stat, admission.ownerUid);
     // Retain while the child still has its private creation mode so an
     // explicit dirMode such as 0 cannot make identity descriptor acquisition fail.
-    retainedChild = new TempWorkspaceRetainedChild(dir, stat);
+    retainedChild = TempWorkspaceRetainedChild.retain(dir, stat);
     const modeInitialization = admitRetainedTempWorkspaceChild(
       retainedChild,
       stat,
@@ -346,7 +346,8 @@ export function tempWorkspaceSync(
   let cleanupOwner: TempWorkspaceCleanupOwner | undefined;
   let unregisterTempDir: () => void;
   try {
-    if (canCreateTempWorkspaceWithRequestedMode(dirMode)) {
+    const directRequestedMode = canCreateTempWorkspaceWithRequestedMode(dirMode);
+    if (directRequestedMode) {
       dir = createTempWorkspaceWithRequestedModeSync(
         childPrefix,
         dirMode,
@@ -358,9 +359,16 @@ export function tempWorkspaceSync(
     }
     if (capability.parent) capability.assertCurrent();
     else admission.assertCurrent();
-    stat = inspectDirectoryIdentitySync(dir);
-    validateInitialTempWorkspaceChild(stat, admission.ownerUid);
-    retainedChild = new TempWorkspaceRetainedChild(dir, stat);
+    if (directRequestedMode) {
+      const created = TempWorkspaceRetainedChild.retainCreated(dir);
+      retainedChild = created.retained;
+      stat = created.stat;
+      validateInitialTempWorkspaceChild(stat, admission.ownerUid);
+    } else {
+      stat = inspectDirectoryIdentitySync(dir);
+      validateInitialTempWorkspaceChild(stat, admission.ownerUid);
+      retainedChild = TempWorkspaceRetainedChild.retain(dir, stat);
+    }
     admitRetainedTempWorkspaceChildSync(retainedChild, stat, admission, dirMode);
     retainChildDescriptor = capability.admitChildDescriptor(retainedChild.ensureReadable());
     // Match async adoption: complete ancestry and retained cleanup authority

@@ -36,33 +36,38 @@ For an already existing canonical root, discovery retains only its immutable
 exact identity. Cleanup-parent retention is provisional: after any native
 capability probe, creation captures and validates the complete ancestry,
 re-observes the root against discovery, and associates the retained parent
-descriptor. Async creation and sync creation outside the Linux direct-mode case
-dispatch `mkdtemp` immediately after that synchronous boundary without another
-yield or native probe. Existing aliases and missing-component roots keep the
-guarded admission route.
+descriptor. Async creation and sync creation outside the Linux/macOS
+direct-mode case dispatch `mkdtemp` immediately after that synchronous boundary
+without another yield or native probe. Existing aliases and missing-component
+roots keep the guarded admission route.
 
-On Linux, synchronous creation can instead use an exclusive six-character
+On Linux and macOS, synchronous creation can instead use an exclusive six-character
 random child name when an explicit requested mode other than `0o700` has owner
 `rwx`, no special bits, and no group/world write bits. The requested mode is
-passed directly to `mkdir`. Without a default ACL, the permission bits are
-filtered by the process umask. An inherited default ACL takes precedence over
-umask, and a parent setgid bit can also appear on the new directory. Creation
-verifies the observed complete mode and corrects any difference from `dirMode`
-through the retained descriptor. Creation makes at most 64 attempts; after a
-name collision, each retry generates its candidate first, replays the already
-admitted immutable ancestry and descriptor receipts, and then immediately
-attempts exclusive creation. A colliding entry is never inspected, adopted,
-corrected, registered, or deleted. The default `0o700`, async creation, and
+passed directly to `mkdir` and the observed complete permission bits, rather
+than the requested bits, are authoritative. Umask, inherited ACL state, or
+inherited special bits can make that observation differ, in which case creation
+corrects the mode through the retained descriptor. This mode-based optimization
+does not claim that Linux and macOS have identical syscall or ACL behavior, and
+POSIX mode bits do not establish ACL privacy. Creation makes at most 64 attempts;
+after a name collision, each retry generates its candidate first, replays the
+already admitted immutable ancestry and descriptor receipts, and then
+immediately attempts exclusive creation. A colliding entry is never inspected,
+adopted, corrected, registered, or deleted. The default `0o700`, async creation, and
 other sync modes retain the `mkdtemp` path. That path requests initial mode
 `0o700`; a result different from `dirMode` is initialized through the same
 descriptor-bound correction.
 
-The new child's exact identity, type, owner, private bits, and complete `0o7777`
-mode are checked before mode initialization. When its creation mode already
+The direct sync path opens the new child without following its final component
+and captures one exact descriptor observation after the parent replay. The new
+child's exact identity, type, owner, private bits, and complete `0o7777` mode are
+checked before mode initialization. When its creation mode already
 matches `dirMode` (including the default `0o700`), creation avoids an extra mode
-descriptor and chmod. If the observed creation mode differs from `dirMode`,
-creation uses the retained descriptor to correct the mode and verifies the
-requested mode before adoption. Permission failures propagate. POSIX `dirMode`
+descriptor and chmod. If the observed creation mode differs from `dirMode`, the
+immediate synchronous correction consumes that one-shot observation, checks the
+fresh child name, replays the parent, and applies correction through the retained
+descriptor. Later admission always performs fresh descriptor and name checks.
+Permission failures propagate. POSIX `dirMode`
 must not grant group/world write access; it only controls the new workspace,
 not existing supplied directories. After the
 first exact child observation, final adoption retains a no-follow child

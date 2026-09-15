@@ -106,17 +106,35 @@ export async function registerLifecycle({ api: a, workspace: w, native, binding,
   add("writeSiblingTempFile", () => a.writeSiblingTempFile({ dir: w, writeTemp: (p) => fsp.writeFile(p, data), resolveFinalPath: () => output }));
   add("writeViaSiblingTempPath", () => a.writeViaSiblingTempPath({ rootDir: w, targetPath: output, writeTemp: (p) => fsp.writeFile(p, data) }));
   const tempOptions = { rootDir: w, prefix: "fixture" };
+  const directRequestedModePlatform = process.platform === "linux" || process.platform === "darwin";
   add("resolveSecureTempRoot", () => a.resolveSecureTempRoot({ preferredDir: secretRoot, fallbackPrefix: "fs-safe-benchmark" }), { sync: true });
   for (const suffix of ["", "Sync"]) {
     const name = `tempWorkspace${suffix}`;
     const type = `TempWorkspace${suffix}`;
     const sync = suffix === "Sync";
     add(name, () => a[name](tempOptions), { sync, after: (r) => r?.cleanup() });
-    // The historical row keeps its stable name. On Linux sync it now measures
-    // requested-mode creation whose ordinary-umask path avoids correction.
+    // The historical row keeps its stable name. On Linux/macOS sync it now
+    // measures requested-mode creation whose ordinary-umask path avoids correction.
+    const ordinaryProbe = path.join(w, ".fs-safe-temp-mode-ordinary-probe");
     add(`${name}/mode-correction`, () => a[name]({ ...tempOptions, dirMode: 0o750 }), {
       sync,
       skip: process.platform === "win32" ? "Windows does not initialize POSIX directory modes." : undefined,
+      before: sync && directRequestedModePlatform
+        ? () => {
+            fs.rmSync(ordinaryProbe, { recursive: true, force: true });
+            fs.mkdirSync(ordinaryProbe, { mode: 0o750 });
+            try {
+              const initial = fs.lstatSync(ordinaryProbe);
+              assert.equal(initial.isDirectory(), true);
+              assert.equal(initial.isSymbolicLink(), false);
+              assert.equal(initial.mode & 0o7777, 0o750,
+                "ordinary requested-mode preflight did not produce initial mode 0750");
+              assert.equal(initial.uid, process.geteuid());
+            } finally {
+              fs.rmSync(ordinaryProbe, { recursive: true, force: true });
+            }
+          }
+        : undefined,
       after: (r) => r?.cleanup(),
     });
     if (sync) {
@@ -145,9 +163,9 @@ export async function registerLifecycle({ api: a, workspace: w, native, binding,
       };
       add(`${name}/forced-mode-correction`, () => a[name]({ ...tempOptions, dirMode: 0o750 }), {
         sync: true,
-        skip: process.platform === "linux"
+        skip: directRequestedModePlatform
           ? undefined
-          : "The requested-mode direct creation path is Linux-only.",
+          : "The requested-mode direct creation path requires Linux or macOS.",
         before: () => {
           try {
             assert.equal(previousUmask, undefined, "forced mode-correction benchmark setup leaked");

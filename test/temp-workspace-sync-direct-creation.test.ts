@@ -10,6 +10,7 @@ import { TempWorkspaceCleanupCapability } from "../src/temp-workspace-owner.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
+const supportsDirectRequestedMode = process.platform === "linux" || process.platform === "darwin";
 
 function isDirectChild(rootDir: string, name: unknown): name is string {
   return typeof name === "string" && path.dirname(name) === rootDir &&
@@ -37,7 +38,7 @@ afterEach(() => {
   __resetFsSafeNativeConfigForTest();
 });
 
-describe.runIf(process.platform === "linux")("sync requested-mode direct creation", () => {
+describe.runIf(supportsDirectRequestedMode)("sync requested-mode direct creation", () => {
   it("retries an exclusive collision without inspecting, adopting, or cleaning its winner", async () => {
     const rootDir = await tempRoot("fs-safe-workspace-direct-collision-");
     const mkdir = fsSync.mkdirSync.bind(fsSync);

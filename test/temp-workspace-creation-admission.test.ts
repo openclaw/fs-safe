@@ -26,7 +26,7 @@ for (const variant of ["async", "sync"] as const) {
     }
 
     async function createWithModeCorrection(rootDir: string) {
-      if (variant !== "sync" || process.platform !== "linux") {
+      if (variant !== "sync" || (process.platform !== "linux" && process.platform !== "darwin")) {
         return await create(rootDir, { dirMode: 0o750 });
       }
       const previous = process.umask(0o077);
@@ -46,6 +46,34 @@ for (const variant of ["async", "sync"] as const) {
           path.basename(name).startsWith("workspace-") && typeof stat?.ino === "bigint") {
           observed = true;
           inspect(name, stat as BigIntStats);
+        }
+        return stat;
+      });
+    }
+
+    function observeDirectDescriptorChild(
+      rootDir: string,
+      inspect: (dir: string, stat: BigIntStats) => void,
+    ) {
+      let child = "";
+      let childFd: number | undefined;
+      const open = fsSync.openSync.bind(fsSync);
+      vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
+        const fd = open(...args);
+        if (typeof args[0] === "string" && path.dirname(args[0]) === rootDir &&
+          path.basename(args[0]).startsWith("workspace-")) {
+          child = args[0];
+          childFd = fd;
+        }
+        return fd;
+      });
+      const fstat = fsSync.fstatSync.bind(fsSync);
+      let observed = false;
+      vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
+        const stat = fstat(fd, options);
+        if (!observed && fd === childFd && typeof stat.ino === "bigint") {
+          observed = true;
+          inspect(child, stat);
         }
         return stat;
       });
@@ -166,7 +194,11 @@ for (const variant of ["async", "sync"] as const) {
           await fs.mkdir(outside, { mode: 0o711 });
           await fs.writeFile(path.join(outside, "keep"), "outside");
           let child = "";
-          observeFirstChild(rootDir, (dir) => {
+          const observe = variant === "sync" &&
+            (process.platform === "linux" || process.platform === "darwin")
+            ? observeDirectDescriptorChild
+            : observeFirstChild;
+          observe(rootDir, (dir) => {
             child = dir;
             fsSync.renameSync(dir, `${dir}.original`);
             if (kind === "symlink") fsSync.symlinkSync(outside, dir, "dir");
@@ -215,7 +247,7 @@ for (const variant of ["async", "sync"] as const) {
       if (variant === "async") {
         const mkdtemp = fs.mkdtemp.bind(fs);
         vi.spyOn(fs, "mkdtemp").mockImplementation(async (...args) => replaceParent(await mkdtemp(...args) as string));
-      } else if (process.platform === "linux") {
+      } else if (process.platform === "linux" || process.platform === "darwin") {
         vi.spyOn(fsSync, "mkdirSync").mockImplementation((...args) => {
           const result = mkdir(...args);
           if (typeof args[0] === "string" && path.dirname(args[0]) === rootDir &&
@@ -227,6 +259,7 @@ for (const variant of ["async", "sync"] as const) {
         vi.spyOn(fsSync, "mkdtempSync").mockImplementation((...args) => replaceParent(mkdtemp(...args) as string));
       }
       const register = vi.spyOn(cleanup, "registerTempPathForExit");
+      const open = vi.spyOn(fsSync, "openSync");
       const chmod = vi.spyOn(fs, "chmod");
       const chmodSync = vi.spyOn(fsSync, "chmodSync");
       const fchmod = vi.spyOn(fsSync, "fchmod");
@@ -237,6 +270,9 @@ for (const variant of ["async", "sync"] as const) {
       expect(chmodSync).not.toHaveBeenCalled();
       expect(fchmod).not.toHaveBeenCalled();
       expect(fchmodSync).not.toHaveBeenCalled();
+      expect(open.mock.calls.filter(([name]) => typeof name === "string" &&
+        path.dirname(name) === rootDir && path.basename(name).startsWith("workspace-")))
+        .toHaveLength(0);
       const [name] = await fs.readdir(rootDir);
       expect(await fs.readFile(path.join(rootDir, name!, "keep"), "utf8")).toBe("replacement");
     });

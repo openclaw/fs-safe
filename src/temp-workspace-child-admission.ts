@@ -134,7 +134,10 @@ export function admitRetainedTempWorkspaceChildSync(
   parent: TempWorkspaceRootAdmission,
   mode: number,
 ): void {
-  if (!tempWorkspaceChildNeedsModeInitialization(expected, parent.ownerUid, mode)) return;
+  if (!tempWorkspaceChildNeedsModeInitialization(expected, parent.ownerUid, mode)) {
+    retained.discardInitialReceipt();
+    return;
+  }
   retained.initializeModeSync(mode, retainedModeChecks(parent, mode));
 }
 

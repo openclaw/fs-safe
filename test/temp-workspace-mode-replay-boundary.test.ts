@@ -8,6 +8,7 @@ import * as cleanup from "../src/temp-cleanup.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
+const supportsDirectRequestedMode = process.platform === "linux" || process.platform === "darwin";
 
 function tempWorkspaceSyncWithUmask022(options: Parameters<typeof tempWorkspaceSync>[0]) {
   const previous = process.umask(0o022);
@@ -26,7 +27,9 @@ afterEach(() => {
 });
 
 for (const variant of ["async", "sync"] as const) {
-  describe.runIf(process.platform === "linux")(`${variant} temp workspace mode replay boundary`, () => {
+  const supportsReplay = process.platform === "linux" ||
+    (process.platform === "darwin" && variant === "sync");
+  describe.runIf(supportsReplay)(`${variant} temp workspace mode replay boundary`, () => {
     async function create(rootDir: string) {
       const options = { rootDir, prefix: "workspace-", dirMode: 0o750 };
       if (variant === "async") return await tempWorkspace(options);
@@ -45,6 +48,7 @@ for (const variant of ["async", "sync"] as const) {
       await fs.mkdir(rootDir, { mode: 0o700 });
       let child = "";
       let childObservations = 0;
+      const replayObservation = variant === "sync" && supportsDirectRequestedMode ? 1 : 2;
       const lstat = fsSync.lstatSync.bind(fsSync);
       vi.spyOn(fsSync, "lstatSync").mockImplementation((name, options) => {
         const stat = lstat(name, options);
@@ -52,7 +56,7 @@ for (const variant of ["async", "sync"] as const) {
           path.basename(name).startsWith("workspace-")) {
           child = name;
           childObservations += 1;
-          if (childObservations === 2) {
+          if (childObservations === replayObservation) {
             fsSync.renameSync(rootDir, originalRoot);
             fsSync.mkdirSync(rootDir, { mode: 0o700 });
           }
@@ -62,7 +66,7 @@ for (const variant of ["async", "sync"] as const) {
       const fchmod = vi.spyOn(fsSync, variant === "async" ? "fchmod" : "fchmodSync");
       const register = vi.spyOn(cleanup, "registerTempPathForExit");
       await expect(create(rootDir)).rejects.toMatchObject({ code: "path-mismatch" });
-      expect(childObservations).toBe(2);
+      expect(childObservations).toBe(replayObservation);
       expect(fchmod).not.toHaveBeenCalled();
       expect(register).not.toHaveBeenCalled();
       expect(fsSync.lstatSync(path.join(originalRoot, path.basename(child))).isDirectory()).toBe(true);
@@ -77,6 +81,7 @@ for (const variant of ["async", "sync"] as const) {
       let modeTargetValidated = false;
       let replaced = false;
       let childObservations = 0;
+      const validatedObservation = variant === "sync" && supportsDirectRequestedMode ? 1 : 2;
       const lstat = fsSync.lstatSync.bind(fsSync);
       const lstatSpy = vi.spyOn(fsSync, "lstatSync").mockImplementation((name, options) => {
         const stat = lstat(name, options);
@@ -84,7 +89,7 @@ for (const variant of ["async", "sync"] as const) {
           path.basename(name).startsWith("workspace-")) {
           child = name;
           childObservations += 1;
-          if (childObservations === 2) modeTargetValidated = true;
+          if (childObservations === validatedObservation) modeTargetValidated = true;
         } else if (name === rootDir && modeTargetValidated && !replaced) {
           replacementChild = child;
           originalChild = `${replacementChild}.original`;
@@ -105,7 +110,7 @@ for (const variant of ["async", "sync"] as const) {
       expect(await fs.readFile(path.join(replacementChild, "keep"), "utf8")).toBe("replacement");
     });
 
-    it.runIf(variant === "sync").each(["unsafe", "mismatch"] as const)(
+    it.runIf(variant === "sync" && process.platform === "linux").each(["unsafe", "mismatch"] as const)(
       "keeps direct requested-mode %s identity replay exact",
       async (kind) => {
         const rootDir = await tempRoot("fs-safe-workspace-direct-identity-");
@@ -141,7 +146,9 @@ for (const variant of ["async", "sync"] as const) {
           if (options?.bigint === true && typeof stat.dev === "bigint") {
             exactLstats += 1;
             stat.dev = unsafe;
-            stat.ino = unsafe + (kind === "mismatch" && exactLstats >= 2 ? 2n : 1n);
+            const finalObservation = initialMode === 0o750 ? 1 : 2;
+            stat.ino = unsafe +
+              (kind === "mismatch" && exactLstats >= finalObservation ? 2n : 1n);
           } else {
             numericLstats += 1;
           }
@@ -174,9 +181,9 @@ for (const variant of ["async", "sync"] as const) {
           expect(workspace.dir).toBe(child);
         }
         expect(initialMode).toBeDefined();
-        const modeCorrection = kind === "unsafe" && initialMode !== 0o750;
-      expect(exactLstats).toBe(modeCorrection ? 3 : 2);
-        expect(exactFstats).toBe(modeCorrection ? 2 : 1);
+        const modeCorrection = initialMode !== 0o750;
+        expect(exactLstats).toBe(modeCorrection ? 2 : 1);
+        expect(exactFstats).toBe(2);
         expect(numericLstats).toBe(0);
         expect(numericFstats).toBe(0);
         lstatSpy.mockRestore();

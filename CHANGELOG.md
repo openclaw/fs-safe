@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Avoid redundant descriptor-bound mode correction when synchronous Linux temp workspaces can be created exclusively with a safe requested mode such as `0o750`; collision retries remain bounded and replay the already admitted immutable ancestry receipts, while actual mode mismatches retain the existing descriptor-bound correction and final adoption fences.
+- Open eligible synchronously created Linux and macOS temp-workspace children before their initial observation, reuse that immutable exact descriptor receipt only for the immediate mode decision, and avoid one redundant correction observation. Safe requested modes such as `0o750` retain bounded exclusive collision retries, actual observed complete modes remain authoritative, Linux numeric replay stays Linux-only, and final parent, descriptor, name, owner, and mode fences are unchanged.
 
 - Reject POSIX temp-workspace `cleanupSafety: "require-bounded"` before child creation when the final `dirMode` lacks owner read or search; compatible mode keeps its guarded JavaScript fallback without native child traversal authority. Retaining a readable descriptor before chmod does not bypass native directory enumeration's final-mode requirements; Windows cleanup remains independent of POSIX mode bits.
 

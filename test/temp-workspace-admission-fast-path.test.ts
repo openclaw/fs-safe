@@ -10,6 +10,7 @@ import { TempWorkspaceRetainedChild } from "../src/temp-workspace-descriptor.js"
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
+const supportsDirectRequestedMode = process.platform === "linux" || process.platform === "darwin";
 
 function tempWorkspaceSyncWithUmask022(options: Parameters<typeof tempWorkspaceSync>[0]) {
   const previous = process.umask(0o022);
@@ -212,8 +213,9 @@ for (const variant of ["async", "sync"] as const) {
       "uses retained descriptor admission for %s", async (_label, dirMode, creationUmask, expectedInitialMode) => {
         const rootDir = await tempRoot("fs-safe-workspace-mode-correction-");
         let initialMode: number | undefined;
-        const directRequestedMode = variant === "sync" && process.platform === "linux" &&
-          dirMode === 0o750 && creationUmask === undefined;
+        const usesDirectCreator = variant === "sync" && supportsDirectRequestedMode &&
+          dirMode === 0o750;
+        const ordinaryDirectCreation = usesDirectCreator && creationUmask === undefined;
         if (creationUmask !== undefined) {
           if (variant === "async") {
             const mkdtemp = fs.mkdtemp.bind(fs);
@@ -227,7 +229,7 @@ for (const variant of ["async", "sync"] as const) {
                 process.umask(previous);
               }
             });
-          } else if (process.platform === "linux" && dirMode === 0o750) {
+          } else if (supportsDirectRequestedMode && dirMode === 0o750) {
             const mkdir = fsSync.mkdirSync.bind(fsSync);
             vi.spyOn(fsSync, "mkdirSync").mockImplementation((...args) => {
               if (!isWorkspaceChild(rootDir, args[0])) return mkdir(...args);
@@ -253,7 +255,7 @@ for (const variant of ["async", "sync"] as const) {
               }
             });
           }
-        } else if (directRequestedMode) {
+        } else if (ordinaryDirectCreation) {
           const mkdir = fsSync.mkdirSync.bind(fsSync);
           vi.spyOn(fsSync, "mkdirSync").mockImplementation((...args) => {
             const result = mkdir(...args);
@@ -264,26 +266,34 @@ for (const variant of ["async", "sync"] as const) {
           });
         }
         const operations = observeChildModeOperations(rootDir);
-        const workspace = directRequestedMode
+        const workspace = ordinaryDirectCreation
           ? tempWorkspaceSyncWithUmask022({ rootDir, prefix: "workspace-", dirMode })
           : await create(rootDir, { dirMode });
-        const directModeMatched = directRequestedMode && initialMode === dirMode;
+        const directModeMatched = usesDirectCreator && initialMode === dirMode;
+        const modeCorrection = !directModeMatched;
         try {
-          if (directRequestedMode) expect(initialMode).toBeDefined();
+          if (usesDirectCreator) expect(initialMode).toBeDefined();
           else expect(initialMode).toBe(expectedInitialMode);
           expect(operations.opens()).toBe(1);
-          expect(operations.chmods()).toBe(directModeMatched ? 0 : 1);
-          expect(operations.fstats()).toBe(directModeMatched ? 1 : 2);
-          expect(operations.lstats()).toBe(directModeMatched ? 2 : 3);
+          expect(operations.chmods()).toBe(modeCorrection ? 1 : 0);
+          expect(operations.fstats()).toBe(usesDirectCreator ? 2 : modeCorrection ? 2 : 1);
+          expect(operations.lstats()).toBe(usesDirectCreator
+            ? modeCorrection ? 2 : 1
+            : modeCorrection ? 3 : 2);
           if (process.platform === "linux") {
-            expect(operations.bigintFstats()).toBe(0);
-            expect(operations.bigintLstats()).toBe(1);
+            expect(operations.bigintFstats()).toBe(usesDirectCreator ? 1 : 0);
+            expect(operations.bigintLstats()).toBe(usesDirectCreator ? 0 : 1);
+          } else if (process.platform === "darwin") {
+            expect(operations.bigintFstats()).toBe(operations.fstats());
+            expect(operations.bigintLstats()).toBe(operations.lstats());
           }
-          expect(operations.opensAtFirstChmod()).toBe(directModeMatched ? undefined : 1);
-          // The retained descriptor and named child are both rebound before
-          // the first mutation; constructor retention itself performs no stat.
-          expect(operations.fstatsAtFirstChmod()).toBe(directModeMatched ? undefined : 1);
-          expect(operations.lstatsAtFirstChmod()).toBe(directModeMatched ? undefined : 2);
+          expect(operations.opensAtFirstChmod()).toBe(modeCorrection ? 1 : undefined);
+          expect(operations.fstatsAtFirstChmod()).toBe(modeCorrection ? 1 : undefined);
+          // Direct creation consumes its exact fd receipt and needs only the
+          // fresh named check before correction. Other routes keep both checks.
+          expect(operations.lstatsAtFirstChmod()).toBe(modeCorrection
+            ? usesDirectCreator ? 1 : 2
+            : undefined);
           expect(fsSync.lstatSync(workspace.dir).mode & 0o7777).toBe(dirMode);
         } finally {
           if (dirMode === 0) await fs.chmod(workspace.dir, 0o700);
@@ -467,7 +477,7 @@ it("keeps an opened child untransferable until final admission and closes it onc
   });
   const fstat = vi.spyOn(fsSync, "fstatSync");
   const close = vi.spyOn(fsSync, "closeSync");
-  const retained = new TempWorkspaceRetainedChild(child, identity);
+  const retained = TempWorkspaceRetainedChild.retain(child, identity);
   try {
     expect(retainedFd).toBeDefined();
     expect(fstat).not.toHaveBeenCalled();
