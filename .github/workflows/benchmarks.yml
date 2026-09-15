@@ -34,7 +34,7 @@ on:
       order:
         description: Baseline/candidate measurement order
         type: choice
-        options: ["baseline-candidate", "abba"]
+        options: ["baseline-candidate", "abba", "baab"]
         default: "baseline-candidate"
       blocks:
         description: Number of complete measurement-order blocks
@@ -135,20 +135,29 @@ jobs:
             done
           }
           baseline_dist="$RUNNER_TEMP/fs-safe-method-baseline/dist"
-          if [[ "$METHOD_ORDER" == "abba" ]]; then
+          if [[ "$METHOD_ORDER" == "abba" || "$METHOD_ORDER" == "baab" ]]; then
+            order_label="ABBA"
+            if [[ "$METHOD_ORDER" == "baab" ]]; then order_label="BAAB"; fi
             if [[ -z "$BASE_REF" ]]; then
-              echo "ABBA order requires compare_ref" >&2
+              echo "$order_label order requires compare_ref" >&2
               exit 2
             fi
             if [[ -z "$METHOD_FILTER" ]]; then
-              echo "ABBA order requires a focused method filter" >&2
+              echo "$order_label order requires a focused method filter" >&2
               exit 2
             fi
             for (( block = 1; block <= METHOD_BLOCKS; block += 1 )); do
-              run_variant "block-$block-baseline-a" "$baseline_dist"
-              run_variant "block-$block-candidate-a" ""
-              run_variant "block-$block-candidate-b" ""
-              run_variant "block-$block-baseline-b" "$baseline_dist"
+              if [[ "$METHOD_ORDER" == "baab" ]]; then
+                run_variant "block-$block-candidate-a" ""
+                run_variant "block-$block-baseline-a" "$baseline_dist"
+                run_variant "block-$block-baseline-b" "$baseline_dist"
+                run_variant "block-$block-candidate-b" ""
+              else
+                run_variant "block-$block-baseline-a" "$baseline_dist"
+                run_variant "block-$block-candidate-a" ""
+                run_variant "block-$block-candidate-b" ""
+                run_variant "block-$block-baseline-b" "$baseline_dist"
+              fi
             done
           else
             for (( block = 1; block <= METHOD_BLOCKS; block += 1 )); do

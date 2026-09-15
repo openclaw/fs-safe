@@ -13,6 +13,7 @@ import {
 } from "./path.js";
 import { root as openRoot } from "./root.js";
 import { realpathSync } from "./realpath.js";
+import { resolvePathWithinNormalizedRoot, type ResolvePathWithinRootParams } from "./path-scope-lexical.js";
 
 type InvalidPathResult = { ok: false; error: string };
 type DirectoryResult =
@@ -55,14 +56,6 @@ function invalidPath(scopeLabel: string): InvalidPathResult {
     ok: false,
     error: `Invalid path: must stay within ${scopeLabel}`,
   };
-}
-
-function pathStaysWithinRoot(rootDir: string, candidatePath: string): boolean {
-  if (process.platform !== "win32") {
-    return candidatePath !== rootDir && isPathInside(rootDir, candidatePath);
-  }
-  const relative = path.relative(rootDir, candidatePath);
-  return Boolean(relative) && !isPathRelativeEscape(relative);
 }
 
 async function resolveRealPathIfExists(targetPath: string): Promise<string | undefined> {
@@ -111,29 +104,10 @@ async function validateCanonicalPathWithinRoot(params: {
   }
 }
 
-export function resolvePathWithinRoot(params: {
-  rootDir: string;
-  requestedPath: string;
-  scopeLabel: string;
-  defaultFileName?: string;
-}): { ok: true; path: string } | { ok: false; error: string } {
-  const root = path.resolve(params.rootDir);
-  const raw = params.requestedPath.trim();
-  if (!raw) {
-    if (!params.defaultFileName) {
-      return { ok: false, error: "path is required" };
-    }
-    const defaultPath = path.resolve(root, params.defaultFileName);
-    if (!pathStaysWithinRoot(root, defaultPath)) {
-      return { ok: false, error: `Invalid path: must stay within ${params.scopeLabel}` };
-    }
-    return { ok: true, path: defaultPath };
-  }
-  const resolved = path.resolve(root, raw);
-  if (!pathStaysWithinRoot(root, resolved)) {
-    return { ok: false, error: `Invalid path: must stay within ${params.scopeLabel}` };
-  }
-  return { ok: true, path: resolved };
+export function resolvePathWithinRoot(
+  params: ResolvePathWithinRootParams,
+): { ok: true; path: string } | { ok: false; error: string } {
+  return resolvePathWithinNormalizedRoot(params, path.resolve(params.rootDir));
 }
 
 export async function resolveWritablePathWithinRoot(params: {
@@ -316,12 +290,22 @@ export function resolvePathsWithinRoot(
   params: ResolvePathsWithinRootParams,
 ): ResolvePathsWithinRootResult {
   const resolvedPaths: string[] = [];
+  let previousRootDir: string | undefined;
+  let previousResolvedRoot = "";
   for (const raw of params.requestedPaths) {
-    const pathResult = resolvePathWithinRoot({
+    const request = {
       rootDir: params.rootDir,
       requestedPath: raw,
       scopeLabel: params.scopeLabel,
-    });
+    };
+    // Relative roots may follow cwd changes made by an input iterator or getter.
+    const resolvedRoot = process.platform !== "win32" && typeof request.rootDir === "string" &&
+        request.rootDir.startsWith("/") && request.rootDir === previousRootDir
+      ? previousResolvedRoot
+      : path.resolve(request.rootDir);
+    previousRootDir = request.rootDir;
+    previousResolvedRoot = resolvedRoot;
+    const pathResult = resolvePathWithinNormalizedRoot(request, resolvedRoot);
     if (!pathResult.ok) {
       return { ok: false, error: pathResult.error };
     }
