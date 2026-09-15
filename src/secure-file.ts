@@ -23,6 +23,7 @@ import {
   type PermissionCheckOptions,
 } from "./permissions.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
+import { inspectSecureWindowsDescriptor } from "./secure-file-windows.js";
 import { scheduleTimeout } from "./timing.js";
 import {
   assertNoWindowsPathAlias,
@@ -229,13 +230,17 @@ async function assertSecurePermissions(
   options: SecureFileReadOptions,
   stat: Stats,
   realPath: string,
+  identity: Pick<BigIntStats, "dev" | "ino">,
+  fd: number,
 ): Promise<PermissionCheck | undefined> {
   if (options.permissions?.allowInsecure) {
     return undefined;
   }
   const platform = options.inject?.platform ?? process.platform;
   const permissions = platform === "win32"
-    ? await inspectPathPermissions(realPath, options.inject)
+    ? process.platform === "win32"
+      ? inspectSecureWindowsDescriptor({ fd, identity, stat })
+      : await inspectPathPermissions(realPath, options.inject)
     : inspectOpenedPermissions(stat, platform);
   const reason = permissions.error ? `: ${formatPermissionErrorDetail(permissions.error)}` : "";
   const diagnostics = {
@@ -316,7 +321,13 @@ export async function readSecureFile(
   const opened = await openSecureHandle(ownedOptions, maxBytes);
   try {
     await assertTrustedDirs(ownedOptions, opened.realPath);
-    const permissions = await assertSecurePermissions(ownedOptions, opened.pathStat, opened.realPath);
+    const permissions = await assertSecurePermissions(
+      ownedOptions,
+      opened.pathStat,
+      opened.realPath,
+      opened.identity,
+      opened.handle.fd,
+    );
     const buffer = await readHandleWithTimeout(
       opened.handle,
       ownedOptions.io?.timeoutMs,

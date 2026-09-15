@@ -11,7 +11,7 @@ import {
 } from "../src/native.js";
 import { DEFAULT_PERMISSION_EXEC_TIMEOUT_MS, executePermissionCommand } from "../src/permission-exec.js";
 import { inspectPathPermissions, inspectWindowsAcl } from "../src/permissions.js";
-import { createPrivateDirectory } from "../src/private-directory.js";
+import { createPrivateDirectory } from "../src/permissions-public.js";
 import { expectFsSafeError } from "./helpers/security.js";
 import { itPosix } from "./helpers/vitest.js";
 
@@ -56,6 +56,69 @@ describe("createPrivateDirectory", () => {
     );
     await expect(fs.stat(target)).rejects.toMatchObject({ code: "ENOENT" });
   });
+
+  it.runIf(process.platform === "win32" && Boolean(native))(
+    "rejects ambiguous components before creating any directory",
+    async () => {
+      const root = await tempRoot();
+      __setNativeLoaderForTest(() => native!);
+      configureFsSafeNative({ mode: "require" });
+      for (const suffix of [
+        "private.",
+        "private ",
+        "parent.\\private",
+        "parent \\private",
+        ".\\private",
+        "parent\\..\\private",
+      ]) {
+        // Keep the spelling intact; path.join would remove dot components.
+        await expect(createPrivateDirectory(root + "\\" + suffix)).rejects.toMatchObject({
+          code: "EINVAL",
+        });
+        expect(await fs.readdir(root)).toEqual([]);
+      }
+    },
+  );
+
+  it.runIf(process.platform === "win32" && Boolean(native))(
+    "preserves existing empty and populated directories",
+    async () => {
+      const root = await tempRoot();
+      __setNativeLoaderForTest(() => native!);
+      configureFsSafeNative({ mode: "require" });
+      for (const populated of [false, true]) {
+        const target = path.join(root, populated ? "populated" : "empty");
+        await fs.mkdir(target);
+        if (populated) await fs.writeFile(path.join(target, "keep"), "existing");
+        const before = await fs.stat(target, { bigint: true });
+        await expect(createPrivateDirectory(target)).rejects.toMatchObject({ code: "EEXIST" });
+        const after = await fs.stat(target, { bigint: true });
+        expect([after.dev, after.ino]).toEqual([before.dev, before.ino]);
+        expect(await fs.readdir(target)).toEqual(populated ? ["keep"] : []);
+        if (populated) {
+          expect(await fs.readFile(path.join(target, "keep"), "utf8")).toBe("existing");
+        }
+      }
+    },
+  );
+
+  it.runIf(process.platform === "win32" && Boolean(native))(
+    "rejects an immediate parent junction without creating its child",
+    async () => {
+      const root = await tempRoot();
+      const parent = path.join(root, "parent");
+      const junction = path.join(root, "junction");
+      await fs.mkdir(parent);
+      await fs.symlink(parent, junction, "junction");
+      __setNativeLoaderForTest(() => native!);
+      configureFsSafeNative({ mode: "require" });
+      await expect(createPrivateDirectory(path.join(junction, "private"))).rejects.toMatchObject({
+        code: "ELOOP",
+      });
+      expect(await fs.readdir(parent)).toEqual([]);
+      expect((await fs.lstat(junction)).isSymbolicLink()).toBe(true);
+    },
+  );
 
   it.runIf(process.platform === "win32" && Boolean(native))(
     "creates and inspects the direct native DACL",

@@ -4,6 +4,16 @@ import { Writable } from "node:stream";
 import type { Gunzip } from "node:zlib";
 import { ArchiveFormatError } from "./archive-errors.js";
 
+const PADDING_WINDOW_BYTES = 65536;
+let zeroPadding: Buffer | undefined;
+
+function assertZeroPadding(bytes: Buffer): void {
+  zeroPadding ??= Buffer.alloc(PADDING_WINDOW_BYTES);
+  if (!bytes.equals(zeroPadding.subarray(0, bytes.length))) {
+    throw new ArchiveFormatError("nonzero gzip container padding");
+  }
+}
+
 export function isGzipBuffer(input: Uint8Array): boolean {
   return input[0] === 31 && input[1] === 139;
 }
@@ -18,12 +28,10 @@ function assertConsumedBoundary(consumed: number, size: number): void {
 export async function validateGzipBufferTail(input: Buffer, consumed: number, signal?: AbortSignal): Promise<void> {
   signal?.throwIfAborted();
   assertConsumedBoundary(consumed, input.length);
-  for (let position = consumed; position < input.length; position += 65536) {
+  for (let position = consumed; position < input.length; position += PADDING_WINDOW_BYTES) {
     signal?.throwIfAborted();
-    if (input.subarray(position, position + 65536).some(byte => byte !== 0)) {
-      throw new ArchiveFormatError("nonzero gzip container padding");
-    }
-    if (position + 65536 < input.length) await new Promise<void>(resolve => setImmediate(resolve));
+    assertZeroPadding(input.subarray(position, position + PADDING_WINDOW_BYTES));
+    if (position + PADDING_WINDOW_BYTES < input.length) await new Promise<void>(resolve => setImmediate(resolve));
   }
   signal?.throwIfAborted();
 }
@@ -77,16 +85,14 @@ export async function validateGzipContainerTail(filePath: string, consumed: numb
     const { size } = fsSync.fstatSync(handle.fd);
     assertConsumedBoundary(consumed, size);
     if (consumed === size) return;
-    const buffer = Buffer.allocUnsafe(65536);
+    const buffer = Buffer.allocUnsafe(PADDING_WINDOW_BYTES);
     let position = consumed;
     while (position < size) {
       signal?.throwIfAborted();
       const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, size - position), position);
       signal?.throwIfAborted();
       if (bytesRead === 0) throw new ArchiveFormatError("truncated gzip container padding");
-      if (buffer.subarray(0, bytesRead).some((byte) => byte !== 0)) {
-        throw new ArchiveFormatError("nonzero gzip container padding");
-      }
+      assertZeroPadding(buffer.subarray(0, bytesRead));
       position += bytesRead;
     }
   } finally { await handle.close(); }

@@ -60,8 +60,8 @@ export async function hashFileHandle(
   }
 
   const hash = createHash("sha256");
-  const buffer = Buffer.allocUnsafe(
-    Math.min(256 * 1024, Math.max(64 * 1024, stat.size)),
+  let buffer = Buffer.allocUnsafe(
+    Math.min(256 * 1024, Math.max(1, stat.size + 1), maxBytes + 1),
   );
   let position = 0;
   while (true) {
@@ -77,6 +77,10 @@ export async function hashFileHandle(
     }
     hash.update(buffer.subarray(0, bytesRead));
     position += bytesRead;
+    // A full small buffer can mean growth or a virtual file with an unhelpful size.
+    if (bytesRead === buffer.length && buffer.length < 64 * 1024) {
+      buffer = Buffer.allocUnsafe(Math.min(64 * 1024, maxBytes + 1));
+    }
   }
 }
 
@@ -160,7 +164,7 @@ function hashDescriptorSync(
     throw new FsSafeError("too-large", `SHA-256 input exceeds ${maxBytes} bytes`);
   }
   const hash = createHash("sha256");
-  const buffer = Buffer.allocUnsafe(Math.min(256 * 1024, Math.max(64 * 1024, stat.size)));
+  let buffer = Buffer.allocUnsafe(Math.min(256 * 1024, Math.max(1, stat.size + 1), maxBytes + 1));
   let position = 0;
   while (true) {
     signal?.throwIfAborted();
@@ -175,6 +179,9 @@ function hashDescriptorSync(
     }
     hash.update(buffer.subarray(0, bytesRead));
     position += bytesRead;
+    if (bytesRead === buffer.length && buffer.length < 64 * 1024) {
+      buffer = Buffer.allocUnsafe(Math.min(64 * 1024, maxBytes + 1));
+    }
   }
 }
 

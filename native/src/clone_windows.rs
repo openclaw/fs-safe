@@ -99,7 +99,11 @@ fn is_refs(handle: HANDLE) -> NativeResult<bool> {
 }
 
 pub(crate) fn probe(parent_fd: i32) -> NativeResult<Option<String>> {
-    Ok(is_refs(root_handle(parent_fd)?)?.then(|| "refs".to_owned()))
+    probe_handle(root_handle(parent_fd)?)
+}
+
+fn probe_handle(parent: HANDLE) -> NativeResult<Option<String>> {
+    Ok(is_refs(parent)?.then(|| "refs".to_owned()))
 }
 
 fn create_directory(parent: HANDLE, name: &str) -> NativeResult<Arc<Directory>> {
@@ -116,7 +120,10 @@ fn create_directory(parent: HANDLE, name: &str) -> NativeResult<Arc<Directory>> 
 }
 
 pub(crate) fn create_source(parent_fd: i32, basename: &str) -> NativeResult<()> {
-    let parent = root_handle(parent_fd)?;
+    create_source_handle(root_handle(parent_fd)?, basename)
+}
+
+fn create_source_handle(parent: HANDLE, basename: &str) -> NativeResult<()> {
     if !is_refs(parent)? {
         return Err(native_error("ENOTSUP", "directory cloning requires ReFS"));
     }
@@ -554,10 +561,24 @@ pub(crate) fn clone_tree(
     cancelled: &AtomicBool,
     concurrency: usize,
 ) -> NativeResult<()> {
+    clone_tree_handles(
+        root_handle(source_fd)?,
+        root_handle(parent_fd)?,
+        basename,
+        cancelled,
+        concurrency,
+    )
+}
+
+fn clone_tree_handles(
+    source_handle: HANDLE,
+    parent_handle: HANDLE,
+    basename: &str,
+    cancelled: &AtomicBool,
+    concurrency: usize,
+) -> NativeResult<()> {
     validate_basename(basename)?;
     check_cancelled(cancelled)?;
-    let source_handle = root_handle(source_fd)?;
-    let parent_handle = root_handle(parent_fd)?;
     let source_identity = handle_identity(source_handle)?;
     let parent_identity = handle_identity(parent_handle)?;
     if !source_identity.2
@@ -634,12 +655,6 @@ mod tests {
             .unwrap()
     }
 
-    fn descriptor(file: &File) -> i32 {
-        // Unit tests run without Node/libuv. The shared Windows resolver accepts
-        // direct HANDLEs, as it does for other native Windows boundary tests.
-        i32::try_from(file.as_raw_handle() as isize).unwrap()
-    }
-
     fn marker(path: &Path, offset: u64) -> [u8; 16] {
         let mut file = File::open(path).unwrap();
         file.seek(SeekFrom::Start(offset)).unwrap();
@@ -691,13 +706,13 @@ mod tests {
         assert_eq!(owned.parent(), Some(base.as_path()));
         {
             let parent = directory(&root);
-            let parent_fd = descriptor(&parent);
-            create_source(parent_fd, "source").unwrap();
+            let parent_handle = parent.as_raw_handle();
+            create_source_handle(parent_handle, "source").unwrap();
             let source_path = root.join("source");
             let source = directory(&source_path);
-            let source_fd = descriptor(&source);
+            let source_handle = source.as_raw_handle();
             let cancelled = AtomicBool::new(false);
-            clone_tree(source_fd, parent_fd, "empty-copy", &cancelled, 32).unwrap();
+            clone_tree_handles(source_handle, parent_handle, "empty-copy", &cancelled, 32).unwrap();
             assert_eq!(fs::read_dir(root.join("empty-copy")).unwrap().count(), 0);
             fs::create_dir_all(source_path.join("nested/empty")).unwrap();
             let fixed_time = UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000);
@@ -710,7 +725,14 @@ mod tests {
                     .set_times(std::fs::FileTimes::new().set_modified(fixed_time))
                     .unwrap();
             }
-            clone_tree(source_fd, parent_fd, "directories-copy", &cancelled, 32).unwrap();
+            clone_tree_handles(
+                source_handle,
+                parent_handle,
+                "directories-copy",
+                &cancelled,
+                32,
+            )
+            .unwrap();
             for name in ["nested/empty", "nested", ""] {
                 let path = root.join("directories-copy").join(name);
                 assert!(path.is_dir());
@@ -747,7 +769,7 @@ mod tests {
                     file.write_all(&[17 + index as u8; 16]).unwrap();
                 }
             }
-            clone_tree(source_fd, parent_fd, "copy", &cancelled, 8).unwrap();
+            clone_tree_handles(source_handle, parent_handle, "copy", &cancelled, 8).unwrap();
             let copied = root.join("copy/large");
             assert_eq!(fs::metadata(&copied).unwrap().len(), size);
             assert_eq!(
@@ -771,14 +793,16 @@ mod tests {
             {
                 let _writer = OpenOptions::new().write(true).open(&source_file).unwrap();
                 let error =
-                    clone_tree(source_fd, parent_fd, "writer-copy", &cancelled, 8).unwrap_err();
+                    clone_tree_handles(source_handle, parent_handle, "writer-copy", &cancelled, 8)
+                        .unwrap_err();
                 assert_eq!(error.status, "EBUSY");
                 assert!(error.reason.contains("Windows error 32"), "{error}");
             }
             assert!(!root.join("writer-copy").exists());
             let named = source_path.join("large:metadata");
             fs::write(&named, b"named stream data").unwrap();
-            let error = clone_tree(source_fd, parent_fd, "ads-copy", &cancelled, 8).unwrap_err();
+            let error = clone_tree_handles(source_handle, parent_handle, "ads-copy", &cancelled, 8)
+                .unwrap_err();
             assert_eq!(error.status, "ENOTSUP");
             assert!(!root.join("ads-copy").exists());
             assert_eq!(fs::read(&named).unwrap(), b"named stream data");

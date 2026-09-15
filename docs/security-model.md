@@ -47,7 +47,7 @@ If you need full sandboxing, run the worker under reduced privileges (uid, conta
 
 ### Path traversal and absolute paths
 
-Every path is resolved against the canonicalized real path of the root, then checked with `isPathInside`. Alias resolution walks components before applying a later `..`, so a symlink cannot change what that parent segment means after validation. Parent traversal, an absolute spelling, or any alias whose canonical result is outside the root throws `outside-workspace`; absolute spellings that remain inside the root are accepted.
+Every path is resolved against the canonicalized real path of the root, then checked at that boundary. On Windows, an exact-case structural Root prefix stays on the lexical fast path; a prefix accepted only by case folding must have the Root's exact directory identity and is rebased onto the trusted Root spelling before use. Alias resolution walks components before applying a later `..`, so a symlink cannot change what that parent segment means after validation. Parent traversal, an absolute spelling, or any alias whose canonical result is outside the root throws `outside-workspace`; absolute spellings that remain inside the root are accepted.
 
 Guarded pathname APIs reject Windows `:` namespace aliases before normalization
 or filesystem access. The only colon admitted in a Windows filesystem path is

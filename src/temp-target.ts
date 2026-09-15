@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { suffixWindowsReservedDeviceName } from "./filename.js";
 import { sameFileIdentityForCleanup, type FileIdentityStat } from "./file-identity.js";
 import { assertSafePathSegment, sanitizeSafePathSegment, trimHyphenEdges } from "./safe-path-segment.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
@@ -87,9 +88,10 @@ function sanitizeExtension(extension?: string): string {
 }
 
 export function sanitizeTempFileName(fileName: string): string {
-  return sanitizeSafePathSegment(path.basename(fileName), "download.bin", {
+  const sanitized = sanitizeSafePathSegment(path.basename(fileName), "download.bin", {
     allowDotPrefix: true,
   });
+  return suffixWindowsReservedDeviceName(sanitized);
 }
 
 export function buildRandomTempFilePath(params: {

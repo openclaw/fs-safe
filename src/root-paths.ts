@@ -8,12 +8,12 @@ import {
 import { realpathSync } from "./realpath.js";
 import { root as openRoot } from "./root.js";
 import {
-  assertNoWindowsPathAlias,
   hasWindowsPathAlias,
   pathForWindowsFilesystem,
   resolvePathPreservingWindowsRoot,
 } from "./windows-path-alias.js";
 import { resolvePathWithinRoot } from "./root-paths-lexical.js";
+import { resolvePathWithinNormalizedRoot } from "./path-scope-lexical.js";
 import {
   assertNoSymlinkSegments,
   ensureDirectoryWithinRoot,
@@ -175,19 +175,26 @@ export async function resolveWritablePathWithinRoot(params: {
 export function resolvePathsWithinRoot(
   params: ResolvePathsWithinRootParams,
 ): ResolvePathsWithinRootResult {
-  const rootDir = params.rootDir;
-  const scopeLabel = params.scopeLabel;
-  if (hasWindowsPathAlias(rootDir, "filesystem")) {
-    return invalidPath(scopeLabel);
-  }
-  const requestedPaths = [...params.requestedPaths];
   const resolvedPaths: string[] = [];
-  for (const raw of requestedPaths) {
-    const pathResult = resolvePathWithinRoot({
-      rootDir,
+  let previousRootDir: string | undefined;
+  let previousResolvedRoot = "";
+  for (const raw of params.requestedPaths) {
+    const request = {
+      rootDir: params.rootDir,
       requestedPath: raw,
-      scopeLabel,
-    });
+      scopeLabel: params.scopeLabel,
+    };
+    // Each lexical request owns its admitted root without consuming later items.
+    if (typeof request.rootDir !== "string") path.resolve(request.rootDir);
+    if (hasWindowsPathAlias(request.rootDir, "filesystem")) return invalidPath(request.scopeLabel);
+    // Relative roots may follow cwd changes made by an input iterator or getter.
+    const resolvedRoot = process.platform !== "win32" && typeof request.rootDir === "string" &&
+        request.rootDir.startsWith("/") && request.rootDir === previousRootDir
+      ? previousResolvedRoot
+      : resolvePathPreservingWindowsRoot(request.rootDir);
+    previousRootDir = request.rootDir;
+    previousResolvedRoot = resolvedRoot;
+    const pathResult = resolvePathWithinNormalizedRoot(request, resolvedRoot);
     if (!pathResult.ok) {
       return { ok: false, error: pathResult.error };
     }

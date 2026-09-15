@@ -256,8 +256,10 @@ When the optional binding is active, hashing runs as an async native task and
 does not occupy the JavaScript event loop with digest updates. With native mode
 `off`, or in `auto` when no binding loads, the fallback performs asynchronous
 positioned reads in chunks of up to 256 KiB but updates Node's `Hash` on the JavaScript
-thread. Both paths stream constant-size buffers rather than loading the file
-into memory. Native mode `require` keeps its usual fail-closed loader semantics.
+thread. Both paths stream bounded buffers rather than loading the file into memory.
+The fallback sizes its scratch buffer to small files and grows it if a stale
+size hint is exceeded, while still probing for actual EOF and byte-limit overflow.
+Native mode `require` keeps its usual fail-closed loader semantics.
 
 ### Synchronous hashing
 

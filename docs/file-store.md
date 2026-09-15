@@ -259,6 +259,12 @@ type FileStorePruneOptions = {
 
 Symlinks are skipped. The walk is best-effort — failures on individual entries don't abort the whole prune. Compares against `mtimeMs`.
 
+Pruning rechecks that a selected entry is still a regular file and still expired
+immediately before guarded removal. Fresh replacements and in-place timestamp
+refreshes are preserved; replacements that are themselves expired remain
+eligible. This does not require read permission. The existing best-effort
+external-process race window after dispatch still applies.
+
 ## Difference from `Root`
 
 | `FileStore` | `Root` |

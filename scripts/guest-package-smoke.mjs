@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -38,7 +38,7 @@ try {
   const payload = Buffer.from(Array.from({ length: 131_089 }, (_, index) => index % 256));
   run(["write", workspace, "nested", name, "1"], payload);
   assert.deepEqual(run(["read", workspace, "nested", name, String(payload.length)]), payload);
-  run(["create", workspace, "nested", name, "0"], Buffer.from("loser"), 17);
+  run(["create", workspace, "nested", name, "0"], undefined, 17);
   assert.deepEqual(readFileSync(join(workspace, "nested", name)), payload);
   run(["read", workspace, "nested", "missing"], undefined, 2);
   run(["read", workspace, "nested", name, String(payload.length - 1)], undefined, 1);
@@ -83,8 +83,18 @@ try {
     run(["rename", workspace, "", "tree", crossDeviceRoot, "", directoryName, "0"]);
     assert.deepEqual(readFileSync(join(crossDeviceRoot, directoryName, "payload.bin")), payload);
     assert.equal(readdirSync(workspace).includes("tree"), false);
-    assert.deepEqual(readdirSync(crossDeviceRoot).sort(), [directoryName, fileName].sort());
-    console.log("guest installed-package real cross-device file and directory moves with long basenames passed");
+    const symlinkName = "s".repeat(240);
+    symlinkSync("missing-target", join(workspace, "alias"));
+    writeFileSync(join(crossDeviceRoot, symlinkName), "previous");
+    run(["rename", workspace, "", "alias", crossDeviceRoot, "", symlinkName, "0"]);
+    assert.equal(readlinkSync(join(crossDeviceRoot, symlinkName)), "missing-target");
+    assert.throws(() => lstatSync(join(workspace, "alias")), { code: "ENOENT" });
+    symlinkSync("retained-target", join(workspace, "retained-alias"));
+    run(["rename", workspace, "", "retained-alias", crossDeviceRoot, "", directoryName, "0"], undefined, 1);
+    assert.equal(readlinkSync(join(workspace, "retained-alias")), "retained-target");
+    assert.deepEqual(readFileSync(join(crossDeviceRoot, directoryName, "payload.bin")), payload);
+    assert.deepEqual(readdirSync(crossDeviceRoot).sort(), [directoryName, fileName, symlinkName].sort());
+    console.log("guest installed-package real cross-device file, directory, and symlink moves, including publication failure, passed");
   }
   console.log("guest installed-package Python protocol and standalone rename fragment passed");
 } finally {

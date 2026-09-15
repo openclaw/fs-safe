@@ -18,8 +18,8 @@ use windows_sys::Win32::System::IO::DeviceIoControl;
 use windows_sys::Win32::System::Ioctl::FSCTL_SET_SPARSE;
 
 use crate::windows::{
-    OwnedHandle, handle_identity_and_size, handle_is_reparse, open_independent_reader, read_at,
-    root_handle, win_error,
+    OwnedHandle, handle_identity_and_size, handle_is_reparse, open_independent_reader_handle,
+    read_at, root_handle, win_error,
 };
 use crate::{NativeResult, native_error};
 
@@ -62,10 +62,12 @@ fn enable_sparse(handle: HANDLE) -> NativeResult<bool> {
     Err(win_error(error, "enable sparse copy target"))
 }
 
-fn copy_contents(source_fd: i32, target_fd: i32, cancelled: &AtomicBool) -> NativeResult<()> {
+fn copy_contents_handles(
+    source_handle: HANDLE,
+    target_handle: HANDLE,
+    cancelled: &AtomicBool,
+) -> NativeResult<()> {
     check_cancelled(cancelled)?;
-    let source_handle = root_handle(source_fd)?;
-    let target_handle = root_handle(target_fd)?;
     let (source_identity, source_size) = handle_identity_and_size(source_handle)?;
     let (target_identity, target_size) = handle_identity_and_size(target_handle)?;
     for (handle, identity) in [(source_handle, source_identity), (target_handle, target_identity)] {
@@ -80,7 +82,7 @@ fn copy_contents(source_fd: i32, target_fd: i32, cancelled: &AtomicBool) -> Nati
     if source_identity == target_identity {
         return Err(native_error("EINVAL", "file copy requires distinct files"));
     }
-    let reader = open_independent_reader(source_fd)?;
+    let reader = open_independent_reader_handle(source_handle)?;
     // ReOpenFile keeps the checked object while giving this worker its own file
     // position. No pathname is reopened and the caller's target stays owned by it.
     // SAFETY: the target handle remains open and the returned handle is uniquely owned.
@@ -169,6 +171,10 @@ fn copy_contents(source_fd: i32, target_fd: i32, cancelled: &AtomicBool) -> Nati
         }
         offset += read as u64;
     }
+}
+
+fn copy_contents(source_fd: i32, target_fd: i32, cancelled: &AtomicBool) -> NativeResult<()> {
+    copy_contents_handles(root_handle(source_fd)?, root_handle(target_fd)?, cancelled)
 }
 
 impl Task for CopyFileContentsTask {
@@ -291,9 +297,9 @@ mod tests {
                 .unwrap();
             source.seek(SeekFrom::Start(3)).unwrap();
             target.seek(SeekFrom::Start(7)).unwrap();
-            copy_contents(
-                i32::try_from(source.as_raw_handle() as isize).unwrap(),
-                i32::try_from(target.as_raw_handle() as isize).unwrap(),
+            copy_contents_handles(
+                source.as_raw_handle(),
+                target.as_raw_handle(),
                 &AtomicBool::new(false),
             )
             .unwrap();
@@ -358,9 +364,9 @@ mod tests {
             let mut target = OpenOptions::new().write(true).open(&target_path).unwrap();
             source.seek(SeekFrom::Start(3)).unwrap();
             target.seek(SeekFrom::Start(7)).unwrap();
-            copy_contents(
-                i32::try_from(source.as_raw_handle() as isize).unwrap(),
-                i32::try_from(target.as_raw_handle() as isize).unwrap(),
+            copy_contents_handles(
+                source.as_raw_handle(),
+                target.as_raw_handle(),
                 &AtomicBool::new(false),
             )
             .unwrap();
@@ -404,10 +410,12 @@ mod tests {
                 .unwrap();
             source.seek(SeekFrom::Start(3)).unwrap();
             target.seek(SeekFrom::Start(7)).unwrap();
-            // root_handle supports Windows handles directly as well as Node fds.
-            let source_fd = i32::try_from(source.as_raw_handle() as isize).unwrap();
-            let target_fd = i32::try_from(target.as_raw_handle() as isize).unwrap();
-            copy_contents(source_fd, target_fd, &AtomicBool::new(false)).unwrap();
+            copy_contents_handles(
+                source.as_raw_handle(),
+                target.as_raw_handle(),
+                &AtomicBool::new(false),
+            )
+            .unwrap();
             assert_eq!(source.stream_position().unwrap(), 3);
             assert_eq!(target.stream_position().unwrap(), 7);
             assert_eq!(fs::read(&target_path).unwrap(), contents);

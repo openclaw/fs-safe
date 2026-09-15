@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{Cursor, Read, Seek, SeekFrom};
+use std::io::{BufReader, Cursor, Read, Seek, SeekFrom};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
@@ -127,11 +127,12 @@ fn open_tar_reader(
     limits: TarMeterLimits,
 ) -> Result<TarMetadataMeter<Box<dyn Read + Send>>> {
     let file = File::open(path).map_err(|error| io_error("open archive", error))?;
-    open_tar_source(file, format, cancelled, limits)
+    open_tar_source(file, format, cancelled, limits, true)
 }
 
 fn open_tar_source<'a, R: Read + Seek + Send + 'a>(
     mut file: R, format: ArchiveFormat, cancelled: Arc<AtomicBool>, limits: TarMeterLimits,
+    buffer_plain: bool,
 ) -> Result<TarMetadataMeter<Box<dyn Read + Send + 'a>>> {
     let decoded: Box<dyn Read + Send + 'a> = match format {
         ArchiveFormat::TarZstd => Box::new(CancellationReader {
@@ -156,6 +157,13 @@ fn open_tar_source<'a, R: Read + Seek + Send + 'a>(
                         CancellationReader { inner: file, cancelled: Arc::clone(&cancelled) },
                         Arc::clone(&cancelled),
                     ),
+                    cancelled,
+                })
+            } else if buffer_plain {
+                // The meter requests each header/payload boundary separately. File
+                // read-ahead avoids a syscall per small member; memory inputs do not need it.
+                Box::new(CancellationReader {
+                    inner: BufReader::with_capacity(65536, file),
                     cancelled,
                 })
             } else {
@@ -903,7 +911,7 @@ impl Task for OpenTarBufferTask {
     fn compute(&mut self) -> Result<Self::Output> {
         check_cancelled(&self.cancelled)?;
         let input = self.buffer.take().ok_or_else(|| Error::new(Status::GenericFailure, "TAR buffer already consumed"))?;
-        let reader = open_tar_source(Cursor::new(input.as_ref()), self.format, Arc::clone(&self.cancelled), self.limits)?;
+        let reader = open_tar_source(Cursor::new(input.as_ref()), self.format, Arc::clone(&self.cancelled), self.limits, false)?;
         let members = inspect_tar_reader(reader)?;
         Ok(NativeTarBufferReader { data: Arc::new(TarBufferData { input, format: self.format, limits: self.limits, members }) })
     }
@@ -960,7 +968,7 @@ impl Task for ReadTarBufferTask {
             }
             return Ok(output);
         }
-        let mut reader = open_tar_source(Cursor::new(input), self.data.format, Arc::clone(&self.cancelled), self.data.limits)?;
+        let mut reader = open_tar_source(Cursor::new(input), self.data.format, Arc::clone(&self.cancelled), self.data.limits, false)?;
         skip_tar_to(&mut reader, &mut 0, member.offset)?;
         let output = read_bounded(&mut (&mut reader).take(member.size), self.max_bytes, Arc::clone(&self.cancelled))?;
         if output.len() as u64 != member.size {
@@ -1046,6 +1054,10 @@ pub fn read_archive_entry_native(
         signal,
     ))
 }
+
+#[cfg(test)]
+#[path = "archive_tar_buffer_tests.rs"]
+mod tar_buffer_tests;
 
 #[cfg(test)]
 mod tests {

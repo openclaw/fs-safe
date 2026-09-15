@@ -17,6 +17,7 @@ export function safeDirName(input: string): string {
   return trimmed.replaceAll("/", "__").replaceAll("\\", "__");
 }
 
+/** Legacy readable encoding; distinct IDs can share a result. Use V2 for untrusted IDs. */
 export function safePathSegmentHashed(input: string): string {
   const trimmed = input.trim();
   const base = trimmed
@@ -34,6 +35,19 @@ export function safePathSegmentHashed(input: string): string {
     return `${safe.slice(0, 50)}-${hash}`;
   }
   return safe;
+}
+
+/**
+ * Versioned install-ID encoding: every trimmed ID receives a domain-separated
+ * SHA-256 digest. Only surrounding whitespace is intentionally equivalent.
+ */
+export function safePathSegmentHashedV2(input: string): string {
+  const hash = createHash("sha256")
+    .update("@openclaw/fs-safe:install-path:v2\0", "utf8")
+    // UTF-16LE preserves every JavaScript code unit, including lone surrogates.
+    .update(input.trim(), "utf16le")
+    .digest("hex");
+  return `id-v2-${hash}`;
 }
 
 export function resolveSafeInstallDir(params: {

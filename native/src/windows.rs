@@ -4,20 +4,22 @@ use std::mem::{size_of, zeroed};
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::FromRawHandle;
 use std::ptr::{null, null_mut};
+use std::sync::OnceLock;
 
 use windows_sys::Win32::Foundation::{
     CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS,
     ERROR_DISK_FULL, ERROR_FILE_EXISTS, ERROR_FILE_NOT_FOUND, ERROR_HANDLE_DISK_FULL,
-    ERROR_LOCK_VIOLATION, ERROR_NO_MORE_FILES, ERROR_PATH_NOT_FOUND, ERROR_SHARING_VIOLATION,
-    GENERIC_READ, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
+    ERROR_INVALID_FUNCTION, ERROR_INVALID_PARAMETER, ERROR_LOCK_VIOLATION, ERROR_NO_MORE_FILES,
+    ERROR_NOT_SUPPORTED, ERROR_PATH_NOT_FOUND, ERROR_SHARING_VIOLATION, GENERIC_READ, GetLastError,
+    HANDLE, INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
     FILE_ATTRIBUTE_TAG_INFO, FILE_DISPOSITION_FLAG_DELETE,
     FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
     FILE_DISPOSITION_INFO_EX, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_ID_BOTH_DIR_INFO,
-    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FileAttributeTagInfo,
-    FileDispositionInfoEx, FileIdBothDirectoryInfo, FileIdBothDirectoryRestartInfo,
+    FILE_ID_INFO, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FileAttributeTagInfo,
+    FileDispositionInfoEx, FileIdBothDirectoryInfo, FileIdBothDirectoryRestartInfo, FileIdInfo,
     GetFileInformationByHandle, GetFileInformationByHandleEx, ReOpenFile,
     SetFileInformationByHandle,
 };
@@ -29,13 +31,12 @@ use crate::{FileIdentity, NativeResult, native_error};
 
 const O_WRONLY: i32 = 0x0001;
 const O_RDWR: i32 = 0x0002;
-const O_APPEND: i32 = 0x0008;
 const O_CREAT: i32 = 0x0100;
 const O_TRUNC: i32 = 0x0200;
 const O_EXCL: i32 = 0x0400;
-const O_BINARY: i32 = 0x8000;
 
 const DELETE_ACCESS: u32 = 0x0001_0000;
+const READ_CONTROL: u32 = 0x0002_0000;
 const SYNCHRONIZE_ACCESS: u32 = 0x0010_0000;
 const FILE_LIST_DIRECTORY: u32 = 0x0000_0001;
 const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
@@ -109,34 +110,6 @@ unsafe extern "system" {
     fn RtlNtStatusToDosError(status: i32) -> u32;
 }
 
-#[link(name = "msvcrt")]
-unsafe extern "C" {
-    fn _get_osfhandle(fd: i32) -> isize;
-    fn _open_osfhandle(handle: isize, flags: i32) -> i32;
-    fn _set_thread_local_invalid_parameter_handler(
-        handler: InvalidParameterHandler,
-    ) -> InvalidParameterHandler;
-}
-
-type InvalidParameterHandler = Option<
-    unsafe extern "C" fn(
-        expression: *const u16,
-        function: *const u16,
-        file: *const u16,
-        line: u32,
-        reserved: usize,
-    ),
->;
-
-unsafe extern "C" fn ignore_invalid_parameter(
-    _expression: *const u16,
-    _function: *const u16,
-    _file: *const u16,
-    _line: u32,
-    _reserved: usize,
-) {
-}
-
 pub(crate) struct OwnedHandle(pub(crate) HANDLE);
 
 impl Drop for OwnedHandle {
@@ -156,69 +129,99 @@ impl OwnedHandle {
     }
 }
 
-pub(crate) fn root_handle(fd: i32) -> NativeResult<HANDLE> {
-    let direct = fd as usize as HANDLE;
-    // Node/libuv may expose a Windows HANDLE directly rather than a UCRT fd.
-    // Probe that representation first with a non-destructive handle query.
-    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { zeroed() };
-    if !direct.is_null() && unsafe { GetFileInformationByHandle(direct, &mut info) } != 0 {
-        return Ok(direct);
+type UvGetOsfhandle = unsafe extern "C" fn(i32) -> isize;
+type UvOpenOsfhandle = unsafe extern "C" fn(isize) -> i32;
+
+#[derive(Clone, Copy, Debug)]
+struct UvBridge {
+    get_osfhandle: UvGetOsfhandle,
+    open_osfhandle: UvOpenOsfhandle,
+}
+
+impl UvBridge {
+    fn from_symbols(
+        get_osfhandle: Option<UvGetOsfhandle>,
+        open_osfhandle: Option<UvOpenOsfhandle>,
+    ) -> Option<Self> {
+        Some(Self {
+            get_osfhandle: get_osfhandle?,
+            open_osfhandle: open_osfhandle?,
+        })
     }
-    // Node's Windows fs descriptors are owned by libuv and are not guaranteed
-    // to belong to the addon's CRT table. Resolve libuv's public conversion
-    // function from the Node executable before trying the CRT fallback.
-    let node_module = unsafe { GetModuleHandleW(null()) };
-    if !node_module.is_null() {
-        let proc = unsafe { GetProcAddress(node_module, c"uv_get_osfhandle".as_ptr().cast()) };
-        if let Some(proc) = proc {
-            // SAFETY: uv_get_osfhandle is exported with the documented
-            // `intptr_t uv_get_osfhandle(int)` signature.
-            let get_uv_handle: unsafe extern "C" fn(i32) -> isize =
-                unsafe { std::mem::transmute(proc) };
-            let handle = unsafe { get_uv_handle(fd) };
-            if handle != -1 {
-                return Ok(handle as HANDLE);
-            }
+}
+
+fn require_uv_bridge(bridge: Option<UvBridge>) -> NativeResult<UvBridge> {
+    bridge.ok_or_else(|| native_error(
+        "ENOTSUP",
+        "runtime libuv descriptor bridge is unavailable",
+    ))
+}
+
+fn uv_bridge() -> NativeResult<UvBridge> {
+    static BRIDGE: OnceLock<Option<UvBridge>> = OnceLock::new();
+    require_uv_bridge(*BRIDGE.get_or_init(|| {
+        // N-API filesystem descriptors belong to the host runtime's libuv
+        // table, not this add-on's CRT. The bridge must come from that same
+        // executable; searching other modules would mix descriptor tables.
+        let runtime = unsafe { GetModuleHandleW(null()) };
+        if runtime.is_null() {
+            return None;
         }
+        let get_osfhandle = unsafe {
+            GetProcAddress(runtime, c"uv_get_osfhandle".as_ptr().cast())
+        }?;
+        let open_osfhandle = unsafe {
+            GetProcAddress(runtime, c"uv_open_osfhandle".as_ptr().cast())
+        }?;
+        // SAFETY: libuv exports these symbols with the documented
+        // `intptr_t uv_get_osfhandle(int)` and
+        // `int uv_open_osfhandle(intptr_t)` signatures.
+        UvBridge::from_symbols(
+            Some(unsafe { std::mem::transmute::<_, UvGetOsfhandle>(get_osfhandle) }),
+            Some(unsafe { std::mem::transmute::<_, UvOpenOsfhandle>(open_osfhandle) }),
+        )
+    }))
+}
+
+fn runtime_handle_from_fd(fd: i32, bridge: UvBridge) -> NativeResult<HANDLE> {
+    if fd < 0 {
+        return Err(native_error("EBADF", "invalid runtime file descriptor"));
     }
-    // _get_osfhandle invokes UCRT's invalid-parameter handler for a non-CRT
-    // descriptor. Override it on this thread so an invalid representation
-    // becomes a normal -1 result instead of terminating Node.
-    let previous =
-        unsafe { _set_thread_local_invalid_parameter_handler(Some(ignore_invalid_parameter)) };
-    let handle = unsafe { _get_osfhandle(fd) };
-    unsafe { _set_thread_local_invalid_parameter_handler(previous) };
-    if handle == -1 {
-        return Err(native_error("EBADF", "invalid root file descriptor"));
+    let handle = unsafe { (bridge.get_osfhandle)(fd) };
+    if handle == -1 || handle == 0 {
+        return Err(native_error("EBADF", "invalid runtime file descriptor"));
     }
     Ok(handle as HANDLE)
 }
 
-fn node_fd_from_handle(handle: OwnedHandle, flags: i32) -> NativeResult<i32> {
-    let node_module = unsafe { GetModuleHandleW(null()) };
-    if !node_module.is_null() {
-        let proc = unsafe { GetProcAddress(node_module, c"uv_open_osfhandle".as_ptr().cast()) };
-        if let Some(proc) = proc {
-            // SAFETY: uv_open_osfhandle is exported with the documented
-            // `int uv_open_osfhandle(intptr_t)` signature.
-            let open_uv_handle: unsafe extern "C" fn(isize) -> i32 =
-                unsafe { std::mem::transmute(proc) };
-            let fd = unsafe { open_uv_handle(handle.0 as isize) };
-            if fd >= 0 {
-                let _ = handle.into_raw();
-                return Ok(fd);
-            }
-        }
-    }
-    let fd = unsafe { _open_osfhandle(handle.0 as isize, flags | O_BINARY | (flags & O_APPEND)) };
+pub(crate) fn root_handle(fd: i32) -> NativeResult<HANDLE> {
+    runtime_handle_from_fd(fd, uv_bridge()?)
+}
+
+fn runtime_fd_for_handle(handle: HANDLE, bridge: UvBridge) -> NativeResult<i32> {
+    let fd = unsafe { (bridge.open_osfhandle)(handle as isize) };
     if fd < 0 {
         return Err(native_error(
             "EIO",
-            "convert Windows handle to file descriptor",
+            format!("convert Windows handle through libuv: {fd}"),
         ));
     }
+    Ok(fd)
+}
+
+fn runtime_fd_from_handle_with_bridge(
+    handle: OwnedHandle,
+    bridge: UvBridge,
+) -> NativeResult<i32> {
+    let fd = runtime_fd_for_handle(handle.0, bridge)?;
+    // libuv owns the HANDLE after a successful conversion.
     let _ = handle.into_raw();
     Ok(fd)
+}
+
+fn runtime_fd_from_handle(handle: OwnedHandle) -> NativeResult<i32> {
+    let bridge = uv_bridge()?;
+    runtime_fd_from_handle_with_bridge(handle, bridge)
 }
 
 fn wide_relative(path: &str) -> NativeResult<Vec<u16>> {
@@ -253,7 +256,10 @@ fn nt_error(status: i32, operation: &str) -> napi::Error<String> {
     win_error(unsafe { RtlNtStatusToDosError(status) }, operation)
 }
 
-pub(crate) fn handle_is_reparse(handle: HANDLE) -> NativeResult<bool> {
+fn handle_attribute_tag_information(
+    handle: HANDLE,
+    operation: &str,
+) -> NativeResult<FILE_ATTRIBUTE_TAG_INFO> {
     // SAFETY: info is a valid output buffer for the supplied class.
     let mut info: FILE_ATTRIBUTE_TAG_INFO = unsafe { zeroed() };
     let ok = unsafe {
@@ -266,9 +272,17 @@ pub(crate) fn handle_is_reparse(handle: HANDLE) -> NativeResult<bool> {
     };
     if ok == 0 {
         // SAFETY: GetLastError has no memory safety preconditions.
-        return Err(win_error(unsafe { GetLastError() }, "inspect opened path"));
+        return Err(win_error(unsafe { GetLastError() }, operation));
     }
-    Ok(info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+    Ok(info)
+}
+
+pub(crate) fn handle_is_reparse(handle: HANDLE) -> NativeResult<bool> {
+    Ok(
+        handle_attribute_tag_information(handle, "inspect opened path")?.FileAttributes
+            & FILE_ATTRIBUTE_REPARSE_POINT
+            != 0,
+    )
 }
 
 fn assert_not_reparse(handle: HANDLE) -> NativeResult<()> {
@@ -326,6 +340,46 @@ pub(crate) fn nt_open_relative_with_sharing(
     reparse_policy: ReparsePolicy,
     share_access: u32,
 ) -> NativeResult<OwnedHandle> {
+    nt_open_relative_with_security_descriptor(
+        root,
+        path,
+        desired_access,
+        disposition,
+        options,
+        reparse_policy,
+        share_access,
+        null_mut(),
+        true,
+    )
+}
+
+// Keep the NtCreateFile inputs explicit at this shared native boundary.
+#[allow(clippy::too_many_arguments)]
+fn nt_open_relative_with_security_descriptor(
+    root: HANDLE,
+    path: &str,
+    desired_access: u32,
+    disposition: u32,
+    options: u32,
+    reparse_policy: ReparsePolicy,
+    share_access: u32,
+    security_descriptor: *mut c_void,
+    post_open_reparse_check: bool,
+) -> NativeResult<OwnedHandle> {
+    if !security_descriptor.is_null() && disposition != FILE_CREATE {
+        return Err(native_error(
+            "EINVAL",
+            "a security descriptor is allowed only for exclusive creation",
+        ));
+    }
+    if !post_open_reparse_check
+        && (security_descriptor.is_null() || disposition != FILE_CREATE)
+    {
+        return Err(native_error(
+            "EINVAL",
+            "only secured exclusive creation may defer the first handle query",
+        ));
+    }
     if matches!(reparse_policy, ReparsePolicy::AllowLeaf) {
         crate::validate_relative_path(path, false)?;
         if path.contains(['/', '\\']) {
@@ -347,7 +401,7 @@ pub(crate) fn nt_open_relative_with_sharing(
             // Validated direct child: no intermediate components can reparse.
             ReparsePolicy::AllowLeaf => 0,
         },
-        security_descriptor: null_mut(),
+        security_descriptor,
         security_quality_of_service: null_mut(),
     };
     // SAFETY: all pointers reference initialized, call-scoped storage.
@@ -373,10 +427,36 @@ pub(crate) fn nt_open_relative_with_sharing(
         return Err(nt_error(status, "open path relative to root handle"));
     }
     let owned = OwnedHandle(handle);
-    if matches!(reparse_policy, ReparsePolicy::Reject) {
+    if post_open_reparse_check && matches!(reparse_policy, ReparsePolicy::Reject) {
         assert_not_reparse(owned.0)?;
     }
     Ok(owned)
+}
+
+pub(crate) fn nt_create_directory_relative(
+    root: HANDLE,
+    name: &str,
+    security_descriptor: *mut c_void,
+) -> NativeResult<OwnedHandle> {
+    crate::validate_relative_path(name, false)?;
+    if name.contains(['/', '\\']) || security_descriptor.is_null() {
+        return Err(native_error(
+            "EINVAL",
+            "private directory creation requires a direct child and security descriptor",
+        ));
+    }
+    nt_open_relative_with_security_descriptor(
+        root,
+        name,
+        DELETE_ACCESS | READ_CONTROL | FILE_WRITE_ATTRIBUTES,
+        FILE_CREATE,
+        FILE_DIRECTORY_FILE,
+        ReparsePolicy::Reject,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        security_descriptor,
+        // Exclusive creation must return the exact handle before any fallible query.
+        false,
+    )
 }
 
 fn access_from_flags(flags: i32) -> u32 {
@@ -426,7 +506,7 @@ pub fn open_beneath(root_fd: i32, rel_path: &str, flags: i32) -> NativeResult<i3
         }
         let duplicate = OwnedHandle(duplicate);
         assert_not_reparse(duplicate.0)?;
-        return node_fd_from_handle(duplicate, flags);
+        return runtime_fd_from_handle(duplicate);
     }
     let handle = nt_open_relative(
         root_handle(root_fd)?,
@@ -435,7 +515,7 @@ pub fn open_beneath(root_fd: i32, rel_path: &str, flags: i32) -> NativeResult<i3
         disposition_from_flags(flags),
         0,
     )?;
-    node_fd_from_handle(handle, flags)
+    runtime_fd_from_handle(handle)
 }
 
 pub fn mkdir_beneath(root_fd: i32, rel_path: &str, _mode: u32) -> NativeResult<()> {
@@ -641,9 +721,50 @@ pub(crate) fn handle_identity(handle: HANDLE) -> NativeResult<(u32, u64, bool)> 
     handle_identity_and_size(handle).map(|(identity, _)| identity)
 }
 
-pub(crate) fn handle_identity_and_size(
-    handle: HANDLE,
-) -> NativeResult<((u32, u64, bool), u64)> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct HandleFileIdentity {
+    volume_serial_number: u64,
+    file_id: [u8; 16],
+}
+
+fn file_identity_error(code: u32) -> napi::Error<String> {
+    if matches!(
+        code,
+        ERROR_INVALID_FUNCTION | ERROR_NOT_SUPPORTED | ERROR_INVALID_PARAMETER
+    ) {
+        native_error(
+            "ENOTSUP",
+            format!(
+                "stable 128-bit Windows file identity is unavailable (Windows error {code})"
+            ),
+        )
+    } else {
+        win_error(code, "inspect stable 128-bit Windows file identity")
+    }
+}
+
+pub(crate) fn handle_file_identity(handle: HANDLE) -> NativeResult<HandleFileIdentity> {
+    // FILE_ID_INFO is available in the supported SDK; filesystems that cannot
+    // supply it fail closed rather than falling back to a narrower identity.
+    let mut info: FILE_ID_INFO = unsafe { zeroed() };
+    if unsafe {
+        GetFileInformationByHandleEx(
+            handle,
+            FileIdInfo,
+            (&mut info as *mut FILE_ID_INFO).cast(),
+            size_of::<FILE_ID_INFO>() as u32,
+        )
+    } == 0
+    {
+        return Err(file_identity_error(unsafe { GetLastError() }));
+    }
+    Ok(HandleFileIdentity {
+        volume_serial_number: info.VolumeSerialNumber,
+        file_id: info.FileId.Identifier,
+    })
+}
+
+fn guarded_handle_information(handle: HANDLE) -> NativeResult<BY_HANDLE_FILE_INFORMATION> {
     // SAFETY: info is a valid output buffer for this API.
     let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { zeroed() };
     if unsafe { GetFileInformationByHandle(handle, &mut info) } == 0 {
@@ -652,12 +773,34 @@ pub(crate) fn handle_identity_and_size(
             "inspect owned directory identity",
         ));
     }
+    Ok(info)
+}
+
+fn identity_from_handle_information(
+    info: &BY_HANDLE_FILE_INFORMATION,
+) -> (u32, u64, bool) {
+    (
+        info.dwVolumeSerialNumber,
+        ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64,
+        info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0,
+    )
+}
+
+pub(crate) fn handle_attributes(handle: HANDLE) -> NativeResult<u32> {
+    // Keep attribute-only guards independent from the larger legacy identity
+    // structure; stable identity remains a separate FileIdInfo query.
+    Ok(
+        handle_attribute_tag_information(handle, "inspect owned directory identity")?
+            .FileAttributes,
+    )
+}
+
+pub(crate) fn handle_identity_and_size(
+    handle: HANDLE,
+) -> NativeResult<((u32, u64, bool), u64)> {
+    let info = guarded_handle_information(handle)?;
     Ok((
-        (
-            info.dwVolumeSerialNumber,
-            ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64,
-            info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0,
-        ),
+        identity_from_handle_information(&info),
         ((info.nFileSizeHigh as u64) << 32) | info.nFileSizeLow as u64,
     ))
 }
@@ -926,9 +1069,13 @@ pub fn chmod_beneath(_root_fd: i32, _rel_path: &str, _mode: u32) -> NativeResult
 pub struct IndependentReader(OwnedHandle);
 
 pub fn open_independent_reader(fd: i32) -> NativeResult<IndependentReader> {
+    open_independent_reader_handle(root_handle(fd)?)
+}
+
+pub(crate) fn open_independent_reader_handle(handle: HANDLE) -> NativeResult<IndependentReader> {
     let handle = unsafe {
         ReOpenFile(
-            root_handle(fd)?,
+            handle,
             GENERIC_READ,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             0,
@@ -1001,10 +1148,119 @@ mod tests {
     use std::collections::BTreeMap;
     use std::fs::{self, OpenOptions};
     use std::os::windows::fs::OpenOptionsExt;
-    use std::os::windows::io::AsRawHandle;
+    use std::os::windows::io::{AsRawHandle, IntoRawHandle};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+
+    unsafe extern "C" fn test_get_osfhandle(fd: i32) -> isize {
+        0x1000 + fd as isize
+    }
+
+    unsafe extern "C" fn test_open_osfhandle(handle: isize) -> i32 {
+        i32::try_from(handle - 0x1000).unwrap_or(-1)
+    }
+
+    unsafe extern "C" fn test_null_osfhandle(_fd: i32) -> isize {
+        0
+    }
+
+    unsafe extern "C" fn test_open_osfhandle_failure(_handle: isize) -> i32 {
+        -1
+    }
+
+    unsafe extern "C" fn test_open_osfhandle_success(_handle: isize) -> i32 {
+        73
+    }
+
+    #[test]
+    fn runtime_descriptor_bridge_requires_both_host_exports() {
+        for bridge in [
+            UvBridge::from_symbols(None, None),
+            UvBridge::from_symbols(Some(test_get_osfhandle), None),
+            UvBridge::from_symbols(None, Some(test_open_osfhandle)),
+        ] {
+            let error = require_uv_bridge(bridge).unwrap_err();
+            assert_eq!(error.status, "ENOTSUP");
+        }
+        assert!(UvBridge::from_symbols(
+            Some(test_get_osfhandle),
+            Some(test_open_osfhandle),
+        ).is_some());
+    }
+
+    #[test]
+    fn runtime_descriptor_bridge_never_guesses_a_raw_handle_namespace() {
+        let bridge = UvBridge::from_symbols(
+            Some(test_get_osfhandle),
+            Some(test_open_osfhandle),
+        ).unwrap();
+        let fd = 37;
+        let handle = runtime_handle_from_fd(fd, bridge).unwrap();
+        assert_eq!(handle as usize, 0x1000 + fd as usize);
+        assert_ne!(handle as usize, fd as usize);
+        assert_eq!(runtime_fd_for_handle(handle, bridge).unwrap(), fd);
+        assert_eq!(runtime_handle_from_fd(-1, bridge).unwrap_err().status, "EBADF");
+        let null_bridge = UvBridge::from_symbols(
+            Some(test_null_osfhandle),
+            Some(test_open_osfhandle),
+        ).unwrap();
+        assert_eq!(
+            runtime_handle_from_fd(fd, null_bridge).unwrap_err().status,
+            "EBADF",
+        );
+        assert_eq!(
+            runtime_fd_for_handle(INVALID_HANDLE_VALUE, bridge)
+                .unwrap_err()
+                .status,
+            "EIO",
+        );
+    }
+
+    #[test]
+    fn runtime_descriptor_bridge_transfers_handle_ownership_only_on_success() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "fs-safe-runtime-fd-ownership-{}-{nonce}",
+            std::process::id(),
+        ));
+        fs::write(&path, b"owned").unwrap();
+
+        let open_exclusive = || OpenOptions::new().read(true).share_mode(0).open(&path);
+        let failed_handle = open_exclusive().unwrap().into_raw_handle();
+        let failure_bridge = UvBridge::from_symbols(
+            Some(test_get_osfhandle),
+            Some(test_open_osfhandle_failure),
+        ).unwrap();
+        assert_eq!(
+            runtime_fd_from_handle_with_bridge(OwnedHandle(failed_handle), failure_bridge)
+                .unwrap_err()
+                .status,
+            "EIO",
+        );
+        drop(open_exclusive().unwrap());
+
+        let transferred_handle = open_exclusive().unwrap().into_raw_handle();
+        let success_bridge = UvBridge::from_symbols(
+            Some(test_get_osfhandle),
+            Some(test_open_osfhandle_success),
+        ).unwrap();
+        assert_eq!(
+            runtime_fd_from_handle_with_bridge(OwnedHandle(transferred_handle), success_bridge)
+                .unwrap(),
+            73,
+        );
+        assert_eq!(
+            open_exclusive().unwrap_err().raw_os_error(),
+            Some(ERROR_SHARING_VIOLATION as i32),
+        );
+        assert_ne!(unsafe { CloseHandle(transferred_handle) }, 0);
+        drop(open_exclusive().unwrap());
+        fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn directory_enumeration_spans_batches_and_restarts_without_losing_entries() {
@@ -1062,6 +1318,33 @@ mod tests {
     #[test]
     fn maps_access_denied_to_node_filesystem_eperm() {
         assert_eq!(win_error(ERROR_ACCESS_DENIED, "test").status, "EPERM");
+    }
+
+    #[test]
+    fn stable_file_identity_uses_volume_and_all_128_file_id_bits() {
+        let identity = HandleFileIdentity {
+            volume_serial_number: 7,
+            file_id: [0; 16],
+        };
+        let mut different_high_bit = identity;
+        different_high_bit.file_id[15] = 0x80;
+        let mut different_volume = identity;
+        different_volume.volume_serial_number = 8;
+        let mut different_volume_high_bit = identity;
+        different_volume_high_bit.volume_serial_number |= 1_u64 << 63;
+        assert_ne!(identity, different_high_bit);
+        assert_ne!(identity, different_volume);
+        assert_ne!(identity, different_volume_high_bit);
+
+        for code in [
+            ERROR_INVALID_FUNCTION,
+            ERROR_NOT_SUPPORTED,
+            ERROR_INVALID_PARAMETER,
+        ] {
+            let error = file_identity_error(code);
+            assert_eq!(error.status, "ENOTSUP");
+            assert!(error.reason.contains("128-bit Windows file identity"));
+        }
     }
 
     #[test]

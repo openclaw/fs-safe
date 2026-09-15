@@ -1,7 +1,8 @@
 import { classifyArchiveParserError } from "./archive-parser-errors.js";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
-import { Readable } from "node:stream";
+import { Readable, Writable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { readBoundedAsync } from "./bounded-read.js";
 import {
   ArchiveFormatError,
@@ -54,44 +55,23 @@ function normalizedRequestedEntry(entryPath: string): string {
   return normalized;
 }
 
-async function readStreamBounded(
-  stream: NodeJS.ReadableStream | AsyncIterable<unknown>,
-  maxBytes: number,
+async function readAdmittedTarPayload(
+  stream: AsyncIterable<Buffer>,
+  size: number,
 ): Promise<Buffer> {
-  if (!(Symbol.asyncIterator in Object(stream))) {
-    return await new Promise<Buffer>((resolve, reject) => {
-      const readable = stream as NodeJS.ReadableStream;
-      const chunks: Buffer[] = [];
-      let total = 0;
-      readable.on("data", (chunk: unknown) => {
-        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
-        total += buffer.length;
-        if (total > maxBytes) {
-          readable.pause();
-          reject(
-            new ArchiveLimitError(
-              ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT,
-            ),
-          );
-          return;
-        }
-        chunks.push(buffer);
-      });
-      readable.once("end", () => resolve(Buffer.concat(chunks, total)));
-      readable.once("error", reject);
-    });
-  }
-  const chunks: Buffer[] = [];
+  // Complete admission has bounded this exact range. Copy as it arrives so
+  // decoder chunks can be released before the caller receives the owned result.
+  const result = Buffer.allocUnsafe(size);
   let total = 0;
-  for await (const chunk of stream as AsyncIterable<unknown>) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
-    total += buffer.length;
-    if (total > maxBytes) {
-      throw new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT);
+  for await (const chunk of stream) {
+    if (chunk.length > size - total) {
+      throw new ArchiveFormatError("invalid admitted TAR payload size");
     }
-    chunks.push(buffer);
+    chunk.copy(result, total);
+    total += chunk.length;
   }
-  return Buffer.concat(chunks, total);
+  if (total !== size) throw new ArchiveFormatError("truncated admitted TAR range");
+  return result;
 }
 
 async function readArchiveInput(archivePath: string): Promise<Buffer> {
@@ -158,13 +138,31 @@ async function readZipEntry(buffer: Buffer, entryPath: string, maxBytes: number,
   ) {
     throw new Error(`archive entry is a link: ${formatErrorDetail(entryPath)}`);
   }
+  const integrity = createZipIntegrityTransform(entry);
   const stream: NodeJS.ReadableStream =
     typeof entry.nodeStream === "function"
       ? entry.nodeStream()
       : Readable.from(await entry.async("nodebuffer"));
-  const integrity = createZipIntegrityTransform(entry);
-  stream.once("error", (error: Error) => integrity.destroy(normalizeZipIntegrityError(error)));
-  return await readStreamBounded(stream.pipe(integrity), maxBytes);
+  const chunks: Buffer[] = [];
+  let total = 0;
+  const destination = new Writable({
+    write(chunk: Buffer, _encoding, callback) {
+      total += chunk.length;
+      if (total > maxBytes) {
+        callback(new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT));
+        return;
+      }
+      chunks.push(chunk);
+      callback();
+    },
+  });
+  try {
+    // Iterator teardown can mask limit errors on Node 22; keep them in stream callbacks.
+    await pipeline(stream, integrity, destination);
+    return Buffer.concat(chunks, total);
+  } catch (error) {
+    throw normalizeZipIntegrityError(error);
+  }
 }
 
 async function readTarEntry(archiveBuffer: Buffer, entryPath: string, maxBytes: number): Promise<Buffer> {
@@ -195,8 +193,8 @@ async function readTarEntry(archiveBuffer: Buffer, entryPath: string, maxBytes: 
     return Buffer.from(archiveBuffer.subarray(selected.offset, end));
   }
   let result: Buffer | undefined;
-  await replayTar({ archiveBuffer, limits, members: [selected], async consume(_member, payload) {
-    result = await readStreamBounded(payload, maxBytes);
+  await replayTar({ archiveBuffer, limits, members: [selected], async consume(member, payload) {
+    result = await readAdmittedTarPayload(payload, member.size);
   } });
   return result!;
 }

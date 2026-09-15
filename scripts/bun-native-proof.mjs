@@ -95,6 +95,33 @@ if (scenario === "all") {
       if (mode !== "off" && !scenario.startsWith("missing-")) {
         assert.ok(addonLoads.some((file) => file.endsWith(".node")), "native qualification must actually load the addon");
       }
+      if (process.platform === "win32" && mode === "require") {
+        const { requireNativeBinding } = await load("native.js");
+        const binding = requireNativeBinding();
+        const rootFd = fs.openSync(directory, fs.constants.O_RDONLY);
+        try {
+          const rootBefore = fs.fstatSync(rootFd, { bigint: true });
+          binding.mkdirBeneath(rootFd, "bun-libuv-directory", 0o700);
+          assert.equal(fs.lstatSync(path.join(directory, "bun-libuv-directory")).isDirectory(), true);
+          const payload = Buffer.from("bun host libuv descriptor proof");
+          fs.writeFileSync(path.join(directory, "bun-libuv-payload"), payload);
+          const opened = binding.openBeneath(rootFd, "bun-libuv-payload", fs.constants.O_RDONLY);
+          try {
+            const received = Buffer.alloc(payload.length);
+            assert.equal(fs.readSync(opened.fd, received, 0, received.length, 0), payload.length);
+            assert.deepEqual(received, payload);
+            const openedStat = fs.fstatSync(opened.fd, { bigint: true });
+            assert.equal(openedStat.isFile(), true);
+            assert.equal(openedStat.size, BigInt(payload.length));
+          } finally { fs.closeSync(opened.fd); }
+          const rootAfter = fs.fstatSync(rootFd, { bigint: true });
+          assert.equal(rootAfter.isDirectory(), true);
+          assert.equal(rootAfter.dev, rootBefore.dev);
+          assert.equal(rootAfter.ino, rootBefore.ino);
+        } finally { fs.closeSync(rootFd); }
+        assert.ok(addonLoads.some((file) => file.endsWith(".node")));
+        checks.push("Windows host libuv converts borrowed and returned native descriptors");
+      }
       if (process.platform !== "win32" && mode !== "off" && !scenario.startsWith("missing-")) {
         fs.mkdirSync(path.join(directory, "a"));
         fs.writeFileSync(path.join(directory, "a", "file"), "slash payload");

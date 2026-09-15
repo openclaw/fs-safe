@@ -113,6 +113,11 @@ prefixes and use short random suffixes independent of the destination basename,
 so legal names near the filesystem's component limit also work for writes and
 cross-device moves.
 
+Cross-device symlink moves create the new link in a private destination-side
+staging directory before atomically replacing the destination. Link creation or
+publication failure preserves the existing destination and source link; ordinary
+failure cleanup removes the staging directory.
+
 Cross-device directory moves build a copy manifest and check it during source
 cleanup. Source changes can leave the published destination and some or all
 of the source. Regular-file and symlink move fallbacks unlink the source

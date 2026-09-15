@@ -407,9 +407,14 @@ describe.skipIf(process.platform !== "win32")("Windows namespace alias admission
       await expect(scope.ensureDir("directory::$INDEX_ALLOCATION")).resolves.toEqual(failure);
       expect(resolvePathsWithinRoot({
         rootDir: `${rootDir}::$INDEX_ALLOCATION`,
-        requestedPaths: [],
+        requestedPaths: ["carrier.txt"],
         scopeLabel: "workspace",
       })).toEqual(failure);
+      expect(resolvePathsWithinRoot({
+        rootDir: `${rootDir}::$INDEX_ALLOCATION`,
+        requestedPaths: [],
+        scopeLabel: "workspace",
+      })).toEqual({ ok: true, paths: [] });
       expect(await ensureDirectoryWithinRoot({
         rootDir,
         requestedPath: "directory::$INDEX_ALLOCATION",

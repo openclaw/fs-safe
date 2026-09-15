@@ -93,6 +93,46 @@ describe.skipIf(process.platform === "win32")("guest filesystem cross-device rec
     expect(await fs.readdir(destination)).toEqual([]);
   });
 
+  it.each(["symlink", "replace"])("preserves both entries when symlink move %s fails after EXDEV", async (operation) => {
+    const { source, destination } = await fixture();
+    await fs.symlink("missing-target", path.join(source, "alias"));
+    await fs.writeFile(path.join(destination, "moved"), "previous");
+    const setup = `${FORCE_EXDEV}
+def fail_move(*args, **kwargs):
+    raise OSError(errno.ENOSPC, 'injected symlink move failure')
+os.${operation} = fail_move
+`;
+
+    const result = runGuest([
+      "rename", source, "", "alias", destination, "", "moved", "0",
+    ], undefined, setup);
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(result.stderr.toString()).toContain("injected symlink move failure");
+    expect(await fs.readlink(path.join(source, "alias"))).toBe("missing-target");
+    expect(await fs.readFile(path.join(destination, "moved"), "utf8")).toBe("previous");
+    expect(await fs.readdir(destination)).toEqual(["moved"]);
+  });
+
+  it.each(["file", "symlink"])("replaces an existing %s with a symlink after EXDEV", async (kind) => {
+    const { source, destination } = await fixture();
+    const basename = "s".repeat(240);
+    await fs.symlink("missing-target", path.join(source, "alias"));
+    if (kind === "file") await fs.writeFile(path.join(destination, basename), "previous");
+    else await fs.symlink("previous-target", path.join(destination, basename));
+
+    const result = runGuest([
+      "rename", source, "", "alias", destination, "", basename, "0",
+    ], undefined, FORCE_EXDEV);
+
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr.toString()).toBe(0);
+    expect(await fs.readlink(path.join(destination, basename))).toBe("missing-target");
+    await expect(fs.lstat(path.join(source, "alias"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await fs.readdir(destination)).toEqual([basename]);
+  });
+
   it("retains the published copy and source when a file is added after copying", async () => {
     const { source, destination, args } = await fixture();
     await fs.utimes(path.join(source, "tree"), 1, 1);

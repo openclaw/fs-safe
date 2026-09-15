@@ -37,8 +37,19 @@ Hash cases verify the digest as well as the byte count outside measurement.
 The broader cases add lexical paths at depths 0/8/32, batches of 100/1,000
 paths, 1,000-entry listings and walks, private/public stores through 1 MiB with
 both durability settings, 1,000-item JSON documents and concurrent updates,
-contended/distinct lock groups, and loading 100 claimed queue entries. Queue
-fixtures are acknowledged outside timing; lock-group timings include release.
+contended/distinct lock groups, and loading 100 fresh or resumed queue claims.
+`PathScope.resolveAll/count=100` and `count=1000` exercise repeated absolute-root
+normalization across ordinary lexical path batches. Compare these with the
+singleton `PathScope.resolveAll` row when evaluating batch optimizations; relative
+roots still resolve against the working directory for each input, and Windows
+root normalization remains platform-specific. Internal drive-component scan
+timings describe validation cost rather than complete Root I/O latency.
+Windows Root-path rows separately measure exact-prefix admission, whose repair
+adds no filesystem observations, and alternate-casing identity admission.
+Resumed fixtures are first claimed outside timing to expose retry durability costs.
+Single and batch migration cases include callback execution and durable replacement,
+then verify the returned entry and the published processing file outside timing.
+Queue fixtures are acknowledged outside timing; lock-group timings include release.
 Scaling cases add 1/8/32 concurrent Root and FileStore reads, batches of 100
 lock-manager constructions with 0/32/128 retained locks, and scans of 100/1,000 unexpired
 store entries. Forced permission-error replacement cases exercise the public
@@ -57,12 +68,28 @@ order. Tree-copy cases use explicit auto, never, and supported always policies
 over 64 small files, one 1 MiB file, and nested and empty directories.
 TAR/gzip member reads, extraction, and inspection cover 1 MiB and 16 MiB payloads; 512-member read and
 inspection cases expose metadata-event transport costs.
+A 10,000-member plain-TAR inspection case uses 128-byte payloads to expose
+small-file read overhead. The archive is assembled in memory outside timing;
+every returned path, kind, and size is verified after measurement.
+Gzip member reads and inspection also cover a small member followed by 64 MiB
+of valid zero container padding, separating suffix validation from payload decoding.
 ZIP reads and extraction also cover 1 MiB and 16 MiB stored and deflated members
 to expose payload integrity costs beyond tiny archive fixtures. ZIP admission and
 member reads also cover 512 ASCII and Unicode names with stored and deflated data.
 Filtered ZIP extraction visits all 512 members while skipping their output,
 isolating admission and planning from destination-file writes.
-The native directory-open case times admission separately from descriptor close.
+The native descriptor cases isolate host-fd admission and directory open/return;
+the latter remains timed separately from descriptor close.
+
+Windows secure-read rows distinguish the measured JavaScript contract from the
+loaded addon's capabilities. A build containing `secure-file-windows.js` uses
+`readSecureFile/descriptor-acl` when its descriptor capability is available, or
+`readSecureFile/permission-unverified` for a verified expected rejection when
+it is not. Older builds use `readSecureFile/legacy-pathname-acl` and verify a
+successful read, including in native-off mode. All successful rows check the
+returned bytes. Detection uses the selected `--dist` directory, so a saved
+current build is not mistaken for a legacy baseline. These labels retain
+`readSecureFile` callable coverage; rejection timing is not successful-read timing.
 
 For a quick executable coverage check:
 
@@ -76,9 +103,14 @@ The `benchmarks` workflow also has an optional manual method audit. Set
 `method_audit=true`, choose `platform=all|linux|macos|windows`, and optionally
 provide `compare_ref`. It builds both revisions on the same runner and uses
 the candidate harness for both, saving JSON reports for JavaScript and native
-modes. `iterations` and `samples` control the measurement budget. These full
-sweeps identify candidates; use interleaved focused measurements before claiming
-a speedup, especially for storage-sensitive operations.
+modes. `iterations` and `samples` control the measurement budget. Set `filter`
+to one workload-family substring and `native_mode` to `off` or `require` for a
+focused audit. With a comparison ref and nonempty filter, `order=abba` records
+baseline, candidate, candidate, baseline within each of up to five `blocks`;
+`order=baab` records candidate, baseline, baseline, candidate. Each position
+has a separate, source-labelled JSON report. These full sweeps identify
+candidates; use repeated blocks of both orders before claiming a speedup when
+order bias is material, especially for storage-sensitive operations.
 
 Use `--filter readFileDescriptorBounded` to repeat one family. Filtered reports
 are marked explicitly and do not imply all cases ran. `--dist /absolute/dist`

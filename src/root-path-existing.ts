@@ -9,6 +9,7 @@ import {
   pathForWindowsFilesystem,
   resolvePathPreservingWindowsRoot,
 } from "./windows-path-alias.js";
+import { admitPathInsideRoot, type RootBoundaryIdentity } from "./root-boundary.js";
 
 export function absolutePathWithRawSegments(candidate: string): string {
   if (path.isAbsolute(candidate)) return candidate;
@@ -20,7 +21,11 @@ export function absolutePathWithRawSegments(candidate: string): string {
 export function rawPathRelativeToCanonicalRoot(
   candidate: string,
   rootCanonicalPath: string,
-  options: { rejectSymlinks?: boolean; rejectFinalSymlink?: boolean } = {},
+  options: {
+    rejectSymlinks?: boolean;
+    rejectFinalSymlink?: boolean;
+    rootIdentity?: RootBoundaryIdentity;
+  } = {},
 ): string | undefined {
   assertNoWindowsPathAlias(candidate);
   assertNoWindowsPathAlias(rootCanonicalPath);
@@ -31,6 +36,7 @@ export function rawPathRelativeToCanonicalRoot(
   const finalComponentIndex = segments.findLastIndex(segment => segment !== "" && segment !== ".");
   let prefix = filesystemRoot;
   let traversedSymlink = false;
+  const identityCache = process.platform === "win32" ? new Map<string, boolean>() : undefined;
   for (let index = 0; index < segments.length; index += 1) {
     prefix += `${prefix.endsWith(path.sep) ? "" : path.sep}${segments[index]}`;
     let canonical: string;
@@ -59,11 +65,17 @@ export function rawPathRelativeToCanonicalRoot(
       if (isSymlink) return undefined;
       continue;
     }
-    if (!isPathInside(rootCanonicalPath, canonical)) continue;
+    const admitted = admitPathInsideRoot({
+      rootPath: rootCanonicalPath,
+      candidatePath: canonical,
+      rootIdentity: options.rootIdentity,
+      identityCache,
+    });
+    if (!admitted) continue;
     if (options.rejectSymlinks && traversedSymlink) {
       throw new FsSafeError("symlink", "symlink path component not allowed");
     }
-    return [path.relative(rootCanonicalPath, canonical), ...segments.slice(index + 1)]
+    return [admitted.relativePath, ...segments.slice(index + 1)]
       .filter(Boolean).join(path.sep);
   }
   return undefined;

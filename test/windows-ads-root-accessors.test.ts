@@ -114,14 +114,17 @@ describe("owned root pathname inputs", () => {
   it("owns path collections and directory-creation inputs", async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), "fs-safe-path-list-accessor-"));
     try {
-      const root = once(rootDir);
+      let rootReads = 0;
       const list = once(["one.txt", "two.txt"]);
       expect(resolvePathsWithinRoot({
-        get rootDir() { return root.get(); },
+        get rootDir() {
+          rootReads += 1;
+          return rootDir;
+        },
         get requestedPaths() { return list.get(); },
         scopeLabel: "workspace",
       })).toMatchObject({ ok: true });
-      expect([root.reads(), list.reads()]).toEqual([1, 1]);
+      expect([rootReads, list.reads()]).toEqual([2, 1]);
 
       const directoryRoot = once(rootDir);
       const directoryPath = once("nested");

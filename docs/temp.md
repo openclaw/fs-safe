@@ -277,6 +277,10 @@ files, hardlinks, and changes between the pre-open pathname, opened descriptor,
 and current pathname are rejected. The callback must finish and close its
 writer before returning. Its return value is preserved as `result`.
 
+Generated temp filenames suffix Windows reserved-device basenames on every
+platform. A completed sibling staging component that still resolves as a
+Windows device alias rejects with `invalid-path` before hooks or producers run.
+
 The helper retains one descriptor through requested mode application, opt-in
 file synchronization, rename, and publication verification. It opens read-only
 unless file synchronization is requested, so closed read-only producer output

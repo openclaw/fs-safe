@@ -17,8 +17,39 @@ export async function registerArchives({ api: a, workspace: w, register: add }) 
   const gzipPath = path.join(w, "fixture.tgz");
   await tar.c({ cwd: source, file: tarPath, portable: true }, ["entry.json"]);
   await tar.c({ cwd: source, file: gzipPath, portable: true, gzip: true }, ["entry.json"]);
+  const paddedGzipPath = path.join(w, "zero-padded.tgz");
+  fs.writeFileSync(paddedGzipPath, Buffer.concat([fs.readFileSync(gzipPath), Buffer.alloc(64 * 1024 * 1024)]));
+  add("readArchiveEntry/gzip-64MiB-zero-padding", () => a.readArchiveEntry(paddedGzipPath, "entry.json", { maxBytes: 1024 }), {
+    divisor: 100, verify: result => assert.equal(result.toString(), '{"ok":true}'),
+  });
+  add("inspectTarArchive/gzip-64MiB-zero-padding", () => a.inspectTarArchive({ archivePath: paddedGzipPath, timeoutMs: 30_000 }), {
+    divisor: 100, verify: entries => {
+      assert.equal(entries.length, 1);
+      assert.equal(entries[0].path, "entry.json");
+      assert.equal(entries[0].size, 11);
+    },
+  });
   const destination = path.join(w, "archive-destination");
   fs.mkdirSync(destination);
+  const smallMemberCount = 10_000;
+  const smallMembers = Buffer.alloc(smallMemberCount * 1024 + 1024);
+  for (let index = 0; index < smallMemberCount; index++) {
+    const offset = index * 1024;
+    new tar.Header({ path: `small-${index}.txt`, type: "File", size: 128,
+      mode: 0o644, uid: 0, gid: 0, mtime: new Date(0) }).encode(smallMembers, offset);
+    smallMembers.fill(42, offset + 512, offset + 512 + 128);
+  }
+  const smallMembersPath = path.join(w, "many-small-members.tar");
+  fs.writeFileSync(smallMembersPath, smallMembers);
+  add("inspectTarArchive/tar-10000-small-members", () => a.inspectTarArchive({
+    archivePath: smallMembersPath, timeoutMs: 30_000,
+  }), {
+    divisor: 100, verify: entries => {
+      assert.equal(entries.length, smallMemberCount);
+      assert.ok(entries.every((entry, index) => entry.path === `small-${index}.txt` &&
+        entry.kind === "file" && entry.size === 128));
+    },
+  });
   const simple = {
     isWindowsDrivePath: ["package/entry.json"], normalizeArchiveEntryPath: ["package\\entry.json"],
     stripArchivePath: ["package/entry.json", 1], validateArchiveEntryPath: ["package/entry.json"],

@@ -6,6 +6,7 @@ import path from "node:path";
 import { syncDirectory } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup, sha256Hex } from "./file-identity.js";
+import { inspectFileIdentity } from "./strict-file-identity.js";
 import { serializePathWrite } from "./write-queue.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
@@ -100,12 +101,19 @@ async function claimDurableQueueEntryUnlocked(
   const existingProcessing = await regularQueueFileIdentity(processingPath);
   if (existingProcessing) {
     const pending = await lstatOrNull(paths.jsonPath);
-    if (
-      pending &&
+    const retiresPending = pending !== null &&
       !pending.isSymbolicLink() &&
       pending.isFile() &&
-      sameFileIdentityForCleanup(pending, existingProcessing)
+      sameFileIdentityForCleanup(pending, existingProcessing);
+    if (
+      !retiresPending ||
+      path.resolve(path.dirname(processingPath)) !== path.resolve(path.dirname(paths.jsonPath))
     ) {
+      // An existing claim can contain a migration whose publication sync failed.
+      // Retirement already syncs this edge when both names share a parent.
+      await syncDirectory(path.dirname(processingPath));
+    }
+    if (retiresPending) {
       await retireDurableQueueSource({ jsonPath: paths.jsonPath, processingPath });
     }
     return processingPath;
@@ -121,7 +129,9 @@ async function claimDurableQueueEntryUnlocked(
     await fs.link(paths.jsonPath, processingPath);
   } catch (error) {
     if (getErrorCode(error) === "EEXIST") {
-      return (await regularQueueFileIdentity(processingPath)) ? processingPath : null;
+      if (!(await regularQueueFileIdentity(processingPath))) return null;
+      await syncDirectory(path.dirname(processingPath));
+      return processingPath;
     }
     if (getErrorCode(error) === "ENOENT") return null;
     throw error;
@@ -145,6 +155,49 @@ export async function claimDurableQueueEntry(
     validatedPaths,
     async () => await claimDurableQueueEntryUnlocked(validatedPaths, options),
   );
+}
+
+// The caller retains its read pin until this owner releases it or migration settles.
+export async function migrateDurableQueueEntry<T>(
+  paths: DurableQueueEntryPathsLike,
+  expected: BigIntStats,
+  releaseReadPin: () => Promise<void>,
+  run: (filePath: string, beforePublish: () => Promise<void>) => Promise<T>,
+): Promise<T> {
+  const validatedPaths = ownDurableQueueEntryPaths(paths);
+  return await withQueueEntryLock(validatedPaths, async () => {
+    const processingPath = validatedPaths.processingPath;
+    const assertCurrent = async (): Promise<void> => {
+      try {
+        await inspectFileIdentity(() => {
+          const current = fsSync.lstatSync(processingPath, { bigint: true });
+          if (current.isSymbolicLink() || !current.isFile() || current.nlink !== 1n) {
+            throw new FsSafeError(
+              "path-mismatch", "queue migration requires its original processing claim",
+            );
+          }
+          return current;
+        }, expected);
+      } catch (error) {
+        if (getErrorCode(error) === "ENOENT") {
+          throw new FsSafeError(
+            "path-mismatch", "queue processing claim disappeared before migration", { cause: error },
+          );
+        }
+        throw error;
+      }
+    };
+    await assertCurrent();
+    return await run(processingPath, async () => {
+      await assertCurrent();
+      if (process.platform === "win32") {
+        // Windows cannot replace our still-open target. Keep the transfer lock
+        // across release and reject changes made while the async close settles.
+        await releaseReadPin();
+        await assertCurrent();
+      }
+    });
+  });
 }
 
 export async function completeDeliveredQueueEntry(

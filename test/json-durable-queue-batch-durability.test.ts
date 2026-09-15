@@ -181,20 +181,21 @@ describe("queue migration durability", () => {
   it.each(["batch", "single"] as const)("%s rejects post-publication directory sync failure and resyncs on retry", async (loader) => {
     const { queueDir, paths, options } = await fixture(true);
     const failure = ioFailure();
-    const calls = failSyncOnce((openedPath) => openedPath === queueDir, failure);
+    // The first sync repairs the existing claim; the second follows migration.
+    const calls = failSyncOnce((openedPath) => openedPath === queueDir, failure, 2);
     const load = () => loader === "batch"
       ? loadPendingJsonDurableQueueEntries({ ...options, read: migrate })
       : loadJsonDurableQueueEntry({ paths, tempPrefix: "queue", read: migrate });
 
     await expect(load()).rejects.toBe(failure);
-    expect(calls()).toBe(1);
+    expect(calls()).toBe(2);
     expect(JSON.parse(await fs.readFile(paths.processingPath!, "utf8"))).toEqual(migrated);
     await expect(fs.access(paths.jsonPath)).rejects.toMatchObject({ code: "ENOENT" });
 
     vi.restoreAllMocks();
     const retrySyncs = failSyncOnce((openedPath) => openedPath === queueDir, failure, Infinity);
     await expect(load()).resolves.toEqual(loader === "batch" ? [migrated] : migrated);
-    expect(retrySyncs()).toBe(1);
+    expect(retrySyncs()).toBe(2);
     expect(JSON.parse(await fs.readFile(paths.processingPath!, "utf8"))).toEqual(migrated);
   });
 

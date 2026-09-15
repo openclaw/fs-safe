@@ -54,7 +54,10 @@ also rejects canonicalization when the addon or its canonicalizer is unavailable
 Node and Windows use their existing runtime canonicalizers. On Windows, Bun's
 recursive directory creation receives an absolute spelling that preserves raw
 path components, working around its rejection of existing relative `.` and `..`
-directories. Public paths and caller-supplied filesystem adapters remain unchanged.
+directories. Windows native descriptor-relative operations require Bun to expose
+the paired libuv descriptor bridge from its host executable; a missing or partial
+bridge fails explicitly with `ENOTSUP`. Public paths and caller-supplied filesystem
+adapters remain unchanged.
 
 The upstream fix is tracked in [Bun #42374](https://github.com/oven-sh/bun/pull/42374).
 The adapter can be removed when the supported Bun baseline includes that fix.

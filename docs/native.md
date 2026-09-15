@@ -55,7 +55,12 @@ whether a path, archive entry, mode, owner, or cleanup policy is acceptable.
   `FILE_OPEN_REPARSE_POINT`, then explicitly rejects reparse points. Rename and
   hardlink operations stay rooted in already-open handles. Owner/DACL reads
   use `GetSecurityInfo`; private directories receive their protected DACL in
-  the `CreateDirectoryW` call itself.
+  an exclusive, handle-relative `NtCreateFile` call. Their created handles remain
+  open through ACL and pathname-association checks and own any failure cleanup.
+  N-API descriptors cross into and out of
+  this layer only through the host executable's paired libuv descriptor bridge;
+  missing or partial exports fail with `ENOTSUP` instead of trying a raw HANDLE
+  or add-on CRT descriptor namespace.
 
 ## Archives
 
@@ -125,6 +130,13 @@ All routes preserve `wx` semantics and the same source/target identity and
 SHA-256 fencing. Native hashing and Linux whole-file copying run on N-API async
 workers rather than the JavaScript event loop.
 
+Linux range copying confirms every zero-byte result with a positioned source
+read at the current transfer offset, including after earlier calls copied data.
+If readable bytes remain, automatic Root copying resumes its byte loop from
+that offset; exclusive publication removes its partial target before retrying
+the guarded byte-copy fallback. EOF checks preserve descriptor cursors and do
+not bypass the byte limit.
+
 ## Mode semantics
 
 | Mode | Native loading | Fallback |
@@ -182,7 +194,7 @@ remain TypeScript-owned. What changes is the syscall strength or availability:
 | Zstd/bzip2 TAR | Supported. | Unsupported; typed `helper-unavailable`. |
 | Publication copy | Clone, Linux `copy_file_range`, async native SHA-256. | Exclusive `wx` byte loop and Node SHA-256 with the same content/identity fences. |
 | `rename-noreplace` | Atomic platform no-replace rename. | Unsupported; no emulation by check-then-rename. |
-| Windows DACL read | Direct `GetSecurityInfo`; the public facts API exposes ordered basic allow/deny ACE SIDs, masks, and decoded flags without trust policy. | Structured .NET owner/DACL inspection for coarse permission checks; the public raw ACE facts API remains native-only. |
+| Windows DACL read | Direct `GetSecurityInfo`; the public facts API exposes ordered basic allow/deny ACE SIDs, masks, and decoded flags without trust policy. Secure-file reads query the borrowed open descriptor and compare its 32-bit volume serial and 64-bit file-index projection with Node's bigint receipt. | Structured .NET owner/DACL inspection remains available to standalone pathname reporting. Secure-file reads fail closed without the descriptor capability. |
 | Windows private directory | Creation-time protected DACL. | Unsupported; no weaker pathname-only substitute. |
 
 Use `off` in CI to keep the fallback contract exercised. Use `require` when a

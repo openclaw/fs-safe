@@ -94,7 +94,15 @@ export async function pruneExpiredStoreEntries(params: {
       }
       if (stat.isFile() && now - stat.mtimeMs > params.options.ttlMs) {
         await assertRootGuard();
-        await scopedRoot.remove(relativePath).catch(() => undefined);
+        await scopedRoot.remove(relativePath, {
+          assertBeforeMutation: () => {
+            // Removal preparation can outlive the expiry observation above.
+            const current = fsSync.lstatSync(fullPath);
+            if (!current.isFile() || !(now - current.mtimeMs > params.options.ttlMs)) {
+              throw new FsSafeError("path-mismatch", "store entry is no longer an expired file");
+            }
+          },
+        }).catch(() => undefined);
       }
     }
     if (!pruneEmptyDirs) {
