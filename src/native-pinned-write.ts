@@ -114,6 +114,7 @@ async function capturePolicyAwarePosixParent(
   let currentPath = params.rootPath;
   let currentDirectory = describeStagedDirectory(rootFd, currentPath);
   try {
+    params.mutationAdmission?.beginParentWalk?.();
     const initialTarget = prospectiveTargetPath(currentPath, segments, params.basename);
     await authorizePinnedMutation(params, {
       targetPath: initialTarget,
@@ -125,6 +126,7 @@ async function capturePolicyAwarePosixParent(
       const segment = segments[index]!;
       const childPath = path.join(currentPath, segment);
       let childFd: number;
+      let created = false;
       try {
         childFd = binding.openBeneath(currentFd, segment, secureDirectoryFlags).fd;
       } catch (openError) {
@@ -144,6 +146,7 @@ async function capturePolicyAwarePosixParent(
         assertStagedDirectoryCurrent(currentDirectory);
         params.assertBeforeMutation?.();
         binding.mkdirBeneath(currentFd, segment, 0o777);
+        created = true;
         try {
           childFd = binding.openBeneath(currentFd, segment, secureDirectoryFlags).fd;
         } catch (createdOpenError) {
@@ -154,6 +157,20 @@ async function capturePolicyAwarePosixParent(
       let child: PosixParentAdmission;
       try {
         child = await describePosixParent(childFd, childPath);
+        if (created && params.mutationAdmission?.advanceCreatedDirectory) {
+          let parentCurrent = false;
+          try {
+            assertStagedDirectoryCurrent(currentDirectory);
+            assertStagedDirectoryCurrent(child.directory);
+            parentCurrent = true;
+          } catch {
+            // Leave failed evidence to the full ordered admission below.
+          }
+          if (parentCurrent) params.mutationAdmission.advanceCreatedDirectory(
+            Object.freeze({ path: currentPath, realPath: currentDirectory.realPath, ...currentDirectory.identity }),
+            Object.freeze({ path: childPath, realPath: child.parentPath, ...child.directory.identity }),
+          );
+        }
         const targetPath = prospectiveTargetPath(
           child.parentPath,
           segments.slice(index + 1),

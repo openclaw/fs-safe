@@ -1301,7 +1301,7 @@ async function resolvePinnedWriteTargetInRoot(
       mutationSymlinks: mutationPolicy.mutationSymlinks,
     });
     ({ relativeParentPath, mutationAdmission } = await preparePinnedWriteMutationAdmission({
-      rootReal, rootWithSep, resolvedTargetPath: resolved,
+      rootReal, rootWithSep, resolvedTargetPath: resolved, originalPath: relativePath,
       defaultRelativeParentPath: relativeParentPath, policy: mutationPolicy, resolveCurrent,
     }));
   }

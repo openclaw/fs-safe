@@ -6,6 +6,20 @@ import type { PinnedWriteMutationAdmission } from "./pinned-write.js";
 import { resolvePathViaExistingAncestor } from "./root-path-existing.js";
 import { outsideWorkspaceError } from "./root-errors.js";
 import type { MutationSymlinkPolicy } from "./root-symlink-policy.js";
+import { getFsSafeNativeConfig } from "./native-config.js";
+import {
+  advanceMutationObservation, mutationObservationCurrent, observeMutationPath,
+  type MutationDirectoryObservation, type MutationPathObservation,
+} from "./pinned-mutation-observation.js";
+
+type AdmissionRequest = Parameters<PinnedWriteMutationAdmission["authorize"]>[0];
+type Epoch = Readonly<{
+  mode: string;
+  observations: readonly MutationPathObservation[];
+  target: MutationPathObservation;
+  paths: readonly (readonly string[])[];
+  prefixes: readonly (readonly string[])[];
+}>;
 
 export type PinnedMutationPolicySnapshot = Readonly<{
   denyMutations?: DenyMutationPolicy;
@@ -33,11 +47,77 @@ function sameAbsolutePath(left: string, right: string): boolean {
   return path.relative(path.resolve(left), path.resolve(right)) === "";
 }
 
+function simpleRoute(rootReal: string, originalPath: string | undefined): string | undefined {
+  // These routes can depend on raw traversal, platform aliases, home expansion,
+  // or live native canonicalization. They retain full admission at every step.
+  if (!originalPath || process.platform === "win32" || process.versions.bun ||
+    originalPath.startsWith("~") || originalPath.includes("\\") || originalPath.includes("\0")) return undefined;
+  const segments = originalPath.split("/");
+  if (segments.some((segment, index) => segment === "." || segment === ".." ||
+    (segment === "" && index !== 0))) return undefined;
+  const target = path.resolve(rootReal, originalPath);
+  return isPathInside(rootReal, target) && target !== rootReal ? target : undefined;
+}
+
+function captureEpoch(rootReal: string, target: string, policy: PinnedMutationPolicySnapshot): Epoch | undefined {
+  const observations = new Map<string, MutationPathObservation>();
+  const observe = (pathname: string) => {
+    if (!observations.has(pathname)) {
+      const observation = observeMutationPath(pathname);
+      if (!observation) throw new Error("incomplete mutation observation");
+      observations.set(pathname, observation);
+    }
+    return observations.get(pathname)!;
+  };
+  try {
+    const root = observe(rootReal);
+    const route = observe(target);
+    // A canonical spelling alone cannot certify a route containing aliases.
+    if (root.canonicalPath !== rootReal || route.canonicalPath !== target ||
+      route.ancestor !== route.canonicalAncestor || route.entry.dev !== route.identity.dev ||
+      route.entry.ino !== route.identity.ino) return undefined;
+    const comparables = (entries: readonly string[] | undefined) => Object.freeze((entries ?? []).map((entry) => {
+      if (!entry || !path.isAbsolute(entry) || entry.includes("\0")) throw new Error("invalid policy observation");
+      const resolved = path.resolve(entry);
+      return Object.freeze([resolved, observe(resolved).canonicalPath]);
+    }));
+    const paths = comparables(policy.denyMutations?.paths);
+    const prefixes = comparables(policy.denyMutations?.prefixes);
+    return Object.freeze({
+      mode: getFsSafeNativeConfig().mode, target: route, paths, prefixes,
+      observations: Object.freeze([...observations.values()]),
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+function epochCurrent(epoch: Epoch): boolean {
+  return !process.versions.bun && getFsSafeNativeConfig().mode === epoch.mode &&
+    epoch.observations.every(mutationObservationCurrent);
+}
+
+function assertCachedNotDenied(target: string, epoch: Epoch): void {
+  if (epoch.paths.some((paths) => paths.some((denied) =>
+    isPathInside(denied, target) && isPathInside(target, denied))) ||
+    epoch.prefixes.some((paths) => paths.some((denied) => isPathInside(denied, target)))) {
+    throw new FsSafeError("denied-path", "path is denied by denyMutations policy");
+  }
+}
+
+function reusableRequest(request: AdmissionRequest, epoch: Epoch): boolean {
+  return request.targetPath === epoch.target.path &&
+    (request.mutationPath === request.targetPath ||
+      (request.phase === "parent-create" && epoch.target.missing.length > 1 &&
+        request.mutationPath === path.join(epoch.target.ancestor, epoch.target.missing[0]!)));
+}
+
 export async function preparePinnedWriteMutationAdmission(params: {
   rootReal: string;
   rootWithSep: string;
   resolvedTargetPath: string;
   defaultRelativeParentPath: string;
+  originalPath?: string;
   policy: PinnedMutationPolicySnapshot | undefined;
   resolveCurrent(): Promise<{ resolved: string }>;
 }): Promise<{
@@ -48,6 +128,10 @@ export async function preparePinnedWriteMutationAdmission(params: {
     return { relativeParentPath: params.defaultRelativeParentPath };
   }
   const policy = params.policy;
+  const route = simpleRoute(params.rootReal, params.originalPath);
+  let receiptsEnabled = false;
+  let epoch: Epoch | undefined;
+  let pending: Readonly<{ epoch: Epoch; childPath: string }> | undefined;
   const canonicalParent = await resolvePathViaExistingAncestor(path.dirname(params.resolvedTargetPath));
   if (!isPathInside(params.rootWithSep, canonicalParent)) throw outsideWorkspaceError();
   const relativeCanonicalParent = path.relative(params.rootReal, canonicalParent);
@@ -56,7 +140,18 @@ export async function preparePinnedWriteMutationAdmission(params: {
   }
   const mutationAdmission: PinnedWriteMutationAdmission = Object.freeze({
     rejectParentSymlinks: policy.mutationSymlinks === "reject",
+    beginParentWalk: route ? () => { receiptsEnabled = true; } : undefined,
     async authorize(request) {
+      pending = undefined;
+      if (epoch && reusableRequest(request, epoch) && epochCurrent(epoch)) {
+        assertCachedNotDenied(request.targetPath, epoch);
+        assertCachedNotDenied(request.mutationPath, epoch);
+        if (request.phase === "parent-create") pending = Object.freeze({ epoch, childPath: request.mutationPath });
+        return;
+      }
+      epoch = undefined;
+      const candidate = receiptsEnabled && route === request.targetPath
+        ? captureEpoch(params.rootReal, route, policy) : undefined;
       // Preserve the original route's symlink/deny error ordering, then apply
       // the same snapshot to the object-bound destination selected below.
       const current = await params.resolveCurrent();
@@ -71,7 +166,35 @@ export async function preparePinnedWriteMutationAdmission(params: {
       if (!sameAbsolutePath(currentTarget, admittedTarget)) {
         throw new FsSafeError("path-mismatch", "write target changed during mutation policy admission");
       }
+      // Observations bracket the ordered admission. Never attach a cache to
+      // evidence collected only after the policy decisions it would replace.
+      if (candidate && current.resolved === route && epochCurrent(candidate)) {
+        epoch = candidate;
+        if (request.phase === "parent-create" && reusableRequest(request, candidate)) {
+          pending = Object.freeze({ epoch: candidate, childPath: request.mutationPath });
+        }
+      }
     },
+    advanceCreatedDirectory: route ? (parent: MutationDirectoryObservation, child: MutationDirectoryObservation) => {
+      const admitted = pending;
+      pending = undefined;
+      if (!epoch || !admitted || admitted.epoch !== epoch || admitted.childPath !== child.path ||
+        getFsSafeNativeConfig().mode !== epoch.mode) {
+        epoch = undefined;
+        return;
+      }
+      // The walker calls this only after its live parent fence, exact-parent
+      // deny, authority callback, successful mkdir, and exact child checks.
+      const observations = epoch.observations.map((observation) => advanceMutationObservation(observation, parent, child));
+      if (observations.some((observation) => !observation)) {
+        epoch = undefined;
+        return;
+      }
+      const complete = observations as MutationPathObservation[];
+      const target = complete.find((observation) => observation.path === epoch!.target.path)!;
+      const next = Object.freeze({ ...epoch, target, observations: Object.freeze(complete) });
+      epoch = epochCurrent(next) ? next : undefined;
+    } : undefined,
   });
   return {
     relativeParentPath: relativeCanonicalParent

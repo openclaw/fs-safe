@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Rebind `denyMutations` and explicit mutation-symlink policy to the actual retained parent selected by POSIX-native and pinned-fallback `Root.write`, `Root.create`, and `Root.copyIn`, authorizing missing directory components before creation so contained Linux symlink redirects cannot reuse stale preflight approval.
+- Reuse operation-local mutation-policy observations for ordinary Node.js POSIX parent walks, refreshing full ordered admission when route, deny-path, identity, missing-component, or configuration evidence changes; retain full admission for complex routes and Bun/Windows.
 - Preserve existing destinations when guest cross-device symlink moves fail by staging links privately before atomic replacement, with cleanup on creation or publication failure.
 - Keep durable-queue migrations bound to the pinned processing generation, rejecting stale callbacks after acknowledgement, quarantine, or replacement; release the verified read pin at Windows publication so migrations can replace their target; resync resumed claims so conditional migrations cannot bypass a failed publication sync on retry.
 - Keep Windows native filesystem descriptors in the host runtime's libuv table, rejecting missing or partial bridges instead of guessing raw HANDLE or add-on CRT namespaces.

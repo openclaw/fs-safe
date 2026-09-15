@@ -23,6 +23,7 @@ import { writeAllToFile } from "./write-file-handle.js";
 import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
 import { type CopyFileInput, writeCopyFileToFd } from "./copy-file-input.js";
 import { publishCopyStage } from "./publish-copy-stage.js";
+import type { MutationDirectoryObservation } from "./pinned-mutation-observation.js";
 
 export type PinnedWriteInput =
   | { kind: "buffer"; data: string | Buffer; encoding?: BufferEncoding }
@@ -77,11 +78,13 @@ export type PublishedWriteIdentity = Readonly<{ dev: bigint; ino: bigint }>;
 
 export type PinnedWriteMutationAdmission = Readonly<{
   rejectParentSymlinks: boolean;
+  beginParentWalk?(): void;
   authorize(request: Readonly<{
     targetPath: string;
     mutationPath: string;
     phase: "parent" | "parent-create";
   }>): Promise<void>;
+  advanceCreatedDirectory?(parent: MutationDirectoryObservation, child: MutationDirectoryObservation): void;
 }>;
 
 export type PinnedWriteParams = {
@@ -189,10 +192,12 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
         await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("mkdir", componentPath);
       },
     };
+    if (mutationAdmission && params.relativeParentPath) mutationAdmission.beginParentWalk?.();
     parentPath = await mkdirPathComponentsWithGuards(mutationAdmission ? {
       ...mkdirParams,
       rejectSymlinks: mutationAdmission.rejectParentSymlinks,
       revalidateParentAfterBeforeComponent: true,
+      afterCreateComponent: mutationAdmission.advanceCreatedDirectory,
       beforeCreateComponent: async (componentPath: string, prospectiveParentPath: string) => {
         await mutationAdmission.authorize(Object.freeze({
           targetPath: path.join(prospectiveParentPath, params.basename),
