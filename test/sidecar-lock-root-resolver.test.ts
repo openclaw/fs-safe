@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { FsSafeError } from "../src/errors.js";
 import { createFileLockManager } from "../src/file-lock.js";
 import { root } from "../src/root.js";
+import * as rootBoundary from "../src/root-boundary.js";
 import { realpathSync } from "../src/realpath.js";
 import { readSidecarLockSnapshot } from "../src/sidecar-lock-reclaim.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
@@ -12,6 +13,22 @@ import { useTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useTempDirs();
 const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+const admitPathInsideRoot = rootBoundary.admitPathInsideRoot;
+
+function spoofWindowsWithHostRootAdmission(): void {
+  // Keep only real Root admission on the host platform; error-path logic remains synthetic Windows.
+  vi.spyOn(rootBoundary, "admitPathInsideRoot").mockImplementation((params) => {
+    const activePlatform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", platform);
+    try {
+      return admitPathInsideRoot(params);
+    } finally {
+      Object.defineProperty(process, "platform", activePlatform);
+    }
+  });
+  Object.defineProperty(process, "platform", { value: "win32" });
+}
+
 afterEach(() => {
   __setFsSafeTestHooksForTest();
   vi.restoreAllMocks();
@@ -151,7 +168,7 @@ it.each(["parser", "read", "stat"])("does not retry a Windows %s exception shape
       });
     } else vi.spyOn(handle, "read").mockRejectedValue(failure);
   } });
-  Object.defineProperty(process, "platform", { value: "win32" });
+  spoofWindowsWithHostRootAdmission();
   const manager = createFileLockManager(`read-error:${lockPath}`);
   await expect(manager.acquire(path.join(capability.rootReal, "state"), {
     lockRoot: capability, payload: () => ({}), parsePayload,
@@ -230,7 +247,7 @@ it.each(["sequential", "nested", "interleaved"])(
     const secondPath = firstPath;
     await capability.create("first.lock", "first");
     // Synthetic Windows resolver EPERM; unlink and descriptor checks are real.
-    Object.defineProperty(process, "platform", { value: "win32" });
+    spoofWindowsWithHostRootAdmission();
     const failure = Object.assign(new Error("synthetic resolver failure"), { code: "EPERM" });
     const realpath = realpathSync.native;
     let deny = false, observingFirst = false;

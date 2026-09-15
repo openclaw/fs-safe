@@ -4,11 +4,28 @@ import JSZip from "jszip";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { extractArchive, readArchiveEntry } from "../src/archive.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
+import * as rootBoundary from "../src/root-boundary.js";
 import { observeReadAdmission, readIdentity, type ReadBoundary } from "./helpers/read-admission-identity.js";
 import { useTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useTempDirs();
 const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+const admitPathInsideRoot = rootBoundary.admitPathInsideRoot;
+
+function spoofWindowsWithHostRootAdmission(): void {
+  // Keep only real Root admission on the host platform; identity retry logic remains synthetic Windows.
+  vi.spyOn(rootBoundary, "admitPathInsideRoot").mockImplementation((params) => {
+    const activePlatform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", platform);
+    try {
+      return admitPathInsideRoot(params);
+    } finally {
+      Object.defineProperty(process, "platform", activePlatform);
+    }
+  });
+  Object.defineProperty(process, "platform", { value: "win32" });
+}
+
 beforeEach(() => configureFsSafeNative({ mode: "off" }));
 afterEach(() => {
   vi.restoreAllMocks();
@@ -45,7 +62,8 @@ describe.each(["read", "extract"] as const)("archive %s input identity", (route)
   for (const boundary of ["preview", "descriptor", "current"] as ReadBoundary[]) {
     it(`retries transient unknown Windows ${boundary} without reopening`, async () => {
       const subject = await fixture({ samples: { [boundary]: [{ ino: 0n }, {}] } });
-      Object.defineProperty(process, "platform", { value: "win32" });
+      if (route === "extract") spoofWindowsWithHostRootAdmission();
+      else Object.defineProperty(process, "platform", { value: "win32" });
       await subject.run();
       expect(subject.counts[boundary]).toBe(2);
       expect(subject.open).toHaveBeenCalledTimes(1);

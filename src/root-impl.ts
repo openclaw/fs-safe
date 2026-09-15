@@ -49,6 +49,7 @@ import { resolveRootPath } from "./root-path.js";
 import { admitPathInsideRoot } from "./root-boundary.js";
 import { openRootDirectoryListing, listDirectoryPath, pathStatFromStats } from "./root-directory-list.js";
 import { entriesInRoot, type RootEntriesOptions } from "./root-entries.js";
+import { assertMoveMutationAllowed } from "./root-move-preflight.js";
 import {
   assertRootIdentityCurrent,
   assertValidRootDestinationPath,
@@ -1462,28 +1463,6 @@ async function listPathFallback(
 ): Promise<string[] | DirEntry[]> {
   const resolved = await resolvePinnedPathInRoot(root, { relativePath, allowRoot: true });
   return await listDirectoryPath(root, resolved.resolved, withFileTypes);
-}
-
-async function assertMoveMutationAllowed(
-  root: RootContext,
-  params: {
-    fromRelative: string;
-    toRelative: string;
-    denyMutations?: DenyMutationPolicy;
-  },
-): Promise<void> {
-  // Keep this preflight separate from the pinned resolutions in movePathFallback:
-  // mutation denials must take precedence over source alias or identity failures.
-  const source = await resolvePathInRoot(root, params.fromRelative, {
-    aliasErrorCode: "path-alias",
-    allowFinalSymlink: true,
-  });
-  await assertMutationNotDenied(source.resolved, params.denyMutations, { protectAncestors: true });
-  const target = await resolvePathInRoot(root, params.toRelative, {
-    aliasErrorCode: "path-alias",
-    allowFinalSymlink: true,
-  });
-  await assertMutationNotDenied(target.resolved, params.denyMutations, { protectAncestors: true });
 }
 
 async function movePathFallback(
