@@ -173,7 +173,10 @@ async function transferFileHandleCore(
     }
     if (bytesRead === 0) return position;
     const chunk = buffer.subarray(0, bytesRead);
-    if (onChunk) assertSynchronousCallbackResult(Reflect.apply(onChunk, callbackThis, [chunk]), "onChunk");
+    if (onChunk) {
+      const returned: unknown = Function.prototype.call.call(onChunk, callbackThis, chunk);
+      assertSynchronousCallbackResult(returned, "onChunk");
+    }
     await writeAllToFile(target, chunk, {
       position: targetPosition === undefined ? undefined : targetPosition + position,
       assertBeforeMutation: beforeWrite,

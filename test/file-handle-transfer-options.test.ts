@@ -276,7 +276,8 @@ describe("borrowed FileHandle option snapshots", () => {
     let state = "original";
     const reads = { signal: 0, maxBytes: 0, onChunk: 0, assertBeforeMutation: 0, state: 0 };
     const authority = function (this: unknown) { expect(this).toBeUndefined(); };
-    const observer = function (this: Record<PropertyKey, unknown>) {
+    let observerCalls = 0;
+    const observerTarget = function (this: Record<PropertyKey, unknown>, chunk: Uint8Array) {
       expect(this === options).toBe(false);
       expect(Object.getPrototypeOf(this)).toBe(Object.prototype);
       expect(this.state).toBe("replacement");
@@ -285,8 +286,21 @@ describe("borrowed FileHandle option snapshots", () => {
       expect(this).toMatchObject({ sizeHint: f.content.length, targetPosition: 0, maxBytes: f.content.length });
       expect(this.hidden).toBeUndefined();
       expect(this.inherited).toBeUndefined();
+      expect(chunk).toBeInstanceOf(Uint8Array);
       this.assertBeforeMutation = () => { throw new Error("replacement authority"); };
     };
+    const callbackPropertyReads: PropertyKey[] = [];
+    const observer = new Proxy(observerTarget, {
+      apply(target, thisArg, argumentsList) {
+        observerCalls += 1;
+        expect(argumentsList).toHaveLength(1);
+        return Reflect.apply(target, thisArg, argumentsList);
+      },
+      get(target, key, receiver) {
+        callbackPropertyReads.push(key);
+        return Reflect.get(target, key, receiver);
+      },
+    });
     const options = Object.defineProperties(Object.create({ inherited: true }), {
       [marker]: { value: markerValue, enumerable: true },
       ["__proto__"]: { value: markerValue, enumerable: true },
@@ -304,6 +318,8 @@ describe("borrowed FileHandle option snapshots", () => {
     state = "replacement";
     await expect(pending).resolves.toBe(f.content.length);
     expect(reads).toEqual({ signal: 1, maxBytes: 1, onChunk: 1, assertBeforeMutation: 1, state: 1 });
+    expect(observerCalls).toBeGreaterThan(0);
+    expect(callbackPropertyReads).toEqual([]);
     expect(await fs.readFile(f.targetPath)).toEqual(f.content);
   });
 });
