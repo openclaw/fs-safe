@@ -541,6 +541,28 @@ pub fn mkdir_beneath(root_fd: i32, rel_path: &str, _mode: u32) -> NativeResult<(
     Ok(())
 }
 
+fn mkdir_child_at_handle(parent: HANDLE, basename: &str) -> NativeResult<bool> {
+    crate::validate_child_basename(basename)?;
+    match nt_open_relative(
+        parent,
+        basename,
+        FILE_READ_ATTRIBUTES,
+        FILE_CREATE,
+        FILE_DIRECTORY_FILE,
+    ) {
+        Ok(created) => {
+            drop(created);
+            Ok(true)
+        }
+        Err(error) if error.status == "EEXIST" => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+pub fn mkdir_child_beneath(parent_fd: i32, basename: &str, _mode: u32) -> NativeResult<bool> {
+    mkdir_child_at_handle(root_handle(parent_fd)?, basename)
+}
+
 #[repr(C)]
 struct FileNameInfoHeader {
     flags: u32,
@@ -1606,6 +1628,34 @@ mod tests {
             .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS)
             .open(&root)
             .unwrap();
+        assert!(mkdir_child_at_handle(
+            root_handle.as_raw_handle() as HANDLE,
+            "owned-child",
+        )
+        .unwrap());
+        for _ in 0..128 {
+            assert!(!mkdir_child_at_handle(
+                root_handle.as_raw_handle() as HANDLE,
+                "owned-child",
+            )
+            .unwrap());
+        }
+        fs::remove_dir(root.join("owned-child")).unwrap();
+        assert!(mkdir_child_at_handle(
+            root_handle.as_raw_handle() as HANDLE,
+            "owned-child",
+        )
+        .unwrap());
+        fs::create_dir(root.join("nested")).unwrap();
+        for invalid in ["", ".", "..", "nested/child", "nested\\child", "nul\0child"] {
+            assert_eq!(
+                mkdir_child_at_handle(root_handle.as_raw_handle() as HANDLE, invalid)
+                    .unwrap_err()
+                    .status,
+                "EINVAL",
+            );
+        }
+        assert_eq!(fs::read_dir(root.join("nested")).unwrap().count(), 0);
         let created = nt_open_relative(
             root_handle.as_raw_handle() as HANDLE,
             "created-dir",

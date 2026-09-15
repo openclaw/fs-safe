@@ -29,8 +29,8 @@ await fs.mkdir("snapshots/2026/05");
 ## What replacement writes do
 
 1. Resolve the relative target against the canonical root and reject anything that escapes (`outside-workspace`).
-2. If `mkdir: true`, create missing parent directories relative to a pinned parent fd in the native path, or with per-component identity guards in the JavaScript fallback.
-3. Pin or guard the parent directory for the selected mechanism. Native operations use a parent fd; guarded JavaScript verifies directory identity before and after mutation. The JavaScript check cannot make the intervening pathname syscall atomic, so a same-privilege peer that can replace the parent may cause an out-of-root side effect before detection. Use native `require` mode for that threat model; see the [security model](security-model.md#symlinks-write-side).
+2. If `mkdir: true`, create missing parent directories relative to a pinned parent fd in the native path, or with per-component identity guards in the JavaScript fallback. When `denyMutations` or an explicit `mutationSymlinks` policy is present, each missing POSIX-native component is authorized before creation and its opened descriptor is authorized again before descent.
+3. Pin or guard the parent directory for the selected mechanism. Native operations use a parent fd and reapply configured mutation policy to the actual canonical destination selected by that descriptor; the pinned JavaScript fallback verifies directory identity before and after mutation and performs the same policy revalidation before its pathname dispatch. The JavaScript check cannot make the intervening pathname syscall atomic, so a same-privilege peer that can replace the parent may cause an out-of-root side effect before detection. Use native `require` mode for that threat model; see the [security model](security-model.md#symlinks-write-side).
 4. Write data to a sibling temp file in the same directory.
 5. Atomically rename the temp file over the destination.
 6. Stat the resulting fd and verify identity.
@@ -74,7 +74,7 @@ await fs.write(".env", "x");       // throws FsSafeError code "denied-path"
 await fs.remove(".ssh/id_rsa");    // throws FsSafeError code "denied-path"
 ```
 
-`paths` blocks exact absolute paths. `prefixes` blocks absolute paths and everything below them. fs-safe preserves path strings exactly and canonicalizes through existing ancestors before comparing, so a mutation through a symlinked ancestor to a denied path is still denied. Root-level and per-call policies are additive; per-call policy can add denies, but cannot clear root defaults.
+`paths` blocks exact absolute paths. `prefixes` blocks absolute paths and everything below them. For POSIX pinned `write`, `create`, and `copyIn`, an existing exact-path directory does not implicitly deny a mutation to its descendants, but creating a missing directory at that exact path is itself denied. fs-safe preserves path strings exactly and canonicalizes through existing ancestors before comparing, so a mutation through a symlinked ancestor to a denied path is still denied. Root-level and per-call policies are additive; per-call policy can add denies, but cannot clear root defaults. Those POSIX pinned operations snapshot the merged policy before their first path observation, then authorize the actual descriptor-selected parent before staging or publication. A caller mutation of the original arrays, or a contained parent redirect after preflight, cannot clear that admission check.
 
 ## Write verbs
 

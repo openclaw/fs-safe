@@ -1,0 +1,146 @@
+name: mutation policy public behavior proof
+
+on:
+  pull_request:
+    paths:
+      - src/pinned-mutation-admission.ts
+      - src/pinned-mutation-observation.ts
+      - src/pinned-mutation-shared-route.ts
+      - src/guarded-mkdir.ts
+      - src/root-directory-creation.ts
+      - src/root-write-admission.ts
+      - src/root-write-complete-parent.ts
+      - src/native-pinned-write.ts
+      - src/pinned-write.ts
+      - src/root-impl.ts
+      - native/src/lib.rs
+      - native/src/unix.rs
+      - native/src/windows.rs
+      - test/native-mutation-policy-admission.test.ts
+      - test/native-mutation-policy-integration.test.ts
+      - test/pinned-mutation-receipt.test.ts
+      - test/pinned-mutation-receipt-walk.test.ts
+      - test/root-mkdir-post-create.test.ts
+      - test/root-shared-js-complete-parent.test.ts
+      - test/root-shared-js-missing-parent.test.ts
+      - test/root-shared-js-mutation-policy.test.ts
+      - test/mutation-policy-proof-contract.test.ts
+      - test/mutation-policy-proof-cases-contract.test.ts
+      - scripts/mutation-policy-proof.mjs
+      - scripts/mutation-policy-proof-cases.mjs
+      - src/test-hooks.ts
+      - src/native-staged-file.ts
+      - src/native-operations.ts
+      - src/write-file-handle.ts
+      - src/replace-file-temp-owner.ts
+      - .github/workflows/mutation-policy-proof.yml
+      - package.json
+      - pnpm-lock.yaml
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-behavior-proof:
+    name: Node 24 public mutation proof (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15, windows-latest]
+    steps:
+      - name: Check out exact event head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Initialize pending sanitized receipt
+        id: initialize
+        if: always()
+        shell: bash
+        env:
+          MUTATION_POLICY_RECEIPT: ${{ runner.temp }}/mutation-policy-proof-${{ runner.os }}.json
+        run: node scripts/mutation-policy-proof.mjs --initialize --receipt "$MUTATION_POLICY_RECEIPT"
+
+      - name: Set up pnpm
+        id: pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.25.0
+          run_install: false
+
+      - name: Set up Node 24
+        id: node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Add portable TAR parser target
+        id: wasm
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Install dependencies
+        id: install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build public package
+        id: build
+        run: pnpm build
+
+      - name: Build and stage host native binding
+        id: native
+        run: pnpm native:build
+
+      - name: Run bounded public mutation proof
+        id: proof
+        if: always()
+        timeout-minutes: 6
+        shell: bash
+        env:
+          MUTATION_POLICY_RECEIPT: ${{ runner.temp }}/mutation-policy-proof-${{ runner.os }}.json
+        run: >-
+          node scripts/mutation-policy-proof.mjs --run
+          --receipt "$MUTATION_POLICY_RECEIPT"
+          --expected-commit "${{ github.event.pull_request.head.sha || github.sha }}"
+          --event-head "${{ github.event.pull_request.head.sha || github.sha }}"
+          --event-base "${{ github.event.pull_request.base.sha || 'none' }}"
+          --event-name "${{ github.event_name }}"
+          --install-result "${{ steps.install.outcome }}"
+          --build-result "${{ steps.build.outcome }}"
+          --native-result "${{ steps.native.outcome }}"
+
+      - name: Preserve one canonical receipt on every path
+        if: always()
+        shell: bash
+        env:
+          MUTATION_POLICY_RECEIPT: ${{ runner.temp }}/mutation-policy-proof-${{ runner.os }}.json
+        run: |
+          set +e
+          node scripts/mutation-policy-proof.mjs --ensure --receipt "$MUTATION_POLICY_RECEIPT"
+          valid=$?
+          if [[ $valid -ne 0 ]]; then
+            fallback="$MUTATION_POLICY_RECEIPT.fallback"
+            printf '%s\n' '{"cases":[],"coverage":{"complementary":[],"hosted":[],"limitations":[]},"failure":{"code":"RECEIPT_INVALID","kind":"proof","stage":"workflow-fallback"},"passed":false,"proof":"mutation-policy-public-behavior","provenance":null,"runtime":{"arch":"unknown","libuv":"unknown","node":"unknown","platform":"unknown","v8":"unknown"},"schema":"fs-safe-mutation-policy-proof-v2","status":"failed"}' > "$fallback"
+            mv -f "$fallback" "$MUTATION_POLICY_RECEIPT"
+            exit 1
+          fi
+
+      - name: Upload exact mutation proof receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        env:
+          MUTATION_POLICY_RECEIPT: ${{ runner.temp }}/mutation-policy-proof-${{ runner.os }}.json
+        with:
+          name: mutation-policy-proof-${{ runner.os }}-node-24-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.MUTATION_POLICY_RECEIPT }}
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 14

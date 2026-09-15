@@ -64,14 +64,19 @@ Queue fixtures are acknowledged outside timing; lock-group timings include relea
 Scaling cases add 1/8/32 concurrent Root and FileStore reads, batches of 100
 lock-manager constructions with 0/32/128 retained locks, and scans of 100/1,000 unexpired
 store entries. Six `Root.write/mutation-admission/` rows cover policy-bound
-writes through existing and missing parents at depths 1/8/32. The focused
+writes through existing and missing parents at depths 1/8/32 with combined
+`denyMutations` and `mutationSymlinks: "reject"` admission. The focused
 `shared-js-mutation-admission` family pairs adjacent `policy=none` and
 `policy=enabled` controls for `Root.openWritable` update, append, and replace,
 `Root.append`, and `Root.mkdir` at the same depths and parent layouts. It has
 exactly 60 portable rows: 36 open-writable, 12 append, and 12 mkdir. Windows
-adds 24 `Root.write` and 12 `Root.create` rows for 96 total. All use a divisor
-of 10; fixture reset, result verification, descriptor close, and cleanup stay
-outside timing. Forced permission-error replacement cases exercise the public
+adds 24 `Root.write` and 12 `Root.create` rows for 96 total, with
+`renameIdentity: "verify-content-with-lock"` retaining the shared JavaScript
+route in native-off and native-require runs. All use a divisor of 10; fixture
+reset, result verification, descriptor close, and cleanup stay outside timing.
+Compare adjacent control/admission rows in alternating baseline/candidate runs;
+investigate reported `medianUs` regressions above 10% or 50 us and `maxUs`
+regressions above 20% or 100 us. Forced permission-error replacement cases exercise the public
 filesystem adapter with 128 B, 1 MiB, and 16 MiB payloads, both restoration
 policies, and both sync/async methods. Temp-file and parent syncing are disabled
 for these cases; `restore-original` still includes its required destination

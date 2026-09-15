@@ -51,10 +51,38 @@ export function inspectFileIdentitySync<T extends ExactFileIdentity>(
   expected?: ExactFileIdentity,
   platform: NodeJS.Platform = process.platform,
 ): T {
-  const check = identityCheck(expected, platform);
+  let knownDev: bigint | undefined;
+  let knownIno: bigint | undefined;
+  if (expected) {
+    knownDev = expected.dev;
+    if (typeof knownDev !== "bigint") throw identityMismatch();
+    knownIno = expected.ino;
+    if (typeof knownIno !== "bigint") throw identityMismatch();
+    // An unknown expected device must not bypass observation of its inode.
+    if (platform === "win32" && (knownDev === 0n || knownIno === 0n)) throw identityMismatch();
+  }
   for (let attempt = 0; attempt < 2; attempt++) {
     const stat = inspect();
-    if (check(stat)) return stat;
+    let complete = true;
+    // Keep dev-before-ino access and early mismatch errors without allocating
+    // a checker closure, known-component object, or field array per inspection.
+    const dev = stat.dev;
+    if (typeof dev !== "bigint") throw identityMismatch();
+    if (platform === "win32" && dev === 0n) {
+      complete = false;
+    } else {
+      if (knownDev !== undefined && knownDev !== dev) throw identityMismatch();
+      knownDev = dev;
+    }
+    const ino = stat.ino;
+    if (typeof ino !== "bigint") throw identityMismatch();
+    if (platform === "win32" && ino === 0n) {
+      complete = false;
+    } else {
+      if (knownIno !== undefined && knownIno !== ino) throw identityMismatch();
+      knownIno = ino;
+    }
+    if (complete) return stat;
   }
   throw identityMismatch();
 }

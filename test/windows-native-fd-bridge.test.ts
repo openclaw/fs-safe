@@ -37,6 +37,36 @@ describe.runIf(process.platform === "win32" && native)("Windows host libuv descr
     }
   });
 
+  it("reports direct-child creation, closes its transient handle, and rejects nested names", async () => {
+    const root = await tempRoot("fs-safe-win-fd-mkdir-child-");
+    fs.mkdirSync(path.join(root, "nested"));
+    fs.writeFileSync(path.join(root, "file"), "preserve");
+    const rootFd = fs.openSync(root, fs.constants.O_RDONLY);
+    const mkdirChild = native!.mkdirChildBeneath;
+    expect(mkdirChild).toBeTypeOf("function");
+    if (!mkdirChild) throw new Error("native direct-child mkdir is unavailable");
+    try {
+      expect(mkdirChild.call(native, rootFd, "created", 0o700)).toBe(true);
+      for (let index = 0; index < 128; index += 1) {
+        expect(mkdirChild.call(native, rootFd, "created", 0o700)).toBe(false);
+      }
+      fs.rmdirSync(path.join(root, "created"));
+      expect(fs.existsSync(path.join(root, "created"))).toBe(false);
+      expect(mkdirChild.call(native, rootFd, "created", 0o700)).toBe(true);
+      expect(mkdirChild.call(native, rootFd, "file", 0o700)).toBe(false);
+      expect(fs.readFileSync(path.join(root, "file"), "utf8")).toBe("preserve");
+      for (const invalid of ["", ".", "..", "nested/child", "nested\\child", "nul\0child"]) {
+        expect(() => mkdirChild.call(native, rootFd, invalid, 0o700)).toThrowError(
+          expect.objectContaining({ code: "EINVAL" }),
+        );
+      }
+      expect(fs.readdirSync(path.join(root, "nested"))).toEqual([]);
+      expect(fs.fstatSync(rootFd).isDirectory()).toBe(true);
+    } finally {
+      fs.closeSync(rootFd);
+    }
+  });
+
   it("returns a descriptor that Node independently reads, stats, and closes", async () => {
     const root = await tempRoot("fs-safe-win-fd-open-");
     const payload = Buffer.from("host libuv descriptor proof");

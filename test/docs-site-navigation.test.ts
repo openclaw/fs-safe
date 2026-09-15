@@ -115,6 +115,7 @@ describe("docs site navigation", () => {
       ["secure-file", "Specialized", "secret-file", "permissions"],
       ["permissions", "Specialized", "secure-file", "regular-file"],
       ["public-api", "Reference", "types", "testing"],
+      ["mutation-policy-proof", "Reference", "testing", "timing"],
       ["migrating-to-0.5", "Reference", "test-hooks", "migrating-to-0.6"],
       ["migrating-to-0.6", "Reference", "migrating-to-0.5", "contributing"],
     ]) {

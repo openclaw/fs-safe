@@ -75,6 +75,26 @@ directory descriptors. Replacement uses descriptor-relative rename just like
 no-replace publication, so replacing the parent pathname does not divert the
 mutation.
 
+When either `denyMutations` or an explicit `mutationSymlinks` policy applies,
+the POSIX writer binds that exact policy snapshot to parent admission. An existing
+parent is canonicalized and identity-matched to its retained descriptor before
+the actual destination is authorized. A missing-parent walk authorizes each
+prospective directory before `mkdirat`, opens it without following a newly
+introduced link, and authorizes the opened object before continuing. This
+prevents a contained Linux `openat2(RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS)`
+redirect from reusing policy approval for a different in-root subtree.
+For an ordinary unchanged route, operation-local observations may carry that
+admission across a direct-child creation only after exact parent and child
+fences and a synchronous full-epoch validation. The resulting operation-local
+token authorizes the opened child without an intervening await; stale,
+redirected, incomplete, or foreign evidence returns to the full ordered
+admission. An already-complete fallback parent is likewise retained only after
+full target admission and a fresh exact guard fence. Native acceleration additionally requires an exclusive
+direct-child mkdir result proving that this syscall created the name; a
+collision, legacy helper, or malformed result performs the guarded walk but
+cannot advance the receipt. That boolean is admission provenance only and does
+not grant ownership for cleanup by pathname.
+
 The opt-in `mutationSymlinks` policy applies independently of read policy.
 `"reject"` rejects symlink components; `"follow-parents-within-root"` resolves
 contained directory aliases and rejects final symlinks. Publication checks the
@@ -113,7 +133,7 @@ A `root()` handle also remembers the canonical root directory identity. Calls fa
 
 ### Denied mutations
 
-`denyMutations` is an opt-in application policy for `root()` mutation methods. It blocks exact absolute paths with `paths` and whole subtrees with `prefixes`, merging root defaults with per-call entries so a call cannot clear root-level denies. This is not an OS permission boundary: code with access to `node:fs`, a shell, or another process with the same filesystem privileges can bypass it.
+`denyMutations` is an opt-in application policy for `root()` mutation methods. It blocks exact absolute paths with `paths` and whole subtrees with `prefixes`, merging root defaults with per-call entries so a call cannot clear root-level denies. POSIX pinned `write`, `create`, and `copyIn` copy the merged entries before awaiting preflight and reapply them to their admitted canonical parent, including before missing parent creation. This is not an OS permission boundary: code with access to `node:fs`, a shell, or another process with the same filesystem privileges can bypass it.
 
 ### Atomic writes
 

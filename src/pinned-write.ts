@@ -5,7 +5,7 @@ import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { normalizeMaxBytes } from "./byte-budget.js";
-import { createAsyncDirectoryGuard, createNearestExistingDirectoryGuard, inspectDirectoryIdentity, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
+import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, createNearestExistingDirectoryGuard, inspectDirectoryIdentity, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { syncDirectoryBestEffort } from "./directory-durability.js";
 import type { FileIdentityStat } from "./file-identity.js";
@@ -23,6 +23,7 @@ import { writeAllToFile } from "./write-file-handle.js";
 import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
 import { type CopyFileInput, writeCopyFileToFd } from "./copy-file-input.js";
 import { publishCopyStage } from "./publish-copy-stage.js";
+import type { MutationDirectoryObservation } from "./pinned-mutation-observation.js";
 
 export type PinnedWriteInput =
   | { kind: "buffer"; data: string | Buffer; encoding?: BufferEncoding }
@@ -56,6 +57,11 @@ function assertWithinMaxBytes(bytes: number, maxBytes: number | undefined): void
   }
 }
 
+function fastParentGuardDeopt(error: unknown): error is FsSafeError {
+  return error instanceof FsSafeError &&
+    (error.code === "path-mismatch" || error.code === "not-file");
+}
+
 async function writeStreamToHandle(
   stream: AsyncIterable<Uint8Array | string>,
   handle: FileHandle,
@@ -75,6 +81,59 @@ export type RenameIdentityPolicy = "strict" | "verify-content-with-lock";
 
 export type PublishedWriteIdentity = Readonly<{ dev: bigint; ino: bigint }>;
 
+// Opaque operation-local proof that the immediately preceding parent-create
+// admission belongs to the epoch a directory walk is advancing.
+export type PinnedMutationAdmissionReceipt = Readonly<object>;
+
+// Opaque operation-local proof that a synchronous, guard-bound authorization
+// completed without crossing an await boundary.
+export type PinnedMutationAuthorizationToken = Readonly<object>;
+
+// Full post-create facts paired with the exact admission that authorized the
+// mkdir. Every nested object is frozen before it reaches the epoch updater.
+export type PinnedCreatedDirectoryReceipt = Readonly<{
+  admission: PinnedMutationAdmissionReceipt;
+  parent: MutationDirectoryObservation;
+  child: MutationDirectoryObservation;
+}>;
+
+export type PinnedMutationParentWalkSession = Readonly<{
+  retainedTargetPath: string;
+  tryAuthorizeAtParent(request: Readonly<{
+    targetPath: string;
+    mutationPath: string;
+    phase: "parent" | "parent-create";
+  }>, parent: MutationDirectoryObservation): PinnedMutationAuthorizationToken | undefined;
+  authorize(request: Readonly<{
+    targetPath: string;
+    mutationPath: string;
+    phase: "parent" | "parent-create";
+  }>): Promise<PinnedMutationAdmissionReceipt | undefined>;
+  advanceCreatedDirectory(
+    receipt: PinnedCreatedDirectoryReceipt,
+  ): PinnedMutationAuthorizationToken | undefined;
+  dispose(): void;
+}>;
+
+export type PinnedWriteMutationAdmission = Readonly<{
+  rejectParentSymlinks: boolean;
+  beginParentWalk?(): string | undefined;
+  beginSharedParentWalk?(): PinnedMutationParentWalkSession | undefined;
+  tryAuthorizeAtParent?(request: Readonly<{
+    targetPath: string;
+    mutationPath: string;
+    phase: "parent" | "parent-create";
+  }>, parent: MutationDirectoryObservation): PinnedMutationAuthorizationToken | undefined;
+  authorize(request: Readonly<{
+    targetPath: string;
+    mutationPath: string;
+    phase: "parent" | "parent-create";
+  }>): Promise<PinnedMutationAdmissionReceipt | undefined>;
+  advanceCreatedDirectory?(
+    receipt: PinnedCreatedDirectoryReceipt,
+  ): PinnedMutationAuthorizationToken | undefined;
+}>;
+
 export type PinnedWriteParams = {
   rootPath: string;
   relativeParentPath: string;
@@ -88,6 +147,7 @@ export type PinnedWriteParams = {
   maxBytes?: number;
   input: PinnedWriteInput;
   rootIdentity?: FileIdentityStat;
+  mutationAdmission?: PinnedWriteMutationAdmission;
   onRenameIdentityMismatch?: "verify-content";
   onPublished?: (identity: PublishedWriteIdentity) => void;
   // Borrowed only for this callback; the writer closes every descriptor in finally.
@@ -104,6 +164,14 @@ export async function runPinnedWriteHelper(params: PinnedWriteParams): Promise<F
   validatePinnedOperationPayload({
     relativeParentPath: params.relativeParentPath,
   });
+  if (normalizedParams.mutationAdmission) {
+    const targetPath = path.join(
+      normalizedParams.rootPath,
+      ...normalizedParams.relativeParentPath.split("/").filter(Boolean),
+      normalizedParams.basename,
+    );
+    await getFsSafeTestHooks()?.beforePinnedWriteParentAdmission?.(targetPath);
+  }
   // The explicit compatibility policy uses the guarded Node fallback, where
   // content verification can replace the strict post-rename inode check.
   if (normalizedParams.onRenameIdentityMismatch === "verify-content") {
@@ -153,28 +221,113 @@ export async function runPinnedWriteWithRenamePolicy(
 async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileIdentityStat> {
   const exactRoot = typeof params.rootIdentity?.dev === "bigint" && typeof params.rootIdentity.ino === "bigint"
     ? { dev: params.rootIdentity.dev, ino: params.rootIdentity.ino } : undefined;
+  const mutationAdmission = params.mutationAdmission;
   if (exactRoot) await inspectDirectoryIdentity(params.rootPath, exactRoot);
   let parentPath = params.relativeParentPath
     ? path.join(params.rootPath, ...params.relativeParentPath.split("/"))
     : params.rootPath;
-  if (params.mkdir) {
+  let parentGuard: AnyAsyncDirectoryGuard | undefined;
+  let parentAdmitted = false;
+  const initialTargetPath = path.join(parentPath, params.basename);
+  const retainedTargetPath = mutationAdmission?.beginParentWalk?.();
+  const ordinaryRetainedTarget = retainedTargetPath !== undefined &&
+    path.relative(path.resolve(retainedTargetPath), path.resolve(initialTargetPath)) === "";
+  let fastGuardClassifierFailure: FsSafeError | undefined;
+  if (ordinaryRetainedTarget) {
+    try {
+      parentGuard = await createAsyncDirectoryGuard(parentPath, { bigint: true });
+    } catch (error) {
+      // Only a genuinely missing complete parent may enter the component
+      // creator. ENOTDIR, permission, identity, and canonicalization failures
+      // retain their original fail-closed result.
+      if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") {
+        if (!fastParentGuardDeopt(error)) throw error;
+        fastGuardClassifierFailure = error;
+      }
+    }
+    if (parentGuard) {
+      await mutationAdmission!.authorize(Object.freeze({
+        targetPath: initialTargetPath,
+        mutationPath: initialTargetPath,
+        phase: "parent" as const,
+      }));
+      await assertAsyncDirectoryGuard(parentGuard);
+      parentAdmitted = true;
+    }
+  }
+  if (fastGuardClassifierFailure) {
+    // The optimized exact-guard classifier runs before policy admission. Let
+    // the established resolver restore deny/symlink precedence before using
+    // the guarded walker or reporting the classifier failure. Because this
+    // was not an ENOENT probe, it may never authorize a newly missing parent.
+    await mutationAdmission!.authorize(Object.freeze({
+      targetPath: initialTargetPath,
+      mutationPath: initialTargetPath,
+      phase: "parent" as const,
+    }));
+  }
+  if (params.mkdir && !parentGuard) {
     // mkdirPathComponentsWithGuards may resolve the final component through
     // an in-root symlink (e.g. a skill-bank layout). Use its returned real
     // path for the subsequent guard and target path so we don't re-check the
     // original, possibly-symlinked, lexical path and reject it outright.
-    parentPath = await mkdirPathComponentsWithGuards({
+    const mkdirParams = {
       rootReal: params.rootPath,
       targetPath: parentPath,
       rootIdentity: params.rootIdentity,
       assertBeforeMutation: params.assertBeforeMutation,
-      beforeComponent: async (componentPath) =>
-        await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("mkdir", componentPath),
-    });
+      beforeComponent: async (componentPath: string) => {
+        await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("mkdir", componentPath);
+      },
+    };
+    parentPath = await mkdirPathComponentsWithGuards(mutationAdmission ? {
+      ...mkdirParams,
+      rejectSymlinks: mutationAdmission.rejectParentSymlinks,
+      revalidateParentAfterBeforeComponent: true,
+      synchronousAuthorizationIncludesFence: true,
+      retainedTargetPath,
+      afterCreateComponent: mutationAdmission.advanceCreatedDirectory,
+      beforeCreateComponent: (
+        componentPath: string,
+        prospectiveParentPath: string,
+        retainedTarget: string | undefined,
+        parent: MutationDirectoryObservation,
+      ) => {
+        if (fastGuardClassifierFailure) throw fastGuardClassifierFailure;
+        const request = Object.freeze({
+          targetPath: retainedTarget ?? path.join(prospectiveParentPath, params.basename),
+          mutationPath: componentPath,
+          phase: "parent-create" as const,
+        });
+        return mutationAdmission.tryAuthorizeAtParent?.(request, parent) ??
+          mutationAdmission.authorize(request);
+      },
+      beforeUseComponent: async (
+        _componentPath: string,
+        prospectiveParentPath: string,
+        retainedTarget: string | undefined,
+      ) => {
+        const targetPath = retainedTarget ?? path.join(prospectiveParentPath, params.basename);
+        await mutationAdmission.authorize(Object.freeze({
+          targetPath,
+          mutationPath: targetPath,
+          phase: "parent" as const,
+        }));
+      },
+    } : mkdirParams);
   }
-  const parentGuard = params.mkdir
+  parentGuard ??= params.mkdir
     ? await createAsyncDirectoryGuard(parentPath, { bigint: true })
     : await createNearestExistingDirectoryGuard(params.rootPath, parentPath, { bigint: true });
   const targetPath = path.join(parentPath, params.basename);
+  if (mutationAdmission && !parentAdmitted) {
+    await mutationAdmission.authorize(Object.freeze({
+      targetPath,
+      mutationPath: targetPath,
+      phase: "parent" as const,
+    }));
+    await assertAsyncDirectoryGuard(parentGuard);
+  }
   if (params.overwrite === false && (params.input.kind === "buffer" ||
     (params.input.kind === "stream" && !params.input.stageBeforePublish))) {
     const assertBeforeMutation = () => {
