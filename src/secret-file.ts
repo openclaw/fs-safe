@@ -24,6 +24,10 @@ import {
 } from "./secret-read-policy.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import { serializePathWrite } from "./write-queue.js";
+import {
+  assertNoWindowsPathAlias,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 export const PRIVATE_SECRET_DIR_MODE = 0o700;
 export const PRIVATE_SECRET_FILE_MODE = 0o600;
@@ -196,8 +200,8 @@ async function ensurePrivateDirectory(
   targetDir: string,
   mode: number,
 ): Promise<{ rootGuard: AsyncDirectoryGuard<BigIntStats>; parentGuard: AsyncDirectoryGuard<BigIntStats> }> {
-  const resolvedRoot = path.resolve(rootDir);
-  const resolvedTarget = path.resolve(targetDir);
+  const resolvedRoot = resolvePathPreservingWindowsRoot(rootDir);
+  const resolvedTarget = resolvePathPreservingWindowsRoot(targetDir);
   let rootStat = await inspectPrivateDirectory(resolvedRoot, "root").catch((error) => {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     return undefined;
@@ -281,12 +285,31 @@ type SecretFileWriteParams = {
   durable?: boolean;
 };
 
+function snapshotSecretFileWriteParams(
+  params: SecretFileWriteParams,
+  rootDir: string,
+  filePath: string,
+): SecretFileWriteParams {
+  return {
+    rootDir,
+    filePath,
+    content: params.content,
+    mode: params.mode,
+    dirMode: params.dirMode,
+    durable: params.durable,
+  };
+}
+
 async function secretFileWriteQueueKey(filePath: string): Promise<string> {
+  assertNoWindowsPathAlias(filePath, "filesystem", "private secret path uses a Windows filesystem namespace alias");
   try {
     return await canonicalPathFromExistingAncestor(filePath);
-  } catch {
+  } catch (error) {
+    if (error instanceof FsSafeError && error.code === "invalid-path") throw error;
     // Keep validation and its public error shape owned by the write path below.
-    return path.resolve(filePath);
+    const resolved = path.resolve(filePath);
+    assertNoWindowsPathAlias(resolved, "filesystem", "private secret path uses a Windows filesystem namespace alias");
+    return resolved;
   }
 }
 
@@ -300,10 +323,16 @@ export async function prepareSecretFileWrite(
   fileName: string;
   finalFilePath: string;
 }> {
+  const rootDir = params.rootDir;
+  const filePath = params.filePath;
+  assertNoWindowsPathAlias(rootDir, "filesystem", "private secret root uses a Windows filesystem namespace alias");
+  assertNoWindowsPathAlias(filePath, "filesystem", "private secret path uses a Windows filesystem namespace alias");
   const mode = params.mode ?? PRIVATE_SECRET_FILE_MODE;
   const dirMode = params.dirMode ?? PRIVATE_SECRET_DIR_MODE;
-  const resolvedRoot = path.resolve(params.rootDir);
-  const resolvedFile = path.resolve(params.filePath);
+  const resolvedRoot = resolvePathPreservingWindowsRoot(rootDir);
+  const resolvedFile = path.resolve(filePath);
+  assertNoWindowsPathAlias(resolvedRoot, "filesystem", "private secret root uses a Windows filesystem namespace alias");
+  assertNoWindowsPathAlias(resolvedFile, "filesystem", "private secret path uses a Windows filesystem namespace alias");
   assertPathWithinRoot(resolvedRoot, resolvedFile);
   for (const [kind, value] of [["file", mode], ["directory", dirMode]] as const) {
     if (!Number.isInteger(value) || value < 0 || value > 0o7777) {
@@ -319,8 +348,11 @@ export async function prepareSecretFileWrite(
   await assertAsyncDirectoryGuard(rootGuard);
   await assertAsyncDirectoryGuard(parentGuard);
   assertRealPathWithinRoot(rootGuard.realPath, parentGuard.realPath);
+  assertNoWindowsPathAlias(rootGuard.realPath, "filesystem", "private secret root uses a Windows filesystem namespace alias");
+  assertNoWindowsPathAlias(parentGuard.realPath, "filesystem", "private secret parent uses a Windows filesystem namespace alias");
   const fileName = path.basename(resolvedFile);
   const finalFilePath = path.join(parentGuard.realPath, fileName);
+  assertNoWindowsPathAlias(finalFilePath, "filesystem", "private secret path uses a Windows filesystem namespace alias");
   return { mode, rootGuard, parentGuard, fileName, finalFilePath };
 }
 
@@ -379,17 +411,27 @@ async function materializeSecretFileAtomic(
 }
 
 export async function writeSecretFileAtomic(params: SecretFileWriteParams): Promise<void> {
-  const canonicalPath = await secretFileWriteQueueKey(params.filePath);
+  const rootDir = params.rootDir;
+  const filePath = params.filePath;
+  assertNoWindowsPathAlias(rootDir, "filesystem", "private secret root uses a Windows filesystem namespace alias");
+  assertNoWindowsPathAlias(filePath, "filesystem", "private secret path uses a Windows filesystem namespace alias");
+  const ownedParams = snapshotSecretFileWriteParams(params, rootDir, filePath);
+  const canonicalPath = await secretFileWriteQueueKey(filePath);
   await serializePathWrite(canonicalPath, async () => {
-    await materializeSecretFileAtomic(params, false);
+    await materializeSecretFileAtomic(ownedParams, false);
   });
 }
 
 export async function createSecretFileAtomic(params: SecretFileWriteParams): Promise<void> {
   try {
-    const canonicalPath = await secretFileWriteQueueKey(params.filePath);
+    const rootDir = params.rootDir;
+    const filePath = params.filePath;
+    assertNoWindowsPathAlias(rootDir, "filesystem", "private secret root uses a Windows filesystem namespace alias");
+    assertNoWindowsPathAlias(filePath, "filesystem", "private secret path uses a Windows filesystem namespace alias");
+    const ownedParams = snapshotSecretFileWriteParams(params, rootDir, filePath);
+    const canonicalPath = await secretFileWriteQueueKey(filePath);
     await serializePathWrite(canonicalPath, async () => {
-      await materializeSecretFileAtomic(params, true);
+      await materializeSecretFileAtomic(ownedParams, true);
     });
   } catch (error) {
     if (

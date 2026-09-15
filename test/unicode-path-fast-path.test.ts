@@ -82,7 +82,10 @@ describe("path normalization fast paths", () => {
 
   it("resolves already-checked store keys like the general guarded path helper", () => {
     const store = fileStore({ rootDir: path.resolve("checked-key-fixture") });
-    const components = ["plain", "café", "日本語", "Γειά", "😀", ".hidden", "a..b", "inner space", "2026-09-14T10:30:00Z"];
+    const components = [
+      "plain", "café", "日本語", "Γειά", "😀", ".hidden", "a..b", "inner space",
+      ...(process.platform === "win32" ? [] : ["2026-09-14T10:30:00Z"]),
+    ];
     for (let index = 0; index < 2000; index++) {
       const key = Array.from({ length: index % 32 + 1 }, (_, depth) => components[(index + depth) % components.length]).join("/");
       expect(store.path(key)).toBe(resolveSafeRelativePath(store.rootDir, key));

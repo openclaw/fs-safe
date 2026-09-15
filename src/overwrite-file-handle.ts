@@ -15,6 +15,10 @@ export async function overwriteFileHandle(
   data: Uint8Array,
   options: OverwriteFileHandleOptions = {},
 ): Promise<void> {
+  // Snapshot caller-owned admission before the first await. Preserve the
+  // former method-call receiver while preventing a later getter mutation from
+  // replacing authority after rollback preparation.
+  const beforeWrite = options.beforeWrite;
   const payload = data.subarray(0, data.byteLength);
   const payloadBytes = payload.byteLength;
   const stat = await handle.stat();
@@ -30,7 +34,10 @@ export async function overwriteFileHandle(
   if (await readFileWindowFully(handle, originalPrefix, 0) !== prefixBytes) {
     throw new FsSafeError("read-failed", "file ended before overwrite rollback preparation completed");
   }
-  assertSynchronousCallbackResult(options.beforeWrite?.(), "beforeWrite");
+  assertSynchronousCallbackResult(
+    beforeWrite === undefined ? undefined : Reflect.apply(beforeWrite, options, []),
+    "beforeWrite",
+  );
 
   let prefixStarted = false;
   try {

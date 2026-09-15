@@ -6,6 +6,11 @@ import { sameFileIdentity } from "./file-identity.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { isNotFoundPathError } from "./path.js";
 import { directoryComponentNotDirectoryError } from "./root-errors.js";
+import {
+  assertNoWindowsPathAlias,
+  pathForWindowsFilesystem,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 import { realpathSync } from "./realpath.js";
 
 export type AsyncDirectoryGuard<T extends Stats | BigIntStats = Stats> = {
@@ -37,8 +42,16 @@ export function assertDirectoryIdentitySync(
   observedPath: string,
   expected: Pick<DirectoryIdentity, "dev" | "ino"> & { realPath?: string },
 ): void {
-  inspectDirectoryIdentitySync(observedPath, expected);
-  if (expected.realPath !== undefined && realpathSync.native(observedPath) !== expected.realPath) {
+  const operationPath = directoryOperationPath(observedPath);
+  const expectedDev = expected.dev;
+  const expectedIno = expected.ino;
+  const expectedRealPath = expected.realPath;
+  if (expectedRealPath !== undefined) assertNoWindowsPathAlias(expectedRealPath, "filesystem");
+  inspectDirectoryIdentityAtPathSync(operationPath, { dev: expectedDev, ino: expectedIno });
+  if (expectedRealPath === undefined) return;
+  const realPath = realpathSync.native(operationPath);
+  assertNoWindowsPathAlias(realPath, "filesystem");
+  if (realPath !== expectedRealPath) {
     throw new FsSafeError("path-mismatch", "directory changed during operation");
   }
 }
@@ -47,46 +60,75 @@ export function createAsyncDirectoryGuard(dir: string, options: { bigint: true }
 export function createAsyncDirectoryGuard(dir: string, options?: { bigint?: false }): Promise<AsyncDirectoryGuard>;
 export function createAsyncDirectoryGuard(dir: string, options: { bigint: boolean }): Promise<AnyAsyncDirectoryGuard>;
 export async function createAsyncDirectoryGuard(dir: string, options?: { bigint?: boolean }): Promise<AnyAsyncDirectoryGuard> {
-  const stat = options?.bigint ? inspectDirectoryIdentitySync(dir) : fsSync.lstatSync(dir);
+  const operationPath = directoryOperationPath(dir);
+  const stat = options?.bigint
+    ? inspectDirectoryIdentityAtPathSync(operationPath)
+    : fsSync.lstatSync(operationPath);
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw directoryComponentNotDirectoryError();
   }
-  return { dir, realPath: realpathSync.native(dir), stat };
+  const realPath = realpathSync.native(operationPath);
+  assertNoWindowsPathAlias(realPath, "filesystem");
+  return { dir, realPath, stat };
 }
 
 export async function assertAsyncDirectoryGuard(guard: AnyAsyncDirectoryGuard): Promise<void> {
-  if (typeof guard.stat.dev === "bigint" && typeof guard.stat.ino === "bigint") {
-    assertDirectoryIdentitySync(guard.dir, { dev: guard.stat.dev, ino: guard.stat.ino, realPath: guard.realPath });
-    return;
-  }
-  const stat = fsSync.lstatSync(guard.dir);
+  const dir = guard.dir;
+  const operationPath = directoryOperationPath(dir);
+  const expectedRealPath = guard.realPath;
+  assertNoWindowsPathAlias(expectedRealPath, "filesystem");
+  const expectedStat = guard.stat;
+  const expectedIdentity = { dev: expectedStat.dev, ino: expectedStat.ino };
+  const stat = typeof expectedIdentity.dev === "bigint" && typeof expectedIdentity.ino === "bigint"
+    ? inspectDirectoryIdentityAtPathSync(operationPath, {
+      dev: expectedIdentity.dev,
+      ino: expectedIdentity.ino,
+    })
+    : fsSync.lstatSync(operationPath);
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw directoryComponentNotDirectoryError();
   }
-  if (!sameFileIdentity(stat, guard.stat) || realpathSync.native(guard.dir) !== guard.realPath) {
+  if (!sameFileIdentity(stat, expectedIdentity)) {
+    throw new FsSafeError("path-mismatch", "directory changed during operation");
+  }
+  const realPath = realpathSync.native(operationPath);
+  assertNoWindowsPathAlias(realPath, "filesystem");
+  if (realPath !== expectedRealPath) {
     throw new FsSafeError("path-mismatch", "directory changed during operation");
   }
 }
 
 export function createSyncDirectoryGuard(dir: string): SyncDirectoryGuard {
-  const stat = fsSync.lstatSync(dir);
+  const operationPath = directoryOperationPath(dir);
+  const stat = fsSync.lstatSync(operationPath);
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw directoryComponentNotDirectoryError();
   }
-  return { dir, realPath: realpathSync(dir), stat };
+  const realPath = realpathSync(operationPath);
+  assertNoWindowsPathAlias(realPath, "filesystem");
+  return { dir, realPath, stat };
 }
 
 export function assertSyncDirectoryGuard(guard: SyncDirectoryGuard | AnyAsyncDirectoryGuard): void {
-  if (typeof guard.stat.dev === "bigint" && typeof guard.stat.ino === "bigint") {
-    assertDirectoryIdentitySync(guard.dir, { dev: guard.stat.dev, ino: guard.stat.ino, realPath: guard.realPath });
-    return;
-  }
-  const stat = fsSync.lstatSync(guard.dir);
+  const dir = guard.dir;
+  const operationPath = directoryOperationPath(dir);
+  const expectedRealPath = guard.realPath;
+  assertNoWindowsPathAlias(expectedRealPath, "filesystem");
+  const expectedStat = guard.stat;
+  const expectedIdentity = { dev: expectedStat.dev, ino: expectedStat.ino };
+  const stat = typeof expectedIdentity.dev === "bigint" && typeof expectedIdentity.ino === "bigint"
+    ? inspectDirectoryIdentityAtPathSync(
+      operationPath,
+      { dev: expectedIdentity.dev, ino: expectedIdentity.ino },
+    )
+    : fsSync.lstatSync(operationPath);
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw directoryComponentNotDirectoryError();
   }
-  const realPath = realpathSync(guard.dir);
-  if (!sameFileIdentity(stat, guard.stat) || realPath !== guard.realPath) {
+  const realPath = typeof expectedIdentity.ino === "bigint"
+    ? realpathSync.native(operationPath) : realpathSync(operationPath);
+  assertNoWindowsPathAlias(realPath, "filesystem");
+  if (!sameFileIdentity(stat, expectedIdentity) || realPath !== expectedRealPath) {
     throw new FsSafeError("path-mismatch", "directory changed during operation");
   }
 }
@@ -98,8 +140,10 @@ export async function createNearestExistingDirectoryGuard(
   targetPath: string,
   options = { bigint: false },
 ): Promise<AnyAsyncDirectoryGuard> {
-  let current = path.resolve(targetPath);
-  const root = path.resolve(rootReal);
+  assertNoWindowsPathAlias(rootReal, "filesystem");
+  assertNoWindowsPathAlias(targetPath, "filesystem");
+  let current = resolvePathPreservingWindowsRoot(targetPath);
+  const root = resolvePathPreservingWindowsRoot(rootReal);
   while (current !== root) {
     try {
       return await createAsyncDirectoryGuard(current, options);
@@ -117,8 +161,10 @@ export function createNearestExistingSyncDirectoryGuard(
   rootReal: string,
   targetPath: string,
 ): SyncDirectoryGuard {
-  let current = path.resolve(targetPath);
-  const root = path.resolve(rootReal);
+  assertNoWindowsPathAlias(rootReal, "filesystem");
+  assertNoWindowsPathAlias(targetPath, "filesystem");
+  let current = resolvePathPreservingWindowsRoot(targetPath);
+  const root = resolvePathPreservingWindowsRoot(rootReal);
   while (current !== root) {
     try {
       return createSyncDirectoryGuard(current);
@@ -134,7 +180,11 @@ export function createNearestExistingSyncDirectoryGuard(
 
 // Recovery receipts must retain every identity bit, including on Windows.
 export async function inspectDirectoryIdentity(dir: string, expected?: Pick<BigIntStats, "dev" | "ino">): Promise<BigIntStats> {
-  return inspectDirectoryIdentitySync(dir, expected);
+  const operationPath = directoryOperationPath(dir);
+  const expectedIdentity = expected === undefined
+    ? undefined
+    : { dev: expected.dev, ino: expected.ino };
+  return inspectDirectoryIdentityAtPathSync(operationPath, expectedIdentity);
 }
 
 function directoryEntryPath(dir: string): string {
@@ -154,14 +204,28 @@ function directoryEntryPath(dir: string): string {
   return end === rootLength || end === dir.length ? dir : dir.slice(0, end);
 }
 
+function directoryOperationPath(dir: string): string {
+  assertNoWindowsPathAlias(dir, "filesystem");
+  return pathForWindowsFilesystem(directoryEntryPath(dir));
+}
+
 export function inspectDirectoryIdentitySync(
   dir: string,
   expected?: Pick<BigIntStats, "dev" | "ino">,
 ): BigIntStats {
-  // A trailing separator makes lstat follow a final directory symlink.
-  const entryPath = directoryEntryPath(dir);
+  const operationPath = directoryOperationPath(dir);
+  const expectedIdentity = expected === undefined
+    ? undefined
+    : { dev: expected.dev, ino: expected.ino };
+  return inspectDirectoryIdentityAtPathSync(operationPath, expectedIdentity);
+}
+
+function inspectDirectoryIdentityAtPathSync(
+  operationPath: string,
+  expected?: Pick<BigIntStats, "dev" | "ino">,
+): BigIntStats {
   return inspectFileIdentitySync(() => {
-    const stat = fsSync.lstatSync(entryPath, { bigint: true });
+    const stat = fsSync.lstatSync(operationPath, { bigint: true });
     if (stat.isSymbolicLink() || !stat.isDirectory()) throw directoryComponentNotDirectoryError();
     return stat;
   }, expected);

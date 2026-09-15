@@ -51,13 +51,27 @@ function resolveFileLockManagerKey(targetPath: string, managerKey?: string): str
 function withLockDefaults<TPayload extends Record<string, unknown>>(
   options: FileLockAcquireOptions<TPayload>,
 ): Omit<SidecarLockAcquireOptions<TPayload>, "targetPath"> {
+  const { managerKey: _managerKey, lockPath } = options;
+  const acquireOptions = {} as FileLockAcquireOptions<TPayload>;
+  for (const key of Reflect.ownKeys(options)) {
+    // Node 22 object-rest can read excluded accessors; exclude before copying.
+    if (key === "managerKey" || key === "lockPath") continue;
+    if (!Object.getOwnPropertyDescriptor(options, key)?.enumerable) continue;
+    Object.defineProperty(acquireOptions, key, {
+      value: Reflect.get(options, key),
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+  }
   const defaults = getFsSafeLockConfig();
   return {
-    ...options,
-    retry: options.retry ?? defaults.retry,
-    staleMs: options.staleMs ?? defaults.staleMs ?? 30_000,
-    staleRecovery: options.staleRecovery ?? defaults.staleRecovery,
-    timeoutMs: options.timeoutMs ?? defaults.timeoutMs,
+    ...acquireOptions,
+    retry: acquireOptions.retry ?? defaults.retry,
+    staleMs: acquireOptions.staleMs ?? defaults.staleMs ?? 30_000,
+    staleRecovery: acquireOptions.staleRecovery ?? defaults.staleRecovery,
+    timeoutMs: acquireOptions.timeoutMs ?? defaults.timeoutMs,
+    ...(lockPath === undefined ? {} : { lockPath }),
   };
 }
 
@@ -82,12 +96,16 @@ export function createFileLockManager(key: string): FileLockManager {
   const manager = createSidecarLockManager(key);
   return {
     acquire: async (targetPath, options) => {
-      const { managerKey: _managerKey, ...acquireOptions } = options;
-      return await manager.acquire({ ...withLockDefaults(acquireOptions), targetPath });
+      return await manager.acquire({
+        ...withLockDefaults(options),
+        targetPath,
+      });
     },
     withLock: async (targetPath, options, fn) => {
-      const { managerKey: _managerKey, ...acquireOptions } = options;
-      return await manager.withLock({ ...withLockDefaults(acquireOptions), targetPath }, fn);
+      return await manager.withLock({
+        ...withLockDefaults(options),
+        targetPath,
+      }, fn);
     },
     drain: manager.drain,
     reset: manager.reset,

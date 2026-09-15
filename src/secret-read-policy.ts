@@ -2,6 +2,7 @@ import { normalizeMaxBytes } from "./byte-budget.js";
 import { resolveHomeRelativePath } from "./home-dir.js";
 import type { BigIntStats } from "node:fs";
 import { FsSafeError, type FsSafeErrorCode } from "./errors.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export const DEFAULT_SECRET_FILE_MAX_BYTES = 16 * 1024;
 
@@ -57,10 +58,13 @@ export function resolveSecretReadPolicy(filePath: string, label: string, options
   resolvedPath: string;
   maxBytes: number;
 } {
-  const resolvedPath = resolveHomeRelativePath(filePath.trim());
+  const trimmedPath = filePath.trim();
+  assertNoWindowsPathAlias(trimmedPath, "filesystem", `${label} file path uses a Windows filesystem namespace alias`);
+  const resolvedPath = resolveHomeRelativePath(trimmedPath);
   if (!resolvedPath) {
     throw new FsSafeError("invalid-path", `${label} file path is empty.`, { cause: undefined });
   }
+  assertNoWindowsPathAlias(resolvedPath, "filesystem", `${label} file path uses a Windows filesystem namespace alias`);
   const maxBytes = normalizeMaxBytes(options.maxBytes, {
     defaultValue: DEFAULT_SECRET_FILE_MAX_BYTES,
   })!;

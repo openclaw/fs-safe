@@ -2,6 +2,10 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { realpathSync } from "./realpath.js";
+import {
+  pathForWindowsFilesystem,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 export type WalkEntryKind = "file" | "directory" | "symlink" | "other";
 export type WalkSymlinkPolicy = "skip" | "follow" | "include";
@@ -125,7 +129,7 @@ export function walkDirectorySync(
   options: WalkDirectoryOptions = {},
 ): WalkDirectoryResultWithFailures {
   validateWalkOptions(options);
-  const root = path.resolve(rootDir);
+  const root = resolvePathPreservingWindowsRoot(rootDir);
   const symlinks = options.symlinks ?? "skip";
   const result: WalkDirectoryResultWithFailures = {
     entries: [],
@@ -138,8 +142,9 @@ export function walkDirectorySync(
   function visit(dir: string, relativeDir: string, depth: number): void {
     if (options.maxDepth !== undefined && depth > options.maxDepth) return;
     let realDir: string;
+    const operationPath = pathForWindowsFilesystem(dir);
     try {
-      realDir = realpathSync(dir);
+      realDir = realpathSync(operationPath);
     } catch (error) {
       recordFailedDir(result, root, dir, depth, error);
       return;
@@ -149,7 +154,7 @@ export function walkDirectorySync(
 
     let entries: fsSync.Dirent[];
     try {
-      entries = fsSync.readdirSync(dir, { withFileTypes: true });
+      entries = fsSync.readdirSync(operationPath, { withFileTypes: true });
     } catch (error) {
       recordFailedDir(result, root, dir, depth, error);
       return;
@@ -188,7 +193,7 @@ export async function walkDirectory(
   options: WalkDirectoryOptions = {},
 ): Promise<WalkDirectoryResultWithFailures> {
   validateWalkOptions(options);
-  const root = path.resolve(rootDir);
+  const root = resolvePathPreservingWindowsRoot(rootDir);
   const symlinks = options.symlinks ?? "skip";
   const result: WalkDirectoryResultWithFailures = {
     entries: [],
@@ -201,8 +206,9 @@ export async function walkDirectory(
   async function visit(dir: string, relativeDir: string, depth: number): Promise<void> {
     if (options.maxDepth !== undefined && depth > options.maxDepth) return;
     let realDir: string;
+    const operationPath = pathForWindowsFilesystem(dir);
     try {
-      realDir = realpathSync.native(dir);
+      realDir = realpathSync.native(operationPath);
     } catch (error) {
       recordFailedDir(result, root, dir, depth, error);
       return;
@@ -212,7 +218,7 @@ export async function walkDirectory(
 
     let entries: fsSync.Dirent[];
     try {
-      entries = await fs.readdir(dir, { withFileTypes: true });
+      entries = await fs.readdir(operationPath, { withFileTypes: true });
     } catch (error) {
       recordFailedDir(result, root, dir, depth, error);
       return;

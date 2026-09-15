@@ -17,9 +17,13 @@ import { resolveOpenedFileRealPathForHandle, root, type Root } from "./root.js";
 import { ensureTrailingSep } from "./root-context.js";
 import { RootHandle } from "./root-impl.js";
 import { prepareSecretFileWrite } from "./secret-file.js";
-import { resolveSecureTempRoot } from "./secure-temp-dir.js";
 import { realpathSync } from "./realpath.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
+import { resolveSecureTempRoot } from "./secure-temp-dir.js";
+import {
+  assertNoWindowsPathAlias,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 export type SyncParentGuard = SyncDirectoryGuard;
 
@@ -46,6 +50,7 @@ export async function openWritableStoreRoot(params: {
   dirMode: number;
   maxBytes?: number;
 }): Promise<Root> {
+  assertNoWindowsPathAlias(params.rootDir, "filesystem", "store root uses a Windows filesystem namespace alias");
   const maxBytes = normalizeMaxBytes(params.maxBytes);
   await fs.mkdir(recursiveMkdirPath(params.rootDir), { recursive: true, mode: params.dirMode });
   await fs.chmod(params.rootDir, params.dirMode).catch(() => undefined);
@@ -173,6 +178,8 @@ export function ensureParentSync(params: {
   filePath: string;
   mode: number;
 }): SyncParentGuard {
+  assertNoWindowsPathAlias(params.rootDir, "filesystem", "store root uses a Windows filesystem namespace alias");
+  assertNoWindowsPathAlias(params.filePath, "filesystem", "store path uses a Windows filesystem namespace alias");
   return ensureStoreDirectorySync({
     rootDir: params.rootDir,
     targetDir: path.dirname(path.resolve(params.filePath)),
@@ -187,8 +194,12 @@ export function ensureStoreDirectorySync(params: {
   mode: number;
   messagePrefix: "private store" | "store";
 }): SyncParentGuard {
-  const rootDir = path.resolve(params.rootDir);
-  const dir = path.resolve(params.targetDir);
+  assertNoWindowsPathAlias(params.rootDir, "filesystem", "store root uses a Windows filesystem namespace alias");
+  assertNoWindowsPathAlias(params.targetDir, "filesystem", "store path uses a Windows filesystem namespace alias");
+  const rootDir = resolvePathPreservingWindowsRoot(params.rootDir);
+  const dir = resolvePathPreservingWindowsRoot(params.targetDir);
+  assertNoWindowsPathAlias(rootDir, "filesystem", "store root uses a Windows filesystem namespace alias");
+  assertNoWindowsPathAlias(dir, "filesystem", "store path uses a Windows filesystem namespace alias");
   const relative = path.relative(rootDir, dir);
   if (isPathRelativeEscape(relative)) {
     throw new FsSafeError("outside-workspace", "file path escapes store root");

@@ -12,6 +12,10 @@ import { resolveSecureTempRoot } from "./secure-temp-dir.js";
 import { assertCallbackTempPathDeviceSafe, writeCallbackSibling } from "./sibling-staged-file.js";
 import { tempFile } from "./temp-target.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
+import {
+  assertNoWindowsPathAlias,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 export type WriteSiblingTempFileOptions<T> = {
   dir: string;
@@ -45,7 +49,11 @@ function buildTempPath(dir: string, tempPrefix?: string): string {
 export async function writeSiblingTempFile<T>(
   options: WriteSiblingTempFileOptions<T>,
 ): Promise<WriteSiblingTempFileResult<T>> {
-  const dir = path.resolve(options.dir);
+  const dirInput = options.dir;
+  assertNoWindowsPathAlias(dirInput, "filesystem", "sibling temp directory uses a Windows filesystem namespace alias");
+  const dir = resolvePathPreservingWindowsRoot(dirInput);
+  assertNoWindowsPathAlias(dir, "filesystem", "sibling temp directory uses a Windows filesystem namespace alias");
+  const producerIsolation = options.producerIsolation;
   await fs.mkdir(recursiveMkdirPath(dir), { recursive: true, mode: options.dirMode ?? 0o700 });
   if (options.chmodDir !== false) {
     await applyDirectoryMode({
@@ -58,7 +66,7 @@ export async function writeSiblingTempFile<T>(
   return await writeCallbackSibling({
     tempPath: buildTempPath(dir, options.tempPrefix),
     write: options.writeTemp,
-    producerIsolation: options.producerIsolation,
+    producerIsolation,
     resolveFinalPath: options.resolveFinalPath,
     mode: options.mode,
     ignoreModeError: true,
@@ -96,10 +104,16 @@ export async function writeViaSiblingTempPath(params: {
   fallbackFileName?: string;
   tempPrefix?: string;
 }): Promise<void> {
+  const rootDirInput = params.rootDir;
+  const targetPathInput = params.targetPath;
+  assertNoWindowsPathAlias(rootDirInput, "filesystem", "sibling temp root uses a Windows filesystem namespace alias");
+  assertNoWindowsPathAlias(targetPathInput, "filesystem", "sibling temp target uses a Windows filesystem namespace alias");
   let rootDir: string;
-  try { rootDir = realpathSync.native(path.resolve(params.rootDir)); }
-  catch { rootDir = path.resolve(params.rootDir); }
-  const requestedTargetPath = path.resolve(params.targetPath);
+  try { rootDir = realpathSync.native(resolvePathPreservingWindowsRoot(rootDirInput)); }
+  catch { rootDir = resolvePathPreservingWindowsRoot(rootDirInput); }
+  assertNoWindowsPathAlias(rootDir, "filesystem", "sibling temp root uses a Windows filesystem namespace alias");
+  const requestedTargetPath = path.resolve(targetPathInput);
+  assertNoWindowsPathAlias(requestedTargetPath, "filesystem", "sibling temp target uses a Windows filesystem namespace alias");
   let targetPath: string;
   try {
     const realDir = realpathSync.native(path.dirname(requestedTargetPath));
@@ -107,6 +121,7 @@ export async function writeViaSiblingTempPath(params: {
   } catch {
     targetPath = requestedTargetPath;
   }
+  assertNoWindowsPathAlias(targetPath, "filesystem", "sibling temp target uses a Windows filesystem namespace alias");
   const relativeTargetPath = path.relative(rootDir, targetPath);
   if (
     !relativeTargetPath ||
@@ -125,6 +140,7 @@ export async function writeViaSiblingTempPath(params: {
     }),
     prefix: "fs-safe-output",
   });
+  assertNoWindowsPathAlias(workspace.dir, "filesystem", "sibling temp workspace uses a Windows filesystem namespace alias");
   try {
     const tempPath = buildSiblingTempPath({
       targetPath: path.join(workspace.dir, path.basename(targetPath)),

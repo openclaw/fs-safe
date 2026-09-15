@@ -12,6 +12,7 @@ import { FsSafeError } from "./errors.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { tempFile } from "./temp-target.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type StagedArchiveFile = { path: string; cleanup: () => Promise<void> };
 
@@ -46,11 +47,14 @@ export async function stageArchiveFileForExtraction(params: {
   deadline: ExtractionDeadline;
 }): Promise<StagedArchiveFile> {
   params.deadline.check();
-  const sourcePath = path.resolve(params.archivePath);
+  const archivePath = params.archivePath;
+  assertNoWindowsPathAlias(archivePath);
+  const sourcePath = path.resolve(archivePath);
+  assertNoWindowsPathAlias(sourcePath);
   const initialStat = await inspectFileIdentity(async () => {
     const stat = fsSync.lstatSync(sourcePath, { bigint: true });
     if (stat.isSymbolicLink() || !stat.isFile()) {
-      throw new Error(`archive is not a regular file: ${params.archivePath}`);
+      throw new Error(`archive is not a regular file: ${archivePath}`);
     }
     return stat;
   });

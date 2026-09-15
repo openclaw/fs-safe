@@ -9,8 +9,10 @@ import { readRegularFile, readRegularFileSync, statRegularFile } from "./regular
 import { openRootFileSync, type RootFileOpenFailure } from "./root-file.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
+import { admitStandalonePublicationPath } from "./standalone-publication-path.js";
 import { writeTextAtomic, type WriteTextAtomicOptions } from "./text-atomic.js";
 import { sleep } from "./timing.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 const READ_RETRY_MAX_ATTEMPTS = 5;
 const READ_RETRY_BASE_DELAY_MS = 50;
@@ -187,17 +189,18 @@ export function tryReadJsonSync<T = unknown>(
 }
 
 export function writeJsonSync(pathname: string, data: unknown) {
+  const filePath = admitStandalonePublicationPath(pathname);
   // Keep literal parent segments so staging follows the same symlinks as the target.
-  const tmpPath = path.format({ ...path.parse(pathname), base: `.fs-safe-${randomUUID()}.tmp` });
+  const tmpPath = path.format({ ...path.parse(filePath), base: `.fs-safe-${randomUUID()}.tmp` });
   const payload = `${stringifyJsonDocument(data, null, 2)}\n`;
 
-  fsSync.mkdirSync(recursiveMkdirPath(path.dirname(pathname)), { recursive: true, mode: JSON_DIR_MODE });
+  fsSync.mkdirSync(recursiveMkdirPath(path.dirname(filePath)), { recursive: true, mode: JSON_DIR_MODE });
   try {
     const tempIdentity = writeTempJsonFile(tmpPath, payload);
     trySetSecureMode(tmpPath, tempIdentity);
-    renameJsonFileWithFallback(tmpPath, pathname);
-    trySetSecureMode(pathname, tempIdentity);
-    trySyncDirectory(pathname);
+    renameJsonFileWithFallback(tmpPath, filePath);
+    trySetSecureMode(filePath, tempIdentity);
+    trySyncDirectory(filePath);
   } finally {
     try {
       fsSync.rmSync(tmpPath, { force: true });
@@ -258,14 +261,50 @@ function resolveInvalidMessage(
 export function readRootStructuredFileSync<T>(
   options: ReadRootStructuredFileSyncOptions<T>,
 ): RootStructuredFileReadResult<T> {
-  const absolutePath = path.resolve(options.rootDir, options.relativePath);
+  return readRootStructuredFileSyncInternal(options, options);
+}
+
+type RootStructuredFileParser<T> = Pick<
+  ReadRootStructuredFileSyncOptions<T>,
+  "parse" | "validate" | "invalidMessage"
+>;
+
+function readRootStructuredFileSyncInternal<T>(
+  options: ReadRootJsonSyncOptions,
+  parser: RootStructuredFileParser<T>,
+): RootStructuredFileReadResult<T> {
+  let absolutePath: string;
+  let relativePath: string;
+  let rootDir: string;
+  let rootRealPath: string | undefined;
+  try {
+    rootDir = options.rootDir;
+    relativePath = options.relativePath;
+    rootRealPath = options.rootRealPath;
+    assertNoWindowsPathAlias(rootDir);
+    assertNoWindowsPathAlias(relativePath, "relative");
+    if (rootRealPath !== undefined) {
+      assertNoWindowsPathAlias(rootRealPath);
+    }
+    absolutePath = path.resolve(rootDir, relativePath);
+    assertNoWindowsPathAlias(absolutePath);
+  } catch (error) {
+    return {
+      ok: false,
+      reason: "open",
+      failure: { ok: false, reason: "validation", error },
+    };
+  }
+  const boundaryLabel = options.boundaryLabel;
+  const rejectHardlinks = options.rejectHardlinks;
+  const maxBytes = options.maxBytes;
   const opened = openRootFileSync({
     absolutePath,
-    rootPath: options.rootDir,
-    ...(options.rootRealPath !== undefined ? { rootRealPath: options.rootRealPath } : {}),
-    boundaryLabel: options.boundaryLabel,
-    rejectHardlinks: options.rejectHardlinks,
-    maxBytes: options.maxBytes,
+    rootPath: rootDir,
+    rootRealPath,
+    boundaryLabel,
+    rejectHardlinks,
+    maxBytes,
     allowedType: "file",
   });
   if (!opened.ok) {
@@ -274,15 +313,17 @@ export function readRootStructuredFileSync<T>(
 
   try {
     const raw =
-      options.maxBytes === undefined
+      maxBytes === undefined
         ? fsSync.readFileSync(opened.fd, "utf8")
-        : readFileDescriptorBoundedSync(opened.fd, options.maxBytes).toString("utf8");
-    const parsed = options.parse(raw);
-    if (options.validate && !options.validate(parsed)) {
+        : readFileDescriptorBoundedSync(opened.fd, maxBytes).toString("utf8");
+    const parse = parser.parse;
+    const parsed = Reflect.apply(parse, parser, [raw]);
+    const validate = parser.validate;
+    if (validate && !Reflect.apply(validate, parser, [parsed])) {
       return {
         ok: false,
         reason: "invalid",
-        error: resolveInvalidMessage(options.invalidMessage, options.relativePath),
+        error: resolveInvalidMessage(parser.invalidMessage, relativePath),
       };
     }
     return {
@@ -296,7 +337,7 @@ export function readRootStructuredFileSync<T>(
     return {
       ok: false,
       reason: "parse",
-      error: `failed to parse ${options.relativePath}: ${String(error)}`,
+      error: `failed to parse ${relativePath}: ${String(error)}`,
     };
   } finally {
     fsSync.closeSync(opened.fd);
@@ -306,8 +347,7 @@ export function readRootStructuredFileSync<T>(
 export function readRootJsonSync<T = unknown>(
   options: ReadRootJsonSyncOptions,
 ): RootStructuredFileReadResult<T> {
-  return readRootStructuredFileSync<T>({
-    ...options,
+  return readRootStructuredFileSyncInternal<T>(options, {
     parse: (raw) => JSON.parse(raw),
   });
 }
@@ -315,8 +355,7 @@ export function readRootJsonSync<T = unknown>(
 export function readRootJsonObjectSync(
   options: ReadRootJsonSyncOptions,
 ): RootStructuredFileReadResult<Record<string, unknown>> {
-  return readRootStructuredFileSync<Record<string, unknown>>({
-    ...options,
+  return readRootStructuredFileSyncInternal<Record<string, unknown>>(options, {
     parse: (raw) => JSON.parse(raw),
     validate: isRecord,
     invalidMessage: (relativePath) => `${relativePath} must contain a JSON object`,
@@ -409,8 +448,9 @@ export async function writeJson(
   value: unknown,
   options?: WriteJsonOptions,
 ) {
+  const admittedPath = admitStandalonePublicationPath(filePath);
   const text = stringifyJsonDocument(value, null, 2);
-  await writeTextAtomic(filePath, text, {
+  await writeTextAtomic(admittedPath, text, {
     mode: options?.mode,
     dirMode: options?.dirMode,
     trailingNewline: options?.trailingNewline,

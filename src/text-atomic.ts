@@ -1,4 +1,5 @@
 import { replaceFileAtomic } from "./replace-file.js";
+import { admitStandalonePublicationPath } from "./standalone-publication-path.js";
 
 export type WriteTextAtomicOptions = {
   mode?: number;
@@ -18,10 +19,11 @@ export async function writeTextAtomic(
   content: string,
   options?: WriteTextAtomicOptions,
 ): Promise<void> {
+  const admittedPath = admitStandalonePublicationPath(filePath);
   const payload = options?.trailingNewline && !content.endsWith("\n") ? `${content}\n` : content;
   const durable = options?.durable ?? true;
   await replaceFileAtomic({
-    filePath,
+    filePath: admittedPath,
     content: payload,
     mode: options?.mode ?? 0o600,
     dirMode: options?.dirMode ?? (0o777 & ~process.umask()),

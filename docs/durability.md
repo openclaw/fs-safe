@@ -53,6 +53,14 @@ propagate.
 discard both unsupported outcomes and failures. Use them only when the primary
 write remains useful without a crash-durability promise.
 
+On Windows, pathname inputs and supplied directory receipts reject NTFS
+alternate-stream and directory-index namespace spellings before opening,
+creating, hashing, or publishing anything. This applies to directory
+durability, `publishFileExclusive()`, and the pathname overloads of
+`sha256File()` and `sha256FileSync()`; the already-open `FileHandle` and
+borrowed numeric file-descriptor overloads are unchanged. Ordinary colon-bearing
+POSIX paths remain valid.
+
 ## Pinned directories
 
 `pinDirectory()` rejects final symlinks and non-directories. On POSIX it opens
@@ -93,6 +101,12 @@ target fails with `FsSafeError("path-mismatch")`.
 target. It pins the source with nonblocking `O_NOFOLLOW`, optionally verifies
 `expectedSourceIdentity`, tries a hardlink first, then synchronizes the target
 parent directory.
+
+Trusted relative source and target paths are resolved to absolute paths before
+authority checks. On Windows, ordinary drive-relative operands are anchored at
+entry before namespace-alias admission. A caller-supplied `parentReceipt` must
+still name the resolved target parent and is not relaxed by this compatibility
+rule.
 
 For example, a backup archive is complete before publication. If directory
 sync fails, keeping that complete file is more useful than conditionally

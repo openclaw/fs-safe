@@ -19,6 +19,7 @@ import { getFsSafeTestHooks } from "./test-hooks.js";
 import { onCopyPublication, type CopyPublicationOptions } from "./copy-publication.js";
 import { syncFileBestEffortSync } from "./file-sync.js";
 import { finalizeArchivePublication, type ArchivePublishedDirectory, type ArchivePublishedFile } from "./archive-durability.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type ArchivePublicationEntry = { path: string; kind: "file" | "directory"; mode: number };
 type MergeParams = {
@@ -34,12 +35,25 @@ type GuardedMergeParams = Pick<MergeParams, "sourceDir" | "deadline"> & {
 export async function mergePlannedArchiveIntoDestination(
   params: GuardedMergeParams & { entries: readonly ArchivePublicationEntry[]; durable?: boolean },
 ): Promise<void> {
+  assertMergePathInputs(params);
   await mergeTree(params, params.entries, params.durable === true);
 }
 
 export async function mergeExtractedTreeIntoDestination(params: MergeParams): Promise<void> {
-  const destinationGuard = await createDirectoryIdentityGuard(params.destinationRealDir);
-  await mergeTree({ sourceDir: params.sourceDir, deadline: params.deadline, destinationGuard });
+  const sourceDir = params.sourceDir;
+  const destinationDir = params.destinationDir;
+  const destinationRealDir = params.destinationRealDir;
+  assertNoWindowsPathAlias(sourceDir);
+  assertNoWindowsPathAlias(destinationDir);
+  assertNoWindowsPathAlias(destinationRealDir);
+  const destinationGuard = await createDirectoryIdentityGuard(destinationRealDir);
+  await mergeTree({ sourceDir, deadline: params.deadline, destinationGuard });
+}
+
+function assertMergePathInputs(params: GuardedMergeParams): void {
+  assertNoWindowsPathAlias(params.sourceDir);
+  assertNoWindowsPathAlias(params.destinationGuard.dir);
+  assertNoWindowsPathAlias(params.destinationGuard.realPath);
 }
 
 async function mergeTree(params: GuardedMergeParams, publication?: readonly ArchivePublicationEntry[], durable = true): Promise<void> {

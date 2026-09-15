@@ -1,5 +1,6 @@
 import { FsSafeError } from "./errors.js";
 import { getNativeBinding } from "./native.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type CreatePrivateDirectoryOptions = {
   platform?: NodeJS.Platform;
@@ -16,6 +17,13 @@ export async function createPrivateDirectory(
       "private-directory creation is supported only on Windows",
     );
   }
+
+  assertNoWindowsPathAlias(
+    targetPath,
+    "filesystem",
+    "private directory path uses a Windows filesystem namespace alias",
+    platform,
+  );
 
   const native = getNativeBinding();
   if (!native) {

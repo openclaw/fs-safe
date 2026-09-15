@@ -28,6 +28,11 @@ import {
   type TempWorkspaceCleanupResult,
   type TempWorkspaceCleanupSafety,
 } from "./temp-workspace-owner.js";
+import {
+  assertNoWindowsPathAlias,
+  hasWindowsPathAlias,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 export type {
   TempWorkspaceCleanupResult,
@@ -90,7 +95,9 @@ function sanitizeTempPrefix(prefix: string): string {
 }
 
 function resolveWorkspaceLeaf(dir: string, fileName: string): string {
-  return path.join(dir, assertWorkspaceFileName(fileName));
+  const resolved = path.join(dir, assertWorkspaceFileName(fileName));
+  assertNoWindowsPathAlias(resolved, "filesystem", "temp workspace path uses a Windows filesystem namespace alias");
+  return resolved;
 }
 
 function assertWorkspaceFileName(fileName: string): string {
@@ -102,6 +109,7 @@ function assertWorkspaceFileName(fileName: string): string {
     value.includes("\0") ||
     value.includes("/") ||
     value.includes("\\") ||
+    hasWindowsPathAlias(value, "relative") ||
     path.basename(value) !== value
   ) {
     throw new Error(`Invalid temp workspace file name: ${JSON.stringify(fileName)}`);
@@ -160,17 +168,22 @@ function ensurePrivateDirectorySync(dir: string, mode: number): void {
 
 async function createTempWorkspace(
   options: TempWorkspaceOptions,
+  scopedPrefix = false,
 ): Promise<TempWorkspace> {
+  const rootDir = options.rootDir;
+  assertNoWindowsPathAlias(rootDir, "filesystem", "temp workspace root uses a Windows filesystem namespace alias");
   const dirMode = options.dirMode ?? 0o700;
   const mode = options.mode ?? 0o600;
   const cleanupSafety = resolveTempWorkspaceCleanupSafety(options.cleanupSafety);
-  const requestedRoot = path.resolve(options.rootDir);
+  const requestedRoot = resolvePathPreservingWindowsRoot(rootDir);
+  assertNoWindowsPathAlias(requestedRoot, "filesystem", "temp workspace root uses a Windows filesystem namespace alias");
   let root = requestedRoot;
   try {
     root = realpathSync.native(requestedRoot);
   } catch {
     root = requestedRoot;
   }
+  assertNoWindowsPathAlias(root, "filesystem", "temp workspace root uses a Windows filesystem namespace alias");
   await ensurePrivateDirectory(root, dirMode);
   const capability = new TempWorkspaceCleanupCapability(root, cleanupSafety);
   let dir: string;
@@ -178,7 +191,12 @@ async function createTempWorkspace(
   let cleanupOwner: TempWorkspaceCleanupOwner | undefined;
   let unregisterTempDir: () => void;
   try {
-    dir = await fs.mkdtemp(path.join(root, sanitizeTempPrefix(options.prefix)));
+    const rawPrefix = options.prefix;
+    const workspacePrefix = scopedPrefix
+      ? `${sanitizeTempPrefix(rawPrefix)}${randomUUID()}-`
+      : rawPrefix;
+    dir = await fs.mkdtemp(path.join(root, sanitizeTempPrefix(workspacePrefix)));
+    assertNoWindowsPathAlias(dir, "filesystem", "temp workspace path uses a Windows filesystem namespace alias");
     await fs.chmod(dir, dirMode).catch(() => undefined);
     stat = fsSync.lstatSync(dir, { bigint: true });
     if (stat.isSymbolicLink() || !stat.isDirectory()) {
@@ -253,10 +271,7 @@ export async function withTempWorkspace<T>(
   options: TempWorkspaceOptions,
   run: (workspace: TempWorkspace) => Promise<T>,
 ): Promise<T> {
-  const workspace = await createTempWorkspace({
-    ...options,
-    prefix: `${sanitizeTempPrefix(options.prefix)}${randomUUID()}-`,
-  });
+  const workspace = await createTempWorkspace(options, true);
   try {
     return await run(workspace);
   } finally {
@@ -264,19 +279,24 @@ export async function withTempWorkspace<T>(
   }
 }
 
-export function tempWorkspaceSync(
+function createTempWorkspaceSync(
   options: TempWorkspaceOptions,
+  scopedPrefix = false,
 ): TempWorkspaceSync {
+  const rootDir = options.rootDir;
+  assertNoWindowsPathAlias(rootDir, "filesystem", "temp workspace root uses a Windows filesystem namespace alias");
   const dirMode = options.dirMode ?? 0o700;
   const mode = options.mode ?? 0o600;
   const cleanupSafety = resolveTempWorkspaceCleanupSafety(options.cleanupSafety);
-  const requestedRoot = path.resolve(options.rootDir);
+  const requestedRoot = resolvePathPreservingWindowsRoot(rootDir);
+  assertNoWindowsPathAlias(requestedRoot, "filesystem", "temp workspace root uses a Windows filesystem namespace alias");
   let root = requestedRoot;
   try {
     root = realpathSync.native(requestedRoot);
   } catch {
     root = requestedRoot;
   }
+  assertNoWindowsPathAlias(root, "filesystem", "temp workspace root uses a Windows filesystem namespace alias");
   ensurePrivateDirectorySync(root, dirMode);
   const capability = new TempWorkspaceCleanupCapability(root, cleanupSafety);
   let dir: string;
@@ -284,7 +304,12 @@ export function tempWorkspaceSync(
   let cleanupOwner: TempWorkspaceCleanupOwner | undefined;
   let unregisterTempDir: () => void;
   try {
-    dir = fsSync.mkdtempSync(path.join(root, sanitizeTempPrefix(options.prefix)));
+    const rawPrefix = options.prefix;
+    const workspacePrefix = scopedPrefix
+      ? `${sanitizeTempPrefix(rawPrefix)}${randomUUID()}-`
+      : rawPrefix;
+    dir = fsSync.mkdtempSync(path.join(root, sanitizeTempPrefix(workspacePrefix)));
+    assertNoWindowsPathAlias(dir, "filesystem", "temp workspace path uses a Windows filesystem namespace alias");
     try {
       fsSync.chmodSync(dir, dirMode);
     } catch {
@@ -364,14 +389,17 @@ export function tempWorkspaceSync(
   };
 }
 
+export function tempWorkspaceSync(
+  options: TempWorkspaceOptions,
+): TempWorkspaceSync {
+  return createTempWorkspaceSync(options);
+}
+
 export function withTempWorkspaceSync<T>(
   options: TempWorkspaceOptions,
   run: (workspace: TempWorkspaceSync) => T,
 ): T {
-  const workspace = tempWorkspaceSync({
-    ...options,
-    prefix: `${sanitizeTempPrefix(options.prefix)}${randomUUID()}-`,
-  });
+  const workspace = createTempWorkspaceSync(options, true);
   try {
     return run(workspace);
   } finally {

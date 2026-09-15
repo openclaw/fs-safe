@@ -4,12 +4,19 @@ import path from "node:path";
 import { syncDirectory } from "./directory-durability.js";
 import { syncQueueDirectoryCreation } from "./json-durable-queue-directory.js";
 import {
+  queueValidationRoot,
+  queueValidationRoots,
+  resolveQueueFilesystemPath,
+  type QueueValidationRoot,
+} from "./json-durable-queue-paths.js";
+import {
   getErrorCode,
   acknowledgeDurableQueueEntry,
   claimDurableQueueEntry,
   completeDeliveredQueueEntry,
   migrateDurableQueueEntry,
   moveDurableQueueEntryToFailed,
+  validateDurableQueueEntryPaths,
 } from "./json-durable-queue-ownership.js";
 import { withJsonDurableQueueEntry } from "./json-durable-queue-read.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
@@ -17,6 +24,11 @@ import { realpathSync } from "./realpath.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { replaceFileAtomicWithDirectorySync } from "./replace-file.js";
 import { assertSafePathSegment } from "./safe-path-segment.js";
+import { admitStandalonePublicationPath } from "./standalone-publication-path.js";
+import {
+  assertNoWindowsPathAlias,
+  hasWindowsPathAlias,
+} from "./windows-path-alias.js";
 
 export { DEFAULT_JSON_DURABLE_QUEUE_ENTRY_MAX_BYTES } from "./json-durable-queue-read.js";
 
@@ -39,20 +51,17 @@ export type JsonDurableQueueLoadOptions<T> = {
   maxBytes?: number;
 };
 
-type QueueValidationRoot = {
-  path: string;
-  allowSymlinkBase: boolean;
-};
-
 function assertSafeQueueEntryId(id: string): void {
   assertSafePathSegment(id, { label: "queue entry id" });
 }
 
 export async function unlinkBestEffort(filePath: string): Promise<void> {
+  if (hasWindowsPathAlias(filePath, "filesystem")) return;
   await fs.promises.unlink(filePath).catch(() => undefined);
 }
 
 export async function jsonDurableQueueEntryExists(filePath: string): Promise<boolean> {
+  assertNoWindowsPathAlias(filePath);
   try {
     const stat = fs.lstatSync(filePath);
     return stat.isFile();
@@ -86,6 +95,7 @@ export function resolveJsonDurableQueueEntryPaths(
   id: string,
 ): JsonDurableQueueEntryPaths {
   assertSafeQueueEntryId(id);
+  assertNoWindowsPathAlias(queueDir);
   return {
     jsonPath: path.join(queueDir, `${id}.json`),
     deliveredPath: path.join(queueDir, `${id}.delivered`),
@@ -97,9 +107,13 @@ export async function ensureJsonDurableQueueDirs(params: {
   queueDir: string;
   failedDir: string;
 }): Promise<void> {
-  const roots = await queueValidationRoots(params.queueDir, params.failedDir);
-  await ensureJsonDurableQueueDir(params.queueDir, roots.queueRoot);
-  await ensureJsonDurableQueueDir(params.failedDir, roots.failedRoot);
+  const queueDir = params.queueDir;
+  const failedDir = params.failedDir;
+  assertNoWindowsPathAlias(queueDir);
+  assertNoWindowsPathAlias(failedDir);
+  const roots = await queueValidationRoots(queueDir, failedDir);
+  await ensureJsonDurableQueueDir(queueDir, roots.queueRoot);
+  await ensureJsonDurableQueueDir(failedDir, roots.failedRoot);
 }
 
 async function ensureJsonDurableQueueDir(
@@ -126,47 +140,6 @@ async function assertJsonDurableQueueDir(
   await assertNoSymlinkDirectorySegments(root, dir, false);
 }
 
-function commonPathAncestor(paths: string[]): string {
-  const resolved = paths.map((entry) => path.resolve(entry));
-  const root = path.parse(resolved[0] ?? process.cwd()).root;
-  const parts = resolved.map((entry) => path.relative(root, entry).split(path.sep));
-  const common: string[] = [];
-  for (let index = 0; parts.every((part) => index < part.length); index++) {
-    const segment = parts[0]?.[index];
-    if (!segment || !parts.every((part) => part[index] === segment)) break;
-    common.push(segment);
-  }
-  return path.join(root, ...common);
-}
-
-function samePathRoot(paths: string[]): boolean {
-  const roots = paths.map((entry) => path.parse(path.resolve(entry)).root);
-  const first = process.platform === "win32" ? roots[0]?.toLowerCase() : roots[0];
-  return roots.every((root) => (process.platform === "win32" ? root.toLowerCase() : root) === first);
-}
-
-async function queueValidationRoots(
-  queueDir: string,
-  failedDir: string,
-): Promise<{ queueRoot: QueueValidationRoot; failedRoot: QueueValidationRoot }> {
-  if (samePathRoot([queueDir, failedDir])) {
-    const common = commonPathAncestor([queueDir, failedDir]);
-    const root = queueValidationRoot(common);
-    return { failedRoot: root, queueRoot: root };
-  }
-  return {
-    failedRoot: queueValidationRoot(failedDir),
-    queueRoot: queueValidationRoot(queueDir),
-  };
-}
-
-function queueValidationRoot(dir: string): QueueValidationRoot {
-  return {
-    path: path.parse(path.resolve(dir)).root,
-    allowSymlinkBase: process.platform === "darwin",
-  };
-}
-
 async function isDarwinSystemAlias(
   dir: string,
   stat: Awaited<ReturnType<typeof fs.promises.lstat>>,
@@ -190,8 +163,8 @@ async function assertNoSymlinkDirectorySegments(
   dir: string,
   allowMissing: boolean,
 ): Promise<void> {
-  let base = path.resolve(validationRoot.path);
-  let target = path.resolve(dir);
+  let base = resolveQueueFilesystemPath(validationRoot.path);
+  let target = resolveQueueFilesystemPath(dir);
   let current = base;
   let baseStat = fs.lstatSync(base);
   if (baseStat.isSymbolicLink() && validationRoot.allowSymlinkBase) {
@@ -289,11 +262,14 @@ async function writeQueueEntry(
   params: Parameters<typeof writeJsonDurableQueueEntry>[0],
   beforeRename?: () => Promise<void>,
 ): Promise<void> {
+  const filePath = admitStandalonePublicationPath(params.filePath);
+  const entry = params.entry;
+  const tempPrefix = params.tempPrefix;
   await replaceFileAtomicWithDirectorySync({
-    filePath: params.filePath,
-    content: stringifyJsonDocument(params.entry, null, 2),
+    filePath,
+    content: stringifyJsonDocument(entry, null, 2),
     mode: 0o600,
-    tempPrefix: params.tempPrefix,
+    tempPrefix,
     syncTempFile: true,
     beforeRename,
   }, syncDirectory);
@@ -331,15 +307,18 @@ export async function loadJsonDurableQueueEntry<T>(params: {
   maxBytes?: number;
 }): Promise<T | null> {
   try {
-    const claimedPath = await claimDurableQueueEntry(params.paths);
+    const pathsInput = params.paths;
+    const paths = validateDurableQueueEntryPaths(pathsInput);
+    const claimedPath = await claimDurableQueueEntry(paths);
     if (!claimedPath) return null;
     return await withJsonDurableQueueEntry<T, T>(claimedPath, {
       maxBytes: params.maxBytes,
     }, async (raw, identity, releaseReadPin) => {
-      const result = params.read ? await params.read(raw, params.paths.jsonPath) : { entry: raw };
+      const read = params.read;
+      const result = read ? await Reflect.apply(read, params, [raw, paths.jsonPath]) : { entry: raw };
       if (result.migrated) {
         await migrateClaimedQueueEntry({
-          paths: params.paths, identity, releaseReadPin, entry: result.entry, tempPrefix: params.tempPrefix,
+          paths, identity, releaseReadPin, entry: result.entry, tempPrefix: params.tempPrefix,
         });
       }
       return result.entry;
@@ -355,9 +334,11 @@ export async function loadJsonDurableQueueEntry<T>(params: {
 export async function loadPendingJsonDurableQueueEntries<T>(
   options: JsonDurableQueueLoadOptions<T>,
 ): Promise<T[]> {
+  const queueDir = options.queueDir;
+  assertNoWindowsPathAlias(queueDir);
   let files: string[];
   try {
-    files = await fs.promises.readdir(options.queueDir);
+    files = await fs.promises.readdir(queueDir);
   } catch (error) {
     if (getErrorCode(error) === "ENOENT") {
       return [];
@@ -370,10 +351,13 @@ export async function loadPendingJsonDurableQueueEntries<T>(
     if (file.endsWith(".delivered")) {
       const id = file.slice(0, -".delivered".length);
       try { assertSafeQueueEntryId(id); } catch { continue; }
-      await completeDeliveredQueueEntry(resolveJsonDurableQueueEntryPaths(options.queueDir, id));
+      const paths = validateDurableQueueEntryPaths(
+        resolveJsonDurableQueueEntryPaths(queueDir, id),
+      );
+      await completeDeliveredQueueEntry(paths);
     } else if (options.cleanupTmpMaxAgeMs !== undefined && file.endsWith(".tmp")) {
       await unlinkStaleTmpBestEffort(
-        path.join(options.queueDir, file),
+        path.join(queueDir, file),
         now,
         options.cleanupTmpMaxAgeMs,
       );
@@ -397,7 +381,7 @@ export async function loadPendingJsonDurableQueueEntries<T>(
 
   const entries: T[] = [];
   for (const id of ids) {
-    const paths = resolveJsonDurableQueueEntryPaths(options.queueDir, id);
+    const paths = validateDurableQueueEntryPaths(resolveJsonDurableQueueEntryPaths(queueDir, id));
     const claimedPath = await claimDurableQueueEntry(paths, { skipUnowned: true });
     if (!claimedPath) continue;
     let migrationStarted = false;
@@ -406,7 +390,8 @@ export async function loadPendingJsonDurableQueueEntries<T>(
         claimedPath,
         { maxBytes: options.maxBytes },
         async (raw, identity, releaseReadPin) => {
-          const result = options.read ? await options.read(raw, paths.jsonPath) : { entry: raw };
+          const read = options.read;
+          const result = read ? await Reflect.apply(read, options, [raw, paths.jsonPath]) : { entry: raw };
           if (result.migrated) {
             migrationStarted = true;
             await migrateClaimedQueueEntry({
@@ -430,12 +415,18 @@ export async function moveJsonDurableQueueEntryToFailed(params: {
   failedDir: string;
   id: string;
 }): Promise<void> {
-  assertSafeQueueEntryId(params.id);
-  const roots = await queueValidationRoots(params.queueDir, params.failedDir);
-  await assertJsonDurableQueueDir(params.queueDir, roots.queueRoot);
-  await ensureJsonDurableQueueDir(params.failedDir, roots.failedRoot);
+  const id = params.id;
+  const queueDir = params.queueDir;
+  const failedDir = params.failedDir;
+  assertSafeQueueEntryId(id);
+  assertNoWindowsPathAlias(queueDir);
+  assertNoWindowsPathAlias(failedDir);
+  const roots = await queueValidationRoots(queueDir, failedDir);
+  await assertJsonDurableQueueDir(queueDir, roots.queueRoot);
+  await ensureJsonDurableQueueDir(failedDir, roots.failedRoot);
+  const paths = validateDurableQueueEntryPaths(resolveJsonDurableQueueEntryPaths(queueDir, id));
   await moveDurableQueueEntryToFailed({
-    paths: resolveJsonDurableQueueEntryPaths(params.queueDir, params.id),
-    failedPath: path.join(params.failedDir, `${params.id}.json`),
+    paths,
+    failedPath: path.join(failedDir, `${id}.json`),
   });
 }

@@ -77,12 +77,23 @@ Operational filesystem failures such as permissions or I/O errors are rethrown.
 | `assertNoSymlinkParents`, `assertNoSymlinkParentsSync`, `AssertNoSymlinkParentsOptions` | – | Reject paths whose ancestor chain contains symlinks. |
 | `assertNoHardlinkedFinalPath`, `assertNoPathAliasEscape`, `PATH_ALIAS_POLICIES`, `PathAliasPolicy` | – | Hardlink/alias defense building blocks. |
 
+`pathExists()` and `pathExistsSync()` intentionally retain ordinary `stat`
+semantics and are not caller-path admission boundaries. Validate an untrusted
+path with the boundary appropriate to the operation before using these
+existence probes.
+
 `openRootFile()` and `openRootFileSync()` compare exact bigint identities before
 open, on the retained descriptor, and on the current resolved path. Their `stat`
 receipts remain numeric. Custom `ioFs` adapters must honor `{ bigint: true }` for
 `lstatSync` and `fstatSync`; numeric identity responses fail validation. Unknown
 Windows identities receive one re-inspection without reopening, then fail
 validation if still unknown.
+
+On Windows, these existing-object readers retain their historical support for a
+leading drive-relative spelling such as `C:existing.txt`: it is anchored to that
+drive before confinement and namespace admission. Additional colons remain in
+the anchored spelling, so alternate-stream and directory-index aliases are still
+rejected before opening.
 
 The explicit `symlinks` policy takes precedence over the existing `rejectSymlinks`
 boolean. Without `symlinks`, `rejectSymlinks: false` retains its existing behavior

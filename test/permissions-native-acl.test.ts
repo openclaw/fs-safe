@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -63,6 +64,24 @@ afterEach(() => {
 });
 
 describe.skipIf(process.platform !== "win32")("native advanced Windows ACL inspection", () => {
+  it("rejects namespace aliases before native loading, stat, or command fallback", async () => {
+    const readOwnerAndDacl = vi.fn(() => facts());
+    const load = vi.fn(() => ({ readOwnerAndDacl }) as unknown as NativeBinding);
+    __setNativeLoaderForTest(load);
+    const lstat = vi.spyOn(fsSync, "lstatSync");
+
+    await expect(inspectWindowsAcl(`${target}:stream`)).resolves.toMatchObject({
+      ok: false,
+      entries: [],
+      error: expect.stringContaining("Windows filesystem namespace alias"),
+    });
+
+    expect(load).not.toHaveBeenCalled();
+    expect(lstat).not.toHaveBeenCalled();
+    expect(readOwnerAndDacl).not.toHaveBeenCalled();
+    expect(exec).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["empty", facts()],
     ["null", facts({ daclPresent: false })],

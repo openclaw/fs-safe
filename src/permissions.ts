@@ -5,6 +5,10 @@ import {
   inspectWindowsPermissions,
   type PermissionExec,
 } from "./permissions-windows.js";
+import {
+  hasWindowsPathAlias,
+  pathForWindowsFilesystem,
+} from "./windows-path-alias.js";
 export type { PermissionCommandFailure } from "./permission-exec.js";
 export {
   createIcaclsResetCommand,
@@ -63,10 +67,21 @@ export type SafeStatResult = {
   error?: string;
 };
 
+function failedSafeStat(error: string): SafeStatResult {
+  return {
+    ok: false,
+    isSymlink: false,
+    isDir: false,
+    mode: null,
+    uid: null,
+    gid: null,
+    error,
+  };
+}
 
-export async function safeStat(targetPath: string): Promise<SafeStatResult> {
+async function safeStatAdmitted(targetPath: string): Promise<SafeStatResult> {
   try {
-    const lst = fsSync.lstatSync(targetPath);
+    const lst = fsSync.lstatSync(pathForWindowsFilesystem(targetPath));
     return {
       ok: true,
       isSymlink: lst.isSymbolicLink(),
@@ -76,23 +91,41 @@ export async function safeStat(targetPath: string): Promise<SafeStatResult> {
       gid: typeof lst.gid === "number" ? lst.gid : null,
     };
   } catch (err) {
-    return {
-      ok: false,
-      isSymlink: false,
-      isDir: false,
-      mode: null,
-      uid: null,
-      gid: null,
-      error: String(err),
-    };
+    return failedSafeStat(String(err));
   }
+}
+
+export async function safeStat(targetPath: string): Promise<SafeStatResult> {
+  if (hasWindowsPathAlias(targetPath, "filesystem")) {
+    return failedSafeStat("Path uses a Windows filesystem namespace alias");
+  }
+  return await safeStatAdmitted(targetPath);
 }
 
 export async function inspectPathPermissions(
   targetPath: string,
   opts?: PermissionCheckOptions,
 ): Promise<PermissionCheck> {
-  const st = await safeStat(targetPath);
+  const admissionPlatform = process.platform === "win32"
+    ? process.platform
+    : (opts?.platform ?? process.platform);
+  if (hasWindowsPathAlias(targetPath, "filesystem", admissionPlatform)) {
+    const st = failedSafeStat("Path uses a Windows filesystem namespace alias");
+    return {
+      ok: false,
+      isSymlink: false,
+      isDir: false,
+      mode: null,
+      bits: null,
+      source: "unknown",
+      worldWritable: false,
+      groupWritable: false,
+      worldReadable: false,
+      groupReadable: false,
+      error: st.error,
+    };
+  }
+  const st = await safeStatAdmitted(targetPath);
   if (!st.ok) {
     return {
       ok: false,

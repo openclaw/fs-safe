@@ -28,6 +28,8 @@ You hand a `root()` boundary to a piece of code that takes caller-controlled rel
 - replaces the destination directory with a symlink right before a write
 - creates a hardlink that aliases an out-of-tree inode and asks you to read or replace it
 - asks a read/open primitive to target a known unsafe device or process-fd path
+- uses an NTFS alternate-stream or directory-index pathname to alias a different
+  Windows filesystem object than the visible path suggests
 - triggers a partial write that leaves a half-written file at the destination
 - ships an archive with `..` paths, absolute paths, or symlinks pointing outside the destination
 
@@ -46,6 +48,30 @@ If you need full sandboxing, run the worker under reduced privileges (uid, conta
 ### Path traversal and absolute paths
 
 Every path is resolved against the canonicalized real path of the root, then checked at that boundary. On Windows, an exact-case structural Root prefix stays on the lexical fast path; a prefix accepted only by case folding must have the Root's exact directory identity and is rebased onto the trusted Root spelling before use. Alias resolution walks components before applying a later `..`, so a symlink cannot change what that parent segment means after validation. Parent traversal, an absolute spelling, or any alias whose canonical result is outside the root throws `outside-workspace`; absolute spellings that remain inside the root are accepted.
+
+Guarded pathname APIs reject Windows `:` namespace aliases before normalization
+or filesystem access. The only colon admitted in a Windows filesystem path is
+the rooted ASCII drive designator (including extended-drive syntax); relative
+paths admit none. This rule does not authorize device or network paths, which
+retain their independent restrictions. Pure formatters, descriptor-only calls,
+and `walkDirectory` (documented as a non-boundary traversal helper) are outside
+this pathname-admission guarantee. Output helpers continue to sanitize an
+untrusted basename, then validate the resulting path.
+
+The low-level existing-object readers `openRootFile()` and
+`openRootFileSync()` preserve their historical Windows drive-relative input:
+they anchor its leading drive designator before this admission check. The raw
+suffix remains unnormalized, and any additional colon is still rejected before
+filesystem access.
+
+Trusted-path standalone publication APIs retain the same drive-relative
+compatibility. This includes the atomic file, text, JSON, JSON store/direct
+queue writer, directory-replacement, move, and exclusive-publication helpers.
+They capture the drive's current directory at publication entry and carry the
+anchored spelling through their remaining checks, locks, callbacks, receipts,
+publication, and cleanup. File writers preserve the raw suffix. Root-relative
+APIs and caller-constructed relative directory receipts continue to reject
+drive designators.
 
 ### Symlinks (read side)
 

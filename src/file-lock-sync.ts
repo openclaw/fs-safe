@@ -30,6 +30,7 @@ import type {
 } from "./sidecar-lock-types.js";
 import { getFsSafeLockConfig } from "./lock-config.js";
 import { sleepSync } from "./timing.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 import { realpathSync } from "./realpath.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 
@@ -172,25 +173,35 @@ function canonicalLockParentSync(parent: string): string {
 
 function normalizeTargetPath(targetPath: string): string {
   const resolved = path.resolve(targetPath);
+  assertNoWindowsPathAlias(resolved);
   fs.mkdirSync(recursiveMkdirPath(path.dirname(resolved)), { recursive: true });
+  let parent: string;
   try {
-    return path.join(canonicalLockParentSync(path.dirname(resolved)), path.basename(resolved));
+    parent = canonicalLockParentSync(path.dirname(resolved));
   } catch {
     return resolved;
   }
+  assertNoWindowsPathAlias(parent);
+  const normalized = path.join(parent, path.basename(resolved));
+  assertNoWindowsPathAlias(normalized);
+  return normalized;
 }
 
 function boundedLockPath(lockPath: string, lockRoot?: Root): string {
   const resolved = path.resolve(lockPath);
+  assertNoWindowsPathAlias(resolved);
   if (!lockRoot) return resolved;
   relativeSidecarLockPath(lockRoot, resolved);
   const parent = path.dirname(resolved);
   const parentReal = canonicalLockParentSync(parent);
+  assertNoWindowsPathAlias(parentReal);
   const parentRelative = path.relative(lockRoot.rootReal, parentReal);
   if (parentRelative === ".." || parentRelative.startsWith(`..${path.sep}`) || path.isAbsolute(parentRelative)) {
     throw new FsSafeError("outside-workspace", "sidecar lock parent is outside lockRoot");
   }
-  return path.join(parentReal, path.basename(resolved));
+  const bounded = path.join(parentReal, path.basename(resolved));
+  assertNoWindowsPathAlias(bounded);
+  return bounded;
 }
 
 function defaultShouldReclaim(snapshot: SidecarLockSnapshot, staleMs: number, nowMs: number): boolean {
@@ -222,8 +233,11 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
   const staleMs = options.staleMs ?? defaults.staleMs ?? 30_000;
   validateSidecarLockStaleMs(staleMs);
   validateSidecarLockCompromiseCheckIntervalMs(options.compromiseCheckIntervalMs);
+  const explicitLockPath = options.lockPath;
+  assertNoWindowsPathAlias(targetPath);
+  if (explicitLockPath !== undefined) assertNoWindowsPathAlias(explicitLockPath);
   const normalizedTargetPath = normalizeTargetPath(targetPath);
-  const lockPath = boundedLockPath(options.lockPath ?? `${normalizedTargetPath}.lock`, options.lockRoot);
+  const lockPath = boundedLockPath(explicitLockPath ?? `${normalizedTargetPath}.lock`, options.lockRoot);
   const heldLocks = getSyncHeldLocks();
   const held = heldLocks.get(normalizedTargetPath);
   if (

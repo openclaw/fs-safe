@@ -10,18 +10,10 @@ import type { ContainmentGuarantee } from "./containment.js";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, createNearestExistingDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { syncDirectoryBestEffort } from "./directory-durability.js";
-import {
-  sameFileIdentity,
-  sameFileIdentityForCleanup,
-  type FileIdentityStat,
-} from "./file-identity.js";
+import { sameFileIdentity, sameFileIdentityForCleanup, type FileIdentityStat } from "./file-identity.js";
 import { mkdirPathComponentsWithGuards } from "./guarded-mkdir.js";
 import { withAsyncDirectoryGuards } from "./guarded-mutation.js";
-import {
-  assertMutationNotDenied,
-  mergeDenyMutationPolicies,
-  type DenyMutationPolicy,
-} from "./deny-mutations.js";
+import { assertMutationNotDenied, mergeDenyMutationPolicies, type DenyMutationPolicy } from "./deny-mutations.js";
 import { resolveOpenedFileRealPathForFd, resolveOpenedFileRealPathForHandle } from "./opened-realpath.js";
 import { openedPathResolutionError, recordExclusiveCreateFailure, recordFileOpenFailure, recordOpenedFileFailure, recordPreOpenFileChange } from "./opened-file-failure.js";
 import {
@@ -83,6 +75,10 @@ import { createCopyPublicationObserver, onCopyPublication, type CopyPublicationO
 import { writeAllToFile } from "./write-file-handle.js";
 import { createInputOptions, rethrowCreateInputError, rootWriteInput, type RootWriteParams } from "./root-create-input.js";
 import { assertFinalSymlinkRejected, mutationSymlinkResolution, readSymlinkResolution, type MutationSymlinkPolicy, type SymlinkPolicy } from "./root-symlink-policy.js";
+import {
+  assertNoWindowsPathAlias,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 import {
   mergeReadOptions, readDefaults,
@@ -260,6 +256,7 @@ async function openVerifiedLocalFile(
         throw error;
       });
     const { realPath } = resolved;
+    assertNoWindowsPathAlias(realPath, "filesystem", "resolved file path uses a Windows filesystem namespace alias");
     let resolvedStat: BigIntStats | undefined = resolved.stat;
     await inspectPathIdentity(async () => {
       // Reuse the post-realpath observation; unknown Windows identities still
@@ -660,7 +657,7 @@ export function rootFromDirectoryGuard(
 ): Root {
   normalizeMaxBytes(defaults.maxBytes);
   return new RootHandle({
-    rootDir: path.resolve(guard.dir),
+    rootDir: resolvePathPreservingWindowsRoot(guard.dir),
     rootIdentity: { dev: guard.stat.dev, ino: guard.stat.ino },
     rootReal: guard.realPath,
     rootWithSep: ensureTrailingSep(guard.realPath),
@@ -750,8 +747,10 @@ export async function readLocalFileSafely(params: {
 }
 
 export async function openLocalFileSafely(params: { filePath: string }): Promise<OpenResult> {
-  assertNoNulPathInput(params.filePath, "file path contains a NUL byte");
-  return (await openVerifiedLocalFile(params.filePath)).opened;
+  const filePath = params.filePath;
+  assertNoNulPathInput(filePath, "file path contains a NUL byte");
+  assertNoWindowsPathAlias(filePath, "filesystem", "file path uses a Windows filesystem namespace alias");
+  return (await openVerifiedLocalFile(filePath)).opened;
 }
 
 export type WritableOpenResult = {
@@ -936,6 +935,7 @@ async function openWritableFileInRoot(
     }
 
     let realPath = await resolveOpenedFileRealPathForHandle(handle, ioPath);
+    assertNoWindowsPathAlias(realPath, "filesystem", "resolved file path uses a Windows filesystem namespace alias");
     const realStat = fsSync.statSync(realPath);
     if (!sameFileIdentity(stat, realStat)) {
       throw new FsSafeError("path-mismatch", "path mismatch");
@@ -1179,6 +1179,7 @@ async function copyFileInRoot(
   let sourceIdentity: BigIntStats;
   if (typeof params.source === "string") {
     assertNoNulPathInput(params.source, "source path contains a NUL byte");
+    assertNoWindowsPathAlias(params.source, "filesystem", "source path uses a Windows filesystem namespace alias");
     ({ opened: source, identity: sourceIdentity } = await openVerifiedLocalFile(params.source, {
       hardlinks: params.sourceHardlinks,
     }));

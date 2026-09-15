@@ -23,6 +23,7 @@ import { writeAllToFile } from "./write-file-handle.js";
 import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
 import { type CopyFileInput, writeCopyFileToFd } from "./copy-file-input.js";
 import { publishCopyStage } from "./publish-copy-stage.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type PinnedWriteInput =
   | { kind: "buffer"; data: string | Buffer; encoding?: BufferEncoding }
@@ -41,6 +42,7 @@ function assertSafeBasename(basename: string): void {
     basename === "." ||
     basename === ".." ||
     basename.includes("/") ||
+    (process.platform === "win32" && basename.includes("\\")) ||
     basename.includes("\0")
   ) {
     throw new FsSafeError("invalid-path", "invalid target path");
@@ -98,12 +100,72 @@ export type PinnedWriteParams = {
   ) => Promise<void>;
 };
 
+const PINNED_WRITE_SNAPSHOT_KEYS: readonly PropertyKey[] = [
+  "rootPath", "relativeParentPath", "basename", "maxBytes", "rootIdentity",
+];
+const RENAME_POLICY_SNAPSHOT_KEYS: readonly PropertyKey[] = ["targetPath", "renameIdentity"];
+type OwnedPinnedWriteParams = Omit<
+  PinnedWriteParams,
+  "rootPath" | "relativeParentPath" | "basename" | "maxBytes" | "rootIdentity"
+>;
+
+function copyOwnEnumerableExcept(
+  source: object,
+  excluded: readonly PropertyKey[],
+): Record<PropertyKey, unknown> {
+  const owned: Record<PropertyKey, unknown> = {};
+  for (const key of Reflect.ownKeys(source)) {
+    // Node 22's object-rest fast path can read excluded accessors eagerly.
+    // Exclude before even inspecting the descriptor so named authority and
+    // pathname fields remain single-read snapshots on every supported Node.
+    if (excluded.includes(key)) continue;
+    if (!Object.getOwnPropertyDescriptor(source, key)?.enumerable) continue;
+    Object.defineProperty(owned, key, {
+      value: Reflect.get(source, key),
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+  }
+  return owned;
+}
+
 export async function runPinnedWriteHelper(params: PinnedWriteParams): Promise<FileIdentityStat> {
-  const normalizedParams = { ...params, maxBytes: normalizeMaxBytes(params.maxBytes) };
-  assertSafeBasename(params.basename);
+  const { rootPath, relativeParentPath, basename, maxBytes, rootIdentity } = params;
+  const ownedParams = copyOwnEnumerableExcept(
+    params,
+    PINNED_WRITE_SNAPSHOT_KEYS,
+  ) as OwnedPinnedWriteParams;
+  const normalizedParams: PinnedWriteParams = {
+    ...ownedParams,
+    rootPath,
+    relativeParentPath,
+    basename,
+    maxBytes: normalizeMaxBytes(maxBytes),
+    rootIdentity,
+  };
+  assertSafeBasename(normalizedParams.basename);
   validatePinnedOperationPayload({
-    relativeParentPath: params.relativeParentPath,
+    relativeParentPath: normalizedParams.relativeParentPath,
   });
+  assertNoWindowsPathAlias(
+    normalizedParams.rootPath,
+    "filesystem",
+    "pinned write root uses a Windows filesystem namespace alias",
+  );
+  assertNoWindowsPathAlias(
+    normalizedParams.relativeParentPath,
+    "relative",
+    "pinned write parent uses a Windows filesystem namespace alias",
+  );
+  assertNoWindowsPathAlias(
+    normalizedParams.basename,
+    "relative",
+    "pinned write basename uses a Windows filesystem namespace alias",
+  );
+  if (rootIdentity !== undefined) {
+    normalizedParams.rootIdentity = { dev: rootIdentity.dev, ino: rootIdentity.ino };
+  }
   // The explicit compatibility policy uses the guarded Node fallback, where
   // content verification can replace the strict post-rename inode check.
   if (normalizedParams.onRenameIdentityMismatch === "verify-content") {
@@ -122,7 +184,11 @@ export async function runPinnedWriteWithRenamePolicy(
     renameIdentity?: RenameIdentityPolicy;
   },
 ): Promise<FileIdentityStat> {
-  const { targetPath, renameIdentity, ...writeParams } = params;
+  const { targetPath, renameIdentity } = params;
+  const writeParams = copyOwnEnumerableExcept(
+    params,
+    RENAME_POLICY_SNAPSHOT_KEYS,
+  ) as PinnedWriteParams;
   if (renameIdentity !== "verify-content-with-lock") {
     return await runPinnedWriteHelper(writeParams);
   }

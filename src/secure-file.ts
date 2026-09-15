@@ -26,6 +26,10 @@ import {
 import { inspectFileIdentity } from "./strict-file-identity.js";
 import { inspectSecureWindowsDescriptor } from "./secure-file-windows.js";
 import { scheduleTimeout } from "./timing.js";
+import {
+  assertNoWindowsPathAlias,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 export type SecureFileReadOptions = {
   filePath: string;
@@ -60,6 +64,31 @@ export type SecureFileReadResult = {
   stat: Stats;
   permissions?: PermissionCheck;
 };
+
+function snapshotSecureFileReadOptions(
+  options: SecureFileReadOptions,
+  io: SecureFileIoOptions | undefined,
+): SecureFileReadOptions {
+  const filePath = options.filePath;
+  const trustInput = options.trust;
+  const trustedDirsInput = trustInput?.trustedDirs;
+  const trustedDirs = trustedDirsInput === undefined ? undefined : [...trustedDirsInput];
+  const trust = trustInput === undefined
+    ? undefined
+    : {
+        allowSymlink: trustInput.allowSymlink,
+        allowNetworkPath: trustInput.allowNetworkPath,
+        ...(trustedDirs === undefined ? {} : { trustedDirs }),
+      };
+  return {
+    filePath,
+    label: options.label,
+    trust,
+    permissions: options.permissions,
+    inject: options.inject,
+    io,
+  };
+}
 
 function isAbsolutePathname(value: string): boolean {
   return (
@@ -142,6 +171,7 @@ async function openSecureHandle(options: SecureFileReadOptions, maxBytes: number
       return pathStat;
     }, openedIdentity);
     const realPath = realpathSync.native(options.filePath);
+    assertNoWindowsPathAlias(realPath, "filesystem", `${label(options)} resolved path uses a Windows filesystem namespace alias`);
     await inspectFileIdentity(() => {
       const realPathStat = fsSync.statSync(realPath, { bigint: true });
       assertNotHardlinked(options, realPathStat);
@@ -163,12 +193,17 @@ async function assertTrustedDirs(options: SecureFileReadOptions, realPath: strin
   }
   const trusted = await Promise.all(
     options.trust.trustedDirs.map(async (dir) => {
-      const resolved = path.resolve(dir);
+      assertNoWindowsPathAlias(dir, "filesystem", "trusted directory uses a Windows filesystem namespace alias");
+      const resolved = resolvePathPreservingWindowsRoot(dir);
+      assertNoWindowsPathAlias(resolved, "filesystem", "trusted directory uses a Windows filesystem namespace alias");
+      let realPath: string;
       try {
-        return realpathSync.native(resolved);
+        realPath = realpathSync.native(resolved);
       } catch {
         return resolved;
       }
+      assertNoWindowsPathAlias(realPath, "filesystem", "trusted directory uses a Windows filesystem namespace alias");
+      return realPath;
     }),
   );
   if (!trusted.some((dir) => isPathInside(dir, realPath))) {
@@ -292,12 +327,18 @@ async function readHandleWithTimeout(
 export async function readSecureFile(
   options: SecureFileReadOptions,
 ): Promise<SecureFileReadResult> {
-  const maxBytes = normalizeMaxBytes(options.io?.maxBytes);
-  const opened = await openSecureHandle(options, maxBytes);
+  const io = options.io;
+  const maxBytes = normalizeMaxBytes(io?.maxBytes);
+  const ownedOptions = snapshotSecureFileReadOptions(options, io);
+  assertNoWindowsPathAlias(ownedOptions.filePath, "filesystem", `${label(ownedOptions)} path uses a Windows filesystem namespace alias`);
+  for (const trustedDir of ownedOptions.trust?.trustedDirs ?? []) {
+    assertNoWindowsPathAlias(trustedDir, "filesystem", "trusted directory uses a Windows filesystem namespace alias");
+  }
+  const opened = await openSecureHandle(ownedOptions, maxBytes);
   try {
-    await assertTrustedDirs(options, opened.realPath);
+    await assertTrustedDirs(ownedOptions, opened.realPath);
     const permissions = await assertSecurePermissions(
-      options,
+      ownedOptions,
       opened.pathStat,
       opened.realPath,
       opened.identity,
@@ -305,7 +346,7 @@ export async function readSecureFile(
     );
     const buffer = await readHandleWithTimeout(
       opened.handle,
-      options.io?.timeoutMs,
+      ownedOptions.io?.timeoutMs,
       maxBytes,
     );
     const finalIdentity = await inspectFileIdentity(
@@ -313,9 +354,9 @@ export async function readSecureFile(
       opened.identity,
     );
     if (!finalIdentity.isFile()) {
-      throw new FsSafeError("not-file", `${label(options)} must remain a file: ${options.filePath}`);
+      throw new FsSafeError("not-file", `${label(ownedOptions)} must remain a file: ${ownedOptions.filePath}`);
     }
-    assertNotHardlinked(options, finalIdentity);
+    assertNotHardlinked(ownedOptions, finalIdentity);
     return { buffer, realPath: opened.realPath, stat: opened.pathStat, permissions };
   } finally {
     await opened.handle.close().catch(() => undefined);

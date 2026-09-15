@@ -17,9 +17,11 @@ import {
   type EntryIdentity,
 } from "./move-path-cleanup.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
+import { realpathSync } from "./realpath.js";
 import { cleanupPinnedFilePath } from "./replace-file-temp-owner.js";
 import { createMoveStageOwner } from "./move-path-stage.js";
-import { realpathSync } from "./realpath.js";
+import { admitStandalonePublicationPath } from "./standalone-publication-path.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type MovePathPublicationReceipt = Readonly<{
   path: string;
@@ -329,6 +331,19 @@ function assertSynchronousResult(returned: unknown, name: string): void {
 export async function movePathWithCopyFallback(
   options: MovePathWithCopyFallbackOptions,
 ): Promise<void> {
+  const from = admitStandalonePublicationPath(
+    options.from,
+    "move source uses a Windows filesystem namespace alias",
+  );
+  const to = admitStandalonePublicationPath(
+    options.to,
+    "move destination uses a Windows filesystem namespace alias",
+  );
+  const sourcePath = path.resolve(from);
+  const targetPath = path.resolve(to);
+  assertNoWindowsPathAlias(sourcePath, "filesystem", "move source uses a Windows filesystem namespace alias");
+  assertNoWindowsPathAlias(targetPath, "filesystem", "move destination uses a Windows filesystem namespace alias");
+  const sourceHardlinks = options.sourceHardlinks;
   // Keep the initiating owner's callbacks across preparation and copy fallback.
   const callerRenameAssert = options.assertBeforeRename;
   const callerMutationAssert = options.assertBeforeMutation;
@@ -363,9 +378,7 @@ export async function movePathWithCopyFallback(
       assertSynchronousResult(callerPublished?.(publicationReceipt), "onDestinationPublished");
     }
   };
-  const sourcePath = path.resolve(options.from);
-  const targetPath = path.resolve(options.to);
-  const rejectHardlinks = options.sourceHardlinks === "reject";
+  const rejectHardlinks = sourceHardlinks === "reject";
   if (rejectHardlinks) {
     await preflightSourceHardlinks(sourcePath);
   }

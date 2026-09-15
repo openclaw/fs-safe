@@ -4,6 +4,13 @@
 
 ### Security
 
+- Keep Windows temp-path admission active with platform adapters, validate canonical root prefixes before inspecting them, and preserve single-read lock-path accessors on Node.js 22.
+- Preserve single-read pinned-write pathname and identity snapshots on Node.js 22 by excluding named accessors before copying remaining caller-owned options.
+- Preserve established callback receivers while retaining single-read pathname and transfer-authority snapshots across structured JSON, durable directory and queue, sibling staging, and borrowed-handle flows.
+- Snapshot root traversal symlink-rejection policy with admitted paths so caller mutation cannot change an in-flight resolution.
+- Reject NTFS alternate-data-stream and directory-index pathname aliases across guarded Root, directory-identity, FileStore, archive, JSON queue, sidecar lock, secret, secure-read, atomic publication, temp, permission, install, trash, and output boundaries before filesystem access. Preserve rooted drive paths, including valid extended namespace drive roots, and the released drive-relative contract of trusted-path atomic, JSON store/queue writer, move, directory-replace, and exclusive-publication APIs without widening volume-root mutation authority, independent device/network policies, intentional output-name sanitization, existing failure shapes, and ordinary colon-bearing POSIX names; native relative and archive paths enforce the same Windows rule.
+- Reuse raw Windows namespace admission for unchanged ordinary rooted drive paths while retaining full checks for normalized, relative, malformed, namespaced, and colon-bearing paths.
+- Reuse the already admitted parent guard when constructing private producer Roots, avoiding redundant canonicalization and identity capture while preserving producer-isolation checks.
 - Use the effective POSIX user identity for secure-file ownership checks, failing closed before reading when ownership checks are enabled and the effective identity or descriptor owner cannot be established; descriptor-bound Windows ACL verification is unchanged.
 - Isolate the manual split-credential proof across separate candidate, historical, and clean execution runners, bind bounded build artifacts to exact provenance, and run only root-staged, identity-checked proof tools and harness files.
 - Authenticate the manual proof runtime against pinned official Node archives before checkout, keep staging private under a verified system parent, and diagnose dropped-credential startup, traversal, and authenticated code-read admission with bounded inline probes before the unchanged seven behavioral cases.

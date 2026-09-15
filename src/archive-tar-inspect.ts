@@ -10,6 +10,7 @@ import { createTarEntryPlanner } from "./archive-tar.js";
 import { inspectTar } from "./archive-tar-stream.js";
 import type { AdmittedTarMember } from "./archive-tar-wasm.js";
 import { getNativeBinding } from "./native.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type InspectTarArchiveOptions = Pick<ExtractArchiveOptions,
   "archivePath" | "timeoutMs" | "limits" | "entryFilter" | "onFiltered">;
@@ -17,12 +18,14 @@ export type InspectedTarEntry = Readonly<Pick<ArchivePlanEntry, "path" | "kind" 
 
 /** Complete TAR/gzip admission and zero-strip extraction policy, without output writes. */
 export async function inspectTarArchive(params: InspectTarArchiveOptions): Promise<readonly InspectedTarEntry[]> {
+  const archivePath = params.archivePath;
   const onFiltered = resolveArchiveFilteredEntryPolicy(params.onFiltered);
   const limits = resolveExtractLimits(params.limits);
   const tarLimits = resolveTarMeterLimits(limits);
   const native = getNativeBinding();
+  assertNoWindowsPathAlias(archivePath, "filesystem", "archive source uses a Windows filesystem namespace alias");
   return await withExtractionDeadline(params.timeoutMs, "inspect tar", async (deadline) => {
-    const staged = await stageArchiveFileForExtraction({ archivePath: params.archivePath, limits, deadline });
+    const staged = await stageArchiveFileForExtraction({ archivePath, limits, deadline });
     try {
       // Staging closes descriptors asynchronously; expiry there must not start a decoder.
       deadline.check();

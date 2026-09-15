@@ -107,11 +107,13 @@ describe("projected Windows root spelling compatibility", () => {
     const expected = { ...identity, realPath: root };
     const spellings = new Set([root, root + "\\", root + "\\\\"]);
     if (bareRoot) spellings.add(root.slice(0, -1));
+    const operationSpellings = new Set(spellings);
+    if (/^\\\\[?.]\\[A-Za-z]:\\$/u.test(root)) operationSpellings.add(root.slice(4));
     Object.defineProperty(process, "platform", { value: "win32" });
     configureFsSafeNative({ mode: "off" });
     const lstat = fsSync.lstatSync.bind(fsSync);
     const assertRootSpelling = (observedPath: fsSync.PathLike) => {
-      if (!spellings.has(String(observedPath))) {
+      if (!operationSpellings.has(String(observedPath))) {
         throw Object.assign(new Error("invalid projected root spelling"), { code: "ENOENT" });
       }
     };
@@ -125,7 +127,7 @@ describe("projected Windows root spelling compatibility", () => {
       return root;
     });
 
-    for (const observedPath of [root, root + "\\\\"]) {
+    for (const observedPath of spellings) {
       await expect(readDirectoryIdentity(observedPath)).resolves.toEqual(expected);
       expect(assertDirectoryIdentitySync(observedPath, expected)).toBeUndefined();
     }

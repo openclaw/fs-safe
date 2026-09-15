@@ -2,7 +2,7 @@ import fsSync from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { overwriteFileHandle } from "../src/advanced.js";
+import { overwriteFileHandle, type OverwriteFileHandleOptions } from "../src/advanced.js";
 import { itPosix, useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -95,6 +95,41 @@ describe("borrowed FileHandle overwrite", () => {
     await overwriteFileHandle(f.handle, Buffer.from("new"), { beforeWrite });
     expect(beforeWrite).toHaveBeenCalledOnce();
     expect(await fs.readFile(f.file, "utf8")).toBe("new");
+  });
+
+  it("snapshots inherited admission once before awaiting and preserves its receiver", async () => {
+    const f = await fixture();
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const stat = f.handle.stat.bind(f.handle);
+    vi.spyOn(f.handle, "stat").mockImplementationOnce(async (...args) => {
+      entered.resolve();
+      await release.promise;
+      return await stat(...args);
+    });
+    let reads = 0;
+    const replacement = vi.fn(() => { throw new Error("late admission"); });
+    let selected = function (this: unknown) { expect(this).toBe(options); };
+    const inherited = Object.defineProperty({}, "beforeWrite", {
+      get() {
+        reads += 1;
+        if (reads > 1) throw new Error("beforeWrite read more than once");
+        return selected;
+      },
+    });
+    const options = Object.create(inherited) as OverwriteFileHandleOptions;
+    const pending = overwriteFileHandle(f.handle, Buffer.from("replacement"), options);
+    expect(reads).toBe(1);
+    try {
+      await entered.promise;
+      selected = replacement;
+    } finally {
+      release.resolve();
+    }
+    await expect(pending).resolves.toBeUndefined();
+    expect(reads).toBe(1);
+    expect(replacement).not.toHaveBeenCalled();
+    expect(await fs.readFile(f.file, "utf8")).toBe("replacement");
   });
 
   it("refuses revoked authority after a pending prefix read without mutating", async () => {

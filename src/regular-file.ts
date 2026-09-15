@@ -17,6 +17,10 @@ import {
   isNonRegularWriteOpenErrorSync,
   resolveNonblockingWriteFlag,
 } from "./write-open-flags.js";
+import {
+  assertNoWindowsPathAlias,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 export type RegularFileStatResult = { missing: true } | { missing: false; stat: Stats };
 
@@ -60,6 +64,7 @@ function translateBoundedReadOverflow(error: unknown, filePath: string, maxBytes
 }
 
 export async function statRegularFile(filePath: string): Promise<RegularFileStatResult> {
+  assertNoWindowsPathAlias(filePath, "filesystem", "file path uses a Windows filesystem namespace alias");
   let stat: Stats;
   try {
     stat = fsSync.lstatSync(filePath);
@@ -76,6 +81,7 @@ export async function statRegularFile(filePath: string): Promise<RegularFileStat
 }
 
 export function statRegularFileSync(filePath: string): RegularFileStatResult {
+  assertNoWindowsPathAlias(filePath, "filesystem", "file path uses a Windows filesystem namespace alias");
   let stat: Stats;
   try {
     stat = fsSync.lstatSync(filePath);
@@ -96,22 +102,24 @@ export async function readRegularFile(params: {
   maxBytes?: number;
 }): Promise<{ buffer: Buffer; stat: Stats }> {
   const maxBytes = normalizeMaxBytes(params.maxBytes);
-  assertNoUnsafeDeviceReadPath(params.filePath);
+  const filePath = params.filePath;
+  assertNoWindowsPathAlias(filePath, "filesystem", "file path uses a Windows filesystem namespace alias");
+  assertNoUnsafeDeviceReadPath(filePath);
   const before = await inspectFileIdentity(async () => {
-    const stat = fsSync.lstatSync(params.filePath, { bigint: true });
-    assertRegularReadStat(stat, params.filePath, true);
+    const stat = fsSync.lstatSync(filePath, { bigint: true });
+    assertRegularReadStat(stat, filePath, true);
     return stat;
-  }).catch((error) => throwReadPreviewError(error, params.filePath));
+  }).catch((error) => throwReadPreviewError(error, filePath));
   if (maxBytes !== undefined && before.size > maxBytes) {
-    throw regularFileTooLargeError(params.filePath, maxBytes);
+    throw regularFileTooLargeError(filePath, maxBytes);
   }
 
   let handle: FileHandle;
   try {
-    handle = await fs.open(params.filePath, resolveReadOpenFlags());
+    handle = await fs.open(filePath, resolveReadOpenFlags());
   } catch (err) {
     if (isNotFoundPathError(err)) {
-      throw new FsSafeError("path-mismatch", `File changed during read: ${params.filePath}`);
+      throw new FsSafeError("path-mismatch", `File changed during read: ${filePath}`);
     }
     throw err;
   }
@@ -119,23 +127,23 @@ export async function readRegularFile(params: {
     const stat = fsSync.fstatSync(handle.fd);
     const identity = await inspectFileIdentity(async () => {
       const exact = fsSync.fstatSync(handle.fd, { bigint: true });
-      assertRegularReadStat(exact, params.filePath);
+      assertRegularReadStat(exact, filePath);
       return exact;
     }, before);
     try {
       await inspectFileIdentity(async () => {
-        const current = fsSync.lstatSync(params.filePath, { bigint: true });
-        assertRegularReadStat(current, params.filePath);
+        const current = fsSync.lstatSync(filePath, { bigint: true });
+        assertRegularReadStat(current, filePath);
         return current;
       }, identity);
     } catch (err) {
       if (isNotFoundPathError(err)) {
-        throw new FsSafeError("path-mismatch", `File changed during read: ${params.filePath}`);
+        throw new FsSafeError("path-mismatch", `File changed during read: ${filePath}`);
       }
       throw err;
     }
     if (maxBytes !== undefined && stat.size > maxBytes) {
-      throw regularFileTooLargeError(params.filePath, maxBytes);
+      throw regularFileTooLargeError(filePath, maxBytes);
     }
     // With a byte cap, avoid readFile(): a raced file growth would allocate
     // the oversized content before the post-read check could reject it.
@@ -147,7 +155,7 @@ export async function readRegularFile(params: {
           : await readFileHandleBounded(handle, maxBytes);
     } catch (error) {
       if (maxBytes !== undefined) {
-        translateBoundedReadOverflow(error, params.filePath, maxBytes);
+        translateBoundedReadOverflow(error, filePath, maxBytes);
       }
       throw error;
     }
@@ -219,34 +227,36 @@ export function readRegularFileSync(params: { filePath: string; maxBytes?: numbe
   stat: Stats;
 } {
   const maxBytes = normalizeMaxBytes(params.maxBytes);
-  assertNoUnsafeDeviceReadPath(params.filePath);
+  const filePath = params.filePath;
+  assertNoWindowsPathAlias(filePath, "filesystem", "file path uses a Windows filesystem namespace alias");
+  assertNoUnsafeDeviceReadPath(filePath);
   let before: BigIntStats;
   try {
     before = inspectFileIdentitySync(() => {
-      const stat = fsSync.lstatSync(params.filePath, { bigint: true });
-      assertRegularReadStat(stat, params.filePath, true);
+      const stat = fsSync.lstatSync(filePath, { bigint: true });
+      assertRegularReadStat(stat, filePath, true);
       return stat;
     });
   } catch (error) {
-    throwReadPreviewError(error, params.filePath);
+    throwReadPreviewError(error, filePath);
   }
   if (maxBytes !== undefined && before.size > maxBytes) {
-    throw regularFileTooLargeError(params.filePath, maxBytes);
+    throw regularFileTooLargeError(filePath, maxBytes);
   }
 
   let fd: number;
   try {
-    fd = fsSync.openSync(params.filePath, resolveReadOpenFlags());
+    fd = fsSync.openSync(filePath, resolveReadOpenFlags());
   } catch (error) {
     if (isNotFoundPathError(error)) {
-      throw new FsSafeError("path-mismatch", `File changed during read: ${params.filePath}`);
+      throw new FsSafeError("path-mismatch", `File changed during read: ${filePath}`);
     }
     throw error;
   }
   try {
     return readOpenedRegularFileSync({
       fd,
-      filePath: params.filePath,
+      filePath,
       preOpenStat: before,
       maxBytes,
     });
@@ -273,8 +283,10 @@ function throwAppendIdentityError(error: unknown, filePath: string): never {
 }
 
 export async function appendRegularFile(options: AppendRegularFileOptions): Promise<void> {
+  const filePath = options.filePath;
+  assertNoWindowsPathAlias(filePath, "filesystem", "file path uses a Windows filesystem namespace alias");
   if (options.rejectSymlinkParents === true) {
-    const resolvedDir = path.resolve(path.dirname(options.filePath));
+    const resolvedDir = resolvePathPreservingWindowsRoot(path.dirname(filePath));
     await assertNoSymlinkParents({
       rootDir: path.parse(resolvedDir).root,
       targetPath: resolvedDir,
@@ -288,12 +300,12 @@ export async function appendRegularFile(options: AppendRegularFileOptions): Prom
   let preOpenStat: BigIntStats | undefined;
   try {
     preOpenStat = await inspectFileIdentity(async () => {
-      const stat = fsSync.lstatSync(options.filePath, { bigint: true });
+      const stat = fsSync.lstatSync(filePath, { bigint: true });
       if (stat.isSymbolicLink()) {
-        throw new Error(`Refusing to append through symlink: ${options.filePath}`);
+        throw new Error(`Refusing to append through symlink: ${filePath}`);
       }
       if (!stat.isFile()) {
-        throw new Error(`Refusing to append to non-file: ${options.filePath}`);
+        throw new Error(`Refusing to append to non-file: ${filePath}`);
       }
       return stat;
     });
@@ -311,14 +323,14 @@ export async function appendRegularFile(options: AppendRegularFileOptions): Prom
     return;
   }
 
-  await getFsSafeTestHooks()?.beforeRegularFileAppendOpen?.(options.filePath);
+  await getFsSafeTestHooks()?.beforeRegularFileAppendOpen?.(filePath);
   const flags = resolveRegularFileAppendFlags();
   let handle: FileHandle;
   try {
-    handle = await fs.open(options.filePath, flags, options.mode ?? 0o600);
+    handle = await fs.open(filePath, flags, options.mode ?? 0o600);
   } catch (error) {
-    if (await isNonRegularWriteOpenError(error, options.filePath, flags)) {
-      throw new Error(`Refusing to append to non-file: ${options.filePath}`);
+    if (await isNonRegularWriteOpenError(error, filePath, flags)) {
+      throw new Error(`Refusing to append to non-file: ${filePath}`);
     }
     throw error;
   }
@@ -327,16 +339,16 @@ export async function appendRegularFile(options: AppendRegularFileOptions): Prom
     try {
       identity = await inspectFileIdentity(async () => {
         const stat = fsSync.fstatSync(handle.fd, { bigint: true });
-        assertRegularAppendStat(stat, options.filePath);
+        assertRegularAppendStat(stat, filePath);
         return stat;
       }, preOpenStat);
       await inspectFileIdentity(async () => {
-        const current = fsSync.lstatSync(options.filePath, { bigint: true });
-        assertRegularAppendStat(current, options.filePath);
+        const current = fsSync.lstatSync(filePath, { bigint: true });
+        assertRegularAppendStat(current, filePath);
         return current;
       }, identity);
     } catch (error) {
-      throwAppendIdentityError(error, options.filePath);
+      throwAppendIdentityError(error, filePath);
     }
     if (
       options.maxFileBytes !== undefined &&
@@ -355,8 +367,10 @@ export async function appendRegularFile(options: AppendRegularFileOptions): Prom
 }
 
 export function appendRegularFileSync(options: AppendRegularFileOptions): void {
+  const filePath = options.filePath;
+  assertNoWindowsPathAlias(filePath, "filesystem", "file path uses a Windows filesystem namespace alias");
   if (options.rejectSymlinkParents === true) {
-    const resolvedDir = path.resolve(path.dirname(options.filePath));
+    const resolvedDir = resolvePathPreservingWindowsRoot(path.dirname(filePath));
     assertNoSymlinkParentsSync({
       rootDir: path.parse(resolvedDir).root,
       targetPath: resolvedDir,
@@ -370,12 +384,12 @@ export function appendRegularFileSync(options: AppendRegularFileOptions): void {
   let preOpenStat: BigIntStats | undefined;
   try {
     preOpenStat = inspectFileIdentitySync(() => {
-      const stat = fsSync.lstatSync(options.filePath, { bigint: true });
+      const stat = fsSync.lstatSync(filePath, { bigint: true });
       if (stat.isSymbolicLink()) {
-        throw new Error(`Refusing to append through symlink: ${options.filePath}`);
+        throw new Error(`Refusing to append through symlink: ${filePath}`);
       }
       if (!stat.isFile()) {
-        throw new Error(`Refusing to append to non-file: ${options.filePath}`);
+        throw new Error(`Refusing to append to non-file: ${filePath}`);
       }
       return stat;
     });
@@ -394,14 +408,14 @@ export function appendRegularFileSync(options: AppendRegularFileOptions): void {
     return;
   }
 
-  getFsSafeTestHooks()?.beforeRegularFileAppendOpenSync?.(options.filePath);
+  getFsSafeTestHooks()?.beforeRegularFileAppendOpenSync?.(filePath);
   const flags = resolveRegularFileAppendFlags();
   let fd: number;
   try {
-    fd = fsSync.openSync(options.filePath, flags, options.mode ?? 0o600);
+    fd = fsSync.openSync(filePath, flags, options.mode ?? 0o600);
   } catch (error) {
-    if (isNonRegularWriteOpenErrorSync(error, options.filePath, flags)) {
-      throw new Error(`Refusing to append to non-file: ${options.filePath}`);
+    if (isNonRegularWriteOpenErrorSync(error, filePath, flags)) {
+      throw new Error(`Refusing to append to non-file: ${filePath}`);
     }
     throw error;
   }
@@ -410,16 +424,16 @@ export function appendRegularFileSync(options: AppendRegularFileOptions): void {
     try {
       identity = inspectFileIdentitySync(() => {
         const stat = fsSync.fstatSync(fd, { bigint: true });
-        assertRegularAppendStat(stat, options.filePath);
+        assertRegularAppendStat(stat, filePath);
         return stat;
       }, preOpenStat);
       inspectFileIdentitySync(() => {
-        const current = fsSync.lstatSync(options.filePath, { bigint: true });
-        assertRegularAppendStat(current, options.filePath);
+        const current = fsSync.lstatSync(filePath, { bigint: true });
+        assertRegularAppendStat(current, filePath);
         return current;
       }, identity);
     } catch (error) {
-      throwAppendIdentityError(error, options.filePath);
+      throwAppendIdentityError(error, filePath);
     }
     if (
       options.maxFileBytes !== undefined &&

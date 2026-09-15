@@ -1,6 +1,24 @@
 import os from "node:os";
 import path from "node:path";
+import process from "node:process";
 import { normalizeOptionalString } from "./string-coerce.js";
+import {
+  assertNoWindowsPathAlias,
+  assertNoWindowsPathAliasForPlatform,
+  repairResolvedWindowsRoot,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
+
+const PATH_ALIAS_MESSAGE = "path uses a Windows filesystem namespace alias";
+
+function isOrdinaryRootedWindowsDrivePath(input: string): boolean {
+  const drive = input.charCodeAt(0);
+  return input.length >= 3 &&
+    ((drive >= 0x41 && drive <= 0x5a) || (drive >= 0x61 && drive <= 0x7a)) &&
+    input.charCodeAt(1) === 0x3a &&
+    (input.charCodeAt(2) === 0x5c || input.charCodeAt(2) === 0x2f) &&
+    input.indexOf(":", 2) === -1;
+}
 
 function hasHomePrefix(input: string): boolean {
   return input === "~" || input.startsWith("~/") ||
@@ -23,7 +41,11 @@ export function resolveEffectiveHomeDir(
   homedir: () => string = os.homedir,
 ): string | undefined {
   const raw = resolveRawHomeDir(env, homedir);
-  return raw ? path.resolve(raw) : undefined;
+  if (!raw) return undefined;
+  assertNoWindowsPathAlias(raw, "filesystem", "home path uses a Windows filesystem namespace alias");
+  const resolved = resolvePathPreservingWindowsRoot(raw);
+  assertNoWindowsPathAlias(resolved, "filesystem", "home path uses a Windows filesystem namespace alias");
+  return resolved;
 }
 
 function resolveRawHomeDir(env: NodeJS.ProcessEnv, homedir: () => string): string | undefined {
@@ -68,7 +90,9 @@ export function resolveRequiredHomeDir(
   env: NodeJS.ProcessEnv = process.env,
   homedir: () => string = os.homedir,
 ): string {
-  return resolveEffectiveHomeDir(env, homedir) ?? path.resolve(process.cwd());
+  const resolved = resolveEffectiveHomeDir(env, homedir) ?? path.resolve(process.cwd());
+  assertNoWindowsPathAlias(resolved, "filesystem", "home path uses a Windows filesystem namespace alias");
+  return resolved;
 }
 
 export function expandHomePrefix(
@@ -92,6 +116,64 @@ export function expandHomePrefix(
   return path.join(home, input.slice(2));
 }
 
+function resolveExpandedHomePath(
+  input: string,
+  opts: { env?: NodeJS.ProcessEnv; homedir?: () => string } | undefined,
+): string {
+  const expanded = expandHomePrefix(input, {
+    home: resolveRequiredHomeDir(opts?.env ?? process.env, opts?.homedir ?? os.homedir),
+    env: opts?.env,
+    homedir: opts?.homedir,
+  });
+  const resolved = resolvePathPreservingWindowsRoot(expanded);
+  assertNoWindowsPathAlias(resolved, "filesystem", PATH_ALIAS_MESSAGE);
+  return resolved;
+}
+
+function admitFinalHomePath(
+  resolved: string,
+  platform: NodeJS.Platform | string | undefined,
+): string {
+  assertNoWindowsPathAliasForPlatform(
+    resolved,
+    "filesystem",
+    PATH_ALIAS_MESSAGE,
+    platform,
+  );
+  return resolved;
+}
+
+function finishOrdinaryHomePath(input: string, resolved: string): string {
+  const resolvedPlatform = process.platform;
+  if (resolved === input && resolvedPlatform !== undefined) return resolved;
+  return admitFinalHomePath(resolved, resolvedPlatform);
+}
+
+function repairAndFinishOrdinaryHomePath(input: string, resolved: string): string {
+  return finishOrdinaryHomePath(input, repairResolvedWindowsRoot(input, resolved));
+}
+
+function resolveHomePathCold(
+  input: string,
+  opts: { env?: NodeJS.ProcessEnv; homedir?: () => string } | undefined,
+  rawPlatform: NodeJS.Platform | string | undefined,
+  ordinaryRawAdmitted: boolean,
+): string {
+  if (ordinaryRawAdmitted) {
+    return finishOrdinaryHomePath(input, resolvePathPreservingWindowsRoot(input));
+  }
+  assertNoWindowsPathAliasForPlatform(input, "filesystem", PATH_ALIAS_MESSAGE, rawPlatform);
+  if (!hasHomePrefix(input)) {
+    const resolved = resolvePathPreservingWindowsRoot(input);
+    // This cold branch was not admitted as an ordinary rooted drive. Recheck
+    // even an unchanged result because the live platform can change between
+    // raw admission and resolved-path admission. Passing undefined preserves
+    // the classifier's default process.platform read.
+    return admitFinalHomePath(resolved, process.platform);
+  }
+  return resolveExpandedHomePath(input, opts);
+}
+
 export function resolveHomeRelativePath(
   input: string,
   opts?: {
@@ -102,13 +184,20 @@ export function resolveHomeRelativePath(
   if (!input) {
     return input;
   }
-  if (!hasHomePrefix(input)) {
-    return path.resolve(input);
+  const rawPlatform = process.platform;
+  // Primitive ordinary drive paths have exactly one structural colon. Record
+  // that admission so an unchanged resolved string does not need rescanning.
+  const ordinaryRawAdmitted = rawPlatform === "win32" &&
+    typeof input === "string" &&
+    isOrdinaryRootedWindowsDrivePath(input);
+  // Keep the overwhelmingly common rooted-drive path close to path.resolve
+  // itself. Seven-byte inputs retain the general helper's observable
+  // namespace-root preflight; a rare six-byte result retains its repair.
+  if (!ordinaryRawAdmitted || input.length === 7) {
+    return resolveHomePathCold(input, opts, rawPlatform, ordinaryRawAdmitted);
   }
-  const expanded = expandHomePrefix(input, {
-    home: resolveRequiredHomeDir(opts?.env ?? process.env, opts?.homedir ?? os.homedir),
-    env: opts?.env,
-    homedir: opts?.homedir,
-  });
-  return path.resolve(expanded);
+  const resolved = path.resolve(input);
+  return resolved.length === 6
+    ? repairAndFinishOrdinaryHomePath(input, resolved)
+    : finishOrdinaryHomePath(input, resolved);
 }

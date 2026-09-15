@@ -72,12 +72,15 @@ describe("drive-relative relative paths", () => {
     }
   });
 
-  it("keeps accepting ordinary segments that merely contain a colon", () => {
+  it.skipIf(process.platform === "win32")(
+    "keeps accepting ordinary POSIX segments that contain a colon",
+    () => {
     expect(splitSafeRelativePath("logs/2026-08-02T10:30:00Z.log")).toEqual([
       "logs",
       "2026-08-02T10:30:00Z.log",
     ]);
-  });
+    },
+  );
 
   it("rejects drive-relative Root destinations without rejecting existing-object sources", async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), "fs-safe-drive-relative-root-"));
@@ -162,9 +165,14 @@ describe("drive-relative relative paths", () => {
       for (const input of aliasingInputs) {
         expect(() => store.path(input), input).toThrow("drive letter");
       }
-      expect(store.path("logs/2026-08-02T10:30:00Z.log")).toBe(
-        path.join(rootDir, "logs", "2026-08-02T10:30:00Z.log"),
-      );
+      const timestampKey = "logs/2026-08-02T10:30:00Z.log";
+      if (process.platform === "win32") {
+        expect(() => store.path(timestampKey)).toThrow(
+          expect.objectContaining({ code: "invalid-path" }),
+        );
+      } else {
+        expect(store.path(timestampKey)).toBe(path.join(rootDir, timestampKey));
+      }
 
       const key = "C:source.txt";
       const calls: Array<[string, () => Promise<unknown>]> = [

@@ -74,7 +74,7 @@ On an actual Windows process with effective `platform: "win32"`, `inject.env` an
 
 | Code | Meaning |
 |---|---|
-| `invalid-path` | `filePath` was not a local absolute path. |
+| `invalid-path` | `filePath` was not a local absolute path, or a Windows `filePath`/trusted directory used an alternate-stream or filesystem-namespace alias. |
 | `not-found` | The path could not be stat'd before open. |
 | `not-file` | The opened target is not a regular file. |
 | `symlink` | The path is a symlink and `trust.allowSymlink` is false. |

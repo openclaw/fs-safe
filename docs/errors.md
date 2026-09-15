@@ -136,11 +136,11 @@ type FsSafeErrorCode =
 
 Secret writes reject invalid `mode` / `dirMode` values with `invalid-path` before directory creation. Existing secret directories with a mode different from the requested `dirMode` report `insecure-permissions` without chmod; a created directory whose descriptor ownership no longer matches its initializing effective user reports `not-owned`.
 
-Pathname `sha256File()` also reports `path-mismatch` when pre-open, descriptor,
-or current-path identity remains unknown after one bounded Windows retry, even
-if the file is benign. It never reopens to recover identity. Preview symlinks
-report `symlink`, preview or descriptor non-files report `not-file`, and a
-current-path symlink or non-file reports `path-mismatch`.
+Pathname `sha256File()` and `sha256FileSync()` also report `path-mismatch` when
+pre-open, descriptor, or current-path identity remains unknown after one bounded
+Windows retry, even if the file is benign. Neither reopens to recover identity.
+Preview symlinks report `symlink`, preview or descriptor non-files report
+`not-file`, and a current-path symlink or non-file reports `path-mismatch`.
 
 ## Branching
 

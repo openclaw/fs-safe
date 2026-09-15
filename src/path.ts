@@ -4,6 +4,13 @@ import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { realpathSync } from "./realpath.js";
 import { isDriveRelativePath } from "./safe-path-segment.js";
+import {
+  assertNoWindowsPathAlias,
+  hasWindowsPathAlias,
+  pathForWindowsFilesystem,
+  resolvePathFromBasePreservingWindowsRoot,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 export {
   assertNoUnsafeDeviceReadPath,
@@ -37,7 +44,9 @@ function resolveWindowsPathForComparison(input: string): string {
   // retain Node's additional normalization rules before comparison.
   return resolved[1] === ":" && path.win32.isAbsolute(resolved)
     ? resolved.toLowerCase()
-    : normalizeWindowsPathForComparison(resolved);
+    : normalizeWindowsPathForComparison(
+      resolved.length === 6 ? resolvePathPreservingWindowsRoot(input) : resolved,
+    );
 }
 
 export function isNodeError(value: unknown): value is NodeJS.ErrnoException {
@@ -127,7 +136,7 @@ export function safeRealpathSync(targetPath: string, cache?: Map<string, string>
     return cached;
   }
   try {
-    const resolved = realpathSync(targetPath);
+    const resolved = realpathSync(pathForWindowsFilesystem(targetPath));
     cache?.set(targetPath, resolved);
     cache?.set(resolved, resolved);
     return resolved;
@@ -141,11 +150,23 @@ export function isPathInsideWithRealpath(
   candidatePath: string,
   opts?: { requireRealpath?: boolean; cache?: Map<string, string> },
 ): boolean {
+  if (
+    hasWindowsPathAlias(basePath, "filesystem") ||
+    hasWindowsPathAlias(candidatePath, "filesystem")
+  ) {
+    return false;
+  }
   if (!isPathInside(basePath, candidatePath)) {
     return false;
   }
   const baseReal = safeRealpathSync(basePath, opts?.cache);
   const candidateReal = safeRealpathSync(candidatePath, opts?.cache);
+  if (
+    (baseReal !== null && hasWindowsPathAlias(baseReal, "filesystem")) ||
+    (candidateReal !== null && hasWindowsPathAlias(candidateReal, "filesystem"))
+  ) {
+    return false;
+  }
   if (!baseReal || !candidateReal) {
     return opts?.requireRealpath === false;
   }
@@ -154,7 +175,7 @@ export function isPathInsideWithRealpath(
 
 export function safeStatSync(targetPath: string): fs.Stats | null {
   try {
-    return fs.statSync(targetPath);
+    return fs.statSync(pathForWindowsFilesystem(targetPath));
   } catch {
     return null;
   }
@@ -185,12 +206,21 @@ export function splitSafeRelativePath(relativePath: string): string[] {
       throw new FsSafeError("invalid-path", "relative path must not contain a drive letter");
     }
   }
+  assertNoWindowsPathAlias(
+    relativePath,
+    "relative",
+    "relative path uses a Windows filesystem namespace alias",
+  );
   return segments;
 }
 
 export function resolveSafeRelativePath(rootDir: string, relativePath: string): string {
-  const root = path.resolve(rootDir);
-  const target = path.resolve(root, ...splitSafeRelativePath(relativePath));
+  assertNoWindowsPathAlias(rootDir, "filesystem", "root dir uses a Windows filesystem namespace alias");
+  const root = resolvePathPreservingWindowsRoot(rootDir);
+  const target = resolvePathFromBasePreservingWindowsRoot(
+    root,
+    ...splitSafeRelativePath(relativePath),
+  );
   if (!isPathInside(root, target)) {
     throw new FsSafeError("outside-workspace", "relative path escapes root");
   }

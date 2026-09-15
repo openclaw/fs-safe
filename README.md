@@ -391,8 +391,8 @@ const store = files.json("settings.json", { lock: true });
 await store.updateOr({ enabled: false }, (current) => ({ ...current, enabled: true }));
 ```
 
-`jsonStore({ filePath })` is the absolute-path convenience wrapper for the same
-primitive.
+`jsonStore({ filePath })` is the single-path convenience wrapper for the same
+primitive and exposes its resolved absolute path.
 
 Use `update()` when missing state is part of your model; use `updateOr()` for
 the common merge-into-defaults case. Standalone helpers use options bags
@@ -429,7 +429,9 @@ await media.pruneExpired({ ttlMs: 10 * 60 * 1000, recursive: true });
 The `store` subpath also includes durable JSON queue helpers for the common
 "one JSON file per work item" pattern: atomic entry writes, pending-entry loads,
 acknowledgement via `.delivered` markers, failed-entry moves, and stale temp
-cleanup. Retry, dedupe, and transport semantics stay with the caller.
+cleanup. On Windows, every independently supplied queue path rejects NTFS
+alternate-stream and directory-index namespace spellings before reads, locks,
+or mutations. Retry, dedupe, and transport semantics stay with the caller.
 
 `tempWorkspace()` exposes `write()`, `writeText()`, `writeJson()`, `copyIn()`, and `read()` for
 single-file scratch workflows without hand-rolled path joins, plus a `store: FileStore` view of

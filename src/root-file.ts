@@ -12,6 +12,7 @@ import {
   type PinnedOpenSyncAllowedType,
   type PinnedOpenSyncFailureReason,
 } from "./pinned-open.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 type BoundaryReadFs = Pick<
   typeof fs,
@@ -78,9 +79,11 @@ function absoluteRootFilePath(filePath: string): string {
 
 export function openRootFileSync(params: OpenRootFileSyncParams): RootFileOpenResult {
   const ioFs = params.ioFs ?? fs;
-  const absolutePath = absoluteRootFilePath(params.absolutePath);
+  const rawAbsolutePath = params.absolutePath;
   let resolved: ResolvedRootFilePath | RootFileOpenResult;
   try {
+    const absolutePath = absoluteRootFilePath(rawAbsolutePath);
+    assertNoWindowsPathAlias(absolutePath);
     resolved = mapResolvedRootPath(absolutePath, resolveRootPathSync({
       absolutePath,
       rootPath: params.rootPath,
@@ -175,9 +178,11 @@ export async function openRootFile(
   params: OpenRootFileParams,
 ): Promise<RootFileOpenResult> {
   const ioFs = params.ioFs ?? fs;
-  const absolutePath = absoluteRootFilePath(params.absolutePath);
+  const rawAbsolutePath = params.absolutePath;
   let resolved: ResolvedRootFilePath | RootFileOpenResult;
   try {
+    const absolutePath = absoluteRootFilePath(rawAbsolutePath);
+    assertNoWindowsPathAlias(absolutePath);
     resolved = mapResolvedRootPath(absolutePath, await resolveRootPath({
       absolutePath,
       rootPath: params.rootPath,

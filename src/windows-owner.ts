@@ -4,6 +4,7 @@ import {
   type PermissionCommandFailure,
 } from "./permission-exec.js";
 import { resolveWindowsSystemCommand } from "./windows-command.js";
+import { hasWindowsPathAlias } from "./windows-path-alias.js";
 
 export type WindowsOwnerExec = (
   command: string,
@@ -86,6 +87,10 @@ export async function inspectWindowsOwner(params: {
   env?: NodeJS.ProcessEnv;
   exec: WindowsOwnerExec;
 }): Promise<WindowsOwnerSummary> {
+  if (hasWindowsPathAlias(params.targetPath, "filesystem", "win32")) {
+    const error = new Error("Path uses a Windows filesystem namespace alias");
+    return { error: String(error), errorCause: error };
+  }
   let command = "";
   let startedAt = performance.now();
   try {

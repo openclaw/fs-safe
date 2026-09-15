@@ -16,6 +16,69 @@ afterEach(() => {
   __cleanupRegisteredTempPathsForTest();
 });
 
+it.each(["temp", "output"] as const)(
+  "%s snapshots producer isolation before its first awaited directory operation",
+  async (api) => {
+    const root = await tempRoot("fs-safe-isolation-snapshot-");
+    const dir = path.join(root, "output");
+    const final = path.join(dir, "final.bin");
+    const realMkdir = fs.mkdir.bind(fs);
+    let reachedGate!: () => void;
+    let releaseGate!: () => void;
+    const atGate = new Promise<void>((resolve) => { reachedGate = resolve; });
+    const released = new Promise<void>((resolve) => { releaseGate = resolve; });
+    let gated = false;
+    vi.spyOn(fs, "mkdir").mockImplementation(async (...args) => {
+      const result = await realMkdir(...args);
+      if (!gated && path.resolve(String(args[0])) === dir) {
+        gated = true;
+        reachedGate();
+        await released;
+      }
+      return result;
+    });
+
+    let producerIsolation: "private-directory" | undefined = "private-directory";
+    let isolationReads = 0;
+    let produced = "";
+    const write = async (candidate: string) => {
+      produced = candidate;
+      await fs.writeFile(candidate, "isolated");
+    };
+    const pending = api === "temp"
+      ? writeSiblingTempFile({
+          dir,
+          writeTemp: write,
+          resolveFinalPath: () => final,
+          get producerIsolation() {
+            isolationReads++;
+            return producerIsolation;
+          },
+        })
+      : writeExternalFileWithinRoot({
+          rootDir: root,
+          path: "output/final.bin",
+          staging: "sibling",
+          write,
+          get producerIsolation() {
+            isolationReads++;
+            return producerIsolation;
+          },
+        });
+
+    await atGate;
+    producerIsolation = undefined;
+    releaseGate();
+    await expect(pending).resolves.toMatchObject(api === "temp"
+      ? { filePath: final }
+      : { path: final });
+    expect(isolationReads).toBe(1);
+    expect(path.dirname(produced)).not.toBe(dir);
+    expect(path.dirname(path.dirname(produced))).toBe(dir);
+    await expect(fs.readFile(final, "utf8")).resolves.toBe("isolated");
+  },
+);
+
 for (const api of ["temp", "output"] as const) {
   describe(`${api} isolated sibling producer`, () => {
     async function fixture() {
@@ -52,6 +115,51 @@ for (const api of ["temp", "output"] as const) {
       expect(path.dirname(produced)).not.toBe(f.dir);
       await expect(fs.lstat(path.dirname(produced))).rejects.toMatchObject({ code: "ENOENT" });
     });
+
+    if (api === "temp") {
+      it("reuses the admitted parent guard instead of recapturing the private producer root", async () => {
+        const f = await fixture();
+        const parentReal = fsSync.realpathSync.native(f.dir);
+        const originalLstat = fsSync.lstatSync;
+        const originalRealpath = fsSync.realpathSync.native;
+        const originalStat = fsSync.statSync;
+        const originalMkdtemp = fs.mkdtemp.bind(fs);
+        const samePath = (left: string, right: string) => process.platform === "win32"
+          ? path.normalize(left).toLowerCase() === path.normalize(right).toLowerCase()
+          : path.normalize(left) === path.normalize(right);
+        let parentLstats = 0;
+        let parentRealpaths = 0;
+        let parentStats = 0;
+        let callsAtMkdtemp: { lstat: number; realpath: number; stat: number } | undefined;
+        vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
+          if (!callsAtMkdtemp && samePath(String(args[0]), f.dir)) parentLstats++;
+          return originalLstat(...args);
+        });
+        vi.spyOn(fsSync.realpathSync, "native").mockImplementation((...args) => {
+          if (!callsAtMkdtemp && samePath(String(args[0]), f.dir)) parentRealpaths++;
+          return originalRealpath(...args);
+        });
+        vi.spyOn(fsSync, "statSync").mockImplementation((...args) => {
+          if (!callsAtMkdtemp && samePath(String(args[0]), parentReal)) parentStats++;
+          return originalStat(...args);
+        });
+        vi.spyOn(fs, "mkdtemp").mockImplementation(async (...args) => {
+          callsAtMkdtemp ??= {
+            lstat: parentLstats,
+            realpath: parentRealpaths,
+            stat: parentStats,
+          };
+          return await originalMkdtemp(...args);
+        });
+
+        await expect(f.run(async (candidate) => {
+          await fs.writeFile(candidate, "isolated");
+        })).resolves.toMatchObject({ filePath: f.final });
+
+        expect(callsAtMkdtemp).toEqual({ lstat: 1, realpath: 1, stat: 0 });
+        await expect(fs.readFile(f.final, "utf8")).resolves.toBe("isolated");
+      });
+    }
 
     it("rejects a replaced creation receipt before invoking the producer", async () => {
       const f = await fixture();

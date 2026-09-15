@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath, URL } from "node:url";
 import { normalizeLowercaseStringOrEmpty } from "./string-coerce.js";
+import { hasWindowsPathAlias } from "./windows-path-alias.js";
 
 const ENCODED_FILE_URL_SEPARATOR_RE = /%(?:2f|5c)/i;
 const FILE_URL_PREFIX_RE = /^file:\/\//i;
@@ -71,6 +72,9 @@ export function safeFileURLToPath(
     throw new Error(`file:// URLs cannot encode path separators: ${fileUrl}`);
   }
   const filePath = fileURLToPath(parsed, { windows: platform === "win32" });
+  if (hasWindowsPathAlias(filePath, "filesystem", platform)) {
+    throw new Error(`Local file URL cannot use Windows filesystem namespace aliases: ${filePath}`);
+  }
   if (isWindowsNetworkPath(filePath, platform)) {
     throw new Error(`Local file URL cannot use Windows network paths: ${filePath}`);
   }

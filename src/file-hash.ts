@@ -7,6 +7,7 @@ import { FsSafeError } from "./errors.js";
 import { getNativeBinding, type NativeBinding } from "./native.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type Sha256FileInput = string | FileHandle;
 export type Sha256FileSyncInput = string | number;
@@ -118,6 +119,7 @@ async function hashPath(
   filePath: string,
   options: Sha256FileOptions,
 ): Promise<Sha256FileResult> {
+  assertNoWindowsPathAlias(filePath, "filesystem", "SHA-256 path uses a Windows filesystem namespace alias");
   const before = await inspectFileIdentity(() => hashPathIdentity(filePath));
 
   let handle: FileHandle;
@@ -184,6 +186,7 @@ function hashDescriptorSync(
 }
 
 function hashPathSync(filePath: string, options: Sha256FileOptions): Sha256FileResult {
+  assertNoWindowsPathAlias(filePath, "filesystem", "SHA-256 path uses a Windows filesystem namespace alias");
   const before = inspectFileIdentitySync(() => hashPathIdentity(filePath));
   let fd: number;
   try {

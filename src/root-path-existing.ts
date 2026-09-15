@@ -4,6 +4,11 @@ import { FsSafeError } from "./errors.js";
 import { formatErrorDetail } from "./error-detail.js";
 import { isNotFoundPathError, isPathInside } from "./path.js";
 import { realpathSync } from "./realpath.js";
+import {
+  assertNoWindowsPathAlias,
+  pathForWindowsFilesystem,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 import { admitPathInsideRoot, type RootBoundaryIdentity } from "./root-boundary.js";
 
 export function absolutePathWithRawSegments(candidate: string): string {
@@ -22,6 +27,8 @@ export function rawPathRelativeToCanonicalRoot(
     rootIdentity?: RootBoundaryIdentity;
   } = {},
 ): string | undefined {
+  assertNoWindowsPathAlias(candidate);
+  assertNoWindowsPathAlias(rootCanonicalPath);
   const absolute = absolutePathWithRawSegments(candidate);
   const raw = process.platform === "win32" ? absolute.replaceAll("/", path.sep) : absolute;
   const filesystemRoot = path.parse(raw).root;
@@ -35,7 +42,8 @@ export function rawPathRelativeToCanonicalRoot(
     let canonical: string;
     let isSymlink = false;
     try {
-      const stat = fs.lstatSync(prefix);
+      const operationPath = pathForWindowsFilesystem(prefix);
+      const stat = fs.lstatSync(operationPath);
       isSymlink = stat.isSymbolicLink();
       // Check the original leaf before canonicalization can erase an entry alias.
       if (isSymlink && options.rejectFinalSymlink && index === finalComponentIndex) {
@@ -43,8 +51,12 @@ export function rawPathRelativeToCanonicalRoot(
       }
       if (!isSymlink && !stat.isDirectory() && index < segments.length - 1) return undefined;
       traversedSymlink ||= isSymlink;
-      canonical = realpathSync.native(prefix);
-      if (isSymlink && index < segments.length - 1 && !fs.statSync(canonical).isDirectory()) return undefined;
+      canonical = realpathSync.native(operationPath);
+      assertNoWindowsPathAlias(canonical);
+      if (
+        isSymlink && index < segments.length - 1 &&
+        !fs.statSync(pathForWindowsFilesystem(canonical)).isDirectory()
+      ) return undefined;
       if (isSymlink && !isPathInside(rootCanonicalPath, canonical) && !isPathInside(canonical, rootCanonicalPath)) {
         throw new FsSafeError("outside-workspace", `symlink prefix resolves outside the root ancestry: ${formatErrorDetail(candidate)}`);
       }
@@ -75,7 +87,7 @@ function isFilesystemRoot(candidate: string): boolean {
 
 async function pathExists(targetPath: string): Promise<boolean> {
   try {
-    fs.lstatSync(targetPath);
+    fs.lstatSync(pathForWindowsFilesystem(targetPath));
     return true;
   } catch (error) {
     if (isNotFoundPathError(error)) {
@@ -86,7 +98,9 @@ async function pathExists(targetPath: string): Promise<boolean> {
 }
 
 export async function resolvePathViaExistingAncestor(targetPath: string): Promise<string> {
-  const normalized = path.resolve(targetPath);
+  assertNoWindowsPathAlias(targetPath);
+  const normalized = resolvePathPreservingWindowsRoot(targetPath);
+  assertNoWindowsPathAlias(normalized);
   let cursor = normalized;
   const missingSuffix: string[] = [];
 
@@ -103,22 +117,33 @@ export async function resolvePathViaExistingAncestor(targetPath: string): Promis
     return normalized;
   }
 
+  let rawResolvedAncestor: string;
   try {
-    const resolvedAncestor = path.resolve(realpathSync.native(cursor));
-    return missingSuffix.length === 0
-      ? resolvedAncestor
-      : path.resolve(resolvedAncestor, ...missingSuffix);
+    rawResolvedAncestor = realpathSync.native(pathForWindowsFilesystem(cursor));
   } catch {
     return normalized;
   }
+  assertNoWindowsPathAlias(rawResolvedAncestor);
+  const resolvedAncestor = resolvePathPreservingWindowsRoot(rawResolvedAncestor);
+  assertNoWindowsPathAlias(resolvedAncestor);
+  const resolved = missingSuffix.length === 0
+    ? resolvedAncestor
+    : path.resolve(resolvedAncestor, ...missingSuffix);
+  assertNoWindowsPathAlias(resolved);
+  return resolved;
 }
 
 export function resolvePathViaExistingAncestorSync(targetPath: string): string {
-  const normalized = path.resolve(targetPath);
+  assertNoWindowsPathAlias(targetPath);
+  const normalized = resolvePathPreservingWindowsRoot(targetPath);
+  assertNoWindowsPathAlias(normalized);
   let cursor = normalized;
   const missingSuffix: string[] = [];
 
-  while (!isFilesystemRoot(cursor) && !fs.existsSync(cursor)) {
+  while (
+    !isFilesystemRoot(cursor) &&
+    !fs.existsSync(pathForWindowsFilesystem(cursor))
+  ) {
     missingSuffix.unshift(path.basename(cursor));
     const parent = path.dirname(cursor);
     if (parent === cursor) {
@@ -127,16 +152,22 @@ export function resolvePathViaExistingAncestorSync(targetPath: string): string {
     cursor = parent;
   }
 
-  if (!fs.existsSync(cursor)) {
+  if (!fs.existsSync(pathForWindowsFilesystem(cursor))) {
     return normalized;
   }
 
+  let rawResolvedAncestor: string;
   try {
-    const resolvedAncestor = path.resolve(realpathSync(cursor));
-    return missingSuffix.length === 0
-      ? resolvedAncestor
-      : path.resolve(resolvedAncestor, ...missingSuffix);
+    rawResolvedAncestor = realpathSync(pathForWindowsFilesystem(cursor));
   } catch {
     return normalized;
   }
+  assertNoWindowsPathAlias(rawResolvedAncestor);
+  const resolvedAncestor = resolvePathPreservingWindowsRoot(rawResolvedAncestor);
+  assertNoWindowsPathAlias(resolvedAncestor);
+  const resolved = missingSuffix.length === 0
+    ? resolvedAncestor
+    : path.resolve(resolvedAncestor, ...missingSuffix);
+  assertNoWindowsPathAlias(resolved);
+  return resolved;
 }

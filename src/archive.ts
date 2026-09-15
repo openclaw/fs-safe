@@ -60,6 +60,7 @@ import {
 } from "./archive-policy.js";
 import type { ExtractArchiveOptions } from "./archive-options.js";
 import { writeSiblingTempFile } from "./sibling-temp.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 import { realpathSync } from "./realpath.js";
 export type { ArchiveLogger, ExtractArchiveOptions } from "./archive-options.js";
 export type {
@@ -314,20 +315,24 @@ async function extractZip(params: {
 }
 
 export async function extractArchive(params: ExtractArchiveOptions): Promise<void> {
+  const archivePath = params.archivePath;
+  const destDir = params.destDir;
   const onFiltered = resolveArchiveFilteredEntryPolicy(params.onFiltered);
-  const kind = params.kind ?? resolveArchiveKind(params.archivePath);
+  const kind = params.kind ?? resolveArchiveKind(archivePath);
   if (!kind) {
-    throw new Error(`unsupported archive: ${params.archivePath}`);
+    throw new Error(`unsupported archive: ${archivePath}`);
   }
 
   const label = kind === "zip" ? "extract zip" : "extract tar";
   const limits = resolveExtractLimits(params.limits);
   const tarLimits = resolveTarMeterLimits(limits);
   const native = getNativeBinding();
+  assertNoWindowsPathAlias(archivePath, "filesystem", "archive source uses a Windows filesystem namespace alias");
+  assertNoWindowsPathAlias(destDir, "filesystem", "archive destination uses a Windows filesystem namespace alias");
   // Read the declared public fields before private adapters copy options: class
   // getters and inherited policy must survive identically on every backend.
   const options = {
-    archivePath: params.archivePath, destDir: params.destDir,
+    archivePath, destDir,
     durable: params.durable,
     stripComponents: params.stripComponents, limits,
     entryModes: params.entryModes, entryFilter: params.entryFilter, onFiltered,

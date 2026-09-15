@@ -9,6 +9,11 @@ import {
 import { FsSafeError } from "./errors.js";
 import { isNotFoundPathError, isPathRelativeEscape } from "./path.js";
 import { directoryComponentNotDirectoryError, rootPathChangedError } from "./root-errors.js";
+import {
+  assertNoWindowsPathAlias,
+  pathForWindowsFilesystem,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 import { realpathSync } from "./realpath.js";
 import { admitPathInsideRoot, type RootBoundaryIdentity } from "./root-boundary.js";
 
@@ -31,7 +36,15 @@ function assertGuardMatchesRootIdentity(
 
 async function realpathOrThrowNotFile(target: string): Promise<string> {
   try {
-    return path.resolve(realpathSync.native(target));
+    const canonical = realpathSync.native(
+      pathForWindowsFilesystem(target),
+    );
+    assertNoWindowsPathAlias(
+      canonical,
+      "filesystem",
+      "canonical directory uses a Windows filesystem namespace alias",
+    );
+    return resolvePathPreservingWindowsRoot(canonical);
   } catch (error) {
     if (isNotFoundPathError(error)) {
       // A dangling symlink (or a component removed between lstat and
@@ -57,21 +70,34 @@ export async function mkdirPathComponentsWithGuards(params: {
   rejectSymlinks?: boolean;
   rootIdentity?: RootBoundaryIdentity;
 }): Promise<string> {
-  const root = path.resolve(params.rootReal);
-  const configuredRootGuard = await createAsyncDirectoryGuard(root, { bigint: true });
+  const rawRootReal = params.rootReal;
+  assertNoWindowsPathAlias(
+    rawRootReal,
+    "filesystem",
+    "root directory uses a Windows filesystem namespace alias",
+  );
+  const rawTargetPath = params.targetPath;
+  assertNoWindowsPathAlias(
+    rawTargetPath,
+    "filesystem",
+    "target directory uses a Windows filesystem namespace alias",
+  );
+  const root = resolvePathPreservingWindowsRoot(rawRootReal);
+  const target = resolvePathPreservingWindowsRoot(rawTargetPath);
   const suppliedIdentity = suppliedExactRootIdentity(params.rootIdentity);
+  const configuredRootGuard = await createAsyncDirectoryGuard(root, { bigint: true });
   const checkedRootIdentity = suppliedIdentity ?? {
     dev: configuredRootGuard.stat.dev,
     ino: configuredRootGuard.stat.ino,
   };
   assertGuardMatchesRootIdentity(configuredRootGuard, checkedRootIdentity);
-  const rootCanonical = path.resolve(configuredRootGuard.realPath);
+  assertNoWindowsPathAlias(configuredRootGuard.realPath);
+  const rootCanonical = resolvePathPreservingWindowsRoot(configuredRootGuard.realPath);
   const rootGuard = rootCanonical === root
     ? configuredRootGuard
     : await createAsyncDirectoryGuard(rootCanonical, { bigint: true });
   assertGuardMatchesRootIdentity(rootGuard, checkedRootIdentity);
 
-  const target = path.resolve(params.targetPath);
   const admissionParams = {
     candidatePath: target,
     rootIdentity: checkedRootIdentity,
@@ -91,6 +117,11 @@ export async function mkdirPathComponentsWithGuards(params: {
   for (const part of admittedTarget.relativePath.split(path.sep).filter(Boolean)) {
     const next = path.join(current, part);
     const parentGuard = currentGuard;
+    assertNoWindowsPathAlias(
+      parentGuard.realPath,
+      "filesystem",
+      "canonical parent directory uses a Windows filesystem namespace alias",
+    );
     await assertAsyncDirectoryGuard(parentGuard);
     await params.beforeComponent?.(next);
     params.assertBeforeMutation?.();
@@ -132,11 +163,21 @@ export async function mkdirPathComponentsWithGuards(params: {
         throw directoryComponentNotDirectoryError();
       }
       currentGuard = await createAsyncDirectoryGuard(nextReal);
+      assertNoWindowsPathAlias(
+        currentGuard.realPath,
+        "filesystem",
+        "canonical directory uses a Windows filesystem namespace alias",
+      );
       await assertAsyncDirectoryGuard(parentGuard);
       current = nextReal;
       continue;
     }
     currentGuard = await createAsyncDirectoryGuard(next);
+    assertNoWindowsPathAlias(
+      currentGuard.realPath,
+      "filesystem",
+      "canonical directory uses a Windows filesystem namespace alias",
+    );
     await assertAsyncDirectoryGuard(parentGuard);
     current = next;
   }

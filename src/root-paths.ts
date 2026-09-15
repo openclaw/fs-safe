@@ -1,24 +1,30 @@
 import fsSync from "node:fs";
-import fs from "node:fs/promises";
 import path from "node:path";
-import { formatErrorDetail } from "./error-detail.js";
 import { FsSafeError } from "./errors.js";
 import {
-  assertNoNulPathInput,
-  hasNodeErrorCode,
-  isNodeError,
   isNotFoundPathError,
   isPathInside,
-  isPathRelativeEscape,
 } from "./path.js";
-import { root as openRoot } from "./root.js";
 import { realpathSync } from "./realpath.js";
-import { resolvePathWithinNormalizedRoot, type ResolvePathWithinRootParams } from "./path-scope-lexical.js";
+import { root as openRoot } from "./root.js";
+import {
+  hasWindowsPathAlias,
+  pathForWindowsFilesystem,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
+import { resolvePathWithinRoot } from "./root-paths-lexical.js";
+import { resolvePathWithinNormalizedRoot } from "./path-scope-lexical.js";
+import {
+  assertNoSymlinkSegments,
+  ensureDirectoryWithinRoot,
+  resolveNearestExistingPath,
+  type DirectoryResult,
+} from "./root-directory.js";
+
+export { resolvePathWithinRoot } from "./root-paths-lexical.js";
+export { ensureDirectoryWithinRoot } from "./root-directory.js";
 
 type InvalidPathResult = { ok: false; error: string };
-type DirectoryResult =
-  | { ok: true; path: string }
-  | { ok: false; error: string; diagnostic?: FsSafeError };
 type ResolvePathsWithinRootParams = {
   rootDir: string;
   requestedPaths: string[];
@@ -58,21 +64,32 @@ function invalidPath(scopeLabel: string): InvalidPathResult {
   };
 }
 
-async function resolveRealPathIfExists(targetPath: string): Promise<string | undefined> {
+const INVALID_REAL_PATH = Symbol("invalid-real-path");
+
+async function resolveRealPathIfExists(
+  targetPath: string,
+): Promise<string | undefined | typeof INVALID_REAL_PATH> {
+  if (hasWindowsPathAlias(targetPath, "filesystem")) return INVALID_REAL_PATH;
   try {
-    return realpathSync.native(targetPath);
+    const realPath = realpathSync.native(
+      pathForWindowsFilesystem(targetPath),
+    );
+    return hasWindowsPathAlias(realPath, "filesystem") ? INVALID_REAL_PATH : realPath;
   } catch {
     return undefined;
   }
 }
 
 async function resolveTrustedRootRealPath(rootDir: string): Promise<string | undefined> {
+  if (hasWindowsPathAlias(rootDir, "filesystem")) return undefined;
   try {
-    const rootLstat = fsSync.lstatSync(rootDir);
+    const operationPath = pathForWindowsFilesystem(rootDir);
+    const rootLstat = fsSync.lstatSync(operationPath);
     if (!rootLstat.isDirectory() || rootLstat.isSymbolicLink()) {
       return undefined;
     }
-    return realpathSync.native(rootDir);
+    const realPath = realpathSync.native(operationPath);
+    return hasWindowsPathAlias(realPath, "filesystem") ? undefined : realPath;
   } catch {
     return undefined;
   }
@@ -84,7 +101,8 @@ async function validateCanonicalPathWithinRoot(params: {
   expect: "directory" | "file";
 }): Promise<"ok" | "not-found" | "invalid"> {
   try {
-    const candidateLstat = fsSync.lstatSync(params.candidatePath);
+    const operationPath = pathForWindowsFilesystem(params.candidatePath);
+    const candidateLstat = fsSync.lstatSync(operationPath);
     if (candidateLstat.isSymbolicLink()) {
       return "invalid";
     }
@@ -97,17 +115,12 @@ async function validateCanonicalPathWithinRoot(params: {
     if (params.expect === "file" && candidateLstat.nlink > 1) {
       return "invalid";
     }
-    const candidateRealPath = realpathSync.native(params.candidatePath);
+    const candidateRealPath = realpathSync.native(operationPath);
+    if (hasWindowsPathAlias(candidateRealPath, "filesystem")) return "invalid";
     return isPathInside(params.rootRealPath, candidateRealPath) ? "ok" : "invalid";
   } catch (err) {
     return isNotFoundPathError(err) ? "not-found" : "invalid";
   }
-}
-
-export function resolvePathWithinRoot(
-  params: ResolvePathWithinRootParams,
-): { ok: true; path: string } | { ok: false; error: string } {
-  return resolvePathWithinNormalizedRoot(params, path.resolve(params.rootDir));
 }
 
 export async function resolveWritablePathWithinRoot(params: {
@@ -116,15 +129,24 @@ export async function resolveWritablePathWithinRoot(params: {
   scopeLabel: string;
   defaultFileName?: string;
 }): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
-  const lexical = resolvePathWithinRoot(params);
+  const rootDirInput = params.rootDir;
+  const requestedPathInput = params.requestedPath;
+  const scopeLabel = params.scopeLabel;
+  const defaultFileName = params.defaultFileName;
+  const lexical = resolvePathWithinRoot({
+    rootDir: rootDirInput,
+    requestedPath: requestedPathInput,
+    scopeLabel,
+    defaultFileName,
+  });
   if (!lexical.ok) {
     return lexical;
   }
 
-  const rootDir = path.resolve(params.rootDir);
+  const rootDir = resolvePathPreservingWindowsRoot(rootDirInput);
   const rootRealPath = await resolveTrustedRootRealPath(rootDir);
   if (!rootRealPath) {
-    return invalidPath(params.scopeLabel);
+    return invalidPath(scopeLabel);
   }
 
   const requestedPath = lexical.path;
@@ -135,7 +157,7 @@ export async function resolveWritablePathWithinRoot(params: {
     expect: "directory",
   });
   if (parentStatus !== "ok") {
-    return invalidPath(params.scopeLabel);
+    return invalidPath(scopeLabel);
   }
 
   const targetStatus = await validateCanonicalPathWithinRoot({
@@ -144,146 +166,10 @@ export async function resolveWritablePathWithinRoot(params: {
     expect: "file",
   });
   if (targetStatus === "invalid") {
-    return invalidPath(params.scopeLabel);
+    return invalidPath(scopeLabel);
   }
 
   return lexical;
-}
-
-async function resolveNearestExistingPath(targetPath: string): Promise<string> {
-  let current = path.resolve(targetPath);
-  while (true) {
-    try {
-      fsSync.lstatSync(current);
-      return current;
-    } catch (err) {
-      if (!isNotFoundPathError(err)) {
-        throw err;
-      }
-    }
-    const parent = path.dirname(current);
-    if (parent === current) {
-      throw new Error(`failed to resolve existing path for ${targetPath}`);
-    }
-    current = parent;
-  }
-}
-
-async function assertNoSymlinkSegments(params: {
-  rootDir: string;
-  targetPath: string;
-  scopeLabel: string;
-}): Promise<void> {
-  const relative = path.relative(params.rootDir, params.targetPath);
-  if (isPathRelativeEscape(relative)) {
-    throw new FsSafeError("outside-workspace", `Invalid path: must stay within ${params.scopeLabel}`);
-  }
-  let current = params.rootDir;
-  for (const segment of relative.split(path.sep).filter(Boolean)) {
-    current = path.join(current, segment);
-    try {
-      const stat = fsSync.lstatSync(current);
-      if (stat.isSymbolicLink()) {
-        throw new FsSafeError(
-          "symlink", `Invalid path: must not traverse symlinks within ${params.scopeLabel}`,
-        );
-      }
-      if (!stat.isDirectory()) {
-        throw new FsSafeError(
-          "not-file",
-          `Invalid path: existing segment must be a directory within ${params.scopeLabel}`,
-        );
-      }
-    } catch (err) {
-      if (isNotFoundPathError(err)) {
-        return;
-      }
-      throw err;
-    }
-  }
-}
-
-export async function ensureDirectoryWithinRoot(params: {
-  rootDir: string;
-  requestedPath: string;
-  scopeLabel: string;
-  defaultDirName?: string;
-  mode?: number;
-}): Promise<DirectoryResult> {
-  const scopeLabel = formatErrorDetail(params.scopeLabel.slice(0, 80));
-  try {
-    assertNoNulPathInput(params.rootDir);
-    assertNoNulPathInput(params.requestedPath);
-    if (!params.requestedPath.trim()) assertNoNulPathInput(params.defaultDirName ?? "");
-    const lexical = resolvePathWithinRoot({
-      ...params, scopeLabel, defaultFileName: params.defaultDirName,
-    });
-    if (!lexical.ok) return lexical;
-    const rootDir = path.resolve(params.rootDir);
-    const targetPath = lexical.path;
-    const rootStat = fsSync.lstatSync(rootDir);
-    if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
-      return invalidPath(scopeLabel);
-    }
-    await assertNoSymlinkSegments({ rootDir, targetPath, scopeLabel });
-    const rootReal = realpathSync.native(rootDir);
-    const nearestExistingPath = await resolveNearestExistingPath(targetPath);
-    const nearestExistingReal = realpathSync.native(nearestExistingPath);
-    if (!isPathInside(rootReal, nearestExistingReal)) {
-      return invalidPath(scopeLabel);
-    }
-    const relative = path.relative(rootDir, targetPath);
-    let current = rootDir;
-    for (const segment of relative.split(path.sep).filter(Boolean)) {
-      current = path.join(current, segment);
-      while (true) {
-        try {
-          const stat = fsSync.lstatSync(current);
-          if (stat.isSymbolicLink() || !stat.isDirectory()) {
-            return invalidPath(scopeLabel);
-          }
-          break;
-        } catch (err) {
-          if (!isNotFoundPathError(err)) {
-            throw err;
-          }
-          try {
-            await fs.mkdir(current, { mode: params.mode });
-          } catch (mkdirErr) {
-            if (hasNodeErrorCode(mkdirErr, "EEXIST")) {
-              continue;
-            }
-            throw mkdirErr;
-          }
-        }
-      }
-      const currentReal = realpathSync.native(current);
-      if (!isPathInside(rootReal, currentReal)) {
-        return invalidPath(scopeLabel);
-      }
-    }
-    const targetReal = realpathSync.native(targetPath);
-    if (!isPathInside(rootReal, targetReal)) {
-      return invalidPath(scopeLabel);
-    }
-    return { ok: true, path: targetPath };
-  } catch (cause) {
-    if (
-      (cause instanceof FsSafeError && cause.category === "policy") ||
-      hasNodeErrorCode(cause, "ENOTDIR")
-    ) {
-      return invalidPath(scopeLabel);
-    }
-    // Native messages include unbounded paths; display only bounded errno metadata.
-    const code = isNodeError(cause) && typeof cause.code === "string"
-      ? formatErrorDetail(cause.code.slice(0, 40)) : "filesystem operation failed";
-    const syscall = isNodeError(cause) && typeof cause.syscall === "string"
-      ? ` during ${formatErrorDetail(cause.syscall.slice(0, 40))}` : "";
-    const diagnostic = new FsSafeError(
-      "helper-failed", `Could not prepare ${scopeLabel}: ${code}${syscall}`, { cause },
-    );
-    return { ok: false, error: diagnostic.message, diagnostic };
-  }
 }
 
 export function resolvePathsWithinRoot(
@@ -298,11 +184,14 @@ export function resolvePathsWithinRoot(
       requestedPath: raw,
       scopeLabel: params.scopeLabel,
     };
+    // Each lexical request owns its admitted root without consuming later items.
+    if (typeof request.rootDir !== "string") path.resolve(request.rootDir);
+    if (hasWindowsPathAlias(request.rootDir, "filesystem")) return invalidPath(request.scopeLabel);
     // Relative roots may follow cwd changes made by an input iterator or getter.
     const resolvedRoot = process.platform !== "win32" && typeof request.rootDir === "string" &&
         request.rootDir.startsWith("/") && request.rootDir === previousRootDir
       ? previousResolvedRoot
-      : path.resolve(request.rootDir);
+      : resolvePathPreservingWindowsRoot(request.rootDir);
     previousRootDir = request.rootDir;
     previousResolvedRoot = resolvedRoot;
     const pathResult = resolvePathWithinNormalizedRoot(request, resolvedRoot);
@@ -327,10 +216,11 @@ export async function resolveStrictExistingPathsWithinRoot(
 }
 
 export function pathScope(rootDir: string, options: PathScopeOptions): PathScope {
-  const base = { rootDir, scopeLabel: options.label };
+  const label = options.label;
+  const base = { rootDir, scopeLabel: label };
   return {
     rootDir,
-    label: options.label,
+    label,
     resolve: (requestedPath, pathOptions) =>
       resolvePathWithinRoot({
         ...base,
@@ -372,8 +262,17 @@ async function resolveCheckedPathsWithinRoot(
   params: ResolvePathsWithinRootParams,
   allowMissingFallback: boolean,
 ): Promise<ResolvePathsWithinRootResult> {
-  const rootDir = path.resolve(params.rootDir);
-  const rootRealPath = await resolveRealPathIfExists(rootDir);
+  const rootDirInput = params.rootDir;
+  const scopeLabel = params.scopeLabel;
+  if (hasWindowsPathAlias(rootDirInput, "filesystem")) {
+    return invalidPath(scopeLabel);
+  }
+  const requestedPaths = [...params.requestedPaths];
+  const rootDir = resolvePathPreservingWindowsRoot(rootDirInput);
+  if (hasWindowsPathAlias(rootDir, "filesystem")) return invalidPath(scopeLabel);
+  const rootRealPathResult = await resolveRealPathIfExists(rootDir);
+  if (rootRealPathResult === INVALID_REAL_PATH) return invalidPath(scopeLabel);
+  const rootRealPath = rootRealPathResult;
   const root = rootRealPath ? await openRoot(rootDir) : undefined;
 
   const isInRoot = (relativePath: string) =>
@@ -391,7 +290,7 @@ async function resolveCheckedPathsWithinRoot(
     const lexicalPathResult = resolvePathWithinRoot({
       rootDir,
       requestedPath,
-      scopeLabel: params.scopeLabel,
+      scopeLabel,
     });
     if (lexicalPathResult.ok) {
       return {
@@ -400,11 +299,21 @@ async function resolveCheckedPathsWithinRoot(
         fallbackPath: lexicalPathResult.path,
       };
     }
-    if (!rootRealPath || !raw || !path.isAbsolute(raw)) {
+    if (
+      !rootRealPath ||
+      !raw ||
+      !path.isAbsolute(raw) ||
+      hasWindowsPathAlias(raw, "filesystem")
+    ) {
       return lexicalPathResult;
     }
     try {
-      const resolvedExistingPath = realpathSync.native(raw);
+      const resolvedExistingPath = realpathSync.native(
+        pathForWindowsFilesystem(raw),
+      );
+      if (hasWindowsPathAlias(resolvedExistingPath, "filesystem")) {
+        return lexicalPathResult;
+      }
       const relativePath = path.relative(rootRealPath, resolvedExistingPath);
       if (!isInRoot(relativePath)) {
         return lexicalPathResult;
@@ -420,7 +329,7 @@ async function resolveCheckedPathsWithinRoot(
   };
 
   const resolvedPaths: string[] = [];
-  for (const raw of params.requestedPaths) {
+  for (const raw of requestedPaths) {
     const pathResult = await resolveExistingRelativePath(raw);
     if (!pathResult.ok) {
       return { ok: false, error: pathResult.error };
@@ -443,15 +352,20 @@ async function resolveCheckedPathsWithinRoot(
           await assertNoSymlinkSegments({
             rootDir,
             targetPath: pathResult.fallbackPath,
-            scopeLabel: params.scopeLabel,
+            scopeLabel,
           });
           const existingPath = await resolveNearestExistingPath(pathResult.fallbackPath);
-          const existingRealPath = realpathSync.native(existingPath);
-          if (!isPathInside(rootRealPath, existingRealPath)) {
-            return invalidPath(params.scopeLabel);
+          const existingRealPath = realpathSync.native(
+            pathForWindowsFilesystem(existingPath),
+          );
+          if (
+            hasWindowsPathAlias(existingRealPath, "filesystem") ||
+            !isPathInside(rootRealPath, existingRealPath)
+          ) {
+            return invalidPath(scopeLabel);
           }
         } catch {
-          return invalidPath(params.scopeLabel);
+          return invalidPath(scopeLabel);
         }
         resolvedPaths.push(pathResult.fallbackPath);
         continue;
@@ -459,12 +373,12 @@ async function resolveCheckedPathsWithinRoot(
       if (err instanceof FsSafeError && err.code === "outside-workspace") {
         return {
           ok: false,
-          error: `File is outside ${params.scopeLabel}`,
+          error: `File is outside ${scopeLabel}`,
         };
       }
       return {
         ok: false,
-        error: `Invalid path: must stay within ${params.scopeLabel} and be a regular non-symlink file`,
+        error: `Invalid path: must stay within ${scopeLabel} and be a regular non-symlink file`,
       };
     } finally {
       await opened?.handle.close().catch(() => {});

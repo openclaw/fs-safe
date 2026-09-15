@@ -69,6 +69,13 @@ when needed as described above. Guarded temporary files used only inside
 fs-safe have independent names so their length does not grow with the
 destination basename.
 
+On Windows, `rootDir` and every target parent reject NTFS alternate-stream and
+directory-index namespace spellings such as `file:stream` and
+`dir::$INDEX_ALLOCATION`. A colon in only the requested basename still follows
+the documented portable filename sanitization above instead of being treated
+as a raw stream path. Ordinary colon-bearing POSIX roots and parents remain
+valid.
+
 ## Choosing a staging mode
 
 `staging: "workspace"` is the default. The producer writes in private temp

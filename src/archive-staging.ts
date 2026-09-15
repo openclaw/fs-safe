@@ -24,6 +24,7 @@ import { mkdirPathComponentsWithGuards } from "./guarded-mkdir.js";
 import { expandRelativePathWithHome } from "./root-context.js";
 import { resolveRootPath } from "./root-path.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 import { realpathSync } from "./realpath.js";
 
 const ERROR_ARCHIVE_ENTRY_TRAVERSES_SYMLINK = "archive entry traverses symlink in destination";
@@ -45,8 +46,11 @@ function symlinkTraversalError(originalPath: string): ArchiveSecurityError {
 }
 
 export async function createDirectoryIdentityGuard(dir: string): Promise<ArchiveDirectoryGuard> {
+  assertNoWindowsPathAlias(dir);
   try {
-    return await createAsyncDirectoryGuard(dir, { bigint: true });
+    const guard = await createAsyncDirectoryGuard(dir, { bigint: true });
+    assertNoWindowsPathAlias(guard.realPath);
+    return guard;
   } catch (err) {
     if (err instanceof FsSafeError && err.code === "not-file") {
       throw new ArchiveSecurityError("destination-symlink", "archive destination is a symlink");
@@ -70,6 +74,7 @@ export async function assertDirectoryIdentityGuard(guard: ArchiveDirectoryGuard)
 }
 
 export async function prepareArchiveDestinationGuard(destDir: string): Promise<ArchiveDirectoryGuard> {
+  assertNoWindowsPathAlias(destDir);
   let stat: BigIntStats;
   try {
     stat = inspectFileIdentitySync(() => {
@@ -96,6 +101,7 @@ export async function prepareArchiveDestinationGuard(destDir: string): Promise<A
     throw err;
   }
   const realPath = realpathSync.native(destDir);
+  assertNoWindowsPathAlias(realPath);
   const guard: ArchiveDirectoryGuard = { dir: destDir, realPath, stat };
   try {
     inspectFileIdentitySync(() => fsSync.statSync(realPath, { bigint: true }), stat);
@@ -145,17 +151,23 @@ export async function assertResolvedInsideDestination(params: {
   targetPath: string;
   originalPath: string;
 }): Promise<void> {
+  const destinationRealDir = params.destinationRealDir;
+  const targetPath = params.targetPath;
+  const originalPath = params.originalPath;
+  assertNoWindowsPathAlias(destinationRealDir);
+  assertNoWindowsPathAlias(targetPath);
   let resolved: string;
   try {
-    resolved = realpathSync.native(params.targetPath);
+    resolved = realpathSync.native(targetPath);
   } catch (err) {
     if (isNotFoundPathError(err)) {
       return;
     }
     throw err;
   }
-  if (!isPathInside(params.destinationRealDir, resolved)) {
-    throw symlinkTraversalError(params.originalPath);
+  assertNoWindowsPathAlias(resolved);
+  if (!isPathInside(destinationRealDir, resolved)) {
+    throw symlinkTraversalError(originalPath);
   }
 }
 
@@ -184,22 +196,42 @@ type ArchiveOutputPathParams = {
   deadline?: ExtractionDeadline;
 };
 
+function ownArchiveOutputPathParams(params: ArchiveOutputPathParams): ArchiveOutputPathParams {
+  const deadline = params.deadline;
+  checkExtractionDeadline(deadline);
+  const destinationDir = params.destinationDir;
+  const destinationRealDir = params.destinationRealDir;
+  const relPath = params.relPath;
+  const outPath = params.outPath;
+  const originalPath = params.originalPath;
+  const isDirectory = params.isDirectory;
+  assertNoWindowsPathAlias(destinationDir);
+  assertNoWindowsPathAlias(destinationRealDir);
+  assertNoWindowsPathAlias(relPath, "relative");
+  assertNoWindowsPathAlias(outPath);
+  return { destinationDir, destinationRealDir, relPath, outPath, originalPath, isDirectory, deadline };
+}
+
 export async function prepareArchiveOutputPath(params: ArchiveOutputPathParams): Promise<void> {
-  await prepareOutputPath(params);
+  await prepareOutputPath(ownArchiveOutputPathParams(params));
 }
 
 export async function preparePrivateArchiveOutputPath(
   params: ArchiveOutputPathParams, assertGuards?: () => Promise<void>,
   destinationGuard?: ArchiveDirectoryGuard,
 ): Promise<void> {
-  await prepareOutputPath(params, assertGuards, true, destinationGuard);
+  await prepareOutputPath(
+    ownArchiveOutputPathParams(params),
+    assertGuards,
+    true,
+    destinationGuard,
+  );
 }
 
 async function prepareOutputPath(
   params: ArchiveOutputPathParams, assertGuards?: () => Promise<void>, privateWorkingMode = false,
   existingDestinationGuard?: ArchiveDirectoryGuard,
 ): Promise<void> {
-  checkExtractionDeadline(params.deadline);
   const targetRoot = privateWorkingMode ? {
     async mkdir(relativePath: string) {
       // Retain Root.mkdir's strict alias admission before the shared traversal,
@@ -294,6 +326,7 @@ async function prepareOutputPath(
 }
 
 function assertSafeArchiveStagingPrefix(prefix: string): string {
+  assertNoWindowsPathAlias(prefix, "relative");
   if (
     !prefix ||
     prefix === "." ||
@@ -312,20 +345,24 @@ export async function withStagedArchiveDestination<T>(params: {
   stagingDirPrefix?: string;
   run: (stagingDir: string) => Promise<T>;
 }): Promise<T> {
+  const destinationRealDir = params.destinationRealDir;
+  assertNoWindowsPathAlias(destinationRealDir);
   const stagingRoot = resolveSecureTempRoot({
     fallbackPrefix: "fs-safe-archive",
     unsafeFallbackLabel: "archive staging temp dir",
     warn: () => undefined,
   });
-  if (isPathInside(params.destinationRealDir, stagingRoot)) {
+  assertNoWindowsPathAlias(stagingRoot);
+  if (isPathInside(destinationRealDir, stagingRoot)) {
     throw new Error(`archive staging root must be outside destination: ${stagingRoot}`);
   }
+  const stagingDirPrefix = params.stagingDirPrefix;
   const stagingPrefix = assertSafeArchiveStagingPrefix(
-    params.stagingDirPrefix ?? "fs-safe-archive-",
+    stagingDirPrefix ?? "fs-safe-archive-",
   );
-  const stagingDir = await fs.mkdtemp(
-    path.join(stagingRoot, stagingPrefix),
-  );
+  const stagingPathPrefix = path.join(stagingRoot, stagingPrefix);
+  assertNoWindowsPathAlias(stagingPathPrefix);
+  const stagingDir = await fs.mkdtemp(stagingPathPrefix);
   const stagingGuard = await createDirectoryIdentityGuard(stagingDir);
   try {
     await fs.chmod(stagingDir, ARCHIVE_STAGING_MODE).catch(() => undefined);

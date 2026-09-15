@@ -2,11 +2,19 @@ import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { assertNoNulPathInput, isPathInside } from "./path.js";
 import { resolvePathViaExistingAncestor } from "./root-path-existing.js";
+import {
+  assertNoWindowsPathAlias,
+  resolvePathPreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 export async function resolveMutationComparablePaths(rawPath: string): Promise<Set<string>> {
   assertNoNulPathInput(rawPath, "path contains a NUL byte");
-  const resolved = path.resolve(rawPath);
-  return new Set([resolved, await resolvePathViaExistingAncestor(resolved)]);
+  assertNoWindowsPathAlias(rawPath, "filesystem", "mutation path uses a Windows filesystem namespace alias");
+  const resolved = resolvePathPreservingWindowsRoot(rawPath);
+  assertNoWindowsPathAlias(resolved, "filesystem", "mutation path uses a Windows filesystem namespace alias");
+  const canonical = await resolvePathViaExistingAncestor(resolved);
+  assertNoWindowsPathAlias(canonical, "filesystem", "mutation path uses a Windows filesystem namespace alias");
+  return new Set([resolved, canonical]);
 }
 
 function isSamePath(left: string, right: string): boolean {
@@ -33,6 +41,7 @@ function policyPathEntries(entries: readonly string[] | undefined): string[] {
       throw new FsSafeError("invalid-path", "deny mutation paths must be non-empty");
     }
     assertNoNulPathInput(entry, "deny mutation path contains a NUL byte");
+    assertNoWindowsPathAlias(entry, "filesystem", "deny mutation path uses a Windows filesystem namespace alias");
     if (!path.isAbsolute(entry)) {
       throw new FsSafeError("invalid-path", "deny mutation paths must be absolute");
     }

@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { pathForWindowsFilesystem } from "./windows-path-alias.js";
 
 /**
  * Returns true when `fs.stat()` can stat the path.
@@ -8,7 +9,7 @@ import fs from "node:fs";
  */
 export async function pathExists(filePath: string): Promise<boolean> {
   try {
-    fs.statSync(filePath);
+    fs.statSync(pathForWindowsFilesystem(filePath));
     return true;
   } catch {
     return false;
@@ -21,7 +22,7 @@ export async function pathExists(filePath: string): Promise<boolean> {
  */
 export function pathExistsSync(filePath: string): boolean {
   try {
-    fs.statSync(filePath);
+    fs.statSync(pathForWindowsFilesystem(filePath));
     return true;
   } catch {
     return false;

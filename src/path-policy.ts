@@ -6,6 +6,7 @@ import {
 } from "./root-path.js";
 import { isNotFoundPathError } from "./path.js";
 import { shortPath } from "./error-detail.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type PathAliasPolicy = RootPathAliasPolicy;
 
@@ -44,9 +45,13 @@ export async function assertNoHardlinkedFinalPath(params: {
   if (params.allowFinalHardlinkForUnlink) {
     return;
   }
+  const filePath = params.filePath;
+  const root = params.root;
+  const boundaryLabel = params.boundaryLabel;
+  assertNoWindowsPathAlias(filePath);
   let stat: fs.Stats;
   try {
-    stat = fs.statSync(params.filePath);
+    stat = fs.statSync(filePath);
   } catch (err) {
     if (isNotFoundPathError(err)) {
       return;
@@ -58,7 +63,7 @@ export async function assertNoHardlinkedFinalPath(params: {
   }
   if (stat.nlink > 1) {
     throw new Error(
-      `Hardlinked path is not allowed under ${params.boundaryLabel} (${shortPath(params.root)}): ${shortPath(params.filePath)}`,
+      `Hardlinked path is not allowed under ${boundaryLabel} (${shortPath(root)}): ${shortPath(filePath)}`,
     );
   }
 }

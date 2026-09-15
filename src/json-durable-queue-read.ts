@@ -3,6 +3,7 @@ import { normalizeMaxBytes } from "./byte-budget.js";
 import { readBoundedAsync } from "./bounded-read.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export const DEFAULT_JSON_DURABLE_QUEUE_ENTRY_MAX_BYTES = 16 * 1024 * 1024;
 
@@ -42,6 +43,7 @@ export async function withJsonDurableQueueEntry<T, R>(
   const maxBytes = normalizeMaxBytes(options.maxBytes, {
     defaultValue: DEFAULT_JSON_DURABLE_QUEUE_ENTRY_MAX_BYTES,
   })!;
+  assertNoWindowsPathAlias(filePath);
   const inspectPath = () => fs.lstatSync(filePath, { bigint: true });
   const initialStat = await inspectQueueEntry(inspectPath, maxBytes);
   const handle = await fs.promises.open(filePath, resolveReadOpenFlags());

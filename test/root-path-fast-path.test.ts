@@ -5,20 +5,33 @@ import fc from "fast-check";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { pathScope, resolvePathWithinRoot } from "../src/root-paths.js";
 import { expandRelativePathWithHome } from "../src/root-context.js";
-import { useRealTempDirs } from "./helpers/vitest.js";
+import {
+  hasWindowsPathAlias,
+  resolvePathFromBasePreservingWindowsRoot,
+  resolvePathPreservingWindowsRoot,
+} from "../src/windows-path-alias.js";
+import { itWin32, useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 function reference(rootDir: string, requestedPath: string, defaultFileName?: string) {
-  const root = path.resolve(rootDir);
+  const invalid = { ok: false as const, error: "Invalid path: must stay within fixture" };
+  if (
+    hasWindowsPathAlias(rootDir, "filesystem") ||
+    hasWindowsPathAlias(requestedPath, "filesystem") ||
+    (defaultFileName !== undefined && hasWindowsPathAlias(defaultFileName, "filesystem"))
+  ) return invalid;
+  const root = resolvePathPreservingWindowsRoot(rootDir);
+  if (hasWindowsPathAlias(root, "filesystem")) return invalid;
   const raw = requestedPath.trim();
   if (!raw && !defaultFileName) return { ok: false, error: "path is required" };
-  const resolved = path.resolve(root, raw || defaultFileName!);
+  const resolved = resolvePathFromBasePreservingWindowsRoot(root, raw || defaultFileName!);
+  if (hasWindowsPathAlias(resolved, "filesystem")) return invalid;
   const relative = path.relative(root, resolved);
   return relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
     ? { ok: true, path: resolved }
-    : { ok: false, error: "Invalid path: must stay within fixture" };
+    : invalid;
 }
 
 describe("lexical path-scope containment", () => {
@@ -54,6 +67,16 @@ it("does not resolve the user's home for ordinary Root paths", async () => {
   for (const value of ["file", ".", "", "a/../b", "~other/file", "nested/~/file"]) {
     expect(await expandRelativePathWithHome(value)).toBe(value);
   }
+  expect(home).not.toHaveBeenCalled();
+});
+
+itWin32("keeps Windows alias admission on the ordinary-path fast path", async () => {
+  vi.stubEnv("HOME", ""); vi.stubEnv("USERPROFILE", "");
+  const home = vi.spyOn(os, "homedir").mockImplementation(() => { throw new Error("home unavailable"); });
+  await expect(expandRelativePathWithHome("file:stream")).rejects.toMatchObject({
+    code: "invalid-path",
+    details: { reason: "windows-path-alias" },
+  });
   expect(home).not.toHaveBeenCalled();
 });
 

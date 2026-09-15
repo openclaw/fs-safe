@@ -21,7 +21,10 @@ export function assertRelativePath(relativePath: string): string {
 
 export function resolveStorePath(rootDir: string, relativePath: string): string {
   const key = assertRelativePath(relativePath);
-  const root = path.resolve(rootDir);
+  // FileStore constructors snapshot an absolute root before this helper runs.
+  // Do not re-resolve it: Node drops the trailing separator from an exact
+  // Windows namespace drive root such as `\\?\C:\`.
+  const root = path.isAbsolute(rootDir) ? rootDir : path.resolve(rootDir);
   // The immutable key already passed segment validation; keep the containment check.
   const target = path.resolve(root, key);
   if (!isPathInside(root, target)) {
