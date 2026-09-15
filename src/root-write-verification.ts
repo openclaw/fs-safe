@@ -58,8 +58,10 @@ export async function verifyAtomicWriteResult(params: {
     // This descriptor remains owned by the writer, even when final mode forbids opens.
     const stat = assertDescriptor();
     assertPath(fsSync.lstatSync(params.targetPath, { bigint: true }));
-    const { realPath } = await resolveOpenedFileRealPathForFd(params.fd, stat, params.targetPath);
-    assertPath(fsSync.statSync(realPath, { bigint: true }));
+    const { realPath, stat: resolvedStat } = await resolveOpenedFileRealPathForFd(params.fd, stat, params.targetPath);
+    // Consume the resolver's observation only in this pass; the checks after
+    // the directory guards must still sample the current path and descriptor.
+    assertPath(resolvedStat);
     if (!isPathInside(params.root.rootWithSep, realPath)) {
       throw outsideWorkspaceError();
     }
@@ -85,8 +87,9 @@ export async function verifyAtomicWriteResult(params: {
       try {
         const reopenedStat = assertDescriptor(opened.fd);
         assertPath(fsSync.lstatSync(params.targetPath, { bigint: true }));
-        const { realPath: reopenedPath } = await resolveOpenedFileRealPathForFd(opened.fd, reopenedStat, params.targetPath);
-        assertPath(fsSync.statSync(reopenedPath, { bigint: true }));
+        const { realPath: reopenedPath, stat: reopenedPathStat } =
+          await resolveOpenedFileRealPathForFd(opened.fd, reopenedStat, params.targetPath);
+        assertPath(reopenedPathStat);
         if (!isPathInside(params.root.rootWithSep, reopenedPath)) {
           throw outsideWorkspaceError();
         }
