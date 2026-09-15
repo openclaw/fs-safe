@@ -78,6 +78,8 @@ describe("lossless secret directory identities", () => {
 
   it("binds private lock roots losslessly and rejects a different identity with the same numeric projection", async () => {
     const { rootDir, parent, filePath, identities } = await fixture();
+    // This test deliberately projects synthetic identities in JavaScript.
+    configureFsSafeNative({ mode: "off" });
     const lockRoot = await openPrivateStoreLockRoot({ rootDir, filePath });
     await expect(lockRoot.stat("")).resolves.toMatchObject({ isDirectory: true });
     const original = identities.get(parent)!;

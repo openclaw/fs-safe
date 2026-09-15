@@ -1,5 +1,6 @@
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
+import { getNativeDirectoryObservationBackend } from "./native-directory-observation.js";
 import { isNotFoundPathError } from "./path.js";
 import { PATH_ALIAS_POLICIES } from "./path-policy.js";
 import { admitPathInsideRoot } from "./root-boundary.js";
@@ -16,6 +17,7 @@ import {
   type RootContext,
 } from "./root-context.js";
 import { fileNotFoundError, outsideWorkspaceError } from "./root-errors.js";
+import { getFsSafeTestHooks } from "./test-hooks.js";
 
 export type PinnedObservedPath = {
   rootReal: string;
@@ -30,6 +32,11 @@ export async function resolvePinnedObservedPathInRoot(
 ): Promise<PinnedObservedPath | undefined> {
   const rootGuard = await createRootObservationGuard(root);
   if (!rootGuard) return undefined;
+  // Race hooks exercise the established JavaScript observation points. Do not
+  // silently move those points into the native helper in test configurations.
+  const directoryObserver = getNativeDirectoryObservationBackend(
+    getFsSafeTestHooks() === undefined,
+  );
   const rootReal = root.rootReal;
   let observed: Awaited<ReturnType<typeof resolveRootPathWithObservation>>;
   try {
@@ -43,7 +50,7 @@ export async function resolvePinnedObservedPathInRoot(
       rootIdentity: root.rootIdentity,
       boundaryLabel: "root",
       policy: PATH_ALIAS_POLICIES.strict,
-    }, { kind, rootGuard });
+    }, { kind, rootGuard, directoryObserver });
   } catch (error) {
     if (error instanceof RootPathObservationError) {
       if (isNotFoundPathError(error.error)) {

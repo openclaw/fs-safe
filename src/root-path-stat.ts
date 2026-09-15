@@ -48,7 +48,7 @@ export async function statResolvedPathInRoot(
       if (observed.isSymbolicLink()) {
         throw new FsSafeError("path-mismatch", "file changed during operation");
       }
-      assertRootPathObservationReceiptCurrent(root, receipt);
+      assertRootPathObservationReceiptCurrent(root, receipt, observed);
       return pathStatFromStats(observed);
     }
     const guardPath = resolvedPath === root.rootReal ? root.rootReal : path.dirname(resolvedPath);

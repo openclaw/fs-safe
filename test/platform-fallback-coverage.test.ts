@@ -14,7 +14,10 @@ async function importRootForPlatform(platform: NodeJS.Platform) {
     enumerable: true,
     value: platform,
   });
-  return await import("../src/root.js");
+  const rootModule = await import("../src/root.js");
+  const { configureFsSafeNative } = await import("../src/native-config.js");
+  configureFsSafeNative({ mode: "off" });
+  return rootModule;
 }
 
 afterEach(async () => {

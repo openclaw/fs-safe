@@ -18,6 +18,12 @@ export interface NativeFileIdentity {
   isSymbolicLink: boolean;
 }
 
+export interface NativeDirectoryObservation {
+  dev: bigint;
+  ino: bigint;
+  realPath: string;
+}
+
 export interface NativeArchiveEntry {
   index: number;
   path: string;
@@ -88,6 +94,8 @@ export interface NativeWindowsSecurityFacts {
 export interface NativeBinding {
   /** POSIX system canonicalization; confinement and identity policy stay with callers. */
   canonicalizePath?(path: string, ordinary: boolean): { path?: string; errno?: number };
+  /** Internal: exact directory identity and canonical path from one no-follow handle. */
+  observeDirectory?(path: string): NativeDirectoryObservation;
   /** Linux/Windows byte transfer; callers retain both admitted descriptors until settlement. */
   copyFileContents?(sourceFd: number, targetFd: number, signal?: AbortSignal): Promise<void>;
   /** Internal: same private, immutable input ownership as the ZIP buffer reader. */

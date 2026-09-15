@@ -1,7 +1,11 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import {
+  __resetFsSafeNativeConfigForTest,
+  configureFsSafeNative,
+} from "../src/native-config.js";
 import { realpathSync } from "../src/realpath.js";
 import { resolveRootContext } from "../src/root-context.js";
 import { resolvePinnedObservedPathInRoot } from "../src/root-observed-path.js";
@@ -10,9 +14,11 @@ import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
+beforeEach(() => configureFsSafeNative({ mode: "off" }));
 afterEach(() => {
   vi.restoreAllMocks();
   __setFsSafeTestHooksForTest();
+  __resetFsSafeNativeConfigForTest();
 });
 
 it.skipIf(process.platform === "win32")("uses ordinary metadata within unchanged descendant observation budgets", async () => {
@@ -78,8 +84,8 @@ it("preserves the root-only initial and final stat hooks", async () => {
   await fs.writeFile(path.join(rootDir, "value"), "inside");
   const capability = await root(rootDir);
   const context = await resolveRootContext(rootDir);
-  expect((await resolvePinnedObservedPathInRoot(context, ".", "stat"))?.receipt).toBeUndefined();
-  expect((await resolvePinnedObservedPathInRoot(context, ".", "directory"))?.receipt).toBeUndefined();
+  expect((await resolvePinnedObservedPathInRoot(context, ".", "stat"))?.receipt).toBeDefined();
+  expect((await resolvePinnedObservedPathInRoot(context, ".", "directory"))?.receipt).toBeDefined();
   const events: string[] = [];
   __setFsSafeTestHooksForTest({
     beforeRootStatInitialObservation: () => { events.push("initial"); },

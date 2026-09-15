@@ -1,7 +1,11 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import {
+  __resetFsSafeNativeConfigForTest,
+  configureFsSafeNative,
+} from "../src/native-config.js";
 import { realpathSync } from "../src/realpath.js";
 import { root } from "../src/root.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
@@ -9,8 +13,10 @@ import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
 
+beforeEach(() => configureFsSafeNative({ mode: "off" }));
 afterEach(() => {
   __setFsSafeTestHooksForTest();
+  __resetFsSafeNativeConfigForTest();
 });
 
 async function replaceDirectoryWithAlias(directory: string, replacement: string): Promise<void> {

@@ -8,6 +8,7 @@ mod archive_gzip;
 mod fast_file;
 mod clone_tree;
 mod clone_metadata;
+mod directory_observation;
 #[cfg(target_os = "linux")]
 mod clone_linux;
 #[cfg(unix)]
@@ -42,6 +43,13 @@ pub struct FileIdentity {
     pub is_file: bool,
     pub is_directory: bool,
     pub is_symbolic_link: bool,
+}
+
+#[napi(object)]
+pub struct DirectoryObservation {
+    pub dev: BigInt,
+    pub ino: BigInt,
+    pub real_path: String,
 }
 
 #[napi(object)]
@@ -211,6 +219,18 @@ pub fn rename_replace(
 #[napi(js_name = "fstatIdentity")]
 pub fn fstat_identity(env: Env, fd: i32) -> Result<FileIdentity> {
     into_napi(env, platform::fstat_identity(fd))
+}
+
+#[napi(js_name = "observeDirectory")]
+pub fn observe_directory(env: Env, path: String) -> Result<DirectoryObservation> {
+    into_napi(
+        env,
+        directory_observation::observe_directory(&path).map(|observed| DirectoryObservation {
+            dev: BigInt::from(observed.dev),
+            ino: BigInt::from(observed.ino),
+            real_path: observed.real_path,
+        }),
+    )
 }
 
 pub use archive::{
