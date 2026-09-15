@@ -13,8 +13,8 @@ on:
       platform:
         description: Method-audit platform
         type: choice
-        options: [all, linux, macos, windows]
-        default: all
+        options: ["all", "linux", "macos", "windows"]
+        default: "all"
       compare_ref:
         description: Optional baseline Git ref for the same runner and harness
         type: string
@@ -34,8 +34,8 @@ on:
       order:
         description: Baseline/candidate measurement order
         type: choice
-        options: [baseline-candidate, abba]
-        default: baseline-candidate
+        options: ["baseline-candidate", "abba"]
+        default: "baseline-candidate"
       blocks:
         description: Number of complete measurement-order blocks
         type: string
@@ -43,8 +43,8 @@ on:
       native_mode:
         description: Native mode selection
         type: choice
-        options: [both, off, require]
-        default: both
+        options: ["both", "off", "require"]
+        default: "both"
 
 permissions:
   contents: read
