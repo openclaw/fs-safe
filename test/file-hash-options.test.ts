@@ -47,20 +47,26 @@ for (const mode of ["off", "require"] as const) {
       if (mode === "require") __setNativeLoaderForTest(() => native!);
     });
 
-    it.each([undefined, Infinity, 6])("hashes the complete file with limit %s", async (maxBytes) => {
-      const file = await fixture("abcdef");
+    it.each([
+      6, 65_536, 65_537, 131_072, 262_144, 262_145,
+      1_048_576, 1_048_577, 1_114_112, 1_179_649, 2_097_169,
+    ])("hashes the complete %s-byte file across read boundaries", async (size) => {
+      const payload = Buffer.alloc(size).map((_, index) => index % 251);
+      const file = await fixture(payload);
       const handle = await fs.open(file, "r");
       const expected = {
-        bytes: 6,
-        digest: createHash("sha256").update("abcdef").digest("hex"),
+        bytes: size,
+        digest: createHash("sha256").update(payload).digest("hex"),
       };
       try {
         await handle.read(Buffer.alloc(2), 0, 2, null);
-        await expect(sha256File(handle, { maxBytes })).resolves.toEqual(expected);
-        await expect(sha256File(file, { maxBytes })).resolves.toEqual(expected);
+        for (const maxBytes of [undefined, Infinity, size]) {
+          await expect(sha256File(handle, { maxBytes })).resolves.toEqual(expected);
+          await expect(sha256File(file, { maxBytes })).resolves.toEqual(expected);
+        }
         const next = Buffer.alloc(1);
         await handle.read(next, 0, 1, null);
-        expect(next.toString()).toBe("c");
+        expect(next[0]).toBe(payload[2]);
       } finally {
         await handle.close();
       }

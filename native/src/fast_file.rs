@@ -129,10 +129,12 @@ impl HashTask {
         self.check_cancelled()?;
         let reader = platform::open_independent_reader(self.fd)?;
         let mut hasher = Sha256::new();
-        let mut buffer = [0_u8; 64 * 1024];
+        let mut initial_buffer = [0_u8; 64 * 1024];
+        let mut large_buffer: Option<Vec<u8>> = None;
         let mut bytes = 0_u64;
         loop {
             self.check_cancelled()?;
+            let buffer = large_buffer.as_deref_mut().unwrap_or(&mut initial_buffer);
             let length = (self.max_bytes - bytes)
                 .saturating_add(1)
                 .min(buffer.len() as u64) as usize;
@@ -149,6 +151,11 @@ impl HashTask {
             }
             hasher.update(&buffer[..read]);
             bytes += read as u64;
+            // Retain stack-only reads through 1 MiB before allocating larger read batches.
+            let next_length = (self.max_bytes - bytes).saturating_add(1).min(256 * 1024) as usize;
+            if bytes > 1024 * 1024 && read == buffer.len() && next_length > buffer.len() {
+                large_buffer = Some(vec![0_u8; next_length]);
+            }
         }
         let mut digest = String::with_capacity(64);
         for byte in hasher.finalize() {

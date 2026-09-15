@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Keep native SHA-256 reads on the existing 64 KiB stack buffer through 1 MiB, then use at most 256 KiB of additional heap scratch for larger inputs, preserving byte limits, positioned reads, and cancellation settlement.
 - Reduce retained decoded buffers when reading gzip TAR entries in JavaScript by filling one owned result buffer from the fully admitted payload size, preserving complete archive validation and independent returned bytes.
 - Avoid repeated relative-path resolution for normalized Windows drive-path descendants, retaining the existing comparison for UNC paths and colon-bearing components.
 - Add `safePathSegmentHashedV2` for untrusted install identifiers, hashing every trimmed ID with domain-separated SHA-256 into a fixed lowercase segment; preserve the legacy encoder's output and document its deterministic aliases and explicit migration requirements.
