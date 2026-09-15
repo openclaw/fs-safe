@@ -33,6 +33,24 @@ describe("home prefix resolution", () => {
     expect(resolveHomeRelativePath("", { env: { HOME: home } })).toBe("");
   });
 
+  it("keeps environment and cwd defaults live across home-prefixed calls", () => {
+    const firstHome = path.resolve("synthetic", "first-home");
+    const secondHome = path.resolve("synthetic", "second-home");
+    vi.stubEnv("OPENCLAW_HOME", firstHome);
+    expect(resolveHomeRelativePath("~/child")).toBe(path.join(firstHome, "child"));
+    vi.stubEnv("OPENCLAW_HOME", secondHome);
+    expect(resolveHomeRelativePath("~/child")).toBe(path.join(secondHome, "child"));
+
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(firstHome);
+    try {
+      expect(resolveHomeRelativePath("~", { env: {}, homedir: () => "" })).toBe(firstHome);
+      cwd.mockReturnValue(secondHome);
+      expect(resolveHomeRelativePath("~", { env: {}, homedir: () => "" })).toBe(secondHome);
+    } finally {
+      cwd.mockRestore();
+    }
+  });
+
   it.skipIf(process.platform !== "win32")("supports backslash and mixed Windows separators", () => {
     for (const input of ["~\\..\\shared", "~/child\\..\\..\\shared"]) {
       expect(expandHomePrefix(input, { home })).toBe(path.join(home, "..", "shared"));

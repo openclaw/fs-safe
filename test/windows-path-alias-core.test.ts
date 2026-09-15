@@ -75,6 +75,19 @@ describe("Windows filesystem namespace alias classifier", () => {
     expect(hasWindowsPathAlias("logs/10:30.txt", "relative", "linux")).toBe(false);
     expect(hasWindowsPathAlias("/tmp/10:30.txt", "filesystem", "darwin")).toBe(false);
   });
+
+  it("limits ordinary-drive admission to rooted ASCII filesystem paths", () => {
+    expect(hasWindowsPathAlias("Z:\\root\\file.txt", "filesystem", "win32")).toBe(false);
+    expect(hasWindowsPathAlias("Z:\\root\\file.txt", "relative", "win32")).toBe(true);
+    for (const value of [
+      "Z:relative.txt",
+      "1:\\root\\file.txt",
+      "é:\\root\\file.txt",
+      "Z:\\root\\file.txt:hidden",
+    ]) {
+      expect(hasWindowsPathAlias(value, "filesystem", "win32"), value).toBe(true);
+    }
+  });
 });
 
 describe.skipIf(process.platform !== "win32")("Windows namespace alias admissions", () => {
