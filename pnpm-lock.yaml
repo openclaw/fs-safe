@@ -12,8 +12,8 @@ importers:
         specifier: 2.0.0-alpha.5
         version: 2.0.0-alpha.5
       '@napi-rs/cli':
-        specifier: 3.9.0
-        version: 3.9.0(@emnapi/core@1.11.2)(@emnapi/runtime@2.0.0-alpha.5)(@types/node@26.5.1)(supports-color@7.2.0)
+        specifier: 3.9.1
+        version: 3.9.1(@emnapi/core@1.11.2)(@emnapi/runtime@2.0.0-alpha.5)(@types/node@26.5.1)(supports-color@7.2.0)
       '@types/node':
         specifier: ^26.5.1
         version: 26.5.1
@@ -22,7 +22,7 @@ importers:
         version: 5.0.0(vitest@5.0.0)
       fast-check:
         specifier: ^4.9.0
-        version: 4.9.0
+        version: 4.10.0
       istanbul-lib-coverage:
         specifier: 3.2.2
         version: 3.2.2
@@ -42,11 +42,11 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
       vite:
-        specifier: 8.2.2
-        version: 8.2.2(@types/node@26.5.1)(esbuild@0.28.1)
+        specifier: 8.3.0
+        version: 8.3.0(@types/node@26.5.1)(esbuild@0.28.1)
       vitest:
         specifier: ^5.0.0
-        version: 5.0.0(@types/node@26.5.1)(@vitest/coverage-v8@5.0.0)(vite@8.2.2(@types/node@26.5.1)(esbuild@0.28.1))
+        version: 5.0.0(@types/node@26.5.1)(@vitest/coverage-v8@5.0.0)(vite@8.3.0(@types/node@26.5.1)(esbuild@0.28.1))
     optionalDependencies:
       '@openclaw/fs-safe-darwin-arm64':
         specifier: 0.12.0
@@ -441,8 +441,8 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@napi-rs/cli@3.9.0':
-    resolution: {integrity: sha512-ZlerYOCLgVdaqbVDt8+uQxmU9j8bKMVFcYo6zRHJJHTO9jN5060+y953aIVc/0zkVSKq+fHjDAtTGOrbxpeZCw==}
+  '@napi-rs/cli@3.9.1':
+    resolution: {integrity: sha512-2DYBrM2j4n00L+O7fKAS38q19rVQK2HXz5RxSuJgFyZrd9TrdVQFmHOfqvqqsRIRBTZmqiMqBd/yzn4X1a23DQ==}
     engines: {node: ^20.17.0 || ^22.13.0 || >= 23.5.0}
     hasBin: true
     peerDependencies:
@@ -1265,8 +1265,8 @@ packages:
     resolution: {integrity: sha512-KfYbmpRm0VbLjEvVa9yGwCi9GI34xvi7A/HXYWQO65CSD2u3MczUJSuwXKFIxlGsgBQizV9q5J9NHj4VG0n+pA==}
     engines: {node: '>=12.0.0'}
 
-  fast-check@4.9.0:
-    resolution: {integrity: sha512-7ms6T7SybUev/PQITciI0yLM2pOSFy5zpG8Ty7tQofcVaQUvrMXp6CBwqF6fThLCLOrfBtuHAtwq6Yu4XPCllg==}
+  fast-check@4.10.0:
+    resolution: {integrity: sha512-hhqQL+IJllZi3aM4TKvmCj3bywLEcycNTTLZeLhA9ttMxBrCqM07q7Di4kl+j9EWSTXvJH1+EpIgsDbF/+8H5Q==}
     engines: {node: '>=12.17.0'}
 
   fast-string-truncated-width@3.0.3:
@@ -1350,8 +1350,8 @@ packages:
   js-tokens@10.0.0:
     resolution: {integrity: sha512-lM/UBzQmfJRo9ABXbPWemivdCW8V2G8FHaHdypQaIy523snUjog0W71ayWXTjiR+ixeMyVHN2XcpnTd/liPg/Q==}
 
-  js-yaml@4.3.2:
-    resolution: {integrity: sha512-SFNOvSJ+Dgf/9An904Yx+CgSlIPCkIpao4qo51lpee25TIRejdH3rhR4EZMGoNx3/TP3O+wzWuiTFl4sqbltzA==}
+  js-yaml@5.4.2:
+    resolution: {integrity: sha512-m+aqu+LwO1O6sIopafj8HUVl5aawITwZQe/yHpMCKjaWBaA/d07B/QdMb3529REftiU+RMMHL3Vlsw3hON7vWg==}
     hasBin: true
 
   json-with-bigint@3.5.12:
@@ -1667,13 +1667,13 @@ packages:
   util-deprecate@1.0.2:
     resolution: {integrity: sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==}
 
-  vite@8.2.2:
-    resolution: {integrity: sha512-cFKLV/PRgAUlIRm5WjMjJ86jrftzpqcgH+Us+DS8mI3CDNiH30Whrz8uHL3+MOLPAgqbMBAqWdAHAphOAM+z/Q==}
+  vite@8.3.0:
+    resolution: {integrity: sha512-lhZBVvEHefgE+HQZC9O7EBJgCU/nVzFNl7vkS4RE0APtWLP02/8QVIkQtzBxPquh7lq5/78NHipTj7ODQ6XuyQ==}
     engines: {node: ^20.19.0 || >=22.12.0}
     hasBin: true
     peerDependencies:
       '@types/node': ^20.19.0 || >=22.12.0
-      '@vitejs/devtools': ^0.4.0 || ^0.5.0
+      '@vitejs/devtools': ^0.7.1
       esbuild: ^0.27.0 || ^0.28.0
       jiti: '>=1.21.0'
       less: ^4.0.0
@@ -2028,7 +2028,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.6.0
 
-  '@napi-rs/cli@3.9.0(@emnapi/core@1.11.2)(@emnapi/runtime@2.0.0-alpha.5)(@types/node@26.5.1)(supports-color@7.2.0)':
+  '@napi-rs/cli@3.9.1(@emnapi/core@1.11.2)(@emnapi/runtime@2.0.0-alpha.5)(@types/node@26.5.1)(supports-color@7.2.0)':
     dependencies:
       '@inquirer/prompts': 8.7.1(@types/node@26.5.1)
       '@napi-rs/cross-toolchain': 1.0.3(supports-color@7.2.0)
@@ -2037,7 +2037,7 @@ snapshots:
       clipanion: 4.0.0-rc.4(typanion@3.14.0)
       colorette: 2.0.20
       es-toolkit: 1.52.0
-      js-yaml: 4.3.2
+      js-yaml: 5.4.2
       obug: 2.1.4
       semver: 7.8.5
       typanion: 3.14.0
@@ -2549,7 +2549,7 @@ snapshots:
       obug: 2.1.4
       std-env: 4.2.0
       tinyrainbow: 3.1.1
-      vitest: 5.0.0(@types/node@26.5.1)(@vitest/coverage-v8@5.0.0)(vite@8.2.2(@types/node@26.5.1)(esbuild@0.28.1))
+      vitest: 5.0.0(@types/node@26.5.1)(@vitest/coverage-v8@5.0.0)(vite@8.3.0(@types/node@26.5.1)(esbuild@0.28.1))
 
   '@vitest/istanbul-lib-coverage@1.0.1': {}
 
@@ -2557,14 +2557,14 @@ snapshots:
     dependencies:
       '@vitest/istanbul-lib-coverage': 1.0.1
 
-  '@vitest/mocker@5.0.0(vite@8.2.2(@types/node@26.5.1)(esbuild@0.28.1))':
+  '@vitest/mocker@5.0.0(vite@8.3.0(@types/node@26.5.1)(esbuild@0.28.1))':
     dependencies:
       '@jridgewell/trace-mapping': 0.3.31
       '@vitest/spy': 5.0.0
       estree-walker: 3.0.3
       magic-string: 1.2.3
     optionalDependencies:
-      vite: 8.2.2(@types/node@26.5.1)(esbuild@0.28.1)
+      vite: 8.3.0(@types/node@26.5.1)(esbuild@0.28.1)
 
   '@vitest/spy@5.0.0': {}
 
@@ -2670,7 +2670,7 @@ snapshots:
 
   expect-type@1.4.0: {}
 
-  fast-check@4.9.0:
+  fast-check@4.10.0:
     dependencies:
       pure-rand: 8.4.2
 
@@ -2755,7 +2755,7 @@ snapshots:
 
   js-tokens@10.0.0: {}
 
-  js-yaml@4.3.2:
+  js-yaml@5.4.2:
     dependencies:
       argparse: 2.0.1
 
@@ -3091,7 +3091,7 @@ snapshots:
   util-deprecate@1.0.2:
     optional: true
 
-  vite@8.2.2(@types/node@26.5.1)(esbuild@0.28.1):
+  vite@8.3.0(@types/node@26.5.1)(esbuild@0.28.1):
     dependencies:
       lightningcss: 1.33.0
       picomatch: 4.0.7
@@ -3103,10 +3103,10 @@ snapshots:
       esbuild: 0.28.1
       fsevents: 2.3.3
 
-  vitest@5.0.0(@types/node@26.5.1)(@vitest/coverage-v8@5.0.0)(vite@8.2.2(@types/node@26.5.1)(esbuild@0.28.1)):
+  vitest@5.0.0(@types/node@26.5.1)(@vitest/coverage-v8@5.0.0)(vite@8.3.0(@types/node@26.5.1)(esbuild@0.28.1)):
     dependencies:
       '@types/chai': 5.2.3
-      '@vitest/mocker': 5.0.0(vite@8.2.2(@types/node@26.5.1)(esbuild@0.28.1))
+      '@vitest/mocker': 5.0.0(vite@8.3.0(@types/node@26.5.1)(esbuild@0.28.1))
       chai: 6.2.2
       es-module-lexer: 2.3.2
       expect-type: 1.4.0
@@ -3117,7 +3117,7 @@ snapshots:
       tinybench: 6.1.4
       tinyexec: 1.3.0
       tinyglobby: 0.2.17
-      vite: 8.2.2(@types/node@26.5.1)(esbuild@0.28.1)
+      vite: 8.3.0(@types/node@26.5.1)(esbuild@0.28.1)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 26.5.1
