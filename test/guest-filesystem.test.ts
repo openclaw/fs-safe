@@ -58,7 +58,7 @@ describe.skipIf(process.platform === "win32")("guest parent creation races", () 
 
       const result = runGuest(
         parentCreationArgs(operation, workspace),
-        "payload",
+        operation === "write" || operation === "create" ? "payload" : undefined,
         competingParentSetup("directory"),
       );
 
