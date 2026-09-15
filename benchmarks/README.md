@@ -117,28 +117,76 @@ Use `--filter rejected` to exercise the synchronous rejection workloads.
 
 The `benchmarks` workflow also has an optional manual method audit. Set
 `method_audit=true`, choose `platform=all|linux|macos|windows`, and optionally
-provide `compare_ref`. It builds both revisions on the same runner and uses
-the candidate harness for both, saving JSON reports for JavaScript and native
-modes. `iterations` and `samples` control the measurement budget. Set `filter`
-to one workload-family substring and `native_mode` to `off` or `require` for a
-focused audit. With a comparison ref and nonempty filter, `order=abba` records
-baseline, candidate, candidate, baseline within each of up to five `blocks`;
-`order=baab` records candidate, baseline, baseline, candidate. Each position
-has a separate, source-labelled JSON report. These full sweeps identify
-candidates; use repeated blocks of both orders before claiming a speedup when
-order bias is material, especially for storage-sensitive operations.
+provide `compare_ref`. A five-minute prepare job first validates every input,
+resolves the candidate and baseline once to full commit and tree IDs, and pins
+the reviewed harness checkout to `github.workflow_sha`. For an exact study,
+set the 40-hex `candidate_ref` for C and independently set
+`expected_harness_sha` to the reviewed workflow commit for H; C and H do not
+need to be the same revision. A named `compare_ref` remains supported for
+convenience, but branch/tag ambiguity and refspec, revspec, URL, option, and
+control-character forms are rejected before the platform jobs fan out.
+
+The platform jobs use three fixed sibling checkouts: harness (H), candidate
+(C), and baseline (B). H has its own frozen dependency install and runs its
+own `benchmarks/runner.mjs`; C and B are installed and built from their own
+lockfiles and layouts, and H always receives an explicit absolute `--dist` for
+the measured build. The jobs disable Git automatic CRLF conversion before any
+checkout, retaining Git blob bytes while recording both source-blob and
+physical installation hashes. `node_version` selects Node 22 or 24 and
+`timeout_minutes` selects 45, 90, or 120 minutes. `iterations` is limited to
+1–10,000, `samples` to 1–25, `blocks` to 1–5, and `filter` to 256 UTF-8 bytes
+without controls. The defaults remain 20 iterations, five samples, sequential
+baseline/candidate order, one block, both native modes, Node 24, a 45-minute
+timeout, and the `rebuild` control.
+
+`control=rebuild` installs and builds C and B separately. Comparing the same
+commit this way is labelled `same-source-rebuild`; differing commits are
+labelled `source-comparison`. `control=same-artifact` requires C and B to
+resolve to the identical commit, installs/builds C once, and points every B
+and C label at the exact same C dist and adjacent dependency/native layout.
+The labels still run in separate Node processes. With a comparison ref and
+nonempty filter, `order=abba` records baseline, candidate, candidate, baseline
+within each block; `order=baab` records the reverse balanced sequence. Each
+position and native mode has a separate source-labelled JSON report. These
+full sweeps identify candidates; use repeated blocks of both orders before
+claiming a speedup when order bias is material, especially for
+storage-sensitive operations.
 
 Use `--filter readFileDescriptorBounded` to repeat one family. Filtered reports
 are marked explicitly and do not imply all cases ran. `--dist /absolute/dist`
 lets the same harness measure a saved build; preserve the WASM asset alongside
 JavaScript and keep the output directory named `dist` (for example,
 `/snapshot/baseline/dist`) for the parser's package-relative asset lookup.
-Reports identify the JavaScript/WASM build by a content hash and
-record a separate SHA-256 for the actual loaded native addon. They also record
-the harness checkout revision and a hash of the actual benchmark code, package
-manifest, and lockfile (including uncommitted edits), Node version, platform, CPU, requested native
-mode, and whether the binding loaded. The addon is resolved relative to that build, so
-keep its matching platform package available too.
+Reports identify the JavaScript/WASM build by a content hash and record a
+separate SHA-256 for the actual loaded native addon. Manual workflow reports
+also carry versioned `methodAuditEvidence`: H's workflow ref, commit, tree,
+workflow-file and benchmark hashes; C/B's requested ref, resolved commit and
+tree; the role, build ID, control, order, block, and position; and the actual
+Node, platform, architecture, CPU, hosted-image, and runner environment.
+Package manifests, lockfiles, complete dist trees, staged/installed native
+addons, and a bounded dependency-layout identity are hashed before and after
+the measurement sequence. A missing report, changed plan, changed covered
+installation identity, unexpected dist hash, or loaded-addon mismatch fails
+finalization.
+
+This evidence workflow is for trusted, reviewed H/C/B revisions. Candidate and
+baseline build scripts and measured library code execute with the runner
+account's authority in separate Node processes; the checkout separation and
+identity receipts detect accidental drift but are not a security sandbox and
+do not make hostile revision execution safe. Each runner-produced JSON file is
+required to be absent before launch, then its SHA-256, device, inode, size, and
+nanosecond modification time must remain unchanged through all later launches
+and the post-measurement installation snapshot. Provenance annotation happens
+only after that receipt is revalidated.
+
+Dependency identity schema `pnpm-layout-manifests-locks-native-v1` hashes all
+dependency paths, entry types and sizes, safe in-checkout link targets, package
+manifests, pnpm layout/lock metadata, and native addons. It is deliberately not
+a byte-for-byte hash of every dependency file; the frozen lockfile supplies
+the remaining package-content identity. This limitation is recorded in every
+report and must not be interpreted as a full installed-tree content hash. The
+addon is resolved relative to the selected measured build, so keep its matching
+platform package available too.
 
 Compare builds on the same host, runtime, filesystem, and native mode. Alternate
 baseline/candidate runs and inspect sample spread; fsync timings and shared-host

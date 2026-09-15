@@ -2,10 +2,17 @@
 
 ## Unreleased
 
+### Security
+
 - Rebind `denyMutations` and explicit mutation-symlink policy to the actual retained parent selected by POSIX-native and pinned-fallback `Root.write`, `Root.create`, and `Root.copyIn`; missing-directory admission now preserves the configured Root's exact identity through canonical-parent and per-component containment checks so contained aliases cannot reuse stale preflight approval.
 - Apply the same snapshotted, per-component mutation-policy admission to shared JavaScript `Root.openWritable`, `Root.append`, `Root.mkdir`, and Windows buffer-write fallbacks, denying exact missing components before creation; followed final-link writes now re-authorize both the original operation entry and retained selected destination and recheck their case-exact binding before creation, truncation, return, Windows staging, and publication while preserving the exact parent fence, existing-parent, alias, and authority semantics. Ordinary writes with a complete canonical parent now transfer one exact guard into selection instead of reauthorizing every existing component; aliases, callbacks, ambiguous routes, and later stage or publication fences retain the full path.
 - Reuse operation-local mutation-policy observations for ordinary Node.js POSIX writes, retaining exact bigint directory guards and an already-complete guarded parent while refreshing full ordered admission when route, deny-path, Root identity, missing-component, or configuration evidence changes; synchronous guard-bound authorization, fused post-create receipt validation, exclusive direct-child native mkdir provenance, and immutable suffix offsets avoid redundant awaited observation passes and depth-quadratic segment-array copies while collisions, legacy native helpers, followed aliases, complex routes, Bun, and ineligible Windows paths retain full admission.
 - Bound full resolver admission across deep missing-parent creation for ordinary Node.js Windows shared-JavaScript mutations with exact canonical routes, reject-symlink policy, bigint Root identity, and fully observed in-root deny entries. The optimization is scoped to one guarded directory walk and advances only through owned `mkdir` receipts with current exact parent/child identities; collisions, callbacks, aliases, ambiguous spellings, incomplete observations, and all final selection, open, staging, publication, hardlink, and cleanup fences continue through full admission.
+
+### Validation and tooling
+
+- Separate the reviewed manual method-audit harness from immutable candidate and baseline checkouts, validate and resolve dispatch inputs before platform fan-out, and support Node 22/24 plus rebuild and same-artifact controls without changing the ordinary PR/schedule benchmark job.
+- Add versioned, mutation-checked benchmark provenance for trusted reviewed revisions, including harness/source identities, measurement and report-file receipts, manifests, lockfiles, dist trees, bounded dependency layouts, native addons, and runner metadata; this detects accidental drift but is not a sandbox for hostile benchmark code.
 
 ## 0.12.0 - 2026-09-15
 
