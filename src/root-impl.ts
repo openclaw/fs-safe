@@ -40,11 +40,7 @@ import { readOpenedFileSafely, type ReadResult } from "./read-opened-file.js";
 import { cleanupPinnedFilePath } from "./replace-file-temp-owner.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { realpathSync } from "./realpath.js";
-import {
-  mkdirPathFallback,
-  prepareRootWriteTarget,
-  tryMkdirAtExactParent,
-} from "./root-directory-creation.js";
+import { mkdirPathFallback, prepareRootWriteTarget, tryMkdirAtExactParent } from "./root-directory-creation.js";
 import { isNonRegularWriteOpenError, resolveNonblockingWriteFlag } from "./write-open-flags.js";
 import { resolveRootPath } from "./root-path.js";
 import { admitPathInsideRoot } from "./root-boundary.js";
