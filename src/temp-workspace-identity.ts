@@ -8,7 +8,8 @@ export type TempWorkspaceIdentity = Readonly<{ dev: bigint; ino: bigint }>;
 export type TempWorkspaceNumericIdentity = Readonly<{ dev: number; ino: number }>;
 export type TempWorkspaceIdentityStat = BigIntStats | Stats;
 
-const LINUX = process.platform === "linux";
+export const TEMP_WORKSPACE_NUMERIC_IDENTITY_REPLAY =
+  process.platform === "linux" || process.platform === "darwin";
 
 export function projectTempWorkspaceNumericIdentity(
   identity: TempWorkspaceIdentity,
@@ -49,8 +50,10 @@ export function inspectTempWorkspaceDescriptorIdentitySync(
   numeric: TempWorkspaceNumericIdentity | undefined,
 ): TempWorkspaceIdentityStat {
   // A malformed or mismatched numeric observation is definite and never
-  // retried. Unsafe receipts and non-Linux platforms retain exact replay.
-  if (LINUX && numeric) return inspectNumericIdentity(fsSync.fstatSync(fd), numeric);
+  // retried. Unsafe receipts and other platforms retain exact replay.
+  if (TEMP_WORKSPACE_NUMERIC_IDENTITY_REPLAY && numeric) {
+    return inspectNumericIdentity(fsSync.fstatSync(fd), numeric);
+  }
   return inspectFileIdentitySync(() => fsSync.fstatSync(fd, { bigint: true }), expected);
 }
 
@@ -59,7 +62,9 @@ export function inspectTempWorkspaceDirectoryIdentitySync(
   expected: TempWorkspaceIdentity,
   numeric: TempWorkspaceNumericIdentity | undefined,
 ): TempWorkspaceIdentityStat {
-  if (LINUX && numeric) return inspectNumericIdentity(observeDirectoryIdentitySync(dir), numeric);
+  if (TEMP_WORKSPACE_NUMERIC_IDENTITY_REPLAY && numeric) {
+    return inspectNumericIdentity(observeDirectoryIdentitySync(dir), numeric);
+  }
   return inspectFileIdentitySync(
     () => observeDirectoryIdentitySync(dir, { bigint: true }),
     expected,

@@ -16,11 +16,11 @@ import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import {
   inspectTempWorkspaceDescriptorIdentitySync,
   projectTempWorkspaceNumericIdentity,
+  TEMP_WORKSPACE_NUMERIC_IDENTITY_REPLAY,
 } from "./temp-workspace-identity.js";
 import { assertTrustedTempWorkspaceDirectory } from "./temp-workspace-permissions.js";
 
 const WINDOWS = process.platform === "win32";
-const LINUX = process.platform === "linux";
 
 type ExactIdentity = Readonly<{ dev: bigint; ino: bigint }>;
 type NumericIdentity = Readonly<{ dev: number; ino: number }>;
@@ -305,7 +305,9 @@ function canonicalRootAdmission(
     prepareChildCreation: (descriptorFd) => {
       const ancestry = canonicalAncestry(discovery.dir);
       const candidate = ancestry.map((dir, index) => {
-        if (!LINUX || index !== ancestry.length - 1) return snapshot(dir, ownerUid, dir).entry;
+        if (!TEMP_WORKSPACE_NUMERIC_IDENTITY_REPLAY || index !== ancestry.length - 1) {
+          return snapshot(dir, ownerUid, dir).entry;
+        }
         const current = inspectSnapshotIdentity(discovery);
         assertTrustedTempWorkspaceDirectory(current, ownerUid);
         return discovery;

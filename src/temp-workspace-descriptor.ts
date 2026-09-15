@@ -8,26 +8,24 @@ import type { FileIdentityStat } from "./file-identity.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import type { TempWorkspaceRootAdmission } from "./temp-workspace-admission.js";
 import {
+  assertTempWorkspaceChildState,
+  childHasRequestedMode,
+  validateAdmittedTempWorkspaceChild,
+} from "./temp-workspace-child-admission.js";
+import {
   inspectTempWorkspaceDescriptorIdentitySync,
   inspectTempWorkspaceDirectoryIdentitySync,
   projectTempWorkspaceNumericIdentity,
+  TEMP_WORKSPACE_NUMERIC_IDENTITY_REPLAY,
   type TempWorkspaceNumericIdentity,
   type TempWorkspaceIdentityStat,
 } from "./temp-workspace-identity.js";
-
-const LINUX = process.platform === "linux";
 
 type DirectoryDescriptorAccess = "read" | "search";
 type OpenedDirectory = {
   fd: number;
   access: DirectoryDescriptorAccess;
   proc: boolean;
-};
-
-type TempWorkspaceChildModeChecks = {
-  assertParent(): void;
-  hasRequestedMode(stat: TempWorkspaceIdentityStat): boolean;
-  validate(stat: TempWorkspaceIdentityStat): void;
 };
 
 type InitialTempWorkspaceChildReceipt = Readonly<{ stat: fsSync.BigIntStats }>;
@@ -145,7 +143,7 @@ export class TempWorkspaceRetainedChild {
     }
     this.#dir = dir;
     this.#identity = Object.freeze({ dev: identity.dev, ino: identity.ino });
-    this.#numericIdentity = LINUX
+    this.#numericIdentity = TEMP_WORKSPACE_NUMERIC_IDENTITY_REPLAY
       ? projectTempWorkspaceNumericIdentity(this.#identity)
       : undefined;
     this.#access = descriptor.access;
@@ -211,7 +209,8 @@ export class TempWorkspaceRetainedChild {
   }
 
   finalizeAdmission(
-    validate: (stat: TempWorkspaceIdentityStat) => void,
+    ownerUid: number | undefined,
+    mode: number,
   ): TempWorkspaceIdentityStat {
     this.#assertModeLeaseReleased();
     this.discardInitialReceipt();
@@ -225,14 +224,13 @@ export class TempWorkspaceRetainedChild {
       this.#identity,
       this.#numericIdentity,
     );
-    assertRetainedChildDirectory(current);
-    validate(current);
+    validateAdmittedTempWorkspaceChild(current, ownerUid, mode);
     const named = inspectTempWorkspaceDirectoryIdentitySync(
       this.#dir,
       this.#identity,
       this.#numericIdentity,
     );
-    validate(named);
+    validateAdmittedTempWorkspaceChild(named, ownerUid, mode);
     this.#transferAuthorized = true;
     return named;
   }
@@ -245,26 +243,25 @@ export class TempWorkspaceRetainedChild {
 
   #inspectModeTarget(
     fd: number,
-    validate: (stat: TempWorkspaceIdentityStat) => void,
+    ownerUid: number | undefined,
     initial?: fsSync.BigIntStats,
   ): TempWorkspaceIdentityStat {
     const descriptor = initial ?? inspectTempWorkspaceDescriptorIdentitySync(
       fd, this.#identity, this.#numericIdentity,
     );
-    assertRetainedChildDirectory(descriptor);
-    validate(descriptor);
+    assertTempWorkspaceChildState(descriptor, ownerUid);
     const named = inspectTempWorkspaceDirectoryIdentitySync(
       this.#dir,
       this.#identity,
       this.#numericIdentity,
     );
-    validate(named);
+    assertTempWorkspaceChildState(named, ownerUid);
     return descriptor;
   }
 
   async #assertProcAuthority(
     fd: number,
-    validate: (stat: fsSync.BigIntStats) => void,
+    ownerUid: number | undefined,
   ): Promise<void> {
     if ((await fs.statfs("/proc/self/fd", { bigint: true })).type !== 0x9fa0n) {
       throw new FsSafeError("path-mismatch", "directory mode requires a trusted procfs fd namespace");
@@ -279,13 +276,13 @@ export class TempWorkspaceRetainedChild {
       this.#identity,
     );
     assertOwnedDirectory(opened, followed);
-    validate(opened);
-    validate(followed);
+    assertTempWorkspaceChildState(opened, ownerUid);
+    assertTempWorkspaceChildState(followed, ownerUid);
   }
 
   #assertProcAuthoritySync(
     fd: number,
-    validate: (stat: fsSync.BigIntStats) => void,
+    ownerUid: number | undefined,
   ): void {
     if (fsSync.statfsSync("/proc/self/fd", { bigint: true }).type !== 0x9fa0n) {
       throw new FsSafeError("path-mismatch", "directory mode requires a trusted procfs fd namespace");
@@ -300,11 +297,15 @@ export class TempWorkspaceRetainedChild {
       this.#identity,
     );
     assertOwnedDirectory(opened, followed);
-    validate(opened);
-    validate(followed);
+    assertTempWorkspaceChildState(opened, ownerUid);
+    assertTempWorkspaceChildState(followed, ownerUid);
   }
 
-  async initializeMode(mode: number, checks: TempWorkspaceChildModeChecks): Promise<void> {
+  async initializeMode(
+    mode: number,
+    ownerUid: number | undefined,
+    assertParent: () => void,
+  ): Promise<void> {
     this.#assertModeLeaseReleased();
     this.discardInitialReceipt();
     if (this.#fd === undefined) {
@@ -314,20 +315,20 @@ export class TempWorkspaceRetainedChild {
     this.#transferAuthorized = false;
     this.#modeLease = true;
     try {
-      checks.assertParent();
-      let current = this.#inspectModeTarget(fd, checks.validate);
-      checks.assertParent();
-      if (checks.hasRequestedMode(current)) return;
+      assertParent();
+      let current = this.#inspectModeTarget(fd, ownerUid);
+      assertParent();
+      if (childHasRequestedMode(current, mode)) return;
       if (this.#proc) {
-        await this.#assertProcAuthority(fd, checks.validate);
+        await this.#assertProcAuthority(fd, ownerUid);
         // statfs is awaited. Rebind both names and the retained descriptor
         // after that turn before dispatching the procfs descriptor chmod.
-        checks.assertParent();
-        current = this.#inspectModeTarget(fd, checks.validate);
-        checks.assertParent();
-        if (checks.hasRequestedMode(current)) return;
+        assertParent();
+        current = this.#inspectModeTarget(fd, ownerUid);
+        assertParent();
+        if (childHasRequestedMode(current, mode)) return;
         await fs.chmod(`/proc/self/fd/${fd}`, mode & 0o7777);
-        await this.#assertProcAuthority(fd, checks.validate);
+        await this.#assertProcAuthority(fd, ownerUid);
       } else {
         await chmodDescriptor(fd, mode & 0o7777);
       }
@@ -338,7 +339,11 @@ export class TempWorkspaceRetainedChild {
     }
   }
 
-  initializeModeSync(mode: number, checks: TempWorkspaceChildModeChecks): void {
+  initializeModeSync(
+    mode: number,
+    ownerUid: number | undefined,
+    assertParent: () => void,
+  ): void {
     this.#assertModeLeaseReleased();
     if (this.#fd === undefined) {
       throw new FsSafeError("path-mismatch", "temp workspace child descriptor is unavailable");
@@ -347,13 +352,13 @@ export class TempWorkspaceRetainedChild {
     this.#transferAuthorized = false;
     this.#modeLease = true;
     try {
-      const current = this.#inspectModeTarget(fd, checks.validate, this.#consumeInitialReceipt());
-      checks.assertParent();
-      if (checks.hasRequestedMode(current)) return;
+      const current = this.#inspectModeTarget(fd, ownerUid, this.#consumeInitialReceipt());
+      assertParent();
+      if (childHasRequestedMode(current, mode)) return;
       if (this.#proc) {
-        this.#assertProcAuthoritySync(fd, checks.validate);
+        this.#assertProcAuthoritySync(fd, ownerUid);
         fsSync.chmodSync(`/proc/self/fd/${fd}`, mode & 0o7777);
-        this.#assertProcAuthoritySync(fd, checks.validate);
+        this.#assertProcAuthoritySync(fd, ownerUid);
       } else {
         fsSync.fchmodSync(fd, mode & 0o7777);
       }

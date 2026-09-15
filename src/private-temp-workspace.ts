@@ -31,7 +31,6 @@ import { TempWorkspaceRetainedChild } from "./temp-workspace-descriptor.js";
 import {
   admitRetainedTempWorkspaceChild,
   admitRetainedTempWorkspaceChildSync,
-  validateAdmittedTempWorkspaceChild,
   validateInitialTempWorkspaceChild,
 } from "./temp-workspace-child-admission.js";
 import {
@@ -217,13 +216,17 @@ async function createTempWorkspace(
     if (capability.parent) capability.assertCurrent();
     else admission.assertCurrent();
     stat = inspectDirectoryIdentitySync(dir);
-    validateInitialTempWorkspaceChild(stat, admission.ownerUid);
+    const needsModeInitialization = validateInitialTempWorkspaceChild(
+      stat,
+      admission.ownerUid,
+      dirMode,
+    );
     // Retain while the child still has its private creation mode so an
     // explicit dirMode such as 0 cannot make identity descriptor acquisition fail.
     retainedChild = TempWorkspaceRetainedChild.retain(dir, stat);
     const modeInitialization = admitRetainedTempWorkspaceChild(
       retainedChild,
-      stat,
+      needsModeInitialization,
       admission,
       dirMode,
     );
@@ -233,9 +236,7 @@ async function createTempWorkspace(
     // parent, then descriptor and named checks of the original child identity.
     if (capability.parent) capability.assertAncestryCurrent();
     else admission.assertAncestry();
-    stat = retainedChild.finalizeAdmission(
-      (current) => { validateAdmittedTempWorkspaceChild(current, admission.ownerUid, dirMode); },
-    );
+    stat = retainedChild.finalizeAdmission(admission.ownerUid, dirMode);
     cleanupOwner = new TempWorkspaceCleanupOwner(
       retainedChild,
       capability,
@@ -343,6 +344,7 @@ export function tempWorkspaceSync(
   let stat: BigIntStats | Stats;
   let retainedChild: TempWorkspaceRetainedChild | undefined;
   let retainChildDescriptor = false;
+  let needsModeInitialization: boolean;
   let cleanupOwner: TempWorkspaceCleanupOwner | undefined;
   let unregisterTempDir: () => void;
   try {
@@ -363,21 +365,32 @@ export function tempWorkspaceSync(
       const created = TempWorkspaceRetainedChild.retainCreated(dir);
       retainedChild = created.retained;
       stat = created.stat;
-      validateInitialTempWorkspaceChild(stat, admission.ownerUid);
+      needsModeInitialization = validateInitialTempWorkspaceChild(
+        stat,
+        admission.ownerUid,
+        dirMode,
+      );
     } else {
       stat = inspectDirectoryIdentitySync(dir);
-      validateInitialTempWorkspaceChild(stat, admission.ownerUid);
+      needsModeInitialization = validateInitialTempWorkspaceChild(
+        stat,
+        admission.ownerUid,
+        dirMode,
+      );
       retainedChild = TempWorkspaceRetainedChild.retain(dir, stat);
     }
-    admitRetainedTempWorkspaceChildSync(retainedChild, stat, admission, dirMode);
+    admitRetainedTempWorkspaceChildSync(
+      retainedChild,
+      needsModeInitialization,
+      admission,
+      dirMode,
+    );
     retainChildDescriptor = capability.admitChildDescriptor(retainedChild.ensureReadable());
     // Match async adoption: complete ancestry and retained cleanup authority
     // precede descriptor and named child security-state checks.
     if (capability.parent) capability.assertAncestryCurrent();
     else admission.assertAncestry();
-    stat = retainedChild.finalizeAdmission(
-      (current) => { validateAdmittedTempWorkspaceChild(current, admission.ownerUid, dirMode); },
-    );
+    stat = retainedChild.finalizeAdmission(admission.ownerUid, dirMode);
     cleanupOwner = new TempWorkspaceCleanupOwner(
       retainedChild,
       capability,

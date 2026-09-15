@@ -110,7 +110,9 @@ for (const variant of ["async", "sync"] as const) {
       expect(await fs.readFile(path.join(replacementChild, "keep"), "utf8")).toBe("replacement");
     });
 
-    it.runIf(variant === "sync" && process.platform === "linux").each(["unsafe", "mismatch"] as const)(
+    it.runIf(variant === "sync" && supportsDirectRequestedMode).each(
+      ["unsafe", "mismatch"] as const,
+    )(
       "keeps direct requested-mode %s identity replay exact",
       async (kind) => {
         const rootDir = await tempRoot("fs-safe-workspace-direct-identity-");

@@ -74,6 +74,10 @@ first exact child observation, final adoption retains a no-follow child
 descriptor, rechecks complete ancestry and retained cleanup-parent authority,
 and then validates the original child's descriptor and current name for exact
 identity, owner, private bits, and requested mode before cleanup is registered.
+Linux and macOS may replay exact identities through round-trip-safe nonnegative
+numeric `dev`/`ino` projections. Initial receipts that cannot be represented
+exactly stay on the BigInt path; a malformed or mismatched numeric replay fails
+closed without an exact retry.
 Parent or child replacements observed during creation reject before cleanup
 ownership is registered. Unverified artifacts are left in place for
 caller-directed recovery.

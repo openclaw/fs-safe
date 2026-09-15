@@ -139,7 +139,7 @@ describe.runIf(supportsDirectRequestedMode)("sync direct child descriptor admiss
     vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
       const stat = fstat(fd, options);
       if (childFds.has(fd)) {
-        if (process.platform === "linux") {
+        if (supportsDirectRequestedMode) {
           rememberRealChildIdentity(stat);
           if (isRealChildIdentity(stat)) projectChildIdentity(stat);
         }
@@ -151,7 +151,7 @@ describe.runIf(supportsDirectRequestedMode)("sync direct child descriptor admiss
     const lstat = fsSync.lstatSync.bind(fsSync);
     vi.spyOn(fsSync, "lstatSync").mockImplementation((name, options) => {
       const stat = lstat(name, options);
-      if (process.platform === "linux" && isRealChildIdentity(stat)) projectChildIdentity(stat);
+      if (supportsDirectRequestedMode && isRealChildIdentity(stat)) projectChildIdentity(stat);
       if (name === child) {
         childLstats += 1;
         if (options?.bigint === true) bigintLstats += 1;
@@ -186,12 +186,9 @@ describe.runIf(supportsDirectRequestedMode)("sync direct child descriptor admiss
     expect(childChmods).toBe(expectedChmods);
     expect(fstatsAtChmod).toBe(expectedChmods ? 1 : undefined);
     expect(lstatsAtChmod).toBe(expectedChmods ? 1 : undefined);
-    if (process.platform === "linux") {
+    if (supportsDirectRequestedMode) {
       expect(bigintFstats).toBe(1);
       expect(bigintLstats).toBe(0);
-    } else {
-      expect(bigintFstats).toBe(childFstats);
-      expect(bigintLstats).toBe(childLstats);
     }
     expect(childCloses).toBe(1);
     expect(register.mock.calls.map(([name]) => name)).toEqual([child]);

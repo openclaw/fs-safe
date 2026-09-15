@@ -11,6 +11,7 @@ import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
 const supportsDirectRequestedMode = process.platform === "linux" || process.platform === "darwin";
+const supportsNumericIdentityReplay = supportsDirectRequestedMode;
 
 function tempWorkspaceSyncWithUmask022(options: Parameters<typeof tempWorkspaceSync>[0]) {
   const previous = process.umask(0o022);
@@ -82,7 +83,7 @@ for (const variant of ["async", "sync"] as const) {
       vi.spyOn(fsSync, "lstatSync").mockImplementation((name, options) => {
         const stat = lstat(name, options);
         if (isWorkspaceChild(rootDir, name)) {
-          if (process.platform === "linux") projectChildIdentity(stat);
+          if (supportsNumericIdentityReplay) projectChildIdentity(stat);
           lstats += 1;
           if (options?.bigint === true) bigintLstats += 1;
         }
@@ -92,7 +93,7 @@ for (const variant of ["async", "sync"] as const) {
       vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
         const stat = fstat(fd, options);
         if (childFds.has(fd)) {
-          if (process.platform === "linux") projectChildIdentity(stat);
+          if (supportsNumericIdentityReplay) projectChildIdentity(stat);
           fstats += 1;
           if (options?.bigint === true) bigintFstats += 1;
         }
@@ -146,7 +147,7 @@ for (const variant of ["async", "sync"] as const) {
           expect(operations.chmods()).toBe(0);
           expect(operations.fstats()).toBe(1);
           expect(operations.lstats()).toBe(2);
-          if (process.platform === "linux") {
+          if (supportsNumericIdentityReplay) {
             expect(operations.bigintFstats()).toBe(0);
             expect(operations.bigintLstats()).toBe(1);
           }
@@ -280,12 +281,9 @@ for (const variant of ["async", "sync"] as const) {
           expect(operations.lstats()).toBe(usesDirectCreator
             ? modeCorrection ? 2 : 1
             : modeCorrection ? 3 : 2);
-          if (process.platform === "linux") {
+          if (supportsNumericIdentityReplay) {
             expect(operations.bigintFstats()).toBe(usesDirectCreator ? 1 : 0);
             expect(operations.bigintLstats()).toBe(usesDirectCreator ? 0 : 1);
-          } else if (process.platform === "darwin") {
-            expect(operations.bigintFstats()).toBe(operations.fstats());
-            expect(operations.bigintLstats()).toBe(operations.lstats());
           }
           expect(operations.opensAtFirstChmod()).toBe(modeCorrection ? 1 : undefined);
           expect(operations.fstatsAtFirstChmod()).toBe(modeCorrection ? 1 : undefined);

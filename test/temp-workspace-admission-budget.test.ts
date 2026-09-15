@@ -15,6 +15,8 @@ import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
 const supportsDirectRequestedMode = process.platform === "linux" || process.platform === "darwin";
+const supportsNumericIdentityReplay =
+  process.platform === "linux" || process.platform === "darwin";
 
 function tempWorkspaceSyncWithUmask022(options: Parameters<typeof tempWorkspaceSync>[0]) {
   const previous = process.umask(0o022);
@@ -90,7 +92,7 @@ for (const variant of ["async", "sync"] as const) {
         if (measuring) observations += 1;
         if (measuring && args[1]?.bigint === true) bigintObservations += 1;
         const stat = lstat(...args);
-        if (process.platform === "linux") projectIdentity(stat);
+        if (supportsNumericIdentityReplay) projectIdentity(stat);
         return stat;
       });
       const fstat = fsSync.fstatSync.bind(fsSync);
@@ -98,7 +100,7 @@ for (const variant of ["async", "sync"] as const) {
         if (measuring) observations += 1;
         if (measuring && args[1]?.bigint === true) bigintObservations += 1;
         const stat = fstat(...args);
-        if (process.platform === "linux") projectIdentity(stat);
+        if (supportsNumericIdentityReplay) projectIdentity(stat);
         return stat;
       });
       const canonicalize = vi.spyOn(realpathSync, "native");
@@ -158,7 +160,9 @@ for (const variant of ["async", "sync"] as const) {
         : directRequestedMode ? 2 : 3;
       expect(observations).toBe(2 * components + 8 +
         (nativeProbe ? 1 : 0) + correctionObservations);
-      if (process.platform === "linux") expect(bigintObservations).toBe(components + 1);
+      if (supportsNumericIdentityReplay) {
+        expect(bigintObservations).toBe(components + 1);
+      }
       expect(canonicalize).toHaveBeenCalledTimes(4 +
         (nativeProbe ? 1 : 0) + (modeCorrection ? (variant === "sync" ? 1 : 2) : 0));
       expect(modeChanges).toBe(modeCorrection ? 1 : 0);
@@ -168,7 +172,7 @@ for (const variant of ["async", "sync"] as const) {
   });
 }
 
-describe.runIf(process.platform === "linux")("temp workspace numeric identity replay", () => {
+describe.runIf(supportsNumericIdentityReplay)("temp workspace numeric identity replay", () => {
   it.each(["device", "inode", "unsafe"] as const)(
     "rejects a definite numeric %s mismatch without an exact retry",
     async (change) => {

@@ -9,6 +9,8 @@ import * as cleanup from "../src/temp-cleanup.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
+const supportsNumericIdentityReplay =
+  process.platform === "linux" || process.platform === "darwin";
 type SafeIdentity = Readonly<{ dev: number; ino: number }>;
 
 function projectSafeIdentity(
@@ -119,9 +121,10 @@ for (const variant of ["async", "sync"] as const) {
             if (options?.bigint === true) exact += 1;
             else if (exact > 0) {
               numeric += 1;
-              // Linux reuses the discovery receipt once at precreation. Other
-              // POSIX platforms retain the prior exact precreation replay.
-              const finalReplay = process.platform === "linux" ? 3 : 2;
+              // Linux and macOS reuse the discovery receipt once at
+              // precreation. Other POSIX platforms retain the prior exact
+              // precreation replay.
+              const finalReplay = supportsNumericIdentityReplay ? 3 : 2;
               if (numeric === finalReplay && typeof stat.ino === "number") stat.ino += 1;
             }
           }
@@ -138,8 +141,8 @@ for (const variant of ["async", "sync"] as const) {
         const canonicalize = vi.spyOn(realpathSync, "native");
         const register = vi.spyOn(cleanup, "registerTempPathForExit");
         await expect(create(rootDir)).rejects.toMatchObject({ code: "path-mismatch" });
-        expect(exact).toBe(process.platform === "linux" ? 1 : 2);
-        expect(numeric).toBe(process.platform === "linux" ? 3 : 2);
+        expect(exact).toBe(supportsNumericIdentityReplay ? 1 : 2);
+        expect(numeric).toBe(supportsNumericIdentityReplay ? 3 : 2);
         expect(canonicalize.mock.calls.filter(([name]) =>
           name === rootDir || name === admittedRoot)).toHaveLength(3);
         expect(register).not.toHaveBeenCalled();
