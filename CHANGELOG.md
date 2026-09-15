@@ -5,6 +5,10 @@
 ### Security
 
 - Sanitize unusable filename fallbacks through the same basename, character, final reserved-device, and length pipeline as primary names, and reject non-component, device, stream, and Windows-aliased sibling callback staging names before invoking producers.
+- Use the effective POSIX user identity for secure-file ownership checks, failing closed before reading when ownership checks are enabled and the effective identity or descriptor owner cannot be established; descriptor-bound Windows ACL verification is unchanged.
+- Isolate the manual split-credential proof across separate candidate, historical, and clean execution runners, bind bounded build artifacts to exact provenance, and run only root-staged, identity-checked proof tools and harness files.
+- Authenticate the manual proof runtime against pinned official Node archives before checkout, keep staging private under a verified system parent, and diagnose dropped-credential startup, traversal, and authenticated code-read admission with bounded inline probes before the unchanged seven behavioral cases.
+- Place split-credential proof fixtures beneath the authenticated root-owned stage so both dropped identities can traverse their complete path, while keeping published receipts in the separately admitted runner-owned container.
 
 ### Archive performance
 
