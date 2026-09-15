@@ -2,7 +2,14 @@
 
 ## Unreleased
 
+### Security
+
 - Snapshot borrowed file-handle transfer budgets, cancellation, observers, and mutation-authority callbacks before descriptor inspection, including inherited and non-enumerable options, so later caller mutation cannot replace the admitted transfer policy.
+
+### Validation and tooling
+
+- Separate the reviewed manual method-audit harness from immutable candidate and baseline checkouts, validate and resolve dispatch inputs before platform fan-out, and support Node 22/24 plus rebuild and same-artifact controls without changing the ordinary PR/schedule benchmark job.
+- Add versioned, mutation-checked benchmark provenance for trusted reviewed revisions, including harness/source identities, measurement and report-file receipts, manifests, lockfiles, dist trees, bounded dependency layouts, native addons, and runner metadata; this detects accidental drift but is not a sandbox for hostile benchmark code.
 
 ## 0.12.0 - 2026-09-15
 
