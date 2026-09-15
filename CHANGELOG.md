@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Count ASCII path-component bytes directly while retaining normalized UTF-8 limits for non-ASCII names.
 - Reduce retained decoded buffers when reading gzip TAR entries in JavaScript by filling one owned result buffer from the fully admitted payload size, preserving complete archive validation and independent returned bytes.
 - Avoid repeated relative-path resolution for normalized Windows drive-path descendants, retaining the existing comparison for UNC paths and colon-bearing components.
 - Add `safePathSegmentHashedV2` for untrusted install identifiers, hashing every trimmed ID with domain-separated SHA-256 into a fixed lowercase segment; preserve the legacy encoder's output and document its deterministic aliases and explicit migration requirements.
