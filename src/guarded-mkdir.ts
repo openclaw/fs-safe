@@ -6,11 +6,7 @@ import { FsSafeError } from "./errors.js";
 import { isNotFoundPathError, isPathRelativeEscape } from "./path.js";
 import { directoryComponentNotDirectoryError } from "./root-errors.js";
 import { realpathSync } from "./realpath.js";
-
-function isSameOrChildPath(candidate: string, parent: string): boolean {
-  const parentPrefix = parent.endsWith(path.sep) ? parent : `${parent}${path.sep}`;
-  return candidate === parent || candidate.startsWith(parentPrefix);
-}
+import { admitPathInsideRoot, type RootBoundaryIdentity } from "./root-boundary.js";
 
 async function realpathOrThrowNotFile(target: string): Promise<string> {
   try {
@@ -38,16 +34,20 @@ export async function mkdirPathComponentsWithGuards(params: {
   assertBeforeMutation?: () => void;
   mode?: number;
   rejectSymlinks?: boolean;
+  rootIdentity?: RootBoundaryIdentity;
 }): Promise<string> {
   const root = path.resolve(params.rootReal);
   const rootCanonical = path.resolve(realpathSync.native(root));
-  const target = path.resolve(params.targetPath);
-  const relative = path.relative(root, target);
-  if (isPathRelativeEscape(relative)) {
+  const admittedTarget = admitPathInsideRoot({
+    rootPath: rootCanonical,
+    candidatePath: path.resolve(params.targetPath),
+    rootIdentity: params.rootIdentity,
+  });
+  if (!admittedTarget || isPathRelativeEscape(admittedTarget.relativePath)) {
     throw new FsSafeError("outside-workspace", "directory is outside workspace root");
   }
-  let current = root;
-  for (const part of relative.split(path.sep).filter(Boolean)) {
+  let current = rootCanonical;
+  for (const part of admittedTarget.relativePath.split(path.sep).filter(Boolean)) {
     const next = path.join(current, part);
     const parentGuard = await createAsyncDirectoryGuard(current);
     await assertAsyncDirectoryGuard(parentGuard);
@@ -66,10 +66,16 @@ export async function mkdirPathComponentsWithGuards(params: {
     }
     // Node's recursive mkdir follows symlinks in missing components. Build one
     // segment at a time and realpath-check each segment before descending.
-    const nextReal = await realpathOrThrowNotFile(next);
-    if (!isSameOrChildPath(nextReal, rootCanonical)) {
+    const observedNextReal = await realpathOrThrowNotFile(next);
+    const admittedNextReal = admitPathInsideRoot({
+      rootPath: rootCanonical,
+      candidatePath: observedNextReal,
+      rootIdentity: params.rootIdentity,
+    });
+    if (!admittedNextReal) {
       throw new FsSafeError("outside-workspace", "directory escaped workspace root");
     }
+    const nextReal = admittedNextReal.path;
     if (stat.isSymbolicLink()) {
       // An existing path component may legitimately be a symlink to a real
       // directory inside the root (e.g. a skill-bank layout). We already
