@@ -45,8 +45,6 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-15, windows-latest]
-    env:
-      MUTATION_POLICY_RECEIPT: ${{ runner.temp }}/mutation-policy-proof-${{ runner.os }}.json
     steps:
       - name: Check out exact event head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -59,6 +57,8 @@ jobs:
         id: initialize
         if: always()
         shell: bash
+        env:
+          MUTATION_POLICY_RECEIPT: ${{ runner.temp }}/mutation-policy-proof-${{ runner.os }}.json
         run: node scripts/mutation-policy-proof.mjs --initialize --receipt "$MUTATION_POLICY_RECEIPT"
 
       - name: Set up pnpm
@@ -97,6 +97,8 @@ jobs:
         if: always()
         timeout-minutes: 4
         shell: bash
+        env:
+          MUTATION_POLICY_RECEIPT: ${{ runner.temp }}/mutation-policy-proof-${{ runner.os }}.json
         run: >-
           node scripts/mutation-policy-proof.mjs --run
           --receipt "$MUTATION_POLICY_RECEIPT"
@@ -111,6 +113,8 @@ jobs:
       - name: Preserve one canonical receipt on every path
         if: always()
         shell: bash
+        env:
+          MUTATION_POLICY_RECEIPT: ${{ runner.temp }}/mutation-policy-proof-${{ runner.os }}.json
         run: |
           set +e
           node scripts/mutation-policy-proof.mjs --ensure --receipt "$MUTATION_POLICY_RECEIPT"
@@ -125,6 +129,8 @@ jobs:
       - name: Upload exact mutation proof receipt
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        env:
+          MUTATION_POLICY_RECEIPT: ${{ runner.temp }}/mutation-policy-proof-${{ runner.os }}.json
         with:
           name: mutation-policy-proof-${{ runner.os }}-node-24-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.MUTATION_POLICY_RECEIPT }}

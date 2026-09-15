@@ -395,7 +395,41 @@ describe("mutation policy hosted proof contract", () => {
     expect(workflow).toContain("Preserve one canonical receipt on every path\n        if: always()");
     expect(workflow).toContain("Upload exact mutation proof receipt\n        if: always()");
     expect(workflow).toContain("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a");
-    expect(workflow).toContain("path: ${{ env.MUTATION_POLICY_RECEIPT }}");
+    const jobStart = workflow.indexOf("  public-behavior-proof:\n");
+    const stepsStart = workflow.indexOf("    steps:\n", jobStart);
+    expect(jobStart).toBeGreaterThanOrEqual(0);
+    expect(stepsStart).toBeGreaterThan(jobStart);
+    expect(workflow.slice(jobStart, stepsStart)).not.toMatch(/\brunner\s*\./u);
+    const stepItems = workflow.slice(stepsStart + "    steps:\n".length)
+      .split(/(?=^      - )/mu)
+      .filter((item) => item.startsWith("      - "));
+    const step = (name: string) => {
+      const marker = `      - name: ${name}\n`;
+      const matches = stepItems.filter((item) => item.startsWith(marker));
+      expect(matches, `workflow step count: ${name}`).toHaveLength(1);
+      return matches[0]!;
+    };
+    const receiptBinding =
+      "        env:\n" +
+      "          MUTATION_POLICY_RECEIPT: ${{ runner.temp }}/mutation-policy-proof-${{ runner.os }}.json";
+    for (const [name, consumer] of [
+      ["Initialize pending sanitized receipt", "--initialize --receipt \"$MUTATION_POLICY_RECEIPT\""],
+      ["Run bounded public mutation proof", "--receipt \"$MUTATION_POLICY_RECEIPT\""],
+      ["Preserve one canonical receipt on every path", "--ensure --receipt \"$MUTATION_POLICY_RECEIPT\""],
+      ["Upload exact mutation proof receipt", "path: ${{ env.MUTATION_POLICY_RECEIPT }}"],
+    ] as const) {
+      expect(step(name)).toContain(receiptBinding);
+      expect(step(name)).toContain(consumer);
+    }
+    const upload = step("Upload exact mutation proof receipt");
+    const uploadWith = upload.indexOf("\n        with:\n");
+    expect(uploadWith).toBeGreaterThanOrEqual(0);
+    expect(upload.slice(uploadWith)).toMatch(
+      /^          path: \$\{\{ env\.MUTATION_POLICY_RECEIPT \}\}$/mu,
+    );
+    expect(workflow.match(
+      /^          MUTATION_POLICY_RECEIPT: \$\{\{ runner\.temp \}\}\/mutation-policy-proof-\$\{\{ runner\.os \}\}\.json$/gmu,
+    )).toHaveLength(4);
     expect(workflow).not.toMatch(/path:\s*[|>]\s*$/mu);
     expect(workflow).not.toMatch(/MUTATION_POLICY_RECEIPT[^\n]*[*?]/u);
     const shellFallback = workflow.match(/printf '%s\\n' '(\{[^'\r\n]+\})' > "\$fallback"/u)?.[1];
