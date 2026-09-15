@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterAll, expect, vi } from "vitest";
+import { SIDECAR_PACKAGE_COPY_TIMINGS } from "../test/helpers/sidecar-package-copy-timeouts.js";
 
 const copy = fs.cp.bind(fs);
 const remove = fs.rm.bind(fs);
@@ -19,8 +20,8 @@ const copySpy = vi.spyOn(fs, "cp").mockImplementation((source, destination, opti
   directory = path.dirname(path.dirname(destination));
   copies++;
   pending = (async () => {
-    // Exceed the ordinary five-second test deadline, without slowing the child.
-    await delay(6_000);
+    // Exceed this platform's package-copy test deadline, without slowing the child.
+    await delay(SIDECAR_PACKAGE_COPY_TIMINGS.slowCopyDelayMs);
     await copy(source, destination, options);
     copied = true;
   })();
@@ -47,4 +48,4 @@ afterAll(async () => {
     // The failing baseline may recreate files after its own early teardown.
     if (directory) await remove(directory, { recursive: true, force: true });
   }
-}, 30_000);
+}, SIDECAR_PACKAGE_COPY_TIMINGS.hookTimeoutMs);

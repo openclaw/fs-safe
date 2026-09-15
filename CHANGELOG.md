@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Give the Windows slow physical-package-copy sidecar proof separate setup, test, child, and teardown budgets with bounded child failure diagnostics, while preserving ordinary helper deadlines elsewhere.
+
 - Keep budgeted-walk cancellation fixture setup outside its test deadline, and drain fixture writes before cleanup on slow or failing filesystems.
 
 - Reuse raw archive path segments during validation, preserving platform checks, normalized component limits, and error order.
