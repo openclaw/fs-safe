@@ -1,30 +1,12 @@
 import { createHash } from "node:crypto";
 import fsSync from "node:fs";
-import fs, { type FileHandle } from "node:fs/promises";
+import fs from "node:fs/promises";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { copyFileHandle } from "../src/advanced.js";
-import { useRealTempDirs } from "./helpers/vitest.js";
+import { useFileHandleTransferFixture } from "./helpers/file-handle-transfer.js";
 
-const { tempRoot } = useRealTempDirs();
-const handles: FileHandle[] = [];
-afterEach(async () => {
-  vi.restoreAllMocks();
-  await Promise.all(handles.splice(0).map(handle => handle.close()));
-});
-
-async function fixture(content: string | Buffer = "source bytes", prior = "original target with a tail") {
-  const directory = await tempRoot("fs-safe-handle-transfer-");
-  const sourcePath = path.join(directory, "source");
-  const targetPath = path.join(directory, "target");
-  await fs.writeFile(sourcePath, content, { mode: 0o600 });
-  await fs.writeFile(targetPath, prior, { mode: 0o640 });
-  const source = await fs.open(sourcePath, "r");
-  handles.push(source);
-  const target = await fs.open(targetPath, "r+");
-  handles.push(target);
-  return { source, target, sourcePath, targetPath, content: Buffer.from(content), prior };
-}
+const { fixture, trackHandle } = useFileHandleTransferFixture();
 
 describe("borrowed FileHandle copying", () => {
   it("copies from zero, preserves both cursors and modes, and leaves target suffixes and handles owned by the caller", async () => {
@@ -239,8 +221,7 @@ describe("borrowed FileHandle copying", () => {
 
   it.skipIf(process.platform === "win32")("refuses a directory handle without changing its target", async () => {
     const f = await fixture();
-    const directory = await fs.open(path.dirname(f.sourcePath), "r");
-    handles.push(directory);
+    const directory = trackHandle(await fs.open(path.dirname(f.sourcePath), "r"));
     await expect(copyFileHandle(directory, f.target)).rejects.toMatchObject({ code: "not-file" });
     expect(await fs.readFile(f.targetPath, "utf8")).toBe(f.prior);
   });
@@ -251,8 +232,7 @@ describe("borrowed FileHandle copying", () => {
     if (kind === "hardlink") {
       const alias = `${f.sourcePath}.alias`;
       await fs.link(f.sourcePath, alias);
-      target = await fs.open(alias, "r+");
-      handles.push(target);
+      target = trackHandle(await fs.open(alias, "r+"));
     }
     await expect(copyFileHandle(f.source, target)).rejects.toMatchObject({ code: "path-alias" });
     expect(await fs.readFile(f.sourcePath)).toEqual(f.content);

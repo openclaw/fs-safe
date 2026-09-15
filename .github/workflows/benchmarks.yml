@@ -68,6 +68,10 @@ on:
         description: Optional exact reviewed workflow commit expected to supply the harness
         type: string
         default: ""
+      transfer_diagnostics:
+        description: Unscored Windows/off Node 24 transfer traces (50 iterations, 9 samples, one balanced block)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -258,6 +262,33 @@ jobs:
           name: method-audit-${{ matrix.platform }}-${{ github.run_id }}
           path: ${{ env.REPORT_ROOT }}/
           if-no-files-found: warn
+
+      - name: Collect unscored transfer diagnostics
+        id: transfer_diagnostics
+        if: success() && inputs.transfer_diagnostics
+        timeout-minutes: 20
+        env:
+          TRANSFER_DIAGNOSTIC_ROOT: ${{ runner.temp }}/transfer-performance-diagnostics
+        run: |
+          node "$HARNESS_ROOT/scripts/transfer-performance-diagnostic.mjs" \
+            --plan "$PLAN_PATH" \
+            --expected-plan-file-hash "$EXPECTED_PLAN_FILE_HASH" \
+            --harness-root "$HARNESS_ROOT" \
+            --candidate-root "$CANDIDATE_ROOT" \
+            --baseline-root "$BASELINE_ROOT" \
+            --scored-root "$REPORT_ROOT" \
+            --output-root "$TRANSFER_DIAGNOSTIC_ROOT"
+
+      - name: Upload unscored transfer diagnostics
+        if: always() && inputs.transfer_diagnostics && steps.transfer_diagnostics.outcome != 'skipped'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unscored-transfer-diagnostics-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/transfer-performance-diagnostics/receipt.json
+            ${{ runner.temp }}/transfer-performance-diagnostics/files/
+          if-no-files-found: error
+          retention-days: 7
 
   benchmark:
     name: Node 22 benchmarks
