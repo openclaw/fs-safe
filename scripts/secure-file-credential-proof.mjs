@@ -2,7 +2,9 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 
 const PROOF = "secure-file-split-credential";
@@ -14,11 +16,28 @@ const PROOF_GID = 61003;
 const EXPECTED_CONTENT = Buffer.from("fs-safe split-credential synthetic payload\n", "utf8");
 const MAX_CAPTURE_BYTES = 64 * 1024;
 const MAX_TRACE_BYTES = 1024 * 1024;
-const MAX_PACKAGE_BYTES = 512 * 1024 * 1024;
+const MAX_PACKAGE_BYTES = 128 * 1024 * 1024;
+const MAX_PACKAGE_FILES = 4096;
+const MAX_PACKAGE_ENTRIES = 8192;
+const MAX_PACKAGE_DEPTH = 32;
+const MAX_TOOL_BYTES = 256 * 1024 * 1024;
+const MAX_DIAGNOSTIC_FIELDS = 8;
+const STAGE_MANIFEST_PROOF = "secure-file-split-credential-stage";
+const BUNDLE_PROOF = "secure-file-split-credential-bundle";
+const ARTIFACT_PROOF = "secure-file-split-credential-artifact";
+const FAILURE_RECEIPTS = new Set([
+  '{"schema":1,"proof":"secure-file-split-credential","overall":false,"failure":{"stage":"workflow-initialization","name":"ProofError","code":"PROOF_NOT_STARTED"},"workflow":{"fallback":true,"receiptAllowlisted":true}}\n',
+  '{"schema":1,"proof":"secure-file-split-credential","overall":false,"failure":{"stage":"workflow-fallback","name":"ProofError","code":"RECEIPT_MISSING"},"workflow":{"fallback":true,"receiptAllowlisted":true}}\n',
+]);
 const ALLOWED_ARGUMENTS = new Set([
-  "candidate",
-  "baseline",
+  "candidate-bundle",
+  "historical-bundle",
+  "candidate-attestation",
+  "historical-attestation",
+  "manifest",
+  "coordinator",
   "worker",
+  "workflow",
   "proof-parent",
   "receipt",
   "node",
@@ -27,14 +46,37 @@ const ALLOWED_ARGUMENTS = new Set([
   "strace",
   "timeout",
   "getent",
+  "bash",
+  "env",
+  "ldd",
   "builder-uid",
   "builder-gid",
   "candidate-head",
   "candidate-tree",
-  "baseline-head",
-  "baseline-tree",
+  "historical-head",
+  "historical-tree",
+  "candidate-artifact-id",
+  "candidate-artifact-digest",
+  "historical-artifact-id",
+  "historical-artifact-digest",
+  "run-id",
+  "run-attempt",
+  "runner-image",
+  "runner-image-version",
   "expected-node",
 ]);
+const TOOL_NAMES = [
+  "node",
+  "prlimit",
+  "setpriv",
+  "strace",
+  "timeout",
+  "getent",
+  "bash",
+  "env",
+  "ldd",
+];
+const STAGED_FILE_NAMES = [...TOOL_NAMES, "coordinator", "worker", "workflow"];
 const CASES = [
   {
     case: "equal-owner",
@@ -148,14 +190,27 @@ let receiptPath;
 let builderUid;
 let builderGid;
 let rawTracesRemoved = true;
+let failureDiagnostic = null;
 const caseReceipts = [];
 const toolReceipts = {};
 const libraryReceipts = {};
+const artifactReceipts = {};
+const durationsMs = {};
+const proofStartedAt = performance.now();
 const harnessReceipt = {
   argumentArraySpawn: true,
   shellDisabled: true,
+  stagedUnderOpt: false,
+  rootOwned: false,
+  nonWritable: false,
+  regularFiles: false,
+  linkCountOne: false,
+  identityStable: false,
+  manifestValidated: false,
   coordinatorSha256: null,
   workerSha256: null,
+  workflowSha256: null,
+  sourceCopyHashesMatch: false,
   workerCopiesMatch: false,
 };
 const credentialReceipt = {
@@ -185,7 +240,22 @@ const fixtureReceipt = {
 
 process.umask(0o077);
 
-function proofError(code) {
+function safeDiagnostic(diagnostic) {
+  if (diagnostic === null || typeof diagnostic !== "object" || Array.isArray(diagnostic)) return null;
+  const clean = {};
+  for (const [key, value] of Object.entries(diagnostic).slice(0, MAX_DIAGNOSTIC_FIELDS)) {
+    if (!/^[A-Za-z][A-Za-z0-9]{0,31}$/.test(key)) continue;
+    if (typeof value === "boolean" || (Number.isSafeInteger(value) && value >= 0)) {
+      clean[key] = value;
+    } else if (typeof value === "string" && /^[A-Za-z0-9_.-]{1,80}$/.test(value)) {
+      clean[key] = value;
+    }
+  }
+  return Object.keys(clean).length === 0 ? null : clean;
+}
+
+function proofError(code, diagnostic = null) {
+  failureDiagnostic = safeDiagnostic(diagnostic);
   const error = new Error(code);
   error.code = code;
   throw error;
@@ -221,6 +291,29 @@ function validateSha(value) {
   return value;
 }
 
+function validateDigest(value) {
+  if (!/^[0-9a-f]{64}$/.test(value)) proofError("INVALID_ARTIFACT_DIGEST");
+  return value;
+}
+
+function validatePositiveIntegerToken(value, code = "INVALID_ARGUMENTS") {
+  if (!/^[1-9][0-9]*$/.test(value)) proofError(code);
+  return value;
+}
+
+function validateSafeLabel(value, fallback = null) {
+  return typeof value === "string" && /^[A-Za-z0-9_.-]{1,100}$/.test(value) ? value : fallback;
+}
+
+async function timed(name, operation) {
+  const started = performance.now();
+  try {
+    return await operation();
+  } finally {
+    durationsMs[name] = Math.round((performance.now() - started) * 1000) / 1000;
+  }
+}
+
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -229,45 +322,64 @@ function identitiesMatch(left, right) {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
-async function stableReadFile(file, expectedOwner, limit = MAX_PACKAGE_BYTES) {
+async function stableReadFile(
+  file,
+  expectedOwner,
+  limit = MAX_PACKAGE_BYTES,
+  expectedGid = expectedOwner === 0 ? 0 : builderGid,
+  diagnosticName = "file",
+) {
   const before = await fs.lstat(file, { bigint: true });
   if (
     !before.isFile() ||
     before.isSymbolicLink() ||
     before.nlink !== 1n ||
     before.uid !== BigInt(expectedOwner) ||
-    before.gid !== BigInt(expectedOwner === 0 ? 0 : builderGid) ||
+    before.gid !== BigInt(expectedGid) ||
+    (before.mode & 0o022n) !== 0n ||
+    (before.mode & 0o7000n) !== 0n ||
     before.size < 0n ||
     before.size > BigInt(limit)
   ) {
-    proofError("UNTRUSTED_SOURCE_FILE");
+    proofError("UNTRUSTED_SOURCE_FILE", {
+      subject: diagnosticName,
+      reason: "metadata",
+      uid: Number(before.uid),
+      gid: Number(before.gid),
+      mode: Number(before.mode & 0o7777n),
+      links: Number(before.nlink),
+    });
   }
   const handle = await fs.open(file, fsSync.constants.O_RDONLY | fsSync.constants.O_NOFOLLOW);
   try {
     const opened = await handle.stat({ bigint: true });
-    if (!opened.isFile() || !identitiesMatch(before, opened) || opened.size !== before.size) {
-      proofError("SOURCE_FILE_CHANGED");
+    if (
+      !opened.isFile() ||
+      !identitiesMatch(before, opened) ||
+      opened.size !== before.size ||
+      opened.uid !== before.uid ||
+      opened.gid !== before.gid ||
+      opened.mode !== before.mode ||
+      opened.nlink !== 1n
+    ) {
+      proofError("SOURCE_FILE_CHANGED", { subject: diagnosticName, reason: "open-identity" });
     }
     const buffer = await handle.readFile();
     const after = await handle.stat({ bigint: true });
-    if (!identitiesMatch(opened, after) || after.size !== opened.size || BigInt(buffer.length) !== opened.size) {
-      proofError("SOURCE_FILE_CHANGED");
+    if (
+      !identitiesMatch(opened, after) ||
+      after.size !== opened.size ||
+      after.uid !== opened.uid ||
+      after.gid !== opened.gid ||
+      after.mode !== opened.mode ||
+      after.nlink !== 1n ||
+      BigInt(buffer.length) !== opened.size
+    ) {
+      proofError("SOURCE_FILE_CHANGED", { subject: diagnosticName, reason: "read-identity" });
     }
     return buffer;
   } finally {
     await handle.close();
-  }
-}
-
-async function validateSourceDirectory(directory) {
-  const stat = await fs.lstat(directory, { bigint: true });
-  if (
-    !stat.isDirectory() ||
-    stat.isSymbolicLink() ||
-    stat.uid !== BigInt(builderUid) ||
-    stat.gid !== BigInt(builderGid)
-  ) {
-    proofError("UNTRUSTED_SOURCE_DIRECTORY");
   }
 }
 
@@ -284,38 +396,294 @@ async function writeRootFile(destination, buffer, mode = 0o444) {
   await fs.chmod(destination, mode);
 }
 
-async function listSourceFiles(root, relative = "") {
-  const directory = relative === "" ? root : path.join(root, relative);
-  await validateSourceDirectory(directory);
-  const entries = await fs.readdir(directory, { withFileTypes: true });
-  entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
-  const files = [];
-  for (const entry of entries) {
-    if (entry.name === "." || entry.name === "..") proofError("INVALID_SOURCE_ENTRY");
-    const childRelative = relative === "" ? entry.name : `${relative}/${entry.name}`;
-    const child = path.join(root, ...childRelative.split("/"));
-    const stat = await fs.lstat(child, { bigint: true });
-    if (stat.isSymbolicLink()) proofError("UNTRUSTED_SOURCE_SYMLINK");
-    if (stat.isDirectory()) {
-      files.push(...await listSourceFiles(root, childRelative));
-    } else if (stat.isFile()) {
-      files.push(childRelative);
-    } else {
-      proofError("UNTRUSTED_SOURCE_ENTRY");
-    }
+async function validateArtifactDirectory(directory, diagnosticName) {
+  const stat = await fs.lstat(directory, { bigint: true });
+  if (
+    !stat.isDirectory() ||
+    stat.isSymbolicLink() ||
+    stat.uid !== BigInt(builderUid) ||
+    stat.gid !== BigInt(builderGid) ||
+    (stat.mode & 0o022n) !== 0n ||
+    (stat.mode & 0o7000n) !== 0n
+  ) {
+    proofError("UNTRUSTED_SOURCE_DIRECTORY", {
+      subject: diagnosticName,
+      reason: "metadata",
+      uid: Number(stat.uid),
+      gid: Number(stat.gid),
+      mode: Number(stat.mode & 0o7777n),
+    });
   }
-  return files;
+  return stat;
 }
 
-async function copyDirectory(source, destination) {
-  const files = await listSourceFiles(source);
+function parseJson(buffer, code) {
+  let value;
+  try {
+    value = JSON.parse(buffer.toString("utf8"));
+  } catch {
+    proofError(code);
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) proofError(code);
+  return value;
+}
+
+function hasExactKeys(value, expected) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  return JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...expected].sort());
+}
+
+async function rejectExecutableArtifact(file, diagnosticName) {
+  const stat = await fs.lstat(file, { bigint: true });
+  if ((stat.mode & 0o111n) !== 0n) {
+    proofError("EXECUTABLE_ARTIFACT_REJECTED", {
+      subject: diagnosticName,
+      reason: "executable",
+      mode: Number(stat.mode & 0o7777n),
+    });
+  }
+}
+
+async function validateAttestation(file, expected) {
+  await rejectExecutableArtifact(file, `${expected.role}-attestation`);
+  const buffer = await stableReadFile(file, builderUid, 16 * 1024, builderGid, `${expected.role}-attestation`);
+  const value = parseJson(buffer, "INVALID_ARTIFACT_ATTESTATION");
+  const canonical = `${JSON.stringify({
+    schema: 1,
+    proof: ARTIFACT_PROOF,
+    role: expected.role,
+    node: expected.node,
+    runId: expected.runId,
+    runAttempt: expected.runAttempt,
+    artifactName: expected.artifactName,
+    artifactId: expected.artifactId,
+    artifactDigest: expected.artifactDigest,
+  })}\n`;
+  if (
+    !hasExactKeys(value, [
+      "schema",
+      "proof",
+      "role",
+      "node",
+      "runId",
+      "runAttempt",
+      "artifactName",
+      "artifactId",
+      "artifactDigest",
+    ]) ||
+    value.schema !== 1 ||
+    value.proof !== ARTIFACT_PROOF ||
+    value.role !== expected.role ||
+    value.node !== expected.node ||
+    value.runId !== expected.runId ||
+    value.runAttempt !== expected.runAttempt ||
+    value.artifactName !== expected.artifactName ||
+    value.artifactId !== expected.artifactId ||
+    value.artifactDigest !== expected.artifactDigest ||
+    buffer.toString("utf8") !== canonical
+  ) {
+    proofError("ARTIFACT_IDENTITY_MISMATCH", { role: expected.receiptRole, reason: "attestation" });
+  }
+  return {
+    id: value.artifactId,
+    digest: value.artifactDigest,
+    nameSha256: sha256(value.artifactName),
+    attestationSha256: sha256(buffer),
+    exactRoleBinding: true,
+    selectedByArtifactId: true,
+    artifactDigestBound: true,
+    transportDigestVerifiedByPinnedAction: true,
+  };
+}
+
+async function validateBundle(root, expected) {
+  const canonical = await fs.realpath(root);
+  if (canonical !== root) {
+    proofError("NONCANONICAL_BUNDLE", { role: expected.receiptRole, reason: "root" });
+  }
+  await validateArtifactDirectory(root, `${expected.receiptRole}-bundle`);
+  const top = await fs.readdir(root, { withFileTypes: true });
+  top.sort((left, right) => left.name.localeCompare(right.name));
+  if (
+    JSON.stringify(top.map((entry) => entry.name)) !==
+      JSON.stringify(["dist", "package.json", "provenance.json"])
+  ) {
+    proofError("UNEXPECTED_BUNDLE_ENTRY", { role: expected.receiptRole, reason: "top-level" });
+  }
+
+  const pending = [{ relative: "dist", depth: 1 }];
+  const files = [];
+  let totalBytes = 0;
+  let entryCount = 0;
+  while (pending.length > 0) {
+    const { relative, depth } = pending.pop();
+    if (depth > MAX_PACKAGE_DEPTH) {
+      proofError("BUNDLE_DEPTH_LIMIT", { role: expected.receiptRole, reason: "depth" });
+    }
+    const directory = path.join(root, ...relative.split("/"));
+    await validateArtifactDirectory(directory, `${expected.receiptRole}-dist`);
+    const entries = await fs.readdir(directory, { withFileTypes: true });
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      entryCount += 1;
+      if (entryCount > MAX_PACKAGE_ENTRIES) {
+        proofError("BUNDLE_ENTRY_LIMIT", { role: expected.receiptRole, reason: "count" });
+      }
+      if (
+        !/^[A-Za-z0-9._@+-]{1,255}$/.test(entry.name) ||
+        entry.name.startsWith(".") ||
+        entry.name === "." ||
+        entry.name === ".."
+      ) {
+        proofError("INVALID_BUNDLE_ENTRY", { role: expected.receiptRole, reason: "name" });
+      }
+      const childRelative = `${relative}/${entry.name}`;
+      const child = path.join(root, ...childRelative.split("/"));
+      const stat = await fs.lstat(child, { bigint: true });
+      if (stat.isSymbolicLink()) {
+        proofError("UNTRUSTED_SOURCE_SYMLINK", { role: expected.receiptRole, reason: "symlink" });
+      }
+      if (stat.isDirectory()) {
+        pending.push({ relative: childRelative, depth: depth + 1 });
+        continue;
+      }
+      if (
+        !stat.isFile() ||
+        stat.nlink !== 1n ||
+        stat.uid !== BigInt(builderUid) ||
+        stat.gid !== BigInt(builderGid) ||
+        (stat.mode & 0o111n) !== 0n ||
+        (stat.mode & 0o7022n) !== 0n
+      ) {
+        proofError("UNTRUSTED_SOURCE_ENTRY", {
+          role: expected.receiptRole,
+          reason: "metadata",
+          uid: Number(stat.uid),
+          gid: Number(stat.gid),
+          mode: Number(stat.mode & 0o7777n),
+          links: Number(stat.nlink),
+        });
+      }
+      files.push(childRelative.slice("dist/".length));
+      totalBytes += Number(stat.size);
+      if (files.length > MAX_PACKAGE_FILES || totalBytes > MAX_PACKAGE_BYTES) {
+        proofError("PACKAGE_TOO_LARGE", { role: expected.receiptRole, reason: "bounds" });
+      }
+    }
+  }
+  files.sort();
+  if (files.length === 0 || totalBytes === 0) proofError("EMPTY_DIST", { role: expected.receiptRole });
+
+  const packagePath = path.join(root, "package.json");
+  const provenancePath = path.join(root, "provenance.json");
+  await rejectExecutableArtifact(packagePath, `${expected.receiptRole}-package`);
+  await rejectExecutableArtifact(provenancePath, `${expected.receiptRole}-provenance`);
+  const packageBuffer = await stableReadFile(
+    packagePath,
+    builderUid,
+    1024 * 1024,
+    builderGid,
+    `${expected.receiptRole}-package`,
+  );
+  const provenanceBuffer = await stableReadFile(
+    provenancePath,
+    builderUid,
+    16 * 1024,
+    builderGid,
+    `${expected.receiptRole}-provenance`,
+  );
+  const packageJson = parseJson(packageBuffer, "INVALID_PACKAGE_JSON");
+  if (
+    packageJson.name !== "@openclaw/fs-safe" ||
+    packageJson.type !== "module" ||
+    packageJson.exports?.["./config"]?.default !== "./dist/config.js" ||
+    packageJson.exports?.["./secure-file"]?.default !== "./dist/secure-file.js" ||
+    !files.includes("config.js") ||
+    !files.includes("secure-file.js")
+  ) {
+    proofError("PUBLIC_EXPORT_MISMATCH", { role: expected.receiptRole });
+  }
+  const provenance = parseJson(provenanceBuffer, "INVALID_BUNDLE_PROVENANCE");
+  const canonicalProvenance = `${JSON.stringify({
+    schema: 1,
+    proof: BUNDLE_PROOF,
+    role: expected.role,
+    node: expected.node,
+    runId: expected.runId,
+    runAttempt: expected.runAttempt,
+    head: expected.head,
+    tree: expected.tree,
+    builtUnprivileged: true,
+    allowedTopLevel: ["dist", "package.json", "provenance.json"],
+  })}\n`;
+  if (
+    !hasExactKeys(provenance, [
+      "schema",
+      "proof",
+      "role",
+      "node",
+      "runId",
+      "runAttempt",
+      "head",
+      "tree",
+      "builtUnprivileged",
+      "allowedTopLevel",
+    ]) ||
+    provenance.schema !== 1 ||
+    provenance.proof !== BUNDLE_PROOF ||
+    provenance.role !== expected.role ||
+    provenance.node !== expected.node ||
+    provenance.runId !== expected.runId ||
+    provenance.runAttempt !== expected.runAttempt ||
+    provenance.head !== expected.head ||
+    provenance.tree !== expected.tree ||
+    provenance.builtUnprivileged !== true ||
+    JSON.stringify(provenance.allowedTopLevel) !==
+      JSON.stringify(["dist", "package.json", "provenance.json"]) ||
+    provenanceBuffer.toString("utf8") !== canonicalProvenance
+  ) {
+    proofError("BUNDLE_PROVENANCE_MISMATCH", { role: expected.receiptRole, reason: "binding" });
+  }
+
+  const manifest = [];
+  for (const relative of files) {
+    const buffer = await stableReadFile(
+      path.join(root, "dist", ...relative.split("/")),
+      builderUid,
+      MAX_PACKAGE_BYTES,
+      builderGid,
+      `${expected.receiptRole}-dist-file`,
+    );
+    manifest.push(`${relative}\0${buffer.length}\0${sha256(buffer)}\n`);
+  }
+  return {
+    root,
+    role: expected.role,
+    packageBuffer,
+    packageSha256: sha256(packageBuffer),
+    provenanceSha256: sha256(provenanceBuffer),
+    files,
+    bytes: totalBytes,
+    entries: entryCount,
+    distSha256: sha256(manifest.join("")),
+  };
+}
+
+async function copyDirectory(bundle, destination) {
+  const files = bundle.files;
   let total = 0;
   const manifest = [];
   await fs.mkdir(destination, { recursive: true, mode: 0o555 });
   for (const relative of files) {
-    const sourceFile = path.join(source, ...relative.split("/"));
+    const sourceFile = path.join(bundle.root, "dist", ...relative.split("/"));
     const destinationFile = path.join(destination, ...relative.split("/"));
-    const buffer = await stableReadFile(sourceFile, builderUid);
+    const buffer = await stableReadFile(
+      sourceFile,
+      builderUid,
+      MAX_PACKAGE_BYTES,
+      builderGid,
+      `${bundle.role}-dist-copy`,
+    );
     total += buffer.length;
     if (total > MAX_PACKAGE_BYTES) proofError("PACKAGE_TOO_LARGE");
     await fs.mkdir(path.dirname(destinationFile), { recursive: true, mode: 0o555 });
@@ -339,28 +707,16 @@ async function copyDirectory(source, destination) {
   return { sha256: sha256(manifest.join("")), files: files.length, bytes: total };
 }
 
-async function copyLibrary(sourceRoot, destinationRoot, role) {
-  await validateSourceDirectory(sourceRoot);
-  const packageBuffer = await stableReadFile(path.join(sourceRoot, "package.json"), builderUid, 1024 * 1024);
-  let packageJson;
-  try {
-    packageJson = JSON.parse(packageBuffer.toString("utf8"));
-  } catch {
-    proofError("INVALID_PACKAGE_JSON");
-  }
-  if (
-    packageJson.name !== "@openclaw/fs-safe" ||
-    packageJson.type !== "module" ||
-    packageJson.exports?.["./config"]?.default !== "./dist/config.js" ||
-    packageJson.exports?.["./secure-file"]?.default !== "./dist/secure-file.js"
-  ) {
-    proofError("PUBLIC_EXPORT_MISMATCH");
-  }
+async function copyLibrary(bundle, destinationRoot, role) {
+  const packageBuffer = bundle.packageBuffer;
   const packageRoot = path.join(destinationRoot, "node_modules", "@openclaw", "fs-safe");
   await fs.mkdir(packageRoot, { recursive: true, mode: 0o555 });
   await writeRootFile(path.join(packageRoot, "package.json"), packageBuffer);
-  const dist = await copyDirectory(path.join(sourceRoot, "dist"), path.join(packageRoot, "dist"));
+  const dist = await copyDirectory(bundle, path.join(packageRoot, "dist"));
   if (dist.files === 0 || dist.bytes === 0) proofError("EMPTY_DIST");
+  if (dist.sha256 !== bundle.distSha256 || dist.bytes !== bundle.bytes) {
+    proofError("PACKAGE_COPY_MISMATCH", { role: safeToken(role, "unknown"), reason: "manifest" });
+  }
   for (const directory of [
     packageRoot,
     path.dirname(packageRoot),
@@ -381,37 +737,290 @@ async function copyLibrary(sourceRoot, destinationRoot, role) {
     distFilesPositive: dist.files > 0,
     distBytesPositive: dist.bytes > 0,
     packageSha256: sha256(packageBuffer),
+    provenanceSha256: bundle.provenanceSha256,
     copyExact: true,
   };
 }
 
-async function validateTool(toolPath, options = {}) {
-  if (!path.isAbsolute(toolPath)) proofError("INVALID_TOOL_PATH");
-  const canonical = await fs.realpath(toolPath);
+async function validateTrustedAncestors(target, diagnosticName) {
+  let current = path.dirname(target);
+  let count = 0;
+  for (;;) {
+    const canonical = await fs.realpath(current);
+    const stat = await fs.lstat(current, { bigint: true });
+    if (
+      canonical !== current ||
+      !stat.isDirectory() ||
+      stat.isSymbolicLink() ||
+      stat.uid !== 0n ||
+      stat.gid !== 0n ||
+      (stat.mode & 0o022n) !== 0n ||
+      (stat.mode & 0o7000n) !== 0n
+    ) {
+      proofError("UNTRUSTED_TOOL_ANCESTOR", {
+        tool: diagnosticName,
+        reason: "ancestor",
+        uid: Number(stat.uid),
+        gid: Number(stat.gid),
+        mode: Number(stat.mode & 0o7777n),
+      });
+    }
+    count += 1;
+    if (current === path.parse(current).root) break;
+    current = path.dirname(current);
+  }
+  return count;
+}
+
+async function inspectTrustedFile(file, diagnosticName, executable) {
+  if (!path.isAbsolute(file)) {
+    proofError("INVALID_TOOL_PATH", { tool: diagnosticName, reason: "relative" });
+  }
+  const canonical = await fs.realpath(file);
+  if (canonical !== file) {
+    proofError("NONCANONICAL_TOOL_PATH", { tool: diagnosticName, reason: "canonical" });
+  }
+  const ancestorCount = await validateTrustedAncestors(canonical, diagnosticName);
   const stat = await fs.lstat(canonical, { bigint: true });
-  const allowedOwner = stat.uid === 0n || stat.uid === BigInt(builderUid);
   if (
     !stat.isFile() ||
     stat.isSymbolicLink() ||
-    !allowedOwner ||
+    stat.nlink !== 1n ||
+    stat.uid !== 0n ||
+    stat.gid !== 0n ||
     (stat.mode & 0o022n) !== 0n ||
-    (options.requireRoot === true && stat.uid !== 0n)
+    (stat.mode & 0o7000n) !== 0n ||
+    (executable && (stat.mode & 0o111n) === 0n)
   ) {
-    proofError("UNTRUSTED_TOOL");
+    proofError("UNTRUSTED_TOOL", {
+      tool: diagnosticName,
+      reason: "metadata",
+      uid: Number(stat.uid),
+      gid: Number(stat.gid),
+      mode: Number(stat.mode & 0o7777n),
+      links: Number(stat.nlink),
+    });
   }
-  const version = await runCapture(canonical, ["--version"], { timeoutMs: 10_000 });
-  if (version.code !== 0 || version.timedOut || version.overflow || version.stdout.length === 0) {
-    proofError("TOOL_VERSION_FAILED");
+  let buffer;
+  try {
+    buffer = await stableReadFile(canonical, 0, MAX_TOOL_BYTES, 0, diagnosticName);
+  } catch (error) {
+    failureDiagnostic = safeDiagnostic({
+      tool: diagnosticName,
+      reason: safeToken(error?.code, "stable-read"),
+    });
+    throw error;
   }
   return {
     path: canonical,
-    receipt: {
-      available: true,
-      rootOwned: stat.uid === 0n,
-      notGroupOrWorldWritable: true,
-      versionSha256: sha256(version.stdout),
-    },
+    stat,
+    sha256: sha256(buffer),
+    bytes: buffer.length,
+    ancestorCount,
   };
+}
+
+function sameTrustedIdentity(left, right) {
+  return left.stat.dev === right.stat.dev &&
+    left.stat.ino === right.stat.ino &&
+    left.stat.size === right.stat.size &&
+    left.stat.mode === right.stat.mode &&
+    left.sha256 === right.sha256;
+}
+
+async function loadStageManifest(manifestPath) {
+  await inspectTrustedFile(manifestPath, "manifest", false);
+  const buffer = await stableReadFile(manifestPath, 0, 1024 * 1024, 0, "manifest");
+  const value = parseJson(buffer, "INVALID_STAGE_MANIFEST");
+  if (
+    !hasExactKeys(value, ["schema", "proof", "entries"]) ||
+    value.schema !== 1 ||
+    value.proof !== STAGE_MANIFEST_PROOF ||
+    value.entries === null ||
+    typeof value.entries !== "object" ||
+    Array.isArray(value.entries) ||
+    JSON.stringify(Object.keys(value.entries).sort()) !== JSON.stringify([...STAGED_FILE_NAMES].sort()) ||
+    buffer.toString("utf8") !== `${JSON.stringify(value)}\n`
+  ) {
+    proofError("INVALID_STAGE_MANIFEST", { subject: "manifest", reason: "shape" });
+  }
+  for (const name of STAGED_FILE_NAMES) {
+    const entry = value.entries[name];
+    if (
+      !hasExactKeys(entry, ["sourceSha256", "copySha256"]) ||
+      !/^[0-9a-f]{64}$/.test(entry.sourceSha256) ||
+      !/^[0-9a-f]{64}$/.test(entry.copySha256) ||
+      entry.sourceSha256 !== entry.copySha256
+    ) {
+      proofError("STAGE_HASH_MISMATCH", { subject: name, reason: "source-copy" });
+    }
+  }
+  return { value, sha256: sha256(buffer) };
+}
+
+async function validateLoaderEnvironment() {
+  const allowed = ["HOME", "LANG", "LC_ALL", "PATH", "TZ"];
+  const actual = Object.keys(process.env).sort();
+  if (
+    JSON.stringify(actual) !== JSON.stringify([...allowed].sort()) ||
+    actual.some((name) => name.startsWith("LD_")) ||
+    ["NODE_OPTIONS", "NODE_PATH", "NODE_REPL_EXTERNAL_MODULE", "BUN_OPTIONS"].some(
+      (name) => process.env[name] !== undefined,
+    )
+  ) {
+    proofError("UNSAFE_PROCESS_ENVIRONMENT", { subject: "environment", reason: "allowlist" });
+  }
+  try {
+    const preload = await stableReadFile("/etc/ld.so.preload", 0, 4096, 0, "ld-preload");
+    if (preload.toString("utf8").trim() !== "") {
+      proofError("LD_PRELOAD_CONFIGURED", { subject: "loader", reason: "preload" });
+    }
+    return { environmentAllowlisted: true, ldSoPreload: "empty" };
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return { environmentAllowlisted: true, ldSoPreload: "absent" };
+    }
+    throw error;
+  }
+}
+
+async function validateDynamicDependencies(toolName, tool, tools) {
+  if (toolName === "ldd") return { count: 0, manifestSha256: sha256("script") };
+  const result = await runCapture(tools.bash.path, [tools.ldd.path, tool.path], {
+    timeoutMs: 10_000,
+  });
+  if (
+    result.code !== 0 ||
+    result.signal !== null ||
+    result.timedOut ||
+    result.overflow ||
+    result.spawnFailed ||
+    result.stderr.length !== 0
+  ) {
+    proofError("DEPENDENCY_RESOLUTION_FAILED", { tool: toolName, reason: "ldd" });
+  }
+  const records = [];
+  for (const rawLine of result.stdout.toString("utf8").split("\n")) {
+    const line = rawLine.trim();
+    if (line === "" || line.startsWith("linux-vdso.so.")) continue;
+    if (line.includes("not found")) {
+      proofError("DEPENDENCY_NOT_FOUND", { tool: toolName, reason: "not-found" });
+    }
+    if (line === "statically linked" || line === "not a dynamic executable") continue;
+    const linked = line.match(/=>\s+(\/[^\s]+)\s+\(0x[0-9a-fA-F]+\)$/u);
+    const direct = line.match(/^(\/[^\s]+)\s+\(0x[0-9a-fA-F]+\)$/u);
+    const supplied = linked?.[1] ?? direct?.[1];
+    if (supplied === undefined) {
+      proofError("DEPENDENCY_OUTPUT_UNRECOGNIZED", { tool: toolName, reason: "format" });
+    }
+    const canonical = await fs.realpath(supplied);
+    await validateTrustedAncestors(canonical, `${toolName}-dependency`);
+    const stat = await fs.lstat(canonical, { bigint: true });
+    if (
+      !stat.isFile() ||
+      stat.isSymbolicLink() ||
+      stat.nlink !== 1n ||
+      stat.uid !== 0n ||
+      stat.gid !== 0n ||
+      (stat.mode & 0o022n) !== 0n ||
+      (stat.mode & 0o7000n) !== 0n
+    ) {
+      proofError("UNTRUSTED_DEPENDENCY", {
+        tool: toolName,
+        reason: "metadata",
+        uid: Number(stat.uid),
+        gid: Number(stat.gid),
+        mode: Number(stat.mode & 0o7777n),
+        links: Number(stat.nlink),
+      });
+    }
+    const buffer = await stableReadFile(canonical, 0, MAX_TOOL_BYTES, 0, `${toolName}-dependency`);
+    records.push(`${path.basename(canonical)}\0${buffer.length}\0${sha256(buffer)}\n`);
+  }
+  records.sort();
+  return { count: records.length, manifestSha256: sha256(records.join("")) };
+}
+
+async function validateStagedHarnessAndTools(args, expectedNode) {
+  const manifest = await loadStageManifest(args.manifest);
+  const inspected = {};
+  for (const name of STAGED_FILE_NAMES) {
+    inspected[name] = await inspectTrustedFile(args[name], name, TOOL_NAMES.includes(name));
+    if (inspected[name].sha256 !== manifest.value.entries[name].copySha256) {
+      proofError("STAGE_HASH_MISMATCH", { subject: name, reason: "copy" });
+    }
+  }
+  if (
+    !args.coordinator.startsWith("/opt/") ||
+    path.dirname(args.coordinator) !== path.dirname(args.node) ||
+    STAGED_FILE_NAMES.some((name) => path.dirname(args[name]) !== path.dirname(args.coordinator)) ||
+    fileURLToPath(import.meta.url) !== args.coordinator
+  ) {
+    proofError("UNEXPECTED_HARNESS_SOURCE", { subject: "harness", reason: "stage-root" });
+  }
+  const processExecutable = await fs.realpath(process.execPath);
+  if (
+    processExecutable !== args.node ||
+    process.version !== expectedNode ||
+    inspected.node.sha256 !== manifest.value.entries.node.copySha256
+  ) {
+    proofError("NODE_EXECUTABLE_MISMATCH", { tool: "node", reason: "execPath" });
+  }
+
+  const tools = {};
+  for (const name of TOOL_NAMES) {
+    tools[name] = { path: inspected[name].path, receipt: null };
+  }
+  const dependencies = {};
+  for (const name of TOOL_NAMES) {
+    dependencies[name] = await validateDynamicDependencies(name, tools[name], tools);
+  }
+  for (const name of TOOL_NAMES) {
+    const beforeVersion = await inspectTrustedFile(args[name], name, true);
+    if (!sameTrustedIdentity(inspected[name], beforeVersion)) {
+      proofError("TOOL_IDENTITY_CHANGED", { tool: name, reason: "pre-version" });
+    }
+    const command = name === "ldd" ? tools.bash.path : tools[name].path;
+    const versionArgs = name === "ldd" ? [tools.ldd.path, "--version"] : ["--version"];
+    const version = await runCapture(command, versionArgs, { timeoutMs: 10_000 });
+    const output = Buffer.concat([version.stdout, version.stderr]);
+    if (
+      version.code !== 0 ||
+      version.signal !== null ||
+      version.timedOut ||
+      version.overflow ||
+      version.spawnFailed ||
+      output.length === 0
+    ) {
+      proofError("TOOL_VERSION_FAILED", { tool: name, reason: "version" });
+    }
+    if (name === "node" && output.toString("utf8").trim() !== expectedNode) {
+      proofError("NODE_VERSION_MISMATCH", { tool: "node", reason: "version" });
+    }
+    const after = await inspectTrustedFile(args[name], name, true);
+    if (!sameTrustedIdentity(inspected[name], after)) {
+      proofError("TOOL_IDENTITY_CHANGED", { tool: name, reason: "post-version" });
+    }
+    tools[name].receipt = {
+      available: true,
+      rootOwned: true,
+      notGroupOrWorldWritable: true,
+      noSpecialBits: true,
+      regularExecutable: true,
+      linkCountOne: true,
+      identityStable: true,
+      deviceIdentityChecked: true,
+      inodeIdentityChecked: true,
+      bytes: inspected[name].bytes,
+      ancestorCount: inspected[name].ancestorCount,
+      sourceSha256: manifest.value.entries[name].sourceSha256,
+      copySha256: inspected[name].sha256,
+      sourceCopyHashesMatch: true,
+      versionSha256: sha256(output),
+      dependencies: dependencies[name],
+    };
+  }
+  return { tools, inspected, manifest };
 }
 
 function minimalEnvironment(home) {
@@ -597,6 +1206,8 @@ function parseWorkerReceipt(output, spec) {
     receipt.publicPackageExports?.config !== true ||
     receipt.publicPackageExports?.secureFile !== true ||
     receipt.nativeOff !== true ||
+    receipt.runtime?.versionExact !== true ||
+    receipt.runtime?.execPathExact !== true ||
     !credentialObservationComplete(receipt.credential?.beforeImport) ||
     !credentialObservationComplete(receipt.credential?.afterImport) ||
     !credentialObservationComplete(receipt.credential?.afterRead) ||
@@ -691,6 +1302,8 @@ async function runProofCase(spec, libraries, secrets, tools) {
     "--mode", modeString(spec.mode),
     "--allow-readable", String(spec.allowReadable),
     "--bounded", String(spec.bounded),
+    "--node", tools.node.path,
+    "--expected-node", safeToken(process.version, "UNKNOWN"),
   ];
   const setprivArgs = [
     "--ruid", String(spec.realUid),
@@ -798,6 +1411,7 @@ async function runProofCase(spec, libraries, secrets, tools) {
       fixture: { beforeImport: true, afterImport: true, afterRead: true, identityStable: true },
       publicPackageExports: { config: true, secureFile: true },
       nativeOff: true,
+      runtime: { versionExact: true, execPathExact: true },
       roleMatched: workerReceipt.libraryRole === spec.libraryRole,
       error: {
         expectedName: spec.expectedErrorName ?? null,
@@ -848,7 +1462,9 @@ async function validateRootTree(root) {
       stat.isSymbolicLink() ||
       stat.uid !== 0n ||
       stat.gid !== 0n ||
-      (stat.mode & 0o022n) !== 0n
+      (stat.mode & 0o022n) !== 0n ||
+      (stat.mode & 0o7000n) !== 0n ||
+      (stat.isFile() && stat.nlink !== 1n)
     ) return false;
     if (stat.isDirectory() && !await validateRootTree(child)) return false;
     if (!stat.isDirectory() && !stat.isFile()) return false;
@@ -917,10 +1533,15 @@ function buildReceipt(metadata, failure, cleanup) {
   credentialReceipt.noNewPrivsByWorker = allWorkersValidated;
   fixtureReceipt.rawTracesRemoved = rawTracesRemoved && cleanup;
   fixtureReceipt.cleanup = cleanup;
+  durationsMs.total = Math.round((performance.now() - proofStartedAt) * 1000) / 1000;
   const overall =
     failure === null &&
     allCasesComplete &&
     cleanup &&
+    harnessReceipt.manifestValidated &&
+    harnessReceipt.sourceCopyHashesMatch &&
+    artifactReceipts.candidate?.exactRoleBinding === true &&
+    artifactReceipts.historical?.exactRoleBinding === true &&
     fixtureReceipt.rawTracesRemoved &&
     fixtureReceipt.secretsExactBefore &&
     fixtureReceipt.secretsExactAfter &&
@@ -940,9 +1561,22 @@ function buildReceipt(metadata, failure, cleanup) {
       booleanInputPresent: true,
       defaultDisabled: true,
       explicitTrueRequired: true,
-      sha256: metadata.workflowSha256,
+      sha256: harnessReceipt.workflowSha256,
       receiptAllowlisted: true,
       rawArtifactsUploaded: false,
+      candidateBuildRunnerSeparated: true,
+      historicalBuildRunnerSeparated: true,
+      proofRunnerClean: true,
+      packageManagerCommandsExecutedOnProofRunner: false,
+      candidateBuildCommandsExecutedOnProofRunner: false,
+    },
+    runtime: {
+      platform: process.platform,
+      arch: process.arch,
+      release: safeToken(os.release(), "UNKNOWN"),
+      runnerImage: metadata.runnerImage,
+      runnerImageVersion: metadata.runnerImageVersion,
+      osRelease: metadata.osRelease,
     },
     library: {
       candidate: {
@@ -955,18 +1589,19 @@ function buildReceipt(metadata, failure, cleanup) {
       historical: {
         role: "historical-negative-control",
         auditOnly: true,
-        fixed: metadata.baselineHead === BASE_HEAD && metadata.baselineTree === BASE_TREE,
-        head: metadata.baselineHead,
-        tree: metadata.baselineTree,
+        fixed: metadata.historicalHead === BASE_HEAD && metadata.historicalTree === BASE_TREE,
+        head: metadata.historicalHead,
+        tree: metadata.historicalTree,
         ...libraryReceipts.baseline,
       },
     },
     base: {
-      fixed: metadata.baselineHead === BASE_HEAD && metadata.baselineTree === BASE_TREE,
-      head: metadata.baselineHead,
-      tree: metadata.baselineTree,
+      fixed: metadata.historicalHead === BASE_HEAD && metadata.historicalTree === BASE_TREE,
+      head: metadata.historicalHead,
+      tree: metadata.historicalTree,
       auditOnly: true,
     },
+    artifacts: artifactReceipts,
     harness: harnessReceipt,
     tools: toolReceipts,
     node: {
@@ -977,6 +1612,7 @@ function buildReceipt(metadata, failure, cleanup) {
     credential: credentialReceipt,
     fixture: fixtureReceipt,
     cases: caseReceipts,
+    durationsMs,
   };
 }
 
@@ -995,18 +1631,31 @@ async function writeReceipt(receipt) {
   ) {
     proofError("INVALID_RECEIPT_DESTINATION");
   }
-  await fs.writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { flag: "wx", mode: 0o644 });
-  await fs.chown(receiptPath, 0, 0);
-  await fs.chmod(receiptPath, 0o644);
+  const existing = await stableReadFile(
+    receiptPath,
+    builderUid,
+    4096,
+    builderGid,
+    "initial-receipt",
+  );
+  if (!FAILURE_RECEIPTS.has(existing.toString("utf8"))) {
+    proofError("INVALID_INITIAL_RECEIPT", { subject: "receipt", reason: "content" });
+  }
+  const temporary = path.join(parent, `.secure-file-credential-proof-${process.pid}.tmp`);
+  const buffer = Buffer.from(`${JSON.stringify(receipt, null, 2)}\n`, "utf8");
+  await writeRootFile(temporary, buffer, 0o644);
+  await fs.rename(temporary, receiptPath);
+  const written = await stableReadFile(receiptPath, 0, 1024 * 1024, 0, "receipt");
+  if (!written.equals(buffer)) proofError("RECEIPT_WRITE_MISMATCH");
 }
 
 async function main() {
-  const args = parseArguments(process.argv.slice(2));
+  const parsed = parseArguments(process.argv.slice(2));
   if (process.platform !== "linux" || process.getuid?.() !== 0 || process.geteuid?.() !== 0) {
     proofError("ROOT_LINUX_REQUIRED");
   }
-  builderUid = parseId(args.get("builder-uid"));
-  builderGid = parseId(args.get("builder-gid"));
+  builderUid = parseId(parsed.get("builder-uid"));
+  builderGid = parseId(parsed.get("builder-gid"));
   if (
     builderUid === 0 ||
     builderGid === 0 ||
@@ -1017,56 +1666,91 @@ async function main() {
     proofError("INVALID_BUILDER_OR_CREDENTIAL_IDS");
   }
   Object.assign(metadata, {
-    candidateHead: validateSha(args.get("candidate-head")),
-    candidateTree: validateSha(args.get("candidate-tree")),
-    baselineHead: validateSha(args.get("baseline-head")),
-    baselineTree: validateSha(args.get("baseline-tree")),
-    expectedNode: args.get("expected-node"),
-    workflowSha256: null,
+    candidateHead: validateSha(parsed.get("candidate-head")),
+    candidateTree: validateSha(parsed.get("candidate-tree")),
+    historicalHead: validateSha(parsed.get("historical-head")),
+    historicalTree: validateSha(parsed.get("historical-tree")),
+    candidateArtifactId: validatePositiveIntegerToken(
+      parsed.get("candidate-artifact-id"),
+      "INVALID_ARTIFACT_ID",
+    ),
+    candidateArtifactDigest: validateDigest(parsed.get("candidate-artifact-digest")),
+    historicalArtifactId: validatePositiveIntegerToken(
+      parsed.get("historical-artifact-id"),
+      "INVALID_ARTIFACT_ID",
+    ),
+    historicalArtifactDigest: validateDigest(parsed.get("historical-artifact-digest")),
+    runId: validatePositiveIntegerToken(parsed.get("run-id")),
+    runAttempt: validatePositiveIntegerToken(parsed.get("run-attempt")),
+    runnerImage: validateSafeLabel(parsed.get("runner-image"), null),
+    runnerImageVersion: validateSafeLabel(parsed.get("runner-image-version"), null),
+    expectedNode: parsed.get("expected-node"),
   });
   if (
-    metadata.baselineHead !== BASE_HEAD ||
-    metadata.baselineTree !== BASE_TREE ||
+    metadata.historicalHead !== BASE_HEAD ||
+    metadata.historicalTree !== BASE_TREE ||
+    metadata.candidateArtifactId === metadata.historicalArtifactId ||
+    metadata.runnerImage === null ||
+    metadata.runnerImageVersion === null ||
     !["v22.23.2", "v24.20.0"].includes(metadata.expectedNode)
   ) {
     proofError("INVALID_FIXED_INPUT");
   }
-  if (process.version !== metadata.expectedNode) proofError("NODE_VERSION_MISMATCH");
+  if (process.version !== metadata.expectedNode) {
+    proofError("NODE_VERSION_MISMATCH", { tool: "node", reason: "process-version" });
+  }
 
   const absolute = (name) => {
-    const value = path.resolve(args.get(name));
-    if (!path.isAbsolute(args.get(name)) || value === path.parse(value).root) proofError("INVALID_PATH_ARGUMENT");
+    const supplied = parsed.get(name);
+    const value = path.resolve(supplied);
+    if (!path.isAbsolute(supplied) || value === path.parse(value).root) {
+      proofError("INVALID_PATH_ARGUMENT", {
+        ...(TOOL_NAMES.includes(name) ? { tool: name } : { subject: name }),
+        reason: "absolute",
+      });
+    }
     return value;
   };
   const canonicalExisting = async (name) => {
     const supplied = absolute(name);
-    const canonical = await fs.realpath(supplied);
-    if (canonical !== supplied) proofError("NONCANONICAL_PATH_ARGUMENT");
+    let canonical;
+    try {
+      canonical = await fs.realpath(supplied);
+    } catch {
+      proofError("MISSING_PATH_ARGUMENT", {
+        ...(TOOL_NAMES.includes(name) ? { tool: name } : { subject: name }),
+        reason: "missing",
+      });
+    }
+    if (canonical !== supplied) {
+      proofError("NONCANONICAL_PATH_ARGUMENT", {
+        ...(TOOL_NAMES.includes(name) ? { tool: name } : { subject: name }),
+        reason: "canonical",
+      });
+    }
     return canonical;
   };
-  const candidateRoot = await canonicalExisting("candidate");
-  const baselineRoot = await canonicalExisting("baseline");
-  const workerSource = await canonicalExisting("worker");
+  receiptPath = await canonicalExisting("receipt");
+  const candidateRoot = await canonicalExisting("candidate-bundle");
+  const historicalRoot = await canonicalExisting("historical-bundle");
+  const candidateAttestation = await canonicalExisting("candidate-attestation");
+  const historicalAttestation = await canonicalExisting("historical-attestation");
+  const staged = {};
+  for (const name of [...STAGED_FILE_NAMES, "manifest"]) staged[name] = await canonicalExisting(name);
   proofParentPath = absolute("proof-parent");
-  receiptPath = absolute("receipt");
   if (
-    candidateRoot === baselineRoot ||
-    candidateRoot.startsWith(`${baselineRoot}${path.sep}`) ||
-    baselineRoot.startsWith(`${candidateRoot}${path.sep}`) ||
+    candidateRoot === historicalRoot ||
+    candidateRoot.startsWith(`${historicalRoot}${path.sep}`) ||
+    historicalRoot.startsWith(`${candidateRoot}${path.sep}`) ||
     proofParentPath.startsWith(`${candidateRoot}${path.sep}`) ||
-    proofParentPath.startsWith(`${baselineRoot}${path.sep}`) ||
+    proofParentPath.startsWith(`${historicalRoot}${path.sep}`) ||
     receiptPath.startsWith(`${candidateRoot}${path.sep}`) ||
-    receiptPath.startsWith(`${baselineRoot}${path.sep}`) ||
-    receiptPath.startsWith(`${proofParentPath}${path.sep}`)
+    receiptPath.startsWith(`${historicalRoot}${path.sep}`) ||
+    receiptPath.startsWith(`${proofParentPath}${path.sep}`) ||
+    staged.coordinator.startsWith(`${candidateRoot}${path.sep}`) ||
+    staged.coordinator.startsWith(`${historicalRoot}${path.sep}`)
   ) {
     proofError("UNSAFE_PATH_RELATIONSHIP");
-  }
-  const expectedWorkerSource = path.join(candidateRoot, "scripts", "secure-file-credential-proof-worker.mjs");
-  if (
-    workerSource !== expectedWorkerSource ||
-    fileURLToPath(import.meta.url) !== path.join(candidateRoot, "scripts", "secure-file-credential-proof.mjs")
-  ) {
-    proofError("UNEXPECTED_HARNESS_SOURCE");
   }
   const proofParentContainer = path.dirname(proofParentPath);
   const receiptDirectory = path.dirname(receiptPath);
@@ -1087,12 +1771,17 @@ async function main() {
     proofError("UNSAFE_PROOF_PARENT");
   }
 
-  stage = "tools";
-  const tools = {};
-  for (const [name, requireRoot] of [["node", false], ["prlimit", true], ["setpriv", true], ["strace", true], ["timeout", true], ["getent", true]]) {
-    tools[name] = await validateTool(absolute(name), { requireRoot });
-    toolReceipts[name] = tools[name].receipt;
-  }
+  stage = "process-environment";
+  const loaderReceipt = await validateLoaderEnvironment();
+
+  stage = "staged-harness-and-tools";
+  const stagedValidation = await timed(
+    "stagedHarnessAndTools",
+    () => validateStagedHarnessAndTools(staged, metadata.expectedNode),
+  );
+  const tools = stagedValidation.tools;
+  for (const name of TOOL_NAMES) toolReceipts[name] = tools[name].receipt;
+  toolReceipts.loader = loaderReceipt;
   toolReceipts.strace.pathFiltered = true;
   toolReceipts.strace.runsAsRoot = true;
   toolReceipts.prlimit.appliesToStraceAndWorker = true;
@@ -1101,25 +1790,125 @@ async function main() {
   toolReceipts.timeout.limit30Seconds = true;
   toolReceipts.setpriv.argumentArray = true;
 
-  stage = "unused-credentials";
-  await assertNssIdsUnused(tools.getent.path);
-  credentialReceipt.nssUnusedBefore = true;
-  await assertProcIdsUnused();
-  credentialReceipt.procUnusedBefore = true;
-
-  stage = "source-validation";
-  await validateSourceDirectory(candidateRoot);
-  await validateSourceDirectory(baselineRoot);
-  const coordinatorBuffer = await stableReadFile(fileURLToPath(import.meta.url), builderUid, 1024 * 1024);
-  const workerBuffer = await stableReadFile(workerSource, builderUid, 1024 * 1024);
-  const workflowBuffer = await stableReadFile(
-    path.join(candidateRoot, ".github", "workflows", "ci.yml"),
-    builderUid,
-    1024 * 1024,
+  const stageDirectory = path.dirname(staged.coordinator);
+  const stageDirectoryStat = await fs.lstat(stageDirectory, { bigint: true });
+  harnessReceipt.stagedUnderOpt = stageDirectory.startsWith("/opt/");
+  harnessReceipt.rootOwned = stageDirectoryStat.uid === 0n && stageDirectoryStat.gid === 0n;
+  harnessReceipt.nonWritable = (stageDirectoryStat.mode & 0o222n) === 0n;
+  harnessReceipt.regularFiles = ["coordinator", "worker", "workflow"].every(
+    (name) => stagedValidation.inspected[name].stat.isFile(),
   );
-  harnessReceipt.coordinatorSha256 = sha256(coordinatorBuffer);
-  harnessReceipt.workerSha256 = sha256(workerBuffer);
-  metadata.workflowSha256 = sha256(workflowBuffer);
+  harnessReceipt.linkCountOne = ["coordinator", "worker", "workflow"].every(
+    (name) => stagedValidation.inspected[name].stat.nlink === 1n,
+  );
+  harnessReceipt.identityStable = true;
+  harnessReceipt.manifestValidated = true;
+  harnessReceipt.coordinatorSha256 = stagedValidation.inspected.coordinator.sha256;
+  harnessReceipt.workerSha256 = stagedValidation.inspected.worker.sha256;
+  harnessReceipt.workflowSha256 = stagedValidation.inspected.workflow.sha256;
+  harnessReceipt.sourceCopyHashesMatch = STAGED_FILE_NAMES.every((name) =>
+    stagedValidation.manifest.value.entries[name].sourceSha256 ===
+      stagedValidation.inspected[name].sha256);
+  harnessReceipt.manifestSha256 = stagedValidation.manifest.sha256;
+  if (
+    !harnessReceipt.stagedUnderOpt ||
+    !harnessReceipt.rootOwned ||
+    !harnessReceipt.nonWritable ||
+    !harnessReceipt.regularFiles ||
+    !harnessReceipt.linkCountOne ||
+    !harnessReceipt.sourceCopyHashesMatch
+  ) {
+    proofError("UNTRUSTED_HARNESS", { subject: "harness", reason: "stage" });
+  }
+
+  stage = "os-provenance";
+  const osReleasePath = await fs.realpath("/etc/os-release");
+  await validateTrustedAncestors(osReleasePath, "os-release");
+  const osReleaseBuffer = await stableReadFile(osReleasePath, 0, 64 * 1024, 0, "os-release");
+  const osFields = {};
+  for (const line of osReleaseBuffer.toString("utf8").split("\n")) {
+    const match = line.match(/^(ID|VERSION_ID)=(?:"([A-Za-z0-9_.-]+)"|([A-Za-z0-9_.-]+))$/u);
+    if (match !== null) osFields[match[1]] = match[2] ?? match[3];
+  }
+  metadata.osRelease = {
+    id: validateSafeLabel(osFields.ID, "unknown"),
+    version: validateSafeLabel(osFields.VERSION_ID, "unknown"),
+    sha256: sha256(osReleaseBuffer),
+  };
+
+  stage = "artifact-attestations";
+  const node = metadata.expectedNode.slice(1);
+  const commonArtifact = {
+    node,
+    runId: metadata.runId,
+    runAttempt: metadata.runAttempt,
+  };
+  artifactReceipts.candidate = await validateAttestation(candidateAttestation, {
+    ...commonArtifact,
+    role: "candidate",
+    receiptRole: "candidate",
+    artifactName: `secure-file-candidate-node-${node}`,
+    artifactId: metadata.candidateArtifactId,
+    artifactDigest: metadata.candidateArtifactDigest,
+  });
+  artifactReceipts.historical = await validateAttestation(historicalAttestation, {
+    ...commonArtifact,
+    role: "historical-negative-control",
+    receiptRole: "historical",
+    artifactName: `secure-file-historical-node-${node}`,
+    artifactId: metadata.historicalArtifactId,
+    artifactDigest: metadata.historicalArtifactDigest,
+  });
+
+  stage = "artifact-bundles";
+  const bundles = await timed("artifactValidation", async () => ({
+    candidate: await validateBundle(candidateRoot, {
+      ...commonArtifact,
+      role: "candidate",
+      receiptRole: "candidate",
+      head: metadata.candidateHead,
+      tree: metadata.candidateTree,
+    }),
+    historical: await validateBundle(historicalRoot, {
+      ...commonArtifact,
+      role: "historical-negative-control",
+      receiptRole: "historical",
+      head: metadata.historicalHead,
+      tree: metadata.historicalTree,
+    }),
+  }));
+  Object.assign(artifactReceipts.candidate, {
+    exactRoleBinding: true,
+    provenanceSha256: bundles.candidate.provenanceSha256,
+    packageSha256: bundles.candidate.packageSha256,
+    distSha256: bundles.candidate.distSha256,
+    files: bundles.candidate.files.length,
+    entries: bundles.candidate.entries,
+    bytes: bundles.candidate.bytes,
+    bounded: true,
+    noHarnessEntries: true,
+  });
+  Object.assign(artifactReceipts.historical, {
+    exactRoleBinding: true,
+    provenanceSha256: bundles.historical.provenanceSha256,
+    packageSha256: bundles.historical.packageSha256,
+    distSha256: bundles.historical.distSha256,
+    files: bundles.historical.files.length,
+    entries: bundles.historical.entries,
+    bytes: bundles.historical.bytes,
+    bounded: true,
+    noHarnessEntries: true,
+  });
+
+  stage = "unused-credentials";
+  await timed("unusedCredentialsBefore", async () => {
+    await assertNssIdsUnused(tools.getent.path);
+    credentialReceipt.nssUnusedBefore = true;
+    await assertProcIdsUnused();
+    credentialReceipt.procUnusedBefore = true;
+  });
+
+  const workerBuffer = await stableReadFile(staged.worker, 0, 1024 * 1024, 0, "worker");
 
   stage = "fixture-create";
   try {
@@ -1151,9 +1940,9 @@ async function main() {
   };
   await fs.mkdir(libraries.candidate, { recursive: true, mode: 0o555 });
   await fs.mkdir(libraries.baseline, { recursive: true, mode: 0o555 });
-  libraryReceipts.candidate = await copyLibrary(candidateRoot, libraries.candidate, "candidate");
+  libraryReceipts.candidate = await copyLibrary(bundles.candidate, libraries.candidate, "candidate");
   libraryReceipts.baseline = await copyLibrary(
-    baselineRoot,
+    bundles.historical,
     libraries.baseline,
     "historical-negative-control",
   );
@@ -1200,9 +1989,11 @@ async function main() {
   if (!fixtureReceipt.nonWritable) proofError("FIXTURE_WRITABLE");
 
   stage = "credential-cases";
-  for (const spec of CASES) {
-    caseReceipts.push(await runProofCase(spec, libraries, secrets, tools));
-  }
+  await timed("credentialCases", async () => {
+    for (const spec of CASES) {
+      caseReceipts.push(await runProofCase(spec, libraries, secrets, tools));
+    }
+  });
   fixtureReceipt.secretsExactAfter = (await Promise.all(Object.values(secrets).map(validateSecret))).every(Boolean);
   if (!fixtureReceipt.secretsExactAfter) proofError("FIXTURE_CHANGED");
   await assertProcIdsUnused();
@@ -1213,10 +2004,18 @@ async function main() {
 let metadata = {
   candidateHead: null,
   candidateTree: null,
-  baselineHead: BASE_HEAD,
-  baselineTree: null,
+  historicalHead: BASE_HEAD,
+  historicalTree: null,
+  candidateArtifactId: null,
+  candidateArtifactDigest: null,
+  historicalArtifactId: null,
+  historicalArtifactDigest: null,
+  runId: null,
+  runAttempt: null,
+  runnerImage: null,
+  runnerImageVersion: null,
+  osRelease: null,
   expectedNode: null,
-  workflowSha256: null,
 };
 let failure = null;
 try {
@@ -1226,6 +2025,7 @@ try {
     stage: safeToken(stage, "unknown"),
     name: safeToken(error?.name, "UnknownError"),
     code: safeToken(error?.code, "UNKNOWN"),
+    ...(failureDiagnostic === null ? {} : { diagnostic: failureDiagnostic }),
   };
 }
 const cleanup = await safeCleanup();

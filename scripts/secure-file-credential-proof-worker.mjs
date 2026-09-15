@@ -12,6 +12,8 @@ const ALLOWED_ARGUMENTS = new Set([
   "mode",
   "allow-readable",
   "bounded",
+  "node",
+  "expected-node",
 ]);
 
 let stage = "arguments";
@@ -161,6 +163,19 @@ async function main() {
   }
   const allowReadableByOthers = parseBoolean(args.get("allow-readable"));
   const bounded = parseBoolean(args.get("bounded"));
+  const expectedNode = args.get("expected-node");
+  const expectedNodePath = args.get("node");
+  if (!/^v(?:22\.23\.2|24\.20\.0)$/.test(expectedNode) || !expectedNodePath.startsWith("/opt/")) {
+    fail("INVALID_ARGUMENTS");
+  }
+
+  stage = "runtime-identity";
+  const processExecutable = await fs.realpath(process.execPath);
+  const runtime = {
+    versionExact: process.version === expectedNode,
+    execPathExact: processExecutable === expectedNodePath,
+  };
+  if (!runtime.versionExact || !runtime.execPathExact) fail("RUNTIME_IDENTITY_MISMATCH");
 
   stage = "credential-before-import";
   const credentialBeforeImport = await inspectCredentials(expectedUids, expectedGids);
@@ -227,6 +242,7 @@ async function main() {
     bounded,
     publicPackageExports: { config: true, secureFile: true },
     nativeOff,
+    runtime,
     credential: {
       beforeImport: credentialBeforeImport,
       afterImport: credentialAfterImport,
