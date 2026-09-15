@@ -5,7 +5,6 @@ import { FsSafeError } from "./errors.js";
 import {
   assertNoNulPathInput,
   isNotFoundPathError,
-  isPathInside,
   isPathRelativeEscape,
 } from "./path.js";
 import {
@@ -14,6 +13,11 @@ import {
   resolvePathViaExistingAncestor,
   resolvePathViaExistingAncestorSync,
 } from "./root-path-existing.js";
+import {
+  admitPathInsideRoot,
+  type AdmittedRootPath,
+  type RootBoundaryIdentity,
+} from "./root-boundary.js";
 import { resolveSymlinkHopPath, resolveSymlinkHopPathSync } from "./root-path-symlink.js";
 import { assertNoDriveRelativePathSegments } from "./safe-path-segment.js";
 
@@ -48,6 +52,7 @@ type ResolveRootPathParams = {
   rejectUnresolvedSymlinks?: boolean;
   skipLexicalRootCheck?: boolean;
   rootCanonicalPath?: string;
+  rootIdentity?: RootBoundaryIdentity;
 };
 
 type ResolvedRootPathKind = "missing" | "file" | "directory" | "symlink" | "other";
@@ -78,11 +83,10 @@ async function resolveRootPathInternal(
   assertValidRootPathInputs(params);
   params = { ...params, absolutePath: absolutePathWithRawSegments(params.absolutePath) };
   const rootPath = path.resolve(params.rootPath);
-  const absolutePath = path.resolve(params.absolutePath);
   const rootCanonicalPath = params.rootCanonicalPath
     ? path.resolve(params.rootCanonicalPath)
     : await resolvePathViaExistingAncestor(rootPath);
-  return resolveRootPathLexicalAsync(prepareRootTraversal(params, rootPath, rootCanonicalPath, absolutePath));
+  return resolveRootPathLexicalAsync(prepareRootTraversal(params, rootPath, rootCanonicalPath));
 }
 
 export function resolveRootPathSync(params: ResolveRootPathParams): ResolvedRootPath {
@@ -97,31 +101,42 @@ function resolveRootPathSyncInternal(params: ResolveRootPathParams): ResolvedRoo
   assertValidRootPathInputs(params);
   params = { ...params, absolutePath: absolutePathWithRawSegments(params.absolutePath) };
   const rootPath = path.resolve(params.rootPath);
-  const absolutePath = path.resolve(params.absolutePath);
   const rootCanonicalPath = params.rootCanonicalPath
     ? path.resolve(params.rootCanonicalPath)
     : resolvePathViaExistingAncestorSync(rootPath);
-  return resolveRootPathLexicalSync(prepareRootTraversal(params, rootPath, rootCanonicalPath, absolutePath));
+  return resolveRootPathLexicalSync(prepareRootTraversal(params, rootPath, rootCanonicalPath));
 }
 
 function prepareRootTraversal(
   params: ResolveRootPathParams,
   rootPath: string,
   rootCanonicalPath: string,
-  absolutePath: string,
 ): LexicalResolutionParams {
+  const callerAbsolutePath = path.resolve(params.absolutePath);
   let raw = params.absolutePath;
-  if (rawPathRelativeToRoot(rootPath, raw) === undefined) {
-    const relative = rawPathRelativeToRoot(rootCanonicalPath, raw)
+  let trustedAbsolutePath = false;
+  const direct = admitRawPathInsideRoot(rootPath, raw, params.rootIdentity);
+  if (direct) {
+    raw = direct.path;
+    trustedAbsolutePath = direct.admission === "identity";
+  } else {
+    const canonical = admitRawPathInsideRoot(rootCanonicalPath, raw, params.rootIdentity);
+    const relative = canonical?.relativePath
       ?? rawPathRelativeToCanonicalRoot(raw, rootCanonicalPath, params);
     if (relative === undefined) {
       throw pathEscapeError({ rootPath, absolutePath: raw, boundaryLabel: params.boundaryLabel });
     }
-    raw = `${rootPath}${path.sep}${relative}`;
+    trustedAbsolutePath = canonical?.admission === "identity";
+    raw = relative === "" ? rootPath : `${rootPath}${path.sep}${relative}`;
   }
   return {
     params: raw === params.absolutePath ? params : { ...params, absolutePath: raw },
-    rootPath, rootCanonicalPath, absolutePath,
+    rootPath,
+    rootCanonicalPath,
+    // Preserve the caller-spelling receipt for ordinary aliases. Only a
+    // Windows case-fold admission must return the identity-gated Root spelling,
+    // because downstream I/O must not reuse the ambiguous caller prefix.
+    absolutePath: trustedAbsolutePath ? path.resolve(raw) : callerAbsolutePath,
   };
 }
 
@@ -180,7 +195,11 @@ function createLexicalTraversalState(params: {
   absolutePath: string;
 }): LexicalTraversalState {
   const rawAbsolutePath = params.params.absolutePath;
-  const relative = rawPathRelativeToRoot(params.rootPath, rawAbsolutePath);
+  const relative = admitRawPathInsideRoot(
+    params.rootPath,
+    rawAbsolutePath,
+    params.params.rootIdentity,
+  )?.relativePath;
   if (relative === undefined) throw new Error("Path traversal must begin at the root");
   const segments = splitTraversalSegments(relative);
   return {
@@ -217,7 +236,11 @@ function splitTraversalSegments(value: string): string[] {
   return segments;
 }
 
-function rawPathRelativeToRoot(rootPath: string, candidatePath: string): string | undefined {
+function admitRawPathInsideRoot(
+  rootPath: string,
+  candidatePath: string,
+  rootIdentity?: RootBoundaryIdentity,
+): AdmittedRootPath | undefined {
   if (!path.isAbsolute(candidatePath)) {
     return undefined;
   }
@@ -225,24 +248,31 @@ function rawPathRelativeToRoot(rootPath: string, candidatePath: string): string 
   const candidate = process.platform === "win32"
     ? candidatePath.replaceAll("/", path.sep)
     : candidatePath;
+  if (process.platform === "win32") {
+    return admitPathInsideRoot({ rootPath: root, candidatePath: candidate, rootIdentity });
+  }
   if (candidate === root) {
-    return "";
+    return { admission: "exact", path: candidate, relativePath: "" };
   }
   const rootWithSep = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
   const candidatePrefix = candidate.slice(0, rootWithSep.length);
-  const prefixMatches = process.platform === "win32"
-    ? candidatePrefix.toLowerCase() === rootWithSep.toLowerCase()
-    : candidatePrefix === rootWithSep;
-  return prefixMatches ? candidate.slice(rootWithSep.length) : undefined;
+  return candidatePrefix === rootWithSep
+    ? {
+      admission: "exact",
+      path: candidate,
+      relativePath: candidate.slice(rootWithSep.length),
+    }
+    : undefined;
 }
 
 function assertLexicalCursorInsideBoundary(
   context: LexicalTraversalContext,
   candidatePath: string,
-): void {
-  assertInsideBoundary({
+): string {
+  return assertInsideBoundary({
     boundaryLabel: context.resolveParams.boundaryLabel,
     rootCanonicalPath: context.rootCanonicalPath,
+    rootIdentity: context.resolveParams.rootIdentity,
     candidatePath,
     absolutePath: context.absolutePath,
   });
@@ -252,15 +282,20 @@ function advanceCanonicalCursorForSegment(
   context: LexicalTraversalContext,
   segment: string,
 ): void {
-  context.state.canonicalCursor = path.resolve(context.state.canonicalCursor, segment);
-  assertLexicalCursorInsideBoundary(context, context.state.canonicalCursor);
+  context.state.canonicalCursor = assertLexicalCursorInsideBoundary(
+    context,
+    path.resolve(context.state.canonicalCursor, segment),
+  );
 }
 
 function finalizeLexicalResolution(
   context: LexicalTraversalContext,
   kind: { exists: boolean; kind: ResolvedRootPathKind },
 ): ResolvedRootPath {
-  assertLexicalCursorInsideBoundary(context, context.state.canonicalCursor);
+  context.state.canonicalCursor = assertLexicalCursorInsideBoundary(
+    context,
+    context.state.canonicalCursor,
+  );
   return buildResolvedRootPath({
     absolutePath: context.absolutePath,
     canonicalPath: context.state.canonicalCursor,
@@ -301,15 +336,18 @@ function applyResolvedSymlinkHop(
   context: LexicalTraversalContext,
   linkCanonical: string,
 ): void {
-  if (!isPathInside(context.rootCanonicalPath, linkCanonical)) {
+  let admitted: string;
+  try {
+    admitted = assertLexicalCursorInsideBoundary(context, linkCanonical);
+  } catch {
     throw symlinkEscapeError({
       boundaryLabel: context.resolveParams.boundaryLabel,
       rootCanonicalPath: context.rootCanonicalPath,
       symlinkPath: context.state.lexicalCursor,
     });
   }
-  context.state.canonicalCursor = linkCanonical;
-  context.state.lexicalCursor = linkCanonical;
+  context.state.canonicalCursor = admitted;
+  context.state.lexicalCursor = admitted;
 }
 
 function applyParentTraversalStep(context: LexicalTraversalContext): void {
@@ -527,11 +565,17 @@ function relativeInsideRoot(rootPath: string, targetPath: string): string {
 function assertInsideBoundary(params: {
   boundaryLabel: string;
   rootCanonicalPath: string;
+  rootIdentity?: RootBoundaryIdentity;
   candidatePath: string;
   absolutePath: string;
-}): void {
-  if (isPathInside(params.rootCanonicalPath, params.candidatePath)) {
-    return;
+}): string {
+  const admitted = admitPathInsideRoot({
+    rootPath: params.rootCanonicalPath,
+    candidatePath: params.candidatePath,
+    rootIdentity: params.rootIdentity,
+  });
+  if (admitted) {
+    return admitted.path;
   }
   throw new Error(
     `Path resolves outside ${params.boundaryLabel} (${shortPath(params.rootCanonicalPath)}): ${shortPath(params.absolutePath)}`,

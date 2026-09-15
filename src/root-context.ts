@@ -12,6 +12,7 @@ import {
   isPathInside,
 } from "./path.js";
 import { ROOT_PATH_ALIAS_POLICIES, resolveRootPath } from "./root-path.js";
+import { admitPathInsideRoot } from "./root-boundary.js";
 import { outsideWorkspaceError, rootPathChangedError } from "./root-errors.js";
 import { isDriveRelativePath } from "./safe-path-segment.js";
 import { realpathSync } from "./realpath.js";
@@ -93,11 +94,20 @@ export function rootRelativeReadPath(root: RootContext, filePath: string): strin
   const absoluteInput = path.isAbsolute(filePath);
   if (!absoluteInput) return filePath;
   const raw = process.platform === "win32" ? filePath.replaceAll("/", path.sep) : filePath;
-  for (const base of [root.rootDir, root.rootReal]) {
+  const bases = root.rootDir === root.rootReal ? [root.rootReal] : [root.rootDir, root.rootReal];
+  for (const base of bases) {
+    if (process.platform === "win32") {
+      const admitted = admitPathInsideRoot({
+        rootPath: base,
+        candidatePath: raw,
+        rootIdentity: root.rootIdentity,
+        resolveCandidateRoot: base === root.rootDir && root.rootDir !== root.rootReal,
+      });
+      if (admitted) return admitted.relativePath;
+      continue;
+    }
     const prefix = ensureTrailingSep(base);
-    const matches = process.platform === "win32"
-      ? raw.slice(0, prefix.length).toLowerCase() === prefix.toLowerCase()
-      : raw.startsWith(prefix);
+    const matches = raw.startsWith(prefix);
     if (matches) {
       let start = prefix.length;
       while (raw[start] === path.sep) start += 1;
@@ -158,6 +168,7 @@ export async function resolvePathInRoot(
       absolutePath: rawAbsolutePath,
       rootPath: root.rootReal,
       rootCanonicalPath: root.rootReal,
+      rootIdentity: root.rootIdentity,
       boundaryLabel: "root",
       policy: options?.allowFinalSymlink ? ROOT_PATH_ALIAS_POLICIES.unlinkTarget : undefined,
       rejectSymlinks: options?.rejectSymlinks,
@@ -172,7 +183,21 @@ export async function resolvePathInRoot(
         throw new FsSafeError("path-alias", "parent traversal resolves differently through a symlink");
       }
     }
-    if (options?.resolveCanonical) resolved = checked.canonicalPath;
+    if (options?.resolveCanonical) {
+      resolved = checked.canonicalPath;
+    } else {
+      // resolveRootPath preserves ordinary caller spelling as part of its
+      // public receipt. Re-admit the exact normalized spelling before it is
+      // reused for Root I/O: on a case-sensitive Windows directory it may
+      // otherwise name a distinct case-folded sibling after raw traversal.
+      const admitted = admitPathInsideRoot({
+        rootPath: root.rootReal,
+        candidatePath: checked.absolutePath,
+        rootIdentity: root.rootIdentity,
+      });
+      if (!admitted) throw outsideWorkspaceError();
+      resolved = admitted.path;
+    }
   } catch (error) {
     if (error instanceof FsSafeError && error.code === "symlink") {
       throw error;

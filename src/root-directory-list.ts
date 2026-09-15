@@ -5,9 +5,10 @@ import path from "node:path";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
-import { isNotFoundPathError, isPathInside } from "./path.js";
+import { isNotFoundPathError } from "./path.js";
 import { assertRootIdentityCurrent, type RootContext } from "./root-context.js";
 import { rootPathChangedError } from "./root-errors.js";
+import { admitPathInsideRoot } from "./root-boundary.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import type { DirEntry, PathStat } from "./types.js";
 
@@ -82,9 +83,16 @@ export async function openRootDirectoryListing(
   const guard = await createAsyncDirectoryGuard(directory, { bigint: true }).catch((error) => {
     throw normalizeDirectoryError(error);
   });
-  if (!isPathInside(root.rootReal, guard.realPath)) {
+  const admittedRealPath = admitPathInsideRoot({
+    rootPath: root.rootReal,
+    candidatePath: guard.realPath,
+    rootIdentity: root.rootIdentity,
+  });
+  if (!admittedRealPath) {
     throw new FsSafeError("outside-workspace", "directory is outside workspace root");
   }
+  guard.dir = admittedRealPath.path;
+  guard.realPath = admittedRealPath.path;
   const guardPinsRoot = guard.dir === root.rootReal &&
     guard.stat.dev === root.rootIdentity.dev && guard.stat.ino === root.rootIdentity.ino;
   const assertCurrent = async () => {

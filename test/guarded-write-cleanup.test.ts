@@ -76,6 +76,7 @@ describe("guarded fallback write cleanup", () => {
 
   itPosix("closes root no-overwrite handles when post guards fail", async () => {
     Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    configureFsSafeNative({ mode: "off" });
     const { root: openRoot } = await import("../src/index.js");
     const base = await tempRoot("fs-safe-root-post-guard-");
     const parentPath = path.join(base, "nested");
