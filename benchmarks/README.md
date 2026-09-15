@@ -62,6 +62,9 @@ order. Tree-copy cases use explicit auto, never, and supported always policies
 over 64 small files, one 1 MiB file, and nested and empty directories.
 TAR/gzip member reads, extraction, and inspection cover 1 MiB and 16 MiB payloads; 512-member read and
 inspection cases expose metadata-event transport costs.
+A 10,000-member plain-TAR inspection case uses 128-byte payloads to expose
+small-file read overhead. The archive is assembled in memory outside timing;
+every returned path, kind, and size is verified after measurement.
 Gzip member reads and inspection also cover a small member followed by 64 MiB
 of valid zero container padding, separating suffix validation from payload decoding.
 ZIP reads and extraction also cover 1 MiB and 16 MiB stored and deflated members

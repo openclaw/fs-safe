@@ -16,6 +16,7 @@
 - Keep Windows native filesystem descriptors in the host runtime's libuv table, rejecting missing or partial bridges instead of guessing raw HANDLE or add-on CRT namespaces.
 - Preserve files refreshed while expiry pruning prepares removal by rechecking current file type and modification time immediately before guarded deletion, without requiring read access.
 - Speed up JavaScript gzip container-padding validation with bounded buffer comparisons and one lazy reusable zero window, preserving complete suffix checks, short-read handling, and cancellation cadence.
+- Speed up native plain-TAR inspection and extraction with bounded file read-ahead, preserving full framing, payload, trailer, and cancellation checks at parser boundaries.
 - Destroy and join JavaScript ZIP decoder sources before rejecting bounded member reads, preventing abandoned decoders and retained archive buffers after byte-limit failures while preserving archive error classifications on Node 22 and newer.
 - Fix automatic Linux file copies truncating when `copy_file_range` reports zero after partial progress; confirm EOF at the current offset before completing or resuming the guarded byte-copy fallback.
 - Speed up repeated lock-manager construction without rescanning held locks, and initialize legacy reference counts at acquisition and release so same-owner nested handles retain the outer lock.
