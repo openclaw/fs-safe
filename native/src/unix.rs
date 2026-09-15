@@ -324,6 +324,56 @@ fn directory_name_matches_fd(parent_fd: i32, name: &str, directory_fd: i32) -> N
         && same_identity(&opened, &current))
 }
 
+#[cfg(target_os = "macos")]
+fn directory_name_matches_receipt(
+    parent_fd: i32,
+    name: &str,
+    receipt: &crate::darwin_security::DarwinSecurityReceipt,
+) -> NativeResult<bool> {
+    let current = match rustix::fs::statat(
+        borrowed(parent_fd),
+        name,
+        AtFlags::SYMLINK_NOFOLLOW,
+    ) {
+        Ok(current) => current,
+        Err(rustix::io::Errno::NOENT) => return Ok(false),
+        Err(error) => return Err(os_error(error, "inspect private clone directory name")),
+    };
+    Ok(FileType::from_raw_mode(current.st_mode).is_dir() && receipt.matches_identity(&current))
+}
+
+#[cfg(target_os = "macos")]
+fn file_name_matches_receipt(
+    parent_fd: i32,
+    name: &str,
+    receipt: &crate::darwin_security::DarwinSecurityReceipt,
+) -> NativeResult<bool> {
+    let current = match rustix::fs::statat(
+        borrowed(parent_fd),
+        name,
+        AtFlags::SYMLINK_NOFOLLOW,
+    ) {
+        Ok(current) => current,
+        Err(rustix::io::Errno::NOENT) => return Ok(false),
+        Err(error) => return Err(os_error(error, "inspect cloned payload name")),
+    };
+    Ok(FileType::from_raw_mode(current.st_mode).is_file() && receipt.matches_identity(&current))
+}
+
+#[cfg(target_os = "macos")]
+fn file_path_matches_receipt(
+    root_fd: i32,
+    rel_path: &str,
+    receipt: &crate::darwin_security::DarwinSecurityReceipt,
+) -> NativeResult<bool> {
+    if !rel_path.contains('/') {
+        file_name_matches_receipt(root_fd, rel_path, receipt)
+    } else {
+        let (parent, name) = open_parent(root_fd, rel_path)?;
+        file_name_matches_receipt(parent.as_raw_fd(), name, receipt)
+    }
+}
+
 fn directory_entry_matches_fd(
     parent_fd: i32,
     name: &CStr,
@@ -706,26 +756,69 @@ pub fn clone_file_exclusive(
 }
 
 #[cfg(target_os = "macos")]
-fn assert_clone_directory(fd: BorrowedFd<'_>, private_stage: bool) -> NativeResult<()> {
-    let stat = rustix::fs::fstat(fd)
-        .map_err(|error| os_error(error, "inspect clone directory"))?;
+fn inspect_clone_directory(
+    fd: BorrowedFd<'_>,
+    private_stage: bool,
+) -> NativeResult<crate::darwin_security::DarwinSecurityReceipt> {
+    let receipt = crate::darwin_security::inspect_security(fd)?;
     // SAFETY: geteuid has no preconditions.
-    let effective_uid = unsafe { libc::geteuid() };
+    let effective_uid = unsafe { libc::geteuid() } as u32;
     let mode_allowed = if private_stage {
-        stat.st_mode & 0o7777 == 0o700
+        receipt.mode & 0o7777 == 0o700
     } else {
-        stat.st_mode & 0o022 == 0
+        receipt.mode & 0o022 == 0
     };
-    if !FileType::from_raw_mode(stat.st_mode).is_dir()
-        || stat.st_uid != effective_uid
-        || !mode_allowed
-    {
+    if !receipt.is_directory() || receipt.uid != effective_uid || !mode_allowed {
         return Err(native_error(
             "ENOTSUP",
             "cloning requires an owned directory with restrictive modes",
         ));
     }
-    crate::darwin_security::require_no_acl(fd, "clone directory")
+    crate::darwin_security::require_receipt_no_acl(&receipt, "clone directory")?;
+    Ok(receipt)
+}
+
+#[cfg(target_os = "macos")]
+fn inspect_clone_stage(
+    parent_fd: i32,
+    stage_path: &str,
+    stage_fd: BorrowedFd<'_>,
+    expected: Option<&crate::darwin_security::DarwinSecurityReceipt>,
+) -> NativeResult<crate::darwin_security::DarwinSecurityReceipt> {
+    // Re-observe both descriptors. The earlier receipt is comparison evidence,
+    // never authority for mutable owner, mode, flags, or ACL state.
+    inspect_clone_directory(borrowed(parent_fd), false)?;
+    let current = inspect_clone_directory(stage_fd, true)?;
+    if expected.is_some_and(|expected| expected != &current) {
+        return Err(native_error(
+            "EIO",
+            "private clone directory security facts changed",
+        ));
+    }
+    if !directory_name_matches_receipt(parent_fd, stage_path, &current)? {
+        return Err(native_error("EIO", "private clone directory identity changed"));
+    }
+    Ok(current)
+}
+
+#[cfg(target_os = "macos")]
+fn assert_clone_payload(
+    receipt: &crate::darwin_security::DarwinSecurityReceipt,
+    operation: &str,
+) -> NativeResult<()> {
+    // SAFETY: geteuid has no preconditions.
+    let effective_uid = unsafe { libc::geteuid() } as u32;
+    if !receipt.is_file()
+        || receipt.uid != effective_uid
+        || receipt.mode & 0o7777 != 0o600
+        || receipt.flags != 0
+    {
+        return Err(native_error(
+            "EIO",
+            format!("{operation} returned unexpected descriptor security facts"),
+        ));
+    }
+    crate::darwin_security::require_receipt_no_acl(receipt, operation)
 }
 
 #[cfg(target_os = "macos")]
@@ -754,7 +847,7 @@ pub(crate) fn clone_file_exclusive_with_sync(
     const CLONE_NOOWNERCOPY: u32 = 0x0002;
     static CLONE_COUNTER: AtomicU64 = AtomicU64::new(0);
     // Reject parent ACLs before creating any stage or materializing clone bytes.
-    assert_clone_directory(borrowed(target_root_fd), false)?;
+    inspect_clone_directory(borrowed(target_root_fd), false)?;
     let source_stat = rustix::fs::fstat(borrowed(source_fd))
         .map_err(|error| os_error(error, "inspect clone source"))?;
     if source_stat.st_flags != 0 {
@@ -786,7 +879,7 @@ pub(crate) fn clone_file_exclusive_with_sync(
     ) {
         return Err(with_cleanup_error(
             os_error(error, "normalize private clone staging directory"),
-            cleanup_clone_stage(target_root_fd, &stage_path, None, false, None),
+            cleanup_clone_stage(target_root_fd, &stage_path, None, None, false, None),
         ));
     }
     let stage_fd = match open_beneath(
@@ -801,31 +894,45 @@ pub(crate) fn clone_file_exclusive_with_sync(
         Err(error) => {
             return Err(with_cleanup_error(
                 error,
-                cleanup_clone_stage(target_root_fd, &stage_path, None, false, None),
+                cleanup_clone_stage(target_root_fd, &stage_path, None, None, false, None),
             ));
         }
     };
     if let Err(error) = rustix::fs::fchmod(stage_fd.as_fd(), Mode::from_bits_retain(0o700)) {
         return Err(with_cleanup_error(
             os_error(error, "normalize private clone staging directory"),
-            cleanup_clone_stage(target_root_fd, &stage_path, Some(&stage_fd), false, None),
+            cleanup_clone_stage(
+                target_root_fd,
+                &stage_path,
+                Some(&stage_fd),
+                None,
+                false,
+                None,
+            ),
         ));
     }
 
-    let admit_stage = || -> NativeResult<()> {
-        assert_clone_directory(borrowed(target_root_fd), false)?;
-        assert_clone_directory(stage_fd.as_fd(), true)?;
-        if !directory_name_matches_fd(target_root_fd, &stage_path, stage_fd.as_raw_fd())? {
-            return Err(native_error("EIO", "private clone directory identity changed"));
+    let stage_receipt = match inspect_clone_stage(
+        target_root_fd,
+        &stage_path,
+        stage_fd.as_fd(),
+        None,
+    ) {
+        Ok(receipt) => receipt,
+        Err(error) => {
+            return Err(with_cleanup_error(
+                error,
+                cleanup_clone_stage(
+                    target_root_fd,
+                    &stage_path,
+                    Some(&stage_fd),
+                    None,
+                    false,
+                    None,
+                ),
+            ));
         }
-        Ok(())
     };
-    if let Err(error) = admit_stage() {
-        return Err(with_cleanup_error(
-            error,
-            cleanup_clone_stage(target_root_fd, &stage_path, Some(&stage_fd), false, None),
-        ));
-    }
 
     let payload = CString::new("payload").unwrap();
     // SAFETY: descriptors are borrowed for this call and payload is NUL-terminated.
@@ -847,7 +954,14 @@ pub(crate) fn clone_file_exclusive_with_sync(
         };
         return Err(with_cleanup_error(
             native_error(code, format!("fclonefileat: {error}")),
-            cleanup_clone_stage(target_root_fd, &stage_path, Some(&stage_fd), false, None),
+            cleanup_clone_stage(
+                target_root_fd,
+                &stage_path,
+                Some(&stage_fd),
+                Some(&stage_receipt),
+                false,
+                None,
+            ),
         ));
     }
     let target_fd = match open_beneath(
@@ -859,14 +973,24 @@ pub(crate) fn clone_file_exclusive_with_sync(
         Err(error) => {
             return Err(with_cleanup_error(
                 post_clone_security_error(error),
-                cleanup_clone_stage(target_root_fd, &stage_path, Some(&stage_fd), true, None),
+                cleanup_clone_stage(
+                    target_root_fd,
+                    &stage_path,
+                    Some(&stage_fd),
+                    Some(&stage_receipt),
+                    true,
+                    None,
+                ),
             ));
         }
     };
     // SAFETY: open_beneath returned a fresh descriptor owned here.
     let target = unsafe { OwnedFd::from_raw_fd(target_fd) };
 
-    let normalize = || -> NativeResult<()> {
+    let normalize = || -> NativeResult<(
+        crate::darwin_security::DarwinSecurityReceipt,
+        crate::darwin_security::DarwinSecurityReceipt,
+    )> {
         // SAFETY: target is an open descriptor owned by this call.
         if unsafe { libc::fchflags(target.as_raw_fd(), 0) } != 0 {
             return Err(native_error(
@@ -877,7 +1001,7 @@ pub(crate) fn clone_file_exclusive_with_sync(
                 ),
             ));
         }
-        crate::darwin_security::clear_acl(target.as_fd())?;
+        crate::darwin_security::clear_private_clone_acl(target.as_fd())?;
         rustix::fs::fchmod(target.as_fd(), Mode::from_bits_retain(0o600))
             .map_err(|error| os_error(error, "set cloned file mode"))?;
         clear_macos_xattrs(target.as_raw_fd())?;
@@ -885,22 +1009,40 @@ pub(crate) fn clone_file_exclusive_with_sync(
             rustix::fs::fsync(target.as_fd())
                 .map_err(|error| os_error(error, "sync cloned file"))?;
         }
-        admit_stage()?;
-        crate::darwin_security::require_no_acl(target.as_fd(), "cloned payload publication")?;
-        Ok(())
+        let current_stage = inspect_clone_stage(
+            target_root_fd,
+            &stage_path,
+            stage_fd.as_fd(),
+            Some(&stage_receipt),
+        )?;
+        // This fused observation is both the ACL-clear readback and the exact
+        // descriptor receipt staged for the post-rename handoff fence.
+        let payload = crate::darwin_security::inspect_security(target.as_fd())?;
+        assert_clone_payload(&payload, "cloned payload publication")?;
+        if !file_name_matches_receipt(stage_fd.as_raw_fd(), "payload", &payload)? {
+            return Err(native_error(
+                "EIO",
+                "cloned payload identity changed before publication",
+            ));
+        }
+        Ok((current_stage, payload))
     };
-    if let Err(error) = normalize() {
-        return Err(with_cleanup_error(
-            post_clone_security_error(error),
-            cleanup_clone_stage(
-                target_root_fd,
-                &stage_path,
-                Some(&stage_fd),
-                true,
-                Some(&target),
-            ),
-        ));
-    }
+    let (publication_stage_receipt, payload_receipt) = match normalize() {
+        Ok(receipts) => receipts,
+        Err(error) => {
+            return Err(with_cleanup_error(
+                post_clone_security_error(error),
+                cleanup_clone_stage(
+                    target_root_fd,
+                    &stage_path,
+                    Some(&stage_fd),
+                    Some(&stage_receipt),
+                    true,
+                    Some(&target),
+                ),
+            ));
+        }
+    };
     if let Err(error) = rename_no_replace(
         stage_fd.as_raw_fd(),
         "payload",
@@ -921,22 +1063,43 @@ pub(crate) fn clone_file_exclusive_with_sync(
                 target_root_fd,
                 &stage_path,
                 Some(&stage_fd),
+                Some(&publication_stage_receipt),
                 true,
                 Some(&target),
             ),
         ));
     }
-    if let Err(error) =
-        cleanup_clone_stage(target_root_fd, &stage_path, Some(&stage_fd), false, None)
-    {
+    if let Err(error) = cleanup_clone_stage(
+        target_root_fd,
+        &stage_path,
+        Some(&stage_fd),
+        Some(&publication_stage_receipt),
+        false,
+        None,
+    ) {
         return Err(with_cleanup_error(
             error,
             remove_created_target_checked(target_root_fd, target_rel_path, &target),
         ));
     }
-    if let Err(error) =
-        crate::darwin_security::require_no_acl(target.as_fd(), "cloned payload handoff")
-    {
+    let handoff = || -> NativeResult<()> {
+        let current = crate::darwin_security::inspect_security(target.as_fd())?;
+        assert_clone_payload(&current, "cloned payload handoff")?;
+        if current != payload_receipt {
+            return Err(native_error(
+                "EIO",
+                "cloned payload security facts changed during publication",
+            ));
+        }
+        if !file_path_matches_receipt(target_root_fd, target_rel_path, &current)? {
+            return Err(native_error(
+                "EIO",
+                "cloned payload identity changed during publication",
+            ));
+        }
+        Ok(())
+    };
+    if let Err(error) = handoff() {
         return Err(with_cleanup_error(
             post_clone_security_error(error),
             remove_created_target_checked(target_root_fd, target_rel_path, &target),
@@ -950,6 +1113,7 @@ fn cleanup_clone_stage(
     parent_fd: i32,
     name: &str,
     stage: Option<&OwnedFd>,
+    receipt: Option<&crate::darwin_security::DarwinSecurityReceipt>,
     payload_created: bool,
     target: Option<&OwnedFd>,
 ) -> NativeResult<()> {
@@ -971,13 +1135,18 @@ fn cleanup_clone_stage(
         }
     }
     let remove_directory = || -> NativeResult<()> {
-        if let Some(stage) = stage
-            && !directory_name_matches_fd(parent_fd, name, stage.as_raw_fd())?
-        {
-            return Err(native_error(
-                "EIO",
-                "private clone directory identity changed",
-            ));
+        if let Some(stage) = stage {
+            let matches = if let Some(receipt) = receipt {
+                directory_name_matches_receipt(parent_fd, name, receipt)?
+            } else {
+                directory_name_matches_fd(parent_fd, name, stage.as_raw_fd())?
+            };
+            if !matches {
+                return Err(native_error(
+                    "EIO",
+                    "private clone directory identity changed",
+                ));
+            }
         }
         rustix::fs::unlinkat(borrowed(parent_fd), name, AtFlags::REMOVEDIR)
             .map_err(|error| os_error(error, "remove private clone directory"))
@@ -1821,12 +1990,92 @@ mod tests {
         let stage = OwnedFd::from(fs::File::open(root.join("stage")).unwrap());
         let error = with_cleanup_error(
             native_error("ENOTSUP", "clone unsupported"),
-            cleanup_clone_stage(parent.as_raw_fd(), "stage", Some(&stage), false, None),
+            cleanup_clone_stage(
+                parent.as_raw_fd(),
+                "stage",
+                Some(&stage),
+                None,
+                false,
+                None,
+            ),
         );
         assert_eq!(error.status, "EIO");
         assert!(error.reason.contains("clone unsupported"));
         assert!(error.reason.contains("private clone stage 'stage'"));
         assert_eq!(fs::read(root.join("stage/foreign")).unwrap(), b"preserve");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn clone_security_receipt_name_fences_reject_substitutions() {
+        let root = temp_root("clone-security-receipt");
+        let stage_path = root.join("stage");
+        fs::create_dir(&stage_path).unwrap();
+        fs::write(stage_path.join("payload"), b"owned").unwrap();
+        let parent = fs::File::open(&root).unwrap();
+        let stage = fs::File::open(&stage_path).unwrap();
+        let payload = fs::File::open(stage_path.join("payload")).unwrap();
+        let stage_receipt = crate::darwin_security::inspect_security(stage.as_fd()).unwrap();
+        let payload_receipt = crate::darwin_security::inspect_security(payload.as_fd()).unwrap();
+        assert!(directory_name_matches_receipt(
+            parent.as_raw_fd(),
+            "stage",
+            &stage_receipt,
+        )
+        .unwrap());
+        assert!(file_name_matches_receipt(
+            stage.as_raw_fd(),
+            "payload",
+            &payload_receipt,
+        )
+        .unwrap());
+
+        fs::rename(&stage_path, root.join("original-stage")).unwrap();
+        fs::create_dir(&stage_path).unwrap();
+        assert!(!directory_name_matches_receipt(
+            parent.as_raw_fd(),
+            "stage",
+            &stage_receipt,
+        )
+        .unwrap());
+
+        fs::rename(
+            root.join("original-stage/payload"),
+            root.join("original-stage/original-payload"),
+        )
+        .unwrap();
+        fs::write(root.join("original-stage/payload"), b"substitute").unwrap();
+        assert!(!file_name_matches_receipt(
+            stage.as_raw_fd(),
+            "payload",
+            &payload_receipt,
+        )
+        .unwrap());
+
+        fs::create_dir(root.join("nested")).unwrap();
+        fs::write(root.join("nested/target"), b"published").unwrap();
+        let published = fs::File::open(root.join("nested/target")).unwrap();
+        let published_receipt =
+            crate::darwin_security::inspect_security(published.as_fd()).unwrap();
+        assert!(file_path_matches_receipt(
+            parent.as_raw_fd(),
+            "nested/target",
+            &published_receipt,
+        )
+        .unwrap());
+        fs::rename(
+            root.join("nested/target"),
+            root.join("nested/original-target"),
+        )
+        .unwrap();
+        fs::write(root.join("nested/target"), b"substitute").unwrap();
+        assert!(!file_path_matches_receipt(
+            parent.as_raw_fd(),
+            "nested/target",
+            &published_receipt,
+        )
+        .unwrap());
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -66,8 +66,10 @@ The internal Darwin descriptor ACL inspector requires its matching native
 capability in both `auto` and `require`; `off`, a missing package, or an older
 binding without `inspectDarwinAcl` rejects with `helper-unavailable`. Inspection
 failure or malformed facts reject with `permission-unverified`; there is no
-mode-bit or pathname fallback for this capability. The clone implementation uses
-the same descriptor ACL mechanism for admission and payload normalization. Once
+mode-bit or pathname fallback for this capability. Clone admission uses a fused
+descriptor-bound metadata and ACL observation, then compares immutable receipts
+with fresh no-follow pathname identity fences; pathnames never authorize ACL
+state. The payload ACL-clear readback is part of that fused observation. Once
 a clone payload exists, normalization and verification failures become terminal
 `EIO` errors (with the underlying status and detail retained), not capability
 signals that permit an ordinary-copy retry. Checked cleanup cannot undo that

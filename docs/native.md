@@ -50,10 +50,14 @@ whether a path, archive entry, mode, owner, or cleanup policy is acceptable.
   race-atomic. macOS uses `renameatx_np(RENAME_EXCL)` and permits
   `fclonefileat` in an owned, non-shared parent. The clone is normalized inside
   a private staging directory: flags, ACLs, extended attributes, and broad mode
-  bits are cleared before no-replace publication. Descriptor ACL inspection rejects
-  any extended entry on the target parent and private staging directory before
-  cloning bytes. The payload's cleared ACL is verified before publication and
-  again before its descriptor is returned. Unsupported admission before payload
+  bits are cleared before no-replace publication. Clone admission obtains mode,
+  owner, exact identity, flags, and ACL state together from the retained descriptor;
+  immutable receipts are compared across the private staging operation and against
+  fresh no-follow pathname identity reads. Any extended entry on the target parent
+  or private staging directory is rejected before cloning bytes. The payload's
+  cleared ACL and normalized descriptor facts are verified before publication and
+  again, with a fresh published-name identity fence, before its descriptor is
+  returned. Unsupported admission before payload
   creation or an unsupported clone syscall may still select the documented
   ordinary-copy path. After the clone creates bytes, normalization and security
   verification failures report terminal `EIO`, retaining the original error

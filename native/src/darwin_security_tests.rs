@@ -20,7 +20,10 @@ impl Fixture {
         ));
         fs::create_dir(&path).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
-        clear_acl(File::open(&path).unwrap().as_fd()).unwrap();
+        let directory = File::open(&path).unwrap();
+        clear_private_clone_acl(directory.as_fd()).unwrap();
+        require_receipt_no_acl(&inspect_security(directory.as_fd()).unwrap(), "test fixture")
+            .unwrap();
         Self(path)
     }
 }
@@ -72,13 +75,15 @@ fn unexpected_entry_results_and_failures_are_not_empty_acls() {
 }
 
 #[test]
-fn only_missing_acl_errors_are_absence() {
-    for errno in [libc::ENOENT, libc::ENOATTR] {
-        assert_eq!(absent_acl(std::io::Error::from_raw_os_error(errno)).unwrap(), AclState::Absent);
-    }
-    for errno in [libc::EINVAL, libc::ENOTSUP, libc::EBADF, libc::EIO, libc::EACCES, 0] {
-        assert!(absent_acl(std::io::Error::from_raw_os_error(errno)).is_err());
-    }
+fn incomplete_filesec_cannot_be_misclassified_as_an_absent_acl() {
+    // This is the state Apple libc leaves behind when its fstatx_np ACL-buffer
+    // realloc fails after an otherwise successful extended-stat syscall.
+    // SAFETY: filesec_init returns either null or a fresh owned allocation.
+    let filesec = OwnedFileSec(
+        NonNull::new(unsafe { filesec_init() }).expect("test filesec must allocate"),
+    );
+    assert!(require_complete_filesec(&filesec).is_err());
+    assert!(filesec_acl_state(&filesec).is_err());
 }
 
 #[test]
@@ -97,11 +102,56 @@ fn inspection_and_acl_clear_keep_the_callers_descriptor_open() {
     set_entry_acl(file.as_fd());
     assert_eq!(inspect_descriptor(file.as_raw_fd()).unwrap(), AclState::Present);
     file.metadata().unwrap();
-    clear_acl(file.as_fd()).unwrap();
+    clear_private_clone_acl(file.as_fd()).unwrap();
+    require_receipt_no_acl(&inspect_security(file.as_fd()).unwrap(), "test ACL clear").unwrap();
     assert!(matches!(inspect_descriptor(file.as_raw_fd()).unwrap(), AclState::Absent | AclState::Empty));
     file.metadata().unwrap();
     assert_eq!(inspect_descriptor(-1).unwrap_err().status, "EBADF");
     file.metadata().unwrap();
+}
+
+#[test]
+fn fused_security_observation_binds_exact_metadata_and_acl_to_one_descriptor() {
+    let fixture = Fixture::new("fused");
+    let path = fixture.0.join("file");
+    let file = File::create(&path).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+
+    let plain = inspect_security(file.as_fd()).unwrap();
+    let stat = rustix::fs::fstat(file.as_fd()).unwrap();
+    assert!(plain.matches_identity(&stat));
+    assert!(plain.is_file());
+    assert_eq!(plain.mode, stat.st_mode);
+    assert_eq!(plain.uid, stat.st_uid as u32);
+    assert_eq!(plain.gid, stat.st_gid as u32);
+    assert_eq!(plain.flags, stat.st_flags);
+    assert!(matches!(plain.acl, AclState::Absent | AclState::Empty));
+
+    set_entry_acl(file.as_fd());
+    let with_acl = inspect_security(file.as_fd()).unwrap();
+    assert!(with_acl.matches_identity(&stat));
+    assert_eq!(with_acl.acl, AclState::Present);
+    assert_ne!(plain, with_acl);
+
+    clear_private_clone_acl(file.as_fd()).unwrap();
+    let cleared = inspect_security(file.as_fd()).unwrap();
+    assert!(matches!(cleared.acl, AclState::Absent | AclState::Empty));
+    assert_eq!(cleared.device, plain.device);
+    assert_eq!(cleared.inode, plain.inode);
+}
+
+#[test]
+fn security_receipts_detect_mode_changes_without_losing_identity() {
+    let fixture = Fixture::new("receipt-mode");
+    let path = fixture.0.join("file");
+    let file = File::create(&path).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    let before = inspect_security(file.as_fd()).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o400)).unwrap();
+    let after = inspect_security(file.as_fd()).unwrap();
+    assert_eq!((before.device, before.inode), (after.device, after.inode));
+    assert_ne!(before, after);
+    assert_eq!(after.mode & 0o7777, 0o400);
 }
 
 #[test]
@@ -114,7 +164,12 @@ fn owned_duplicate_survives_original_close_and_path_replacement() {
     drop(file);
     fs::rename(&path, fixture.0.join("moved")).unwrap();
     let replacement = File::create(&path).unwrap();
-    clear_acl(replacement.as_fd()).unwrap();
+    clear_private_clone_acl(replacement.as_fd()).unwrap();
+    require_receipt_no_acl(
+        &inspect_security(replacement.as_fd()).unwrap(),
+        "test replacement ACL clear",
+    )
+    .unwrap();
     assert_eq!(inspect_acl(retained.as_fd()).unwrap(), AclState::Present);
     assert!(matches!(inspect_acl(replacement.as_fd()).unwrap(), AclState::Absent | AclState::Empty));
 }
