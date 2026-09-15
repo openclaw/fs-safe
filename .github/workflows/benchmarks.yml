@@ -19,6 +19,10 @@ on:
         description: Optional baseline Git ref for the same runner and harness
         type: string
         default: ""
+      candidate_ref:
+        description: Optional exact 40-hex candidate commit for a reproducible study
+        type: string
+        default: ""
       iterations:
         description: Method-audit iterations
         type: string
@@ -45,34 +49,154 @@ on:
         type: choice
         options: ["both", "off", "require"]
         default: "both"
+      node_version:
+        description: Node.js version for the method audit
+        type: choice
+        options: ["22", "24"]
+        default: "24"
+      control:
+        description: Build control for baseline/candidate measurements
+        type: choice
+        options: ["rebuild", "same-artifact"]
+        default: "rebuild"
+      timeout_minutes:
+        description: Method-audit job timeout
+        type: choice
+        options: ["45", "90", "120"]
+        default: "45"
+      expected_harness_sha:
+        description: Optional exact reviewed workflow commit expected to supply the harness
+        type: string
+        default: ""
 
 permissions:
   contents: read
 
 jobs:
-  method-audit:
+  prepare_method_audit:
     if: github.event_name == 'workflow_dispatch' && inputs.method_audit
+    name: Prepare method audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      harness_sha: ${{ steps.plan.outputs.harness_sha }}
+      candidate_sha: ${{ steps.plan.outputs.candidate_sha }}
+      baseline_sha: ${{ steps.plan.outputs.baseline_sha }}
+      has_baseline: ${{ steps.plan.outputs.has_baseline }}
+      baseline_build_required: ${{ steps.plan.outputs.baseline_build_required }}
+      node_version: ${{ steps.plan.outputs.node_version }}
+      timeout_minutes: ${{ steps.plan.outputs.timeout_minutes }}
+      control_kind: ${{ steps.plan.outputs.control_kind }}
+      plan_file_sha256: ${{ steps.plan.outputs.plan_file_sha256 }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Configure byte-exact checkouts
+        run: |
+          # checkout v7 has no line-ending input; configure Git before checkout.
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+      - name: Check out reviewed harness history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: harness
+      - name: Validate and resolve method-audit plan
+        id: plan
+        env:
+          METHOD_PLATFORM: ${{ inputs.platform }}
+          METHOD_COMPARE_REF: ${{ inputs.compare_ref }}
+          METHOD_CANDIDATE_REF: ${{ inputs.candidate_ref }}
+          METHOD_ITERATIONS: ${{ inputs.iterations }}
+          METHOD_SAMPLES: ${{ inputs.samples }}
+          METHOD_FILTER: ${{ inputs.filter }}
+          METHOD_ORDER: ${{ inputs.order }}
+          METHOD_BLOCKS: ${{ inputs.blocks }}
+          METHOD_NATIVE_MODE: ${{ inputs.native_mode }}
+          METHOD_NODE_VERSION: ${{ inputs.node_version }}
+          METHOD_CONTROL: ${{ inputs.control }}
+          METHOD_TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
+          METHOD_EXPECTED_HARNESS_SHA: ${{ inputs.expected_harness_sha }}
+          METHOD_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          METHOD_EVENT_SHA: ${{ github.sha }}
+          METHOD_WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          node "$GITHUB_WORKSPACE/harness/benchmarks/method-audit-evidence.mjs" prepare \
+            --harness-root "$GITHUB_WORKSPACE/harness" \
+            --output "$RUNNER_TEMP/method-audit-plan.json"
+      - name: Upload resolved method-audit plan
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: method-audit-plan
+          path: ${{ runner.temp }}/method-audit-plan.json
+          if-no-files-found: error
+
+  method-audit:
+    needs: prepare_method_audit
     name: Method audit (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: ${{ fromJSON(needs.prepare_method_audit.outputs.timeout_minutes) }}
     strategy:
       fail-fast: false
-      matrix:
-        os: ${{ fromJSON(inputs.platform == 'linux' && '["ubuntu-latest"]' || inputs.platform == 'macos' && '["macos-15"]' || inputs.platform == 'windows' && '["windows-latest"]' || '["ubuntu-latest","macos-15","windows-latest"]') }}
+      matrix: ${{ fromJSON(needs.prepare_method_audit.outputs.matrix) }}
     defaults:
       run:
         shell: bash
     env:
-      METHOD_ITERATIONS: ${{ inputs.iterations }}
-      METHOD_SAMPLES: ${{ inputs.samples }}
-      METHOD_FILTER: ${{ inputs.filter }}
-      METHOD_ORDER: ${{ inputs.order }}
-      METHOD_BLOCKS: ${{ inputs.blocks }}
-      METHOD_NATIVE_MODE: ${{ inputs.native_mode }}
-      BASE_REF: ${{ inputs.compare_ref }}
+      HARNESS_ROOT: ${{ github.workspace }}/harness
+      CANDIDATE_ROOT: ${{ github.workspace }}/candidate
+      BASELINE_ROOT: ${{ github.workspace }}/baseline
+      PLAN_PATH: ${{ runner.temp }}/method-audit-plan/method-audit-plan.json
+      EVIDENCE_ROOT: ${{ runner.temp }}/method-audit-evidence
+      REPORT_ROOT: ${{ github.workspace }}/artifacts/method-audit
+      METHOD_MATRIX_PLATFORM: ${{ matrix.platform }}
+      EXPECTED_PLAN_FILE_HASH: ${{ needs.prepare_method_audit.outputs.plan_file_sha256 }}
     steps:
-      - name: Check out
+      - name: Configure byte-exact checkouts
+        run: |
+          # checkout v7 has no line-ending input; configure Git before checkout.
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+      - name: Download resolved method-audit plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: method-audit-plan
+          path: ${{ runner.temp }}/method-audit-plan
+      - name: Check out reviewed harness
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare_method_audit.outputs.harness_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: harness
+      - name: Check out resolved candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare_method_audit.outputs.candidate_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: candidate
+      - name: Check out resolved baseline
+        if: needs.prepare_method_audit.outputs.has_baseline == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare_method_audit.outputs.baseline_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: baseline
+      - name: Reserve fixed baseline path
+        if: needs.prepare_method_audit.outputs.has_baseline != 'true'
+        run: mkdir -p "$BASELINE_ROOT"
+      - name: Verify reviewed harness before measured builds
+        run: |
+          node "$HARNESS_ROOT/benchmarks/method-audit-evidence.mjs" verify-harness \
+            --plan "$PLAN_PATH" \
+            --expected-plan-file-hash "$EXPECTED_PLAN_FILE_HASH" \
+            --harness-root "$HARNESS_ROOT"
       - name: Set up pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
@@ -81,96 +205,52 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24"
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
+          node-version: ${{ needs.prepare_method_audit.outputs.node_version }}
       - name: Add portable TAR parser target
         run: rustup target add wasm32-unknown-unknown
+      - name: Install reviewed harness dependencies
+        run: pnpm --dir "$HARNESS_ROOT" install --frozen-lockfile
       - name: Build candidate
         run: |
-          pnpm install --frozen-lockfile
-          pnpm build
-          pnpm native:build
+          pnpm --dir "$CANDIDATE_ROOT" install --frozen-lockfile
+          pnpm --dir "$CANDIDATE_ROOT" build
+          pnpm --dir "$CANDIDATE_ROOT" native:build
       - name: Build baseline
-        if: inputs.compare_ref != ''
+        if: needs.prepare_method_audit.outputs.baseline_build_required == 'true'
         run: |
-          git fetch --no-tags -- origin "$BASE_REF"
-          git worktree add --detach "$RUNNER_TEMP/fs-safe-method-baseline" FETCH_HEAD
-          cd "$RUNNER_TEMP/fs-safe-method-baseline"
-          pnpm install --frozen-lockfile
-          pnpm build
-          pnpm native:build
-      - name: Measure all methods
+          pnpm --dir "$BASELINE_ROOT" install --frozen-lockfile
+          pnpm --dir "$BASELINE_ROOT" build
+          pnpm --dir "$BASELINE_ROOT" native:build
+      - name: Snapshot measured installations
         run: |
-          mkdir -p artifacts/method-audit
-          if [[ ! "$METHOD_BLOCKS" =~ ^[1-5]$ ]]; then
-            echo "blocks must be an integer from 1 through 5" >&2
-            exit 2
-          fi
-          run_variant() {
-            local label="$1"
-            local dist="$2"
-            local modes=(off require)
-            if [[ "$METHOD_NATIVE_MODE" != "both" ]]; then modes=("$METHOD_NATIVE_MODE"); fi
-            for mode in "${modes[@]}"; do
-              local report="artifacts/method-audit/$label-$mode.json"
-              local args=(--mode "$mode" --iterations "$METHOD_ITERATIONS" --samples "$METHOD_SAMPLES" --warmup 3 --json "$report")
-              if [[ -n "$dist" ]]; then args+=(--dist "$dist"); fi
-              if [[ -n "$METHOD_FILTER" ]]; then args+=(--filter "$METHOD_FILTER"); fi
-              # Git Bash rewrites leading-slash arguments for native programs.
-              # Keep filters byte-exact; RUNNER_TEMP is already a native path.
-              MSYS2_ARG_CONV_EXCL='*' pnpm benchmark:methods "${args[@]}"
-              REPORT_PATH="$report" REPORT_LABEL="$label" REPORT_MODE="$mode" node --input-type=module -e '
-                import fs from "node:fs";
-                const report = JSON.parse(fs.readFileSync(process.env.REPORT_PATH, "utf8"));
-                const measured = Array.isArray(report.results) &&
-                  report.results.some((result) => result.skipped === undefined);
-                if (!measured) {
-                  console.error("No measured cases for filter " +
-                    JSON.stringify(process.env.METHOD_FILTER) + " on " + process.platform + "/" +
-                    process.env.REPORT_MODE + " (" + process.env.REPORT_LABEL + ")");
-                  process.exit(2);
-                }
-              '
-            done
-          }
-          baseline_dist="$RUNNER_TEMP/fs-safe-method-baseline/dist"
-          if [[ "$METHOD_ORDER" == "abba" || "$METHOD_ORDER" == "baab" ]]; then
-            order_label="ABBA"
-            if [[ "$METHOD_ORDER" == "baab" ]]; then order_label="BAAB"; fi
-            if [[ -z "$BASE_REF" ]]; then
-              echo "$order_label order requires compare_ref" >&2
-              exit 2
-            fi
-            if [[ -z "$METHOD_FILTER" ]]; then
-              echo "$order_label order requires a focused method filter" >&2
-              exit 2
-            fi
-            for (( block = 1; block <= METHOD_BLOCKS; block += 1 )); do
-              if [[ "$METHOD_ORDER" == "baab" ]]; then
-                run_variant "block-$block-candidate-a" ""
-                run_variant "block-$block-baseline-a" "$baseline_dist"
-                run_variant "block-$block-baseline-b" "$baseline_dist"
-                run_variant "block-$block-candidate-b" ""
-              else
-                run_variant "block-$block-baseline-a" "$baseline_dist"
-                run_variant "block-$block-candidate-a" ""
-                run_variant "block-$block-candidate-b" ""
-                run_variant "block-$block-baseline-b" "$baseline_dist"
-              fi
-            done
-          else
-            for (( block = 1; block <= METHOD_BLOCKS; block += 1 )); do
-              if [[ -n "$BASE_REF" ]]; then run_variant "block-$block-baseline" "$baseline_dist"; fi
-              run_variant "block-$block-candidate" ""
-            done
-          fi
+          mkdir -p "$EVIDENCE_ROOT"
+          node "$HARNESS_ROOT/benchmarks/method-audit-evidence.mjs" snapshot \
+            --plan "$PLAN_PATH" \
+            --expected-plan-file-hash "$EXPECTED_PLAN_FILE_HASH" \
+            --harness-root "$HARNESS_ROOT" \
+            --candidate-root "$CANDIDATE_ROOT" \
+            --baseline-root "$BASELINE_ROOT" \
+            --output "$EVIDENCE_ROOT/before.json"
+      - name: Measure and finalize evidence
+        env:
+          # Git Bash rewrites leading-slash arguments for native programs.
+          # Preserve filter bytes even though the validated plan supplies argv directly.
+          MSYS2_ARG_CONV_EXCL: "*"
+        run: |
+          node "$HARNESS_ROOT/benchmarks/method-audit-evidence.mjs" measure \
+            --plan "$PLAN_PATH" \
+            --expected-plan-file-hash "$EXPECTED_PLAN_FILE_HASH" \
+            --before "$EVIDENCE_ROOT/before.json" \
+            --harness-root "$HARNESS_ROOT" \
+            --candidate-root "$CANDIDATE_ROOT" \
+            --baseline-root "$BASELINE_ROOT" \
+            --output-root "$REPORT_ROOT"
       - name: Upload method measurements
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: method-audit-${{ matrix.os }}-${{ github.run_id }}
-          path: artifacts/method-audit/
+          name: method-audit-${{ matrix.platform }}-${{ github.run_id }}
+          path: ${{ env.REPORT_ROOT }}/
           if-no-files-found: warn
 
   benchmark:
