@@ -51,7 +51,7 @@ export function profileForFilenameSource(blobOid, bytes) {
   const sanitized = /sanitizeFileNameCandidate\(fileName\)\s*\?\?\s*sanitizeFileNameCandidate\(fallbackName\)\s*\?\?/u.test(source) &&
     /function\s+sanitizeFileNameCandidate\s*\(/u.test(source);
   const legacy = /export\s+function\s+sanitizeUntrustedFileName\s*\(/u.test(source) &&
-    /if\s*\(!trimmed\)\s*{\s*return\s+fallbackName;\s*}/u.test(source);
+    /if\s*\(!trimmed\)\s*\{\s*return\s+fallbackName;\s*\}/u.test(source);
   assert.notEqual(sanitized, legacy, `Unrecognized or ambiguous src/filename.ts blob: ${blobOid}`);
   const profile = sanitized ? "sanitized" : "legacy";
   const known = SOURCE_PROFILES.get(blobOid);
