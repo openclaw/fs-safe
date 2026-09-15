@@ -77,7 +77,7 @@ export async function readBoundedAsync(
     // initial read; virtual files can report zero or stale sizes thereafter.
     const currentSize = bytesRead < buffer.length ? observeRegularFileSize?.() : undefined;
     total = addReadBytes(total, bytesRead, maxBytes, createLimitError);
-    if (currentSize !== undefined && bytesRead >= currentSize) return finishReadBuffer(buffer, total, allocate);
+    if (currentSize !== undefined && currentSize > 0 && bytesRead >= currentSize) return finishReadBuffer(buffer, total, allocate);
   }
   while (true) {
     if (total === buffer.length) buffer = growReadBuffer(buffer, maxBytes, allocate);
@@ -154,7 +154,7 @@ export function readBoundedSync(
     if (bytesRead === 0) return finishReadBuffer(buffer, 0);
     const currentSize = bytesRead < buffer.length ? observeRegularFileSize?.() : undefined;
     total = addReadBytes(total, bytesRead, maxBytes, createLimitError);
-    if (currentSize !== undefined && bytesRead >= currentSize) return finishReadBuffer(buffer, total);
+    if (currentSize !== undefined && currentSize > 0 && bytesRead >= currentSize) return finishReadBuffer(buffer, total);
   }
   while (true) {
     if (total === buffer.length) buffer = growReadBuffer(buffer, maxBytes);

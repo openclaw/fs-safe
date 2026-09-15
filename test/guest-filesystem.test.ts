@@ -36,11 +36,14 @@ function competingParentSetup(kind: "directory" | "symlink" | "file"): string {
   // Inject after the actual missing-directory observation, without rewriting the guest source.
   return [
     "original_open = os.open",
+    "competing_parent_created = False",
     "def open_with_competing_parent(*args, **kwargs):",
+    "    global competing_parent_created",
     "    try:",
     "        return original_open(*args, **kwargs)",
     "    except FileNotFoundError:",
-    "        if args[0] == 'raced' and kwargs.get('dir_fd') is not None:",
+    "        if not competing_parent_created and args[0] == 'raced' and kwargs.get('dir_fd') is not None:",
+    "            competing_parent_created = True",
     "            parent_fd = kwargs['dir_fd']",
     ...create.map((line) => `            ${line}`),
     "            sys.stderr.write('competing parent created\\n')",
@@ -111,7 +114,7 @@ describe.skipIf(process.platform === "win32")("guest parent creation races", () 
     }
   });
 
-  it.each(["write", "create", "copy"] as const)(
+  it.each(["write", "create", "copy", "rename"] as const)(
     "%s still rejects a missing parent when mkdir is disabled",
     async (operation) => {
       const workspace = await tempRoot("fs-safe-guest-no-mkdir-");
@@ -126,6 +129,90 @@ describe.skipIf(process.platform === "win32")("guest parent creation races", () 
       expect(await fs.readFile(path.join(workspace, "source.txt"), "utf8")).toBe("payload");
     },
   );
+
+  it.each(["missing", "file", "symlink", "directory"] as const)(
+    "admits only a directory when the competing parent becomes %s before the final open",
+    async (kind) => {
+      const root = await tempRoot("fs-safe-guest-parent-change-");
+      const workspace = path.join(root, "workspace");
+      const outside = path.join(root, "outside");
+      await fs.mkdir(workspace);
+      await fs.mkdir(outside);
+      await fs.writeFile(path.join(outside, "keep.txt"), "unchanged");
+      const replacement = kind === "directory"
+        ? ["original_mkdir(name, 0o777, dir_fd=parent_fd)"]
+        : kind === "symlink"
+          ? ["os.symlink('../outside', name, dir_fd=parent_fd)"]
+          : kind === "file"
+            ? [
+                "replacement_fd = original_open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=parent_fd)",
+                "os.close(replacement_fd)",
+              ]
+            : [];
+      const setup = [
+        competingParentSetup("directory"),
+        "original_mkdir = os.mkdir",
+        "def mkdir_then_change_competitor(name, *args, **kwargs):",
+        "    try:",
+        "        return original_mkdir(name, *args, **kwargs)",
+        "    except FileExistsError:",
+        "        if name == 'raced':",
+        "            parent_fd = kwargs['dir_fd']",
+        "            os.rmdir(name, dir_fd=parent_fd)",
+        ...replacement.map((line) => `            ${line}`),
+        "            sys.stderr.write('competing parent changed\\n')",
+        "        raise",
+        "os.mkdir = mkdir_then_change_competitor",
+      ].join("\n");
+      const result = runGuest(parentCreationArgs("write", workspace),
+        kind === "directory" ? "payload" : undefined, setup);
+
+      expect(result.error).toBeUndefined();
+      expect(result.signal).toBeNull();
+      expect(result.stderr.toString().match(/competing parent created/g)).toHaveLength(1);
+      expect(result.stderr.toString()).toContain("competing parent changed");
+      expect(result.status).toBe(kind === "directory" ? 0 : 1);
+      expect(await fs.readdir(outside)).toEqual(["keep.txt"]);
+      expect(await fs.readFile(path.join(outside, "keep.txt"), "utf8")).toBe("unchanged");
+      if (kind === "directory") {
+        // Admission accepts the current directory, not ownership of the mkdir winner.
+        expect(await fs.readFile(path.join(workspace, "raced/nested/note.txt"), "utf8"))
+          .toBe("payload");
+        expect(await fs.readdir(path.join(workspace, "raced/nested"))).toEqual(["note.txt"]);
+      } else if (kind === "missing") {
+        expect(result.stderr.toString().trimEnd().split("\n").at(-1)).toMatch(/^FileNotFoundError:/);
+        expect(await fs.readdir(workspace)).toEqual([]);
+      } else {
+        expect(result.stderr.toString().trimEnd().split("\n").at(-1))
+          .toMatch(/NotADirectoryError|Not a directory|Too many levels/i);
+        expect(await fs.readdir(workspace)).toEqual(["raced"]);
+        if (kind === "symlink") expect(await fs.readlink(path.join(workspace, "raced"))).toBe("../outside");
+        else expect(await fs.readFile(path.join(workspace, "raced"))).toHaveLength(0);
+      }
+    },
+  );
+
+  it.each([
+    { errno: "EACCES", code: 13, exception: "PermissionError" },
+    { errno: "ENOSPC", code: 28, exception: "OSError" },
+  ])("preserves a mkdir $errno failure instead of admitting a parent", async ({ errno, code, exception }) => {
+    const workspace = await tempRoot("fs-safe-guest-mkdir-failure-");
+    const setup = [
+      "original_mkdir = os.mkdir",
+      "def fail_parent_mkdir(name, *args, **kwargs):",
+      "    if name == 'raced':",
+      `        raise OSError(errno.${errno}, 'injected mkdir failure', name)`,
+      "    return original_mkdir(name, *args, **kwargs)",
+      "os.mkdir = fail_parent_mkdir",
+    ].join("\n");
+    const result = runGuest(parentCreationArgs("create", workspace), undefined, setup);
+    expect(result.error).toBeUndefined();
+    expect(result.signal).toBeNull();
+    expect(result.status).toBe(1);
+    expect(result.stderr.toString().trimEnd().split("\n").at(-1))
+      .toBe(`${exception}: [Errno ${code}] injected mkdir failure: 'raced'`);
+    expect(await fs.readdir(workspace)).toEqual([]);
+  });
 });
 
 describe.skipIf(process.platform === "win32")("guest filesystem protocol", () => {

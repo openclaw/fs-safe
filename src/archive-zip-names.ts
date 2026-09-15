@@ -1,3 +1,4 @@
+import { types } from "node:util";
 import { ArchiveFormatError, ArchiveSecurityError } from "./archive-errors.js";
 import { stripArchivePath, validateArchiveEntryPath } from "./archive-entry.js";
 import { updateCrc32 } from "./archive-crc32.js";
@@ -65,18 +66,31 @@ export function admitZipNames(params: {
 }): string | undefined {
   const { central, local, flags, centralExtra, localExtra, seen } = params;
   if (!central.length || !local.length) zipFormat("empty entry name");
-  const centralRaw = central.toString("latin1"); const localRaw = local.toString("latin1");
-  const centralUtf8 = originalName(central, centralRaw, flags); const localUtf8 = originalName(local, localRaw, flags);
-  const centralUnicode = unicodeName(central, centralExtra); const localUnicode = unicodeName(local, localExtra);
+  // Reuse only within this synchronous call; shared backing bytes can change
+  // concurrently even though admission does not yield while checking names.
+  const sameName = !types.isSharedArrayBuffer(central.buffer) &&
+    !types.isSharedArrayBuffer(local.buffer) && central.equals(local);
+  const centralRaw = central.toString("latin1");
+  const localRaw = sameName ? centralRaw : local.toString("latin1");
+  const centralUtf8 = originalName(central, centralRaw, flags);
+  const localUtf8 = sameName ? centralUtf8 : originalName(local, localRaw, flags);
+  const centralUnicode = unicodeName(central, centralExtra);
+  const centralField = centralExtra.get(0x7075); const localField = localExtra.get(0x7075);
+  // Only immutable identical fields share their CRC-bound name admission.
+  const sameUnicode = (!centralField || !types.isSharedArrayBuffer(centralField.buffer)) &&
+    (!localField || !types.isSharedArrayBuffer(localField.buffer)) &&
+    (centralField === localField ||
+      (centralField !== undefined && localField !== undefined && centralField.equals(localField)));
+  const localUnicode = sameName && sameUnicode ? centralUnicode : unicodeName(local, localExtra);
   const centralKey = key(centralRaw);
-  if (centralKey !== key(localRaw)) {
+  if (!sameName && centralKey !== key(localRaw)) {
     zipFormat("central and local names disagree");
   }
   const interpretations = [centralUtf8, localUtf8, centralUnicode, localUnicode].filter(
     (value): value is string => value !== undefined,
   );
   const interpretationKey = interpretations.length ? key(interpretations[0]!) : undefined;
-  if (interpretations.some((value) => key(value) !== interpretationKey)) {
+  if (interpretations.some((value) => value !== interpretations[0] && key(value) !== interpretationKey)) {
     zipFormat("conflicting Unicode name interpretations");
   }
   // JSZip checks the central Unicode field against the local name. A slash-only
@@ -88,11 +102,13 @@ export function admitZipNames(params: {
   if (!centralUnicode && localUnicode && key(localUnicode) !== key(local.toString("utf8"))) {
     zipFormat("local-only Unicode override changes the name");
   }
-  const identities = new Set([centralKey]);
-  if (centralUnicode !== undefined) identities.add(key(Buffer.from(centralUnicode).toString("latin1")));
-  if ([...identities].some((identity) => seen.has(identity))) {
+  const unicodeKey = centralUnicode === undefined
+    ? undefined : key(Buffer.from(centralUnicode).toString("latin1"));
+  if (seen.has(centralKey) ||
+      (unicodeKey !== undefined && unicodeKey !== centralKey && seen.has(unicodeKey))) {
     throw new ArchiveSecurityError("entry-path", "zip archive contains duplicate or colliding entry names");
   }
-  for (const identity of identities) seen.add(identity);
+  seen.add(centralKey);
+  if (unicodeKey !== undefined && unicodeKey !== centralKey) seen.add(unicodeKey);
   return centralUnicode ?? centralUtf8 ?? (central.every((byte) => byte < 128) ? central.toString("ascii") : undefined);
 }

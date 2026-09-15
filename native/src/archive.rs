@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{Cursor, Read, Seek, SeekFrom};
+use std::io::{BufReader, Cursor, Read, Seek, SeekFrom};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
@@ -124,11 +124,12 @@ fn open_tar_reader(
     limits: TarMeterLimits,
 ) -> Result<TarMetadataMeter<Box<dyn Read + Send>>> {
     let file = File::open(path).map_err(|error| io_error("open archive", error))?;
-    open_tar_source(file, format, cancelled, limits)
+    open_tar_source(file, format, cancelled, limits, true)
 }
 
 fn open_tar_source<'a, R: Read + Seek + Send + 'a>(
     mut file: R, format: ArchiveFormat, cancelled: Arc<AtomicBool>, limits: TarMeterLimits,
+    buffer_plain: bool,
 ) -> Result<TarMetadataMeter<Box<dyn Read + Send + 'a>>> {
     let decoded: Box<dyn Read + Send + 'a> = match format {
         ArchiveFormat::TarZstd => Box::new(CancellationReader {
@@ -153,6 +154,13 @@ fn open_tar_source<'a, R: Read + Seek + Send + 'a>(
                         CancellationReader { inner: file, cancelled: Arc::clone(&cancelled) },
                         Arc::clone(&cancelled),
                     ),
+                    cancelled,
+                })
+            } else if buffer_plain {
+                // The meter requests each header/payload boundary separately. File
+                // read-ahead avoids a syscall per small member; memory inputs do not need it.
+                Box::new(CancellationReader {
+                    inner: BufReader::with_capacity(65536, file),
                     cancelled,
                 })
             } else {
@@ -678,7 +686,7 @@ fn read_tar_entry(
     if member.size > max_bytes { return Err(limit_error("archive-entry-extracted-size-exceeds-limit")); }
     let mut reader = open_tar_reader(path, format, Arc::clone(&cancelled), limits)?;
     skip_tar_to(&mut reader, &mut 0, member.offset)?;
-    let output = read_bounded(&mut (&mut reader).take(member.size), max_bytes, cancelled)?;
+    let output = read_bounded(&mut (&mut reader).take(member.size), max_bytes, member.size, cancelled)?;
     if output.len() as u64 != member.size {
         return Err(Error::new(Status::InvalidArg, "archive-header-invalid: truncated TAR payload"));
     }
@@ -710,7 +718,7 @@ fn read_zip_entry(
         ));
     }
     let expected_size = entry.size();
-    let output = read_bounded(&mut entry, max_bytes, cancelled)?;
+    let output = read_bounded(&mut entry, max_bytes, expected_size, cancelled)?;
     if output.len() as u64 != expected_size {
         return Err(Error::new(
             Status::InvalidArg,
@@ -723,9 +731,12 @@ fn read_zip_entry(
 fn read_bounded(
     reader: &mut impl Read,
     max_bytes: u64,
+    expected_size: u64,
     cancelled: Arc<AtomicBool>,
 ) -> Result<Vec<u8>> {
-    let capacity = usize::try_from(max_bytes.min(1024 * 1024)).unwrap_or(0);
+    // The member size guides reservation only; EOF and integrity checks still
+    // consume the reader, including an extra byte when the budget permits it.
+    let capacity = usize::try_from(max_bytes.min(1024 * 1024).min(expected_size.saturating_add(1))).unwrap_or(0);
     let mut output = Vec::with_capacity(capacity);
     CancellationReader {
         inner: reader,
@@ -833,7 +844,7 @@ impl Task for ReadZipBufferTask {
             return Err(Error::new(Status::InvalidArg, "archive entry is not a file"));
         }
         let expected_size = entry.size();
-        let output = read_bounded(&mut entry, self.max_bytes, Arc::clone(&self.cancelled))?;
+        let output = read_bounded(&mut entry, self.max_bytes, expected_size, Arc::clone(&self.cancelled))?;
         if output.len() as u64 != expected_size {
             return Err(Error::new(Status::InvalidArg, "archive-header-invalid: ZIP entry size does not match declared uncompressed size"));
         }
@@ -896,7 +907,7 @@ impl Task for OpenTarBufferTask {
     fn compute(&mut self) -> Result<Self::Output> {
         check_cancelled(&self.cancelled)?;
         let input = self.buffer.take().ok_or_else(|| Error::new(Status::GenericFailure, "TAR buffer already consumed"))?;
-        let reader = open_tar_source(Cursor::new(input.as_ref()), self.format, Arc::clone(&self.cancelled), self.limits)?;
+        let reader = open_tar_source(Cursor::new(input.as_ref()), self.format, Arc::clone(&self.cancelled), self.limits, false)?;
         let members = inspect_tar_reader(reader)?;
         Ok(NativeTarBufferReader { data: Arc::new(TarBufferData { input, format: self.format, limits: self.limits, members }) })
     }
@@ -953,9 +964,9 @@ impl Task for ReadTarBufferTask {
             }
             return Ok(output);
         }
-        let mut reader = open_tar_source(Cursor::new(input), self.data.format, Arc::clone(&self.cancelled), self.data.limits)?;
+        let mut reader = open_tar_source(Cursor::new(input), self.data.format, Arc::clone(&self.cancelled), self.data.limits, false)?;
         skip_tar_to(&mut reader, &mut 0, member.offset)?;
-        let output = read_bounded(&mut (&mut reader).take(member.size), self.max_bytes, Arc::clone(&self.cancelled))?;
+        let output = read_bounded(&mut (&mut reader).take(member.size), self.max_bytes, member.size, Arc::clone(&self.cancelled))?;
         if output.len() as u64 != member.size {
             return Err(Error::new(Status::InvalidArg, "archive-header-invalid: truncated TAR payload"));
         }
@@ -1039,6 +1050,10 @@ pub fn read_archive_entry_native(
 }
 
 #[cfg(test)]
+#[path = "archive_tar_buffer_tests.rs"]
+mod tar_buffer_tests;
+
+#[cfg(test)]
 mod tests {
     use std::io::{Cursor, Write};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1060,7 +1075,12 @@ mod tests {
         let archive = Arc::clone(&reader.archive);
         let mut task = ReadZipBufferTask { archive: Arc::clone(&archive), index: 0, max_bytes: 14, cancelled: Arc::new(AtomicBool::new(false)) };
         drop(reader);
-        assert_eq!(task.compute().unwrap(), b"retained bytes");
+        for budget in [14, 16 * 1024 * 1024] {
+            task.max_bytes = budget;
+            let output = task.compute().unwrap();
+            assert_eq!(output, b"retained bytes");
+            assert!(output.capacity() <= 64 * 1024, "small output must not retain a large speculative reservation");
+        }
         drop(task);
         let original = Arc::try_unwrap(archive).ok().unwrap().into_inner().unwrap().into_inner().into_inner();
         assert_eq!(original.as_ptr(), input_pointer, "input bytes must not be copied");
@@ -1081,7 +1101,12 @@ mod tests {
             let mut task = ReadTarBufferTask { data: Arc::clone(&reader.data), index: 1, max_bytes: 3, cancelled: Arc::new(AtomicBool::new(false)) };
             drop(reader);
             assert_eq!(task.data.input.as_ptr(), pointer, "input bytes must not be copied");
-            assert_eq!(task.compute().unwrap(), b"two");
+            for budget in [3, 16 * 1024 * 1024] {
+                task.max_bytes = budget;
+                let output = task.compute().unwrap();
+                assert_eq!(output, b"two");
+                assert!(output.capacity() <= 64 * 1024, "small output must not retain a large speculative reservation");
+            }
             task.index = 0;
             assert_eq!(task.compute().unwrap(), b"one");
         }
