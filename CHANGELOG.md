@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Bind Windows `readSecureFile()` owner and DACL verification to the already-open descriptor and compare its native 32-bit volume serial and 64-bit file-index projection with Node's bigint receipt before reading. Secure reads now fail closed when the descriptor capability is missing, stale, remote, incomplete, or unsupported instead of authorizing bytes with pathname-based ACL facts.
+- Bind Windows private-directory creation, protected-DACL validation, complete file-identity association checks, and failure cleanup to retained handles, preserving concurrent pathname replacements; reject dot, dot-dot, and trailing-space or trailing-period path components before creation.
 - Bind Windows Root containment that depends on case folding to the Root directory's exact identity, then continue under the trusted Root spelling; exact-case paths retain the lexical fast path without added filesystem observations.
 - Let manually dispatched method audits focus one workload family, select native mode, and repeat baseline/candidate measurements in A-B-B-A order for drift-resistant performance decisions.
 - Preserve existing destinations when guest cross-device symlink moves fail by staging links privately before atomic replacement, with cleanup on creation or publication failure.
