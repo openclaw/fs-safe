@@ -84,6 +84,31 @@ describe("sanitizeUntrustedFileName", () => {
     expect(sanitizeUntrustedFileName("report.txt", "../../outside.txt")).toBe("report.txt");
   });
 
+  it.each([
+    ["safe Unicode", `${"é".repeat(196)}.txt`, `${"é".repeat(196)}.txt`],
+    ["199-character ASCII", "a".repeat(199), "a".repeat(199)],
+    ["200-character ASCII", "a".repeat(200), "a".repeat(200)],
+    ["Windows device", "cOn.TxT", "cOn_.TxT"],
+    ["padded Windows device", `CON${" ".repeat(193)}.txt`, `CON${" ".repeat(193)}_.tx`],
+    ["invalid characters", 're<>:"|?*port.txt', "report.txt"],
+    ["path", "../nested/report.txt", "report.txt"],
+    ["trimmed name", " report.txt ", "report.txt"],
+    ["overlength name", "a".repeat(201), "a".repeat(200)],
+    ["surrogate boundary", `${"a".repeat(199)}😀`, "a".repeat(199)],
+  ])("keeps %s candidate behavior identical in primary and fallback positions", (
+    _label,
+    candidate,
+    expected,
+  ) => {
+    expect(sanitizeAtPosition("primary", candidate)).toBe(expected);
+    expect(sanitizeAtPosition("fallback", candidate)).toBe(expected);
+  });
+
+  it.each([".", ".."])("keeps dot alias %j unusable in either candidate position", (candidate) => {
+    expect(sanitizeAtPosition("primary", candidate)).toBe("fallback.bin");
+    expect(sanitizeAtPosition("fallback", candidate)).toBe("file");
+  });
+
   it.each(["primary", "fallback"] as const)(
     "keeps a 200-character safe ASCII %s candidate exact",
     (position) => {

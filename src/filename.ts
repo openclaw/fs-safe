@@ -3,6 +3,7 @@ import { WINDOWS_RESERVED_DEVICE_NAMES } from "./device-path.js";
 import { maxNormalizedUtf8Bytes } from "./unicode-path.js";
 
 const INVALID_FILE_NAME_CHARACTERS = /[\u0000-\u001f\u007f-\u009f<>:"/\\|?*]/g;
+const HAS_INVALID_FILE_NAME_CHARACTER = /[\u0000-\u001f\u007f-\u009f<>:"/\\|?*]/;
 
 function canStartWindowsDeviceName(character: number): boolean {
   const folded = character | 0x20;
@@ -43,124 +44,24 @@ const PORTABLE_FILE_NAME_BYTES = 255;
 const SANITIZED_FILE_NAME_CODE_UNITS = 200;
 const SAFE_FALLBACK_FILE_NAME = "file";
 
-function asciiBaseEqualsIgnoreCase(
-  value: string,
-  baseNameEnd: number,
-  expectedLowerCase: string,
-): boolean {
-  if (baseNameEnd !== expectedLowerCase.length) return false;
-  for (let index = 0; index < baseNameEnd; index += 1) {
-    const codeUnit = value.charCodeAt(index);
-    const lowerCaseCodeUnit = codeUnit >= 0x41 && codeUnit <= 0x5a
-      ? codeUnit + 0x20
-      : codeUnit;
-    if (lowerCaseCodeUnit !== expectedLowerCase.charCodeAt(index)) return false;
-  }
-  return true;
-}
-
-function isAsciiWindowsReservedDeviceBase(fileName: string, baseNameEnd: number): boolean {
-  let deviceBaseNameEnd = baseNameEnd;
-  while (deviceBaseNameEnd > 0) {
-    const codeUnit = fileName.charCodeAt(deviceBaseNameEnd - 1);
-    if (codeUnit !== 0x20 && codeUnit !== 0x2e) break;
-    deviceBaseNameEnd -= 1;
-  }
-  switch (deviceBaseNameEnd) {
-    case 3:
-      return asciiBaseEqualsIgnoreCase(fileName, deviceBaseNameEnd, "con") ||
-        asciiBaseEqualsIgnoreCase(fileName, deviceBaseNameEnd, "prn") ||
-        asciiBaseEqualsIgnoreCase(fileName, deviceBaseNameEnd, "aux") ||
-        asciiBaseEqualsIgnoreCase(fileName, deviceBaseNameEnd, "nul");
-    case 4: {
-      const number = fileName.charCodeAt(3);
-      return number >= 0x31 && number <= 0x39 && (
-        asciiBaseEqualsIgnoreCase(fileName, 3, "com") ||
-        asciiBaseEqualsIgnoreCase(fileName, 3, "lpt")
-      );
-    }
-    case 6:
-      return asciiBaseEqualsIgnoreCase(fileName, deviceBaseNameEnd, "clock$") ||
-        asciiBaseEqualsIgnoreCase(fileName, deviceBaseNameEnd, "conin$");
-    case 7:
-      return asciiBaseEqualsIgnoreCase(fileName, deviceBaseNameEnd, "conout$");
-    default:
-      return false;
-  }
-}
-
-const ASCII_FILE_NAME_NEEDS_SANITIZING = 0;
-const ASCII_FILE_NAME_FIXED_POINT = 1;
-const ASCII_FILE_NAME_UNUSABLE = 2;
-
-function isRemovableNonPathAscii(codeUnit: number): boolean {
-  return codeUnit < 0x20 ||
-    codeUnit === 0x7f ||
-    codeUnit === 0x22 ||
-    codeUnit === 0x2a ||
-    codeUnit === 0x3c ||
-    codeUnit === 0x3e ||
-    codeUnit === 0x3f ||
-    codeUnit === 0x7c;
-}
-
-function hasOnlyRemovableNonPathAscii(fileName: string, start: number): boolean {
-  for (let index = start; index < fileName.length; index += 1) {
-    if (!isRemovableNonPathAscii(fileName.charCodeAt(index))) return false;
-  }
-  return true;
-}
-
 /**
- * Recognizes only names for which the full sanitizer is provably a fixed point
- * or provably empty. Keeping this ASCII-only makes the scan bounded and avoids
- * normalization or locale-sensitive case behavior on the common callback path.
+ * Uses native string and regexp operations to recognize the full sanitizer's
+ * bounded fixed points. The separate non-global regexp keeps this predicate
+ * stateless, and the authoritative device-name transform remains the final
+ * admission check.
  */
-function classifyBoundedSanitizedAsciiFileName(fileName: unknown): number {
-  if (typeof fileName !== "string" || fileName.length === 0 || fileName === "." || fileName === "..") {
-    return ASCII_FILE_NAME_UNUSABLE;
-  }
-  if (fileName.length > SANITIZED_FILE_NAME_CODE_UNITS) {
-    return ASCII_FILE_NAME_NEEDS_SANITIZING;
-  }
-
-  let baseNameEnd = fileName.length;
-  for (let index = 0; index < fileName.length; index += 1) {
-    const codeUnit = fileName.charCodeAt(index);
-    if (
-      codeUnit < 0x20 ||
-      codeUnit > 0x7e ||
-      codeUnit === 0x22 ||
-      codeUnit === 0x2a ||
-      codeUnit === 0x2f ||
-      codeUnit === 0x3a ||
-      codeUnit === 0x3c ||
-      codeUnit === 0x3e ||
-      codeUnit === 0x3f ||
-      codeUnit === 0x5c ||
-      codeUnit === 0x7c
-    ) {
-      // The cold path is intentionally narrower than the replacement regexp:
-      // path separators, drive punctuation, Unicode, and mixed content retain
-      // the complete basename/normalization/suffix pipeline below.
-      return index === 0 &&
-          isRemovableNonPathAscii(codeUnit) &&
-          hasOnlyRemovableNonPathAscii(fileName, 1)
-        ? ASCII_FILE_NAME_UNUSABLE
-        : ASCII_FILE_NAME_NEEDS_SANITIZING;
-    }
-    if (codeUnit === 0x2e && baseNameEnd === fileName.length) {
-      baseNameEnd = index;
-    }
-  }
-
-  // trim() would change edge spaces, so those cannot take the fixed-point path.
-  if (fileName.charCodeAt(0) === 0x20 || fileName.charCodeAt(fileName.length - 1) === 0x20) {
-    return ASCII_FILE_NAME_NEEDS_SANITIZING;
-  }
-  return isAsciiWindowsReservedDeviceBase(fileName, baseNameEnd)
-    ? ASCII_FILE_NAME_NEEDS_SANITIZING
-    : ASCII_FILE_NAME_FIXED_POINT;
+function isBoundedSanitizedFileName(
+  fileName: unknown,
+  trimmedFileName: string,
+): fileName is string {
+  return typeof fileName === "string" &&
+    fileName.length > 0 &&
+    fileName.length <= SANITIZED_FILE_NAME_CODE_UNITS &&
+    fileName !== "." &&
+    fileName !== ".." &&
+    trimmedFileName === fileName &&
+    !HAS_INVALID_FILE_NAME_CHARACTER.test(fileName) &&
+    suffixWindowsReservedDeviceName(fileName) === fileName;
 }
 
 function hasWindowsDrivePrefix(value: string): boolean {
@@ -222,10 +123,8 @@ export function fitFileNameToPortableComponent(params: {
 }
 
 function sanitizeFileNameCandidate(fileName: string): string | undefined {
-  const asciiClassification = classifyBoundedSanitizedAsciiFileName(fileName);
-  if (asciiClassification === ASCII_FILE_NAME_FIXED_POINT) return fileName;
-  if (asciiClassification === ASCII_FILE_NAME_UNUSABLE) return undefined;
   const trimmed = typeof fileName === "string" ? fileName.trim() : "";
+  if (isBoundedSanitizedFileName(fileName, trimmed)) return fileName;
   if (!trimmed) {
     return undefined;
   }
