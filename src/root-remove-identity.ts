@@ -6,6 +6,7 @@ import { realpathSync } from "./realpath.js";
 import { directoryComponentNotDirectoryError } from "./root-errors.js";
 
 type ExactDirectoryIdentity = Readonly<Pick<BigIntStats, "dev" | "ino">>;
+const MAX_SAFE_DIRECTORY_IDENTITY = BigInt(Number.MAX_SAFE_INTEGER);
 
 export type RemovalDirectoryAssertion = Readonly<{
   path: string;
@@ -24,7 +25,7 @@ function identityMismatch(cause?: unknown): FsSafeError {
 }
 
 function safeIdentityNumber(value: bigint): number | undefined {
-  if (value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) return undefined;
+  if (value < 0n || value > MAX_SAFE_DIRECTORY_IDENTITY) return undefined;
   return Number(value);
 }
 
@@ -78,15 +79,20 @@ function assertNumericObservation(
   }
 
   let unknown = false;
-  for (const field of ["dev", "ino"] as const) {
-    const observed = stat[field];
-    const expected = field === "dev" ? assertion.numericDev : assertion.numericIno;
-    if (assertion.platform === "win32" && observed === 0) {
-      unknown = true;
-    } else if (observed !== expected) {
-      // Reject a known mismatch before considering an unknown companion field.
-      throw identityMismatch();
-    }
+  const observedDev = stat.dev;
+  const expectedDev = assertion.numericDev;
+  if (assertion.platform === "win32" && observedDev === 0) {
+    unknown = true;
+  } else if (observedDev !== expectedDev) {
+    // Reject a known mismatch before considering an unknown companion field.
+    throw identityMismatch();
+  }
+  const observedIno = stat.ino;
+  const expectedIno = assertion.numericIno;
+  if (assertion.platform === "win32" && observedIno === 0) {
+    unknown = true;
+  } else if (observedIno !== expectedIno) {
+    throw identityMismatch();
   }
 
   if (unknown) {

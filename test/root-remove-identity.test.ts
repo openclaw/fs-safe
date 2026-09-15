@@ -52,6 +52,15 @@ describe("nonrecursive removal identity assertions", () => {
     expect(calls).toEqual([["boundary"]]);
   });
 
+  it.each(["dev", "ino"] as const)("keeps the inclusive safe numeric %s boundary", field => {
+    const exact = { dev: 11n, ino: 22n, [field]: BigInt(Number.MAX_SAFE_INTEGER) };
+    const assertion = createRemovalDirectoryAssertion("boundary", exact, undefined, "win32");
+    const calls = mockLstat(directoryObservation(Number(exact.dev), Number(exact.ino)));
+
+    expect(() => assertRemovalDirectoryCurrent(assertion)).not.toThrow();
+    expect(calls).toEqual([["boundary"]]);
+  });
+
   it.each([
     { name: "device mismatch", dev: 12, ino: 22 },
     { name: "inode mismatch", dev: 11, ino: 23 },
@@ -125,12 +134,40 @@ describe("nonrecursive removal identity assertions", () => {
     expect(calls).toEqual([["boundary"], ["boundary", { bigint: true }]]);
   });
 
-  it("rejects a known Windows mismatch without spending the exact retry", () => {
+  it.each([{ dev: 0, ino: 23 }, { dev: 12, ino: 0 }])("rejects a known Windows mismatch without spending the exact retry (%s)", ({ dev, ino }) => {
     const assertion = createRemovalDirectoryAssertion("boundary", { dev: 11n, ino: 22n }, undefined, "win32");
-    const calls = mockLstat(directoryObservation(0, 23), directoryObservation(11n, 22n));
+    const calls = mockLstat(directoryObservation(dev, ino), directoryObservation(11n, 22n));
 
     expect(() => assertRemovalDirectoryCurrent(assertion)).toThrow(expect.objectContaining({ code: "path-mismatch" }));
     expect(calls).toHaveLength(1);
+  });
+
+  it.each([false, true])("preserves field observation and error order (device mismatch=%s)", mismatch => {
+    const events: string[] = [];
+    const assertion = { ...createRemovalDirectoryAssertion("boundary", { dev: 11n, ino: 22n }, undefined, "win32") };
+    Object.defineProperties(assertion, {
+      numericDev: { get() { events.push("expected-dev"); return 11; } },
+      numericIno: { get() { events.push("expected-ino"); return 22; } },
+      platform: { get() { events.push("platform"); return "win32"; } },
+    });
+    const observation = Object.create(directoryObservation(11, 22)) as Stats;
+    Object.defineProperties(observation, {
+      dev: { get() { events.push("observed-dev"); return mismatch ? 12 : 0; } },
+      ino: { get() { events.push("observed-ino"); return mismatch ? 0 : 22; } },
+    });
+    const calls = mockLstat(observation, directoryObservation(11n, 22n));
+
+    if (mismatch) {
+      expect(() => assertRemovalDirectoryCurrent(assertion)).toThrow(expect.objectContaining({ code: "path-mismatch" }));
+    } else {
+      expect(() => assertRemovalDirectoryCurrent(assertion)).not.toThrow();
+    }
+    expect(calls).toEqual(mismatch ? [["boundary"]] : [["boundary"], ["boundary", { bigint: true }]]);
+    expect(events).toEqual([
+      "expected-dev", "expected-ino", "observed-dev", "observed-dev", "observed-ino", "observed-ino",
+      "observed-dev", "expected-dev", "platform",
+      ...(mismatch ? [] : ["observed-ino", "expected-ino", "platform", "platform"]),
+    ]);
   });
 
   it.each([
