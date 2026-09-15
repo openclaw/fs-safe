@@ -38,6 +38,8 @@ The broader cases add lexical paths at depths 0/8/32, batches of 100/1,000
 paths, 1,000-entry listings and walks, private/public stores through 1 MiB with
 both durability settings, 1,000-item JSON documents and concurrent updates,
 contended/distinct lock groups, and loading 100 fresh or resumed queue claims.
+Windows Root-path rows separately measure exact-prefix admission, whose repair
+adds no filesystem observations, and alternate-casing identity admission.
 Resumed fixtures are first claimed outside timing to expose retry durability costs.
 Single and batch migration cases include callback execution and durable replacement,
 then verify the returned entry and the published processing file outside timing.
