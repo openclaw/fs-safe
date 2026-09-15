@@ -50,7 +50,16 @@ whether a path, archive entry, mode, owner, or cleanup policy is acceptable.
   race-atomic. macOS uses `renameatx_np(RENAME_EXCL)` and permits
   `fclonefileat` in an owned, non-shared parent. The clone is normalized inside
   a private staging directory: flags, ACLs, extended attributes, and broad mode
-  bits are cleared before no-replace publication.
+  bits are cleared before no-replace publication. Descriptor ACL inspection rejects
+  any extended entry on the target parent and private staging directory before
+  cloning bytes. The payload's cleared ACL is verified before publication and
+  again before its descriptor is returned. Unsupported admission before payload
+  creation or an unsupported clone syscall may still select the documented
+  ordinary-copy path. After the clone creates bytes, normalization and security
+  verification failures report terminal `EIO`, retaining the original error
+  detail; successful cleanup does not make them eligible for ordinary-copy retry.
+  Cleanup failures remain secondary diagnostics, and already-terminal publication
+  errors such as `EEXIST` retain their status.
 - Windows uses handle-relative `NtCreateFile` with `OBJ_DONT_REPARSE` and
   `FILE_OPEN_REPARSE_POINT`, then explicitly rejects reparse points. Rename and
   hardlink operations stay rooted in already-open handles. Owner/DACL reads
@@ -59,6 +68,16 @@ whether a path, archive entry, mode, owner, or cleanup policy is acceptable.
   this layer only through the host executable's paired libuv descriptor bridge;
   missing or partial exports fail with `ENOTSUP` instead of trying a raw HANDLE
   or add-on CRT descriptor namespace.
+
+The internal macOS `inspectDarwinAcl(fd)` capability reports `absent`, `empty`,
+or `present` for the opened object's extended ACL. It synchronously owns a
+close-on-exec duplicate for inspection, leaves the caller's descriptor and file
+position alone, and never reopens a pathname. Darwin's `acl_get_entry` returns
+zero for an entry; end-of-list is accepted only for the first entry of a valid,
+privately owned empty ACL. Unsupported, malformed, and failed inspection is not
+reported as absence. These facts do not classify individual ACE permissions,
+prove volume ownership enforcement, or add ACL enforcement to private writers
+and secure readers outside the clone path.
 
 ## Archives
 

@@ -1,8 +1,6 @@
 use std::ffi::CStr;
 #[cfg(target_os = "macos")]
 use std::ffi::CString;
-#[cfg(target_os = "macos")]
-use std::ffi::c_void;
 use std::io::{Read, Write};
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd};
 
@@ -708,6 +706,43 @@ pub fn clone_file_exclusive(
 }
 
 #[cfg(target_os = "macos")]
+fn assert_clone_directory(fd: BorrowedFd<'_>, private_stage: bool) -> NativeResult<()> {
+    let stat = rustix::fs::fstat(fd)
+        .map_err(|error| os_error(error, "inspect clone directory"))?;
+    // SAFETY: geteuid has no preconditions.
+    let effective_uid = unsafe { libc::geteuid() };
+    let mode_allowed = if private_stage {
+        stat.st_mode & 0o7777 == 0o700
+    } else {
+        stat.st_mode & 0o022 == 0
+    };
+    if !FileType::from_raw_mode(stat.st_mode).is_dir()
+        || stat.st_uid != effective_uid
+        || !mode_allowed
+    {
+        return Err(native_error(
+            "ENOTSUP",
+            "cloning requires an owned directory with restrictive modes",
+        ));
+    }
+    crate::darwin_security::require_no_acl(fd, "clone directory")
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn post_clone_security_error(error: napi::Error<String>) -> napi::Error<String> {
+    // Once fclonefileat has materialized a payload, a failed security check is
+    // not an unsupported-clone signal. Both native and JS callers may otherwise
+    // retry ordinary copying for the original errno, even after successful cleanup.
+    native_error(
+        "EIO",
+        format!(
+            "cloned payload security failure ({}): {}",
+            error.status, error.reason
+        ),
+    )
+}
+
+#[cfg(target_os = "macos")]
 pub(crate) fn clone_file_exclusive_with_sync(
     source_fd: i32,
     target_root_fd: i32,
@@ -718,19 +753,8 @@ pub(crate) fn clone_file_exclusive_with_sync(
 
     const CLONE_NOOWNERCOPY: u32 = 0x0002;
     static CLONE_COUNTER: AtomicU64 = AtomicU64::new(0);
-    let parent_stat = rustix::fs::fstat(borrowed(target_root_fd))
-        .map_err(|error| os_error(error, "inspect clone target parent"))?;
-    // SAFETY: geteuid has no preconditions.
-    let effective_uid = unsafe { libc::geteuid() };
-    if parent_stat.st_uid != effective_uid
-        || parent_stat.st_mode & 0o022 != 0
-        || macos_acl_has_entries(target_root_fd)?
-    {
-        return Err(native_error(
-            "ENOTSUP",
-            "cloning requires an owned target parent without broad modes or ACLs",
-        ));
-    }
+    // Reject parent ACLs before creating any stage or materializing clone bytes.
+    assert_clone_directory(borrowed(target_root_fd), false)?;
     let source_stat = rustix::fs::fstat(borrowed(source_fd))
         .map_err(|error| os_error(error, "inspect clone source"))?;
     if source_stat.st_flags != 0 {
@@ -788,6 +812,21 @@ pub(crate) fn clone_file_exclusive_with_sync(
         ));
     }
 
+    let admit_stage = || -> NativeResult<()> {
+        assert_clone_directory(borrowed(target_root_fd), false)?;
+        assert_clone_directory(stage_fd.as_fd(), true)?;
+        if !directory_name_matches_fd(target_root_fd, &stage_path, stage_fd.as_raw_fd())? {
+            return Err(native_error("EIO", "private clone directory identity changed"));
+        }
+        Ok(())
+    };
+    if let Err(error) = admit_stage() {
+        return Err(with_cleanup_error(
+            error,
+            cleanup_clone_stage(target_root_fd, &stage_path, Some(&stage_fd), false, None),
+        ));
+    }
+
     let payload = CString::new("payload").unwrap();
     // SAFETY: descriptors are borrowed for this call and payload is NUL-terminated.
     if unsafe {
@@ -819,7 +858,7 @@ pub(crate) fn clone_file_exclusive_with_sync(
         Ok(fd) => fd,
         Err(error) => {
             return Err(with_cleanup_error(
-                error,
+                post_clone_security_error(error),
                 cleanup_clone_stage(target_root_fd, &stage_path, Some(&stage_fd), true, None),
             ));
         }
@@ -838,7 +877,7 @@ pub(crate) fn clone_file_exclusive_with_sync(
                 ),
             ));
         }
-        clear_macos_acl(target.as_raw_fd())?;
+        crate::darwin_security::clear_acl(target.as_fd())?;
         rustix::fs::fchmod(target.as_fd(), Mode::from_bits_retain(0o600))
             .map_err(|error| os_error(error, "set cloned file mode"))?;
         clear_macos_xattrs(target.as_raw_fd())?;
@@ -846,11 +885,13 @@ pub(crate) fn clone_file_exclusive_with_sync(
             rustix::fs::fsync(target.as_fd())
                 .map_err(|error| os_error(error, "sync cloned file"))?;
         }
+        admit_stage()?;
+        crate::darwin_security::require_no_acl(target.as_fd(), "cloned payload publication")?;
         Ok(())
     };
     if let Err(error) = normalize() {
         return Err(with_cleanup_error(
-            error,
+            post_clone_security_error(error),
             cleanup_clone_stage(
                 target_root_fd,
                 &stage_path,
@@ -866,6 +907,14 @@ pub(crate) fn clone_file_exclusive_with_sync(
         target_root_fd,
         target_rel_path,
     ) {
+        // Preserve already-terminal namespace errors such as EEXIST, but never
+        // retry a different copy mechanism after materializing the clone.
+        let error = match error.status.as_str() {
+            "EINVAL" | "ENOSYS" | "ENOTSUP" | "EOPNOTSUPP" | "EPERM" | "EXDEV" => {
+                post_clone_security_error(error)
+            }
+            _ => error,
+        };
         return Err(with_cleanup_error(
             error,
             cleanup_clone_stage(
@@ -882,6 +931,14 @@ pub(crate) fn clone_file_exclusive_with_sync(
     {
         return Err(with_cleanup_error(
             error,
+            remove_created_target_checked(target_root_fd, target_rel_path, &target),
+        ));
+    }
+    if let Err(error) =
+        crate::darwin_security::require_no_acl(target.as_fd(), "cloned payload handoff")
+    {
+        return Err(with_cleanup_error(
+            post_clone_security_error(error),
             remove_created_target_checked(target_root_fd, target_rel_path, &target),
         ));
     }
@@ -935,80 +992,6 @@ fn cleanup_clone_stage(
             "EIO",
             format!("private clone stage '{name}': {}", errors.join("; ")),
         ))
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn clear_macos_acl(fd: i32) -> NativeResult<()> {
-    const ACL_TYPE_EXTENDED: i32 = 0x0000_0100;
-    unsafe extern "C" {
-        fn acl_init(count: i32) -> *mut c_void;
-        fn acl_set_fd_np(fd: i32, acl: *mut c_void, acl_type: i32) -> i32;
-        fn acl_free(object: *mut c_void) -> i32;
-    }
-
-    // SAFETY: acl_init allocates an empty ACL owned by this function.
-    let acl = unsafe { acl_init(0) };
-    if acl.is_null() {
-        return Err(native_error(
-            "EIO",
-            format!("allocate empty ACL: {}", std::io::Error::last_os_error()),
-        ));
-    }
-    // SAFETY: fd and acl are valid for the duration of the call.
-    let result = unsafe { acl_set_fd_np(fd, acl, ACL_TYPE_EXTENDED) };
-    // SAFETY: acl was allocated by acl_init and is freed exactly once.
-    unsafe { acl_free(acl) };
-    if result != 0 {
-        return Err(native_error(
-            "EIO",
-            format!("clear cloned file ACL: {}", std::io::Error::last_os_error()),
-        ));
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "macos")]
-fn macos_acl_has_entries(fd: i32) -> NativeResult<bool> {
-    const ACL_TYPE_EXTENDED: i32 = 0x0000_0100;
-    const ACL_FIRST_ENTRY: i32 = 0;
-    unsafe extern "C" {
-        fn acl_get_fd_np(fd: i32, acl_type: i32) -> *mut c_void;
-        fn acl_get_entry(acl: *mut c_void, entry_id: i32, entry: *mut *mut c_void) -> i32;
-        fn acl_free(object: *mut c_void) -> i32;
-    }
-
-    // SAFETY: acl_get_fd_np borrows fd and returns an owned ACL object.
-    let acl = unsafe { acl_get_fd_np(fd, ACL_TYPE_EXTENDED) };
-    if acl.is_null() {
-        let error = std::io::Error::last_os_error();
-        let code = error.raw_os_error();
-        return if matches!(code, Some(libc::ENOENT) | Some(libc::ENOATTR)) {
-            Ok(false)
-        } else if code == Some(libc::ENOTSUP)
-            || code == Some(libc::EOPNOTSUPP)
-            || code == Some(libc::EINVAL)
-        {
-            Err(native_error(
-                "ENOTSUP",
-                format!("inspect parent ACL: {error}"),
-            ))
-        } else {
-            Err(native_error("EIO", format!("inspect parent ACL: {error}")))
-        };
-    }
-    let mut entry = std::ptr::null_mut();
-    // SAFETY: acl is valid and entry is writable for one pointer.
-    let result = unsafe { acl_get_entry(acl, ACL_FIRST_ENTRY, &mut entry) };
-    // SAFETY: acl was returned by acl_get_fd_np and is freed exactly once.
-    unsafe { acl_free(acl) };
-    match result {
-        1 => Ok(true),
-        0 => Ok(false),
-        _ => Err(native_error(
-            "EIO",
-            format!("enumerate parent ACL: {}", std::io::Error::last_os_error()),
-        )),
     }
 }
 
@@ -1799,6 +1782,33 @@ mod tests {
         );
         assert!(!workspace.exists());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn post_clone_security_failure_stays_terminal_with_or_without_cleanup_errors() {
+        for code in [
+            "ENOTSUP", "EOPNOTSUPP", "ENOSYS", "EXDEV", "EINVAL", "EPERM", "EACCES", "EIO",
+        ] {
+            for cleanup_failed in [false, true] {
+                let error =
+                    post_clone_security_error(native_error(code, "inspect cloned payload ACL"));
+                let cleanup = if cleanup_failed {
+                    Err(native_error("ENOTSUP", "cleanup unsupported"))
+                } else {
+                    Ok(())
+                };
+                let error = with_cleanup_error(error, cleanup);
+                assert_eq!(error.status, "EIO");
+                assert!(error.reason.starts_with(&format!(
+                    "cloned payload security failure ({code}): inspect cloned payload ACL"
+                )));
+                assert_eq!(
+                    error.reason.contains("cleanup failed: cleanup unsupported"),
+                    cleanup_failed
+                );
+            }
+        }
     }
 
     #[test]

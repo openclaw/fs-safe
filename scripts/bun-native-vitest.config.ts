@@ -12,6 +12,7 @@ export default {
       "test/relative-publication.test.ts",
       "test/native-integration.test.ts",
       "test/windows-native-fd-bridge.test.ts",
+      "test/darwin-acl-native.test.ts",
       "test/native-loader.test.ts",
       "test/native-write-containment.test.ts",
       "test/native-staging-regression.test.ts",

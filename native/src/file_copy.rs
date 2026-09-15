@@ -117,6 +117,13 @@ impl FileCopyTask {
     }
 
     fn copy(&self) -> NativeResult<CreatedCopy> {
+        self.copy_with_clone(clone_file_exclusive_with_sync)
+    }
+
+    fn copy_with_clone(
+        &self,
+        clone: impl FnOnce(i32, i32, &str, bool) -> NativeResult<i32>,
+    ) -> NativeResult<CreatedCopy> {
         self.check_cancelled()?;
         let source = rustix::io::fcntl_dupfd_cloexec(borrowed(self.source_fd), 0)
             .map_err(|error| os_error(error, "retain copy source"))?;
@@ -127,7 +134,7 @@ impl FileCopyTask {
         let cloned = if self.clone_mode == CloneMode::Never {
             None
         } else {
-            match clone_file_exclusive_with_sync(
+            match clone(
                 source.as_raw_fd(),
                 parent.as_raw_fd(),
                 &self.name,
@@ -470,6 +477,55 @@ mod tests {
             assert_eq!(fs::read(fixture.path.join("stage")).unwrap(), contents);
             drop(created);
             assert!(!fixture.path.join("stage").exists());
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn post_clone_security_failures_do_not_retry_ordinary_copy() {
+        for operation in [
+            "clear cloned file ACL",
+            "re-admit clone parent",
+            "re-admit private clone stage",
+            "cloned payload publication",
+            "cloned payload handoff",
+        ] {
+            for code in ["ENOTSUP", "EINVAL", "EPERM"] {
+                let fixture = Fixture::new();
+                let task = fixture.task(CloneMode::Auto, u64::MAX);
+                let failure = crate::unix::post_clone_security_error(native_error(code, operation));
+                let error = task
+                    .copy_with_clone(|_, _, _, _| Err(failure))
+                    .err()
+                    .unwrap();
+                assert_eq!(error.status, "EIO");
+                assert!(error.reason.contains(code));
+                assert!(error.reason.contains(operation));
+                assert!(!fixture.path.join("stage").exists());
+                assert_eq!(fs::read(fixture.path.join("source")).unwrap(), b"copy source");
+            }
+        }
+    }
+
+    #[test]
+    fn pre_creation_unsupported_clone_may_retry_ordinary_copy_only_in_auto_mode() {
+        for mode in [CloneMode::Auto, CloneMode::Always] {
+            let fixture = Fixture::new();
+            let task = fixture.task(mode, u64::MAX);
+            let result = task.copy_with_clone(|_, _, _, _| {
+                Err(native_error("ENOTSUP", "clone directory admission unsupported"))
+            });
+            if mode == CloneMode::Auto {
+                let created = result.unwrap();
+                assert!(created.error.is_none());
+                assert_ne!(created.method, "clone");
+                assert_eq!(fs::read(fixture.path.join("stage")).unwrap(), b"copy source");
+                drop(created);
+            } else {
+                assert_eq!(result.err().unwrap().status, "ENOTSUP");
+            }
+            assert!(!fixture.path.join("stage").exists());
+            assert_eq!(fs::read(fixture.path.join("source")).unwrap(), b"copy source");
         }
     }
 

@@ -69,6 +69,14 @@ Filtered ZIP extraction visits all 512 members while skipping their output,
 isolating admission and planning from destination-file writes.
 The native descriptor cases isolate host-fd admission and directory open/return;
 the latter remains timed separately from descriptor close.
+On Darwin, guarded `cloneFileExclusive` rows measure successful APFS file clones
+with no source ACL at 4 KiB, 1 MiB, and 64 MiB, plus a 4 KiB source carrying a
+non-inheriting metadata-only ACL. Fixture setup, full result verification,
+descriptor close, and target cleanup stay outside timing. Separate descriptor
+ACL rows measure the public inspection boundary. An untimed preflight prevents
+comparison of a baseline rejection with candidate success, and an ACL-bearing
+destination-parent proof verifies rejection before any clone target or stage is
+left behind.
 
 For a quick executable coverage check:
 
