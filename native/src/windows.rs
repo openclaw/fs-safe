@@ -821,74 +821,88 @@ fn same_handle_identity(left: HANDLE, right: HANDLE) -> NativeResult<bool> {
     Ok(left.2 && right.2 && left.0 == right.0 && left.1 == right.1)
 }
 
-pub(crate) fn list_directory_entries(directory: HANDLE) -> NativeResult<Vec<(String, u32, u64)>> {
-    let mut entries = Vec::new();
-    let mut restart = true;
-    let mut storage = vec![0_usize; (64_usize * 1024).div_ceil(size_of::<usize>())];
-    loop {
-        let class = if restart {
-            FileIdBothDirectoryRestartInfo
-        } else {
-            FileIdBothDirectoryInfo
-        };
-        let ok = unsafe {
-            GetFileInformationByHandleEx(
-                directory,
-                class,
-                storage.as_mut_ptr().cast(),
-                (storage.len() * size_of::<usize>()) as u32,
-            )
-        };
-        if ok == 0 {
-            let error = unsafe { GetLastError() };
-            if error == ERROR_NO_MORE_FILES {
-                break;
-            }
-            return Err(win_error(error, "enumerate owned directory"));
-        }
-        restart = false;
-        let bytes = storage.len() * size_of::<usize>();
-        let mut offset = 0_usize;
-        loop {
-            if offset + size_of::<FILE_ID_BOTH_DIR_INFO>() > bytes {
-                return Err(native_error("EIO", "invalid owned directory entry buffer"));
-            }
-            let info = unsafe {
-                &*storage
-                    .as_ptr()
-                    .cast::<u8>()
-                    .add(offset)
-                    .cast::<FILE_ID_BOTH_DIR_INFO>()
-            };
-            let name_bytes = info.FileNameLength as usize;
-            let name_offset = std::mem::offset_of!(FILE_ID_BOTH_DIR_INFO, FileName);
-            if name_bytes % 2 != 0 || offset + name_offset + name_bytes > bytes {
-                return Err(native_error("EIO", "invalid owned directory entry name"));
-            }
-            let name = unsafe {
-                std::slice::from_raw_parts(
-                    storage
-                        .as_ptr()
-                        .cast::<u8>()
-                        .add(offset + name_offset)
-                        .cast::<u16>(),
-                    name_bytes / 2,
-                )
-            };
-            let name = String::from_utf16(name)
-                .map_err(|_| native_error("EINVAL", "owned directory entry is not valid UTF-16"))?;
-            if name != "." && name != ".." {
-                entries.push((name, info.FileAttributes, info.FileId as u64));
-            }
-            if info.NextEntryOffset == 0 {
-                break;
-            }
-            offset = offset
-                .checked_add(info.NextEntryOffset as usize)
-                .ok_or_else(|| native_error("EIO", "owned directory entry offset overflow"))?;
+pub(crate) struct DirectoryEnumeration {
+    storage: Vec<usize>,
+}
+
+impl DirectoryEnumeration {
+    pub(crate) fn new() -> Self {
+        Self {
+            // Word alignment is required by FILE_ID_BOTH_DIR_INFO. One traversal
+            // reuses this scratch across directories; returned names own their bytes.
+            storage: vec![0_usize; (64_usize * 1024).div_ceil(size_of::<usize>())],
         }
     }
-    Ok(entries)
+
+    pub(crate) fn read(&mut self, directory: HANDLE) -> NativeResult<Vec<(String, u32, u64)>> {
+        let mut entries = Vec::new();
+        let mut restart = true;
+        let storage = &mut self.storage;
+        loop {
+            let class = if restart {
+                FileIdBothDirectoryRestartInfo
+            } else {
+                FileIdBothDirectoryInfo
+            };
+            let ok = unsafe {
+                GetFileInformationByHandleEx(
+                    directory,
+                    class,
+                    storage.as_mut_ptr().cast(),
+                    (storage.len() * size_of::<usize>()) as u32,
+                )
+            };
+            if ok == 0 {
+                let error = unsafe { GetLastError() };
+                if error == ERROR_NO_MORE_FILES {
+                    break;
+                }
+                return Err(win_error(error, "enumerate owned directory"));
+            }
+            restart = false;
+            let bytes = storage.len() * size_of::<usize>();
+            let mut offset = 0_usize;
+            loop {
+                if offset + size_of::<FILE_ID_BOTH_DIR_INFO>() > bytes {
+                    return Err(native_error("EIO", "invalid owned directory entry buffer"));
+                }
+                let info = unsafe {
+                    &*storage
+                        .as_ptr()
+                        .cast::<u8>()
+                        .add(offset)
+                        .cast::<FILE_ID_BOTH_DIR_INFO>()
+                };
+                let name_bytes = info.FileNameLength as usize;
+                let name_offset = std::mem::offset_of!(FILE_ID_BOTH_DIR_INFO, FileName);
+                if name_bytes % 2 != 0 || offset + name_offset + name_bytes > bytes {
+                    return Err(native_error("EIO", "invalid owned directory entry name"));
+                }
+                let name = unsafe {
+                    std::slice::from_raw_parts(
+                        storage
+                            .as_ptr()
+                            .cast::<u8>()
+                            .add(offset + name_offset)
+                            .cast::<u16>(),
+                        name_bytes / 2,
+                    )
+                };
+                let name = String::from_utf16(name)
+                    .map_err(|_| native_error("EINVAL", "owned directory entry is not valid UTF-16"))?;
+                if name != "." && name != ".." {
+                    entries.push((name, info.FileAttributes, info.FileId as u64));
+                }
+                if info.NextEntryOffset == 0 {
+                    break;
+                }
+                offset = offset
+                    .checked_add(info.NextEntryOffset as usize)
+                    .ok_or_else(|| native_error("EIO", "owned directory entry offset overflow"))?;
+            }
+        }
+        Ok(entries)
+    }
 }
 
 pub(crate) fn mark_handle_for_deletion(handle: HANDLE) -> NativeResult<()> {
@@ -916,10 +930,11 @@ pub(crate) fn mark_handle_for_deletion(handle: HANDLE) -> NativeResult<()> {
 
 fn remove_directory_handle_with_hook(
     directory: HANDLE,
+    enumeration: &mut DirectoryEnumeration,
     before_child_open: &mut impl FnMut(&str),
 ) -> NativeResult<()> {
     let parent_volume = handle_identity(directory)?.0;
-    for (name, attributes, file_id) in list_directory_entries(directory)? {
+    for (name, attributes, file_id) in enumeration.read(directory)? {
         let is_reparse = attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0;
         let is_directory = attributes & FILE_ATTRIBUTE_DIRECTORY != 0;
         let traverse = is_directory && !is_reparse;
@@ -946,7 +961,7 @@ fn remove_directory_handle_with_hook(
             ));
         }
         if traverse {
-            remove_directory_handle_with_hook(child.0, before_child_open)?;
+            remove_directory_handle_with_hook(child.0, enumeration, before_child_open)?;
         }
         mark_handle_for_deletion(child.0)?;
     }
@@ -954,7 +969,11 @@ fn remove_directory_handle_with_hook(
 }
 
 pub(crate) fn remove_directory_handle(directory: HANDLE) -> NativeResult<()> {
-    remove_directory_handle_with_hook(directory, &mut |_| {})
+    remove_directory_handle_with_hook(
+        directory,
+        &mut DirectoryEnumeration::new(),
+        &mut |_| {},
+    )
 }
 
 fn remove_owned_tree_handles_with_hook(
@@ -1293,13 +1312,27 @@ mod tests {
             expected.insert(name, (is_directory, identity.1));
         }
         {
+            let child_path = root.join(
+                expected.iter().find(|(_, entry)| entry.0).unwrap().0,
+            );
+            let child_file = child_path.join("different-entry");
+            fs::write(&child_file, b"second directory").unwrap();
+            let child_file_handle = fs::File::open(&child_file).unwrap();
+            let child_id = handle_identity(child_file_handle.as_raw_handle()).unwrap().1;
+            drop(child_file_handle);
+            let child = OpenOptions::new()
+                .read(true)
+                .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS)
+                .open(&child_path)
+                .unwrap();
             let handle = OpenOptions::new()
                 .read(true)
                 .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS)
                 .open(&root)
                 .unwrap();
+            let mut enumeration = DirectoryEnumeration::new();
             for _ in 0..2 {
-                let entries = list_directory_entries(handle.as_raw_handle()).unwrap();
+                let entries = enumeration.read(handle.as_raw_handle()).unwrap();
                 assert_eq!(entries.len(), expected.len());
                 let actual: BTreeMap<_, _> = entries
                     .into_iter()
@@ -1308,7 +1341,14 @@ mod tests {
                     })
                     .collect();
                 assert_eq!(actual, expected);
+                let child_entries = enumeration.read(child.as_raw_handle()).unwrap();
+                assert_eq!(child_entries.len(), 1);
+                assert_eq!(child_entries[0].0, "different-entry");
+                assert_eq!(child_entries[0].1 & FILE_ATTRIBUTE_DIRECTORY, 0);
+                assert_eq!(child_entries[0].2, child_id);
             }
+            fs::remove_file(child_file).unwrap();
+            assert!(enumeration.read(child.as_raw_handle()).unwrap().is_empty());
         }
         assert_eq!(fs::canonicalize(&root).unwrap(), owned);
         assert_eq!(owned.parent(), Some(base.as_path()));
@@ -1393,6 +1433,7 @@ mod tests {
             .unwrap();
         let error = remove_directory_handle_with_hook(
             directory.as_raw_handle() as HANDLE,
+            &mut DirectoryEnumeration::new(),
             &mut |name| {
                 assert_eq!(name, "nested");
                 fs::rename(root.join("nested"), root.join("original")).unwrap();
@@ -1429,6 +1470,7 @@ mod tests {
         let mut swapped = false;
         let error = remove_directory_handle_with_hook(
             directory.as_raw_handle() as HANDLE,
+            &mut DirectoryEnumeration::new(),
             &mut |name| {
                 if name == "nested" && !swapped {
                     swapped = true;

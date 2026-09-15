@@ -24,7 +24,7 @@ use windows_sys::Win32::System::Ioctl::{
 use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
 use crate::windows::{
-    OwnedHandle, ReparsePolicy, handle_identity, handle_is_reparse, list_directory_entries,
+    DirectoryEnumeration, OwnedHandle, ReparsePolicy, handle_identity, handle_is_reparse,
     mark_handle_for_deletion, nt_open_relative_with_policy, nt_open_relative_with_sharing,
     remove_directory_handle, root_handle, win_error,
 };
@@ -460,6 +460,7 @@ fn copy_tree(
     std::thread::scope(|scope| -> NativeResult<()> {
         let mut workers = Vec::new();
         let traversal: NativeResult<()> = (|| {
+            let mut enumeration = DirectoryEnumeration::new();
             let mut pending = vec![(source, target)];
             while let Some((source, target)) = pending.pop() {
                 check_cancelled(cancelled)?;
@@ -469,7 +470,7 @@ fn copy_tree(
                 let info = metadata(source.0.0)?;
                 reject_named_streams(source.0.0)?;
                 let volume = handle_identity(source.0.0)?.0;
-                for (name, attributes, file_id) in list_directory_entries(source.0.0)? {
+                for (name, attributes, file_id) in enumeration.read(source.0.0)? {
                     check_cancelled(cancelled)?;
                     if failed.load(Ordering::Acquire) {
                         break;
