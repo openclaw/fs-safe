@@ -93,7 +93,7 @@ pub fn read_owner_and_dacl(env: Env, path: String) -> Result<WindowsSecurityFact
 #[cfg(windows)]
 mod windows {
     use std::ffi::c_void;
-    use std::mem::zeroed;
+    use std::mem::{size_of, zeroed};
     use std::os::windows::ffi::OsStrExt;
     use std::path::{Path, PathBuf};
     use std::ptr::{null, null_mut};
@@ -124,6 +124,7 @@ mod windows {
         FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, GetFinalPathNameByHandleW,
         OPEN_EXISTING, VOLUME_NAME_GUID,
     };
+    use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
     use super::{WindowsAccessControlEntry, WindowsSecurityFacts, ace_flags};
@@ -159,6 +160,25 @@ mod windows {
     const FINAL_PATH_STACK_WCHARS: usize = 512;
     const MAX_FINAL_PATH_WCHARS: usize = 32 * 1024;
     const MAX_FINAL_PATH_ATTEMPTS: usize = 4;
+    const FILE_IS_REMOTE_DEVICE_INFORMATION_CLASS: i32 = 51;
+
+    #[repr(C)]
+    struct FileIsRemoteDeviceInformation {
+        // Windows BOOLEAN is one byte. Keep the raw byte so a malformed driver
+        // response cannot construct an invalid Rust bool before we fall back.
+        is_remote: u8,
+    }
+
+    #[link(name = "ntdll")]
+    unsafe extern "system" {
+        fn NtQueryInformationFile(
+            file_handle: HANDLE,
+            io_status_block: *mut IO_STATUS_BLOCK,
+            file_information: *mut c_void,
+            length: u32,
+            file_information_class: i32,
+        ) -> i32;
+    }
 
     fn wide(value: &str) -> NativeResult<Vec<u16>> {
         if value.encode_utf16().any(|unit| unit == 0) {
@@ -622,7 +642,51 @@ mod windows {
         is_local_handle_with_query(handle, normalized_dos_query)
     }
 
-    fn is_local_handle(handle: HANDLE) -> NativeResult<bool> {
+    fn parse_remote_device_information(
+        status: i32,
+        transferred: usize,
+        information: &FileIsRemoteDeviceInformation,
+    ) -> Option<bool> {
+        if status != 0
+            || transferred != size_of::<FileIsRemoteDeviceInformation>()
+            || information.is_remote > 1
+        {
+            return None;
+        }
+        Some(information.is_remote != 0)
+    }
+
+    fn query_is_remote_device(handle: HANDLE) -> Option<bool> {
+        let mut io: IO_STATUS_BLOCK = unsafe { zeroed() };
+        let mut information = FileIsRemoteDeviceInformation { is_remote: u8::MAX };
+        let status = unsafe {
+            NtQueryInformationFile(
+                handle,
+                &mut io,
+                (&mut information as *mut FileIsRemoteDeviceInformation).cast(),
+                size_of::<FileIsRemoteDeviceInformation>() as u32,
+                FILE_IS_REMOTE_DEVICE_INFORMATION_CLASS,
+            )
+        };
+        parse_remote_device_information(status, io.Information, &information)
+    }
+
+    fn is_local_handle_with_remote_query<RemoteQuery, Fallback>(
+        handle: HANDLE,
+        mut remote_query: RemoteQuery,
+        mut fallback: Fallback,
+    ) -> NativeResult<bool>
+    where
+        RemoteQuery: FnMut(HANDLE) -> Option<bool>,
+        Fallback: FnMut(HANDLE) -> NativeResult<bool>,
+    {
+        match remote_query(handle) {
+            Some(is_remote) => Ok(!is_remote),
+            None => fallback(handle),
+        }
+    }
+
+    fn is_local_handle_via_paths(handle: HANDLE) -> NativeResult<bool> {
         is_local_handle_with_queries(
             handle,
             |handle, buffer| {
@@ -657,6 +721,10 @@ mod windows {
                 Ok(written as usize)
             },
         )
+    }
+
+    fn is_local_handle(handle: HANDLE) -> NativeResult<bool> {
+        is_local_handle_with_remote_query(handle, query_is_remote_device, is_local_handle_via_paths)
     }
 
     fn inspect_owner_and_dacl_handle(
@@ -1230,6 +1298,83 @@ mod windows {
                 )
                 .unwrap()
             );
+        }
+
+        #[test]
+        fn remote_device_fast_path_is_bounded_and_falls_back() {
+            let local = FileIsRemoteDeviceInformation { is_remote: 0 };
+            let remote = FileIsRemoteDeviceInformation { is_remote: 1 };
+            assert_eq!(
+                parse_remote_device_information(
+                    0,
+                    size_of::<FileIsRemoteDeviceInformation>(),
+                    &local,
+                ),
+                Some(false)
+            );
+            assert_eq!(
+                parse_remote_device_information(
+                    0,
+                    size_of::<FileIsRemoteDeviceInformation>(),
+                    &remote,
+                ),
+                Some(true)
+            );
+            for (status, transferred, value) in [
+                (1, size_of::<FileIsRemoteDeviceInformation>(), 0),
+                (0, 0, 0),
+                (0, size_of::<FileIsRemoteDeviceInformation>() + 1, 0),
+                (0, size_of::<FileIsRemoteDeviceInformation>(), 2),
+            ] {
+                assert_eq!(
+                    parse_remote_device_information(
+                        status,
+                        transferred,
+                        &FileIsRemoteDeviceInformation { is_remote: value },
+                    ),
+                    None
+                );
+            }
+
+            let handle = null_mut();
+            assert!(
+                is_local_handle_with_remote_query(
+                    handle,
+                    |_| Some(false),
+                    |_| -> NativeResult<bool> { panic!("local result must not fall back") },
+                )
+                .unwrap()
+            );
+            assert!(
+                !is_local_handle_with_remote_query(
+                    handle,
+                    |_| Some(true),
+                    |_| -> NativeResult<bool> { panic!("remote result must not fall back") },
+                )
+                .unwrap()
+            );
+            let fallback_calls = Cell::new(0);
+            assert!(
+                is_local_handle_with_remote_query(
+                    handle,
+                    |_| None,
+                    |_| {
+                        fallback_calls.set(fallback_calls.get() + 1);
+                        Ok(true)
+                    },
+                )
+                .unwrap()
+            );
+            assert_eq!(fallback_calls.get(), 1);
+
+            let error = is_local_handle_with_remote_query(
+                handle,
+                |_| None,
+                |_| Err(native_error("fallback-failed", "injected fallback failure")),
+            )
+            .unwrap_err();
+            assert_eq!(error.status, "fallback-failed");
+            assert_eq!(error.reason, "injected fallback failure");
         }
 
         #[test]
