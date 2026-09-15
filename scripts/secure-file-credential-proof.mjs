@@ -272,6 +272,7 @@ try {
   if (!absolute(config.node) || !nodeMatch || nodeMatch[3] !== config.expectedNode.slice(1) ||
       !absolute(config.fixture) || !/^fixture-[A-Za-z0-9]{6}$/u.test(path.basename(config.fixture)) ||
       path.basename(path.dirname(config.fixture)) !== "fs-safe-secure-file-proof-" + config.expectedNode.slice(1) ||
+      path.dirname(path.dirname(config.fixture)) !== path.dirname(config.node) ||
       !Array.isArray(config.files) || config.files.length !== 4) fail("INVALID_ARGUMENTS");
   const targets = [
     ["candidate-worker", "candidateWorker", path.join(config.fixture, "candidate", "worker.mjs")],
@@ -2279,19 +2280,30 @@ async function main() {
   }
   const proofParentContainer = path.dirname(proofParentPath);
   const receiptDirectory = path.dirname(receiptPath);
+  const receiptContainer = path.dirname(receiptDirectory);
   const proofParentContainerCanonical = await fs.realpath(proofParentContainer);
+  const receiptContainerCanonical = await fs.realpath(receiptContainer);
   const proofParentContainerStat = await fs.lstat(proofParentContainerCanonical, { bigint: true });
+  const receiptContainerStat = await fs.lstat(receiptContainerCanonical, { bigint: true });
   const nodeVersionLabel = metadata.expectedNode.slice(1);
+  const expectedStageDirectory =
+    `/usr/local/lib/fs-safe-credential-proof-${metadata.runId}-${metadata.runAttempt}-${nodeVersionLabel}`;
   if (
     proofParentContainerCanonical !== proofParentContainer ||
-    path.basename(proofParentPath) !== `fs-safe-secure-file-proof-${nodeVersionLabel}` ||
-    path.dirname(receiptDirectory) !== proofParentContainer ||
+    proofParentPath !== path.join(expectedStageDirectory, `fs-safe-secure-file-proof-${nodeVersionLabel}`) ||
+    receiptContainerCanonical !== receiptContainer ||
+    path.dirname(receiptDirectory) !== receiptContainer ||
     path.basename(receiptDirectory) !== `fs-safe-secure-file-receipt-${nodeVersionLabel}` ||
     !proofParentContainerStat.isDirectory() ||
     proofParentContainerStat.isSymbolicLink() ||
-    proofParentContainerStat.uid !== BigInt(builderUid) ||
-    proofParentContainerStat.gid !== BigInt(builderGid) ||
-    (proofParentContainerStat.mode & 0o022n) !== 0n
+    proofParentContainerStat.uid !== 0n ||
+    proofParentContainerStat.gid !== 0n ||
+    (proofParentContainerStat.mode & 0o022n) !== 0n ||
+    !receiptContainerStat.isDirectory() ||
+    receiptContainerStat.isSymbolicLink() ||
+    receiptContainerStat.uid !== BigInt(builderUid) ||
+    receiptContainerStat.gid !== BigInt(builderGid) ||
+    (receiptContainerStat.mode & 0o022n) !== 0n
   ) {
     proofError("UNSAFE_PROOF_PARENT");
   }
@@ -2300,8 +2312,6 @@ async function main() {
   const loaderReceipt = await validateLoaderEnvironment();
 
   stage = "staged-harness-and-tools";
-  const expectedStageDirectory =
-    `/usr/local/lib/fs-safe-credential-proof-${metadata.runId}-${metadata.runAttempt}-${nodeVersionLabel}`;
   const stagedValidation = await timed(
     "stagedHarnessAndTools",
     () => validateStagedHarnessAndTools(staged, metadata.expectedNode, expectedStageDirectory),

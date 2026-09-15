@@ -300,7 +300,7 @@ jobs:
           CANDIDATE_BUNDLE: ${{ runner.temp }}/fs-safe-candidate-bundle-${{ matrix.node }}
           HISTORICAL_ATTESTATION: ${{ runner.temp }}/fs-safe-historical-attestation-${{ matrix.node }}/artifact.json
           HISTORICAL_BUNDLE: ${{ runner.temp }}/fs-safe-historical-bundle-${{ matrix.node }}
-          PROOF_PARENT: ${{ runner.temp }}/fs-safe-secure-file-proof-${{ matrix.node }}
+          PROOF_PARENT: /usr/local/lib/fs-safe-credential-proof-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.node }}/fs-safe-secure-file-proof-${{ matrix.node }}
           RECEIPT_DIR: ${{ runner.temp }}/fs-safe-secure-file-receipt-${{ matrix.node }}
           RECEIPT_PATH: ${{ runner.temp }}/fs-safe-secure-file-receipt-${{ matrix.node }}/secure-file-credential-proof.json
           STAGE_ROOT: /usr/local/lib/fs-safe-credential-proof-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.node }}
