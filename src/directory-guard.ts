@@ -7,6 +7,12 @@ import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { isNotFoundPathError } from "./path.js";
 import { directoryComponentNotDirectoryError } from "./root-errors.js";
 import { realpathSync } from "./realpath.js";
+import {
+  assertStatObservationSync,
+  inspectStatObservationSync,
+  type ExactStatIdentity,
+  type StatObservationReceipt,
+} from "./stat-observation.js";
 
 export type AsyncDirectoryGuard<T extends Stats | BigIntStats = Stats> = {
   dir: string;
@@ -165,4 +171,50 @@ export function inspectDirectoryIdentitySync(
     if (stat.isSymbolicLink() || !stat.isDirectory()) throw directoryComponentNotDirectoryError();
     return stat;
   }, expected);
+}
+
+export type DirectoryObservationGuard = StatObservationReceipt & { dir: string; realPath: string };
+
+export function extendDirectoryObservationGuard(
+  observation: StatObservationReceipt,
+  dir: string,
+  realPath: string,
+): DirectoryObservationGuard {
+  const guard = observation as DirectoryObservationGuard;
+  guard.dir = dir;
+  guard.realPath = realPath;
+  return guard;
+}
+
+// Only stat/list receipts use this metadata fast path. Recovery and publication
+// callers retain the BigIntStats contract of inspectDirectoryIdentitySync.
+export function inspectDirectoryObservationSync(
+  dir: string,
+  expected?: ExactStatIdentity,
+): StatObservationReceipt {
+  const entryPath = directoryEntryPath(dir);
+  return inspectStatObservationSync(bigint => {
+    const stat = bigint ? fsSync.lstatSync(entryPath, { bigint: true }) : fsSync.lstatSync(entryPath);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw directoryComponentNotDirectoryError();
+    return stat;
+  }, expected);
+}
+
+export function assertDirectoryObservationSync(
+  dir: string,
+  expected: ExactStatIdentity,
+): Stats | BigIntStats {
+  const entryPath = directoryEntryPath(dir);
+  return assertStatObservationSync(bigint => {
+    const stat = bigint ? fsSync.lstatSync(entryPath, { bigint: true }) : fsSync.lstatSync(entryPath);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw directoryComponentNotDirectoryError();
+    return stat;
+  }, expected);
+}
+
+export function assertDirectoryObservationGuardSync(guard: DirectoryObservationGuard): void {
+  assertDirectoryObservationSync(guard.dir, guard.identity);
+  if (realpathSync.native(guard.dir) !== guard.realPath) {
+    throw new FsSafeError("path-mismatch", "directory changed during operation");
+  }
 }

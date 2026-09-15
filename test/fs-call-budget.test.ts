@@ -17,7 +17,7 @@ const budgets = {
   replaceFileAtomic: 20, // measured 18
   "writeJson durable:false": 20, // measured 18
   "root.write": 60, // measured 58, including canonical mode-inheritance identity
-  "root.exists": 7, // measured 5
+  "root.exists": 7, // exact direct-child admission and final root path fence
 };
 const asyncBudgets = {
   "root.readBytes": 4, // measured 3: open, read, close

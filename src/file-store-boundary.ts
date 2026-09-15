@@ -59,6 +59,7 @@ export async function openPrivateStoreLockRoot(
   // Bind to the admitted parent, never resolve a replacement into a fresh capability.
   return new RootHandle({
     rootDir: parentGuard.dir,
+    rootGuard: { dir: parentGuard.realPath, realPath: parentGuard.realPath, stat: parentGuard.stat },
     rootReal: parentGuard.realPath,
     rootWithSep: ensureTrailingSep(parentGuard.realPath),
     rootIdentity: { dev: parentGuard.stat.dev, ino: parentGuard.stat.ino },

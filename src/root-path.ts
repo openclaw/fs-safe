@@ -1,7 +1,8 @@
-import fs from "node:fs";
+import fs, { type BigIntStats } from "node:fs";
 import path from "node:path";
 import { formatErrorDetail, shortPath } from "./error-detail.js";
 import { FsSafeError } from "./errors.js";
+import { isNativeDirectoryObservationGuard } from "./native-directory-observation.js";
 import {
   assertNoNulPathInput,
   isNotFoundPathError,
@@ -18,10 +19,29 @@ import {
   type AdmittedRootPath,
   type RootBoundaryIdentity,
 } from "./root-boundary.js";
+import {
+  RootPathObservationError,
+  captureRootPathObservedDirectory,
+  createRootPathTraversalObservation,
+  inspectRootPathTraversalEntry,
+  type RootPathObservationReceipt,
+  type RootPathParentObservationReceipt,
+  type RootPathObservationRequest,
+  type RootPathTraversalObservation,
+} from "./root-path-observation.js";
 import { resolveSymlinkHopPath, resolveSymlinkHopPathSync } from "./root-path-symlink.js";
 import { assertNoDriveRelativePathSegments } from "./safe-path-segment.js";
 
 export { resolvePathViaExistingAncestorSync } from "./root-path-existing.js";
+export {
+  RootPathObservationError,
+  type RootPathDirectoryObservationGuard,
+  type RootPathObservationKind,
+  type RootPathObservationReceipt,
+  type RootPathParentObservationReceipt,
+  type RootPathObservationRequest,
+  type RootPathTargetObservation,
+} from "./root-path-observation.js";
 
 type RootPathIntent = "read" | "write" | "create" | "delete" | "stat";
 
@@ -67,6 +87,11 @@ export type ResolvedRootPath = {
   kind: ResolvedRootPathKind;
 };
 
+export type ObservedRootPath = {
+  resolved: ResolvedRootPath;
+  receipt?: RootPathObservationReceipt;
+};
+
 export async function resolveRootPath(
   params: ResolveRootPathParams,
 ): Promise<ResolvedRootPath> {
@@ -79,6 +104,8 @@ export async function resolveRootPath(
 
 async function resolveRootPathInternal(
   params: ResolveRootPathParams,
+  observationRequest?: RootPathObservationRequest,
+  observationOutput?: { receipt?: RootPathObservationReceipt },
 ): Promise<ResolvedRootPath> {
   assertValidRootPathInputs(params);
   params = { ...params, absolutePath: absolutePathWithRawSegments(params.absolutePath) };
@@ -86,7 +113,24 @@ async function resolveRootPathInternal(
   const rootCanonicalPath = params.rootCanonicalPath
     ? path.resolve(params.rootCanonicalPath)
     : await resolvePathViaExistingAncestor(rootPath);
-  return resolveRootPathLexicalAsync(prepareRootTraversal(params, rootPath, rootCanonicalPath));
+  return resolveRootPathLexicalAsync(
+    prepareRootTraversal(params, rootPath, rootCanonicalPath),
+    observationRequest,
+    observationOutput,
+  );
+}
+
+export async function resolveRootPathWithObservation(
+  params: ResolveRootPathParams,
+  request: RootPathObservationRequest,
+): Promise<ObservedRootPath> {
+  const output: { receipt?: RootPathObservationReceipt } = {};
+  try {
+    const resolved = await resolveRootPathInternal(params, request, output);
+    return output.receipt ? { resolved, receipt: output.receipt } : { resolved };
+  } catch (error) {
+    throw sanitizeRootPathError(error);
+  }
 }
 
 export function resolveRootPathSync(params: ResolveRootPathParams): ResolvedRootPath {
@@ -137,6 +181,7 @@ function prepareRootTraversal(
     // Windows case-fold admission must return the identity-gated Root spelling,
     // because downstream I/O must not reuse the ambiguous caller prefix.
     absolutePath: trustedAbsolutePath ? path.resolve(raw) : callerAbsolutePath,
+    observationEligible: raw === params.absolutePath && !trustedAbsolutePath,
   };
 }
 
@@ -171,6 +216,8 @@ function assertNoEmbeddedDriveRelativeSegment(filePath: string, label: string): 
 
 type LexicalTraversalState = {
   segments: string[];
+  relativePath: string;
+  reuseLexicalCanonical: boolean;
   finalComponentIndex: number;
   allowFinalSymlink: boolean;
   canonicalCursor: string;
@@ -185,8 +232,8 @@ type LexicalTraversalContext = {
   rootPath: string;
   rootCanonicalPath: string;
   absolutePath: string;
+  observationEligible: boolean;
 };
-
 
 function createLexicalTraversalState(params: {
   params: ResolveRootPathParams;
@@ -204,6 +251,8 @@ function createLexicalTraversalState(params: {
   const segments = splitTraversalSegments(relative);
   return {
     segments,
+    relativePath: relative,
+    reuseLexicalCanonical: false,
     finalComponentIndex: segments.findLastIndex((segment) => segment !== "."),
     allowFinalSymlink: params.params.policy?.allowFinalSymlinkForUnlink === true,
     canonicalCursor: params.rootCanonicalPath,
@@ -218,6 +267,7 @@ function createLexicalTraversalContext(params: {
   rootPath: string;
   rootCanonicalPath: string;
   absolutePath: string;
+  observationEligible: boolean;
 }): LexicalTraversalContext {
   return {
     state: createLexicalTraversalState(params),
@@ -225,7 +275,19 @@ function createLexicalTraversalContext(params: {
     rootPath: params.rootPath,
     rootCanonicalPath: params.rootCanonicalPath,
     absolutePath: params.absolutePath,
+    observationEligible: params.observationEligible,
   };
+}
+
+function createLexicalTraversalObservation(
+  context: LexicalTraversalContext,
+  request: RootPathObservationRequest | undefined,
+): RootPathTraversalObservation | undefined {
+  const observation = createRootPathTraversalObservation(context, request);
+  if (observation && observation.targetIndex >= 0) {
+    context.state.reuseLexicalCanonical = true;
+  }
+  return observation;
 }
 
 function splitTraversalSegments(value: string): string[] {
@@ -244,7 +306,9 @@ function admitRawPathInsideRoot(
   if (!path.isAbsolute(candidatePath)) {
     return undefined;
   }
-  const root = path.resolve(rootPath);
+  // Every caller supplies the already-resolved root selected by
+  // resolveRootPathInternal; resolving it again is redundant on each traversal.
+  const root = rootPath;
   const candidate = process.platform === "win32"
     ? candidatePath.replaceAll("/", path.sep)
     : candidatePath;
@@ -282,10 +346,21 @@ function advanceCanonicalCursorForSegment(
   context: LexicalTraversalContext,
   segment: string,
 ): void {
+  const candidatePath = context.state.reuseLexicalCanonical
+    ? context.state.lexicalCursor
+    : path.resolve(context.state.canonicalCursor, segment);
   context.state.canonicalCursor = assertLexicalCursorInsideBoundary(
     context,
-    path.resolve(context.state.canonicalCursor, segment),
+    candidatePath,
   );
+}
+
+function disableLexicalTraversalObservation(
+  context: LexicalTraversalContext,
+  observation: RootPathTraversalObservation,
+): void {
+  observation.enabled = false;
+  context.state.reuseLexicalCanonical = false;
 }
 
 function finalizeLexicalResolution(
@@ -356,7 +431,11 @@ function applyParentTraversalStep(context: LexicalTraversalContext): void {
   if (context.state.missingDepth > 0) context.state.missingDepth -= 1;
 }
 
-function assertDirectoryBeforeMoreSegments(stat: fs.Stats, pathname: string, isLast: boolean): void {
+function assertDirectoryBeforeMoreSegments(
+  stat: fs.Stats | BigIntStats,
+  pathname: string,
+  isLast: boolean,
+): void {
   if (!isLast && !stat.isDirectory()) {
     throw Object.assign(new Error(`Path component is not a directory: ${pathname}`), { code: "ENOTDIR" });
   }
@@ -373,13 +452,17 @@ type LexicalResolutionParams = {
   absolutePath: string;
   rootPath: string;
   rootCanonicalPath: string;
+  observationEligible: boolean;
 };
 
 async function resolveRootPathLexicalAsync(
   params: LexicalResolutionParams,
+  observationRequest?: RootPathObservationRequest,
+  observationOutput?: { receipt?: RootPathObservationReceipt },
 ): Promise<ResolvedRootPath> {
   const context = createLexicalTraversalContext(params);
   const { state } = context;
+  const observation = createLexicalTraversalObservation(context, observationRequest);
 
   for (let idx = 0; idx < state.segments.length; idx += 1) {
     const segment = state.segments[idx] ?? "";
@@ -395,13 +478,57 @@ async function resolveRootPathLexicalAsync(
       state.missingDepth += 1;
       continue;
     }
-    let stat: fs.Stats;
+    let stat: fs.Stats | BigIntStats | undefined;
+    let observed: ReturnType<typeof inspectRootPathTraversalEntry> | undefined;
     try {
-      stat = fs.lstatSync(state.lexicalCursor);
+      const directorySlot = observation?.enabled === true && idx === observation.directoryIndex;
+      const targetSlot = observation?.enabled === true && idx === observation.targetIndex;
+      const observeExactly = directorySlot || targetSlot;
+      if (observeExactly) {
+        observed = inspectRootPathTraversalEntry(state.lexicalCursor, directorySlot, observation!);
+      }
+      stat = isNativeDirectoryObservationGuard(observed)
+        ? undefined
+        : observed?.stat ?? fs.lstatSync(state.lexicalCursor);
     } catch (error) {
+      if (observation?.enabled && observation.request.kind === "stat" &&
+        idx === observation.targetIndex && observation.directoryGuard) {
+        const parentReceipt: RootPathParentObservationReceipt = {
+          kind: "stat-parent",
+          rootGuard: observation.request.rootGuard,
+          directoryGuard: observation.directoryGuard,
+          directoryObserver: observation.directoryObserver,
+          targetPath: state.lexicalCursor,
+        };
+        // Stop here: the generic missing-path fallback would re-admit a parent.
+        // Preserve observation-only versus ordinary traversal error precedence.
+        throw new RootPathObservationError(
+          error instanceof RootPathObservationError ? error.error : sanitizeRootPathError(error),
+          parentReceipt,
+          !(error instanceof RootPathObservationError),
+        );
+      }
       if (handleLexicalLstatFailure(context, error, segment)) continue;
       throw error;
     }
+
+    if (isNativeDirectoryObservationGuard(observed)) {
+      advanceCanonicalCursorForSegment(context, segment);
+      captureRootPathObservedDirectory(
+        observation!,
+        observed,
+        state.lexicalCursor,
+        state.canonicalCursor,
+        context.rootCanonicalPath,
+        context.resolveParams.rootIdentity,
+      );
+      if (idx === observation!.targetIndex) {
+        observation!.targetPath = state.canonicalCursor;
+        observation!.target = observed;
+      }
+      continue;
+    }
+    if (!stat) throw new Error("directory observation did not return metadata");
 
     const isSymbolicLink = stat.isSymbolicLink();
     if (!isSymbolicLink) assertDirectoryBeforeMoreSegments(stat, state.lexicalCursor, isLast);
@@ -415,9 +542,29 @@ async function resolveRootPathLexicalAsync(
     if (disposition !== "resolve-link") {
       state.preserveFinalSymlink = disposition === "break";
       advanceCanonicalCursorForSegment(context, segment);
+      if (observation?.enabled && isSymbolicLink) {
+        disableLexicalTraversalObservation(context, observation);
+      }
+      if (observation?.enabled && idx === observation.directoryIndex) {
+        const captured = observed?.identity && captureRootPathObservedDirectory(
+          observation,
+          observed,
+          state.canonicalCursor,
+          state.canonicalCursor,
+          context.rootCanonicalPath,
+          context.resolveParams.rootIdentity,
+        );
+        if (!captured) disableLexicalTraversalObservation(context, observation);
+      }
+      if (observation?.enabled && idx === observation.targetIndex) {
+        observation.targetPath = state.canonicalCursor;
+        observation.target = observed?.identity ? observed : undefined;
+      }
       if (state.preserveFinalSymlink) break;
       continue;
     }
+
+    if (observation?.enabled) disableLexicalTraversalObservation(context, observation);
 
     const linkCanonical = await resolveSymlinkHopPath(state.lexicalCursor, {
       rejectUnresolved: context.resolveParams.rejectUnresolvedSymlinks,
@@ -429,7 +576,26 @@ async function resolveRootPathLexicalAsync(
     assertResolvedLinkDirectory(linkCanonical, isLast);
   }
 
-  const kind = await getPathKind(state.canonicalCursor, state.preserveFinalSymlink);
+  const completeObservation = observation?.enabled === true && observation.directoryGuard !== undefined &&
+    observation.targetPath === state.canonicalCursor && observation.target !== undefined;
+  const kind = completeObservation
+    ? {
+      exists: true,
+      kind: isNativeDirectoryObservationGuard(observation.target)
+        ? "directory" as const
+        : toResolvedKind(observation.target!.stat),
+    }
+    : await getPathKind(state.canonicalCursor, state.preserveFinalSymlink);
+  if (completeObservation && observationOutput) {
+    observationOutput.receipt = {
+      kind: observation.request.kind,
+      rootGuard: observation.request.rootGuard,
+      directoryGuard: observation.directoryGuard!,
+      directoryObserver: observation.directoryObserver,
+      targetPath: observation.targetPath!,
+      target: observation.target!,
+    };
+  }
   return finalizeLexicalResolution(context, kind);
 }
 
@@ -538,7 +704,7 @@ function getPathKindSync(
   }
 }
 
-function toResolvedKind(stat: fs.Stats): ResolvedRootPathKind {
+function toResolvedKind(stat: fs.Stats | BigIntStats): ResolvedRootPathKind {
   if (stat.isFile()) {
     return "file";
   }

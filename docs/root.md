@@ -299,7 +299,12 @@ fs.entries(rel, options?)        // nonrecursive AsyncIterable<DirEntry>, includ
 fs.resolve(rel)                  // absolute path inside the root, after canonicalization
 ```
 
-These do not pin a later operation. They are safe to expose to UIs and decision points; for the actual read or write, use the verb methods so the operation pins identity at the point of use.
+These do not pin a later operation. During `stat()`, the exact selected target and
+parent are checked around metadata collection; `list()` checks one exact selected
+directory around the complete name/metadata batch instead of repeating containment
+work for every child. A detectable redirection rejects with `path-mismatch` rather
+than returning names or metadata from the replacement. Results remain advisory
+after the call returns, so use the verb methods for the actual read or write.
 
 `entries()` streams immediate children in filesystem order by default. It
 supports cancellation, a physical-entry limit that throws on overflow, and

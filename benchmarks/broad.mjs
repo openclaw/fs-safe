@@ -64,6 +64,14 @@ export async function registerBroad({ api: a, workspace: w, register: add, onCle
   add("Root.resolve/depth=8", () => root.resolve(`${deepName}/value`), {
     verify: value => assert.equal(value, path.join(directoryRoot, deepName, "value")),
   });
+  add("Root.stat/depth=8", () => root.stat(`${deepName}/value`), {
+    verify: stat => assert.equal(stat.size, 7),
+  });
+  for (const withFileTypes of [false, true]) {
+    add(`Root.list/depth=8/metadata=${withFileTypes}`, () => root.list(deepName, { withFileTypes }), {
+      verify: entries => assert.deepEqual(withFileTypes ? entries.map(entry => entry.name) : entries, ["value"]),
+    });
+  }
 
   for (const privateMode of [false, true]) {
     const storeRoot = path.join(w, `broad-store-${privateMode}`);

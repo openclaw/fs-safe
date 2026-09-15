@@ -200,6 +200,10 @@ describe.skipIf(process.platform !== "win32")("real Windows case-sensitive Root 
     await expect(scoped.resolve(path.join(alternateRoot, "value.txt"))).resolves.toBe(
       path.join(rootDir, "value.txt"),
     );
+    await expect(scoped.stat(path.join(alternateRoot, "value.txt"))).resolves.toMatchObject({
+      isFile: true,
+    });
+    await expect(scoped.list(alternateRoot)).resolves.toEqual(["value.txt"]);
   });
 
   it("rejects a case-folded sibling across reads, fallback writes, creates, and moves", async (context) => {
@@ -239,6 +243,8 @@ describe.skipIf(process.platform !== "win32")("real Windows case-sensitive Root 
     const rejected: Array<[string, () => Promise<unknown>]> = [
       ["resolve", () => scoped.resolve(outside("resolve.txt"))],
       ["readAbsolute", () => scoped.readAbsolute(outside("outside.txt"))],
+      ["stat", () => scoped.stat(outside("outside.txt"))],
+      ["list", () => scoped.list(foldedSibling)],
       ["canonical symlink hop", () => scoped.readText("alias/outside.txt", { symlinks: "follow-within-root" })],
       ["openWritable", async () => { const opened = await scoped.openWritable(outside("open.txt")); await opened.handle.close(); }],
       ["append", () => scoped.append(outside("append.txt"), "changed")],

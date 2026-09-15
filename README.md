@@ -233,7 +233,7 @@ const locked = await root("/srv/workspace", {
 await locked.write(".env", "token"); // FsSafeError code "denied-path"
 ```
 
-`stat()`, `exists()`, `list()`, and `entries()` are boundary-checked, but they cannot pin a later operation to the same filesystem object. Use `read()`, `open()`, `write()`, `create()`, `copyIn()`, `move()`, or `remove()` for operation-local identity checks, and inspect `containment` when the platform distinction matters.
+`stat()`, `exists()`, `list()`, and `entries()` check the exact selected objects while collecting their advisory results, but they cannot pin a later operation to the same filesystem object. Use `read()`, `open()`, `write()`, `create()`, `copyIn()`, `move()`, or `remove()` for operation-local identity checks, and inspect `containment` when the platform distinction matters.
 
 ## Subpaths
 

@@ -80,6 +80,15 @@ export async function registerCore({ api: a, workspace: w, binding, measuredFeat
   });
   add("Root.list/names-100", () => safe.list("tree"));
   add("Root.list/metadata-100", () => safe.list("tree", { withFileTypes: true }));
+  add("Root.list/names-1", () => safe.list("tree/nested"), {
+    verify: names => assert.deepEqual(names, ["entry"]),
+  });
+  add("Root.list/metadata-1", () => safe.list("tree/nested", { withFileTypes: true }), {
+    verify: entries => assert.deepEqual(entries.map(entry => entry.name), ["entry"]),
+  });
+  add("Root.stat/nested", () => safe.stat("tree/nested/entry"), {
+    verify: stat => assert.equal(stat.size, data.length),
+  });
   const entryNames = [...Array.from({ length: 100 }, (_, i) => `entry-${i}`), "nested"].sort();
   for (const order of ["filesystem", "sorted"]) {
     add(order === "filesystem" ? "Root.entries" : "Root.entries/sorted", async () => {

@@ -111,6 +111,13 @@ isolating admission and planning from destination-file writes.
 The native descriptor cases isolate host-fd admission and directory open/return;
 the latter remains timed separately from descriptor close.
 
+Root observation changes should compare the exact baseline and candidate builds
+with interleaved runs of `Root.stat`, `Root.stat/nested`, `Root.stat/depth=8`, and
+the one-, 100-, and 1,000-entry `Root.list` name and metadata rows. Use the same
+runtime, filesystem, and native mode. Flag median regressions above 10% or
+50 microseconds, and p95/maximum regressions above 20% or 100 microseconds,
+both pooled and within each complete measurement-order block.
+
 Windows secure-read rows distinguish the measured JavaScript contract from the
 loaded addon's capabilities. A build containing `secure-file-windows.js` uses
 `readSecureFile/descriptor-acl` when its descriptor capability is available, or
