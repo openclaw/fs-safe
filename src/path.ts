@@ -31,6 +31,15 @@ export function normalizeWindowsPathForComparison(input: string): string {
   return normalized.replaceAll("/", "\\").toLowerCase();
 }
 
+function resolveWindowsPathForComparison(input: string): string {
+  const resolved = path.win32.resolve(input);
+  // Ordinary drive paths are already normalized by resolve. Namespace paths
+  // retain Node's additional normalization rules before comparison.
+  return resolved[1] === ":" && path.win32.isAbsolute(resolved)
+    ? resolved.toLowerCase()
+    : normalizeWindowsPathForComparison(resolved);
+}
+
 export function isNodeError(value: unknown): value is NodeJS.ErrnoException {
   return Boolean(
     value && typeof value === "object" && "code" in (value as Record<string, unknown>),
@@ -57,8 +66,8 @@ export function isSymlinkOpenError(value: unknown): boolean {
 
 export function isPathInside(root: string, target: string): boolean {
   if (process.platform === "win32") {
-    const rootForCompare = normalizeWindowsPathForComparison(path.win32.resolve(root));
-    const targetForCompare = normalizeWindowsPathForComparison(path.win32.resolve(target));
+    const rootForCompare = resolveWindowsPathForComparison(root);
+    const targetForCompare = resolveWindowsPathForComparison(target);
     // Resolved drive paths already have canonical separators and case. A full
     // segment prefix needs no second resolution through path.relative.
     // Colon-bearing components keep Node's relative-path interpretation.
