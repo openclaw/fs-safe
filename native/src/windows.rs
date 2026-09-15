@@ -256,7 +256,10 @@ fn nt_error(status: i32, operation: &str) -> napi::Error<String> {
     win_error(unsafe { RtlNtStatusToDosError(status) }, operation)
 }
 
-pub(crate) fn handle_is_reparse(handle: HANDLE) -> NativeResult<bool> {
+fn handle_attribute_tag_information(
+    handle: HANDLE,
+    operation: &str,
+) -> NativeResult<FILE_ATTRIBUTE_TAG_INFO> {
     // SAFETY: info is a valid output buffer for the supplied class.
     let mut info: FILE_ATTRIBUTE_TAG_INFO = unsafe { zeroed() };
     let ok = unsafe {
@@ -269,9 +272,17 @@ pub(crate) fn handle_is_reparse(handle: HANDLE) -> NativeResult<bool> {
     };
     if ok == 0 {
         // SAFETY: GetLastError has no memory safety preconditions.
-        return Err(win_error(unsafe { GetLastError() }, "inspect opened path"));
+        return Err(win_error(unsafe { GetLastError() }, operation));
     }
-    Ok(info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+    Ok(info)
+}
+
+pub(crate) fn handle_is_reparse(handle: HANDLE) -> NativeResult<bool> {
+    Ok(
+        handle_attribute_tag_information(handle, "inspect opened path")?.FileAttributes
+            & FILE_ATTRIBUTE_REPARSE_POINT
+            != 0,
+    )
 }
 
 fn assert_not_reparse(handle: HANDLE) -> NativeResult<()> {
@@ -776,7 +787,12 @@ fn identity_from_handle_information(
 }
 
 pub(crate) fn handle_attributes(handle: HANDLE) -> NativeResult<u32> {
-    Ok(guarded_handle_information(handle)?.dwFileAttributes)
+    // Keep attribute-only guards independent from the larger legacy identity
+    // structure; stable identity remains a separate FileIdInfo query.
+    Ok(
+        handle_attribute_tag_information(handle, "inspect owned directory identity")?
+            .FileAttributes,
+    )
 }
 
 pub(crate) fn handle_identity_and_size(

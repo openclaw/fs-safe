@@ -111,7 +111,7 @@ mod windows {
         CreateWellKnownSid, DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetLengthSid,
         GetSecurityDescriptorControl, GetTokenInformation, InitializeSecurityDescriptor,
         IsValidSid, IsWellKnownSid, OBJECT_INHERIT_ACE, OWNER_SECURITY_INFORMATION, PSID,
-        SE_DACL_PROTECTED, SECURITY_DESCRIPTOR, SECURITY_MAX_SID_SIZE,
+        SE_DACL_PRESENT, SE_DACL_PROTECTED, SECURITY_DESCRIPTOR, SECURITY_MAX_SID_SIZE,
         SetSecurityDescriptorControl, SetSecurityDescriptorDacl, SetSecurityDescriptorOwner,
         TOKEN_QUERY, TOKEN_USER, TokenUser, WinAnonymousSid, WinAuthenticatedUserSid,
         WinBuiltinAdministratorsSid, WinBuiltinGuestsSid, WinBuiltinUsersSid, WinInteractiveSid,
@@ -120,8 +120,9 @@ mod windows {
     use windows_sys::Win32::Storage::FileSystem::{
         CreateFileW, FILE_ADD_SUBDIRECTORY, FILE_ALL_ACCESS, FILE_ATTRIBUTE_DIRECTORY,
         FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS,
-        FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ,
-        FILE_SHARE_WRITE, FILE_TRAVERSE, GetFinalPathNameByHandleW, OPEN_EXISTING,
+        FILE_FLAG_OPEN_REPARSE_POINT, FILE_NAME_OPENED, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, GetFinalPathNameByHandleW,
+        OPEN_EXISTING, VOLUME_NAME_GUID,
     };
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -148,8 +149,12 @@ mod windows {
     const FILE_WRITE_EA: u32 = 0x0000_0010;
     const FILE_DELETE_CHILD: u32 = 0x0000_0040;
     const FILE_WRITE_ATTRIBUTES: u32 = 0x0000_0100;
+    const PRIVATE_PARENT_CREATE_ACCESS: u32 =
+        FILE_READ_ATTRIBUTES | FILE_ADD_SUBDIRECTORY | FILE_TRAVERSE;
+    const PRIVATE_PARENT_METADATA_ACCESS: u32 = FILE_READ_ATTRIBUTES;
     const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
     const ACCESS_DENIED_ACE_TYPE: u8 = 1;
+    const INHERIT_ONLY_ACE_FLAG: u8 = 0x08;
     const SECURITY_DESCRIPTOR_REVISION: u32 = 1;
     const FINAL_PATH_STACK_WCHARS: usize = 512;
     const MAX_FINAL_PATH_WCHARS: usize = 32 * 1024;
@@ -183,9 +188,43 @@ mod windows {
         sid: PSID,
     }
 
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum OwnerClass {
+        CurrentUser,
+        System,
+        Administrators,
+        Foreign,
+    }
+
+    impl OwnerClass {
+        fn as_str(self) -> &'static str {
+            match self {
+                Self::CurrentUser => "current-user",
+                Self::System => "system",
+                Self::Administrators => "administrators",
+                Self::Foreign => "foreign",
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    struct BasicAce {
+        sid: PSID,
+        mask: u32,
+        ace_type: u8,
+        flags: u8,
+    }
+
+    #[derive(Clone, Copy, Debug)]
     struct HandleSecurityInspection {
-        facts: WindowsSecurityFacts,
+        owner_is_current: bool,
         dacl_protected: bool,
+        dacl_present: bool,
+        is_local: bool,
+        ace_list_complete: bool,
+        unsupported_ace_seen: bool,
+        untrusted_readable: bool,
+        untrusted_writable: bool,
     }
 
     fn current_user_sid() -> NativeResult<TokenSid> {
@@ -287,18 +326,17 @@ mod windows {
     fn parse_basic_ace(
         raw: *mut c_void,
         header: &ACE_HEADER,
-    ) -> NativeResult<Option<(WindowsAccessControlEntry, PSID)>> {
+    ) -> NativeResult<Option<BasicAce>> {
         let sid_offset = std::mem::offset_of!(ACCESS_ALLOWED_ACE, SidStart);
         if (header.AceSize as usize) < sid_offset + 8 {
             return Ok(None);
         }
-        let (mask, sid, ace_type) = match header.AceType {
+        let (mask, sid) = match header.AceType {
             ACCESS_ALLOWED_ACE_TYPE => {
                 let ace = unsafe { &*(raw.cast::<ACCESS_ALLOWED_ACE>()) };
                 (
                     ace.Mask,
                     (&ace.SidStart as *const u32).cast_mut().cast::<c_void>(),
-                    "allow",
                 )
             }
             ACCESS_DENIED_ACE_TYPE => {
@@ -306,7 +344,6 @@ mod windows {
                 (
                     ace.Mask,
                     (&ace.SidStart as *const u32).cast_mut().cast::<c_void>(),
-                    "deny",
                 )
             }
             _ => return Ok(None),
@@ -318,15 +355,26 @@ mod windows {
         if sid_length == 0 || sid_offset + sid_length > header.AceSize as usize {
             return Ok(None);
         }
-        Ok(Some((
-            WindowsAccessControlEntry {
-                sid: sid_string(sid)?,
-                mask,
-                ace_type: ace_type.to_owned(),
-                flags: ace_flags(header.AceFlags),
-            },
+        Ok(Some(BasicAce {
             sid,
-        )))
+            mask,
+            ace_type: header.AceType,
+            flags: header.AceFlags,
+        }))
+    }
+
+    fn public_ace(entry: BasicAce) -> NativeResult<WindowsAccessControlEntry> {
+        Ok(WindowsAccessControlEntry {
+            sid: sid_string(entry.sid)?,
+            mask: entry.mask,
+            ace_type: if entry.ace_type == ACCESS_ALLOWED_ACE_TYPE {
+                "allow"
+            } else {
+                "deny"
+            }
+            .to_owned(),
+            flags: ace_flags(entry.flags),
+        })
     }
 
     fn open_security_handle(path: &[u16]) -> NativeResult<OwnedHandle> {
@@ -384,6 +432,7 @@ mod windows {
 
     fn open_private_directory_parent(
         path: &Path,
+        desired_access: u32,
     ) -> NativeResult<(OwnedHandle, HandleFileIdentity)> {
         let path = path
             .to_str()
@@ -392,7 +441,7 @@ mod windows {
         let handle = unsafe {
             CreateFileW(
                 path.as_ptr(),
-                FILE_READ_ATTRIBUTES | FILE_ADD_SUBDIRECTORY | FILE_TRAVERSE,
+                desired_access,
                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                 null(),
                 OPEN_EXISTING,
@@ -534,27 +583,87 @@ mod windows {
             && (!final_path.starts_with(r"\\") || final_path.starts_with(r"\\?\")))
     }
 
-    fn is_local_handle(handle: HANDLE) -> NativeResult<bool> {
-        is_local_handle_with_query(handle, |handle, buffer| {
-            let written = unsafe {
-                GetFinalPathNameByHandleW(
-                    handle,
-                    buffer.as_mut_ptr(),
-                    buffer.len() as u32,
-                    0,
-                )
-            };
-            if written == 0 {
-                return Err(win_error(unsafe { GetLastError() }, "resolve final path"));
+    fn is_volume_guid_path(path: &str) -> bool {
+        let bytes = path.as_bytes();
+        if bytes.len() < 49
+            || !bytes[..11].eq_ignore_ascii_case(br"\\?\Volume{")
+            || bytes[47] != b'}'
+            || bytes[48] != b'\\'
+        {
+            return false;
+        }
+        bytes[11..47].iter().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                *byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
             }
-            Ok(written as usize)
         })
     }
 
-    fn read_owner_and_dacl_handle(
+    fn is_local_handle_with_queries<VolumeGuidQuery, NormalizedDosQuery>(
+        handle: HANDLE,
+        volume_guid_query: VolumeGuidQuery,
+        normalized_dos_query: NormalizedDosQuery,
+    ) -> NativeResult<bool>
+    where
+        VolumeGuidQuery: FnMut(HANDLE, &mut [u16]) -> NativeResult<usize>,
+        NormalizedDosQuery: FnMut(HANDLE, &mut [u16]) -> NativeResult<usize>,
+    {
+        if final_path_with_query(handle, volume_guid_query).is_ok_and(|path| {
+            // A volume-GUID path is issued only for a mounted local volume. Do
+            // not infer locality from any other successful driver response.
+            is_volume_guid_path(&path)
+        }) {
+            return Ok(true);
+        }
+        // Network shares have no volume GUID. Keep the normalized DOS query as
+        // the fail-closed fallback so UNC paths retain their existing verdict.
+        is_local_handle_with_query(handle, normalized_dos_query)
+    }
+
+    fn is_local_handle(handle: HANDLE) -> NativeResult<bool> {
+        is_local_handle_with_queries(
+            handle,
+            |handle, buffer| {
+                let written = unsafe {
+                    GetFinalPathNameByHandleW(
+                        handle,
+                        buffer.as_mut_ptr(),
+                        buffer.len() as u32,
+                        FILE_NAME_OPENED | VOLUME_NAME_GUID,
+                    )
+                };
+                if written == 0 {
+                    return Err(win_error(
+                        unsafe { GetLastError() },
+                        "resolve opened volume GUID path",
+                    ));
+                }
+                Ok(written as usize)
+            },
+            |handle, buffer| {
+                let written = unsafe {
+                    GetFinalPathNameByHandleW(
+                        handle,
+                        buffer.as_mut_ptr(),
+                        buffer.len() as u32,
+                        0,
+                    )
+                };
+                if written == 0 {
+                    return Err(win_error(unsafe { GetLastError() }, "resolve final path"));
+                }
+                Ok(written as usize)
+            },
+        )
+    }
+
+    fn inspect_owner_and_dacl_handle(
         handle: HANDLE,
         current: &TokenSid,
-    ) -> NativeResult<HandleSecurityInspection> {
+        include_public_report: bool,
+    ) -> NativeResult<(HandleSecurityInspection, Option<WindowsSecurityFacts>)> {
         let local = is_local_handle(handle).unwrap_or(false);
         let mut owner = null_mut();
         let mut dacl: *mut ACL = null_mut();
@@ -575,6 +684,12 @@ mod windows {
             return Err(win_error(status, "read owner and DACL"));
         }
         let result = (|| {
+            if owner.is_null() || unsafe { IsValidSid(owner) } == 0 {
+                return Err(native_error(
+                    "EIO",
+                    "security descriptor owner is absent or invalid",
+                ));
+            }
             let mut control = 0_u16;
             let mut revision = 0_u32;
             if unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) } == 0
@@ -585,80 +700,127 @@ mod windows {
                 ));
             }
             let owner_class = if unsafe { EqualSid(owner, current.sid) } != 0 {
-                "current-user"
+                OwnerClass::CurrentUser
             } else if unsafe { IsWellKnownSid(owner, WinLocalSystemSid) } != 0 {
-                "system"
+                OwnerClass::System
             } else if unsafe { IsWellKnownSid(owner, WinBuiltinAdministratorsSid) } != 0 {
-                "administrators"
+                OwnerClass::Administrators
             } else {
-                "foreign"
+                OwnerClass::Foreign
             };
-            let mut facts = WindowsSecurityFacts {
-                owner_sid: sid_string(owner)?,
-                current_user_sid: sid_string(current.sid)?,
-                owner_class: owner_class.to_owned(),
-                world_writable: dacl.is_null(),
-                group_writable: false,
-                world_readable: dacl.is_null(),
-                group_readable: false,
-                fallback_required: !local,
-                dacl_present: !dacl.is_null(),
+            let mut inspection = HandleSecurityInspection {
+                owner_is_current: owner_class == OwnerClass::CurrentUser,
+                dacl_protected: control & SE_DACL_PROTECTED != 0,
+                dacl_present: control & SE_DACL_PRESENT != 0 && !dacl.is_null(),
                 is_local: local,
                 ace_list_complete: true,
-                unsupported_ace_types: Vec::new(),
-                aces: Vec::new(),
+                unsupported_ace_seen: false,
+                // An absent or null DACL grants unrestricted access.
+                untrusted_readable: dacl.is_null(),
+                untrusted_writable: dacl.is_null(),
+            };
+            // Public reporting and private admission share the same ACE walk.
+            // Private admission leaves this absent and compares binary SIDs
+            // and masks directly, avoiding report-only SID formatting.
+            let mut report = if include_public_report {
+                Some(WindowsSecurityFacts {
+                    owner_sid: sid_string(owner)?,
+                    current_user_sid: sid_string(current.sid)?,
+                    owner_class: owner_class.as_str().to_owned(),
+                    world_writable: dacl.is_null(),
+                    group_writable: false,
+                    world_readable: dacl.is_null(),
+                    group_readable: false,
+                    fallback_required: !local,
+                    dacl_present: !dacl.is_null(),
+                    is_local: local,
+                    ace_list_complete: true,
+                    unsupported_ace_types: Vec::new(),
+                    aces: Vec::new(),
+                })
+            } else {
+                None
             };
             if !dacl.is_null() {
                 let count = unsafe { (*dacl).AceCount } as u32;
                 for index in 0..count {
                     let mut raw = null_mut();
                     if unsafe { GetAce(dacl, index, &mut raw) } == 0 || raw.is_null() {
-                        facts.fallback_required = true;
-                        facts.ace_list_complete = false;
+                        inspection.ace_list_complete = false;
+                        if let Some(facts) = report.as_mut() {
+                            facts.fallback_required = true;
+                            facts.ace_list_complete = false;
+                        }
                         continue;
                     }
                     let header = unsafe { &*(raw.cast::<ACE_HEADER>()) };
-                    let Some((entry, sid)) = parse_basic_ace(raw, header)? else {
-                        facts.fallback_required = true;
-                        facts.ace_list_complete = false;
-                        facts.unsupported_ace_types.push(header.AceType.into());
+                    let Some(entry) = parse_basic_ace(raw, header)? else {
+                        inspection.ace_list_complete = false;
+                        inspection.unsupported_ace_seen = true;
+                        if let Some(facts) = report.as_mut() {
+                            facts.fallback_required = true;
+                            facts.ace_list_complete = false;
+                            facts.unsupported_ace_types.push(header.AceType.into());
+                        }
                         continue;
                     };
                     let mask = entry.mask;
-                    let inherit_only = entry.flags.inherit_only;
-                    facts.aces.push(entry);
-                    if inherit_only || header.AceType == ACCESS_DENIED_ACE_TYPE {
+                    if let Some(facts) = report.as_mut() {
+                        facts.aces.push(public_ace(entry)?);
+                    }
+                    if entry.flags & INHERIT_ONLY_ACE_FLAG != 0
+                        || entry.ace_type == ACCESS_DENIED_ACE_TYPE
+                    {
                         continue;
                     }
-                    let trusted = unsafe { EqualSid(sid, current.sid) } != 0
-                        || unsafe { IsWellKnownSid(sid, WinLocalSystemSid) } != 0
-                        || unsafe { IsWellKnownSid(sid, WinBuiltinAdministratorsSid) } != 0;
+                    let trusted = unsafe { EqualSid(entry.sid, current.sid) } != 0
+                        || unsafe { IsWellKnownSid(entry.sid, WinLocalSystemSid) } != 0
+                        || unsafe { IsWellKnownSid(entry.sid, WinBuiltinAdministratorsSid) } != 0;
                     if trusted {
                         continue;
                     }
-                    if is_world_sid(sid) {
-                        facts.world_readable |= can_read(mask);
-                        facts.world_writable |= can_write(mask);
-                    } else {
-                        facts.group_readable |= can_read(mask);
-                        facts.group_writable |= can_write(mask);
+                    let readable = can_read(mask);
+                    let writable = can_write(mask);
+                    inspection.untrusted_readable |= readable;
+                    inspection.untrusted_writable |= writable;
+                    if let Some(facts) = report.as_mut() {
+                        if is_world_sid(entry.sid) {
+                            facts.world_readable |= readable;
+                            facts.world_writable |= writable;
+                        } else {
+                            facts.group_readable |= readable;
+                            facts.group_writable |= writable;
+                        }
                     }
                 }
             }
-            Ok(HandleSecurityInspection {
-                facts,
-                dacl_protected: control & SE_DACL_PROTECTED != 0,
-            })
+            Ok((inspection, report))
         })();
         unsafe { LocalFree(descriptor) };
         result
+    }
+
+    fn read_owner_and_dacl_handle(
+        handle: HANDLE,
+        current: &TokenSid,
+    ) -> NativeResult<HandleSecurityInspection> {
+        inspect_owner_and_dacl_handle(handle, current, false)
+            .map(|(inspection, _)| inspection)
+    }
+
+    fn read_owner_and_dacl_report_handle(
+        handle: HANDLE,
+        current: &TokenSid,
+    ) -> NativeResult<WindowsSecurityFacts> {
+        let (_, report) = inspect_owner_and_dacl_handle(handle, current, true)?;
+        report.ok_or_else(|| native_error("EIO", "Windows security report was not constructed"))
     }
 
     pub fn read_owner_and_dacl(path: &str) -> NativeResult<WindowsSecurityFacts> {
         let path = wide(path)?;
         let current = current_user_sid()?;
         let handle = open_security_handle(&path)?;
-        read_owner_and_dacl_handle(handle.0, &current).map(|inspection| inspection.facts)
+        read_owner_and_dacl_report_handle(handle.0, &current)
     }
 
     fn verify_private_directory_association<FinalLocality>(
@@ -678,7 +840,10 @@ mod windows {
                 "retained private directory parent identity changed",
             ));
         }
-        let (_named_parent, named_parent_identity) = open_private_directory_parent(parent_path)?;
+        // This public-name reopen only reads attributes, locality, and stable
+        // identity; child-creation rights remain confined to the retained parent.
+        let (_named_parent, named_parent_identity) =
+            open_private_directory_parent(parent_path, PRIVATE_PARENT_METADATA_ACCESS)?;
         if named_parent_identity != parent_identity {
             return Err(native_error(
                 "EIO",
@@ -715,14 +880,14 @@ mod windows {
     fn validate_private_directory_facts(
         inspection: &HandleSecurityInspection,
     ) -> NativeResult<()> {
-        let facts = &inspection.facts;
         if !inspection.dacl_protected
-            || facts.owner_class != "current-user"
-            || facts.world_readable
-            || facts.world_writable
-            || facts.group_readable
-            || facts.group_writable
-            || facts.fallback_required
+            || !inspection.owner_is_current
+            || !inspection.dacl_present
+            || !inspection.is_local
+            || !inspection.ace_list_complete
+            || inspection.unsupported_ace_seen
+            || inspection.untrusted_readable
+            || inspection.untrusted_writable
         {
             return Err(native_error(
                 "EACCES",
@@ -770,7 +935,8 @@ mod windows {
         FinalLocality: FnMut(HANDLE) -> NativeResult<bool>,
     {
         let (parent_path, name) = split_parent(path)?;
-        let (parent, parent_identity) = open_private_directory_parent(&parent_path)?;
+        let (parent, parent_identity) =
+            open_private_directory_parent(&parent_path, PRIVATE_PARENT_CREATE_ACCESS)?;
         let current = current_user_sid()?;
         let system = well_known_sid(WinLocalSystemSid)?;
         let administrators = well_known_sid(WinBuiltinAdministratorsSid)?;
@@ -925,6 +1091,19 @@ mod windows {
             units.len()
         }
 
+        fn valid_private_inspection() -> HandleSecurityInspection {
+            HandleSecurityInspection {
+                owner_is_current: true,
+                dacl_protected: true,
+                dacl_present: true,
+                is_local: true,
+                ace_list_complete: true,
+                unsupported_ace_seen: false,
+                untrusted_readable: false,
+                untrusted_writable: false,
+            }
+        }
+
         #[test]
         fn final_path_query_uses_stack_and_bounded_fallbacks() {
             let handle = null_mut();
@@ -994,10 +1173,119 @@ mod windows {
         }
 
         #[test]
+        fn volume_guid_fast_path_accepts_only_a_canonical_local_volume() {
+            let handle = null_mut();
+            let volume_guid = r"\\?\Volume{01234567-89ab-cdef-0123-456789abcdef}\private";
+            assert!(is_volume_guid_path(volume_guid));
+            assert!(is_volume_guid_path(
+                r"\\?\VOLUME{ABCDEF01-2345-6789-ABCD-EF0123456789}\private"
+            ));
+            for path in [
+                r"\\?\Volume{01234567-89ab-cdef-0123-456789abcdeg}\private",
+                r"\\?\Volume{0123456789ab-cdef-0123-456789abcdef}\private",
+                r"\\?\Volume{01234567-89ab-cdef-0123-456789abcdef}/private",
+                r"\\?\UNC\server\share\private",
+                r"\\?\C:\private",
+            ] {
+                assert!(!is_volume_guid_path(path), "accepted {path}");
+            }
+
+            let fallback_calls = Cell::new(0);
+            assert!(
+                is_local_handle_with_queries(
+                    handle,
+                    |_, buffer| Ok(write_final_path_result(volume_guid, buffer)),
+                    |_, _| -> NativeResult<usize> {
+                        panic!("a valid volume GUID must not query the DOS fallback")
+                    },
+                )
+                .unwrap()
+            );
+            assert!(
+                !is_local_handle_with_queries(
+                    handle,
+                    |_, buffer| {
+                        Ok(write_final_path_result(
+                            r"\\?\Volume{not-a-volume-guid}\private",
+                            buffer,
+                        ))
+                    },
+                    |_, buffer| {
+                        fallback_calls.set(fallback_calls.get() + 1);
+                        Ok(write_final_path_result(
+                            r"\\?\UNC\server\share\private",
+                            buffer,
+                        ))
+                    },
+                )
+                .unwrap()
+            );
+            assert_eq!(fallback_calls.get(), 1);
+
+            assert!(
+                is_local_handle_with_queries(
+                    handle,
+                    |_, _| Err(native_error("EIO", "volume GUID unavailable")),
+                    |_, buffer| Ok(write_final_path_result(r"\\?\C:\private", buffer)),
+                )
+                .unwrap()
+            );
+        }
+
+        #[test]
+        fn private_validation_fails_closed_for_every_raw_predicate() {
+            let valid = valid_private_inspection();
+            validate_private_directory_facts(&valid).unwrap();
+
+            let failures = [
+                HandleSecurityInspection {
+                    dacl_protected: false,
+                    ..valid
+                },
+                HandleSecurityInspection {
+                    owner_is_current: false,
+                    ..valid
+                },
+                HandleSecurityInspection {
+                    dacl_present: false,
+                    ..valid
+                },
+                HandleSecurityInspection {
+                    is_local: false,
+                    ..valid
+                },
+                HandleSecurityInspection {
+                    ace_list_complete: false,
+                    ..valid
+                },
+                HandleSecurityInspection {
+                    unsupported_ace_seen: true,
+                    ..valid
+                },
+                HandleSecurityInspection {
+                    untrusted_readable: true,
+                    ..valid
+                },
+                HandleSecurityInspection {
+                    untrusted_writable: true,
+                    ..valid
+                },
+            ];
+            for inspection in failures {
+                let error = validate_private_directory_facts(&inspection).unwrap_err();
+                assert_eq!(error.status, "EACCES");
+                assert_eq!(
+                    error.reason,
+                    "filesystem did not enforce the private directory DACL"
+                );
+            }
+        }
+
+        #[test]
         fn creates_private_directory_with_validated_dacl() {
             let root = temp_root("success");
             let target = root.join("private");
-            let protected = Cell::new(false);
+            let private_inspection = Cell::new(None);
             create_private_directory_with_hooks(
                 target.to_str().unwrap(),
                 || {},
@@ -1005,15 +1293,32 @@ mod windows {
                 || {},
                 |handle, current| {
                     let inspection = read_owner_and_dacl_handle(handle, current)?;
-                    protected.set(inspection.dacl_protected);
+                    private_inspection.set(Some(inspection));
                     Ok(inspection)
                 },
                 is_local_handle,
             )
             .unwrap();
-            assert!(protected.get());
 
             let facts = read_owner_and_dacl(target.to_str().unwrap()).unwrap();
+            let inspection = private_inspection.get().unwrap();
+            assert!(inspection.dacl_protected);
+            assert_eq!(inspection.owner_is_current, facts.owner_class == "current-user");
+            assert_eq!(inspection.dacl_present, facts.dacl_present);
+            assert_eq!(inspection.is_local, facts.is_local);
+            assert_eq!(inspection.ace_list_complete, facts.ace_list_complete);
+            assert_eq!(
+                inspection.unsupported_ace_seen,
+                !facts.unsupported_ace_types.is_empty()
+            );
+            assert_eq!(
+                inspection.untrusted_readable,
+                facts.world_readable || facts.group_readable
+            );
+            assert_eq!(
+                inspection.untrusted_writable,
+                facts.world_writable || facts.group_writable
+            );
             assert_eq!(facts.owner_class, "current-user");
             assert_eq!(facts.owner_sid, facts.current_user_sid);
             assert!(facts.dacl_present);
