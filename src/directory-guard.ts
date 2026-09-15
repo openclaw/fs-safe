@@ -8,6 +8,7 @@ import { isNotFoundPathError } from "./path.js";
 import { directoryComponentNotDirectoryError } from "./root-errors.js";
 import { realpathSync } from "./realpath.js";
 import {
+  assertStatObservationSync,
   inspectStatObservationSync,
   type ExactStatIdentity,
   type StatObservationReceipt,
@@ -174,6 +175,17 @@ export function inspectDirectoryIdentitySync(
 
 export type DirectoryObservationGuard = StatObservationReceipt & { dir: string; realPath: string };
 
+export function extendDirectoryObservationGuard(
+  observation: StatObservationReceipt,
+  dir: string,
+  realPath: string,
+): DirectoryObservationGuard {
+  const guard = observation as DirectoryObservationGuard;
+  guard.dir = dir;
+  guard.realPath = realPath;
+  return guard;
+}
+
 // Only stat/list receipts use this metadata fast path. Recovery and publication
 // callers retain the BigIntStats contract of inspectDirectoryIdentitySync.
 export function inspectDirectoryObservationSync(
@@ -188,8 +200,20 @@ export function inspectDirectoryObservationSync(
   }, expected);
 }
 
+export function assertDirectoryObservationSync(
+  dir: string,
+  expected: ExactStatIdentity,
+): Stats | BigIntStats {
+  const entryPath = directoryEntryPath(dir);
+  return assertStatObservationSync(bigint => {
+    const stat = bigint ? fsSync.lstatSync(entryPath, { bigint: true }) : fsSync.lstatSync(entryPath);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw directoryComponentNotDirectoryError();
+    return stat;
+  }, expected);
+}
+
 export function assertDirectoryObservationGuardSync(guard: DirectoryObservationGuard): void {
-  inspectDirectoryObservationSync(guard.dir, guard.identity);
+  assertDirectoryObservationSync(guard.dir, guard.identity);
   if (realpathSync.native(guard.dir) !== guard.realPath) {
     throw new FsSafeError("path-mismatch", "directory changed during operation");
   }

@@ -19,7 +19,6 @@ import { fileNotFoundError, outsideWorkspaceError } from "./root-errors.js";
 export type PinnedObservedPath = {
   rootReal: string;
   resolved: string;
-  relativePosix: string;
   receipt?: RootPathObservationReceipt;
 };
 
@@ -59,13 +58,20 @@ export async function resolvePinnedObservedPathInRoot(
     throw new FsSafeError("path-alias", "path alias escape blocked", { cause: error });
   }
   const resolved = observed.resolved;
+  if (observed.receipt) {
+    // A receipt is emitted only for the straight traversal whose lexical and
+    // canonical cursors stayed identical and inside the checked boundary.
+    return {
+      rootReal: resolved.rootCanonicalPath,
+      resolved: resolved.canonicalPath,
+      receipt: observed.receipt,
+    };
+  }
   const relativeResolved = path.relative(resolved.rootCanonicalPath, resolved.canonicalPath);
   if (relativeResolved === "" || relativeResolved === ".") {
     return {
       rootReal: resolved.rootCanonicalPath,
       resolved: resolved.canonicalPath,
-      relativePosix: "",
-      ...(observed.receipt ? { receipt: observed.receipt } : {}),
     };
   }
   const firstSegment = relativeResolved.split(path.sep)[0];
@@ -76,7 +82,5 @@ export async function resolvePinnedObservedPathInRoot(
   return {
     rootReal: resolved.rootCanonicalPath,
     resolved: resolved.canonicalPath,
-    relativePosix: relativeResolved.split(path.sep).join(path.posix.sep),
-    ...(observed.receipt ? { receipt: observed.receipt } : {}),
   };
 }

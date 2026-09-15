@@ -9,6 +9,10 @@ export type StatObservationReceipt = {
   identity: ExactStatIdentity;
 };
 
+type StatObservationResult<CaptureIdentity extends boolean> = CaptureIdentity extends true
+  ? StatObservationReceipt
+  : Stats | BigIntStats;
+
 function identityMismatch(): never {
   const error = new FsSafeError("path-mismatch", "file identity changed or could not be verified");
   recordFileObservationFailure(error, "identity");
@@ -25,13 +29,13 @@ function safeExpected(identity: ExactStatIdentity): boolean {
     identity.dev <= 9007199254740991n && identity.ino <= 9007199254740991n;
 }
 
-/** Operation-local metadata plus exact identity; never use projected PathStat IDs. */
-export function inspectStatObservationSync(
+function observeStatSync<CaptureIdentity extends boolean>(
   inspect: (bigint: boolean) => Stats | BigIntStats,
   expected?: ExactStatIdentity,
   initial?: Stats | BigIntStats,
   platform: NodeJS.Platform = process.platform,
-): StatObservationReceipt {
+  captureIdentity?: CaptureIdentity,
+): StatObservationResult<CaptureIdentity> {
   if (platform === "win32" || (!initial && expected && !safeExpected(expected))) {
     // Preserve the strict Windows unknown-ID retry, including known components
     // and validation of the expected identity before the first observation.
@@ -40,7 +44,9 @@ export function inspectStatObservationSync(
       initial = undefined;
       return (current ?? inspect(true)) as BigIntStats;
     }, expected, platform);
-    return { stat, identity: { dev: stat.dev, ino: stat.ino } };
+    return (captureIdentity
+      ? { stat, identity: expected ?? { dev: stat.dev, ino: stat.ino } }
+      : stat) as StatObservationResult<CaptureIdentity>;
   }
 
   const stat = initial ?? inspect(false);
@@ -52,7 +58,9 @@ export function inspectStatObservationSync(
   if (expected && ((dev !== undefined && dev !== expected.dev) ||
     (ino !== undefined && ino !== expected.ino))) identityMismatch();
   if (numericDev && numericIno) {
-    return { stat, identity: { dev: dev!, ino: ino! } };
+    return (captureIdentity
+      ? { stat, identity: expected ?? { dev: dev!, ino: ino! } }
+      : stat) as StatObservationResult<CaptureIdentity>;
   }
 
   // An unsafe numeric component is unknown, not a rounded identity. Retain
@@ -63,5 +71,27 @@ export function inspectStatObservationSync(
       (ino !== undefined && current.ino !== ino)) identityMismatch();
     return current;
   }, expected, platform);
-  return { stat: exact, identity: { dev: exact.dev, ino: exact.ino } };
+  return (captureIdentity
+    ? { stat: exact, identity: expected ?? { dev: exact.dev, ino: exact.ino } }
+    : exact) as StatObservationResult<CaptureIdentity>;
+}
+
+/** Operation-local metadata plus exact identity; never use projected PathStat IDs. */
+export function inspectStatObservationSync(
+  inspect: (bigint: boolean) => Stats | BigIntStats,
+  expected?: ExactStatIdentity,
+  initial?: Stats | BigIntStats,
+  platform: NodeJS.Platform = process.platform,
+): StatObservationReceipt {
+  return observeStatSync(inspect, expected, initial, platform, true);
+}
+
+/** Revalidate an exact identity without allocating a receipt that the caller will discard. */
+export function assertStatObservationSync(
+  inspect: (bigint: boolean) => Stats | BigIntStats,
+  expected: ExactStatIdentity,
+  initial?: Stats | BigIntStats,
+  platform: NodeJS.Platform = process.platform,
+): Stats | BigIntStats {
+  return observeStatSync(inspect, expected, initial, platform, false);
 }

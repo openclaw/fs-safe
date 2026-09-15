@@ -6,8 +6,8 @@ import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import {
   assertAsyncDirectoryGuard,
   assertDirectoryObservationGuardSync,
+  assertDirectoryObservationSync,
   createAsyncDirectoryGuard,
-  inspectDirectoryObservationSync,
   type AsyncDirectoryGuard,
   type DirectoryObservationGuard,
 } from "./directory-guard.js";
@@ -120,7 +120,7 @@ export function assertRootPathObservationReceiptCurrent(
     return;
   }
   try {
-    inspectDirectoryObservationSync(rootGuard.dir, rootGuard.identity);
+    assertDirectoryObservationSync(rootGuard.dir, rootGuard.identity);
   } catch (error) {
     throw rootPathChangedError(error instanceof Error ? error : undefined);
   }

@@ -1,6 +1,10 @@
 import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { assertDirectoryObservationGuardSync, inspectDirectoryObservationSync } from "../src/directory-guard.js";
+import {
+  assertDirectoryObservationGuardSync,
+  extendDirectoryObservationGuard,
+  inspectDirectoryObservationSync,
+} from "../src/directory-guard.js";
 import { realpathSync } from "../src/realpath.js";
 
 const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
@@ -10,6 +14,13 @@ const exact = () => ({ dev: 7n, ino: 11n, isDirectory: () => true, isSymbolicLin
 afterEach(() => {
   vi.restoreAllMocks();
   Object.defineProperty(process, "platform", platform);
+});
+
+it("extends an operation-owned observation into its directory guard", () => {
+  const observation = { stat: numeric(), identity: { dev: 7n, ino: 11n } };
+  const guard = extendDirectoryObservationGuard(observation, "/root/selected", "/root/selected");
+  expect(guard).toBe(observation);
+  expect(guard).toMatchObject({ dir: "/root/selected", realPath: "/root/selected" });
 });
 
 it.each([

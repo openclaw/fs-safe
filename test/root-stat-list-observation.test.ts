@@ -48,6 +48,31 @@ it.skipIf(process.platform === "win32")("uses ordinary metadata within unchanged
   }
 });
 
+it("reuses operation-owned receipt records without exposing write-only path fields", async () => {
+  const rootDir = await tempRoot("fs-safe-observation-record-ownership-");
+  const selected = path.join(rootDir, "selected");
+  await fs.mkdir(selected);
+  await fs.writeFile(path.join(rootDir, "direct"), "inside");
+  await fs.writeFile(path.join(selected, "value"), "inside");
+  const context = await resolveRootContext(rootDir);
+
+  const direct = await resolvePinnedObservedPathInRoot(context, "direct", "stat");
+  expect(direct?.receipt).toBeDefined();
+  expect(direct).not.toHaveProperty("relativePosix");
+  expect(direct?.receipt?.rootGuard.identity).toBe(context.rootIdentity);
+  expect(direct?.receipt?.directoryGuard).toBe(direct?.receipt?.rootGuard);
+
+  const nested = await resolvePinnedObservedPathInRoot(context, "selected/value", "stat");
+  expect(nested?.receipt).toBeDefined();
+  expect(nested?.receipt?.rootGuard.identity).toBe(context.rootIdentity);
+  expect(nested?.receipt?.directoryGuard).not.toBe(nested?.receipt?.target);
+
+  const listed = await resolvePinnedObservedPathInRoot(context, "selected", "directory");
+  expect(listed?.receipt).toBeDefined();
+  expect(listed?.receipt?.rootGuard.identity).toBe(context.rootIdentity);
+  expect(listed?.receipt?.directoryGuard).toBe(listed?.receipt?.target);
+});
+
 it("preserves the root-only initial and final stat hooks", async () => {
   const rootDir = await tempRoot("fs-safe-root-only-observation-");
   await fs.writeFile(path.join(rootDir, "value"), "inside");
@@ -68,7 +93,7 @@ it("preserves the root-only initial and final stat hooks", async () => {
   expect(events).toEqual(["list"]);
 });
 
-it.each(["selected/./value", "selected//value"])(
+it.each(["selected/./value", "selected//value", "selected////value"])(
   "keeps unusual spelling %s on the general observation path", async spelling => {
     const rootDir = await tempRoot("fs-safe-observation-spelling-");
     await fs.mkdir(path.join(rootDir, "selected"));

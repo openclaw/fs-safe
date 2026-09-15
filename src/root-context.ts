@@ -2,6 +2,7 @@ import fs, { type BigIntStats } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  extendDirectoryObservationGuard,
   inspectDirectoryIdentity,
   inspectDirectoryObservationSync,
   type AsyncDirectoryGuard,
@@ -29,6 +30,12 @@ export type RootContext = {
   rootReal: string;
   rootWithSep: string;
 };
+
+function hasExactRootIdentity(
+  identity: RootContext["rootIdentity"],
+): identity is { dev: bigint; ino: bigint } {
+  return typeof identity.dev === "bigint" && typeof identity.ino === "bigint";
+}
 
 export const ensureTrailingSep = (value: string) =>
   value.endsWith(path.sep) ? value : value + path.sep;
@@ -144,16 +151,14 @@ export async function assertRootIdentityCurrent(root: RootContext): Promise<void
 export async function createRootObservationGuard(
   root: RootContext,
 ): Promise<DirectoryObservationGuard | undefined> {
-  if (typeof root.rootIdentity.dev !== "bigint" || typeof root.rootIdentity.ino !== "bigint") {
+  const rootIdentity = root.rootIdentity;
+  if (!hasExactRootIdentity(rootIdentity)) {
     await assertRootIdentityCurrent(root);
     return undefined;
   }
   try {
-    const observed = await inspectDirectoryObservationSync(root.rootReal, {
-      dev: root.rootIdentity.dev,
-      ino: root.rootIdentity.ino,
-    });
-    return { dir: root.rootReal, realPath: root.rootReal, ...observed };
+    const observed = await inspectDirectoryObservationSync(root.rootReal, rootIdentity);
+    return extendDirectoryObservationGuard(observed, root.rootReal, root.rootReal);
   } catch (error) {
     throw rootPathChangedError(error instanceof Error ? error : undefined);
   }

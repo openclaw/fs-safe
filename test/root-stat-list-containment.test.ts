@@ -114,26 +114,25 @@ it.skipIf(process.platform === "win32")(
     const nested = path.join(selected, "value");
     await fs.writeFile(direct, "inside");
     await fs.writeFile(nested, "inside");
+    const originalStat = fsSync.statSync.bind(fsSync);
+    const originalLstat = fsSync.lstatSync.bind(fsSync);
+    const project = (stat: fsSync.Stats | fsSync.BigIntStats) => Object.assign(Object.create(stat),
+      typeof stat.dev === "bigint" ? { dev: 7n, ino: 11n } : { dev: 7, ino: 11 });
+    const stat = vi.spyOn(fsSync, "statSync").mockImplementation((candidate, options) =>
+      project(originalStat(candidate, options as never)));
+    const lstat = vi.spyOn(fsSync, "lstatSync").mockImplementation((candidate, options) =>
+      project(originalLstat(candidate, options as never)));
     const capability = await root(rootDir);
-    const promotes = (pathname: string): number => {
-      const { dev, ino } = fsSync.lstatSync(pathname);
-      return Number.isSafeInteger(dev) && dev >= 0 &&
-        Number.isSafeInteger(ino) && ino >= 0 ? 0 : 1;
-    };
-    const directPromotions = promotes(direct);
-    const selectedPromotions = promotes(selected);
-    const nestedPromotions = promotes(nested);
-    const lstat = vi.spyOn(fsSync, "lstatSync");
     const realpath = vi.spyOn(realpathSync, "native");
     try {
       await expect(capability.stat("direct")).resolves.toMatchObject({ isFile: true });
-      expect(lstat).toHaveBeenCalledTimes(4 + directPromotions);
+      expect(lstat).toHaveBeenCalledTimes(4);
       expect(realpath).toHaveBeenCalledTimes(1);
 
       lstat.mockClear();
       realpath.mockClear();
       await expect(capability.stat("selected/value")).resolves.toMatchObject({ isFile: true });
-      expect(lstat).toHaveBeenCalledTimes(6 + selectedPromotions + nestedPromotions);
+      expect(lstat).toHaveBeenCalledTimes(6);
       expect(realpath).toHaveBeenCalledTimes(2);
 
       lstat.mockClear();
@@ -141,9 +140,10 @@ it.skipIf(process.platform === "win32")(
       await expect(capability.list("selected", { withFileTypes: true })).resolves.toEqual([
         expect.objectContaining({ name: "value", isFile: true }),
       ]);
-      expect(lstat).toHaveBeenCalledTimes(5 + selectedPromotions);
+      expect(lstat).toHaveBeenCalledTimes(5);
       expect(realpath).toHaveBeenCalledTimes(2);
     } finally {
+      stat.mockRestore();
       lstat.mockRestore();
       realpath.mockRestore();
     }
