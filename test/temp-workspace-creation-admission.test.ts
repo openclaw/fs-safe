@@ -6,6 +6,7 @@ import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/
 import { __resetNativeLoaderForTest, __setNativeLoaderForTest, type NativeBinding } from "../src/native.js";
 import { tempWorkspace, tempWorkspaceSync, type TempWorkspaceOptions } from "../src/temp.js";
 import * as cleanup from "../src/temp-cleanup.js";
+import { TempWorkspaceRetainedChild } from "../src/temp-workspace-descriptor.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -167,6 +168,7 @@ for (const variant of ["async", "sync"] as const) {
           const chmodSync = vi.spyOn(fsSync, "chmodSync");
           const fchmod = vi.spyOn(fsSync, "fchmod");
           const fchmodSync = vi.spyOn(fsSync, "fchmodSync");
+          const transfer = vi.spyOn(TempWorkspaceRetainedChild.prototype, "transfer");
           await expect(create(rootDir, { dirMode: 0o750, cleanupSafety })).rejects.toBeInstanceOf(Error);
           expect(child).not.toBe("");
           expect(register).not.toHaveBeenCalled();
@@ -174,6 +176,7 @@ for (const variant of ["async", "sync"] as const) {
           expect(chmodSync).not.toHaveBeenCalled();
           expect(fchmod).not.toHaveBeenCalled();
           expect(fchmodSync).not.toHaveBeenCalled();
+          expect(transfer).not.toHaveBeenCalled();
           cleanup.__cleanupRegisteredTempPathsForTest();
           expect(await fs.readFile(path.join(outside, "keep"), "utf8")).toBe("outside");
           expect(fsSync.statSync(outside).mode & 0o777).toBe(0o711);

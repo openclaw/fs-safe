@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { tempWorkspace, tempWorkspaceSync, type TempWorkspaceOptions } from "../src/temp.js";
 import * as cleanup from "../src/temp-cleanup.js";
+import { TempWorkspaceRetainedChild } from "../src/temp-workspace-descriptor.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -46,6 +47,8 @@ for (const variant of ["async", "sync"] as const) {
       let fstats = 0;
       let lstats = 0;
       let opensAtFirstChmod: number | undefined;
+      let fstatsAtFirstChmod: number | undefined;
+      let lstatsAtFirstChmod: number | undefined;
       const childFds = new Set<number>();
       const openSync = fsSync.openSync.bind(fsSync);
       vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
@@ -72,14 +75,22 @@ for (const variant of ["async", "sync"] as const) {
         const fchmod = fsSync.fchmod.bind(fsSync);
         vi.spyOn(fsSync, "fchmod").mockImplementation((fd, mode, callback) => {
           if (childFds.has(fd)) chmods += 1;
-          if (childFds.has(fd)) opensAtFirstChmod ??= opens;
+          if (childFds.has(fd) && opensAtFirstChmod === undefined) {
+            opensAtFirstChmod = opens;
+            fstatsAtFirstChmod = fstats;
+            lstatsAtFirstChmod = lstats;
+          }
           return fchmod(fd, mode, callback);
         });
       } else {
         const fchmod = fsSync.fchmodSync.bind(fsSync);
         vi.spyOn(fsSync, "fchmodSync").mockImplementation((fd, mode) => {
           if (childFds.has(fd)) chmods += 1;
-          if (childFds.has(fd)) opensAtFirstChmod ??= opens;
+          if (childFds.has(fd) && opensAtFirstChmod === undefined) {
+            opensAtFirstChmod = opens;
+            fstatsAtFirstChmod = fstats;
+            lstatsAtFirstChmod = lstats;
+          }
           fchmod(fd, mode);
         });
       }
@@ -89,6 +100,8 @@ for (const variant of ["async", "sync"] as const) {
         fstats: () => fstats,
         lstats: () => lstats,
         opensAtFirstChmod: () => opensAtFirstChmod,
+        fstatsAtFirstChmod: () => fstatsAtFirstChmod,
+        lstatsAtFirstChmod: () => lstatsAtFirstChmod,
       };
     }
 
@@ -102,7 +115,7 @@ for (const variant of ["async", "sync"] as const) {
         try {
           expect(operations.opens()).toBe(1);
           expect(operations.chmods()).toBe(0);
-          expect(operations.fstats()).toBe(2);
+          expect(operations.fstats()).toBe(1);
           expect(operations.lstats()).toBe(2);
           expect(fsSync.lstatSync(workspace.dir).mode & 0o7777).toBe(0o700);
           expect(chmod).not.toHaveBeenCalled();
@@ -112,6 +125,34 @@ for (const variant of ["async", "sync"] as const) {
         }
       },
     );
+
+    it("holds the normal admission path to 3N + 8 stat-family observations", async () => {
+      const rootDir = await tempRoot("fs-safe-workspace-stat-budget-");
+      let components = 1;
+      for (let current = rootDir; path.dirname(current) !== current; current = path.dirname(current)) {
+        components += 1;
+      }
+      let observations = 0;
+      let measuring = true;
+      const lstat = fsSync.lstatSync.bind(fsSync);
+      vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
+        if (measuring) observations += 1;
+        return lstat(...args);
+      });
+      const fstat = fsSync.fstatSync.bind(fsSync);
+      vi.spyOn(fsSync, "fstatSync").mockImplementation((...args) => {
+        if (measuring) observations += 1;
+        return fstat(...args);
+      });
+      const register = cleanup.registerTempPathForExit.bind(cleanup);
+      vi.spyOn(cleanup, "registerTempPathForExit").mockImplementation((...args) => {
+        measuring = false;
+        return register(...args);
+      });
+      const workspace = await create(rootDir);
+      expect(observations).toBe(3 * components + 8);
+      await workspace.cleanup();
+    });
 
     it("does not yield between the exact child snapshot and cleanup registration", async () => {
       const rootDir = await tempRoot("fs-safe-workspace-mode-fast-turn-");
@@ -191,9 +232,13 @@ for (const variant of ["async", "sync"] as const) {
           expect(initialMode).toBe(expectedInitialMode);
           expect(operations.opens()).toBe(1);
           expect(operations.chmods()).toBe(1);
-          expect(operations.fstats()).toBe(3);
+          expect(operations.fstats()).toBe(2);
           expect(operations.lstats()).toBe(3);
           expect(operations.opensAtFirstChmod()).toBe(1);
+          // The retained descriptor and named child are both rebound before
+          // the first mutation; constructor retention itself performs no stat.
+          expect(operations.fstatsAtFirstChmod()).toBe(1);
+          expect(operations.lstatsAtFirstChmod()).toBe(2);
           expect(fsSync.lstatSync(workspace.dir).mode & 0o7777).toBe(dirMode);
         } finally {
           if (dirMode === 0) await fs.chmod(workspace.dir, 0o700);
@@ -362,3 +407,32 @@ for (const variant of ["async", "sync"] as const) {
     );
   });
 }
+
+it("keeps an opened child untransferable until final admission and closes it once", async () => {
+  const rootDir = await tempRoot("fs-safe-workspace-unadmitted-child-");
+  const child = path.join(rootDir, "child");
+  await fs.mkdir(child, { mode: 0o700 });
+  const identity = fsSync.lstatSync(child, { bigint: true });
+  const open = fsSync.openSync.bind(fsSync);
+  let retainedFd: number | undefined;
+  vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
+    const fd = open(...args);
+    if (args[0] === child) retainedFd = fd;
+    return fd;
+  });
+  const fstat = vi.spyOn(fsSync, "fstatSync");
+  const close = vi.spyOn(fsSync, "closeSync");
+  const retained = new TempWorkspaceRetainedChild(child, identity);
+  try {
+    expect(retainedFd).toBeDefined();
+    expect(fstat).not.toHaveBeenCalled();
+    expect(() => retained.transfer(false)).toThrowError(expect.objectContaining({
+      code: "path-mismatch",
+    }));
+    expect(fstat).not.toHaveBeenCalled();
+  } finally {
+    retained.close();
+    retained.close();
+  }
+  expect(close.mock.calls.filter(([fd]) => fd === retainedFd)).toHaveLength(1);
+});

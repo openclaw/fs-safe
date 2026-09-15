@@ -33,7 +33,6 @@ import {
   admitRetainedTempWorkspaceChildSync,
   admitTempWorkspaceRoot,
   admitTempWorkspaceRootSync,
-  inspectAdmittedTempWorkspaceChild,
   validateAdmittedTempWorkspaceChild,
   validateInitialTempWorkspaceChild,
   validateTempWorkspaceDirMode,
@@ -184,8 +183,9 @@ async function createTempWorkspace(
     // parent, then descriptor and named checks of the original child identity.
     if (capability.parent) capability.assertAncestryCurrent();
     else admission.assertAncestry();
-    validateAdmittedTempWorkspaceChild(retainedChild.inspectCurrent(), admission.ownerUid, dirMode);
-    stat = inspectAdmittedTempWorkspaceChild(dir, stat, admission.ownerUid, dirMode);
+    stat = retainedChild.finalizeAdmission(
+      (current) => { validateAdmittedTempWorkspaceChild(current, admission.ownerUid, dirMode); },
+    );
     cleanupOwner = new TempWorkspaceCleanupOwner(
       retainedChild,
       capability,
@@ -308,8 +308,9 @@ export function tempWorkspaceSync(
     // precede descriptor and named child security-state checks.
     if (capability.parent) capability.assertAncestryCurrent();
     else admission.assertAncestry();
-    validateAdmittedTempWorkspaceChild(retainedChild.inspectCurrent(), admission.ownerUid, dirMode);
-    stat = inspectAdmittedTempWorkspaceChild(dir, stat, admission.ownerUid, dirMode);
+    stat = retainedChild.finalizeAdmission(
+      (current) => { validateAdmittedTempWorkspaceChild(current, admission.ownerUid, dirMode); },
+    );
     cleanupOwner = new TempWorkspaceCleanupOwner(
       retainedChild,
       capability,
