@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 
 const BASE_HEAD = "914cd7b41388876b55e1cca76b46b8eb01e46364";
 const BASE_TREE = "eb1d05638cd0ec21cea68a8b189ec3e253a8d903";
+const SECURE_FILE_PROOF_INPUT =
+  /^ {2}workflow_dispatch:\n {4}inputs:\n {6}secure_file_credential_proof:\n(?: {8}[^\n]*\n)*? {8}default: false\n {8}type: boolean$/mu;
 
 let sourcePromise: Promise<{ coordinator: string; worker: string; workflow: string }> | undefined;
 
@@ -38,11 +40,23 @@ describe("manual split-credential secure-file proof contract", () => {
     expect(normalizeSource("first\r\nsecond\rthird\n")).toBe("first\nsecond\nthird\n");
   });
 
+  it("matches the proof input without crossing sibling mappings", () => {
+    const prefix =
+      "  workflow_dispatch:\n    inputs:\n      secure_file_credential_proof:\n";
+    expect(`${prefix}        description: proof\n        default: false\n        type: boolean\n`).toMatch(
+      SECURE_FILE_PROOF_INPUT,
+    );
+    expect(`${prefix}        default: false\n        type: boolean-extra\n`).not.toMatch(
+      SECURE_FILE_PROOF_INPUT,
+    );
+    expect(
+      `${prefix}${"        \n".repeat(4_096)}      sibling:\n        default: false\n        type: boolean\n`,
+    ).not.toMatch(SECURE_FILE_PROOF_INPUT);
+  });
+
   it("keeps three opt-in jobs and the exact supported-runtime proof matrix", async () => {
     const { workflow } = await sources();
-    expect(workflow).toMatch(
-      /workflow_dispatch:\n\s+inputs:\n\s+secure_file_credential_proof:\n(?:\s+[^\n]+\n)*?\s+default:\s+false\n\s+type:\s+boolean/u,
-    );
+    expect(workflow).toMatch(SECURE_FILE_PROOF_INPUT);
     for (const name of [
       "secure-file-credential-candidate-build",
       "secure-file-credential-historical-build",
