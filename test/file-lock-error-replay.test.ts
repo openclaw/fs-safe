@@ -5,30 +5,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative } from "../src/native-config.js";
 import { acquireFileLockSync, createFileLockManager } from "../src/file-lock.js";
 import { root } from "../src/root.js";
-import * as rootBoundary from "../src/root-boundary.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
 const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
-const admitPathInsideRoot = rootBoundary.admitPathInsideRoot;
 const foreign = '{"owner":"foreign"}\n';
 const retry = { retries: 2, minTimeout: 0, maxTimeout: 0 };
 const denial = (pathname: string, code = "EPERM") =>
   Object.assign(new Error("synthetic open denial"), { code, syscall: "open", path: pathname });
-
-function spoofWindowsWithHostRootAdmission(): void {
-  // Keep only real Root admission on the host platform; error-path logic remains synthetic Windows.
-  vi.spyOn(rootBoundary, "admitPathInsideRoot").mockImplementation((params) => {
-    const activePlatform = Object.getOwnPropertyDescriptor(process, "platform")!;
-    Object.defineProperty(process, "platform", platform);
-    try {
-      return admitPathInsideRoot(params);
-    } finally {
-      Object.defineProperty(process, "platform", activePlatform);
-    }
-  });
-  Object.defineProperty(process, "platform", { value: "win32" });
-}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -45,8 +29,7 @@ for (const { mode, timeoutMs } of (["sync", "async", "root"] as const).flatMap((
       const target = path.join(directory, "state"), lockPath = `${target}.lock`;
       const manager = createFileLockManager(`replay:${target}`);
       configureFsSafeNative({ mode: "off" });
-      if (mode === "root") spoofWindowsWithHostRootAdmission();
-      else Object.defineProperty(process, "platform", { value: "win32" });
+      Object.defineProperty(process, "platform", { value: "win32" });
       const acquire = (file: string, options: {
         payload: () => Record<string, unknown>;
         parsePayload?: (raw: string) => unknown;

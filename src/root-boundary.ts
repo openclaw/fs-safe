@@ -147,7 +147,17 @@ export function admitPathInsideRoot(params: {
   resolveCandidateRoot?: boolean;
   identityCache?: Map<string, boolean>;
 }): AdmittedRootPath | undefined {
-  if (process.platform !== "win32") {
+  // Some platform-fallback tests intentionally spoof process.platform while
+  // retaining Node's POSIX path module. A single-slash absolute root remains
+  // unambiguously POSIX; double-slash and slash-backslash roots are reserved
+  // for the synthetic Windows namespace cases below.
+  const usesPosixBoundary = process.platform !== "win32" || (
+    path.sep === "/" &&
+    params.rootPath.startsWith("/") &&
+    params.rootPath[1] !== "/" &&
+    params.rootPath[1] !== "\\"
+  );
+  if (usesPosixBoundary) {
     if (
       params.rootPath.startsWith("/") &&
       params.candidatePath.startsWith("/") &&

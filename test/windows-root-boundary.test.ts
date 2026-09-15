@@ -32,6 +32,14 @@ describe("Windows Root prefix admission", () => {
     ["C:\\Trusted\\Root", "C:\\Trusted\\Root\\child", "C:\\Trusted\\Root\\child"],
     ["C:\\Trusted\\Root", "\\\\?\\C:\\Trusted\\Root\\child", "C:\\Trusted\\Root\\child"],
     ["\\\\server\\share\\Root", "\\\\?\\UNC\\server\\share\\Root\\child", "\\\\server\\share\\Root\\child"],
+    ["//server/share/Root", "//server/share/Root/child", "\\\\server\\share\\Root\\child"],
+    ["/\\server/share/Root", "/\\server/share/Root/child", "\\\\server\\share\\Root\\child"],
+    ["//?/C:/Trusted/Root", "\\\\?\\C:\\Trusted\\Root\\child", "\\\\?\\C:\\Trusted\\Root\\child"],
+    [
+      "//?/UNC/server/share/Root",
+      "\\\\?\\UNC\\server\\share\\Root\\child",
+      "\\\\?\\UNC\\server\\share\\Root\\child",
+    ],
   ])("adds no observation for an exact structural prefix: %s", (rootPath, candidatePath, expected) => {
     Object.defineProperty(process, "platform", { value: "win32" });
     const lstat = vi.spyOn(fsSync, "lstatSync").mockImplementation(() => {
@@ -105,6 +113,52 @@ describe("Windows Root prefix admission", () => {
       relativePath: "child",
     });
     expect(realpath).toHaveBeenCalledWith("c:\\configured\\alias");
+  });
+});
+
+describe.skipIf(path.sep !== "/")("POSIX Root admission while Windows is spoofed", () => {
+  it("retains an exact POSIX child spelling", () => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+
+    expect(admitPathInsideRoot({
+      rootPath: "/srv/trusted",
+      candidatePath: "/srv/trusted/child",
+    })).toEqual({
+      admission: "exact",
+      path: "/srv/trusted/child",
+      relativePath: "child",
+    });
+  });
+
+  it("rejects a case-distinct POSIX sibling", () => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+
+    expect(admitPathInsideRoot({
+      rootPath: "/srv/Root",
+      candidatePath: "/srv/root/child",
+    })).toBeUndefined();
+  });
+
+  it("rejects an adjacent POSIX prefix", () => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+
+    expect(admitPathInsideRoot({
+      rootPath: "/srv/root",
+      candidatePath: "/srv/root-adjacent/child",
+    })).toBeUndefined();
+  });
+
+  it("admits descendants of the POSIX filesystem root", () => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+
+    expect(admitPathInsideRoot({
+      rootPath: "/",
+      candidatePath: "/srv/trusted/child",
+    })).toEqual({
+      admission: "exact",
+      path: "/srv/trusted/child",
+      relativePath: "srv/trusted/child",
+    });
   });
 });
 
