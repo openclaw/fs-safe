@@ -460,7 +460,9 @@ Use `readSecureFile()` when the caller gives you an absolute credential path
 instead of a root-relative workspace path. It opens the file first, validates the
 same handle it will read from, checks trusted directories, owner, POSIX mode or
 Windows ACLs, hardlink count, size, and optional timeout, then reads through the
-pinned handle.
+pinned handle. On Windows, both the bytes and the owner/DACL facts come from that
+handle; secure reads require the matching current native package and do not fall
+back to a pathname ACL command.
 
 ```ts
 import { readSecureFile } from "@openclaw/fs-safe/secure-file";

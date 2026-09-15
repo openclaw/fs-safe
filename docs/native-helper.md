@@ -73,7 +73,9 @@ normalization, and the decision to fall back.
 - Windows uses handle-relative `NtCreateFile`, rejects reparse points during root-bounded traversal, uses `FileRenameInfoEx` with replacement selected explicitly by the TypeScript policy layer, and deletes owned trees through exact opened handles with `FileDispositionInfoEx`; symlink/reparse entries in owned trees are removed as leaves and never traversed. Descriptors crossing N-API are converted only by the host executable's paired `uv_get_osfhandle` and `uv_open_osfhandle` exports. A runtime without both exports is unsupported for these native operations; the binding never guesses a raw HANDLE or uses a foreign CRT descriptor table.
 
 Native primitives back create-only and replacing pinned writes, async sidecar creation,
-guarded publication, archive acceleration, and direct Windows ACL operations.
+guarded publication, archive acceleration, and direct Windows ACL operations. Windows
+secure-file reads require descriptor-bound owner/DACL facts from the current helper;
+they do not use the standalone pathname inspector's command fallback.
 Equivalent JavaScript paths remain available for documented fallback-capable
 features. See [Native architecture](native.md#javascript-fallback-guarantees-and-delta)
 for the exact difference.

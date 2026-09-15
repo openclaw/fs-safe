@@ -59,6 +59,18 @@ export function isPathInside(root: string, target: string): boolean {
   if (process.platform === "win32") {
     const rootForCompare = normalizeWindowsPathForComparison(path.win32.resolve(root));
     const targetForCompare = normalizeWindowsPathForComparison(path.win32.resolve(target));
+    // Resolved drive paths already have canonical separators and case. A full
+    // segment prefix needs no second resolution through path.relative.
+    // Colon-bearing components keep Node's relative-path interpretation.
+    if (
+      rootForCompare[1] === ":" && path.win32.isAbsolute(rootForCompare) &&
+      !targetForCompare.includes(":", 2) &&
+      (targetForCompare === rootForCompare ||
+        (targetForCompare.startsWith(rootForCompare) &&
+          (rootForCompare.endsWith("\\") || targetForCompare[rootForCompare.length] === "\\")))
+    ) {
+      return true;
+    }
     const relative = path.win32.relative(rootForCompare, targetForCompare);
     const firstSegment = relative.split(path.win32.sep)[0];
     return (
