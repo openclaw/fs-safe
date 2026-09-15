@@ -1,6 +1,8 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
+import { realpathSync } from "../src/realpath.js";
 import { root } from "../src/root.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
@@ -99,6 +101,91 @@ it.each([false, true])(
       ? capability.list("value", { withFileTypes: true })
       : capability.list("value");
     await expect(listing).rejects.toMatchObject({ code: "not-found" });
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "reuses exact traversal receipts without redundant metadata or canonicalization calls",
+  async () => {
+    const rootDir = await tempRoot("fs-safe-stat-list-fused-receipt-");
+    const selected = path.join(rootDir, "selected");
+    await fs.mkdir(selected);
+    await fs.writeFile(path.join(rootDir, "direct"), "inside");
+    await fs.writeFile(path.join(selected, "value"), "inside");
+    const capability = await root(rootDir);
+    const lstat = vi.spyOn(fsSync, "lstatSync");
+    const realpath = vi.spyOn(realpathSync, "native");
+    try {
+      await expect(capability.stat("direct")).resolves.toMatchObject({ isFile: true });
+      expect(lstat).toHaveBeenCalledTimes(4);
+      expect(realpath).toHaveBeenCalledTimes(1);
+
+      lstat.mockClear();
+      realpath.mockClear();
+      await expect(capability.stat("selected/value")).resolves.toMatchObject({ isFile: true });
+      expect(lstat).toHaveBeenCalledTimes(6);
+      expect(realpath).toHaveBeenCalledTimes(2);
+
+      lstat.mockClear();
+      realpath.mockClear();
+      await expect(capability.list("selected", { withFileTypes: true })).resolves.toEqual([
+        expect.objectContaining({ name: "value", isFile: true }),
+      ]);
+      expect(lstat).toHaveBeenCalledTimes(5);
+      expect(realpath).toHaveBeenCalledTimes(2);
+    } finally {
+      lstat.mockRestore();
+      realpath.mockRestore();
+    }
+  },
+);
+
+it.each(["ENOENT", "ENOTDIR"])(
+  "normalizes %s from traversal receipt canonicalization",
+  async (code) => {
+    const rootDir = await tempRoot("fs-safe-observation-canonical-error-");
+    const selected = path.join(rootDir, "selected");
+    await fs.mkdir(selected);
+    await fs.writeFile(path.join(selected, "value"), "inside");
+    const capability = await root(rootDir);
+    const native = realpathSync.native.bind(realpathSync);
+    const failure = Object.assign(new Error("canonicalization unavailable"), { code });
+    const realpath = vi.spyOn(realpathSync, "native").mockImplementation((candidate) => {
+      if (path.resolve(String(candidate)) === selected) throw failure;
+      return native(candidate);
+    });
+    try {
+      await expect(capability.stat("selected/value")).rejects.toMatchObject({ code: "not-found" });
+      await expect(capability.exists("selected/value")).resolves.toBe(false);
+      await expect(capability.list("selected")).rejects.toMatchObject({ code: "not-found" });
+    } finally {
+      realpath.mockRestore();
+    }
+  },
+);
+
+it.skipIf(process.platform !== "win32")(
+  "handles a persistent unknown identity as an ordinary non-directory observation",
+  async () => {
+    const rootDir = await tempRoot("fs-safe-list-file-zero-identity-");
+    const filePath = path.join(rootDir, "value");
+    await fs.writeFile(filePath, "inside");
+    const capability = await root(rootDir);
+    const originalLstat = fsSync.lstatSync.bind(fsSync);
+    const lstat = vi.spyOn(fsSync, "lstatSync").mockImplementation((candidate, options) => {
+      const stat = originalLstat(candidate, options as never);
+      return path.resolve(String(candidate)) === filePath && typeof stat.dev === "bigint"
+        ? Object.assign(Object.create(stat), { dev: 0n, ino: 0n })
+        : stat;
+    });
+    try {
+      await expect(capability.list("value")).rejects.toMatchObject({ code: "not-found" });
+      await expect(capability.list("value", { withFileTypes: true }))
+        .rejects.toMatchObject({ code: "not-found" });
+      await expect(capability.stat("value/child")).rejects.toMatchObject({ code: "path-alias" });
+    } finally {
+      lstat.mockRestore();
+    }
   },
 );
 

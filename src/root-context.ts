@@ -130,6 +130,30 @@ export async function assertRootIdentityCurrent(root: RootContext): Promise<void
   }
 }
 
+/**
+ * Observe the current Root with an exact, operation-local receipt.
+ *
+ * This is deliberately separate from {@link assertRootIdentityCurrent}: callers
+ * must not retain the returned guard beyond the operation that requested it.
+ */
+export async function createRootObservationGuard(
+  root: RootContext,
+): Promise<AsyncDirectoryGuard<BigIntStats> | undefined> {
+  if (typeof root.rootIdentity.dev !== "bigint" || typeof root.rootIdentity.ino !== "bigint") {
+    await assertRootIdentityCurrent(root);
+    return undefined;
+  }
+  try {
+    const stat = await inspectDirectoryIdentity(root.rootReal, {
+      dev: root.rootIdentity.dev,
+      ino: root.rootIdentity.ino,
+    });
+    return { dir: root.rootReal, realPath: root.rootReal, stat };
+  } catch (error) {
+    throw rootPathChangedError(error instanceof Error ? error : undefined);
+  }
+}
+
 export async function resolvePathInRoot(
   root: RootContext,
   relativePath: string,

@@ -86,6 +86,7 @@ import { createCopyPublicationObserver, onCopyPublication, type CopyPublicationO
 import { writeAllToFile } from "./write-file-handle.js";
 import { createInputOptions, rethrowCreateInputError, rootWriteInput, type RootWriteParams } from "./root-create-input.js";
 import { assertFinalSymlinkRejected, mutationSymlinkResolution, readSymlinkResolution, type MutationSymlinkPolicy, type SymlinkPolicy } from "./root-symlink-policy.js";
+import { resolvePinnedObservedPathInRoot, type PinnedObservedPath } from "./root-observed-path.js";
 
 import {
   mergeReadOptions, readDefaults,
@@ -1414,8 +1415,13 @@ async function mkdirPathFallback(resolved: { rootReal: string; resolved: string 
 }
 
 async function statPathFallback(root: RootContext, relativePath: string): Promise<PathStat> {
-  const resolved = await resolvePinnedPathInRoot(root, { relativePath, allowRoot: true });
-  return await statResolvedPathInRoot(root, resolved.resolved);
+  const initialObservationHook = getFsSafeTestHooks()?.beforeRootStatInitialObservation;
+  const observed = initialObservationHook
+    ? undefined
+    : await resolvePinnedObservedPathInRoot(root, relativePath, "stat");
+  const resolved: PinnedObservedPath = observed ??
+    await resolvePinnedPathInRoot(root, { relativePath, allowRoot: true });
+  return await statResolvedPathInRoot(root, resolved.resolved, resolved.receipt);
 }
 
 async function listPathFallback(
@@ -1423,8 +1429,10 @@ async function listPathFallback(
   relativePath: string,
   withFileTypes: boolean,
 ): Promise<string[] | DirEntry[]> {
-  const resolved = await resolvePinnedPathInRoot(root, { relativePath, allowRoot: true });
-  return await listDirectoryPath(root, resolved.resolved, withFileTypes);
+  const observed = await resolvePinnedObservedPathInRoot(root, relativePath, "directory");
+  const resolved: PinnedObservedPath = observed ??
+    await resolvePinnedPathInRoot(root, { relativePath, allowRoot: true });
+  return await listDirectoryPath(root, resolved.resolved, withFileTypes, resolved.receipt);
 }
 
 async function assertMoveMutationAllowed(

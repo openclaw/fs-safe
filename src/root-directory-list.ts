@@ -5,13 +5,16 @@ import path from "node:path";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import {
   assertAsyncDirectoryGuard,
+  assertDirectoryIdentitySync,
   createAsyncDirectoryGuard,
+  inspectDirectoryIdentitySync,
   type AsyncDirectoryGuard,
 } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { isNotFoundPathError, isPathInside } from "./path.js";
 import { assertRootIdentityCurrent, type RootContext } from "./root-context.js";
 import { rootPathChangedError } from "./root-errors.js";
+import type { RootPathObservationReceipt } from "./root-path.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import type { DirEntry, PathStat } from "./types.js";
@@ -81,6 +84,60 @@ export async function assertRootDirectoryObservationGuard(
   }
 }
 
+function sameObservationDirectory(
+  left: RootDirectoryObservationGuard,
+  right: RootDirectoryObservationGuard,
+): boolean {
+  return left.dir === right.dir && left.realPath === right.realPath &&
+    left.stat.dev === right.stat.dev && left.stat.ino === right.stat.ino;
+}
+
+/**
+ * Close an operation-local traversal receipt with fresh exact observations.
+ * Descendant canonical paths are admitted while the receipt is created. The
+ * final directory check repeats canonical admission; the Root-only case does
+ * both its identity and canonical check here.
+ */
+export function assertRootPathObservationReceiptCurrent(
+  root: RootContext,
+  receipt: RootPathObservationReceipt,
+): void {
+  const { rootGuard, directoryGuard } = receipt;
+  if (rootGuard.dir !== root.rootReal || rootGuard.realPath !== root.rootReal ||
+    rootGuard.stat.dev !== root.rootIdentity.dev || rootGuard.stat.ino !== root.rootIdentity.ino) {
+    throw rootPathChangedError();
+  }
+  if (sameObservationDirectory(rootGuard, directoryGuard)) {
+    try {
+      assertDirectoryIdentitySync(rootGuard.dir, {
+        dev: rootGuard.stat.dev,
+        ino: rootGuard.stat.ino,
+        realPath: rootGuard.realPath,
+      });
+    } catch (error) {
+      throw rootPathChangedError(error instanceof Error ? error : undefined);
+    }
+    return;
+  }
+  try {
+    inspectDirectoryIdentitySync(rootGuard.dir, {
+      dev: rootGuard.stat.dev,
+      ino: rootGuard.stat.ino,
+    });
+  } catch (error) {
+    throw rootPathChangedError(error instanceof Error ? error : undefined);
+  }
+  try {
+    assertDirectoryIdentitySync(directoryGuard.dir, {
+      dev: directoryGuard.stat.dev,
+      ino: directoryGuard.stat.ino,
+      realPath: directoryGuard.realPath,
+    });
+  } catch (error) {
+    throw directoryChangedError(error);
+  }
+}
+
 function normalizeDirectoryError(error: unknown): unknown {
   if (isNotFoundPathError(error)) {
     return new FsSafeError("not-found", "directory not found", {
@@ -97,40 +154,64 @@ function normalizeInitialDirectoryError(error: unknown): unknown {
   return normalizeDirectoryError(error);
 }
 
-export function listDirectoryPath(root: RootContext, directory: string, withFileTypes: true): Promise<DirEntry[]>;
-export function listDirectoryPath(root: RootContext, directory: string, withFileTypes: boolean): Promise<string[] | DirEntry[]>;
+export function listDirectoryPath(
+  root: RootContext,
+  directory: string,
+  withFileTypes: true,
+  receipt?: RootPathObservationReceipt,
+): Promise<DirEntry[]>;
+export function listDirectoryPath(
+  root: RootContext,
+  directory: string,
+  withFileTypes: boolean,
+  receipt?: RootPathObservationReceipt,
+): Promise<string[] | DirEntry[]>;
 export async function listDirectoryPath(
   root: RootContext,
   directory: string,
   withFileTypes: boolean,
+  receipt?: RootPathObservationReceipt,
 ): Promise<string[] | DirEntry[]> {
   let guard: RootDirectoryObservationGuard;
-  try {
-    guard = await createRootDirectoryObservationGuard(root, directory);
-  } catch (error) {
-    throw normalizeInitialDirectoryError(error);
+  if (receipt) {
+    if (receipt.kind !== "directory" || receipt.targetPath !== directory ||
+      receipt.directoryGuard.dir !== directory ||
+      !receipt.targetStat.isDirectory()) {
+      throw new FsSafeError("path-mismatch", "directory observation receipt does not match target");
+    }
+    guard = receipt.directoryGuard;
+  } else {
+    try {
+      guard = await createRootDirectoryObservationGuard(root, directory);
+    } catch (error) {
+      throw normalizeInitialDirectoryError(error);
+    }
   }
-  return await listGuardedDirectoryPath(root, guard, withFileTypes);
+  return await listGuardedDirectoryPath(root, guard, withFileTypes, receipt);
 }
 
 function listGuardedDirectoryPath(
   root: RootContext,
   guard: RootDirectoryObservationGuard,
   withFileTypes: true,
+  receipt?: RootPathObservationReceipt,
 ): Promise<DirEntry[]>;
 function listGuardedDirectoryPath(
   root: RootContext,
   guard: RootDirectoryObservationGuard,
   withFileTypes: boolean,
+  receipt?: RootPathObservationReceipt,
 ): Promise<string[] | DirEntry[]>;
 async function listGuardedDirectoryPath(
   root: RootContext,
   guard: RootDirectoryObservationGuard,
   withFileTypes: boolean,
+  receipt?: RootPathObservationReceipt,
 ): Promise<string[] | DirEntry[]> {
   let entries: string[] | DirEntry[];
   try {
-    await getFsSafeTestHooks()?.beforeRootListObservation?.(guard.realPath, withFileTypes);
+    const beforeObservation = getFsSafeTestHooks()?.beforeRootListObservation;
+    if (beforeObservation) await beforeObservation(guard.realPath, withFileTypes);
     const names = (await fs.readdir(guard.realPath)).sort();
     entries = withFileTypes
       ? names.map(name => ({
@@ -141,10 +222,12 @@ async function listGuardedDirectoryPath(
   } catch (error) {
     // Preserve ordinary observation errors only while the admitted directory is
     // still current. A post-admission replacement is an identity failure.
-    await assertRootDirectoryObservationGuard(root, guard);
+    if (receipt) assertRootPathObservationReceiptCurrent(root, receipt);
+    else await assertRootDirectoryObservationGuard(root, guard);
     throw normalizeDirectoryError(error);
   }
-  await assertRootDirectoryObservationGuard(root, guard);
+  if (receipt) assertRootPathObservationReceiptCurrent(root, receipt);
+  else await assertRootDirectoryObservationGuard(root, guard);
   return entries;
 }
 
