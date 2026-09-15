@@ -116,8 +116,9 @@ describe("shared JavaScript mutation-policy component admission", () => {
     const denied = path.join(directory, "one", ...(deniedDepth === "first" ? [] : ["two"]));
     const safe = await root(directory);
 
-    await expect(operation.run(safe, "one/two/value", {
+    await expect(operation.run(safe, path.join("one", "two", "value"), {
       denyMutations: { paths: [denied] },
+      mutationSymlinks: "reject",
     })).rejects.toMatchObject({ code: "denied-path" });
 
     if (deniedDepth === "first") {
@@ -195,8 +196,9 @@ describe("shared JavaScript mutation-policy component admission", () => {
       return lstat(...args);
     }) as typeof fsSync.lstatSync);
 
-    await expect(safe.openWritable("one/two/value", {
+    await expect(safe.openWritable(path.join("one", "two", "value"), {
       denyMutations: { paths: deniedPaths },
+      mutationSymlinks: "reject",
     })).rejects.toMatchObject({ code: "denied-path" });
     expect(mutated).toBe(true);
     await expect(fs.lstat(denied)).rejects.toMatchObject({ code: "ENOENT" });

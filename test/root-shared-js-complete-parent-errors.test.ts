@@ -199,4 +199,53 @@ describeNode("shared JavaScript complete-parent preparation failures", () => {
     expect(optimized).toEqual(established);
     expect(optimized).toMatchObject(scenario.expectedReceipt);
   });
+
+  it.runIf(process.platform === "win32").each(["EACCES", "EPERM", "ENOTDIR"] as const)(
+    "keeps incomplete missing-suffix %s evidence on the ordered failure path",
+    async (code) => {
+      const run = async (forceComponentWalk: boolean): Promise<ErrorReceipt> => {
+        configureFsSafeNative({ mode: "off" });
+        const directory = await tempRoot(`fs-safe-shared-policy-receipt-${code}-`);
+        const target = path.join(directory, "one", "two", "value");
+        const safe = await root(directory);
+        let armed = false;
+        const resolveTarget = writeAdmission.resolveGuardedWriteTargetInRoot;
+        vi.spyOn(writeAdmission, "resolveGuardedWriteTargetInRoot").mockImplementation(
+          async (...args) => {
+            const guarded = await resolveTarget(...args);
+            armed = true;
+            return guarded;
+          },
+        );
+        const realLstat = fsSync.lstatSync.bind(fsSync);
+        vi.spyOn(fsSync, "lstatSync").mockImplementation(((...args: Parameters<
+          typeof fsSync.lstatSync
+        >) => {
+          if (armed && path.resolve(String(args[0])) === target) {
+            throw errno(code, "lstat", target);
+          }
+          return realLstat(...args);
+        }) as typeof fsSync.lstatSync);
+        let failure: unknown;
+        try {
+          const opened = await safe.openWritable(path.relative(directory, target), {
+            writeMode: "update",
+            denyMutations: { paths: [path.join(directory, "unrelated")] },
+            mutationSymlinks: "reject",
+            assertBeforeMutation: forceComponentWalk ? vi.fn() : undefined,
+          });
+          await opened.handle.close();
+        } catch (error) {
+          failure = error;
+        }
+        expect(failure).toBeDefined();
+        return errorReceipt(failure, directory);
+      };
+
+      const established = await run(true);
+      vi.restoreAllMocks();
+      const optimized = await run(false);
+      expect(optimized).toEqual(established);
+    },
+  );
 });

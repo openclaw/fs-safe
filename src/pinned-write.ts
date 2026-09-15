@@ -97,9 +97,28 @@ export type PinnedCreatedDirectoryReceipt = Readonly<{
   child: MutationDirectoryObservation;
 }>;
 
+export type PinnedMutationParentWalkSession = Readonly<{
+  retainedTargetPath: string;
+  tryAuthorizeAtParent(request: Readonly<{
+    targetPath: string;
+    mutationPath: string;
+    phase: "parent" | "parent-create";
+  }>, parent: MutationDirectoryObservation): PinnedMutationAuthorizationToken | undefined;
+  authorize(request: Readonly<{
+    targetPath: string;
+    mutationPath: string;
+    phase: "parent" | "parent-create";
+  }>): Promise<PinnedMutationAdmissionReceipt | undefined>;
+  advanceCreatedDirectory(
+    receipt: PinnedCreatedDirectoryReceipt,
+  ): PinnedMutationAuthorizationToken | undefined;
+  dispose(): void;
+}>;
+
 export type PinnedWriteMutationAdmission = Readonly<{
   rejectParentSymlinks: boolean;
   beginParentWalk?(): string | undefined;
+  beginSharedParentWalk?(): PinnedMutationParentWalkSession | undefined;
   tryAuthorizeAtParent?(request: Readonly<{
     targetPath: string;
     mutationPath: string;

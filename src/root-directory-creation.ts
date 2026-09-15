@@ -1,5 +1,6 @@
 import path from "node:path";
 import { mkdirPathComponentsWithGuards } from "./guarded-mkdir.js";
+import type { MutationDirectoryObservation } from "./pinned-mutation-observation.js";
 import type { PinnedWriteMutationAdmission } from "./pinned-write.js";
 import type { RootContext } from "./root-context.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
@@ -7,34 +8,47 @@ import { getFsSafeTestHooks } from "./test-hooks.js";
 function mutationWalkOptions(
   mutationAdmission: PinnedWriteMutationAdmission,
   operationTarget: (prospectiveDirectory: string) => string,
+  assertBeforeMutation: (() => void) | undefined,
 ) {
+  const session = assertBeforeMutation === undefined
+    ? mutationAdmission.beginSharedParentWalk?.()
+    : undefined;
   return {
-    rejectSymlinks: mutationAdmission.rejectParentSymlinks,
-    revalidateParentAfterBeforeComponent: true,
-    beforeCreateComponent: async (
-      componentPath: string,
-      prospectiveDirectory: string,
-    ) => {
-      const targetPath = operationTarget(prospectiveDirectory);
-      await mutationAdmission.authorize(Object.freeze({
-        targetPath,
-        mutationPath: componentPath,
-        phase: "parent-create" as const,
-      }));
-      // The shared pathname fallback deliberately retains full ordered
-      // authorization. Receipt shortcuts stay exclusive to pinned writers.
-      return undefined;
-    },
-    beforeUseComponent: async (
-      _componentPath: string,
-      prospectiveDirectory: string,
-    ) => {
-      const targetPath = operationTarget(prospectiveDirectory);
-      await mutationAdmission.authorize(Object.freeze({
-        targetPath,
-        mutationPath: targetPath,
-        phase: "parent" as const,
-      }));
+    dispose: () => session?.dispose(),
+    options: {
+      rejectSymlinks: mutationAdmission.rejectParentSymlinks,
+      revalidateParentAfterBeforeComponent: true,
+      retainedTargetPath: session?.retainedTargetPath,
+      synchronousAuthorizationIncludesFence: session !== undefined,
+      afterCreateComponent: session?.advanceCreatedDirectory,
+      beforeCreateComponent: (
+        componentPath: string,
+        prospectiveDirectory: string,
+        retainedTargetPath: string | undefined,
+        parent: MutationDirectoryObservation,
+      ) => {
+        const targetPath = retainedTargetPath ?? operationTarget(prospectiveDirectory);
+        const request = Object.freeze({
+          targetPath,
+          mutationPath: componentPath,
+          phase: "parent-create" as const,
+        });
+        return session?.tryAuthorizeAtParent(request, parent) ??
+          (session?.authorize(request) ?? mutationAdmission.authorize(request));
+      },
+      beforeUseComponent: async (
+        _componentPath: string,
+        prospectiveDirectory: string,
+        retainedTargetPath: string | undefined,
+      ) => {
+        const targetPath = retainedTargetPath ?? operationTarget(prospectiveDirectory);
+        const request = Object.freeze({
+          targetPath,
+          mutationPath: targetPath,
+          phase: "parent" as const,
+        });
+        await (session?.authorize(request) ?? mutationAdmission.authorize(request));
+      },
     },
   };
 }
@@ -52,13 +66,22 @@ export async function prepareRootWriteTarget(
     targetPath: path.dirname(targetPath),
     assertBeforeMutation,
   };
-  const parentPath = await mkdirPathComponentsWithGuards(mutationAdmission ? {
-    ...baseParams,
-    ...mutationWalkOptions(
+  const mutationWalk = mutationAdmission
+    ? mutationWalkOptions(
       mutationAdmission,
       (prospectiveParent) => path.join(prospectiveParent, basename),
-    ),
-  } : baseParams);
+      assertBeforeMutation,
+    )
+    : undefined;
+  let parentPath: string;
+  try {
+    parentPath = await mkdirPathComponentsWithGuards(mutationWalk ? {
+      ...baseParams,
+      ...mutationWalk.options,
+    } : baseParams);
+  } finally {
+    mutationWalk?.dispose();
+  }
   // Continue through the guarded walk's real parent instead of re-entering
   // the original path through a symlinked component.
   return path.join(parentPath, basename);
@@ -77,9 +100,20 @@ export async function mkdirPathFallback(
     rejectSymlinks,
     beforeComponent: async (componentPath: string) => await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("mkdir", componentPath),
   };
-  await mkdirPathComponentsWithGuards(mutationAdmission ? {
-    ...baseParams,
-    ...mutationWalkOptions(mutationAdmission, (prospectiveDirectory) => prospectiveDirectory),
-    rejectSymlinks: rejectSymlinks || mutationAdmission.rejectParentSymlinks,
-  } : baseParams);
+  const mutationWalk = mutationAdmission
+    ? mutationWalkOptions(
+      mutationAdmission,
+      (prospectiveDirectory) => prospectiveDirectory,
+      assertBeforeMutation,
+    )
+    : undefined;
+  try {
+    await mkdirPathComponentsWithGuards(mutationWalk ? {
+      ...baseParams,
+      ...mutationWalk.options,
+      rejectSymlinks: rejectSymlinks || mutationAdmission!.rejectParentSymlinks,
+    } : baseParams);
+  } finally {
+    mutationWalk?.dispose();
+  }
 }
