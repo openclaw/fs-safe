@@ -27,6 +27,14 @@ permissions. Missing root components are created at `0o700` and initialized
 from their first exact security snapshot; if a restrictive umask changes that
 mode, correction uses a verified directory descriptor.
 
+For an already existing canonical root, discovery retains only its immutable
+exact identity. Cleanup-parent retention is provisional: after any native
+capability probe, creation freshly captures and validates the complete ancestry,
+re-observes the root against discovery, and associates the retained parent
+descriptor. `mkdtemp` is dispatched immediately after that synchronous boundary
+without another yield or native probe. Existing aliases and missing-component
+roots keep the guarded admission route.
+
 The new child's exact identity, type, owner, private bits, and complete `0o7777`
 mode are checked before mode initialization. When its creation mode already
 matches `dirMode` (including the default `0o700`), creation avoids an extra mode

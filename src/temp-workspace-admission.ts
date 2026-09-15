@@ -5,12 +5,15 @@ import {
   inspectDirectoryIdentitySync,
   observeDirectoryIdentitySync,
 } from "./directory-guard.js";
-import { pinNodeDirectoryForMode, pinNodeDirectoryForModeSync } from "./directory-mode-node.js";
+import {
+  admitTempWorkspaceChild,
+  admitTempWorkspaceChildSync,
+} from "./temp-workspace-child-admission.js";
 import { FsSafeError } from "./errors.js";
 import { recordFileObservationFailure } from "./file-observation.js";
 import { realpathSync } from "./realpath.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
-import type { TempWorkspaceRetainedChild } from "./temp-workspace-descriptor.js";
+import { assertTrustedTempWorkspaceDirectory } from "./temp-workspace-permissions.js";
 
 const WINDOWS = process.platform === "win32";
 
@@ -36,20 +39,14 @@ export type TempWorkspaceRootAdmission = {
   identity: ExactIdentity;
   ownerUid: number | undefined;
   realPath: string;
+  retainCleanupParent(inspectDescriptor: () => BigIntStats): void;
+  prepareCleanupProbe(inspectDescriptor: () => BigIntStats): void;
+  prepareChildCreation(inspectDescriptor?: () => BigIntStats): void;
   assertCurrent(): void;
   assertAncestry(): void;
   associateCurrent(inspectDescriptor: () => BigIntStats): void;
   associateAncestry(inspectDescriptor: () => BigIntStats): void;
 };
-
-export function validateTempWorkspaceDirMode(mode: number): void {
-  if (!Number.isInteger(mode) || mode < 0 || mode > 0o7777) {
-    throw new FsSafeError("insecure-permissions", "temp workspace dirMode must be permission bits");
-  }
-  if (process.platform !== "win32" && (mode & 0o022) !== 0) {
-    throw new FsSafeError("insecure-permissions", "temp workspace must not be group/world writable");
-  }
-}
 
 function effectiveOwner(): number | undefined {
   // Windows mode/uid fields do not describe ACL authority. The supplied root's
@@ -65,33 +62,6 @@ function effectiveOwner(): number | undefined {
     throw new FsSafeError("permission-unverified", "temp workspace requires effective owner identity");
   }
   return uid;
-}
-
-function assertTrustedDirectory(
-  stat: Pick<BigIntStats, "uid" | "mode"> | Pick<Stats, "uid" | "mode">,
-  uid: number | undefined,
-  child = false,
-): void {
-  if (uid === undefined) return;
-  const ownedByUser = typeof stat.uid === "bigint" ? stat.uid === BigInt(uid) : stat.uid === uid;
-  const ownedByRoot = typeof stat.uid === "bigint" ? stat.uid === 0n : stat.uid === 0;
-  if (!ownedByUser && (child || !ownedByRoot)) {
-    throw new FsSafeError("not-owned", "temp workspace directory has an untrusted owner");
-  }
-  // A root/current-user-owned sticky directory protects children owned by us,
-  // including the usual shared system temp directory. Never chmod that parent.
-  const writable = typeof stat.mode === "bigint"
-    ? (stat.mode & 0o022n) !== 0n
-    : Number.isSafeInteger(stat.mode) && stat.mode >= 0 && (stat.mode & 0o022) !== 0;
-  const sticky = typeof stat.mode === "bigint"
-    ? (stat.mode & 0o1000n) !== 0n
-    : Number.isSafeInteger(stat.mode) && stat.mode >= 0 && (stat.mode & 0o1000) !== 0;
-  if (typeof stat.mode !== "bigint" && (!Number.isSafeInteger(stat.mode) || stat.mode < 0)) {
-    throw new FsSafeError("insecure-permissions", "temp workspace directory permissions are invalid");
-  }
-  if (writable && (child || !sticky)) {
-    throw new FsSafeError("insecure-permissions", "temp workspace directory is group/world writable without sticky protection");
-  }
 }
 
 function safeNumericIdentity(stat: Pick<BigIntStats, "dev" | "ino">): NumericIdentity | undefined {
@@ -127,7 +97,7 @@ function snapshotFromExactObservation(
   if (stat.symbolicLink || !stat.directory) {
     throw new FsSafeError("not-file", "temp workspace root component must be a real directory");
   }
-  assertTrustedDirectory(stat, uid);
+  assertTrustedTempWorkspaceDirectory(stat, uid);
   const identity = Object.freeze({ dev: stat.dev, ino: stat.ino });
   // Retain copied immutable scalars, never a mutable Stats object supplied by
   // an observation hook. Every later permission check uses a fresh snapshot.
@@ -187,17 +157,33 @@ function inspectSnapshotIdentity(entry: DirectorySnapshot): BigIntStats | Stats 
 
 function assertSnapshot(entry: DirectorySnapshot, uid: number | undefined): void {
   const stat = inspectSnapshotIdentity(entry);
-  assertTrustedDirectory(stat, uid);
+  assertTrustedTempWorkspaceDirectory(stat, uid);
   assertCanonicalRoot(entry);
 }
 
 function assertChain(chain: DirectorySnapshot[], uid: number | undefined): void {
   for (const entry of chain) {
     const current = inspectSnapshotIdentity(entry);
-    assertTrustedDirectory(current, uid);
+    assertTrustedTempWorkspaceDirectory(current, uid);
   }
   const last = chain[chain.length - 1]!;
   assertCanonicalRoot(last);
+}
+
+function canonicalAncestry(root: string): string[] {
+  const ancestry: string[] = [];
+  for (let current = root;; current = path.dirname(current)) {
+    ancestry.push(current);
+    if (path.dirname(current) === current) break;
+  }
+  return ancestry.reverse();
+}
+
+function exactIdentityMatches(
+  current: Pick<ExactIdentity, "dev" | "ino">,
+  expected: ExactIdentity,
+): void {
+  if (current.dev !== expected.dev || current.ino !== expected.ino) identityMismatch();
 }
 
 function associateTempWorkspaceRoot(
@@ -209,11 +195,12 @@ function associateTempWorkspaceRoot(
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw new FsSafeError("not-file", "temp workspace cleanup parent must be a real directory");
   }
-  assertTrustedDirectory(stat, ownerUid);
+  assertTrustedTempWorkspaceDirectory(stat, ownerUid);
 }
 
 function rootPlan(rootDir: string): {
-  chain: DirectorySnapshot[];
+  admission?: TempWorkspaceRootAdmission;
+  chain?: DirectorySnapshot[];
   missing: string[];
   ownerUid: number | undefined;
 } {
@@ -238,23 +225,20 @@ function rootPlan(rootDir: string): {
   // system aliases such as macOS /var. A dangling alias fails canonicalization.
   const observedAncestor = ancestor;
   ancestor = realpathSync.native(observedAncestor);
-  const reuseInitialRoot = missing.length === 0 && observedAncestor === ancestor &&
+  const existingCanonicalRoot = missing.length === 0 && observedAncestor === ancestor &&
     !initial.symbolicLink && initial.directory && hasCompleteExactIdentity(initial);
-  const ancestry: string[] = [];
-  for (let current = ancestor;; current = path.dirname(current)) {
-    ancestry.push(current);
-    if (path.dirname(current) === current) break;
+  if (existingCanonicalRoot) {
+    const discovery = snapshotFromExactObservation(ancestor, ownerUid, ancestor, initial);
+    return {
+      admission: canonicalRootAdmission(discovery, ownerUid),
+      missing,
+      ownerUid,
+    };
   }
-  const orderedAncestry = ancestry.reverse();
-  const chain = orderedAncestry.map((dir, index) => {
-    if (reuseInitialRoot && index === orderedAncestry.length - 1) {
-      return snapshotFromExactObservation(dir, ownerUid, dir, initial);
-    }
-    return snapshot(dir, ownerUid, dir).entry;
-  });
+  const chain = canonicalAncestry(ancestor).map((dir) => snapshot(dir, ownerUid, dir).entry);
   // Missing-component creation needs a replay before its first mutation. When
-  // the complete root already exists, the caller's pre-mkdtemp ancestry pass
-  // is the first mutation boundary and makes an immediate replay redundant.
+  // the complete root already exists through an alias, retain the historical
+  // guarded route because discovery and mutation use different path spellings.
   if (missing.length > 0) assertChain(chain, ownerUid);
   return { chain, missing, ownerUid };
 }
@@ -267,6 +251,14 @@ function rootAdmission(chain: DirectorySnapshot[], ownerUid: number | undefined)
     identity: current.identity,
     ownerUid,
     realPath: current.realPath,
+    retainCleanupParent: (inspectDescriptor) => {
+      assertSnapshot(current, ownerUid);
+      associateTempWorkspaceRoot(current, ownerUid, inspectDescriptor);
+    },
+    // The guarded route associated the cleanup parent while retaining it.
+    // A native capability probe therefore needs no additional observation.
+    prepareCleanupProbe: () => {},
+    prepareChildCreation: () => { assertChain(chain, ownerUid); },
     assertCurrent: () => { assertSnapshot(current, ownerUid); },
     assertAncestry: () => { assertChain(chain, ownerUid); },
     associateCurrent: (inspectDescriptor) => {
@@ -280,10 +272,71 @@ function rootAdmission(chain: DirectorySnapshot[], ownerUid: number | undefined)
   };
 }
 
+function canonicalRootAdmission(
+  discovery: DirectorySnapshot,
+  ownerUid: number | undefined,
+): TempWorkspaceRootAdmission {
+  let admittedChain: DirectorySnapshot[] | undefined;
+  const chain = (): DirectorySnapshot[] => {
+    if (!admittedChain) {
+      throw new FsSafeError("path-mismatch", "temp workspace root has not completed creation admission");
+    }
+    return admittedChain;
+  };
+  return {
+    dir: discovery.dir,
+    identity: discovery.identity,
+    ownerUid,
+    realPath: discovery.realPath,
+    // Merely opening the cleanup-parent descriptor grants no authority. The
+    // exact association is completed only at a bounded probe or the mutation
+    // boundary below.
+    retainCleanupParent: () => {},
+    prepareCleanupProbe: (inspectDescriptor) => {
+      // A native feature probe may inspect only a descriptor associated with
+      // the originally discovered root. This remains provisional: the named
+      // root and complete ancestry are freshly admitted before mutation.
+      assertCanonicalRoot(discovery);
+      associateTempWorkspaceRoot(discovery, ownerUid, inspectDescriptor);
+    },
+    prepareChildCreation: (inspectDescriptor) => {
+      const candidate = canonicalAncestry(discovery.dir)
+        .map((dir) => snapshot(dir, ownerUid, dir).entry);
+      const current = candidate[candidate.length - 1]!;
+      exactIdentityMatches(current.identity, discovery.identity);
+      assertCanonicalRoot(current);
+      if (inspectDescriptor) {
+        associateTempWorkspaceRoot(current, ownerUid, inspectDescriptor);
+      }
+      // Do not expose even the ancestry receipts until every named and
+      // descriptor association at this pre-mutation boundary has succeeded.
+      admittedChain = candidate;
+    },
+    assertCurrent: () => {
+      const currentChain = chain();
+      assertSnapshot(currentChain[currentChain.length - 1]!, ownerUid);
+    },
+    assertAncestry: () => { assertChain(chain(), ownerUid); },
+    associateCurrent: (inspectDescriptor) => {
+      const currentChain = chain();
+      const current = currentChain[currentChain.length - 1]!;
+      assertSnapshot(current, ownerUid);
+      associateTempWorkspaceRoot(current, ownerUid, inspectDescriptor);
+    },
+    associateAncestry: (inspectDescriptor) => {
+      const currentChain = chain();
+      assertChain(currentChain, ownerUid);
+      associateTempWorkspaceRoot(currentChain[currentChain.length - 1]!, ownerUid, inspectDescriptor);
+    },
+  };
+}
+
 export async function admitTempWorkspaceRoot(rootDir: string): Promise<TempWorkspaceRootAdmission> {
-  const { chain, missing, ownerUid } = rootPlan(rootDir);
+  const { admission, chain, missing, ownerUid } = rootPlan(rootDir);
+  if (admission) return admission;
+  const guardedChain = chain!;
   for (const segment of missing) {
-    const parent = rootAdmission(chain, ownerUid);
+    const parent = rootAdmission(guardedChain, ownerUid);
     const dir = path.join(parent.dir, segment);
     parent.assertCurrent();
     let created = false;
@@ -299,15 +352,17 @@ export async function admitTempWorkspaceRoot(rootDir: string): Promise<TempWorks
       const modeInitialization = admitTempWorkspaceChild(dir, observed.stat, parent, 0o700);
       if (modeInitialization) await modeInitialization;
     }
-    chain.push(observed.entry);
+    guardedChain.push(observed.entry);
   }
-  return rootAdmission(chain, ownerUid);
+  return rootAdmission(guardedChain, ownerUid);
 }
 
 export function admitTempWorkspaceRootSync(rootDir: string): TempWorkspaceRootAdmission {
-  const { chain, missing, ownerUid } = rootPlan(rootDir);
+  const { admission, chain, missing, ownerUid } = rootPlan(rootDir);
+  if (admission) return admission;
+  const guardedChain = chain!;
   for (const segment of missing) {
-    const parent = rootAdmission(chain, ownerUid);
+    const parent = rootAdmission(guardedChain, ownerUid);
     const dir = path.join(parent.dir, segment);
     parent.assertCurrent();
     let created = false;
@@ -320,121 +375,7 @@ export function admitTempWorkspaceRootSync(rootDir: string): TempWorkspaceRootAd
     parent.assertCurrent();
     const observed = snapshot(dir, ownerUid);
     if (created) admitTempWorkspaceChildSync(dir, observed.stat, parent, 0o700);
-    chain.push(observed.entry);
+    guardedChain.push(observed.entry);
   }
-  return rootAdmission(chain, ownerUid);
-}
-
-function assertTempWorkspaceChildState(
-  stat: BigIntStats, ownerUid: number | undefined,
-): void {
-  if (typeof stat.dev !== "bigint" || typeof stat.ino !== "bigint" ||
-    (WINDOWS && (stat.dev === 0n || stat.ino === 0n))) {
-    throw new FsSafeError("path-mismatch", "temp workspace child identity could not be verified");
-  }
-  if (stat.isSymbolicLink() || !stat.isDirectory()) {
-    throw new FsSafeError("not-file", "temp workspace child must be a real directory");
-  }
-  assertTrustedDirectory(stat, ownerUid, true);
-}
-
-export function validateInitialTempWorkspaceChild(
-  stat: BigIntStats, ownerUid: number | undefined,
-): void {
-  assertTempWorkspaceChildState(stat, ownerUid);
-}
-
-function childHasRequestedMode(stat: BigIntStats, mode: number): boolean {
-  // Windows st_mode does not establish ACL privacy. Creation still validates
-  // the exact named object, while the supplied root's ACL remains caller trust.
-  return WINDOWS || Number(stat.mode & 0o7777n) === (mode & 0o7777);
-}
-
-function tempWorkspaceChildNeedsModeInitialization(
-  expected: BigIntStats, ownerUid: number | undefined, mode: number,
-): boolean {
-  assertTempWorkspaceChildState(expected, ownerUid);
-  return !childHasRequestedMode(expected, mode);
-}
-
-async function initializeTempWorkspaceChildMode(
-  dir: string, expected: BigIntStats, parent: TempWorkspaceRootAdmission, mode: number,
-): Promise<void> {
-  parent.assertCurrent();
-  const owner = await pinNodeDirectoryForMode(dir, { expectedIdentity: expected, ownerUid: parent.ownerUid });
-  try {
-    await owner.apply(mode, { check: parent.assertCurrent });
-    const current = inspectDirectoryIdentitySync(dir, expected);
-    assertTempWorkspaceChildState(current, parent.ownerUid);
-    if (!childHasRequestedMode(current, mode)) {
-      throw new FsSafeError("path-mismatch", "temp workspace final mode could not be verified");
-    }
-    parent.assertCurrent();
-  } finally {
-    await owner.close();
-  }
-}
-
-export function admitTempWorkspaceChild(
-  dir: string, expected: BigIntStats, parent: TempWorkspaceRootAdmission, mode: number,
-): Promise<void> | undefined {
-  if (!tempWorkspaceChildNeedsModeInitialization(expected, parent.ownerUid, mode)) return undefined;
-  return initializeTempWorkspaceChildMode(dir, expected, parent, mode);
-}
-
-export function admitTempWorkspaceChildSync(
-  dir: string, expected: BigIntStats, parent: TempWorkspaceRootAdmission, mode: number,
-): void {
-  if (!tempWorkspaceChildNeedsModeInitialization(expected, parent.ownerUid, mode)) return;
-  parent.assertCurrent();
-  const owner = pinNodeDirectoryForModeSync(dir, { expectedIdentity: expected, ownerUid: parent.ownerUid });
-  try {
-    owner.apply(mode, parent.assertCurrent);
-    const current = inspectDirectoryIdentitySync(dir, expected);
-    assertTempWorkspaceChildState(current, parent.ownerUid);
-    if (!childHasRequestedMode(current, mode)) {
-      throw new FsSafeError("path-mismatch", "temp workspace final mode could not be verified");
-    }
-    parent.assertCurrent();
-  } finally {
-    owner.close();
-  }
-}
-
-function retainedModeChecks(parent: TempWorkspaceRootAdmission, mode: number) {
-  return {
-    assertParent: parent.assertCurrent,
-    hasRequestedMode: (stat: BigIntStats) => childHasRequestedMode(stat, mode),
-    validate: (stat: BigIntStats) => assertTempWorkspaceChildState(stat, parent.ownerUid),
-  };
-}
-
-export function admitRetainedTempWorkspaceChild(
-  retained: TempWorkspaceRetainedChild,
-  expected: BigIntStats,
-  parent: TempWorkspaceRootAdmission,
-  mode: number,
-): Promise<void> | undefined {
-  if (!tempWorkspaceChildNeedsModeInitialization(expected, parent.ownerUid, mode)) return undefined;
-  return retained.initializeMode(mode, retainedModeChecks(parent, mode));
-}
-
-export function admitRetainedTempWorkspaceChildSync(
-  retained: TempWorkspaceRetainedChild,
-  expected: BigIntStats,
-  parent: TempWorkspaceRootAdmission,
-  mode: number,
-): void {
-  if (!tempWorkspaceChildNeedsModeInitialization(expected, parent.ownerUid, mode)) return;
-  retained.initializeModeSync(mode, retainedModeChecks(parent, mode));
-}
-
-export function validateAdmittedTempWorkspaceChild(
-  current: BigIntStats, ownerUid: number | undefined, mode: number,
-): BigIntStats {
-  assertTempWorkspaceChildState(current, ownerUid);
-  if (!childHasRequestedMode(current, mode)) {
-    throw new FsSafeError("path-mismatch", "temp workspace final mode could not be verified");
-  }
-  return current;
+  return rootAdmission(guardedChain, ownerUid);
 }

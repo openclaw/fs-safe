@@ -31,12 +31,14 @@ import { TempWorkspaceRetainedChild } from "./temp-workspace-descriptor.js";
 import {
   admitRetainedTempWorkspaceChild,
   admitRetainedTempWorkspaceChildSync,
-  admitTempWorkspaceRoot,
-  admitTempWorkspaceRootSync,
   validateAdmittedTempWorkspaceChild,
   validateInitialTempWorkspaceChild,
-  validateTempWorkspaceDirMode,
+} from "./temp-workspace-child-admission.js";
+import {
+  admitTempWorkspaceRoot,
+  admitTempWorkspaceRootSync,
 } from "./temp-workspace-admission.js";
+import { validateTempWorkspaceDirMode } from "./temp-workspace-permissions.js";
 
 export type {
   TempWorkspaceCleanupResult,
@@ -154,6 +156,10 @@ async function createTempWorkspace(
   const cleanupSafety = resolveTempWorkspaceCleanupSafety(options.cleanupSafety);
   const admission = await admitTempWorkspaceRoot(options.rootDir);
   const root = admission.dir;
+  // Resolve attacker-controlled accessors and string coercion before retaining
+  // any cleanup descriptor. The completed prefix remains inert across the
+  // immediate pre-admission-to-mkdtemp dispatch boundary below.
+  const childPrefix = path.join(root, sanitizeTempPrefix(options.prefix));
   const capability = new TempWorkspaceCleanupCapability(root, cleanupSafety, admission, dirMode);
   let dir: string;
   let stat: fsSync.BigIntStats;
@@ -162,8 +168,12 @@ async function createTempWorkspace(
   let cleanupOwner: TempWorkspaceCleanupOwner | undefined;
   let unregisterTempDir: () => void;
   try {
-    admission.assertAncestry();
-    dir = await fs.mkdtemp(path.join(root, sanitizeTempPrefix(options.prefix)));
+    // Native capability discovery is complete before this synchronous
+    // boundary. The existing canonical-root route now captures the complete
+    // ancestry and associates its provisional parent descriptor here, then
+    // dispatches mkdtemp without yielding or invoking another probe.
+    capability.prepareChildCreation();
+    dir = await fs.mkdtemp(childPrefix);
     if (capability.parent) capability.assertCurrent();
     else admission.assertCurrent();
     stat = inspectDirectoryIdentitySync(dir);
@@ -287,6 +297,7 @@ export function tempWorkspaceSync(
   const cleanupSafety = resolveTempWorkspaceCleanupSafety(options.cleanupSafety);
   const admission = admitTempWorkspaceRootSync(options.rootDir);
   const root = admission.dir;
+  const childPrefix = path.join(root, sanitizeTempPrefix(options.prefix));
   const capability = new TempWorkspaceCleanupCapability(root, cleanupSafety, admission, dirMode);
   let dir: string;
   let stat: fsSync.BigIntStats;
@@ -295,8 +306,8 @@ export function tempWorkspaceSync(
   let cleanupOwner: TempWorkspaceCleanupOwner | undefined;
   let unregisterTempDir: () => void;
   try {
-    admission.assertAncestry();
-    dir = fsSync.mkdtempSync(path.join(root, sanitizeTempPrefix(options.prefix)));
+    capability.prepareChildCreation();
+    dir = fsSync.mkdtempSync(childPrefix);
     if (capability.parent) capability.assertCurrent();
     else admission.assertCurrent();
     stat = inspectDirectoryIdentitySync(dir);

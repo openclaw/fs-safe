@@ -40,9 +40,9 @@ for (const variant of ["async", "sync"] as const) {
       const canonicalize = vi.spyOn(realpathSync, "native");
       const workspace = await create(rootDir);
       try {
-        // Initial alias resolution, cleanup-parent retention, pre-mutation,
+        // Discovery, the coalesced pre-mutation ancestry/parent association,
         // post-mutation parent association, and final ancestry validation.
-        expect(canonicalize).toHaveBeenCalledTimes(5);
+        expect(canonicalize).toHaveBeenCalledTimes(4);
       } finally {
         canonicalize.mockRestore();
         await workspace.cleanup();
@@ -73,9 +73,10 @@ for (const variant of ["async", "sync"] as const) {
         observation.mockRestore();
         try {
           expect(exactAncestorObservations).toBe(1);
-          // Pre-mkdtemp and final-adoption ancestry remain. Missing creation
-          // retains its additional replay before the first mkdir mutation.
-          expect(numericAncestorObservations).toBe(missing === 0 ? 2 : 3);
+          // Existing canonical roots capture their exact receipt at the
+          // pre-mkdtemp boundary, then replay it only for final adoption.
+          // Missing creation retains its guarded three numeric replays.
+          expect(numericAncestorObservations).toBe(missing === 0 ? 1 : 3);
         } finally {
           await workspace.cleanup();
         }
@@ -83,7 +84,7 @@ for (const variant of ["async", "sync"] as const) {
     });
 
     it.runIf(process.platform !== "win32")(
-      "rejects a known numeric mismatch before exact retry or canonicalization", async () => {
+      "rejects a final-adoption numeric mismatch without exact retry or registration", async () => {
         const base = await tempRoot("fs-safe-workspace-numeric-mismatch-");
         const rootDir = path.join(base, "root");
         await fs.mkdir(rootDir, { mode: 0o700 });
@@ -106,6 +107,7 @@ for (const variant of ["async", "sync"] as const) {
             if (options?.bigint === true) exact += 1;
             else if (exact > 0) {
               numeric += 1;
+              // The second replay is final ancestry adoption, after mkdtemp.
               if (numeric === 2 && typeof stat.ino === "number") stat.ino += 1;
             }
           }
@@ -122,12 +124,15 @@ for (const variant of ["async", "sync"] as const) {
         const canonicalize = vi.spyOn(realpathSync, "native");
         const register = vi.spyOn(cleanup, "registerTempPathForExit");
         await expect(create(rootDir)).rejects.toMatchObject({ code: "path-mismatch" });
-        expect(exact).toBe(1);
+        expect(exact).toBe(2);
         expect(numeric).toBe(2);
         expect(canonicalize.mock.calls.filter(([name]) =>
-          name === rootDir || name === admittedRoot)).toHaveLength(2);
+          name === rootDir || name === admittedRoot)).toHaveLength(3);
         expect(register).not.toHaveBeenCalled();
-        expect(await fs.readdir(rootDir)).toEqual([]);
+        const children = await fs.readdir(rootDir);
+        expect(children).toHaveLength(1);
+        expect(children[0]).toMatch(/^workspace-/);
+        expect(fsSync.lstatSync(path.join(rootDir, children[0]!)).isDirectory()).toBe(true);
       },
     );
 
@@ -153,7 +158,7 @@ for (const variant of ["async", "sync"] as const) {
         return stat;
       });
       const workspace = await create(rootDir);
-      expect(exact).toBe(3);
+      expect(exact).toBe(2);
       expect(numeric).toBe(0);
       observation.mockRestore();
       await workspace.cleanup();
@@ -188,6 +193,8 @@ for (const variant of ["async", "sync"] as const) {
             stat.dev = fake.dev;
             stat.ino = fake.ino;
             if (numeric === 2) {
+              // This is final adoption, so rejection must preserve the
+              // unregistered child for caller-directed recovery.
               stat.ino = kind === "zero" ? 0 :
                 kind === "unsafe" ? Number.MAX_SAFE_INTEGER + 1 : fake.ino + 1;
             }
@@ -203,16 +210,21 @@ for (const variant of ["async", "sync"] as const) {
           }
           return stat;
         });
+        const register = vi.spyOn(cleanup, "registerTempPathForExit");
         const operation = create(rootDir);
         if (kind === "mismatch") {
           await expect(operation).rejects.toMatchObject({ code: "path-mismatch" });
-          expect(exact).toBe(1);
+          expect(exact).toBe(2);
           expect(numeric).toBe(2);
-          expect(await fs.readdir(rootDir)).toEqual([]);
+          const children = await fs.readdir(rootDir);
+          expect(children).toHaveLength(1);
+          expect(children[0]).toMatch(/^workspace-/);
+          expect(fsSync.lstatSync(path.join(rootDir, children[0]!)).isDirectory()).toBe(true);
+          expect(register).not.toHaveBeenCalled();
         } else {
           const workspace = await operation;
-          expect(exact).toBe(2);
-          expect(numeric).toBe(4);
+          expect(exact).toBe(3);
+          expect(numeric).toBe(2);
           await workspace.cleanup();
         }
       },

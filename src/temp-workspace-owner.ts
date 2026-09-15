@@ -43,6 +43,7 @@ export class TempWorkspaceCleanupCapability {
   readonly #admission: TempWorkspaceRootAdmission;
   readonly #safety: TempWorkspaceCleanupSafety;
   readonly #ownedTreeRemovalAvailable: boolean;
+  #creationPrepared = false;
   #closed = false;
 
   constructor(
@@ -79,17 +80,36 @@ export class TempWorkspaceCleanupCapability {
       if (parent) fsSync.closeSync(parent.fd);
       parent = undefined;
     }
-    this.parent = parent;
     let available = false;
     if (childModeAllowsRemoval && parent?.access === "read" && isNativeCleanupBinding(binding)) {
+      let probeReady = false;
       try {
-        available = binding.ownedTreeRemovalAvailable(parent.fd) === true;
+        admission.prepareCleanupProbe(() => fsSync.fstatSync(parent!.fd, { bigint: true }));
+        probeReady = true;
+      } catch (error) {
+        // A descriptor that cannot be associated even provisionally must not
+        // reach native code or remain available to compatible cleanup.
+        try {
+          fsSync.closeSync(parent.fd);
+        } catch (closeError) {
+          throw new AggregateError(
+            [error, closeError],
+            "temp workspace cleanup parent probe admission and close failed",
+          );
+        }
+        parent = undefined;
+      }
+      try {
+        if (probeReady && parent) {
+          available = binding.ownedTreeRemovalAvailable(parent.fd) === true;
+        }
       } catch {
         // Runtime denial must select fallback or reject before child creation.
       }
     }
+    this.parent = parent;
     this.#ownedTreeRemovalAvailable = available;
-    if (safety === "require-bounded" && !this.canRemoveOwnedTree) {
+    if (safety === "require-bounded" && !this.#ownedTreeRemovalAvailable) {
       this.close();
       throw new FsSafeError(
         "helper-unavailable",
@@ -99,11 +119,24 @@ export class TempWorkspaceCleanupCapability {
   }
 
   get canRemoveOwnedTree(): boolean {
-    return !this.#closed && this.#ownedTreeRemovalAvailable;
+    return !this.#closed && this.#creationPrepared && this.#ownedTreeRemovalAvailable;
+  }
+
+  prepareChildCreation(): void {
+    if (this.#closed || this.#creationPrepared) {
+      throw new FsSafeError("path-mismatch", "temp workspace cleanup parent is unavailable");
+    }
+    const inspectDescriptor = this.parent
+      ? () => fsSync.fstatSync(this.parent!.fd, { bigint: true })
+      : undefined;
+    this.#admission.prepareChildCreation(inspectDescriptor);
+    // The retained descriptor cannot authorize cleanup until the complete
+    // ancestry and its exact descriptor association succeeded together.
+    this.#creationPrepared = true;
   }
 
   #assertCurrent(ancestry: boolean): void {
-    if (this.#closed || !this.parent) {
+    if (this.#closed || !this.#creationPrepared || !this.parent) {
       throw new FsSafeError("path-mismatch", "temp workspace cleanup parent is unavailable");
     }
     const inspectDescriptor = () => fsSync.fstatSync(this.parent!.fd, { bigint: true });

@@ -92,9 +92,12 @@ export function openTempWorkspaceCleanupParent(
   const opened = openRetainedDirectory(pathname);
   const { fd } = opened;
   try {
-    // Observe the trusted name after acquiring the descriptor, then associate
-    // the two exact identities within the same synchronous admission call.
-    admission.associateCurrent(() => fsSync.fstatSync(fd, { bigint: true }));
+    // Existing canonical roots deliberately retain this descriptor
+    // provisionally. Its exact association is completed at the native probe
+    // (when present) and again with the full pre-mutation ancestry admission.
+    // Guarded alias/missing-component routes retain their historical eager
+    // association through the admission implementation.
+    admission.retainCleanupParent(() => fsSync.fstatSync(fd, { bigint: true }));
     return {
       fd,
       access: opened.access,
