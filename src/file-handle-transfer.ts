@@ -16,6 +16,8 @@ export type CopyFileHandleOptions = {
   assertBeforeMutation?: () => void;
 };
 
+const NO_CALLBACK_ARGUMENTS = Object.freeze([]);
+
 function defineReceiverValue(
   receiver: Record<PropertyKey, unknown>,
   key: PropertyKey,
@@ -101,28 +103,49 @@ export async function copyFileHandle(
   const callbackThis = copyTransferReceiver(
     options, maxBytes, sizeHint, signal, onChunk, assertBeforeMutation,
   );
+  const beforeWrite = signal == null
+    ? assertBeforeMutation
+    : assertBeforeMutation === undefined
+      ? () => signal.throwIfAborted()
+      : () => {
+        signal.throwIfAborted();
+        assertBeforeMutation();
+      };
   return await transferFileHandleCore(
     source, target, sizeHint, maxBytes, 0,
-    signal, onChunk, assertBeforeMutation, callbackThis,
+    signal, onChunk, beforeWrite, callbackThis,
   ).catch(rethrowMutationAuthorityError);
 }
 
 // Root.copyIn supplies already-admitted identities and retains its owned target cursor.
-export async function transferFileHandle(
+export function transferFileHandle(
   source: FileHandle,
   target: FileHandle | number,
   options: CopyFileHandleOptions & { sizeHint: number; targetPosition?: number },
 ): Promise<number> {
-  const maxBytes = options.maxBytes;
-  const sizeHint = options.sizeHint;
-  const targetPosition = options.targetPosition;
-  const signal = options.signal;
-  const onChunk = options.onChunk;
-  const assertBeforeMutation = options.assertBeforeMutation;
-  return await transferFileHandleCore(
-    source, target, sizeHint, maxBytes, targetPosition,
-    signal, onChunk, assertBeforeMutation, options,
-  );
+  try {
+    const maxBytes = options.maxBytes;
+    const sizeHint = options.sizeHint;
+    const targetPosition = options.targetPosition;
+    const signal = options.signal;
+    const onChunk = options.onChunk;
+    const assertBeforeMutation = options.assertBeforeMutation;
+    const beforeWrite = signal === undefined && assertBeforeMutation === undefined
+      ? undefined
+      : () => {
+        signal?.throwIfAborted();
+        if (assertBeforeMutation) {
+          Reflect.apply(assertBeforeMutation, options, NO_CALLBACK_ARGUMENTS);
+        }
+      };
+    return transferFileHandleCore(
+      source, target, sizeHint, maxBytes, targetPosition,
+      signal, onChunk, beforeWrite, options,
+    );
+  } catch (error) {
+    // Keep the former async-function contract for synchronous option getters.
+    return Promise.reject(error);
+  }
 }
 
 async function transferFileHandleCore(
@@ -133,17 +156,11 @@ async function transferFileHandleCore(
   targetPosition: number | undefined,
   signal: AbortSignal | undefined,
   onChunk: CopyFileHandleOptions["onChunk"],
-  assertBeforeMutation: CopyFileHandleOptions["assertBeforeMutation"],
+  beforeWrite: CopyFileHandleOptions["assertBeforeMutation"],
   callbackThis: unknown,
 ): Promise<number> {
   const limit = maxBytes ?? Infinity;
   const buffer = Buffer.allocUnsafe(Math.min(512 * 1024, Math.max(64 * 1024, sizeHint), limit + 1));
-  const beforeWrite = signal === undefined && assertBeforeMutation === undefined
-    ? undefined
-    : () => {
-      signal?.throwIfAborted();
-      if (assertBeforeMutation) Reflect.apply(assertBeforeMutation, callbackThis, []);
-    };
   let position = 0;
   while (true) {
     signal?.throwIfAborted();

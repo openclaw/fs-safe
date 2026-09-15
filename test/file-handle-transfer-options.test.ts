@@ -175,6 +175,26 @@ describe("borrowed FileHandle option snapshots", () => {
     expect(await fs.readFile(f.targetPath)).toEqual(f.content);
   });
 
+  it("keeps direct transfer option getter failures asynchronous and ordered", async () => {
+    const f = await fixture("content", "unchanged");
+    const failure = new Error("synthetic target position failure");
+    const events: PropertyKey[] = [];
+    const options = new Proxy({ sizeHint: f.content.length }, {
+      get(target, key, receiver) {
+        events.push(key);
+        if (key === "targetPosition") throw failure;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    let pending!: Promise<number>;
+    expect(() => {
+      pending = transferFileHandle(f.source, f.target, options);
+    }).not.toThrow();
+    expect(events).toEqual(["maxBytes", "sizeHint", "targetPosition"]);
+    await expect(pending).rejects.toBe(failure);
+    expect(await fs.readFile(f.targetPath, "utf8")).toBe(f.prior);
+  });
+
   it("preserves proxy trap order and the spread-compatible observer receiver", async () => {
     const f = await fixture("content", "");
     const marker = Symbol("receiver marker");
