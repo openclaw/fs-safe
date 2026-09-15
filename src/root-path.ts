@@ -16,6 +16,7 @@ import {
 } from "./root-path-existing.js";
 import { resolveSymlinkHopPath, resolveSymlinkHopPathSync } from "./root-path-symlink.js";
 import { assertNoDriveRelativePathSegments } from "./safe-path-segment.js";
+import type { RemovalPathReceipts } from "./root-remove-receipt.js";
 
 export { resolvePathViaExistingAncestorSync } from "./root-path-existing.js";
 
@@ -74,6 +75,7 @@ export async function resolveRootPath(
 
 async function resolveRootPathInternal(
   params: ResolveRootPathParams,
+  removalReceipts?: RemovalPathReceipts,
 ): Promise<ResolvedRootPath> {
   assertValidRootPathInputs(params);
   params = { ...params, absolutePath: absolutePathWithRawSegments(params.absolutePath) };
@@ -82,7 +84,20 @@ async function resolveRootPathInternal(
   const rootCanonicalPath = params.rootCanonicalPath
     ? path.resolve(params.rootCanonicalPath)
     : await resolvePathViaExistingAncestor(rootPath);
-  return resolveRootPathLexicalAsync(prepareRootTraversal(params, rootPath, rootCanonicalPath, absolutePath));
+  return resolveRootPathLexicalAsync(prepareRootTraversal(params, rootPath, rootCanonicalPath, absolutePath), removalReceipts);
+}
+
+// Internal removal-only entry point; the public resolver's options and result
+// remain unchanged, including numeric observations for other operations.
+export async function resolveRootPathForRemoval(
+  params: ResolveRootPathParams,
+  receipts: RemovalPathReceipts,
+): Promise<ResolvedRootPath> {
+  try {
+    return await resolveRootPathInternal(params, receipts);
+  } catch (error) {
+    throw sanitizeRootPathError(error);
+  }
 }
 
 export function resolveRootPathSync(params: ResolveRootPathParams): ResolvedRootPath {
@@ -318,7 +333,7 @@ function applyParentTraversalStep(context: LexicalTraversalContext): void {
   if (context.state.missingDepth > 0) context.state.missingDepth -= 1;
 }
 
-function assertDirectoryBeforeMoreSegments(stat: fs.Stats, pathname: string, isLast: boolean): void {
+function assertDirectoryBeforeMoreSegments(stat: fs.Stats | fs.BigIntStats, pathname: string, isLast: boolean): void {
   if (!isLast && !stat.isDirectory()) {
     throw Object.assign(new Error(`Path component is not a directory: ${pathname}`), { code: "ENOTDIR" });
   }
@@ -339,6 +354,7 @@ type LexicalResolutionParams = {
 
 async function resolveRootPathLexicalAsync(
   params: LexicalResolutionParams,
+  removalReceipts?: RemovalPathReceipts,
 ): Promise<ResolvedRootPath> {
   const context = createLexicalTraversalContext(params);
   const { state } = context;
@@ -357,9 +373,14 @@ async function resolveRootPathLexicalAsync(
       state.missingDepth += 1;
       continue;
     }
-    let stat: fs.Stats;
+    let stat: fs.Stats | fs.BigIntStats;
     try {
-      stat = fs.lstatSync(state.lexicalCursor);
+      if (removalReceipts && !isLast) {
+        stat = fs.lstatSync(state.lexicalCursor, { bigint: true });
+        if (stat.isDirectory() && !stat.isSymbolicLink()) removalReceipts.observeDirectory(state.lexicalCursor, stat);
+      } else {
+        stat = fs.lstatSync(state.lexicalCursor);
+      }
     } catch (error) {
       if (handleLexicalLstatFailure(context, error, segment)) continue;
       throw error;

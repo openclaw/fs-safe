@@ -16,6 +16,7 @@ import { isNotFoundPathError, isPathInside } from "./path.js";
 import { assertRootIdentityCurrent, type RootContext } from "./root-context.js";
 import { normalizeRemoveGuardError, normalizeRemovePathError, rootPathChangedError } from "./root-errors.js";
 import type { RootRemoveOptions } from "./root-options.js";
+import type { RemovalPathReceipts } from "./root-remove-receipt.js";
 import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { createSuppressedError } from "./suppressed-error.js";
@@ -75,9 +76,11 @@ function sameCanonicalDirectory(left: string, right: string): boolean {
 function assertRemovalReceiptPrefixCurrent(
   rootGuard: AsyncDirectoryGuard<BigIntStats>,
   intermediates: readonly RemovalDirectoryReceipt[],
+  canonicalParentCoversRoot = false,
 ): void {
   try {
-    assertSyncDirectoryGuard(rootGuard);
+    if (canonicalParentCoversRoot) inspectDirectoryIdentitySync(rootGuard.dir, rootGuard.stat);
+    else assertSyncDirectoryGuard(rootGuard);
     for (const receipt of intermediates) {
       inspectDirectoryIdentitySync(receipt.path, receipt);
     }
@@ -114,15 +117,21 @@ async function captureNonrecursiveRemovalAdmission(
   root: RootContext,
   targetPath: string,
   options: RootRemoveOptions,
+  receipts?: RemovalPathReceipts,
 ): Promise<NonrecursiveRemovalAdmission | undefined> {
   const parentPath = path.dirname(targetPath);
   if (!isPathInside(root.rootReal, parentPath)) {
     throw new FsSafeError("path-mismatch", "removal parent is outside the retained root");
   }
 
+  const retained = receipts?.complete(root.rootReal, targetPath);
   let rootGuard: AsyncDirectoryGuard<BigIntStats>;
   try {
-    rootGuard = await createAsyncDirectoryGuard(root.rootReal, { bigint: true });
+    // A complete, exactly spelled parent canonicalization below also proves
+    // Root's canonical route. Retain Root's earlier exact identity either way.
+    rootGuard = retained && parentPath !== root.rootReal
+      ? { dir: root.rootReal, realPath: root.rootReal, stat: retained.rootStat }
+      : await createAsyncDirectoryGuard(root.rootReal, { bigint: true, initial: retained?.rootStat });
   } catch (error) {
     // force may tolerate a missing target or parent, never a missing Root.
     if (options.force && isNotFoundPathError(error)) await assertRootIdentityCurrent(root);
@@ -146,10 +155,10 @@ async function captureNonrecursiveRemovalAdmission(
   const segments = path.relative(root.rootReal, parentPath).split(path.sep).filter(Boolean);
   const intermediates: RemovalDirectoryReceipt[] = [];
   let ancestor = root.rootReal;
-  for (const segment of segments.slice(0, -1)) {
+  for (const [index, segment] of segments.slice(0, -1).entries()) {
     ancestor = path.join(ancestor, segment);
     try {
-      const stat = inspectDirectoryIdentitySync(ancestor);
+      const stat = inspectDirectoryIdentitySync(ancestor, undefined, retained?.directories[index]);
       intermediates.push({ path: ancestor, dev: stat.dev, ino: stat.ino });
     } catch (error) {
       if (isNotFoundPathError(error)) {
@@ -163,7 +172,7 @@ async function captureNonrecursiveRemovalAdmission(
 
   let parentGuard: AsyncDirectoryGuard<BigIntStats>;
   try {
-    parentGuard = await createAsyncDirectoryGuard(parentPath, { bigint: true });
+    parentGuard = await createAsyncDirectoryGuard(parentPath, { bigint: true, initial: retained?.parentStat });
   } catch (error) {
     if (isNotFoundPathError(error)) {
       await assertMissingRemovalPrefixCurrent(rootGuard, intermediates);
@@ -175,10 +184,19 @@ async function captureNonrecursiveRemovalAdmission(
   if (!sameCanonicalDirectory(parentGuard.realPath, parentPath)) {
     throw removalAncestorChanged();
   }
+  const canonicalParentCoversRoot = retained !== undefined && parentGuard.realPath === parentPath;
+  if (retained && !canonicalParentCoversRoot) {
+    try {
+      rootGuard = await createAsyncDirectoryGuard(root.rootReal, { bigint: true, initial: retained.rootStat });
+    } catch (error) {
+      if (options.force && isNotFoundPathError(error)) await assertRootIdentityCurrent(root);
+      throw normalizeRemoveGuardError(error);
+    }
+  }
 
   return Object.freeze({
     assertAfterMutation(): void {
-      assertRemovalReceiptPrefixCurrent(rootGuard, intermediates);
+      assertRemovalReceiptPrefixCurrent(rootGuard, intermediates, canonicalParentCoversRoot);
       // Preserve the established nonrecursive post-dispatch mapping for the
       // immediate parent: disappearance is `not-found`, while replacements
       // retain their directory-guard classification. Earlier lost ancestry
@@ -186,7 +204,7 @@ async function captureNonrecursiveRemovalAdmission(
       assertSyncDirectoryGuard(parentGuard);
     },
     assertCurrent(): void {
-      assertRemovalReceiptPrefixCurrent(rootGuard, intermediates);
+      assertRemovalReceiptPrefixCurrent(rootGuard, intermediates, canonicalParentCoversRoot);
       try {
         assertSyncDirectoryGuard(parentGuard);
       } catch (error) {
@@ -196,8 +214,8 @@ async function captureNonrecursiveRemovalAdmission(
   });
 }
 
-async function removeOne(root: RootContext, targetPath: string, options: RootRemoveOptions): Promise<void> {
-  const admission = await captureNonrecursiveRemovalAdmission(root, targetPath, options);
+async function removeOne(root: RootContext, targetPath: string, options: RootRemoveOptions, receipts?: RemovalPathReceipts): Promise<void> {
+  const admission = await captureNonrecursiveRemovalAdmission(root, targetPath, options, receipts);
   if (!admission) return;
   try {
     await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("remove", targetPath);
@@ -226,10 +244,11 @@ export async function removePathInRootFallback(
   root: RootContext,
   targetPath: string,
   options: RootRemoveOptions,
+  receipts?: RemovalPathReceipts,
 ): Promise<void> {
   assertNotAborted(options.signal);
   if (!options.recursive) {
-    await removeOne(root, targetPath, options);
+    await removeOne(root, targetPath, options, receipts);
     return;
   }
 

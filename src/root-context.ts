@@ -107,11 +107,15 @@ export function rootRelativeReadPath(root: RootContext, filePath: string): strin
   return raw;
 }
 
-export async function assertRootIdentityCurrent(root: RootContext): Promise<void> {
+export async function assertRootIdentityCurrent(
+  root: RootContext,
+  observe?: (stat: fs.BigIntStats) => void,
+): Promise<void> {
   let current: fs.Stats;
   try {
     if (typeof root.rootIdentity.dev === "bigint" && typeof root.rootIdentity.ino === "bigint") {
-      await inspectDirectoryIdentity(root.rootReal, { dev: root.rootIdentity.dev, ino: root.rootIdentity.ino });
+      const stat = await inspectDirectoryIdentity(root.rootReal, { dev: root.rootIdentity.dev, ino: root.rootIdentity.ino });
+      observe?.(stat);
       return;
     }
     current = fs.lstatSync(root.rootReal);
