@@ -42,6 +42,12 @@ describe("ZIP metadata framing and encoding", () => {
       expect(Object.keys((await loadZipArchiveWithPreflight(bytes)).files)).toEqual(["first", "second"]);
     }
   });
+  it.each([false, true])("accepts the maximum ZIP comment (empty archive: %s)", async (empty) => {
+    const entries = empty ? [] : [{ name: "good", body: "payload" }];
+    const bytes = zipRecords(entries, { comment: Buffer.alloc(65_535, 0x61) });
+    const archive = await loadZipArchiveWithPreflight(bytes);
+    expect(Object.keys(archive.files)).toEqual(entries.map((entry) => entry.name));
+  });
   it("bounds optional directory signatures and ZIP64 extensible records", () => {
     const signed = zipRecords([{ name: "good" }], { directorySignature: Buffer.from("signature") });
     expect(admit(signed)).toBe(1);

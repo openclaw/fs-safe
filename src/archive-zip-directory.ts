@@ -23,10 +23,16 @@ function* read(offset: number, length: number, bound: number): Generator<ZipRead
   return bytes;
 }
 
+const END_SIGNATURE = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
+
 function endOffset(tail: Buffer): number {
   let found = -1;
-  for (let offset = tail.length - 22; offset >= 0; offset--) {
-    if (tail.readUInt32LE(offset) === 0x06054b50 && offset + 22 + tail.readUInt16LE(offset + 20) === tail.length) {
+  for (
+    let offset = tail.indexOf(END_SIGNATURE);
+    offset !== -1 && offset <= tail.length - 22;
+    offset = tail.indexOf(END_SIGNATURE, offset + 1)
+  ) {
+    if (offset + 22 + tail.readUInt16LE(offset + 20) === tail.length) {
       if (found !== -1) zipFormat("ambiguous end records");
       found = offset;
     }
