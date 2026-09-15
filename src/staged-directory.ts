@@ -3,10 +3,21 @@ import path from "node:path";
 import type { DirectoryReceipt } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
 import type { FileIdentityStat } from "./file-identity.js";
+import { inspectDirectoryIdentitySync } from "./directory-guard.js";
+import {
+  checkedMutationDirectory,
+  type MutationDirectoryObservation,
+} from "./pinned-mutation-observation.js";
 import { realpathSync } from "./realpath.js";
 import type { StagedFileReceipt } from "./staged-file-types.js";
 
-type DirectorySnapshot = StagedFileReceipt["directory"];
+export type StagedDirectorySnapshot = StagedFileReceipt["directory"];
+
+export type PolicyStagedDirectory = Readonly<{
+  directory: StagedDirectorySnapshot;
+  observation: MutationDirectoryObservation;
+  stat: BigIntStats;
+}>;
 
 export function exactIdentityMatches(
   expected: FileIdentityStat,
@@ -18,7 +29,7 @@ export function exactIdentityMatches(
   });
 }
 
-export function describeStagedDirectory(fd: number, pathname: string): DirectorySnapshot {
+export function describeStagedDirectory(fd: number, pathname: string): StagedDirectorySnapshot {
   const identity = fs.fstatSync(fd, { bigint: true });
   if (!identity.isDirectory()) {
     throw new FsSafeError("not-file", "staging parent must be a directory");
@@ -32,7 +43,7 @@ export function describeStagedDirectory(fd: number, pathname: string): Directory
   return receipt;
 }
 
-export function assertStagedDirectoryCurrent(receipt: DirectorySnapshot): BigIntStats {
+export function assertStagedDirectoryCurrent(receipt: StagedDirectorySnapshot): BigIntStats {
   const current = fs.lstatSync(receipt.path, { bigint: true });
   if (
     !current.isDirectory() || !exactIdentityMatches(receipt.identity, current) ||
@@ -43,9 +54,70 @@ export function assertStagedDirectoryCurrent(receipt: DirectorySnapshot): BigInt
   return current;
 }
 
+function sameDirectoryMetadata(left: BigIntStats, right: BigIntStats): boolean {
+  return left.dev === right.dev && left.ino === right.ino && left.mode === right.mode &&
+    left.nlink === right.nlink;
+}
+
+// The policy hot path is Node/POSIX-only. It deliberately uses native
+// canonicalization so a successful capture contains no JS realpath work.
+export function describePolicyStagedDirectory(
+  fd: number,
+  pathname: string,
+): PolicyStagedDirectory {
+  const resolved = path.resolve(pathname);
+  const descriptor = fs.fstatSync(fd, { bigint: true });
+  if (!descriptor.isDirectory()) {
+    throw new FsSafeError("not-file", "staging parent must be a directory");
+  }
+  const before = inspectDirectoryIdentitySync(resolved);
+  const canonicalPath = path.resolve(realpathSync.native(resolved));
+  const after = inspectDirectoryIdentitySync(resolved, descriptor);
+  if (canonicalPath !== resolved || !sameDirectoryMetadata(descriptor, before) ||
+    !sameDirectoryMetadata(descriptor, after) ||
+    path.resolve(realpathSync.native(resolved)) !== canonicalPath) {
+    throw new FsSafeError("path-mismatch", "staging directory pathname changed");
+  }
+  const directory = Object.freeze({
+    path: resolved,
+    realPath: canonicalPath,
+    identity: Object.freeze({ dev: descriptor.dev, ino: descriptor.ino }),
+  });
+  return Object.freeze({
+    directory,
+    observation: checkedMutationDirectory(resolved, canonicalPath, after),
+    stat: after,
+  });
+}
+
+export function assertPolicyStagedDirectoryCurrent(
+  captured: PolicyStagedDirectory,
+): BigIntStats {
+  const current = inspectDirectoryIdentitySync(captured.directory.path, captured.directory.identity);
+  if (!sameDirectoryMetadata(captured.stat, current) ||
+    path.resolve(realpathSync.native(captured.directory.path)) !== captured.directory.realPath) {
+    throw new FsSafeError("path-mismatch", "staging directory pathname changed");
+  }
+  return current;
+}
+
+export function refreshPolicyStagedDirectoryObservation(
+  captured: PolicyStagedDirectory,
+): MutationDirectoryObservation {
+  const current = inspectDirectoryIdentitySync(
+    captured.directory.path,
+    captured.directory.identity,
+  );
+  const canonicalPath = path.resolve(realpathSync.native(captured.directory.path));
+  if (canonicalPath !== captured.directory.realPath) {
+    throw new FsSafeError("path-mismatch", "staging directory pathname changed");
+  }
+  return checkedMutationDirectory(captured.directory.path, canonicalPath, current);
+}
+
 export function openStagedDirectory(directory: string | DirectoryReceipt): {
   fd: number;
-  receipt: DirectorySnapshot;
+  receipt: StagedDirectorySnapshot;
 } {
   // Copy supplied facts before any asynchronous work; receipts are not authority.
   const pathname = path.resolve(typeof directory === "string" ? directory : directory.path);

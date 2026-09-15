@@ -85,9 +85,11 @@ prevents a contained Linux `openat2(RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS)`
 redirect from reusing policy approval for a different in-root subtree.
 For an ordinary unchanged route, operation-local observations may carry that
 admission across a direct-child creation only after exact parent and child
-fences; the immediately following parent authorization validates the complete
-epoch, while stale, redirected, incomplete, or foreign evidence returns to the
-full ordered admission. Native acceleration additionally requires an exclusive
+fences and a synchronous full-epoch validation. The resulting operation-local
+token authorizes the opened child without an intervening await; stale,
+redirected, incomplete, or foreign evidence returns to the full ordered
+admission. An already-complete fallback parent is likewise retained only after
+full target admission and a fresh exact guard fence. Native acceleration additionally requires an exclusive
 direct-child mkdir result proving that this syscall created the name; a
 collision, legacy helper, or malformed result performs the guarded walk but
 cannot advance the receipt. That boolean is admission provenance only and does

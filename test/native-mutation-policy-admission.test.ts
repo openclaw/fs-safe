@@ -13,7 +13,8 @@ try {
   __loadBundledNativeForTest();
   nativeAvailable = true;
 } catch (error) {
-  if (process.env.FS_SAFE_NATIVE_MODE === "require" && process.platform === "linux") throw error;
+  if (process.env.FS_SAFE_NATIVE_MODE === "require" &&
+    process.platform !== "win32" && !process.versions.bun) throw error;
 }
 
 afterEach(() => {
@@ -42,35 +43,95 @@ async function runOperation(
 const routes = [
   { label: "POSIX fallback", mode: "off" as const, enabled: process.platform !== "win32" },
   {
-    label: "Linux native",
+    label: "POSIX native",
     mode: "require" as const,
-    enabled: process.platform === "linux" && nativeAvailable,
+    enabled: process.platform !== "win32" && !process.versions.bun && nativeAvailable,
   },
 ];
 
 for (const route of routes) {
   describe.runIf(route.enabled)(`${route.label} object-bound mutation admission`, () => {
-    it("applies an exact parent deny only when that directory would actually be created", async () => {
-      configureFsSafeNative({ mode: route.mode });
-      const base = await tempRoot("fs-safe-native-policy-exact-parent-");
-      const rootDir = path.join(base, "root");
-      const existingParent = path.join(rootDir, "existing");
-      const missingParent = path.join(rootDir, "missing");
-      await fs.mkdir(existingParent, { recursive: true });
-      const safe = await root(rootDir);
+    it.each([true, false])(
+      "applies an exact parent deny only when that directory would actually be created (mkdir=%s)",
+      async (mkdir) => {
+        configureFsSafeNative({ mode: route.mode });
+        const base = await tempRoot("fs-safe-native-policy-exact-parent-");
+        const rootDir = path.join(base, "root");
+        const existingParent = path.join(rootDir, "existing");
+        const missingParent = path.join(rootDir, "missing");
+        await fs.mkdir(existingParent, { recursive: true });
+        const safe = await root(rootDir);
 
-      await safe.write("existing/value", "allowed", {
-        denyMutations: { paths: [existingParent] },
-        durable: false,
-      });
-      expect(await fs.readFile(path.join(existingParent, "value"), "utf8")).toBe("allowed");
+        await safe.write("existing/value", "allowed", {
+          denyMutations: { paths: [existingParent] },
+          mkdir,
+          durable: false,
+        });
+        expect(await fs.readFile(path.join(existingParent, "value"), "utf8")).toBe("allowed");
 
-      await expect(safe.write("missing/value", "blocked", {
-        denyMutations: { paths: [missingParent] },
-        durable: false,
-      })).rejects.toMatchObject({ code: "denied-path" });
-      await expect(fs.lstat(missingParent)).rejects.toMatchObject({ code: "ENOENT" });
-    });
+        if (mkdir) {
+          await expect(safe.write("missing/value", "blocked", {
+            denyMutations: { paths: [missingParent] },
+            durable: false,
+          })).rejects.toMatchObject({ code: "denied-path" });
+          await expect(fs.lstat(missingParent)).rejects.toMatchObject({ code: "ENOENT" });
+        }
+      }
+    );
+
+    it.each(
+      (["final-parent", "ancestor"] as const).flatMap((aliasPosition) =>
+        [true, false].flatMap((mkdir) => [
+          { aliasPosition, mkdir, policy: "deny" as const },
+          { aliasPosition, mkdir, policy: "reject-symlink" as const },
+        ])),
+    )(
+      "preserves $policy precedence for a complete $aliasPosition alias (mkdir=$mkdir)",
+      async ({ aliasPosition, mkdir, policy }) => {
+        configureFsSafeNative({ mode: route.mode });
+        const base = await tempRoot("fs-safe-native-policy-complete-alias-");
+        const rootDir = path.join(base, "root");
+        const allowed = path.join(rootDir, "allowed");
+        const saved = path.join(rootDir, "saved");
+        const redirected = path.join(rootDir, "redirected");
+        await fs.mkdir(allowed, { recursive: true });
+        await fs.mkdir(redirected, { recursive: true });
+        if (aliasPosition === "ancestor") {
+          await fs.mkdir(path.join(allowed, "nested"));
+          await fs.mkdir(path.join(redirected, "nested"));
+        }
+        await fs.writeFile(path.join(redirected, "sentinel"), "unchanged");
+        let swapped = false;
+        __setFsSafeTestHooksForTest({
+          async beforePinnedWriteParentAdmission() {
+            if (swapped) return;
+            swapped = true;
+            await fs.rename(allowed, saved);
+            await fs.symlink(path.basename(redirected), allowed, "dir");
+          },
+        });
+        const safe = await root(rootDir);
+        const relative = aliasPosition === "ancestor"
+          ? "allowed/nested/value"
+          : "allowed/value";
+        await expect(safe.write(relative, "payload", {
+          mkdir,
+          durable: false,
+          ...(policy === "deny"
+            ? { denyMutations: { prefixes: [redirected] } }
+            : { mutationSymlinks: "reject" as const }),
+        })).rejects.toMatchObject({
+          code: policy === "deny" ? "denied-path" : "symlink",
+        });
+        expect(swapped).toBe(true);
+        expect(await fs.readFile(path.join(redirected, "sentinel"), "utf8"))
+          .toBe("unchanged");
+        await expect(fs.lstat(path.join(
+          redirected,
+          aliasPosition === "ancestor" ? "nested/value" : "value",
+        ))).rejects.toMatchObject({ code: "ENOENT" });
+      },
+    );
 
     it.each(
       (["write", "create", "copyIn"] as const).flatMap((operation) =>

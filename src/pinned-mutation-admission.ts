@@ -5,6 +5,7 @@ import { isPathInside } from "./path.js";
 import type {
   PinnedCreatedDirectoryReceipt,
   PinnedMutationAdmissionReceipt,
+  PinnedMutationAuthorizationToken,
   PinnedWriteMutationAdmission,
 } from "./pinned-write.js";
 import { resolvePathViaExistingAncestor } from "./root-path-existing.js";
@@ -13,8 +14,9 @@ import type { MutationSymlinkPolicy } from "./root-symlink-policy.js";
 import { getFsSafeNativeConfig } from "./native-config.js";
 import {
   advanceMutationObservation, mutationObservationCurrent, observeMutationPath,
+  mutationDirectoryObservationCurrent, mutationObservationUsesDirectory,
   missingMutationSegments, nextMissingMutationPath,
-  type MutationDirectoryObservation, type MutationPathObservation,
+  type MutationPathObservation,
 } from "./pinned-mutation-observation.js";
 
 type AdmissionRequest = Parameters<PinnedWriteMutationAdmission["authorize"]>[0];
@@ -116,7 +118,7 @@ function assertCachedNotDenied(target: string, epoch: Epoch): void {
 
 function reusableRequest(request: AdmissionRequest, epoch: Epoch): boolean {
   return request.targetPath === epoch.target.path &&
-    (request.mutationPath === request.targetPath ||
+    ((request.phase === "parent" && request.mutationPath === request.targetPath) ||
       (request.phase === "parent-create" && missingMutationSegments(epoch.target) > 1 &&
         request.mutationPath === nextMissingMutationPath(epoch.target)));
 }
@@ -141,7 +143,7 @@ export async function preparePinnedWriteMutationAdmission(params: {
   let receiptsEnabled = false;
   let epoch: Epoch | undefined;
   let pending: CreateReceipt | undefined;
-  let tentative: Epoch | undefined;
+  const authorizationToken: PinnedMutationAuthorizationToken = Object.freeze({});
   const canonicalParent = await resolvePathViaExistingAncestor(path.dirname(params.resolvedTargetPath));
   if (!isPathInside(params.rootWithSep, canonicalParent)) throw outsideWorkspaceError();
   const relativeCanonicalParent = path.relative(params.rootReal, canonicalParent);
@@ -154,14 +156,32 @@ export async function preparePinnedWriteMutationAdmission(params: {
       receiptsEnabled = true;
       return route;
     } : undefined,
-    async authorize(request) {
-      const awaitingValidation = tentative;
-      tentative = undefined;
+    tryAuthorizeAtParent(request, parent) {
       pending = undefined;
-      if (awaitingValidation && (awaitingValidation !== epoch || request.phase !== "parent" ||
-        request.targetPath !== awaitingValidation.target.path || request.mutationPath !== request.targetPath)) {
+      const reusable = epoch;
+      if (!reusable || !reusableRequest(request, reusable) ||
+        !mutationObservationUsesDirectory(reusable.target, parent) ||
+        !epochCurrent(reusable)) {
         epoch = undefined;
+        return undefined;
       }
+      assertCachedNotDenied(request.targetPath, reusable);
+      assertCachedNotDenied(request.mutationPath, reusable);
+      // This is the required end fence. The caller can consume the returned
+      // token without awaiting only while the exact pathname, canonical
+      // spelling, descriptor identity, type, mode, and link count still match.
+      if (!mutationDirectoryObservationCurrent(parent)) {
+        epoch = undefined;
+        return undefined;
+      }
+      if (request.phase === "parent-create") {
+        pending = Object.freeze({ epoch: reusable, childPath: request.mutationPath });
+        return pending;
+      }
+      return authorizationToken;
+    },
+    async authorize(request) {
+      pending = undefined;
       if (epoch && reusableRequest(request, epoch) && epochCurrent(epoch)) {
         assertCachedNotDenied(request.targetPath, epoch);
         assertCachedNotDenied(request.mutationPath, epoch);
@@ -202,29 +222,40 @@ export async function preparePinnedWriteMutationAdmission(params: {
     advanceCreatedDirectory: route ? (receipt: PinnedCreatedDirectoryReceipt) => {
       const admitted = pending;
       pending = undefined;
-      tentative = undefined;
-      if (!epoch || !admitted || receipt.admission !== admitted || admitted.epoch !== epoch ||
+      const admittedEpoch = epoch;
+      // Completion is fail-closed: no partially checked candidate remains
+      // reusable if any provenance, observation, or freshness check fails.
+      epoch = undefined;
+      if (!admittedEpoch || !admitted || receipt.admission !== admitted ||
+        admitted.epoch !== admittedEpoch ||
         admitted.childPath !== receipt.child.path) {
-        epoch = undefined;
-        return;
+        return undefined;
       }
       // The walker calls this only after its live parent fence, exact-parent
       // deny, authority callback, successful mkdir, and exact child checks.
-      const observations = epoch.observations.map((observation) =>
+      const observations = admittedEpoch.observations.map((observation) =>
         advanceMutationObservation(observation, receipt.parent, receipt.child));
       if (observations.some((observation) => !observation)) {
-        epoch = undefined;
-        return;
+        return undefined;
       }
       const complete = observations as MutationPathObservation[];
-      const target = complete.find((observation) => observation.path === epoch!.target.path)!;
-      if (!target || target.missingOffset !== epoch.target.missingOffset + 1) {
-        epoch = undefined;
-        return;
+      const target = complete.find((observation) => observation.path === admittedEpoch.target.path);
+      if (!target || target.missingOffset !== admittedEpoch.target.missingOffset + 1) {
+        return undefined;
       }
-      const next = Object.freeze({ ...epoch, target, observations: Object.freeze(complete) });
+      const next = Object.freeze({
+        ...admittedEpoch,
+        target,
+        observations: Object.freeze(complete),
+      });
+      if (!mutationDirectoryObservationCurrent(receipt.parent) ||
+        !mutationDirectoryObservationCurrent(receipt.child) ||
+        !mutationObservationUsesDirectory(target, receipt.child) ||
+        !epochCurrent(next)) return undefined;
+      assertCachedNotDenied(target.path, next);
+      assertCachedNotDenied(receipt.child.path, next);
       epoch = next;
-      tentative = next;
+      return authorizationToken;
     } : undefined,
   });
   return {

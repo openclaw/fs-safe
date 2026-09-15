@@ -93,6 +93,31 @@ function checkedDirectory(observation: MutationDirectoryObservation): boolean {
     directoryMode(observation.identity.mode);
 }
 
+export function mutationDirectoryObservationCurrent(
+  observation: MutationDirectoryObservation,
+): boolean {
+  if (!checkedDirectory(observation)) return false;
+  try {
+    const stat = inspectFileIdentitySync(() => fs.lstatSync(observation.path, { bigint: true }));
+    return stat.isDirectory() && !stat.isSymbolicLink() &&
+      sameIdentity(observation.identity, stat) &&
+      realpathSync.native(observation.path) === observation.canonicalPath;
+  } catch {
+    return false;
+  }
+}
+
+export function mutationObservationUsesDirectory(
+  observation: MutationPathObservation,
+  directory: MutationDirectoryObservation,
+): boolean {
+  return checkedDirectory(directory) &&
+    observation.ancestor === directory.path &&
+    observation.canonicalAncestor === directory.canonicalPath &&
+    sameIdentity(observation.entry, directory.identity) &&
+    sameIdentity(observation.identity, directory.identity);
+}
+
 // Optional evidence only: failures select full admission, never a new error order.
 export function observeMutationPath(pathname: string): MutationPathObservation | undefined {
   try {

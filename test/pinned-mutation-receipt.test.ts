@@ -83,7 +83,7 @@ describe.runIf(process.platform !== "win32" && !process.versions.bun)("operation
 
   it("reuses one admission through a verified direct-child walk and final parent admission", async () => {
     const directory = await tempRoot("fs-safe-policy-receipt-depth-");
-    const parts = Array.from({ length: 24 }, (_, index) => `level-${index}`);
+    const parts = Array.from({ length: 32 }, (_, index) => `level-${index}`);
     const receipt = await prepare(directory, [...parts, "value"].join("/"), {
       paths: [path.join(directory, "unrelated", "missing", "record")],
       prefixes: [path.join(directory, "unrelated", "protected")],
@@ -101,7 +101,7 @@ describe.runIf(process.platform !== "win32" && !process.versions.bun)("operation
     expect(receipt.resolveCurrent).toHaveBeenCalledTimes(1);
   });
 
-  it("advances tentatively without I/O and validates the complete epoch exactly once", async () => {
+  it("fuses post-create provenance and the next parent authorization synchronously", async () => {
     const directory = await tempRoot("fs-safe-policy-receipt-tentative-");
     const receipt = await prepare(directory, "one/two/value");
     const first = path.join(directory, "one");
@@ -111,13 +111,11 @@ describe.runIf(process.platform !== "win32" && !process.versions.bun)("operation
     const lstat = vi.spyOn(fsSync, "lstatSync");
     const realpath = vi.spyOn(realpathSync, "native");
 
-    receipt.admission.advanceCreatedDirectory!(evidence);
-    expect(lstat).not.toHaveBeenCalled();
-    expect(realpath).not.toHaveBeenCalled();
-
-    await receipt.authorize();
-    expect(lstat).toHaveBeenCalledTimes(3);
-    expect(realpath).toHaveBeenCalledTimes(2);
+    const token = receipt.admission.advanceCreatedDirectory!(evidence);
+    expect(token).toBeTypeOf("object");
+    expect(token).not.toBeInstanceOf(Promise);
+    expect(lstat).toHaveBeenCalledTimes(5);
+    expect(realpath).toHaveBeenCalledTimes(4);
     expect(receipt.resolveCurrent).toHaveBeenCalledTimes(1);
   });
 

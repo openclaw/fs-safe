@@ -10,17 +10,25 @@ import type { NativeBinding } from "./native.js";
 import type {
   PinnedCreatedDirectoryReceipt,
   PinnedMutationAdmissionReceipt,
+  PinnedMutationAuthorizationToken,
   PinnedWriteParams,
 } from "./pinned-write.js";
 import {
+  assertPolicyStagedDirectoryCurrent,
   assertStagedDirectoryCurrent,
+  describePolicyStagedDirectory,
   describeStagedDirectory,
   exactIdentityMatches,
+  refreshPolicyStagedDirectoryObservation,
+  type PolicyStagedDirectory,
 } from "./staged-directory.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { realpathSync } from "./realpath.js";
 import { isNotFoundPathError, isSymlinkOpenError } from "./path.js";
-import { checkedMutationDirectory } from "./pinned-mutation-observation.js";
+import {
+  checkedMutationDirectory,
+  type MutationDirectoryObservation,
+} from "./pinned-mutation-observation.js";
 import { createPathSegmentRoute, joinPathSegmentRoute, type PathSegmentRoute } from "./path-segment-route.js";
 
 type PosixParentAdmission = {
@@ -28,6 +36,8 @@ type PosixParentAdmission = {
   parentPath: string;
   directory: ReturnType<typeof describeStagedDirectory>;
   parentPathStat: BigIntStats;
+  observation: MutationDirectoryObservation;
+  policyDirectory?: PolicyStagedDirectory;
 };
 
 function relativeParentSegments(relativeParentPath: string): string[] {
@@ -101,7 +111,48 @@ async function describePosixParent(parentFd: number, pathname: string): Promise<
     parentPath,
     inspectFileIdentitySync(() => fsSync.fstatSync(parentFd, { bigint: true })),
   );
-  return { parentFd, parentPath, directory, parentPathStat };
+  return {
+    parentFd,
+    parentPath,
+    directory,
+    parentPathStat,
+    observation: checkedMutationDirectory(parentPath, directory.realPath, parentPathStat),
+  };
+}
+
+function describePolicyPosixParent(parentFd: number, pathname: string): PosixParentAdmission {
+  const policyDirectory = describePolicyStagedDirectory(parentFd, pathname);
+  return {
+    parentFd,
+    parentPath: policyDirectory.directory.realPath,
+    directory: policyDirectory.directory,
+    parentPathStat: policyDirectory.stat,
+    observation: policyDirectory.observation,
+    policyDirectory,
+  };
+}
+
+function policyParentCaptureDeopt(error: unknown): boolean {
+  return error instanceof FsSafeError &&
+    (error.code === "path-mismatch" || error.code === "not-file");
+}
+
+function tryDescribePolicyPosixParent(
+  parentFd: number,
+  pathname: string,
+): PosixParentAdmission | undefined {
+  try {
+    return describePolicyPosixParent(parentFd, pathname);
+  } catch (error) {
+    if (!policyParentCaptureDeopt(error)) throw error;
+    return undefined;
+  }
+}
+
+function assertPosixParentCurrent(parent: PosixParentAdmission): BigIntStats {
+  return parent.policyDirectory
+    ? assertPolicyStagedDirectoryCurrent(parent.policyDirectory)
+    : assertStagedDirectoryCurrent(parent.directory);
 }
 
 async function capturePolicyAwarePosixParent(
@@ -114,32 +165,56 @@ async function capturePolicyAwarePosixParent(
   const parentSpelling = segments.length
     ? path.join(params.rootPath, ...segments)
     : params.rootPath;
+  const segmentRoute = createPathSegmentRoute(segments);
+  const initialTarget = prospectiveTargetPath(
+    params.rootPath,
+    segmentRoute,
+    0,
+    params.basename,
+  );
+  let retainedTargetPath = params.mutationAdmission?.beginParentWalk?.();
+  if (retainedTargetPath && !sameAbsolutePath(retainedTargetPath, initialTarget)) {
+    retainedTargetPath = undefined;
+  }
 
   // Preserve the one-open hot path when the complete parent still exists.
   // Policy is attached only after the opened descriptor is associated with its
   // current canonical pathname, so a contained redirect cannot retain the old
   // preflight authorization.
+  let completeParentFd: number | undefined;
   try {
-    const parentFd = binding.openBeneath(rootFd, params.relativeParentPath, directoryFlags).fd;
+    completeParentFd = binding.openBeneath(
+      rootFd,
+      params.relativeParentPath,
+      directoryFlags,
+    ).fd;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT" || !params.mkdir) throw error;
+  }
+  if (completeParentFd !== undefined) {
+    const parentFd = completeParentFd;
     try {
-      const admitted = await describePosixParent(parentFd, parentSpelling);
+      let admitted = retainedTargetPath
+        ? tryDescribePolicyPosixParent(parentFd, parentSpelling)
+        : undefined;
+      if (!admitted) {
+        retainedTargetPath = undefined;
+        admitted = await describePosixParent(parentFd, parentSpelling);
+      }
       const targetPath = path.join(admitted.parentPath, params.basename);
       await authorizePinnedMutation(params, {
         targetPath,
         mutationPath: targetPath,
         phase: "parent",
       });
-      assertStagedDirectoryCurrent(admitted.directory);
+      assertPosixParentCurrent(admitted);
       return admitted;
     } catch (error) {
       fsSync.closeSync(parentFd);
       throw error;
     }
-  } catch (error) {
-    if (!isNotFoundPathError(error) || !params.mkdir) throw error;
   }
 
-  const segmentRoute = createPathSegmentRoute(segments);
   // The canonical preflight spelling has no intentional symlinks in its
   // existing prefix. Walk missing-parent cases one direct child at a time so
   // every existing/opened object is authorized and every mkdir is authorized
@@ -149,18 +224,20 @@ async function capturePolicyAwarePosixParent(
   let currentFd = rootFd;
   let currentOwnedFd: number | undefined;
   let currentPath = params.rootPath;
-  let currentDirectory = describeStagedDirectory(rootFd, currentPath);
+  let current = retainedTargetPath
+    ? tryDescribePolicyPosixParent(rootFd, currentPath)
+    : undefined;
+  if (!current) {
+    retainedTargetPath = undefined;
+    current = await describePosixParent(rootFd, currentPath);
+  }
   try {
-    let retainedTargetPath = params.mutationAdmission?.beginParentWalk?.();
-    const initialTarget = prospectiveTargetPath(currentPath, segmentRoute, 0, params.basename);
-    if (retainedTargetPath && !sameAbsolutePath(retainedTargetPath, initialTarget)) {
-      retainedTargetPath = undefined;
-    }
     await authorizePinnedMutation(params, {
       targetPath: retainedTargetPath ?? initialTarget,
       mutationPath: retainedTargetPath ?? initialTarget,
       phase: "parent",
     });
+    assertPosixParentCurrent(current);
 
     for (let index = 0; index < segments.length; index += 1) {
       const segment = segments[index]!;
@@ -177,13 +254,22 @@ async function capturePolicyAwarePosixParent(
         const targetPath = retainedTargetPath ?? prospectiveTargetPath(
           currentPath, segmentRoute, index, params.basename,
         );
-        createReceipt = await authorizePinnedMutation(params, {
+        const request = Object.freeze({
           targetPath,
           mutationPath: childPath,
-          phase: "parent-create",
+          phase: "parent-create" as const,
         });
-        assertStagedDirectoryCurrent(currentDirectory);
+        createReceipt = params.mutationAdmission?.tryAuthorizeAtParent?.(
+          request,
+          current.observation,
+        );
+        if (!createReceipt) {
+          createReceipt = await authorizePinnedMutation(params, request);
+          assertPosixParentCurrent(current);
+        }
         params.assertBeforeMutation?.();
+        // Do not carry pathname freshness across the live authority callback.
+        assertPosixParentCurrent(current);
         createdByMkdir = mkdirPolicyChild(binding, currentFd, segment, 0o777);
         try {
           childFd = binding.openBeneath(currentFd, segment, secureDirectoryFlags).fd;
@@ -194,34 +280,55 @@ async function capturePolicyAwarePosixParent(
 
       let child: PosixParentAdmission;
       try {
-        child = await describePosixParent(childFd, childPath);
+        const acceleratedChild = retainedTargetPath
+          ? tryDescribePolicyPosixParent(childFd, childPath)
+          : undefined;
+        if (acceleratedChild) {
+          child = acceleratedChild;
+        } else {
+          retainedTargetPath = undefined;
+          child = await describePosixParent(childFd, childPath);
+        }
         if (!sameAbsolutePath(child.parentPath, childPath)) retainedTargetPath = undefined;
+        let childAuthorization: PinnedMutationAuthorizationToken | undefined;
         if (createdByMkdir && createReceipt && params.mutationAdmission?.advanceCreatedDirectory) {
           let evidence: PinnedCreatedDirectoryReceipt | undefined;
           try {
-            const parentStat = assertStagedDirectoryCurrent(currentDirectory);
-            const childStat = assertStagedDirectoryCurrent(child.directory);
+            const parent = current.policyDirectory
+              ? refreshPolicyStagedDirectoryObservation(current.policyDirectory)
+              : checkedMutationDirectory(
+                currentPath,
+                current.directory.realPath,
+                assertStagedDirectoryCurrent(current.directory),
+              );
             evidence = Object.freeze({
               admission: createReceipt,
-              parent: checkedMutationDirectory(currentPath, currentDirectory.realPath, parentStat),
-              child: checkedMutationDirectory(childPath, child.directory.realPath, childStat),
+              parent,
+              child: child.observation,
             });
           } catch {
             // Leave failed evidence to the full ordered admission below.
           }
           if (evidence) {
-            params.mutationAdmission.advanceCreatedDirectory(evidence);
+            childAuthorization = params.mutationAdmission.advanceCreatedDirectory(evidence);
           }
         }
         const targetPath = retainedTargetPath ?? prospectiveTargetPath(
           child.parentPath, segmentRoute, index + 1, params.basename,
         );
-        await authorizePinnedMutation(params, {
+        const request = Object.freeze({
           targetPath,
           mutationPath: targetPath,
-          phase: "parent",
+          phase: "parent" as const,
         });
-        assertStagedDirectoryCurrent(child.directory);
+        childAuthorization ??= params.mutationAdmission?.tryAuthorizeAtParent?.(
+          request,
+          child.observation,
+        );
+        if (!childAuthorization) {
+          await authorizePinnedMutation(params, request);
+          assertPosixParentCurrent(child);
+        }
       } catch (error) {
         fsSync.closeSync(childFd);
         throw error;
@@ -231,7 +338,7 @@ async function capturePolicyAwarePosixParent(
       currentOwnedFd = child.parentFd;
       currentFd = child.parentFd;
       currentPath = child.parentPath;
-      currentDirectory = child.directory;
+      current = child;
       if (previousOwnedFd !== undefined) fsSync.closeSync(previousOwnedFd);
       if (index === segments.length - 1) {
         currentOwnedFd = undefined;

@@ -60,7 +60,7 @@ for (const mode of ["off", "require"] as const) {
         const scoped = await root(directory);
         const resolve = vi.spyOn(context, "resolvePathInRoot");
         const counts: number[] = [];
-        for (const depth of [1, 8, 24]) {
+        for (const depth of [1, 8, 32]) {
           const relative = [...Array.from({ length: depth }, (_, index) => `d${depth}-${index}`), "value"].join("/");
           const options = {
             durable: false, mutationSymlinks: "reject" as const,
@@ -168,7 +168,7 @@ describe.runIf(process.platform !== "win32" && !process.versions.bun && nativeAv
 describe.runIf(process.platform !== "win32" && !process.versions.bun)("fallback receipt race seams", () => {
   it("retains one full target across deep simple routes and rebuilds after a redirect", async () => {
     const directory = await tempRoot("fs-safe-policy-walk-target-");
-    const parts = Array.from({ length: 24 }, (_, index) => `level-${index}`);
+    const parts = Array.from({ length: 32 }, (_, index) => `level-${index}`);
     const parentPath = path.join(directory, ...parts);
     const targetPath = path.join(parentPath, "value");
     const retained: (string | undefined)[] = [];

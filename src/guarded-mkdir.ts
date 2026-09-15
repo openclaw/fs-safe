@@ -1,13 +1,23 @@
 import fsSync, { type BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, inspectDirectoryIdentitySync, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
+import {
+  assertAsyncDirectoryGuard,
+  createAsyncDirectoryGuard,
+  inspectDirectoryIdentitySync,
+  type AnyAsyncDirectoryGuard,
+  type AsyncDirectoryGuard,
+} from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { isNotFoundPathError, isPathRelativeEscape } from "./path.js";
 import { directoryComponentNotDirectoryError } from "./root-errors.js";
 import { realpathSync } from "./realpath.js";
-import { checkedMutationDirectory } from "./pinned-mutation-observation.js";
-import type { PinnedCreatedDirectoryReceipt, PinnedMutationAdmissionReceipt } from "./pinned-write.js";
+import { checkedMutationDirectory, type MutationDirectoryObservation } from "./pinned-mutation-observation.js";
+import type {
+  PinnedCreatedDirectoryReceipt,
+  PinnedMutationAdmissionReceipt,
+  PinnedMutationAuthorizationToken,
+} from "./pinned-write.js";
 import {
   createPathSegmentRoute,
   joinPathSegmentRoute,
@@ -31,20 +41,31 @@ function inspectGuardCurrent(parent: AnyAsyncDirectoryGuard): BigIntStats {
   return stat;
 }
 
+function exactGuard(
+  parent: AnyAsyncDirectoryGuard,
+): parent is AsyncDirectoryGuard<BigIntStats> {
+  return typeof parent.stat.dev === "bigint" && typeof parent.stat.ino === "bigint";
+}
+
+function observedGuard(parent: AnyAsyncDirectoryGuard): MutationDirectoryObservation {
+  if (!exactGuard(parent)) {
+    throw new TypeError("exact directory guard required for mutation authorization");
+  }
+  return checkedMutationDirectory(parent.dir, parent.realPath, parent.stat);
+}
+
 function createdDirectoryEvidence(
   admission: PinnedMutationAdmissionReceipt,
   parent: AnyAsyncDirectoryGuard,
   childPath: string,
 ): PinnedCreatedDirectoryReceipt | undefined {
   try {
-    const parentBefore = inspectGuardCurrent(parent);
+    const parentAfter = inspectGuardCurrent(parent);
     const childBefore = inspectDirectoryIdentitySync(childPath);
     const realPath = realpathSync.native(childPath);
     if (realPath !== childPath) return undefined;
     const childAfter = inspectDirectoryIdentitySync(childPath, childBefore);
-    const parentAfter = inspectGuardCurrent(parent);
-    if (!sameDirectoryFacts(parentBefore, parentAfter) ||
-      !sameDirectoryFacts(childBefore, childAfter)) return undefined;
+    if (!sameDirectoryFacts(childBefore, childAfter)) return undefined;
     return Object.freeze({
       admission,
       parent: checkedMutationDirectory(parent.dir, parent.realPath, parentAfter),
@@ -63,6 +84,10 @@ function sameAbsolutePath(left: string, right: string): boolean {
 function isSameOrChildPath(candidate: string, parent: string): boolean {
   const parentPrefix = parent.endsWith(path.sep) ? parent : `${parent}${path.sep}`;
   return candidate === parent || candidate.startsWith(parentPrefix);
+}
+
+function isPromiseLike<T>(value: T | Promise<T>): value is Promise<T> {
+  return typeof (value as Promise<T> | undefined)?.then === "function";
 }
 
 async function realpathOrThrowNotFile(target: string): Promise<string> {
@@ -92,17 +117,21 @@ export async function mkdirPathComponentsWithGuards(params: {
     componentPath: string,
     prospectiveTargetPath: string,
     retainedTargetPath: string | undefined,
+    parent: MutationDirectoryObservation,
   ) => Promise<PinnedMutationAdmissionReceipt | undefined> | PinnedMutationAdmissionReceipt | undefined;
   beforeUseComponent?: (
     componentPath: string,
     prospectiveTargetPath: string,
     retainedTargetPath: string | undefined,
   ) => Promise<void> | void;
-  afterCreateComponent?: (receipt: PinnedCreatedDirectoryReceipt) => void;
+  afterCreateComponent?: (
+    receipt: PinnedCreatedDirectoryReceipt,
+  ) => PinnedMutationAuthorizationToken | undefined;
   assertBeforeMutation?: () => void;
   mode?: number;
   rejectSymlinks?: boolean;
   revalidateParentAfterBeforeComponent?: boolean;
+  synchronousAuthorizationIncludesFence?: boolean;
   retainedTargetPath?: string;
 }): Promise<string> {
   const root = path.resolve(params.rootReal);
@@ -123,10 +152,14 @@ export async function mkdirPathComponentsWithGuards(params: {
   for (let index = 0; index < parts.length; index += 1) {
     const part = parts[index]!;
     const next = path.join(current, part);
-    const parentGuard = await createAsyncDirectoryGuard(current, { bigint: params.afterCreateComponent !== undefined });
+    const parentGuard = await createAsyncDirectoryGuard(current, {
+      bigint: params.beforeCreateComponent !== undefined || params.afterCreateComponent !== undefined,
+    });
     let created = false;
     let createReceipt: PinnedMutationAdmissionReceipt | undefined;
-    await assertAsyncDirectoryGuard(parentGuard);
+    if (!params.revalidateParentAfterBeforeComponent) {
+      await assertAsyncDirectoryGuard(parentGuard);
+    }
     await params.beforeComponent?.(next);
     if (params.revalidateParentAfterBeforeComponent) {
       await assertAsyncDirectoryGuard(parentGuard);
@@ -145,13 +178,26 @@ export async function mkdirPathComponentsWithGuards(params: {
           partRoute ??= createPathSegmentRoute(parts);
           prospectiveParent = joinPathSegmentRoute(next, partRoute, index + 1);
         }
-        createReceipt = await params.beforeCreateComponent(
+        const authorization = params.beforeCreateComponent(
           next,
           prospectiveParent,
           retainedTargetPath,
+          observedGuard(parentGuard),
         );
-        await assertAsyncDirectoryGuard(parentGuard);
+        if (isPromiseLike(authorization)) {
+          createReceipt = await authorization;
+          await assertAsyncDirectoryGuard(parentGuard);
+        } else {
+          createReceipt = authorization;
+          // A synchronous authorization must still end at a live pathname
+          // fence immediately before the authority callback and mkdir.
+          if (!params.synchronousAuthorizationIncludesFence) inspectGuardCurrent(parentGuard);
+        }
         params.assertBeforeMutation?.();
+        // Authority callbacks are an explicit freshness boundary. Recheck the
+        // exact parent synchronously so no callback-observed authority is
+        // carried into a pathname mkdir after the parent was swapped.
+        inspectGuardCurrent(parentGuard);
         try {
           await fs.mkdir(next, { mode: params.mode });
           created = true;
@@ -171,12 +217,15 @@ export async function mkdirPathComponentsWithGuards(params: {
         }
       }
     }
-    const stat = fsSync.lstatSync(next);
+    let createdAuthorization: PinnedMutationAuthorizationToken | undefined;
+    let createdEvidence: PinnedCreatedDirectoryReceipt | undefined;
     if (created && createReceipt && params.afterCreateComponent) {
-      const evidence = createdDirectoryEvidence(createReceipt, parentGuard, next);
-      if (evidence) params.afterCreateComponent(evidence);
+      createdEvidence = createdDirectoryEvidence(createReceipt, parentGuard, next);
+      if (createdEvidence) {
+        createdAuthorization = params.afterCreateComponent(createdEvidence);
+      }
     }
-    if (params.beforeUseComponent) {
+    if (params.beforeUseComponent && !createdAuthorization) {
       let prospectiveParent = retainedParentPath;
       if (!prospectiveParent) {
         partRoute ??= createPathSegmentRoute(parts);
@@ -185,16 +234,20 @@ export async function mkdirPathComponentsWithGuards(params: {
       await params.beforeUseComponent(next, prospectiveParent, retainedTargetPath);
       await assertAsyncDirectoryGuard(parentGuard);
     }
-    if ((params.rejectSymlinks && stat.isSymbolicLink()) || (!stat.isSymbolicLink() && !stat.isDirectory())) {
+    const stat = createdAuthorization ? undefined : fsSync.lstatSync(next);
+    if (stat && ((params.rejectSymlinks && stat.isSymbolicLink()) ||
+      (!stat.isSymbolicLink() && !stat.isDirectory()))) {
       throw directoryComponentNotDirectoryError();
     }
     // Node's recursive mkdir follows symlinks in missing components. Build one
     // segment at a time and realpath-check each segment before descending.
-    const nextReal = await realpathOrThrowNotFile(next);
+    const nextReal = createdAuthorization && createdEvidence
+      ? createdEvidence.child.canonicalPath
+      : await realpathOrThrowNotFile(next);
     if (!isSameOrChildPath(nextReal, rootCanonical)) {
       throw new FsSafeError("outside-workspace", "directory escaped workspace root");
     }
-    if (stat.isSymbolicLink()) {
+    if (stat?.isSymbolicLink()) {
       // An existing path component may legitimately be a symlink to a real
       // directory inside the root (e.g. a skill-bank layout). We already
       // verified above that it resolves inside the root, so treat the
@@ -215,8 +268,10 @@ export async function mkdirPathComponentsWithGuards(params: {
       current = nextReal;
       continue;
     }
-    await createAsyncDirectoryGuard(next);
-    await assertAsyncDirectoryGuard(parentGuard);
+    if (!createdAuthorization) {
+      await createAsyncDirectoryGuard(next);
+      await assertAsyncDirectoryGuard(parentGuard);
+    }
     current = next;
   }
   return current;
