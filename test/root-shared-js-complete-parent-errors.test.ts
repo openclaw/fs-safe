@@ -33,6 +33,11 @@ type ScenarioContext = Readonly<{
 type PreparationFailureScenario = Readonly<{
   name: string;
   causeCode: "EACCES" | "ENOTDIR" | "EPERM";
+  expectedReceipt: Readonly<{
+    name: string;
+    code: string;
+    causeCode: string | undefined;
+  }>;
   setup(context: ScenarioContext): Promise<void>;
   install?(context: ScenarioContext): void;
   afterPreflight?(context: ScenarioContext): void;
@@ -85,6 +90,7 @@ const scenarios: readonly PreparationFailureScenario[] = [
   {
     name: "an intermediate component becomes a non-directory",
     causeCode: "ENOTDIR",
+    expectedReceipt: { name: "FsSafeError", code: "path-alias", causeCode: "ENOTDIR" },
     async setup({ parent }) {
       await fs.mkdir(parent, { recursive: true });
     },
@@ -97,6 +103,7 @@ const scenarios: readonly PreparationFailureScenario[] = [
   {
     name: "complete-parent observation loses permission",
     causeCode: "EACCES",
+    expectedReceipt: { name: "FsSafeError", code: "path-alias", causeCode: "EACCES" },
     async setup({ parent }) {
       await fs.mkdir(parent, { recursive: true });
     },
@@ -107,6 +114,7 @@ const scenarios: readonly PreparationFailureScenario[] = [
   {
     name: "target observation loses permission",
     causeCode: "EPERM",
+    expectedReceipt: { name: "FsSafeError", code: "path-alias", causeCode: "EPERM" },
     async setup({ parent, target }) {
       await fs.mkdir(parent, { recursive: true });
       await fs.writeFile(target, "original");
@@ -118,6 +126,7 @@ const scenarios: readonly PreparationFailureScenario[] = [
   {
     name: "target canonicalization loses permission",
     causeCode: "EACCES",
+    expectedReceipt: { name: "Error", code: "EACCES", causeCode: undefined },
     async setup({ parent, target }) {
       await fs.mkdir(parent, { recursive: true });
       await fs.writeFile(target, "original");
@@ -188,10 +197,6 @@ describeNode("shared JavaScript complete-parent preparation failures", () => {
     const optimized = await runScenario(scenario, false);
 
     expect(optimized).toEqual(established);
-    expect(optimized).toMatchObject({
-      name: "FsSafeError",
-      code: "path-alias",
-      causeCode: scenario.causeCode,
-    });
+    expect(optimized).toMatchObject(scenario.expectedReceipt);
   });
 });
