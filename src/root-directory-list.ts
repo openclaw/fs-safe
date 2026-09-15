@@ -23,6 +23,7 @@ import { rootPathChangedError } from "./root-errors.js";
 import type {
   RootPathDirectoryObservationGuard,
   RootPathObservationReceipt,
+  RootPathParentObservationReceipt,
 } from "./root-path.js";
 import { admitPathInsideRoot } from "./root-boundary.js";
 import { createSuppressedError } from "./suppressed-error.js";
@@ -147,7 +148,7 @@ function assertReceiptDirectoryGuardSync(
  */
 export function assertRootPathObservationReceiptCurrent(
   root: RootContext,
-  receipt: RootPathObservationReceipt,
+  receipt: RootPathObservationReceipt | RootPathParentObservationReceipt,
   finalTarget?: Stats | BigIntStats,
 ): void {
   const { rootGuard, directoryGuard } = receipt;

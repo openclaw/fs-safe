@@ -32,6 +32,7 @@ mod unix;
 #[cfg(windows)]
 mod windows;
 mod windows_security;
+mod windows_secure_file;
 
 #[napi(object)]
 pub struct FileIdentity {
@@ -255,6 +256,9 @@ pub use staged_file::{create_staged_file, remove_staged_file, staged_file_matche
 pub use windows_security::{
     WindowsAccessControlEntry, WindowsAceFlags, WindowsSecurityFacts, create_private_directory,
     read_owner_and_dacl,
+};
+pub use windows_secure_file::{
+    WindowsDescriptorSecurityFacts, inspect_windows_secure_file_handle,
 };
 
 #[cfg(test)]

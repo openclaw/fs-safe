@@ -53,7 +53,8 @@ fn copy_contents(source_fd: i32, target_fd: i32, cancelled: &AtomicBool) -> Nati
     // Only an empty destination makes unwritten ranges read as zeros. Existing
     // targets retain the Windows adapter's dense overwrite and untouched tail.
     let sparse = target_stat.st_size == 0;
-    let mut buffer = vec![0_u8; 1024 * 1024];
+    // The observed size only bounds scratch allocation; read to actual EOF below.
+    let mut buffer = vec![0_u8; source_stat.st_size.clamp(4 * 1024, 1024 * 1024) as usize];
     let mut offset = 0_u64;
     loop {
         check_cancelled(cancelled)?;
@@ -149,7 +150,16 @@ mod tests {
         let directory =
             std::env::temp_dir().join(format!("fs-safe-sparse-{}-{nonce}", std::process::id()));
         fs::create_dir(&directory).unwrap();
-        for size in [0, 1, 4 * 1024 * 1024 + 17] {
+        for size in [
+            0,
+            1,
+            4095,
+            4096,
+            4097,
+            1024 * 1024,
+            1024 * 1024 + 17,
+            4 * 1024 * 1024 + 17,
+        ] {
             let source_path = directory.join(format!("source-{size}"));
             let target_path = directory.join(format!("target-{size}"));
             let mut source = OpenOptions::new()
@@ -160,8 +170,10 @@ mod tests {
                 .unwrap();
             source.set_len(size).unwrap();
             if size > 1 {
-                source.seek(SeekFrom::Start(1024 * 1024 + 3)).unwrap();
-                source.write_all(b"ordinary sparse payload").unwrap();
+                source.seek(SeekFrom::Start(size / 2)).unwrap();
+                let payload = b"ordinary sparse payload";
+                let length = payload.len().min((size - size / 2) as usize);
+                source.write_all(&payload[..length]).unwrap();
             }
             let mut target = OpenOptions::new()
                 .read(true)

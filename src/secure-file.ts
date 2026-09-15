@@ -6,6 +6,7 @@ import path from "node:path";
 import { readFileHandleBounded } from "./bounded-read.js";
 import { normalizeMaxBytes } from "./byte-budget.js";
 import { assertNoUnsafeDeviceReadPath } from "./device-path.js";
+import { resolveEffectiveUid } from "./effective-uid.js";
 import { FsSafeError } from "./errors.js";
 import { isWindowsDriveLetterPath, isWindowsNetworkPath } from "./local-file-access.js";
 import { isPathInside, isSymlinkOpenError } from "./path.js";
@@ -23,6 +24,7 @@ import {
   type PermissionCheckOptions,
 } from "./permissions.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
+import { inspectSecureWindowsDescriptor } from "./secure-file-windows.js";
 import { scheduleTimeout } from "./timing.js";
 
 export type SecureFileReadOptions = {
@@ -194,13 +196,17 @@ async function assertSecurePermissions(
   options: SecureFileReadOptions,
   stat: Stats,
   realPath: string,
+  identity: Pick<BigIntStats, "dev" | "ino">,
+  fd: number,
 ): Promise<PermissionCheck | undefined> {
   if (options.permissions?.allowInsecure) {
     return undefined;
   }
   const platform = options.inject?.platform ?? process.platform;
   const permissions = platform === "win32"
-    ? await inspectPathPermissions(realPath, options.inject)
+    ? process.platform === "win32"
+      ? inspectSecureWindowsDescriptor({ fd, identity, stat })
+      : await inspectPathPermissions(realPath, options.inject)
     : inspectOpenedPermissions(stat, platform);
   const reason = permissions.error ? `: ${formatPermissionErrorDetail(permissions.error)}` : "";
   const diagnostics = {
@@ -233,10 +239,25 @@ async function assertSecurePermissions(
   if (writableByOthers || (!options.permissions?.allowReadableByOthers && readableByOthers)) {
     throw new FsSafeError("insecure-permissions", `${label(options)} permissions are too open: ${realPath}`);
   }
-  if (platform !== "win32" && typeof process.getuid === "function" && stat.uid != null) {
-    const uid = process.getuid();
+  if (platform !== "win32") {
+    let uid: number | undefined;
+    try {
+      uid = resolveEffectiveUid();
+    } catch (cause) {
+      throw new FsSafeError(
+        "permission-unverified",
+        `${label(options)} owner identity could not be verified for the effective user: ${realPath}`,
+        { cause },
+      );
+    }
+    if (uid === undefined || !Number.isSafeInteger(stat.uid) || stat.uid < 0) {
+      throw new FsSafeError(
+        "permission-unverified",
+        `${label(options)} owner identity could not be verified for the effective user: ${realPath}`,
+      );
+    }
     if (stat.uid !== uid) {
-      throw new FsSafeError("not-owned", `${label(options)} must be owned by the current user (uid=${uid}): ${realPath}`);
+      throw new FsSafeError("not-owned", `${label(options)} must be owned by the effective user (uid=${uid}): ${realPath}`);
     }
   }
   return permissions;
@@ -275,7 +296,13 @@ export async function readSecureFile(
   const opened = await openSecureHandle(options, maxBytes);
   try {
     await assertTrustedDirs(options, opened.realPath);
-    const permissions = await assertSecurePermissions(options, opened.pathStat, opened.realPath);
+    const permissions = await assertSecurePermissions(
+      options,
+      opened.pathStat,
+      opened.realPath,
+      opened.identity,
+      opened.handle.fd,
+    );
     const buffer = await readHandleWithTimeout(
       opened.handle,
       options.io?.timeoutMs,

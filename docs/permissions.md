@@ -42,7 +42,7 @@ POSIX remediation strings shell-quote paths with whitespace or metacharacters
 and protect option-like paths with `--`, so they can be presented as commands
 without letting the inspected pathname add shell syntax.
 
-`inspectPathPermissions()` follows symlink targets for the effective mode but tells you whether the original path was a symlink. On POSIX it reports owner/group/world bits. On Windows it delegates to the ACL helpers below and also reports `ownerSid` plus `ownerTrusted` when ownership can be verified. `ownerTrusted` is true only for a local volume owned by the current user, LocalSystem, or built-in Administrators; remote filesystems fail closed. Secure reads and callers that protect credential-bearing execution require `ownerTrusted === true`.
+`inspectPathPermissions()` follows symlink targets for the effective mode but tells you whether the original path was a symlink. On POSIX it reports owner/group/world bits. On Windows it delegates to the ACL helpers below and also reports `ownerSid` plus `ownerTrusted` when ownership can be verified. `ownerTrusted` is true only for a local volume owned by the current user, LocalSystem, or built-in Administrators; remote filesystems fail closed. This remains a pathname reporting API with the fallbacks described below. `readSecureFile()` does not use those pathname fallbacks on Windows: it requires descriptor-bound native owner/DACL facts for the exact handle it reads.
 
 ## Advanced Windows ACL helpers
 
@@ -178,6 +178,31 @@ await openSqlite(path.join(sqliteDirectory, "sessions.sqlite"));
 On Windows with native support, this creates the directory and applies a
 protected owner + LocalSystem + Administrators full-control DACL directly with
 an atomic security descriptor; no PowerShell or `icacls` process is launched.
+The native operation retains the parent and exact created-directory handles
+through ACL and final pathname validation. If validation fails, it attempts only
+nonrecursive deletion through the created handle, preserving any pathname
+replacement. If cleanup also fails, the error retains the original failure and
+includes the cleanup failure.
+
+Directory association checks compare the complete 64-bit volume serial and
+128-bit `FILE_ID_INFO` identity, including on ReFS. If that identity class is
+unavailable, the operation fails closed without a narrower file-index fallback.
+Validation confirms that the created directory is local, its DACL is protected
+from inheritance, and its final public pathname opens the same local directory.
+
+This is a point-in-time pathname association check. The function closes its
+handles before returning; callers must keep the pathname's ancestry trusted
+during subsequent use, including opening SQLite databases in the example above.
+The immediate parent and final directory must not be reparse points. Earlier
+ancestor reparse points can be followed; this API does not reject every reparse
+point in the full ancestry.
+
+Path components ending in a space or period are rejected before filesystem
+operations to avoid differing Win32 and native pathname interpretations. This
+also rejects explicit `.` and `..` components, including spellings such as
+`.\private` and `parent\..\private`, as a compatibility restriction. Simple
+relative names without these components remain supported.
+
 This API is Windows-only and native-only; it fails closed with
 `FsSafeError("helper-unavailable")` on other platforms, when native mode is off,
 or when the binding is unavailable. POSIX callers should create private

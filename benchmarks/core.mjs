@@ -5,8 +5,9 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
+import { secureFileBenchmarkCase } from "./secure-file-contract.mjs";
 
-export async function registerCore({ api: a, workspace: w, register: add, contract }) {
+export async function registerCore({ api: a, workspace: w, binding, measuredFeatures, register: add, contract, onCleanup }) {
   const data = Buffer.from(' {"ok":true,"label":"synthetic benchmark"}\n');
   const input = path.join(w, "input.json");
   if (process.platform === "win32") {
@@ -107,7 +108,10 @@ export async function registerCore({ api: a, workspace: w, register: add, contra
   add("readLocalFileSafely", () => a.readLocalFileSafely({ filePath: input, maxBytes: 1024 }));
   add("openLocalFileSafely", () => a.openLocalFileSafely({ filePath: input }), { after: (r) => r?.handle.close() });
   add("resolveOpenedFileRealPathForHandle", (h) => a.resolveOpenedFileRealPathForHandle(h, input), { before: () => fsp.open(input, "r"), after: (_, h) => h.close() });
-  add("readSecureFile", () => a.readSecureFile({ filePath: input, io: { maxBytes: 1024 } }));
+  const { name: secureReadName, ...secureReadOptions } = secureFileBenchmarkCase({
+    platform: process.platform, measuredFeatures, binding,
+  }, data);
+  add(secureReadName, () => a.readSecureFile({ filePath: input, io: { maxBytes: 1024 } }), secureReadOptions);
   for (const name of ["readRegularFile", "readRegularFileSync", "statRegularFile", "statRegularFileSync"]) add(name, () => a[name](name.startsWith("stat") ? input : { filePath: input }), { sync: name.endsWith("Sync") });
   for (const name of ["appendRegularFile", "appendRegularFileSync"]) add(name, () => a[name]({ filePath: path.join(w, "append.txt"), content: data }), { sync: name.endsWith("Sync"), before: () => fs.writeFileSync(path.join(w, "append.txt"), data) });
   for (const name of ["openRootFile", "openRootFileSync"]) add(name, () => a[name]({ absolutePath: input, rootPath: w, boundaryLabel: "benchmark" }), { sync: name.endsWith("Sync"), verify: (r) => assert(r.ok), after: (r) => { if (r?.ok) fs.closeSync(r.fd); } });
@@ -118,6 +122,17 @@ export async function registerCore({ api: a, workspace: w, register: add, contra
       sync, before: () => sync ? fs.openSync(input, "r") : fsp.open(input, "r"),
       after: (_, opened) => sync ? fs.closeSync(opened) : opened.close(),
       verify: (count) => { assert.equal(count, buffer.length); assert.deepEqual(buffer, data.subarray(1)); },
+    });
+  }
+  for (const size of [0, 512]) {
+    const payload = Buffer.alloc(size, 120);
+    const digest = createHash("sha256").update(payload).digest("hex");
+    const filePath = path.join(w, `hash-borrowed-${size}`);
+    fs.writeFileSync(filePath, payload);
+    const fd = fs.openSync(filePath, "r");
+    onCleanup(() => fs.closeSync(fd));
+    add(`sha256FileSync/borrowed-fd/${size}`, () => a.sha256FileSync(fd), {
+      sync: true, batch: 100, verify: (result) => assert.deepEqual(result, { bytes: size, digest }),
     });
   }
   for (const size of [128, 64 * 1024, 1024 * 1024, 2 * 1024 * 1024, 16 * 1024 * 1024, 32 * 1024 * 1024]) {

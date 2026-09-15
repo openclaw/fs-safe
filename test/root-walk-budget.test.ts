@@ -1,8 +1,10 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { root } from "../src/root.js";
+import { useSuiteFixture } from "./helpers/suite-fixture.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -324,30 +326,42 @@ it("counts failed metadata reads before reporting a skipped subtree", async () =
   ]);
 });
 
-it("lets event-loop cancellation interrupt a complete budgeted scan before the unused suffix", async () => {
-  const directory = await tempRoot("fs-safe-walk-timer-");
+describe("budgeted walk event-loop cancellation", () => {
+  let directory: string | undefined;
   const count = 256;
-  await Promise.all(Array.from({ length: count }, (_, index) =>
-    fs.writeFile(path.join(directory, String(index).padStart(3, "0")), "value")));
-  const capability = await root(directory);
-  const observed = observeChildMetadata(directory);
-  const controller = new AbortController();
-  const reason = new Error("cancelled from a timer");
-  let timer: ReturnType<typeof setImmediate> | undefined;
-  let yielded = 0;
-  const consume = async () => {
-    for await (const _entry of capability.walk("", {
-      symlinkPolicy: "skip", maxEntries: count, signal: controller.signal,
-    })) {
-      yielded += 1;
-      timer ??= setImmediate(() => controller.abort(reason));
+  const run = useSuiteFixture(async () => {
+    directory = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-walk-timer-"));
+    directory = await fs.realpath(directory);
+    const writes = await Promise.allSettled(Array.from({ length: count }, (_, index) =>
+      fs.writeFile(path.join(directory!, String(index).padStart(3, "0")), "value")));
+    for (const result of writes) {
+      if (result.status === "rejected") throw result.reason;
     }
-  };
-  try {
-    await expect(consume()).rejects.toBe(reason);
-    expect(yielded).toBeGreaterThan(0);
-    expect(observed.length).toBeLessThan(count);
-  } finally {
-    clearImmediate(timer);
-  }
+    return { directory, capability: await root(directory) };
+  }, async () => {
+    if (directory) await fs.rm(directory, { recursive: true, force: true });
+  });
+
+  it("lets event-loop cancellation interrupt a complete budgeted scan before the unused suffix", () => run(async ({ directory, capability }) => {
+    const observed = observeChildMetadata(directory);
+    const controller = new AbortController();
+    const reason = new Error("cancelled from a timer");
+    let timer: ReturnType<typeof setImmediate> | undefined;
+    let yielded = 0;
+    const consume = async () => {
+      for await (const _entry of capability.walk("", {
+        symlinkPolicy: "skip", maxEntries: count, signal: controller.signal,
+      })) {
+        yielded += 1;
+        timer ??= setImmediate(() => controller.abort(reason));
+      }
+    };
+    try {
+      await expect(consume()).rejects.toBe(reason);
+      expect(yielded).toBeGreaterThan(0);
+      expect(observed.length).toBeLessThan(count);
+    } finally {
+      clearImmediate(timer);
+    }
+  }));
 });

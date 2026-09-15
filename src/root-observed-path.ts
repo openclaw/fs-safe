@@ -4,6 +4,7 @@ import { getNativeDirectoryObservationBackend } from "./native-directory-observa
 import { isNotFoundPathError } from "./path.js";
 import { PATH_ALIAS_POLICIES } from "./path-policy.js";
 import { admitPathInsideRoot } from "./root-boundary.js";
+import { assertRootPathObservationReceiptCurrent } from "./root-directory-list.js";
 import {
   RootPathObservationError,
   resolveRootPathWithObservation,
@@ -53,6 +54,13 @@ export async function resolvePinnedObservedPathInRoot(
     }, { kind, rootGuard, directoryObserver });
   } catch (error) {
     if (error instanceof RootPathObservationError) {
+      if (error.parentReceipt) {
+        assertRootPathObservationReceiptCurrent(root, error.parentReceipt);
+        if (error.traversalFailure && !isNotFoundPathError(error.error)) {
+          if (error.error instanceof FsSafeError && error.error.code === "symlink") throw error.error;
+          throw new FsSafeError("path-alias", "path alias escape blocked", { cause: error.error });
+        }
+      }
       if (isNotFoundPathError(error.error)) {
         if (kind === "stat") {
           throw fileNotFoundError(error.error instanceof Error ? error.error : undefined);

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { registerTempWorkspaceCoverage } from "./temp-workspace-fixtures.mjs";
 
 export async function registerLifecycle({ api: a, workspace: w, native, binding, register: add, contract, onCleanup, args }) {
   const cloneBackend = a.probeTreeClone(w);
@@ -111,7 +112,13 @@ export async function registerLifecycle({ api: a, workspace: w, native, binding,
     const name = `tempWorkspace${suffix}`;
     const type = `TempWorkspace${suffix}`;
     const sync = suffix === "Sync";
-    add(name, () => a[name](tempOptions), { sync, after: (r) => r?.cleanup() });
+    registerTempWorkspaceCoverage({
+      api: a,
+      workspace: w,
+      register: add,
+      tempOptions,
+      suffix,
+    });
     add(`withTempWorkspace${suffix}`, () => a[`withTempWorkspace${suffix}`](tempOptions, sync ? () => 1 : async () => 1), { sync, before: () => {} });
     const tmp = await a[name](tempOptions);
     contract(type, tmp);

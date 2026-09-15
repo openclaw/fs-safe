@@ -20,10 +20,12 @@ import {
   type RootBoundaryIdentity,
 } from "./root-boundary.js";
 import {
+  RootPathObservationError,
   captureRootPathObservedDirectory,
   createRootPathTraversalObservation,
   inspectRootPathTraversalEntry,
   type RootPathObservationReceipt,
+  type RootPathParentObservationReceipt,
   type RootPathObservationRequest,
   type RootPathTraversalObservation,
 } from "./root-path-observation.js";
@@ -36,6 +38,7 @@ export {
   type RootPathDirectoryObservationGuard,
   type RootPathObservationKind,
   type RootPathObservationReceipt,
+  type RootPathParentObservationReceipt,
   type RootPathObservationRequest,
   type RootPathTargetObservation,
 } from "./root-path-observation.js";
@@ -488,6 +491,23 @@ async function resolveRootPathLexicalAsync(
         ? undefined
         : observed?.stat ?? fs.lstatSync(state.lexicalCursor);
     } catch (error) {
+      if (observation?.enabled && observation.request.kind === "stat" &&
+        idx === observation.targetIndex && observation.directoryGuard) {
+        const parentReceipt: RootPathParentObservationReceipt = {
+          kind: "stat-parent",
+          rootGuard: observation.request.rootGuard,
+          directoryGuard: observation.directoryGuard,
+          directoryObserver: observation.directoryObserver,
+          targetPath: state.lexicalCursor,
+        };
+        // Stop here: the generic missing-path fallback would re-admit a parent.
+        // Preserve observation-only versus ordinary traversal error precedence.
+        throw new RootPathObservationError(
+          error instanceof RootPathObservationError ? error.error : sanitizeRootPathError(error),
+          parentReceipt,
+          !(error instanceof RootPathObservationError),
+        );
+      }
       if (handleLexicalLstatFailure(context, error, segment)) continue;
       throw error;
     }

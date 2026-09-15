@@ -38,6 +38,11 @@ export type RootPathObservationReceipt = {
   target: RootPathTargetObservation;
 };
 
+/** A failed initial target lookup must not discard its already admitted parent. */
+export type RootPathParentObservationReceipt = Omit<RootPathObservationReceipt, "kind" | "target"> & {
+  kind: "stat-parent";
+};
+
 export type RootPathObservationRequest = {
   kind: RootPathObservationKind;
   rootGuard: DirectoryObservationGuard;
@@ -62,7 +67,11 @@ export type RootPathObservedTraversalEntry =
 // Observation-only failures happen after ordinary traversal has admitted the
 // name. Keep them distinguishable so Root preserves existing error precedence.
 export class RootPathObservationError extends Error {
-  constructor(readonly error: unknown) {
+  constructor(
+    readonly error: unknown,
+    readonly parentReceipt?: RootPathParentObservationReceipt,
+    readonly traversalFailure = false,
+  ) {
     super("root path observation failed", { cause: error });
     this.name = "RootPathObservationError";
   }

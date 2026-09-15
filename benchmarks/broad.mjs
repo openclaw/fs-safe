@@ -26,6 +26,17 @@ export async function registerBroad({ api: a, workspace: w, register: add, onCle
   const names = Array.from({ length: 1000 }, (_, i) => `entry-${i}`);
   for (const name of names) fs.writeFileSync(path.join(wide, name), "x");
   const sorted = [...names].sort();
+  for (const method of ["walkDirectory", "walkDirectorySync"]) {
+    add(`${method}/1000`, () => a[method](wide), {
+      sync: method.endsWith("Sync"), divisor: 100,
+      verify: result => {
+        assert.deepEqual(result.entries.map(entry => entry.relativePath), sorted);
+        assert.equal(result.scannedEntryCount, names.length);
+        assert.equal(result.truncated, false);
+        assert.deepEqual(result.failedDirs, []);
+      },
+    });
+  }
   const root = await a.root(directoryRoot);
   for (const withFileTypes of [false, true]) {
     add(`Root.list/1000/metadata=${withFileTypes}`, () => root.list("wide", { withFileTypes }), {

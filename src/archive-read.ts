@@ -54,21 +54,23 @@ function normalizedRequestedEntry(entryPath: string): string {
   return normalized;
 }
 
-async function readStreamBounded(
-  stream: AsyncIterable<unknown>,
-  maxBytes: number,
+async function readAdmittedTarPayload(
+  stream: AsyncIterable<Buffer>,
+  size: number,
 ): Promise<Buffer> {
-  const chunks: Buffer[] = [];
+  // Complete admission has bounded this exact range. Copy as it arrives so
+  // decoder chunks can be released before the caller receives the owned result.
+  const result = Buffer.allocUnsafe(size);
   let total = 0;
   for await (const chunk of stream) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
-    total += buffer.length;
-    if (total > maxBytes) {
-      throw new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT);
+    if (chunk.length > size - total) {
+      throw new ArchiveFormatError("invalid admitted TAR payload size");
     }
-    chunks.push(buffer);
+    chunk.copy(result, total);
+    total += chunk.length;
   }
-  return Buffer.concat(chunks, total);
+  if (total !== size) throw new ArchiveFormatError("truncated admitted TAR range");
+  return result;
 }
 
 async function readArchiveInput(archivePath: string): Promise<Buffer> {
@@ -188,8 +190,8 @@ async function readTarEntry(archiveBuffer: Buffer, entryPath: string, maxBytes: 
     return Buffer.from(archiveBuffer.subarray(selected.offset, end));
   }
   let result: Buffer | undefined;
-  await replayTar({ archiveBuffer, limits, members: [selected], async consume(_member, payload) {
-    result = await readStreamBounded(payload, maxBytes);
+  await replayTar({ archiveBuffer, limits, members: [selected], async consume(member, payload) {
+    result = await readAdmittedTarPayload(payload, member.size);
   } });
   return result!;
 }
