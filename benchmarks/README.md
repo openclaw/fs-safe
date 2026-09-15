@@ -38,6 +38,12 @@ The broader cases add lexical paths at depths 0/8/32, batches of 100/1,000
 paths, 1,000-entry listings and walks, private/public stores through 1 MiB with
 both durability settings, 1,000-item JSON documents and concurrent updates,
 contended/distinct lock groups, and loading 100 fresh or resumed queue claims.
+`PathScope.resolveAll/count=100` and `count=1000` exercise repeated absolute-root
+normalization across ordinary lexical path batches. Compare these with the
+singleton `PathScope.resolveAll` row when evaluating batch optimizations; relative
+roots still resolve against the working directory for each input, and Windows
+root normalization remains platform-specific. Internal drive-component scan
+timings describe validation cost rather than complete Root I/O latency.
 Windows Root-path rows separately measure exact-prefix admission, whose repair
 adds no filesystem observations, and alternate-casing identity admission.
 Resumed fixtures are first claimed outside timing to expose retry durability costs.
