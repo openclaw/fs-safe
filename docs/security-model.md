@@ -107,7 +107,7 @@ When `hardlinks: "reject"` is set, reads stat the target and refuse if `nlink > 
 
 ### TOCTOU between resolve and use
 
-`resolve()`, `exists()`, `stat()`, and `list()` are explicitly advisory — they answer a question and return. To act on a path with operation-local identity checks, use `read()`, `open()`, `write()`, `create()`, `copyIn()`, `move()`, or `remove()`. The containment table below states which opens are kernel-atomic and which remain best-effort.
+`resolve()`, `exists()`, `stat()`, and `list()` are explicitly advisory — they answer a question and return. `stat()` checks the exact selected target and parent while collecting metadata, and `list()` checks the exact selected directory around its complete batch, so detectable descendant redirection rejects before results are returned. Those checks do not preserve identity after the call. To act on a path with operation-local identity checks, use `read()`, `open()`, `write()`, `create()`, `copyIn()`, `move()`, or `remove()`. The containment table below states which opens are kernel-atomic and which remain best-effort.
 
 A `root()` handle also remembers the canonical root directory identity. Calls fail with `path-mismatch` if that canonical pathname is replaced, including advisory inspection and walking calls, rather than following a replacement root into another tree.
 

@@ -1,19 +1,29 @@
-import type { Dir, Stats } from "node:fs";
+import type { BigIntStats, Dir, Stats } from "node:fs";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
-import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard } from "./directory-guard.js";
+import {
+  assertAsyncDirectoryGuard,
+  createAsyncDirectoryGuard,
+  type AsyncDirectoryGuard,
+} from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { isNotFoundPathError, isPathInside } from "./path.js";
 import { assertRootIdentityCurrent, type RootContext } from "./root-context.js";
 import { rootPathChangedError } from "./root-errors.js";
 import { createSuppressedError } from "./suppressed-error.js";
+import { getFsSafeTestHooks } from "./test-hooks.js";
 import type { DirEntry, PathStat } from "./types.js";
 
 const METADATA_BATCH_SIZE = 32;
 
-export function pathStatFromStats(stat: Stats): PathStat {
+export function pathStatFromStats(stat: Stats | BigIntStats): PathStat {
+  const mtimeMs = typeof stat.mtimeMs === "bigint"
+    ? "mtimeNs" in stat && typeof stat.mtimeNs === "bigint"
+      ? Number(stat.mtimeNs) / 1_000_000
+      : stat.mtime.getTime()
+    : stat.mtimeMs;
   return {
     dev: Number(stat.dev),
     gid: Number(stat.gid),
@@ -21,12 +31,54 @@ export function pathStatFromStats(stat: Stats): PathStat {
     isDirectory: stat.isDirectory(),
     isFile: stat.isFile(),
     isSymbolicLink: stat.isSymbolicLink(),
-    mode: stat.mode,
-    mtimeMs: stat.mtimeMs,
-    nlink: stat.nlink,
-    size: stat.size,
-    uid: stat.uid,
+    mode: Number(stat.mode),
+    mtimeMs,
+    nlink: Number(stat.nlink),
+    size: Number(stat.size),
+    uid: Number(stat.uid),
   };
+}
+
+export type RootDirectoryObservationGuard = AsyncDirectoryGuard<BigIntStats>;
+
+export async function createRootDirectoryObservationGuard(
+  root: RootContext,
+  directory: string,
+): Promise<RootDirectoryObservationGuard> {
+  const guard = await createAsyncDirectoryGuard(directory, { bigint: true });
+  if (!isPathInside(root.rootReal, guard.realPath)) {
+    throw new FsSafeError("outside-workspace", "directory is outside workspace root");
+  }
+  return guard;
+}
+
+function directoryChangedError(error: unknown): FsSafeError {
+  if (error instanceof FsSafeError && error.code === "path-mismatch") return error;
+  return new FsSafeError("path-mismatch", "directory changed during operation", {
+    cause: error instanceof Error ? error : undefined,
+  });
+}
+
+export async function assertRootDirectoryObservationGuard(
+  root: RootContext,
+  guard: RootDirectoryObservationGuard,
+): Promise<void> {
+  const guardPinsRoot = guard.dir === root.rootReal &&
+    guard.stat.dev === root.rootIdentity.dev && guard.stat.ino === root.rootIdentity.ino;
+  if (guardPinsRoot) {
+    try {
+      await assertAsyncDirectoryGuard(guard);
+    } catch (error) {
+      throw rootPathChangedError(error instanceof Error ? error : undefined);
+    }
+    return;
+  }
+  await assertRootIdentityCurrent(root);
+  try {
+    await assertAsyncDirectoryGuard(guard);
+  } catch (error) {
+    throw directoryChangedError(error);
+  }
 }
 
 function normalizeDirectoryError(error: unknown): unknown {
@@ -38,6 +90,13 @@ function normalizeDirectoryError(error: unknown): unknown {
   return error;
 }
 
+function normalizeInitialDirectoryError(error: unknown): unknown {
+  if (error instanceof FsSafeError && error.code === "not-file") {
+    return new FsSafeError("not-found", "directory not found", { cause: error });
+  }
+  return normalizeDirectoryError(error);
+}
+
 export function listDirectoryPath(root: RootContext, directory: string, withFileTypes: true): Promise<DirEntry[]>;
 export function listDirectoryPath(root: RootContext, directory: string, withFileTypes: boolean): Promise<string[] | DirEntry[]>;
 export async function listDirectoryPath(
@@ -45,19 +104,48 @@ export async function listDirectoryPath(
   directory: string,
   withFileTypes: boolean,
 ): Promise<string[] | DirEntry[]> {
+  let guard: RootDirectoryObservationGuard;
   try {
-    const names = (await fs.readdir(directory)).sort();
-    const entries = withFileTypes
+    guard = await createRootDirectoryObservationGuard(root, directory);
+  } catch (error) {
+    throw normalizeInitialDirectoryError(error);
+  }
+  return await listGuardedDirectoryPath(root, guard, withFileTypes);
+}
+
+function listGuardedDirectoryPath(
+  root: RootContext,
+  guard: RootDirectoryObservationGuard,
+  withFileTypes: true,
+): Promise<DirEntry[]>;
+function listGuardedDirectoryPath(
+  root: RootContext,
+  guard: RootDirectoryObservationGuard,
+  withFileTypes: boolean,
+): Promise<string[] | DirEntry[]>;
+async function listGuardedDirectoryPath(
+  root: RootContext,
+  guard: RootDirectoryObservationGuard,
+  withFileTypes: boolean,
+): Promise<string[] | DirEntry[]> {
+  let entries: string[] | DirEntry[];
+  try {
+    await getFsSafeTestHooks()?.beforeRootListObservation?.(guard.realPath, withFileTypes);
+    const names = (await fs.readdir(guard.realPath)).sort();
+    entries = withFileTypes
       ? names.map(name => ({
         name,
-        ...pathStatFromStats(fsSync.lstatSync(path.join(directory, name))),
+        ...pathStatFromStats(fsSync.lstatSync(path.join(guard.realPath, name))),
       }))
       : names;
-    await assertRootIdentityCurrent(root);
-    return entries;
   } catch (error) {
+    // Preserve ordinary observation errors only while the admitted directory is
+    // still current. A post-admission replacement is an identity failure.
+    await assertRootDirectoryObservationGuard(root, guard);
     throw normalizeDirectoryError(error);
   }
+  await assertRootDirectoryObservationGuard(root, guard);
+  return entries;
 }
 
 export type RootDirectoryListing = {
@@ -79,27 +167,12 @@ export async function openRootDirectoryListing(
   directory: string,
   options: RootDirectoryListingOptions,
 ): Promise<RootDirectoryListing> {
-  const guard = await createAsyncDirectoryGuard(directory, { bigint: true }).catch((error) => {
+  const guard = await createRootDirectoryObservationGuard(root, directory).catch((error) => {
     throw normalizeDirectoryError(error);
   });
-  if (!isPathInside(root.rootReal, guard.realPath)) {
-    throw new FsSafeError("outside-workspace", "directory is outside workspace root");
-  }
-  const guardPinsRoot = guard.dir === root.rootReal &&
-    guard.stat.dev === root.rootIdentity.dev && guard.stat.ino === root.rootIdentity.ino;
   const assertCurrent = async () => {
     options.signal?.throwIfAborted();
-    if (guardPinsRoot) {
-      // One exact receipt proves both identities without dropping the canonical-path check.
-      try {
-        await assertAsyncDirectoryGuard(guard);
-      } catch (error) {
-        throw rootPathChangedError(error instanceof Error ? error : undefined);
-      }
-    } else {
-      await assertRootIdentityCurrent(root);
-      await assertAsyncDirectoryGuard(guard);
-    }
+    await assertRootDirectoryObservationGuard(root, guard);
     options.signal?.throwIfAborted();
   };
   let handle: Dir | undefined;
@@ -122,7 +195,7 @@ export async function openRootDirectoryListing(
       // A one-entry buffer keeps the truncation lookahead independent of width.
       handle = await fs.opendir(guard.realPath, { bufferSize: 1 });
     } else if (options.snapshot) {
-      snapshot = await listDirectoryPath(root, guard.realPath, true);
+      snapshot = await listGuardedDirectoryPath(root, guard, true);
     } else if (options.maxNames !== undefined) {
       names = [];
       handle = await fs.opendir(guard.realPath, { bufferSize: 1 });

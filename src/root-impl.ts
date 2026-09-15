@@ -47,7 +47,11 @@ import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { realpathSync } from "./realpath.js";
 import { isNonRegularWriteOpenError, resolveNonblockingWriteFlag } from "./write-open-flags.js";
 import { resolveRootPath } from "./root-path.js";
-import { openRootDirectoryListing, listDirectoryPath, pathStatFromStats } from "./root-directory-list.js";
+import {
+  openRootDirectoryListing,
+  listDirectoryPath,
+} from "./root-directory-list.js";
+import { statResolvedPathInRoot } from "./root-path-stat.js";
 import { entriesInRoot, type RootEntriesOptions } from "./root-entries.js";
 import {
   assertRootIdentityCurrent,
@@ -346,6 +350,7 @@ export interface Root {
 }
 
 export class RootHandle implements Root {
+  private readonly rootGuard: RootContext["rootGuard"];
   private readonly rootIdentity: RootContext["rootIdentity"];
   readonly rootDir: string;
   readonly rootReal: string;
@@ -353,6 +358,7 @@ export class RootHandle implements Root {
   readonly defaults: RootDefaults;
 
   constructor(context: RootContext, defaults: RootDefaults = {}) {
+    this.rootGuard = context.rootGuard;
     this.rootIdentity = context.rootIdentity;
     this.rootDir = context.rootDir;
     this.rootReal = context.rootReal;
@@ -363,6 +369,7 @@ export class RootHandle implements Root {
   private get context(): RootContext {
     return {
       rootDir: this.rootDir,
+      rootGuard: this.rootGuard,
       rootIdentity: this.rootIdentity,
       rootReal: this.rootReal,
       rootWithSep: this.rootWithSep,
@@ -660,6 +667,7 @@ export function rootFromDirectoryGuard(
   normalizeMaxBytes(defaults.maxBytes);
   return new RootHandle({
     rootDir: path.resolve(guard.dir),
+    rootGuard: { dir: guard.realPath, realPath: guard.realPath, stat: guard.stat },
     rootIdentity: { dev: guard.stat.dev, ino: guard.stat.ino },
     rootReal: guard.realPath,
     rootWithSep: ensureTrailingSep(guard.realPath),
@@ -1407,16 +1415,7 @@ async function mkdirPathFallback(resolved: { rootReal: string; resolved: string 
 
 async function statPathFallback(root: RootContext, relativePath: string): Promise<PathStat> {
   const resolved = await resolvePinnedPathInRoot(root, { relativePath, allowRoot: true });
-  try {
-    const stat = pathStatFromStats(fsSync.lstatSync(resolved.resolved));
-    await assertRootIdentityCurrent(root);
-    return stat;
-  } catch (error) {
-    if (isNotFoundPathError(error)) {
-      throw fileNotFoundError(error instanceof Error ? error : undefined);
-    }
-    throw error;
-  }
+  return await statResolvedPathInRoot(root, resolved.resolved);
 }
 
 async function listPathFallback(

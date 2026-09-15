@@ -70,6 +70,12 @@ isolating admission and planning from destination-file writes.
 The native descriptor cases isolate host-fd admission and directory open/return;
 the latter remains timed separately from descriptor close.
 
+Root observation changes should compare the exact baseline and candidate builds
+with interleaved runs of `Root.stat`, `Root.stat/nested`, `Root.stat/depth=8`, and
+the one-, 100-, and 1,000-entry `Root.list` name and metadata rows. Use the same
+runtime, filesystem, and native mode, and investigate a median regression above
+10% or a p95 regression above 20% once the absolute delta is at least 5 microseconds.
+
 For a quick executable coverage check:
 
 ```sh

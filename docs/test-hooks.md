@@ -35,6 +35,9 @@ type FsSafeTestHooks = {
   beforeFileStorePruneDescend?: (dirPath: string) => Promise<void> | void;
   beforeFileStoreSyncPrivateWrite?: (filePath: string) => void;
   beforeRootFallbackMutation?: (operation: "mkdir" | "move" | "remove", targetPath: string) => Promise<void> | void;
+  beforeRootStatObservation?: (targetPath: string) => Promise<void> | void;
+  beforeRootStatInitialObservation?: (targetPath: string) => Promise<void> | void;
+  beforeRootListObservation?: (directoryPath: string, withFileTypes: boolean) => Promise<void> | void;
   afterPinnedWriteFallbackRename?: (targetPath: string) => Promise<void> | void;
   beforeSiblingTempWrite?: (tempPath: string) => Promise<void> | void;
   beforeSidecarLockSnapshotOpen?: (lockPath: string) => Promise<void> | void;
@@ -53,6 +56,9 @@ type FsSafeTestHooks = {
 | `beforeFileStorePruneDescend` | File-store pruning is about to descend into a directory. |
 | `beforeFileStoreSyncPrivateWrite` | A synchronous private-store write is about to mutate its target. |
 | `beforeRootFallbackMutation` | A guarded JS root fallback is about to mkdir, move, or remove. |
+| `beforeRootStatObservation` | `Root.stat()` admitted its exact target and parent and is about to collect returned metadata. |
+| `beforeRootStatInitialObservation` | `Root.stat()` admitted its exact parent and is about to inspect the target for the first time. |
+| `beforeRootListObservation` | `Root.list()` admitted its exact selected directory and is about to collect names and optional metadata. |
 | `afterPinnedWriteFallbackRename` | A fallback rename committed and post-commit identity checks have not run yet. |
 | `beforeSiblingTempWrite` | A sibling temp file exists and its writer is about to run. |
 | `beforeSidecarLockSnapshotOpen` | A sidecar lock was inspected and is about to be opened for a bounded snapshot read. |

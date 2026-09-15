@@ -1,7 +1,7 @@
-import fs from "node:fs";
+import fs, { type BigIntStats } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { inspectDirectoryIdentity } from "./directory-guard.js";
+import { inspectDirectoryIdentity, type AsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import {
@@ -19,6 +19,7 @@ import { inspectFileIdentity } from "./strict-file-identity.js";
 
 export type RootContext = {
   rootDir: string;
+  rootGuard?: AsyncDirectoryGuard<BigIntStats>;
   rootIdentity: { dev: number; ino: number } | { dev: bigint; ino: bigint };
   rootReal: string;
   rootWithSep: string;
@@ -63,10 +64,11 @@ export async function resolveRootContext(rootDir: string): Promise<RootContext> 
   assertNoNulPathInput(rootDir, "root dir contains a NUL byte");
   const lexicalRoot = path.resolve(rootDir);
   let rootReal: string;
+  let rootStat: BigIntStats;
   let rootIdentity: { dev: bigint; ino: bigint };
   try {
     rootReal = realpathSync.native(rootDir);
-    const rootStat = await inspectFileIdentity(() => {
+    rootStat = await inspectFileIdentity(() => {
       const stat = fs.statSync(rootReal, { bigint: true });
       if (!stat.isDirectory()) throw new FsSafeError("invalid-path", "root dir is not a directory");
       return stat;
@@ -83,6 +85,7 @@ export async function resolveRootContext(rootDir: string): Promise<RootContext> 
   }
   return {
     rootDir: lexicalRoot,
+    rootGuard: { dir: rootReal, realPath: rootReal, stat: rootStat },
     rootIdentity,
     rootReal,
     rootWithSep: ensureTrailingSep(rootReal),
