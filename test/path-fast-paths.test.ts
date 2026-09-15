@@ -12,7 +12,7 @@ const posixPath = fc.array(fc.constantFrom("a", "ab", ".", "..", "", "é", "two 
 describe("path utility fast paths", () => {
   it.skipIf(process.platform !== "win32")("matches Windows relative semantics after drive and namespace normalization", () => {
     const windowsPath = fc.tuple(
-      fc.constantFrom("C:\\", "D:\\", "C:\\safe", "C:\\safe ", "\\\\?\\C:\\safe", "\\\\server\\share\\safe"),
+      fc.constantFrom("", ".", "C:", "C:\\", "D:\\", "C:\\safe", "C:\\safe ", "\\\\?\\C:\\safe", "\\\\?\\UNC\\server\\share", "\\\\server\\share\\safe"),
       fc.array(fc.constantFrom("a", "A", "ab", ".", "..", "", "é", "İ", "two words", "..hidden", "C:", "D:relative"), { maxLength: 8 }),
       fc.constantFrom("\\", "/"),
     ).map(([base, parts, separator]) => `${base}${separator}${parts.join(separator)}`);
