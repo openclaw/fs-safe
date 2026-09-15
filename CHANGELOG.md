@@ -2,7 +2,6 @@
 
 ## Unreleased
 
-- Tolerate a concurrently created guest parent directory while preserving no-follow directory admission. Competing files and symlinks still fail before payload writes, and disabled parent creation remains unchanged.
 - Bind Windows `readSecureFile()` owner and DACL verification to the already-open descriptor and compare its native 32-bit volume serial and 64-bit file-index projection with Node's bigint receipt before reading. Secure reads now fail closed when the descriptor capability is missing, stale, remote, incomplete, or unsupported instead of authorizing bytes with pathname-based ACL facts.
 - Reuse resolved Windows drive paths during containment comparison instead of normalizing them again, preserving namespace and relative-path comparison behavior.
 - Reduce retained decoded buffers when reading gzip TAR entries in JavaScript by filling one owned result buffer from the fully admitted payload size, preserving complete archive validation and independent returned bytes.
@@ -20,6 +19,7 @@
 - Destroy and join JavaScript ZIP decoder sources before rejecting bounded member reads, preventing abandoned decoders and retained archive buffers after byte-limit failures while preserving archive error classifications on Node 22 and newer.
 - Fix automatic Linux file copies truncating when `copy_file_range` reports zero after partial progress; confirm EOF at the current offset before completing or resuming the guarded byte-copy fallback.
 - Speed up repeated lock-manager construction without rescanning held locks, and initialize legacy reference counts at acquisition and release so same-owner nested handles retain the outer lock.
+- Tolerate a concurrently created guest parent directory while preserving no-follow directory admission. Competing files and symlinks still fail before payload writes, and disabled parent creation remains unchanged.
 
 ## 0.11.0 - 2026-09-14
 
