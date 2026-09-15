@@ -147,3 +147,81 @@ describe.runIf(process.platform === "win32" && !process.versions.bun)(
     });
   },
 );
+
+describe.runIf(process.platform !== "win32" && !process.versions.bun)(
+  "POSIX shared parent-walk eligibility",
+  () => {
+    it.each([
+      ["backslash spelling", String.raw`one\value`],
+      ["traversal", "one/../value"],
+      ["empty segment", "one//value"],
+      ["non-ordinary segment", "one/value with space"],
+    ])("deopts %s", async (_label, originalPath) => {
+      const directory = await tempRoot("fs-safe-shared-posix-route-deopt-");
+      const context = await resolveRootContext(directory);
+      const resolvedTargetPath = path.resolve(directory, originalPath);
+      const prepared = await preparePinnedWriteMutationAdmission({
+        ...context,
+        originalPath,
+        resolvedTargetPath,
+        defaultRelativeParentPath: path.relative(directory, path.dirname(resolvedTargetPath)),
+        policy: snapshotPinnedMutationPolicy(undefined, "reject")!,
+        resolveCurrent: async () => ({ resolved: resolvedTargetPath }),
+      });
+
+      expect(prepared.mutationAdmission?.beginSharedParentWalk?.()).toBeUndefined();
+    });
+
+    it("accepts an ordinary exact route with an observed in-root deny entry", async () => {
+      const directory = await tempRoot("fs-safe-shared-posix-route-eligible-");
+      const context = await resolveRootContext(directory);
+      const target = path.join(directory, "one", "value");
+      const prepared = await preparePinnedWriteMutationAdmission({
+        ...context,
+        originalPath: "one/value",
+        resolvedTargetPath: target,
+        defaultRelativeParentPath: "one",
+        policy: snapshotPinnedMutationPolicy(
+          { prefixes: [path.join(directory, "denied")] },
+          "reject",
+        )!,
+        resolveCurrent: async () => ({ resolved: target }),
+      });
+
+      const session = prepared.mutationAdmission?.beginSharedParentWalk?.();
+      expect(session).toBeDefined();
+      session?.dispose();
+    });
+
+    it("deopts zero identity and outside-root deny observations", async () => {
+      const directory = await tempRoot("fs-safe-shared-posix-evidence-deopt-");
+      const context = await resolveRootContext(directory);
+      const target = path.join(directory, "one", "value");
+      const outside = path.join(path.dirname(directory), "outside", "denied");
+
+      for (const candidate of [
+        {
+          rootIdentity: { dev: 0n, ino: context.rootIdentity.ino as bigint },
+          policy: snapshotPinnedMutationPolicy(undefined, "reject")!,
+        },
+        {
+          rootIdentity: context.rootIdentity,
+          policy: snapshotPinnedMutationPolicy(
+            { prefixes: [outside] },
+            "reject",
+          )!,
+        },
+      ]) {
+        const prepared = await preparePinnedWriteMutationAdmission({
+          ...context,
+          ...candidate,
+          originalPath: "one/value",
+          resolvedTargetPath: target,
+          defaultRelativeParentPath: "one",
+          resolveCurrent: async () => ({ resolved: target }),
+        });
+        expect(prepared.mutationAdmission?.beginSharedParentWalk?.()).toBeUndefined();
+      }
+    });
+  },
+);

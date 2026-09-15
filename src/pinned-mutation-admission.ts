@@ -11,7 +11,7 @@ import type {
   PinnedWriteMutationAdmission,
 } from "./pinned-write.js";
 import {
-  ordinaryWindowsAbsoluteInsideRoot,
+  ordinarySharedAbsoluteInsideRoot,
   simpleSharedRoute,
 } from "./pinned-mutation-shared-route.js";
 import type { ExactRootIdentity } from "./pinned-mutation-shared-route.js";
@@ -118,7 +118,7 @@ function captureEpoch(
       if (!entry || !path.isAbsolute(entry) || entry.includes("\0")) throw new Error("invalid policy observation");
       const resolved = path.resolve(entry);
       if (session.kind === "shared" && (!session.rootIdentity || entry !== resolved ||
-        !ordinaryWindowsAbsoluteInsideRoot(rootReal, resolved, session.rootIdentity))) {
+        !ordinarySharedAbsoluteInsideRoot(rootReal, resolved, session.rootIdentity))) {
         throw new Error("ineligible shared policy observation");
       }
       const observation = observe(resolved);
@@ -134,9 +134,7 @@ function captureEpoch(
     if (session.kind === "shared" && (!session.rootIdentity ||
       root.entry.dev !== session.rootIdentity.dev || root.entry.ino !== session.rootIdentity.ino ||
       root.identity.dev !== session.rootIdentity.dev || root.identity.ino !== session.rootIdentity.ino ||
-      !nonzeroObservationIdentity(root) || !nonzeroObservationIdentity(route) ||
-      missingMutationSegments(route) === 0 ||
-      nextMissingMutationPath(route) === undefined)) return undefined;
+      !nonzeroObservationIdentity(root) || !nonzeroObservationIdentity(route))) return undefined;
     return Object.freeze({
       mode: getFsSafeNativeConfig().mode, target: route, paths, prefixes,
       observations: Object.freeze([...observations.values()]), session,
@@ -170,6 +168,12 @@ function reusableRequest(request: AdmissionRequest, epoch: Epoch): boolean {
 function reusableSharedCreateRequest(request: AdmissionRequest, epoch: Epoch): boolean {
   return request.phase === "parent-create" && request.targetPath === epoch.target.path &&
     request.mutationPath === nextMissingMutationPath(epoch.target);
+}
+
+function reusableSharedRequest(request: AdmissionRequest, epoch: Epoch): boolean {
+  return request.phase === "parent"
+    ? request.targetPath === epoch.target.path && request.mutationPath === request.targetPath
+    : reusableSharedCreateRequest(request, epoch);
 }
 
 function nonzeroDirectoryObservation(
@@ -326,13 +330,21 @@ export async function preparePinnedWriteMutationAdmission(params: {
         // did not yield owned, complete post-create evidence (including
         // EEXIST). The rest of this walk stays on ordered admission.
         if (sharedPending) disable();
+        const reusable = sharedEpoch;
+        if (!disposed && !disabled && reusable?.session === session &&
+          reusableSharedRequest(request, reusable) && epochCurrent(reusable)) {
+          assertCachedNotDenied(request.targetPath, reusable);
+          assertCachedNotDenied(request.mutationPath, reusable);
+          return undefined;
+        }
+        if (reusable) disable();
         const captureRequested = !disposed && !disabled &&
-          request.phase === "parent-create" && request.targetPath === session.route;
+          request.targetPath === session.route;
         const candidate = captureRequested
           ? captureEpoch(params.rootReal, session.route, policy, session)
           : undefined;
         if (captureRequested &&
-          (!candidate || !reusableSharedCreateRequest(request, candidate))) disable();
+          (!candidate || !reusableSharedRequest(request, candidate))) disable();
         const current = await authorizeFully(request);
         if (disposed || disabled || !candidate) {
           sharedEpoch = undefined;
@@ -346,6 +358,7 @@ export async function preparePinnedWriteMutationAdmission(params: {
         // Observations bracket the ordered admission. Never attach a receipt
         // to evidence collected only after the policy decisions it replaces.
         sharedEpoch = candidate;
+        if (request.phase === "parent") return undefined;
         sharedPending = Object.freeze({
           epoch: candidate,
           childPath: request.mutationPath,

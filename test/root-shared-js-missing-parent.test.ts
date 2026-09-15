@@ -55,8 +55,8 @@ describeNode("shared JavaScript missing-parent admission", () => {
     expect(observed[1]).toBeGreaterThan(observed[0]!);
   });
 
-  it.runIf(process.platform === "win32").each(["off", "require"] as const)(
-    "keeps eligible Windows missing-parent admission bounded in %s mode",
+  it.each(["off", "require"] as const)(
+    "keeps eligible ordinary missing-parent admission bounded in %s mode",
     async (mode) => {
       configureFsSafeNative({ mode });
       const directory = await tempRoot(`fs-safe-shared-policy-receipt-${mode}-`);
@@ -131,7 +131,71 @@ describeNode("shared JavaScript missing-parent admission", () => {
     },
   );
 
-  it.runIf(process.platform === "win32").each([
+  it.each(["off", "require"] as const)(
+    "keeps mixed existing/missing parent resolution bounded in %s mode",
+    async (mode) => {
+      configureFsSafeNative({ mode });
+      const directory = await tempRoot(`fs-safe-shared-policy-mixed-${mode}-`);
+      const safe = await root(directory);
+      const resolve = vi.spyOn(context, "resolvePathInRoot");
+      const resolutions: number[] = [];
+
+      for (const depth of [8, 32]) {
+        const parts = Array.from({ length: depth }, (_, index) => `d${depth}-${index}`);
+        await fs.mkdir(path.join(directory, ...parts.slice(0, depth / 2)), { recursive: true });
+        const relative = path.join(...parts, "value");
+        resolve.mockClear();
+        const opened = await safe.openWritable(relative, {
+          writeMode: "update",
+          denyMutations: { prefixes: [path.join(directory, "denied")] },
+          mutationSymlinks: "reject",
+        });
+        await opened.handle.close();
+        resolutions.push(resolve.mock.calls.length);
+        expect((await fs.lstat(path.join(directory, relative))).isFile()).toBe(true);
+      }
+
+      expect(resolutions[0]).toBeGreaterThan(0);
+      expect(resolutions[1]).toBe(resolutions[0]);
+    },
+  );
+
+  it.each(["off", "require"] as const)(
+    "uses one guarded mkdir below an exact existing parent at every depth in %s mode",
+    async (mode) => {
+      configureFsSafeNative({ mode });
+      const directory = await tempRoot(`fs-safe-shared-policy-mkdir-parent-${mode}-`);
+      const safe = await root(directory);
+      const resolve = vi.spyOn(context, "resolvePathInRoot");
+      const mkdir = vi.spyOn(fs, "mkdir");
+      const resolutions: number[] = [];
+      const mkdirs: number[] = [];
+
+      for (const depth of [1, 8, 32]) {
+        const parent = path.join(
+          directory,
+          `existing-${depth}`,
+          ...Array.from({ length: depth - 1 }, (_, index) => `d${index}`),
+        );
+        await fs.mkdir(parent, { recursive: true });
+        const target = path.join(parent, "value");
+        resolve.mockClear();
+        mkdir.mockClear();
+        await safe.mkdir(path.relative(directory, target), {
+          denyMutations: { prefixes: [path.join(directory, "denied")] },
+          mutationSymlinks: "reject",
+        });
+        resolutions.push(resolve.mock.calls.length);
+        mkdirs.push(mkdir.mock.calls.length);
+        expect((await fs.lstat(target)).isDirectory()).toBe(true);
+      }
+
+      expect(new Set(resolutions).size).toBe(1);
+      expect(mkdirs).toEqual([1, 1, 1]);
+    },
+  );
+
+  it.each([
     "openWritable",
     "append",
     "mkdir",
@@ -185,7 +249,7 @@ describeNode("shared JavaScript missing-parent admission", () => {
     }
   });
 
-  it.runIf(process.platform === "win32")(
+  it(
     "deopts an EEXIST parent collision to full admission",
     async () => {
       configureFsSafeNative({ mode: "off" });
@@ -222,7 +286,123 @@ describeNode("shared JavaScript missing-parent admission", () => {
     },
   );
 
-  it.runIf(process.platform === "win32")(
+  it("reclassifies an exact-parent file collision without a second mutation", async () => {
+    configureFsSafeNative({ mode: "off" });
+    const directory = await tempRoot("fs-safe-shared-policy-exact-parent-collision-");
+    const parent = path.join(directory, "existing");
+    const target = path.join(parent, "value");
+    await fs.mkdir(parent);
+    const safe = await root(directory);
+    const realMkdir = fs.mkdir.bind(fs);
+    let raced = false;
+    vi.spyOn(fs, "mkdir").mockImplementation((async (...args: Parameters<typeof fs.mkdir>) => {
+      if (!raced && String(args[0]) === target) {
+        raced = true;
+        await fs.writeFile(target, "collision");
+        throw Object.assign(new Error("concurrent file"), { code: "EEXIST" });
+      }
+      return await realMkdir(...args);
+    }) as typeof fs.mkdir);
+
+    await expect(safe.mkdir(path.relative(directory, target), {
+      denyMutations: { prefixes: [path.join(directory, "denied")] },
+      mutationSymlinks: "reject",
+    })).rejects.toMatchObject({ code: "not-file" });
+
+    expect(raced).toBe(true);
+    expect(await fs.readFile(target, "utf8")).toBe("collision");
+  });
+
+  it("keeps a live mkdir authority callback ahead of exact-parent mutation", async () => {
+    configureFsSafeNative({ mode: "off" });
+    const directory = await tempRoot("fs-safe-shared-policy-exact-parent-authority-");
+    const parent = path.join(directory, "existing");
+    const target = path.join(parent, "value");
+    await fs.mkdir(parent);
+    const safe = await root(directory);
+    const revoked = new Error("authority revoked");
+    let calls = 0;
+
+    await expect(safe.mkdir(path.relative(directory, target), {
+      denyMutations: { prefixes: [path.join(directory, "denied")] },
+      mutationSymlinks: "reject",
+      assertBeforeMutation() {
+        calls += 1;
+        throw revoked;
+      },
+    })).rejects.toBe(revoked);
+
+    expect(calls).toBe(1);
+    await expect(fs.lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.each(["symlink", "file", "observation"] as const)(
+    "matches the forced walk after an exact-parent post-create %s failure",
+    async (failure) => {
+      const outcomes: string[] = [];
+      for (const forced of [false, true]) {
+        configureFsSafeNative({ mode: "off" });
+        const directory = await tempRoot(`fs-safe-mkdir-post-${failure}-${forced}-`);
+        const parent = path.join(directory, "existing");
+        const target = path.join(parent, "value");
+        const replacement = path.join(directory, "replacement");
+        await fs.mkdir(parent);
+        if (failure === "symlink") await fs.mkdir(replacement);
+        const safe = await root(directory);
+        const realMkdir = fs.mkdir.bind(fs);
+        const realLstat = fsSync.lstatSync.bind(fsSync);
+        let targetAttempts = 0;
+        let targetMutations = 0;
+        let failObservation = false;
+        const mkdir = vi.spyOn(fs, "mkdir").mockImplementation((async (...args: Parameters<typeof fs.mkdir>) => {
+          const targetsValue = String(args[0]) === target;
+          if (targetsValue) targetAttempts += 1;
+          const result = await realMkdir(...args);
+          if (!targetsValue) return result;
+          targetMutations += 1;
+          if (failure !== "observation") {
+            await fs.rm(target, { recursive: true });
+            if (failure === "symlink") {
+              await fs.symlink(replacement, target, process.platform === "win32" ? "junction" : "dir");
+            } else await fs.writeFile(target, "replacement");
+          } else failObservation = true;
+          return result;
+        }) as typeof fs.mkdir);
+        const lstat = failure === "observation"
+          ? vi.spyOn(fsSync, "lstatSync").mockImplementation(((...args: Parameters<typeof fsSync.lstatSync>) => {
+            if (failObservation && String(args[0]) === target) {
+              failObservation = false;
+              throw Object.assign(new Error("transient observation"), { code: "EIO" });
+            }
+            return realLstat(...args);
+          }) as typeof fsSync.lstatSync)
+          : undefined;
+        let outcome = "ok";
+        try {
+          await safe.mkdir(path.relative(directory, target), {
+            denyMutations: { prefixes: [path.join(directory, "denied")] },
+            mutationSymlinks: "reject",
+            ...(forced ? { assertBeforeMutation() {} } : {}),
+          });
+        } catch (error) {
+          outcome = (error as { code?: string }).code ?? "error";
+        } finally {
+          mkdir.mockRestore();
+          lstat?.mockRestore();
+        }
+        expect(targetAttempts).toBe(1);
+        expect(targetMutations).toBe(1);
+        if (failure === "symlink") expect((await fs.lstat(target)).isSymbolicLink()).toBe(true);
+        else if (failure === "file") expect(await fs.readFile(target, "utf8")).toBe("replacement");
+        else expect((await fs.lstat(target)).isDirectory()).toBe(true);
+        outcomes.push(outcome);
+      }
+      expect(outcomes).toEqual(failure === "symlink"
+        ? ["symlink", "symlink"] : failure === "file" ? ["not-file", "not-file"] : ["ok", "ok"]);
+    },
+  );
+
+  it(
     "rechecks a deny-policy spelling that appears during the receipt walk",
     async () => {
       configureFsSafeNative({ mode: "off" });
@@ -234,7 +414,7 @@ describeNode("shared JavaScript missing-parent admission", () => {
         afterSharedAdvance(advanced) {
           if (appeared || !advanced) return;
           appeared = true;
-          fsSync.symlinkSync(first, denied, "junction");
+          fsSync.symlinkSync(first, denied, process.platform === "win32" ? "junction" : "dir");
         },
       });
       const safe = await root(directory);
@@ -250,7 +430,7 @@ describeNode("shared JavaScript missing-parent admission", () => {
     },
   );
 
-  it.runIf(process.platform === "win32")(
+  it(
     "rejects an exact parent replacement before reusing its receipt",
     async () => {
       configureFsSafeNative({ mode: "off" });
@@ -280,7 +460,7 @@ describeNode("shared JavaScript missing-parent admission", () => {
     },
   );
 
-  it.runIf(process.platform === "win32").each(["symlink", "hardlink"] as const)(
+  it.each(["symlink", "hardlink"] as const)(
     "retains the final %s check after a missing-parent receipt walk",
     async (attack) => {
       configureFsSafeNative({ mode: "off" });

@@ -1,8 +1,25 @@
+import fsSync, { type BigIntStats } from "node:fs";
+import fs from "node:fs/promises";
 import path from "node:path";
+import {
+  assertAsyncDirectoryGuard,
+  assertDirectoryIdentitySync,
+  assertSyncDirectoryGuard,
+  createAsyncDirectoryGuard,
+  inspectDirectoryIdentitySync,
+  type AsyncDirectoryGuard,
+} from "./directory-guard.js";
+import { FsSafeError } from "./errors.js";
 import { mkdirPathComponentsWithGuards } from "./guarded-mkdir.js";
-import type { MutationDirectoryObservation } from "./pinned-mutation-observation.js";
+import { hasNodeErrorCode } from "./path.js";
+import {
+  checkedMutationDirectory,
+  type MutationDirectoryObservation,
+} from "./pinned-mutation-observation.js";
 import type { PinnedWriteMutationAdmission } from "./pinned-write.js";
+import { admitPathInsideRoot } from "./root-boundary.js";
 import type { RootContext } from "./root-context.js";
+import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
 function mutationWalkOptions(
@@ -51,6 +68,116 @@ function mutationWalkOptions(
       },
     },
   };
+}
+
+/**
+ * Complete the common Root.mkdir case with one exact existing parent. This is
+ * optional evidence: every uncertain probe returns to the ordered root walk.
+ */
+export async function tryMkdirAtExactParent(
+  root: RootContext,
+  targetPath: string,
+  mutationAdmission: PinnedWriteMutationAdmission,
+): Promise<boolean> {
+  if (getFsSafeTestHooks()?.beforeRootFallbackMutation) return false;
+  if (typeof root.rootIdentity.dev !== "bigint" ||
+    typeof root.rootIdentity.ino !== "bigint" ||
+    root.rootIdentity.dev === 0n || root.rootIdentity.ino === 0n) return false;
+  const rootIdentity = Object.freeze({
+    dev: root.rootIdentity.dev,
+    ino: root.rootIdentity.ino,
+  });
+  const session = mutationAdmission.beginSharedParentWalk?.();
+  if (!session) return false;
+  try {
+    if (path.resolve(session.retainedTargetPath) !== path.resolve(targetPath)) return false;
+    const parentPath = path.dirname(targetPath);
+    let parentGuard: AsyncDirectoryGuard<BigIntStats>;
+    try {
+      parentGuard = await createAsyncDirectoryGuard(parentPath, { bigint: true });
+    } catch {
+      return false;
+    }
+    try {
+      fsSync.lstatSync(targetPath, { bigint: true });
+      return false;
+    } catch (error) {
+      if (!hasNodeErrorCode(error, "ENOENT")) return false;
+    }
+    const admittedParent = admitPathInsideRoot({
+      rootPath: root.rootReal,
+      candidatePath: parentPath,
+      rootIdentity,
+    });
+    if (admittedParent?.admission !== "exact" || admittedParent.path !== parentPath ||
+      parentGuard.realPath !== parentPath) return false;
+    await session.authorize(Object.freeze({
+      targetPath,
+      mutationPath: targetPath,
+      phase: "parent" as const,
+    }));
+    await assertAsyncDirectoryGuard(parentGuard);
+    try {
+      fsSync.lstatSync(targetPath, { bigint: true });
+      return false;
+    } catch (error) {
+      if (!hasNodeErrorCode(error, "ENOENT")) return false;
+    }
+    assertSyncDirectoryGuard(parentGuard);
+    const createAdmission = session.tryAuthorizeAtParent(Object.freeze({
+      targetPath,
+      mutationPath: targetPath,
+      phase: "parent-create" as const,
+    }), checkedMutationDirectory(parentPath, parentGuard.realPath, parentGuard.stat));
+    if (!createAdmission) return false;
+    try {
+      await fs.mkdir(targetPath);
+    } catch (error) {
+      if (hasNodeErrorCode(error, "EEXIST")) return false;
+      throw error;
+    }
+    const observeCreated = async () => {
+      const childGuard = await createAsyncDirectoryGuard(targetPath, { bigint: true });
+      const parentAfter = inspectDirectoryIdentitySync(parentPath, parentGuard.stat);
+      assertDirectoryIdentitySync(root.rootReal, rootIdentity);
+      const admittedChild = admitPathInsideRoot({
+        rootPath: root.rootReal,
+        candidatePath: childGuard.realPath,
+        rootIdentity,
+      });
+      if (childGuard.realPath !== targetPath || childGuard.dir !== targetPath ||
+        admittedChild?.admission !== "exact" || admittedChild.path !== targetPath) {
+        throw new FsSafeError("path-mismatch", "created directory changed during operation");
+      }
+      return { childGuard, parentAfter };
+    };
+    try {
+      const created = await observeCreated();
+      if (session.advanceCreatedDirectory(Object.freeze({
+        admission: createAdmission,
+        parent: checkedMutationDirectory(parentPath, parentGuard.realPath, created.parentAfter),
+        child: checkedMutationDirectory(targetPath, created.childGuard.realPath, created.childGuard.stat),
+      }))) return true;
+    } catch {
+      // Post-create observations are optional receipt evidence. The directory
+      // was already created, so renew ordered admission without a second mkdir.
+    }
+    await session.authorize(Object.freeze({
+      targetPath,
+      mutationPath: targetPath,
+      phase: "parent" as const,
+    }));
+    await assertAsyncDirectoryGuard(parentGuard);
+    assertDirectoryIdentitySync(root.rootReal, rootIdentity);
+    assertFinalSymlinkRejected(targetPath, true);
+    const refreshed = await observeCreated();
+    await assertAsyncDirectoryGuard(parentGuard);
+    await assertAsyncDirectoryGuard(refreshed.childGuard);
+    assertDirectoryIdentitySync(root.rootReal, rootIdentity);
+    return true;
+  } finally {
+    session.dispose();
+  }
 }
 
 export async function prepareRootWriteTarget(

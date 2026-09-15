@@ -27,6 +27,12 @@ function ordinaryWindowsSegments(relativePath: string): boolean {
     !windowsReservedDeviceSegment(segment));
 }
 
+function ordinaryPosixSegments(relativePath: string): boolean {
+  return relativePath !== "" && !relativePath.includes("\\") &&
+    relativePath.split("/").every((segment) =>
+      isSafePathSegment(segment, { allowDotPrefix: true }));
+}
+
 function exactNonzeroRootIdentity(
   identity: RootBoundaryIdentity | undefined,
 ): ExactRootIdentity | undefined {
@@ -36,21 +42,25 @@ function exactNonzeroRootIdentity(
     : undefined;
 }
 
-export function ordinaryWindowsAbsoluteInsideRoot(
+export function ordinarySharedAbsoluteInsideRoot(
   rootReal: string,
   candidatePath: string,
   rootIdentity: ExactRootIdentity,
 ): boolean {
-  if (!path.isAbsolute(candidatePath) || candidatePath.startsWith("\\\\") ||
-    candidatePath.includes("/") || candidatePath.includes("\0") ||
-    path.resolve(candidatePath) !== candidatePath) return false;
+  if (!path.isAbsolute(candidatePath) || candidatePath.includes("\0") ||
+    path.resolve(candidatePath) !== candidatePath ||
+    (process.platform === "win32"
+      ? candidatePath.startsWith("\\\\") || candidatePath.includes("/")
+      : candidatePath.includes("\\"))) return false;
   const admitted = admitPathInsideRoot({
     rootPath: rootReal,
     candidatePath,
     rootIdentity,
   });
   return admitted?.admission === "exact" && admitted.path === candidatePath &&
-    (admitted.relativePath === "" || ordinaryWindowsSegments(admitted.relativePath));
+    (admitted.relativePath === "" || (process.platform === "win32"
+      ? ordinaryWindowsSegments(admitted.relativePath)
+      : ordinaryPosixSegments(admitted.relativePath)));
 }
 
 export function simpleSharedRoute(params: {
@@ -60,21 +70,24 @@ export function simpleSharedRoute(params: {
   selectedTarget: string;
   policy: SharedMutationPolicy;
 }): { route: string; rootIdentity: ExactRootIdentity } | undefined {
-  if (process.platform !== "win32" || process.versions.bun ||
+  if (process.versions.bun ||
     params.policy.mutationSymlinks !== "reject" || !params.originalPath ||
     params.originalPath.startsWith("~") || path.isAbsolute(params.originalPath) ||
-    !ordinaryWindowsSegments(params.originalPath) || params.rootReal.startsWith("\\\\") ||
-    params.rootReal.includes("/") || path.resolve(params.rootReal) !== params.rootReal) return undefined;
+    !(process.platform === "win32"
+      ? ordinaryWindowsSegments(params.originalPath) &&
+        !params.rootReal.startsWith("\\\\") && !params.rootReal.includes("/")
+      : ordinaryPosixSegments(params.originalPath) && !params.rootReal.includes("\\")) ||
+    path.resolve(params.rootReal) !== params.rootReal) return undefined;
   const rootIdentity = exactNonzeroRootIdentity(params.rootIdentity);
   if (!rootIdentity) return undefined;
   const route = path.resolve(params.rootReal, params.originalPath);
   if (route !== params.selectedTarget ||
-    !ordinaryWindowsAbsoluteInsideRoot(params.rootReal, route, rootIdentity)) return undefined;
+    !ordinarySharedAbsoluteInsideRoot(params.rootReal, route, rootIdentity)) return undefined;
   const policyEntries = [
     ...(params.policy.denyMutations?.paths ?? []),
     ...(params.policy.denyMutations?.prefixes ?? []),
   ];
   if (policyEntries.some((entry) => entry !== path.resolve(entry) ||
-    !ordinaryWindowsAbsoluteInsideRoot(params.rootReal, entry, rootIdentity))) return undefined;
+    !ordinarySharedAbsoluteInsideRoot(params.rootReal, entry, rootIdentity))) return undefined;
   return { route, rootIdentity };
 }
