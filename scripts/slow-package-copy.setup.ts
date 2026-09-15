@@ -37,11 +37,13 @@ afterAll(async () => {
   try {
     // Drain even the deliberately broken baseline before the proof runner exits.
     await pending;
-    console.log(JSON.stringify({ slowPackageCopy: { copies, copied, teardownRacedCopy: raced } }));
     expect(copies).toBe(1);
     expect(copied).toBe(true);
     expect(raced).toBe(false);
     await expect(fs.lstat(directory!)).rejects.toMatchObject({ code: "ENOENT" });
+    console.log(JSON.stringify({
+      slowPackageCopy: { copies, copied, teardownRacedCopy: raced, fixtureRemoved: true },
+    }));
   } finally {
     copySpy.mockRestore();
     removeSpy.mockRestore();

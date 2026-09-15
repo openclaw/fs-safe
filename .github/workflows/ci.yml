@@ -74,7 +74,30 @@ jobs:
 
       - name: Prove slow package-copy fixture lifetime on Windows
         if: matrix.os == 'windows-latest'
-        run: pnpm test --config scripts/slow-package-copy.config.ts
+        env:
+          FS_SAFE_SLOW_PACKAGE_COPY_PHASE: test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $output = & pnpm test --config scripts/slow-package-copy.config.ts 2>&1
+          $status = $LASTEXITCODE
+          $ErrorActionPreference = 'Stop'
+          $text = $output -join "`n"
+          Write-Output $text
+          if ($status -ne 1) { throw "Expected Vitest exit 1, received $status." }
+          if (-not $text.Contains('Test timed out in 15000ms.')) {
+            throw 'Missing exact 15000ms Vitest timeout.'
+          }
+          $receipt = '{"slowPackageCopy":{"copies":1,"copied":true,"teardownRacedCopy":false,"fixtureRemoved":true}}'
+          if (-not $text.Contains($receipt)) { throw 'Missing complete slow package-copy receipt.' }
+          $completion = '{"slowPackageCopyCompletion":{"childOutput":"1","locksAbsent":12}}'
+          if (-not $text.Contains($completion)) { throw 'Missing child and lock completion receipt.' }
+          if ($text.Contains('sidecar child failed:')) { throw 'Unexpected child-process timeout.' }
+          $head = (& git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $head -notmatch '^[0-9a-f]{40}$') {
+            throw 'Missing exact negative-control head.'
+          }
+          Write-Output "NEGATIVE_CONTROL_A head=$head"
 
       - name: Prove Root sidecar unlinked snapshot handoff and replacement rejection
         if: matrix.node == 24 && (matrix.os == 'ubuntu-latest' || matrix.os == 'macos-15')

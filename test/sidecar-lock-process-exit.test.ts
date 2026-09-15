@@ -16,6 +16,7 @@ import { useSuiteFixture } from "./helpers/suite-fixture.js";
 const { tempRoot } = useTempDirs();
 const exec = promisify(execFile);
 const CHILD_DIAGNOSTIC_OUTPUT_LIMIT = 2_000;
+const deferSlowPackageCopyToTest = process.env.FS_SAFE_SLOW_PACKAGE_COPY_PHASE === "test";
 const preamble = `
   import assert from "node:assert/strict";
   import fs from "node:fs/promises";
@@ -288,13 +289,18 @@ describe("sidecar lock natural process exit", () => {
       const copy = path.join(directory, "copy");
       await fs.mkdir(copy);
       await fs.copyFile(new URL("../package.json", import.meta.url), path.join(copy, "package.json"));
-      await fs.cp(new URL("../dist", import.meta.url), path.join(copy, "dist"), { recursive: true });
+      if (!deferSlowPackageCopyToTest) {
+        await fs.cp(new URL("../dist", import.meta.url), path.join(copy, "dist"), { recursive: true });
+      }
       return directory;
     }, async () => {
       if (directory) await fs.rm(directory, { recursive: true, force: true });
     }, SIDECAR_PACKAGE_COPY_TIMINGS.hookTimeoutMs);
 
     it("deduplicates listeners across manager domains and physical package copies", () => run(async (directory) => {
+      if (deferSlowPackageCopyToTest) {
+        await fs.cp(new URL("../dist", import.meta.url), path.join(directory, "copy", "dist"), { recursive: true });
+      }
       const output = await runChild(directory, `
         const { createRequire } = await import("node:module");
         const { pathToFileURL } = await import("node:url");
@@ -311,6 +317,11 @@ describe("sidecar lock natural process exit", () => {
       `, SIDECAR_PACKAGE_COPY_TIMINGS.childTimeoutMs);
       expect(output).toBe("1");
       for (let index = 0; index < 12; index++) await expectAbsent(directory, `${index}.json.lock`);
+      if (deferSlowPackageCopyToTest) {
+        console.log(JSON.stringify({
+          slowPackageCopyCompletion: { childOutput: output, locksAbsent: 12 },
+        }));
+      }
     }), SIDECAR_PACKAGE_COPY_TIMINGS.testTimeoutMs);
   });
 
