@@ -102,11 +102,13 @@ export function admitZipNames(params: {
   if (!centralUnicode && localUnicode && key(localUnicode) !== key(local.toString("utf8"))) {
     zipFormat("local-only Unicode override changes the name");
   }
-  const identities = new Set([centralKey]);
-  if (centralUnicode !== undefined) identities.add(key(Buffer.from(centralUnicode).toString("latin1")));
-  if ([...identities].some((identity) => seen.has(identity))) {
+  const unicodeKey = centralUnicode === undefined
+    ? undefined : key(Buffer.from(centralUnicode).toString("latin1"));
+  if (seen.has(centralKey) ||
+      (unicodeKey !== undefined && unicodeKey !== centralKey && seen.has(unicodeKey))) {
     throw new ArchiveSecurityError("entry-path", "zip archive contains duplicate or colliding entry names");
   }
-  for (const identity of identities) seen.add(identity);
+  seen.add(centralKey);
+  if (unicodeKey !== undefined && unicodeKey !== centralKey) seen.add(unicodeKey);
   return centralUnicode ?? centralUtf8 ?? (central.every((byte) => byte < 128) ? central.toString("ascii") : undefined);
 }

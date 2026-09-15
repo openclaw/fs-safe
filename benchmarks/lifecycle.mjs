@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { registerTempWorkspaceCoverage } from "./temp-workspace-fixtures.mjs";
 
 export async function registerLifecycle({ api: a, workspace: w, native, binding, register: add, contract, onCleanup, args }) {
   const cloneBackend = a.probeTreeClone(w);
@@ -106,125 +107,18 @@ export async function registerLifecycle({ api: a, workspace: w, native, binding,
   add("writeSiblingTempFile", () => a.writeSiblingTempFile({ dir: w, writeTemp: (p) => fsp.writeFile(p, data), resolveFinalPath: () => output }));
   add("writeViaSiblingTempPath", () => a.writeViaSiblingTempPath({ rootDir: w, targetPath: output, writeTemp: (p) => fsp.writeFile(p, data) }));
   const tempOptions = { rootDir: w, prefix: "fixture" };
-  const directRequestedModePlatform = process.platform === "linux" || process.platform === "darwin";
   add("resolveSecureTempRoot", () => a.resolveSecureTempRoot({ preferredDir: secretRoot, fallbackPrefix: "fs-safe-benchmark" }), { sync: true });
   for (const suffix of ["", "Sync"]) {
     const name = `tempWorkspace${suffix}`;
     const type = `TempWorkspace${suffix}`;
     const sync = suffix === "Sync";
-    add(name, () => a[name](tempOptions), { sync, after: (r) => r?.cleanup() });
-    // The historical row keeps its stable name. On Linux/macOS sync it now
-    // measures requested-mode creation whose ordinary-umask path avoids correction.
-    const ordinaryProbe = path.join(w, ".fs-safe-temp-mode-ordinary-probe");
-    add(`${name}/mode-correction`, () => a[name]({ ...tempOptions, dirMode: 0o750 }), {
-      sync,
-      skip: process.platform === "win32" ? "Windows does not initialize POSIX directory modes." : undefined,
-      before: sync && directRequestedModePlatform
-        ? () => {
-            fs.rmSync(ordinaryProbe, { recursive: true, force: true });
-            fs.mkdirSync(ordinaryProbe, { mode: 0o750 });
-            try {
-              const initial = fs.lstatSync(ordinaryProbe);
-              assert.equal(initial.isDirectory(), true);
-              assert.equal(initial.isSymbolicLink(), false);
-              assert.equal(initial.mode & 0o7777, 0o750,
-                "ordinary requested-mode preflight did not produce initial mode 0750");
-              assert.equal(initial.uid, process.geteuid());
-            } finally {
-              fs.rmSync(ordinaryProbe, { recursive: true, force: true });
-            }
-          }
-        : undefined,
-      after: (r) => r?.cleanup(),
+    registerTempWorkspaceCoverage({
+      api: a,
+      workspace: w,
+      register: add,
+      tempOptions,
+      suffix,
     });
-    if (sync) {
-      let previousUmask;
-      const correctionProbe = path.join(w, ".fs-safe-temp-mode-correction-probe");
-      const resetForcedCorrectionSetup = () => {
-        const failures = [];
-        try {
-          fs.rmSync(correctionProbe, { recursive: true, force: true });
-        } catch (error) {
-          failures.push(error);
-        }
-        const restoreUmask = previousUmask;
-        previousUmask = undefined;
-        if (restoreUmask !== undefined) {
-          try {
-            process.umask(restoreUmask);
-          } catch (error) {
-            failures.push(error);
-          }
-        }
-        if (failures.length === 1) throw failures[0];
-        if (failures.length > 1) {
-          throw new AggregateError(failures, "forced mode-correction benchmark reset failed");
-        }
-      };
-      add(`${name}/forced-mode-correction`, () => a[name]({ ...tempOptions, dirMode: 0o750 }), {
-        sync: true,
-        skip: directRequestedModePlatform
-          ? undefined
-          : "The requested-mode direct creation path requires Linux or macOS.",
-        before: () => {
-          try {
-            assert.equal(previousUmask, undefined, "forced mode-correction benchmark setup leaked");
-            previousUmask = process.umask(0o077);
-            fs.mkdirSync(correctionProbe, { mode: 0o750 });
-            const initial = fs.lstatSync(correctionProbe);
-            assert.equal(initial.isDirectory(), true);
-            assert.equal(initial.isSymbolicLink(), false);
-            assert.equal(initial.mode & 0o7777, 0o700,
-              "forced mode-correction preflight did not produce initial mode 0700");
-            assert.equal(initial.uid, process.geteuid());
-            fs.rmdirSync(correctionProbe);
-          } catch (error) {
-            try {
-              resetForcedCorrectionSetup();
-            } catch (resetError) {
-              throw new AggregateError(
-                [error, resetError],
-                "forced mode-correction benchmark preflight and reset failed",
-              );
-            }
-            throw error;
-          }
-        },
-        after: (workspace) => {
-          const failures = [];
-          let stat;
-          let cleanupResult;
-          if (workspace) {
-            try {
-              stat = fs.lstatSync(workspace.dir);
-            } catch (error) {
-              failures.push(error);
-            }
-            try {
-              cleanupResult = workspace.cleanup();
-            } catch (error) {
-              failures.push(error);
-            }
-          }
-          try {
-            resetForcedCorrectionSetup();
-          } catch (error) {
-            failures.push(error);
-          }
-          if (failures.length === 1) throw failures[0];
-          if (failures.length > 1) {
-            throw new AggregateError(failures, "forced mode-correction benchmark cleanup failed");
-          }
-          if (!workspace) return;
-          assert.equal(stat.isDirectory(), true);
-          assert.equal(stat.isSymbolicLink(), false);
-          assert.equal(stat.mode & 0o7777, 0o750);
-          assert.equal(stat.uid, process.geteuid());
-          assert.equal(cleanupResult, "removed");
-          assert.equal(fs.existsSync(workspace.dir), false);
-        },
-      });
-    }
     add(`withTempWorkspace${suffix}`, () => a[`withTempWorkspace${suffix}`](tempOptions, sync ? () => 1 : async () => 1), { sync, before: () => {} });
     const tmp = await a[name](tempOptions);
     contract(type, tmp);
