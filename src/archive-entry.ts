@@ -33,9 +33,10 @@ export function validateArchiveEntryPath(
     );
   }
   const slashNormalized = normalizeArchiveEntryPath(entryPath);
+  const rawSegments = slashNormalized.split("/");
   if (
     process.platform === "win32" &&
-    slashNormalized.split("/").some((segment) => segment.includes(":"))
+    rawSegments.some((segment) => segment.includes(":"))
   ) {
     throw new ArchiveSecurityError(
       "entry-path",
@@ -44,7 +45,7 @@ export function validateArchiveEntryPath(
   }
   if (
     process.platform === "win32" &&
-    slashNormalized.split("/").some((segment) => isWindowsReservedDeviceName(segment))
+    rawSegments.some((segment) => isWindowsReservedDeviceName(segment))
   ) {
     throw new ArchiveSecurityError(
       "entry-path",
@@ -73,7 +74,7 @@ export function validateArchiveEntryPath(
       `archive entry is absolute: ${formatErrorDetail(entryPath)}`,
     );
   }
-  if (slashNormalized.split("/").includes("..")) {
+  if (rawSegments.includes("..")) {
     throw new ArchiveSecurityError(
       "entry-path",
       `archive entry contains a parent segment: ${formatErrorDetail(entryPath)}`,

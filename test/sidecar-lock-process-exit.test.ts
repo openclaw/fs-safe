@@ -2,14 +2,20 @@ import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { createFileLockManager } from "../src/file-lock.js";
+import {
+  DEFAULT_SIDECAR_CHILD_TIMEOUT_MS,
+  SIDECAR_PACKAGE_COPY_TIMINGS,
+} from "./helpers/sidecar-package-copy-timeouts.js";
 import { useTempDirs } from "./helpers/vitest.js";
 import { useSuiteFixture } from "./helpers/suite-fixture.js";
 
 const { tempRoot } = useTempDirs();
 const exec = promisify(execFile);
+const CHILD_DIAGNOSTIC_OUTPUT_LIMIT = 2_000;
 const preamble = `
   import assert from "node:assert/strict";
   import fs from "node:fs/promises";
@@ -22,14 +28,58 @@ const preamble = `
   const options = { lockRoot: capability, payload: () => ({ owner: "caller" }) };
 `;
 
-async function runChild(directory: string, script: string): Promise<string> {
-  const { stdout, stderr } = await exec(
-    process.execPath,
-    ["--unhandled-rejections=strict", "--input-type=module", "-e", preamble + script, directory],
-    { cwd: new URL("..", import.meta.url), timeout: 4_000, killSignal: "SIGKILL" },
-  );
-  expect(stderr).toBe("");
-  return stdout.trim();
+interface ChildFailure {
+  code?: unknown;
+  killed?: unknown;
+  signal?: unknown;
+  stdout?: unknown;
+  stderr?: unknown;
+}
+
+function boundedChildOutput(value: unknown): { text: string; omittedChars: number } {
+  const text = Buffer.isBuffer(value) ? value.toString("utf8")
+    : typeof value === "string" ? value
+      : value === undefined || value === null ? "" : String(value);
+  if (text.length <= CHILD_DIAGNOSTIC_OUTPUT_LIMIT) return { text, omittedChars: 0 };
+  const prefixLength = Math.floor((CHILD_DIAGNOSTIC_OUTPUT_LIMIT - 1) / 2);
+  const suffixLength = CHILD_DIAGNOSTIC_OUTPUT_LIMIT - 1 - prefixLength;
+  return {
+    text: `${text.slice(0, prefixLength)}…${text.slice(-suffixLength)}`,
+    omittedChars: text.length - prefixLength - suffixLength,
+  };
+}
+
+async function runChild(
+  directory: string,
+  script: string,
+  timeoutMs = DEFAULT_SIDECAR_CHILD_TIMEOUT_MS,
+): Promise<string> {
+  const startedAt = performance.now();
+  let stdout: unknown = "";
+  let stderr: unknown = "";
+  try {
+    const result = await exec(
+      process.execPath,
+      ["--unhandled-rejections=strict", "--input-type=module", "-e", preamble + script, directory],
+      { cwd: new URL("..", import.meta.url), timeout: timeoutMs, killSignal: "SIGKILL" },
+    );
+    stdout = result.stdout;
+    stderr = result.stderr;
+    expect(stderr).toBe("");
+    return result.stdout.trim();
+  } catch (cause) {
+    const failure = cause !== null && typeof cause === "object" ? cause as ChildFailure : {};
+    const details = {
+      timeoutBudgetMs: timeoutMs,
+      elapsedMs: Math.round(performance.now() - startedAt),
+      code: failure.code ?? null,
+      killed: failure.killed ?? null,
+      signal: failure.signal ?? null,
+      stdout: boundedChildOutput(failure.stdout === undefined ? stdout : failure.stdout),
+      stderr: boundedChildOutput(failure.stderr === undefined ? stderr : failure.stderr),
+    };
+    throw new Error(`sidecar child failed: ${JSON.stringify(details)}`, { cause });
+  }
 }
 
 async function expectAbsent(directory: string, name = "state.json.lock"): Promise<void> {
@@ -242,7 +292,7 @@ describe("sidecar lock natural process exit", () => {
       return directory;
     }, async () => {
       if (directory) await fs.rm(directory, { recursive: true, force: true });
-    });
+    }, SIDECAR_PACKAGE_COPY_TIMINGS.hookTimeoutMs);
 
     it("deduplicates listeners across manager domains and physical package copies", () => run(async (directory) => {
       const output = await runChild(directory, `
@@ -258,10 +308,10 @@ describe("sidecar lock natural process exit", () => {
             .acquire(path.join(directory, index + ".json"), options);
         }
         console.log(process.listenerCount("beforeExit") - before);
-      `);
+      `, SIDECAR_PACKAGE_COPY_TIMINGS.childTimeoutMs);
       expect(output).toBe("1");
       for (let index = 0; index < 12; index++) await expectAbsent(directory, `${index}.json.lock`);
-    }));
+    }), SIDECAR_PACKAGE_COPY_TIMINGS.testTimeoutMs);
   });
 
   it("registers beforeExit when an older copy already registered exit cleanup", async () => {
