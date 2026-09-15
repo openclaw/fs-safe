@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isWindowsReservedDeviceName,
   isUnsafeDeviceReadPath,
   WINDOWS_RESERVED_DEVICE_NAMES,
 } from "../src/device-path.js";
@@ -54,6 +55,40 @@ describe("sanitizeUntrustedFileName", () => {
     expect(sanitizeUntrustedFileName("<>", "fallback.bin")).toBe("fallback.bin");
   });
 
+  it("leaves a valid primary name unchanged without exposing an unsafe fallback", () => {
+    expect(sanitizeUntrustedFileName("report.txt", "../../outside.txt")).toBe("report.txt");
+  });
+
+  it.each([
+    ["../nested/portable.txt", "portable.txt"],
+    ["..\\nested\\windows.txt", "windows.txt"],
+    ["safe\u0000\u001f\u0085name?.txt", "safename.txt"],
+  ])("sanitizes fallback %j through the filename pipeline", (fallback, expected) => {
+    expect(sanitizeUntrustedFileName("<>", fallback)).toBe(expected);
+  });
+
+  it("applies reserved-device and length rules to fallbacks", () => {
+    expect(sanitizeUntrustedFileName("", "CON.txt")).toBe("CON_.txt");
+    expect(sanitizeUntrustedFileName("", "a".repeat(220))).toBe("a".repeat(200));
+  });
+
+  it("keeps the final truncated primary and fallback names device-safe", () => {
+    const paddedDevice = `CON${" ".repeat(197)}.txt`;
+    for (const sanitized of [
+      sanitizeUntrustedFileName(paddedDevice, "fallback.bin"),
+      sanitizeUntrustedFileName("<>", paddedDevice),
+    ]) {
+      expect(sanitized.length).toBeLessThanOrEqual(200);
+      expect(isWindowsReservedDeviceName(sanitized)).toBe(false);
+      expect(isUnsafeDeviceReadPath(`C:\\tmp\\${sanitized}`, { platform: "win32" })).toBe(false);
+    }
+  });
+
+  it("uses a fixed safe literal when both primary and fallback are unusable", () => {
+    expect(sanitizeUntrustedFileName("<>", "../..")).toBe("file");
+    expect(sanitizeUntrustedFileName(".", "\u0000<>\t")).toBe("file");
+  });
+
   it("strips C1 controls and Windows-invalid characters on every platform", () => {
     expect(
       sanitizeUntrustedFileName('re<po>r:t"|?*\u0085\u009f.pdf', "fallback.bin"),
@@ -74,6 +109,8 @@ describe("sanitizeUntrustedFileName", () => {
       expect(sanitizeUntrustedFileName(`${casedName}.TxT`, "fallback.bin")).toBe(
         `${casedName}_.TxT`,
       );
+      expect(sanitizeUntrustedFileName("<>", reservedName)).toBe(`${reservedName}_`);
+      expect(sanitizeUntrustedFileName("<>", `${casedName}.TxT`)).toBe(`${casedName}_.TxT`);
     },
   );
 
@@ -90,9 +127,13 @@ describe("sanitizeUntrustedFileName", () => {
 
   it("does not return a Windows device name disguised with ignored trailing characters", () => {
     for (const input of ["CON .", "nul .txt", "LPT1..."]) {
-      const sanitized = sanitizeUntrustedFileName(input, "fallback.bin");
-      expect(isUnsafeDeviceReadPath(`C:\\tmp\\${sanitized}`, { platform: "win32" }), input)
-        .toBe(false);
+      for (const sanitized of [
+        sanitizeUntrustedFileName(input, "fallback.bin"),
+        sanitizeUntrustedFileName("<>", input),
+      ]) {
+        expect(isUnsafeDeviceReadPath(`C:\\tmp\\${sanitized}`, { platform: "win32" }), input)
+          .toBe(false);
+      }
     }
   });
 

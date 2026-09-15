@@ -29,6 +29,9 @@ export async function registerPaths({ api: a, workspace: w, register: add, contr
     categorizeFsSafeError: ["outside-workspace"],
   };
   for (const [name, values] of Object.entries(simple)) add(name, () => a[name](...values), { sync: true, batch: 100 });
+  add("sanitizeUntrustedFileName/fallback", () => a.sanitizeUntrustedFileName("<>", "fallback.json"), {
+    sync: true, batch: 100, verify: (result) => assert.equal(result, "fallback.json"),
+  });
   add("isPathInside/trailing-separator", () => a.isPathInside(`${w}${path.sep}`, input), {
     sync: true, batch: 100, verify: (result) => assert.equal(result, true),
   });

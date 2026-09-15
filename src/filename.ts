@@ -28,9 +28,20 @@ function suffixWindowsReservedDeviceName(fileName: string): string {
 }
 
 const PORTABLE_FILE_NAME_BYTES = 255;
+const SAFE_FALLBACK_FILE_NAME = "file";
 
 function normalizedFileNameBytes(value: string): number {
   return maxNormalizedUtf8Bytes(value, true);
+}
+
+function truncateCodeUnitsWithoutSplittingSurrogate(value: string, limit: number): string {
+  if (value.length <= limit) return value;
+  let truncated = value.slice(0, limit);
+  const trailingCodeUnit = truncated.charCodeAt(truncated.length - 1);
+  if (trailingCodeUnit >= 0xd800 && trailingCodeUnit <= 0xdbff) {
+    truncated = truncated.slice(0, -1);
+  }
+  return truncated;
 }
 
 /** Keeps short names exact and trims only the filename tail of a composite temp name. */
@@ -70,24 +81,32 @@ export function fitFileNameToPortableComponent(params: {
   return `${codePoints.slice(0, low).join("")}${tailSuffix}`;
 }
 
-export function sanitizeUntrustedFileName(fileName: string, fallbackName: string): string {
+function sanitizeFileNameCandidate(fileName: string): string | undefined {
   const trimmed = typeof fileName === "string" ? fileName.trim() : "";
   if (!trimmed) {
-    return fallbackName;
+    return undefined;
   }
   let base = path.posix.basename(trimmed);
   base = path.win32.basename(base);
   base = base.replace(INVALID_FILE_NAME_CHARACTERS, "").trim();
   if (!base || base === "." || base === "..") {
-    return fallbackName;
+    return undefined;
   }
-  base = suffixWindowsReservedDeviceName(base);
-  if (base.length > 200) {
-    base = base.slice(0, 200);
-    const trailingCodeUnit = base.charCodeAt(base.length - 1);
-    if (trailingCodeUnit >= 0xd800 && trailingCodeUnit <= 0xdbff) {
-      base = base.slice(0, -1);
-    }
+  base = truncateCodeUnitsWithoutSplittingSurrogate(base, 200);
+  let safeBase = suffixWindowsReservedDeviceName(base);
+  if (safeBase.length > 200) {
+    // The safety suffix is the final invariant. Shorten the unsuffixed tail so
+    // truncation cannot turn a padded reserved stem back into a device name.
+    base = truncateCodeUnitsWithoutSplittingSurrogate(base, 199);
+    safeBase = suffixWindowsReservedDeviceName(base);
   }
-  return base;
+  return safeBase;
+}
+
+export function sanitizeUntrustedFileName(fileName: string, fallbackName: string): string {
+  return (
+    sanitizeFileNameCandidate(fileName) ??
+    sanitizeFileNameCandidate(fallbackName) ??
+    SAFE_FALLBACK_FILE_NAME
+  );
 }
