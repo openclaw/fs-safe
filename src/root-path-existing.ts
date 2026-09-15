@@ -46,6 +46,7 @@ export function rawPathRelativeToCanonicalRoot(
       if (!isSymlink && !stat.isDirectory() && index < segments.length - 1) return undefined;
       traversedSymlink ||= isSymlink;
       canonical = realpathSync.native(operationPath);
+      assertNoWindowsPathAlias(canonical);
       if (
         isSymlink && index < segments.length - 1 &&
         !fs.statSync(pathForWindowsFilesystem(canonical)).isDirectory()
@@ -58,7 +59,6 @@ export function rawPathRelativeToCanonicalRoot(
       if (isSymlink) return undefined;
       continue;
     }
-    assertNoWindowsPathAlias(canonical);
     if (!isPathInside(rootCanonicalPath, canonical)) continue;
     if (options.rejectSymlinks && traversedSymlink) {
       throw new FsSafeError("symlink", "symlink path component not allowed");

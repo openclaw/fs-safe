@@ -41,6 +41,8 @@ function isNodeErrorWithCode(err: unknown, code: string): err is MaybeNodeError 
 
 export function resolveSecureTempRoot(options: ResolveSecureTempRootOptions): string {
   const platform = options.platform ?? process.platform;
+  // Platform adapters select behavior, but cannot disable the host's pathname policy.
+  const admissionPlatform = process.platform === "win32" ? process.platform : platform;
   const fallbackPrefix = assertSafePathSegment(options.fallbackPrefix, {
     allowDotPrefix: true,
     label: "fallback temp prefix",
@@ -73,7 +75,7 @@ export function resolveSecureTempRoot(options: ResolveSecureTempRootOptions): st
       preferredDir,
       "filesystem",
       "preferred temp directory uses a Windows filesystem namespace alias",
-      platform,
+      admissionPlatform,
     );
   }
 
@@ -96,7 +98,7 @@ export function resolveSecureTempRoot(options: ResolveSecureTempRootOptions): st
       base,
       "filesystem",
       "system temp directory uses a Windows filesystem namespace alias",
-      platform,
+      admissionPlatform,
     );
     const suffix = uid === undefined ? fallbackPrefix : `${fallbackPrefix}-${uid}`;
     const joiner = platform === "win32" ? path.win32.join : path.join;
@@ -105,7 +107,7 @@ export function resolveSecureTempRoot(options: ResolveSecureTempRootOptions): st
       fallbackPath,
       "filesystem",
       "fallback temp directory uses a Windows filesystem namespace alias",
-      platform,
+      admissionPlatform,
     );
     return fallbackPath;
   };
@@ -119,7 +121,7 @@ export function resolveSecureTempRoot(options: ResolveSecureTempRootOptions): st
       candidatePath,
       "filesystem",
       "temp directory uses a Windows filesystem namespace alias",
-      platform,
+      admissionPlatform,
     );
     try {
       const candidate = lstatSync(candidatePath);
@@ -141,7 +143,7 @@ export function resolveSecureTempRoot(options: ResolveSecureTempRootOptions): st
       candidatePath,
       "filesystem",
       "temp directory uses a Windows filesystem namespace alias",
-      platform,
+      admissionPlatform,
     );
     try {
       const st = lstatSync(candidatePath);

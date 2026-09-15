@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Keep Windows temp-path admission active with platform adapters, validate canonical root prefixes before inspecting them, and preserve single-read lock-path accessors on Node.js 22.
 - Preserve single-read pinned-write pathname and identity snapshots on Node.js 22 by excluding named accessors before copying remaining caller-owned options.
 - Preserve established callback receivers while retaining single-read pathname and transfer-authority snapshots across structured JSON, durable directory and queue, sibling staging, and borrowed-handle flows.
 - Snapshot root traversal symlink-rejection policy with admitted paths so caller mutation cannot change an in-flight resolution.
