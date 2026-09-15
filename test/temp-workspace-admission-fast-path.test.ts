@@ -43,6 +43,8 @@ for (const variant of ["async", "sync"] as const) {
     function observeChildModeOperations(rootDir: string) {
       let opens = 0;
       let chmods = 0;
+      let fstats = 0;
+      let lstats = 0;
       let opensAtFirstChmod: number | undefined;
       const childFds = new Set<number>();
       const openSync = fsSync.openSync.bind(fsSync);
@@ -54,20 +56,24 @@ for (const variant of ["async", "sync"] as const) {
         }
         return fd;
       });
+      const lstat = fsSync.lstatSync.bind(fsSync);
+      vi.spyOn(fsSync, "lstatSync").mockImplementation((name, options) => {
+        const stat = lstat(name, options);
+        if (isWorkspaceChild(rootDir, name) && options?.bigint === true) lstats += 1;
+        return stat;
+      });
+      const fstat = fsSync.fstatSync.bind(fsSync);
+      vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
+        const stat = fstat(fd, options);
+        if (childFds.has(fd) && options?.bigint === true) fstats += 1;
+        return stat;
+      });
       if (variant === "async") {
-        const open = fs.open.bind(fs);
-        vi.spyOn(fs, "open").mockImplementation(async (...args) => {
-          const handle = await open(...args);
-          if (isWorkspaceChild(rootDir, args[0])) {
-            opens += 1;
-            const chmod = handle.chmod.bind(handle);
-            vi.spyOn(handle, "chmod").mockImplementation(async (mode) => {
-              chmods += 1;
-              opensAtFirstChmod ??= opens;
-              await chmod(mode);
-            });
-          }
-          return handle;
+        const fchmod = fsSync.fchmod.bind(fsSync);
+        vi.spyOn(fsSync, "fchmod").mockImplementation((fd, mode, callback) => {
+          if (childFds.has(fd)) chmods += 1;
+          if (childFds.has(fd)) opensAtFirstChmod ??= opens;
+          return fchmod(fd, mode, callback);
         });
       } else {
         const fchmod = fsSync.fchmodSync.bind(fsSync);
@@ -80,6 +86,8 @@ for (const variant of ["async", "sync"] as const) {
       return {
         opens: () => opens,
         chmods: () => chmods,
+        fstats: () => fstats,
+        lstats: () => lstats,
         opensAtFirstChmod: () => opensAtFirstChmod,
       };
     }
@@ -92,9 +100,11 @@ for (const variant of ["async", "sync"] as const) {
         const chmodSync = vi.spyOn(fsSync, "chmodSync");
         const workspace = await create(rootDir);
         try {
-          expect(fsSync.lstatSync(workspace.dir).mode & 0o7777).toBe(0o700);
           expect(operations.opens()).toBe(1);
           expect(operations.chmods()).toBe(0);
+          expect(operations.fstats()).toBe(2);
+          expect(operations.lstats()).toBe(2);
+          expect(fsSync.lstatSync(workspace.dir).mode & 0o7777).toBe(0o700);
           expect(chmod).not.toHaveBeenCalled();
           expect(chmodSync).not.toHaveBeenCalled();
         } finally {
@@ -121,7 +131,7 @@ for (const variant of ["async", "sync"] as const) {
       await workspace.cleanup();
     });
 
-    it("rejects a matching-mode replacement without opening a mode descriptor", async () => {
+    it("rejects a matching-mode replacement without dispatching mode correction", async () => {
       const rootDir = await tempRoot("fs-safe-workspace-mode-fast-swap-");
       let child = "";
       observeFirstChild(rootDir, (dir) => {
@@ -155,7 +165,7 @@ for (const variant of ["async", "sync"] as const) {
               const previous = process.umask(creationUmask);
               try {
                 const dir = await mkdtemp(...args);
-                initialMode = fsSync.lstatSync(dir).mode & 0o7777;
+                initialMode = fsSync.statSync(dir).mode & 0o7777;
                 return dir;
               } finally {
                 process.umask(previous);
@@ -167,7 +177,7 @@ for (const variant of ["async", "sync"] as const) {
               const previous = process.umask(creationUmask);
               try {
                 const dir = mkdtemp(...args);
-                initialMode = fsSync.lstatSync(dir).mode & 0o7777;
+                initialMode = fsSync.statSync(dir).mode & 0o7777;
                 return dir;
               } finally {
                 process.umask(previous);
@@ -179,14 +189,46 @@ for (const variant of ["async", "sync"] as const) {
         const workspace = await create(rootDir, { dirMode });
         try {
           expect(initialMode).toBe(expectedInitialMode);
-          expect(fsSync.lstatSync(workspace.dir).mode & 0o7777).toBe(dirMode);
-          expect(operations.opens()).toBe(2);
+          expect(operations.opens()).toBe(1);
           expect(operations.chmods()).toBe(1);
-          expect(operations.opensAtFirstChmod()).toBe(2);
+          expect(operations.fstats()).toBe(3);
+          expect(operations.lstats()).toBe(3);
+          expect(operations.opensAtFirstChmod()).toBe(1);
+          expect(fsSync.lstatSync(workspace.dir).mode & 0o7777).toBe(dirMode);
         } finally {
           if (dirMode === 0) await fs.chmod(workspace.dir, 0o700);
           await workspace.cleanup();
         }
+      },
+    );
+
+    it.runIf(variant === "async" && process.platform !== "win32")(
+      "settles borrowed descriptor chmod before transfer and registration", async () => {
+        const rootDir = await tempRoot("fs-safe-workspace-mode-lease-");
+        const fchmod = fsSync.fchmod.bind(fsSync);
+        let release!: () => void;
+        const paused = new Promise<void>((resolve) => { release = resolve; });
+        let enter!: (fd: number) => void;
+        const entered = new Promise<number>((resolve) => { enter = resolve; });
+        vi.spyOn(fsSync, "fchmod").mockImplementation((fd, mode, callback) => {
+          enter(fd);
+          void paused.then(() => fchmod(fd, mode, callback));
+        });
+        const register = vi.spyOn(cleanup, "registerTempPathForExit");
+        const creating = create(rootDir, { dirMode: 0o750 });
+        const fd = await entered;
+        try {
+          expect(fsSync.fstatSync(fd).isDirectory()).toBe(true);
+          expect(register).not.toHaveBeenCalled();
+        } finally {
+          release();
+        }
+        const workspace = await creating;
+        expect(register).toHaveBeenCalledTimes(1);
+        expect(() => fsSync.fstatSync(fd)).toThrowError(
+          expect.objectContaining({ code: "EBADF" }),
+        );
+        await workspace.cleanup();
       },
     );
 

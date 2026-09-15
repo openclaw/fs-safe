@@ -6,6 +6,7 @@ import { pinNodeDirectoryForMode, pinNodeDirectoryForModeSync } from "./director
 import { FsSafeError } from "./errors.js";
 import { realpathSync } from "./realpath.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
+import type { TempWorkspaceRetainedChild } from "./temp-workspace-descriptor.js";
 
 type DirectorySnapshot = { dir: string; realPath: string; stat: BigIntStats };
 export type TempWorkspaceRootAssociation = Readonly<{
@@ -287,6 +288,34 @@ export function admitTempWorkspaceChildSync(
   } finally {
     owner.close();
   }
+}
+
+function retainedModeChecks(parent: TempWorkspaceRootAdmission, mode: number) {
+  return {
+    assertParent: parent.assertCurrent,
+    hasRequestedMode: (stat: BigIntStats) => childHasRequestedMode(stat, mode),
+    validate: (stat: BigIntStats) => assertTempWorkspaceChildState(stat, parent.ownerUid),
+  };
+}
+
+export function admitRetainedTempWorkspaceChild(
+  retained: TempWorkspaceRetainedChild,
+  expected: BigIntStats,
+  parent: TempWorkspaceRootAdmission,
+  mode: number,
+): Promise<void> | undefined {
+  if (!tempWorkspaceChildNeedsModeInitialization(expected, parent.ownerUid, mode)) return undefined;
+  return retained.initializeMode(mode, retainedModeChecks(parent, mode));
+}
+
+export function admitRetainedTempWorkspaceChildSync(
+  retained: TempWorkspaceRetainedChild,
+  expected: BigIntStats,
+  parent: TempWorkspaceRootAdmission,
+  mode: number,
+): void {
+  if (!tempWorkspaceChildNeedsModeInitialization(expected, parent.ownerUid, mode)) return;
+  retained.initializeModeSync(mode, retainedModeChecks(parent, mode));
 }
 
 export function inspectAdmittedTempWorkspaceChild(

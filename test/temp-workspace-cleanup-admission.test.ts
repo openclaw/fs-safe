@@ -134,3 +134,83 @@ describe.runIf(nativeCleanup).each(["async", "sync"] as const)("%s workspace cle
     },
   );
 });
+
+describe.each(["async", "sync"] as const)("%s compatible cleanup receipt reuse", (variant) => {
+  it("keeps exact parent fences without duplicate numeric guard observations", async () => {
+    configureFsSafeNative({ mode: "off" });
+    const rootDir = await tempRoot("fs-safe-temp-cleanup-receipt-");
+    const options = { rootDir, prefix: "workspace-" };
+    const workspace = variant === "async"
+      ? await tempWorkspace(options)
+      : tempWorkspaceSync(options);
+    let exactParentObservations = 0;
+    let numericParentObservations = 0;
+    let renameObservation: number | undefined;
+    let removeObservation: number | undefined;
+    const lstat = fsSync.lstatSync.bind(fsSync);
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((name, statOptions) => {
+      const stat = lstat(name, statOptions);
+      if (name === rootDir) {
+        if (statOptions?.bigint === true) exactParentObservations += 1;
+        else numericParentObservations += 1;
+      }
+      return stat;
+    });
+    const rename = fsSync.renameSync.bind(fsSync);
+    vi.spyOn(fsSync, "renameSync").mockImplementation((from, to) => {
+      if (from === workspace.dir) renameObservation = exactParentObservations;
+      return rename(from, to);
+    });
+    if (variant === "async") {
+      const rm = fs.rm.bind(fs);
+      vi.spyOn(fs, "rm").mockImplementation(async (...args) => {
+        removeObservation = exactParentObservations;
+        return await rm(...args);
+      });
+    } else {
+      const rm = fsSync.rmSync.bind(fsSync);
+      vi.spyOn(fsSync, "rmSync").mockImplementation((...args) => {
+        removeObservation = exactParentObservations;
+        return rm(...args);
+      });
+    }
+    expect(await workspace.cleanup()).toBe("removed");
+    expect(renameObservation).toBe(3);
+    expect(removeObservation).toBe(6);
+    expect(exactParentObservations).toBe(7);
+    expect(numericParentObservations).toBe(0);
+  });
+
+  it("maps a post-removal parent replacement to an indeterminate result", async () => {
+    configureFsSafeNative({ mode: "off" });
+    const base = await tempRoot("fs-safe-temp-cleanup-parent-post-");
+    const rootDir = path.join(base, "root");
+    const moved = path.join(base, "moved");
+    const options = { rootDir, prefix: "workspace-" };
+    const workspace = variant === "async"
+      ? await tempWorkspace(options)
+      : tempWorkspaceSync(options);
+    const replaceParent = () => {
+      fsSync.renameSync(rootDir, moved);
+      fsSync.mkdirSync(rootDir);
+      fsSync.writeFileSync(path.join(rootDir, "keep.txt"), "replacement");
+    };
+    if (variant === "async") {
+      const rm = fs.rm.bind(fs);
+      vi.spyOn(fs, "rm").mockImplementationOnce(async (...args) => {
+        await rm(...args);
+        replaceParent();
+      });
+    } else {
+      const rm = fsSync.rmSync.bind(fsSync);
+      vi.spyOn(fsSync, "rmSync").mockImplementationOnce((...args) => {
+        rm(...args);
+        replaceParent();
+      });
+    }
+    expect(await workspace.cleanup()).toBe("indeterminate");
+    expect(await workspace.cleanup()).toBe("indeterminate");
+    expect(await fs.readFile(path.join(rootDir, "keep.txt"), "utf8")).toBe("replacement");
+    expect(await fs.readdir(moved)).toEqual([]);
+  });
+});

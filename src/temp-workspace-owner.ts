@@ -2,10 +2,8 @@ import { randomUUID } from "node:crypto";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { createAsyncDirectoryGuard, createSyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup, type FileIdentityStat } from "./file-identity.js";
-import { withAsyncDirectoryGuards, withSyncDirectoryGuards } from "./guarded-mutation.js";
 import { getNativeBinding, type NativeBinding } from "./native.js";
 import type { NativeOwnedTreeRemovalResult } from "./native-binding.js";
 import type { TempWorkspaceRootAdmission } from "./temp-workspace-admission.js";
@@ -245,11 +243,10 @@ export class TempWorkspaceCleanupOwner {
           name,
         );
       } else {
-        const guard = createSyncDirectoryGuard(parent.receipt.path);
-        withSyncDirectoryGuards([guard], () => {
-          this.#capability.assertCurrent();
-          fsSync.renameSync(this.#dir, quarantinePath);
-        });
+        // The admitted receipt is exact and descriptor-associated. Reuse it as
+        // the pre/post parent fence instead of layering a numeric guard over it.
+        this.#capability.assertCurrent();
+        fsSync.renameSync(this.#dir, quarantinePath);
       }
       this.#capability.assertCurrent();
       const quarantined = fsSync.lstatSync(quarantinePath, { bigint: true });
@@ -295,16 +292,14 @@ export class TempWorkspaceCleanupOwner {
     }
     let removalError: unknown;
     try {
-      const guard = await createAsyncDirectoryGuard(this.#capability.parent!.receipt.path);
-      await withAsyncDirectoryGuards([guard], async () => {
-        this.#assertQuarantine(quarantine);
-        try {
-          await fs.rm(quarantine.path, { recursive: true, force: true });
-        } catch (error) {
-          removalError = error;
-          throw error;
-        }
-      });
+      this.#assertQuarantine(quarantine);
+      try {
+        await fs.rm(quarantine.path, { recursive: true, force: true });
+      } catch (error) {
+        removalError = error;
+        throw error;
+      }
+      this.#capability.assertCurrent();
       return "removed";
     } catch (error) {
       if (error === removalError) throw error;
@@ -323,16 +318,14 @@ export class TempWorkspaceCleanupOwner {
     }
     let removalError: unknown;
     try {
-      const guard = createSyncDirectoryGuard(this.#capability.parent!.receipt.path);
-      withSyncDirectoryGuards([guard], () => {
-        this.#assertQuarantine(quarantine);
-        try {
-          fsSync.rmSync(quarantine.path, { recursive: true, force: true });
-        } catch (error) {
-          removalError = error;
-          throw error;
-        }
-      });
+      this.#assertQuarantine(quarantine);
+      try {
+        fsSync.rmSync(quarantine.path, { recursive: true, force: true });
+      } catch (error) {
+        removalError = error;
+        throw error;
+      }
+      this.#capability.assertCurrent();
       return "removed";
     } catch (error) {
       if (error === removalError) throw error;

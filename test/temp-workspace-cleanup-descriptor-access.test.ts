@@ -34,7 +34,10 @@ describe.runIf(supportsSearchOnlyDirectory)("temp workspace cleanup descriptor a
     };
   }
 
-  function forceSearchOnlyChild(rootDir: string): () => number {
+  function forceSearchOnlyChild(
+    rootDir: string,
+    deniedReadableAttempts: readonly number[] = [1, 3],
+  ): () => number {
     let attempts = 0;
     const open = fsSync.openSync;
     vi.spyOn(fsSync, "openSync").mockImplementation((name, ...args) => {
@@ -43,8 +46,8 @@ describe.runIf(supportsSearchOnlyDirectory)("temp workspace cleanup descriptor a
         path.basename(name).startsWith("workspace-")
       ) {
         attempts += 1;
-        // Initial O_RDONLY, search-only fallback, then post-mode O_RDONLY.
-        if (attempts === 1 || attempts === 3) {
+        // Initial O_RDONLY, search-only fallback, then cleanup-read O_RDONLY.
+        if (deniedReadableAttempts.includes(attempts)) {
           throw Object.assign(new Error("read access denied"), { code: "EACCES" });
         }
       }
@@ -70,6 +73,20 @@ describe.runIf(supportsSearchOnlyDirectory)("temp workspace cleanup descriptor a
       expect(binding.renameNoReplace).not.toHaveBeenCalled();
       expect(binding.removeOwnedTree).not.toHaveBeenCalled();
       expect(binding.removeOwnedTreeSync).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["async", "sync"] as const)(
+    "reuses the retained search-only %s descriptor for mode correction", async (variant) => {
+      const rootDir = await tempRoot("fs-safe-workspace-search-mode-");
+      configureFsSafeNative({ mode: "off" });
+      const forced = forceSearchOnlyChild(rootDir, [1]);
+      const workspace = variant === "async"
+        ? await tempWorkspace({ rootDir, prefix: "workspace-", dirMode: 0o750 })
+        : tempWorkspaceSync({ rootDir, prefix: "workspace-", dirMode: 0o750 });
+      expect(forced()).toBe(3);
+      expect(fsSync.statSync(workspace.dir).mode & 0o7777).toBe(0o750);
+      expect(await workspace.cleanup()).toBe("removed");
     },
   );
 

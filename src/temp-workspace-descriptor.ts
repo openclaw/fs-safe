@@ -1,13 +1,26 @@
 import fsSync from "node:fs";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { nodeDirectorySearchOnlyFlags } from "./directory-mode-node.js";
+import { inspectDirectoryIdentitySync } from "./directory-guard.js";
+import { assertOwnedDirectory } from "./directory-mode-owner.js";
 import { FsSafeError } from "./errors.js";
 import type { FileIdentityStat } from "./file-identity.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import type { TempWorkspaceRootAdmission } from "./temp-workspace-admission.js";
 
 type DirectoryDescriptorAccess = "read" | "search";
-type OpenedDirectory = { fd: number; access: DirectoryDescriptorAccess };
+type OpenedDirectory = {
+  fd: number;
+  access: DirectoryDescriptorAccess;
+  proc: boolean;
+};
+
+type TempWorkspaceChildModeChecks = {
+  assertParent(): void;
+  hasRequestedMode(stat: fsSync.BigIntStats): boolean;
+  validate(stat: fsSync.BigIntStats): void;
+};
 
 export type RetainedDirectory = {
   fd: number;
@@ -44,15 +57,28 @@ function openReadableDirectory(pathname: string): number {
 
 function openRetainedDirectory(pathname: string): OpenedDirectory {
   try {
-    return { fd: openReadableDirectory(pathname), access: "read" };
+    return { fd: openReadableDirectory(pathname), access: "read", proc: false };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EACCES") throw error;
     const route = nodeDirectorySearchOnlyFlags();
     if (!route) throw error;
     const flags = fsSync.constants.O_DIRECTORY | fsSync.constants.O_NOFOLLOW |
       fsSync.constants.O_NONBLOCK;
-    return { fd: fsSync.openSync(pathname, route.flags | flags), access: "search" };
+    return {
+      fd: fsSync.openSync(pathname, route.flags | flags),
+      access: "search",
+      proc: route.proc,
+    };
   }
+}
+
+function chmodDescriptor(fd: number, mode: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    fsSync.fchmod(fd, mode, (error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
 }
 
 export function openTempWorkspaceCleanupParent(
@@ -94,6 +120,8 @@ export class TempWorkspaceRetainedChild {
   readonly #identity: Readonly<{ dev: bigint; ino: bigint }>;
   #access: DirectoryDescriptorAccess;
   #fd: number | undefined;
+  #modeLease = false;
+  #proc: boolean;
 
   constructor(dir: string, identity: FileIdentityStat) {
     if (typeof identity.dev !== "bigint" || typeof identity.ino !== "bigint") {
@@ -104,6 +132,7 @@ export class TempWorkspaceRetainedChild {
     const descriptor = openRetainedDirectory(dir);
     const { fd } = descriptor;
     this.#access = descriptor.access;
+    this.#proc = descriptor.proc;
     try {
       const openedStat = inspectFileIdentitySync(
         () => fsSync.fstatSync(fd, { bigint: true }),
@@ -117,6 +146,7 @@ export class TempWorkspaceRetainedChild {
   }
 
   inspectCurrent(): fsSync.BigIntStats {
+    this.#assertModeLeaseReleased();
     if (this.#fd === undefined) {
       throw new FsSafeError("path-mismatch", "temp workspace child descriptor is unavailable");
     }
@@ -128,11 +158,128 @@ export class TempWorkspaceRetainedChild {
     return current;
   }
 
+  #assertModeLeaseReleased(): void {
+    if (this.#modeLease) {
+      throw new FsSafeError("path-mismatch", "temp workspace child mode operation is active");
+    }
+  }
+
+  #inspectModeTarget(fd: number, validate: (stat: fsSync.BigIntStats) => void): fsSync.BigIntStats {
+    const descriptor = inspectFileIdentitySync(
+      () => fsSync.fstatSync(fd, { bigint: true }),
+      this.#identity,
+    );
+    assertRetainedChildDirectory(descriptor);
+    validate(descriptor);
+    const named = inspectDirectoryIdentitySync(this.#dir, this.#identity);
+    validate(named);
+    return descriptor;
+  }
+
+  async #assertProcAuthority(
+    fd: number,
+    validate: (stat: fsSync.BigIntStats) => void,
+  ): Promise<void> {
+    if ((await fs.statfs("/proc/self/fd", { bigint: true })).type !== 0x9fa0n) {
+      throw new FsSafeError("path-mismatch", "directory mode requires a trusted procfs fd namespace");
+    }
+    const procPath = `/proc/self/fd/${fd}`;
+    const opened = inspectFileIdentitySync(
+      () => fsSync.fstatSync(fd, { bigint: true }),
+      this.#identity,
+    );
+    const followed = inspectFileIdentitySync(
+      () => fsSync.statSync(procPath, { bigint: true }),
+      this.#identity,
+    );
+    assertOwnedDirectory(opened, followed);
+    validate(opened);
+    validate(followed);
+  }
+
+  #assertProcAuthoritySync(
+    fd: number,
+    validate: (stat: fsSync.BigIntStats) => void,
+  ): void {
+    if (fsSync.statfsSync("/proc/self/fd", { bigint: true }).type !== 0x9fa0n) {
+      throw new FsSafeError("path-mismatch", "directory mode requires a trusted procfs fd namespace");
+    }
+    const procPath = `/proc/self/fd/${fd}`;
+    const opened = inspectFileIdentitySync(
+      () => fsSync.fstatSync(fd, { bigint: true }),
+      this.#identity,
+    );
+    const followed = inspectFileIdentitySync(
+      () => fsSync.statSync(procPath, { bigint: true }),
+      this.#identity,
+    );
+    assertOwnedDirectory(opened, followed);
+    validate(opened);
+    validate(followed);
+  }
+
+  async initializeMode(mode: number, checks: TempWorkspaceChildModeChecks): Promise<void> {
+    this.#assertModeLeaseReleased();
+    if (this.#fd === undefined) {
+      throw new FsSafeError("path-mismatch", "temp workspace child descriptor is unavailable");
+    }
+    const fd = this.#fd;
+    this.#modeLease = true;
+    try {
+      checks.assertParent();
+      let current = this.#inspectModeTarget(fd, checks.validate);
+      checks.assertParent();
+      if (checks.hasRequestedMode(current)) return;
+      if (this.#proc) {
+        await this.#assertProcAuthority(fd, checks.validate);
+        // statfs is awaited. Rebind both names and the retained descriptor
+        // after that turn before dispatching the procfs descriptor chmod.
+        checks.assertParent();
+        current = this.#inspectModeTarget(fd, checks.validate);
+        checks.assertParent();
+        if (checks.hasRequestedMode(current)) return;
+        await fs.chmod(`/proc/self/fd/${fd}`, mode & 0o7777);
+        await this.#assertProcAuthority(fd, checks.validate);
+      } else {
+        await chmodDescriptor(fd, mode & 0o7777);
+      }
+    } finally {
+      // The lease outlives every queued fd operation, including failures, so
+      // transfer or factory cleanup can never close a still-active descriptor.
+      this.#modeLease = false;
+    }
+  }
+
+  initializeModeSync(mode: number, checks: TempWorkspaceChildModeChecks): void {
+    this.#assertModeLeaseReleased();
+    if (this.#fd === undefined) {
+      throw new FsSafeError("path-mismatch", "temp workspace child descriptor is unavailable");
+    }
+    const fd = this.#fd;
+    this.#modeLease = true;
+    try {
+      checks.assertParent();
+      const current = this.#inspectModeTarget(fd, checks.validate);
+      checks.assertParent();
+      if (checks.hasRequestedMode(current)) return;
+      if (this.#proc) {
+        this.#assertProcAuthoritySync(fd, checks.validate);
+        fsSync.chmodSync(`/proc/self/fd/${fd}`, mode & 0o7777);
+        this.#assertProcAuthoritySync(fd, checks.validate);
+      } else {
+        fsSync.fchmodSync(fd, mode & 0o7777);
+      }
+    } finally {
+      this.#modeLease = false;
+    }
+  }
+
   get canEnumerate(): boolean {
     return this.#access === "read";
   }
 
   ensureReadable(): boolean {
+    this.#assertModeLeaseReleased();
     if (this.canEnumerate) return true;
     if (this.#fd === undefined) {
       throw new FsSafeError("path-mismatch", "temp workspace child descriptor is unavailable");
@@ -175,6 +322,7 @@ export class TempWorkspaceRetainedChild {
     }
     this.#fd = fd;
     this.#access = "read";
+    this.#proc = false;
     return true;
   }
 
@@ -183,6 +331,7 @@ export class TempWorkspaceRetainedChild {
     identity: Readonly<{ dev: bigint; ino: bigint }>;
     directory: RetainedChildDirectory | undefined;
   } {
+    this.#assertModeLeaseReleased();
     if (this.#fd === undefined) {
       throw new FsSafeError("path-mismatch", "temp workspace child descriptor is unavailable");
     }
@@ -210,6 +359,7 @@ export class TempWorkspaceRetainedChild {
   }
 
   close(): void {
+    this.#assertModeLeaseReleased();
     if (this.#fd === undefined) return;
     const fd = this.#fd;
     this.#fd = undefined;

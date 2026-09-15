@@ -29,8 +29,8 @@ import {
 } from "./temp-workspace-owner.js";
 import { TempWorkspaceRetainedChild } from "./temp-workspace-descriptor.js";
 import {
-  admitTempWorkspaceChild,
-  admitTempWorkspaceChildSync,
+  admitRetainedTempWorkspaceChild,
+  admitRetainedTempWorkspaceChildSync,
   admitTempWorkspaceRoot,
   admitTempWorkspaceRootSync,
   inspectAdmittedTempWorkspaceChild,
@@ -172,7 +172,12 @@ async function createTempWorkspace(
     // Retain while the child still has its private creation mode so an
     // explicit dirMode such as 0 cannot make identity descriptor acquisition fail.
     retainedChild = new TempWorkspaceRetainedChild(dir, stat);
-    const modeInitialization = admitTempWorkspaceChild(dir, stat, admission, dirMode);
+    const modeInitialization = admitRetainedTempWorkspaceChild(
+      retainedChild,
+      stat,
+      admission,
+      dirMode,
+    );
     if (modeInitialization) await modeInitialization;
     retainChildDescriptor = capability.admitChildDescriptor(retainedChild.ensureReadable());
     // Final adoption order is deliberate: complete ancestry, retained cleanup
@@ -297,7 +302,7 @@ export function tempWorkspaceSync(
     stat = inspectDirectoryIdentitySync(dir);
     validateInitialTempWorkspaceChild(stat, admission.ownerUid);
     retainedChild = new TempWorkspaceRetainedChild(dir, stat);
-    admitTempWorkspaceChildSync(dir, stat, admission, dirMode);
+    admitRetainedTempWorkspaceChildSync(retainedChild, stat, admission, dirMode);
     retainChildDescriptor = capability.admitChildDescriptor(retainedChild.ensureReadable());
     // Match async adoption: complete ancestry and retained cleanup authority
     // precede descriptor and named child security-state checks.

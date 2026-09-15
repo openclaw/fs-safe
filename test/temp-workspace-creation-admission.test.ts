@@ -1,5 +1,5 @@
 import fsSync, { type BigIntStats } from "node:fs";
-import fs, { type FileHandle } from "node:fs/promises";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
@@ -124,12 +124,14 @@ for (const variant of ["async", "sync"] as const) {
           else stat.mode |= 0o022n;
         });
         const register = vi.spyOn(cleanup, "registerTempPathForExit");
-        const chmod = vi.spyOn(fsSync, "fchmodSync");
+        const chmod = vi.spyOn(fsSync, "fchmod");
+        const chmodSync = vi.spyOn(fsSync, "fchmodSync");
         await expect(create(rootDir)).rejects.toMatchObject({
           code: kind === "foreign-owner" ? "not-owned" : "insecure-permissions",
         });
         expect(register).not.toHaveBeenCalled();
         expect(chmod).not.toHaveBeenCalled();
+        expect(chmodSync).not.toHaveBeenCalled();
         expect(await fs.readdir(rootDir)).toHaveLength(1);
       },
     );
@@ -163,11 +165,15 @@ for (const variant of ["async", "sync"] as const) {
           const register = vi.spyOn(cleanup, "registerTempPathForExit");
           const chmod = vi.spyOn(fs, "chmod");
           const chmodSync = vi.spyOn(fsSync, "chmodSync");
+          const fchmod = vi.spyOn(fsSync, "fchmod");
+          const fchmodSync = vi.spyOn(fsSync, "fchmodSync");
           await expect(create(rootDir, { dirMode: 0o750, cleanupSafety })).rejects.toBeInstanceOf(Error);
           expect(child).not.toBe("");
           expect(register).not.toHaveBeenCalled();
           expect(chmod).not.toHaveBeenCalled();
           expect(chmodSync).not.toHaveBeenCalled();
+          expect(fchmod).not.toHaveBeenCalled();
+          expect(fchmodSync).not.toHaveBeenCalled();
           cleanup.__cleanupRegisteredTempPathsForTest();
           expect(await fs.readFile(path.join(outside, "keep"), "utf8")).toBe("outside");
           expect(fsSync.statSync(outside).mode & 0o777).toBe(0o711);
@@ -200,10 +206,14 @@ for (const variant of ["async", "sync"] as const) {
       const register = vi.spyOn(cleanup, "registerTempPathForExit");
       const chmod = vi.spyOn(fs, "chmod");
       const chmodSync = vi.spyOn(fsSync, "chmodSync");
+      const fchmod = vi.spyOn(fsSync, "fchmod");
+      const fchmodSync = vi.spyOn(fsSync, "fchmodSync");
       await expect(create(rootDir, { dirMode: 0o750 })).rejects.toMatchObject({ code: "path-mismatch" });
       expect(register).not.toHaveBeenCalled();
       expect(chmod).not.toHaveBeenCalled();
       expect(chmodSync).not.toHaveBeenCalled();
+      expect(fchmod).not.toHaveBeenCalled();
+      expect(fchmodSync).not.toHaveBeenCalled();
       const [name] = await fs.readdir(rootDir);
       expect(await fs.readFile(path.join(rootDir, name!, "keep"), "utf8")).toBe("replacement");
     });
@@ -216,9 +226,14 @@ for (const variant of ["async", "sync"] as const) {
         await fs.mkdir(rootDir, { mode: 0o700 });
         await fs.mkdir(outside, { mode: 0o711 });
         let child = "";
-        let descriptor: FileHandle | undefined;
-        let syncFd: number | undefined;
+        let childFd: number | undefined;
         observeFirstChild(rootDir, (dir) => { child = dir; });
+        const open = fsSync.openSync.bind(fsSync);
+        vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
+          const fd = open(...args);
+          if (args[0] === child) childFd = fd;
+          return fd;
+        });
         const failure = Object.assign(new Error("chmod rejected"), { code: "EPERM" });
         const beforeChmod = () => {
           if (kind === "failure") throw failure;
@@ -226,24 +241,15 @@ for (const variant of ["async", "sync"] as const) {
           fsSync.symlinkSync(outside, child, "dir");
         };
         if (variant === "async") {
-          const open = fs.open.bind(fs);
-          vi.spyOn(fs, "open").mockImplementation(async (...args) => {
-            const handle = await open(...args);
-            if (args[0] === child) {
-              descriptor = handle;
-              const chmod = handle.chmod.bind(handle);
-              vi.spyOn(handle, "chmod").mockImplementation(async (mode) => {
-                beforeChmod();
-                await chmod(mode);
-              });
-            }
-            return handle;
+          const fchmod = fsSync.fchmod.bind(fsSync);
+          vi.spyOn(fsSync, "fchmod").mockImplementation((fd, mode, callback) => {
+            if (fd === childFd) beforeChmod();
+            return fchmod(fd, mode, callback);
           });
         } else {
           const chmod = fsSync.fchmodSync.bind(fsSync);
           vi.spyOn(fsSync, "fchmodSync").mockImplementation((fd, mode) => {
-            syncFd = fd;
-            beforeChmod();
+            if (fd === childFd) beforeChmod();
             chmod(fd, mode);
           });
         }
@@ -253,8 +259,8 @@ for (const variant of ["async", "sync"] as const) {
         else await expect(operation).rejects.toBeInstanceOf(Error);
         expect(register).not.toHaveBeenCalled();
         expect(fsSync.statSync(outside).mode & 0o777).toBe(0o711);
-        if (descriptor) expect(descriptor.fd).toBe(-1);
-        if (syncFd !== undefined) expect(() => fsSync.fstatSync(syncFd)).toThrow();
+        expect(childFd).toBeDefined();
+        expect(() => fsSync.fstatSync(childFd!)).toThrow();
         expect(fsSync.lstatSync(child).isSymbolicLink()).toBe(kind === "replacement");
       },
     );
@@ -264,10 +270,12 @@ for (const variant of ["async", "sync"] as const) {
       const chmod = vi.spyOn(fs, "chmod");
       const chmodSync = vi.spyOn(fsSync, "chmodSync");
       const fchmod = vi.spyOn(fsSync, "fchmodSync");
+      const fchmodAsync = vi.spyOn(fsSync, "fchmod");
       const workspace = await create(rootDir);
       expect(chmod).not.toHaveBeenCalled();
       expect(chmodSync).not.toHaveBeenCalled();
       expect(fchmod).not.toHaveBeenCalled();
+      expect(fchmodAsync).not.toHaveBeenCalled();
       await workspace.cleanup();
       const lstat = fsSync.lstatSync.bind(fsSync);
       vi.spyOn(fsSync, "lstatSync").mockImplementation((name, options) => {

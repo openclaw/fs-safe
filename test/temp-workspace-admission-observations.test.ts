@@ -83,52 +83,49 @@ for (const variant of ["async", "sync"] as const) {
         const rootDir = path.join(grandparent, "parent", "root");
         await fs.mkdir(rootDir, { recursive: true, mode: 0o700 });
         const events: string[] = [];
-        let modeDescriptorClosed = false;
-        let rootObservationsAfterClose = 0;
+        let modeChangeSettled = false;
+        let rootObservationsAfterMode = 0;
         let cleanupParentFd: number | undefined;
         let cleanupParentObserved = false;
-        let modeFd: number | undefined;
+        let childFd: number | undefined;
         const isChild = (name: unknown): name is string => typeof name === "string" &&
           path.dirname(name) === rootDir && path.basename(name).startsWith("workspace-");
         const openSync = fsSync.openSync.bind(fsSync);
         vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
           const fd = openSync(...args);
           if (args[0] === rootDir) cleanupParentFd = fd;
-          if (variant === "sync" && isChild(args[0])) modeFd = fd;
+          if (isChild(args[0])) childFd = fd;
           return fd;
         });
         if (variant === "async") {
-          const open = fs.open.bind(fs);
-          vi.spyOn(fs, "open").mockImplementation(async (...args) => {
-            const handle = await open(...args);
-            if (isChild(args[0])) {
-              const close = handle.close.bind(handle);
-              vi.spyOn(handle, "close").mockImplementation(async () => {
-                await close();
-                modeDescriptorClosed = true;
-                events.push("mode-close");
-              });
-            }
-            return handle;
+          const fchmod = fsSync.fchmod.bind(fsSync);
+          vi.spyOn(fsSync, "fchmod").mockImplementation((fd, mode, callback) => {
+            return fchmod(fd, mode, (error) => {
+              if (fd === childFd && !error) {
+                modeChangeSettled = true;
+                events.push("mode-settled");
+              }
+              callback(error);
+            });
           });
         } else {
-          const close = fsSync.closeSync.bind(fsSync);
-          vi.spyOn(fsSync, "closeSync").mockImplementation((fd) => {
-            close(fd);
-            if (fd === modeFd && !modeDescriptorClosed) {
-              modeDescriptorClosed = true;
-              events.push("mode-close");
+          const fchmod = fsSync.fchmodSync.bind(fsSync);
+          vi.spyOn(fsSync, "fchmodSync").mockImplementation((fd, mode) => {
+            fchmod(fd, mode);
+            if (fd === childFd) {
+              modeChangeSettled = true;
+              events.push("mode-settled");
             }
           });
         }
         const lstat = fsSync.lstatSync.bind(fsSync);
         vi.spyOn(fsSync, "lstatSync").mockImplementation((name, options) => {
           const stat = lstat(name, options);
-          if (modeDescriptorClosed && name === rootDir && options?.bigint === true) {
-            rootObservationsAfterClose += 1;
-            if (rootObservationsAfterClose === 1) events.push("ancestry");
+          if (modeChangeSettled && name === rootDir && options?.bigint === true) {
+            rootObservationsAfterMode += 1;
+            if (rootObservationsAfterMode === 1) events.push("ancestry");
           }
-          if (modeDescriptorClosed && isChild(name) && options?.bigint === true) {
+          if (modeChangeSettled && isChild(name) && options?.bigint === true) {
             events.push("child-security");
           }
           return stat;
@@ -137,7 +134,7 @@ for (const variant of ["async", "sync"] as const) {
         vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
           const stat = fstat(fd, options);
           if (
-            modeDescriptorClosed && rootObservationsAfterClose > 0 &&
+            modeChangeSettled && rootObservationsAfterMode > 0 &&
             fd === cleanupParentFd && !cleanupParentObserved
           ) {
             cleanupParentObserved = true;
@@ -153,7 +150,7 @@ for (const variant of ["async", "sync"] as const) {
         const workspace = await create(rootDir, { dirMode: 0o750 });
         try {
           expect(events).toEqual([
-            "mode-close", "ancestry", "cleanup-parent", "child-security", "register",
+            "mode-settled", "ancestry", "cleanup-parent", "child-security", "register",
           ]);
         } finally {
           await workspace.cleanup();
@@ -164,56 +161,50 @@ for (const variant of ["async", "sync"] as const) {
     it.runIf(process.platform !== "win32").each([
       "grandparent-mode", "child-replacement", "child-mode", "child-owner",
     ] as const)(
-      "rejects %s after mode descriptor close and before cleanup adoption", async (change) => {
+      "rejects %s after mode correction and before cleanup adoption", async (change) => {
         const base = await tempRoot("fs-safe-workspace-final-ancestry-");
         const grandparent = path.join(base, "grandparent");
         const rootDir = path.join(grandparent, "parent", "root");
         await fs.mkdir(rootDir, { recursive: true, mode: 0o700 });
         let child = "";
-        let modeDescriptorClosed = false;
+        let modeChangeSettled = false;
         let finalAncestryObserved = false;
-        let childObservationsAfterClose = 0;
+        let childObservationsAfterMode = 0;
         const isChild = (name: unknown): name is string => typeof name === "string" &&
           path.dirname(name) === rootDir && path.basename(name).startsWith("workspace-");
-        const afterModeClose = () => {
-          modeDescriptorClosed = true;
+        const afterModeChange = () => {
+          modeChangeSettled = true;
           if (change === "grandparent-mode") fsSync.chmodSync(grandparent, 0o770);
         };
+        let childFd: number | undefined;
+        const open = fsSync.openSync.bind(fsSync);
+        vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
+          const fd = open(...args);
+          if (isChild(args[0])) {
+            child = args[0];
+            childFd = fd;
+          }
+          return fd;
+        });
         if (variant === "async") {
-          const open = fs.open.bind(fs);
-          vi.spyOn(fs, "open").mockImplementation(async (...args) => {
-            const handle = await open(...args);
-            if (isChild(args[0])) {
-              child = args[0];
-              const close = handle.close.bind(handle);
-              vi.spyOn(handle, "close").mockImplementation(async () => {
-                await close();
-                afterModeClose();
-              });
-            }
-            return handle;
+          const fchmod = fsSync.fchmod.bind(fsSync);
+          vi.spyOn(fsSync, "fchmod").mockImplementation((fd, mode, callback) => {
+            return fchmod(fd, mode, (error) => {
+              if (fd === childFd && !error) afterModeChange();
+              callback(error);
+            });
           });
         } else {
-          let childFd: number | undefined;
-          const open = fsSync.openSync.bind(fsSync);
-          const close = fsSync.closeSync.bind(fsSync);
-          vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
-            const fd = open(...args);
-            if (isChild(args[0])) {
-              child = args[0];
-              childFd = fd;
-            }
-            return fd;
-          });
-          vi.spyOn(fsSync, "closeSync").mockImplementation((fd) => {
-            close(fd);
-            if (fd === childFd && !modeDescriptorClosed) afterModeClose();
+          const fchmod = fsSync.fchmodSync.bind(fsSync);
+          vi.spyOn(fsSync, "fchmodSync").mockImplementation((fd, mode) => {
+            fchmod(fd, mode);
+            if (fd === childFd) afterModeChange();
           });
         }
         const lstat = fsSync.lstatSync.bind(fsSync);
         vi.spyOn(fsSync, "lstatSync").mockImplementation((name, options) => {
           const stat = lstat(name, options);
-          if (modeDescriptorClosed && name === grandparent && !finalAncestryObserved) {
+          if (modeChangeSettled && name === grandparent && !finalAncestryObserved) {
             finalAncestryObserved = true;
             if (change === "child-replacement") {
               // Keep the ancestry unchanged while substituting the child
@@ -223,8 +214,8 @@ for (const variant of ["async", "sync"] as const) {
               fsSync.writeFileSync(path.join(child, "keep"), "replacement");
             }
           }
-          if (modeDescriptorClosed && name === child) {
-            childObservationsAfterClose += 1;
+          if (modeChangeSettled && name === child) {
+            childObservationsAfterMode += 1;
             if (finalAncestryObserved && typeof stat?.mode === "bigint") {
               if (change === "child-mode") stat.mode = (stat.mode & ~0o7777n) | 0o700n;
               if (change === "child-owner") stat.uid = BigInt(process.geteuid!()) + 1n;
@@ -237,9 +228,9 @@ for (const variant of ["async", "sync"] as const) {
           code: change === "grandparent-mode" ? "insecure-permissions" :
             change === "child-owner" ? "not-owned" : "path-mismatch",
         });
-        expect(modeDescriptorClosed).toBe(true);
+        expect(modeChangeSettled).toBe(true);
         expect(finalAncestryObserved).toBe(true);
-        expect(childObservationsAfterClose).toBe(change === "grandparent-mode" ? 0 : 1);
+        expect(childObservationsAfterMode).toBe(change === "grandparent-mode" ? 0 : 1);
         expect(register).not.toHaveBeenCalled();
         cleanup.__cleanupRegisteredTempPathsForTest();
         expect(fsSync.statSync(child).isDirectory()).toBe(true);
