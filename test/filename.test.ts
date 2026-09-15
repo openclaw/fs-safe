@@ -16,6 +16,14 @@ function normalizedBytes(value: string): number {
   return Math.max(Buffer.byteLength(value.normalize("NFC")), Buffer.byteLength(value.normalize("NFD")));
 }
 
+type CandidatePosition = "primary" | "fallback";
+
+function sanitizeAtPosition(position: CandidatePosition, candidate: string): string {
+  return position === "primary"
+    ? sanitizeUntrustedFileName(candidate, "fallback.bin")
+    : sanitizeUntrustedFileName("<>", candidate);
+}
+
 describe("fitFileNameToPortableComponent", () => {
   const prefix = `.fs-safe-output-12345-${"a".repeat(36)}-`;
   const suffix = ".part";
@@ -58,6 +66,38 @@ describe("sanitizeUntrustedFileName", () => {
   it("leaves a valid primary name unchanged without exposing an unsafe fallback", () => {
     expect(sanitizeUntrustedFileName("report.txt", "../../outside.txt")).toBe("report.txt");
   });
+
+  it.each(["primary", "fallback"] as const)(
+    "keeps a 200-character safe ASCII %s candidate exact",
+    (position) => {
+      const candidate = "a".repeat(200);
+      expect(sanitizeAtPosition(position, candidate)).toBe(candidate);
+    },
+  );
+
+  it.each(["primary", "fallback"] as const)(
+    "strips a final newline and CRLF from a %s candidate",
+    (position) => {
+      expect(sanitizeAtPosition(position, "report.txt\n")).toBe("report.txt");
+      expect(sanitizeAtPosition(position, "report.txt\r\n")).toBe("report.txt");
+    },
+  );
+
+  it.each(["primary", "fallback"] as const)(
+    "does not admit dot aliases from a %s candidate",
+    (position) => {
+      const replacement = position === "primary" ? "fallback.bin" : "file";
+      expect(sanitizeAtPosition(position, ".")).toBe(replacement);
+      expect(sanitizeAtPosition(position, "..")).toBe(replacement);
+    },
+  );
+
+  it.each(["primary", "fallback"] as const)(
+    "suffixes a mixed-case Windows device %s candidate",
+    (position) => {
+      expect(sanitizeAtPosition(position, "cOn.TxT")).toBe("cOn_.TxT");
+    },
+  );
 
   it.each([
     ["../nested/portable.txt", "portable.txt"],
@@ -137,13 +177,16 @@ describe("sanitizeUntrustedFileName", () => {
     }
   });
 
-  it("suffixes reserved names before applying the 200-character limit", () => {
-    const input = `CON.${"a".repeat(196)}`;
-    const expected = `CON_.${"a".repeat(195)}`;
-    expect(input).toHaveLength(200);
-    expect(expected).toHaveLength(200);
-    expect(sanitizeUntrustedFileName(input, "fallback.bin")).toBe(expected);
-  });
+  it.each(["primary", "fallback"] as const)(
+    "suffixes a 200-character reserved %s candidate without truncating the safety suffix",
+    (position) => {
+      const input = `CON.${"a".repeat(196)}`;
+      const expected = `CON_.${"a".repeat(195)}`;
+      expect(input).toHaveLength(200);
+      expect(expected).toHaveLength(200);
+      expect(sanitizeAtPosition(position, input)).toBe(expected);
+    },
+  );
 
   it("does not split a Unicode surrogate pair at the length limit", () => {
     const sanitized = sanitizeUntrustedFileName(`${"a".repeat(199)}😀`, "fallback.bin");

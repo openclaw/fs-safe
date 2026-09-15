@@ -28,7 +28,107 @@ function suffixWindowsReservedDeviceName(fileName: string): string {
 }
 
 const PORTABLE_FILE_NAME_BYTES = 255;
+const SANITIZED_FILE_NAME_CODE_UNITS = 200;
 const SAFE_FALLBACK_FILE_NAME = "file";
+
+function asciiBaseEqualsIgnoreCase(
+  value: string,
+  baseNameEnd: number,
+  expectedLowerCase: string,
+): boolean {
+  if (baseNameEnd !== expectedLowerCase.length) return false;
+  for (let index = 0; index < baseNameEnd; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    const lowerCaseCodeUnit = codeUnit >= 0x41 && codeUnit <= 0x5a
+      ? codeUnit + 0x20
+      : codeUnit;
+    if (lowerCaseCodeUnit !== expectedLowerCase.charCodeAt(index)) return false;
+  }
+  return true;
+}
+
+function isAsciiWindowsReservedDeviceBase(fileName: string, baseNameEnd: number): boolean {
+  let deviceBaseNameEnd = baseNameEnd;
+  while (deviceBaseNameEnd > 0) {
+    const codeUnit = fileName.charCodeAt(deviceBaseNameEnd - 1);
+    if (codeUnit !== 0x20 && codeUnit !== 0x2e) break;
+    deviceBaseNameEnd -= 1;
+  }
+  switch (deviceBaseNameEnd) {
+    case 3:
+      return asciiBaseEqualsIgnoreCase(fileName, deviceBaseNameEnd, "con") ||
+        asciiBaseEqualsIgnoreCase(fileName, deviceBaseNameEnd, "prn") ||
+        asciiBaseEqualsIgnoreCase(fileName, deviceBaseNameEnd, "aux") ||
+        asciiBaseEqualsIgnoreCase(fileName, deviceBaseNameEnd, "nul");
+    case 4: {
+      const number = fileName.charCodeAt(3);
+      return number >= 0x31 && number <= 0x39 && (
+        asciiBaseEqualsIgnoreCase(fileName, 3, "com") ||
+        asciiBaseEqualsIgnoreCase(fileName, 3, "lpt")
+      );
+    }
+    case 6:
+      return asciiBaseEqualsIgnoreCase(fileName, deviceBaseNameEnd, "clock$") ||
+        asciiBaseEqualsIgnoreCase(fileName, deviceBaseNameEnd, "conin$");
+    case 7:
+      return asciiBaseEqualsIgnoreCase(fileName, deviceBaseNameEnd, "conout$");
+    default:
+      return false;
+  }
+}
+
+/**
+ * Recognizes only names for which the full sanitizer is provably a fixed point.
+ * Keeping this ASCII-only makes the scan bounded and avoids normalization or
+ * locale-sensitive case behavior on the common callback-name path.
+ */
+function isBoundedSanitizedAsciiFileName(fileName: unknown): fileName is string {
+  if (
+    typeof fileName !== "string" ||
+    fileName.length === 0 ||
+    fileName.length > SANITIZED_FILE_NAME_CODE_UNITS ||
+    fileName === "." ||
+    fileName === ".."
+  ) {
+    return false;
+  }
+
+  let baseNameEnd = fileName.length;
+  for (let index = 0; index < fileName.length; index += 1) {
+    const codeUnit = fileName.charCodeAt(index);
+    if (
+      codeUnit < 0x20 ||
+      codeUnit > 0x7e ||
+      codeUnit === 0x22 ||
+      codeUnit === 0x2a ||
+      codeUnit === 0x2f ||
+      codeUnit === 0x3a ||
+      codeUnit === 0x3c ||
+      codeUnit === 0x3e ||
+      codeUnit === 0x3f ||
+      codeUnit === 0x5c ||
+      codeUnit === 0x7c
+    ) {
+      return false;
+    }
+    if (codeUnit === 0x2e && baseNameEnd === fileName.length) {
+      baseNameEnd = index;
+    }
+  }
+
+  // trim() would change edge spaces, so those cannot take the fixed-point path.
+  if (fileName.charCodeAt(0) === 0x20 || fileName.charCodeAt(fileName.length - 1) === 0x20) {
+    return false;
+  }
+  return !isAsciiWindowsReservedDeviceBase(fileName, baseNameEnd);
+}
+
+function hasWindowsDrivePrefix(value: string): boolean {
+  if (value.length < 2 || value.charCodeAt(1) !== 0x3a) return false;
+  const firstCodeUnit = value.charCodeAt(0);
+  return (firstCodeUnit >= 0x41 && firstCodeUnit <= 0x5a) ||
+    (firstCodeUnit >= 0x61 && firstCodeUnit <= 0x7a);
+}
 
 function normalizedFileNameBytes(value: string): number {
   return maxNormalizedUtf8Bytes(value, true);
@@ -82,22 +182,29 @@ export function fitFileNameToPortableComponent(params: {
 }
 
 function sanitizeFileNameCandidate(fileName: string): string | undefined {
+  if (isBoundedSanitizedAsciiFileName(fileName)) return fileName;
   const trimmed = typeof fileName === "string" ? fileName.trim() : "";
   if (!trimmed) {
     return undefined;
   }
-  let base = path.posix.basename(trimmed);
-  base = path.win32.basename(base);
+  let base = trimmed;
+  if (base.includes("/")) base = path.posix.basename(base);
+  if (base.includes("\\") || hasWindowsDrivePrefix(base)) {
+    base = path.win32.basename(base);
+  }
   base = base.replace(INVALID_FILE_NAME_CHARACTERS, "").trim();
   if (!base || base === "." || base === "..") {
     return undefined;
   }
-  base = truncateCodeUnitsWithoutSplittingSurrogate(base, 200);
+  base = truncateCodeUnitsWithoutSplittingSurrogate(base, SANITIZED_FILE_NAME_CODE_UNITS);
   let safeBase = suffixWindowsReservedDeviceName(base);
-  if (safeBase.length > 200) {
+  if (safeBase.length > SANITIZED_FILE_NAME_CODE_UNITS) {
     // The safety suffix is the final invariant. Shorten the unsuffixed tail so
     // truncation cannot turn a padded reserved stem back into a device name.
-    base = truncateCodeUnitsWithoutSplittingSurrogate(base, 199);
+    base = truncateCodeUnitsWithoutSplittingSurrogate(
+      base,
+      SANITIZED_FILE_NAME_CODE_UNITS - 1,
+    );
     safeBase = suffixWindowsReservedDeviceName(base);
   }
   return safeBase;
