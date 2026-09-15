@@ -10,6 +10,7 @@ import { pathToFileURL } from "node:url";
 import { registerCore } from "./core.mjs";
 import { registerPaths } from "./paths.mjs";
 import { registerLifecycle } from "./lifecycle.mjs";
+import { registerDarwinClone } from "./darwin-clone.mjs";
 import { registerArchives } from "./archives.mjs";
 import { registerBroad } from "./broad.mjs";
 import { registerScaling } from "./scaling.mjs";
@@ -68,6 +69,7 @@ assert(!native || loadedAddon, "Could not identify the loaded native addon");
 const nativeHash = loadedAddon
   ? createHash("sha256").update(fs.readFileSync(loadedAddon.filename)).digest("hex") : null;
 const workspace = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-methods-")));
+const workspaceFilesystem = fs.statfsSync(workspace);
 const cases = [];
 const exclusions = new Map();
 const contracts = new Map();
@@ -94,6 +96,7 @@ try {
   cleanup = await registerCore(context);
   await registerPaths(context);
   await registerLifecycle(context);
+  await registerDarwinClone(context);
   await registerArchives(context);
   await registerBroad(context);
   await registerScaling(context);
@@ -151,7 +154,7 @@ try {
   const report = {
     schemaVersion: 1,
     copyFixture: { shape: args["copy-shape"], files: args["copy-shape"] === "empty" ? 0 : args["copy-files"], bytesPerFile: args["copy-file-bytes"], extraPayloadBytes: args["copy-shape"] === "mixed" ? 1024 * 1024 : 0, concurrency: args["copy-concurrency"] ?? null },
-    metadata: { harnessHash: harnessDigest, nativeHash, distHash: createHash("sha256").update(fs.readdirSync(dist).filter((name) => /\.(js|wasm)$/.test(name)).sort().map((name) => name + createHash("sha256").update(fs.readFileSync(path.join(dist, name))).digest("hex")).join("\n")).digest("hex"), harnessRevision: execFileSync("git", ["rev-parse", "HEAD"], { cwd: packageRoot, encoding: "utf8" }).trim(), node: process.version, platform: process.platform, arch: process.arch, cpu: os.cpus()[0]?.model, mode: args.mode, native, samples: args.samples, date: new Date().toISOString() },
+    metadata: { harnessHash: harnessDigest, nativeHash, distHash: createHash("sha256").update(fs.readdirSync(dist).filter((name) => /\.(js|wasm)$/.test(name)).sort().map((name) => name + createHash("sha256").update(fs.readFileSync(path.join(dist, name))).digest("hex")).join("\n")).digest("hex"), harnessRevision: execFileSync("git", ["rev-parse", "HEAD"], { cwd: packageRoot, encoding: "utf8" }).trim(), node: process.version, platform: process.platform, osRelease: os.release(), arch: process.arch, cpu: os.cpus()[0]?.model, workspaceFilesystem: { type: workspaceFilesystem.type, blockSize: workspaceFilesystem.bsize }, mode: args.mode, native, samples: args.samples, date: new Date().toISOString() },
     coverage: { exports: Object.fromEntries(exportsByName), methods: Object.fromEntries(contracts), exclusions: Object.fromEntries(exclusions), registeredCases: cases.length, filtered: Boolean(args.filter) },
     results,
   };
