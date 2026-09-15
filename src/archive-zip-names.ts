@@ -1,3 +1,4 @@
+import { types } from "node:util";
 import { ArchiveFormatError, ArchiveSecurityError } from "./archive-errors.js";
 import { stripArchivePath, validateArchiveEntryPath } from "./archive-entry.js";
 import { updateCrc32 } from "./archive-crc32.js";
@@ -65,11 +66,17 @@ export function admitZipNames(params: {
 }): string | undefined {
   const { central, local, flags, centralExtra, localExtra, seen } = params;
   if (!central.length || !local.length) zipFormat("empty entry name");
-  const centralRaw = central.toString("latin1"); const localRaw = local.toString("latin1");
-  const centralUtf8 = originalName(central, centralRaw, flags); const localUtf8 = originalName(local, localRaw, flags);
+  // Reuse only within this synchronous call; shared backing bytes can change
+  // concurrently even though admission does not yield while checking names.
+  const sameName = !types.isSharedArrayBuffer(central.buffer) &&
+    !types.isSharedArrayBuffer(local.buffer) && central.equals(local);
+  const centralRaw = central.toString("latin1");
+  const localRaw = sameName ? centralRaw : local.toString("latin1");
+  const centralUtf8 = originalName(central, centralRaw, flags);
+  const localUtf8 = sameName ? centralUtf8 : originalName(local, localRaw, flags);
   const centralUnicode = unicodeName(central, centralExtra); const localUnicode = unicodeName(local, localExtra);
   const centralKey = key(centralRaw);
-  if (centralKey !== key(localRaw)) {
+  if (!sameName && centralKey !== key(localRaw)) {
     zipFormat("central and local names disagree");
   }
   const interpretations = [centralUtf8, localUtf8, centralUnicode, localUnicode].filter(
