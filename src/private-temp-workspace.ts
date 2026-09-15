@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import fsSync from "node:fs";
+import { randomInt, randomUUID } from "node:crypto";
+import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
@@ -10,8 +10,7 @@ import {
 } from "./file-store.js";
 import { FsSafeError } from "./errors.js";
 import { isNotFoundPathError } from "./path.js";
-import { realpathSync } from "./realpath.js";
-import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
+import { inspectDirectoryIdentitySync } from "./directory-guard.js";
 import { throwFsSafeReadError } from "./root-errors.js";
 import {
   matchRootFileOpenFailure,
@@ -28,6 +27,17 @@ import {
   type TempWorkspaceCleanupResult,
   type TempWorkspaceCleanupSafety,
 } from "./temp-workspace-owner.js";
+import { TempWorkspaceRetainedChild } from "./temp-workspace-descriptor.js";
+import {
+  admitRetainedTempWorkspaceChild,
+  admitRetainedTempWorkspaceChildSync,
+  validateInitialTempWorkspaceChild,
+} from "./temp-workspace-child-admission.js";
+import {
+  admitTempWorkspaceRoot,
+  admitTempWorkspaceRootSync,
+} from "./temp-workspace-admission.js";
+import { validateTempWorkspaceDirMode } from "./temp-workspace-permissions.js";
 
 export type {
   TempWorkspaceCleanupResult,
@@ -89,6 +99,46 @@ function sanitizeTempPrefix(prefix: string): string {
   return sanitized.endsWith("-") ? sanitized : `${sanitized}-`;
 }
 
+const TEMP_WORKSPACE_SUFFIX_ALPHABET =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+const TEMP_WORKSPACE_SUFFIX_SPACE = TEMP_WORKSPACE_SUFFIX_ALPHABET.length ** 6;
+const TEMP_WORKSPACE_DIRECT_CREATE_ATTEMPTS = 64;
+
+function randomTempWorkspaceChildPath(childPrefix: string): string {
+  let encoded = randomInt(TEMP_WORKSPACE_SUFFIX_SPACE);
+  let suffix = "";
+  for (let index = 0; index < 6; index += 1) {
+    suffix = TEMP_WORKSPACE_SUFFIX_ALPHABET[encoded % TEMP_WORKSPACE_SUFFIX_ALPHABET.length]! + suffix;
+    encoded = Math.floor(encoded / TEMP_WORKSPACE_SUFFIX_ALPHABET.length);
+  }
+  return `${childPrefix}${suffix}`;
+}
+
+function canCreateTempWorkspaceWithRequestedMode(dirMode: number): boolean {
+  return (process.platform === "linux" || process.platform === "darwin") && dirMode !== 0o700 &&
+    (dirMode & 0o700) === 0o700 && (dirMode & 0o7000) === 0 && (dirMode & 0o022) === 0;
+}
+
+function createTempWorkspaceWithRequestedModeSync(
+  childPrefix: string,
+  dirMode: number,
+  prepareChildCreation: () => void,
+): string {
+  let collision: unknown;
+  for (let attempt = 0; attempt < TEMP_WORKSPACE_DIRECT_CREATE_ATTEMPTS; attempt += 1) {
+    const candidate = randomTempWorkspaceChildPath(childPrefix);
+    prepareChildCreation();
+    try {
+      fsSync.mkdirSync(candidate, { mode: dirMode, recursive: false });
+      return candidate;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      collision = error;
+    }
+  }
+  throw collision;
+}
+
 function resolveWorkspaceLeaf(dir: string, fileName: string): string {
   return path.join(dir, assertWorkspaceFileName(fileName));
 }
@@ -136,63 +186,78 @@ function throwTempWorkspaceOpenFailure(failure: RootFileOpenFailure): never {
   });
 }
 
-async function ensurePrivateDirectory(dir: string, mode: number): Promise<void> {
-  await fs.mkdir(recursiveMkdirPath(dir), { recursive: true, mode });
-  const stat = fsSync.statSync(dir);
-  if (!stat.isDirectory()) {
-    throw new Error(`Temp root must be a directory: ${dir}`);
-  }
-  await fs.chmod(dir, mode).catch(() => undefined);
-}
-
-function ensurePrivateDirectorySync(dir: string, mode: number): void {
-  fsSync.mkdirSync(recursiveMkdirPath(dir), { recursive: true, mode });
-  const stat = fsSync.statSync(dir);
-  if (!stat.isDirectory()) {
-    throw new Error(`Temp root must be a directory: ${dir}`);
-  }
-  try {
-    fsSync.chmodSync(dir, mode);
-  } catch {
-    // Best-effort on platforms that do not enforce POSIX modes.
-  }
-}
-
 async function createTempWorkspace(
   options: TempWorkspaceOptions,
 ): Promise<TempWorkspace> {
   const dirMode = options.dirMode ?? 0o700;
+  validateTempWorkspaceDirMode(dirMode);
   const mode = options.mode ?? 0o600;
   const cleanupSafety = resolveTempWorkspaceCleanupSafety(options.cleanupSafety);
-  const requestedRoot = path.resolve(options.rootDir);
-  let root = requestedRoot;
-  try {
-    root = realpathSync.native(requestedRoot);
-  } catch {
-    root = requestedRoot;
-  }
-  await ensurePrivateDirectory(root, dirMode);
-  const capability = new TempWorkspaceCleanupCapability(root, cleanupSafety);
+  const admission = await admitTempWorkspaceRoot(options.rootDir);
+  const root = admission.dir;
+  // Resolve attacker-controlled accessors and string coercion before retaining
+  // any cleanup descriptor. The completed prefix remains inert across the
+  // immediate pre-admission-to-mkdtemp dispatch boundary below.
+  const childPrefix = path.join(root, sanitizeTempPrefix(options.prefix));
+  const capability = new TempWorkspaceCleanupCapability(root, cleanupSafety, admission, dirMode);
   let dir: string;
-  let stat: fsSync.BigIntStats;
+  let stat: BigIntStats | Stats;
+  let retainedChild: TempWorkspaceRetainedChild | undefined;
+  let retainChildDescriptor = false;
   let cleanupOwner: TempWorkspaceCleanupOwner | undefined;
   let unregisterTempDir: () => void;
   try {
-    dir = await fs.mkdtemp(path.join(root, sanitizeTempPrefix(options.prefix)));
-    await fs.chmod(dir, dirMode).catch(() => undefined);
-    stat = fsSync.lstatSync(dir, { bigint: true });
-    if (stat.isSymbolicLink() || !stat.isDirectory()) {
-      throw new Error(`Temp workspace must be a directory: ${dir}`);
-    }
+    // Native capability discovery is complete before this synchronous
+    // boundary. The existing canonical-root route now captures the complete
+    // ancestry and associates its provisional parent descriptor here, then
+    // dispatches mkdtemp without yielding or invoking another probe.
+    capability.prepareChildCreation();
+    dir = await fs.mkdtemp(childPrefix);
     if (capability.parent) capability.assertCurrent();
-    cleanupOwner = new TempWorkspaceCleanupOwner(dir, stat, capability);
+    else admission.assertCurrent();
+    stat = inspectDirectoryIdentitySync(dir);
+    const needsModeInitialization = validateInitialTempWorkspaceChild(
+      stat,
+      admission.ownerUid,
+      dirMode,
+    );
+    // Retain while the child still has its private creation mode so an
+    // explicit dirMode such as 0 cannot make identity descriptor acquisition fail.
+    retainedChild = TempWorkspaceRetainedChild.retain(dir, stat);
+    const modeInitialization = admitRetainedTempWorkspaceChild(
+      retainedChild,
+      needsModeInitialization,
+      admission,
+      dirMode,
+    );
+    if (modeInitialization) await modeInitialization;
+    retainChildDescriptor = capability.admitChildDescriptor(retainedChild.ensureReadable());
+    // Final adoption order is deliberate: complete ancestry, retained cleanup
+    // parent, then descriptor and named checks of the original child identity.
+    if (capability.parent) capability.assertAncestryCurrent();
+    else admission.assertAncestry();
+    stat = retainedChild.finalizeAdmission(admission.ownerUid, dirMode);
+    cleanupOwner = new TempWorkspaceCleanupOwner(
+      retainedChild,
+      capability,
+      retainChildDescriptor,
+    );
+    retainedChild = undefined;
     unregisterTempDir = registerTempPathForExit(dir, {
       cleanupSync: () => cleanupOwner!.cleanupSync(),
     });
   } catch (error) {
     try {
       if (cleanupOwner) cleanupOwner.cleanupSync();
-      else capability.close();
+      else {
+        const closeErrors: unknown[] = [];
+        try { retainedChild?.close(); } catch (closeError) { closeErrors.push(closeError); }
+        try { capability.close(); } catch (closeError) { closeErrors.push(closeError); }
+        if (closeErrors.length === 1) throw closeErrors[0];
+        if (closeErrors.length > 1) {
+          throw new AggregateError(closeErrors, "temp workspace admission descriptor close failed");
+        }
+      }
     } catch (cleanupError) {
       throw new AggregateError([error, cleanupError], "temp workspace creation and cleanup both failed");
     }
@@ -268,41 +333,85 @@ export function tempWorkspaceSync(
   options: TempWorkspaceOptions,
 ): TempWorkspaceSync {
   const dirMode = options.dirMode ?? 0o700;
+  validateTempWorkspaceDirMode(dirMode);
   const mode = options.mode ?? 0o600;
   const cleanupSafety = resolveTempWorkspaceCleanupSafety(options.cleanupSafety);
-  const requestedRoot = path.resolve(options.rootDir);
-  let root = requestedRoot;
-  try {
-    root = realpathSync.native(requestedRoot);
-  } catch {
-    root = requestedRoot;
-  }
-  ensurePrivateDirectorySync(root, dirMode);
-  const capability = new TempWorkspaceCleanupCapability(root, cleanupSafety);
+  const admission = admitTempWorkspaceRootSync(options.rootDir);
+  const root = admission.dir;
+  const childPrefix = path.join(root, sanitizeTempPrefix(options.prefix));
+  const capability = new TempWorkspaceCleanupCapability(root, cleanupSafety, admission, dirMode);
   let dir: string;
-  let stat: fsSync.BigIntStats;
+  let stat: BigIntStats | Stats;
+  let retainedChild: TempWorkspaceRetainedChild | undefined;
+  let retainChildDescriptor = false;
+  let needsModeInitialization: boolean;
   let cleanupOwner: TempWorkspaceCleanupOwner | undefined;
   let unregisterTempDir: () => void;
   try {
-    dir = fsSync.mkdtempSync(path.join(root, sanitizeTempPrefix(options.prefix)));
-    try {
-      fsSync.chmodSync(dir, dirMode);
-    } catch {
-      // Best-effort on platforms that do not enforce POSIX modes.
-    }
-    stat = fsSync.lstatSync(dir, { bigint: true });
-    if (stat.isSymbolicLink() || !stat.isDirectory()) {
-      throw new Error(`Temp workspace must be a directory: ${dir}`);
+    const directRequestedMode = canCreateTempWorkspaceWithRequestedMode(dirMode);
+    if (directRequestedMode) {
+      dir = createTempWorkspaceWithRequestedModeSync(
+        childPrefix,
+        dirMode,
+        () => capability.prepareChildCreation(),
+      );
+    } else {
+      capability.prepareChildCreation();
+      dir = fsSync.mkdtempSync(childPrefix);
     }
     if (capability.parent) capability.assertCurrent();
-    cleanupOwner = new TempWorkspaceCleanupOwner(dir, stat, capability);
+    else admission.assertCurrent();
+    if (directRequestedMode) {
+      const created = TempWorkspaceRetainedChild.retainCreated(dir);
+      retainedChild = created.retained;
+      stat = created.stat;
+      needsModeInitialization = validateInitialTempWorkspaceChild(
+        stat,
+        admission.ownerUid,
+        dirMode,
+      );
+    } else {
+      stat = inspectDirectoryIdentitySync(dir);
+      needsModeInitialization = validateInitialTempWorkspaceChild(
+        stat,
+        admission.ownerUid,
+        dirMode,
+      );
+      retainedChild = TempWorkspaceRetainedChild.retain(dir, stat);
+    }
+    admitRetainedTempWorkspaceChildSync(
+      retainedChild,
+      needsModeInitialization,
+      admission,
+      dirMode,
+    );
+    retainChildDescriptor = capability.admitChildDescriptor(retainedChild.ensureReadable());
+    // Match async adoption: complete ancestry and retained cleanup authority
+    // precede descriptor and named child security-state checks.
+    if (capability.parent) capability.assertAncestryCurrent();
+    else admission.assertAncestry();
+    stat = retainedChild.finalizeAdmission(admission.ownerUid, dirMode);
+    cleanupOwner = new TempWorkspaceCleanupOwner(
+      retainedChild,
+      capability,
+      retainChildDescriptor,
+    );
+    retainedChild = undefined;
     unregisterTempDir = registerTempPathForExit(dir, {
       cleanupSync: () => cleanupOwner!.cleanupSync(),
     });
   } catch (error) {
     try {
       if (cleanupOwner) cleanupOwner.cleanupSync();
-      else capability.close();
+      else {
+        const closeErrors: unknown[] = [];
+        try { retainedChild?.close(); } catch (closeError) { closeErrors.push(closeError); }
+        try { capability.close(); } catch (closeError) { closeErrors.push(closeError); }
+        if (closeErrors.length === 1) throw closeErrors[0];
+        if (closeErrors.length > 1) {
+          throw new AggregateError(closeErrors, "temp workspace admission descriptor close failed");
+        }
+      }
     } catch (cleanupError) {
       throw new AggregateError([error, cleanupError], "temp workspace creation and cleanup both failed");
     }

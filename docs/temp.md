@@ -14,7 +14,89 @@ import {
 
 ## Private temp workspaces
 
-A private workspace is a directory created at mode `0o700` under a caller-provided temp root. It is unique per call (random suffix). Calling `cleanup()` or leaving an `await using` scope moves an unchanged workspace through a private quarantine before removal. Descriptor-bounded cleanup prevents recursive traversal of substitutions; the compatible JavaScript fallback has the narrower race contract documented below.
+A private workspace is a uniquely named directory under a caller-provided temp
+root. The default requested mode is `0o700`. Calling `cleanup()` or leaving an
+`await using` scope moves an unchanged workspace through a private quarantine
+before removal. Descriptor-bounded cleanup prevents recursive traversal of
+substitutions; the compatible JavaScript fallback has the narrower race
+contract documented below.
+
+On POSIX, workspace creation verifies the supplied root and its canonical
+ancestors before creating a child. Each existing directory must be owned by the
+effective user or root. Group/world-writable directories must also have the
+sticky bit, so ordinary system temp directories remain usable without changing
+their modes. Foreign-owned directories and non-sticky writable ancestors reject
+with `not-owned` or `insecure-permissions`; unavailable effective-user identity
+rejects with `permission-unverified`. Existing supplied directories keep their
+permissions. Missing root components are created at `0o700` and initialized
+from their first exact security snapshot; if a restrictive umask changes that
+mode, correction uses a verified directory descriptor.
+
+For an already existing canonical root, discovery retains only its immutable
+exact identity. Cleanup-parent retention is provisional: after any native
+capability probe, creation captures and validates the complete ancestry,
+re-observes the root against discovery, and associates the retained parent
+descriptor. Async creation and sync creation outside the Linux/macOS
+direct-mode case dispatch `mkdtemp` immediately after that synchronous boundary
+without another yield or native probe. Existing aliases and missing-component
+roots keep the guarded admission route.
+
+On Linux and macOS, synchronous creation can instead use an exclusive six-character
+random child name when an explicit requested mode other than `0o700` has owner
+`rwx`, no special bits, and no group/world write bits. The requested mode is
+passed directly to `mkdir` and the observed complete permission bits, rather
+than the requested bits, are authoritative. Umask, inherited ACL state, or
+inherited special bits can make that observation differ, in which case creation
+corrects the mode through the retained descriptor. This mode-based optimization
+does not claim that Linux and macOS have identical syscall or ACL behavior, and
+POSIX mode bits do not establish ACL privacy. Creation makes at most 64 attempts;
+after a name collision, each retry generates its candidate first, replays the
+already admitted immutable ancestry and descriptor receipts, and then
+immediately attempts exclusive creation. A colliding entry is never inspected,
+adopted, corrected, registered, or deleted. The default `0o700`, async creation, and
+other sync modes retain the `mkdtemp` path. That path requests initial mode
+`0o700`; a result different from `dirMode` is initialized through the same
+descriptor-bound correction.
+
+The direct sync path opens the new child without following its final component
+and captures one exact descriptor observation after the parent replay. The new
+child's exact identity, type, owner, private bits, and complete `0o7777` mode are
+checked before mode initialization. When its creation mode already
+matches `dirMode` (including the default `0o700`), creation avoids an extra mode
+descriptor and chmod. If the observed creation mode differs from `dirMode`, the
+immediate synchronous correction consumes that one-shot observation, checks the
+fresh child name, replays the parent, and applies correction through the retained
+descriptor. Later admission always performs fresh descriptor and name checks.
+Permission failures propagate. POSIX `dirMode`
+must not grant group/world write access; it only controls the new workspace,
+not existing supplied directories. After the
+first exact child observation, final adoption retains a no-follow child
+descriptor, rechecks complete ancestry and retained cleanup-parent authority,
+and then validates the original child's descriptor and current name for exact
+identity, owner, private bits, and requested mode before cleanup is registered.
+Linux and macOS may replay exact identities through round-trip-safe nonnegative
+numeric `dev`/`ino` projections. Initial receipts that cannot be represented
+exactly stay on the BigInt path; a malformed or mismatched numeric replay fails
+closed without an exact retry.
+Parent or child replacements observed during creation reject before cleanup
+ownership is registered. Unverified artifacts are left in place for
+caller-directed recovery.
+
+On Windows, POSIX mode/UID metadata does not establish ACL privacy, and these
+factories neither claim nor initialize a POSIX `dirMode`; every requested value
+uses the identity-only path without opening a mode descriptor or applying chmod.
+Callers must supply a root with trusted ACLs that protect its children and
+ancestors; exact pathname identity checks still apply. `cleanupSafety` controls
+removal capability, not Windows ACL admission.
+
+Root aliases already present at entry retain their historical support and are
+canonicalized. Callers remain responsible for choosing trusted root paths and
+excluding hostile peers with the same filesystem authority. Node's pathname
+`mkdir`/`mkdtemp` calls do not atomically return a creation descriptor: identity
+checks detect observed substitutions but cannot prove provenance against every
+same-privilege replacement before the first observation. Descriptor chmod
+cannot be redirected to a subsequently substituted pathname. Native bounded
+cleanup does not upgrade the creation operation to an atomic namespace boundary.
 
 ### `tempWorkspace`
 
@@ -76,18 +158,36 @@ verification can still redirect the final pathname removal.
 
 Set `cleanupSafety: "require-bounded"` when that concurrent attacker is in scope.
 Creation then requires native no-replace directory rename, native owned-tree
-removal, and a retained parent descriptor **before** `mkdtemp` creates
-a child. If any capability is unavailable, creation throws
-`FsSafeError("helper-unavailable")`; no child is created and a scoped callback is
-not called. The compatible default retains its fallback even if process-global
-native mode is `require`; select `require-bounded` to make cleanup capability
-mandatory for this API.
+removal, and a readable retained parent descriptor **before** child creation.
+On POSIX, the final requested `dirMode` must also include owner read
+and search (`(dirMode & 0o500) === 0o500`). Preflight failure throws
+`FsSafeError("helper-unavailable")` without creating a child or calling a scoped
+callback. The child descriptor is opened
+while the new directory still has its private creation mode, before an explicit
+`dirMode` can lower access. Retaining a read descriptor does not bypass the
+POSIX final-mode requirement: enumeration reopens the directory relative to
+that descriptor. Compatible mode accepts these restrictive modes but selects
+the JavaScript fallback and does not retain native traversal authority for the
+child, even if the caller later restores its permissions. Windows cleanup
+does not use this POSIX mode gate. A search-only descriptor remains valid identity
+evidence but is never native traversal authority: compatible cleanup selects
+the JavaScript fallback, while `require-bounded` rejects and leaves the
+unregistered child in place for caller-directed recovery. The compatible
+default retains its fallback even if process-global native mode is `require`;
+select `require-bounded` to make cleanup capability mandatory for this API.
 
 On Linux, bounded cleanup requires a successful runtime probe of the exact
 `openat2` child-directory flags, including `RESOLVE_NO_XDEV`, against the retained
 parent descriptor. If the kernel or seccomp policy denies that capability,
 compatible mode uses the guarded JavaScript fallback; `require-bounded` rejects
-before child creation. The probe runs once at creation, without filesystem mutation.
+before child creation. For eligible modes, the probe runs once at creation,
+without filesystem mutation.
+
+Cleanup does not repair POSIX workspace or descendant permissions. In compatible
+mode, a restrictive workspace mode or caller-created unreadable descendants
+can prevent recursive removal; native bounded cleanup can also encounter later
+permission changes or inaccessible descendants. These remain operational
+cleanup failures, with the propagation and recovery behavior described below.
 
 Bounded cleanup checks the parent and public workspace identity, quarantines
 the direct child without replacement, and verifies the quarantine against the
@@ -183,7 +283,7 @@ try {
 type TempWorkspaceOptions = {
   rootDir: string;          // parent directory for workspaces
   prefix: string;           // dir prefix (sanitized)
-  dirMode?: number;         // dir mode; default 0o700
+  dirMode?: number;         // new workspace mode; default 0o700; no POSIX group/world write
   mode?: number;            // file write mode; default 0o600
   cleanupSafety?: "compatible" | "require-bounded"; // default compatible
 };

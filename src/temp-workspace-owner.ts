@@ -2,20 +2,24 @@ import { randomUUID } from "node:crypto";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { createAsyncDirectoryGuard, createSyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup, type FileIdentityStat } from "./file-identity.js";
-import { withAsyncDirectoryGuards, withSyncDirectoryGuards } from "./guarded-mutation.js";
 import { getNativeBinding, type NativeBinding } from "./native.js";
 import type { NativeOwnedTreeRemovalResult } from "./native-binding.js";
-import { assertStagedDirectoryCurrent, openStagedDirectory } from "./staged-directory.js";
+import type { TempWorkspaceRootAdmission } from "./temp-workspace-admission.js";
+import {
+  openTempWorkspaceCleanupParent,
+  TempWorkspaceRetainedChild,
+  type RetainedChildDirectory,
+  type RetainedDirectory,
+} from "./temp-workspace-descriptor.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
 export type TempWorkspaceCleanupResult = "removed" | "missing" | "identity-mismatch" | "indeterminate";
 export type TempWorkspaceCleanupSafety = "compatible" | "require-bounded";
 
-type RetainedDirectory = ReturnType<typeof openStagedDirectory>;
 type Quarantine = { name: string; path: string; nativeRemoval: boolean };
+type CleanupCapabilityPhase = "new" | "ready" | "sealed" | "failed" | "closed";
 
 function isNativeCleanupBinding(
   binding: NativeBinding | undefined,
@@ -37,10 +41,31 @@ function nativeRemovalError(result: NativeOwnedTreeRemovalResult): Error | undef
 export class TempWorkspaceCleanupCapability {
   readonly binding: NativeBinding | undefined;
   readonly parent: RetainedDirectory | undefined;
+  readonly #admission: TempWorkspaceRootAdmission;
+  readonly #safety: TempWorkspaceCleanupSafety;
   readonly #ownedTreeRemovalAvailable: boolean;
-  #closed = false;
+  #phase: CleanupCapabilityPhase = "new";
 
-  constructor(root: string, safety: TempWorkspaceCleanupSafety) {
+  constructor(
+    root: string,
+    safety: TempWorkspaceCleanupSafety,
+    admission: TempWorkspaceRootAdmission,
+    dirMode: number,
+  ) {
+    if (path.resolve(root) !== path.resolve(admission.dir)) {
+      throw new FsSafeError("path-mismatch", "temp workspace cleanup parent differs from admitted root");
+    }
+    this.#admission = admission;
+    this.#safety = safety;
+    // POSIX enumeration reopens fd-relative ".", so retaining O_RDONLY before
+    // chmod cannot supply read/search authority that the final mode removes.
+    const childModeAllowsRemoval = process.platform === "win32" || (dirMode & 0o500) === 0o500;
+    if (safety === "require-bounded" && !childModeAllowsRemoval) {
+      throw new FsSafeError(
+        "helper-unavailable",
+        "temp workspace owned-tree cleanup requires owner read and search in dirMode",
+      );
+    }
     let binding: NativeBinding | undefined;
     try {
       binding = getNativeBinding();
@@ -50,23 +75,41 @@ export class TempWorkspaceCleanupCapability {
     this.binding = binding;
     let parent: RetainedDirectory | undefined;
     try {
-      parent = openStagedDirectory(root);
-      assertStagedDirectoryCurrent(parent.receipt);
+      parent = openTempWorkspaceCleanupParent(root, admission);
     } catch {
       if (parent) fsSync.closeSync(parent.fd);
       parent = undefined;
     }
-    this.parent = parent;
     let available = false;
-    if (parent && isNativeCleanupBinding(binding)) {
+    if (childModeAllowsRemoval && parent?.access === "read" && isNativeCleanupBinding(binding)) {
+      let probeReady = false;
       try {
-        available = binding.ownedTreeRemovalAvailable(parent.fd) === true;
+        admission.prepareCleanupProbe(parent.fd);
+        probeReady = true;
+      } catch (error) {
+        // A descriptor that cannot be associated even provisionally must not
+        // reach native code or remain available to compatible cleanup.
+        try {
+          fsSync.closeSync(parent.fd);
+        } catch (closeError) {
+          throw new AggregateError(
+            [error, closeError],
+            "temp workspace cleanup parent probe admission and close failed",
+          );
+        }
+        parent = undefined;
+      }
+      try {
+        if (probeReady && parent) {
+          available = binding.ownedTreeRemovalAvailable(parent.fd) === true;
+        }
       } catch {
         // Runtime denial must select fallback or reject before child creation.
       }
     }
+    this.parent = parent;
     this.#ownedTreeRemovalAvailable = available;
-    if (safety === "require-bounded" && !this.canRemoveOwnedTree) {
+    if (safety === "require-bounded" && !this.#ownedTreeRemovalAvailable) {
       this.close();
       throw new FsSafeError(
         "helper-unavailable",
@@ -76,23 +119,65 @@ export class TempWorkspaceCleanupCapability {
   }
 
   get canRemoveOwnedTree(): boolean {
-    return !this.#closed && this.#ownedTreeRemovalAvailable;
+    return (this.#phase === "ready" || this.#phase === "sealed") &&
+      this.#ownedTreeRemovalAvailable;
+  }
+
+  prepareChildCreation(): void {
+    const replay = this.#phase === "ready";
+    if (this.#phase !== "new" && !replay) {
+      throw new FsSafeError("path-mismatch", "temp workspace cleanup parent is unavailable");
+    }
+    // A failed initial admission or receipt replay is terminal: no earlier
+    // authority may survive a partial revalidation.
+    this.#phase = "failed";
+    if (replay) {
+      if (this.parent) this.#admission.associateAncestry(this.parent.fd);
+      else this.#admission.assertAncestry();
+    } else {
+      this.#admission.prepareChildCreation(this.parent?.fd);
+    }
+    // The retained descriptor cannot authorize cleanup until the complete
+    // ancestry and its exact descriptor association succeeded together.
+    this.#phase = "ready";
+  }
+
+  #assertCurrent(ancestry: boolean): void {
+    if ((this.#phase !== "ready" && this.#phase !== "sealed") || !this.parent) {
+      throw new FsSafeError("path-mismatch", "temp workspace cleanup parent is unavailable");
+    }
+    if (ancestry) this.#admission.associateAncestry(this.parent.fd);
+    else this.#admission.associateCurrent(this.parent.fd);
+  }
+
+  admitChildDescriptor(canEnumerate: boolean): boolean {
+    if (this.#phase !== "ready") {
+      throw new FsSafeError("path-mismatch", "temp workspace cleanup parent is unavailable");
+    }
+    // From this point the capability belongs to this successfully created
+    // child. Collision retries and further preparation must remain impossible.
+    this.#phase = "sealed";
+    const bounded = this.canRemoveOwnedTree && canEnumerate;
+    if (this.#safety === "require-bounded" && !bounded) {
+      throw new FsSafeError(
+        "helper-unavailable",
+        "temp workspace owned-tree cleanup requires a readable child descriptor",
+      );
+    }
+    return bounded;
   }
 
   assertCurrent(): void {
-    if (this.#closed || !this.parent) {
-      throw new FsSafeError("path-mismatch", "temp workspace cleanup parent is unavailable");
-    }
-    assertStagedDirectoryCurrent(this.parent.receipt);
-    const current = fsSync.fstatSync(this.parent.fd, { bigint: true });
-    if (!sameFileIdentityForCleanup(current, this.parent.receipt.identity)) {
-      throw new FsSafeError("path-mismatch", "temp workspace cleanup parent changed");
-    }
+    this.#assertCurrent(false);
+  }
+
+  assertAncestryCurrent(): void {
+    this.#assertCurrent(true);
   }
 
   close(): void {
-    if (this.#closed) return;
-    this.#closed = true;
+    if (this.#phase === "closed") return;
+    this.#phase = "closed";
     if (this.parent) fsSync.closeSync(this.parent.fd);
   }
 }
@@ -101,28 +186,23 @@ export class TempWorkspaceCleanupOwner {
   readonly #dir: string;
   readonly #identity: FileIdentityStat;
   readonly #capability: TempWorkspaceCleanupCapability;
-  readonly #directory: RetainedDirectory | undefined;
+  readonly #directory: RetainedChildDirectory | undefined;
   #closed = false;
   #running = false;
   #exitInterrupted = false;
   #result?: TempWorkspaceCleanupResult;
   #pending?: Promise<TempWorkspaceCleanupResult>;
 
-  constructor(dir: string, identity: FileIdentityStat, capability: TempWorkspaceCleanupCapability) {
-    this.#dir = dir;
-    this.#identity = { dev: identity.dev, ino: identity.ino };
+  constructor(
+    retained: TempWorkspaceRetainedChild,
+    capability: TempWorkspaceCleanupCapability,
+    retainDescriptor: boolean,
+  ) {
+    const child = retained.transfer(retainDescriptor);
+    this.#dir = child.dir;
+    this.#identity = child.identity;
     this.#capability = capability;
-    let directory: RetainedDirectory | undefined;
-    if (capability.canRemoveOwnedTree) {
-      directory = openStagedDirectory(dir);
-      const current = fsSync.fstatSync(directory.fd, { bigint: true });
-      if (!sameFileIdentityForCleanup(current, this.#identity)) {
-        fsSync.closeSync(directory.fd);
-        capability.close();
-        throw new FsSafeError("path-mismatch", "temp workspace changed while retaining cleanup authority");
-      }
-    }
-    this.#directory = directory;
+    this.#directory = child.directory;
   }
 
   #repeat(): TempWorkspaceCleanupResult {
@@ -200,11 +280,10 @@ export class TempWorkspaceCleanupOwner {
           name,
         );
       } else {
-        const guard = createSyncDirectoryGuard(parent.receipt.path);
-        withSyncDirectoryGuards([guard], () => {
-          this.#capability.assertCurrent();
-          fsSync.renameSync(this.#dir, quarantinePath);
-        });
+        // The admitted receipt is exact and descriptor-associated. Reuse it as
+        // the pre/post parent fence instead of layering a numeric guard over it.
+        this.#capability.assertCurrent();
+        fsSync.renameSync(this.#dir, quarantinePath);
       }
       this.#capability.assertCurrent();
       const quarantined = fsSync.lstatSync(quarantinePath, { bigint: true });
@@ -250,16 +329,14 @@ export class TempWorkspaceCleanupOwner {
     }
     let removalError: unknown;
     try {
-      const guard = await createAsyncDirectoryGuard(this.#capability.parent!.receipt.path);
-      await withAsyncDirectoryGuards([guard], async () => {
-        this.#assertQuarantine(quarantine);
-        try {
-          await fs.rm(quarantine.path, { recursive: true, force: true });
-        } catch (error) {
-          removalError = error;
-          throw error;
-        }
-      });
+      this.#assertQuarantine(quarantine);
+      try {
+        await fs.rm(quarantine.path, { recursive: true, force: true });
+      } catch (error) {
+        removalError = error;
+        throw error;
+      }
+      this.#capability.assertCurrent();
       return "removed";
     } catch (error) {
       if (error === removalError) throw error;
@@ -278,16 +355,14 @@ export class TempWorkspaceCleanupOwner {
     }
     let removalError: unknown;
     try {
-      const guard = createSyncDirectoryGuard(this.#capability.parent!.receipt.path);
-      withSyncDirectoryGuards([guard], () => {
-        this.#assertQuarantine(quarantine);
-        try {
-          fsSync.rmSync(quarantine.path, { recursive: true, force: true });
-        } catch (error) {
-          removalError = error;
-          throw error;
-        }
-      });
+      this.#assertQuarantine(quarantine);
+      try {
+        fsSync.rmSync(quarantine.path, { recursive: true, force: true });
+      } catch (error) {
+        removalError = error;
+        throw error;
+      }
+      this.#capability.assertCurrent();
       return "removed";
     } catch (error) {
       if (error === removalError) throw error;

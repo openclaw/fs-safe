@@ -154,15 +154,33 @@ function directoryEntryPath(dir: string): string {
   return end === rootLength || end === dir.length ? dir : dir.slice(0, end);
 }
 
+export function observeDirectoryIdentitySync(
+  dir: string,
+  options: { bigint: true },
+): BigIntStats;
+export function observeDirectoryIdentitySync(
+  dir: string,
+  options?: { bigint?: false },
+): Stats;
+export function observeDirectoryIdentitySync(
+  dir: string,
+  options?: { bigint?: boolean },
+): Stats | BigIntStats {
+  const entryPath = directoryEntryPath(dir);
+  const stat = options?.bigint
+    ? fsSync.lstatSync(entryPath, { bigint: true })
+    : fsSync.lstatSync(entryPath);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) throw directoryComponentNotDirectoryError();
+  return stat;
+}
+
 export function inspectDirectoryIdentitySync(
   dir: string,
   expected?: Pick<BigIntStats, "dev" | "ino">,
 ): BigIntStats {
   // A trailing separator makes lstat follow a final directory symlink.
-  const entryPath = directoryEntryPath(dir);
-  return inspectFileIdentitySync(() => {
-    const stat = fsSync.lstatSync(entryPath, { bigint: true });
-    if (stat.isSymbolicLink() || !stat.isDirectory()) throw directoryComponentNotDirectoryError();
-    return stat;
-  }, expected);
+  return inspectFileIdentitySync(
+    () => observeDirectoryIdentitySync(dir, { bigint: true }),
+    expected,
+  );
 }
