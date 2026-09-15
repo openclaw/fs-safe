@@ -116,6 +116,20 @@ export function expandHomePrefix(
   return path.join(home, input.slice(2));
 }
 
+function resolveExpandedHomePath(
+  input: string,
+  opts: { env?: NodeJS.ProcessEnv; homedir?: () => string } | undefined,
+): string {
+  const expanded = expandHomePrefix(input, {
+    home: resolveRequiredHomeDir(opts?.env ?? process.env, opts?.homedir ?? os.homedir),
+    env: opts?.env,
+    homedir: opts?.homedir,
+  });
+  const resolved = resolvePathPreservingWindowsRoot(expanded);
+  assertNoWindowsPathAlias(resolved, "filesystem", PATH_ALIAS_MESSAGE);
+  return resolved;
+}
+
 export function resolveHomeRelativePath(
   input: string,
   opts?: {
@@ -150,12 +164,5 @@ export function resolveHomeRelativePath(
     }
     return resolved;
   }
-  const expanded = expandHomePrefix(input, {
-    home: resolveRequiredHomeDir(opts?.env ?? process.env, opts?.homedir ?? os.homedir),
-    env: opts?.env,
-    homedir: opts?.homedir,
-  });
-  const resolved = resolvePathPreservingWindowsRoot(expanded);
-  assertNoWindowsPathAlias(resolved, "filesystem", PATH_ALIAS_MESSAGE);
-  return resolved;
+  return resolveExpandedHomePath(input, opts);
 }

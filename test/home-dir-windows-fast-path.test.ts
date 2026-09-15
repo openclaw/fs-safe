@@ -211,6 +211,21 @@ describe("Windows home-path admission fast path", () => {
     expect(resolve).not.toHaveBeenCalled();
   });
 
+  it("preserves option getter order on the extracted home path", () => {
+    setPlatform("linux");
+    const home = path.resolve("synthetic", "home");
+    const events: string[] = [];
+    const env = { HOME: home };
+    const homedir = () => path.resolve("unused-home");
+    const opts = Object.defineProperties({}, {
+      env: { get: () => { events.push("env"); return env; } },
+      homedir: { get: () => { events.push("homedir"); return homedir; } },
+    });
+
+    expect(resolveHomeRelativePath("~/child", opts)).toBe(path.join(home, "child"));
+    expect(events).toEqual(["env", "homedir", "env", "homedir"]);
+  });
+
   it("returns empty input before platform or option access", () => {
     Object.defineProperty(process, "platform", {
       configurable: true,
