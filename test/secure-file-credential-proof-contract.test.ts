@@ -72,6 +72,7 @@ describe("manual split-credential secure-file proof contract", () => {
     const { coordinator, workflow } = await sources();
     const job = workflowJob(workflow);
     expect(job.match(/test "\$\(id -u\)" -ne 0/gu)).toHaveLength(2);
+    expect(job).toContain(`git cat-file -e '${BASE_HEAD}^{commit}'`);
     expect(job).toContain(`git worktree add --detach "$BASELINE_DIR" ${BASE_HEAD}`);
     expect(job).toContain(`show -s --format=%T HEAD)\" = ${BASE_TREE}`);
     expect(coordinator).toContain(`const BASE_HEAD = "${BASE_HEAD}"`);

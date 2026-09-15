@@ -99,7 +99,7 @@ jobs:
           set -euo pipefail
           test "$(id -u)" -ne 0
           test ! -e "$BASELINE_DIR"
-          git cat-file -e 914cd7b41388876b55e1cca76b46b8eb01e46364^{commit}
+          git cat-file -e '914cd7b41388876b55e1cca76b46b8eb01e46364^{commit}'
           git worktree add --detach "$BASELINE_DIR" 914cd7b41388876b55e1cca76b46b8eb01e46364
           pnpm --dir "$BASELINE_DIR" install --frozen-lockfile
           pnpm --dir "$BASELINE_DIR" build
