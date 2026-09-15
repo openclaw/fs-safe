@@ -384,7 +384,10 @@ describe("mutation policy hosted proof contract", () => {
   });
 
   it("always uploads one exact receipt from an exact event-head checkout", async () => {
-    const workflow = await readFile(".github/workflows/mutation-policy-proof.yml", "utf8");
+    const workflow = (await readFile(
+      ".github/workflows/mutation-policy-proof.yml",
+      "utf8",
+    )).replace(/\r\n?/gu, "\n");
     expect(workflow).toContain("os: [ubuntu-latest, macos-15, windows-latest]");
     expect(workflow).toContain("node-version: 24");
     expect(workflow).toContain("ref: ${{ github.event.pull_request.head.sha || github.sha }}");
