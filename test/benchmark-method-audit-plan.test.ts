@@ -12,6 +12,10 @@ import {
   validateCompleteReportSet,
   validateDispatchInputs,
 } from "../benchmarks/method-audit-plan.mjs";
+import {
+  measuredSourceBinding,
+  parseMeasuredSourceArguments,
+} from "../benchmarks/measured-distribution.mjs";
 
 const H = "1".repeat(40);
 const C = "2".repeat(40);
@@ -29,7 +33,12 @@ const RECEIPT = {
   mtimeNs: "1700000000000000000",
 };
 
-function resolution(commit: string, requestedRef: string | null, hash = C64) {
+function resolution(
+  commit: string,
+  requestedRef: string | null,
+  hash = C64,
+  filenameFallbackProfile = commit === B ? "legacy" : "sanitized",
+) {
   return {
     requestedRef,
     matchedRef: requestedRef && !/^[0-9a-f]{40}$/u.test(requestedRef) ? `refs/remotes/origin/${requestedRef}` : null,
@@ -37,6 +46,9 @@ function resolution(commit: string, requestedRef: string | null, hash = C64) {
     tree: commit === C ? X : commit,
     manifestHash: hash,
     lockfileHash: hash,
+    filenameSourceBlob: commit,
+    filenameSourceHash: hash,
+    filenameFallbackProfile,
   };
 }
 
@@ -84,6 +96,9 @@ function buildSnapshot(source: ReturnType<typeof resolution>, nativeHash = N64) 
     tree: source.tree,
     manifestHash: source.manifestHash,
     lockfileHash: source.lockfileHash,
+    filenameSourceBlob: source.filenameSourceBlob,
+    filenameSourceHash: source.filenameSourceHash,
+    filenameFallbackProfile: source.filenameFallbackProfile,
     distTreeHash: { algorithm: "bounded-tree-sha256-v1", hash: source.manifestHash, entries: 2, bytes: 10 },
     runnerDistHash: source.lockfileHash,
     dependencySnapshot: { schemaVersion: 1, scope: "pnpm-layout-manifests-locks-native-v1", hash: source.tree.padEnd(64, "0") },
@@ -109,12 +124,23 @@ function snapshotFor(plan: ReturnType<typeof planFor>) {
       dependencySnapshot: { schemaVersion: 1, scope: "pnpm-layout-manifests-locks-native-v1", hash: H64 },
     },
     checkouts: {
-      candidate: { commit: C, tree: X, manifestHash: C64, lockfileHash: C64 },
+      candidate: {
+        commit: C,
+        tree: X,
+        manifestHash: C64,
+        lockfileHash: C64,
+        filenameSourceBlob: C,
+        filenameSourceHash: C64,
+        filenameFallbackProfile: "sanitized",
+      },
       baseline: plan.sources.baseline && {
         commit: plan.sources.baseline.commit,
         tree: plan.sources.baseline.tree,
         manifestHash: plan.sources.baseline.manifestHash,
         lockfileHash: plan.sources.baseline.lockfileHash,
+        filenameSourceBlob: plan.sources.baseline.filenameSourceBlob,
+        filenameSourceHash: plan.sources.baseline.filenameSourceHash,
+        filenameFallbackProfile: plan.sources.baseline.filenameFallbackProfile,
       },
     },
     builds,
@@ -122,13 +148,27 @@ function snapshotFor(plan: ReturnType<typeof planFor>) {
 }
 
 function rawReport(plan: ReturnType<typeof planFor>, reportPlan = plan.reports[0]) {
-  const build = plan.sources[reportPlan.role as "candidate" | "baseline"]!;
+  const buildPlan = plan.builds.find(({ id }) => id === reportPlan.buildId)!;
+  const build = plan.sources[buildPlan.sourceRole as "candidate" | "baseline"]!;
   return {
     schemaVersion: 1,
     metadata: {
       harnessRevision: H,
       harnessHash: H64,
       distHash: build.lockfileHash,
+      measuredDistribution: {
+        binding: "method-audit-plan-v1",
+        buildId: buildPlan.id,
+        sourceRole: buildPlan.sourceRole,
+        sourceCommit: build.commit,
+        sourceTree: build.tree,
+        filenameSourceBlob: build.filenameSourceBlob,
+        filenameSourceHash: build.filenameSourceHash,
+        expectedFilenameFallbackProfile: build.filenameFallbackProfile,
+        observedFilenameFallbackProfile: build.filenameFallbackProfile,
+        distHash: build.lockfileHash,
+      },
+      sampleSemantics: "Each samplesUs value is an average microseconds per call over result.iterations.",
       nativeHash: null,
       node: "v24.9.0",
       platform: "win32",
@@ -243,6 +283,12 @@ describe("method-audit sequence and build controls", () => {
       runnerOutputReceipt: RECEIPT,
     });
     expect(evidence.measurement.artifactPathId).toBe("candidate/dist");
+    expect(measuredSourceBinding(plan, baselinePlan)).toMatchObject({
+      buildId: "candidate-build",
+      sourceRole: "candidate",
+      sourceCommit: C,
+      expectedFilenameFallbackProfile: "sanitized",
+    });
   });
 
   it("keeps identical-source rebuilds as two separately identified builds", () => {
@@ -263,6 +309,29 @@ describe("method-audit sequence and build controls", () => {
     expect(args.at(-2)).toBe("--filter");
     expect(args.at(-1)).toBe(filter);
     expect(args).toContain("C:\\audit space\\candidate\\dist");
+  });
+
+  it("passes a complete plan binding without consulting a harness dist", () => {
+    const plan = planFor();
+    const reportPlan = plan.reports.find(({ role }) => role === "baseline")!;
+    const measuredSource = measuredSourceBinding(plan, reportPlan);
+    const args = createRunnerArguments({
+      runnerFile: "C:\\audit\\harness\\benchmarks\\runner.mjs",
+      distRoot: "C:\\audit\\baseline\\dist",
+      reportFile: "C:\\audit\\reports\\baseline.json",
+      mode: "off",
+      settings: plan.settings,
+      measuredSource,
+    });
+    expect(args).toContain("C:\\audit\\baseline\\dist");
+    expect(args.join("\n")).not.toContain("harness\\dist");
+    const parsed = Object.fromEntries(
+      Array.from({ length: (args.length - 1) / 2 }, (_, index) =>
+        [args[1 + index * 2].slice(2), args[2 + index * 2]]),
+    );
+    expect(parseMeasuredSourceArguments(parsed)).toEqual(measuredSource);
+    expect(() => parseMeasuredSourceArguments({ "measured-build-id": "candidate-build" }))
+      .toThrow("supplied together");
   });
 });
 
@@ -302,6 +371,7 @@ describe("method-audit provenance validation", () => {
     const plan = planFor();
     const before = snapshotFor(plan);
     const reports = new Map(plan.reports.map((entry) => [entry.file, rawReport(plan, entry)]));
+    const candidateReport = plan.reports.find(({ role }) => role === "candidate")!;
     expect(() => validateCompleteReportSet(plan, new Map([...reports].slice(1)), before, before)).toThrow("incomplete");
 
     const mutated = structuredClone(before);
@@ -313,6 +383,36 @@ describe("method-audit provenance validation", () => {
     first.metadata.distHash = N64;
     expect(() => validateCompleteReportSet(plan, wrongDist, before, before)).toThrow("distribution hash mismatch");
 
+    const wrongProfile = structuredClone(reports);
+    wrongProfile.get(candidateReport.file)!.metadata
+      .measuredDistribution.observedFilenameFallbackProfile = "legacy";
+    expect(() => validateCompleteReportSet(plan, wrongProfile, before, before))
+      .toThrow("filename fallback profile mismatch");
+
+    const wrongBinding = structuredClone(reports);
+    wrongBinding.get(candidateReport.file)!.metadata.measuredDistribution.buildId = "baseline-build";
+    expect(() => validateCompleteReportSet(plan, wrongBinding, before, before))
+      .toThrow("measured buildId mismatch");
+
+    const wrongSourceRole = structuredClone(reports);
+    wrongSourceRole.get(candidateReport.file)!.metadata.measuredDistribution.sourceRole = "baseline";
+    expect(() => validateCompleteReportSet(plan, wrongSourceRole, before, before))
+      .toThrow("measured sourceRole mismatch");
+
+    const wrongSampleSemantics = structuredClone(reports);
+    wrongSampleSemantics.get(plan.reports[0].file)!.metadata.sampleSemantics = "individual calls";
+    expect(() => validateCompleteReportSet(plan, wrongSampleSemantics, before, before))
+      .toThrow("sample semantics mismatch");
+
+    const wrongSemantics = structuredClone(reports);
+    wrongSemantics.get(plan.reports[0].file)!.results = [{
+      name: "sanitizeUntrustedFileName/matrix/fallback-path",
+      medianUs: 1,
+      workloadSemantics: "equivalent-output",
+    }];
+    expect(() => validateCompleteReportSet(plan, wrongSemantics, before, before))
+      .toThrow("workload semantics mismatch");
+
     const wrongNative = structuredClone(reports);
     const nativeReport = wrongNative.get(plan.reports[0].file)!;
     nativeReport.metadata.native = true;
@@ -322,6 +422,11 @@ describe("method-audit provenance validation", () => {
     const normalizedAway = structuredClone(before);
     normalizedAway.builds["candidate-build"].manifestHash = H64;
     expect(() => validateCompleteReportSet(plan, reports, normalizedAway, normalizedAway))
+      .toThrow("not bound to its resolved source blobs");
+
+    const wrongFilenameSource = structuredClone(before);
+    wrongFilenameSource.builds["candidate-build"].filenameSourceHash = H64;
+    expect(() => validateCompleteReportSet(plan, reports, wrongFilenameSource, wrongFilenameSource))
       .toThrow("not bound to its resolved source blobs");
   });
 });
@@ -336,6 +441,7 @@ describe("benchmark workflow contract", () => {
     const methodJobHeader = workflow.slice(methodJobStart, methodStepsStart);
     const prepareJob = workflow.slice(workflow.indexOf("  prepare_method_audit:"), workflow.indexOf("  method-audit:"));
     const evidenceDriver = await readFile("benchmarks/method-audit-evidence.mjs", "utf8");
+    const runner = await readFile("benchmarks/runner.mjs", "utf8");
     const configureStepStart = methodJob.indexOf("      - name: Configure byte-exact checkouts");
     const downloadStepStart = methodJob.indexOf("      - name: Download resolved method-audit plan");
     const configureStep = methodJob.slice(configureStepStart, downloadStepStart);
@@ -373,6 +479,8 @@ describe("benchmark workflow contract", () => {
       .toBeLessThan(methodJob.indexOf("uses: actions/checkout@"));
     expect(evidenceDriver).toContain('distRoot: path.join(roots[build.checkout], "dist")');
     expect(evidenceDriver).toContain("exists before its benchmark process starts");
+    expect(runner).toContain("fs.readdirSync(dist)");
+    expect(runner).not.toContain("candidateDistHash");
     expect(methodJob).toContain("verify-harness");
     expect(methodJob).toContain("MSYS2_ARG_CONV_EXCL: \"*\"");
     expect(workflow).toContain('options: ["22", "24"]');

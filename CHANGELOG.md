@@ -11,11 +11,22 @@
 - Reject NTFS alternate-data-stream and directory-index pathname aliases across guarded Root, directory-identity, FileStore, archive, JSON queue, sidecar lock, secret, secure-read, atomic publication, temp, permission, install, trash, and output boundaries before filesystem access. Preserve rooted drive paths, including valid extended namespace drive roots, and the released drive-relative contract of trusted-path atomic, JSON store/queue writer, move, directory-replace, and exclusive-publication APIs without widening volume-root mutation authority, independent device/network policies, intentional output-name sanitization, existing failure shapes, and ordinary colon-bearing POSIX names; native relative and archive paths enforce the same Windows rule.
 - Reuse raw Windows namespace admission for unchanged ordinary rooted drive paths while retaining full checks for normalized, relative, malformed, namespaced, and colon-bearing paths.
 - Reuse the already admitted parent guard when constructing private producer Roots, avoiding redundant canonicalization and identity capture while preserving producer-isolation checks.
+- Use the effective POSIX user identity for secure-file ownership checks, failing closed before reading when ownership checks are enabled and the effective identity or descriptor owner cannot be established; descriptor-bound Windows ACL verification is unchanged.
+- Isolate the manual split-credential proof across separate candidate, historical, and clean execution runners, bind bounded build artifacts to exact provenance, and run only root-staged, identity-checked proof tools and harness files.
+- Authenticate the manual proof runtime against pinned official Node archives before checkout, keep staging private under a verified system parent, and diagnose dropped-credential startup, traversal, and authenticated code-read admission with bounded inline probes before the unchanged seven behavioral cases.
+- Place split-credential proof fixtures beneath the authenticated root-owned stage so both dropped identities can traverse their complete path, while keeping published receipts in the separately admitted runner-owned container.
+
+### Archive performance
+
+- Reuse canonical archive paths when no components are stripped, retaining validation and filter order.
+- Avoid temporary ZIP collision-identity collections while checking both raw and Unicode identities before recording them.
+- Size native archive entry reservations from bounded member-size hints so small ZIP and compressed TAR results do not reserve the caller's larger byte budget.
 
 ### Validation and tooling
 
 - Separate the reviewed manual method-audit harness from immutable candidate and baseline checkouts, validate and resolve dispatch inputs before platform fan-out, and support Node 22/24 plus rebuild and same-artifact controls without changing the ordinary PR/schedule benchmark job.
 - Add versioned, mutation-checked benchmark provenance for trusted reviewed revisions, including harness/source identities, measurement and report-file receipts, manifests, lockfiles, dist trees, bounded dependency layouts, native addons, and runner metadata; this detects accidental drift but is not a sandbox for hostile benchmark code.
+- Bind filename-sanitizer benchmark expectations to the measured revision's tracked source, validate all 17 profile rows before filtering, strengthen four long-name endpoint checks, add paired shared-mutation-admission fixtures with 60 portable and 96 Windows rows, and cover temp-workspace mode correction plus existing/missing roots at depths 4/8/32.
 
 ## 0.12.0 - 2026-09-15
 

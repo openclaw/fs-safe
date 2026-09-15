@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import {
+  registerRootWriteMutationAdmission,
+  registerSharedMutationAdmission,
+} from "./shared-mutation-admission.mjs";
 
 async function settledValues(pending) {
   const results = await Promise.allSettled(pending);
@@ -26,6 +30,8 @@ export async function registerScaling({ api: a, workspace: w, register: add, onC
       }
     }
   }
+  registerRootWriteMutationAdmission({ root, workspace: w, register: add });
+  registerSharedMutationAdmission({ root, workspace: w, register: add });
 
   const renameDenied = () => { throw Object.assign(new Error("benchmark forces copy fallback"), { code: "EPERM" }); };
   const asyncFs = { promises: { ...fs.promises, rename: async () => renameDenied() } };
