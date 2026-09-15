@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reuse raw archive path segments during validation, preserving platform checks, normalized component limits, and error order.
+
 - Size Linux native byte-copy scratch buffers from the existing file-size hint, bounded between 4 KiB and 1 MiB, while retaining read-to-EOF, sparse output, and borrowed-descriptor behavior.
 
 - Reuse lexical directory prefixes when producing walk entry paths, preserving traversal order, followed-link spelling, budgets, and directory checks.
