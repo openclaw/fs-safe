@@ -110,15 +110,16 @@ it.each([
     await fs.writeFile(candidate, "value");
 
     const boundarySet = new Set(boundaries);
-    const identityObservations = new Map(boundaries.map(boundary => [boundary, 0]));
+    const identityObservations = new Map(boundaries.map(boundary => [boundary, { exact: 0, numeric: 0 }]));
     const canonicalPaths: string[] = [];
     const lstat = fsSync.lstatSync.bind(fsSync);
     const canonicalize = realpathSync.native;
     vi.spyOn(fsSync, "lstatSync").mockImplementation(((...args: Parameters<typeof fsSync.lstatSync>) => {
       const observed = String(args[0]);
       const options = args[1] as { bigint?: boolean } | undefined;
-      if (options?.bigint === true && boundarySet.has(observed)) {
-        identityObservations.set(observed, identityObservations.get(observed)! + 1);
+      if (boundarySet.has(observed)) {
+        const count = identityObservations.get(observed)!;
+        count[options?.bigint === true ? "exact" : "numeric"] += 1;
       }
       return lstat(...args);
     }) as typeof fsSync.lstatSync);
@@ -135,10 +136,12 @@ it.each([
       new Set(parentDepth === 0 ? [context.rootReal] : [context.rootReal, parent]),
     );
     for (const observations of identityObservations.values()) {
-      // Unknown Windows identities may take the one bounded retry provided by
-      // the strict identity observer, but work still grows only with depth.
-      expect(observations).toBeGreaterThanOrEqual(3);
-      expect(observations).toBeLessThanOrEqual(6);
+      // Admission remains exact. Both later fences use ordinary Stats; either
+      // may spend one exact retry for unknown Windows IDs. Unsafe host IDs
+      // stay on the exact path without making this budget host-dependent.
+      expect([0, 2]).toContain(observations.numeric);
+      expect(observations.exact).toBeGreaterThanOrEqual(observations.numeric === 2 ? 1 : 3);
+      expect(observations.exact).toBeLessThanOrEqual(observations.numeric === 2 ? 4 : 6);
     }
   },
 );

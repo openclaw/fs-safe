@@ -158,6 +158,7 @@ export function inspectDirectoryIdentitySync(
   dir: string,
   expected?: Pick<BigIntStats, "dev" | "ino">,
   initial?: BigIntStats,
+  platform: NodeJS.Platform = process.platform,
 ): BigIntStats {
   // A trailing separator makes lstat follow a final directory symlink.
   const entryPath = directoryEntryPath(dir);
@@ -168,5 +169,5 @@ export function inspectDirectoryIdentitySync(
     initial = undefined;
     if (stat.isSymbolicLink() || !stat.isDirectory()) throw directoryComponentNotDirectoryError();
     return stat;
-  }, expected);
+  }, expected, platform);
 }

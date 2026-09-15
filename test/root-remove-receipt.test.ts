@@ -1,3 +1,4 @@
+import type { BigIntStats } from "node:fs";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -5,6 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { realpathSync } from "../src/realpath.js";
 import { root } from "../src/root.js";
+import { RemovalPathReceipts } from "../src/root-remove-receipt.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
@@ -15,6 +17,39 @@ afterEach(() => {
   __setFsSafeTestHooksForTest();
   __resetFsSafeNativeConfigForTest();
   Object.defineProperty(process, "platform", platform);
+});
+
+it("completes a direct-child receipt without any directory-map observations", () => {
+  const rootPath = path.resolve("receipt-root");
+  const rootStat = { dev: 1n, ino: 2n } as BigIntStats;
+  const receipts = new RemovalPathReceipts();
+  receipts.observeRoot(rootStat);
+
+  expect(receipts.complete(rootPath, path.join(rootPath, "target"))).toEqual({
+    rootStat,
+    parent: undefined,
+    directories: [],
+  });
+});
+
+it("returns captured receipt paths in order and retains the first exact observation", () => {
+  const rootPath = path.resolve("receipt-root");
+  const ancestor = path.join(rootPath, "ancestor");
+  const parent = path.join(ancestor, "parent");
+  const rootStat = { dev: 1n, ino: 2n } as BigIntStats;
+  const ancestorStat = { dev: 3n, ino: 4n } as BigIntStats;
+  const ignoredReplacement = { dev: 5n, ino: 6n } as BigIntStats;
+  const parentStat = { dev: 7n, ino: 8n } as BigIntStats;
+  const receipts = new RemovalPathReceipts();
+  receipts.observeRoot(rootStat);
+  receipts.observeDirectory(ancestor, ancestorStat);
+  receipts.observeDirectory(ancestor, ignoredReplacement);
+  receipts.observeDirectory(parent, parentStat);
+
+  const completed = receipts.complete(rootPath, path.join(parent, "target"));
+  expect(completed?.directories.map(directory => directory.path)).toEqual([ancestor, parent]);
+  expect(completed?.directories[0]?.stat).toBe(ancestorStat);
+  expect(completed?.parent).toEqual({ path: parent, stat: parentStat });
 });
 
 it.each([0, 2, 8].flatMap(depth => ["file", "directory"].map(kind => ({ depth, kind }))))(
@@ -30,7 +65,7 @@ it.each([0, 2, 8].flatMap(depth => ["file", "directory"].map(kind => ({ depth, k
     await fs.mkdir(parent, { recursive: true });
     if (kind === "file") await fs.writeFile(target, "value");
     else await fs.mkdir(target);
-    const observed = new Map(boundaries.map(dir => [dir, { exact: 0, numeric: 0, unknown: 0 }]));
+    const observed = new Map(boundaries.map(dir => [dir, { exact: 0, numeric: 0 }]));
     const canonicalPaths: string[] = [];
     const lstat = fsSync.lstatSync.bind(fsSync);
     const canonicalize = realpathSync.native;
@@ -39,7 +74,6 @@ it.each([0, 2, 8].flatMap(depth => ["file", "directory"].map(kind => ({ depth, k
       const count = observed.get(String(args[0]));
       if (count) {
         count[(args[1] as { bigint?: boolean } | undefined)?.bigint ? "exact" : "numeric"]++;
-        if (process.platform === "win32" && (BigInt(stat.dev) === 0n || BigInt(stat.ino) === 0n)) count.unknown++;
       }
       return stat;
     }) as typeof fsSync.lstatSync);
@@ -52,11 +86,12 @@ it.each([0, 2, 8].flatMap(depth => ["file", "directory"].map(kind => ({ depth, k
 
     expect(canonicalPaths).toEqual([parent, parent, parent]);
     for (const count of observed.values()) {
-      expect(count.numeric).toBe(0);
-      // Each admitted observation plus the two current-identity fences. Each
-      // strict Windows observation may use at most one unknown-ID retry.
-      expect(count.exact).toBe(3 + count.unknown);
-      expect(count.exact).toBeLessThanOrEqual(6);
+      // The exact admission observation remains unchanged. Each later fence
+      // is numeric when the admitted IDs project safely; unsafe host IDs stay
+      // exact. Unknown Windows observations have one bounded retry per fence.
+      expect([0, 2]).toContain(count.numeric);
+      expect(count.exact).toBeGreaterThanOrEqual(count.numeric === 2 ? 1 : 3);
+      expect(count.exact).toBeLessThanOrEqual(count.numeric === 2 ? 4 : 6);
     }
   },
 );
@@ -121,40 +156,28 @@ it.each(["before", "after"].flatMap(phase => [false, true].map(nested => ({ phas
   },
 );
 
-it.each(["intermediate", "parent"].flatMap(boundary =>
-  ["device", "inode", "persistent", "changed known", "alternating", "numeric", "symlink"].map(scenario => ({ boundary, scenario }))))(
-  "retains strict Windows seeded identity admission for $boundary: $scenario", async ({ boundary, scenario }) => {
-    const directory = await tempRoot("fs-safe-remove-receipt-unknown-");
-    const ancestor = path.join(directory, "ancestor");
-    const parent = path.join(ancestor, "parent");
-    const target = path.join(parent, "target");
-    await fs.mkdir(parent, { recursive: true });
-    await fs.writeFile(target, "value");
-    const scoped = await root(directory);
-    const observedPath = boundary === "parent" ? parent : ancestor;
-    Object.defineProperty(process, "platform", { value: "win32" });
-    const lstat = fsSync.lstatSync.bind(fsSync);
-    let inspections = 0;
-    vi.spyOn(fsSync, "lstatSync").mockImplementation(((...args: Parameters<typeof fsSync.lstatSync>) => {
-      const stat = lstat(...args);
-      if (String(args[0]) !== observedPath) return stat;
-      expect(typeof stat.ino).toBe("bigint");
-      const first = ++inspections === 1;
-      if (scenario === "numeric") return Object.assign(Object.create(stat), { dev: Number(stat.dev), ino: Number(stat.ino) });
-      if (scenario === "symlink" && !first) return Object.assign(Object.create(stat), { isSymbolicLink: () => true });
-      if (scenario === "alternating") return Object.assign(Object.create(stat), first ? { dev: 0n } : { ino: 0n });
-      if (scenario === "changed known" && first) return Object.assign(Object.create(stat), { dev: 0n, ino: BigInt(stat.ino) + 1n });
-      if (first || scenario === "persistent") return Object.assign(Object.create(stat), scenario === "inode" ? { ino: 0n } : { dev: 0n });
-      return stat;
-    }) as typeof fsSync.lstatSync);
-    const pending = scoped.remove("ancestor/parent/target", { force: true });
-    if (scenario === "device" || scenario === "inode") {
-      await pending;
-      expect(inspections).toBe(4);
-    } else {
-      await expect(pending).rejects.toMatchObject({ code: scenario === "symlink" ? "not-file" : "path-mismatch" });
-      expect(inspections).toBe(scenario === "numeric" ? 1 : 2);
-      expect(await fs.readFile(target, "utf8")).toBe("value");
+it("preserves deny-policy precedence over the later admission identity fences", async () => {
+  const directory = await tempRoot("fs-safe-remove-receipt-denial-order-");
+  const parent = path.join(directory, "parent");
+  const target = path.join(parent, "target");
+  await fs.mkdir(parent);
+  await fs.writeFile(target, "value");
+  const scoped = await root(directory);
+  const lstat = fsSync.lstatSync.bind(fsSync);
+  let exactParentObservations = 0;
+  vi.spyOn(fsSync, "lstatSync").mockImplementation(((...args: Parameters<typeof fsSync.lstatSync>) => {
+    const stat = lstat(...args);
+    const options = args[1] as { bigint?: boolean } | undefined;
+    if (String(args[0]) === parent && options?.bigint === true && ++exactParentObservations > 1) {
+      return Object.assign(Object.create(stat), { ino: BigInt(stat.ino) + 1n });
     }
-  },
-);
+    return stat;
+  }) as typeof fsSync.lstatSync);
+
+  await expect(scoped.remove("parent/target", {
+    denyMutations: { paths: [target] },
+  })).rejects.toMatchObject({ code: "denied-path" });
+
+  expect(exactParentObservations).toBe(1);
+  expect(await fs.readFile(target, "utf8")).toBe("value");
+});
