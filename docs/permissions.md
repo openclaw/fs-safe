@@ -42,7 +42,7 @@ POSIX remediation strings shell-quote paths with whitespace or metacharacters
 and protect option-like paths with `--`, so they can be presented as commands
 without letting the inspected pathname add shell syntax.
 
-`inspectPathPermissions()` follows symlink targets for the effective mode but tells you whether the original path was a symlink. On POSIX it reports owner/group/world bits. On Windows it delegates to the ACL helpers below and also reports `ownerSid` plus `ownerTrusted` when ownership can be verified. `ownerTrusted` is true only for a local volume owned by the current user, LocalSystem, or built-in Administrators; remote filesystems fail closed. Secure reads and callers that protect credential-bearing execution require `ownerTrusted === true`.
+`inspectPathPermissions()` follows symlink targets for the effective mode but tells you whether the original path was a symlink. On POSIX it reports owner/group/world bits. On Windows it delegates to the ACL helpers below and also reports `ownerSid` plus `ownerTrusted` when ownership can be verified. `ownerTrusted` is true only for a local volume owned by the current user, LocalSystem, or built-in Administrators; remote filesystems fail closed. This remains a pathname reporting API with the fallbacks described below. `readSecureFile()` does not use those pathname fallbacks on Windows: it requires descriptor-bound native owner/DACL facts for the exact handle it reads.
 
 ## Advanced Windows ACL helpers
 

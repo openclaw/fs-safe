@@ -1,6 +1,8 @@
 use napi::{Env, Result};
 use napi_derive::napi;
 
+#[cfg(windows)]
+use crate::NativeResult;
 use crate::into_napi;
 #[cfg(not(windows))]
 use crate::native_error;
@@ -723,7 +725,7 @@ mod windows {
         )
     }
 
-    fn is_local_handle(handle: HANDLE) -> NativeResult<bool> {
+    pub(super) fn is_local_handle(handle: HANDLE) -> NativeResult<bool> {
         is_local_handle_with_remote_query(handle, query_is_remote_device, is_local_handle_via_paths)
     }
 
@@ -731,8 +733,8 @@ mod windows {
         handle: HANDLE,
         current: &TokenSid,
         include_public_report: bool,
+        local: bool,
     ) -> NativeResult<(HandleSecurityInspection, Option<WindowsSecurityFacts>)> {
-        let local = is_local_handle(handle).unwrap_or(false);
         let mut owner = null_mut();
         let mut dacl: *mut ACL = null_mut();
         let mut descriptor = null_mut();
@@ -752,6 +754,12 @@ mod windows {
             return Err(win_error(status, "read owner and DACL"));
         }
         let result = (|| {
+            if descriptor.is_null() || owner.is_null() {
+                return Err(native_error(
+                    "EIO",
+                    "Windows owner and DACL query returned incomplete descriptor data",
+                ));
+            }
             if owner.is_null() || unsafe { IsValidSid(owner) } == 0 {
                 return Err(native_error(
                     "EIO",
@@ -864,7 +872,9 @@ mod windows {
             }
             Ok((inspection, report))
         })();
-        unsafe { LocalFree(descriptor) };
+        if !descriptor.is_null() {
+            unsafe { LocalFree(descriptor) };
+        }
         result
     }
 
@@ -872,23 +882,35 @@ mod windows {
         handle: HANDLE,
         current: &TokenSid,
     ) -> NativeResult<HandleSecurityInspection> {
-        inspect_owner_and_dacl_handle(handle, current, false)
+        let local = is_local_handle(handle).unwrap_or(false);
+        inspect_owner_and_dacl_handle(handle, current, false, local)
             .map(|(inspection, _)| inspection)
     }
 
     fn read_owner_and_dacl_report_handle(
         handle: HANDLE,
         current: &TokenSid,
+        local: bool,
     ) -> NativeResult<WindowsSecurityFacts> {
-        let (_, report) = inspect_owner_and_dacl_handle(handle, current, true)?;
+        let (_, report) = inspect_owner_and_dacl_handle(handle, current, true, local)?;
         report.ok_or_else(|| native_error("EIO", "Windows security report was not constructed"))
+    }
+
+    pub(super) fn security_facts(
+        handle: HANDLE,
+        local: bool,
+    ) -> NativeResult<WindowsSecurityFacts> {
+        let current = current_user_sid()?;
+        read_owner_and_dacl_report_handle(handle, &current, local)
     }
 
     pub fn read_owner_and_dacl(path: &str) -> NativeResult<WindowsSecurityFacts> {
         let path = wide(path)?;
-        let current = current_user_sid()?;
         let handle = open_security_handle(&path)?;
-        read_owner_and_dacl_report_handle(handle.0, &current)
+        // The pathname API preserves its historical structured fallback when
+        // locality cannot be established. Secure reads use the stricter fd API.
+        let local = is_local_handle(handle.0).unwrap_or(false);
+        security_facts(handle.0, local)
     }
 
     fn verify_private_directory_association<FinalLocality>(
@@ -1844,6 +1866,14 @@ mod windows {
             fs::remove_dir_all(root).unwrap();
         }
     }
+}
+
+#[cfg(windows)]
+pub(crate) fn read_owner_and_dacl_for_handle(
+    handle: windows_sys::Win32::Foundation::HANDLE,
+) -> NativeResult<WindowsSecurityFacts> {
+    let local = windows::is_local_handle(handle)?;
+    windows::security_facts(handle, local)
 }
 
 #[cfg(test)]

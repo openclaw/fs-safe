@@ -85,6 +85,12 @@ export interface NativeWindowsSecurityFacts {
   aces: NativeWindowsAccessControlEntry[];
 }
 
+export interface NativeWindowsDescriptorSecurityFacts {
+  /** Canonical lowercase 32-bit volume serial and 64-bit file-index projection used by Node. */
+  identity: string;
+  security: NativeWindowsSecurityFacts;
+}
+
 export interface NativeBinding {
   /** POSIX system canonicalization; confinement and identity policy stay with callers. */
   canonicalizePath?(path: string, ordinary: boolean): { path?: string; errno?: number };
@@ -165,6 +171,8 @@ export interface NativeBinding {
     signal: AbortSignal,
   ): Promise<Buffer>;
   readOwnerAndDacl(path: string): NativeWindowsSecurityFacts;
+  /** Internal Windows-only inspection of the exact borrowed Node descriptor. */
+  inspectWindowsSecureFileHandle?(fd: number): NativeWindowsDescriptorSecurityFacts;
   ownedTreeRemovalAvailable?(parentFd: number): boolean;
   removeOwnedTree?(
     parentFd: number,

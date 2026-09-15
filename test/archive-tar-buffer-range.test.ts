@@ -12,12 +12,14 @@ import { useRealTempDirs } from "./helpers/vitest.js";
 const { tempRoot } = useRealTempDirs();
 afterEach(() => { vi.restoreAllMocks(); __resetFsSafeNativeConfigForTest(); });
 
-it.each([false, true])("returns independent PAX payload bytes from the fully admitted snapshot (gzip=%s)", async gzip => {
+it.each([false, true].flatMap(gzip => [0, 8193, 131103].map(size => ({ gzip, size }))))(
+  "returns independent PAX payload bytes from the fully admitted snapshot (gzip=$gzip, size=$size)", async ({ gzip, size }) => {
   configureFsSafeNative({ mode: "off" });
   const dir = await tempRoot("fs-safe-tar-range-");
   // Explicit kind and magic must determine decompression, not the filename.
   const archivePath = path.join(dir, gzip ? "input.tar" : "input.tgz");
-  const payload = Buffer.alloc(8193, 42);
+  const payload = Buffer.alloc(size);
+  for (let index = 0; index < payload.length; index++) payload[index] = index % 251;
   const raw = tarFixture([
     { path: "unselected", body: Buffer.alloc(65537, 99) },
     paxHeader([["path", "./pkg//value"], ["size", String(payload.length)]]),

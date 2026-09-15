@@ -68,7 +68,7 @@ describe("secure file inspection failures", () => {
     await expect(readSecureFile({ filePath })).rejects.toMatchObject({ code: "path-mismatch" });
   });
 
-  it("fails closed when permission inspection cannot complete", async () => {
+  itPosix("fails closed when simulated Windows permission inspection cannot complete", async () => {
     const root = await tempRoot("fs-safe-secure-permission-inspect-");
     const filePath = path.join(root, "secret");
     await fs.writeFile(filePath, "secret", { mode: 0o600 });
