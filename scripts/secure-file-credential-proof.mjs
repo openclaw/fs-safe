@@ -15,6 +15,7 @@ const EFFECTIVE_UID = 61002;
 const PROOF_GID = 61003;
 const EXPECTED_CONTENT = Buffer.from("fs-safe split-credential synthetic payload\n", "utf8");
 const MAX_CAPTURE_BYTES = 64 * 1024;
+const MAX_WORKER_FAILURE_RECEIPT_BYTES = 1024;
 const MAX_TRACE_BYTES = 1024 * 1024;
 const MAX_PACKAGE_BYTES = 128 * 1024 * 1024;
 const MAX_PACKAGE_FILES = 4096;
@@ -23,6 +24,34 @@ const MAX_PACKAGE_DEPTH = 32;
 const MAX_TOOL_BYTES = 256 * 1024 * 1024;
 const MAX_DIAGNOSTIC_FIELDS = 8;
 const STAGE_MANIFEST_PROOF = "secure-file-split-credential-stage";
+const WORKER_FAILURE_STAGES = new Set([
+  "arguments",
+  "runtime-identity",
+  "credential-before-import",
+  "fixture-before-import",
+  "public-import",
+  "credential-after-import",
+  "fixture-after-import",
+  "public-read",
+  "credential-after-read",
+  "fixture-after-read",
+]);
+const WORKER_FAILURE_CODES = new Set([
+  "INVALID_ARGUMENTS",
+  "INCOMPLETE_PROC_STATUS",
+  "RUNTIME_IDENTITY_MISMATCH",
+  "CREDENTIAL_MISMATCH",
+  "FIXTURE_MISMATCH",
+  "PUBLIC_EXPORT_MISMATCH",
+  "NATIVE_MODE_MISMATCH",
+  "EACCES",
+  "EPERM",
+  "ENOENT",
+  "ENOTDIR",
+  "EIO",
+  "ERR_MODULE_NOT_FOUND",
+  "ERR_UNSUPPORTED_DIR_IMPORT",
+]);
 const NODE_ARCHIVE_SHA256 = new Map([
   ["v22.23.2", "d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307"],
   ["v24.20.0", "2f2c0da162318f0de47665410c7c8c2ed3d36c8f3105de4bbc61176c70a7cbf2"],
@@ -1233,6 +1262,60 @@ function parseWorkerReceipt(output, spec) {
   return receipt;
 }
 
+function parseWorkerFailureReceipt(output) {
+  if (output.length === 0 || output.length > MAX_WORKER_FAILURE_RECEIPT_BYTES) return null;
+  const text = output.toString("utf8");
+  if (!text.endsWith("\n") || text.slice(0, -1).includes("\n")) return null;
+  let receipt;
+  try {
+    receipt = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (
+    receipt === null ||
+    typeof receipt !== "object" ||
+    Array.isArray(receipt) ||
+    Object.keys(receipt).sort().join(",") !== "error,schema,stage,workerComplete" ||
+    receipt.schema !== 1 ||
+    receipt.workerComplete !== false ||
+    !WORKER_FAILURE_STAGES.has(receipt.stage) ||
+    receipt.error === null ||
+    typeof receipt.error !== "object" ||
+    Array.isArray(receipt.error) ||
+    Object.keys(receipt.error).sort().join(",") !== "code,name" ||
+    typeof receipt.error.name !== "string" ||
+    !WORKER_FAILURE_CODES.has(receipt.error.code)
+  ) {
+    return null;
+  }
+  return { workerStage: receipt.stage, workerCode: receipt.error.code };
+}
+
+function workerExecutionFailureDiagnostic(run) {
+  const reason = run.spawnFailed
+    ? "spawn-failed"
+    : run.timedOut
+      ? "timeout"
+      : run.overflow
+        ? "overflow"
+        : run.signal !== null
+          ? "signal"
+          : run.code !== 0
+            ? "nonzero-exit"
+            : run.stderr.length !== 0
+              ? "stderr"
+              : "unknown";
+  const workerFailure = parseWorkerFailureReceipt(run.stdout);
+  return {
+    reason,
+    ...(Number.isSafeInteger(run.code) && run.code >= 0 ? { exitCode: run.code } : {}),
+    stdoutBytes: run.stdout.length,
+    stderrBytes: run.stderr.length,
+    ...(workerFailure ?? {}),
+  };
+}
+
 function parseTrace(trace, secretPath) {
   if (trace.length === 0 || trace.length > MAX_TRACE_BYTES) proofError("TRACE_INCOMPLETE");
   const text = trace.toString("utf8");
@@ -1369,7 +1452,7 @@ async function runProofCase(spec, libraries, secrets, tools) {
       run.spawnFailed ||
       run.stderr.length !== 0
     ) {
-      proofError("WORKER_EXECUTION_FAILED");
+      proofError("WORKER_EXECUTION_FAILED", workerExecutionFailureDiagnostic(run));
     }
     const workerReceipt = parseWorkerReceipt(run.stdout, spec);
     const traceStat = await fs.lstat(tracePath, { bigint: true });

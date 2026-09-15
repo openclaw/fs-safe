@@ -411,6 +411,15 @@ describe("manual split-credential secure-file proof contract", () => {
   it("emits bounded diagnostics, provenance, durations, and only the JSON receipt", async () => {
     const { coordinator, workflow } = await sources();
     expect(coordinator).toContain("MAX_DIAGNOSTIC_FIELDS = 8");
+    expect(coordinator).toContain("MAX_WORKER_FAILURE_RECEIPT_BYTES = 1024");
+    expect(coordinator).toContain("WORKER_FAILURE_STAGES = new Set([");
+    expect(coordinator).toContain("WORKER_FAILURE_CODES = new Set([");
+    expect(coordinator).toContain("Object.keys(receipt).sort().join(\",\") !== \"error,schema,stage,workerComplete\"");
+    expect(coordinator).toContain("Object.keys(receipt.error).sort().join(\",\") !== \"code,name\"");
+    expect(coordinator).toContain(
+      'proofError("WORKER_EXECUTION_FAILED", workerExecutionFailureDiagnostic(run))',
+    );
+    expect(coordinator).not.toContain("stderr.toString");
     expect(coordinator).toContain("runnerImageVersion");
     expect(coordinator).toContain("osRelease");
     expect(coordinator).toContain("durationsMs");
