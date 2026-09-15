@@ -537,6 +537,27 @@ describe("directory walking", () => {
     ]);
   });
 
+  it.each([walkDirectory, walkDirectorySync])(
+    "preserves literal descendant names relative to a followed walk root (%#)",
+    async (walk) => {
+      const scanRoot = path.join(root, "scan");
+      const target = path.join(root, "target");
+      const nested = process.platform === "win32" ? "café-日本" : "café-日本\\literal";
+      await fs.mkdir(scanRoot);
+      await fs.mkdir(path.join(target, nested), { recursive: true });
+      await fs.writeFile(path.join(target, nested, "value.txt"), "value");
+      await fs.symlink(target, path.join(scanRoot, "alias"), process.platform === "win32" ? "junction" : "dir");
+
+      const scan = await walk(scanRoot, { symlinks: "follow" });
+      expect(scan.failedDirs).toEqual([]);
+      expect(scan.entries.map(entry => ({ relativePath: entry.relativePath, depth: entry.depth }))).toEqual([
+        { relativePath: "alias", depth: 1 },
+        { relativePath: path.join("alias", nested), depth: 2 },
+        { relativePath: path.join("alias", nested, "value.txt"), depth: 3 },
+      ]);
+    },
+  );
+
   it("leaves failedDirs empty when every directory is readable", async () => {
     await fs.mkdir(path.join(root, "a", "b"), { recursive: true });
     await fs.writeFile(path.join(root, "a", "one.txt"), "1");
