@@ -270,8 +270,13 @@ and current pathname are rejected. The callback must finish and close its
 writer before returning. Its return value is preserved as `result`.
 
 Generated temp filenames suffix Windows reserved-device basenames on every
-platform. A completed sibling staging component that still resolves as a
-Windows device alias rejects with `invalid-path` before hooks or producers run.
+platform. Before either an ordinary or isolated producer runs, the completed staging
+name must be a nonempty, non-dot path component with no POSIX or Windows
+separator, C0/C1 control, Windows-invalid punctuation or stream colon. Windows
+reserved devices and trailing-dot/space aliases are rejected on every host.
+The helper joins that validated component to the guarded or owned directory and
+verifies that the result is a direct child. An invalid completion rejects with
+`invalid-path` without calling the producer or its pre-write hook.
 
 The helper retains one descriptor through requested mode application, opt-in
 file synchronization, rename, and publication verification. It opens read-only
@@ -380,7 +385,11 @@ Its private workspace uses the same identity-aware directory cleanup as
 The callback staging component is capped at 255 bytes as written and under NFC and NFD by
 shortening only an overlong embedded destination tail, while preserving an
 extension when possible. Short callback paths and the final target stay
-unchanged. This workspace owns its contents, unlike the unadmitted sibling
+unchanged. An unusable target basename causes `fallbackFileName` to pass through
+the same basename, character, reserved-device, and length sanitization before it
+is embedded; if neither candidate is usable, the fixed tail `file` is used. The
+completed component is then checked as a direct child before test hooks or the
+producer run. This workspace owns its contents, unlike the unadmitted sibling
 pathname above.
 
 ## Secure temp root

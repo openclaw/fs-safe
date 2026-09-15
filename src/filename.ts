@@ -3,6 +3,7 @@ import { WINDOWS_RESERVED_DEVICE_NAMES } from "./device-path.js";
 import { maxNormalizedUtf8Bytes } from "./unicode-path.js";
 
 const INVALID_FILE_NAME_CHARACTERS = /[\u0000-\u001f\u007f-\u009f<>:"/\\|?*]/g;
+const HAS_INVALID_FILE_NAME_CHARACTER = /[\u0000-\u001f\u007f-\u009f<>:"/\\|?*]/;
 
 function canStartWindowsDeviceName(character: number): boolean {
   const folded = character | 0x20;
@@ -40,19 +41,48 @@ export function suffixWindowsReservedDeviceName(fileName: string): string {
 }
 
 const PORTABLE_FILE_NAME_BYTES = 255;
-const UNTRUSTED_FILE_NAME_CODE_UNITS = 200;
+const SANITIZED_FILE_NAME_CODE_UNITS = 200;
+const SAFE_FALLBACK_FILE_NAME = "file";
 
-function truncateWithoutSplittingSurrogatePair(value: string, maxLength: number): string {
-  let truncated = value.slice(0, maxLength);
+/**
+ * Uses native string and regexp operations to recognize the full sanitizer's
+ * bounded fixed points. The separate non-global regexp keeps this predicate
+ * stateless, and the authoritative device-name transform remains the final
+ * admission check.
+ */
+function isBoundedSanitizedFileName(
+  fileName: unknown,
+  trimmedFileName: string,
+): fileName is string {
+  return typeof fileName === "string" &&
+    fileName.length > 0 &&
+    fileName.length <= SANITIZED_FILE_NAME_CODE_UNITS &&
+    fileName !== "." &&
+    fileName !== ".." &&
+    trimmedFileName === fileName &&
+    !HAS_INVALID_FILE_NAME_CHARACTER.test(fileName) &&
+    suffixWindowsReservedDeviceName(fileName) === fileName;
+}
+
+function hasWindowsDrivePrefix(value: string): boolean {
+  if (value.length < 2 || value.charCodeAt(1) !== 0x3a) return false;
+  const firstCodeUnit = value.charCodeAt(0);
+  return (firstCodeUnit >= 0x41 && firstCodeUnit <= 0x5a) ||
+    (firstCodeUnit >= 0x61 && firstCodeUnit <= 0x7a);
+}
+
+function normalizedFileNameBytes(value: string): number {
+  return maxNormalizedUtf8Bytes(value, true);
+}
+
+function truncateCodeUnitsWithoutSplittingSurrogate(value: string, limit: number): string {
+  if (value.length <= limit) return value;
+  let truncated = value.slice(0, limit);
   const trailingCodeUnit = truncated.charCodeAt(truncated.length - 1);
   if (trailingCodeUnit >= 0xd800 && trailingCodeUnit <= 0xdbff) {
     truncated = truncated.slice(0, -1);
   }
   return truncated;
-}
-
-function normalizedFileNameBytes(value: string): number {
-  return maxNormalizedUtf8Bytes(value, true);
 }
 
 /** Keeps short names exact and trims only the filename tail of a composite temp name. */
@@ -92,25 +122,38 @@ export function fitFileNameToPortableComponent(params: {
   return `${codePoints.slice(0, low).join("")}${tailSuffix}`;
 }
 
-export function sanitizeUntrustedFileName(fileName: string, fallbackName: string): string {
-  const trimmed = typeof fileName === "string" ? fileName.trim() : "";
-  if (!trimmed) {
-    return fallbackName;
+function sanitizeFileNameCandidate(fileName: string): string | undefined {
+  if (typeof fileName !== "string") return undefined;
+  const trimmed = fileName.trim();
+  if (!trimmed) return undefined;
+  if (isBoundedSanitizedFileName(fileName, trimmed)) return fileName;
+  let base = trimmed;
+  if (base.includes("/")) base = path.posix.basename(base);
+  if (base.includes("\\") || hasWindowsDrivePrefix(base)) {
+    base = path.win32.basename(base);
   }
-  let base = path.posix.basename(trimmed);
-  base = path.win32.basename(base);
   base = base.replace(INVALID_FILE_NAME_CHARACTERS, "").trim();
   if (!base || base === "." || base === "..") {
-    return fallbackName;
+    return undefined;
   }
-  base = suffixWindowsReservedDeviceName(base);
-  if (base.length > UNTRUSTED_FILE_NAME_CODE_UNITS) {
-    base = truncateWithoutSplittingSurrogatePair(base, UNTRUSTED_FILE_NAME_CODE_UNITS);
-    if (suffixWindowsReservedDeviceName(base) !== base) {
-      base = suffixWindowsReservedDeviceName(
-        truncateWithoutSplittingSurrogatePair(base, UNTRUSTED_FILE_NAME_CODE_UNITS - 1),
-      );
-    }
+  base = truncateCodeUnitsWithoutSplittingSurrogate(base, SANITIZED_FILE_NAME_CODE_UNITS);
+  let safeBase = suffixWindowsReservedDeviceName(base);
+  if (safeBase.length > SANITIZED_FILE_NAME_CODE_UNITS) {
+    // The safety suffix is the final invariant. Shorten the unsuffixed tail so
+    // truncation cannot turn a padded reserved stem back into a device name.
+    base = truncateCodeUnitsWithoutSplittingSurrogate(
+      base,
+      SANITIZED_FILE_NAME_CODE_UNITS - 1,
+    );
+    safeBase = suffixWindowsReservedDeviceName(base);
   }
-  return base;
+  return safeBase;
+}
+
+export function sanitizeUntrustedFileName(fileName: string, fallbackName: string): string {
+  return (
+    sanitizeFileNameCandidate(fileName) ??
+    sanitizeFileNameCandidate(fallbackName) ??
+    SAFE_FALLBACK_FILE_NAME
+  );
 }

@@ -9,7 +9,7 @@ import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { root } from "./root.js";
 import { assertSafePathPrefix } from "./safe-path-segment.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
-import { assertCallbackTempPathDeviceSafe, writeCallbackSibling } from "./sibling-staged-file.js";
+import { resolveCallbackTempPath, writeCallbackSibling } from "./sibling-staged-file.js";
 import { tempFile } from "./temp-target.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
@@ -35,11 +35,11 @@ export type WriteSiblingTempFileResult<T> = {
   result: T;
 };
 
-function buildTempPath(dir: string, tempPrefix?: string): string {
+function buildTempName(tempPrefix?: string): string {
   const safePrefix = assertSafePathPrefix(tempPrefix ?? ".fs-safe-stream", {
     label: "sibling temp prefix",
   });
-  return path.join(dir, `${safePrefix}.${process.pid}.${randomUUID()}.tmp`);
+  return `${safePrefix}.${process.pid}.${randomUUID()}.tmp`;
 }
 
 export async function writeSiblingTempFile<T>(
@@ -56,7 +56,8 @@ export async function writeSiblingTempFile<T>(
     });
   }
   return await writeCallbackSibling({
-    tempPath: buildTempPath(dir, options.tempPrefix),
+    tempDir: dir,
+    tempName: buildTempName(options.tempPrefix),
     write: options.writeTemp,
     producerIsolation: options.producerIsolation,
     resolveFinalPath: options.resolveFinalPath,
@@ -67,7 +68,7 @@ export async function writeSiblingTempFile<T>(
   });
 }
 
-function buildSiblingTempPath(params: {
+function buildSiblingTempName(params: {
   targetPath: string;
   fallbackFileName: string;
   tempPrefix: string;
@@ -86,7 +87,7 @@ function buildSiblingTempPath(params: {
     ),
     suffix,
   });
-  return path.join(path.dirname(params.targetPath), `${prefix}${safeTail}${suffix}`);
+  return `${prefix}${safeTail}${suffix}`;
 }
 
 export async function writeViaSiblingTempPath(params: {
@@ -126,12 +127,12 @@ export async function writeViaSiblingTempPath(params: {
     prefix: "fs-safe-output",
   });
   try {
-    const tempPath = buildSiblingTempPath({
+    const tempName = buildSiblingTempName({
       targetPath: path.join(workspace.dir, path.basename(targetPath)),
       fallbackFileName: params.fallbackFileName ?? "output.bin",
       tempPrefix: params.tempPrefix ?? ".fs-safe-output-",
     });
-    assertCallbackTempPathDeviceSafe(tempPath);
+    const tempPath = resolveCallbackTempPath(workspace.dir, tempName);
     await getFsSafeTestHooks()?.beforeSiblingTempWrite?.(tempPath);
     await params.writeTemp(tempPath);
     await assertAsyncDirectoryGuard(rootGuard);

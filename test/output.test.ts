@@ -173,6 +173,25 @@ describe("writeExternalFileWithinRoot", () => {
     },
   );
 
+  it.each(["workspace", "sibling"] as const)(
+    "retains output.bin when both %s output-name candidates are unusable",
+    async (staging) => {
+      const rootDir = await tempRoot("fs-safe-output-safe-default-");
+      const result = await writeExternalFileWithinRoot({
+        rootDir,
+        path: "\u0001",
+        fallbackFileName: "<>",
+        staging,
+        write: async (candidate) => {
+          await fs.writeFile(candidate, "safe-default", "utf8");
+        },
+      });
+
+      expect(result.path).toBe(path.join(await fs.realpath(rootDir), "output.bin"));
+      await expect(fs.readFile(result.path, "utf8")).resolves.toBe("safe-default");
+    },
+  );
+
   it("preserves caller-provided destination filename spacing", async () => {
     const rootDir = await tempRoot("fs-safe-output-spaces-");
     const fileName = " report .txt ";

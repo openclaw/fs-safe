@@ -17,22 +17,27 @@ function sanitizeUntrustedFileName(fileName: string, fallbackName: string): stri
 
 ## What it does
 
-In order:
+The primary name goes through this pipeline first:
 
-1. **Trim** whitespace. If the result is empty, return `fallbackName`.
+1. **Trim** whitespace. An empty result is unusable.
 2. **Strip path components.** Apply `path.posix.basename` then `path.win32.basename` so neither `foo/bar.txt` nor `foo\bar.txt` survives — only the final segment remains.
 3. **Strip non-portable characters.** C0/C1 controls (`0x00`–`0x1f`, `0x7f`–`0x9f`) and the Windows-invalid set `< > : " / \\ | ? *` are removed on every platform.
 4. **Trim again.**
-5. If the result is empty, `"."`, or `".."`, return `fallbackName`.
-6. **Suffix Windows reserved basenames.** Compare the part before the first `.` case-insensitively with the Windows device-name set, including `CON`, `PRN`, `AUX`, `NUL`, `CLOCK$`, `CONIN$`, `CONOUT$`, `COM1..9`, `LPT1..9`, and their superscript `¹`, `²`, and `³` variants. Windows-ignored spaces and dots at the end of that basename do not disguise a device name. A match gains `_` before its extension, preserving the original case and extension on every platform.
-7. **Truncate.** If the cleaned segment is longer than 200 UTF-16 code units, take up to the first 200 without splitting a valid Unicode surrogate pair.
+5. An empty result, `"."`, or `".."` is unusable.
+6. **Truncate.** If the cleaned segment is longer than 200 UTF-16 code units, take up to the first 200 without splitting a valid Unicode surrogate pair.
+7. **Make the final name device-safe.** Compare the part before the first `.` case-insensitively with the Windows device-name set, including `CON`, `PRN`, `AUX`, `NUL`, `CLOCK$`, `CONIN$`, `CONOUT$`, `COM1..9`, `LPT1..9`, and their superscript `¹`, `²`, and `³` variants. Windows-ignored spaces and dots at the end of that basename do not disguise a device name. A match gains `_` before its extension on every platform. If the suffix would exceed 200 code units, the unsuffixed tail is shortened first, so truncation cannot recreate a device name.
+
+Only when the primary name is unusable does `fallbackName` go through the same
+nonrecursive pipeline. A safe fallback is preserved exactly; path components,
+controls, reserved device names, and overlong fallback names receive the same
+treatment as the primary name. If both candidates are unusable, the function
+returns the fixed safe literal `"file"`.
 
 If truncation itself exposes a reserved-device basename after Windows ignores
 trailing spaces or dots, the result is shortened once more and receives the
 same underscore suffix. A name that reaches the sanitization branch therefore
 remains at most 200 UTF-16 code units and is never a Windows reserved-device
-alias. `fallbackName` is returned verbatim for empty or path-alias input, so
-callers must supply a fallback that already satisfies their filename policy.
+alias. Fallback names pass through the same checks before they can be returned.
 
 That's it. The function stays intentionally small: it removes traversal and
 the most obvious cross-platform device and character hazards, but it is not a
@@ -48,6 +53,8 @@ sanitizeUntrustedFileName("a\u0000b\tc", "upload");       // "abc"
 sanitizeUntrustedFileName("   ", "fallback");              // "fallback"
 sanitizeUntrustedFileName(".", "fallback");                // "fallback"
 sanitizeUntrustedFileName("..", "fallback");               // "fallback"
+sanitizeUntrustedFileName("<>", "../../etc/passwd");       // "passwd"
+sanitizeUntrustedFileName("<>", "../..");                  // "file"
 sanitizeUntrustedFileName("CON", "fallback");              // "CON_"
 sanitizeUntrustedFileName("nul.txt", "fallback");          // "nul_.txt"
 sanitizeUntrustedFileName("aux.c", "fallback");            // "aux_.c"

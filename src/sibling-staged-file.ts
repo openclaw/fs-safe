@@ -7,8 +7,8 @@ import {
   assertDirectoryIdentitySync,
   createAsyncDirectoryGuard,
 } from "./directory-guard.js";
-import { syncDirectoryBestEffort } from "./directory-durability.js";
 import { isWindowsReservedDeviceName } from "./device-path.js";
+import { syncDirectoryBestEffort } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { root } from "./root.js";
@@ -16,6 +16,29 @@ import { inspectFileIdentity } from "./strict-file-identity.js";
 import { registerTempPathForExit, type TempPathRegistration } from "./temp-cleanup.js";
 import { createOwnedTempFile } from "./temp-target.js";
 import { serializePathWrite } from "./write-queue.js";
+
+const INVALID_CALLBACK_COMPONENT_CHARACTERS = /[\u0000-\u001f\u007f-\u009f<>:"/\\|?*]/u;
+
+export function resolveCallbackTempPath(workspaceDir: string, component: string): string {
+  const dir = path.resolve(workspaceDir);
+  if (
+    typeof component !== "string" ||
+    component === "" ||
+    component === "." ||
+    component === ".." ||
+    INVALID_CALLBACK_COMPONENT_CHARACTERS.test(component) ||
+    component.endsWith(".") ||
+    component.endsWith(" ") ||
+    isWindowsReservedDeviceName(component)
+  ) {
+    throw new FsSafeError("invalid-path", "callback temp name must be one path component");
+  }
+  const joined = path.join(dir, component);
+  if (path.dirname(joined) !== dir) {
+    throw new FsSafeError("invalid-path", "callback temp path must be a direct workspace child");
+  }
+  return joined;
+}
 
 function assertRegularFile(stat: BigIntStats): void {
   if (stat.isSymbolicLink()) {
@@ -37,12 +60,6 @@ async function inspectStage(inspect: () => BigIntStats, expected?: BigIntStats) 
   }, expected);
 }
 
-export function assertCallbackTempPathDeviceSafe(tempPath: string): void {
-  if (isWindowsReservedDeviceName(tempPath)) {
-    throw new FsSafeError("invalid-path", "callback temp path uses a reserved Windows device name");
-  }
-}
-
 // Own the workspace before the producer can leave partial output. The finished
 // file still enters the ordinary sibling admission and publication lifecycle.
 async function writeIsolatedProducer<T>(params: {
@@ -61,10 +78,11 @@ async function writeIsolatedProducer<T>(params: {
     assertDirectoryIdentitySync(target.dir, { ...identity, realPath: target.dir });
   };
   try {
+    const producerPath = resolveCallbackTempPath(target.dir, path.basename(target.path));
     assertCurrent();
-    const result = await params.write(target.path);
+    const result = await params.write(producerPath);
     assertCurrent();
-    await targetRoot.move(path.relative(targetRoot.rootReal, target.path), path.basename(params.tempPath), {
+    await targetRoot.move(path.relative(targetRoot.rootReal, producerPath), path.basename(params.tempPath), {
       assertBeforeMutation: assertCurrent,
     });
     return result;
@@ -77,7 +95,8 @@ async function writeIsolatedProducer<T>(params: {
 // Keep one descriptor and one exact identity through mode, sync, rename and cleanup.
 // Read/write access is needed only when the caller requests file synchronization.
 export async function writeCallbackSibling<T>(params: {
-  tempPath: string;
+  tempDir: string;
+  tempName: string;
   write: (tempPath: string) => Promise<T>;
   producerIsolation?: "private-directory";
   resolveFinalPath: (result: T) => string;
@@ -88,8 +107,8 @@ export async function writeCallbackSibling<T>(params: {
   syncTempFile: boolean;
   syncParentDir: boolean;
 }): Promise<{ filePath: string; result: T }> {
-  assertCallbackTempPathDeviceSafe(params.tempPath);
-  const parent = path.dirname(params.tempPath);
+  const parent = path.resolve(params.tempDir);
+  const tempPath = resolveCallbackTempPath(parent, params.tempName);
   const guard = await createAsyncDirectoryGuard(parent, { bigint: true });
   const assertParent = () => assertAsyncDirectoryGuard(guard);
   let handle: FileHandle | undefined;
@@ -114,7 +133,7 @@ export async function writeCallbackSibling<T>(params: {
   try {
     const result = params.producerIsolation === "private-directory"
       ? await writeIsolatedProducer({
-          tempPath: params.tempPath,
+          tempPath,
           write: params.write,
           assertParent: () => assertDirectoryIdentitySync(parent, {
             dev: guard.stat.dev,
@@ -122,13 +141,13 @@ export async function writeCallbackSibling<T>(params: {
             realPath: guard.realPath,
           }),
         })
-      : await params.write(params.tempPath);
+      : await params.write(tempPath);
     await assertParent();
-    const before = await inspectPath(params.tempPath);
+    const before = await inspectPath(tempPath);
     try {
       // No create/truncate flags; O_NONBLOCK also bounds a FIFO swap during open.
       const access = params.syncTempFile ? fsSync.constants.O_RDWR : fsSync.constants.O_RDONLY;
-      handle = await fs.open(params.tempPath, access | resolveReadOpenFlags());
+      handle = await fs.open(tempPath, access | resolveReadOpenFlags());
     } catch (error) {
       if ((error as NodeJS.ErrnoException)?.code === "ELOOP") {
         throw new FsSafeError("symlink", "symlink sibling temp not allowed", { cause: error });
@@ -136,20 +155,20 @@ export async function writeCallbackSibling<T>(params: {
       throw error;
     }
     const opened = await inspectStage(() => fsSync.fstatSync(handle!.fd, { bigint: true }), before);
-    await inspectPath(params.tempPath, opened);
+    await inspectPath(tempPath, opened);
     await assertParent();
     identity = opened;
-    unregister = registerTempPathForExit(params.tempPath, { identity, singleLinkFile: true });
+    unregister = registerTempPathForExit(tempPath, { identity, singleLinkFile: true });
 
     const filePath = path.resolve(params.resolveFinalPath(result));
     if (path.dirname(filePath) !== parent) {
       throw new Error("Final path must be in the sibling temp directory.");
     }
-    if (filePath === params.tempPath) {
+    if (filePath === tempPath) {
       throw new FsSafeError("invalid-path", "final path must differ from the sibling temp path");
     }
     await serializePathWrite(filePath, async () => {
-      await assertCurrent(params.tempPath);
+      await assertCurrent(tempPath);
       if (params.mode !== undefined) {
         try {
           await handle!.chmod(params.mode);
@@ -158,11 +177,11 @@ export async function writeCallbackSibling<T>(params: {
         }
       }
       if (params.syncTempFile) {
-        await assertCurrent(params.tempPath);
+        await assertCurrent(tempPath);
         await syncFileBestEffort(handle!);
       }
-      await assertCurrent(params.tempPath);
-      await fs.rename(params.tempPath, filePath);
+      await assertCurrent(tempPath);
+      await fs.rename(tempPath, filePath);
       // A later verification failure never authorizes rollback of the final name.
       renamed = true;
       unregister!();
@@ -180,8 +199,8 @@ export async function writeCallbackSibling<T>(params: {
         try {
           await assertParent();
           await inspectStage(() => fsSync.fstatSync(handle!.fd, { bigint: true }), identity);
-          await inspectPath(params.tempPath, identity);
-          await fs.unlink(params.tempPath);
+          await inspectPath(tempPath, identity);
+          await fs.unlink(tempPath);
           unregister?.();
         } catch (error) {
           // Preserve observed substitutes; retry only operational cleanup failures.
