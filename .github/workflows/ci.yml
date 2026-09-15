@@ -303,7 +303,7 @@ jobs:
           PROOF_PARENT: ${{ runner.temp }}/fs-safe-secure-file-proof-${{ matrix.node }}
           RECEIPT_DIR: ${{ runner.temp }}/fs-safe-secure-file-receipt-${{ matrix.node }}
           RECEIPT_PATH: ${{ runner.temp }}/fs-safe-secure-file-receipt-${{ matrix.node }}/secure-file-credential-proof.json
-          STAGE_ROOT: /opt/fs-safe-credential-proof-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.node }}
+          STAGE_ROOT: /usr/local/lib/fs-safe-credential-proof-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.node }}
         run: |
           set -euo pipefail
           umask 077
@@ -410,17 +410,305 @@ jobs:
               throw new Error("Candidate and historical artifact identities overlap");
             }
 
-      - name: Set up exact Node without repository cache
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: ${{ matrix.node }}
-
       - name: Install proof tools before candidate checkout
         shell: bash
         run: |
           set -euo pipefail
           sudo /usr/bin/apt-get update -qq
-          sudo /usr/bin/apt-get install --yes --no-install-recommends strace util-linux coreutils libc-bin
+          sudo /usr/bin/apt-get install --yes --no-install-recommends strace util-linux coreutils libc-bin curl tar xz-utils
+
+      - name: Authenticate and privately stage proof tools before checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          builder_uid=$(/usr/bin/id -u)
+          builder_gid=$(/usr/bin/id -g)
+          sudo -- /usr/bin/env -i HOME=/root LANG=C LC_ALL=C PATH=/usr/bin TZ=UTC \
+            /usr/bin/bash --noprofile --norc -s -- \
+            "$STAGE_ROOT" "$RECEIPT_DIR" "$RUNNER_TEMP" "$GITHUB_WORKSPACE" \
+            "$builder_uid" "$builder_gid" '${{ matrix.node }}' \
+            '${{ github.run_id }}' '${{ github.run_attempt }}' <<'STAGE_BOOTSTRAP'
+          set -Eeuo pipefail
+          umask 077
+          stage=bootstrap subject=bootstrap reason=predicate receipt_ready=0
+          # BEGIN STAGING POLICY: also exercised by the shell contract tests.
+          initial_receipt='{"schema":1,"proof":"secure-file-split-credential","overall":false,"failure":{"stage":"workflow-initialization","name":"ProofError","code":"PROOF_NOT_STARTED"},"workflow":{"fallback":true,"receiptAllowlisted":true}}'
+          failure_json() {
+            local status="$1"
+            case "$stage" in bootstrap|system-tools|stage-parent|node-download|node-authentication|tool-copy|harness-copy|manifest|publish) ;; *) stage=bootstrap ;; esac
+            case "$subject" in bootstrap|system-tool|stage-root|node-archive|node|prlimit|setpriv|strace|timeout|getent|bash|env|ldd|coordinator|worker|workflow|manifest|receipt) ;; *) subject=bootstrap ;; esac
+            case "$reason" in predicate|path|owner|mode|type|links|size|identity|hash|version|io|unsupported-runtime) ;; *) reason=predicate ;; esac
+            [[ "$status" =~ ^(0|[1-9][0-9]{0,2})$ ]] && (( status <= 255 )) || status=1
+            printf '{"schema":1,"proof":"secure-file-split-credential","overall":false,"failure":{"stage":"workflow-staging","name":"ProofError","code":"STAGING_FAILED","diagnostic":{"stage":"%s","subject":"%s","reason":"%s","exitCode":%d}},"workflow":{"fallback":true,"receiptAllowlisted":true}}\n' "$stage" "$subject" "$reason" "$status"
+          }
+          write_staging_failure() {
+            [[ "$receipt_ready" = 1 ]] || return 1
+            local directory="/proc/self/fd/$receipt_fd" existing expected temporary before
+            # This descriptor pins a directory we admitted before taking ownership.
+            [[ "$(/usr/bin/stat -Lc '%u:%g:%a:%d:%i' -- "$directory")" = "0:0:755:$receipt_identity" ]] || return 1
+            [[ "$(/usr/bin/stat -c '%d:%i' -- "$receipt_dir")" = "$receipt_identity" ]] || return 1
+            [[ -f "$directory/secure-file-credential-proof.json" && ! -L "$directory/secure-file-credential-proof.json" ]] || return 1
+            [[ "$(/usr/bin/stat -c '%h:%s' -- "$directory/secure-file-credential-proof.json")" = "1:$((${#initial_receipt} + 1))" ]] || return 1
+            before=$(/usr/bin/stat -c '%d:%i:%u:%g:%f:%h:%s:%y:%z' -- "$directory/secure-file-credential-proof.json") || return 1
+            existing=$(/usr/bin/head --bytes "$((${#initial_receipt} + 1))" -- "$directory/secure-file-credential-proof.json" | /usr/bin/sha256sum) || return 1
+            expected=$(printf '%s\n' "$initial_receipt" | /usr/bin/sha256sum) || return 1
+            [[ "$existing" = "$expected" ]] || return 1
+            [[ "$(/usr/bin/stat -c '%d:%i:%u:%g:%f:%h:%s:%y:%z' -- "$directory/secure-file-credential-proof.json")" = "$before" ]] || return 1
+            temporary="$directory/.staging-failure-$BASHPID.tmp"
+            (set -o noclobber; failure_json "$1" > "$temporary") || return 1
+            /usr/bin/chmod 0644 -- "$temporary" || return 1
+            /usr/bin/mv -T -- "$temporary" "$directory/secure-file-credential-proof.json" || return 1
+          }
+          staging_exit() {
+            local status="$?"
+            trap - EXIT
+            if (( status != 0 )); then
+              set +e
+              failure_json "$status"
+              write_staging_failure "$status" || :
+            fi
+            exit "$status"
+          }
+          # Installed before the first predicate; reporting cannot replace a failure status.
+          trap staging_exit EXIT
+          set -o noclobber
+          exec 2>/dev/null
+          metadata_policy() {
+            local uid="$1" gid="$2" mode="$3" links="$4" size="$5" wanted_uid="$6" wanted_gid="$7" limit="$8"
+            reason=owner
+            [[ "$uid" = "$wanted_uid" && "$gid" = "$wanted_gid" ]] || return 1
+            reason=mode
+            [[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+            (( (8#$mode & 8#7022) == 0 )) || return 1
+            reason=links
+            [[ "$links" = 1 ]] || return 1
+            reason=size
+            [[ "$size" =~ ^[1-9][0-9]{0,8}$ ]] || return 1
+            (( size <= limit ))
+          }
+          inspect_directory() {
+            local directory="$1" wanted_uid="$2" wanted_gid="$3" uid gid mode
+            reason=path
+            [[ -d "$directory" && ! -L "$directory" ]]
+            [[ "$(/usr/bin/realpath -e -- "$directory")" = "$directory" ]]
+            read -r uid gid mode < <(/usr/bin/stat -c '%u %g %a' -- "$directory")
+            reason=owner
+            [[ "$uid" = "$wanted_uid" && "$gid" = "$wanted_gid" ]]
+            reason=mode
+            [[ "$mode" =~ ^[0-7]{3,4}$ ]]
+            (( (8#$mode & 8#7022) == 0 ))
+          }
+          inspect_metadata() {
+            local file="$1" wanted_uid="$2" wanted_gid="$3" limit="$4" uid gid mode links size
+            reason=path
+            [[ "$(/usr/bin/realpath -e -- "$file")" = "$file" ]]
+            reason=type
+            [[ -f "$file" && ! -L "$file" ]]
+            read -r uid gid mode links size < <(/usr/bin/stat -c '%u %g %a %h %s' -- "$file")
+            metadata_policy "$uid" "$gid" "$mode" "$links" "$size" "$wanted_uid" "$wanted_gid" "$limit"
+            identity=$(/usr/bin/stat -c '%d:%i:%u:%g:%f:%h:%s:%y:%z' -- "$file")
+          }
+          inspect_file() {
+            local file="$1" wanted_uid="$2" wanted_gid="$3" limit="$4" before
+            inspect_metadata "$file" "$wanted_uid" "$wanted_gid" "$limit"
+            before="$identity"
+            reason=hash
+            file_hash=$(/usr/bin/sha256sum < "$file")
+            file_hash="${file_hash%% *}"
+            [[ "$file_hash" =~ ^[0-9a-f]{64}$ ]]
+            inspect_metadata "$file" "$wanted_uid" "$wanted_gid" "$limit"
+            reason=identity
+            [[ "$identity" = "$before" ]]
+          }
+          validate_system_tools() {
+            stage=system-tools subject=system-tool
+            # The root host's Bash, stat and realpath are the bootstrap trust anchor.
+            # No PATH lookup, setup-node cache or repository executable participates.
+            for directory in / /usr /usr/bin; do inspect_directory "$directory" 0 0; done
+            for name in "${system_tools[@]}"; do
+              inspect_metadata "/usr/bin/$name" 0 0 268435456
+              [[ -x "/usr/bin/$name" ]]
+            done
+            # sha256sum, curl, tar and xz are used only after the entire tool admission.
+          }
+          prepare_receipt() {
+            local uid gid mode directory
+            subject=receipt
+            [[ "$receipt_dir" = "$runner_temp/fs-safe-secure-file-receipt-$node_version" ]]
+            inspect_directory "$runner_temp" "$builder_uid" "$builder_gid"
+            exec {receipt_fd}< "$receipt_dir"
+            directory="/proc/self/fd/$receipt_fd"
+            [[ -d "$directory" ]]
+            read -r uid gid mode < <(/usr/bin/stat -Lc '%u %g %a' -- "$directory")
+            if [[ "$uid:$gid" = 0:0 ]]; then
+              inspect_directory "$receipt_dir" 0 0
+            else
+              [[ "$uid" = "$builder_uid" && "$gid" = "$builder_gid" ]]
+              inspect_directory "$receipt_dir" "$builder_uid" "$builder_gid"
+            fi
+            [[ "$mode" =~ ^[0-7]{3,4}$ ]]
+            (( (8#$mode & 8#7022) == 0 ))
+            receipt_identity=$(/usr/bin/stat -Lc '%d:%i' -- "$directory")
+            [[ "$(/usr/bin/stat -c '%d:%i' -- "$receipt_dir")" = "$receipt_identity" ]]
+            # Only this admitted directory is changed; descriptor paths avoid parent swaps.
+            /usr/bin/chown --dereference 0:0 -- "$directory"
+            /usr/bin/chmod 0755 -- "$directory"
+            [[ "$(/usr/bin/stat -c '%d:%i' -- "$receipt_dir")" = "$receipt_identity" ]]
+            receipt_ready=1
+          }
+          select_node_archive() {
+            reason=unsupported-runtime
+            case "$node_version" in
+              22.23.2) archive_sha256=d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307 ;;
+              24.20.0) archive_sha256=2f2c0da162318f0de47665410c7c8c2ed3d36c8f3105de4bbc61176c70a7cbf2 ;;
+              *) return 1 ;;
+            esac
+            archive_url="https://nodejs.org/dist/v$node_version/node-v$node_version-linux-x64.tar.xz"
+            node_member="node-v$node_version-linux-x64/bin/node"
+          }
+          authenticate_node_archive() {
+            stage=node-authentication subject=node-archive
+            inspect_file "$archive" 0 0 134217728
+            reason=hash
+            [[ "$file_hash" = "$archive_sha256" ]]
+            archive_identity="$identity"
+            # Authenticate before parsing. Only one exact regular member may reach stdout;
+            # archive names are never used as extraction destinations on the filesystem.
+            reason=type
+            members=$(/usr/bin/tar --list --file "$archive" --use-compress-program=/usr/bin/xz --no-wildcards -- "$node_member")
+            [[ "$members" = "$node_member" ]]
+            member_info=$(/usr/bin/tar --list --verbose --numeric-owner --file "$archive" --use-compress-program=/usr/bin/xz --no-wildcards -- "$node_member")
+            [[ "$member_info" = -rwxr-xr-x\ * && "$member_info" != *$'\n'* ]]
+            /usr/bin/tar --extract --to-stdout --file "$archive" --use-compress-program=/usr/bin/xz --no-wildcards -- "$node_member" > "$stage_root/.node-source"
+            inspect_file "$archive" 0 0 134217728
+            reason=identity
+            [[ "$identity" = "$archive_identity" && "$file_hash" = "$archive_sha256" ]]
+            /usr/bin/chmod 0400 -- "$stage_root/.node-source"
+          }
+          copy_admitted_file() {
+            local name="$1" source="$2" uid="$3" gid="$4" mode="$5" limit="$6" before hash
+            subject="$name"
+            inspect_file "$source" "$uid" "$gid" "$limit"
+            before="$identity" hash="$file_hash"
+            reason=io
+            [[ ! -e "$stage_root/$name" && ! -L "$stage_root/$name" ]]
+            /usr/bin/install -o 0 -g 0 -m "$mode" -- "$source" "$stage_root/$name"
+            inspect_file "$source" "$uid" "$gid" "$limit"
+            reason=identity
+            [[ "$identity" = "$before" && "$file_hash" = "$hash" ]]
+            inspect_file "$stage_root/$name" 0 0 "$limit"
+            reason=hash
+            [[ "$file_hash" = "$hash" ]]
+            [[ "$(/usr/bin/stat -c %a -- "$stage_root/$name")" = "${mode#0}" ]]
+            source_paths[$name]="$source" source_hashes[$name]="$hash" source_identities[$name]="$before"
+            copy_hashes[$name]="$file_hash" copy_identities[$name]="$identity"
+          }
+          inspect_harness_ancestors() {
+            local current="${1%/*}" owner
+            while :; do
+              owner=$(/usr/bin/stat -c '%u:%g' -- "$current")
+              if [[ "$owner" = 0:0 ]]; then inspect_directory "$current" 0 0
+              else inspect_directory "$current" "$builder_uid" "$builder_gid"; fi
+              [[ "$current" != / ]] || break
+              current="${current%/*}"
+              current="${current:-/}"
+            done
+          }
+          finish_stage() {
+            [[ "$EUID" = 0 && "$UID" = 0 ]]
+            validate_system_tools
+            prepare_receipt
+            stage=stage-parent subject=stage-root
+            for directory in /usr/local /usr/local/lib "$stage_root"; do inspect_directory "$directory" 0 0; done
+            [[ "$(/usr/bin/stat -c '%d:%i:%a' -- "$stage_root")" = "$stage_identity:700" ]]
+            stage=harness-copy
+            inspect_harness_ancestors "$workspace/scripts/secure-file-credential-proof.mjs"
+            inspect_harness_ancestors "$workspace/.github/workflows/ci.yml"
+            copy_admitted_file coordinator "$workspace/scripts/secure-file-credential-proof.mjs" "$builder_uid" "$builder_gid" 0444 1048576
+            copy_admitted_file worker "$workspace/scripts/secure-file-credential-proof-worker.mjs" "$builder_uid" "$builder_gid" 0444 1048576
+            copy_admitted_file workflow "$workspace/.github/workflows/ci.yml" "$builder_uid" "$builder_gid" 0444 1048576
+            stage=manifest
+            for name in "${staged_names[@]}"; do
+              subject="$name"
+              uid=0 gid=0
+              case "$name" in coordinator|worker|workflow) uid="$builder_uid" gid="$builder_gid" ;; esac
+              inspect_file "${source_paths[$name]}" "$uid" "$gid" 268435456
+              reason=identity
+              [[ "$identity" = "${source_identities[$name]}" && "$file_hash" = "${source_hashes[$name]}" ]]
+              inspect_file "$stage_root/$name" 0 0 268435456
+              reason=identity
+              [[ "$identity" = "${copy_identities[$name]}" && "$file_hash" = "${copy_hashes[$name]}" ]]
+            done
+            subject=manifest reason=io
+            (set -o noclobber
+              printf '{"schema":1,"proof":"secure-file-split-credential-stage","nodeArchive":{"version":"v%s","sha256":"%s"},"entries":{' "$node_version" "$archive_sha256"
+              separator=
+              for name in "${staged_names[@]}"; do
+                printf '%s"%s":{"sourceSha256":"%s","copySha256":"%s"}' "$separator" "$name" "${source_hashes[$name]}" "${copy_hashes[$name]}"
+                separator=,
+              done
+              printf '}}\n'
+            ) > "$stage_root/manifest.json"
+            /usr/bin/chmod 0444 -- "$stage_root/manifest.json"
+            inspect_file "$stage_root/manifest.json" 0 0 1048576
+            manifest_identity="$identity" manifest_hash="$file_hash"
+            # Exact private intermediates only; no recursive changes to shared paths.
+            /usr/bin/rm -- "$stage_root/.node-source" "$stage_root/.finish-stage"
+            stage=publish subject=stage-root reason=identity
+            [[ "$(/usr/bin/stat -c '%d:%i:%a' -- "$stage_root")" = "$stage_identity:700" ]]
+            /usr/bin/chmod 0555 -- "$stage_root"
+            inspect_directory "$stage_root" 0 0
+            [[ "$(/usr/bin/stat -c '%d:%i:%a' -- "$stage_root")" = "$stage_identity:555" ]]
+            inspect_file "$stage_root/manifest.json" 0 0 1048576
+            [[ "$identity" = "$manifest_identity" && "$file_hash" = "$manifest_hash" ]]
+          }
+          # END STAGING POLICY
+          stage_root="$1" receipt_dir="$2" runner_temp="$3" workspace="$4"
+          builder_uid="$5" builder_gid="$6" node_version="$7" run_id="$8" run_attempt="$9"
+          system_tools=(stat realpath bash env install mkdir chmod chown mv rm head sha256sum curl tar xz prlimit setpriv strace timeout getent ldd)
+          staged_names=(node prlimit setpriv strace timeout getent bash env ldd coordinator worker workflow)
+          declare -A source_paths source_hashes source_identities copy_hashes copy_identities
+          [[ "$EUID" = 0 && "$UID" = 0 ]]
+          [[ "$builder_uid" =~ ^[1-9][0-9]{0,9}$ && "$builder_gid" =~ ^[1-9][0-9]{0,9}$ ]]
+          [[ "$run_id" =~ ^[1-9][0-9]{0,19}$ && "$run_attempt" =~ ^[1-9][0-9]{0,9}$ ]]
+          select_node_archive
+          [[ "$stage_root" = "/usr/local/lib/fs-safe-credential-proof-$run_id-$run_attempt-$node_version" ]]
+          cd /
+          validate_system_tools
+          prepare_receipt
+          stage=stage-parent subject=stage-root
+          for directory in /usr/local /usr/local/lib; do inspect_directory "$directory" 0 0; done
+          reason=io
+          # mkdir is exclusive; the stage stays inaccessible until final publication.
+          /usr/bin/mkdir -m 0700 -- "$stage_root"
+          inspect_directory "$stage_root" 0 0
+          stage_identity=$(/usr/bin/stat -c '%d:%i' -- "$stage_root")
+          stage=node-download subject=node-archive reason=io
+          archive="$stage_root/.node.tar.xz"
+          /usr/bin/curl --disable --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            --fail --silent --show-error --connect-timeout 15 --max-time 180 \
+            --max-filesize 134217728 --output "$archive" "$archive_url"
+          authenticate_node_archive
+          stage=tool-copy
+          copy_admitted_file node "$stage_root/.node-source" 0 0 0555 268435456
+          for name in prlimit setpriv strace timeout getent bash env ldd; do
+            copy_admitted_file "$name" "/usr/bin/$name" 0 0 0555 268435456
+          done
+          subject=node reason=version
+          actual_version=$("$stage_root/node" --version)
+          [[ "$actual_version" = "v$node_version" ]]
+          /usr/bin/rm -- "$archive"
+          # Persist only this workflow's functions and quoted, admitted state. This root-only
+          # continuation exists before checkout; no repository shell helper is executed.
+          (set -o noclobber
+            printf '%s\n' 'set -Eeuo pipefail' 'set -o noclobber' 'umask 077' 'stage=bootstrap subject=bootstrap reason=predicate receipt_ready=0'
+            declare -f failure_json write_staging_failure staging_exit metadata_policy inspect_directory inspect_metadata inspect_file validate_system_tools prepare_receipt copy_admitted_file inspect_harness_ancestors finish_stage
+            declare -p initial_receipt stage_root receipt_dir runner_temp workspace builder_uid builder_gid node_version archive_sha256 stage_identity system_tools staged_names source_paths source_hashes source_identities copy_hashes copy_identities
+            printf '%s\n' 'trap staging_exit EXIT' 'exec 2>/dev/null' 'cd /' 'finish_stage'
+          ) > "$stage_root/.finish-stage"
+          /usr/bin/chmod 0400 -- "$stage_root/.finish-stage"
+          inspect_file "$stage_root/.finish-stage" 0 0 1048576
+          STAGE_BOOTSTRAP
 
       - name: Check out exact reviewed proof harness
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -548,68 +836,14 @@ jobs:
           path: ${{ runner.temp }}/fs-safe-historical-bundle-${{ matrix.node }}
           merge-multiple: true
 
-      - name: Stage trusted proof harness and executables under opt
+      - name: Finish and publish the private authenticated proof stage
         id: stage-proof
         shell: bash
         run: |
           set -euo pipefail
-          umask 077
-          test "$(/usr/bin/id -u)" -ne 0
-          test "$STAGE_ROOT" = "/opt/fs-safe-credential-proof-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.node }}"
-          test "$(/usr/bin/realpath /opt)" = /opt
-          test "$(/usr/bin/stat -c %u /opt)" = 0
-          test "$(/usr/bin/stat -c %g /opt)" = 0
-          opt_mode=$(/usr/bin/stat -c %a /opt)
-          (( (8#$opt_mode & 8#7022) == 0 ))
-          test ! -e "$STAGE_ROOT"
-          source_node=$(/usr/bin/realpath -- "$(command -v node)")
-          tool_cache=$(/usr/bin/realpath -- "$RUNNER_TOOL_CACHE")
-          test "$source_node" = "$tool_cache/node/${{ matrix.node }}/x64/bin/node"
-          declare -A source_paths
-          declare -A copy_paths
-          source_paths[node]="$source_node"
-          for name in prlimit setpriv strace timeout getent bash env ldd; do
-            source_paths[$name]=$(/usr/bin/realpath -- "$(command -v "$name")")
-          done
-          source_paths[coordinator]=$(/usr/bin/realpath -- "$GITHUB_WORKSPACE/scripts/secure-file-credential-proof.mjs")
-          source_paths[worker]=$(/usr/bin/realpath -- "$GITHUB_WORKSPACE/scripts/secure-file-credential-proof-worker.mjs")
-          source_paths[workflow]=$(/usr/bin/realpath -- "$GITHUB_WORKSPACE/.github/workflows/ci.yml")
-          test "${source_paths[coordinator]}" = "$GITHUB_WORKSPACE/scripts/secure-file-credential-proof.mjs"
-          test "${source_paths[worker]}" = "$GITHUB_WORKSPACE/scripts/secure-file-credential-proof-worker.mjs"
-          test "${source_paths[workflow]}" = "$GITHUB_WORKSPACE/.github/workflows/ci.yml"
-          for name in node prlimit setpriv strace timeout getent bash env ldd coordinator worker workflow; do
-            test -f "${source_paths[$name]}"
-            test ! -L "${source_paths[$name]}"
-            test "$(/usr/bin/stat -c %h "${source_paths[$name]}")" = 1
-            source_mode=$(/usr/bin/stat -c %a "${source_paths[$name]}")
-            (( (8#$source_mode & 8#7022) == 0 ))
-          done
-          sudo /usr/bin/install -d -o 0 -g 0 -m 0755 "$STAGE_ROOT"
-          for name in node prlimit setpriv strace timeout getent bash env ldd; do
-            copy_paths[$name]="$STAGE_ROOT/$name"
-            sudo /usr/bin/install -o 0 -g 0 -m 0555 "${source_paths[$name]}" "${copy_paths[$name]}"
-          done
-          for name in coordinator worker workflow; do
-            copy_paths[$name]="$STAGE_ROOT/$name"
-            sudo /usr/bin/install -o 0 -g 0 -m 0444 "${source_paths[$name]}" "${copy_paths[$name]}"
-          done
-          manifest="$RUNNER_TEMP/fs-safe-proof-manifest-${{ matrix.node }}.json"
-          test ! -e "$manifest"
-          /usr/bin/printf '{"schema":1,"proof":"secure-file-split-credential-stage","entries":{' > "$manifest"
-          separator=
-          for name in node prlimit setpriv strace timeout getent bash env ldd coordinator worker workflow; do
-            source_hash=$(/usr/bin/sha256sum -- "${source_paths[$name]}")
-            source_hash="${source_hash%% *}"
-            copy_hash=$(/usr/bin/sha256sum -- "${copy_paths[$name]}")
-            copy_hash="${copy_hash%% *}"
-            test "$source_hash" = "$copy_hash"
-            /usr/bin/printf '%s"%s":{"sourceSha256":"%s","copySha256":"%s"}' \
-              "$separator" "$name" "$source_hash" "$copy_hash" >> "$manifest"
-            separator=,
-          done
-          /usr/bin/printf '}}\n' >> "$manifest"
-          sudo /usr/bin/install -o 0 -g 0 -m 0444 "$manifest" "$STAGE_ROOT/manifest.json"
-          sudo /usr/bin/chmod 0555 "$STAGE_ROOT"
+          test "$STAGE_ROOT" = "/usr/local/lib/fs-safe-credential-proof-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.node }}"
+          sudo -- /usr/bin/env -i HOME=/root LANG=C LC_ALL=C PATH=/usr/bin TZ=UTC \
+            /usr/bin/bash --noprofile --norc "$STAGE_ROOT/.finish-stage"
 
       - name: Prove split real and effective credential behavior
         shell: bash

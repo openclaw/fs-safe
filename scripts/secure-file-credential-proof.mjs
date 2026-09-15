@@ -23,6 +23,10 @@ const MAX_PACKAGE_DEPTH = 32;
 const MAX_TOOL_BYTES = 256 * 1024 * 1024;
 const MAX_DIAGNOSTIC_FIELDS = 8;
 const STAGE_MANIFEST_PROOF = "secure-file-split-credential-stage";
+const NODE_ARCHIVE_SHA256 = new Map([
+  ["v22.23.2", "d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307"],
+  ["v24.20.0", "2f2c0da162318f0de47665410c7c8c2ed3d36c8f3105de4bbc61176c70a7cbf2"],
+]);
 const BUNDLE_PROOF = "secure-file-split-credential-bundle";
 const ARTIFACT_PROOF = "secure-file-split-credential-artifact";
 const FAILURE_RECEIPTS = new Set([
@@ -200,7 +204,7 @@ const proofStartedAt = performance.now();
 const harnessReceipt = {
   argumentArraySpawn: true,
   shellDisabled: true,
-  stagedUnderOpt: false,
+  stagedUnderUsrLocalLib: false,
   rootOwned: false,
   nonWritable: false,
   regularFiles: false,
@@ -828,12 +832,12 @@ function sameTrustedIdentity(left, right) {
     left.sha256 === right.sha256;
 }
 
-async function loadStageManifest(manifestPath) {
+async function loadStageManifest(manifestPath, expectedNode) {
   await inspectTrustedFile(manifestPath, "manifest", false);
   const buffer = await stableReadFile(manifestPath, 0, 1024 * 1024, 0, "manifest");
   const value = parseJson(buffer, "INVALID_STAGE_MANIFEST");
   if (
-    !hasExactKeys(value, ["schema", "proof", "entries"]) ||
+    !hasExactKeys(value, ["schema", "proof", "nodeArchive", "entries"]) ||
     value.schema !== 1 ||
     value.proof !== STAGE_MANIFEST_PROOF ||
     value.entries === null ||
@@ -843,6 +847,14 @@ async function loadStageManifest(manifestPath) {
     buffer.toString("utf8") !== `${JSON.stringify(value)}\n`
   ) {
     proofError("INVALID_STAGE_MANIFEST", { subject: "manifest", reason: "shape" });
+  }
+  if (
+    !hasExactKeys(value.nodeArchive, ["version", "sha256"]) ||
+    !NODE_ARCHIVE_SHA256.has(expectedNode) ||
+    value.nodeArchive.version !== expectedNode ||
+    value.nodeArchive.sha256 !== NODE_ARCHIVE_SHA256.get(expectedNode)
+  ) {
+    proofError("INVALID_NODE_ARCHIVE_PROVENANCE", { subject: "node", reason: "archive" });
   }
   for (const name of STAGED_FILE_NAMES) {
     const entry = value.entries[name];
@@ -941,8 +953,8 @@ async function validateDynamicDependencies(toolName, tool, tools) {
   return { count: records.length, manifestSha256: sha256(records.join("")) };
 }
 
-async function validateStagedHarnessAndTools(args, expectedNode) {
-  const manifest = await loadStageManifest(args.manifest);
+async function validateStagedHarnessAndTools(args, expectedNode, expectedStageDirectory) {
+  const manifest = await loadStageManifest(args.manifest, expectedNode);
   const inspected = {};
   for (const name of STAGED_FILE_NAMES) {
     inspected[name] = await inspectTrustedFile(args[name], name, TOOL_NAMES.includes(name));
@@ -951,7 +963,7 @@ async function validateStagedHarnessAndTools(args, expectedNode) {
     }
   }
   if (
-    !args.coordinator.startsWith("/opt/") ||
+    path.dirname(args.coordinator) !== expectedStageDirectory ||
     path.dirname(args.coordinator) !== path.dirname(args.node) ||
     STAGED_FILE_NAMES.some((name) => path.dirname(args[name]) !== path.dirname(args.coordinator)) ||
     fileURLToPath(import.meta.url) !== args.coordinator
@@ -1775,12 +1787,16 @@ async function main() {
   const loaderReceipt = await validateLoaderEnvironment();
 
   stage = "staged-harness-and-tools";
+  const expectedStageDirectory =
+    `/usr/local/lib/fs-safe-credential-proof-${metadata.runId}-${metadata.runAttempt}-${nodeVersionLabel}`;
   const stagedValidation = await timed(
     "stagedHarnessAndTools",
-    () => validateStagedHarnessAndTools(staged, metadata.expectedNode),
+    () => validateStagedHarnessAndTools(staged, metadata.expectedNode, expectedStageDirectory),
   );
   const tools = stagedValidation.tools;
   for (const name of TOOL_NAMES) toolReceipts[name] = tools[name].receipt;
+  toolReceipts.node.archiveSha256 = stagedValidation.manifest.value.nodeArchive.sha256;
+  toolReceipts.node.officialArchivePinned = true;
   toolReceipts.loader = loaderReceipt;
   toolReceipts.strace.pathFiltered = true;
   toolReceipts.strace.runsAsRoot = true;
@@ -1792,7 +1808,7 @@ async function main() {
 
   const stageDirectory = path.dirname(staged.coordinator);
   const stageDirectoryStat = await fs.lstat(stageDirectory, { bigint: true });
-  harnessReceipt.stagedUnderOpt = stageDirectory.startsWith("/opt/");
+  harnessReceipt.stagedUnderUsrLocalLib = stageDirectory === expectedStageDirectory;
   harnessReceipt.rootOwned = stageDirectoryStat.uid === 0n && stageDirectoryStat.gid === 0n;
   harnessReceipt.nonWritable = (stageDirectoryStat.mode & 0o222n) === 0n;
   harnessReceipt.regularFiles = ["coordinator", "worker", "workflow"].every(
@@ -1811,7 +1827,7 @@ async function main() {
       stagedValidation.inspected[name].sha256);
   harnessReceipt.manifestSha256 = stagedValidation.manifest.sha256;
   if (
-    !harnessReceipt.stagedUnderOpt ||
+    !harnessReceipt.stagedUnderUsrLocalLib ||
     !harnessReceipt.rootOwned ||
     !harnessReceipt.nonWritable ||
     !harnessReceipt.regularFiles ||

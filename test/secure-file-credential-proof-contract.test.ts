@@ -215,7 +215,7 @@ describe("manual split-credential secure-file proof contract", () => {
       "      - name: Resolve bounded artifact metadata from the workflow run API\n",
     );
     const attestationStart = proof.indexOf("      - name: Download candidate artifact identity\n");
-    const stageStart = proof.indexOf("      - name: Stage trusted proof harness and executables under opt\n");
+    const stageStart = proof.indexOf("      - name: Finish and publish the private authenticated proof stage\n");
     const rootProofStart = proof.indexOf(
       "      - name: Prove split real and effective credential behavior\n",
     );
@@ -271,18 +271,25 @@ describe("manual split-credential secure-file proof contract", () => {
     expect(validation).toContain("nul == 0");
   });
 
-  it("runs the reviewed harness and copied setup-node executable from locked opt", async () => {
+  it("runs the reviewed harness and authenticated Node from the exact protected stage", async () => {
     const { coordinator, workflow } = await sources();
     const proof = workflowJob(workflow, "secure-file-credential-proof");
-    expect(proof).toContain("STAGE_ROOT: /opt/fs-safe-credential-proof-");
-    expect(proof).toContain('test "$(/usr/bin/realpath /opt)" = /opt');
-    expect(proof).toContain("source_node=$(/usr/bin/realpath");
-    expect(proof).toContain('sudo /usr/bin/install -o 0 -g 0 -m 0555');
-    expect(proof).toContain('sudo /usr/bin/install -o 0 -g 0 -m 0444');
-    expect(proof).toContain('sudo /usr/bin/chmod 0555 "$STAGE_ROOT"');
+    expect(proof).toContain("STAGE_ROOT: /usr/local/lib/fs-safe-credential-proof-");
+    expect(proof).toContain('for directory in /usr/local /usr/local/lib; do inspect_directory');
+    expect(proof).toContain('copy_admitted_file node "$stage_root/.node-source" 0 0 0555');
+    expect(proof).toContain('/usr/bin/chmod 0555 -- "$stage_root"');
+    expect(proof).not.toContain("RUNNER_TOOL_CACHE");
+    expect(proof).not.toContain("command -v node");
+    expect(coordinator).toContain("harnessReceipt.stagedUnderUsrLocalLib = stageDirectory ===");
+    expect(coordinator).toContain('proofError("INVALID_NODE_ARCHIVE_PROVENANCE"');
     expect(proof).toContain('sudo -- "$STAGE_ROOT/env" -i');
     expect(proof).toContain('"$STAGE_ROOT/node" "$STAGE_ROOT/coordinator"');
     expect(coordinator).toContain('fileURLToPath(import.meta.url) !== args.coordinator');
+    expect(coordinator).toContain("path.dirname(args.coordinator) !== expectedStageDirectory");
+    expect(coordinator).toContain(
+      "validateStagedHarnessAndTools(staged, metadata.expectedNode, expectedStageDirectory)",
+    );
+    expect(coordinator).not.toContain('args.coordinator.startsWith("/opt/")');
     expect(coordinator).toContain("processExecutable !== args.node");
     expect(coordinator).toContain("entry.sourceSha256 !== entry.copySha256");
     expect(coordinator).toContain('proofError("TOOL_IDENTITY_CHANGED"');
