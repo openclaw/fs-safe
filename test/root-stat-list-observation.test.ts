@@ -68,7 +68,7 @@ it("preserves the root-only initial and final stat hooks", async () => {
   expect(events).toEqual(["list"]);
 });
 
-it.each(["selected/./value", "selected//value", "selected/../selected/value"])(
+it.each(["selected/./value", "selected//value"])(
   "keeps unusual spelling %s on the general observation path", async spelling => {
     const rootDir = await tempRoot("fs-safe-observation-spelling-");
     await fs.mkdir(path.join(rootDir, "selected"));
@@ -81,6 +81,19 @@ it.each(["selected/./value", "selected//value", "selected/../selected/value"])(
       .rejects.toMatchObject({ code: "not-found" });
   },
 );
+
+it("rejects parent traversal before the general observation path", async () => {
+  const rootDir = await tempRoot("fs-safe-observation-parent-traversal-");
+  await fs.mkdir(path.join(rootDir, "selected"));
+  await fs.writeFile(path.join(rootDir, "selected", "value"), "inside");
+  const capability = await root(rootDir);
+  const context = await resolveRootContext(rootDir);
+  const spelling = "selected/../selected/value";
+  expect((await resolvePinnedObservedPathInRoot(context, spelling, "stat"))?.receipt).toBeUndefined();
+  const lstat = vi.spyOn(fsSync, "lstatSync");
+  await expect(capability.stat(spelling)).rejects.toMatchObject({ code: "invalid-path" });
+  expect(lstat).not.toHaveBeenCalled();
+});
 
 it("retains the general path for an admitted directory alias", async () => {
   const rootDir = await tempRoot("fs-safe-observation-alias-");
