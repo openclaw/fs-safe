@@ -150,14 +150,20 @@ jobs:
       HARNESS_ROOT: ${{ github.workspace }}/harness
       CANDIDATE_ROOT: ${{ github.workspace }}/candidate
       BASELINE_ROOT: ${{ github.workspace }}/baseline
-      PLAN_PATH: ${{ runner.temp }}/method-audit-plan/method-audit-plan.json
-      EVIDENCE_ROOT: ${{ runner.temp }}/method-audit-evidence
       REPORT_ROOT: ${{ github.workspace }}/artifacts/method-audit
       METHOD_MATRIX_PLATFORM: ${{ matrix.platform }}
       EXPECTED_PLAN_FILE_HASH: ${{ needs.prepare_method_audit.outputs.plan_file_sha256 }}
     steps:
       - name: Configure byte-exact checkouts
+        env:
+          METHOD_RUNNER_TEMP: ${{ runner.temp }}
         run: |
+          if [[ -z "$METHOD_RUNNER_TEMP" ]]; then
+            echo "runner temp directory is unavailable" >&2
+            exit 2
+          fi
+          printf 'PLAN_PATH=%s/method-audit-plan/method-audit-plan.json\n' "$METHOD_RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'EVIDENCE_ROOT=%s/method-audit-evidence\n' "$METHOD_RUNNER_TEMP" >> "$GITHUB_ENV"
           # checkout v7 has no line-ending input; configure Git before checkout.
           git config --global core.autocrlf false
           git config --global core.eol lf
