@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Size Linux native byte-copy scratch buffers from the existing file-size hint, bounded between 4 KiB and 1 MiB, while retaining read-to-EOF, sparse output, and borrowed-descriptor behavior.
+
 - Reuse lexical directory prefixes when producing walk entry paths, preserving traversal order, followed-link spelling, budgets, and directory checks.
 
 - Reuse synchronous ZIP name facts for identical local and central names with non-shared backing buffers, retaining separate Unicode metadata validation and shared-memory handling.
