@@ -143,6 +143,42 @@ export async function registerCore({ api: a, workspace: w, binding, measuredFeat
       after: (_, { source, target }) => Promise.all([source.close(), target.close()]),
       verify: (bytes) => { assert.equal(bytes, size); assert.deepEqual(fs.readFileSync(copyPath), payload); },
     });
+    if (size === 2 * 1024 * 1024) {
+      const expectedChunkCalls = size / (512 * 1024);
+      for (const { name, observe, authorize } of [
+        { name: "observer", observe: true, authorize: false },
+        { name: "authority", observe: false, authorize: true },
+        { name: "observer+authority", observe: true, authorize: true },
+      ]) {
+        const callbackCopyPath = path.join(w, `handle-copy-${name}`);
+        let observedChunks = 0;
+        let observedBytes = 0;
+        let authorityCalls = 0;
+        const options = {};
+        if (observe) options.onChunk = (chunk) => { observedChunks += 1; observedBytes += chunk.byteLength; };
+        if (authorize) options.assertBeforeMutation = () => { authorityCalls += 1; };
+        add(`copyFileHandle/${name}`, ({ source, target }) => a.copyFileHandle(source, target, options), {
+          divisor,
+          before: async () => {
+            observedChunks = 0;
+            observedBytes = 0;
+            authorityCalls = 0;
+            const source = await fsp.open(filePath, "r");
+            try { return { source, target: await fsp.open(callbackCopyPath, "w+", 0o600) }; }
+            catch (error) { await source.close(); throw error; }
+          },
+          after: (_, { source, target }) => Promise.all([source.close(), target.close()]),
+          verify: (bytes) => {
+            assert.equal(bytes, size);
+            assert.equal(observedChunks, observe ? expectedChunkCalls : 0);
+            assert.equal(observedBytes, observe ? size : 0);
+            if (authorize) assert(authorityCalls >= expectedChunkCalls);
+            else assert.equal(authorityCalls, 0);
+            assert.deepEqual(fs.readFileSync(callbackCopyPath), payload);
+          },
+        });
+      }
+    }
     const overwritePath = path.join(w, `handle-overwrite-${size}`);
     add(`overwriteFileHandle/${size}`, (handle) => a.overwriteFileHandle(handle, payload), {
       divisor,

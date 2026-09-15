@@ -57,6 +57,12 @@ Unicode names; and long callback-output filenames. Expected synchronous
 rejections use the checked per-call timing path, including during measurement.
 Borrowed-handle transfers and Root byte-copy cases cover the same payload sizes;
 the Root cases use `clone: "never"` and `durable: false` to expose transfer costs.
+Dedicated 2 MiB borrowed-handle rows measure observer, mutation-authority, and
+combined callback costs over four 512 KiB chunks. They verify observer calls,
+observed bytes, mutation-authority calls, and copied contents outside timing;
+short writes may produce additional authority checks. Root's publication
+observer runs once after publication rather than per transfer chunk, so it is
+not presented as an equivalent callback workload.
 Directory iteration includes full and early-stop scans in filesystem and sorted
 order. Tree-copy cases use explicit auto, never, and supported always policies
 over 64 small files, one 1 MiB file, and nested and empty directories.
