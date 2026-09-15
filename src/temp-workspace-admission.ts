@@ -213,7 +213,19 @@ function rootPlan(rootDir: string): {
   let initial: ExactDirectoryObservation;
   for (;;) {
     try {
-      initial = copyExactDirectoryObservation(fsSync.lstatSync(ancestor, { bigint: true }));
+      // Keep the initial and volume-root probes strict. Only discovery after
+      // an observed ENOENT can avoid allocating another missing-entry error.
+      const parent = missing.length > 0 ? path.dirname(ancestor) : undefined;
+      const allowMissing = parent !== undefined && parent !== ancestor;
+      const stat = allowMissing
+        ? fsSync.lstatSync(ancestor, { bigint: true, throwIfNoEntry: false })
+        : fsSync.lstatSync(ancestor, { bigint: true });
+      if (allowMissing && stat === undefined) {
+        missing.push(path.basename(ancestor));
+        ancestor = parent!;
+        continue;
+      }
+      initial = copyExactDirectoryObservation(stat!);
       break;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
