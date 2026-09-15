@@ -82,7 +82,7 @@ function isAsciiWindowsReservedDeviceBase(fileName: string, baseNameEnd: number)
  * Keeping this ASCII-only makes the scan bounded and avoids normalization or
  * locale-sensitive case behavior on the common callback-name path.
  */
-function isBoundedSanitizedAsciiFileName(fileName: unknown): fileName is string {
+function isBoundedSanitizedAsciiFileName(fileName: unknown): boolean {
   if (
     typeof fileName !== "string" ||
     fileName.length === 0 ||
