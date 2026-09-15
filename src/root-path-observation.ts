@@ -61,7 +61,8 @@ export type RootPathTraversalObservation = {
 };
 
 export type RootPathObservedTraversalEntry =
-  | { stat: fs.Stats | BigIntStats; identity?: StatObservationReceipt["identity"] }
+  | StatObservationReceipt
+  | { stat: fs.Stats | BigIntStats; identity?: undefined }
   | NativeDirectoryObservationGuard;
 
 // Observation-only failures happen after ordinary traversal has admitted the
