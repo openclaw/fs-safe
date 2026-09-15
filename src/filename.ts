@@ -122,7 +122,11 @@ export function fitFileNameToPortableComponent(params: {
   return `${codePoints.slice(0, low).join("")}${tailSuffix}`;
 }
 
-function sanitizeTransformedFileName(trimmed: string): string | undefined {
+function sanitizeFileNameCandidate(fileName: string): string | undefined {
+  if (typeof fileName !== "string") return undefined;
+  const trimmed = fileName.trim();
+  if (!trimmed) return undefined;
+  if (isBoundedSanitizedFileName(fileName, trimmed)) return fileName;
   let base = trimmed;
   if (base.includes("/")) base = path.posix.basename(base);
   if (base.includes("\\") || hasWindowsDrivePrefix(base)) {
@@ -144,14 +148,6 @@ function sanitizeTransformedFileName(trimmed: string): string | undefined {
     safeBase = suffixWindowsReservedDeviceName(base);
   }
   return safeBase;
-}
-
-function sanitizeFileNameCandidate(fileName: string): string | undefined {
-  if (typeof fileName !== "string") return undefined;
-  const trimmed = fileName.trim();
-  if (!trimmed) return undefined;
-  if (isBoundedSanitizedFileName(fileName, trimmed)) return fileName;
-  return sanitizeTransformedFileName(trimmed);
 }
 
 export function sanitizeUntrustedFileName(fileName: string, fallbackName: string): string {
