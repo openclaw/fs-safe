@@ -5,7 +5,7 @@ import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { normalizeMaxBytes } from "./byte-budget.js";
-import { createAsyncDirectoryGuard, createNearestExistingDirectoryGuard, inspectDirectoryIdentity, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
+import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, createNearestExistingDirectoryGuard, inspectDirectoryIdentity, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { syncDirectoryBestEffort } from "./directory-durability.js";
 import type { FileIdentityStat } from "./file-identity.js";
@@ -75,6 +75,15 @@ export type RenameIdentityPolicy = "strict" | "verify-content-with-lock";
 
 export type PublishedWriteIdentity = Readonly<{ dev: bigint; ino: bigint }>;
 
+export type PinnedWriteMutationAdmission = Readonly<{
+  rejectParentSymlinks: boolean;
+  authorize(request: Readonly<{
+    targetPath: string;
+    mutationPath: string;
+    phase: "parent" | "parent-create";
+  }>): Promise<void>;
+}>;
+
 export type PinnedWriteParams = {
   rootPath: string;
   relativeParentPath: string;
@@ -88,6 +97,7 @@ export type PinnedWriteParams = {
   maxBytes?: number;
   input: PinnedWriteInput;
   rootIdentity?: FileIdentityStat;
+  mutationAdmission?: PinnedWriteMutationAdmission;
   onRenameIdentityMismatch?: "verify-content";
   onPublished?: (identity: PublishedWriteIdentity) => void;
   // Borrowed only for this callback; the writer closes every descriptor in finally.
@@ -104,6 +114,14 @@ export async function runPinnedWriteHelper(params: PinnedWriteParams): Promise<F
   validatePinnedOperationPayload({
     relativeParentPath: params.relativeParentPath,
   });
+  if (normalizedParams.mutationAdmission) {
+    const targetPath = path.join(
+      normalizedParams.rootPath,
+      ...normalizedParams.relativeParentPath.split("/").filter(Boolean),
+      normalizedParams.basename,
+    );
+    await getFsSafeTestHooks()?.beforePinnedWriteParentAdmission?.(targetPath);
+  }
   // The explicit compatibility policy uses the guarded Node fallback, where
   // content verification can replace the strict post-rename inode check.
   if (normalizedParams.onRenameIdentityMismatch === "verify-content") {
@@ -153,6 +171,7 @@ export async function runPinnedWriteWithRenamePolicy(
 async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileIdentityStat> {
   const exactRoot = typeof params.rootIdentity?.dev === "bigint" && typeof params.rootIdentity.ino === "bigint"
     ? { dev: params.rootIdentity.dev, ino: params.rootIdentity.ino } : undefined;
+  const mutationAdmission = params.mutationAdmission;
   if (exactRoot) await inspectDirectoryIdentity(params.rootPath, exactRoot);
   let parentPath = params.relativeParentPath
     ? path.join(params.rootPath, ...params.relativeParentPath.split("/"))
@@ -162,18 +181,47 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
     // an in-root symlink (e.g. a skill-bank layout). Use its returned real
     // path for the subsequent guard and target path so we don't re-check the
     // original, possibly-symlinked, lexical path and reject it outright.
-    parentPath = await mkdirPathComponentsWithGuards({
+    const mkdirParams = {
       rootReal: params.rootPath,
       targetPath: parentPath,
       assertBeforeMutation: params.assertBeforeMutation,
-      beforeComponent: async (componentPath) =>
-        await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("mkdir", componentPath),
-    });
+      beforeComponent: async (componentPath: string) => {
+        await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("mkdir", componentPath);
+      },
+    };
+    parentPath = await mkdirPathComponentsWithGuards(mutationAdmission ? {
+      ...mkdirParams,
+      rejectSymlinks: mutationAdmission.rejectParentSymlinks,
+      revalidateParentAfterBeforeComponent: true,
+      beforeCreateComponent: async (componentPath: string, prospectiveParentPath: string) => {
+        await mutationAdmission.authorize(Object.freeze({
+          targetPath: path.join(prospectiveParentPath, params.basename),
+          mutationPath: componentPath,
+          phase: "parent-create" as const,
+        }));
+      },
+      beforeUseComponent: async (_componentPath: string, prospectiveParentPath: string) => {
+        const targetPath = path.join(prospectiveParentPath, params.basename);
+        await mutationAdmission.authorize(Object.freeze({
+          targetPath,
+          mutationPath: targetPath,
+          phase: "parent" as const,
+        }));
+      },
+    } : mkdirParams);
   }
   const parentGuard = params.mkdir
     ? await createAsyncDirectoryGuard(parentPath, { bigint: true })
     : await createNearestExistingDirectoryGuard(params.rootPath, parentPath, { bigint: true });
   const targetPath = path.join(parentPath, params.basename);
+  if (mutationAdmission) {
+    await mutationAdmission.authorize(Object.freeze({
+      targetPath,
+      mutationPath: targetPath,
+      phase: "parent" as const,
+    }));
+    await assertAsyncDirectoryGuard(parentGuard);
+  }
   if (params.overwrite === false && (params.input.kind === "buffer" ||
     (params.input.kind === "stream" && !params.input.stageBeforePublish))) {
     const assertBeforeMutation = () => {

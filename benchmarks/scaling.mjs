@@ -27,6 +27,37 @@ export async function registerScaling({ api: a, workspace: w, register: add, onC
     }
   }
 
+  const mutationDenied = path.join(w, "mutation-admission-denied");
+  fs.mkdirSync(mutationDenied);
+  const mutationOptions = {
+    denyMutations: { prefixes: [mutationDenied] },
+    mutationSymlinks: "reject",
+    durable: false,
+  };
+  for (const depth of [1, 8, 32]) {
+    const components = Array.from({ length: depth - 1 }, (_, index) => `d${index}`);
+    const existingParent = path.join(w, `mutation-admission-existing-${depth}`, ...components);
+    const existingRelative = path.relative(w, path.join(existingParent, "value"));
+    fs.mkdirSync(existingParent, { recursive: true });
+    fs.writeFileSync(path.join(existingParent, "value"), "original");
+    add(`Root.write/mutation-admission/existing/depth=${depth}`, () =>
+      root.write(existingRelative, "replacement", mutationOptions), {
+      divisor: 10,
+      verify: () => assert.equal(fs.readFileSync(path.join(existingParent, "value"), "utf8"), "replacement"),
+    });
+
+    const missingRoot = path.join(w, `mutation-admission-missing-${depth}`);
+    const missingTarget = path.join(missingRoot, ...components, "value");
+    const missingRelative = path.relative(w, missingTarget);
+    add(`Root.write/mutation-admission/mkdir/depth=${depth}`, () =>
+      root.write(missingRelative, "replacement", mutationOptions), {
+      divisor: 10,
+      before: () => fs.rmSync(missingRoot, { recursive: true, force: true }),
+      verify: () => assert.equal(fs.readFileSync(missingTarget, "utf8"), "replacement"),
+      after: () => fs.rmSync(missingRoot, { recursive: true, force: true }),
+    });
+  }
+
   const renameDenied = () => { throw Object.assign(new Error("benchmark forces copy fallback"), { code: "EPERM" }); };
   const asyncFs = { promises: { ...fs.promises, rename: async () => renameDenied() } };
   const syncFs = { ...fs, renameSync: renameDenied };

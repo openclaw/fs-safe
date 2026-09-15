@@ -35,9 +35,18 @@ export async function mkdirPathComponentsWithGuards(params: {
   rootReal: string;
   targetPath: string;
   beforeComponent?: (componentPath: string) => Promise<void> | void;
+  beforeCreateComponent?: (
+    componentPath: string,
+    prospectiveTargetPath: string,
+  ) => Promise<void> | void;
+  beforeUseComponent?: (
+    componentPath: string,
+    prospectiveTargetPath: string,
+  ) => Promise<void> | void;
   assertBeforeMutation?: () => void;
   mode?: number;
   rejectSymlinks?: boolean;
+  revalidateParentAfterBeforeComponent?: boolean;
 }): Promise<string> {
   const root = path.resolve(params.rootReal);
   const rootCanonical = path.resolve(realpathSync.native(root));
@@ -47,20 +56,57 @@ export async function mkdirPathComponentsWithGuards(params: {
     throw new FsSafeError("outside-workspace", "directory is outside workspace root");
   }
   let current = root;
-  for (const part of relative.split(path.sep).filter(Boolean)) {
+  const parts = relative.split(path.sep).filter(Boolean);
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index]!;
     const next = path.join(current, part);
     const parentGuard = await createAsyncDirectoryGuard(current);
     await assertAsyncDirectoryGuard(parentGuard);
     await params.beforeComponent?.(next);
-    params.assertBeforeMutation?.();
-    try {
-      await fs.mkdir(next, { mode: params.mode });
-    } catch (error) {
-      if (!error || typeof error !== "object" || !("code" in error) || error.code !== "EEXIST") {
-        throw error;
+    if (params.revalidateParentAfterBeforeComponent) {
+      await assertAsyncDirectoryGuard(parentGuard);
+    }
+    if (params.beforeCreateComponent) {
+      let missing = false;
+      try {
+        fsSync.lstatSync(next);
+      } catch (error) {
+        if (!isNotFoundPathError(error)) throw error;
+        missing = true;
+      }
+      if (missing) {
+        await params.beforeCreateComponent(
+          next,
+          path.join(next, ...parts.slice(index + 1)),
+        );
+        await assertAsyncDirectoryGuard(parentGuard);
+        params.assertBeforeMutation?.();
+        try {
+          await fs.mkdir(next, { mode: params.mode });
+        } catch (error) {
+          if (!error || typeof error !== "object" || !("code" in error) || error.code !== "EEXIST") {
+            throw error;
+          }
+        }
+      }
+    } else {
+      params.assertBeforeMutation?.();
+      try {
+        await fs.mkdir(next, { mode: params.mode });
+      } catch (error) {
+        if (!error || typeof error !== "object" || !("code" in error) || error.code !== "EEXIST") {
+          throw error;
+        }
       }
     }
     const stat = fsSync.lstatSync(next);
+    await params.beforeUseComponent?.(
+      next,
+      path.join(next, ...parts.slice(index + 1)),
+    );
+    if (params.beforeUseComponent) {
+      await assertAsyncDirectoryGuard(parentGuard);
+    }
     if ((params.rejectSymlinks && stat.isSymbolicLink()) || (!stat.isSymbolicLink() && !stat.isDirectory())) {
       throw directoryComponentNotDirectoryError();
     }

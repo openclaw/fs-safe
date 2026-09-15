@@ -1,4 +1,4 @@
-import fsSync from "node:fs";
+import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { inspectDirectoryIdentity } from "./directory-guard.js";
@@ -8,9 +8,186 @@ import { runPinnedWriteWindows, sameNativeIdentity } from "./native-pinned-write
 import { assertNativeStaging, writeNativeStage, type NativeStagingBinding } from "./native-staged-file.js";
 import type { NativeBinding } from "./native.js";
 import type { PinnedWriteParams } from "./pinned-write.js";
-import { describeStagedDirectory, exactIdentityMatches } from "./staged-directory.js";
+import {
+  assertStagedDirectoryCurrent,
+  describeStagedDirectory,
+  exactIdentityMatches,
+} from "./staged-directory.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { realpathSync } from "./realpath.js";
+import { isNotFoundPathError, isSymlinkOpenError } from "./path.js";
+
+type PosixParentAdmission = {
+  parentFd: number;
+  parentPath: string;
+  directory: ReturnType<typeof describeStagedDirectory>;
+  parentPathStat: BigIntStats;
+};
+
+function relativeParentSegments(relativeParentPath: string): string[] {
+  return relativeParentPath.split("/").filter(Boolean);
+}
+
+function prospectiveTargetPath(
+  parentPath: string,
+  remainingParentSegments: readonly string[],
+  basename: string,
+): string {
+  return path.join(parentPath, ...remainingParentSegments, basename);
+}
+
+async function authorizePinnedMutation(
+  params: PinnedWriteParams,
+  request: {
+    targetPath: string;
+    mutationPath: string;
+    phase: "parent" | "parent-create";
+  },
+): Promise<void> {
+  await params.mutationAdmission?.authorize(Object.freeze(request));
+}
+
+function normalizePolicyParentOpenError(error: unknown, params: PinnedWriteParams): unknown {
+  if (!isSymlinkOpenError(error)) return error;
+  return params.mutationAdmission?.rejectParentSymlinks
+    ? new FsSafeError("symlink", "symlink path component not allowed", {
+      cause: error instanceof Error ? error : undefined,
+    })
+    : new FsSafeError("path-mismatch", "native write parent changed during policy admission", {
+      cause: error instanceof Error ? error : undefined,
+    });
+}
+
+async function describePosixParent(parentFd: number, pathname: string): Promise<PosixParentAdmission> {
+  const parentPath = realpathSync.native(pathname);
+  const directory = describeStagedDirectory(parentFd, parentPath);
+  const parentPathStat = await inspectDirectoryIdentity(
+    parentPath,
+    inspectFileIdentitySync(() => fsSync.fstatSync(parentFd, { bigint: true })),
+  );
+  return { parentFd, parentPath, directory, parentPathStat };
+}
+
+async function capturePolicyAwarePosixParent(
+  binding: NativeBinding,
+  params: PinnedWriteParams,
+  rootFd: number,
+  directoryFlags: number,
+): Promise<PosixParentAdmission> {
+  const segments = relativeParentSegments(params.relativeParentPath);
+  const parentSpelling = segments.length
+    ? path.join(params.rootPath, ...segments)
+    : params.rootPath;
+
+  // Preserve the one-open hot path when the complete parent still exists.
+  // Policy is attached only after the opened descriptor is associated with its
+  // current canonical pathname, so a contained redirect cannot retain the old
+  // preflight authorization.
+  try {
+    const parentFd = binding.openBeneath(rootFd, params.relativeParentPath, directoryFlags).fd;
+    try {
+      const admitted = await describePosixParent(parentFd, parentSpelling);
+      const targetPath = path.join(admitted.parentPath, params.basename);
+      await authorizePinnedMutation(params, {
+        targetPath,
+        mutationPath: targetPath,
+        phase: "parent",
+      });
+      assertStagedDirectoryCurrent(admitted.directory);
+      return admitted;
+    } catch (error) {
+      fsSync.closeSync(parentFd);
+      throw error;
+    }
+  } catch (error) {
+    if (!isNotFoundPathError(error) || !params.mkdir) throw error;
+  }
+
+  // The canonical preflight spelling has no intentional symlinks in its
+  // existing prefix. Walk missing-parent cases one direct child at a time so
+  // every existing/opened object is authorized and every mkdir is authorized
+  // before dispatch. O_NOFOLLOW makes a concurrently introduced link fail
+  // before the next component can be created through it.
+  const secureDirectoryFlags = directoryFlags | (fsSync.constants.O_NOFOLLOW ?? 0);
+  let currentFd = rootFd;
+  let currentOwnedFd: number | undefined;
+  let currentPath = params.rootPath;
+  let currentDirectory = describeStagedDirectory(rootFd, currentPath);
+  try {
+    const initialTarget = prospectiveTargetPath(currentPath, segments, params.basename);
+    await authorizePinnedMutation(params, {
+      targetPath: initialTarget,
+      mutationPath: initialTarget,
+      phase: "parent",
+    });
+
+    for (let index = 0; index < segments.length; index += 1) {
+      const segment = segments[index]!;
+      const childPath = path.join(currentPath, segment);
+      let childFd: number;
+      try {
+        childFd = binding.openBeneath(currentFd, segment, secureDirectoryFlags).fd;
+      } catch (openError) {
+        if (!isNotFoundPathError(openError)) {
+          throw normalizePolicyParentOpenError(openError, params);
+        }
+        const targetPath = prospectiveTargetPath(
+          currentPath,
+          segments.slice(index),
+          params.basename,
+        );
+        await authorizePinnedMutation(params, {
+          targetPath,
+          mutationPath: childPath,
+          phase: "parent-create",
+        });
+        assertStagedDirectoryCurrent(currentDirectory);
+        params.assertBeforeMutation?.();
+        binding.mkdirBeneath(currentFd, segment, 0o777);
+        try {
+          childFd = binding.openBeneath(currentFd, segment, secureDirectoryFlags).fd;
+        } catch (createdOpenError) {
+          throw normalizePolicyParentOpenError(createdOpenError, params);
+        }
+      }
+
+      let child: PosixParentAdmission;
+      try {
+        child = await describePosixParent(childFd, childPath);
+        const targetPath = prospectiveTargetPath(
+          child.parentPath,
+          segments.slice(index + 1),
+          params.basename,
+        );
+        await authorizePinnedMutation(params, {
+          targetPath,
+          mutationPath: targetPath,
+          phase: "parent",
+        });
+        assertStagedDirectoryCurrent(child.directory);
+      } catch (error) {
+        fsSync.closeSync(childFd);
+        throw error;
+      }
+
+      const previousOwnedFd = currentOwnedFd;
+      currentOwnedFd = child.parentFd;
+      currentFd = child.parentFd;
+      currentPath = child.parentPath;
+      currentDirectory = child.directory;
+      if (previousOwnedFd !== undefined) fsSync.closeSync(previousOwnedFd);
+      if (index === segments.length - 1) {
+        currentOwnedFd = undefined;
+        return child;
+      }
+    }
+
+    // Empty relative parents are handled by the complete-parent fast path.
+    throw new FsSafeError("path-mismatch", "native write parent admission did not complete");
+  } finally {
+    if (currentOwnedFd !== undefined) fsSync.closeSync(currentOwnedFd);
+  }
+}
 
 export async function runPinnedWriteNative(binding: NativeBinding, params: PinnedWriteParams): Promise<FileIdentityStat> {
   const windows = process.platform === "win32";
@@ -48,24 +225,42 @@ export async function runPinnedWriteNative(binding: NativeBinding, params: Pinne
     if (!rootMatches) {
       throw new FsSafeError("path-mismatch", "root path changed during native write");
     }
-    if (params.mkdir) {
-      params.assertBeforeMutation?.();
-      binding.mkdirBeneath(root.fd, params.relativeParentPath, 0o777);
+    let parentPath: string;
+    let directory: ReturnType<typeof describeStagedDirectory> | undefined;
+    let parentPathStat: Stats | BigIntStats;
+    let policyParentAdmitted = false;
+    if (!windows && params.mutationAdmission) {
+      const admitted = await capturePolicyAwarePosixParent(
+        binding,
+        params,
+        root.fd,
+        directoryFlags,
+      );
+      parentFd = admitted.parentFd;
+      parentPath = admitted.parentPath;
+      directory = admitted.directory;
+      parentPathStat = admitted.parentPathStat;
+      policyParentAdmitted = true;
+    } else {
+      if (params.mkdir) {
+        params.assertBeforeMutation?.();
+        binding.mkdirBeneath(root.fd, params.relativeParentPath, 0o777);
+      }
+      parentFd = binding.openBeneath(
+        root.fd,
+        params.relativeParentPath,
+        directoryFlags,
+      ).fd;
+      parentPath = realpathSync.native(
+        params.relativeParentPath
+          ? path.join(params.rootPath, ...params.relativeParentPath.split("/"))
+          : params.rootPath,
+      );
+      directory = windows ? undefined : describeStagedDirectory(parentFd, parentPath);
+      parentPathStat = exactRoot
+        ? await inspectDirectoryIdentity(parentPath, inspectFileIdentitySync(() => fsSync.fstatSync(parentFd!, { bigint: true })))
+        : fsSync.lstatSync(parentPath);
     }
-    parentFd = binding.openBeneath(
-      root.fd,
-      params.relativeParentPath,
-      directoryFlags,
-    ).fd;
-    const parentPath = realpathSync.native(
-      params.relativeParentPath
-        ? path.join(params.rootPath, ...params.relativeParentPath.split("/"))
-        : params.rootPath,
-    );
-    const directory = windows ? undefined : describeStagedDirectory(parentFd, parentPath);
-    const parentPathStat = exactRoot
-      ? await inspectDirectoryIdentity(parentPath, inspectFileIdentitySync(() => fsSync.fstatSync(parentFd!, { bigint: true })))
-      : fsSync.lstatSync(parentPath);
     if (windows && !exactRoot) {
       const parentIdentity = binding.fstatIdentity(parentFd);
       if (parentPathStat.isSymbolicLink() || !sameNativeIdentity(parentPathStat, parentIdentity)) {
@@ -73,6 +268,18 @@ export async function runPinnedWriteNative(binding: NativeBinding, params: Pinne
       }
     } else if (!windows && (parentPathStat.isSymbolicLink() || !exactIdentityMatches(parentPathStat, directory!.identity))) {
       throw new FsSafeError("path-mismatch", "native write parent changed during resolution");
+    }
+    if (!policyParentAdmitted && params.mutationAdmission) {
+      const targetPath = path.join(parentPath, params.basename);
+      await authorizePinnedMutation(params, {
+        targetPath,
+        mutationPath: targetPath,
+        phase: "parent",
+      });
+      await inspectDirectoryIdentity(
+        parentPath,
+        inspectFileIdentitySync(() => fsSync.fstatSync(parentFd!, { bigint: true })),
+      );
     }
     const verificationGuard = { dir: parentPath, realPath: parentPath, stat: parentPathStat };
     if (params.overwrite === false) {

@@ -44,7 +44,12 @@ then verify the returned entry and the published processing file outside timing.
 Queue fixtures are acknowledged outside timing; lock-group timings include release.
 Scaling cases add 1/8/32 concurrent Root and FileStore reads, batches of 100
 lock-manager constructions with 0/32/128 retained locks, and scans of 100/1,000 unexpired
-store entries. Forced permission-error replacement cases exercise the public
+store entries. Policy-bound Root writes at parent depths 1/8/32 cover both
+existing parents and missing-parent creation with combined
+`denyMutations` and `mutationSymlinks: "reject"` admission. Compare the
+`Root.write/mutation-admission/` rows in alternating native and fallback
+baseline/candidate runs; investigate reported `medianUs` regressions above 10%
+or 50 us and `maxUs` regressions above 20% or 100 us. Forced permission-error replacement cases exercise the public
 filesystem adapter with 128 B, 1 MiB, and 16 MiB payloads, both restoration
 policies, and both sync/async methods. Temp-file and parent syncing are disabled
 for these cases; `restore-original` still includes its required destination

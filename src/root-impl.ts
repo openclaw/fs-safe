@@ -24,12 +24,9 @@ import {
 } from "./deny-mutations.js";
 import { resolveOpenedFileRealPathForFd, resolveOpenedFileRealPathForHandle } from "./opened-realpath.js";
 import { openedPathResolutionError, recordExclusiveCreateFailure, recordFileOpenFailure, recordOpenedFileFailure, recordPreOpenFileChange } from "./opened-file-failure.js";
-import {
-  type RenameIdentityPolicy,
-  runPinnedWriteHelper,
-  runPinnedWriteWithRenamePolicy,
-  type PinnedWriteInput,
-} from "./pinned-write.js";
+import { runPinnedWriteHelper, runPinnedWriteWithRenamePolicy } from "./pinned-write.js";
+import type { PinnedWriteInput, PinnedWriteMutationAdmission, RenameIdentityPolicy } from "./pinned-write.js";
+import { preparePinnedWriteMutationAdmission, snapshotPinnedMutationPolicy } from "./pinned-mutation-admission.js";
 import { getNativeBinding } from "./native.js";
 import { validatePinnedOperationPayload } from "./pinned-operation.js";
 import { assertNoPathAliasEscape, PATH_ALIAS_POLICIES } from "./path-policy.js";
@@ -768,7 +765,7 @@ function rootWriteQueueKey(root: RootContext, relativePath: string): string {
   return `${root.rootReal}\0${relativePath}`;
 }
 
-type PinnedWriteTarget = { rootReal: string; targetPath: string; relativeParentPath: string; basename: string; mode: number };
+type PinnedWriteTarget = { rootReal: string; targetPath: string; relativeParentPath: string; basename: string; mode: number; mutationAdmission?: PinnedWriteMutationAdmission };
 
 async function prepareRootWriteTarget(rootReal: string, targetPath: string, assertBeforeMutation?: () => void): Promise<string> {
   const parentPath = await mkdirPathComponentsWithGuards({
@@ -1114,6 +1111,7 @@ async function commitPinnedWriteInRoot(
       input,
       maxBytes: params.maxBytes,
       rootIdentity: root.rootIdentity,
+      mutationAdmission: pinned.mutationAdmission,
       assertBeforeMutation: params.assertBeforeMutation,
       verifyPublished: async (fd, expectedIdentity, parentGuard) => {
         verifyingPublication = true;
@@ -1219,6 +1217,7 @@ async function copyFileInRoot(
             onPublished: observer.onPublished,
             input: { kind: "file", handle: source.handle, size: source.stat.size, clone, signal: params.signal, verifySource },
             rootIdentity: root.rootIdentity,
+            mutationAdmission: pinned.mutationAdmission,
           });
         } catch (error) {
           observer.rethrowObserverFailure(error);
@@ -1256,10 +1255,12 @@ async function resolvePinnedWriteTargetInRoot(
   overwrite = true,
   mutationSymlinks?: MutationSymlinkPolicy,
 ): Promise<PinnedWriteTarget> {
+  // Snapshot mutable caller-owned policy before preflight so both admissions authorize the same rules.
+  const mutationPolicy = denyMutations === undefined && mutationSymlinks === undefined ? undefined : snapshotPinnedMutationPolicy(denyMutations, mutationSymlinks);
   const { rootReal, rootWithSep, resolved } = await resolveGuardedWritePathInRoot(root, {
     relativePath,
-    denyMutations,
-    mutationSymlinks,
+    denyMutations: mutationPolicy?.denyMutations,
+    mutationSymlinks: mutationPolicy?.mutationSymlinks,
   });
 
   // resolvePathInRoot already enforces isPathInside, so any actual escape
@@ -1291,13 +1292,27 @@ async function resolvePinnedWriteTargetInRoot(
     ? await inheritWriteTargetMode({ targetPath: resolved, rootWithSep, requestedMode })
     : requestedMode ?? 0o600;
 
+  let relativeParentPath =
+    path.posix.dirname(relativePosix) === "." ? "" : path.posix.dirname(relativePosix);
+  let mutationAdmission: PinnedWriteMutationAdmission | undefined;
+  if (mutationPolicy) {
+    const resolveCurrent = async () => await resolveGuardedWritePathInRoot(root, {
+      relativePath, denyMutations: mutationPolicy.denyMutations,
+      mutationSymlinks: mutationPolicy.mutationSymlinks,
+    });
+    ({ relativeParentPath, mutationAdmission } = await preparePinnedWriteMutationAdmission({
+      rootReal, rootWithSep, resolvedTargetPath: resolved,
+      defaultRelativeParentPath: relativeParentPath, policy: mutationPolicy, resolveCurrent,
+    }));
+  }
+
   return {
     rootReal,
     targetPath: resolved,
-    relativeParentPath:
-      path.posix.dirname(relativePosix) === "." ? "" : path.posix.dirname(relativePosix),
+    relativeParentPath,
     basename,
     mode,
+    mutationAdmission,
   };
 }
 
