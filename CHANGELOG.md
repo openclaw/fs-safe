@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Check legacy ZIP names for ASCII bytes with Node's buffer validator instead of a per-byte JavaScript callback, preserving Unicode metadata precedence.
 - Reuse synchronous ZIP name facts for identical local and central names with non-shared backing buffers, retaining separate Unicode metadata validation and shared-memory handling.
 
 - Bind Windows `readSecureFile()` owner and DACL verification to the already-open descriptor and compare its native 32-bit volume serial and 64-bit file-index projection with Node's bigint receipt before reading. Secure reads now fail closed when the descriptor capability is missing, stale, remote, incomplete, or unsupported instead of authorizing bytes with pathname-based ACL facts.

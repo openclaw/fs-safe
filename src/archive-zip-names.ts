@@ -1,3 +1,4 @@
+import { isAscii } from "node:buffer";
 import { types } from "node:util";
 import { ArchiveFormatError, ArchiveSecurityError } from "./archive-errors.js";
 import { stripArchivePath, validateArchiveEntryPath } from "./archive-entry.js";
@@ -101,5 +102,5 @@ export function admitZipNames(params: {
     throw new ArchiveSecurityError("entry-path", "zip archive contains duplicate or colliding entry names");
   }
   for (const identity of identities) seen.add(identity);
-  return centralUnicode ?? centralUtf8 ?? (central.every((byte) => byte < 128) ? central.toString("ascii") : undefined);
+  return centralUnicode ?? centralUtf8 ?? (isAscii(central) ? central.toString("ascii") : undefined);
 }
