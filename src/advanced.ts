@@ -117,6 +117,7 @@ export {
 export {
   safeDirName,
   safePathSegmentHashed,
+  safePathSegmentHashedV2,
   resolveSafeInstallDir,
   assertCanonicalPathWithinBase,
 } from "./install-path.js";

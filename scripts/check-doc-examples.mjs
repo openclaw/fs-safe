@@ -11,6 +11,7 @@ import {
   resolveLocalPathFromRootsSync,
   safeDirName,
   safePathSegmentHashed,
+  safePathSegmentHashedV2,
   sanitizeUntrustedFileName,
 } from "@openclaw/fs-safe/advanced";
 import { writeJson } from "@openclaw/fs-safe/json";
@@ -77,6 +78,10 @@ function runPureExamples() {
   assert.equal(safePathSegmentHashed("Über@"), "ber-e392bba2b3");
   assert.equal(safePathSegmentHashed(""), "skill-e3b0c44298");
   assert.equal(safePathSegmentHashed("."), "skill-cdb4ee2aea");
+  const installSegment = safePathSegmentHashedV2("plugin/v1");
+  assert.match(installSegment, /^id-v2-[a-f0-9]{64}$/);
+  assert.equal(safePathSegmentHashedV2(" plugin/v1 "), installSegment);
+  assert.notEqual(safePathSegmentHashedV2("Plugin/v1"), installSegment);
 
   assert.equal(sanitizeUntrustedFileName("../../etc/passwd", "upload"), "passwd");
   assert.equal(sanitizeUntrustedFileName("CON", "fallback"), "CON_");

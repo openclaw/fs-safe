@@ -298,6 +298,7 @@
         "safeDirName",
         "safeFileURLToPath",
         "safePathSegmentHashed",
+        "safePathSegmentHashedV2",
         "sameFileIdentity",
         "sanitizeTempFileName",
         "sanitizeUntrustedFileName",
