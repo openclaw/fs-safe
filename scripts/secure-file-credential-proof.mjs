@@ -56,6 +56,343 @@ const NODE_ARCHIVE_SHA256 = new Map([
   ["v22.23.2", "d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307"],
   ["v24.20.0", "2f2c0da162318f0de47665410c7c8c2ed3d36c8f3105de4bbc61176c70a7cbf2"],
 ]);
+// BEGIN STARTUP PROBE CONTRACT
+const MAX_STARTUP_RECEIPT_BYTES = 1024;
+const STARTUP_TUPLES = ["equal", "split"];
+const STARTUP_CHECKS = [
+  "candidateWorker", "candidatePackage", "historicalWorker", "historicalPackage",
+  "candidateCwd", "historicalCwd", "secretsDirectory",
+];
+const STARTUP_STAGES = [
+  "arguments", "credentials-before", "runtime", "ancestors", "files",
+  "working-directory", "credentials-after", "complete",
+];
+const STARTUP_SUBJECTS = [
+  "input", "credentials", "node", "candidate-worker", "candidate-package",
+  "historical-worker", "historical-package", "candidate-cwd", "historical-cwd",
+  "secrets-directory", "none",
+];
+const STARTUP_OPERATIONS = [
+  "parse-arguments", "read-proc", "verify-ids", "verify-groups", "verify-caps",
+  "verify-no-new-privs", "verify-runtime", "lstat", "realpath", "chdir", "open",
+  "fstat", "read", "hash", "close", "none",
+];
+const STARTUP_CODES = [
+  "OK", "INVALID_ARGUMENTS", "PROC_STATUS_INVALID", "REAL_UID_MISMATCH",
+  "EFFECTIVE_UID_MISMATCH", "SAVED_UID_MISMATCH", "FS_UID_MISMATCH",
+  "REAL_GID_MISMATCH", "EFFECTIVE_GID_MISMATCH", "SAVED_GID_MISMATCH",
+  "FS_GID_MISMATCH", "GROUPS_NOT_EMPTY", "CAPS_NOT_ZERO", "NO_NEW_PRIVS_MISSING",
+  "PROCESS_API_MISMATCH", "NODE_VERSION_MISMATCH", "NODE_PATH_MISMATCH",
+  "ANCESTOR_LIMIT", "NONCANONICAL_PATH", "NOT_DIRECTORY", "NOT_REGULAR_FILE",
+  "UNTRUSTED_FILE", "IDENTITY_CHANGED", "SIZE_LIMIT", "HASH_MISMATCH",
+  "EACCES", "EPERM", "ENOENT", "ENOTDIR", "ELOOP", "EIO", "EMFILE", "ENFILE",
+  "EBADF", "EINVAL", "UNKNOWN",
+];
+
+function startupHasKeys(value, keys) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const actual = Object.keys(value);
+  return actual.length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+}
+
+function startupCredentialsValid(value) {
+  return value === null || (
+    startupHasKeys(value, ["uid", "gid", "caps", "groupsCleared", "noNewPrivs", "processApi"]) &&
+    [["uid", 4], ["gid", 4], ["caps", 5]].every(([key, length]) =>
+      Array.isArray(value[key]) && value[key].length === length &&
+      value[key].every((flag) => typeof flag === "boolean")) &&
+    ["groupsCleared", "noNewPrivs", "processApi"].every((key) => typeof value[key] === "boolean")
+  );
+}
+
+function startupChecksComplete(receipt) {
+  return [receipt.credentialsBefore, receipt.credentialsAfter].every((value) =>
+    value !== null && [...value.uid, ...value.gid, ...value.caps,
+      value.groupsCleared, value.noNewPrivs, value.processApi].every((flag) => flag === true)) &&
+    Object.values(receipt.runtime).every((flag) => flag === true) &&
+    Object.values(receipt.checked).every((flag) => flag === true);
+}
+
+function parseStartupReceipt(output, tuple) {
+  if (output.length === 0 || output.length > MAX_STARTUP_RECEIPT_BYTES) return null;
+  const text = output.toString("utf8");
+  if (!/^[\x20-\x7e]*\n$/u.test(text)) return null;
+  let value;
+  try { value = JSON.parse(text); } catch { return null; }
+  // Canonical serialization rejects duplicate keys and alternative byte encodings.
+  if (JSON.stringify(value) + "\n" !== text ||
+      !startupHasKeys(value, [
+        "schema", "proof", "tuple", "complete", "stage", "subject", "operation", "code",
+        "ancestorIndex", "ancestorsChecked", "credentialsBefore", "credentialsAfter",
+        "runtime", "checked",
+      ]) ||
+      value.schema !== 1 || value.proof !== "secure-file-startup" ||
+      !STARTUP_TUPLES.includes(tuple) || value.tuple !== tuple ||
+      typeof value.complete !== "boolean" || !STARTUP_STAGES.includes(value.stage) ||
+      !STARTUP_SUBJECTS.includes(value.subject) || !STARTUP_OPERATIONS.includes(value.operation) ||
+      !STARTUP_CODES.includes(value.code) ||
+      !(value.ancestorIndex === null || (Number.isInteger(value.ancestorIndex) &&
+        value.ancestorIndex >= 0 && value.ancestorIndex < 32)) ||
+      !Number.isInteger(value.ancestorsChecked) ||
+      value.ancestorsChecked < 0 || value.ancestorsChecked > 32 ||
+      !startupCredentialsValid(value.credentialsBefore) ||
+      !startupCredentialsValid(value.credentialsAfter) ||
+      !startupHasKeys(value.runtime, ["versionExact", "execPathExact"]) ||
+      !Object.values(value.runtime).every((flag) => typeof flag === "boolean") ||
+      !startupHasKeys(value.checked, STARTUP_CHECKS) ||
+      !Object.values(value.checked).every((flag) => typeof flag === "boolean")) return null;
+  if (value.complete
+    ? value.stage !== "complete" || value.subject !== "none" || value.operation !== "none" ||
+      value.code !== "OK" || value.ancestorIndex !== null || value.ancestorsChecked === 0 ||
+      !startupChecksComplete(value)
+    : value.stage === "complete" || value.subject === "none" || value.operation === "none" || value.code === "OK" ||
+      (value.ancestorIndex !== null && value.stage !== "ancestors")) return null;
+  const credentials = (record) => record === null ? null : ({
+    uid: [...record.uid], gid: [...record.gid], caps: [...record.caps],
+    groupsCleared: record.groupsCleared, noNewPrivs: record.noNewPrivs, processApi: record.processApi,
+  });
+  return {
+    schema: 1, proof: "secure-file-startup", tuple, complete: value.complete,
+    stage: value.stage, subject: value.subject, operation: value.operation, code: value.code,
+    ancestorIndex: value.ancestorIndex, ancestorsChecked: value.ancestorsChecked,
+    credentialsBefore: credentials(value.credentialsBefore),
+    credentialsAfter: credentials(value.credentialsAfter),
+    runtime: { versionExact: value.runtime.versionExact, execPathExact: value.runtime.execPathExact },
+    checked: Object.fromEntries(STARTUP_CHECKS.map((key) => [key, value.checked[key]])),
+  };
+}
+
+// Static reviewed source only. Every pathname and expectation travels in one separate argv value.
+const STARTUP_PROBE_SOURCE = String.raw`
+import fs from "node:fs/promises";
+import { constants } from "node:fs";
+import path from "node:path";
+import { createHash } from "node:crypto";
+
+const receipt = {
+  schema: 1, proof: "secure-file-startup", tuple: "equal", complete: false,
+  stage: "arguments", subject: "input", operation: "parse-arguments", code: "OK",
+  ancestorIndex: null, ancestorsChecked: 0, credentialsBefore: null, credentialsAfter: null,
+  runtime: { versionExact: false, execPathExact: false },
+  checked: {
+    candidateWorker: false, candidatePackage: false, historicalWorker: false,
+    historicalPackage: false, candidateCwd: false, historicalCwd: false, secretsDirectory: false,
+  },
+};
+const errno = new Set(["EACCES", "EPERM", "ENOENT", "ENOTDIR", "ELOOP", "EIO",
+  "EMFILE", "ENFILE", "EBADF", "EINVAL"]);
+const fail = (code) => { receipt.code = code; throw new Error(); };
+const keys = (value, expected) => {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const actual = Object.keys(value);
+  return actual.length === expected.length && expected.every((key) => Object.hasOwn(value, key));
+};
+const locate = (stage, subject, operation) => {
+  receipt.stage = stage; receipt.subject = subject; receipt.operation = operation;
+  receipt.ancestorIndex = null;
+};
+const identity = (stat) => [stat.dev, stat.ino, stat.uid, stat.gid, stat.mode, stat.nlink].join(":");
+const fileIdentity = (stat) => [identity(stat), stat.size, stat.mtimeNs, stat.ctimeNs].join(":");
+async function readBounded(handle, limit) {
+  const buffer = Buffer.alloc(limit + 1);
+  let used = 0;
+  while (used < buffer.length) {
+    const { bytesRead } = await handle.read(buffer, used, buffer.length - used, null);
+    if (bytesRead === 0) return buffer.subarray(0, used);
+    used += bytesRead;
+  }
+  fail("SIZE_LIMIT");
+}
+async function credentials(config, phase) {
+  locate(phase, "credentials", "read-proc");
+  const handle = await fs.open("/proc/self/status", constants.O_RDONLY | constants.O_NOFOLLOW);
+  let buffer;
+  try { buffer = await readBounded(handle, 16384); } finally { await handle.close(); }
+  const fields = new Map();
+  const required = ["Uid", "Gid", "Groups", "CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb", "NoNewPrivs"];
+  for (const line of buffer.toString("utf8").split("\n")) {
+    const separator = line.indexOf(":");
+    const name = line.slice(0, separator);
+    if (separator < 1 || !required.includes(name)) continue;
+    if (fields.has(name)) fail("PROC_STATUS_INVALID");
+    fields.set(name, line.slice(separator + 1).trim());
+  }
+  if (fields.size !== required.length) fail("PROC_STATUS_INVALID");
+  const numbers = (name) => {
+    const values = fields.get(name).split(/\s+/u);
+    if (values.length !== 4 || values.some((value) => !/^[0-9]{1,10}$/u.test(value) ||
+      Number(value) > 4294967295)) fail("PROC_STATUS_INVALID");
+    return values.map(Number);
+  };
+  const expectedUids = [config.tuple === "equal" ? 61002 : 61001, 61002, 61002, 61002];
+  const uids = numbers("Uid"), gids = numbers("Gid");
+  const caps = required.slice(3, 8).map((name) => {
+    const value = fields.get(name);
+    if (!/^[0-9a-fA-F]{1,16}$/u.test(value)) fail("PROC_STATUS_INVALID");
+    return BigInt("0x" + value) === 0n;
+  });
+  if (!/^(?:[0-9]+(?:\s+[0-9]+)*)?$/u.test(fields.get("Groups"))) fail("PROC_STATUS_INVALID");
+  // Node includes the effective group; /proc reports supplementary groups separately.
+  const apiGroups = process.getgroups();
+  const observation = {
+    uid: uids.map((value, index) => value === expectedUids[index]),
+    gid: gids.map((value) => value === 61003), caps,
+    groupsCleared: fields.get("Groups") === "",
+    noNewPrivs: fields.get("NoNewPrivs") === "1",
+    processApi: process.getuid() === expectedUids[0] && process.geteuid() === 61002 &&
+      process.getgid() === 61003 && process.getegid() === 61003 &&
+      apiGroups.length === 1 && apiGroups[0] === 61003,
+  };
+  receipt[phase === "credentials-before" ? "credentialsBefore" : "credentialsAfter"] = observation;
+  receipt.operation = "verify-ids";
+  for (const [kind, codes] of [
+    ["uid", ["REAL_UID_MISMATCH", "EFFECTIVE_UID_MISMATCH", "SAVED_UID_MISMATCH", "FS_UID_MISMATCH"]],
+    ["gid", ["REAL_GID_MISMATCH", "EFFECTIVE_GID_MISMATCH", "SAVED_GID_MISMATCH", "FS_GID_MISMATCH"]],
+  ]) for (let index = 0; index < 4; index++) if (!observation[kind][index]) fail(codes[index]);
+  if (!observation.processApi) fail("PROCESS_API_MISMATCH");
+  receipt.operation = "verify-groups";
+  if (!observation.groupsCleared) fail("GROUPS_NOT_EMPTY");
+  receipt.operation = "verify-caps";
+  if (!caps.every(Boolean)) fail("CAPS_NOT_ZERO");
+  receipt.operation = "verify-no-new-privs";
+  if (!observation.noNewPrivs) fail("NO_NEW_PRIVS_MISSING");
+}
+try {
+  if (process.argv.length !== 2 || Buffer.byteLength(process.argv[1]) > 16384) fail("INVALID_ARGUMENTS");
+  const config = JSON.parse(process.argv[1]);
+  if (JSON.stringify(config) !== process.argv[1] ||
+      !keys(config, ["tuple", "expectedNode", "node", "fixture", "files"]) ||
+      !["equal", "split"].includes(config.tuple) || process.platform !== "linux" ||
+      !["v22.23.2", "v24.20.0"].includes(config.expectedNode)) fail("INVALID_ARGUMENTS");
+  receipt.tuple = config.tuple;
+  const absolute = (value) => typeof value === "string" && Buffer.byteLength(value) <= 4096 &&
+    !value.includes("\0") && path.isAbsolute(value) && path.resolve(value) === value;
+  const nodeMatch = typeof config.node === "string" && config.node.match(
+    /^\/usr\/local\/lib\/fs-safe-credential-proof-([1-9][0-9]{0,19})-([1-9][0-9]{0,9})-(22\.23\.2|24\.20\.0)\/node$/u);
+  if (!absolute(config.node) || !nodeMatch || nodeMatch[3] !== config.expectedNode.slice(1) ||
+      !absolute(config.fixture) || !/^fixture-[A-Za-z0-9]{6}$/u.test(path.basename(config.fixture)) ||
+      path.basename(path.dirname(config.fixture)) !== "fs-safe-secure-file-proof-" + config.expectedNode.slice(1) ||
+      !Array.isArray(config.files) || config.files.length !== 4) fail("INVALID_ARGUMENTS");
+  const targets = [
+    ["candidate-worker", "candidateWorker", path.join(config.fixture, "candidate", "worker.mjs")],
+    ["candidate-package", "candidatePackage", path.join(config.fixture, "candidate", "node_modules", "@openclaw", "fs-safe", "package.json")],
+    ["historical-worker", "historicalWorker", path.join(config.fixture, "historical", "worker.mjs")],
+    ["historical-package", "historicalPackage", path.join(config.fixture, "historical", "node_modules", "@openclaw", "fs-safe", "package.json")],
+  ];
+  for (let index = 0; index < targets.length; index++) {
+    const expected = config.files[index];
+    if (!keys(expected, ["path", "bytes", "sha256", "dev", "ino"]) ||
+        !absolute(expected.path) || expected.path !== targets[index][2] ||
+        !Number.isInteger(expected.bytes) || expected.bytes < 1 || expected.bytes > 1048576 ||
+        typeof expected.sha256 !== "string" || !/^[0-9a-f]{64}$/u.test(expected.sha256) ||
+        !["dev", "ino"].every((key) => typeof expected[key] === "string" &&
+          /^(?:0|[1-9][0-9]{0,31})$/u.test(expected[key]))) fail("INVALID_ARGUMENTS");
+  }
+  await credentials(config, "credentials-before");
+  locate("runtime", "node", "verify-runtime");
+  receipt.runtime.versionExact = process.version === config.expectedNode;
+  if (!receipt.runtime.versionExact) fail("NODE_VERSION_MISMATCH");
+  receipt.operation = "realpath";
+  receipt.runtime.execPathExact = await fs.realpath(process.execPath) === config.node;
+  if (!receipt.runtime.execPathExact) fail("NODE_PATH_MISMATCH");
+  const directories = [
+    ["candidate-cwd", "candidateCwd", path.join(config.fixture, "candidate")],
+    ["historical-cwd", "historicalCwd", path.join(config.fixture, "historical")],
+    ["secrets-directory", "secretsDirectory", path.join(config.fixture, "secrets")],
+  ];
+  const ancestors = new Map();
+  for (const [subject, directory] of [
+    ["node", path.dirname(config.node)],
+    ...targets.map(([subject, , file]) => [subject, path.dirname(file)]),
+    ...directories.map(([subject, , directory]) => [subject, directory]),
+  ]) {
+    locate("ancestors", subject, "lstat");
+    const chain = [];
+    for (let current = directory;; current = path.dirname(current)) {
+      chain.unshift(current);
+      if (current === "/") break;
+      if (chain.length >= 32) fail("ANCESTOR_LIMIT");
+    }
+    for (const current of chain) if (!ancestors.has(current)) {
+      if (ancestors.size >= 32) fail("ANCESTOR_LIMIT");
+      ancestors.set(current, { subject, index: ancestors.size, identity: null });
+    }
+  }
+  for (const [directory, record] of ancestors) {
+    locate("ancestors", record.subject, "lstat");
+    receipt.ancestorIndex = record.index;
+    const before = await fs.lstat(directory, { bigint: true });
+    if (!before.isDirectory() || before.isSymbolicLink()) fail("NOT_DIRECTORY");
+    receipt.operation = "realpath";
+    if (await fs.realpath(directory) !== directory) fail("NONCANONICAL_PATH");
+    receipt.operation = "chdir";
+    process.chdir(directory);
+    receipt.operation = "lstat";
+    if (identity(await fs.lstat(".", { bigint: true })) !== identity(before)) fail("IDENTITY_CHANGED");
+    record.identity = identity(before);
+    receipt.ancestorsChecked++;
+  }
+  for (let index = 0; index < targets.length; index++) {
+    const [subject, checked, file] = targets[index], expected = config.files[index];
+    locate("files", subject, "lstat");
+    const before = await fs.lstat(file, { bigint: true });
+    if (!before.isFile() || before.isSymbolicLink()) fail("NOT_REGULAR_FILE");
+    if (before.uid !== 0n || before.gid !== 0n || before.nlink !== 1n ||
+        (before.mode & 0o7777n) !== 0o444n) fail("UNTRUSTED_FILE");
+    if (String(before.dev) !== expected.dev || String(before.ino) !== expected.ino ||
+        before.size !== BigInt(expected.bytes)) fail("IDENTITY_CHANGED");
+    receipt.operation = "realpath";
+    if (await fs.realpath(file) !== file) fail("NONCANONICAL_PATH");
+    receipt.operation = "open";
+    const handle = await fs.open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+    let fileComplete = false;
+    try {
+      receipt.operation = "fstat";
+      if (fileIdentity(await handle.stat({ bigint: true })) !== fileIdentity(before)) fail("IDENTITY_CHANGED");
+      receipt.operation = "read";
+      const buffer = await readBounded(handle, expected.bytes);
+      if (buffer.length !== expected.bytes) fail("IDENTITY_CHANGED");
+      receipt.operation = "hash";
+      if (createHash("sha256").update(buffer).digest("hex") !== expected.sha256) fail("HASH_MISMATCH");
+      receipt.operation = "fstat";
+      if (fileIdentity(await handle.stat({ bigint: true })) !== fileIdentity(before)) fail("IDENTITY_CHANGED");
+      receipt.operation = "lstat";
+      if (fileIdentity(await fs.lstat(file, { bigint: true })) !== fileIdentity(before)) fail("IDENTITY_CHANGED");
+      fileComplete = true;
+    } catch (error) {
+      if (receipt.code === "OK") receipt.code = errno.has(error?.code) ? error.code : "UNKNOWN";
+      throw error;
+    } finally {
+      if (fileComplete) receipt.operation = "close";
+      await handle.close();
+    }
+    receipt.checked[checked] = true;
+  }
+  for (const [subject, checked, directory] of directories) {
+    locate("working-directory", subject, "chdir");
+    process.chdir(directory);
+    receipt.operation = "realpath";
+    if (await fs.realpath(process.cwd()) !== directory) fail("NONCANONICAL_PATH");
+    receipt.checked[checked] = true;
+  }
+  for (const [directory, record] of ancestors) {
+    locate("ancestors", record.subject, "lstat");
+    receipt.ancestorIndex = record.index;
+    if (identity(await fs.lstat(directory, { bigint: true })) !== record.identity) fail("IDENTITY_CHANGED");
+  }
+  await credentials(config, "credentials-after");
+  locate("complete", "none", "none");
+  receipt.complete = true;
+} catch (error) {
+  if (receipt.code === "OK") receipt.code = errno.has(error?.code) ? error.code : "UNKNOWN";
+}
+const output = JSON.stringify(receipt) + "\n";
+// Oversized or unexpected output fails closed without publishing any fallback string.
+if (Buffer.byteLength(output) <= 1024) process.stdout.write(output);
+if (!receipt.complete || Buffer.byteLength(output) > 1024) process.exitCode = 1;
+`;
+// END STARTUP PROBE CONTRACT
+
 const BUNDLE_PROOF = "secure-file-split-credential-bundle";
 const ARTIFACT_PROOF = "secure-file-split-credential-artifact";
 const FAILURE_RECEIPTS = new Set([
@@ -225,6 +562,7 @@ let builderGid;
 let rawTracesRemoved = true;
 let failureDiagnostic = null;
 const caseReceipts = [];
+const startupReceipts = [];
 const toolReceipts = {};
 const libraryReceipts = {};
 const artifactReceipts = {};
@@ -1377,6 +1715,94 @@ function modeString(mode) {
   return mode.toString(8).padStart(4, "0");
 }
 
+async function startupFileExpectations(libraries) {
+  const files = [];
+  for (const [role, library] of [["candidate", libraries.candidate], ["baseline", libraries.baseline]]) {
+    for (const [file, expectedHash] of [
+      [path.join(library, "worker.mjs"), harnessReceipt.workerSha256],
+      [path.join(library, "node_modules", "@openclaw", "fs-safe", "package.json"), libraryReceipts[role].packageSha256],
+    ]) {
+      const before = await fs.lstat(file, { bigint: true });
+      const buffer = await stableReadFile(file, 0, 1024 * 1024, 0, "startup-file");
+      const after = await fs.lstat(file, { bigint: true });
+      if (!identitiesMatch(before, after) || before.size !== after.size ||
+          before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs ||
+          after.uid !== 0n || after.gid !== 0n || after.nlink !== 1n ||
+          (after.mode & 0o7777n) !== 0o444n || buffer.length === 0 ||
+          BigInt(buffer.length) !== after.size || sha256(buffer) !== expectedHash) {
+        proofError("STARTUP_FILE_IDENTITY_MISMATCH");
+      }
+      files.push({ path: file, bytes: buffer.length, sha256: expectedHash,
+        dev: String(after.dev), ino: String(after.ino) });
+    }
+  }
+  return files;
+}
+
+function startupFailureDiagnostic(run, receipt, tuple) {
+  const reason = run.spawnFailed ? "spawn-failed" : run.timedOut ? "timeout" :
+    run.overflow ? "overflow" : run.signal !== null ? "signal" :
+      run.code !== 0 ? "nonzero-exit" : run.stderr.length !== 0 ? "stderr" :
+        receipt === null ? "invalid-receipt" : "incomplete-probe";
+  const exitCode = Number.isSafeInteger(run.code) && run.code >= 0 ? run.code : null;
+  return receipt === null
+    ? { reason, exitCode, tuple, stdoutBytes: run.stdout.length, stderrBytes: run.stderr.length }
+    : { reason, exitCode, tuple, probeStage: receipt.stage, subject: receipt.subject,
+      operation: receipt.operation, probeCode: receipt.code,
+      ancestorIndex: receipt.ancestorIndex };
+}
+
+async function runStartupProbe(tuple, files, tools) {
+  stage = `startup-${tuple}`;
+  await assertProcIdsUnused();
+  const config = JSON.stringify({
+    tuple, expectedNode: process.version, node: tools.node.path, fixture: fixturePath, files,
+  });
+  if (!STARTUP_TUPLES.includes(tuple) || Buffer.byteLength(config) > 16384) {
+    proofError("INVALID_STARTUP_CONFIG");
+  }
+  const tracePath = path.join(fixturePath, "traces", `startup-${tuple}.trace`);
+  // --eval has no script pathname: the sole value after -- is process.argv[1].
+  const setprivArgs = [
+    "--ruid", String(tuple === "equal" ? EFFECTIVE_UID : REAL_UID),
+    "--euid", String(EFFECTIVE_UID),
+    "--rgid", String(PROOF_GID), "--egid", String(PROOF_GID),
+    "--clear-groups", "--inh-caps=-all", "--ambient-caps=-all",
+    "--bounding-set=-all", "--no-new-privs",
+    tools.node.path, "--input-type=module", "--eval", STARTUP_PROBE_SOURCE, "--", config,
+  ];
+  try {
+    const run = await runCapture(tools.timeout.path, [
+      "--signal=TERM", "--kill-after=5s", "30s", tools.prlimit.path,
+      "--fsize=1048576:1048576", "--core=0:0", "--", tools.strace.path,
+      "--quiet=all", "--follow-forks", "--decode-fds=path", "--string-limit=1", "--signal=none",
+      "--trace=open,openat,openat2,read,readv,pread64,preadv,preadv2,mmap,sendfile,copy_file_range,splice,close",
+      ...files.map((file) => `--trace-path=${file.path}`),
+      `--output=${tracePath}`, "--kill-on-exit", tools.setpriv.path, ...setprivArgs,
+    ], { cwd: "/", env: minimalEnvironment(fixturePath), timeoutMs: 40_000 });
+    const receipt = parseStartupReceipt(run.stdout, tuple);
+    if (receipt !== null) startupReceipts.push(receipt);
+    if (run.code !== 0 || run.signal !== null || run.timedOut || run.overflow ||
+        run.spawnFailed || run.stderr.length !== 0 || receipt?.complete !== true) {
+      proofError("STARTUP_PROBE_FAILED", startupFailureDiagnostic(run, receipt, tuple));
+    }
+    const traceStat = await fs.lstat(tracePath, { bigint: true });
+    if (!traceStat.isFile() || traceStat.isSymbolicLink() || traceStat.nlink !== 1n ||
+        traceStat.uid !== 0n || traceStat.gid !== 0n || (traceStat.mode & 0o7777n) !== 0o600n) {
+      proofError("UNTRUSTED_TRACE_FILE");
+    }
+    if (traceStat.size <= 0n || traceStat.size >= BigInt(MAX_TRACE_BYTES)) {
+      proofError("TRACE_SIZE_LIMIT_REACHED");
+    }
+    await assertProcIdsUnused();
+  } finally {
+    // These traces are local diagnostics only; never read, publish, or retain their bytes.
+    try { await fs.unlink(tracePath); } catch (error) {
+      if (error?.code !== "ENOENT") rawTracesRemoved = false;
+    }
+  }
+}
+
 async function runProofCase(spec, libraries, secrets, tools) {
   stage = `case-${spec.case}-${spec.libraryRole}`;
   await assertProcIdsUnused();
@@ -1615,6 +2041,8 @@ async function safeCleanup() {
 }
 
 function buildReceipt(metadata, failure, cleanup) {
+  const startupComplete = startupReceipts.length === STARTUP_TUPLES.length &&
+    startupReceipts.every((receipt, index) => receipt.tuple === STARTUP_TUPLES[index] && receipt.complete);
   const allCasesComplete = caseReceipts.length === CASES.length;
   const allWorkersValidated = allCasesComplete && caseReceipts.every((item) =>
     item.credential.expectedSaved &&
@@ -1631,6 +2059,7 @@ function buildReceipt(metadata, failure, cleanup) {
   durationsMs.total = Math.round((performance.now() - proofStartedAt) * 1000) / 1000;
   const overall =
     failure === null &&
+    startupComplete &&
     allCasesComplete &&
     cleanup &&
     harnessReceipt.manifestValidated &&
@@ -1706,6 +2135,7 @@ function buildReceipt(metadata, failure, cleanup) {
     },
     credential: credentialReceipt,
     fixture: fixtureReceipt,
+    startup: { complete: startupComplete, probes: startupReceipts },
     cases: caseReceipts,
     durationsMs,
   };
@@ -2086,6 +2516,14 @@ async function main() {
     sealedParent.gid === 0n &&
     (sealedParent.mode & 0o222n) === 0n;
   if (!fixtureReceipt.nonWritable) proofError("FIXTURE_WRITABLE");
+
+  stage = "startup-probes";
+  await timed("startupProbes", async () => {
+    const startupFiles = await startupFileExpectations(libraries);
+    for (const tuple of STARTUP_TUPLES) {
+      await timed(`startup-${tuple}`, () => runStartupProbe(tuple, startupFiles, tools));
+    }
+  });
 
   stage = "credential-cases";
   await timed("credentialCases", async () => {
