@@ -97,6 +97,9 @@ const bytes = await copyFileHandle(sourceHandle, targetHandle, {
 
 `CopyFileHandleOptions` contains optional `maxBytes`, `signal`, `onChunk`, and
 `assertBeforeMutation`. The result is the actual byte count copied through EOF.
+The four options are selected once before descriptor inspection; later mutation
+of the options object cannot replace the active budget, signal, observer, or
+mutation-authority callback.
 The byte limit is not a prefix length: excess data rejects with `too-large`,
 including data added after admission. Omitted limits are unlimited; Root's
 default read cap does not apply. Zero accepts only an empty source. Invalid
