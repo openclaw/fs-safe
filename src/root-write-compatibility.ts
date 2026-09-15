@@ -15,22 +15,29 @@ function unsupportedSpelling(): FsSafeError {
 // the existing lock protocol has no portable case/Unicode equivalence key for a
 // missing name. Do not guess one, or switch keys when a placeholder appears.
 function effectiveDestination(rootPath: string, targetPath: string): string {
-  let cursor = targetPath;
-  const missing: string[] = [];
-  for (;;) {
-    try {
-      fs.lstatSync(cursor);
-      break;
-    } catch (error) {
-      if (!isNotFoundPathError(error) || cursor === rootPath) throw error;
-      const parent = path.dirname(cursor);
-      if (parent === cursor) throw error;
-      missing.unshift(path.basename(cursor));
-      cursor = parent;
+  let effective: string;
+  try {
+    effective = realpathSync.native(targetPath);
+  } catch (error) {
+    if (!isNotFoundPathError(error)) throw error;
+    let cursor = targetPath;
+    const missing: string[] = [];
+    for (;;) {
+      try {
+        fs.lstatSync(cursor);
+        break;
+      } catch (error) {
+        if (!isNotFoundPathError(error) || cursor === rootPath) throw error;
+        const parent = path.dirname(cursor);
+        if (parent === cursor) throw error;
+        missing.unshift(path.basename(cursor));
+        cursor = parent;
+      }
     }
+    // An existing dangling link must fail resolution, not become a missing
+    // lexical component. Keep the fallback bounded by the retained Root.
+    effective = path.join(realpathSync.native(cursor), ...missing);
   }
-  // Fail on resolution errors rather than falling back to the lexical alias.
-  const effective = path.join(realpathSync.native(cursor), ...missing);
   if (!isPathInside(rootPath, effective)) throw unsupportedSpelling();
   const relative = path.relative(rootPath, effective);
   if (!relative || !relative.split(path.sep).every(component =>
@@ -56,7 +63,8 @@ export async function withRootFallbackCompatibilityLock<T>(
   return await serializePathWrite(targetPath, async () => await withPinnedWriteRenameIdentityLock({
     rootPath: params.rootPath, targetPath, relativeTargetPath: relativePath,
   }, async () => {
-    assertCurrent();
+    // The guarded open resolves again under the lock; each mutation rechecks
+    // below. Lock selection is never reused as post-lock filesystem authority.
     return await run({
       targetPath, relativePath,
       assertBeforeMutation: () => { params.assertBeforeMutation?.(); assertCurrent(); },
