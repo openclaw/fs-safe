@@ -762,6 +762,33 @@ function validatedCommit(value, proofCode) {
   return value;
 }
 
+export function validatePullRequestMergeBinding({
+  baseCommit: rawBaseCommit,
+  checkoutCommit: rawCheckoutCommit,
+  eventSha: rawEventSha,
+  headCommit: rawHeadCommit,
+  parentCommits: rawParentCommits,
+}) {
+  const baseCommit = validatedCommit(rawBaseCommit, "invalid-pr-base");
+  const checkoutCommit = validatedCommit(rawCheckoutCommit, "invalid-checkout-commit");
+  const eventSha = validatedCommit(rawEventSha, "invalid-event-sha");
+  const headCommit = validatedCommit(rawHeadCommit, "invalid-pr-head");
+  requireInvariant(Array.isArray(rawParentCommits), "invalid-parent-list");
+  requireInvariant(rawParentCommits.length === 2, "invalid-pr-parent-count");
+  const parentCommits = rawParentCommits.map(parent =>
+    validatedCommit(parent, "invalid-pr-parent"));
+  requireInvariant(checkoutCommit === eventSha, "checkout-event-commit-mismatch");
+  requireInvariant(parentCommits[0] === baseCommit, "checkout-pr-base-parent-mismatch");
+  requireInvariant(parentCommits[1] === headCommit, "checkout-pr-head-parent-mismatch");
+  return Object.freeze({
+    baseCommit,
+    checkoutCommit,
+    headCommit,
+    mergeCommit: eventSha,
+    parentCommits: Object.freeze(parentCommits),
+  });
+}
+
 function gitTree(commit) {
   return validatedCommit(gitText(["rev-parse", `${commit}^{tree}`]), "invalid-tree");
 }
@@ -802,10 +829,14 @@ async function sourceMetadata() {
   if (eventName === "pull_request") {
     const headCommit = validatedCommit(event?.pull_request?.head?.sha, "invalid-pr-head");
     const baseCommit = validatedCommit(event?.pull_request?.base?.sha, "invalid-pr-base");
-    const mergeCommit = validatedCommit(
-      event?.pull_request?.merge_commit_sha,
-      "invalid-pr-merge",
-    );
+    const binding = validatePullRequestMergeBinding({
+      baseCommit,
+      checkoutCommit: commit,
+      eventSha,
+      headCommit,
+      parentCommits: parentLine.slice(1),
+    });
+    const mergeCommit = binding.mergeCommit;
     const headTree = gitTree(headCommit);
     const baseTree = gitTree(baseCommit);
     const mergeTree = gitTree(mergeCommit);
@@ -819,11 +850,7 @@ async function sourceMetadata() {
         checkoutEqualsMerge: tree === mergeTree,
       },
     };
-    requireInvariant(commit === eventSha, "checkout-event-commit-mismatch");
-    requireInvariant(commit === mergeCommit, "checkout-pr-merge-mismatch");
     requireInvariant(tree === mergeTree, "checkout-pr-tree-mismatch");
-    requireInvariant(parentLine[1] === baseCommit, "checkout-pr-base-parent-mismatch");
-    requireInvariant(parentLine[2] === headCommit, "checkout-pr-head-parent-mismatch");
   } else if (eventSha !== undefined) {
     requireInvariant(commit === eventSha, "checkout-event-commit-mismatch");
   }

@@ -9,6 +9,7 @@ import {
   preservePendingReceipt,
   sanitizeProofFailure,
   timeoutContractReceipt,
+  validatePullRequestMergeBinding,
 } from "../scripts/file-handle-transfer-proof.mjs";
 import { copyFileHandle } from "../src/advanced.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
@@ -33,6 +34,65 @@ function section(source: string, start: string, end: string): string {
 }
 
 describe("hosted file-handle transfer proof contract", () => {
+  it("binds pull-request checkouts to GITHUB_SHA and exactly ordered event parents", () => {
+    const baseCommit = "1".repeat(40);
+    const headCommit = "2".repeat(40);
+    const eventSha = "3".repeat(40);
+    const valid = {
+      baseCommit,
+      checkoutCommit: eventSha,
+      eventSha,
+      headCommit,
+      parentCommits: [baseCommit, headCommit],
+    };
+
+    expect(validatePullRequestMergeBinding(valid)).toEqual({
+      baseCommit,
+      checkoutCommit: eventSha,
+      headCommit,
+      mergeCommit: eventSha,
+      parentCommits: [baseCommit, headCommit],
+    });
+    expect(validatePullRequestMergeBinding({
+      ...valid,
+      mergeCommitFromPayload: undefined,
+    } as typeof valid)).toEqual(expect.objectContaining({ mergeCommit: eventSha }));
+    expect(validatePullRequestMergeBinding({
+      ...valid,
+      mergeCommitFromPayload: "4".repeat(40),
+    } as typeof valid)).toEqual(expect.objectContaining({ mergeCommit: eventSha }));
+
+    for (const invalid of [
+      { ...valid, eventSha: undefined },
+      { ...valid, eventSha: "not-a-commit" },
+      { ...valid, checkoutCommit: "4".repeat(40) },
+      { ...valid, baseCommit: "not-a-commit" },
+      { ...valid, headCommit: "not-a-commit" },
+      { ...valid, parentCommits: [headCommit, baseCommit] },
+      { ...valid, parentCommits: [baseCommit, "4".repeat(40)] },
+      { ...valid, parentCommits: [baseCommit, "not-a-commit"] },
+    ]) {
+      expect(() => validatePullRequestMergeBinding(invalid as typeof valid)).toThrow();
+    }
+    for (const parentCommits of [
+      [],
+      [baseCommit],
+      [baseCommit, headCommit, "4".repeat(40)],
+    ]) {
+      let caught: unknown;
+      try {
+        validatePullRequestMergeBinding({ ...valid, parentCommits });
+      } catch (error) {
+        caught = error;
+      }
+      expect(sanitizeProofFailure(caught)).toEqual({
+        code: "invalid-pr-parent-count",
+        kind: "proof",
+      });
+    }
+    expect(proofSource).not.toContain("merge_commit_sha");
+  });
+
   it("sorts receipt keys recursively and sanitizes arbitrary failures", () => {
     expect(canonicalReceipt({
       z: 3,
