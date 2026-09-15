@@ -12,10 +12,11 @@ import {
   type DirectoryObservationGuard,
 } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
-import { isNotFoundPathError, isPathInside } from "./path.js";
+import { isNotFoundPathError } from "./path.js";
 import { assertRootIdentityCurrent, type RootContext } from "./root-context.js";
 import { rootPathChangedError } from "./root-errors.js";
 import type { RootPathObservationReceipt } from "./root-path.js";
+import { admitPathInsideRoot } from "./root-boundary.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import type { DirEntry, PathStat } from "./types.js";
@@ -50,9 +51,16 @@ export async function createRootDirectoryObservationGuard(
   directory: string,
 ): Promise<RootDirectoryObservationGuard> {
   const guard = await createAsyncDirectoryGuard(directory, { bigint: true });
-  if (!isPathInside(root.rootReal, guard.realPath)) {
+  const admittedRealPath = admitPathInsideRoot({
+    rootPath: root.rootReal,
+    candidatePath: guard.realPath,
+    rootIdentity: root.rootIdentity,
+  });
+  if (!admittedRealPath) {
     throw new FsSafeError("outside-workspace", "directory is outside workspace root");
   }
+  guard.dir = admittedRealPath.path;
+  guard.realPath = admittedRealPath.path;
   return guard;
 }
 

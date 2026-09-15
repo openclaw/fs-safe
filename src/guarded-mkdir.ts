@@ -1,15 +1,32 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard } from "./directory-guard.js";
+import {
+  assertAsyncDirectoryGuard,
+  createAsyncDirectoryGuard,
+  type AnyAsyncDirectoryGuard,
+} from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { isNotFoundPathError, isPathRelativeEscape } from "./path.js";
-import { directoryComponentNotDirectoryError } from "./root-errors.js";
+import { directoryComponentNotDirectoryError, rootPathChangedError } from "./root-errors.js";
 import { realpathSync } from "./realpath.js";
+import { admitPathInsideRoot, type RootBoundaryIdentity } from "./root-boundary.js";
 
-function isSameOrChildPath(candidate: string, parent: string): boolean {
-  const parentPrefix = parent.endsWith(path.sep) ? parent : `${parent}${path.sep}`;
-  return candidate === parent || candidate.startsWith(parentPrefix);
+type ExactRootIdentity = Readonly<{ dev: bigint; ino: bigint }>;
+
+function suppliedExactRootIdentity(identity: RootBoundaryIdentity | undefined): ExactRootIdentity | undefined {
+  return typeof identity?.dev === "bigint" && typeof identity.ino === "bigint"
+    ? { dev: identity.dev, ino: identity.ino }
+    : undefined;
+}
+
+function assertGuardMatchesRootIdentity(
+  guard: AnyAsyncDirectoryGuard,
+  expected: ExactRootIdentity,
+): void {
+  if (guard.stat.dev !== expected.dev || guard.stat.ino !== expected.ino) {
+    throw rootPathChangedError();
+  }
 }
 
 async function realpathOrThrowNotFile(target: string): Promise<string> {
@@ -38,18 +55,42 @@ export async function mkdirPathComponentsWithGuards(params: {
   assertBeforeMutation?: () => void;
   mode?: number;
   rejectSymlinks?: boolean;
+  rootIdentity?: RootBoundaryIdentity;
 }): Promise<string> {
   const root = path.resolve(params.rootReal);
-  const rootCanonical = path.resolve(realpathSync.native(root));
+  const configuredRootGuard = await createAsyncDirectoryGuard(root, { bigint: true });
+  const suppliedIdentity = suppliedExactRootIdentity(params.rootIdentity);
+  const checkedRootIdentity = suppliedIdentity ?? {
+    dev: configuredRootGuard.stat.dev,
+    ino: configuredRootGuard.stat.ino,
+  };
+  assertGuardMatchesRootIdentity(configuredRootGuard, checkedRootIdentity);
+  const rootCanonical = path.resolve(configuredRootGuard.realPath);
+  const rootGuard = rootCanonical === root
+    ? configuredRootGuard
+    : await createAsyncDirectoryGuard(rootCanonical, { bigint: true });
+  assertGuardMatchesRootIdentity(rootGuard, checkedRootIdentity);
+
   const target = path.resolve(params.targetPath);
-  const relative = path.relative(root, target);
-  if (isPathRelativeEscape(relative)) {
+  const admissionParams = {
+    candidatePath: target,
+    rootIdentity: checkedRootIdentity,
+  };
+  // Derive the suffix from the caller's trusted root spelling first. The
+  // canonical spelling is also accepted after both names have been bound to
+  // the same exact root object above.
+  const admittedTarget = admitPathInsideRoot({ rootPath: root, ...admissionParams }) ??
+    (rootCanonical === root
+      ? undefined
+      : admitPathInsideRoot({ rootPath: rootCanonical, ...admissionParams }));
+  if (!admittedTarget || isPathRelativeEscape(admittedTarget.relativePath)) {
     throw new FsSafeError("outside-workspace", "directory is outside workspace root");
   }
-  let current = root;
-  for (const part of relative.split(path.sep).filter(Boolean)) {
+  let current = rootCanonical;
+  let currentGuard: AnyAsyncDirectoryGuard = rootGuard;
+  for (const part of admittedTarget.relativePath.split(path.sep).filter(Boolean)) {
     const next = path.join(current, part);
-    const parentGuard = await createAsyncDirectoryGuard(current);
+    const parentGuard = currentGuard;
     await assertAsyncDirectoryGuard(parentGuard);
     await params.beforeComponent?.(next);
     params.assertBeforeMutation?.();
@@ -66,10 +107,16 @@ export async function mkdirPathComponentsWithGuards(params: {
     }
     // Node's recursive mkdir follows symlinks in missing components. Build one
     // segment at a time and realpath-check each segment before descending.
-    const nextReal = await realpathOrThrowNotFile(next);
-    if (!isSameOrChildPath(nextReal, rootCanonical)) {
+    const observedNextReal = await realpathOrThrowNotFile(next);
+    const admittedNextReal = admitPathInsideRoot({
+      rootPath: rootCanonical,
+      candidatePath: observedNextReal,
+      rootIdentity: checkedRootIdentity,
+    });
+    if (!admittedNextReal) {
       throw new FsSafeError("outside-workspace", "directory escaped workspace root");
     }
+    const nextReal = admittedNextReal.path;
     if (stat.isSymbolicLink()) {
       // An existing path component may legitimately be a symlink to a real
       // directory inside the root (e.g. a skill-bank layout). We already
@@ -84,12 +131,12 @@ export async function mkdirPathComponentsWithGuards(params: {
       if (!targetStat.isDirectory()) {
         throw directoryComponentNotDirectoryError();
       }
-      await createAsyncDirectoryGuard(nextReal);
+      currentGuard = await createAsyncDirectoryGuard(nextReal);
       await assertAsyncDirectoryGuard(parentGuard);
       current = nextReal;
       continue;
     }
-    await createAsyncDirectoryGuard(next);
+    currentGuard = await createAsyncDirectoryGuard(next);
     await assertAsyncDirectoryGuard(parentGuard);
     current = next;
   }

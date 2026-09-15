@@ -3,6 +3,8 @@
 ## Unreleased
 
 - Keep `Root.stat()` and `Root.list()` descendant observations inside the admitted root by checking exact target, parent, and selected-directory identities before returning metadata or names; use ordinary metadata for safely representable non-Windows identities while retaining exact bigint checks and Windows retries.
+- Bind Windows Root containment that depends on case folding to the Root directory's exact identity, then continue under the trusted Root spelling; exact-case paths retain the lexical fast path without added filesystem observations.
+- Let manually dispatched method audits focus one workload family, select native mode, and repeat baseline/candidate measurements in A-B-B-A order for drift-resistant performance decisions.
 - Preserve existing destinations when guest cross-device symlink moves fail by staging links privately before atomic replacement, with cleanup on creation or publication failure.
 - Keep durable-queue migrations bound to the pinned processing generation, rejecting stale callbacks after acknowledgement, quarantine, or replacement; release the verified read pin at Windows publication so migrations can replace their target; resync resumed claims so conditional migrations cannot bypass a failed publication sync on retry.
 - Keep Windows native filesystem descriptors in the host runtime's libuv table, rejecting missing or partial bridges instead of guessing raw HANDLE or add-on CRT namespaces.

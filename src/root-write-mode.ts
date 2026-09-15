@@ -1,27 +1,35 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
-import { isNotFoundPathError, isPathInside } from "./path.js";
+import { isNotFoundPathError } from "./path.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { realpathSync } from "./realpath.js";
 import { hardlinkedPathNotAllowedError, outsideWorkspaceError } from "./root-errors.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
+import { admitPathInsideRoot, type RootBoundaryIdentity } from "./root-boundary.js";
 
 // The caller has already resolved and guarded this write target.
 export async function inheritWriteTargetMode(params: {
   targetPath: string;
   rootWithSep: string;
+  rootIdentity?: RootBoundaryIdentity;
   requestedMode?: number;
 }): Promise<number> {
   try {
-    const existing = await inspectFileIdentity(() => fsSync.lstatSync(params.targetPath, { bigint: true }));
+    const admittedTarget = admitPathInsideRoot({
+      rootPath: params.rootWithSep,
+      candidatePath: params.targetPath,
+      rootIdentity: params.rootIdentity,
+    });
+    if (!admittedTarget) throw outsideWorkspaceError();
+    const targetPath = admittedTarget.path;
+    const existing = await inspectFileIdentity(() => fsSync.lstatSync(targetPath, { bigint: true }));
     if (existing.isSymbolicLink()) throw new FsSafeError("path-alias", "path alias escape blocked");
     if (!existing.isFile()) throw new FsSafeError("not-file", "not a file");
     if (existing.nlink > 1n) throw hardlinkedPathNotAllowedError();
-    if (!isPathInside(params.rootWithSep, params.targetPath)) throw outsideWorkspaceError();
     // Preserve read-open admission of the pre-existing destination. access(2)
     // is not equivalent: it ignores ACLs on Windows and capabilities on Linux.
-    const handle = await fs.open(params.targetPath, resolveReadOpenFlags());
+    const handle = await fs.open(targetPath, resolveReadOpenFlags());
     try {
       // Bind admission to the inode whose metadata is inherited.
       await inspectFileIdentity(() => fsSync.fstatSync(handle.fd, { bigint: true }), existing);
@@ -31,8 +39,14 @@ export async function inheritWriteTargetMode(params: {
     try {
       // A parent can change after guarded resolution. Do not inherit metadata
       // from an outside inode, even if the parent is restored before publication.
-      const realPath = realpathSync.native(params.targetPath);
-      if (!isPathInside(params.rootWithSep, realPath)) throw outsideWorkspaceError();
+      const observedRealPath = realpathSync.native(targetPath);
+      const admittedRealPath = admitPathInsideRoot({
+        rootPath: params.rootWithSep,
+        candidatePath: observedRealPath,
+        rootIdentity: params.rootIdentity,
+      });
+      if (!admittedRealPath) throw outsideWorkspaceError();
+      const realPath = admittedRealPath.path;
       await inspectFileIdentity(async () => {
         const current = fsSync.statSync(realPath, { bigint: true });
         if (!current.isFile()) throw new FsSafeError("not-file", "not a file");

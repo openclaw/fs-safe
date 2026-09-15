@@ -44,6 +44,31 @@ export async function registerPaths({ api: a, workspace: w, register: add, contr
   add("assertNoHardlinkedFinalPath", () => a.assertNoHardlinkedFinalPath({ filePath: input, root: w, boundaryLabel: "benchmark" }));
   const rootParams = { absolutePath: input, rootPath: w, boundaryLabel: "benchmark" };
   for (const name of ["resolveRootPath", "resolveRootPathSync", "assertNoPathAliasEscape"]) add(name, () => a[name](rootParams), { sync: name.endsWith("Sync") });
+  const workspaceName = path.basename(w);
+  const caseIndex = [...workspaceName].findIndex((character) => /[a-z]/i.test(character));
+  const caseCharacter = caseIndex < 0 ? "" : workspaceName[caseIndex];
+  const alternateName = caseIndex < 0 ? workspaceName : `${workspaceName.slice(0, caseIndex)}${
+    caseCharacter === caseCharacter.toLowerCase() ? caseCharacter.toUpperCase() : caseCharacter.toLowerCase()
+  }${workspaceName.slice(caseIndex + 1)}`;
+  const alternateRoot = path.join(path.dirname(w), alternateName);
+  const alternateInput = path.join(alternateRoot, path.basename(input));
+  const windowsCaseAdmission = process.platform === "win32" && alternateRoot !== w && fs.existsSync(alternateInput);
+  const rootIdentity = fs.lstatSync(w, { bigint: true });
+  add("resolveRootPath/windows-exact-prefix", () => a.resolveRootPath({
+    ...rootParams, rootCanonicalPath: w, rootIdentity,
+  }), {
+    skip: process.platform === "win32" ? undefined : "Windows Root prefix admission.",
+    verify: (result) => assert.equal(result.absolutePath, input),
+  });
+  add("resolveRootPath/windows-identity-prefix", () => a.resolveRootPath({
+    ...rootParams, absolutePath: alternateInput, rootCanonicalPath: w, rootIdentity,
+  }), {
+    skip: windowsCaseAdmission ? undefined : "Requires an alternate-casing alias to the benchmark Root.",
+    // The baseline deliberately retains caller spelling while the repaired
+    // implementation returns the identity-gated Root spelling. Canonical
+    // identity is the invariant shared by both revisions.
+    verify: (result) => assert.equal(result.canonicalPath, input),
+  });
   add("resolvePathViaExistingAncestorSync", () => a.resolvePathViaExistingAncestorSync(input), { sync: true });
   for (const name of ["resolveLocalPathFromRootsSync", "readLocalFileFromRoots"]) add(name, () => a[name]({ filePath: input, roots: [w] }), { sync: name.endsWith("Sync") });
   const base = { rootDir: w, scopeLabel: "benchmark" };

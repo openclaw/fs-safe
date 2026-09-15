@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -6,6 +7,7 @@ import { FsSafeError } from "../src/errors.js";
 import { mkdirPathComponentsWithGuards } from "../src/guarded-mkdir.js";
 import { configureFsSafeNative } from "../src/native-config.js";
 import { root } from "../src/root.js";
+import { resolveWindowsSystemCommand } from "../src/windows-command.js";
 
 const { tempRoot } = useTempDirs();
 
@@ -15,6 +17,117 @@ afterEach(async () => {
 });
 
 // --- Unit-level coverage of mkdirPathComponentsWithGuards itself ---
+
+async function ancestorAliasFixture(prefix: string) {
+  const container = await tempRoot(prefix);
+  const realAncestor = path.join(container, "real-ancestor");
+  const aliasAncestor = path.join(container, "ancestor-alias");
+  const rootCanonical = path.join(realAncestor, "Root");
+  await fs.mkdir(rootCanonical, { recursive: true });
+  await fs.symlink(realAncestor, aliasAncestor, process.platform === "win32" ? "junction" : "dir");
+  const rootAlias = path.join(aliasAncestor, "Root");
+  const identity = await fs.lstat(rootAlias, { bigint: true });
+  return {
+    aliasAncestor,
+    identity: { dev: identity.dev, ino: identity.ino },
+    realAncestor,
+    rootAlias,
+    rootCanonical: await fs.realpath(rootCanonical),
+  };
+}
+
+it("rebases original and canonical target spellings through an ancestor alias", async () => {
+  const fixture = await ancestorAliasFixture("fs-safe-mkdir-ancestor-alias-");
+  const originalTarget = path.join(fixture.rootAlias, "from-alias", "nested");
+  const canonicalTarget = path.join(fixture.rootCanonical, "from-canonical", "nested");
+
+  await expect(mkdirPathComponentsWithGuards({
+    rootReal: fixture.rootAlias,
+    rootIdentity: fixture.identity,
+    targetPath: originalTarget,
+  })).resolves.toBe(path.join(fixture.rootCanonical, "from-alias", "nested"));
+  await expect(mkdirPathComponentsWithGuards({
+    rootReal: fixture.rootAlias,
+    rootIdentity: fixture.identity,
+    targetPath: canonicalTarget,
+  })).resolves.toBe(canonicalTarget);
+
+  expect((await fs.lstat(path.join(fixture.rootCanonical, "from-alias", "nested"))).isDirectory()).toBe(true);
+  expect((await fs.lstat(canonicalTarget)).isDirectory()).toBe(true);
+});
+
+it("rejects a mismatched supplied alias-root identity before mutation", async () => {
+  const fixture = await ancestorAliasFixture("fs-safe-mkdir-alias-identity-");
+  const targetPath = path.join(fixture.rootAlias, "must-not-exist");
+  const mutations: string[] = [];
+
+  await expect(mkdirPathComponentsWithGuards({
+    rootReal: fixture.rootAlias,
+    rootIdentity: { dev: fixture.identity.dev, ino: fixture.identity.ino + 1n },
+    targetPath,
+    beforeComponent: (componentPath) => { mutations.push(componentPath); },
+  })).rejects.toMatchObject({
+    constructor: FsSafeError,
+    code: "path-mismatch",
+  });
+  expect(mutations).toEqual([]);
+  await expect(fs.lstat(path.join(fixture.rootCanonical, "must-not-exist"))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+});
+
+it("rejects a case-distinct sibling under an ancestor alias where supported", async (context) => {
+  const container = await tempRoot("fs-safe-mkdir-alias-case-");
+  const realAncestor = path.join(container, "real-ancestor");
+  await fs.mkdir(realAncestor);
+  if (process.platform === "win32") {
+    const enabled = spawnSync(
+      resolveWindowsSystemCommand("fsutil.exe"),
+      ["file", "setCaseSensitiveInfo", realAncestor, "enable"],
+      { stdio: "ignore", timeout: 10_000, windowsHide: true },
+    );
+    if (enabled.error || enabled.status !== 0) {
+      context.skip();
+      return;
+    }
+  }
+
+  const trustedRoot = path.join(realAncestor, "Root");
+  const foldedSibling = path.join(realAncestor, "root");
+  try {
+    await fs.mkdir(trustedRoot);
+    await fs.mkdir(foldedSibling);
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "EEXIST") {
+      context.skip();
+      return;
+    }
+    throw error;
+  }
+  const trustedIdentity = await fs.lstat(trustedRoot, { bigint: true });
+  const siblingIdentity = await fs.lstat(foldedSibling, { bigint: true });
+  if (trustedIdentity.dev === siblingIdentity.dev && trustedIdentity.ino === siblingIdentity.ino) {
+    context.skip();
+    return;
+  }
+
+  const aliasAncestor = path.join(container, "ancestor-alias");
+  await fs.symlink(realAncestor, aliasAncestor, process.platform === "win32" ? "junction" : "dir");
+  const rootAlias = path.join(aliasAncestor, "Root");
+  const targetPath = path.join(aliasAncestor, "root", "must-not-exist");
+  const mutations: string[] = [];
+
+  await expect(mkdirPathComponentsWithGuards({
+    rootReal: rootAlias,
+    rootIdentity: { dev: trustedIdentity.dev, ino: trustedIdentity.ino },
+    targetPath,
+    beforeComponent: (componentPath) => { mutations.push(componentPath); },
+  })).rejects.toBeInstanceOf(FsSafeError);
+  expect(mutations).toEqual([]);
+  await expect(fs.lstat(path.join(foldedSibling, "must-not-exist"))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+});
 
 it("treats an in-root symlinked directory component as valid instead of rejecting it", async () => {
   const rootDir = await tempRoot("fs-safe-mkdir-symlink-ok-");

@@ -165,6 +165,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
     parentPath = await mkdirPathComponentsWithGuards({
       rootReal: params.rootPath,
       targetPath: parentPath,
+      rootIdentity: params.rootIdentity,
       assertBeforeMutation: params.assertBeforeMutation,
       beforeComponent: async (componentPath) =>
         await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("mkdir", componentPath),

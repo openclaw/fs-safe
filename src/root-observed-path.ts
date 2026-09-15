@@ -1,7 +1,8 @@
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
-import { isNotFoundPathError, isPathInside } from "./path.js";
+import { isNotFoundPathError } from "./path.js";
 import { PATH_ALIAS_POLICIES } from "./path-policy.js";
+import { admitPathInsideRoot } from "./root-boundary.js";
 import {
   RootPathObservationError,
   resolveRootPathWithObservation,
@@ -39,6 +40,7 @@ export async function resolvePinnedObservedPathInRoot(
         : `${ensureTrailingSep(rootReal)}${expandedPath}`,
       rootPath: rootReal,
       rootCanonicalPath: rootReal,
+      rootIdentity: root.rootIdentity,
       boundaryLabel: "root",
       policy: PATH_ALIAS_POLICIES.strict,
     }, { kind, rootGuard });
@@ -75,12 +77,17 @@ export async function resolvePinnedObservedPathInRoot(
     };
   }
   const firstSegment = relativeResolved.split(path.sep)[0];
-  if (firstSegment === ".." || path.isAbsolute(relativeResolved) ||
-    !isPathInside(ensureTrailingSep(resolved.rootCanonicalPath), resolved.canonicalPath)) {
+  if (firstSegment === ".." || path.isAbsolute(relativeResolved)) {
     throw outsideWorkspaceError();
   }
+  const admittedCanonicalPath = admitPathInsideRoot({
+    rootPath: resolved.rootCanonicalPath,
+    candidatePath: resolved.canonicalPath,
+    rootIdentity: root.rootIdentity,
+  });
+  if (!admittedCanonicalPath) throw outsideWorkspaceError();
   return {
     rootReal: resolved.rootCanonicalPath,
-    resolved: resolved.canonicalPath,
+    resolved: admittedCanonicalPath.path,
   };
 }
