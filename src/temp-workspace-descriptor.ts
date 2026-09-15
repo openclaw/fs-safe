@@ -94,19 +94,14 @@ export function openTempWorkspaceCleanupParent(
   try {
     // Observe the trusted name after acquiring the descriptor, then associate
     // the two exact identities within the same synchronous admission call.
-    const observed = admission.associateCurrent(
-      () => fsSync.fstatSync(fd, { bigint: true }),
-    );
-    if (path.resolve(observed.dir) !== pathname) {
-      throw new FsSafeError("path-mismatch", "temp workspace cleanup parent changed while opening");
-    }
+    admission.associateCurrent(() => fsSync.fstatSync(fd, { bigint: true }));
     return {
       fd,
       access: opened.access,
       receipt: Object.freeze({
         path: pathname,
-        realPath: observed.realPath,
-        identity: Object.freeze({ dev: observed.stat.dev, ino: observed.stat.ino }),
+        realPath: admission.realPath,
+        identity: admission.identity,
       }),
     };
   } catch (error) {

@@ -1,26 +1,37 @@
-import fsSync, { type BigIntStats } from "node:fs";
+import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { inspectDirectoryIdentitySync } from "./directory-guard.js";
+import {
+  inspectDirectoryIdentitySync,
+  observeDirectoryIdentitySync,
+} from "./directory-guard.js";
 import { pinNodeDirectoryForMode, pinNodeDirectoryForModeSync } from "./directory-mode-node.js";
 import { FsSafeError } from "./errors.js";
+import { recordFileObservationFailure } from "./file-observation.js";
 import { realpathSync } from "./realpath.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import type { TempWorkspaceRetainedChild } from "./temp-workspace-descriptor.js";
 
-type DirectorySnapshot = { dir: string; realPath: string; stat: BigIntStats };
-export type TempWorkspaceRootAssociation = Readonly<{
+const WINDOWS = process.platform === "win32";
+
+type ExactIdentity = Readonly<{ dev: bigint; ino: bigint }>;
+type NumericIdentity = Readonly<{ dev: number; ino: number }>;
+type DirectorySnapshot = {
   dir: string;
+  identity: ExactIdentity;
+  numericIdentity: NumericIdentity | undefined;
   realPath: string;
   stat: BigIntStats;
-}>;
+};
 export type TempWorkspaceRootAdmission = {
   dir: string;
+  identity: ExactIdentity;
   ownerUid: number | undefined;
+  realPath: string;
   assertCurrent(): void;
   assertAncestry(): void;
-  associateCurrent(inspectDescriptor: () => BigIntStats): TempWorkspaceRootAssociation;
-  associateAncestry(inspectDescriptor: () => BigIntStats): TempWorkspaceRootAssociation;
+  associateCurrent(inspectDescriptor: () => BigIntStats): void;
+  associateAncestry(inspectDescriptor: () => BigIntStats): void;
 };
 
 export function validateTempWorkspaceDirMode(mode: number): void {
@@ -35,7 +46,7 @@ export function validateTempWorkspaceDirMode(mode: number): void {
 function effectiveOwner(): number | undefined {
   // Windows mode/uid fields do not describe ACL authority. The supplied root's
   // ACL remains a caller trust requirement, independently of cleanup safety.
-  if (process.platform === "win32") return undefined;
+  if (WINDOWS) return undefined;
   let uid: number | undefined;
   try {
     uid = process.geteuid?.();
@@ -48,22 +59,51 @@ function effectiveOwner(): number | undefined {
   return uid;
 }
 
-function assertTrustedDirectory(stat: BigIntStats, uid: number | undefined, child = false): void {
+function assertTrustedDirectory(
+  stat: BigIntStats | Stats,
+  uid: number | undefined,
+  child = false,
+): void {
   if (uid === undefined) return;
-  if (stat.uid !== BigInt(uid) && (child || stat.uid !== 0n)) {
+  const ownedByUser = typeof stat.uid === "bigint" ? stat.uid === BigInt(uid) : stat.uid === uid;
+  const ownedByRoot = typeof stat.uid === "bigint" ? stat.uid === 0n : stat.uid === 0;
+  if (!ownedByUser && (child || !ownedByRoot)) {
     throw new FsSafeError("not-owned", "temp workspace directory has an untrusted owner");
   }
   // A root/current-user-owned sticky directory protects children owned by us,
   // including the usual shared system temp directory. Never chmod that parent.
-  if ((stat.mode & 0o022n) !== 0n && (child || (stat.mode & 0o1000n) === 0n)) {
+  const writable = typeof stat.mode === "bigint"
+    ? (stat.mode & 0o022n) !== 0n
+    : Number.isSafeInteger(stat.mode) && stat.mode >= 0 && (stat.mode & 0o022) !== 0;
+  const sticky = typeof stat.mode === "bigint"
+    ? (stat.mode & 0o1000n) !== 0n
+    : Number.isSafeInteger(stat.mode) && stat.mode >= 0 && (stat.mode & 0o1000) !== 0;
+  if (typeof stat.mode !== "bigint" && (!Number.isSafeInteger(stat.mode) || stat.mode < 0)) {
+    throw new FsSafeError("insecure-permissions", "temp workspace directory permissions are invalid");
+  }
+  if (writable && (child || !sticky)) {
     throw new FsSafeError("insecure-permissions", "temp workspace directory is group/world writable without sticky protection");
   }
+}
+
+function safeNumericIdentity(stat: BigIntStats): NumericIdentity | undefined {
+  const dev = Number(stat.dev);
+  const ino = Number(stat.ino);
+  if (
+    !Number.isSafeInteger(dev) || dev < 0 || BigInt(dev) !== stat.dev ||
+    !Number.isSafeInteger(ino) || ino < 0 || BigInt(ino) !== stat.ino ||
+    (WINDOWS && (dev === 0 || ino === 0))
+  ) {
+    return undefined;
+  }
+  return Object.freeze({ dev, ino });
 }
 
 function snapshot(dir: string, uid: number | undefined, realPath = realpathSync.native(dir)): DirectorySnapshot {
   const stat = inspectDirectoryIdentitySync(dir);
   assertTrustedDirectory(stat, uid);
-  return { dir, realPath, stat };
+  const identity = Object.freeze({ dev: stat.dev, ino: stat.ino });
+  return { dir, identity, numericIdentity: safeNumericIdentity(stat), realPath, stat };
 }
 
 function assertCanonicalRoot(entry: DirectorySnapshot): void {
@@ -72,38 +112,61 @@ function assertCanonicalRoot(entry: DirectorySnapshot): void {
   }
 }
 
-function inspectSnapshot(entry: DirectorySnapshot, uid: number | undefined): BigIntStats {
-  const stat = inspectDirectoryIdentitySync(entry.dir, entry.stat);
-  assertTrustedDirectory(stat, uid);
-  assertCanonicalRoot(entry);
-  return stat;
+function identityMismatch(): never {
+  const error = new FsSafeError("path-mismatch", "file identity changed or could not be verified");
+  recordFileObservationFailure(error, "identity");
+  throw error;
 }
 
-function inspectChain(
-  chain: DirectorySnapshot[], uid: number | undefined,
-): { entry: DirectorySnapshot; stat: BigIntStats } {
-  let current: BigIntStats | undefined;
+function inspectSnapshotIdentity(entry: DirectorySnapshot): BigIntStats | Stats {
+  const expected = entry.numericIdentity;
+  if (!expected) {
+    return inspectDirectoryIdentitySync(entry.dir, entry.identity);
+  }
+  const stat = observeDirectoryIdentitySync(entry.dir);
+  let requiresExactRetry = false;
+  const devKnown = Number.isSafeInteger(stat.dev) && stat.dev >= 0 && (!WINDOWS || stat.dev !== 0);
+  if (devKnown) {
+    if (stat.dev !== expected.dev) identityMismatch();
+  } else if (WINDOWS) requiresExactRetry = true;
+  else identityMismatch();
+  const inoKnown = Number.isSafeInteger(stat.ino) && stat.ino >= 0 && (!WINDOWS || stat.ino !== 0);
+  if (inoKnown) {
+    if (stat.ino !== expected.ino) identityMismatch();
+  } else if (WINDOWS) requiresExactRetry = true;
+  else identityMismatch();
+  if (!requiresExactRetry) return stat;
+  // Read exact identity only once. The strict helper may re-check this constant
+  // receipt in memory when Windows still reports an unknown component.
+  const exact = observeDirectoryIdentitySync(entry.dir, { bigint: true });
+  return inspectFileIdentitySync(() => exact, entry.identity);
+}
+
+function assertSnapshot(entry: DirectorySnapshot, uid: number | undefined): void {
+  const stat = inspectSnapshotIdentity(entry);
+  assertTrustedDirectory(stat, uid);
+  assertCanonicalRoot(entry);
+}
+
+function assertChain(chain: DirectorySnapshot[], uid: number | undefined): void {
   for (const entry of chain) {
-    current = inspectDirectoryIdentitySync(entry.dir, entry.stat);
+    const current = inspectSnapshotIdentity(entry);
     assertTrustedDirectory(current, uid);
   }
   const last = chain[chain.length - 1]!;
   assertCanonicalRoot(last);
-  return { entry: last, stat: current! };
 }
 
 function associateTempWorkspaceRoot(
   entry: DirectorySnapshot,
-  named: BigIntStats,
   ownerUid: number | undefined,
   inspectDescriptor: () => BigIntStats,
-): TempWorkspaceRootAssociation {
-  const stat = inspectFileIdentitySync(inspectDescriptor, named);
+): void {
+  const stat = inspectFileIdentitySync(inspectDescriptor, entry.identity);
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw new FsSafeError("not-file", "temp workspace cleanup parent must be a real directory");
   }
   assertTrustedDirectory(stat, ownerUid);
-  return Object.freeze({ stat, dir: entry.dir, realPath: entry.realPath });
 }
 
 function rootPlan(rootDir: string): {
@@ -139,7 +202,7 @@ function rootPlan(rootDir: string): {
   // Missing-component creation needs a replay before its first mutation. When
   // the complete root already exists, the caller's pre-mkdtemp ancestry pass
   // is the first mutation boundary and makes an immediate replay redundant.
-  if (missing.length > 0) inspectChain(chain, ownerUid);
+  if (missing.length > 0) assertChain(chain, ownerUid);
   return { chain, missing, ownerUid };
 }
 
@@ -148,23 +211,18 @@ function rootAdmission(chain: DirectorySnapshot[], ownerUid: number | undefined)
   const current = chain[chain.length - 1]!;
   return {
     dir: current.dir,
+    identity: current.identity,
     ownerUid,
-    assertCurrent: () => { inspectSnapshot(current, ownerUid); },
-    assertAncestry: () => { inspectChain(chain, ownerUid); },
-    associateCurrent: (inspectDescriptor) => associateTempWorkspaceRoot(
-      current,
-      inspectSnapshot(current, ownerUid),
-      ownerUid,
-      inspectDescriptor,
-    ),
+    realPath: current.realPath,
+    assertCurrent: () => { assertSnapshot(current, ownerUid); },
+    assertAncestry: () => { assertChain(chain, ownerUid); },
+    associateCurrent: (inspectDescriptor) => {
+      assertSnapshot(current, ownerUid);
+      associateTempWorkspaceRoot(current, ownerUid, inspectDescriptor);
+    },
     associateAncestry: (inspectDescriptor) => {
-      const observed = inspectChain(chain, ownerUid);
-      return associateTempWorkspaceRoot(
-        observed.entry,
-        observed.stat,
-        ownerUid,
-        inspectDescriptor,
-      );
+      assertChain(chain, ownerUid);
+      associateTempWorkspaceRoot(current, ownerUid, inspectDescriptor);
     },
   };
 }
@@ -218,7 +276,7 @@ function assertTempWorkspaceChildState(
   stat: BigIntStats, ownerUid: number | undefined,
 ): void {
   if (typeof stat.dev !== "bigint" || typeof stat.ino !== "bigint" ||
-    (process.platform === "win32" && (stat.dev === 0n || stat.ino === 0n))) {
+    (WINDOWS && (stat.dev === 0n || stat.ino === 0n))) {
     throw new FsSafeError("path-mismatch", "temp workspace child identity could not be verified");
   }
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
@@ -236,7 +294,7 @@ export function validateInitialTempWorkspaceChild(
 function childHasRequestedMode(stat: BigIntStats, mode: number): boolean {
   // Windows st_mode does not establish ACL privacy. Creation still validates
   // the exact named object, while the supplied root's ACL remains caller trust.
-  return process.platform === "win32" || Number(stat.mode & 0o7777n) === (mode & 0o7777);
+  return WINDOWS || Number(stat.mode & 0o7777n) === (mode & 0o7777);
 }
 
 function tempWorkspaceChildNeedsModeInitialization(

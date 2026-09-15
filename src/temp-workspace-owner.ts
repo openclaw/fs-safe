@@ -107,16 +107,8 @@ export class TempWorkspaceCleanupCapability {
       throw new FsSafeError("path-mismatch", "temp workspace cleanup parent is unavailable");
     }
     const inspectDescriptor = () => fsSync.fstatSync(this.parent!.fd, { bigint: true });
-    const current = ancestry
-      ? this.#admission.associateAncestry(inspectDescriptor)
-      : this.#admission.associateCurrent(inspectDescriptor);
-    if (
-      path.resolve(current.dir) !== this.parent.receipt.path ||
-      current.realPath !== this.parent.receipt.realPath ||
-      !sameFileIdentityForCleanup(current.stat, this.parent.receipt.identity)
-    ) {
-      throw new FsSafeError("path-mismatch", "temp workspace cleanup parent changed");
-    }
+    if (ancestry) this.#admission.associateAncestry(inspectDescriptor);
+    else this.#admission.associateCurrent(inspectDescriptor);
   }
 
   admitChildDescriptor(canEnumerate: boolean): boolean {

@@ -9,6 +9,16 @@ import * as cleanup from "../src/temp-cleanup.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
+type SafeIdentity = Readonly<{ dev: number; ino: number }>;
+
+function projectSafeIdentity(
+  stat: { dev: number | bigint; ino: number | bigint },
+  identity: SafeIdentity,
+): void {
+  stat.dev = typeof stat.dev === "bigint" ? BigInt(identity.dev) : identity.dev;
+  stat.ino = typeof stat.ino === "bigint" ? BigInt(identity.ino) : identity.ino;
+}
+
 beforeEach(() => configureFsSafeNative({ mode: "off" }));
 afterEach(() => {
   vi.restoreAllMocks();
@@ -39,42 +49,174 @@ for (const variant of ["async", "sync"] as const) {
       }
     });
 
-    it("omits the existing-root replay while keeping missing-component observations linear", async () => {
-      const samples = new Map<number, { ancestorObservations: number; total: number }>();
+    it("retains one exact ancestor receipt and replays it numerically", async () => {
       for (const missing of [0, 1, 3, 6]) {
         const base = await tempRoot("fs-safe-workspace-observations-");
+        const admittedBase = realpathSync.native(base);
         const existing = path.join(base, "existing");
         await fs.mkdir(existing, { mode: 0o700 });
         const rootDir = path.join(existing, ...Array.from({ length: missing }, (_, index) => `part-${index}`));
-        let ancestorObservations = 0;
-        let total = 0;
+        let exactAncestorObservations = 0;
+        let numericAncestorObservations = 0;
+        const identity = { dev: 101, ino: 201 + missing };
         const lstat = fsSync.lstatSync.bind(fsSync);
         const observation = vi.spyOn(fsSync, "lstatSync").mockImplementation((name, options) => {
-          if (options?.bigint === true) {
-            total += 1;
-            // base is never an immediate mkdir/mkdtemp/chmod parent here.
-            if (name === base) ancestorObservations += 1;
+          const stat = lstat(name, options);
+          if (name === admittedBase) {
+            projectSafeIdentity(stat, identity);
+            if (options?.bigint === true) exactAncestorObservations += 1;
+            else numericAncestorObservations += 1;
           }
-          return lstat(name, options);
+          return stat;
         });
         const workspace = await create(rootDir);
-        samples.set(missing, { ancestorObservations, total });
         observation.mockRestore();
         try {
-          // A complete existing root has one snapshot plus the pre-mkdtemp and
-          // final-adoption passes. Missing creation retains the extra replay
-          // before the first mkdir mutation.
-          expect(ancestorObservations).toBe(missing === 0 ? 3 : 4);
+          expect(exactAncestorObservations).toBe(1);
+          // Pre-mkdtemp and final-adoption ancestry remain. Missing creation
+          // retains its additional replay before the first mkdir mutation.
+          expect(numericAncestorObservations).toBe(missing === 0 ? 2 : 3);
         } finally {
           await workspace.cleanup();
         }
       }
-      const one = samples.get(1)!.total;
-      const three = samples.get(3)!.total;
-      const six = samples.get(6)!.total;
-      expect((three - one) / 2).toBe(5);
-      expect((six - three) / 3).toBe(5);
     });
+
+    it.runIf(process.platform !== "win32")(
+      "rejects a known numeric mismatch before exact retry or canonicalization", async () => {
+        const base = await tempRoot("fs-safe-workspace-numeric-mismatch-");
+        const rootDir = path.join(base, "root");
+        await fs.mkdir(rootDir, { mode: 0o700 });
+        const admittedRoot = realpathSync.native(rootDir);
+        const identity = { dev: 301, ino: 401 };
+        let exact = 0;
+        let numeric = 0;
+        let parentFd: number | undefined;
+        const open = fsSync.openSync.bind(fsSync);
+        vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
+          const fd = open(...args);
+          if (args[0] === admittedRoot) parentFd = fd;
+          return fd;
+        });
+        const lstat = fsSync.lstatSync.bind(fsSync);
+        vi.spyOn(fsSync, "lstatSync").mockImplementation((name, options) => {
+          const stat = lstat(name, options);
+          if (name === admittedRoot) {
+            projectSafeIdentity(stat, identity);
+            if (options?.bigint === true) exact += 1;
+            else if (exact > 0) {
+              numeric += 1;
+              if (numeric === 2 && typeof stat.ino === "number") stat.ino += 1;
+            }
+          }
+          return stat;
+        });
+        const fstat = fsSync.fstatSync.bind(fsSync);
+        vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
+          const stat = fstat(fd, options);
+          if (fd === parentFd && options?.bigint === true) {
+            projectSafeIdentity(stat, identity);
+          }
+          return stat;
+        });
+        const canonicalize = vi.spyOn(realpathSync, "native");
+        const register = vi.spyOn(cleanup, "registerTempPathForExit");
+        await expect(create(rootDir)).rejects.toMatchObject({ code: "path-mismatch" });
+        expect(exact).toBe(1);
+        expect(numeric).toBe(2);
+        expect(canonicalize.mock.calls.filter(([name]) =>
+          name === rootDir || name === admittedRoot)).toHaveLength(2);
+        expect(register).not.toHaveBeenCalled();
+        expect(await fs.readdir(rootDir)).toEqual([]);
+      },
+    );
+
+    it("keeps unsafe initial ancestor identities on exact replay", async () => {
+      const base = await tempRoot("fs-safe-workspace-exact-replay-");
+      const ancestor = path.join(base, "ancestor");
+      const rootDir = path.join(ancestor, "root");
+      await fs.mkdir(rootDir, { recursive: true, mode: 0o700 });
+      const admittedAncestor = realpathSync.native(ancestor);
+      const unsafe = BigInt(Number.MAX_SAFE_INTEGER) + 1n;
+      let exact = 0;
+      let numeric = 0;
+      const lstat = fsSync.lstatSync.bind(fsSync);
+      const observation = vi.spyOn(fsSync, "lstatSync").mockImplementation((name, options) => {
+        const stat = lstat(name, options);
+        if (name === admittedAncestor && options?.bigint === true && typeof stat.dev === "bigint") {
+          exact += 1;
+          stat.dev = unsafe;
+          stat.ino = unsafe + 1n;
+        } else if (name === admittedAncestor) {
+          numeric += 1;
+        }
+        return stat;
+      });
+      const workspace = await create(rootDir);
+      expect(exact).toBe(3);
+      expect(numeric).toBe(0);
+      observation.mockRestore();
+      await workspace.cleanup();
+    });
+
+    it.runIf(process.platform === "win32").each(["zero", "unsafe", "mismatch"] as const)(
+      "handles a %s Windows numeric identity without an unbounded retry", async (kind) => {
+        const base = await tempRoot("fs-safe-workspace-windows-replay-");
+        const rootDir = path.join(base, "root");
+        await fs.mkdir(rootDir, { mode: 0o700 });
+        const admittedRoot = realpathSync.native(rootDir);
+        const fake = { dev: 101, ino: 202 };
+        let exact = 0;
+        let numeric = 0;
+        let parentFd: number | undefined;
+        const open = fsSync.openSync.bind(fsSync);
+        vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
+          const fd = open(...args);
+          if (args[0] === admittedRoot) parentFd = fd;
+          return fd;
+        });
+        const lstat = fsSync.lstatSync.bind(fsSync);
+        vi.spyOn(fsSync, "lstatSync").mockImplementation((name, options) => {
+          const stat = lstat(name, options);
+          if (name !== admittedRoot) return stat;
+          if (options?.bigint === true && typeof stat.dev === "bigint") {
+            exact += 1;
+            stat.dev = BigInt(fake.dev);
+            stat.ino = BigInt(fake.ino);
+          } else if (exact > 0 && typeof stat.dev === "number") {
+            numeric += 1;
+            stat.dev = fake.dev;
+            stat.ino = fake.ino;
+            if (numeric === 2) {
+              stat.ino = kind === "zero" ? 0 :
+                kind === "unsafe" ? Number.MAX_SAFE_INTEGER + 1 : fake.ino + 1;
+            }
+          }
+          return stat;
+        });
+        const fstat = fsSync.fstatSync.bind(fsSync);
+        vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
+          const stat = fstat(fd, options);
+          if (fd === parentFd && options?.bigint === true && typeof stat.dev === "bigint") {
+            stat.dev = BigInt(fake.dev);
+            stat.ino = BigInt(fake.ino);
+          }
+          return stat;
+        });
+        const operation = create(rootDir);
+        if (kind === "mismatch") {
+          await expect(operation).rejects.toMatchObject({ code: "path-mismatch" });
+          expect(exact).toBe(1);
+          expect(numeric).toBe(2);
+          expect(await fs.readdir(rootDir)).toEqual([]);
+        } else {
+          const workspace = await operation;
+          expect(exact).toBe(2);
+          expect(numeric).toBe(4);
+          await workspace.cleanup();
+        }
+      },
+    );
 
     it.runIf(process.platform !== "win32")(
       "orders final ancestry, cleanup authority, child security, and registration", async () => {
@@ -121,7 +263,7 @@ for (const variant of ["async", "sync"] as const) {
         const lstat = fsSync.lstatSync.bind(fsSync);
         vi.spyOn(fsSync, "lstatSync").mockImplementation((name, options) => {
           const stat = lstat(name, options);
-          if (modeChangeSettled && name === rootDir && options?.bigint === true) {
+          if (modeChangeSettled && name === rootDir) {
             rootObservationsAfterMode += 1;
             if (rootObservationsAfterMode === 1) events.push("ancestry");
           }
