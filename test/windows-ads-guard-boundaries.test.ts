@@ -166,6 +166,7 @@ describe("Windows namespace-alias guard boundaries", () => {
 
   it("snapshots guarded-mkdir root and target inputs once", async () => {
     const rootDir = await tempRoot("fs-safe-ads-mkdir-snapshot-");
+    const rootCanonical = fsSync.realpathSync.native(rootDir);
     simulateWindows();
     let rootReads = 0;
     let targetReads = 0;
@@ -179,7 +180,7 @@ describe("Windows namespace-alias guard boundaries", () => {
         targetReads += 1;
         return targetReads === 1 ? rootDir : `${rootDir}:payload`;
       },
-    })).resolves.toBe(path.resolve(rootDir));
+    })).resolves.toBe(rootCanonical);
     expect({ rootReads, targetReads }).toEqual({ rootReads: 1, targetReads: 1 });
   });
 
@@ -238,6 +239,11 @@ itPosix("preserves POSIX colon paths across guards, containment, and probes", as
   const rootDir = await tempRoot("fs-safe-posix-colon-guards-");
   const colonDir = path.join(rootDir, "scope:stable");
   const nested = path.join(colonDir, "child:next");
+  const canonicalNested = path.join(
+    fsSync.realpathSync.native(rootDir),
+    "scope:stable",
+    "child:next",
+  );
   await fs.mkdir(colonDir);
 
   await expect(assertNoSymlinkParents({
@@ -253,7 +259,7 @@ itPosix("preserves POSIX colon paths across guards, containment, and probes", as
   await expect(mkdirPathComponentsWithGuards({
     rootReal: rootDir,
     targetPath: nested,
-  })).resolves.toBe(nested);
+  })).resolves.toBe(canonicalNested);
   expect(isPathInsideWithRealpath(rootDir, nested)).toBe(true);
   expect(safeRealpathSync(nested)).toBe(fsSync.realpathSync(nested));
   expect(safeStatSync(nested)?.isDirectory()).toBe(true);
