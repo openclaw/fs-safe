@@ -1,10 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  GUEST_FILESYSTEM_CREATE_EXISTS_EXIT_CODE,
-  GUEST_FILESYSTEM_READ_NOT_FOUND_EXIT_CODE,
-} from "../src/guest.js";
+import { GUEST_FILESYSTEM_READ_NOT_FOUND_EXIT_CODE } from "../src/guest.js";
 import { runGuest } from "./helpers/guest-filesystem.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
@@ -94,13 +91,13 @@ describe.skipIf(process.platform === "win32")("guest parent creation races", () 
 
     const result = runGuest(
       parentCreationArgs(operation, workspace),
-      "replacement",
+      undefined,
       competingParentSetup(kind),
     );
 
     expect(result.error).toBeUndefined();
-    expect(result.status).not.toBe(0);
-    expect(result.status).not.toBe(GUEST_FILESYSTEM_CREATE_EXISTS_EXIT_CODE);
+    expect(result.signal).toBeNull();
+    expect(result.status).toBe(1);
     expect(result.stderr.toString()).toContain("competing parent created");
     expect(result.stderr.toString()).toMatch(/NotADirectoryError|Not a directory|Too many levels/i);
     expect((await fs.readdir(workspace)).sort()).toEqual(["raced", "source.txt"]);
@@ -119,11 +116,11 @@ describe.skipIf(process.platform === "win32")("guest parent creation races", () 
     async (operation) => {
       const workspace = await tempRoot("fs-safe-guest-no-mkdir-");
       await fs.writeFile(path.join(workspace, "source.txt"), "payload");
-      const result = runGuest(parentCreationArgs(operation, workspace, "0"), "replacement");
+      const result = runGuest(parentCreationArgs(operation, workspace, "0"));
 
       expect(result.error).toBeUndefined();
-      expect(result.status).not.toBe(0);
-      expect(result.status).not.toBe(GUEST_FILESYSTEM_CREATE_EXISTS_EXIT_CODE);
+      expect(result.signal).toBeNull();
+      expect(result.status).toBe(1);
       expect(result.stderr.toString()).toContain("FileNotFoundError");
       expect(await fs.readdir(workspace)).toEqual(["source.txt"]);
       expect(await fs.readFile(path.join(workspace, "source.txt"), "utf8")).toBe("payload");
