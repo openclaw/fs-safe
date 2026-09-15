@@ -6,6 +6,12 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      secure_file_credential_proof:
+        description: Run the manual Linux split-credential secure-file proof
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -21,6 +27,149 @@ jobs:
 
       - name: Lint workflows
         uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
+
+  secure-file-credential-proof:
+    name: Secure-file credential proof (Node ${{ matrix.node }})
+    if: github.event_name == 'workflow_dispatch' && inputs.secure_file_credential_proof == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        node:
+          - 22.23.2
+          - 24.20.0
+    env:
+      BASELINE_DIR: ${{ runner.temp }}/fs-safe-secure-file-baseline-${{ matrix.node }}
+      PROOF_PARENT: ${{ runner.temp }}/fs-safe-secure-file-proof-${{ matrix.node }}
+      RECEIPT_DIR: ${{ runner.temp }}/fs-safe-secure-file-receipt-${{ matrix.node }}
+      RECEIPT_PATH: ${{ runner.temp }}/fs-safe-secure-file-receipt-${{ matrix.node }}/secure-file-credential-proof.json
+    steps:
+      - name: Check out candidate with fixed baseline history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.25.0
+          run_install: false
+
+      - name: Set up exact Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install proof tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install --yes --no-install-recommends strace util-linux coreutils libc-bin
+
+      - name: Build candidate as the unprivileged runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          rustup target add wasm32-unknown-unknown
+          pnpm install --frozen-lockfile
+          pnpm build
+          test -f dist/secure-file.js
+          test -f dist/config.js
+          test -z "$(git status --short --untracked-files=no)"
+
+      - name: Build fixed historical negative control as the unprivileged runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          test ! -e "$BASELINE_DIR"
+          git cat-file -e 914cd7b41388876b55e1cca76b46b8eb01e46364^{commit}
+          git worktree add --detach "$BASELINE_DIR" 914cd7b41388876b55e1cca76b46b8eb01e46364
+          pnpm --dir "$BASELINE_DIR" install --frozen-lockfile
+          pnpm --dir "$BASELINE_DIR" build
+          test -f "$BASELINE_DIR/dist/secure-file.js"
+          test -f "$BASELINE_DIR/dist/config.js"
+          test -z "$(git -C "$BASELINE_DIR" status --short --untracked-files=no)"
+          test "$(git -C "$BASELINE_DIR" show -s --format=%H HEAD)" = 914cd7b41388876b55e1cca76b46b8eb01e46364
+          test "$(git -C "$BASELINE_DIR" show -s --format=%T HEAD)" = eb1d05638cd0ec21cea68a8b189ec3e253a8d903
+
+      - name: Prove split real and effective credential behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e "$PROOF_PARENT"
+          install -d -m 0700 "$RECEIPT_DIR"
+          candidate_dir=$(realpath "$GITHUB_WORKSPACE")
+          baseline_dir=$(realpath "$BASELINE_DIR")
+          node_path=$(realpath "$(command -v node)")
+          prlimit_path=$(realpath "$(command -v prlimit)")
+          setpriv_path=$(realpath "$(command -v setpriv)")
+          strace_path=$(realpath "$(command -v strace)")
+          timeout_path=$(realpath "$(command -v timeout)")
+          getent_path=$(realpath "$(command -v getent)")
+          candidate_head=$(git -C "$candidate_dir" show -s --format=%H HEAD)
+          candidate_tree=$(git -C "$candidate_dir" show -s --format=%T HEAD)
+          baseline_head=$(git -C "$baseline_dir" show -s --format=%H HEAD)
+          baseline_tree=$(git -C "$baseline_dir" show -s --format=%T HEAD)
+          builder_uid=$(id -u)
+          builder_gid=$(id -g)
+          sudo -- "$node_path" "$candidate_dir/scripts/secure-file-credential-proof.mjs" \
+            --candidate "$candidate_dir" \
+            --baseline "$baseline_dir" \
+            --worker "$candidate_dir/scripts/secure-file-credential-proof-worker.mjs" \
+            --proof-parent "$PROOF_PARENT" \
+            --receipt "$RECEIPT_PATH" \
+            --node "$node_path" \
+            --prlimit "$prlimit_path" \
+            --setpriv "$setpriv_path" \
+            --strace "$strace_path" \
+            --timeout "$timeout_path" \
+            --getent "$getent_path" \
+            --builder-uid "$builder_uid" \
+            --builder-gid "$builder_gid" \
+            --candidate-head "$candidate_head" \
+            --candidate-tree "$candidate_tree" \
+            --baseline-head "$baseline_head" \
+            --baseline-tree "$baseline_tree" \
+            --expected-node "v${{ matrix.node }}"
+
+      - name: Remove historical worktree
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="$RUNNER_TEMP/fs-safe-secure-file-baseline-${{ matrix.node }}"
+          test "$BASELINE_DIR" = "$expected"
+          if [[ -e "$BASELINE_DIR" ]]; then
+            git worktree remove --force "$BASELINE_DIR"
+          fi
+
+      - name: Create failed proof receipt when missing
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -e "$RECEIPT_PATH" || -L "$RECEIPT_PATH" ]]; then
+            exit 0
+          fi
+          install -d -m 0700 "$RECEIPT_DIR"
+          set -o noclobber
+          printf '%s\n' '{"schema":1,"proof":"secure-file-split-credential","overall":false,"failure":{"stage":"workflow-fallback","name":"ProofError","code":"RECEIPT_MISSING"},"workflow":{"fallback":true,"receiptAllowlisted":true}}' > "$RECEIPT_PATH"
+          chmod 0644 "$RECEIPT_PATH"
+          exit 1
+
+      - name: Upload allowlisted credential receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: secure-file-credential-proof-node-${{ matrix.node }}
+          path: ${{ env.RECEIPT_PATH }}
+          if-no-files-found: error
 
   check:
     name: Node ${{ matrix.node }} check (${{ matrix.os }})
