@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { validateFilenameFallbackProfile } from "./filename-fallback-profile.mjs";
+import { measuredSourceArguments, validateMeasuredDistribution } from "./measured-distribution.mjs";
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/iu;
 const CONTROL_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u;
@@ -193,6 +195,10 @@ function validateResolution(name, resolution) {
     tree: normalizeSha(`${name} tree`, resolution.tree),
     manifestHash: normalizeSha256(`${name} manifest hash`, resolution.manifestHash),
     lockfileHash: normalizeSha256(`${name} lockfile hash`, resolution.lockfileHash),
+    filenameSourceBlob: normalizeSha(`${name} filename source blob`, resolution.filenameSourceBlob),
+    filenameSourceHash: normalizeSha256(`${name} filename source hash`, resolution.filenameSourceHash),
+    filenameFallbackProfile: validateFilenameFallbackProfile(resolution.filenameFallbackProfile,
+      `${name} filename fallback profile`),
   };
 }
 
@@ -231,6 +237,14 @@ export function createMethodAuditPlan({ inputs, harness, candidate, baseline = n
     fail("compare_ref did not resolve to the requested exact commit");
   }
   const controlKind = deriveControlKind(inputs.control, normalizedCandidate.commit, normalizedBaseline?.commit);
+  if (controlKind === "same-artifact") {
+    for (const field of ["tree", "manifestHash", "lockfileHash", "filenameSourceBlob",
+      "filenameSourceHash", "filenameFallbackProfile"]) {
+      if (normalizedCandidate[field] !== normalizedBaseline[field]) {
+        fail(`same-artifact source ${field} identities differ`);
+      }
+    }
+  }
   const roleBuilds = {
     candidate: "candidate-build",
     baseline: controlKind === "same-artifact" ? "candidate-build" : "baseline-build",
@@ -284,9 +298,8 @@ export function attachPlanHash(plan) {
   return { ...plan, planHash: digestJson(plan) };
 }
 
-export function createRunnerArguments({ runnerFile, distRoot, distributionIdentity, reportFile, mode, settings }) {
+export function createRunnerArguments({ runnerFile, distRoot, reportFile, mode, settings, measuredSource }) {
   oneOf("native mode", mode, ["off", "require"]);
-  oneOf("distribution identity", distributionIdentity, ["candidate-equivalent", "comparison"]);
   const args = [
     runnerFile,
     "--mode", mode,
@@ -295,9 +308,9 @@ export function createRunnerArguments({ runnerFile, distRoot, distributionIdenti
     "--warmup", "3",
     "--json", reportFile,
     "--dist", distRoot,
-    "--distribution-identity", distributionIdentity,
   ];
   if (settings.filter) args.push("--filter", settings.filter);
+  if (measuredSource) args.push(...measuredSourceArguments(measuredSource));
   return args;
 }
 
@@ -341,19 +354,16 @@ function buildForReport(plan, reportPlan) {
   return build;
 }
 
-export function distributionIdentityForReport(plan, reportPlan) {
-  const sourceRole = buildForReport(plan, reportPlan).sourceRole;
-  oneOf("build source role", sourceRole, ["candidate", "baseline"]);
-  return sourceRole === "candidate" ? "candidate-equivalent" : "comparison";
-}
-
 export function validateRawReport(plan, reportPlan, report, snapshot) {
   const build = snapshot.builds[reportPlan.buildId];
   const buildPlan = buildForReport(plan, reportPlan);
   if (!build) fail(`snapshot is missing ${reportPlan.buildId}`);
   const buildSource = plan.sources[buildPlan.sourceRole];
   if (!buildSource || build.commit !== buildSource.commit || build.tree !== buildSource.tree ||
-      build.manifestHash !== buildSource.manifestHash || build.lockfileHash !== buildSource.lockfileHash) {
+      build.manifestHash !== buildSource.manifestHash || build.lockfileHash !== buildSource.lockfileHash ||
+      build.filenameSourceBlob !== buildSource.filenameSourceBlob ||
+      build.filenameSourceHash !== buildSource.filenameSourceHash ||
+      build.filenameFallbackProfile !== buildSource.filenameFallbackProfile) {
     fail(`${reportPlan.file} installation is not bound to its resolved source blobs`);
   }
   if (snapshot.harness.commit !== plan.harness.sha || snapshot.harness.tree !== plan.harness.tree ||
@@ -368,14 +378,10 @@ export function validateRawReport(plan, reportPlan, report, snapshot) {
       report.metadata?.harnessHash !== snapshot.harness.benchmarkHash) {
     fail(`${reportPlan.file} was not produced by the reviewed harness`);
   }
-  if (report.metadata?.distHash !== build.runnerDistHash) fail(`${reportPlan.file} distribution hash mismatch`);
-  const distributionIdentity = distributionIdentityForReport(plan, reportPlan);
-  if (report.metadata?.distributionIdentity !== distributionIdentity) {
-    fail(`${reportPlan.file} distribution identity mismatch`);
-  }
-  if (distributionIdentity === "candidate-equivalent" &&
-      report.metadata?.measuredProfiles?.filenameFallbackSanitization !== "sanitized") {
-    fail(`${reportPlan.file} candidate-equivalent filename fallback profile mismatch`);
+  try {
+    validateMeasuredDistribution(plan, reportPlan, report, build.runnerDistHash);
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
   }
   if (report.metadata?.mode !== reportPlan.mode) fail(`${reportPlan.file} native mode mismatch`);
   if (report.metadata?.samples !== plan.settings.samples) fail(`${reportPlan.file} sample count mismatch`);
@@ -450,6 +456,9 @@ export function createReportEvidence(plan, reportPlan, report, snapshot, runner,
       tree: source.tree,
       manifestBlobHash: source.manifestHash,
       lockfileBlobHash: source.lockfileHash,
+      filenameSourceBlob: source.filenameSourceBlob,
+      filenameSourceHash: source.filenameSourceHash,
+      filenameFallbackProfile: source.filenameFallbackProfile,
     },
     measurement: {
       reportId: reportPlan.file.slice(0, -5),
@@ -475,6 +484,9 @@ export function createReportEvidence(plan, reportPlan, report, snapshot, runner,
       dependencySnapshot: build.dependencySnapshot,
       nativeArtifacts: build.nativeArtifacts,
       loadedNativeHash: report.metadata.nativeHash,
+      filenameSourceBlob: build.filenameSourceBlob,
+      filenameSourceHash: build.filenameSourceHash,
+      filenameFallbackProfile: build.filenameFallbackProfile,
       identityStableThroughStudy,
     },
     runtime: {

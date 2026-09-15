@@ -2,8 +2,18 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { registerFilenameFallbackBenchmarks } from "./filename-fallback-profile.mjs";
 
-export async function registerPaths({ api: a, workspace: w, register: add, contract, exclude, args, native, measuredProfiles }) {
+export async function registerPaths({
+  api: a,
+  workspace: w,
+  register: add,
+  contract,
+  exclude,
+  args,
+  native,
+  measuredProfiles,
+}) {
   const input = path.join(w, "input.json");
   const error = Object.assign(new Error("synthetic"), { code: "ENOENT" });
   const simple = {
@@ -16,7 +26,7 @@ export async function registerPaths({ api: a, workspace: w, register: add, contr
     assertNoWindowsNetworkPath: [input], basenameFromMediaSource: [pathToFileURL(input).href],
     hasEncodedFileUrlSeparator: ["file:///workspace/a%20b.json"], isWindowsDriveLetterPath: ["C:\\workspace\\file", "win32"],
     isWindowsNetworkPath: ["\\\\server\\share\\file", "win32"], safeFileURLToPath: [pathToFileURL(input).href], trySafeFileURLToPath: [pathToFileURL(input).href],
-    safeDirName: ["package/module"], safePathSegmentHashed: ["ordinary-safe-name"], sanitizeUntrustedFileName: ["ordinary-safe-name.json", "fallback"],
+    safeDirName: ["package/module"], safePathSegmentHashed: ["ordinary-safe-name"],
     sanitizeTempFileName: ["ordinary-safe-name.json"], resolveRegularFileAppendFlags: [],
     sameFileIdentity: [{ dev: 1, ino: 123 }, { dev: 1, ino: 123 }],
     resolveSafeInstallDir: [{ baseDir: w, id: "module", invalidNameMessage: "invalid" }],
@@ -29,86 +39,12 @@ export async function registerPaths({ api: a, workspace: w, register: add, contr
     categorizeFsSafeError: ["outside-workspace"],
   };
   for (const [name, values] of Object.entries(simple)) add(name, () => a[name](...values), { sync: true, batch: 100 });
-  add("sanitizeUntrustedFileName/fallback", () => a.sanitizeUntrustedFileName("<>", "fallback.json"), {
-    sync: true, batch: 100, verify: (result) => assert.equal(result, "fallback.json"),
+  registerFilenameFallbackBenchmarks({
+    sanitize: a.sanitizeUntrustedFileName,
+    register: add,
+    expectedProfile: measuredProfiles.expectedFilenameFallback,
+    observedProfile: measuredProfiles.observedFilenameFallback,
   });
-  const sanitizerMatrix = [
-    ["primary-empty", "", "fallback.json"],
-    ["primary-whitespace", " \t\r\n", "fallback.json"],
-    ["primary-punctuation", '<>:"|?*', "fallback.json"],
-    ["primary-controls", "\u0000\u001f\u007f\u0085\u009f", "fallback.json"],
-    ["primary-mixed", "<>report?.json", "fallback.json"],
-    ["fallback-path", "<>", "../nested/fallback?.json"],
-    ["fallback-windows-path", "<>", "..\\nested\\fallback?.json"],
-    ["fallback-device", "<>", "CON.txt"],
-    ["fallback-padded-device", "<>", "NUL   .txt"],
-    ["fallback-ascii-199", "<>", "a".repeat(199)],
-    ["fallback-ascii-200", "<>", "a".repeat(200)],
-    ["fallback-ascii-201", "<>", "a".repeat(201)],
-    ["fallback-unicode-200", "<>", "é".repeat(200)],
-    ["fallback-surrogate-boundary", "<>", `${"a".repeat(199)}😀`],
-    ["both-unusable", "<>", "../.."],
-  ];
-  const legacyExpectations = {
-    "primary-empty": "fallback.json",
-    "primary-whitespace": "fallback.json",
-    "primary-punctuation": "fallback.json",
-    "primary-controls": "fallback.json",
-    "primary-mixed": "report.json",
-    "fallback-path": "../nested/fallback?.json",
-    "fallback-windows-path": "..\\nested\\fallback?.json",
-    "fallback-device": "CON.txt",
-    "fallback-padded-device": "NUL   .txt",
-    "fallback-ascii-199": "a".repeat(199),
-    "fallback-ascii-200": "a".repeat(200),
-    "fallback-ascii-201": "a".repeat(201),
-    "fallback-unicode-200": "é".repeat(200),
-    "fallback-surrogate-boundary": `${"a".repeat(199)}😀`,
-    "both-unusable": "../..",
-  };
-  const sanitizedExpectations = {
-    "primary-empty": "fallback.json",
-    "primary-whitespace": "fallback.json",
-    "primary-punctuation": "fallback.json",
-    "primary-controls": "fallback.json",
-    "primary-mixed": "report.json",
-    "fallback-path": "fallback.json",
-    "fallback-windows-path": "fallback.json",
-    "fallback-device": "CON_.txt",
-    "fallback-padded-device": "NUL   _.txt",
-    "fallback-ascii-199": "a".repeat(199),
-    "fallback-ascii-200": "a".repeat(200),
-    "fallback-ascii-201": "a".repeat(200),
-    "fallback-unicode-200": "é".repeat(200),
-    "fallback-surrogate-boundary": "a".repeat(199),
-    "both-unusable": "file",
-  };
-  const expectations = measuredProfiles.filenameFallbackSanitization === "legacy"
-    ? legacyExpectations
-    : sanitizedExpectations;
-  assert.equal(Object.keys(expectations).length, sanitizerMatrix.length);
-  for (const [name, primary, fallback] of sanitizerMatrix) {
-    const expected = expectations[name];
-    assert.equal(typeof expected, "string", `Missing ${measuredProfiles.filenameFallbackSanitization} expectation for ${name}`);
-    assert.equal(
-      a.sanitizeUntrustedFileName(primary, fallback),
-      expected,
-      `Unexpected ${measuredProfiles.filenameFallbackSanitization} output for ${name}`,
-    );
-  }
-  for (const [name, primary, fallback] of sanitizerMatrix) {
-    const expected = expectations[name];
-    add(`sanitizeUntrustedFileName/matrix/${name}`, () => (
-      a.sanitizeUntrustedFileName(primary, fallback)
-    ), {
-      sync: true,
-      batch: 100,
-      workloadSemantics: legacyExpectations[name] === sanitizedExpectations[name]
-        ? "equivalent-output"
-        : "changed-output",
-      verify: (result) => assert.equal(result, expected),
-    });
-  }
   add("safePathSegmentHashedV2", () => a.safePathSegmentHashedV2("ordinary-safe-name"), {
     sync: true,
     batch: 100,
