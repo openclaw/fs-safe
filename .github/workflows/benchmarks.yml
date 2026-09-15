@@ -126,7 +126,9 @@ jobs:
                 const measured = Array.isArray(report.results) &&
                   report.results.some((result) => result.skipped === undefined);
                 if (!measured) {
-                  console.error(`No measured cases for filter ${JSON.stringify(process.env.METHOD_FILTER)} on ${process.platform}/${process.env.REPORT_MODE} (${process.env.REPORT_LABEL})`);
+                  console.error("No measured cases for filter " +
+                    JSON.stringify(process.env.METHOD_FILTER) + " on " + process.platform + "/" +
+                    process.env.REPORT_MODE + " (" + process.env.REPORT_LABEL + ")");
                   process.exit(2);
                 }
               '
