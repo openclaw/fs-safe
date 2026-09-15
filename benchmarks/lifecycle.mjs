@@ -112,11 +112,101 @@ export async function registerLifecycle({ api: a, workspace: w, native, binding,
     const type = `TempWorkspace${suffix}`;
     const sync = suffix === "Sync";
     add(name, () => a[name](tempOptions), { sync, after: (r) => r?.cleanup() });
+    // The historical row keeps its stable name. On Linux sync it now measures
+    // requested-mode creation whose ordinary-umask path avoids correction.
     add(`${name}/mode-correction`, () => a[name]({ ...tempOptions, dirMode: 0o750 }), {
       sync,
       skip: process.platform === "win32" ? "Windows does not initialize POSIX directory modes." : undefined,
       after: (r) => r?.cleanup(),
     });
+    if (sync) {
+      let previousUmask;
+      const correctionProbe = path.join(w, ".fs-safe-temp-mode-correction-probe");
+      const resetForcedCorrectionSetup = () => {
+        const failures = [];
+        try {
+          fs.rmSync(correctionProbe, { recursive: true, force: true });
+        } catch (error) {
+          failures.push(error);
+        }
+        const restoreUmask = previousUmask;
+        previousUmask = undefined;
+        if (restoreUmask !== undefined) {
+          try {
+            process.umask(restoreUmask);
+          } catch (error) {
+            failures.push(error);
+          }
+        }
+        if (failures.length === 1) throw failures[0];
+        if (failures.length > 1) {
+          throw new AggregateError(failures, "forced mode-correction benchmark reset failed");
+        }
+      };
+      add(`${name}/forced-mode-correction`, () => a[name]({ ...tempOptions, dirMode: 0o750 }), {
+        sync: true,
+        skip: process.platform === "linux"
+          ? undefined
+          : "The requested-mode direct creation path is Linux-only.",
+        before: () => {
+          try {
+            assert.equal(previousUmask, undefined, "forced mode-correction benchmark setup leaked");
+            previousUmask = process.umask(0o077);
+            fs.mkdirSync(correctionProbe, { mode: 0o750 });
+            const initial = fs.lstatSync(correctionProbe);
+            assert.equal(initial.isDirectory(), true);
+            assert.equal(initial.isSymbolicLink(), false);
+            assert.equal(initial.mode & 0o7777, 0o700,
+              "forced mode-correction preflight did not produce initial mode 0700");
+            assert.equal(initial.uid, process.geteuid());
+            fs.rmdirSync(correctionProbe);
+          } catch (error) {
+            try {
+              resetForcedCorrectionSetup();
+            } catch (resetError) {
+              throw new AggregateError(
+                [error, resetError],
+                "forced mode-correction benchmark preflight and reset failed",
+              );
+            }
+            throw error;
+          }
+        },
+        after: (workspace) => {
+          const failures = [];
+          let stat;
+          let cleanupResult;
+          if (workspace) {
+            try {
+              stat = fs.lstatSync(workspace.dir);
+            } catch (error) {
+              failures.push(error);
+            }
+            try {
+              cleanupResult = workspace.cleanup();
+            } catch (error) {
+              failures.push(error);
+            }
+          }
+          try {
+            resetForcedCorrectionSetup();
+          } catch (error) {
+            failures.push(error);
+          }
+          if (failures.length === 1) throw failures[0];
+          if (failures.length > 1) {
+            throw new AggregateError(failures, "forced mode-correction benchmark cleanup failed");
+          }
+          if (!workspace) return;
+          assert.equal(stat.isDirectory(), true);
+          assert.equal(stat.isSymbolicLink(), false);
+          assert.equal(stat.mode & 0o7777, 0o750);
+          assert.equal(stat.uid, process.geteuid());
+          assert.equal(cleanupResult, "removed");
+          assert.equal(fs.existsSync(workspace.dir), false);
+        },
+      });
+    }
     add(`withTempWorkspace${suffix}`, () => a[`withTempWorkspace${suffix}`](tempOptions, sync ? () => 1 : async () => 1), { sync, before: () => {} });
     const tmp = await a[name](tempOptions);
     contract(type, tmp);

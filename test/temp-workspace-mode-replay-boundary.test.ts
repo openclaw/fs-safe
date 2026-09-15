@@ -9,6 +9,15 @@ import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
 
+function tempWorkspaceSyncWithUmask022(options: Parameters<typeof tempWorkspaceSync>[0]) {
+  const previous = process.umask(0o022);
+  try {
+    return tempWorkspaceSync(options);
+  } finally {
+    process.umask(previous);
+  }
+}
+
 beforeEach(() => configureFsSafeNative({ mode: "off" }));
 afterEach(() => {
   vi.restoreAllMocks();
@@ -20,7 +29,13 @@ for (const variant of ["async", "sync"] as const) {
   describe.runIf(process.platform === "linux")(`${variant} temp workspace mode replay boundary`, () => {
     async function create(rootDir: string) {
       const options = { rootDir, prefix: "workspace-", dirMode: 0o750 };
-      return variant === "async" ? await tempWorkspace(options) : tempWorkspaceSync(options);
+      if (variant === "async") return await tempWorkspace(options);
+      const previous = process.umask(0o077);
+      try {
+        return tempWorkspaceSync(options);
+      } finally {
+        process.umask(previous);
+      }
     }
 
     it("rejects a parent replacement after child validation and before chmod", async () => {
@@ -89,5 +104,86 @@ for (const variant of ["async", "sync"] as const) {
       expect(fsSync.lstatSync(originalChild).mode & 0o7777).toBe(0o750);
       expect(await fs.readFile(path.join(replacementChild, "keep"), "utf8")).toBe("replacement");
     });
+
+    it.runIf(variant === "sync").each(["unsafe", "mismatch"] as const)(
+      "keeps direct requested-mode %s identity replay exact",
+      async (kind) => {
+        const rootDir = await tempRoot("fs-safe-workspace-direct-identity-");
+        const unsafe = BigInt(Number.MAX_SAFE_INTEGER) + 1n;
+        let child = "";
+        let childFd: number | undefined;
+        let exactLstats = 0;
+        let numericLstats = 0;
+        let exactFstats = 0;
+        let numericFstats = 0;
+        let initialMode: number | undefined;
+        const isChild = (name: unknown): name is string => typeof name === "string" &&
+          path.dirname(name) === rootDir && path.basename(name).startsWith("workspace-");
+        const mkdir = fsSync.mkdirSync.bind(fsSync);
+        vi.spyOn(fsSync, "mkdirSync").mockImplementation((...args) => {
+          const result = mkdir(...args);
+          if (isChild(args[0])) initialMode = fsSync.statSync(args[0]).mode & 0o7777;
+          return result;
+        });
+        const open = fsSync.openSync.bind(fsSync);
+        vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
+          const fd = open(...args);
+          if (isChild(args[0])) {
+            child = args[0];
+            childFd = fd;
+          }
+          return fd;
+        });
+        const lstat = fsSync.lstatSync.bind(fsSync);
+        const lstatSpy = vi.spyOn(fsSync, "lstatSync").mockImplementation((name, options) => {
+          const stat = lstat(name, options);
+          if (!isChild(name)) return stat;
+          if (options?.bigint === true && typeof stat.dev === "bigint") {
+            exactLstats += 1;
+            stat.dev = unsafe;
+            stat.ino = unsafe + (kind === "mismatch" && exactLstats >= 2 ? 2n : 1n);
+          } else {
+            numericLstats += 1;
+          }
+          return stat;
+        });
+        const fstat = fsSync.fstatSync.bind(fsSync);
+        const fstatSpy = vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
+          const stat = fstat(fd, options);
+          if (fd !== childFd) return stat;
+          if (options?.bigint === true && typeof stat.dev === "bigint") {
+            exactFstats += 1;
+            stat.dev = unsafe;
+            stat.ino = unsafe + 1n;
+          } else {
+            numericFstats += 1;
+          }
+          return stat;
+        });
+        const register = vi.spyOn(cleanup, "registerTempPathForExit");
+        let workspace: ReturnType<typeof tempWorkspaceSync> | undefined;
+        if (kind === "mismatch") {
+          expect(() => tempWorkspaceSync({ rootDir, prefix: "workspace-", dirMode: 0o750 }))
+            .toThrowError(expect.objectContaining({ code: "path-mismatch" }));
+          expect(register).not.toHaveBeenCalled();
+        } else {
+          workspace = tempWorkspaceSyncWithUmask022({
+            rootDir, prefix: "workspace-", dirMode: 0o750,
+          });
+          expect(register).toHaveBeenCalledTimes(1);
+          expect(workspace.dir).toBe(child);
+        }
+        expect(initialMode).toBeDefined();
+        const modeCorrection = kind === "unsafe" && initialMode !== 0o750;
+      expect(exactLstats).toBe(modeCorrection ? 3 : 2);
+        expect(exactFstats).toBe(modeCorrection ? 2 : 1);
+        expect(numericLstats).toBe(0);
+        expect(numericFstats).toBe(0);
+        lstatSpy.mockRestore();
+        fstatSpy.mockRestore();
+        if (workspace) await workspace.cleanup();
+        else expect(() => fsSync.fstatSync(childFd!)).toThrow();
+      },
+    );
   });
 }

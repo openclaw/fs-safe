@@ -81,9 +81,20 @@ describe.runIf(supportsSearchOnlyDirectory)("temp workspace cleanup descriptor a
       const rootDir = await tempRoot("fs-safe-workspace-search-mode-");
       configureFsSafeNative({ mode: "off" });
       const forced = forceSearchOnlyChild(rootDir, [1]);
-      const workspace = variant === "async"
-        ? await tempWorkspace({ rootDir, prefix: "workspace-", dirMode: 0o750 })
-        : tempWorkspaceSync({ rootDir, prefix: "workspace-", dirMode: 0o750 });
+      const options = { rootDir, prefix: "workspace-", dirMode: 0o750 };
+      let workspace;
+      if (variant === "async") {
+        workspace = await tempWorkspace(options);
+      } else if (process.platform === "linux") {
+        const previous = process.umask(0o077);
+        try {
+          workspace = tempWorkspaceSync(options);
+        } finally {
+          process.umask(previous);
+        }
+      } else {
+        workspace = tempWorkspaceSync(options);
+      }
       expect(forced()).toBe(3);
       expect(fsSync.statSync(workspace.dir).mode & 0o7777).toBe(0o750);
       expect(await workspace.cleanup()).toBe("removed");

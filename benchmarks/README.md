@@ -34,6 +34,15 @@ payload assertions run outside measurement. Reads cover 128 B, 64 KiB, 1 MiB,
 2 MiB, the default Root budget of 16 MiB, and an explicit 32 MiB budget;
 writes compare both durability settings without changing package defaults.
 Hash cases verify the digest as well as the byte count outside measurement.
+The historical `tempWorkspaceSync/mode-correction` row uses the current process
+umask. On Linux it measures exclusive requested-`0750` creation and skips mode
+correction when the observed complete mode already matches. Async and
+non-eligible sync cases retain `mkdtemp`, which requests `0700`; a differing
+observed mode is corrected. The separate
+`tempWorkspaceSync/forced-mode-correction` row applies umask `077` and performs
+an untimed same-parent preflight proving requested `0750` is created as `0700`.
+It fails when that precondition is not met, and verifies final `0750` plus
+cleanup outside timing.
 The broader cases add lexical paths at depths 0/8/32, batches of 100/1,000
 paths, 1,000-entry listings and walks, private/public stores through 1 MiB with
 both durability settings, 1,000-item JSON documents and concurrent updates,

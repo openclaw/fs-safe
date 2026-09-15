@@ -19,6 +19,7 @@ export type TempWorkspaceCleanupResult = "removed" | "missing" | "identity-misma
 export type TempWorkspaceCleanupSafety = "compatible" | "require-bounded";
 
 type Quarantine = { name: string; path: string; nativeRemoval: boolean };
+type CleanupCapabilityPhase = "new" | "ready" | "sealed" | "failed" | "closed";
 
 function isNativeCleanupBinding(
   binding: NativeBinding | undefined,
@@ -43,8 +44,7 @@ export class TempWorkspaceCleanupCapability {
   readonly #admission: TempWorkspaceRootAdmission;
   readonly #safety: TempWorkspaceCleanupSafety;
   readonly #ownedTreeRemovalAvailable: boolean;
-  #creationPrepared = false;
-  #closed = false;
+  #phase: CleanupCapabilityPhase = "new";
 
   constructor(
     root: string,
@@ -119,21 +119,31 @@ export class TempWorkspaceCleanupCapability {
   }
 
   get canRemoveOwnedTree(): boolean {
-    return !this.#closed && this.#creationPrepared && this.#ownedTreeRemovalAvailable;
+    return (this.#phase === "ready" || this.#phase === "sealed") &&
+      this.#ownedTreeRemovalAvailable;
   }
 
   prepareChildCreation(): void {
-    if (this.#closed || this.#creationPrepared) {
+    const replay = this.#phase === "ready";
+    if (this.#phase !== "new" && !replay) {
       throw new FsSafeError("path-mismatch", "temp workspace cleanup parent is unavailable");
     }
-    this.#admission.prepareChildCreation(this.parent?.fd);
+    // A failed initial admission or receipt replay is terminal: no earlier
+    // authority may survive a partial revalidation.
+    this.#phase = "failed";
+    if (replay) {
+      if (this.parent) this.#admission.associateAncestry(this.parent.fd);
+      else this.#admission.assertAncestry();
+    } else {
+      this.#admission.prepareChildCreation(this.parent?.fd);
+    }
     // The retained descriptor cannot authorize cleanup until the complete
     // ancestry and its exact descriptor association succeeded together.
-    this.#creationPrepared = true;
+    this.#phase = "ready";
   }
 
   #assertCurrent(ancestry: boolean): void {
-    if (this.#closed || !this.#creationPrepared || !this.parent) {
+    if ((this.#phase !== "ready" && this.#phase !== "sealed") || !this.parent) {
       throw new FsSafeError("path-mismatch", "temp workspace cleanup parent is unavailable");
     }
     if (ancestry) this.#admission.associateAncestry(this.parent.fd);
@@ -141,6 +151,12 @@ export class TempWorkspaceCleanupCapability {
   }
 
   admitChildDescriptor(canEnumerate: boolean): boolean {
+    if (this.#phase !== "ready") {
+      throw new FsSafeError("path-mismatch", "temp workspace cleanup parent is unavailable");
+    }
+    // From this point the capability belongs to this successfully created
+    // child. Collision retries and further preparation must remain impossible.
+    this.#phase = "sealed";
     const bounded = this.canRemoveOwnedTree && canEnumerate;
     if (this.#safety === "require-bounded" && !bounded) {
       throw new FsSafeError(
@@ -160,8 +176,8 @@ export class TempWorkspaceCleanupCapability {
   }
 
   close(): void {
-    if (this.#closed) return;
-    this.#closed = true;
+    if (this.#phase === "closed") return;
+    this.#phase = "closed";
     if (this.parent) fsSync.closeSync(this.parent.fd);
   }
 }

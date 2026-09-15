@@ -25,6 +25,18 @@ for (const variant of ["async", "sync"] as const) {
       return variant === "async" ? await tempWorkspace(params) : tempWorkspaceSync(params);
     }
 
+    async function createWithModeCorrection(rootDir: string) {
+      if (variant !== "sync" || process.platform !== "linux") {
+        return await create(rootDir, { dirMode: 0o750 });
+      }
+      const previous = process.umask(0o077);
+      try {
+        return tempWorkspaceSync({ rootDir, prefix: "workspace-", dirMode: 0o750 });
+      } finally {
+        process.umask(previous);
+      }
+    }
+
     function observeFirstChild(rootDir: string, inspect: (dir: string, stat: BigIntStats) => void) {
       const lstat = fsSync.lstatSync.bind(fsSync);
       let observed = false;
@@ -192,16 +204,24 @@ for (const variant of ["async", "sync"] as const) {
       const base = await tempRoot("fs-safe-workspace-parent-snapshot-");
       const rootDir = path.join(base, "root");
       await fs.mkdir(rootDir, { mode: 0o700 });
+      const mkdir = fsSync.mkdirSync.bind(fsSync);
       const replaceParent = (dir: string) => {
         fsSync.renameSync(rootDir, path.join(base, "original"));
-        fsSync.mkdirSync(rootDir, { mode: 0o700 });
-        fsSync.mkdirSync(dir, { mode: 0o755 });
+        mkdir(rootDir, { mode: 0o700 });
+        mkdir(dir, { mode: 0o755 });
         fsSync.writeFileSync(path.join(dir, "keep"), "replacement");
         return dir;
       };
       if (variant === "async") {
         const mkdtemp = fs.mkdtemp.bind(fs);
         vi.spyOn(fs, "mkdtemp").mockImplementation(async (...args) => replaceParent(await mkdtemp(...args) as string));
+      } else if (process.platform === "linux") {
+        vi.spyOn(fsSync, "mkdirSync").mockImplementation((...args) => {
+          const result = mkdir(...args);
+          if (typeof args[0] === "string" && path.dirname(args[0]) === rootDir &&
+            path.basename(args[0]).startsWith("workspace-")) replaceParent(args[0]);
+          return result;
+        });
       } else {
         const mkdtemp = fsSync.mkdtempSync.bind(fsSync);
         vi.spyOn(fsSync, "mkdtempSync").mockImplementation((...args) => replaceParent(mkdtemp(...args) as string));
@@ -257,7 +277,7 @@ for (const variant of ["async", "sync"] as const) {
           });
         }
         const register = vi.spyOn(cleanup, "registerTempPathForExit");
-        const operation = create(rootDir, { dirMode: 0o750 });
+        const operation = createWithModeCorrection(rootDir);
         if (kind === "failure") await expect(operation).rejects.toBe(failure);
         else await expect(operation).rejects.toBeInstanceOf(Error);
         expect(register).not.toHaveBeenCalled();

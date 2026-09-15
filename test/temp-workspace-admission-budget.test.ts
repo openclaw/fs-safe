@@ -15,6 +15,15 @@ import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
 
+function tempWorkspaceSyncWithUmask022(options: Parameters<typeof tempWorkspaceSync>[0]) {
+  const previous = process.umask(0o022);
+  try {
+    return tempWorkspaceSync(options);
+  } finally {
+    process.umask(previous);
+  }
+}
+
 function safeIdentityProjector() {
   const identities = new Map<string, Readonly<{ dev: number; ino: number }>>();
   let next = 1;
@@ -45,10 +54,16 @@ afterEach(() => {
 for (const variant of ["async", "sync"] as const) {
   describe(`${variant} temp workspace observation budget`, () => {
     it.each([
-      ["compatible default", false, 0o700],
-      ["compatible mode correction", false, 0o750],
-      ["native capability probe", true, 0o700],
-    ] as const)("holds %s to separate total and BigInt budgets", async (_label, nativeProbe, dirMode) => {
+      ["compatible default", false, 0o700, undefined],
+      ["compatible requested 0750", false, 0o750, undefined],
+      ["native capability probe", true,
+        variant === "sync" && process.platform === "linux" ? 0o750 : 0o700, undefined],
+      ...(variant === "sync" && process.platform === "linux"
+        ? [["restrictive umask correction", false, 0o750, 0o077] as const]
+        : []),
+    ] as const)("holds %s to separate total and BigInt budgets", async (
+      _label, nativeProbe, dirMode, creationUmask,
+    ) => {
       const rootDir = await tempRoot("fs-safe-workspace-stat-budget-");
       let components = 1;
       for (let current = rootDir; path.dirname(current) !== current; current = path.dirname(current)) {
@@ -105,13 +120,43 @@ for (const variant of ["async", "sync"] as const) {
         return register(...args);
       });
       const options = { rootDir, prefix: "workspace-", dirMode };
-      const workspace = variant === "async" ? await tempWorkspace(options) : tempWorkspaceSync(options);
-      const modeCorrection = process.platform !== "win32" && dirMode !== 0o700;
+      const directRequestedMode = variant === "sync" && process.platform === "linux" &&
+        dirMode === 0o750 && creationUmask === undefined;
+      let directInitialMode: number | undefined;
+      if (directRequestedMode) {
+        const mkdir = fsSync.mkdirSync.bind(fsSync);
+        vi.spyOn(fsSync, "mkdirSync").mockImplementation((...args) => {
+          const result = mkdir(...args);
+          if (typeof args[0] === "string" && path.dirname(args[0]) === rootDir &&
+            path.basename(args[0]).startsWith("workspace-")) {
+            directInitialMode = fsSync.statSync(args[0]).mode & 0o7777;
+          }
+          return result;
+        });
+      }
+      let workspace;
+      if (variant === "async") {
+        workspace = await tempWorkspace(options);
+      } else if (creationUmask !== undefined) {
+        const previous = process.umask(creationUmask);
+        try {
+          workspace = tempWorkspaceSync(options);
+        } finally {
+          process.umask(previous);
+        }
+      } else if (directRequestedMode) {
+        workspace = tempWorkspaceSyncWithUmask022(options);
+      } else {
+        workspace = tempWorkspaceSync(options);
+      }
+      if (directRequestedMode) expect(directInitialMode).toBeDefined();
+      const modeCorrection = process.platform !== "win32" && dirMode !== 0o700 &&
+        (!directRequestedMode || directInitialMode !== dirMode);
       expect(observations).toBe(2 * components + 8 +
-        (nativeProbe ? 1 : modeCorrection ? (variant === "sync" ? 3 : 4) : 0));
+        (nativeProbe ? 1 : 0) + (modeCorrection ? (variant === "sync" ? 3 : 4) : 0));
       if (process.platform === "linux") expect(bigintObservations).toBe(components + 1);
       expect(canonicalize).toHaveBeenCalledTimes(4 +
-        (nativeProbe ? 1 : modeCorrection ? (variant === "sync" ? 1 : 2) : 0));
+        (nativeProbe ? 1 : 0) + (modeCorrection ? (variant === "sync" ? 1 : 2) : 0));
       expect(modeChanges).toBe(modeCorrection ? 1 : 0);
       expect(probe).toHaveBeenCalledTimes(nativeProbe ? 1 : 0);
       await workspace.cleanup();

@@ -33,6 +33,18 @@ for (const variant of ["async", "sync"] as const) {
       return variant === "async" ? await tempWorkspace(params) : tempWorkspaceSync(params);
     }
 
+    async function createWithModeCorrection(rootDir: string) {
+      if (variant !== "sync" || process.platform !== "linux") {
+        return await create(rootDir, { dirMode: 0o750 });
+      }
+      const previous = process.umask(0o077);
+      try {
+        return tempWorkspaceSync({ rootDir, prefix: "workspace-", dirMode: 0o750 });
+      } finally {
+        process.umask(previous);
+      }
+    }
+
     it("canonicalizes only the complete root during each admission pass", async () => {
       const base = await tempRoot("fs-safe-workspace-canonical-passes-");
       const rootDir = path.join(base, "one", "two", "three");
@@ -303,7 +315,7 @@ for (const variant of ["async", "sync"] as const) {
           events.push("register");
           return register(...args);
         });
-        const workspace = await create(rootDir, { dirMode: 0o750 });
+        const workspace = await createWithModeCorrection(rootDir);
         try {
           expect(events).toEqual([
             "mode-settled", "ancestry", "cleanup-parent", "child-security", "register",
@@ -388,7 +400,7 @@ for (const variant of ["async", "sync"] as const) {
           return stat;
         });
         const register = vi.spyOn(cleanup, "registerTempPathForExit");
-        await expect(create(rootDir, { dirMode: 0o750 })).rejects.toMatchObject({
+        await expect(createWithModeCorrection(rootDir)).rejects.toMatchObject({
           code: change === "grandparent-mode" ? "insecure-permissions" :
             change === "child-owner" ? "not-owned" : "path-mismatch",
         });

@@ -226,10 +226,13 @@ describe("temp workspace provisional cleanup capability", () => {
     mismatchedParentFstat(() => parentFd);
     const close = vi.spyOn(fsSync, "closeSync");
     const capability = new TempWorkspaceCleanupCapability(rootDir, "compatible", admission, 0o700);
+    const assertAncestry = vi.spyOn(admission, "assertAncestry");
     expect(probe).not.toHaveBeenCalled();
     expect(capability.parent).toBeUndefined();
     expect(capability.canRemoveOwnedTree).toBe(false);
     capability.prepareChildCreation();
+    capability.prepareChildCreation();
+    expect(assertAncestry).toHaveBeenCalledTimes(1);
     expect(capability.canRemoveOwnedTree).toBe(false);
     capability.close();
     expect(close.mock.calls.filter(([fd]) => fd === parentFd)).toHaveLength(1);
@@ -296,6 +299,74 @@ describe("temp workspace provisional cleanup capability", () => {
     }
     expect(capability.canRemoveOwnedTree).toBe(false);
   });
+
+  it("replays admitted ancestry for a retry, seals the winner, and does not reprobe", async () => {
+    const rootDir = await tempRoot("fs-safe-workspace-capability-replay-");
+    const admission = admitTempWorkspaceRootSync(rootDir);
+    configureFsSafeNative({ mode: "auto" });
+    const probe = vi.fn(() => true);
+    __setNativeLoaderForTest(() => cleanupBinding(probe));
+    const prepare = vi.spyOn(admission, "prepareChildCreation");
+    const replay = vi.spyOn(admission, "associateAncestry");
+    const close = vi.spyOn(fsSync, "closeSync");
+    const capability = new TempWorkspaceCleanupCapability(rootDir, "compatible", admission, 0o700);
+    const parentFd = capability.parent?.fd;
+    expect(parentFd).toBeDefined();
+    capability.prepareChildCreation();
+    capability.prepareChildCreation();
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(replay).toHaveBeenCalledTimes(1);
+    expect(probe).toHaveBeenCalledTimes(1);
+    expect(capability.canRemoveOwnedTree).toBe(true);
+    expect(capability.admitChildDescriptor(true)).toBe(true);
+    expect(capability.canRemoveOwnedTree).toBe(true);
+    capability.assertCurrent();
+    expect(() => capability.prepareChildCreation()).toThrowError(
+      expect.objectContaining({ code: "path-mismatch" }),
+    );
+    capability.close();
+    capability.close();
+    expect(capability.canRemoveOwnedTree).toBe(false);
+    expect(() => capability.prepareChildCreation()).toThrowError(
+      expect.objectContaining({ code: "path-mismatch" }),
+    );
+    expect(probe).toHaveBeenCalledTimes(1);
+    expect(close.mock.calls.filter(([fd]) => fd === parentFd)).toHaveLength(1);
+  });
+
+  it.each(["initial", "replay"] as const)(
+    "makes a failed %s preparation terminal",
+    async (failurePoint) => {
+      const rootDir = await tempRoot("fs-safe-workspace-capability-terminal-");
+      const admission = admitTempWorkspaceRootSync(rootDir);
+      configureFsSafeNative({ mode: "auto" });
+      const probe = vi.fn(() => true);
+      __setNativeLoaderForTest(() => cleanupBinding(probe));
+      const capability = new TempWorkspaceCleanupCapability(rootDir, "compatible", admission, 0o700);
+      const parentFd = capability.parent?.fd;
+      expect(parentFd).toBeDefined();
+      if (failurePoint === "replay") capability.prepareChildCreation();
+      const failure = new Error(`${failurePoint} preparation rejected`);
+      const boundary = failurePoint === "initial"
+        ? vi.spyOn(admission, "prepareChildCreation").mockImplementation(() => { throw failure; })
+        : vi.spyOn(admission, "associateAncestry").mockImplementation(() => { throw failure; });
+      expect(() => capability.prepareChildCreation()).toThrow(failure);
+      expect(boundary).toHaveBeenCalledTimes(1);
+      expect(capability.canRemoveOwnedTree).toBe(false);
+      expect(() => capability.prepareChildCreation()).toThrowError(
+        expect.objectContaining({ code: "path-mismatch" }),
+      );
+      expect(() => capability.admitChildDescriptor(true)).toThrowError(
+        expect.objectContaining({ code: "path-mismatch" }),
+      );
+      expect(boundary).toHaveBeenCalledTimes(1);
+      const close = vi.spyOn(fsSync, "closeSync");
+      capability.close();
+      capability.close();
+      expect(close.mock.calls.filter(([fd]) => fd === parentFd)).toHaveLength(1);
+      expect(probe).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("keeps native cleanup authority withheld when the complete boundary rejects", async () => {
     const base = await tempRoot("fs-safe-workspace-capability-rejection-");

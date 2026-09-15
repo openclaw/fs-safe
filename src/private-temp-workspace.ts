@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -98,6 +98,46 @@ function sanitizeTempPrefix(prefix: string): string {
     return "fs-safe-";
   }
   return sanitized.endsWith("-") ? sanitized : `${sanitized}-`;
+}
+
+const TEMP_WORKSPACE_SUFFIX_ALPHABET =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+const TEMP_WORKSPACE_SUFFIX_SPACE = TEMP_WORKSPACE_SUFFIX_ALPHABET.length ** 6;
+const TEMP_WORKSPACE_DIRECT_CREATE_ATTEMPTS = 64;
+
+function randomTempWorkspaceChildPath(childPrefix: string): string {
+  let encoded = randomInt(TEMP_WORKSPACE_SUFFIX_SPACE);
+  let suffix = "";
+  for (let index = 0; index < 6; index += 1) {
+    suffix = TEMP_WORKSPACE_SUFFIX_ALPHABET[encoded % TEMP_WORKSPACE_SUFFIX_ALPHABET.length]! + suffix;
+    encoded = Math.floor(encoded / TEMP_WORKSPACE_SUFFIX_ALPHABET.length);
+  }
+  return `${childPrefix}${suffix}`;
+}
+
+function canCreateTempWorkspaceWithRequestedMode(dirMode: number): boolean {
+  return process.platform === "linux" && dirMode !== 0o700 &&
+    (dirMode & 0o700) === 0o700 && (dirMode & 0o7000) === 0 && (dirMode & 0o022) === 0;
+}
+
+function createTempWorkspaceWithRequestedModeSync(
+  childPrefix: string,
+  dirMode: number,
+  prepareChildCreation: () => void,
+): string {
+  let collision: unknown;
+  for (let attempt = 0; attempt < TEMP_WORKSPACE_DIRECT_CREATE_ATTEMPTS; attempt += 1) {
+    const candidate = randomTempWorkspaceChildPath(childPrefix);
+    prepareChildCreation();
+    try {
+      fsSync.mkdirSync(candidate, { mode: dirMode, recursive: false });
+      return candidate;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      collision = error;
+    }
+  }
+  throw collision;
 }
 
 function resolveWorkspaceLeaf(dir: string, fileName: string): string {
@@ -306,8 +346,16 @@ export function tempWorkspaceSync(
   let cleanupOwner: TempWorkspaceCleanupOwner | undefined;
   let unregisterTempDir: () => void;
   try {
-    capability.prepareChildCreation();
-    dir = fsSync.mkdtempSync(childPrefix);
+    if (canCreateTempWorkspaceWithRequestedMode(dirMode)) {
+      dir = createTempWorkspaceWithRequestedModeSync(
+        childPrefix,
+        dirMode,
+        () => capability.prepareChildCreation(),
+      );
+    } else {
+      capability.prepareChildCreation();
+      dir = fsSync.mkdtempSync(childPrefix);
+    }
     if (capability.parent) capability.assertCurrent();
     else admission.assertCurrent();
     stat = inspectDirectoryIdentitySync(dir);

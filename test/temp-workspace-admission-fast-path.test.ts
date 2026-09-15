@@ -10,6 +10,16 @@ import { TempWorkspaceRetainedChild } from "../src/temp-workspace-descriptor.js"
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
+
+function tempWorkspaceSyncWithUmask022(options: Parameters<typeof tempWorkspaceSync>[0]) {
+  const previous = process.umask(0o022);
+  try {
+    return tempWorkspaceSync(options);
+  } finally {
+    process.umask(previous);
+  }
+}
+
 beforeEach(() => configureFsSafeNative({ mode: "off" }));
 afterEach(() => {
   vi.restoreAllMocks();
@@ -196,11 +206,14 @@ for (const variant of ["async", "sync"] as const) {
       ["requested 0750", 0o750, undefined, undefined],
       ["requested mode 0", 0, undefined, undefined],
       ["requested sticky bit", 0o1700, undefined, undefined],
-      ["restrictive creation umask", 0o700, 0o200, 0o500],
+      ["restrictive default creation umask", 0o700, 0o200, 0o500],
+      ["restrictive direct creation umask", 0o750, 0o077, 0o700],
     ] as const)(
-      "uses one descriptor correction for %s", async (_label, dirMode, creationUmask, expectedInitialMode) => {
+      "uses retained descriptor admission for %s", async (_label, dirMode, creationUmask, expectedInitialMode) => {
         const rootDir = await tempRoot("fs-safe-workspace-mode-correction-");
         let initialMode: number | undefined;
+        const directRequestedMode = variant === "sync" && process.platform === "linux" &&
+          dirMode === 0o750 && creationUmask === undefined;
         if (creationUmask !== undefined) {
           if (variant === "async") {
             const mkdtemp = fs.mkdtemp.bind(fs);
@@ -210,6 +223,19 @@ for (const variant of ["async", "sync"] as const) {
                 const dir = await mkdtemp(...args);
                 initialMode = fsSync.statSync(dir).mode & 0o7777;
                 return dir;
+              } finally {
+                process.umask(previous);
+              }
+            });
+          } else if (process.platform === "linux" && dirMode === 0o750) {
+            const mkdir = fsSync.mkdirSync.bind(fsSync);
+            vi.spyOn(fsSync, "mkdirSync").mockImplementation((...args) => {
+              if (!isWorkspaceChild(rootDir, args[0])) return mkdir(...args);
+              const previous = process.umask(creationUmask);
+              try {
+                const result = mkdir(...args);
+                initialMode = fsSync.statSync(args[0]).mode & 0o7777;
+                return result;
               } finally {
                 process.umask(previous);
               }
@@ -227,24 +253,37 @@ for (const variant of ["async", "sync"] as const) {
               }
             });
           }
+        } else if (directRequestedMode) {
+          const mkdir = fsSync.mkdirSync.bind(fsSync);
+          vi.spyOn(fsSync, "mkdirSync").mockImplementation((...args) => {
+            const result = mkdir(...args);
+            if (isWorkspaceChild(rootDir, args[0])) {
+              initialMode = fsSync.statSync(args[0]).mode & 0o7777;
+            }
+            return result;
+          });
         }
         const operations = observeChildModeOperations(rootDir);
-        const workspace = await create(rootDir, { dirMode });
+        const workspace = directRequestedMode
+          ? tempWorkspaceSyncWithUmask022({ rootDir, prefix: "workspace-", dirMode })
+          : await create(rootDir, { dirMode });
+        const directModeMatched = directRequestedMode && initialMode === dirMode;
         try {
-          expect(initialMode).toBe(expectedInitialMode);
+          if (directRequestedMode) expect(initialMode).toBeDefined();
+          else expect(initialMode).toBe(expectedInitialMode);
           expect(operations.opens()).toBe(1);
-          expect(operations.chmods()).toBe(1);
-          expect(operations.fstats()).toBe(2);
-          expect(operations.lstats()).toBe(3);
+          expect(operations.chmods()).toBe(directModeMatched ? 0 : 1);
+          expect(operations.fstats()).toBe(directModeMatched ? 1 : 2);
+          expect(operations.lstats()).toBe(directModeMatched ? 2 : 3);
           if (process.platform === "linux") {
             expect(operations.bigintFstats()).toBe(0);
             expect(operations.bigintLstats()).toBe(1);
           }
-          expect(operations.opensAtFirstChmod()).toBe(1);
+          expect(operations.opensAtFirstChmod()).toBe(directModeMatched ? undefined : 1);
           // The retained descriptor and named child are both rebound before
           // the first mutation; constructor retention itself performs no stat.
-          expect(operations.fstatsAtFirstChmod()).toBe(1);
-          expect(operations.lstatsAtFirstChmod()).toBe(2);
+          expect(operations.fstatsAtFirstChmod()).toBe(directModeMatched ? undefined : 1);
+          expect(operations.lstatsAtFirstChmod()).toBe(directModeMatched ? undefined : 2);
           expect(fsSync.lstatSync(workspace.dir).mode & 0o7777).toBe(dirMode);
         } finally {
           if (dirMode === 0) await fs.chmod(workspace.dir, 0o700);
