@@ -98,9 +98,10 @@ modes. `iterations` and `samples` control the measurement budget. Set `filter`
 to one workload-family substring and `native_mode` to `off` or `require` for a
 focused audit. With a comparison ref and nonempty filter, `order=abba` records
 baseline, candidate, candidate, baseline within each of up to five `blocks`;
-each position has a separate JSON report. These full sweeps identify candidates;
-use repeated A-B-B-A blocks before claiming a speedup, especially for
-storage-sensitive operations.
+`order=baab` records candidate, baseline, baseline, candidate. Each position
+has a separate, source-labelled JSON report. These full sweeps identify
+candidates; use repeated blocks of both orders before claiming a speedup when
+order bias is material, especially for storage-sensitive operations.
 
 Use `--filter readFileDescriptorBounded` to repeat one family. Filtered reports
 are marked explicitly and do not imply all cases ran. `--dist /absolute/dist`
