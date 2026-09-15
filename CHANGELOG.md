@@ -3,9 +3,20 @@
 ## Unreleased
 
 - Reject POSIX temp-workspace `cleanupSafety: "require-bounded"` before child creation when the final `dirMode` lacks owner read or search; compatible mode keeps its guarded JavaScript fallback without native child traversal authority. Retaining a readable descriptor before chmod does not bypass native directory enumeration's final-mode requirements; Windows cleanup remains independent of POSIX mode bits.
+
 - Verify POSIX temp-workspace root ownership and ancestor permissions before child creation, preserve existing roots and trusted sticky-temp modes, and apply mismatched new-directory permissions through verified descriptors before cleanup adoption. Existing canonical roots coalesce complete ancestry capture and provisional cleanup-parent association at the pre-`mkdtemp` boundary, then dispatch creation without another yield or native probe; aliases and missing roots retain the guarded route. Exact `0o700` creation skips redundant descriptor-mode work while restrictive umasks reuse the already retained child descriptor for correction; final adoption retains the child before rechecking ancestry, cleanup authority, and fresh descriptor/name owner/private/requested-mode state. Repeat ancestry checks replay lossless numeric projections of their exact receipts; Linux also replays safely representable retained parent and child receipts numerically, while unsafe identities stay exact and ambiguous Windows observations retain one exact retry. Compatible cleanup reuses that admitted parent receipt for descriptor-associated rename and removal fences instead of layering duplicate guards. Reject insecure supplied roots, writable workspace modes, and observed creation-time replacements in async and sync factories; retain Windows identity checks without treating POSIX modes as ACL privacy or initializing them.
+
+- Reuse raw archive path segments during validation, preserving platform checks, normalized component limits, and error order.
+
+- Size Linux native byte-copy scratch buffers from the existing file-size hint, bounded between 4 KiB and 1 MiB, while retaining read-to-EOF, sparse output, and borrowed-descriptor behavior.
+
+- Reuse lexical directory prefixes when producing walk entry paths, preserving traversal order, followed-link spelling, budgets, and directory checks.
+
+- Reuse synchronous ZIP name facts for identical local and central names with non-shared backing buffers, retaining separate Unicode metadata validation and shared-memory handling.
+
 - Bind Windows `readSecureFile()` owner and DACL verification to the already-open descriptor and compare its native 32-bit volume serial and 64-bit file-index projection with Node's bigint receipt before reading. Secure reads now fail closed when the descriptor capability is missing, stale, remote, incomplete, or unsupported instead of authorizing bytes with pathname-based ACL facts.
 - Reuse resolved Windows drive paths during containment comparison instead of normalizing them again, preserving namespace and relative-path comparison behavior.
+- Avoid intermediate segment arrays when classifying Windows device names, preserving existing path, stream, extension, and case handling.
 - Reduce retained decoded buffers when reading gzip TAR entries in JavaScript by filling one owned result buffer from the fully admitted payload size, preserving complete archive validation and independent returned bytes.
 - Avoid repeated relative-path resolution for normalized Windows drive-path descendants, retaining the existing comparison for UNC paths and colon-bearing components.
 - Add `safePathSegmentHashedV2` for untrusted install identifiers, hashing every trimmed ID with domain-separated SHA-256 into a fixed lowercase segment; preserve the legacy encoder's output and document its deterministic aliases and explicit migration requirements.
