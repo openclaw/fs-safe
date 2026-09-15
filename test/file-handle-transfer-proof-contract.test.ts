@@ -34,7 +34,7 @@ function section(source: string, start: string, end: string): string {
 }
 
 describe("hosted file-handle transfer proof contract", () => {
-  it("binds pull-request checkouts to GITHUB_SHA and exactly ordered event parents", () => {
+  it("binds pull-request checkouts to GITHUB_SHA and the actual ordered merge parents", () => {
     const baseCommit = "1".repeat(40);
     const headCommit = "2".repeat(40);
     const eventSha = "3".repeat(40);
@@ -47,8 +47,10 @@ describe("hosted file-handle transfer proof contract", () => {
     };
 
     expect(validatePullRequestMergeBinding(valid)).toEqual({
-      baseCommit,
+      actualBaseCommit: baseCommit,
+      baseMatchesEvent: true,
       checkoutCommit: eventSha,
+      eventBaseCommit: baseCommit,
       headCommit,
       mergeCommit: eventSha,
       parentCommits: [baseCommit, headCommit],
@@ -61,6 +63,19 @@ describe("hosted file-handle transfer proof contract", () => {
       ...valid,
       mergeCommitFromPayload: "4".repeat(40),
     } as typeof valid)).toEqual(expect.objectContaining({ mergeCommit: eventSha }));
+    const currentBaseCommit = "4".repeat(40);
+    expect(validatePullRequestMergeBinding({
+      ...valid,
+      parentCommits: [currentBaseCommit, headCommit],
+    })).toEqual({
+      actualBaseCommit: currentBaseCommit,
+      baseMatchesEvent: false,
+      checkoutCommit: eventSha,
+      eventBaseCommit: baseCommit,
+      headCommit,
+      mergeCommit: eventSha,
+      parentCommits: [currentBaseCommit, headCommit],
+    });
 
     for (const invalid of [
       { ...valid, eventSha: undefined },
@@ -90,7 +105,21 @@ describe("hosted file-handle transfer proof contract", () => {
         kind: "proof",
       });
     }
+    const sparseParents = new Array<string>(2);
+    sparseParents[1] = headCommit;
+    for (const parentCommits of [
+      sparseParents,
+      [undefined, headCommit],
+      ["not-a-commit", headCommit],
+    ]) {
+      expect(() => validatePullRequestMergeBinding({
+        ...valid,
+        parentCommits,
+      } as typeof valid)).toThrow();
+    }
     expect(proofSource).not.toContain("merge_commit_sha");
+    expect(proofSource).toContain("const actualBaseTree = gitTree(binding.actualBaseCommit)");
+    expect(proofSource).not.toContain("gitTree(eventBaseCommit)");
   });
 
   it("sorts receipt keys recursively and sanitizes arbitrary failures", () => {

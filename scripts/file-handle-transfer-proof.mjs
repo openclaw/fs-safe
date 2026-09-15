@@ -763,26 +763,29 @@ function validatedCommit(value, proofCode) {
 }
 
 export function validatePullRequestMergeBinding({
-  baseCommit: rawBaseCommit,
+  baseCommit: rawEventBaseCommit,
   checkoutCommit: rawCheckoutCommit,
   eventSha: rawEventSha,
   headCommit: rawHeadCommit,
   parentCommits: rawParentCommits,
 }) {
-  const baseCommit = validatedCommit(rawBaseCommit, "invalid-pr-base");
+  const eventBaseCommit = validatedCommit(rawEventBaseCommit, "invalid-pr-base");
   const checkoutCommit = validatedCommit(rawCheckoutCommit, "invalid-checkout-commit");
   const eventSha = validatedCommit(rawEventSha, "invalid-event-sha");
   const headCommit = validatedCommit(rawHeadCommit, "invalid-pr-head");
   requireInvariant(Array.isArray(rawParentCommits), "invalid-parent-list");
   requireInvariant(rawParentCommits.length === 2, "invalid-pr-parent-count");
-  const parentCommits = rawParentCommits.map(parent =>
-    validatedCommit(parent, "invalid-pr-parent"));
+  const parentCommits = [
+    validatedCommit(rawParentCommits[0], "invalid-pr-parent"),
+    validatedCommit(rawParentCommits[1], "invalid-pr-parent"),
+  ];
   requireInvariant(checkoutCommit === eventSha, "checkout-event-commit-mismatch");
-  requireInvariant(parentCommits[0] === baseCommit, "checkout-pr-base-parent-mismatch");
   requireInvariant(parentCommits[1] === headCommit, "checkout-pr-head-parent-mismatch");
   return Object.freeze({
-    baseCommit,
+    actualBaseCommit: parentCommits[0],
+    baseMatchesEvent: parentCommits[0] === eventBaseCommit,
     checkoutCommit,
+    eventBaseCommit,
     headCommit,
     mergeCommit: eventSha,
     parentCommits: Object.freeze(parentCommits),
@@ -828,9 +831,9 @@ async function sourceMetadata() {
   };
   if (eventName === "pull_request") {
     const headCommit = validatedCommit(event?.pull_request?.head?.sha, "invalid-pr-head");
-    const baseCommit = validatedCommit(event?.pull_request?.base?.sha, "invalid-pr-base");
+    const eventBaseCommit = validatedCommit(event?.pull_request?.base?.sha, "invalid-pr-base");
     const binding = validatePullRequestMergeBinding({
-      baseCommit,
+      baseCommit: eventBaseCommit,
       checkoutCommit: commit,
       eventSha,
       headCommit,
@@ -838,14 +841,17 @@ async function sourceMetadata() {
     });
     const mergeCommit = binding.mergeCommit;
     const headTree = gitTree(headCommit);
-    const baseTree = gitTree(baseCommit);
+    const actualBaseTree = gitTree(binding.actualBaseCommit);
     const mergeTree = gitTree(mergeCommit);
     metadata.event.pullRequest = {
-      base: { commit: baseCommit, tree: baseTree },
+      actualBase: { commit: binding.actualBaseCommit, tree: actualBaseTree },
+      baseMatchesEvent: binding.baseMatchesEvent,
+      eventDeclaredBase: { commit: binding.eventBaseCommit },
       head: { commit: headCommit, tree: headTree },
       merge: { commit: mergeCommit, tree: mergeTree },
+      orderedParents: binding.parentCommits,
       treeComparison: {
-        checkoutEqualsBase: tree === baseTree,
+        checkoutEqualsActualBase: tree === actualBaseTree,
         checkoutEqualsHead: tree === headTree,
         checkoutEqualsMerge: tree === mergeTree,
       },
