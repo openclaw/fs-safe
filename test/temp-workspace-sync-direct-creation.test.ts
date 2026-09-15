@@ -201,8 +201,9 @@ describe.runIf(process.platform === "linux")("sync requested-mode direct creatio
     });
     const prepare = vi.spyOn(TempWorkspaceCleanupCapability.prototype, "prepareChildCreation");
     const register = vi.spyOn(cleanup, "registerTempPathForExit");
+    // Replay observes the replacement symlink before it can compare the preserved leaf inode.
     expect(() => tempWorkspaceSync({ rootDir, prefix: "workspace-", dirMode: 0o750 }))
-      .toThrowError(expect.objectContaining({ code: "path-mismatch" }));
+      .toThrowError(expect.objectContaining({ code: "not-file" }));
     const currentRoot = await fs.stat(rootDir, { bigint: true });
     expect(currentRoot.dev).toBe(rootIdentity.dev);
     expect(currentRoot.ino).toBe(rootIdentity.ino);
