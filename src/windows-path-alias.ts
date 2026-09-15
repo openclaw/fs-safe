@@ -158,20 +158,23 @@ export function hasWindowsPathAlias(
   platform: NodeJS.Platform | string = process.platform,
 ): boolean {
   if (platform !== "win32") return false;
-  if (
-    kind === "filesystem" &&
-    typeof value === "string" &&
-    value.length >= 3 &&
-    value.charCodeAt(1) === COLON &&
-    isAsciiLetter(value.charCodeAt(0)) &&
-    isSeparator(value.charCodeAt(2))
-  ) {
-    return value.indexOf(":", 2) !== -1;
-  }
   const firstColon = value.indexOf(":");
   if (firstColon === -1) return false;
   if (kind === "relative") return true;
   return firstColon !== rootedDriveColonIndex(value) || value.indexOf(":", firstColon + 1) !== -1;
+}
+
+export function assertNoWindowsPathAliasForPlatform(
+  value: string,
+  kind: WindowsPathAliasKind,
+  message: string,
+  platform: NodeJS.Platform | string | undefined,
+): void {
+  if (hasWindowsPathAlias(value, kind, platform)) {
+    throw new FsSafeError("invalid-path", message, {
+      details: { reason: "windows-path-alias" },
+    });
+  }
 }
 
 export function assertNoWindowsPathAlias(

@@ -3,8 +3,21 @@ import path from "node:path";
 import { normalizeOptionalString } from "./string-coerce.js";
 import {
   assertNoWindowsPathAlias,
+  assertNoWindowsPathAliasForPlatform,
   resolvePathPreservingWindowsRoot,
 } from "./windows-path-alias.js";
+
+const PATH_ALIAS_MESSAGE = "path uses a Windows filesystem namespace alias";
+
+function isOrdinaryRootedWindowsDrivePath(input: string): boolean {
+  const drive = input[0];
+  return input.length >= 3 &&
+    drive !== undefined &&
+    ((drive >= "A" && drive <= "Z") || (drive >= "a" && drive <= "z")) &&
+    input[1] === ":" &&
+    (input[2] === "\\" || input[2] === "/") &&
+    input.indexOf(":", 2) === -1;
+}
 
 function hasHomePrefix(input: string): boolean {
   return input === "~" || input.startsWith("~/") ||
@@ -112,10 +125,28 @@ export function resolveHomeRelativePath(
   if (!input) {
     return input;
   }
-  assertNoWindowsPathAlias(input, "filesystem", "path uses a Windows filesystem namespace alias");
+  const rawPlatform = process.platform;
+  // Primitive ordinary drive paths have exactly one structural colon. Record
+  // that admission so an unchanged resolved string does not need rescanning.
+  const ordinaryRawAdmitted = rawPlatform === "win32" &&
+    typeof input === "string" &&
+    isOrdinaryRootedWindowsDrivePath(input);
+  if (!ordinaryRawAdmitted) {
+    assertNoWindowsPathAliasForPlatform(input, "filesystem", PATH_ALIAS_MESSAGE, rawPlatform);
+  }
   if (!hasHomePrefix(input)) {
     const resolved = resolvePathPreservingWindowsRoot(input);
-    assertNoWindowsPathAlias(resolved, "filesystem", "path uses a Windows filesystem namespace alias");
+    const resolvedPlatform = process.platform;
+    // An undefined synthetic platform read would make the classifier's
+    // default parameter read process.platform again; preserve that behavior.
+    if (!ordinaryRawAdmitted || resolved !== input || resolvedPlatform === undefined) {
+      assertNoWindowsPathAliasForPlatform(
+        resolved,
+        "filesystem",
+        PATH_ALIAS_MESSAGE,
+        resolvedPlatform,
+      );
+    }
     return resolved;
   }
   const expanded = expandHomePrefix(input, {
@@ -124,6 +155,6 @@ export function resolveHomeRelativePath(
     homedir: opts?.homedir,
   });
   const resolved = resolvePathPreservingWindowsRoot(expanded);
-  assertNoWindowsPathAlias(resolved, "filesystem", "path uses a Windows filesystem namespace alias");
+  assertNoWindowsPathAlias(resolved, "filesystem", PATH_ALIAS_MESSAGE);
   return resolved;
 }
