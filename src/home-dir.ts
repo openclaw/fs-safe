@@ -5,18 +5,18 @@ import { normalizeOptionalString } from "./string-coerce.js";
 import {
   assertNoWindowsPathAlias,
   assertNoWindowsPathAliasForPlatform,
+  repairResolvedWindowsRoot,
   resolvePathPreservingWindowsRoot,
 } from "./windows-path-alias.js";
 
 const PATH_ALIAS_MESSAGE = "path uses a Windows filesystem namespace alias";
 
 function isOrdinaryRootedWindowsDrivePath(input: string): boolean {
-  const drive = input[0];
+  const drive = input.charCodeAt(0);
   return input.length >= 3 &&
-    drive !== undefined &&
-    ((drive >= "A" && drive <= "Z") || (drive >= "a" && drive <= "z")) &&
-    input[1] === ":" &&
-    (input[2] === "\\" || input[2] === "/") &&
+    ((drive >= 0x41 && drive <= 0x5a) || (drive >= 0x61 && drive <= 0x7a)) &&
+    input.charCodeAt(1) === 0x3a &&
+    (input.charCodeAt(2) === 0x5c || input.charCodeAt(2) === 0x2f) &&
     input.indexOf(":", 2) === -1;
 }
 
@@ -146,22 +146,42 @@ export function resolveHomeRelativePath(
   const ordinaryRawAdmitted = rawPlatform === "win32" &&
     typeof input === "string" &&
     isOrdinaryRootedWindowsDrivePath(input);
-  if (!ordinaryRawAdmitted) {
-    assertNoWindowsPathAliasForPlatform(input, "filesystem", PATH_ALIAS_MESSAGE, rawPlatform);
-  }
-  if (!hasHomePrefix(input)) {
-    const resolved = resolvePathPreservingWindowsRoot(input);
+  if (ordinaryRawAdmitted) {
+    // Keep the overwhelmingly common rooted-drive path close to path.resolve
+    // itself. Seven-byte inputs retain the general helper's observable
+    // namespace-root preflight; a rare six-byte result retains its repair.
+    const usedGeneralResolver = input.length === 7;
+    const resolved = usedGeneralResolver
+      ? resolvePathPreservingWindowsRoot(input)
+      : path.resolve(input);
+    const repaired = !usedGeneralResolver && resolved.length === 6
+      ? repairResolvedWindowsRoot(input, resolved)
+      : resolved;
     const resolvedPlatform = process.platform;
-    // An undefined synthetic platform read would make the classifier's
-    // default parameter read process.platform again; preserve that behavior.
-    if (!ordinaryRawAdmitted || resolved !== input || resolvedPlatform === undefined) {
+    if (repaired !== input || resolvedPlatform === undefined) {
       assertNoWindowsPathAliasForPlatform(
-        resolved,
+        repaired,
         "filesystem",
         PATH_ALIAS_MESSAGE,
         resolvedPlatform,
       );
     }
+    return repaired;
+  }
+  assertNoWindowsPathAliasForPlatform(input, "filesystem", PATH_ALIAS_MESSAGE, rawPlatform);
+  if (!hasHomePrefix(input)) {
+    const resolved = resolvePathPreservingWindowsRoot(input);
+    const resolvedPlatform = process.platform;
+    // This cold branch was not admitted as an ordinary rooted drive. Recheck
+    // even an unchanged result because the live platform can change between
+    // raw admission and resolved-path admission. Passing undefined preserves
+    // the classifier's default process.platform read.
+    assertNoWindowsPathAliasForPlatform(
+      resolved,
+      "filesystem",
+      PATH_ALIAS_MESSAGE,
+      resolvedPlatform,
+    );
     return resolved;
   }
   return resolveExpandedHomePath(input, opts);

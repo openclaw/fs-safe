@@ -88,6 +88,15 @@ export function resolvePathPreservingWindowsRoot(value: string): string {
     return value.includes("/") ? value.replaceAll("/", "\\") : value;
   }
   const resolved = path.resolve(value);
+  return repairResolvedWindowsRoot(value, resolved);
+}
+
+/**
+ * Preserve a namespaced drive root after a caller has already resolved the
+ * input. This lets admission fast paths keep exactly one live path.resolve
+ * call while retaining the same root-repair behavior as the general helper.
+ */
+export function repairResolvedWindowsRoot(value: string, resolved: string): string {
   if (
     resolved.length === 6 &&
     process.platform === "win32" &&

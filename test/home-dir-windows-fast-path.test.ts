@@ -159,6 +159,21 @@ describe("Windows home-path admission fast path", () => {
     expect(reads).toBe(2);
   });
 
+  it("rechecks an unchanged nonordinary result when resolution switches to Windows", () => {
+    const platforms = ["linux", "win32"] as const;
+    let reads = 0;
+    Object.defineProperty(process, "platform", {
+      configurable: true,
+      get: () => platforms[reads++],
+    });
+    resolveToInput();
+
+    expect(() => resolveHomeRelativePath("relative:literal.txt")).toThrow(
+      expect.objectContaining({ code: "invalid-path" }),
+    );
+    expect(reads).toBe(2);
+  });
+
   it("preserves root-resolver platform reads for seven-character input", () => {
     let reads = 0;
     Object.defineProperty(process, "platform", {
@@ -187,6 +202,42 @@ describe("Windows home-path admission fast path", () => {
 
     expect(resolveHomeRelativePath("C:\\safe\\nested\\file.txt")).toBe("\\\\?\\C:\\");
     expect(reads).toBe(4);
+  });
+
+  it("repairs a six-character result once for a seven-character ordinary input", () => {
+    let reads = 0;
+    Object.defineProperty(process, "platform", {
+      configurable: true,
+      get: () => {
+        reads += 1;
+        return "win32";
+      },
+    });
+    vi.spyOn(path, "resolve").mockReturnValue("\\\\?\\C:");
+
+    expect(resolveHomeRelativePath("C:\\safe")).toBe("\\\\?\\C:\\");
+    expect(reads).toBe(5);
+    expect(path.resolve).toHaveBeenCalledOnce();
+  });
+
+  it("does not retry general-root repair after a platform transition", () => {
+    const failure = new Error("unexpected extra platform read");
+    const platforms = ["win32", "win32", "linux", "win32"] as const;
+    let reads = 0;
+    Object.defineProperty(process, "platform", {
+      configurable: true,
+      get: () => {
+        if (reads >= platforms.length) throw failure;
+        return platforms[reads++];
+      },
+    });
+    vi.spyOn(path, "resolve").mockReturnValue("\\\\?\\C:");
+
+    expect(() => resolveHomeRelativePath("C:\\safe")).toThrow(
+      expect.objectContaining({ code: "invalid-path" }),
+    );
+    expect(reads).toBe(4);
+    expect(path.resolve).toHaveBeenCalledOnce();
   });
 
   it("keeps valid namespace roots on the full admission path", () => {
