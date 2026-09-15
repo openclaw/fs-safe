@@ -5,6 +5,8 @@ const SAFE_DOT_PREFIX_PATH_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/;
 // Windows treats "C:name" as relative to the drive's current directory even
 // though path.win32.isAbsolute() reports false.
 const DRIVE_RELATIVE_PREFIX = /^[A-Za-z]:(?![\\/])/;
+// A forward slash ends the segment, so "C:/file" still contains the "C:" segment.
+const DRIVE_RELATIVE_SEGMENT = /(?:^|\/)[A-Za-z]:(?!\\)/;
 const HYPHEN_CHAR_CODE = 0x2d;
 
 export type SafePathSegmentOptions = {
@@ -17,7 +19,7 @@ export function isDriveRelativePath(value: string): boolean {
 }
 
 export function assertNoDriveRelativePathSegments(value: string, label: string): string {
-  if (value.split("/").some(isDriveRelativePath)) {
+  if (DRIVE_RELATIVE_SEGMENT.test(value)) {
     throw new FsSafeError("invalid-path", `${label} must not contain a drive letter`);
   }
   return value;

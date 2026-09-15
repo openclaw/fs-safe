@@ -7,7 +7,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { secureFileBenchmarkCase } from "./secure-file-contract.mjs";
 
-export async function registerCore({ api: a, workspace: w, binding, measuredFeatures, register: add, contract }) {
+export async function registerCore({ api: a, workspace: w, binding, measuredFeatures, register: add, contract, onCleanup }) {
   const data = Buffer.from(' {"ok":true,"label":"synthetic benchmark"}\n');
   const input = path.join(w, "input.json");
   if (process.platform === "win32") {
@@ -113,6 +113,17 @@ export async function registerCore({ api: a, workspace: w, binding, measuredFeat
       sync, before: () => sync ? fs.openSync(input, "r") : fsp.open(input, "r"),
       after: (_, opened) => sync ? fs.closeSync(opened) : opened.close(),
       verify: (count) => { assert.equal(count, buffer.length); assert.deepEqual(buffer, data.subarray(1)); },
+    });
+  }
+  for (const size of [0, 512]) {
+    const payload = Buffer.alloc(size, 120);
+    const digest = createHash("sha256").update(payload).digest("hex");
+    const filePath = path.join(w, `hash-borrowed-${size}`);
+    fs.writeFileSync(filePath, payload);
+    const fd = fs.openSync(filePath, "r");
+    onCleanup(() => fs.closeSync(fd));
+    add(`sha256FileSync/borrowed-fd/${size}`, () => a.sha256FileSync(fd), {
+      sync: true, batch: 100, verify: (result) => assert.deepEqual(result, { bytes: size, digest }),
     });
   }
   for (const size of [128, 64 * 1024, 1024 * 1024, 2 * 1024 * 1024, 16 * 1024 * 1024, 32 * 1024 * 1024]) {
