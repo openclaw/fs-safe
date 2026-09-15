@@ -72,18 +72,17 @@ function shouldStop(result: WalkDirectoryResult, options: WalkDirectoryOptions):
 }
 
 function buildEntry(params: {
-  rootDir: string;
+  relativePath: string;
   fullPath: string;
   dirent: fsSync.Dirent;
   depth: number;
   kind?: WalkEntryKind;
 }): WalkDirectoryEntry {
   const fullPath = params.fullPath;
-  const relativePath = path.relative(params.rootDir, fullPath) || params.dirent.name;
   return {
     name: params.dirent.name,
     path: fullPath,
-    relativePath,
+    relativePath: params.relativePath,
     depth: params.depth,
     kind: params.kind ?? kindForDirent(params.dirent),
     dirent: params.dirent,
@@ -136,7 +135,7 @@ export function walkDirectorySync(
   };
   const visitedDirs = new Set<string>();
 
-  function visit(dir: string, depth: number): void {
+  function visit(dir: string, relativeDir: string, depth: number): void {
     if (options.maxDepth !== undefined && depth > options.maxDepth) return;
     let realDir: string;
     try {
@@ -164,7 +163,8 @@ export function walkDirectorySync(
       const fullPath = path.join(dir, dirent.name);
       const kind = resolveKind(fullPath, dirent, symlinks);
       if (!kind) continue;
-      const entry = buildEntry({ rootDir: root, fullPath, dirent, depth, kind });
+      const relativePath = relativeDir ? `${relativeDir}${path.sep}${dirent.name}` : dirent.name;
+      const entry = buildEntry({ relativePath, fullPath, dirent, depth, kind });
       if (options.include?.(entry) ?? true) {
         result.entries.push(entry);
       }
@@ -173,13 +173,13 @@ export function walkDirectorySync(
         (options.maxDepth === undefined || depth < options.maxDepth) &&
         (options.descend?.(entry) ?? true)
       ) {
-        visit(fullPath, depth + 1);
+        visit(fullPath, relativePath, depth + 1);
         if (result.truncated) return;
       }
     }
   }
 
-  visit(root, 1);
+  visit(root, "", 1);
   return result;
 }
 
@@ -198,7 +198,7 @@ export async function walkDirectory(
   };
   const visitedDirs = new Set<string>();
 
-  async function visit(dir: string, depth: number): Promise<void> {
+  async function visit(dir: string, relativeDir: string, depth: number): Promise<void> {
     if (options.maxDepth !== undefined && depth > options.maxDepth) return;
     let realDir: string;
     try {
@@ -226,7 +226,8 @@ export async function walkDirectory(
       const fullPath = path.join(dir, dirent.name);
       const kind = resolveKind(fullPath, dirent, symlinks);
       if (!kind) continue;
-      const entry = buildEntry({ rootDir: root, fullPath, dirent, depth, kind });
+      const relativePath = relativeDir ? `${relativeDir}${path.sep}${dirent.name}` : dirent.name;
+      const entry = buildEntry({ relativePath, fullPath, dirent, depth, kind });
       if (options.include?.(entry) ?? true) {
         result.entries.push(entry);
       }
@@ -235,12 +236,12 @@ export async function walkDirectory(
         (options.maxDepth === undefined || depth < options.maxDepth) &&
         (options.descend?.(entry) ?? true)
       ) {
-        await visit(fullPath, depth + 1);
+        await visit(fullPath, relativePath, depth + 1);
         if (result.truncated) return;
       }
     }
   }
 
-  await visit(root, 1);
+  await visit(root, "", 1);
   return result;
 }
