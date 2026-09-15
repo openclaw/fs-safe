@@ -2,8 +2,10 @@
 
 ## Unreleased
 
-### Performance
+### Archive performance
 
+- Reuse canonical archive paths when no components are stripped, retaining validation and filter order.
+- Avoid temporary ZIP collision-identity collections while checking both raw and Unicode identities before recording them.
 - Size native archive entry reservations from bounded member-size hints so small ZIP and compressed TAR results do not reserve the caller's larger byte budget.
 
 ### Validation and tooling

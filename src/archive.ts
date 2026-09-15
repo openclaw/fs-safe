@@ -130,7 +130,7 @@ function resolveZipOutputPath(params: {
   validateArchiveEntryPath(params.entryPath);
   const canonicalPath = stripArchivePath(params.entryPath, 0);
   if (!canonicalPath) return null;
-  const relPath = stripArchivePath(canonicalPath, params.strip);
+  const relPath = params.strip === 0 ? canonicalPath : stripArchivePath(canonicalPath, params.strip);
   if (!relPath) {
     return null;
   }
