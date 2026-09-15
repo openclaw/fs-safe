@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Performance
+
+- Size native archive entry reservations from bounded member-size hints so small ZIP and compressed TAR results do not reserve the caller's larger byte budget.
+
 ### Validation and tooling
 
 - Separate the reviewed manual method-audit harness from immutable candidate and baseline checkouts, validate and resolve dispatch inputs before platform fan-out, and support Node 22/24 plus rebuild and same-artifact controls without changing the ordinary PR/schedule benchmark job.

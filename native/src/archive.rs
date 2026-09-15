@@ -686,7 +686,7 @@ fn read_tar_entry(
     if member.size > max_bytes { return Err(limit_error("archive-entry-extracted-size-exceeds-limit")); }
     let mut reader = open_tar_reader(path, format, Arc::clone(&cancelled), limits)?;
     skip_tar_to(&mut reader, &mut 0, member.offset)?;
-    let output = read_bounded(&mut (&mut reader).take(member.size), max_bytes, cancelled)?;
+    let output = read_bounded(&mut (&mut reader).take(member.size), max_bytes, member.size, cancelled)?;
     if output.len() as u64 != member.size {
         return Err(Error::new(Status::InvalidArg, "archive-header-invalid: truncated TAR payload"));
     }
@@ -718,7 +718,7 @@ fn read_zip_entry(
         ));
     }
     let expected_size = entry.size();
-    let output = read_bounded(&mut entry, max_bytes, cancelled)?;
+    let output = read_bounded(&mut entry, max_bytes, expected_size, cancelled)?;
     if output.len() as u64 != expected_size {
         return Err(Error::new(
             Status::InvalidArg,
@@ -731,9 +731,12 @@ fn read_zip_entry(
 fn read_bounded(
     reader: &mut impl Read,
     max_bytes: u64,
+    expected_size: u64,
     cancelled: Arc<AtomicBool>,
 ) -> Result<Vec<u8>> {
-    let capacity = usize::try_from(max_bytes.min(1024 * 1024)).unwrap_or(0);
+    // The member size guides reservation only; EOF and integrity checks still
+    // consume the reader, including an extra byte when the budget permits it.
+    let capacity = usize::try_from(max_bytes.min(1024 * 1024).min(expected_size.saturating_add(1))).unwrap_or(0);
     let mut output = Vec::with_capacity(capacity);
     CancellationReader {
         inner: reader,
@@ -841,7 +844,7 @@ impl Task for ReadZipBufferTask {
             return Err(Error::new(Status::InvalidArg, "archive entry is not a file"));
         }
         let expected_size = entry.size();
-        let output = read_bounded(&mut entry, self.max_bytes, Arc::clone(&self.cancelled))?;
+        let output = read_bounded(&mut entry, self.max_bytes, expected_size, Arc::clone(&self.cancelled))?;
         if output.len() as u64 != expected_size {
             return Err(Error::new(Status::InvalidArg, "archive-header-invalid: ZIP entry size does not match declared uncompressed size"));
         }
@@ -963,7 +966,7 @@ impl Task for ReadTarBufferTask {
         }
         let mut reader = open_tar_source(Cursor::new(input), self.data.format, Arc::clone(&self.cancelled), self.data.limits, false)?;
         skip_tar_to(&mut reader, &mut 0, member.offset)?;
-        let output = read_bounded(&mut (&mut reader).take(member.size), self.max_bytes, Arc::clone(&self.cancelled))?;
+        let output = read_bounded(&mut (&mut reader).take(member.size), self.max_bytes, member.size, Arc::clone(&self.cancelled))?;
         if output.len() as u64 != member.size {
             return Err(Error::new(Status::InvalidArg, "archive-header-invalid: truncated TAR payload"));
         }
@@ -1072,7 +1075,12 @@ mod tests {
         let archive = Arc::clone(&reader.archive);
         let mut task = ReadZipBufferTask { archive: Arc::clone(&archive), index: 0, max_bytes: 14, cancelled: Arc::new(AtomicBool::new(false)) };
         drop(reader);
-        assert_eq!(task.compute().unwrap(), b"retained bytes");
+        for budget in [14, 16 * 1024 * 1024] {
+            task.max_bytes = budget;
+            let output = task.compute().unwrap();
+            assert_eq!(output, b"retained bytes");
+            assert!(output.capacity() <= 64 * 1024, "small output must not retain a large speculative reservation");
+        }
         drop(task);
         let original = Arc::try_unwrap(archive).ok().unwrap().into_inner().unwrap().into_inner().into_inner();
         assert_eq!(original.as_ptr(), input_pointer, "input bytes must not be copied");
@@ -1093,7 +1101,12 @@ mod tests {
             let mut task = ReadTarBufferTask { data: Arc::clone(&reader.data), index: 1, max_bytes: 3, cancelled: Arc::new(AtomicBool::new(false)) };
             drop(reader);
             assert_eq!(task.data.input.as_ptr(), pointer, "input bytes must not be copied");
-            assert_eq!(task.compute().unwrap(), b"two");
+            for budget in [3, 16 * 1024 * 1024] {
+                task.max_bytes = budget;
+                let output = task.compute().unwrap();
+                assert_eq!(output, b"two");
+                assert!(output.capacity() <= 64 * 1024, "small output must not retain a large speculative reservation");
+            }
             task.index = 0;
             assert_eq!(task.compute().unwrap(), b"one");
         }
