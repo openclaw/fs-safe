@@ -100,7 +100,9 @@ The read methods also accept an absolute spelling that already resolves inside
 the root. `readAbsolute()` and `reader()` make that intent explicit and accept
 both the configured root spelling and its canonical real path when the Root was
 created through a directory symlink or Windows junction. An absolute path
-outside the root is still rejected.
+outside the root is still rejected. On Windows, alternate casing is accepted
+only when the differently cased Root prefix has the Root's exact directory
+identity; the operation then continues under the trusted Root spelling.
 
 ### Writes
 

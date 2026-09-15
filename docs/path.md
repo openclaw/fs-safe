@@ -36,7 +36,7 @@ isPathInside("/srv/uploads", "/srv/uploads-other/x");        // false
 isPathInside("/srv/uploads", "/srv/uploads");                // true (root itself counts)
 ```
 
-The check is platform-aware: on Windows, paths are normalized for case and separator before comparison.
+The check is platform-aware: on Windows, paths are normalized for case and separator before comparison. This is deliberately a string-only, lexical answer; case folding does not prove that two differently cased prefixes name the same directory on a case-sensitive Windows directory. Root operations perform their own filesystem-identity admission when containment depends on case folding.
 
 ### `isPathInsideWithRealpath(rootDir, target, opts?)`
 
