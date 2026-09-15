@@ -51,7 +51,18 @@ existing parents and missing-parent creation with combined
 `denyMutations` and `mutationSymlinks: "reject"` admission. Compare the
 `Root.write/mutation-admission/` rows in alternating native and fallback
 baseline/candidate runs; investigate reported `medianUs` regressions above 10%
-or 50 us and `maxUs` regressions above 20% or 100 us. Forced permission-error replacement cases exercise the public
+or 50 us and `maxUs` regressions above 20% or 100 us. The focused
+`shared-js-mutation-admission` family pairs adjacent `policy=none` and
+`policy=enabled` controls for `Root.openWritable` update, append, and replace,
+`Root.append`, and `Root.mkdir` at exact parent depths 1/8/32 with existing and
+equally deep missing-parent fixtures. Setup, verification, descriptor close, and
+cleanup stay outside the
+timer, and these filesystem-heavy rows use a divisor of 10. On Windows the same
+filter also covers buffer overwrite, exclusive write, and create through
+`renameIdentity: "verify-content-with-lock"`, keeping the shared JavaScript route
+measurable in both native-off and native-require runs. The matrix has 60 portable
+rows and 36 additional Windows rows: 30 and 18 adjacent control/admission pairs.
+Forced permission-error replacement cases exercise the public
 filesystem adapter with 128 B, 1 MiB, and 16 MiB payloads, both restoration
 policies, and both sync/async methods. Temp-file and parent syncing are disabled
 for these cases; `restore-original` still includes its required destination
