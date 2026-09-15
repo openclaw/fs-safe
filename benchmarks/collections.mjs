@@ -3,6 +3,19 @@ import fs from "node:fs";
 import path from "node:path";
 import JSZip from "jszip";
 
+const LONG_NAME_INPUTS = Object.freeze([
+  ["ascii", `${"a".repeat(195)}.txt`],
+  ["unicode", `${"é".repeat(80)}.txt`],
+]);
+const LONG_NAME_ENDPOINTS = Object.freeze([
+  "writeViaSiblingTempPath",
+  "writeExternalFileWithinRoot",
+]);
+export const LONG_NAME_BENCHMARK_NAMES = Object.freeze(
+  LONG_NAME_INPUTS.flatMap(([kind]) =>
+    LONG_NAME_ENDPOINTS.map((endpoint) => `${endpoint}/long-name-${kind}`)),
+);
+
 export async function registerCollections({ api: a, workspace: w, register: add }) {
   const stores = [["FileStore", a.fileStore({ rootDir: w })], ["FileStoreSync", a.fileStoreSync({ rootDir: w })]];
   for (const [form, word] of [["ascii", "component"], ["nfc", "café-日本語"], ["nfd", "cafe\u0301-日本語"]]) {
@@ -66,19 +79,38 @@ export async function registerCollections({ api: a, workspace: w, register: add 
       } });
     }
   }
-  for (const [kind, name] of [["ascii", `${"a".repeat(195)}.txt`], ["unicode", `${"é".repeat(80)}.txt`]]) {
+  for (const [kind, name] of LONG_NAME_INPUTS) {
     const targetPath = path.join(w, name);
+    let stagedPath;
     const write = async file => {
-      assert.ok(Buffer.byteLength(path.basename(file)) <= 255);
+      stagedPath = file;
       await fs.promises.writeFile(file, "data");
     };
-    const verify = () => assert.equal(fs.readFileSync(targetPath, "utf8"), "data");
-    const after = () => fs.rmSync(targetPath, { force: true });
+    const before = () => {
+      assert.equal(fs.existsSync(targetPath), false);
+      stagedPath = undefined;
+    };
+    const after = () => {
+      try {
+        assert.equal(fs.readFileSync(targetPath, "utf8"), "data");
+        assert.equal(typeof stagedPath, "string");
+        assert.notEqual(path.resolve(stagedPath), path.resolve(targetPath));
+        const component = path.basename(stagedPath);
+        const normalizedBytes = ["NFC", "NFD"].map((form) =>
+          Buffer.byteLength(component.normalize(form)));
+        assert.ok(Math.max(...normalizedBytes) <= 255);
+        assert.ok(component.endsWith(".txt.part"));
+        assert.equal(fs.existsSync(stagedPath), false);
+      } finally {
+        fs.rmSync(targetPath, { force: true });
+        if (stagedPath) fs.rmSync(stagedPath, { force: true });
+      }
+    };
     add(`writeViaSiblingTempPath/long-name-${kind}`, () => a.writeViaSiblingTempPath({ rootDir: w, targetPath, writeTemp: write }), {
-      divisor: 100, verify, after,
+      divisor: 100, before, after, workloadSemantics: "equivalent-output",
     });
     add(`writeExternalFileWithinRoot/long-name-${kind}`, () => a.writeExternalFileWithinRoot({ rootDir: w, path: name, staging: "sibling", write }), {
-      divisor: 100, verify, after,
+      divisor: 100, before, after, workloadSemantics: "equivalent-output",
     });
   }
 }

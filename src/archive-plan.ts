@@ -41,7 +41,7 @@ export function createArchiveEntryPlanner(params: ArchivePlanOptions, archiveKin
     validateArchiveEntryPath(entry.path, { escapeLabel: params.escapeLabel });
     const canonicalPath = stripArchivePath(entry.path, 0);
     if (!canonicalPath) return null;
-    const relPath = stripArchivePath(canonicalPath, strip);
+    const relPath = strip === 0 ? canonicalPath : stripArchivePath(canonicalPath, strip);
     if (!relPath) return null;
     validateArchiveEntryPath(relPath, { escapeLabel: params.escapeLabel });
     assertArchiveEntryPathComponentsWithinLimit(relPath, limits);

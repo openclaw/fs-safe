@@ -6,10 +6,18 @@
 
 - Snapshot borrowed file-handle transfer budgets, cancellation, observers, and mutation-authority callbacks before descriptor inspection, including inherited and non-enumerable options, so later caller mutation cannot replace the admitted transfer policy.
 
+### Archive performance
+
+- Reuse canonical archive paths when no components are stripped, retaining validation and filter order.
+- Avoid temporary ZIP collision-identity collections while checking both raw and Unicode identities before recording them.
+- Size native archive entry reservations from bounded member-size hints so small ZIP and compressed TAR results do not reserve the caller's larger byte budget.
+
 ### Validation and tooling
 
+- Add bounded Node 22/24 Linux receipts using real caller-owned descriptors to prove borrowed file-handle transfers retain their selected policy and stop later write submissions after cancellation or mutation-authority rejection, preserving a canonical pending receipt across interrupted final emission.
 - Separate the reviewed manual method-audit harness from immutable candidate and baseline checkouts, validate and resolve dispatch inputs before platform fan-out, and support Node 22/24 plus rebuild and same-artifact controls without changing the ordinary PR/schedule benchmark job.
 - Add versioned, mutation-checked benchmark provenance for trusted reviewed revisions, including harness/source identities, measurement and report-file receipts, manifests, lockfiles, dist trees, bounded dependency layouts, native addons, and runner metadata; this detects accidental drift but is not a sandbox for hostile benchmark code.
+- Bind filename-sanitizer benchmark expectations to the measured revision's tracked source, validate all 17 profile rows before filtering, strengthen four long-name endpoint checks, add paired shared-mutation-admission fixtures with 60 portable and 96 Windows rows, and cover temp-workspace mode correction plus existing/missing roots at depths 4/8/32.
 
 ## 0.12.0 - 2026-09-15
 

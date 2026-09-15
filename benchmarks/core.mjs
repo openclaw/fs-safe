@@ -156,16 +156,20 @@ export async function registerCore({ api: a, workspace: w, binding, measuredFeat
     });
     if (size === 2 * 1024 * 1024) {
       const expectedMinimumChunks = size / (512 * 1024);
-      for (const { name, observe, authorize } of [
-        { name: "observer", observe: true, authorize: false },
-        { name: "authority", observe: false, authorize: true },
-        { name: "observer+authority", observe: true, authorize: true },
+      const liveSignal = new AbortController().signal;
+      for (const { name, signal, observe, authorize } of [
+        { name: "signal", signal: true, observe: false, authorize: false },
+        { name: "observer", signal: false, observe: true, authorize: false },
+        { name: "authority", signal: false, observe: false, authorize: true },
+        { name: "observer+authority", signal: false, observe: true, authorize: true },
+        { name: "signal+observer+authority", signal: true, observe: true, authorize: true },
       ]) {
         const callbackCopyPath = path.join(w, `handle-copy-${name}`);
         let observedChunks = 0;
         let observedBytes = 0;
         let authorityCalls = 0;
         const options = {};
+        if (signal) options.signal = liveSignal;
         if (observe) options.onChunk = (chunk) => { observedChunks += 1; observedBytes += chunk.byteLength; };
         if (authorize) options.assertBeforeMutation = () => { authorityCalls += 1; };
         add(`copyFileHandle/${name}`, ({ source, target }) => a.copyFileHandle(source, target, options), {
