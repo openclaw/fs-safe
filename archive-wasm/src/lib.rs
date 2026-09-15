@@ -51,9 +51,18 @@ pub extern "C" fn push(offset: usize, length: usize) -> i32 {
         if length == 0 || offset >= s.input.len() || length > s.input.len() - offset
             || !s.error.is_empty() { return -1; }
         let Some(parser) = &mut s.parser else { return -1; };
-        match parser.push(&s.input[offset..offset + length]) {
-            Ok(used) => { s.member = parser.take_member(); used as i32 }
-            Err(error) => { s.error = error.to_string(); s.parser = None; -1 }
+        let mut consumed = 0;
+        loop {
+            match parser.push(&s.input[offset + consumed..offset + length]) {
+                Ok(used) => {
+                    s.member = parser.take_member();
+                    if used == 0 { return 0; }
+                    consumed += used;
+                    // Return each member before consuming any of its payload.
+                    if s.member.is_some() || consumed == length { return consumed as i32; }
+                }
+                Err(error) => { s.error = error.to_string(); s.parser = None; return -1; }
+            }
         }
     })
 }

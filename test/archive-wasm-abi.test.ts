@@ -8,7 +8,7 @@ function parser() {
   return new WebAssembly.Instance(module).exports as unknown as {
     memory: WebAssembly.Memory; input_ptr(): number; init(a: number, b: number, c: number, d: number, windows: number): number;
     push(offset: number, length: number): number; finish(): number; dispose(): void; text_ptr(): number; text_len(): number;
-    member_type(): number;
+    member_type(): number; member_offset(): number;
   };
 }
 function text(p: ReturnType<typeof parser>) {
@@ -31,7 +31,7 @@ it("has no imports, rejects invalid limits and inbox lengths, and bounds linear 
   expect(p.push(0, 1)).toBe(-1);
   expect(p.finish()).toBe(-1);
 });
-it("keeps concurrent parser states isolated and consumes one bounded event at a time", () => {
+it.each([7, 65536])("keeps concurrent parser states isolated and emits members before their payloads (chunk=%i)", (chunkSize) => {
   const parsers = [parser(), parser()];
   const names = ["雪.txt", "line\n.txt"];
   const bytes = names.map((name) => unifiedFixture(name).bytes);
@@ -42,13 +42,16 @@ it("keeps concurrent parser states isolated and consumes one bounded event at a 
     parsers.forEach((p, i) => {
       const offset = offsets[i]!;
       if (offset === bytes[i]!.length) return;
-      const chunk = bytes[i]!.subarray(offset, offset + 7);
+      const chunk = bytes[i]!.subarray(offset, offset + chunkSize);
       new Uint8Array(p.memory.buffer, p.input_ptr(), chunk.length).set(chunk);
       const used = p.push(0, chunk.length);
       expect(used).toBeGreaterThan(0);
       expect(used).toBeLessThanOrEqual(chunk.length);
       offsets[i]! += used;
-      if (p.member_type() >= 0) observed[i]!.push(text(p));
+      if (p.member_type() >= 0) {
+        expect(offsets[i]).toBe(p.member_offset());
+        observed[i]!.push(text(p));
+      }
     });
   }
   expect(observed).toEqual(names.map((name) => [name, "sentinel"]));
@@ -107,7 +110,10 @@ it("consumes multiple member events from one copied inbox range", () => {
     expect(used).toBeGreaterThan(0);
     expect(used).toBeLessThanOrEqual(bytes.length - consumed);
     consumed += used;
-    if (p.member_type() >= 0) names.push(text(p));
+    if (p.member_type() >= 0) {
+      expect(consumed).toBe(p.member_offset());
+      names.push(text(p));
+    }
   }
   expect(names).toEqual(Array.from({ length: 20 }, (_, i) => `entry-${i}`));
   expect(p.finish()).toBe(0);
