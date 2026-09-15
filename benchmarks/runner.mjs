@@ -20,7 +20,7 @@ const args = { iterations: 100, samples: 5, warmup: 5, mode: "off", "copy-shape"
 for (let i = 2; i < process.argv.length; i++) {
   const key = process.argv[i].replace(/^--/, "");
   if (key === "") continue;
-  if (!["iterations", "samples", "warmup", "mode", "json", "filter", "dist", "copy-shape", "copy-files", "copy-file-bytes", "copy-concurrency"].includes(key)) throw new Error(`Unknown argument: ${key}`);
+  if (!["iterations", "samples", "warmup", "mode", "json", "filter", "dist", "distribution-identity", "copy-shape", "copy-files", "copy-file-bytes", "copy-concurrency"].includes(key)) throw new Error(`Unknown argument: ${key}`);
   const value = process.argv[++i];
   if (value === undefined) throw new Error(`Missing value for ${key}`);
   args[key] = ["iterations", "samples", "warmup", "copy-files", "copy-file-bytes"].includes(key) ? Number(value) : value;
@@ -39,7 +39,14 @@ if (args["copy-concurrency"] !== undefined) {
   assert(new Set(args["copy-concurrency"]).size === args["copy-concurrency"].length, "Duplicate copy concurrency");
 }
 const packageRoot = path.resolve(import.meta.dirname, "..");
-const dist = path.resolve(args.dist ?? path.join(packageRoot, "dist"));
+const localDist = path.join(packageRoot, "dist");
+const dist = path.resolve(args.dist ?? localDist);
+const distributionIdentity = args["distribution-identity"] ??
+  (dist === path.resolve(localDist) ? "candidate-equivalent" : "comparison");
+assert(
+  ["candidate-equivalent", "comparison"].includes(distributionIdentity),
+  "Invalid distribution identity",
+);
 const distributionHash = (directory) => createHash("sha256").update(
   fs.readdirSync(directory)
     .filter((name) => /\.(js|wasm)$/.test(name))
@@ -48,8 +55,6 @@ const distributionHash = (directory) => createHash("sha256").update(
     .join("\n"),
 ).digest("hex");
 const distHash = distributionHash(dist);
-const candidateDistHash = distributionHash(path.join(packageRoot, "dist"));
-const distributionIdentity = distHash === candidateDistHash ? "candidate-equivalent" : "comparison";
 const measuredFeatures = measuredSecureFileFeatures(dist);
 const manifest = JSON.parse(fs.readFileSync(path.join(packageRoot, "package.json"), "utf8"));
 const harnessHash = createHash("sha256");
@@ -178,7 +183,7 @@ try {
   const report = {
     schemaVersion: 1,
     copyFixture: { shape: args["copy-shape"], files: args["copy-shape"] === "empty" ? 0 : args["copy-files"], bytesPerFile: args["copy-file-bytes"], extraPayloadBytes: args["copy-shape"] === "mixed" ? 1024 * 1024 : 0, concurrency: args["copy-concurrency"] ?? null },
-    metadata: { harnessHash: harnessDigest, nativeHash, distHash, candidateDistHash, distributionIdentity, measuredProfiles, harnessRevision: execFileSync("git", ["rev-parse", "HEAD"], { cwd: packageRoot, encoding: "utf8" }).trim(), node: process.version, platform: process.platform, arch: process.arch, cpu: os.cpus()[0]?.model, mode: args.mode, native, samples: args.samples, date: new Date().toISOString() },
+    metadata: { harnessHash: harnessDigest, nativeHash, distHash, distributionIdentity, measuredProfiles, harnessRevision: execFileSync("git", ["rev-parse", "HEAD"], { cwd: packageRoot, encoding: "utf8" }).trim(), node: process.version, platform: process.platform, arch: process.arch, cpu: os.cpus()[0]?.model, mode: args.mode, native, samples: args.samples, date: new Date().toISOString() },
     coverage: { exports: Object.fromEntries(exportsByName), methods: Object.fromEntries(contracts), exclusions: Object.fromEntries(exclusions), registeredCases: cases.length, filtered: Boolean(args.filter) },
     results,
   };
