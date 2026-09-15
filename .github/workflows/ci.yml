@@ -39,12 +39,23 @@ jobs:
         node:
           - 22.23.2
           - 24.20.0
-    env:
-      BASELINE_DIR: ${{ runner.temp }}/fs-safe-secure-file-baseline-${{ matrix.node }}
-      PROOF_PARENT: ${{ runner.temp }}/fs-safe-secure-file-proof-${{ matrix.node }}
-      RECEIPT_DIR: ${{ runner.temp }}/fs-safe-secure-file-receipt-${{ matrix.node }}
-      RECEIPT_PATH: ${{ runner.temp }}/fs-safe-secure-file-receipt-${{ matrix.node }}/secure-file-credential-proof.json
     steps:
+      - name: Initialize proof paths
+        shell: bash
+        env:
+          BASELINE_DIR: ${{ runner.temp }}/fs-safe-secure-file-baseline-${{ matrix.node }}
+          PROOF_PARENT: ${{ runner.temp }}/fs-safe-secure-file-proof-${{ matrix.node }}
+          RECEIPT_DIR: ${{ runner.temp }}/fs-safe-secure-file-receipt-${{ matrix.node }}
+          RECEIPT_PATH: ${{ runner.temp }}/fs-safe-secure-file-receipt-${{ matrix.node }}/secure-file-credential-proof.json
+        run: |
+          set -euo pipefail
+          printf '%s\n' \
+            "BASELINE_DIR=$BASELINE_DIR" \
+            "PROOF_PARENT=$PROOF_PARENT" \
+            "RECEIPT_DIR=$RECEIPT_DIR" \
+            "RECEIPT_PATH=$RECEIPT_PATH" \
+            >> "$GITHUB_ENV"
+
       - name: Check out candidate with fixed baseline history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

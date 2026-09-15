@@ -50,6 +50,24 @@ describe("manual split-credential secure-file proof contract", () => {
     expect(job).not.toMatch(/pull_request|push:/u);
   });
 
+  it("initializes runner-dependent paths in the first step", async () => {
+    const { workflow } = await sources();
+    const job = workflowJob(workflow);
+    const stepsStart = job.indexOf("    steps:\n");
+    const initializeStart = job.indexOf("      - name: Initialize proof paths\n");
+    const checkoutStart = job.indexOf("      - name: Check out candidate with fixed baseline history\n");
+    expect(stepsStart).toBeGreaterThan(-1);
+    expect(job.slice(0, stepsStart)).not.toContain("runner.temp");
+    expect(initializeStart).toBe(stepsStart + "    steps:\n".length);
+    expect(checkoutStart).toBeGreaterThan(initializeStart);
+    const initialize = job.slice(initializeStart, checkoutStart);
+    for (const name of ["BASELINE_DIR", "PROOF_PARENT", "RECEIPT_DIR", "RECEIPT_PATH"]) {
+      expect(initialize).toContain(`          ${name}: \${{ runner.temp }}`);
+      expect(initialize).toContain(`"${name}=\$${name}"`);
+    }
+    expect(initialize).toContain('>> "$GITHUB_ENV"');
+  });
+
   it("builds both revisions unprivileged and pins the audit-only baseline", async () => {
     const { coordinator, workflow } = await sources();
     const job = workflowJob(workflow);
