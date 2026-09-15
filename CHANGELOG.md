@@ -8,6 +8,12 @@
 - Isolate the manual split-credential proof across separate candidate, historical, and clean execution runners, bind bounded build artifacts to exact provenance, and run only root-staged, identity-checked proof tools and harness files.
 - Authenticate the manual proof runtime against pinned official Node archives before checkout, keep staging private under a verified system parent, and report bounded staging failures on hosted images with writable tool caches.
 
+### Archive performance
+
+- Reuse canonical archive paths when no components are stripped, retaining validation and filter order.
+- Avoid temporary ZIP collision-identity collections while checking both raw and Unicode identities before recording them.
+- Size native archive entry reservations from bounded member-size hints so small ZIP and compressed TAR results do not reserve the caller's larger byte budget.
+
 ### Validation and tooling
 
 - Separate the reviewed manual method-audit harness from immutable candidate and baseline checkouts, validate and resolve dispatch inputs before platform fan-out, and support Node 22/24 plus rebuild and same-artifact controls without changing the ordinary PR/schedule benchmark job.
