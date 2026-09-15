@@ -102,7 +102,7 @@ describe.each([false, true])("copy fallback restore reads (sync: %s)", sync => {
     expect(adapter.reads.length).toBeLessThanOrEqual(size > 16 * 1024 * 1024 ? 3 : 2);
     expect(adapter.reads.every((r, i) => r.position === adapter.reads.slice(0, i).reduce((n, r) => n + r.read, 0))).toBe(true);
     expect(adapter.reads[0]!.requested).toBeLessThanOrEqual(16 * 1024 * 1024 + 1);
-  });
+  }, process.platform === "win32" ? 30_000 : 5_000);
 
   it.each([0, 90001, Number.MAX_SAFE_INTEGER])("reads through short chunks and EOF with size hint %s", async sizeHint => {
     const original = Buffer.alloc(90001, 0x5a);

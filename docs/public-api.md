@@ -26,6 +26,11 @@ deprecated native-configuration bridge retains the `FsSafePythonConfig` type.
 
 ## `path` and `advanced`
 
+`safePathSegmentHashedV2` encodes every trimmed install ID with domain-separated
+SHA-256 into a fixed lowercase segment. The legacy `safePathSegmentHashed` keeps
+its existing output but can alias distinct IDs. See [install paths](install-path.md)
+for the exact encoding and migration contract.
+
 The lexical path surface additionally exports `isNodeError`,
 `isPathRelativeEscape`, `normalizeWindowsPathForComparison`,
 `resolveSafeRelativePath`, `splitSafeRelativePath`, and

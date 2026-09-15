@@ -4,11 +4,12 @@ import { assertAsyncDirectoryGuard, type AnyAsyncDirectoryGuard } from "./direct
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { resolveOpenedFileRealPathForFd } from "./opened-realpath.js";
-import { assertNoUnsafeDeviceReadPath, hasNodeErrorCode, isNotFoundPathError, isPathInside, isSymlinkOpenError } from "./path.js";
+import { assertNoUnsafeDeviceReadPath, hasNodeErrorCode, isNotFoundPathError, isSymlinkOpenError } from "./path.js";
 import type { PublishedWriteIdentity } from "./pinned-write.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { assertRootIdentityCurrent, type RootContext } from "./root-context.js";
 import { fileNotFoundError, hardlinkedPathNotAllowedError, outsideWorkspaceError } from "./root-errors.js";
+import { admitPathInsideRoot } from "./root-boundary.js";
 
 export async function verifyAtomicWriteResult(params: {
   root: RootContext;
@@ -60,7 +61,11 @@ export async function verifyAtomicWriteResult(params: {
     assertPath(fsSync.lstatSync(params.targetPath, { bigint: true }));
     const { realPath } = await resolveOpenedFileRealPathForFd(params.fd, stat, params.targetPath);
     assertPath(fsSync.statSync(realPath, { bigint: true }));
-    if (!isPathInside(params.root.rootWithSep, realPath)) {
+    if (!admitPathInsideRoot({
+      rootPath: params.root.rootReal,
+      candidatePath: realPath,
+      rootIdentity: params.root.rootIdentity,
+    })) {
       throw outsideWorkspaceError();
     }
     await assertAsyncDirectoryGuard(params.parentGuard);
@@ -87,7 +92,11 @@ export async function verifyAtomicWriteResult(params: {
         assertPath(fsSync.lstatSync(params.targetPath, { bigint: true }));
         const { realPath: reopenedPath } = await resolveOpenedFileRealPathForFd(opened.fd, reopenedStat, params.targetPath);
         assertPath(fsSync.statSync(reopenedPath, { bigint: true }));
-        if (!isPathInside(params.root.rootWithSep, reopenedPath)) {
+        if (!admitPathInsideRoot({
+          rootPath: params.root.rootReal,
+          candidatePath: reopenedPath,
+          rootIdentity: params.root.rootIdentity,
+        })) {
           throw outsideWorkspaceError();
         }
         await assertAsyncDirectoryGuard(params.parentGuard);
