@@ -269,6 +269,10 @@ files, hardlinks, and changes between the pre-open pathname, opened descriptor,
 and current pathname are rejected. The callback must finish and close its
 writer before returning. Its return value is preserved as `result`.
 
+Generated temp filenames suffix Windows reserved-device basenames on every
+platform. A completed sibling staging component that still resolves as a
+Windows device alias rejects with `invalid-path` before hooks or producers run.
+
 The helper retains one descriptor through requested mode application, opt-in
 file synchronization, rename, and publication verification. It opens read-only
 unless file synchronization is requested, so closed read-only producer output
@@ -417,7 +421,7 @@ type ResolveSecureTempRootOptions = {
 
   // Platform/test adapters; production callers normally omit these.
   platform?: NodeJS.Platform;
-  getuid?: () => number | undefined;  // effective uid override; legacy name
+  getuid?: () => number | undefined;
   tmpdir?: () => string;
   accessSync?: typeof import("node:fs").accessSync;
   chmodSync?: typeof import("node:fs").chmodSync;
@@ -434,39 +438,15 @@ type ResolveSecureTempRootOptions = {
 };
 ```
 
-On POSIX, the fallback is `<tmpdir>/<fallbackPrefix>-<effective-uid>`, using
-`process.geteuid()`. The legacy-named `getuid` adapter is retained for
-compatibility, but its result is treated as the effective UID. Missing,
-throwing, negative, fractional, or unsafe-integer effective identities fail
-closed on POSIX. On Windows, the fallback is
-`<tmpdir>/<fallbackPrefix>` unless the existing adapter supplies an identity;
-no username is appended. The helper never returns the shared `os.tmpdir()`
-directory itself. It requires the selected path to be a writable, non-symlink
-directory. On POSIX, an owner UID must be present and match the effective user;
-available mode bits must not grant group/world write access. It creates or
-repairs the fallback to mode `0o700` where mode bits apply. If it cannot
-establish that state, it throws an ordinary `Error`; there is no separate native
-mutation mode or direct `helper-unavailable` branch on this API. On Bun POSIX,
-however, its canonical-path checks use the shared resolver and therefore honor
-the configured native-helper mode so restrictive directories keep Bun's
-supported behavior.
-
-Default POSIX writability checks use `fs.accessSync` only when the process can
-report matching real/effective user and group IDs and the effective user is not
-root. Root, split-credential, and unobservable-credential processes instead
-prove their current effective operation rights by exclusively creating and
-removing a random private empty file. That bounded probe retains exact bigint
-file and directory identities, rechecks the directory's canonical path,
-ownership, and mode before cleanup, and never removes recursively. An uncertain
-identity or cleanup fails closed; an object without an established receipt is
-left untouched. The result is a point-in-time admission, not a retained lease.
-
-Supplying `accessSync` keeps the historical adapter authoritative and disables
-the automatic credential classification and operation probe; pair it with the
-other adapters when testing virtual paths. Windows continues to use
-`fs.accessSync` by default. The legacy `getuid` adapter controls ownership
-admission and fallback naming, but default POSIX probe selection always
-classifies the process's actual credential getters.
+When `process.getuid()` is available, the fallback is
+`<tmpdir>/<fallbackPrefix>-<uid>`. Without a UID (including Windows), it is
+`<tmpdir>/<fallbackPrefix>`; no username is appended. The helper never returns
+the shared `os.tmpdir()` directory itself. It requires the selected path to be
+a writable, non-symlink directory and, when UID/mode facts are available,
+owned by the current user without group/world write bits. It creates or repairs
+the fallback to mode `0o700` where mode bits apply. If it cannot establish that
+state, it throws an ordinary `Error`; there is no native mode or
+`helper-unavailable` branch on this API.
 
 ## Common patterns
 

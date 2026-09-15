@@ -9,8 +9,6 @@ export default {
     ...config.test,
     include: [
       "test/realpath.test.ts",
-      "test/secure-temp-dir.test.ts",
-      "test/secure-temp-bun-canonicalizer.test.ts",
       "test/relative-publication.test.ts",
       "test/native-integration.test.ts",
       "test/windows-native-fd-bridge.test.ts",

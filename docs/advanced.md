@@ -96,6 +96,8 @@ byte limit. Continuation buffers grow only after filling with actual bytes,
 up to the byte budget plus its probe; file-size hints cannot force that growth.
 Unknown-size inputs start with at most 64 KiB. This avoids per-chunk copies and
 a final concatenation when a file exceeds the initial allocation.
+Regular files that report a size of zero, such as virtual files, continue through
+positive short reads until actual EOF or byte-limit overflow.
 
 The bounded descriptor helpers start at the descriptor's current offset and
 leave ownership with the caller. They are intended for the second half of a
@@ -133,7 +135,7 @@ component is followed by another segment, both helpers throw
 
 | Export | Page | Notes |
 |---|---|---|
-| `safeDirName`, `safePathSegmentHashed`, `resolveSafeInstallDir`, `assertCanonicalPathWithinBase` | [install-path.md](install-path.md) | Build install-target directories from caller-supplied identifiers. |
+| `safeDirName`, `safePathSegmentHashed`, `safePathSegmentHashedV2`, `resolveSafeInstallDir`, `assertCanonicalPathWithinBase` | [install-path.md](install-path.md) | Build install-target directories; use V2 for untrusted identifier mappings. |
 | `sanitizeUntrustedFileName` | [filename.md](filename.md) | Coerce an untrusted string into a safe filename. |
 | `resolveHomeRelativePath` | – | Expand a leading `~` before resolving `.` and `..`; tildes inside relative paths stay literal. |
 

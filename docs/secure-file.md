@@ -23,17 +23,15 @@ The helper:
 - optionally requires the real path to live under one of `trust.trustedDirs`
 - rejects hardlink aliases using descriptor, pathname, and realpath link counts, then rechecks the descriptor after reading before returning bytes
 - rejects hard-to-verify or unsafe permissions unless `permissions.allowInsecure` is set
-- rejects files owned by a POSIX uid other than the process's effective uid
+- rejects files owned by another POSIX uid
 - enforces `maxBytes` before and after reading
 - closes the handle on success, error, and timeout
 
-On POSIX, unsafe permissions mean group/world writable, and group/world readable unless `permissions.allowReadableByOthers` is true. On Windows, the helper uses the ACL inspection helpers from [`permissions`](permissions.md) and refuses the read if ACLs cannot be verified.
+On POSIX, unsafe permissions mean group/world writable, and group/world readable unless `permissions.allowReadableByOthers` is true. On Windows, the helper queries owner, DACL, and locality from the same open descriptor that supplies the bytes. The native query returns the 32-bit volume serial and 64-bit file-index projection used by Node, which must equal Node's bigint descriptor receipt before its ACL facts are trusted. This avoids JavaScript number rounding but does not represent the full 128-bit file identity available on ReFS. Only the current user, LocalSystem, and built-in Administrators are trusted owner classes.
 
-POSIX ownership is compared with `process.geteuid()`, not the real UID. If the
-effective identity or the opened file's owner identity is unavailable or
-invalid, the read fails with `permission-unverified`.
+Windows secure reads require the matching current optional native package. A missing or stale helper, fd-to-handle conversion failure, denied `READ_CONTROL`, remote handle, incomplete descriptor, or unsupported ACE form rejects with `permission-unverified` before content is read. A malformed or different handle identity rejects with `path-mismatch`. There is no pathname-command fallback for `readSecureFile()`; the standalone reporting APIs in [`permissions`](permissions.md) retain their documented fallbacks. `permissions.allowInsecure` remains the explicit escape hatch and bypasses the ACL query.
 
-Descriptor, pathname, and realpath identity checks use lossless bigint stats internally. The returned `stat` remains a normal Node `Stats` object with numeric fields. A zero Windows device or inode is unverified, never a match: the helper re-inspects that identity once using the same descriptor or pathname, then rejects persistent ambiguity with `path-mismatch`. A definite mismatch rejects immediately; retries retain known identity components and still enforce symlink policy.
+Descriptor, pathname, and realpath identity checks use bigint stats internally to avoid JavaScript number rounding. The returned `stat` remains a normal Node `Stats` object with numeric fields. A zero Windows device or inode is unverified, never a match: the helper re-inspects that identity once using the same descriptor or pathname, then rejects persistent ambiguity with `path-mismatch`. A definite mismatch rejects immediately; retries retain known identity components and still enforce symlink policy.
 
 ## Options
 
@@ -66,11 +64,9 @@ type SecureFileReadOptions = {
 
 `permissions.allowInsecure` is a migration escape hatch. Prefer fixing permissions and using [`formatPermissionRemediation`](permissions.md) to show the user what to run. `trust.allowNetworkPath` is off by default because UNC paths are remote authority, not local filesystem input. `inject` is for tests and platform adapters; production callers usually leave it unset.
 
-`permissions.allowInsecure` bypasses only permission checks, including the
-owner check. Neither it nor `inject.platform` changes filesystem identity
-verification, which always uses the actual process platform.
-`trust.allowSymlink` permits an alias but still requires its target and
-realpath to match the opened descriptor.
+On an actual Windows process with effective `platform: "win32"`, `inject.env` and `inject.exec` do not replace descriptor inspection. They remain available to simulated Windows checks on non-Windows hosts.
+
+`permissions.allowInsecure` bypasses only permission checks. Neither it nor `inject.platform` changes filesystem identity verification, which always uses the actual process platform. `trust.allowSymlink` permits an alias but still requires its target and realpath to match the opened descriptor.
 
 ## Errors
 
@@ -85,23 +81,20 @@ realpath to match the opened descriptor.
 | `hardlink` | The descriptor, pathname, or realpath has more than one link. |
 | `path-mismatch` | The path or realpath changed between open and verification, or filesystem identity could not be verified after bounded re-inspection. |
 | `outside-workspace` | `realPath` is outside `trust.trustedDirs`. |
-| `permission-unverified` | Required mode, owner, or ACL checks could not be completed. |
+| `permission-unverified` | Required mode/ACL checks could not be completed, including when descriptor-bound Windows inspection is unavailable. |
 | `insecure-permissions` | Mode bits or ACLs grant broader access than allowed. |
-| `not-owned` | POSIX owner uid is not the process's effective uid. |
+| `not-owned` | POSIX owner uid is not the current process uid. |
 | `too-large` | File size or bytes read exceeded `maxBytes`. |
 | `timeout` | `timeoutMs` elapsed while reading. |
 
-Windows inspection failures remain operational `permission-unverified` errors
-and still refuse the read. Their message includes the underlying reason when
-available. `details` includes `ownerError` for owner-query failures and, when
-command diagnostics are available, `command`, `durationMs`, `timedOut`,
-`exitCode`, `signal`, and `stderr`. Reasons and stderr are control-character
-escaped and limited to 400 characters each (including a truncation marker).
-No stdout or target file contents are copied into these display diagnostics.
-The original inspection exception is retained as `cause`; built-in command
-errors also retain their original execFile exception in the cause chain.
-Treat causes as restricted local diagnostic data. No retries are performed,
-and verification order and rejection conditions are unchanged.
+Windows descriptor-inspection failures are operational `permission-unverified`
+errors and refuse the read. The original native exception is retained as
+`cause`; treat causes as restricted local diagnostic data. No pathname or ACL
+content is copied into the display message. Test adapters that simulate Windows
+on another operating system retain the standalone pathname inspector's
+structured command diagnostics (`ownerError`, `command`, `durationMs`,
+`timedOut`, `exitCode`, `signal`, and bounded escaped `stderr`). Actual Windows
+secure reads do not start those commands. No retries are performed.
 
 ## See also
 

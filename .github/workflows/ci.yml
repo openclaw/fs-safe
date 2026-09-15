@@ -227,6 +227,11 @@ jobs:
           FS_SAFE_NATIVE_MODE: require
         run: pnpm test test/file-hash-options.test.ts
 
+      - name: Test Windows descriptor ACL admission with required native binding
+        env:
+          FS_SAFE_NATIVE_MODE: require
+        run: pnpm test test/secure-file-windows-descriptor.test.ts test/secure-file-windows-native.test.ts
+
       - name: Test native archive buffer ownership and validation
         env:
           FS_SAFE_NATIVE_MODE: require

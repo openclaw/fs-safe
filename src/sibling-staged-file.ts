@@ -8,6 +8,7 @@ import {
   createAsyncDirectoryGuard,
 } from "./directory-guard.js";
 import { syncDirectoryBestEffort } from "./directory-durability.js";
+import { isWindowsReservedDeviceName } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { root } from "./root.js";
@@ -34,6 +35,12 @@ async function inspectStage(inspect: () => BigIntStats, expected?: BigIntStats) 
     assertRegularFile(stat);
     return stat;
   }, expected);
+}
+
+export function assertCallbackTempPathDeviceSafe(tempPath: string): void {
+  if (isWindowsReservedDeviceName(tempPath)) {
+    throw new FsSafeError("invalid-path", "callback temp path uses a reserved Windows device name");
+  }
 }
 
 // Own the workspace before the producer can leave partial output. The finished
@@ -81,6 +88,7 @@ export async function writeCallbackSibling<T>(params: {
   syncTempFile: boolean;
   syncParentDir: boolean;
 }): Promise<{ filePath: string; result: T }> {
+  assertCallbackTempPathDeviceSafe(params.tempPath);
   const parent = path.dirname(params.tempPath);
   const guard = await createAsyncDirectoryGuard(parent, { bigint: true });
   const assertParent = () => assertAsyncDirectoryGuard(guard);

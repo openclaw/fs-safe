@@ -9,7 +9,7 @@ import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { root } from "./root.js";
 import { assertSafePathPrefix } from "./safe-path-segment.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
-import { writeCallbackSibling } from "./sibling-staged-file.js";
+import { assertCallbackTempPathDeviceSafe, writeCallbackSibling } from "./sibling-staged-file.js";
 import { tempFile } from "./temp-target.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
@@ -131,6 +131,7 @@ export async function writeViaSiblingTempPath(params: {
       fallbackFileName: params.fallbackFileName ?? "output.bin",
       tempPrefix: params.tempPrefix ?? ".fs-safe-output-",
     });
+    assertCallbackTempPathDeviceSafe(tempPath);
     await getFsSafeTestHooks()?.beforeSiblingTempWrite?.(tempPath);
     await params.writeTemp(tempPath);
     await assertAsyncDirectoryGuard(rootGuard);

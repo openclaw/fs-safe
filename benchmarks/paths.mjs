@@ -29,6 +29,33 @@ export async function registerPaths({ api: a, workspace: w, register: add, contr
     categorizeFsSafeError: ["outside-workspace"],
   };
   for (const [name, values] of Object.entries(simple)) add(name, () => a[name](...values), { sync: true, batch: 100 });
+  add("safePathSegmentHashedV2", () => a.safePathSegmentHashedV2("ordinary-safe-name"), {
+    sync: true,
+    batch: 100,
+    skip: typeof a.safePathSegmentHashedV2 !== "function"
+      ? "Not exported by this explicitly selected older comparison build."
+      : undefined,
+    verify: (result) => {
+      assert.match(result, /^id-v2-[a-f0-9]{64}$/);
+      assert.equal(result.length, 70);
+    },
+  });
+  add("resolveSafeInstallDir/V2", () => a.resolveSafeInstallDir({
+    baseDir: w,
+    id: "module",
+    invalidNameMessage: "invalid",
+    nameEncoder: a.safePathSegmentHashedV2,
+  }), {
+    sync: true,
+    batch: 100,
+    skip: typeof a.safePathSegmentHashedV2 !== "function"
+      ? "Not exported by this explicitly selected older comparison build."
+      : undefined,
+    verify: (result) => assert.deepEqual(result, {
+      ok: true,
+      path: path.join(w, a.safePathSegmentHashedV2("module")),
+    }),
+  });
   add("isPathInside/trailing-separator", () => a.isPathInside(`${w}${path.sep}`, input), {
     sync: true, batch: 100, verify: (result) => assert.equal(result, true),
   });
@@ -44,6 +71,31 @@ export async function registerPaths({ api: a, workspace: w, register: add, contr
   add("assertNoHardlinkedFinalPath", () => a.assertNoHardlinkedFinalPath({ filePath: input, root: w, boundaryLabel: "benchmark" }));
   const rootParams = { absolutePath: input, rootPath: w, boundaryLabel: "benchmark" };
   for (const name of ["resolveRootPath", "resolveRootPathSync", "assertNoPathAliasEscape"]) add(name, () => a[name](rootParams), { sync: name.endsWith("Sync") });
+  const workspaceName = path.basename(w);
+  const caseIndex = [...workspaceName].findIndex((character) => /[a-z]/i.test(character));
+  const caseCharacter = caseIndex < 0 ? "" : workspaceName[caseIndex];
+  const alternateName = caseIndex < 0 ? workspaceName : `${workspaceName.slice(0, caseIndex)}${
+    caseCharacter === caseCharacter.toLowerCase() ? caseCharacter.toUpperCase() : caseCharacter.toLowerCase()
+  }${workspaceName.slice(caseIndex + 1)}`;
+  const alternateRoot = path.join(path.dirname(w), alternateName);
+  const alternateInput = path.join(alternateRoot, path.basename(input));
+  const windowsCaseAdmission = process.platform === "win32" && alternateRoot !== w && fs.existsSync(alternateInput);
+  const rootIdentity = fs.lstatSync(w, { bigint: true });
+  add("resolveRootPath/windows-exact-prefix", () => a.resolveRootPath({
+    ...rootParams, rootCanonicalPath: w, rootIdentity,
+  }), {
+    skip: process.platform === "win32" ? undefined : "Windows Root prefix admission.",
+    verify: (result) => assert.equal(result.absolutePath, input),
+  });
+  add("resolveRootPath/windows-identity-prefix", () => a.resolveRootPath({
+    ...rootParams, absolutePath: alternateInput, rootCanonicalPath: w, rootIdentity,
+  }), {
+    skip: windowsCaseAdmission ? undefined : "Requires an alternate-casing alias to the benchmark Root.",
+    // The baseline deliberately retains caller spelling while the repaired
+    // implementation returns the identity-gated Root spelling. Canonical
+    // identity is the invariant shared by both revisions.
+    verify: (result) => assert.equal(result.canonicalPath, input),
+  });
   add("resolvePathViaExistingAncestorSync", () => a.resolvePathViaExistingAncestorSync(input), { sync: true });
   for (const name of ["resolveLocalPathFromRootsSync", "readLocalFileFromRoots"]) add(name, () => a[name]({ filePath: input, roots: [w] }), { sync: name.endsWith("Sync") });
   const base = { rootDir: w, scopeLabel: "benchmark" };

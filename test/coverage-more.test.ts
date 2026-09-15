@@ -58,14 +58,13 @@ afterEach(async () => {
 });
 
 describe("secure temp root fallback coverage", () => {
-  it("creates the uid-less Windows fallback when no preferred directory is configured", () => {
-    const fallbackPath = path.win32.join("C:\\Temp", "fs-safe-test");
+  it("creates the uid-less fallback when no preferred directory is configured", () => {
+    const fallbackPath = path.join("/tmp", "fs-safe-test");
     let created = false;
 
     const resolved = resolveSecureTempRoot({
       fallbackPrefix: "fs-safe-test",
       getuid: () => undefined,
-      platform: "win32",
       lstatSync: vi.fn((candidate: string) => {
         if (candidate === fallbackPath && !created) {
           throw nodeError("ENOENT");
@@ -79,7 +78,7 @@ describe("secure temp root fallback coverage", () => {
       }),
       chmodSync: vi.fn(),
       accessSync: vi.fn(),
-      tmpdir: () => "C:\\Temp",
+      tmpdir: () => "/tmp",
       warn: vi.fn(),
     });
 

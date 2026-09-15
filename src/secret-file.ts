@@ -8,7 +8,6 @@ import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, inspectDirectoryI
 import { pinNodeDirectoryForMode } from "./directory-mode-node.js";
 import { assertOwnedDirectory } from "./directory-mode-owner.js";
 import { assertNoUnsafeDeviceReadPath } from "./device-path.js";
-import { resolveEffectiveUid } from "./effective-uid.js";
 import { FsSafeError } from "./errors.js";
 import { resolveHomeRelativePath } from "./home-dir.js";
 import { openPinnedFileSync } from "./pinned-open.js";
@@ -164,16 +163,7 @@ async function enforcePrivateDirectoryMode(params: {
     }
     return;
   }
-  let ownerUid: number | undefined;
-  try {
-    ownerUid = resolveEffectiveUid();
-  } catch (cause) {
-    throw new FsSafeError(
-      "helper-unavailable",
-      "secret directory initialization requires owner identity",
-      { cause },
-    );
-  }
+  const ownerUid = process.geteuid?.();
   if (ownerUid === undefined) {
     throw new FsSafeError("helper-unavailable", "secret directory initialization requires owner identity");
   }

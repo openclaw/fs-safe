@@ -76,7 +76,10 @@ setup use `useSuiteFixture` from `test/helpers/suite-fixture.ts`: setup has a se
 removing directories. Run shared-state corpora sequentially with a deadline per
 payload. Keep child-process liveness limits separate from fixture preparation.
 The Windows CI slow-copy proof runs the real package-copy process-exit test with a
-six-second copy delay, retaining its four-second child deadline:
+16-second copy delay, a 10-second child deadline, a 15-second test deadline, and
+60-second setup and teardown hook budgets. Other hosts retain the ordinary
+six-second delay, four-second child deadline, five-second test deadline, and
+30-second hook budgets:
 
 ```bash
 pnpm build

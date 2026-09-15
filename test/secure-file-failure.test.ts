@@ -68,7 +68,7 @@ describe("secure file inspection failures", () => {
     await expect(readSecureFile({ filePath })).rejects.toMatchObject({ code: "path-mismatch" });
   });
 
-  it("fails closed when permission inspection cannot complete", async () => {
+  itPosix("fails closed when simulated Windows permission inspection cannot complete", async () => {
     const root = await tempRoot("fs-safe-secure-permission-inspect-");
     const filePath = path.join(root, "secret");
     await fs.writeFile(filePath, "secret", { mode: 0o600 });
@@ -151,13 +151,15 @@ describe("secure file inspection failures", () => {
     await expect(readSecureFile({ filePath })).rejects.toMatchObject({ code: "not-owned" });
   });
 
-  itPosix("fails closed when the descriptor owner uid is unavailable", async () => {
+  itPosix("fails closed before reading when the descriptor owner uid is unavailable", async () => {
     const root = await tempRoot("fs-safe-secure-missing-owner-");
     const filePath = path.join(root, "secret");
     await fs.writeFile(filePath, "secret", { mode: 0o600 });
     const realOpen = fs.open.bind(fs);
+    let read: ReturnType<typeof vi.spyOn>;
     vi.spyOn(fs, "open").mockImplementationOnce(async (...args) => {
       const handle = await realOpen(...args);
+      read = vi.spyOn(handle, "readFile");
       const actual = await handle.stat();
       vi.spyOn(fsSync, "fstatSync").mockReturnValueOnce({
         ...actual,
@@ -173,6 +175,7 @@ describe("secure file inspection failures", () => {
       code: "permission-unverified",
       category: "operational",
     });
+    expect(read!).not.toHaveBeenCalled();
   });
 
   itPosix("uses the effective uid when the real and effective identities differ", async () => {
