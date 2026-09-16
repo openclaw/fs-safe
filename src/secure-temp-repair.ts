@@ -98,7 +98,7 @@ export function repairSecureTempDirectory(
     let chmodFailed = false;
     if (needsChmod) {
       try {
-        adapter.fchmodSync(fd, 0o700);
+        fs.chmodSync(candidate, 0o700);
       } catch (error) {
         if (!mayHaveConcurrentRepair(error)) throw error;
         chmodFailed = true;
