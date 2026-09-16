@@ -15,6 +15,7 @@ import { registerArchives } from "./archives.mjs";
 import { registerBroad } from "./broad.mjs";
 import { registerScaling } from "./scaling.mjs";
 import { registerCollections } from "./collections.mjs";
+import { registerSyncStoreDirectoryModes } from "./sync-store-directory-mode.mjs";
 import { observeFilenameFallbackProfile } from "./filename-fallback-profile.mjs";
 import {
   MEASURED_SOURCE_ARGUMENT_NAMES,
@@ -134,6 +135,7 @@ try {
   await registerBroad(context);
   await registerScaling(context);
   await registerCollections(context);
+  registerSyncStoreDirectoryModes(context);
   const covered = new Set(cases.flatMap((c) => c.covers));
   const required = [...exportsByName.keys(), ...[...contracts].flatMap(([type, keys]) => keys.map((key) => `${type}.${key}`))];
   const missing = required.filter((name) => !covered.has(name) && !exclusions.has(name));

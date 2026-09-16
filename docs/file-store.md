@@ -136,6 +136,24 @@ its exact publication identity cannot be verified. There is no equal-content
 fallback. The published entry remains present, so callers must inspect or
 recover that outcome instead of assuming the write did not occur.
 
+Synchronous directory creation retains exact bigint receipts for the store root
+and every parent component. On POSIX, an existing or newly created directory
+whose complete requested mode differs is reopened without following the final
+name, checked against its receipt and parent chain, and finalized through that
+descriptor. A concurrent root or parent replacement is rejected without
+applying the mode to the replacement. Directories already at the requested mode
+skip the descriptor and mode operation. Windows retains its bounded `mkdir`
+mode request and identity checks without relying on directory descriptors or a
+pathname `chmod`, because Node does not enforce POSIX directory modes there.
+
+Node does not expose a portable, `fchmod`-capable search-only directory
+descriptor on Linux. If a mismatched existing directory, or one created under
+an owner-read-removing umask, cannot be opened for reading, the synchronous
+store therefore fails closed with `permission-unverified`; it never falls back
+to pathname `chmod`. On supported macOS x64/arm64 hosts it also tries an
+`O_SEARCH` descriptor, so owner-searchable directories can still be repaired.
+Directories with neither usable read nor search access remain fail-closed.
+
 | Method | Durability support |
 |---|---|
 | `write`, `writeText`, `writeJson` (async and sync) | Per-call option overrides store default. |

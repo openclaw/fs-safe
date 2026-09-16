@@ -47,6 +47,20 @@ fileStoreSync({ rootDir: "/var/lib/app", private: true }).writeJson("config.json
 The sync store intentionally exposes a smaller surface: path resolution,
 lenient reads, and atomic text/JSON writes.
 
+Sync directory modes remain repair-compatible on POSIX, but repairs are applied
+only through an exact-identity, no-follow directory descriptor after the store
+root and admitted parent name are revalidated. Root or component swaps fail
+without chmodding the substituted directory. Matching modes take the no-open
+fast path. Windows uses its existing `mkdir` mode request plus exact directory
+identity checks and never falls back to pathname chmod.
+
+On Linux, Node offers no portable search-only descriptor that can also be
+`fchmod`ed. A mismatched directory without effective read access—including one
+created under an owner-read-removing umask—fails closed with
+`permission-unverified`. Supported macOS x64/arm64 hosts additionally try
+`O_SEARCH` when the directory remains searchable; an inaccessible directory
+still fails rather than restoring the pathname race.
+
 ## See also
 
 - [`fileStore`](file-store.md) — full store API.

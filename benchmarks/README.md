@@ -35,6 +35,13 @@ cases exclude later close/release, which have their own rows. Representative
 payload assertions run outside measurement. Reads cover 128 B, 64 KiB, 1 MiB,
 2 MiB, the default Root budget of 16 MiB, and an explicit 32 MiB budget;
 writes compare both durability settings without changing package defaults.
+Thirty-six synchronous file-store directory-mode rows cross existing matching,
+existing mismatched, and wholly new directory chains at depths 0/4/16 with both
+durability and private-mode settings. Fixture creation, mode setup, verification,
+and cleanup remain outside timing; every POSIX row verifies the complete final
+directory chain at the requested mode.
+New-directory POSIX fixtures retain a restrictive `0077` umask during the
+timed write, so mode repair from the masked creation mode is included.
 Hash cases verify the digest as well as the byte count outside measurement.
 The `tempWorkspace` filter selects 17 rows across asynchronous and synchronous
 creation: two ordinary rows, two requested-`0750` mode rows, one synchronous

@@ -4,6 +4,7 @@
 
 ### Security
 
+- Bind synchronous file-store directory mode repair to no-follow directory descriptors and exact bigint root/component receipts. Parent swaps now fail without changing an unrelated directory's permissions; matching modes avoid descriptor and chmod work, Windows retains mkdir-only mode behavior, and unreadable Linux directories fail closed when Node cannot provide an `fchmod`-capable descriptor.
 - Use the effective POSIX user identity for secure-file ownership checks, failing closed before reading when ownership checks are enabled and the effective identity or descriptor owner cannot be established; descriptor-bound Windows ACL verification is unchanged.
 - Isolate the manual split-credential proof across separate candidate, historical, and clean execution runners, bind bounded build artifacts to exact provenance, and run only root-staged, identity-checked proof tools and harness files.
 - Authenticate the manual proof runtime against pinned official Node archives before checkout, keep staging private under a verified system parent, and diagnose dropped-credential startup, traversal, and authenticated code-read admission with bounded inline probes before the unchanged seven behavioral cases.
@@ -17,6 +18,7 @@
 
 ### Validation and tooling
 
+- Add 36 synchronous file-store directory-mode workloads covering matching, mismatched, and new directory chains at depths 0/4/16 across durability and private-mode settings.
 - Separate the reviewed manual method-audit harness from immutable candidate and baseline checkouts, validate and resolve dispatch inputs before platform fan-out, and support Node 22/24 plus rebuild and same-artifact controls without changing the ordinary PR/schedule benchmark job.
 - Add versioned, mutation-checked benchmark provenance for trusted reviewed revisions, including harness/source identities, measurement and report-file receipts, manifests, lockfiles, dist trees, bounded dependency layouts, native addons, and runner metadata; this detects accidental drift but is not a sandbox for hostile benchmark code.
 - Bind filename-sanitizer benchmark expectations to the measured revision's tracked source, validate all 17 profile rows before filtering, strengthen four long-name endpoint checks, add paired shared-mutation-admission fixtures with 60 portable and 96 Windows rows, and cover temp-workspace mode correction plus existing/missing roots at depths 4/8/32.

@@ -13,42 +13,66 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => fsp.rm(dir, { force: true, recursive: true })));
 });
 
-it.runIf(process.platform !== "win32")(
-  "rejects store-root swaps during private and non-private parent walks",
-  async () => {
-    for (const privateMode of [false, true]) {
+it.runIf(process.platform !== "win32").each(
+  [false, true].flatMap((privateMode) => ["root", "component"].map((swapAt) => ({
+    privateMode,
+    swapAt,
+  }))),
+)(
+  "rejects a $swapAt store swap without changing outside modes (private=$privateMode)",
+  async ({ privateMode, swapAt }) => {
       const container = await fsp.mkdtemp(
-        path.join(os.tmpdir(), `fs-safe-sync-root-swap-${privateMode}-`),
+        path.join(os.tmpdir(), `fs-safe-sync-${swapAt}-swap-${privateMode}-`),
       );
       tempDirs.push(container);
       const storeRoot = path.join(container, "store");
       const originalRoot = path.join(container, "store-original");
       const outside = path.join(container, "outside");
       const firstDir = path.join(storeRoot, "first");
-      await fsp.mkdir(storeRoot);
-      await fsp.mkdir(path.join(outside, "first"), { recursive: true });
+      const originalFirst = path.join(storeRoot, "first-original");
+      const outsideFirst = path.join(outside, "first");
+      await fsp.mkdir(firstDir, { recursive: true });
+      await fsp.mkdir(outsideFirst, { recursive: true });
+      await Promise.all([
+        fsp.chmod(storeRoot, 0o755),
+        fsp.chmod(firstDir, 0o755),
+        fsp.chmod(outside, 0o755),
+        fsp.chmod(outsideFirst, 0o755),
+      ]);
 
       const originalRealpathSync = realpath.realpathSync;
       let swapped = false;
       const realpathSpy = vi.spyOn(realpath, "realpathSync").mockImplementation((...args) => {
         const realPath = originalRealpathSync(...args);
-        if (!swapped && String(args[0]) === firstDir) {
+        const trigger = swapAt === "root" ? storeRoot : firstDir;
+        if (!swapped && String(args[0]) === trigger) {
           swapped = true;
-          fs.renameSync(storeRoot, originalRoot);
-          fs.symlinkSync(outside, storeRoot, "dir");
+          if (swapAt === "root") {
+            fs.renameSync(storeRoot, originalRoot);
+            fs.symlinkSync(outside, storeRoot, "dir");
+          } else {
+            fs.renameSync(firstDir, originalFirst);
+            fs.symlinkSync(outsideFirst, firstDir, "dir");
+          }
         }
         return realPath;
       });
 
       try {
-        const store = fileStoreSync({ rootDir: storeRoot, private: privateMode });
+        const store = fileStoreSync({
+          rootDir: storeRoot,
+          private: privateMode,
+          dirMode: 0o700,
+          durable: false,
+        });
         expect(() => store.writeText("first/second/value.txt", "secret")).toThrow(
           expect.objectContaining({ code: "outside-workspace" }),
         );
         expect(fs.existsSync(path.join(outside, "first", "second", "value.txt"))).toBe(false);
+        const outsideTarget = swapAt === "root" ? outside : outsideFirst;
+        expect(fs.statSync(outsideTarget).mode & 0o777).toBe(0o755);
       } finally {
         realpathSpy.mockRestore();
       }
-    }
   },
 );

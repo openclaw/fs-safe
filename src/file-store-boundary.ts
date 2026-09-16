@@ -1,27 +1,28 @@
-import syncFs from "node:fs";
+import syncFs, { type BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Transform, Readable } from "node:stream";
 import { createByteLimitTransform } from "./bounded-read-stream.js";
 import { normalizeMaxBytes } from "./byte-budget.js";
 import { pipeline } from "node:stream/promises";
-import {
-  assertSyncDirectoryGuard as assertDirectoryGuardSync,
-  createSyncDirectoryGuard,
-  type SyncDirectoryGuard,
-} from "./directory-guard.js";
+import type { SyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
-import { sameFileIdentity } from "./file-identity.js";
-import { isPathInside, isPathRelativeEscape } from "./path.js";
+import {
+  assertSyncStoreDirectoryReceipt,
+  ensureSyncStoreDirectory,
+} from "./file-store-sync-directory.js";
+import { isPathInside } from "./path.js";
 import { resolveOpenedFileRealPathForHandle, root, type Root } from "./root.js";
 import { ensureTrailingSep } from "./root-context.js";
 import { RootHandle } from "./root-impl.js";
 import { prepareSecretFileWrite } from "./secret-file.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
-import { realpathSync } from "./realpath.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 
-export type SyncParentGuard = SyncDirectoryGuard;
+export type SyncParentGuard = SyncDirectoryGuard & {
+  /** Exact authority retained separately from the legacy numeric durability receipt. */
+  readonly exactStat: BigIntStats;
+};
 
 function parentRelativePath(relativePath: string): string {
   const parent = path.posix.dirname(relativePath);
@@ -148,24 +149,11 @@ export async function writeStreamToTempSource(params: {
 }
 
 export function assertSyncDirectoryGuard(guard: SyncParentGuard): void {
-  try {
-    assertDirectoryGuardSync(guard);
-  } catch (error) {
-    if (error instanceof FsSafeError && error.code === "path-mismatch") {
-      throw new FsSafeError("path-mismatch", "store directory changed during write", {
-        cause: error,
-      });
-    }
-    throw error;
-  }
-}
-
-function chmodDirectorySyncBestEffort(dir: string, mode: number): void {
-  try {
-    syncFs.chmodSync(dir, mode);
-  } catch {
-    // Best-effort on platforms that do not enforce POSIX modes.
-  }
+  assertSyncStoreDirectoryReceipt({
+    dir: guard.dir,
+    realPath: guard.realPath,
+    exactStat: guard.exactStat,
+  });
 }
 
 export function ensureParentSync(params: {
@@ -187,60 +175,13 @@ export function ensureStoreDirectorySync(params: {
   mode: number;
   messagePrefix: "private store" | "store";
 }): SyncParentGuard {
-  const rootDir = path.resolve(params.rootDir);
-  const dir = path.resolve(params.targetDir);
-  const relative = path.relative(rootDir, dir);
-  if (isPathRelativeEscape(relative)) {
-    throw new FsSafeError("outside-workspace", "file path escapes store root");
-  }
-
-  syncFs.mkdirSync(recursiveMkdirPath(rootDir), { recursive: true, mode: params.mode });
-  const rootStat = syncFs.lstatSync(rootDir);
-  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
-    throw new FsSafeError(
-      "not-file",
-      `${params.messagePrefix} root must be a directory: ${rootDir}`,
-    );
-  }
-  const rootReal = realpathSync(rootDir);
-  chmodDirectorySyncBestEffort(rootDir, params.mode);
-
-  let current = rootDir;
-  for (const segment of path.relative(rootDir, dir).split(path.sep).filter(Boolean)) {
-    current = path.join(current, segment);
-    try {
-      const stat = syncFs.lstatSync(current);
-      if (stat.isSymbolicLink() || !stat.isDirectory()) {
-        throw new FsSafeError(
-          "not-file",
-          `${params.messagePrefix} directory component must be a directory: ${current}`,
-        );
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw error;
-      }
-      syncFs.mkdirSync(current, { mode: params.mode });
-    }
-    const currentRootStat = syncFs.lstatSync(rootDir);
-    const currentRootReal = realpathSync(rootDir);
-    const currentReal = realpathSync(current);
-    if (
-      currentRootStat.isSymbolicLink() ||
-      !currentRootStat.isDirectory() ||
-      !sameFileIdentity(rootStat, currentRootStat) ||
-      currentRootReal !== rootReal ||
-      !isPathInside(rootReal, currentReal)
-    ) {
-      throw new FsSafeError(
-        "outside-workspace",
-        `${params.messagePrefix} directory escapes root`,
-      );
-    }
-    chmodDirectorySyncBestEffort(current, params.mode);
-  }
-
-  const guard = createSyncDirectoryGuard(dir);
+  const receipt = ensureSyncStoreDirectory(params);
+  const guard: SyncParentGuard = {
+    dir: receipt.dir,
+    realPath: receipt.realPath,
+    stat: syncFs.lstatSync(receipt.dir),
+    exactStat: receipt.exactStat,
+  };
   assertSyncDirectoryGuard(guard);
   return guard;
 }
