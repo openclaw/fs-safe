@@ -261,6 +261,7 @@ describe.each([false, true])("FileStore policy snapshot (private=%s)", privateMo
       await store.writeStream("target", Readable.from(["payload"]), options);
       await store.copyIn("copy", path.join(rootDir, "target"), options);
     }
+    expect(await fs.readFile(path.join(rootDir, "target"), "utf8")).toBe("payload");
   });
 });
 
