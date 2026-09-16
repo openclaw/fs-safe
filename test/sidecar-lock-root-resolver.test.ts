@@ -12,6 +12,7 @@ import { useTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useTempDirs();
 const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+const finalResolverOutcomes = ["outside", "EPERM", "EBADF"] as const;
 afterEach(() => {
   __setFsSafeTestHooksForTest();
   vi.restoreAllMocks();
@@ -66,6 +67,194 @@ it.each(["EPERM", "EBADF"])("retries the recorded Windows resolver %s only with 
   await expect(waiter.verifyStillHeld()).resolves.toBe(true);
   await waiter.release();
   expect(waiterManager.heldEntries()).toEqual([]);
+});
+
+it.each(finalResolverOutcomes)("retries a final %s resolution failure only with inspectable unlink evidence", async (outcome) => {
+  const capability = await root(await tempRoot("sidecar-final-containment-"));
+  const target = path.join(capability.rootReal, "state"), lockPath = `${target}.lock`;
+  const ownerManager = createFileLockManager(`final-containment-owner:${target}`);
+  const waiterManager = createFileLockManager(`final-containment-waiter:${target}`);
+  const owner = await ownerManager.acquire(target, { lockRoot: capability, payload: () => ({ owner: 1 }) });
+  const outsidePath = path.join(path.dirname(capability.rootReal), "delete-pending.lock");
+  const realpath = realpathSync.native;
+  let armed = false, injected = false, descriptor: FileHandle | undefined;
+  vi.spyOn(realpathSync, "native").mockImplementation((...args) => {
+    if (armed && String(args[0]) === lockPath) {
+      armed = false;
+      injected = true;
+      fsSync.unlinkSync(lockPath);
+      expect(fsSync.fstatSync(descriptor!.fd, { bigint: true }).nlink).toBe(0n);
+      if (outcome !== "outside") {
+        Object.defineProperty(process, "platform", { value: "win32" });
+        throw Object.assign(new Error("final resolver failure"), { code: outcome });
+      }
+      return outsidePath;
+    }
+    return realpath(...args);
+  });
+  const open = capability.open.bind(capability);
+  vi.spyOn(capability, "open").mockImplementationOnce(async (...args) => {
+    try {
+      return await open(...args);
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+    }
+  });
+  __setFsSafeTestHooksForTest({
+    afterOpen(candidate, handle) {
+      if (candidate === lockPath && !injected) descriptor = handle;
+    },
+    beforeRootReadFinalFence(candidate) {
+      if (candidate === lockPath && !injected) armed = true;
+    },
+  });
+  const parsePayload = vi.fn(JSON.parse);
+  const waiter = await waiterManager.acquire(target, {
+    lockRoot: capability, payload: () => ({ owner: 2 }), parsePayload,
+    retry: { retries: 1, minTimeout: 0, maxTimeout: 0 },
+  });
+  expect(injected).toBe(true);
+  expect(parsePayload).not.toHaveBeenCalled();
+  expect(descriptor?.fd).toBe(-1);
+  await expect(waiter.verifyStillHeld()).resolves.toBe(true);
+  await waiter.release();
+  await owner.release();
+  expect(waiterManager.heldEntries()).toEqual([]);
+  expect(ownerManager.heldEntries()).toEqual([]);
+});
+
+it.each(finalResolverOutcomes.flatMap(
+  outcome => ["linked", "unknown", "changed"].map(control => ({ control, outcome })),
+))(
+  "rejects a final $outcome result with $control descriptor evidence",
+  async ({ control, outcome }) => {
+    const capability = await root(await tempRoot("sidecar-final-containment-control-"));
+    const lockPath = path.join(capability.rootReal, "state.lock");
+    await capability.create("state.lock", "{}");
+    const outsidePath = path.join(path.dirname(capability.rootReal), "outside.lock");
+    const realpath = realpathSync.native;
+    let armed = false, descriptor: FileHandle | undefined;
+    vi.spyOn(realpathSync, "native").mockImplementation((...args) => {
+      if (armed && String(args[0]) === lockPath) {
+        armed = false;
+        if (control !== "linked") {
+          fsSync.unlinkSync(lockPath);
+          Object.defineProperty(process, "platform", { value: "win32" });
+          const fstat = fsSync.fstatSync.bind(fsSync);
+          vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
+            const value = fstat(fd, options);
+            if (fd === descriptor!.fd && options?.bigint) {
+              (value as fsSync.BigIntStats).ino = control === "unknown"
+                ? 0n
+                : BigInt(value.ino) + 1n;
+            }
+            return value;
+          });
+        }
+        if (outcome !== "outside") {
+          Object.defineProperty(process, "platform", { value: "win32" });
+          throw Object.assign(new Error("final resolver failure"), { code: outcome });
+        }
+        return outsidePath;
+      }
+      return realpath(...args);
+    });
+    const open = capability.open.bind(capability);
+    vi.spyOn(capability, "open").mockImplementationOnce(async (...args) => {
+      try {
+        return await open(...args);
+      } finally {
+        Object.defineProperty(process, "platform", platform);
+      }
+    });
+    __setFsSafeTestHooksForTest({
+      afterOpen(candidate, handle) {
+        if (candidate === lockPath) descriptor = handle;
+      },
+      beforeRootReadFinalFence(candidate) {
+        if (candidate === lockPath) armed = true;
+      },
+    });
+
+    await expect(readSidecarLockSnapshot(lockPath, {
+      lockRoot: capability, discardObservation: "unlinked",
+    })).rejects.toMatchObject({ code: outcome === "outside" ? "outside-workspace" : outcome });
+    expect(descriptor?.fd).toBe(-1);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "rejects final containment discard after the observed parent is replaced",
+  async () => {
+    const capability = await root(await tempRoot("sidecar-final-containment-parent-"));
+    const relative = "parent/state.lock", lockPath = path.join(capability.rootReal, relative);
+    const parent = path.dirname(lockPath), displaced = `${parent}.old`;
+    await capability.create(relative, "{}");
+    const outsidePath = path.join(path.dirname(capability.rootReal), "outside.lock");
+    const realpath = realpathSync.native;
+    let armed = false, descriptor: FileHandle | undefined;
+    vi.spyOn(realpathSync, "native").mockImplementation((...args) => {
+      if (armed && String(args[0]) === lockPath) {
+        armed = false;
+        fsSync.unlinkSync(lockPath);
+        fsSync.renameSync(parent, displaced);
+        fsSync.mkdirSync(parent);
+        return outsidePath;
+      }
+      return realpath(...args);
+    });
+    __setFsSafeTestHooksForTest({
+      afterOpen(candidate, handle) {
+        if (candidate === lockPath) descriptor = handle;
+      },
+      beforeRootReadFinalFence(candidate) {
+        if (candidate === lockPath) armed = true;
+      },
+    });
+
+    await expect(readSidecarLockSnapshot(lockPath, {
+      lockRoot: capability, discardObservation: "unlinked",
+    })).rejects.toMatchObject({ code: "outside-workspace" });
+    expect(descriptor?.fd).toBe(-1);
+  },
+);
+
+it.each(finalResolverOutcomes)("ordinary Root.open preserves a final %s rejection after unlink", async (outcome) => {
+  const capability = await root(await tempRoot("root-final-containment-strict-"));
+  const lockPath = path.join(capability.rootReal, "state.lock");
+  await capability.create("state.lock", "{}");
+  const outsidePath = path.join(path.dirname(capability.rootReal), "outside.lock");
+  const realpath = realpathSync.native;
+  let armed = false, descriptor: FileHandle | undefined;
+  vi.spyOn(realpathSync, "native").mockImplementation((...args) => {
+    if (armed && String(args[0]) === lockPath) {
+      armed = false;
+      fsSync.unlinkSync(lockPath);
+      if (outcome !== "outside") {
+        Object.defineProperty(process, "platform", { value: "win32" });
+        throw Object.assign(new Error("final resolver failure"), { code: outcome });
+      }
+      return outsidePath;
+    }
+    return realpath(...args);
+  });
+  __setFsSafeTestHooksForTest({
+    afterOpen(candidate, handle) {
+      if (candidate === lockPath) descriptor = handle;
+    },
+    beforeRootReadFinalFence(candidate) {
+      if (candidate === lockPath) armed = true;
+    },
+  });
+
+  try {
+    await expect(capability.open("state.lock")).rejects.toMatchObject({
+      code: outcome === "outside" ? "outside-workspace" : outcome,
+    });
+  } finally {
+    Object.defineProperty(process, "platform", platform);
+  }
+  expect(descriptor?.fd).toBe(-1);
 });
 
 it.each(["numeric", "unknown", "closed", "changed", "linked", "multiple-links"])(
