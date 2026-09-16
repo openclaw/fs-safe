@@ -1,10 +1,10 @@
-import fsSync, { type BigIntStats } from "node:fs";
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
   assertAsyncDirectoryGuard,
   createAsyncDirectoryGuard,
-  type AsyncDirectoryGuard,
+  type AnyAsyncDirectoryGuard,
 } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { isNotFoundPathError, isPathRelativeEscape } from "./path.js";
@@ -13,7 +13,6 @@ import { realpathSync } from "./realpath.js";
 import { admitPathInsideRoot, type RootBoundaryIdentity } from "./root-boundary.js";
 
 type ExactRootIdentity = Readonly<{ dev: bigint; ino: bigint }>;
-type ExactAsyncDirectoryGuard = AsyncDirectoryGuard<BigIntStats>;
 
 function suppliedExactRootIdentity(identity: RootBoundaryIdentity | undefined): ExactRootIdentity | undefined {
   return typeof identity?.dev === "bigint" && typeof identity.ino === "bigint"
@@ -22,7 +21,7 @@ function suppliedExactRootIdentity(identity: RootBoundaryIdentity | undefined): 
 }
 
 function assertGuardMatchesRootIdentity(
-  guard: ExactAsyncDirectoryGuard,
+  guard: AnyAsyncDirectoryGuard,
   expected: ExactRootIdentity,
 ): void {
   if (guard.stat.dev !== expected.dev || guard.stat.ino !== expected.ino) {
@@ -88,7 +87,7 @@ export async function mkdirPathComponentsWithGuards(params: {
     throw new FsSafeError("outside-workspace", "directory is outside workspace root");
   }
   let current = rootCanonical;
-  let currentGuard: ExactAsyncDirectoryGuard = rootGuard;
+  let currentGuard: AnyAsyncDirectoryGuard = rootGuard;
   for (const part of admittedTarget.relativePath.split(path.sep).filter(Boolean)) {
     const next = path.join(current, part);
     const parentGuard = currentGuard;
@@ -132,12 +131,12 @@ export async function mkdirPathComponentsWithGuards(params: {
       if (!targetStat.isDirectory()) {
         throw directoryComponentNotDirectoryError();
       }
-      currentGuard = await createAsyncDirectoryGuard(nextReal, { bigint: true });
+      currentGuard = await createAsyncDirectoryGuard(nextReal);
       await assertAsyncDirectoryGuard(parentGuard);
       current = nextReal;
       continue;
     }
-    currentGuard = await createAsyncDirectoryGuard(next, { bigint: true });
+    currentGuard = await createAsyncDirectoryGuard(next);
     await assertAsyncDirectoryGuard(parentGuard);
     current = next;
   }
