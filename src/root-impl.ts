@@ -79,7 +79,6 @@ import { serializePathWrite } from "./write-queue.js";
 import { verifyAtomicWriteResult } from "./root-write-verification.js";
 import { inheritWriteTargetMode } from "./root-write-mode.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
-import { admitRootReadHandle, inspectOpenedPathIdentitySync } from "./root-read-admission.js";
 import { createCopyPublicationObserver, onCopyPublication, type CopyPublicationOptions } from "./copy-publication.js";
 import { writeAllToFile } from "./write-file-handle.js";
 import { createInputOptions, rethrowCreateInputError, rootWriteInput, type RootWriteParams } from "./root-create-input.js";
@@ -242,7 +241,15 @@ async function openVerifiedLocalFile(
         throw failure;
       }
     };
-    await inspectPathIdentity(async () => inspectOpenedPathIdentitySync(filePath, options?.symlinks));
+    await inspectPathIdentity(async () => {
+      const pathStat = options?.symlinks === "follow-within-root"
+        ? fsSync.statSync(filePath, { bigint: true })
+        : fsSync.lstatSync(filePath, { bigint: true });
+      if (pathStat.isSymbolicLink() && options?.symlinks !== "follow-within-root") {
+        throw new FsSafeError("symlink", "symlink not allowed");
+      }
+      return pathStat;
+    });
 
     await fsSafeTestHooks?.afterOpenedPathIdentityCheck?.(filePath, handle);
     const resolved = await resolveOpenedFileRealPathForFd(handle.fd, identity, filePath)
@@ -671,22 +678,27 @@ async function openFileInRoot(
     resolveCanonical: true,
   });
 
-  const fsSafeTestHooks = getFsSafeTestHooks();
-  if (fsSafeTestHooks?.afterRootReadPathResolution) {
-    await fsSafeTestHooks.afterRootReadPathResolution(resolved);
-  }
-
-  const { opened, identity } = await openVerifiedLocalFile(resolved, {
+  const { opened } = await openVerifiedLocalFile(resolved, {
     symlinks: params.symlinks,
   });
-  // The admission helper owns the descriptor until the complete root/file/root
-  // fence succeeds, then transfers that still-open handle to the caller.
-  return await admitRootReadHandle({
-    root, filePath: resolved, opened, identity,
-    hardlinks: params.hardlinks, symlinks: params.symlinks,
-    beforeFinalFence: fsSafeTestHooks?.beforeRootReadFinalFence,
-    afterPathIdentityCheck: fsSafeTestHooks?.afterRootReadFinalPathIdentityCheck,
+
+  if (params.hardlinks !== "allow" && opened.stat.nlink > 1) {
+    await opened.handle.close().catch(() => {});
+    throw hardlinkedPathNotAllowedError();
+  }
+
+  const admittedRealPath = admitPathInsideRoot({
+    rootPath: root.rootReal,
+    candidatePath: opened.realPath,
+    rootIdentity: root.rootIdentity,
   });
+  if (!admittedRealPath) {
+    await opened.handle.close().catch(() => {});
+    throw outsideWorkspaceError();
+  }
+  opened.realPath = admittedRealPath.path;
+
+  return opened;
 }
 
 async function readFileInRoot(

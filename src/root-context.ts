@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { inspectDirectoryIdentitySync } from "./directory-guard.js";
+import { inspectDirectoryIdentity } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import {
@@ -117,11 +117,11 @@ export function rootRelativeReadPath(root: RootContext, filePath: string): strin
   return raw;
 }
 
-export function assertRootIdentityCurrentSync(root: RootContext): void {
+export async function assertRootIdentityCurrent(root: RootContext): Promise<void> {
   let current: fs.Stats;
   try {
     if (typeof root.rootIdentity.dev === "bigint" && typeof root.rootIdentity.ino === "bigint") {
-      inspectDirectoryIdentitySync(root.rootReal, { dev: root.rootIdentity.dev, ino: root.rootIdentity.ino });
+      await inspectDirectoryIdentity(root.rootReal, { dev: root.rootIdentity.dev, ino: root.rootIdentity.ino });
       return;
     }
     current = fs.lstatSync(root.rootReal);
@@ -135,10 +135,6 @@ export function assertRootIdentityCurrentSync(root: RootContext): void {
   ) {
     throw rootPathChangedError();
   }
-}
-
-export async function assertRootIdentityCurrent(root: RootContext): Promise<void> {
-  assertRootIdentityCurrentSync(root);
 }
 
 export async function resolvePathInRoot(
