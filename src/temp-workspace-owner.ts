@@ -114,33 +114,12 @@ export class TempWorkspaceCleanupOwner {
     this.#capability = capability;
     let directory: RetainedDirectory | undefined;
     if (capability.canRemoveOwnedTree) {
-      try {
-        directory = openStagedDirectory(dir);
-        const current = fsSync.fstatSync(directory.fd, { bigint: true });
-        if (!sameFileIdentityForCleanup(current, this.#identity)) {
-          throw new FsSafeError("path-mismatch", "temp workspace changed while retaining cleanup authority");
-        }
-      } catch (error) {
-        const closeErrors: unknown[] = [];
-        if (directory) {
-          try {
-            fsSync.closeSync(directory.fd);
-          } catch (closeError) {
-            closeErrors.push(closeError);
-          }
-        }
-        try {
-          capability.close();
-        } catch (closeError) {
-          closeErrors.push(closeError);
-        }
-        if (closeErrors.length > 0) {
-          throw new AggregateError(
-            [error, ...closeErrors],
-            "temp workspace cleanup authority admission and close failed",
-          );
-        }
-        throw error;
+      directory = openStagedDirectory(dir);
+      const current = fsSync.fstatSync(directory.fd, { bigint: true });
+      if (!sameFileIdentityForCleanup(current, this.#identity)) {
+        fsSync.closeSync(directory.fd);
+        capability.close();
+        throw new FsSafeError("path-mismatch", "temp workspace changed while retaining cleanup authority");
       }
     }
     this.#directory = directory;
