@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Apply Windows native write, create, stream, and copy mutation policy before creating each missing parent. Retain and recheck exact parent identities around policy and authority callbacks, and create only admitted direct children; existing parents and writes without mutation policy retain their fast paths.
+
 ## 0.13.0 - 2026-09-16
 
 ### Highlights

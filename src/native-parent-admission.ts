@@ -99,7 +99,7 @@ export async function openNativeRootAdmission(
 
 export async function openNativeParentAdmission(
   binding: NativeBinding,
-  rootAdmission: NativeRootAdmission,
+  rootAdmission: Omit<NativeRootAdmission, "root"> & { root: Pick<FileHandle, "fd"> },
   relativeParentPath: string,
 ): Promise<NativeParentAdmission> {
   assertParentAdmissionAvailable(binding);

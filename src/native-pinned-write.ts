@@ -4,6 +4,7 @@ import { inspectDirectoryIdentity } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import type { FileIdentityStat } from "./file-identity.js";
 import { runPinnedWriteWindows } from "./native-pinned-write-windows.js";
+import { capturePolicyAwareWindowsParent } from "./native-policy-parent-windows.js";
 import { openNativeParentAdmission, openNativeRootAdmission } from "./native-parent-admission.js";
 import { assertNativeStaging, writeNativeStage, type NativeStagingBinding } from "./native-staged-file.js";
 import type { NativeBinding } from "./native.js";
@@ -380,7 +381,6 @@ export async function runPinnedWriteNative(binding: NativeBinding, params: Pinne
     let parentPath: string;
     let directory: ReturnType<typeof describeStagedDirectory> | undefined;
     let parentPathStat: Stats | BigIntStats;
-    let policyParentAdmitted = false;
     if (!windows && params.mutationAdmission) {
       const admitted = await capturePolicyAwarePosixParent(
         binding,
@@ -392,7 +392,11 @@ export async function runPinnedWriteNative(binding: NativeBinding, params: Pinne
       parentPath = admitted.parentPath;
       directory = admitted.directory;
       parentPathStat = admitted.parentPathStat;
-      policyParentAdmitted = true;
+    } else if (windows && params.mutationAdmission) {
+      const admitted = await capturePolicyAwareWindowsParent(binding, params, rootAdmission);
+      parentFd = admitted.fd;
+      parentPath = admitted.guard.realPath;
+      parentPathStat = admitted.guard.stat;
     } else {
       if (params.mkdir) {
         params.assertBeforeMutation?.();
@@ -403,18 +407,6 @@ export async function runPinnedWriteNative(binding: NativeBinding, params: Pinne
       parentPath = admitted.guard.realPath;
       directory = admitted.stagedDirectory;
       parentPathStat = admitted.guard.stat;
-    }
-    if (!policyParentAdmitted && params.mutationAdmission) {
-      const targetPath = path.join(parentPath, params.basename);
-      await authorizePinnedMutation(params, {
-        targetPath,
-        mutationPath: targetPath,
-        phase: "parent",
-      });
-      await inspectDirectoryIdentity(
-        parentPath,
-        inspectFileIdentitySync(() => fsSync.fstatSync(parentFd!, { bigint: true })),
-      );
     }
     const verificationGuard = { dir: parentPath, realPath: parentPath, stat: parentPathStat };
     if (params.overwrite === false) {
