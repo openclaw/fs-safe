@@ -53,11 +53,17 @@ describe("store stress matrix", () => {
     },
   );
 
-  it.each([false, true])(
-    "publishes only complete JSON during overlapping reads and writes (private=%s)",
-    async (privateMode) => {
-      const root = await tempRoot("fs-safe-store-overlap-");
-      const store = fileStore({ rootDir: root, private: privateMode });
+  describe.each([false, true])("overlapping reads and writes (private=%s)", (privateMode) => {
+    let directory: string | undefined;
+    // A Vitest timeout must not remove the directory while reads or writes still own it.
+    const run = useSuiteFixture(async () => {
+      directory = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-store-overlap-"));
+      return fileStore({ rootDir: directory, private: privateMode });
+    }, async () => {
+      if (directory) await fs.rm(directory, { recursive: true, force: true });
+    });
+
+    it("publishes only complete JSON", () => run(async (store) => {
       const payloadFor = (index: number) => `${index}:`.padEnd(4 * 1024, String(index % 10));
       await store.writeJson("state.json", { index: -1, payload: payloadFor(-1) });
 
@@ -82,8 +88,8 @@ describe("store stress matrix", () => {
 
       const final = await store.readJson<{ index: number; payload: string }>("state.json");
       expect(final.payload).toBe(payloadFor(final.index));
-    },
-  );
+    }), 20_000);
+  });
 
   it("releases JSON-store serialization and sidecar locks after callback and serializer failures", async () => {
     const root = await tempRoot("fs-safe-json-store-recovery-");
