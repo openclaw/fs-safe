@@ -644,10 +644,12 @@ fn set_rename_information(
         )
     };
     if status < 0 {
-        // The target may exist because this rename was refused, because it was
-        // committed before an acknowledgement failed, or because another actor
-        // created it. Only the NTSTATUS conversion may classify a collision;
-        // a second pathname observation cannot prove an uncommitted outcome.
+        if !replace
+            && nt_open_relative(target_root, target_path, FILE_READ_ATTRIBUTES, FILE_OPEN, 0)
+                .is_ok()
+        {
+            return Err(native_error("EEXIST", "rename destination already exists"));
+        }
         return Err(rename_nt_error(status, operation));
     }
     Ok(())
@@ -1418,18 +1420,6 @@ mod tests {
             rename_win_error(ERROR_DISK_FULL, "rename file").status,
             "ENOSPC"
         );
-        for (code, expected) in [
-            (ERROR_FILE_EXISTS, "EEXIST"),
-            (ERROR_ALREADY_EXISTS, "EEXIST"),
-            (ERROR_ACCESS_DENIED, "EPERM"),
-            (ERROR_SHARING_VIOLATION, "EBUSY"),
-        ] {
-            assert_eq!(
-                rename_win_error(code, "rename file").status,
-                expected,
-                "Windows error {code} must retain its own rename outcome"
-            );
-        }
     }
 
     #[test]

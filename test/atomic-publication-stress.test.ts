@@ -172,14 +172,22 @@ describe("atomic publication stress regressions", () => {
         targetDir: target,
         backupPrefix: "backup-a-",
       });
-      await cleanupStarted;
-      expect(mkdir).toHaveBeenCalledTimes(1);
-      const second = replaceDirectoryAtomic({
-        stagedDir: stagedB,
-        targetDir: target,
-        backupPrefix: "backup-b-",
-      });
+      let second!: Promise<void>;
       try {
+        const firstProgress = await Promise.race([
+          cleanupStarted.then(() => "cleanup-started" as const),
+          first.then(
+            () => "replacement-settled" as const,
+            () => "replacement-settled" as const,
+          ),
+        ]);
+        expect(firstProgress).toBe("cleanup-started");
+        second = replaceDirectoryAtomic({
+          stagedDir: stagedB,
+          targetDir: target,
+          backupPrefix: "backup-b-",
+        });
+        expect(mkdir).toHaveBeenCalledTimes(1);
         await new Promise<void>((resolve) => setImmediate(resolve));
         expect(mkdir).toHaveBeenCalledTimes(1);
         expect(renameNoReplace).toHaveBeenCalledTimes(2);
