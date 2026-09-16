@@ -9,9 +9,10 @@ import { readRegularFile } from "../src/regular-file.js";
 import { root } from "../src/root.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
-// Measured fallback calls on macOS; allow two calls for platform variation.
+// Measured fallback calls on macOS; allow two calls for platform variation,
+// except for the exact root.readBytes final-fence ceiling.
 const budgets = {
-  "root.readBytes": 16, // measured 14, including the post-read EOF size observation
+  "root.readBytes": 19, // measured 19: four final identities, canonicalization, and EOF size
   readRegularFile: 9, // measured 7
   tryReadJson: 10, // measured 8
   replaceFileAtomic: 20, // measured 18
