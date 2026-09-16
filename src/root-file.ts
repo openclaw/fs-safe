@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
-  resolveRootPath,
-  resolveRootPathSync,
+  resolveRootPathSyncWithCanonicalRootObservation,
+  resolveRootPathWithCanonicalRootObservation,
   type ResolvedRootPath,
 } from "./root-path.js";
 import type { PathAliasPolicy } from "./path-policy.js";
@@ -12,6 +12,12 @@ import {
   type PinnedOpenSyncAllowedType,
   type PinnedOpenSyncFailureReason,
 } from "./pinned-open.js";
+import { FsSafeError } from "./errors.js";
+import {
+  createRootFileFinalAdmission,
+  observeCanonicalRoot,
+  type CanonicalRootObservation,
+} from "./root-file-final-admission.js";
 
 type BoundaryReadFs = Pick<
   typeof fs,
@@ -54,6 +60,18 @@ type ResolvedRootFilePath = {
   absolutePath: string;
   resolvedPath: string;
   rootRealPath: string;
+  boundaryLabel: string;
+  rootObservation: Extract<CanonicalRootObservation, { ok: true }>;
+};
+
+type AsyncResolutionSnapshot = {
+  rootPath: string;
+  rootRealPath?: string;
+  boundaryLabel: string;
+  aliasPolicy?: PathAliasPolicy;
+  rejectSymlinks: boolean;
+  rejectFinalSymlink: boolean;
+  skipLexicalRootCheck?: boolean;
 };
 
 export function canUseRootFileOpen(ioFs: typeof fs): boolean {
@@ -81,14 +99,29 @@ export function openRootFileSync(params: OpenRootFileSyncParams): RootFileOpenRe
   const absolutePath = absoluteRootFilePath(params.absolutePath);
   let resolved: ResolvedRootFilePath | RootFileOpenResult;
   try {
-    resolved = mapResolvedRootPath(absolutePath, resolveRootPathSync({
+    const rootPath = params.rootPath;
+    const rootRealPath = params.rootRealPath;
+    const boundaryLabel = params.boundaryLabel;
+    let rootObservation: CanonicalRootObservation | undefined;
+    const resolvedPath = resolveRootPathSyncWithCanonicalRootObservation({
       absolutePath,
-      rootPath: params.rootPath,
-      rootCanonicalPath: params.rootRealPath,
-      boundaryLabel: params.boundaryLabel,
-      ...readSymlinkResolution(params.symlinks ?? (params.rejectSymlinks === false ? "follow-within-root" : "reject")),
+      rootPath,
+      rootCanonicalPath: rootRealPath,
+      boundaryLabel,
+      ...readSymlinkResolution(
+        params.symlinks ??
+          (params.rejectSymlinks === false ? "follow-within-root" : "reject"),
+      ),
       skipLexicalRootCheck: params.skipLexicalRootCheck,
-    }));
+    }, rootCanonicalPath => {
+      rootObservation = observeCanonicalRoot(ioFs, rootCanonicalPath);
+    });
+    resolved = mapResolvedRootPath(
+      absolutePath,
+      boundaryLabel,
+      resolvedPath,
+      rootObservation,
+    );
   } catch (error) {
     resolved = toBoundaryValidationError(error);
   }
@@ -125,6 +158,8 @@ function openRootFileResolved(params: {
   absolutePath: string;
   resolvedPath: string;
   rootRealPath: string;
+  boundaryLabel: string;
+  rootObservation: Extract<CanonicalRootObservation, { ok: true }>;
   maxBytes?: number;
   rejectHardlinks?: boolean;
   allowedType?: PinnedOpenSyncAllowedType;
@@ -137,6 +172,11 @@ function openRootFileResolved(params: {
     maxBytes: params.maxBytes,
     allowedType: params.allowedType,
     ioFs: params.ioFs,
+    finalAdmission: createRootFileFinalAdmission(
+      params.ioFs,
+      params.rootObservation,
+      params.boundaryLabel,
+    ),
   });
   if (!opened.ok) {
     return opened;
@@ -164,6 +204,8 @@ function finalizeRootFileOpen(params: {
     absolutePath: params.resolved.absolutePath,
     resolvedPath: params.resolved.resolvedPath,
     rootRealPath: params.resolved.rootRealPath,
+    boundaryLabel: params.resolved.boundaryLabel,
+    rootObservation: params.resolved.rootObservation,
     maxBytes: params.maxBytes,
     rejectHardlinks: params.rejectHardlinks,
     allowedType: params.allowedType,
@@ -176,25 +218,50 @@ export async function openRootFile(
 ): Promise<RootFileOpenResult> {
   const ioFs = params.ioFs ?? fs;
   const absolutePath = absoluteRootFilePath(params.absolutePath);
-  let resolved: ResolvedRootFilePath | RootFileOpenResult;
+  let resolutionSnapshot: AsyncResolutionSnapshot | RootFileOpenResult;
   try {
-    resolved = mapResolvedRootPath(absolutePath, await resolveRootPath({
-      absolutePath,
-      rootPath: params.rootPath,
-      rootCanonicalPath: params.rootRealPath,
-      boundaryLabel: params.boundaryLabel,
-      policy: params.aliasPolicy,
-      ...readSymlinkResolution(params.symlinks ?? (params.rejectSymlinks === false ? "follow-within-root" : "reject")),
-      skipLexicalRootCheck: params.skipLexicalRootCheck,
-    }));
+    resolutionSnapshot = snapshotAsyncResolution(params);
   } catch (error) {
-    resolved = toBoundaryValidationError(error);
+    resolutionSnapshot = toBoundaryValidationError(error);
   }
-  return finalizeRootFileOpen({
-    resolved,
+  const openSnapshot = {
     maxBytes: params.maxBytes,
     rejectHardlinks: params.rejectHardlinks,
     allowedType: params.allowedType,
+  };
+  let resolved: ResolvedRootFilePath | RootFileOpenResult;
+  if ("ok" in resolutionSnapshot) {
+    resolved = resolutionSnapshot;
+  } else {
+    try {
+      let rootObservation: CanonicalRootObservation | undefined;
+      const resolvedPath = await resolveRootPathWithCanonicalRootObservation({
+        absolutePath,
+        rootPath: resolutionSnapshot.rootPath,
+        rootCanonicalPath: resolutionSnapshot.rootRealPath,
+        boundaryLabel: resolutionSnapshot.boundaryLabel,
+        policy: resolutionSnapshot.aliasPolicy,
+        rejectSymlinks: resolutionSnapshot.rejectSymlinks,
+        rejectFinalSymlink: resolutionSnapshot.rejectFinalSymlink,
+        skipLexicalRootCheck: resolutionSnapshot.skipLexicalRootCheck,
+      }, rootCanonicalPath => {
+        rootObservation = observeCanonicalRoot(ioFs, rootCanonicalPath);
+      });
+      resolved = mapResolvedRootPath(
+        absolutePath,
+        resolutionSnapshot.boundaryLabel,
+        resolvedPath,
+        rootObservation,
+      );
+    } catch (error) {
+      resolved = toBoundaryValidationError(error);
+    }
+  }
+  return finalizeRootFileOpen({
+    resolved,
+    maxBytes: openSnapshot.maxBytes,
+    rejectHardlinks: openSnapshot.rejectHardlinks,
+    allowedType: openSnapshot.allowedType,
     ioFs,
   });
 }
@@ -205,11 +272,57 @@ function toBoundaryValidationError(error: unknown): RootFileOpenResult {
 
 function mapResolvedRootPath(
   absolutePath: string,
+  boundaryLabel: string,
   resolved: ResolvedRootPath,
-): ResolvedRootFilePath {
+  rootObservation: CanonicalRootObservation | undefined,
+): ResolvedRootFilePath | RootFileOpenResult {
+  if (!rootObservation) {
+    return toBoundaryValidationError(new FsSafeError(
+      "path-mismatch",
+      "canonical root identity was not observed",
+    ));
+  }
+  if (!rootObservation.ok) {
+    return toRootObservationError(rootObservation.error);
+  }
   return {
     absolutePath,
     resolvedPath: resolved.canonicalPath,
     rootRealPath: resolved.rootCanonicalPath,
+    boundaryLabel,
+    rootObservation,
   };
+}
+
+function snapshotAsyncResolution(params: OpenRootFileParams): AsyncResolutionSnapshot {
+  const rootPath = params.rootPath;
+  const rootRealPath = params.rootRealPath;
+  const boundaryLabel = params.boundaryLabel;
+  const sourceAliasPolicy = params.aliasPolicy;
+  const aliasPolicy = sourceAliasPolicy == null ? undefined : {
+    allowFinalSymlinkForUnlink: sourceAliasPolicy.allowFinalSymlinkForUnlink,
+    allowFinalHardlinkForUnlink: sourceAliasPolicy.allowFinalHardlinkForUnlink,
+  };
+  const symlinkResolution = readSymlinkResolution(
+    params.symlinks ?? (params.rejectSymlinks === false ? "follow-within-root" : "reject"),
+  );
+  return {
+    rootPath,
+    rootRealPath,
+    boundaryLabel,
+    aliasPolicy,
+    ...symlinkResolution,
+    skipLexicalRootCheck: params.skipLexicalRootCheck,
+  };
+}
+
+function toRootObservationError(error: unknown): RootFileOpenResult {
+  if (error instanceof FsSafeError) return toBoundaryValidationError(error);
+  const code = typeof error === "object" && error !== null && "code" in error
+    ? String(error.code)
+    : "";
+  if (code === "ENOENT" || code === "ENOTDIR" || code === "ELOOP") {
+    return { ok: false, reason: "path", error };
+  }
+  return { ok: false, reason: "io", error };
 }

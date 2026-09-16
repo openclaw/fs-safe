@@ -13,6 +13,12 @@ export type PinnedOpenSyncResult =
 
 export type PinnedOpenSyncAllowedType = "file" | "directory";
 
+export type PinnedOpenSyncFinalAdmission = (params: {
+  path: string;
+  preRealpathIdentity: fs.BigIntStats;
+  descriptorIdentity: fs.BigIntStats;
+}) => string;
+
 export type PinnedOpenSyncFs = Pick<
   typeof fs,
   "constants" | "lstatSync" | "realpathSync" | "openSync" | "fstatSync" | "closeSync"
@@ -32,6 +38,7 @@ export function openPinnedFileSync(params: {
   maxBytes?: number;
   allowedType?: PinnedOpenSyncAllowedType;
   ioFs?: PinnedOpenSyncFs;
+  finalAdmission?: PinnedOpenSyncFinalAdmission;
 }): PinnedOpenSyncResult {
   const ioFs = params.ioFs ?? fs;
   const allowedType = params.allowedType ?? "file";
@@ -65,13 +72,19 @@ export function openPinnedFileSync(params: {
       assertAllowedStat(stat, allowedType, params);
       return stat;
     }, preOpenStat);
-    inspectFileIdentitySync(() => {
+    const pathIdentity = inspectFileIdentitySync(() => {
       const stat = ioFs.lstatSync(realPath, { bigint: true });
       assertAllowedStat(stat, allowedType, params);
       return stat;
     }, identity);
 
-    const opened = { ok: true as const, path: realPath, fd, stat: openedStat };
+    const admittedPath = params.finalAdmission?.({
+      path: realPath,
+      preRealpathIdentity: pathIdentity,
+      descriptorIdentity: identity,
+    }) ?? realPath;
+
+    const opened = { ok: true as const, path: admittedPath, fd, stat: openedStat };
     fd = null;
     return opened;
   } catch (error) {

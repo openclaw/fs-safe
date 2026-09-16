@@ -1,17 +1,40 @@
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+type OpenRootFileParams = import("../src/root-file.js").OpenRootFileParams;
+
 const resolveRootPathSyncMock = vi.hoisted(() => vi.fn());
 const resolveRootPathMock = vi.hoisted(() => vi.fn());
 const openPinnedFileSyncMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../src/root-path.js", () => ({
-  resolveRootPathSync: (...args: unknown[]) => resolveRootPathSyncMock(...args),
-  resolveRootPath: (...args: unknown[]) => resolveRootPathMock(...args),
+  resolveRootPathSyncWithCanonicalRootObservation: (
+    params: unknown,
+    observeRoot: (rootPath: string) => void,
+  ) => {
+    observeRoot("/real/root");
+    return resolveRootPathSyncMock(params, observeRoot);
+  },
+  resolveRootPathWithCanonicalRootObservation: (
+    params: unknown,
+    observeRoot: (rootPath: string) => void,
+  ) => {
+    observeRoot("/real/root");
+    return resolveRootPathMock(params, observeRoot);
+  },
 }));
 
 vi.mock("../src/pinned-open.js", () => ({
   openPinnedFileSync: (...args: unknown[]) => openPinnedFileSyncMock(...args),
+}));
+
+vi.mock("../src/root-file-final-admission.js", () => ({
+  observeCanonicalRoot: (_ioFs: unknown, rootPath: string) => ({
+    ok: true,
+    path: rootPath,
+    identity: { dev: 1n, ino: 2n },
+  }),
+  createRootFileFinalAdmission: () => () => "/real/admitted",
 }));
 
 let canUseRootFileOpen: typeof import("../src/root-file.js").canUseRootFileOpen;
@@ -82,15 +105,18 @@ describe("root-file", () => {
       ioFs,
     });
 
-    expect(resolveRootPathSyncMock).toHaveBeenCalledWith({
-      absolutePath,
-      rootPath: "/workspace",
-      rootCanonicalPath: undefined,
-      boundaryLabel: "plugin root",
-      rejectSymlinks: true,
-      rejectFinalSymlink: false,
-      skipLexicalRootCheck: undefined,
-    });
+    expect(resolveRootPathSyncMock).toHaveBeenCalledWith(
+      {
+        absolutePath,
+        rootPath: "/workspace",
+        rootCanonicalPath: undefined,
+        boundaryLabel: "plugin root",
+        rejectSymlinks: true,
+        rejectFinalSymlink: false,
+        skipLexicalRootCheck: undefined,
+      },
+      expect.any(Function),
+    );
     expect(openPinnedFileSyncMock).toHaveBeenCalledWith({
       filePath: absolutePath,
       resolvedPath: "/real/plugin.json",
@@ -98,6 +124,7 @@ describe("root-file", () => {
       maxBytes: undefined,
       allowedType: undefined,
       ioFs,
+      finalAdmission: expect.any(Function),
     });
     expect(opened).toEqual({
       ok: true,
@@ -150,16 +177,22 @@ describe("root-file", () => {
       ioFs,
     });
 
-    expect(resolveRootPathMock).toHaveBeenCalledWith({
-      absolutePath,
-      rootPath: "/workspace",
-      rootCanonicalPath: undefined,
-      boundaryLabel: "workspace",
-      policy: { allowFinalSymlinkForUnlink: true },
-      rejectSymlinks: true,
-      rejectFinalSymlink: false,
-      skipLexicalRootCheck: undefined,
-    });
+    expect(resolveRootPathMock).toHaveBeenCalledWith(
+      {
+        absolutePath,
+        rootPath: "/workspace",
+        rootCanonicalPath: undefined,
+        boundaryLabel: "workspace",
+        policy: {
+          allowFinalSymlinkForUnlink: true,
+          allowFinalHardlinkForUnlink: undefined,
+        },
+        rejectSymlinks: true,
+        rejectFinalSymlink: false,
+        skipLexicalRootCheck: undefined,
+      },
+      expect.any(Function),
+    );
     expect(openPinnedFileSyncMock).toHaveBeenCalledWith({
       filePath: absolutePath,
       resolvedPath: "/real/notes.txt",
@@ -167,6 +200,7 @@ describe("root-file", () => {
       maxBytes: undefined,
       allowedType: undefined,
       ioFs,
+      finalAdmission: expect.any(Function),
     });
     expect(opened).toEqual({
       ok: false,
@@ -191,6 +225,164 @@ describe("root-file", () => {
       error,
     });
     expect(openPinnedFileSyncMock).not.toHaveBeenCalled();
+  });
+
+  it("snapshots every async option before boundary resolution yields", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    resolveRootPathMock.mockImplementation(async () => {
+      await gate;
+      return {
+        canonicalPath: "/real/value",
+        rootCanonicalPath: "/real/root",
+      };
+    });
+    openPinnedFileSyncMock.mockReturnValue({
+      ok: false,
+      reason: "validation",
+      error: new Error("finished"),
+    });
+    const aliasPolicy = {
+      allowFinalSymlinkForUnlink: true,
+      allowFinalHardlinkForUnlink: false,
+    };
+    const params: OpenRootFileParams = {
+      absolutePath: "/input/value",
+      rootPath: "/input/root",
+      rootRealPath: "/real/root",
+      boundaryLabel: "original boundary",
+      aliasPolicy,
+      rejectSymlinks: false,
+      skipLexicalRootCheck: true,
+      maxBytes: 99,
+      rejectHardlinks: false,
+      allowedType: "file",
+    };
+
+    const pending = openRootFile(params);
+    params.rootPath = "/changed/root";
+    params.rootRealPath = "/changed/real";
+    params.boundaryLabel = "changed boundary";
+    params.rejectSymlinks = true;
+    params.skipLexicalRootCheck = false;
+    params.maxBytes = 0;
+    params.rejectHardlinks = true;
+    params.allowedType = "directory";
+    aliasPolicy.allowFinalSymlinkForUnlink = false;
+    aliasPolicy.allowFinalHardlinkForUnlink = true;
+    release();
+    await pending;
+
+    expect(resolveRootPathMock).toHaveBeenCalledWith(
+      {
+        absolutePath: "/input/value",
+        rootPath: "/input/root",
+        rootCanonicalPath: "/real/root",
+        boundaryLabel: "original boundary",
+        policy: {
+          allowFinalSymlinkForUnlink: true,
+          allowFinalHardlinkForUnlink: false,
+        },
+        rejectSymlinks: false,
+        rejectFinalSymlink: false,
+        skipLexicalRootCheck: true,
+      },
+      expect.any(Function),
+    );
+    expect(openPinnedFileSyncMock).toHaveBeenCalledWith(expect.objectContaining({
+      rejectHardlinks: false,
+      maxBytes: 99,
+      allowedType: "file",
+    }));
+  });
+
+  it("preserves async getter failure categories while snapshotting", async () => {
+    const policyFailure = new Error("policy getter failed");
+    const policyResult = await openRootFile({
+      absolutePath: "/input/value",
+      rootPath: "/input/root",
+      boundaryLabel: "fixture",
+      get aliasPolicy() {
+        throw policyFailure;
+      },
+    });
+    expect(policyResult).toEqual({
+      ok: false,
+      reason: "validation",
+      error: policyFailure,
+    });
+
+    const openFailure = new Error("open getter failed");
+    await expect(openRootFile({
+      absolutePath: "/input/value",
+      rootPath: "/input/root",
+      boundaryLabel: "fixture",
+      get maxBytes(): number {
+        throw openFailure;
+      },
+    })).rejects.toBe(openFailure);
+  });
+
+  it("reads async option getters once and shallow-snapshots alias policy", async () => {
+    resolveRootPathMock.mockResolvedValue({
+      canonicalPath: "/real/value",
+      rootCanonicalPath: "/real/root",
+    });
+    openPinnedFileSyncMock.mockReturnValue({
+      ok: false,
+      reason: "validation",
+      error: new Error("finished"),
+    });
+    const reads = new Map<PropertyKey, number>();
+    const aliasReads = new Map<PropertyKey, number>();
+    const aliasPolicy = new Proxy({
+      allowFinalSymlinkForUnlink: false,
+      allowFinalHardlinkForUnlink: false,
+    }, {
+      get(target, property, receiver) {
+        aliasReads.set(property, (aliasReads.get(property) ?? 0) + 1);
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const values: OpenRootFileParams = {
+      absolutePath: "/input/value",
+      rootPath: "/input/root",
+      rootRealPath: "/real/root",
+      boundaryLabel: "fixture",
+      aliasPolicy,
+      rejectSymlinks: false,
+      symlinks: undefined,
+      skipLexicalRootCheck: true,
+      maxBytes: 9,
+      rejectHardlinks: false,
+      allowedType: "file",
+    };
+    const params = new Proxy(values, {
+      get(target, property, receiver) {
+        reads.set(property, (reads.get(property) ?? 0) + 1);
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    await openRootFile(params);
+
+    for (const property of [
+      "absolutePath",
+      "rootPath",
+      "rootRealPath",
+      "boundaryLabel",
+      "aliasPolicy",
+      "rejectSymlinks",
+      "symlinks",
+      "skipLexicalRootCheck",
+      "maxBytes",
+      "rejectHardlinks",
+      "allowedType",
+    ]) {
+      expect(reads.get(property)).toBe(1);
+    }
+    expect(aliasReads.get("allowFinalSymlinkForUnlink")).toBe(1);
+    expect(aliasReads.get("allowFinalHardlinkForUnlink")).toBe(1);
   });
 
   it("matches boundary file failures by reason with fallback support", () => {

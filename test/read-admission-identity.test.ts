@@ -61,7 +61,9 @@ for (const route of ["regular async", "regular sync", "root sync", "root async"]
         const subject = await fixture({ samples: { [boundary]: [{ ino: 0n }, {}] } });
         Object.defineProperty(process, "platform", { value: "win32" });
         expect((await subject.run()).buffer.toString()).toBe("original");
-        expect(subject.counts[boundary]).toBe(2);
+        expect(subject.counts[boundary]).toBe(
+          boundary === "current" && route.startsWith("root") ? 3 : 2,
+        );
         expect(subject.open).toHaveBeenCalledTimes(1);
         expect(subject.close).toHaveBeenCalledTimes(1);
       });

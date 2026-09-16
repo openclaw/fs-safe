@@ -77,8 +77,20 @@ export async function resolveRootPath(
   }
 }
 
+export async function resolveRootPathWithCanonicalRootObservation(
+  params: ResolveRootPathParams,
+  observeRoot: (rootCanonicalPath: string) => void,
+): Promise<ResolvedRootPath> {
+  try {
+    return await resolveRootPathInternal(params, observeRoot);
+  } catch (error) {
+    throw sanitizeRootPathError(error);
+  }
+}
+
 async function resolveRootPathInternal(
   params: ResolveRootPathParams,
+  observeRoot?: (rootCanonicalPath: string) => void,
 ): Promise<ResolvedRootPath> {
   assertValidRootPathInputs(params);
   params = { ...params, absolutePath: absolutePathWithRawSegments(params.absolutePath) };
@@ -86,7 +98,10 @@ async function resolveRootPathInternal(
   const rootCanonicalPath = params.rootCanonicalPath
     ? path.resolve(params.rootCanonicalPath)
     : await resolvePathViaExistingAncestor(rootPath);
-  return resolveRootPathLexicalAsync(prepareRootTraversal(params, rootPath, rootCanonicalPath));
+  observeRoot?.(rootCanonicalPath);
+  return resolveRootPathLexicalAsync(
+    prepareRootTraversal(params, rootPath, rootCanonicalPath),
+  );
 }
 
 export function resolveRootPathSync(params: ResolveRootPathParams): ResolvedRootPath {
@@ -97,14 +112,31 @@ export function resolveRootPathSync(params: ResolveRootPathParams): ResolvedRoot
   }
 }
 
-function resolveRootPathSyncInternal(params: ResolveRootPathParams): ResolvedRootPath {
+export function resolveRootPathSyncWithCanonicalRootObservation(
+  params: ResolveRootPathParams,
+  observeRoot: (rootCanonicalPath: string) => void,
+): ResolvedRootPath {
+  try {
+    return resolveRootPathSyncInternal(params, observeRoot);
+  } catch (error) {
+    throw sanitizeRootPathError(error);
+  }
+}
+
+function resolveRootPathSyncInternal(
+  params: ResolveRootPathParams,
+  observeRoot?: (rootCanonicalPath: string) => void,
+): ResolvedRootPath {
   assertValidRootPathInputs(params);
   params = { ...params, absolutePath: absolutePathWithRawSegments(params.absolutePath) };
   const rootPath = path.resolve(params.rootPath);
   const rootCanonicalPath = params.rootCanonicalPath
     ? path.resolve(params.rootCanonicalPath)
     : resolvePathViaExistingAncestorSync(rootPath);
-  return resolveRootPathLexicalSync(prepareRootTraversal(params, rootPath, rootCanonicalPath));
+  observeRoot?.(rootCanonicalPath);
+  return resolveRootPathLexicalSync(
+    prepareRootTraversal(params, rootPath, rootCanonicalPath),
+  );
 }
 
 function prepareRootTraversal(

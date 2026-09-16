@@ -78,6 +78,30 @@ describe("Windows Root prefix admission", () => {
     expect(observed).toEqual(["c:\\trusted\\root"]);
   });
 
+  it("delegates case-fold-only identity inspection to the scoped adapter", () => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const nativeLstat = vi.spyOn(fsSync, "lstatSync").mockImplementation(() => {
+      throw new Error("scoped admission must not use the native adapter");
+    });
+    const inspectCandidateRoot = vi.fn();
+
+    expect(admitPathInsideRoot({
+      rootPath: "C:\\Trusted\\Root",
+      candidatePath: "c:\\trusted\\root\\Child.txt",
+      rootIdentity: { dev: 11n, ino: 22n },
+      inspectCandidateRoot,
+    })).toEqual({
+      admission: "identity",
+      path: "C:\\Trusted\\Root\\Child.txt",
+      relativePath: "Child.txt",
+    });
+    expect(inspectCandidateRoot).toHaveBeenCalledWith(
+      "c:\\trusted\\root",
+      { dev: 11n, ino: 22n },
+    );
+    expect(nativeLstat).not.toHaveBeenCalled();
+  });
+
   it.each(["different", "missing", "unknown"] as const)(
     "rejects a %s case-fold-only prefix with bounded observations",
     (scenario) => {

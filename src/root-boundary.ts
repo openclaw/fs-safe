@@ -146,6 +146,10 @@ export function admitPathInsideRoot(params: {
   rootIdentity?: RootBoundaryIdentity;
   resolveCandidateRoot?: boolean;
   identityCache?: Map<string, boolean>;
+  inspectCandidateRoot?: (
+    candidateRootPath: string,
+    expected: Readonly<{ dev: bigint; ino: bigint }>,
+  ) => void;
 }): AdmittedRootPath | undefined {
   // Some platform-fallback tests intentionally spoof process.platform while
   // retaining Node's POSIX path module. A single-slash absolute root remains
@@ -200,7 +204,11 @@ export function admitPathInsideRoot(params: {
     const candidateRootPath = params.resolveCandidateRoot
       ? realpathSync.native(match.candidateRootPath)
       : match.candidateRootPath;
-    inspectDirectoryIdentitySync(candidateRootPath, expected);
+    if (params.inspectCandidateRoot) {
+      params.inspectCandidateRoot(candidateRootPath, expected);
+    } else {
+      inspectDirectoryIdentitySync(candidateRootPath, expected);
+    }
     params.identityCache?.set(match.candidateRootPath, true);
     return admitted();
   } catch {

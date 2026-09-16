@@ -67,6 +67,14 @@ Regular-file readers, root-file adapters, and archive input staging use the same
 exact admission policy. `copyIn()` retains the admitted source identity for its
 checks before and after copying, independently of its numeric metadata receipt.
 
+The low-level `openRootFile()` adapters additionally retain the canonical root's
+exact identity from before component traversal. After their existing pathname and
+descriptor checks, they verify the root, freshly resolve and re-admit the consumed
+pathname, compare that canonical leaf with the descriptor, and verify the root
+again before returning ownership. A failed final fence closes the descriptor
+without reading. The checks detect substitutions at each observation boundary;
+they do not make pathname confinement atomic against a continuously racing peer.
+
 ### Symlinks (write side)
 
 With the native binding loaded, `write()`, `create()`, and `copyIn()` use a
