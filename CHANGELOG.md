@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preserve files and symlinks that replace an observed empty FileStore directory while prune removal is being prepared; nonempty directory replacements remain untouched.
+
 ## 0.13.0 - 2026-09-16
 
 ### Highlights

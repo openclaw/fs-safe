@@ -156,3 +156,85 @@ it("keeps fractional-millisecond expiry comparisons at the removal boundary", as
   expect(refreshed).toBe(true);
   expect(await fs.readFile(target, "utf8")).toBe("expired");
 });
+
+it.each([false, true])(
+  "keeps a fresh file substituted for an observed empty directory (private=%s)",
+  async privateMode => {
+    const rootDir = await tempRoot("fs-safe-prune-empty-dir-");
+    const store = fileStore({ rootDir, private: privateMode });
+    const target = path.join(rootDir, "empty");
+    const sibling = path.join(rootDir, "expired.txt");
+    await fs.mkdir(target);
+    await fs.writeFile(sibling, "expired");
+    await fs.utimes(sibling, new Date(0), new Date(0));
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    let replaced = false;
+    __setFsSafeTestHooksForTest({
+      async beforeRootFallbackMutation(operation, targetPath) {
+        if (operation !== "remove" || targetPath !== target || replaced) return;
+        await fs.rmdir(target);
+        await fs.writeFile(target, "fresh replacement");
+        replaced = true;
+      },
+    });
+
+    await store.pruneExpired({ ttlMs, recursive: true, pruneEmptyDirs: true });
+
+    expect(replaced).toBe(true);
+    expect(await fs.readFile(target, "utf8")).toBe("fresh replacement");
+    await expect(fs.lstat(sibling)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+it.each([false, true])(
+  "keeps a directory that becomes nonempty before empty-directory removal (private=%s)",
+  async privateMode => {
+    const rootDir = await tempRoot("fs-safe-prune-nonempty-dir-");
+    const store = fileStore({ rootDir, private: privateMode });
+    const target = path.join(rootDir, "empty");
+    const child = path.join(target, "fresh.txt");
+    await fs.mkdir(target);
+    let populated = false;
+    __setFsSafeTestHooksForTest({
+      async beforeRootFallbackMutation(operation, targetPath) {
+        if (operation !== "remove" || targetPath !== target || populated) return;
+        await fs.writeFile(child, "fresh");
+        populated = true;
+      },
+    });
+
+    await store.pruneExpired({ ttlMs, recursive: true, pruneEmptyDirs: true });
+
+    expect(populated).toBe(true);
+    expect(await fs.readFile(child, "utf8")).toBe("fresh");
+  },
+);
+
+itPosix.each([false, true])(
+  "keeps a symlink substituted for an observed empty directory (private=%s)",
+  async privateMode => {
+    const rootDir = await tempRoot("fs-safe-prune-empty-dir-link-");
+    const store = fileStore({ rootDir, private: privateMode });
+    const target = path.join(rootDir, "empty");
+    const referent = path.join(rootDir, "referent");
+    const child = path.join(referent, "fresh.txt");
+    await fs.mkdir(target);
+    await fs.mkdir(referent);
+    await fs.writeFile(child, "fresh");
+    let replaced = false;
+    __setFsSafeTestHooksForTest({
+      async beforeRootFallbackMutation(operation, targetPath) {
+        if (operation !== "remove" || targetPath !== target || replaced) return;
+        await fs.rmdir(target);
+        await fs.symlink(referent, target);
+        replaced = true;
+      },
+    });
+
+    await store.pruneExpired({ ttlMs, recursive: true, pruneEmptyDirs: true });
+
+    expect(replaced).toBe(true);
+    expect((await fs.lstat(target)).isSymbolicLink()).toBe(true);
+    expect(await fs.readFile(child, "utf8")).toBe("fresh");
+  },
+);
