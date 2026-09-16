@@ -195,17 +195,29 @@ describe.skipIf(process.platform === "win32" || process.getuid?.() === 0)("real 
       }
     } });
     let settled = false;
+    let operation: Promise<void> | undefined;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const merge = withExtractionDeadline(500, "directory merge", async (deadline) => {
       deadline.signal.addEventListener("abort", expired.resolve, { once: true });
-      await mergeExtractedTreeIntoDestination({ ...params, deadline });
+      operation = mergeExtractedTreeIntoDestination({ ...params, deadline });
+      await operation;
     });
     void merge.then(() => { settled = true; }, () => { settled = true; });
     try {
-      await entered.promise;
+      await Promise.race([
+        entered.promise,
+        merge.then(() => { throw new Error(`merge completed before ${stage} admission`); }),
+      ]);
+      // Filesystem scheduling stays real; expire only once the selected operation is owned.
+      await vi.advanceTimersByTimeAsync(500);
       await expired.promise;
       expect(settled).toBe(false);
       expect(closes).toBe(0);
-    } finally { release.resolve(); }
+    } finally {
+      release.resolve();
+      await Promise.allSettled([merge, operation]);
+      vi.useRealTimers();
+    }
     await expect(merge).rejects.toThrow("directory merge timed out");
     expect(closes).toBe(1);
     expect(chmods).toBe(stage === "active-chmod" ? 1 : 0);
