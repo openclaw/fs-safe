@@ -103,15 +103,18 @@ small-file read overhead. The archive is assembled in memory outside timing;
 every returned path, kind, and size is verified after measurement.
 Gzip member reads and inspection also cover a small member followed by 64 MiB
 of valid zero container padding, separating suffix validation from payload decoding.
-The `native-codec/` filter selects 12 zstd/bzip2 rows: normal extraction and
-buffered member reads for one 128-byte member, 512 128-byte members, and one
-16 MiB member. These rows require native mode and record explicit skips when
-the binding is unavailable. Checked-in compressed fixtures need no external
-compressor on Linux, macOS, Windows, or Node 22. Every extracted filename and
-payload, and the complete selected read payload, is checked outside timing;
-setup and destination cleanup are also outside timing. Payloads are constant
-bytes and compress well, so these rows measure normal codec, admission, and
-output costs, not high-entropy input refill throughput or cancellation latency.
+The `native-codec/` filter selects 16 zstd/bzip2 rows. Twelve cover normal
+extraction and buffered member reads for one 128-byte member, 512 128-byte
+members, and one 16 MiB member. Four more extract and read one 4 MiB member from
+258 concatenated streams: a TAR header, one independently compressed 16 KiB
+SHA-256-counter block replayed 256 times, and the TAR trailer. The repeated
+block is deliberately resistant to compression within each stream while
+keeping the checked-in components small. Component, assembled-compressed,
+decoded-TAR, and payload hashes are checked while the archive is assembled
+outside timing. All rows require native mode and record explicit skips when the
+binding is unavailable. Setup, payload verification, and destination cleanup
+are outside timing. The four added rows measure concatenated-stream refill
+throughput, not single-frame high-entropy throughput or cancellation latency.
 Deterministic Rust tests separately check cancellation between raw input reads.
 ZIP reads and extraction also cover 1 MiB and 16 MiB stored and deflated members
 to expose payload integrity costs beyond tiny archive fixtures. ZIP admission and

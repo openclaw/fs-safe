@@ -18,7 +18,7 @@
 
 ### Validation and tooling
 
-- Add portable zstd/bzip2 method-audit fixtures for normal extraction and buffered reads of small, many-member, and 16 MiB archives, with exact payload checks and explicit native-only skips.
+- Add portable zstd/bzip2 method-audit fixtures for normal extraction and buffered reads of small, many-member, and 16 MiB archives, plus a 4 MiB concatenated-stream refill workload assembled from reviewed deterministic components; verify component, assembled archive, decoded TAR, and payload identities, retain explicit native-only skips, and report raw-refill cancellation proofs independently for each codec and input reader.
 - Separate the reviewed manual method-audit harness from immutable candidate and baseline checkouts, validate and resolve dispatch inputs before platform fan-out, and support Node 22/24 plus rebuild and same-artifact controls without changing the ordinary PR/schedule benchmark job.
 - Add versioned, mutation-checked benchmark provenance for trusted reviewed revisions, including harness/source identities, measurement and report-file receipts, manifests, lockfiles, dist trees, bounded dependency layouts, native addons, and runner metadata; this detects accidental drift but is not a sandbox for hostile benchmark code.
 - Bind filename-sanitizer benchmark expectations to the measured revision's tracked source, validate all 17 profile rows before filtering, strengthen four long-name endpoint checks, add paired shared-mutation-admission fixtures with 60 portable and 96 Windows rows, and cover temp-workspace mode correction plus existing/missing roots at depths 4/8/32.

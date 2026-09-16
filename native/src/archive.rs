@@ -1355,19 +1355,55 @@ mod tests {
         }
     }
 
-    #[test]
-    fn compressed_raw_refills_stop_before_the_decoder_produces_output() {
+    fn compressed_fixture(format: ArchiveFormat) -> Vec<u8> {
         let raw = fixture_tar();
-        for (format, bytes) in [
-            (ArchiveFormat::TarZstd, zstd::stream::encode_all(raw.as_slice(), 1).unwrap()),
-            (ArchiveFormat::TarBzip2, bzip(&raw)),
-        ] {
-            check_compressed_raw_cancellation(Cursor::new(bytes.as_slice()), format, false);
-            let path = temp_path("tar-raw-cancellation");
-            std::fs::write(&path, &bytes).unwrap();
-            check_compressed_raw_cancellation(File::open(&path).unwrap(), format, true);
-            std::fs::remove_file(path).unwrap();
+        match format {
+            ArchiveFormat::TarZstd => zstd::stream::encode_all(raw.as_slice(), 1).unwrap(),
+            ArchiveFormat::TarBzip2 => bzip(&raw),
+            _ => unreachable!(),
         }
+    }
+
+    fn check_compressed_raw_file_cancellation(format: ArchiveFormat, suffix: &str) {
+        let bytes = compressed_fixture(format);
+        let path = temp_path(suffix);
+        std::fs::write(&path, &bytes).unwrap();
+        check_compressed_raw_cancellation(File::open(&path).unwrap(), format, true);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn compressed_raw_refills_zstd_cursor() {
+        check_compressed_raw_cancellation(
+            Cursor::new(compressed_fixture(ArchiveFormat::TarZstd)),
+            ArchiveFormat::TarZstd,
+            false,
+        );
+    }
+
+    #[test]
+    fn compressed_raw_refills_zstd_file() {
+        check_compressed_raw_file_cancellation(
+            ArchiveFormat::TarZstd,
+            "tar-zstd-raw-cancellation",
+        );
+    }
+
+    #[test]
+    fn compressed_raw_refills_bzip2_cursor() {
+        check_compressed_raw_cancellation(
+            Cursor::new(compressed_fixture(ArchiveFormat::TarBzip2)),
+            ArchiveFormat::TarBzip2,
+            false,
+        );
+    }
+
+    #[test]
+    fn compressed_raw_refills_bzip2_file() {
+        check_compressed_raw_file_cancellation(
+            ArchiveFormat::TarBzip2,
+            "tar-bzip2-raw-cancellation",
+        );
     }
 
     #[test]
