@@ -6,6 +6,8 @@ import { isPathInside } from "./path.js";
 import { realpathSync } from "./realpath.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { root } from "./root.js";
+import type { RootRemoveOptions } from "./root-options.js";
+import { nonrecursiveRemovalKind } from "./root-remove.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
 export type FileStorePruneOptions = {
@@ -14,6 +16,12 @@ export type FileStorePruneOptions = {
   maxDepth?: number;
   pruneEmptyDirs?: boolean;
 };
+
+const REMOVE_EMPTY_DIRECTORY_OPTIONS: RootRemoveOptions & {
+  readonly [nonrecursiveRemovalKind]: "directory";
+} = Object.freeze({
+  [nonrecursiveRemovalKind]: "directory" as const,
+});
 
 export async function pruneExpiredStoreEntries(params: {
   rootDir: string;
@@ -88,16 +96,7 @@ export async function pruneExpiredStoreEntries(params: {
           await assertRootGuard();
           // Keep empty-dir pruning on the same root-bounded remove path as files;
           // the Root fallback handles empty directories without recursive delete.
-          await scopedRoot.remove(relativePath, {
-            assertBeforeMutation: () => {
-              // Removal preparation can outlive the empty-directory
-              // observation above. Never unlink a replacement file or link.
-              const current = fsSync.lstatSync(fullPath);
-              if (current.isSymbolicLink() || !current.isDirectory()) {
-                throw new FsSafeError("path-mismatch", "store entry is no longer a directory");
-              }
-            },
-          }).catch(() => undefined);
+          await scopedRoot.remove(relativePath, REMOVE_EMPTY_DIRECTORY_OPTIONS).catch(() => undefined);
         }
         continue;
       }
