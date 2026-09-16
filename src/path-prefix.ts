@@ -32,12 +32,13 @@ export function resolvePathPrefixSync(input: string): ResolvedPathPrefix {
   assertNoNulPathInput(input);
   const absolutePath = absolutePathWithRawSegments(input);
   let resolved = rawRoot(absolutePath);
-  const remaining = absolutePath.slice(resolved.length).split(path.sep);
+  let remaining = absolutePath.slice(resolved.length).split(path.sep);
+  let nextSegment = 0;
   const visitedStates = new Set<string>();
   let symlinkHops = 0;
 
-  while (remaining.length > 0) {
-    const segment = remaining.shift()!;
+  while (nextSegment < remaining.length) {
+    const segment = remaining[nextSegment++]!;
     if (segment === "") continue;
     if (segment === "." || segment === "..") {
       const atRoot = resolved === rawRoot(resolved);
@@ -57,15 +58,16 @@ export function resolvePathPrefixSync(input: string): ResolvedPathPrefix {
       return {
         absolutePath,
         existingPath: realpathSync.native(pathForWindowsFilesystem(resolved)),
-        unresolvedSegments: [segment, ...remaining],
+        unresolvedSegments: remaining.slice(nextSegment - 1),
       };
     }
     if (!stat.isSymbolicLink()) {
-      if (!stat.isDirectory() && remaining.length > 0) throw resolutionError("ENOTDIR", absolutePath);
+      if (!stat.isDirectory() && nextSegment < remaining.length) throw resolutionError("ENOTDIR", absolutePath);
       resolved = candidate;
       continue;
     }
-    const state = JSON.stringify([String(stat.dev), String(stat.ino), candidate, remaining]);
+    const pendingSuffix = remaining.slice(nextSegment);
+    const state = JSON.stringify([String(stat.dev), String(stat.ino), candidate, pendingSuffix]);
     if (symlinkHops >= 64 || visitedStates.has(state)) throw resolutionError("ELOOP", absolutePath);
     visitedStates.add(state);
     symlinkHops++;
@@ -75,11 +77,12 @@ export function resolvePathPrefixSync(input: string): ResolvedPathPrefix {
       const targetRoot = rawRoot(rawTarget);
       // A rooted Windows link target uses the link's drive/share, not cwd's.
       resolved = path.sep === "\\" && targetRoot === "\\" ? rawRoot(resolved) : targetRoot;
-      remaining.unshift(...rawTarget.slice(targetRoot.length).split(path.sep));
+      remaining = rawTarget.slice(targetRoot.length).split(path.sep).concat(pendingSuffix);
     } else {
       // A target's parent traversal applies after resolving its preceding links.
-      remaining.unshift(...rawTarget.split(path.sep));
+      remaining = rawTarget.split(path.sep).concat(pendingSuffix);
     }
+    nextSegment = 0;
   }
   return { absolutePath, existingPath: realpathSync.native(pathForWindowsFilesystem(resolved)), unresolvedSegments: [] };
 }

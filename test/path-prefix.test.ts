@@ -55,6 +55,18 @@ describe("resolvePathPrefixSync", () => {
     },
   );
 
+  it("preserves every raw token after a consumed existing prefix", async () => {
+    const directory = await tempRoot("fs-safe-prefix-cursor-suffix-");
+    const existing = path.join(directory, "existing", "nested");
+    fs.mkdirSync(existing, { recursive: true });
+    const input = `${existing}${path.sep}missing${path.sep}${path.sep}.${path.sep}..${path.sep}`;
+    expect(resolvePathPrefixSync(input)).toEqual({
+      absolutePath: input,
+      existingPath: existing,
+      unresolvedSegments: ["missing", "", ".", "..", ""],
+    });
+  });
+
   it.each(["absolute", "relative"])("resolves %s link/.. from the physical target", async form => {
     const rawDirectory = form === "relative"
       ? fs.mkdtempSync(path.join(process.cwd(), ".fs-safe-prefix-parent-"))
@@ -92,6 +104,19 @@ describe("resolvePathPrefixSync", () => {
       absolutePath: path.join(directory, "alias"),
       existingPath: target.startsWith("inner") ? path.join(directory, "deep") : directory,
       unresolvedSegments: target.startsWith("inner") ? ["future"] : ["missing", "..", "live"],
+    });
+  });
+
+  itPosix("orders a missing symlink-target suffix before the caller suffix", async () => {
+    const directory = await tempRoot("fs-safe-prefix-cursor-link-");
+    fs.mkdirSync(path.join(directory, "existing"));
+    const alias = path.join(directory, "alias");
+    fs.symlinkSync("existing/missing//target", alias);
+    const input = `${alias}${path.sep}caller${path.sep}${path.sep}tail${path.sep}`;
+    expect(resolvePathPrefixSync(input)).toEqual({
+      absolutePath: input,
+      existingPath: path.join(directory, "existing"),
+      unresolvedSegments: ["missing", "", "target", "caller", "", "tail", ""],
     });
   });
 

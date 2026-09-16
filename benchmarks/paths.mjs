@@ -127,6 +127,14 @@ export async function registerPaths({
       : undefined,
     verify: result => assert.deepEqual(result.unresolvedSegments, ["future", "..", "input.json"]),
   });
+  const separatorHeavyPrefix = `${w}${path.sep.repeat(4096)}future`;
+  add("resolvePathPrefixSync/separator-heavy", () => a.resolvePathPrefixSync(separatorHeavyPrefix), {
+    sync: true,
+    skip: typeof a.resolvePathPrefixSync !== "function"
+      ? "Not exported by this explicitly selected older comparison build."
+      : undefined,
+    verify: result => assert.deepEqual(result.unresolvedSegments, ["future"]),
+  });
   for (const name of ["resolveLocalPathFromRootsSync", "readLocalFileFromRoots"]) add(name, () => a[name]({ filePath: input, roots: [w] }), { sync: name.endsWith("Sync") });
   const base = { rootDir: w, scopeLabel: "benchmark" };
   for (const name of ["resolvePathWithinRoot", "resolveWritablePathWithinRoot", "ensureDirectoryWithinRoot"]) add(name, () => a[name]({ ...base, requestedPath: name === "ensureDirectoryWithinRoot" ? "tree" : "input.json" }), { sync: name === "resolvePathWithinRoot" });

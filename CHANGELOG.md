@@ -4,6 +4,7 @@
 
 - Register the path-prefix performance workflow on the default branch so an exact reviewed non-release ref can be dispatched manually. The default-branch registration stub fails closed without checking out or executing repository code.
 - Reduce repeated filesystem observations during policy-bound native parent creation, Windows compatibility writes and metadata reads, synchronous store-directory permission repair, and missing temporary-root creation. Keep fresh identity, canonical-path, lock-destination, callback, and publication checks at mutation boundaries.
+- Consume raw path-prefix components with a forward cursor so separator-heavy untrusted input cannot trigger repeated whole-suffix moves; symlink expansion, missing-suffix order, and filesystem observations remain unchanged.
 
 ## 0.13.1 - 2026-09-16
 
