@@ -27,9 +27,16 @@ Regardless of shape, every read goes through the same boundary checks:
 3. Resolve path components and reject anything that escapes the root (`outside-workspace`).
 4. Reject `..` traversal and absolute spellings when they resolve outside the root. In-root absolute spellings remain accepted; `readAbsolute` makes that intent explicit.
 5. Open with `O_NOFOLLOW` where available. Any remaining symlink in the path triggers `symlink` unless the call's `symlinks` policy is `follow-within-root`.
-6. Compare the pre-open path identity, the open fd, and the post-open resolved path (`sameFileIdentity`). A swap mid-call triggers `path-mismatch`.
+6. Compare the pre-open path identity, the open fd, and the post-open resolved path (`sameFileIdentity`), then run a best-effort final observation fence: check the captured root identity, compare the policy-aware pathname with the fd, freshly canonicalize and re-admit that target inside the captured root, compare its exact bigint identity with the fd, and check the root again. An observed swap triggers `path-mismatch` or `outside-workspace`.
 7. If `hardlinks: "reject"`, refuse files with `nlink > 1` (`hardlink`).
 8. If `maxBytes` is set, refuse reads larger than the cap (`too-large`).
+
+The final fence closes a rejected descriptor before any Root read consumes bytes or
+`open()` hands the descriptor to its caller. It is a sequence of filesystem
+observations, not an atomic kernel pathname/open primitive, so a hostile peer can
+still race the namespace after the last observation. Standalone absolute-file
+helpers have no captured `Root` identity and do not claim this replacement-root
+fence; use a `Root` for untrusted paths.
 
 ## Read shapes
 

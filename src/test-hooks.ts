@@ -6,6 +6,9 @@ export type FsSafeTestHooks = {
   beforeOpen?: (filePath: string, flags: number) => Promise<void> | void;
   afterOpen?: (filePath: string, handle: FileHandle) => Promise<void> | void;
   afterOpenedPathIdentityCheck?: (filePath: string, handle: FileHandle) => Promise<void> | void;
+  afterRootReadPathResolution?: (filePath: string) => Promise<void> | void;
+  beforeRootReadFinalFence?: (filePath: string, handle: FileHandle) => Promise<void> | void;
+  afterRootReadFinalPathIdentityCheck?: (filePath: string, handle: FileHandle) => void;
   beforeArchiveOutputMutation?: (
     operation: "mkdir" | "chmod",
     targetPath: string,

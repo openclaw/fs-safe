@@ -20,6 +20,22 @@ export async function registerCore({ api: a, workspace: w, binding, measuredFeat
   fs.mkdirSync(path.join(w, "tree", "nested"), { recursive: true });
   for (let i = 0; i < 100; i++) fs.writeFileSync(path.join(w, "tree", `entry-${i}`), data);
   fs.writeFileSync(path.join(w, "tree", "nested", "entry"), data);
+  const largeRootRead = Buffer.alloc(1024 * 1024, 120);
+  fs.writeFileSync(path.join(w, "root-read-large"), largeRootRead);
+  const rootReadCases = [
+    { name: "depth=0/tiny", relative: "input.json", payload: data, divisor: 1 },
+    { name: "depth=0/large", relative: "root-read-large", payload: largeRootRead, divisor: 10 },
+  ];
+  for (const depth of [8, 32]) {
+    const components = Array.from({ length: depth }, (_, index) => index === 0 ? `root-read-${depth}` : `d${index}`);
+    const relativeDir = path.join(...components);
+    fs.mkdirSync(path.join(w, relativeDir), { recursive: true });
+    for (const [size, payload, divisor] of [["tiny", data, 1], ["large", largeRootRead, 10]]) {
+      const relative = path.join(relativeDir, size);
+      fs.writeFileSync(path.join(w, relative), payload);
+      rootReadCases.push({ name: `depth=${depth}/${size}`, relative, payload, divisor });
+    }
+  }
   const safe = await a.root(w);
   const directoryStat = fs.lstatSync(w, { bigint: true });
   const directoryIdentity = { dev: directoryStat.dev, ino: directoryStat.ino, realPath: fs.realpathSync.native(w) };
@@ -38,6 +54,22 @@ export async function registerCore({ api: a, workspace: w, binding, measuredFeat
   add("Root.reader", () => safe.reader(), { sync: true });
   add("Root.reader/call", () => safe.reader()(input));
   add("Root.open", () => safe.open("input.json"), { after: (r) => r?.handle.close() });
+  const rootReader = safe.reader({ maxBytes: largeRootRead.length });
+  for (const readCase of rootReadCases) {
+    add(`Root.open/${readCase.name}`, () => safe.open(readCase.relative), {
+      divisor: readCase.divisor,
+      after: (result) => result?.handle.close(),
+      verify: (result) => assert.equal(result.stat.size, readCase.payload.length),
+    });
+    add(`Root.read/${readCase.name}`, () => safe.read(readCase.relative, { maxBytes: largeRootRead.length }), {
+      divisor: readCase.divisor,
+      verify: (result) => assert.deepEqual(result.buffer, readCase.payload),
+    });
+    add(`Root.reader/call/${readCase.name}`, () => rootReader(readCase.relative), {
+      divisor: readCase.divisor,
+      verify: (result) => assert.deepEqual(result, readCase.payload),
+    });
+  }
   add("OpenResult.[Symbol.asyncDispose]", (r) => r[Symbol.asyncDispose](), { before: () => safe.open("input.json") });
   contract("OpenResult", await (async () => { const r = await safe.open("input.json"); await r.handle.close(); return r; })());
   add("Root.openWritable", () => safe.openWritable("writable.txt"), { after: (r) => r?.handle.close() });

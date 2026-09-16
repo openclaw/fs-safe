@@ -31,6 +31,10 @@ type FsSafeTestHooks = {
   afterPreOpenLstat?: (filePath: string) => Promise<void> | void;
   beforeOpen?: (filePath: string, flags: number) => Promise<void> | void;
   afterOpen?: (filePath: string, handle: FileHandle) => Promise<void> | void;
+  afterOpenedPathIdentityCheck?: (filePath: string, handle: FileHandle) => Promise<void> | void;
+  afterRootReadPathResolution?: (filePath: string) => Promise<void> | void;
+  beforeRootReadFinalFence?: (filePath: string, handle: FileHandle) => Promise<void> | void;
+  afterRootReadFinalPathIdentityCheck?: (filePath: string, handle: FileHandle) => void;
   beforeArchiveOutputMutation?: (operation: "mkdir" | "chmod", targetPath: string) => Promise<void> | void;
   beforeFileStorePruneDescend?: (dirPath: string) => Promise<void> | void;
   beforeFileStoreSyncPrivateWrite?: (filePath: string) => void;
@@ -49,6 +53,10 @@ type FsSafeTestHooks = {
 | `afterPreOpenLstat` | A pre-open `lstat` has just resolved. Use this to swap a path between validation and open. |
 | `beforeOpen` | The library is about to call `open(path, flags)`. Use this to inject a TOCTOU window. |
 | `afterOpen` | An open just succeeded. Use this to mutate state before the post-open identity check runs. |
+| `afterOpenedPathIdentityCheck` | The opened descriptor matches its pathname and the opened-path resolver is about to run. |
+| `afterRootReadPathResolution` | A Root read path was resolved and has not yet entered local-file open admission. |
+| `beforeRootReadFinalFence` | A Root read descriptor passed local-file admission and is about to enter the final root/file/root fence. |
+| `afterRootReadFinalPathIdentityCheck` | The final pathname-to-descriptor comparison passed and the second root check has not run. This hook is synchronous-only. |
 | `beforeArchiveOutputMutation` | Archive staging is about to create a directory or apply a mode. |
 | `beforeFileStorePruneDescend` | File-store pruning is about to descend into a directory. |
 | `beforeFileStoreSyncPrivateWrite` | A synchronous private-store write is about to mutate its target. |

@@ -60,12 +60,23 @@ checks, so callers do not need their own parent canonicalization.
 
 Guarded root reads compare lossless bigint identities from before open, the opened
 descriptor, the input path, and the canonical target; numeric public `Stats`
-receipts are not used as identity evidence. Unknown Windows device/inode values
-receive one re-inspection without reopening the file. A definite mismatch or
-persistent unknown identity rejects with `path-mismatch` before reading bytes.
-Regular-file readers, root-file adapters, and archive input staging use the same
-exact admission policy. `copyIn()` retains the admitted source identity for its
-checks before and after copying, independently of its numeric metadata receipt.
+receipts are not used as identity evidence. Before returning a handle or reading
+bytes, a best-effort final observation fence checks the originally captured root
+identity, freshly compares the policy-aware pathname with the opened descriptor,
+canonicalizes and re-admits that current target inside the captured root, compares
+the canonical target's exact bigint identity with the descriptor, and checks the
+root identity again. Unknown Windows device/inode values receive one re-inspection
+without reopening the file. A definite mismatch or persistent unknown identity
+rejects with `path-mismatch`; escaped fresh containment rejects with
+`outside-workspace`. This is not an atomic kernel pathname/open primitive, so the
+namespace can still change after the final observation.
+
+Other regular-file readers, root-file adapters, and archive input staging retain
+their documented descriptor/path admission. The exported unrooted
+`openLocalFileSafely()` and `readLocalFileSafely()` helpers have no captured `Root`
+identity and therefore do not provide the replacement-root fence. `copyIn()`
+retains the admitted source identity for its checks before and after copying,
+independently of its numeric metadata receipt.
 
 ### Symlinks (write side)
 
