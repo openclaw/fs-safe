@@ -98,7 +98,26 @@ export async function registerLifecycle({ api: a, workspace: w, native, binding,
   fs.mkdirSync(secretRoot, { mode: 0o700 });
   for (const name of ["replaceFileAtomic", "replaceFileAtomicSync"]) add(name, () => a[name]({ filePath: output, content: data }), { sync: name.endsWith("Sync") });
   add("writeTextAtomic", () => a.writeTextAtomic(output, "synthetic benchmark"));
-  add("replaceDirectoryAtomic", () => a.replaceDirectoryAtomic({ stagedDir: path.join(w, "staged-dir"), targetDir: path.join(w, "target-dir") }), { before: () => fs.mkdirSync(path.join(w, "staged-dir")), after: () => fs.rmSync(path.join(w, "target-dir"), { recursive: true, force: true }) });
+  add("replaceDirectoryAtomic", () => a.replaceDirectoryAtomic({ stagedDir: path.join(w, "staged-dir"), targetDir: path.join(w, "target-dir") }), {
+    skip: !native ? "Directory replacement requires the native binding." : undefined,
+    before: () => fs.mkdirSync(path.join(w, "staged-dir")),
+    after: () => fs.rmSync(path.join(w, "target-dir"), { recursive: true, force: true }),
+  });
+  const invalidDirectoryStage = path.join(w, "invalid-staged-dir");
+  const invalidDirectoryTarget = path.join(w, "invalid-target-dir");
+  add("replaceDirectoryAtomic/validation/invalid-backup-prefix", () => a.replaceDirectoryAtomic({
+    stagedDir: invalidDirectoryStage,
+    targetDir: invalidDirectoryTarget,
+    backupPrefix: "invalid/prefix",
+  }), {
+    expectError: true,
+    verify: error => assert.equal(error?.code, "invalid-path"),
+    after: error => {
+      assert.equal(error?.code, "invalid-path");
+      assert.equal(fs.existsSync(invalidDirectoryStage), false);
+      assert.equal(fs.existsSync(invalidDirectoryTarget), false);
+    },
+  });
   add("movePathWithCopyFallback", () => a.movePathWithCopyFallback({ from: path.join(w, "move-source"), to: output }), { before: () => fs.writeFileSync(path.join(w, "move-source"), data) });
   for (const shape of ["empty", "wide", "deep"]) {
     const source = path.join(w, `move-copy-${shape}-source`);
