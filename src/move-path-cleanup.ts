@@ -1,6 +1,8 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { FsSafeError } from "./errors.js";
+import { inspectFileIdentitySync } from "./strict-file-identity.js";
 
 export type EntryIdentity = {
   ctimeMs: number;
@@ -63,8 +65,13 @@ export function sameIdentity(a: EntryIdentity, b: EntryIdentity): boolean {
   );
 }
 
-function sameDirectoryNode(a: EntryIdentity, b: EntryIdentity): boolean {
-  return a.dev === b.dev && a.ino === b.ino;
+function matchesDirectoryManifest(
+  manifest: EntryIdentity,
+  observed: Pick<fsSync.BigIntStats, "dev" | "ino">,
+): boolean {
+  // Copy manifests retain their numeric metadata contract. Cleanup separately
+  // pins the exact admitted identity for its final removal check.
+  return manifest.dev === Number(observed.dev) && manifest.ino === Number(observed.ino);
 }
 
 export function sourceChangedError(sourcePath: string): Error {
@@ -192,24 +199,16 @@ export async function cleanupCopiedEntry(
   state: CleanupCopiedEntryState,
   assertBeforeMutation: () => void,
 ): Promise<CleanupCopiedEntryResult> {
-  const aliasGroup =
-    manifest.kind === "leaf" ? state.aliasGroups.get(identityKey(manifest)) : undefined;
-  if (aliasGroup?.stale) {
-    return "stale";
-  }
-
-  let currentStat: Awaited<ReturnType<typeof fs.lstat>>;
-  try {
-    currentStat = fsSync.lstatSync(sourcePath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException | null)?.code === "ENOENT") {
-      return aliasGroup ? poisonAliasGroup(aliasGroup) : "removed";
-    }
-    throw error;
-  }
-
   if (manifest.kind === "directory") {
-    if (!currentStat.isDirectory() || !sameDirectoryNode(manifest, entryIdentity(currentStat))) {
+    let currentStat: fsSync.BigIntStats;
+    try {
+      currentStat = inspectFileIdentitySync(() => fsSync.lstatSync(sourcePath, { bigint: true }));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException | null)?.code === "ENOENT") return "removed";
+      if (error instanceof FsSafeError && error.code === "path-mismatch") return "stale";
+      throw error;
+    }
+    if (!currentStat.isDirectory() || !matchesDirectoryManifest(manifest, currentStat)) {
       return "stale";
     }
     // A same-inode directory can gain unrelated children after commit. Still
@@ -226,6 +225,23 @@ export async function cleanupCopiedEntry(
         ),
       );
     }
+    // Child cleanup yields. Recheck the admitted directory before removing it;
+    // its timestamps and link count can change through our own child removals.
+    try {
+      currentStat = inspectFileIdentitySync(
+        () => fsSync.lstatSync(sourcePath, { bigint: true }),
+        currentStat,
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException | null)?.code === "ENOENT") {
+        return "stale";
+      }
+      if (error instanceof FsSafeError && error.code === "path-mismatch") return "stale";
+      throw error;
+    }
+    if (!currentStat.isDirectory()) {
+      return "stale";
+    }
     assertBeforeMutation();
     try {
       await fs.rmdir(sourcePath);
@@ -239,6 +255,19 @@ export async function cleanupCopiedEntry(
     return result;
   }
 
+  const aliasGroup = state.aliasGroups.get(identityKey(manifest));
+  if (aliasGroup?.stale) {
+    return "stale";
+  }
+  let currentStat: Awaited<ReturnType<typeof fs.lstat>>;
+  try {
+    currentStat = fsSync.lstatSync(sourcePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | null)?.code === "ENOENT") {
+      return aliasGroup ? poisonAliasGroup(aliasGroup) : "removed";
+    }
+    throw error;
+  }
   const expected = aliasGroup?.expected ?? manifest;
   if (!sameIdentity(expected, entryIdentity(currentStat))) {
     return aliasGroup ? poisonAliasGroup(aliasGroup) : "stale";

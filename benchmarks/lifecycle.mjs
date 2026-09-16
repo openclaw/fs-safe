@@ -98,6 +98,39 @@ export async function registerLifecycle({ api: a, workspace: w, native, binding,
   add("writeTextAtomic", () => a.writeTextAtomic(output, "synthetic benchmark"));
   add("replaceDirectoryAtomic", () => a.replaceDirectoryAtomic({ stagedDir: path.join(w, "staged-dir"), targetDir: path.join(w, "target-dir") }), { before: () => fs.mkdirSync(path.join(w, "staged-dir")), after: () => fs.rmSync(path.join(w, "target-dir"), { recursive: true, force: true }) });
   add("movePathWithCopyFallback", () => a.movePathWithCopyFallback({ from: path.join(w, "move-source"), to: output }), { before: () => fs.writeFileSync(path.join(w, "move-source"), data) });
+  for (const shape of ["empty", "wide", "deep"]) {
+    const source = path.join(w, `move-copy-${shape}-source`);
+    const target = path.join(w, `move-copy-${shape}-target`);
+    const directories = Array.from({ length: shape === "empty" ? 0 : 32 }, (_, index) => shape === "wide"
+      ? `d${index}` : Array(index + 1).fill("d").join(path.sep));
+    const payload = Buffer.alloc(128, 0x5a);
+    add(`movePathWithCopyFallback/forced-copy/${shape}/directories=${directories.length + 1}`, () => a.movePathWithCopyFallback({
+      from: source, to: target, sourceHardlinks: "reject",
+    }), {
+      divisor: 10,
+      workloadDetails: { shape, directories: directories.length + 1, files: directories.length, bytesPerFile: 128, sourceHardlinks: "reject" },
+      before: () => {
+        fs.mkdirSync(source);
+        for (const directory of directories) {
+          fs.mkdirSync(path.join(source, directory), { recursive: true });
+          fs.writeFileSync(path.join(source, directory, "payload"), payload);
+        }
+      },
+      verify: () => {
+        assert.equal(fs.existsSync(source), false);
+        assert.deepEqual(fs.readdirSync(target).sort(), shape === "deep" ? ["d"] : directories.toSorted());
+        for (const [index, directory] of directories.entries()) {
+          const expected = shape === "deep" && index < directories.length - 1 ? ["d", "payload"] : ["payload"];
+          assert.deepEqual(fs.readdirSync(path.join(target, directory)).sort(), expected);
+          assert(fs.readFileSync(path.join(target, directory, "payload")).equals(payload));
+        }
+      },
+      after: () => {
+        fs.rmSync(source, { recursive: true, force: true });
+        fs.rmSync(target, { recursive: true, force: true });
+      },
+    });
+  }
   for (const name of ["writeSecretFileAtomic", "createSecretFileAtomic"]) add(name, () => a[name]({ rootDir: secretRoot, filePath: path.join(secretRoot, "secret-out"), content: data }), {
     before: () => name === "createSecretFileAtomic"
       ? fs.rmSync(path.join(secretRoot, "secret-out"), { force: true })

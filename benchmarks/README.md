@@ -96,6 +96,13 @@ the Root cases use `clone: "never"` and `durable: false` to expose transfer cost
 Directory iteration includes full and early-stop scans in filesystem and sorted
 order. Tree-copy cases use explicit auto, never, and supported always policies
 over 64 small files, one 1 MiB file, and nested and empty directories.
+The `movePathWithCopyFallback/forced-copy` rows use `sourceHardlinks: "reject"`
+to measure complete staged directory copies and source cleanup on one filesystem.
+An empty-directory row measures the smallest operation. Wide and deep trees
+each contain 33 directories (including the root) and 32 128-byte files,
+exposing the per-directory cleanup identity observations at
+depths 1 and 32. The hardlink preflight, copy, publication, and source cleanup
+are timed; fixture creation, destination-content checks, and teardown are not.
 TAR/gzip member reads, extraction, and inspection cover 1 MiB and 16 MiB payloads; 512-member read and
 inspection cases expose metadata-event transport costs.
 A 10,000-member plain-TAR inspection case uses 128-byte payloads to expose
