@@ -32,7 +32,6 @@ import { getFsSafeLockConfig } from "./lock-config.js";
 import { sleepSync } from "./timing.js";
 import { realpathSync } from "./realpath.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
-import { createSuppressedError } from "./suppressed-error.js";
 
 export type FileLockSyncAcquireOptions<TPayload extends Record<string, unknown>> = {
   lockPath?: string;
@@ -337,25 +336,10 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
       return returnedHandle;
     } catch (error) {
       if (fd !== undefined) {
-        const failed: SidecarLockSnapshot = { payload: null };
-        try {
-          failed.stat = fs.fstatSync(fd);
-        } catch {
-          // Missing identity leaves the sidecar in place, but must not skip close.
-        }
-        const failedFd = fd;
-        // A close error may still free the number; consume ownership before closing.
+        const failed = { payload: null, stat: fs.fstatSync(fd) } satisfies SidecarLockSnapshot;
+        fs.closeSync(fd);
         fd = undefined;
-        try {
-          fs.closeSync(failedFd);
-          if (failed.stat) removeSidecarLockIfUnchangedSync(lockPath, failed);
-        } catch (cleanupError) {
-          throw createSuppressedError(
-            error,
-            cleanupError,
-            "file lock acquisition and cleanup both failed",
-          );
-        }
+        removeSidecarLockIfUnchangedSync(lockPath, failed);
       }
       if (lockFileCreateDenied && retryLockFileDenial(error)) continue;
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
