@@ -135,16 +135,12 @@ fn open_tar_source<'a, R: Read + Seek + Send + 'a>(
     // those refills and decoded reads, which can use already-buffered input.
     let decoded: Box<dyn Read + Send + 'a> = match format {
         ArchiveFormat::TarZstd => Box::new(CancellationReader {
-            inner: zstd::stream::read::Decoder::new(CancellationReader {
-                inner: file, cancelled: Arc::clone(&cancelled),
-            })
+            inner: zstd::stream::read::Decoder::new(file)
                 .map_err(|error| io_error("open zstd archive", error))?,
             cancelled,
         }),
         ArchiveFormat::TarBzip2 => Box::new(CancellationReader {
-            inner: bzip2::read::MultiBzDecoder::new(CancellationReader {
-                inner: file, cancelled: Arc::clone(&cancelled),
-            }),
+            inner: bzip2::read::MultiBzDecoder::new(file),
             cancelled,
         }),
         ArchiveFormat::Tar => {
