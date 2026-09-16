@@ -197,13 +197,32 @@ Small, focused PRs land faster. The general shape:
 Maintainers publish from a protected `vX.Y.Z` tag on `main` through
 `.github/workflows/release.yml`. The workflow requires the package version and a
 dated `CHANGELOG.md` section to match the tag. It builds and publishes all seven
-platform packages before publishing `@openclaw/fs-safe`, verifies every registry
-artifact and provenance statement, and then creates the GitHub release.
+platform-native packages before publishing the root `@openclaw/fs-safe` package,
+for eight published packages in total. It verifies every registry artifact and
+provenance statement, and then creates the GitHub release.
 
-Each package needs its own npm trusted-publisher configuration for
-`openclaw/fs-safe` and `release.yml`. A new platform package must be created and
-configured on npm before the first tag that references it; npm trust is
-package-specific and cannot be bootstrapped by the tag workflow itself.
+Protect the `npm-publish` GitHub environment with a deployment policy that
+allows only tags matching `v*.*.*` and allows no branches. Require authorized
+release reviewers, enable prevention of self-review, and prevent administrator
+bypass where the repository plan supports that control.
+
+Each of the eight packages needs its own npm trusted-publisher configuration for
+`openclaw/fs-safe`, `release.yml`, and the exact `npm-publish` environment. Each
+connection must explicitly allow direct `npm publish`; newly created connections
+otherwise default to staged publishing. Trusted-publisher connections are
+immutable, so delete and recreate any connection that needs this setting or the
+environment binding. Remove every previous publisher that omits the environment,
+and retain no other environment-unbound publishing path. A new platform package
+must be created and configured on npm before the first tag that references it;
+npm trust is package-specific and cannot be bootstrapped by the tag workflow
+itself. See the [npm trusted-publisher configuration](https://docs.npmjs.com/trusted-publishers/)
+for current connection behavior.
+
+Coordinate GitHub environment and npm trusted-publisher policy changes before a
+release. Once the environment binding is active, reruns of older tag workflows
+may no longer authenticate. Do not restore an environment-unbound trusted
+publisher as a rollback; repair or deliberately migrate the protected policy
+instead.
 
 External contributors do not need to do anything beyond getting the pull
 request merged. Maintainers must not publish locally or add npm automation

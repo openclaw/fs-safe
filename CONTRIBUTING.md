@@ -69,4 +69,17 @@ contents.
 
 Maintainers publish from a protected `vX.Y.Z` tag on `main` through the trusted
 publishing workflow. The tag, package version, and dated `CHANGELOG.md` section
-must match. Do not publish locally or add an npm automation token.
+must match. The `npm-publish` GitHub environment must use a tag-only deployment
+policy allowing only `v*.*.*` tags, require authorized release reviewers, prevent
+administrator bypass where the repository plan supports it. Configure the npm
+trusted publisher for each of the eight published packages (the root package
+plus seven platform-native packages) with the exact `npm-publish` environment
+and explicitly allow direct `npm publish`; new connections otherwise default to
+staged publishing. Trusted-publisher connections are immutable, so replace the
+old connections and do not retain an environment-unbound publisher or another
+unbound publishing path.
+
+Coordinate environment and npm policy changes before a release. After this
+binding is enabled, reruns of older tag workflows may no longer authenticate;
+rollback must not restore environment-unbound trust. Do not publish locally or
+add an npm automation token.
