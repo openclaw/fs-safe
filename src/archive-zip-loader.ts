@@ -1,5 +1,7 @@
 import { ArchiveFormatError, ArchiveSecurityError } from "./archive-errors.js";
-import { validateArchiveEntryPath } from "./archive-entry.js";
+import { stripArchivePath, validateArchiveEntryPath } from "./archive-entry.js";
+import type { ZipDirectoryEntry } from "./archive-zip-directory.js";
+import { isZipSymlinkEntry, type ZipEntry } from "./archive-zip-entry.js";
 
 export type ZipArchiveWithFiles = {
   files: Record<string, unknown>;
@@ -9,10 +11,10 @@ type JsZipConstructor = {
   loadAsync(buffer: Buffer | Uint8Array): Promise<ZipArchiveWithFiles>;
 };
 
-/** Internal: the caller has admitted these unchanged bytes and their physical count. */
+/** Internal: the caller has admitted these unchanged bytes and their metadata. */
 export async function loadAdmittedZipArchive(
   buffer: Buffer | Uint8Array,
-  entryCount: number,
+  admitted: ZipDirectoryEntry[],
 ): Promise<ZipArchiveWithFiles> {
   const JSZip = await importOptionalJsZip();
   let archive: ZipArchiveWithFiles;
@@ -25,13 +27,30 @@ export async function loadAdmittedZipArchive(
     );
   }
   const names = Object.keys(archive.files);
-  if (names.length !== entryCount) {
+  if (names.length !== admitted.length) {
     throw new ArchiveSecurityError(
       "entry-path",
       "zip archive contains duplicate or colliding entry names",
     );
   }
-  for (const name of names) validateArchiveEntryPath(name);
+  // Object key order is not central-directory order (numeric names reorder).
+  // Use the admitted portable interpretation, including legacy UTF-8 decoding.
+  const physicalByPath = new Map(admitted.map(entry => [stripArchivePath(entry.portablePath, 0), entry]));
+  for (const name of names) {
+    validateArchiveEntryPath(name);
+    const key = stripArchivePath(name, 0);
+    const physical = physicalByPath.get(key);
+    const entry = archive.files[name] as ZipEntry;
+    validateArchiveEntryPath(entry.name);
+    const kind = isZipSymlinkEntry(entry) ? "symlink" : entry.dir ? "directory" : "file";
+    if (!physical || stripArchivePath(entry.name, 0) !== key || kind !== physical.kind) {
+      throw new ArchiveFormatError("ZIP decoder disagrees with admitted directory metadata");
+    }
+    physicalByPath.delete(key);
+  }
+  if (physicalByPath.size) {
+    throw new ArchiveFormatError("ZIP decoder disagrees with admitted directory metadata");
+  }
   return archive;
 }
 

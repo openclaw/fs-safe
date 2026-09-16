@@ -27,6 +27,7 @@ export type ZipRecord = {
   localName?: string | Buffer;
   body?: string;
   attributes?: number;
+  creatorSystem?: number;
   flags?: number;
   extra?: Buffer;
   localExtra?: Buffer;
@@ -69,7 +70,7 @@ export function zipRecords(entries: ZipRecord[], options: {
       }
     }
     const central = Buffer.alloc(46); central.writeUInt32LE(0x02014b50);
-    central.writeUInt16LE(0x314, 4); central.writeUInt16LE(entry.zip64 ? 45 : 20, 6);
+    central.writeUInt16LE(((entry.creatorSystem ?? 3) << 8) | 20, 4); central.writeUInt16LE(entry.zip64 ? 45 : 20, 6);
     central.writeUInt16LE(flags, 8); central.writeUInt16LE(entry.deflate ? 8 : 0, 10);
     central.writeUInt32LE(fixtureCrc32(body), 16);
     central.writeUInt32LE(entry.zip64 ? 0xffffffff : compressed.length, 20);

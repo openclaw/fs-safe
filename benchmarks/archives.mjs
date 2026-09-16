@@ -94,7 +94,10 @@ export async function registerArchives({ api: a, workspace: w, register: add }) 
         divisor: 10, verify: result => assert.ok(result.equals(payload)),
       });
       add(`loadZipArchiveWithPreflight/${label}`, () => a.loadZipArchiveWithPreflight(bytes), {
-        divisor: 10, verify: result => assert.equal(Object.keys(result.files).length, names.length),
+        divisor: 10, verify: result => {
+          assert.equal(Object.keys(result.files).length, names.length);
+          for (const name of names) assert.equal(result.files[name]?.dir, false);
+        },
       });
       add(`extractArchive/${label}-skip-all`, async () => {
         let inspected = 0;
@@ -107,6 +110,38 @@ export async function registerArchives({ api: a, workspace: w, register: add }) 
       } });
     }
   }
+  const mixedZip = new JSZip();
+  const mixedKinds = new Map();
+  for (let index = 0; index < 512; index++) {
+    const directory = index % 2 === 0;
+    const name = `mixed-${index}`;
+    mixedKinds.set(name, directory ? "directory" : "file");
+    mixedZip.file(name + (directory ? "/" : ""), directory ? "" : "payload", { dir: directory, createFolders: false });
+  }
+  const mixedBytes = await mixedZip.generateAsync({ type: "nodebuffer", platform: "UNIX" });
+  const mixedPath = path.join(w, "zip-512-mixed-kinds.zip");
+  fs.writeFileSync(mixedPath, mixedBytes);
+  add("loadZipArchiveWithPreflight/zip-512-mixed-kinds", () => a.loadZipArchiveWithPreflight(mixedBytes), {
+    divisor: 10, verify: result => {
+      assert.equal(Object.keys(result.files).length, mixedKinds.size);
+      for (const [name, kind] of mixedKinds) {
+        const directory = kind === "directory";
+        assert.equal(result.files[name + (directory ? "/" : "")]?.dir, directory);
+      }
+    },
+  });
+  add("readArchiveEntry/zip-512-mixed-kinds", () => a.readArchiveEntry(mixedPath, "mixed-511", { maxBytes: 7 }), {
+    divisor: 10, verify: result => assert.equal(result.toString(), "payload"),
+  });
+  add("extractArchive/zip-512-mixed-kinds-skip-all", async () => {
+    const entries = [];
+    await a.extractArchive({ archivePath: mixedPath, destDir: destination, timeoutMs: 30_000,
+      entryFilter: entry => { entries.push([entry.path, entry.kind]); return "skip"; }, onFiltered: "skip-entry" });
+    return entries;
+  }, { divisor: 10, verify: entries => {
+    assert.deepEqual(entries, [...mixedKinds]);
+    assert.deepEqual(fs.readdirSync(destination), []);
+  } });
   const manySource = path.join(w, "tar-many-source");
   fs.mkdirSync(manySource);
   const names = Array.from({ length: 512 }, (_, index) => `entry-${index}`);

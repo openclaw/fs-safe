@@ -106,6 +106,10 @@ of valid zero container padding, separating suffix validation from payload decod
 ZIP reads and extraction also cover 1 MiB and 16 MiB stored and deflated members
 to expose payload integrity costs beyond tiny archive fixtures. ZIP admission and
 member reads also cover 512 ASCII and Unicode names with stored and deflated data.
+Preflight rows verify the decoded file kinds as well as entry counts. Three
+`zip-512-mixed-kinds` rows cover preflight, bounded reads, and filtered extraction
+with 256 directories and 256 files, including physical-to-decoder kind association.
+The filtered row verifies every callback's canonical path and kind after timing.
 Filtered ZIP extraction visits all 512 members while skipping their output,
 isolating admission and planning from destination-file writes.
 The native descriptor cases isolate host-fd admission and directory open/return;

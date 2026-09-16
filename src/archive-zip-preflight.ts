@@ -6,6 +6,7 @@ import {
 } from "./archive-limits.js";
 import { admitZipBuffer } from "./archive-zip-admission.js";
 import { loadAdmittedZipArchive, type ZipArchiveWithFiles } from "./archive-zip-loader.js";
+import type { ZipDirectoryEntry } from "./archive-zip-directory.js";
 export { readZipCentralDirectoryEntryCount } from "./archive-zip-count.js";
 export type { ZipArchiveWithFiles } from "./archive-zip-loader.js";
 
@@ -17,6 +18,7 @@ export async function loadZipArchiveWithPreflight(
   if (buffer.byteLength > resolvedLimits.maxArchiveBytes) {
     throw new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.ARCHIVE_SIZE_EXCEEDS_LIMIT);
   }
-  const entryCount = admitZipBuffer(buffer, resolvedLimits);
-  return await loadAdmittedZipArchive(buffer, entryCount);
+  const entries: ZipDirectoryEntry[] = [];
+  admitZipBuffer(buffer, resolvedLimits, entry => { entries.push(entry); });
+  return await loadAdmittedZipArchive(buffer, entries);
 }

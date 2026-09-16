@@ -3,10 +3,9 @@ import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import {
   ArchiveFormatError,
-  ArchiveSecurityError,
   isArchiveFormatErrorMessage,
 } from "./archive-errors.js";
-import { stripArchivePath, validateArchiveEntryPath } from "./archive-entry.js";
+import { validateArchiveEntryPath } from "./archive-entry.js";
 import { createArchiveEntryPlanner, type ArchivePlanEntry } from "./archive-plan.js";
 import type { ExtractionDeadline } from "./archive-deadline.js";
 import { stageArchiveFileForExtraction } from "./archive-input.js";
@@ -25,6 +24,7 @@ import { mergePlannedArchiveIntoDestination } from "./archive-merge.js";
 import type { ZipDirectoryEntry } from "./archive-zip-directory.js";
 import type { NativeBinding } from "./native.js";
 import { admitZipFile } from "./archive-zip-admission.js";
+import { validateNativeZipManifest } from "./archive-zip-manifest.js";
 
 export function throwMappedNativeArchiveError(error: unknown): never {
   if (error instanceof Error) {
@@ -62,9 +62,9 @@ export async function extractNativeArchive(params: {
   });
   try {
     const zipEntries: ZipDirectoryEntry[] = [];
-    const physicalCount = params.kind === "zip"
-      ? await admitZipFile(stagedArchive.path, limits, params.deadline, (entry) => { zipEntries.push(entry); })
-      : undefined;
+    if (params.kind === "zip") {
+      await admitZipFile(stagedArchive.path, limits, params.deadline, (entry) => { zipEntries.push(entry); });
+    }
     const destinationGuard = await prepareArchiveDestinationGuard(params.destDir);
     const destinationRealDir = destinationGuard.realPath;
     await withStagedArchiveDestination({
@@ -82,21 +82,8 @@ export async function extractNativeArchive(params: {
           .catch(throwMappedNativeArchiveError);
         params.deadline.check();
         assertArchiveEntryCountWithinLimit(manifest.length, limits);
-        if (physicalCount !== undefined && manifest.length !== physicalCount) {
-          throw new ArchiveSecurityError("entry-path", "zip decoder collapsed entry names");
-        }
         if (params.kind === "zip") {
-          for (const [ordinal, entry] of manifest.entries()) {
-            const physical = zipEntries[ordinal];
-            // Native ZIP indices are physical central-directory ordinals. Legacy
-            // filename decoding remains native-selected; compare names when known.
-            if (!physical || physical.index !== ordinal || entry.index !== ordinal ||
-                entry.size !== physical.size ||
-                (physical.path !== undefined && stripArchivePath(entry.path, 0) !== stripArchivePath(physical.path, 0)) ||
-                (physical.creatorSystem === 3 && entry.mode !== physical.externalAttributes >>> 16)) {
-              throw new ArchiveFormatError("ZIP decoder disagrees with admitted directory metadata");
-            }
-          }
+          validateNativeZipManifest(manifest, zipEntries);
         }
         // Recheck the native manifest at the shared policy boundary before
         // any caller callback observes an entry.

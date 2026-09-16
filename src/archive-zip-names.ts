@@ -63,7 +63,7 @@ export function admitZipNames(params: {
   central: Buffer; local: Buffer; flags: number;
   centralExtra: Map<number, Buffer>; localExtra: Map<number, Buffer>;
   seen: Set<string>;
-}): string | undefined {
+}): { path?: string; portablePath: string; directory: boolean } {
   const { central, local, flags, centralExtra, localExtra, seen } = params;
   if (!central.length || !local.length) zipFormat("empty entry name");
   // Reuse only within this synchronous call; shared backing bytes can change
@@ -89,6 +89,13 @@ export function admitZipNames(params: {
   const interpretations = [centralUtf8, localUtf8, centralUnicode, localUnicode].filter(
     (value): value is string => value !== undefined,
   );
+  // Canonical paths erase terminal separators. Preserve their kind meaning in
+  // every interpretation, including Unicode overrides of legacy-encoded names.
+  const directory = /[/\\]$/.test(centralRaw);
+  if (/[/\\]$/.test(localRaw) !== directory ||
+      interpretations.some((value) => /[/\\]$/.test(value) !== directory)) {
+    zipFormat("conflicting terminal directory markers");
+  }
   const interpretationKey = interpretations.length ? key(interpretations[0]!) : undefined;
   if (interpretations.some((value) => value !== interpretations[0] && key(value) !== interpretationKey)) {
     zipFormat("conflicting Unicode name interpretations");
@@ -110,5 +117,10 @@ export function admitZipNames(params: {
   }
   seen.add(centralKey);
   if (unicodeKey !== undefined && unicodeKey !== centralKey) seen.add(unicodeKey);
-  return centralUnicode ?? centralUtf8 ?? (central.every((byte) => byte < 128) ? central.toString("ascii") : undefined);
+  const path = centralUnicode ?? centralUtf8 ?? (central.every((byte) => byte < 128) ? central.toString("ascii") : undefined);
+  return {
+    path,
+    portablePath: centralUnicode ?? localUtf8 ?? (sameName && path !== undefined ? path : local.toString("utf8")),
+    directory,
+  };
 }

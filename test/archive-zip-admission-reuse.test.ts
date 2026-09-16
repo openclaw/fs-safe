@@ -56,6 +56,21 @@ it("rejects decoder name changes even when its entry count matches", async () =>
   await expect(readArchiveEntry(archivePath, "value", { maxBytes: 3 })).rejects.toMatchObject({ code: "entry-path" });
 });
 
+it("rejects portable decoder kind changes before returning a selected member", async () => {
+  configureFsSafeNative({ mode: "off" });
+  const dir = await tempRoot("fs-safe-zip-decoded-kind-");
+  const archivePath = path.join(dir, "input.zip");
+  const bytes = zipRecords([{ name: "selected" }, { name: "unrelated" }]);
+  await fs.writeFile(archivePath, bytes);
+  const altered = await JSZip.loadAsync(bytes);
+  altered.files.unrelated!.dir = true;
+  vi.spyOn(JSZip, "loadAsync").mockResolvedValue(altered);
+  const scan = vi.spyOn(admission, "admitZipBuffer");
+  await expect(readArchiveEntry(archivePath, "selected", { maxBytes: 7 })).rejects.toMatchObject({ code: "archive-header-invalid" });
+  expect(scan).toHaveBeenCalledTimes(1);
+  await expect(loadZipArchiveWithPreflight(bytes)).rejects.toMatchObject({ code: "archive-header-invalid" });
+});
+
 it("resets strict UTF-8 decoding after errors and preserves repeated BOM-prefixed names", async () => {
   const invalid = zipRecords([{ name: Buffer.from([0xc3]), flags: 0x800 }]);
   for (const name of ["\ufefffirst", "\ufeffsecond"]) {

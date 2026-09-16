@@ -9,6 +9,8 @@ import { resolveTarMeterLimits } from "../src/archive-limits.js";
 import { readBoundedAsync } from "../src/bounded-read.js";
 import * as temp from "../src/temp-target.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import * as admission from "../src/archive-zip-admission.js";
+import { zipRecords } from "./helpers/zip-records.js";
 
 const { tempRoot } = useRealTempDirs();
 let native: NativeBinding | undefined;
@@ -36,6 +38,30 @@ it.each([0, 1, 7, 64 * 1024])("keeps an unpooled bounded read private after a sh
 });
 
 describe.skipIf(!native)("native buffered ZIP reads", () => {
+  it.each(["index", "path", "size", "mode", "kind"] as const)("rejects unrelated %s manifest disagreement before reading", async field => {
+    const dir = await tempRoot("fs-safe-native-buffer-metadata-");
+    const archivePath = path.join(dir, "input.zip");
+    await fs.writeFile(archivePath, zipRecords([{ name: "selected" }, { name: "unrelated" }]));
+    const read = vi.fn(async () => Buffer.from("unexpected"));
+    __setNativeLoaderForTest(() => ({
+      ...native!,
+      async openZipBufferNative(...args: Parameters<NativeBinding["openZipBufferNative"]>) {
+        const reader = await native!.openZipBufferNative(...args);
+        const entries = reader.entries;
+        const entry = entries[1]!;
+        if (field === "path") entry.path = "different";
+        else if (field === "kind") entry.kind = "directory";
+        else entry[field]++;
+        return { entries, readEntry: read };
+      },
+    }));
+    configureFsSafeNative({ mode: "require" });
+    const scan = vi.spyOn(admission, "admitZipBuffer");
+    await expect(readArchiveEntry(archivePath, "selected", { maxBytes: 7 })).rejects.toMatchObject({ code: "archive-header-invalid" });
+    expect(scan).toHaveBeenCalledTimes(1);
+    expect(read).not.toHaveBeenCalled();
+  });
+
   it.each(["STORE", "DEFLATE"] as const)("reads %s without disk staging and keeps admitted bytes across source replacement", async compression => {
     const dir = await tempRoot("fs-safe-native-buffer-");
     const archivePath = path.join(dir, "input.zip");

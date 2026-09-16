@@ -36,6 +36,8 @@ import { realpathSync } from "./realpath.js";
 import { getNativeBinding, type NativeBinding } from "./native.js";
 import type { NativeArchiveEntry } from "./native-binding.js";
 import { admitZipBuffer } from "./archive-zip-admission.js";
+import type { ZipDirectoryEntry } from "./archive-zip-directory.js";
+import { validateNativeZipManifest } from "./archive-zip-manifest.js";
 import { resolveExtractLimits, resolveTarMeterLimits } from "./archive-limits.js";
 
 const ZIP_UNIX_FILE_TYPE_MASK = 0o170000;
@@ -114,8 +116,8 @@ async function readArchiveInput(archivePath: string): Promise<Buffer> {
   }
 }
 
-async function readZipEntry(buffer: Buffer, entryPath: string, maxBytes: number, physicalCount: number): Promise<Buffer> {
-  const archive = await loadAdmittedZipArchive(buffer, physicalCount);
+async function readZipEntry(buffer: Buffer, entryPath: string, maxBytes: number, admitted: ZipDirectoryEntry[]): Promise<Buffer> {
+  const archive = await loadAdmittedZipArchive(buffer, admitted);
   let entry: ZipEntry | undefined;
   // JSZip keys retain some aliases and may use Unicode Path metadata. Scan the
   // effective entries once, after raw ZIP admission has rejected collisions.
@@ -197,11 +199,8 @@ async function readTarEntry(archiveBuffer: Buffer, entryPath: string, maxBytes: 
 }
 
 function selectNativeEntry(
-  manifest: NativeArchiveEntry[], requested: string, displayPath: string, physicalCount?: number,
+  manifest: NativeArchiveEntry[], requested: string, displayPath: string,
 ): NativeArchiveEntry {
-  if (physicalCount !== undefined && manifest.length !== physicalCount) {
-    throw new ArchiveSecurityError("entry-path", "zip decoder collapsed entry names");
-  }
   const seen = new Set<string>();
   let selected: NativeArchiveEntry | undefined;
   for (const entry of manifest) {
@@ -229,7 +228,7 @@ function throwNativeReadError(error: unknown): never {
 }
 
 async function readNativeBufferEntry(
-  native: NativeBinding, buffer: Buffer, kind: ArchiveKind, requested: string, displayPath: string, maxBytes: number, physicalCount?: number,
+  native: NativeBinding, buffer: Buffer, kind: ArchiveKind, requested: string, displayPath: string, maxBytes: number, zipEntries: ZipDirectoryEntry[],
 ): Promise<Buffer> {
   try {
     const signal = new AbortController().signal;
@@ -237,7 +236,9 @@ async function readNativeBufferEntry(
     const reader = kind === "zip"
       ? await native.openZipBufferNative(buffer, limits, AbortSignal.any([signal]))
       : await native.openTarBufferNative(buffer, kind, limits, AbortSignal.any([signal]));
-    const selected = selectNativeEntry(reader.entries, requested, displayPath, physicalCount);
+    const manifest = reader.entries;
+    if (kind === "zip") validateNativeZipManifest(manifest, zipEntries);
+    const selected = selectNativeEntry(manifest, requested, displayPath);
     return await reader.readEntry(selected.index, maxBytes, AbortSignal.any([signal]));
   } catch (error) {
     throwNativeReadError(error);
@@ -258,12 +259,11 @@ export async function readArchiveEntry(
   }
   const requestedEntry = normalizedRequestedEntry(entryPath);
   const buffer = await readArchiveInput(archivePath);
-  const physicalCount = kind === "zip"
-    ? admitZipBuffer(buffer, resolveExtractLimits())
-    : undefined;
+  const zipEntries: ZipDirectoryEntry[] = [];
+  if (kind === "zip") admitZipBuffer(buffer, resolveExtractLimits(), entry => { zipEntries.push(entry); });
   const native = getNativeBinding();
-  if (native) return await readNativeBufferEntry(native, buffer, kind, requestedEntry, entryPath, options.maxBytes, physicalCount);
+  if (native) return await readNativeBufferEntry(native, buffer, kind, requestedEntry, entryPath, options.maxBytes, zipEntries);
   assertPortableArchiveKind(kind);
-  return kind === "zip" ? await readZipEntry(buffer, requestedEntry, options.maxBytes, physicalCount!)
+  return kind === "zip" ? await readZipEntry(buffer, requestedEntry, options.maxBytes, zipEntries)
     : await readTarEntry(buffer, requestedEntry, options.maxBytes);
 }

@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 describe.skipIf(!native)("native ZIP permission metadata association", () => {
-  it.each(["index", "path", "size", "mode"] as const)("rejects mocked %s disagreement before filters or extraction", async (field) => {
+  it.each(["index", "path", "size", "mode", "kind"] as const)("rejects mocked %s disagreement before filters or extraction", async (field) => {
     const base = await tempRoot("fs-safe-native-mode-admission-");
     const archivePath = path.join(base, "fixture.zip");
     const destDir = path.join(base, "output");
@@ -30,6 +30,7 @@ describe.skipIf(!native)("native ZIP permission metadata association", () => {
         const manifest = await native!.inspectArchiveNative(...args);
         const entry = manifest[0]!;
         if (field === "path") entry.path = "different";
+        else if (field === "kind") entry.kind = "directory";
         else entry[field]++;
         return manifest;
       },
