@@ -2,7 +2,17 @@
 
 ## Unreleased
 
-- Close native-owned file descriptors through their originating native binding, eliminating unmanaged-descriptor warnings in Node worker threads during guarded writes, moves, and cleanup. Node-owned roots and borrowed handles retain their existing ownership; stale helpers without native close support fail before allocation.
+## 0.13.1 - 2026-09-16
+
+### Highlights
+
+- **Correct native cleanup in Node workers:** guarded writes, moves, and staged-file cleanup close native-created descriptors through their originating binding, eliminating unmanaged-descriptor warnings while preserving Node's own descriptor tracking. ([#438](https://github.com/openclaw/fs-safe/pull/438))
+
+### Fixes and compatibility
+
+- Retain the correct closer through errors and native-mode changes, including staged files whose parent directory was opened by Node. Borrowed handles keep their caller-owned lifetime.
+- On Windows, close exported descriptors through the same host runtime's libuv table that opened them. Descriptor-producing operations require complete native close support before allocation; stale helpers are treated as unavailable under the existing native-mode policy.
+- Add real Worker coverage on Node 22/24 and verify that Windows native close releases both file and directory descriptors. Forced `Worker.terminate()` reclamation remains a [documented limitation](https://github.com/openclaw/fs-safe/blob/v0.13.1/docs/native-helper.md); callers should close retained resources and finish in-flight work before termination.
 
 ## 0.13.0 - 2026-09-16
 
