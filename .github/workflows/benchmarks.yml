@@ -73,6 +73,186 @@ permissions:
   contents: read
 
 jobs:
+  archive-cancellation-native-off-smoke:
+    if: github.event_name == 'workflow_dispatch'
+    name: Archive cancellation native-off smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Configure byte-exact checkouts
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+      - name: Check out proof overlay
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: overlay
+      - name: Check out exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 7e167f407151a3669dbaff14fe7b0e69fab53e5a
+          fetch-depth: 1
+          persist-credentials: false
+          path: candidate
+      - name: Verify immutable source identities
+        shell: bash
+        env:
+          EXPECTED_CANDIDATE_HEAD: 7e167f407151a3669dbaff14fe7b0e69fab53e5a
+          EXPECTED_CANDIDATE_TREE: dfc8c064edf028addf36061d00689476078b812e
+          EXPECTED_OVERLAY_HEAD: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git -C candidate rev-parse HEAD)" = "$EXPECTED_CANDIDATE_HEAD"
+          test "$(git -C candidate rev-parse 'HEAD^{tree}')" = "$EXPECTED_CANDIDATE_TREE"
+          test -z "$(git -C candidate status --porcelain=v1 --untracked-files=no)"
+          test "$(git -C overlay rev-parse HEAD)" = "$EXPECTED_OVERLAY_HEAD"
+          test -z "$(git -C overlay status --porcelain=v1 --untracked-files=no)"
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.25.0
+          run_install: false
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: candidate/pnpm-lock.yaml
+      - name: Add portable TAR parser target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Install exact candidate dependencies
+        working-directory: candidate
+        run: pnpm install --frozen-lockfile
+      - name: Build exact candidate
+        working-directory: candidate
+        run: pnpm build
+      - name: Run focused native-off benchmark smoke
+        working-directory: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof_root="$RUNNER_TEMP/archive-cancellation-native-off"
+          mkdir -p "$proof_root"
+          pnpm benchmark:methods --mode off --filter native-codec/ \
+            --iterations 1 --samples 1 --warmup 0 \
+            --json "$proof_root/report.json" 2>&1 | tee "$proof_root/benchmark.log"
+      - name: Verify and bind focused smoke receipt
+        shell: bash
+        env:
+          EXPECTED_CANDIDATE_HEAD: 7e167f407151a3669dbaff14fe7b0e69fab53e5a
+          EXPECTED_CANDIDATE_TREE: dfc8c064edf028addf36061d00689476078b812e
+          PROOF_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          PROOF_EVENT_SHA: ${{ github.sha }}
+          PROOF_RUN_ID: ${{ github.run_id }}
+          PROOF_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const assert = require("node:assert/strict");
+          const { execFileSync } = require("node:child_process");
+          const { createHash } = require("node:crypto");
+          const fs = require("node:fs");
+          const path = require("node:path");
+
+          const workspace = process.env.GITHUB_WORKSPACE;
+          const candidateRoot = path.join(workspace, "candidate");
+          const overlayRoot = path.join(workspace, "overlay");
+          const proofRoot = path.join(process.env.RUNNER_TEMP, "archive-cancellation-native-off");
+          const reportPath = path.join(proofRoot, "report.json");
+          const logPath = path.join(proofRoot, "benchmark.log");
+          const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
+          const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+
+          const candidateHead = git(candidateRoot, "rev-parse", "HEAD");
+          const candidateTree = git(candidateRoot, "rev-parse", "HEAD^{tree}");
+          const overlayHead = git(overlayRoot, "rev-parse", "HEAD");
+          const overlayTree = git(overlayRoot, "rev-parse", "HEAD^{tree}");
+          assert.equal(candidateHead, process.env.EXPECTED_CANDIDATE_HEAD);
+          assert.equal(candidateTree, process.env.EXPECTED_CANDIDATE_TREE);
+          assert.equal(overlayHead, process.env.PROOF_WORKFLOW_SHA);
+          assert.equal(git(candidateRoot, "status", "--porcelain=v1", "--untracked-files=no"), "");
+          assert.equal(git(overlayRoot, "status", "--porcelain=v1", "--untracked-files=no"), "");
+
+          const reportBytes = fs.readFileSync(reportPath);
+          const report = JSON.parse(reportBytes);
+          const expected = [];
+          for (const fixture of ["small", "512-members", "16MiB", "concatenated-refills-4MiB"]) {
+            for (const codec of ["zstd", "bzip2"]) {
+              for (const operation of ["extractArchive", "readArchiveEntry"]) {
+                expected.push(`${operation}/native-codec/${codec}/${fixture}`);
+              }
+            }
+          }
+          expected.sort();
+          assert.equal(report.results.length, 16);
+          assert.deepEqual(report.results.map(result => result.name).sort(), expected);
+          assert.equal(report.results.filter(result => !result.skipped).length, 0);
+          for (const result of report.results) {
+            assert.equal(result.skipped, "zstd/bzip2 archives require the native binding");
+            assert.equal(Object.hasOwn(result, "medianUs"), false);
+          }
+          assert.equal(report.metadata.mode, "off");
+          assert.equal(report.metadata.native, false);
+          assert.equal(report.metadata.nativeHash, null);
+          assert.equal(report.metadata.harnessRevision, candidateHead);
+          assert.equal(report.coverage.filtered, true);
+
+          const workflowPath = path.join(overlayRoot, ".github", "workflows", "benchmarks.yml");
+          const receipt = {
+            schemaVersion: 1,
+            proof: "archive-cancellation-native-off-smoke",
+            overall: true,
+            candidate: {
+              head: candidateHead,
+              tree: candidateTree,
+              runnerBlob: git(candidateRoot, "rev-parse", "HEAD:benchmarks/runner.mjs"),
+              archiveHarnessBlob: git(candidateRoot, "rev-parse", "HEAD:benchmarks/native-archives.mjs"),
+              fixtureBlob: git(candidateRoot, "rev-parse", "HEAD:benchmarks/native-archive-fixtures.mjs"),
+              lockfileBlob: git(candidateRoot, "rev-parse", "HEAD:pnpm-lock.yaml"),
+            },
+            overlay: {
+              head: overlayHead,
+              tree: overlayTree,
+              eventSha: process.env.PROOF_EVENT_SHA,
+              workflowSha: process.env.PROOF_WORKFLOW_SHA,
+              workflowBlob: git(overlayRoot, "rev-parse", "HEAD:.github/workflows/benchmarks.yml"),
+              workflowFileSha256: sha256(fs.readFileSync(workflowPath)),
+            },
+            run: {
+              id: process.env.PROOF_RUN_ID,
+              attempt: process.env.PROOF_RUN_ATTEMPT,
+              node: process.version,
+              platform: `${process.platform}-${process.arch}`,
+            },
+            benchmark: {
+              command: "pnpm benchmark:methods --mode off --filter native-codec/ --iterations 1 --samples 1 --warmup 0 --json <report>",
+              reportSha256: sha256(reportBytes),
+              logSha256: sha256(fs.readFileSync(logPath)),
+              harnessHash: report.metadata.harnessHash,
+              distHash: report.metadata.distHash,
+              expectedNames: expected,
+              resultCount: report.results.length,
+              measuredCount: report.results.filter(result => !result.skipped).length,
+              skipReason: "zstd/bzip2 archives require the native binding",
+              native: report.metadata.native,
+              nativeHash: report.metadata.nativeHash,
+            },
+          };
+          fs.writeFileSync(path.join(proofRoot, "receipt.json"), `${JSON.stringify(receipt, null, 2)}\n`);
+          console.log(JSON.stringify(receipt, null, 2));
+          NODE
+      - name: Upload native-off smoke evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: archive-cancellation-native-off-smoke
+          path: ${{ runner.temp }}/archive-cancellation-native-off
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 7
+
   prepare_method_audit:
     if: github.event_name == 'workflow_dispatch' && inputs.method_audit
     name: Prepare method audit
