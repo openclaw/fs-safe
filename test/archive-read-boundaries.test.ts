@@ -368,13 +368,26 @@ describe("bounded archive reads", () => {
       .rejects.toMatchObject({ name: "ArchiveSecurityError", code: "entry-path" });
     manifest = [{ ...regular, kind: "directory" }];
     await expect(readArchiveEntry(archivePath, "value.txt", { maxBytes: 5 }))
-      .rejects.toThrow("archive entry is not a file");
+      .rejects.toMatchObject({
+        name: "ArchiveFormatError",
+        code: "archive-header-invalid",
+        message: "ZIP decoder disagrees with admitted directory metadata",
+      });
     manifest = [{ ...regular, path: "other.txt" }];
     await expect(readArchiveEntry(archivePath, "value.txt", { maxBytes: 5 }))
-      .rejects.toThrow("archive entry not found");
+      .rejects.toMatchObject({
+        name: "ArchiveFormatError",
+        code: "archive-header-invalid",
+        message: "ZIP decoder disagrees with admitted directory metadata",
+      });
     manifest = [{ ...regular, path: "../escape" }];
     await expect(readArchiveEntry(archivePath, "value.txt", { maxBytes: 5 }))
-      .rejects.toMatchObject({ name: "ArchiveSecurityError", code: "entry-path" });
+      .rejects.toMatchObject({
+        name: "ArchiveFormatError",
+        code: "archive-header-invalid",
+        message: "ZIP decoder disagrees with admitted directory metadata",
+      });
+    expect(readEntry).not.toHaveBeenCalled();
     manifest = [{ ...regular, path: "./value.txt" }];
     readError = new Error(ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT);
     await expect(readArchiveEntry(archivePath, "value.txt", { maxBytes: 5 }))
@@ -391,6 +404,7 @@ describe("bounded archive reads", () => {
       expect.any(AbortSignal),
     );
     expect(readEntry).toHaveBeenLastCalledWith(0, 5, expect.any(AbortSignal));
+    expect(readEntry).toHaveBeenCalledTimes(3);
   });
 
   it("requires native support for explicitly selected zstd and bzip2 TAR reads", async () => {
