@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- Close failed synchronous file-lock acquisitions even when descriptor metadata cannot be read. Preserve sidecars without an exact cleanup identity and keep the acquisition error primary when close or removal also fails.
+
 ### Security
 
 - Use the effective POSIX user identity for secure-file ownership checks, failing closed before reading when ownership checks are enabled and the effective identity or descriptor owner cannot be established; descriptor-bound Windows ACL verification is unchanged.

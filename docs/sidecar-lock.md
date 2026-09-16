@@ -33,7 +33,7 @@ Each new sidecar also carries an internal random ownership token encoded as JSON
 
 The raw sidecar bytes are not a canonical JSON representation: tools that trim or rewrite the trailing whitespace invalidate the ownership token, so release leaves the changed sidecar in place and fails closed. The token distinguishes cooperating acquisitions; it is not a secret and does not make pathname compare-and-remove atomic against a hostile process that can replace files outside the lock protocol.
 
-`release()` propagates an I/O failure that prevents deletion of an unchanged, owned sidecar; it never reports successful cleanup while leaving that lock behind. The handle and manager retain the exact cleanup receipt after a failure, so the same handle can retry `release()` and `manager.drain()` can retry retained cleanup. A changed sidecar remains an ownership mismatch rather than a deletion failure and is left untouched. If both a `withFileLock()` callback and release fail, the release error is the primary `SuppressedError.error` and the callback failure remains available as `SuppressedError.suppressed`. Failed acquisition cleanup uses the same shape, with the cleanup error primary and the acquisition failure suppressed. On Node runtimes without the global `SuppressedError` constructor, fs-safe returns the equivalent `Error` shape with the same name and properties.
+`release()` propagates an I/O failure that prevents deletion of an unchanged, owned sidecar; it never reports successful cleanup while leaving that lock behind. The handle and manager retain the exact cleanup receipt after a failure, so the same handle can retry `release()` and `manager.drain()` can retry retained cleanup. A changed sidecar remains an ownership mismatch rather than a deletion failure and is left untouched. If both a `withFileLock()` callback and release fail, the release error is the primary `SuppressedError.error` and the callback failure remains available as `SuppressedError.suppressed`. Failed asynchronous acquisition cleanup uses the same shape, with the cleanup error primary and the acquisition failure suppressed. On Node runtimes without the global `SuppressedError` constructor, fs-safe returns the equivalent `Error` shape with the same name and properties.
 
 ## API
 
@@ -301,6 +301,13 @@ try {
   handle.release();
 }
 ```
+
+Failed synchronous acquisition attempts close the created descriptor once even
+if its metadata cannot be read. Cleanup leaves the sidecar in place without an
+exact descriptor identity. A metadata-capture failure does not replace the
+acquisition error; if close or identity-checked removal also fails, the
+`SuppressedError.error` is the acquisition error and `suppressed` is the cleanup
+error.
 
 The sync payload, reclaim, and parsing callbacks must also be synchronous. This
 shape is appropriate for a short boot migration; it is a poor fit for a server
