@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Security
+
+- Snapshot external-output and sibling-temp options before asynchronous setup so caller mutation cannot change in-flight producers, staging paths, permissions, or sync policy, while preserving callback receivers.
+
 ## 0.13.0 - 2026-09-16
 
 ### Highlights
