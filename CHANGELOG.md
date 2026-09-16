@@ -14,6 +14,7 @@
 
 ### Security
 
+- Snapshot external-output and sibling-temp options before asynchronous setup so caller mutation cannot change in-flight producers, staging paths, permissions, or sync policy, while preserving callback receivers.
 - Sanitize fallback filenames and validate completed sibling callback components before producers run, retaining bounded names and Windows device-name rejection.
 - Stop zstd and bzip2 compressed-input refills after cancellation while retaining decoded-output and complete archive validation.
 - Bind ZIP physical entry names and kinds to decoder metadata before callbacks or member selection, rejecting ambiguous interpretations consistently.
