@@ -5,7 +5,7 @@ import { assertNoUnsafeDeviceReadPath } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { realpathSync } from "./realpath.js";
-import { inspectFileIdentity } from "./strict-file-identity.js";
+import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import {
   assertSecretFilePreview,
   resolveSecretReadPolicy,
@@ -21,20 +21,12 @@ export async function readSecretFile(
   options: SecretFileReadOptions = {},
 ): Promise<string> {
   const { resolvedPath, maxBytes } = resolveSecretReadPolicy(filePath, label, options);
-  async function inspectInput(symlinkMessage: string): Promise<fsSync.BigIntStats> {
-    const stat = options.rejectSymlink
-      ? fsSync.lstatSync(resolvedPath, { bigint: true })
-      : fsSync.statSync(resolvedPath, { bigint: true });
-    if (options.rejectSymlink && stat.isSymbolicLink()) {
-      throw new FsSafeError("symlink", symlinkMessage);
-    }
-    return stat;
-  }
-
-  let previewStat;
+  let rejectSymlink: boolean;
+  let previewStat: fsSync.BigIntStats;
   try {
     assertNoUnsafeDeviceReadPath(resolvedPath);
-    previewStat = await inspectFileIdentity(() =>
+    rejectSymlink = Boolean(options.rejectSymlink);
+    previewStat = inspectFileIdentitySync(() =>
       inspectInput(`${label} file at ${resolvedPath} must not be a symlink.`),
     );
   } catch (error) {
@@ -43,7 +35,17 @@ export async function readSecretFile(
       "inspect", label, resolvedPath, error,
     );
   }
-  assertSecretFilePreview(previewStat, label, resolvedPath, maxBytes, options.rejectHardlinks !== false);
+  function inspectInput(symlinkMessage: string): fsSync.BigIntStats {
+    const stat = rejectSymlink
+      ? fsSync.lstatSync(resolvedPath, { bigint: true })
+      : fsSync.statSync(resolvedPath, { bigint: true });
+    if (rejectSymlink && stat.isSymbolicLink()) {
+      throw new FsSafeError("symlink", symlinkMessage);
+    }
+    return stat;
+  }
+  const rejectHardlinks = options.rejectHardlinks !== false;
+  assertSecretFilePreview(previewStat, label, resolvedPath, maxBytes, rejectHardlinks);
 
   let handle: fs.FileHandle | undefined;
   let raw: string;
@@ -54,7 +56,7 @@ export async function readSecretFile(
     const openedHandle = handle;
     const openedStat = await inspectFileIdentity(async () => {
       const stat = fsSync.fstatSync(openedHandle.fd, { bigint: true });
-      if (!stat.isFile() || (options.rejectHardlinks !== false && stat.nlink > 1n)) {
+      if (!stat.isFile() || (rejectHardlinks && stat.nlink > 1n)) {
         throw new FsSafeError("path-mismatch", "security validation failed");
       }
       return stat;

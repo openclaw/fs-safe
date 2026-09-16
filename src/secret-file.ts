@@ -34,19 +34,11 @@ export function readSecretFileSync(
   options: SecretFileReadOptions = {},
 ): string {
   const { resolvedPath, maxBytes } = resolveSecretReadPolicy(filePath, label, options);
-  function inspectInput(symlinkMessage: string): fs.BigIntStats {
-    const stat = options.rejectSymlink
-      ? fs.lstatSync(resolvedPath, { bigint: true })
-      : fs.statSync(resolvedPath, { bigint: true });
-    if (options.rejectSymlink && stat.isSymbolicLink()) {
-      throw new FsSafeError("symlink", symlinkMessage);
-    }
-    return stat;
-  }
-
+  let rejectSymlink: boolean;
   let previewStat: fs.BigIntStats;
   try {
     assertNoUnsafeDeviceReadPath(resolvedPath);
+    rejectSymlink = Boolean(options.rejectSymlink);
     previewStat = inspectFileIdentitySync(() =>
       inspectInput(`${label} file at ${resolvedPath} must not be a symlink.`),
     );
@@ -56,13 +48,22 @@ export function readSecretFileSync(
       "inspect", label, resolvedPath, error,
     );
   }
-
-  assertSecretFilePreview(previewStat, label, resolvedPath, maxBytes, options.rejectHardlinks !== false);
+  function inspectInput(symlinkMessage: string): fs.BigIntStats {
+    const stat = rejectSymlink
+      ? fs.lstatSync(resolvedPath, { bigint: true })
+      : fs.statSync(resolvedPath, { bigint: true });
+    if (rejectSymlink && stat.isSymbolicLink()) {
+      throw new FsSafeError("symlink", symlinkMessage);
+    }
+    return stat;
+  }
+  const rejectHardlinks = options.rejectHardlinks !== false;
+  assertSecretFilePreview(previewStat, label, resolvedPath, maxBytes, rejectHardlinks);
 
   const opened = openPinnedFileSync({
     filePath: resolvedPath,
-    rejectPathSymlink: options.rejectSymlink,
-    rejectHardlinks: options.rejectHardlinks !== false,
+    rejectPathSymlink: rejectSymlink,
+    rejectHardlinks,
   });
   if (!opened.ok) {
     throw secretReadError(
@@ -75,14 +76,14 @@ export function readSecretFileSync(
   try {
     const openedIdentity = inspectFileIdentitySync(() => {
       const stat = fs.fstatSync(opened.fd, { bigint: true });
-      if (!stat.isFile() || (options.rejectHardlinks !== false && stat.nlink > 1n)) {
+      if (!stat.isFile() || (rejectHardlinks && stat.nlink > 1n)) {
         throw new FsSafeError("path-mismatch", "security validation failed");
       }
       return stat;
     }, previewStat);
     inspectFileIdentitySync(() => {
       const stat = fs.lstatSync(opened.path, { bigint: true });
-      if (!stat.isFile() || (options.rejectHardlinks !== false && stat.nlink > 1n)) {
+      if (!stat.isFile() || (rejectHardlinks && stat.nlink > 1n)) {
         throw new FsSafeError("path-mismatch", "security validation failed");
       }
       return stat;

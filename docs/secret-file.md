@@ -81,6 +81,9 @@ itself must not be an alias. Hardlinks are rejected by default so another
 in-tree name cannot alias the credential; pass `rejectHardlinks: false` only
 when you explicitly trust that layout.
 
+Read options are captured when the call starts. Mutating a shared options
+object while an asynchronous read is in flight cannot relax its link policy.
+
 These readers do not enforce ownership or mode bits on an existing file. Their
 read contract covers pinned identity, file type, link policy, and byte bounds;
 the `0o600` guarantee belongs to the write helpers below. Use
