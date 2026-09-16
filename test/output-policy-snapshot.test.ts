@@ -37,6 +37,13 @@ function trackedOptions<T extends object>(values: T) {
   return { options, reads, expectedReads: new Map(keys.map((key) => [key, 1])) };
 }
 
+function forbidCallbackMethodLookup(callback: object) {
+  Object.defineProperties(callback, {
+    call: { get(): never { throw new Error("callback.call must not be inspected"); } },
+    bind: { get(): never { throw new Error("callback.bind must not be inspected"); } },
+  });
+}
+
 it.each(["workspace", "sibling"] as const)(
   "captures every external-output option before returning control with %s staging",
   async (staging) => {
@@ -59,6 +66,7 @@ it.each(["workspace", "sibling"] as const)(
         return "captured-result";
       },
     };
+    forbidCallbackMethodLookup(values.write);
     const originalWrite = values.write;
     const replacement = vi.fn(async () => "replacement-result");
     const { options, reads, expectedReads } = trackedOptions(values);
@@ -212,6 +220,7 @@ it.each(["captured.bin", "<>"])(
         if (fileName === "<>") throw stop;
       },
     };
+    forbidCallbackMethodLookup(values.writeTemp);
     const replacement = vi.fn(async () => {});
     const { options, reads, expectedReads } = trackedOptions(values);
     const pending = writeViaSiblingTempPath(options);
