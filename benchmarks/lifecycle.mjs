@@ -1,10 +1,614 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { registerTempWorkspaceCoverage } from "./temp-workspace-fixtures.mjs";
 import { registerSecureTempRootCoverage } from "./secure-temp-root-fixtures.mjs";
 import { registerSidecarPathSnapshot } from "./sidecar-path-snapshot.mjs";
+
+const DIRECTORY_REPLACEMENT_NATIVE_SKIP = "Directory replacement security workload requires the native binding.";
+const REPLACEMENT_PAYLOAD_BYTES = 128;
+const WINDOWS_HANDLE_OBSERVER_ARGS = Object.freeze([
+  "-NoLogo",
+  "-NoProfile",
+  "-NonInteractive",
+  "-Command",
+  `(Get-Process -Id ${process.pid} -ErrorAction Stop).HandleCount`,
+]);
+const WINDOWS_HANDLE_OBSERVER_STDIO = Object.freeze(["ignore", "pipe", "pipe"]);
+const WINDOWS_HANDLE_OBSERVER_OPTIONS = Object.freeze({
+  encoding: "utf8",
+  stdio: WINDOWS_HANDLE_OBSERVER_STDIO,
+  timeout: 30_000,
+  windowsHide: true,
+});
+
+let persistentProcessHandleObserver;
+
+function isMissingPathError(error) {
+  return error?.code === "ENOENT";
+}
+
+function throwCollectedFailures(failures, message) {
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) throw new AggregateError(failures, message);
+}
+
+function attemptSync(failures, action) {
+  try {
+    action();
+  } catch (error) {
+    failures.push(error);
+  }
+}
+
+function removeTreeDeepestFirst(pathname, failures) {
+  let metadata;
+  try {
+    metadata = fs.lstatSync(pathname);
+  } catch (error) {
+    if (!isMissingPathError(error)) failures.push(error);
+    return;
+  }
+
+  if (metadata.isDirectory() && !metadata.isSymbolicLink()) {
+    let names;
+    try {
+      names = fs.readdirSync(pathname).sort();
+    } catch (error) {
+      failures.push(error);
+      names = [];
+    }
+    for (const name of names) {
+      removeTreeDeepestFirst(path.join(pathname, name), failures);
+    }
+    try {
+      fs.rmdirSync(pathname);
+    } catch (error) {
+      if (!isMissingPathError(error)) failures.push(error);
+    }
+    return;
+  }
+
+  try {
+    fs.unlinkSync(pathname);
+  } catch (error) {
+    if (!isMissingPathError(error)) failures.push(error);
+  }
+}
+
+function cleanupTreeDeepestFirst(pathname) {
+  const failures = [];
+  removeTreeDeepestFirst(pathname, failures);
+  throwCollectedFailures(failures, `could not clean benchmark fixture ${pathname}`);
+}
+
+function observeWindowsProcessHandles() {
+  const output = execFileSync(
+    "powershell.exe",
+    WINDOWS_HANDLE_OBSERVER_ARGS,
+    WINDOWS_HANDLE_OBSERVER_OPTIONS,
+  ).trim();
+  assert.match(output, /^(?:0|[1-9]\d*)$/u, "PowerShell returned an invalid process HandleCount");
+  const count = Number(output);
+  assert(Number.isSafeInteger(count), "PowerShell process HandleCount exceeds the safe integer range");
+  return count;
+}
+
+function createPosixDescriptorObserver() {
+  const descriptorDirectory = ["/proc/self/fd", "/dev/fd"].find((candidate) => fs.existsSync(candidate));
+  assert(descriptorDirectory, "neither /proc/self/fd nor /dev/fd is available for descriptor observation");
+  return {
+    observe() {
+      let count = 0;
+      const descriptors = fs.readdirSync(descriptorDirectory)
+        .filter((name) => /^(?:0|[1-9]\d*)$/u.test(name))
+        .map(Number)
+        .sort((left, right) => left - right);
+      for (const descriptor of descriptors) {
+        try {
+          fs.fstatSync(descriptor);
+          count += 1;
+        } catch (error) {
+          // Directory enumeration can expose its own descriptor after it has closed.
+          if (error?.code !== "EBADF") throw error;
+        }
+      }
+      return count;
+    },
+    observer: `numeric fstat census from ${descriptorDirectory}`,
+    scope: "Persistent process-wide file-descriptor balance only; this is not a descriptor-identity proof.",
+  };
+}
+
+function initializePersistentProcessHandleObserver(workspace) {
+  if (persistentProcessHandleObserver) return persistentProcessHandleObserver;
+  const observer = process.platform === "win32"
+    ? {
+        observe: observeWindowsProcessHandles,
+        observer: "hidden synchronous powershell.exe Get-Process HandleCount query for the Node process",
+        scope: "Persistent process-wide handle-count balance only; this is not a handle-identity proof.",
+      }
+    : createPosixDescriptorObserver();
+  const canaryPath = path.join(workspace, ".replace-directory-handle-observer-canary");
+  const failures = [];
+  let canaryDescriptor;
+  let before;
+  let during;
+  let after;
+
+  try {
+    observer.observe();
+    fs.writeFileSync(canaryPath, "handle observer canary\n");
+    before = observer.observe();
+    canaryDescriptor = fs.openSync(canaryPath, "r");
+    during = observer.observe();
+    assert.equal(during, before + 1, "opening the observer canary did not add exactly one process handle");
+    fs.closeSync(canaryDescriptor);
+    canaryDescriptor = undefined;
+    after = observer.observe();
+    assert.equal(after, before, "closing the observer canary did not restore the stable process handle count");
+  } catch (error) {
+    failures.push(error);
+  } finally {
+    if (canaryDescriptor !== undefined) {
+      attemptSync(failures, () => fs.closeSync(canaryDescriptor));
+    }
+    attemptSync(failures, () => fs.rmSync(canaryPath, { force: true }));
+  }
+  throwCollectedFailures(failures, "persistent process handle observer canary or cleanup failed");
+
+  persistentProcessHandleObserver = {
+    ...observer,
+    canary: Object.freeze({ before, during, after, openDelta: during - before }),
+  };
+  return persistentProcessHandleObserver;
+}
+
+function compareManifestEntries(left, right) {
+  if (left.relativePath < right.relativePath) return -1;
+  if (left.relativePath > right.relativePath) return 1;
+  return left.kind < right.kind ? -1 : left.kind > right.kind ? 1 : 0;
+}
+
+function replacementShapeDefinition(shape, byteSeed) {
+  const directories = [];
+  const files = new Map();
+  if (shape === "wide32") {
+    for (let index = 0; index < 32; index += 1) {
+      const directory = `d${String(index + 1).padStart(2, "0")}`;
+      directories.push(directory);
+      files.set(`${directory}/payload`, Buffer.alloc(REPLACEMENT_PAYLOAD_BYTES, (byteSeed + index) % 251 + 1));
+    }
+  } else if (shape === "deep16") {
+    let directory = "";
+    for (let index = 0; index < 16; index += 1) {
+      const component = `d${String(index + 1).padStart(2, "0")}`;
+      directory = directory === "" ? component : `${directory}/${component}`;
+      directories.push(directory);
+      files.set(`${directory}/payload`, Buffer.alloc(REPLACEMENT_PAYLOAD_BYTES, (byteSeed + index) % 251 + 1));
+    }
+  } else {
+    assert.equal(shape, "empty", `unknown directory replacement shape: ${shape}`);
+  }
+  return Object.freeze({ directories: Object.freeze(directories), files });
+}
+
+function createReplacementTree(root, definition) {
+  fs.mkdirSync(root);
+  for (const relativePath of definition.directories) {
+    fs.mkdirSync(path.join(root, ...relativePath.split("/")), { recursive: true });
+  }
+  for (const [relativePath, contents] of definition.files) {
+    fs.writeFileSync(path.join(root, ...relativePath.split("/")), contents);
+  }
+}
+
+function collectReplacementManifest(root) {
+  const entries = [];
+  const visit = (directory, relativeDirectory) => {
+    for (const name of fs.readdirSync(directory).sort()) {
+      const pathname = path.join(directory, name);
+      const relativePath = relativeDirectory === "" ? name : `${relativeDirectory}/${name}`;
+      const metadata = fs.lstatSync(pathname);
+      if (metadata.isDirectory() && !metadata.isSymbolicLink()) {
+        entries.push({ relativePath, kind: "directory" });
+        visit(pathname, relativePath);
+      } else if (metadata.isFile()) {
+        entries.push({ relativePath, kind: "file" });
+      } else {
+        entries.push({ relativePath, kind: "other" });
+      }
+    }
+  };
+  const rootMetadata = fs.lstatSync(root);
+  assert(rootMetadata.isDirectory() && !rootMetadata.isSymbolicLink(), `${root} is not a real directory`);
+  visit(root, "");
+  return entries.sort(compareManifestEntries);
+}
+
+function verifyReplacementTree(root, definition) {
+  const expected = [
+    ...definition.directories.map((relativePath) => ({ relativePath, kind: "directory" })),
+    ...[...definition.files].map(([relativePath]) => ({ relativePath, kind: "file" })),
+  ].sort(compareManifestEntries);
+  assert.deepEqual(collectReplacementManifest(root), expected, `${root} manifest changed`);
+  for (const [relativePath, contents] of definition.files) {
+    const pathname = path.join(root, ...relativePath.split("/"));
+    assert(fs.readFileSync(pathname).equals(contents), `${pathname} payload changed`);
+  }
+}
+
+function exactPathIdentity(pathname, expectedKind) {
+  const metadata = fs.lstatSync(pathname, { bigint: true });
+  assert.equal(metadata.isDirectory(), expectedKind === "directory", `${pathname} has the wrong directory type`);
+  assert.equal(metadata.isFile(), expectedKind === "file", `${pathname} has the wrong file type`);
+  assert.equal(metadata.isSymbolicLink(), false, `${pathname} became a symbolic link`);
+  return Object.freeze({ dev: metadata.dev, ino: metadata.ino });
+}
+
+function assertExactPathIdentity(pathname, expected, expectedKind) {
+  assert.deepEqual(exactPathIdentity(pathname, expectedKind), expected, `${pathname} identity changed`);
+}
+
+function assertPathAbsent(pathname) {
+  try {
+    fs.lstatSync(pathname);
+  } catch (error) {
+    if (isMissingPathError(error)) return;
+    throw error;
+  }
+  assert.fail(`${pathname} unexpectedly exists`);
+}
+
+function assertDirectoryEntries(directory, expected) {
+  assert.deepEqual(fs.readdirSync(directory).sort(), [...expected].sort(), `${directory} entries changed`);
+}
+
+function createSentinel(parent, contents) {
+  const pathname = path.join(parent, "sentinel");
+  fs.writeFileSync(pathname, contents);
+  return Object.freeze({
+    pathname,
+    contents,
+    identity: exactPathIdentity(pathname, "file"),
+  });
+}
+
+function assertSentinelCurrent(sentinel) {
+  assertExactPathIdentity(sentinel.pathname, sentinel.identity, "file");
+  assert(fs.readFileSync(sentinel.pathname).equals(sentinel.contents), `${sentinel.pathname} contents changed`);
+}
+
+function createHandleBalanceDetails(observer, expectedInvocations) {
+  return {
+    observer: observer.observer,
+    scope: observer.scope,
+    canary: observer.canary,
+    expectedBoundaryObservations: 2,
+    observedBoundaryObservations: 0,
+    expectedInvocations,
+    observedInvocations: 0,
+    baseline: null,
+    final: null,
+    delta: null,
+    balanced: null,
+  };
+}
+
+function observeHandleBoundary(observer, details, boundary) {
+  const observed = observer.observe();
+  if (boundary === "baseline") {
+    assert.equal(details.baseline, null, "process handle baseline was observed more than once");
+    details.baseline = observed;
+    details.observedBoundaryObservations += 1;
+    return;
+  }
+  assert.equal(boundary, "final");
+  assert.equal(details.final, null, "final process handle count was observed more than once");
+  assert.notEqual(details.baseline, null, "final process handle count was observed before its baseline");
+  details.final = observed;
+  details.delta = details.final - details.baseline;
+  details.balanced = details.delta === 0;
+  details.observedBoundaryObservations += 1;
+  assert.equal(details.final, details.baseline, "persistent process handle count changed across timed invocations");
+}
+
+function observeHandleBaselineOrCleanup(observer, details, rowRoot) {
+  try {
+    observeHandleBoundary(observer, details, "baseline");
+  } catch (error) {
+    const failures = [error];
+    attemptSync(failures, () => cleanupTreeDeepestFirst(rowRoot));
+    throwCollectedFailures(failures, "process handle baseline or fixture self-cleanup failed");
+  }
+}
+
+function createReplacementSuccessFixture(params) {
+  cleanupTreeDeepestFirst(params.rowRoot);
+  try {
+    fs.mkdirSync(params.rowRoot);
+    let stagedParent;
+    let targetParent;
+    let rootEntries;
+    const parents = [];
+
+    if (params.parentPlacement === "same") {
+      stagedParent = path.join(params.rowRoot, "shared-parent");
+      targetParent = stagedParent;
+      rootEntries = ["shared-parent"];
+      fs.mkdirSync(stagedParent);
+      const sentinel = createSentinel(stagedParent, Buffer.from("shared parent sentinel\n"));
+      parents.push({
+        pathname: stagedParent,
+        identity: undefined,
+        sentinel,
+        beforeEntries: ["sentinel", "staged", ...(params.targetState === "existing" ? ["target"] : [])],
+        afterEntries: ["sentinel", "target"],
+      });
+    } else {
+      assert.equal(params.parentPlacement, "distinct");
+      stagedParent = path.join(params.rowRoot, "staged-parent");
+      targetParent = path.join(params.rowRoot, "target-parent");
+      rootEntries = ["staged-parent", "target-parent"];
+      fs.mkdirSync(stagedParent);
+      fs.mkdirSync(targetParent);
+      parents.push({
+        pathname: stagedParent,
+        identity: undefined,
+        sentinel: createSentinel(stagedParent, Buffer.from("staged parent sentinel\n")),
+        beforeEntries: ["sentinel", "staged"],
+        afterEntries: ["sentinel"],
+      });
+      parents.push({
+        pathname: targetParent,
+        identity: undefined,
+        sentinel: createSentinel(targetParent, Buffer.from("target parent sentinel\n")),
+        beforeEntries: ["sentinel", ...(params.targetState === "existing" ? ["target"] : [])],
+        afterEntries: ["sentinel", "target"],
+      });
+    }
+
+    const stagedDir = path.join(stagedParent, "staged");
+    const targetDir = path.join(targetParent, "target");
+    createReplacementTree(stagedDir, params.stagedDefinition);
+    if (params.targetState === "existing") {
+      createReplacementTree(targetDir, params.targetDefinition);
+    }
+    for (const parent of parents) {
+      parent.identity = exactPathIdentity(parent.pathname, "directory");
+    }
+    const fixture = {
+      ...params,
+      rowRootIdentity: exactPathIdentity(params.rowRoot, "directory"),
+      rootEntries,
+      parents,
+      stagedDir,
+      stagedIdentity: exactPathIdentity(stagedDir, "directory"),
+      targetDir,
+      targetIdentity: params.targetState === "existing"
+        ? exactPathIdentity(targetDir, "directory")
+        : undefined,
+    };
+    if (fixture.targetIdentity) {
+      assert.notDeepEqual(fixture.targetIdentity, fixture.stagedIdentity, "staged and existing target identities match");
+    }
+    verifyReplacementSuccessFixture(fixture, "before");
+    return fixture;
+  } catch (error) {
+    const failures = [error];
+    attemptSync(failures, () => cleanupTreeDeepestFirst(params.rowRoot));
+    throwCollectedFailures(failures, "directory replacement fixture setup and self-cleanup failed");
+  }
+}
+
+function verifyReplacementSuccessFixture(fixture, phase) {
+  assertExactPathIdentity(fixture.rowRoot, fixture.rowRootIdentity, "directory");
+  assertDirectoryEntries(fixture.rowRoot, fixture.rootEntries);
+  for (const parent of fixture.parents) {
+    assertExactPathIdentity(parent.pathname, parent.identity, "directory");
+    assertSentinelCurrent(parent.sentinel);
+    assertDirectoryEntries(parent.pathname, phase === "before" ? parent.beforeEntries : parent.afterEntries);
+  }
+
+  if (phase === "before") {
+    verifyReplacementTree(fixture.stagedDir, fixture.stagedDefinition);
+    if (fixture.targetState === "existing") {
+      assertExactPathIdentity(fixture.targetDir, fixture.targetIdentity, "directory");
+      assert.deepEqual(
+        fixture.targetDefinition.directories,
+        fixture.stagedDefinition.directories,
+        "staged and existing target directory shapes differ",
+      );
+      assert.deepEqual(
+        [...fixture.targetDefinition.files.keys()],
+        [...fixture.stagedDefinition.files.keys()],
+        "staged and existing target file shapes differ",
+      );
+      for (const [relativePath, stagedContents] of fixture.stagedDefinition.files) {
+        assert(
+          !fixture.targetDefinition.files.get(relativePath).equals(stagedContents),
+          `${relativePath} staged and existing target payloads match`,
+        );
+      }
+      verifyReplacementTree(fixture.targetDir, fixture.targetDefinition);
+    } else {
+      assertPathAbsent(fixture.targetDir);
+    }
+    return;
+  }
+
+  assert.equal(phase, "after");
+  assertPathAbsent(fixture.stagedDir);
+  assertExactPathIdentity(fixture.targetDir, fixture.stagedIdentity, "directory");
+  verifyReplacementTree(fixture.targetDir, fixture.stagedDefinition);
+}
+
+function createReplacementValidationFixture(params) {
+  cleanupTreeDeepestFirst(params.rowRoot);
+  try {
+    fs.mkdirSync(params.rowRoot);
+    const sentinel = createSentinel(params.rowRoot, Buffer.from("invalid-prefix sentinel\n"));
+    const fixture = {
+      ...params,
+      rowRootIdentity: exactPathIdentity(params.rowRoot, "directory"),
+      sentinel,
+      stagedParent: path.join(params.rowRoot, "staged-parent-must-stay-absent"),
+      targetParent: path.join(params.rowRoot, "target-parent-must-stay-absent"),
+    };
+    fixture.stagedDir = path.join(fixture.stagedParent, "staged");
+    fixture.targetDir = path.join(fixture.targetParent, "target");
+    verifyReplacementValidationFixture(fixture);
+    return fixture;
+  } catch (error) {
+    const failures = [error];
+    attemptSync(failures, () => cleanupTreeDeepestFirst(params.rowRoot));
+    throwCollectedFailures(failures, "invalid-prefix fixture setup and self-cleanup failed");
+  }
+}
+
+function verifyReplacementValidationFixture(fixture, output, requireError = false) {
+  if (requireError) {
+    assert(output instanceof Error, "invalid backup prefix did not produce an Error");
+    assert.equal(output.code, "invalid-path", "invalid backup prefix produced the wrong error code");
+  }
+  assertExactPathIdentity(fixture.rowRoot, fixture.rowRootIdentity, "directory");
+  assertSentinelCurrent(fixture.sentinel);
+  assertDirectoryEntries(fixture.rowRoot, ["sentinel"]);
+  assertPathAbsent(fixture.stagedParent);
+  assertPathAbsent(fixture.targetParent);
+  assertPathAbsent(fixture.stagedDir);
+  assertPathAbsent(fixture.targetDir);
+}
+
+function finishReplacementBenchmarkInvocation(params) {
+  const failures = [];
+  if (params.invocationIndex === params.expectedInvocations) {
+    attemptSync(failures, () => observeHandleBoundary(params.observer, params.handleDetails, "final"));
+  }
+  params.handleDetails.observedInvocations = params.invocationIndex;
+  attemptSync(failures, params.verify);
+  attemptSync(failures, () => cleanupTreeDeepestFirst(params.rowRoot));
+  throwCollectedFailures(failures, "directory replacement verification or deepest-first teardown failed");
+}
+
+function registerDirectoryReplacementSecurityCases({ api, workspace, native, register, onCleanup, args }) {
+  const observer = initializePersistentProcessHandleObserver(workspace);
+  const firstTimedInvocation = args.warmup + 2;
+  const expectedInvocations = args.warmup + 1 + args.samples * args.iterations;
+  const shapes = ["empty", "wide32", "deep16"];
+
+  for (const targetState of ["absent", "existing"]) {
+    for (const parentPlacement of ["same", "distinct"]) {
+      for (const shape of shapes) {
+        const name = `replaceDirectoryAtomic/security/target=${targetState}/parents=${parentPlacement}/shape=${shape}`;
+        const rowRoot = path.join(
+          workspace,
+          `rd-${targetState}-${parentPlacement}-${shape}`,
+        );
+        const stagedDefinition = replacementShapeDefinition(shape, 0x31);
+        const targetDefinition = replacementShapeDefinition(shape, 0xa1);
+        const handleDetails = createHandleBalanceDetails(observer, expectedInvocations);
+        const workloadDetails = {
+          targetState,
+          parentPlacement,
+          shape,
+          directoriesPerTreeIncludingRoot: stagedDefinition.directories.length + 1,
+          filesPerTree: stagedDefinition.files.size,
+          bytesPerFile: REPLACEMENT_PAYLOAD_BYTES,
+          setupVerificationAndTeardown: "outside timed operation",
+          timedOperation: "replaceDirectoryAtomic through completed backup cleanup",
+          persistentProcessHandleBalance: handleDetails,
+        };
+        let invocationIndex = 0;
+        onCleanup(() => cleanupTreeDeepestFirst(rowRoot));
+        register(name, () => api.replaceDirectoryAtomic({
+          stagedDir: path.join(
+            rowRoot,
+            parentPlacement === "same" ? "shared-parent" : "staged-parent",
+            "staged",
+          ),
+          targetDir: path.join(
+            rowRoot,
+            parentPlacement === "same" ? "shared-parent" : "target-parent",
+            "target",
+          ),
+        }), {
+          divisor: 1,
+          skip: !native ? DIRECTORY_REPLACEMENT_NATIVE_SKIP : undefined,
+          workloadSemantics: "Whole-directory publication with fixture and exhaustive state checks outside timing.",
+          workloadDetails,
+          before: () => {
+            invocationIndex += 1;
+            const fixture = createReplacementSuccessFixture({
+              rowRoot,
+              targetState,
+              parentPlacement,
+              stagedDefinition,
+              targetDefinition,
+            });
+            fixture.invocationIndex = invocationIndex;
+            if (invocationIndex === firstTimedInvocation) {
+              observeHandleBaselineOrCleanup(observer, handleDetails, rowRoot);
+            }
+            return fixture;
+          },
+          after: (output, fixture) => finishReplacementBenchmarkInvocation({
+            invocationIndex: fixture.invocationIndex,
+            expectedInvocations,
+            observer,
+            handleDetails,
+            rowRoot,
+            verify: () => {
+              assert.equal(output, undefined, "replaceDirectoryAtomic returned an unexpected value");
+              verifyReplacementSuccessFixture(fixture, "after");
+            },
+          }),
+        });
+      }
+    }
+  }
+
+  const validationRowRoot = path.join(workspace, "replace-directory-validation-invalid-backup-prefix");
+  const validationHandleDetails = createHandleBalanceDetails(observer, expectedInvocations);
+  const validationWorkloadDetails = {
+    invalidBackupPrefix: "../invalid-backup-",
+    expectedErrorCode: "invalid-path",
+    setupVerificationAndTeardown: "outside timed operation",
+    timedOperation: "reject backup prefix before native binding, mkdir, or UUID work",
+    persistentProcessHandleBalance: validationHandleDetails,
+  };
+  let validationInvocationIndex = 0;
+  onCleanup(() => cleanupTreeDeepestFirst(validationRowRoot));
+  register("replaceDirectoryAtomic/validation/invalid-backup-prefix", () => api.replaceDirectoryAtomic({
+    stagedDir: path.join(validationRowRoot, "staged-parent-must-stay-absent", "staged"),
+    targetDir: path.join(validationRowRoot, "target-parent-must-stay-absent", "target"),
+    backupPrefix: "../invalid-backup-",
+  }), {
+    divisor: 1,
+    expectError: true,
+    workloadSemantics: "Equal-semantics invalid-prefix rejection with no filesystem publication side effects.",
+    workloadDetails: validationWorkloadDetails,
+    before: () => {
+      validationInvocationIndex += 1;
+      const fixture = createReplacementValidationFixture({ rowRoot: validationRowRoot });
+      fixture.invocationIndex = validationInvocationIndex;
+      if (validationInvocationIndex === firstTimedInvocation) {
+        observeHandleBaselineOrCleanup(observer, validationHandleDetails, validationRowRoot);
+      }
+      return fixture;
+    },
+    after: (output, fixture) => finishReplacementBenchmarkInvocation({
+      invocationIndex: fixture.invocationIndex,
+      expectedInvocations,
+      observer,
+      handleDetails: validationHandleDetails,
+      rowRoot: validationRowRoot,
+      verify: () => verifyReplacementValidationFixture(fixture, output, true),
+    }),
+  });
+}
 
 export async function registerLifecycle({ api: a, workspace: w, native, binding, register: add, contract, onCleanup, args }) {
   const cloneBackend = a.probeTreeClone(w);
@@ -98,7 +702,14 @@ export async function registerLifecycle({ api: a, workspace: w, native, binding,
   fs.mkdirSync(secretRoot, { mode: 0o700 });
   for (const name of ["replaceFileAtomic", "replaceFileAtomicSync"]) add(name, () => a[name]({ filePath: output, content: data }), { sync: name.endsWith("Sync") });
   add("writeTextAtomic", () => a.writeTextAtomic(output, "synthetic benchmark"));
-  add("replaceDirectoryAtomic", () => a.replaceDirectoryAtomic({ stagedDir: path.join(w, "staged-dir"), targetDir: path.join(w, "target-dir") }), { before: () => fs.mkdirSync(path.join(w, "staged-dir")), after: () => fs.rmSync(path.join(w, "target-dir"), { recursive: true, force: true }) });
+  registerDirectoryReplacementSecurityCases({
+    api: a,
+    workspace: w,
+    native,
+    register: add,
+    onCleanup,
+    args,
+  });
   add("movePathWithCopyFallback", () => a.movePathWithCopyFallback({ from: path.join(w, "move-source"), to: output }), { before: () => fs.writeFileSync(path.join(w, "move-source"), data) });
   for (const shape of ["empty", "wide", "deep"]) {
     const source = path.join(w, `move-copy-${shape}-source`);
