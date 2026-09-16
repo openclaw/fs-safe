@@ -1,7 +1,9 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
+import { useSuiteFixture } from "./helpers/suite-fixture.js";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { fileStore, fileStoreSync } from "../src/file-store.js";
 import { FsSafeError } from "../src/errors.js";
@@ -112,44 +114,57 @@ describe("store stress matrix", () => {
     });
   }, 20_000);
 
-  it("serializes queue writers and preserves the last complete entry on serializer failure", async () => {
-    const root = await tempRoot("fs-safe-queue-writers-");
-    const queueDir = path.join(root, "queue");
-    const failedDir = path.join(root, "failed");
-    await ensureJsonDurableQueueDirs({ queueDir, failedDir });
-    const paths = resolveJsonDurableQueueEntryPaths(queueDir, "job");
-    await writeJsonDurableQueueEntry({
-      filePath: paths.jsonPath,
-      entry: { index: -1, payload: "initial" },
-      tempPrefix: "queue",
+  describe("queue writers", () => {
+    let directory: string | undefined;
+    // A Vitest timeout must not remove the directory while queued writes still run.
+    const run = useSuiteFixture(async () => {
+      directory = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-queue-writers-"));
+      return directory;
+    }, async () => {
+      if (directory) await fs.rm(directory, { recursive: true, force: true });
     });
 
-    await expect(
-      writeJsonDurableQueueEntry({
+    it("serializes queue writers and preserves the last complete entry on serializer failure", () => run(async (root) => {
+      const queueDir = path.join(root, "queue");
+      const failedDir = path.join(root, "failed");
+      await ensureJsonDurableQueueDirs({ queueDir, failedDir });
+      const paths = resolveJsonDurableQueueEntryPaths(queueDir, "job");
+      await writeJsonDurableQueueEntry({
         filePath: paths.jsonPath,
-        entry: circularValue(),
+        entry: { index: -1, payload: "initial" },
         tempPrefix: "queue",
-      }),
-    ).rejects.toThrow(TypeError);
-    await expect(readJsonDurableQueueEntry(paths.jsonPath)).resolves.toEqual({
-      index: -1,
-      payload: "initial",
-    });
+      });
 
-    await Promise.all(
-      Array.from({ length: 20 }, async (_, index) => {
-        await writeJsonDurableQueueEntry({
+      await expect(
+        writeJsonDurableQueueEntry({
           filePath: paths.jsonPath,
-          entry: { index, payload: `${index}:`.padEnd(4096, "x") },
+          entry: circularValue(),
           tempPrefix: "queue",
-        });
-      }),
-    );
-    const final = await readJsonDurableQueueEntry<{ index: number; payload: string }>(
-      paths.jsonPath,
-    );
-    expect(final.payload).toBe(`${final.index}:`.padEnd(4096, "x"));
-    expect((await fs.readdir(queueDir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+        }),
+      ).rejects.toThrow(TypeError);
+      await expect(readJsonDurableQueueEntry(paths.jsonPath)).resolves.toEqual({
+        index: -1,
+        payload: "initial",
+      });
+
+      const settled = await Promise.allSettled(
+        Array.from({ length: 20 }, async (_, index) => {
+          await writeJsonDurableQueueEntry({
+            filePath: paths.jsonPath,
+            entry: { index, payload: `${index}:`.padEnd(4096, "x") },
+            tempPrefix: "queue",
+          });
+        }),
+      );
+      for (const result of settled) {
+        if (result.status === "rejected") throw result.reason;
+      }
+      const final = await readJsonDurableQueueEntry<{ index: number; payload: string }>(
+        paths.jsonPath,
+      );
+      expect(final.payload).toBe(`${final.index}:`.padEnd(4096, "x"));
+      expect((await fs.readdir(queueDir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+    }), 20_000);
   });
 
   it("applies prune depth bounds without deleting fresh or deeper entries", async () => {

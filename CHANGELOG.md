@@ -2,71 +2,66 @@
 
 ## Unreleased
 
-### Fixes
+## 0.13.0 - 2026-09-16
 
-- Retry Root-backed lock acquisition when an admitted single-link successor disappears during a stale-snapshot recovery probe, retaining root and parent identity checks.
+### Highlights
+
+- **Stronger protection against filesystem replacement races:** bind Root reads, metadata, writes, moves, and cleanup to exact file and directory identities; use atomic native rename for no-clobber moves.
+- **Less overhead in guarded writes and archives:** avoid repeated path and mutation-policy work on eligible routes, reuse validated archive paths, and size native result buffers to bounded member sizes.
+- **Safer Windows paths and writes:** reject NTFS stream and directory-index aliases before filesystem access, and retain destination handles through compatibility writes and verification.
+- **New tools for prospective paths:** add `resolvePathPrefixSync()` and `probePathSuffixAliasesSync()` for existing-prefix traversal and bounded observations of missing suffix aliases.
+- **Opt-in bounded temporary-file cleanup:** add retained-directory cleanup ownership to `tempFile()` and strengthen temporary-workspace admission and permission repair.
+
+### Compatibility and upgrade notes
+
+- **No-clobber `Root.move()` now requires usable native support.** With `overwrite` omitted or `false`, native-off mode, missing bindings, or unavailable safe parent/rename support fail with `helper-unavailable`; there is no JavaScript check-and-replace fallback. Keep the matching native package installed for these moves. Directory moves still require `overwrite: true`, which retains guarded JavaScript support; use it only when replacement is intended. Post-operation verification can report an error after a rename has completed.
+- Windows alternate-data-stream and directory-index aliases now reject across guarded APIs before I/O. Supported rooted and extended-drive paths retain their handling, as do released drive-relative forms in trusted-path atomic, store/queue, move, publication, and lock APIs. Existing Root destination restrictions remain distinct; ordinary colon-bearing POSIX names keep their established rules.
+- POSIX secure-file ownership checks now use the process's effective user ID and fail closed when required identity facts are unavailable. Public `Stats` values remain numeric; exact writable-file verification uses private bigint receipts.
+- `tempFile({ cleanupSafety: "require-bounded" })` is opt-in and requires an existing supplied root plus supported retained-parent cleanup. Unsupported admission fails before child creation. `"compatible"` remains the default; cleanup callbacks and error-suppression behavior are preserved. Bounded cleanup retains the documented [POSIX final-entry unlink limitation](https://github.com/openclaw/fs-safe/blob/v0.13.0/docs/temp.md).
+- The two new path helpers are observations, not permission to access a path. Prefix resolution is read-only but is not a pinned or consistent snapshot. Suffix probing can create and remove directories under an approved writable parent, returns `undefined` when unresolved, and may preserve artifacts whose ownership cannot be verified; its budgets limit work counts and path sizes, not elapsed time.
+
+### Root boundaries and mutation performance
+
+- Fence Root content reads, metadata observations, directory entries, and low-level file opens with exact captured-root, parent, and final-path identities. Admit supported native Windows root spellings without relaxing symlink or replacement rejection.
+- Apply `denyMutations` and mutation-symlink policy to the actual retained parent used by `Root.write`, `Root.create`, `Root.copyIn`, `Root.openWritable`, `Root.append`, and `Root.mkdir`, including Windows buffer fallbacks. Admit missing components before creating them, and re-authorize followed final-link destinations before open, truncation, staging, and publication.
+- Reuse operation-local policy observations, canonical parent guards, post-create receipts, and immutable suffix offsets for eligible Node.js mutation paths. This avoids repeated resolver work and depth-quadratic segment copies; collisions, callbacks, aliases, ambiguous routes, incomplete identity observations, and final open/publication/cleanup checks retain full admission.
+- Bound repeated resolver work during deep missing-parent creation on eligible Windows and POSIX JavaScript paths. Advance only through owned directory-creation receipts, and let `Root.mkdir` reuse an exact existing-parent proof for its single missing child.
+- Reuse an already admitted parent guard for private producer Roots while preserving isolated handoff, including legacy Windows delete-pending and read-only restoration behavior.
+- Bind nonrecursive removal to its admitted parent and revalidate native move endpoints and explicit parent-symlink rejection before dispatch. Recheck copied-directory identities after child cleanup so concurrent replacements are preserved.
+
+### Credentials, permissions, and temporary files
+
+- Snapshot secure-read, secret-reader, traversal, and borrowed-transfer policies before asynchronous work, including size/link limits, trusted directories, and selected environment values. In-flight admission can no longer be relaxed by changing shared options.
+- Preserve single-read pathname and authority accessors on Node.js 22, along with callback receivers, cancellation signals, and progress callbacks across JSON, durable directory/queue, sibling-staging, and borrowed-handle operations. Windows temp admission remains active with platform adapters, and canonical prefixes are checked before inspection.
+- Bind secure temporary-directory and synchronous store-directory mode repairs to no-follow descriptors and exact current identities, including concurrent mode changes during the matching-mode fast path.
+- Admit temporary-workspace roots and children before use, preserve existing permissions, and bind initialization and cleanup to retained identities. Opt-in bounded temporary-file admission closes descriptors on failure.
+- Retain Windows destination descriptors through buffered compatibility-write locking, content verification, mode changes, sync, and final identity checks.
+- Validate descriptor-bound macOS clone ACLs before admission and publication, including absent ACLs. Once payload bytes exist, normalization or security failures are terminal `EIO` errors rather than a reason to retry with an ordinary copy.
+
+### Archive safety and performance
+
+- Bind physical ZIP entry names and file/directory kinds to decoder metadata before callbacks or member selection, rejecting ambiguous interpretations consistently.
+- Stop zstd and bzip2 compressed-input refills after cancellation while preserving decoded-output limits and complete archive validation.
+- Reuse canonical archive paths when no components are stripped and avoid temporary ZIP collision collections, retaining validation/filter order and checks of both raw and Unicode identities.
+- Reserve native archive result capacity from bounded member-size hints so small ZIP and compressed TAR reads do not allocate the caller's larger byte budget.
+
+### Path helpers and reliability
+
+- Add [`resolvePathPrefixSync()`](https://github.com/openclaw/fs-safe/blob/v0.13.0/docs/path-prefix.md) under `@openclaw/fs-safe/advanced` to traverse existing path prefixes while retaining the raw missing suffix, preserving dangling aliases and propagating ambiguous resolution failures.
+- Add [`probePathSuffixAliasesSync()`](https://github.com/openclaw/fs-safe/blob/v0.13.0/docs/path-suffix-aliases.md) under `@openclaw/fs-safe/advanced`, with fixed path, depth, creation, and observation budgets and conservative identity-checked cleanup.
+- Sanitize fallback filenames and validate completed sibling callback names before producers run, retaining length bounds and Windows device-name rejection. Reuse Windows namespace admission for unchanged ordinary rooted-drive paths while keeping full checks for relative, normalized, malformed, namespaced, and colon-bearing forms.
+- Pin asynchronous relative sidecar-lock paths and roots to their entry-time working directory through acquisition, reclaim, verification, and release. Close synchronous lock descriptors after metadata inspection failures while preserving the original error and unverified sidecar; retry vanished admitted successors under the existing identity checks and budgets.
+- Report actionable guarded-write errno diagnostics while preserving error codes, categories, original causes, and already-classified failures.
+- Tolerate concurrent guest parent-directory creation only after descriptor-relative no-follow admission; file and symlink competitors remain rejected. Thanks @vincentkoc.
 - Show only the moon icon in the docs light-theme picker and only the sun icon in dark mode.
-- Tolerate concurrent guest parent-directory creation only after descriptor-relative no-follow directory admission; file and symlink competitors remain rejected. Thanks @vincentkoc.
-- Close synchronous lock descriptors even when cleanup metadata inspection fails, preserving the original error and unverified sidecar.
-- Pin asynchronous relative sidecar-lock paths and roots to their entry-time working directory through acquisition, reclaim, verification, and release.
-- Apply Windows buffered-write compatibility locking and content verification, retaining the accepted destination descriptor through mode changes, sync, and final verification.
-- Report actionable errno diagnostics from guarded write preparation while preserving error codes, categories, original causes, and already-classified failures.
-
-### Security
-
-- Sanitize fallback filenames and validate completed sibling callback components before producers run, retaining bounded names and Windows device-name rejection.
-- Stop zstd and bzip2 compressed-input refills after cancellation while retaining decoded-output and complete archive validation.
-- Bind ZIP physical entry names and kinds to decoder metadata before callbacks or member selection, rejecting ambiguous interpretations consistently.
-- Snapshot secure-read policies, trusted-directory inputs, and selected environment values before asynchronous I/O so callers cannot change in-flight admission.
-- Recheck copied-directory identities after awaited child cleanup and before removal, preserving concurrently substituted directories.
-- Verify writable-file admission and post-open identity using private bigint receipts while retaining the public numeric Stats contract.
-- Bind secure temporary-directory mode repairs to no-follow descriptors and exact pathname identity, preserving concurrent replacements and failing closed on unverifiable repair.
-- Snapshot borrowed-file transfer options before I/O while retaining the original cancellation signal, mutation authority, and progress callbacks through partial writes.
-- Validate descriptor-bound Darwin ACL facts before clone admission and publication, correctly handling absent ACLs and rejecting unsafe staging states.
-- Bind nonrecursive removal to admitted parent receipts, and revalidate native move endpoint containment and explicit parent-symlink rejection before dispatch.
-- Repair synchronous store-directory permissions through no-follow descriptors and current exact identities, rechecking mode changes during the matching-mode fast path.
-- Fence low-level root-file opens with exact root and final-file identities, consistently admitting native Windows root spellings without weakening symlink or replacement rejection.
-- Fence Root reads against replacement of the captured root and final path, rejecting swapped trees before returning file contents or handles.
-- Make no-clobber Root moves atomic through native rename primitives and preserve identity-pinned isolated producer handoff, including legacy Windows delete-pending behavior.
-- Admit temporary-workspace roots and children before use, preserve existing permissions, and bind mode initialization and cleanup to retained directory identities.
-- Fence Root metadata observations with exact target and parent identities so replaced descendants cannot supply out-of-root metadata or directory entries.
-- Snapshot secret-reader size and link policies once, before asynchronous work, so shared option mutation cannot relax symlink or hardlink rejection during an in-flight read.
-- Keep Windows temp-path admission active with platform adapters, validate canonical root prefixes before inspecting them, and preserve single-read lock-path accessors on Node.js 22.
-- Preserve single-read pinned-write pathname and identity snapshots on Node.js 22 by excluding named accessors before copying remaining caller-owned options.
-- Preserve established callback receivers while retaining single-read pathname and transfer-authority snapshots across structured JSON, durable directory and queue, sibling staging, and borrowed-handle flows.
-- Snapshot root traversal symlink-rejection policy with admitted paths so caller mutation cannot change an in-flight resolution.
-- Reject NTFS alternate-data-stream and directory-index pathname aliases across guarded Root, directory-identity, FileStore, archive, JSON queue, sidecar lock, secret, secure-read, atomic publication, temp, permission, install, trash, and output boundaries before filesystem access. Preserve rooted drive paths, including valid extended namespace drive roots, and the released drive-relative contract of trusted-path atomic, JSON store/queue writer, move, directory-replace, and exclusive-publication APIs without widening volume-root mutation authority, independent device/network policies, intentional output-name sanitization, existing failure shapes, and ordinary colon-bearing POSIX names; native relative and archive paths enforce the same Windows rule.
-- Reuse raw Windows namespace admission for unchanged ordinary rooted drive paths while retaining full checks for normalized, relative, malformed, namespaced, and colon-bearing paths.
-- Reuse the already admitted parent guard when constructing private producer Roots, avoiding redundant canonicalization and identity capture while preserving producer-isolation checks.
-- Rebind `denyMutations` and explicit mutation-symlink policy to the actual retained parent selected by POSIX-native and pinned-fallback `Root.write`, `Root.create`, and `Root.copyIn`; missing-directory admission now preserves the configured Root's exact identity through canonical-parent and per-component containment checks so contained aliases cannot reuse stale preflight approval.
-- Apply the same snapshotted, per-component mutation-policy admission to shared JavaScript `Root.openWritable`, `Root.append`, `Root.mkdir`, and Windows buffer-write fallbacks, denying exact missing components before creation; followed final-link writes now re-authorize both the original operation entry and retained selected destination and recheck their case-exact binding before creation, truncation, return, Windows staging, and publication while preserving the exact parent fence, existing-parent, alias, and authority semantics. Ordinary writes with a complete canonical parent now transfer one exact guard into selection instead of reauthorizing every existing component; aliases, callbacks, ambiguous routes, and later stage or publication fences retain the full path.
-- Reuse operation-local mutation-policy observations for ordinary Node.js POSIX writes, retaining exact bigint directory guards and an already-complete guarded parent while refreshing full ordered admission when route, deny-path, Root identity, missing-component, or configuration evidence changes; synchronous guard-bound authorization, fused post-create receipt validation, exclusive direct-child native mkdir provenance, and immutable suffix offsets avoid redundant awaited observation passes and depth-quadratic segment-array copies while collisions, legacy native helpers, followed aliases, complex routes, Bun, and ineligible Windows paths retain full admission.
-- Bound full resolver admission across deep missing-parent creation for ordinary Node.js shared-JavaScript mutations on Windows and POSIX with exact canonical routes, reject-symlink policy, bigint Root identity, and fully observed in-root deny entries. The optimization is scoped to one guarded directory walk, advances only through owned `mkdir` receipts with current exact parent/child identities, and lets `Root.mkdir` reuse an exact existing-parent proof for its single missing child; collisions, callbacks, aliases, ambiguous spellings, incomplete observations, and all final selection, open, staging, publication, hardlink, and cleanup fences continue through full admission.
-- Use the effective POSIX user identity for secure-file ownership checks, failing closed before reading when ownership checks are enabled and the effective identity or descriptor owner cannot be established; descriptor-bound Windows ACL verification is unchanged.
-- Isolate the manual split-credential proof across separate candidate, historical, and clean execution runners, bind bounded build artifacts to exact provenance, and run only root-staged, identity-checked proof tools and harness files.
-- Authenticate the manual proof runtime against pinned official Node archives before checkout, keep staging private under a verified system parent, and diagnose dropped-credential startup, traversal, and authenticated code-read admission with bounded inline probes before the unchanged seven behavioral cases.
-- Place split-credential proof fixtures beneath the authenticated root-owned stage so both dropped identities can traverse their complete path, while keeping published receipts in the separately admitted runner-owned container.
-
-### Archive performance
-
-- Reuse canonical archive paths when no components are stripped, retaining validation and filter order.
-- Avoid temporary ZIP collision-identity collections while checking both raw and Unicode identities before recording them.
-- Size native archive entry reservations from bounded member-size hints so small ZIP and compressed TAR results do not reserve the caller's larger byte budget.
 
 ### Validation and tooling
 
-- Update development dependencies to @napi-rs/cli 3.9.1, fast-check 4.10.0, and Vite 8.3.0 with verified registry integrity.
-- Add guarded-mkdir regressions for exact descendant receipts, rounded inode collisions, and bounded Windows unknown-identity recovery across ordinary and symlink-resolved directory branches.
-- Version mutation-policy proof receipts to distinguish observed preservation from scoped JavaScript mkdir counters, and add bounded public-package pinned-policy rejection, state-selected write-refusal, and Windows buffer-write/placeholder-cleanup cases with explicit built test-hook provenance.
-- Separate the reviewed manual method-audit harness from immutable candidate and baseline checkouts, validate and resolve dispatch inputs before platform fan-out, and support Node 22/24 plus rebuild and same-artifact controls without changing the ordinary PR/schedule benchmark job.
-- Add versioned, mutation-checked benchmark provenance for trusted reviewed revisions, including harness/source identities, measurement and report-file receipts, manifests, lockfiles, dist trees, bounded dependency layouts, native addons, and runner metadata; this detects accidental drift but is not a sandbox for hostile benchmark code.
-- Bind filename-sanitizer benchmark expectations to the measured revision's tracked source, validate all 17 profile rows before filtering, strengthen four long-name endpoint checks, add paired shared-mutation-admission fixtures with 60 portable and 96 Windows rows, and cover temp-workspace mode correction plus existing/missing roots at depths 4/8/32.
-
-### Features
-
-- Add bounded missing-suffix alias probes with fixed path, depth, creation, and observation budgets plus identity-checked conservative cleanup.
-- Add resolvePathPrefixSync for physical traversal through existing prefixes with a raw missing suffix, preserving dangling aliases and propagating ambiguous resolution failures.
-- Add opt-in bounded temp-file cleanup with retained directory ownership, preserving compatible defaults and closing descriptors when admission fails.
+- Strengthen exact-identity, rounded-inode, Windows recovery, mutation-policy, and package-consumer regressions, with explicit test-hook provenance and bounded fixture lifetimes. Queue stress fixtures retain and drain outstanding writers before cleanup.
+- Separate manual method-audit harnesses from immutable candidate and baseline checkouts, validate dispatch inputs before fan-out, and support Node 22/24 plus rebuild and same-artifact controls. Versioned benchmark receipts bind source, harness, dependencies, artifacts, native addons, and runner metadata; they detect accidental drift and are not a sandbox for hostile code.
+- Expand benchmark coverage for filename sanitizers, all 17 profiles, shared mutation admission, temporary-workspace modes, and existing/missing roots at depths 4/8/32. Keep Windows-specific rows and observed-preservation claims distinct from JavaScript operation counts.
+- Isolate split-credential proof runners, authenticate official Node archives before checkout, and use private, identity-checked stages and tools. Fixtures remain traversable by both dropped identities while published receipts stay in a separately admitted container; the seven behavioral cases are unchanged.
+- Update development tooling to `@napi-rs/cli` 3.9.1, fast-check 4.10.0, and Vite 8.3.0 with verified registry integrity.
 
 ## 0.12.0 - 2026-09-15
 

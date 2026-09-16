@@ -87,7 +87,7 @@ On an actual Windows process with effective `platform: "win32"`, `inject.env` an
 | `outside-workspace` | `realPath` is outside `trust.trustedDirs`. |
 | `permission-unverified` | Required mode/ACL checks could not be completed, including when descriptor-bound Windows inspection is unavailable. |
 | `insecure-permissions` | Mode bits or ACLs grant broader access than allowed. |
-| `not-owned` | POSIX owner uid is not the current process uid. |
+| `not-owned` | POSIX owner uid is not the process's effective uid. |
 | `too-large` | File size or bytes read exceeded `maxBytes`. |
 | `timeout` | `timeoutMs` elapsed while reading. |
 
