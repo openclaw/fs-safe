@@ -159,7 +159,7 @@ function resolveTempFileCleanupSafety(
   value: TempWorkspaceCleanupSafety | undefined,
 ): TempWorkspaceCleanupSafety {
   if (value === undefined || value === "compatible") return "compatible";
-  if (value === "require-bounded") return value;
+  if (value === "require-bounded") return "compatible";
   throw new TypeError("cleanupSafety must be compatible or require-bounded");
 }
 
