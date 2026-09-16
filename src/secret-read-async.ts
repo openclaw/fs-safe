@@ -56,7 +56,7 @@ export async function readSecretFile(
     const openedHandle = handle;
     const openedStat = await inspectFileIdentity(async () => {
       const stat = fsSync.fstatSync(openedHandle.fd, { bigint: true });
-      if (!stat.isFile() || (rejectHardlinks && stat.nlink > 1n)) {
+      if (!stat.isFile() || (options.rejectHardlinks !== false && stat.nlink > 1n)) {
         throw new FsSafeError("path-mismatch", "security validation failed");
       }
       return stat;
@@ -66,7 +66,15 @@ export async function readSecretFile(
       if (!stat.isFile()) throw new FsSafeError("path-mismatch", "security validation failed");
       return stat;
     }, openedStat);
-    await inspectFileIdentity(() => inspectInput("secret path became a symlink"), openedStat);
+    await inspectFileIdentity(() => {
+      const stat = options.rejectSymlink
+        ? fsSync.lstatSync(resolvedPath, { bigint: true })
+        : fsSync.statSync(resolvedPath, { bigint: true });
+      if (options.rejectSymlink && stat.isSymbolicLink()) {
+        throw new FsSafeError("symlink", "secret path became a symlink");
+      }
+      return stat;
+    }, openedStat);
     raw = (await readFileHandleBounded(handle, maxBytes)).toString("utf8");
   } catch (error) {
     throw secretReadError(

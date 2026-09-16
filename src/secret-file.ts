@@ -62,8 +62,8 @@ export function readSecretFileSync(
 
   const opened = openPinnedFileSync({
     filePath: resolvedPath,
-    rejectPathSymlink: rejectSymlink,
-    rejectHardlinks,
+    rejectPathSymlink: Boolean(options.rejectSymlink),
+    rejectHardlinks: options.rejectHardlinks !== false,
   });
   if (!opened.ok) {
     throw secretReadError(
@@ -76,14 +76,14 @@ export function readSecretFileSync(
   try {
     const openedIdentity = inspectFileIdentitySync(() => {
       const stat = fs.fstatSync(opened.fd, { bigint: true });
-      if (!stat.isFile() || (rejectHardlinks && stat.nlink > 1n)) {
+      if (!stat.isFile() || (options.rejectHardlinks !== false && stat.nlink > 1n)) {
         throw new FsSafeError("path-mismatch", "security validation failed");
       }
       return stat;
     }, previewStat);
     inspectFileIdentitySync(() => {
       const stat = fs.lstatSync(opened.path, { bigint: true });
-      if (!stat.isFile() || (rejectHardlinks && stat.nlink > 1n)) {
+      if (!stat.isFile() || (options.rejectHardlinks !== false && stat.nlink > 1n)) {
         throw new FsSafeError("path-mismatch", "security validation failed");
       }
       return stat;
