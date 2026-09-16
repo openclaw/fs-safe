@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Security
+
+- Snapshot FileStore write policies before asynchronous work, streams, source reads, and JSON serialization, and JsonStore durability and newline options before each mutation queues or calls its updater; caller mutation cannot change an in-flight write's policy.
+
 ## 0.13.0 - 2026-09-16
 
 ### Highlights
