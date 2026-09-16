@@ -94,10 +94,6 @@ export async function writeExternalFileWithinRoot<T = void>(
     "output target parent uses a Windows filesystem namespace alias",
   );
   const producerIsolation = options.producerIsolation;
-  const write = options.write;
-  const mode = options.mode;
-  const staging = options.staging;
-  const fallbackFileName = options.fallbackFileName;
   const targetRoot = await root(rootDir);
   if (requestedTargetPath.length === 0) {
     throw new FsSafeError("invalid-path", "target path is required");
@@ -109,11 +105,11 @@ export async function writeExternalFileWithinRoot<T = void>(
     targetPath: requestedTargetPath,
   });
   assertFileTargetPath(rawTargetPath);
-  const targetPath = sanitizedTargetPath(rawTargetPath, fallbackFileName);
+  const targetPath = sanitizedTargetPath(rawTargetPath, options.fallbackFileName);
   assertNoWindowsPathAlias(targetPath, "filesystem", "output target uses a Windows filesystem namespace alias");
   const finalPath = await targetRoot.resolve(targetPath);
   assertNoWindowsPathAlias(finalPath, "filesystem", "output target uses a Windows filesystem namespace alias");
-  if (staging === "sibling") {
+  if (options.staging === "sibling") {
     const parentPath = path.dirname(targetPath);
     if (parentPath !== ".") {
       await targetRoot.mkdir(parentPath);
@@ -121,24 +117,24 @@ export async function writeExternalFileWithinRoot<T = void>(
     const siblingFinalPath = await targetRoot.resolve(targetPath);
     const result = await writeExternalFileViaSibling({
       finalPath: siblingFinalPath,
-      write,
+      write: options.write,
       producerIsolation,
-      fallbackFileName,
+      fallbackFileName: options.fallbackFileName,
       maxBytes,
-      mode,
+      mode: options.mode,
     });
     return { path: siblingFinalPath, result };
   }
   const staged = await tempFile({
     prefix: "fs-safe-output",
-    fileName: tempFileNameForTarget(targetPath, fallbackFileName),
+    fileName: tempFileNameForTarget(targetPath, options.fallbackFileName),
   });
 
   try {
-    const result = await Reflect.apply(write, options, [staged.path]);
+    const result = await options.write(staged.path);
     await targetRoot.copyIn(targetPath, staged.path, {
       maxBytes,
-      mode,
+      mode: options.mode,
       mkdir: true,
       sourceHardlinks: "reject",
     });

@@ -54,33 +54,25 @@ export async function writeSiblingTempFile<T>(
   const dir = resolvePathPreservingWindowsRoot(dirInput);
   assertNoWindowsPathAlias(dir, "filesystem", "sibling temp directory uses a Windows filesystem namespace alias");
   const producerIsolation = options.producerIsolation;
-  const dirMode = options.dirMode ?? 0o700;
-  const chmodDir = options.chmodDir !== false;
-  const tempPrefix = options.tempPrefix;
-  const writeTemp = options.writeTemp;
-  const resolveFinalPath = options.resolveFinalPath;
-  const mode = options.mode;
-  const syncTempFile = options.syncTempFile === true;
-  const syncParentDir = options.syncParentDir === true;
-  await fs.mkdir(recursiveMkdirPath(dir), { recursive: true, mode: dirMode });
-  if (chmodDir) {
+  await fs.mkdir(recursiveMkdirPath(dir), { recursive: true, mode: options.dirMode ?? 0o700 });
+  if (options.chmodDir !== false) {
     await applyDirectoryMode({
       fsModule: fs,
       dirPath: dir,
-      mode: dirMode,
+      mode: options.dirMode ?? 0o700,
       ignoreChmodError: true,
     });
   }
   return await writeCallbackSibling({
     tempDir: dir,
-    tempName: buildTempName(tempPrefix),
-    write: writeTemp,
+    tempName: buildTempName(options.tempPrefix),
+    write: options.writeTemp,
     producerIsolation,
-    resolveFinalPath,
-    mode,
+    resolveFinalPath: options.resolveFinalPath,
+    mode: options.mode,
     ignoreModeError: true,
-    syncTempFile,
-    syncParentDir,
+    syncTempFile: options.syncTempFile === true,
+    syncParentDir: options.syncParentDir === true,
   });
 }
 
@@ -140,9 +132,6 @@ export async function writeViaSiblingTempPath(params: {
   ) {
     throw new Error("Target path is outside the allowed root");
   }
-  const writeTemp = params.writeTemp;
-  const fallbackFileName = params.fallbackFileName;
-  const tempPrefix = params.tempPrefix;
   const rootGuard = await createAsyncDirectoryGuard(rootDir);
   const workspace = await tempFile({
     rootDir: resolveSecureTempRoot({
@@ -156,12 +145,12 @@ export async function writeViaSiblingTempPath(params: {
   try {
     const tempName = buildSiblingTempName({
       targetPath: path.join(workspace.dir, path.basename(targetPath)),
-      fallbackFileName: fallbackFileName ?? "output.bin",
-      tempPrefix: tempPrefix ?? ".fs-safe-output-",
+      fallbackFileName: params.fallbackFileName ?? "output.bin",
+      tempPrefix: params.tempPrefix ?? ".fs-safe-output-",
     });
     const tempPath = resolveCallbackTempPath(workspace.dir, tempName);
     await getFsSafeTestHooks()?.beforeSiblingTempWrite?.(tempPath);
-    await Reflect.apply(writeTemp, params, [tempPath]);
+    await params.writeTemp(tempPath);
     await assertAsyncDirectoryGuard(rootGuard);
     const targetRoot = await root(rootDir);
     await targetRoot.copyIn(relativeTargetPath, tempPath, { mkdir: false });
