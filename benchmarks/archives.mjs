@@ -73,8 +73,83 @@ export async function registerArchives(context) {
   add("withStagedArchiveDestination", () => a.withStagedArchiveDestination({ destinationRealDir: destination, run: async () => 1 }));
   add("mergeExtractedTreeIntoDestination", () => a.mergeExtractedTreeIntoDestination({ sourceDir: source, destinationDir: destination, destinationRealDir: destination }), {
     before: () => { fs.writeFileSync(path.join(source, "entry.json"), '{"ok":true}'); },
-    after: () => fs.rmSync(path.join(destination, "entry.json"), { force: true }), divisor: 10,
+    after: () => {
+      try {
+        assert.equal(fs.readFileSync(path.join(destination, "entry.json"), "utf8"), '{"ok":true}');
+        assert.equal(fs.readFileSync(path.join(source, "entry.json"), "utf8"), '{"ok":true}');
+        assert.deepEqual(fs.readdirSync(destination), ["entry.json"]);
+      } finally {
+        fs.rmSync(path.join(destination, "entry.json"), { force: true });
+      }
+    },
+    divisor: 10,
   });
+  const authorityFixtureRoot = path.join(w, "archive-merge-source-authority");
+  fs.mkdirSync(authorityFixtureRoot);
+  const assertSingleFileChain = (rootDir, parts) => {
+    let current = rootDir;
+    for (const part of parts) {
+      assert.deepEqual(fs.readdirSync(current), [part]);
+      current = path.join(current, part);
+    }
+    assert.deepEqual(fs.readdirSync(current), ["entry.bin"]);
+  };
+  for (const depth of [1, 8, 32]) {
+    const parts = Array.from({ length: depth }, (_, index) => `d${index}`);
+    const sourceDir = path.join(authorityFixtureRoot, `source-${depth}`);
+    const sourceParent = path.join(sourceDir, ...parts);
+    const sourceFile = path.join(sourceParent, "entry.bin");
+    const payload = Buffer.alloc(128, depth);
+    fs.mkdirSync(sourceParent, { recursive: true, mode: 0o750 });
+    if (process.platform !== "win32") {
+      let current = sourceDir;
+      fs.chmodSync(current, 0o750);
+      for (const part of parts) {
+        current = path.join(current, part);
+        fs.chmodSync(current, 0o750);
+      }
+    }
+    fs.writeFileSync(sourceFile, payload, { mode: 0o640 });
+    if (process.platform !== "win32") fs.chmodSync(sourceFile, 0o640);
+    for (const layout of ["existing", "missing"]) {
+      const destinationDir = path.join(authorityFixtureRoot, `destination-${depth}-${layout}`);
+      const destinationParent = path.join(destinationDir, ...parts);
+      const destinationFile = path.join(destinationParent, "entry.bin");
+      const targetAction = layout === "existing" ? "overwrite" : "create";
+      add(`mergeExtractedTreeIntoDestination/source-authority/depth=${depth}/destination-parents=${layout}/target=${targetAction}`, () =>
+        a.mergeExtractedTreeIntoDestination({ sourceDir, destinationDir, destinationRealDir: destinationDir }), {
+        before: () => {
+          fs.rmSync(destinationDir, { recursive: true, force: true });
+          if (layout === "existing") {
+            fs.mkdirSync(destinationParent, { recursive: true });
+            fs.writeFileSync(destinationFile, "OLD");
+          } else {
+            fs.mkdirSync(destinationDir);
+          }
+        },
+        after: () => {
+          try {
+            assert.ok(fs.readFileSync(destinationFile).equals(payload));
+            assert.ok(fs.readFileSync(sourceFile).equals(payload));
+            assertSingleFileChain(destinationDir, parts);
+            assertSingleFileChain(sourceDir, parts);
+            if (process.platform !== "win32") {
+              assert.equal(fs.statSync(destinationFile).mode & 0o777, 0o640);
+              let current = destinationDir;
+              for (const part of parts) {
+                current = path.join(current, part);
+                assert.equal(fs.statSync(current).mode & 0o777, 0o750);
+              }
+            }
+          } finally {
+            fs.rmSync(destinationDir, { recursive: true, force: true });
+          }
+        },
+        divisor: 10,
+        workloadDetails: { depth, files: 1, bytesPerFile: 128, destinationRoot: "existing" },
+      });
+    }
+  }
   for (const [kind, archivePath] of [["zip", zipPath], ["tar", tarPath], ["gzip", gzipPath]]) {
     add(`extractArchive/${kind}`, () => a.extractArchive({ archivePath, destDir: destination, timeoutMs: 30_000 }), {
       after: () => fs.rmSync(path.join(destination, "entry.json"), { force: true }), divisor: 10,
