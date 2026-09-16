@@ -50,7 +50,7 @@ describe("permission inspection failure modes", () => {
       unsupportedAceTypes: [],
       aces: [],
     }));
-    __setNativeLoaderForTest(() => ({ readOwnerAndDacl }) as unknown as NativeBinding);
+    __setNativeLoaderForTest(() => ({ closeOwnedFd: vi.fn(), readOwnerAndDacl }) as unknown as NativeBinding);
     configureFsSafeNative({ mode: "require" });
     const exec = vi.fn();
 

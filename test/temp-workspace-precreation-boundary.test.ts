@@ -14,6 +14,7 @@ const { tempRoot } = useRealTempDirs();
 
 function cleanupBinding(probe: ReturnType<typeof vi.fn>): NativeBinding {
   return {
+    closeOwnedFd: vi.fn(),
     renameNoReplace: vi.fn(),
     removeOwnedTree: vi.fn(),
     removeOwnedTreeSync: vi.fn(),

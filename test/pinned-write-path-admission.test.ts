@@ -169,8 +169,14 @@ describe.skipIf(process.platform !== "win32")("pinned write Windows pathname adm
       });
       const renameNoReplace = vi.fn(binding.renameNoReplace.bind(binding));
       const renameReplace = vi.fn(binding.renameReplace.bind(binding));
+      const closeFailure = new Error("parent close failed after closing");
+      const close = vi.fn((fd: number) => {
+        binding.closeOwnedFd(fd);
+        if (closeOutcome === "fails" && parentFds.includes(fd)) throw closeFailure;
+      });
       __setNativeLoaderForTest(() => ({
         ...binding,
+        closeOwnedFd: close,
         fstatIdentity(fd) {
           rootFds.push(fd);
           return binding.fstatIdentity(fd);
@@ -184,12 +190,6 @@ describe.skipIf(process.platform !== "win32")("pinned write Windows pathname adm
       vi.spyOn(realpathSync, "native").mockImplementation((candidate) =>
         `${nativeRealpath(candidate)}:stream`);
       const lstat = vi.spyOn(fsSync, "lstatSync");
-      const realClose = fsSync.closeSync.bind(fsSync);
-      const closeFailure = new Error("parent close failed after closing");
-      const close = vi.spyOn(fsSync, "closeSync").mockImplementation((fd) => {
-        realClose(fd);
-        if (closeOutcome === "fails" && parentFds.includes(fd)) throw closeFailure;
-      });
 
       await expect(runPinnedWriteHelper(baseParams({ rootPath: root })))
         .rejects.toMatchObject(aliasError);

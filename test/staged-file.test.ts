@@ -40,7 +40,7 @@ for (const unavailable of ["off", "absent", "missing-capability", "windows"] as 
       });
     }
     if (unavailable === "missing-capability") {
-      __setNativeLoaderForTest(() => ({} as never));
+      __setNativeLoaderForTest(() => ({ closeOwnedFd: vi.fn() } as never));
     }
     await expect(stageFileInDirectory({ directory, content: "x" })).rejects.toMatchObject({
       code: process.platform === "win32" ? "unsupported-platform" : "helper-unavailable",

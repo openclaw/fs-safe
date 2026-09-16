@@ -43,6 +43,19 @@ when admitting a temp workspace. Containment and identity checks stay intact.
 
 Configure the mode once during startup. Loading is lazy and cached; changing from `auto` to `require` after a failed load changes failure policy but does not repeatedly probe the binary.
 
+Native-created descriptors retain their originating native close operation through
+normal and error cleanup, including later mode changes. Node-created roots and
+directory handles keep Node's close operation, and borrowed handles keep their
+caller-owned lifetime. This preserves Node worker-thread descriptor tracking
+without unmanaged-descriptor warnings. A helper missing native close support is
+unavailable before descriptor allocation.
+
+Close retained native resources and let in-flight operations finish before
+forcibly terminating a worker. Native-created descriptors are not registered
+with Node's automatic worker-exit cleanup; `Worker.terminate()` can leave them
+open until process exit. The native close operation handles explicit cleanup,
+not forced worker termination.
+
 [`tempWorkspace()` and its scoped/sync variants](temp.md#private-temp-workspaces)
 remain available in every mode. Their default compatible cleanup uses guarded
 JavaScript quarantine when owned native tree removal is unavailable.
@@ -84,7 +97,7 @@ normalization, and the decision to fall back.
 
 - Linux uses `openat2` with `RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS`, `renameat`, and `renameat2(RENAME_NOREPLACE)`. Owned-tree cleanup enumerates and unlinks through retained directory descriptors and rejects device crossings.
 - macOS 15.4 and newer prefer `O_RESOLVE_BENEATH`; older kernels resolve components with `O_NOFOLLOW` and restart in-root symlinks from the pinned root descriptor. Both routes use an `F_GETPATH` post-open escape detector and report `best-effort` because directory rename races are not atomic with that check. Publication uses `renameat` for replacement and `renameatx_np(RENAME_EXCL)` for no-replace; owned-tree cleanup uses descriptor-relative `openat`/`unlinkat`.
-- Windows uses handle-relative `NtCreateFile`, rejects reparse points during root-bounded traversal, uses `FileRenameInfoEx` with replacement selected explicitly by the TypeScript policy layer, and deletes owned trees through exact opened handles with `FileDispositionInfoEx`; symlink/reparse entries in owned trees are removed as leaves and never traversed. Descriptors crossing N-API are converted only by the host executable's paired `uv_get_osfhandle` and `uv_open_osfhandle` exports. A runtime without both exports is unsupported for these native operations; the binding never guesses a raw HANDLE or uses a foreign CRT descriptor table.
+- Windows uses handle-relative `NtCreateFile`, rejects reparse points during root-bounded traversal, uses `FileRenameInfoEx` with replacement selected explicitly by the TypeScript policy layer, and deletes owned trees through exact opened handles with `FileDispositionInfoEx`; symlink/reparse entries in owned trees are removed as leaves and never traversed. Descriptors crossing N-API are converted only by the host executable's paired `uv_get_osfhandle` and `uv_open_osfhandle` exports. A runtime without both exports is unsupported for these native operations; the binding never guesses a raw HANDLE or uses a foreign CRT descriptor table. Descriptor-producing operations also require that same host's synchronous libuv close and request-management APIs before exporting an owned descriptor.
 
 Native primitives back create-only and replacing pinned writes, no-clobber
 `Root.move()`, async sidecar creation, guarded publication, archive acceleration,

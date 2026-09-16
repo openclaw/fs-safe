@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { itPosix } from "./helpers/vitest.js";
 import { readOwnerAndDacl } from "../src/owner-dacl.js";
 import { __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
@@ -36,6 +36,7 @@ describe("readOwnerAndDacl", () => {
     __setNativeLoaderForTest(
       () =>
         ({
+          closeOwnedFd: vi.fn(),
           readOwnerAndDacl: () => ({
             ownerSid: "s-1-5-21-owner",
             currentUserSid: "s-1-5-21-current-user",

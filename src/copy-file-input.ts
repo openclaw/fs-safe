@@ -3,7 +3,7 @@ import type { FileHandle } from "node:fs/promises";
 import { resolveCopyCloneMode, type CopyCloneMode } from "./copy-policy.js";
 import { FsSafeError } from "./errors.js";
 import { getNativeBinding, type NativeBinding } from "./native.js";
-import type { NativeFileCopyResult } from "./native-binding.js";
+import { captureNativeFdClose, type NativeFileCopyResult } from "./native-binding.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 import { transferFileHandle } from "./file-handle-transfer.js";
 
@@ -64,6 +64,7 @@ export async function createNativeCopyFile(
     }
     return undefined;
   }
+  captureNativeFdClose(native);
   const nativeSignal = input.signal ? AbortSignal.any([input.signal]) : undefined;
   try {
     // The caller adopts this descriptor before observing a later cancellation.

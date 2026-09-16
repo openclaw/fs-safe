@@ -1,6 +1,7 @@
 import type { TarMeterLimits } from "./archive-limits.js";
 import type { ArchiveMemberKind } from "./archive-plan.js";
 import type { CopyCloneMode } from "./copy-policy.js";
+import { FsSafeError } from "./errors.js";
 
 export interface NativeFileHash {
   bytes: number;
@@ -102,6 +103,8 @@ export interface NativeDarwinAclFacts {
 }
 
 export interface NativeBinding {
+  /** Internal: consumes only a descriptor returned by this binding. */
+  closeOwnedFd(fd: number): void;
   /** Internal Darwin-only synchronous inspection; the caller retains its fd. */
   inspectDarwinAcl?(fd: number): NativeDarwinAclFacts;
   /** POSIX system canonicalization; confinement and identity policy stay with callers. */
@@ -213,4 +216,12 @@ export interface NativeBinding {
     targetRelPath: string,
   ): void;
   sha256File(fd: number, maxBytes?: number, signal?: AbortSignal): Promise<NativeFileHash>;
+}
+
+export function captureNativeFdClose(binding: NativeBinding): (fd: number) => void {
+  if (typeof binding.closeOwnedFd !== "function") {
+    throw new FsSafeError("helper-unavailable", "native descriptor ownership is unavailable");
+  }
+  // Retained descriptors must remain disposable after native configuration changes.
+  return binding.closeOwnedFd.bind(binding);
 }

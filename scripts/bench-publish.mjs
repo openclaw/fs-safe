@@ -119,7 +119,7 @@ try {
           const started = performance.now();
           const fd = native.cloneFileExclusive(source.fd, directory.fd, targetName);
           samples.push(performance.now() - started);
-          fsSync.closeSync(fd);
+          native.closeOwnedFd(fd);
           await fs.rm(path.join(root, targetName));
         }
       } finally {

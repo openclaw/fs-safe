@@ -1,6 +1,6 @@
-use std::ffi::c_void;
+use std::ffi::{CStr, c_char, c_void};
 use std::io::{Read, Write};
-use std::mem::{size_of, zeroed};
+use std::mem::{MaybeUninit, size_of, zeroed};
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::FromRawHandle;
 use std::ptr::{null, null_mut};
@@ -131,22 +131,98 @@ impl OwnedHandle {
 
 type UvGetOsfhandle = unsafe extern "C" fn(i32) -> isize;
 type UvOpenOsfhandle = unsafe extern "C" fn(isize) -> i32;
+type UvReqSize = unsafe extern "C" fn(i32) -> usize;
+type UvFsCallback = unsafe extern "C" fn(*mut c_void);
+type UvFsClose = unsafe extern "C" fn(*mut c_void, *mut c_void, i32, Option<UvFsCallback>) -> i32;
+type UvFsReqCleanup = unsafe extern "C" fn(*mut c_void);
+type UvErrName = unsafe extern "C" fn(i32) -> *const c_char;
+
+const UV_FS: i32 = 6;
+const UV_FS_REQUEST_CAPACITY: usize = 4096;
+
+// libuv's Windows request fields are at most 8-byte aligned. Query the host
+// size before admitting opens; opaque stack storage keeps closing allocation-free.
+#[repr(C, align(16))]
+struct UvFsRequest([MaybeUninit<u8>; UV_FS_REQUEST_CAPACITY]);
+
+#[derive(Clone, Copy, Debug)]
+struct UvCloseBridge {
+    fs_close: UvFsClose,
+    fs_req_cleanup: UvFsReqCleanup,
+    err_name: UvErrName,
+}
+
+impl UvCloseBridge {
+    fn from_symbols(
+        req_size: Option<UvReqSize>,
+        fs_close: Option<UvFsClose>,
+        fs_req_cleanup: Option<UvFsReqCleanup>,
+        err_name: Option<UvErrName>,
+    ) -> Option<Self> {
+        let bridge = Self {
+            fs_close: fs_close?,
+            fs_req_cleanup: fs_req_cleanup?,
+            err_name: err_name?,
+        };
+        // SAFETY: UV_FS is the stable uv_req_type discriminant, not uv_fs_type.
+        let request_size = unsafe { req_size?(UV_FS) };
+        (request_size > 0 && request_size <= UV_FS_REQUEST_CAPACITY).then_some(bridge)
+    }
+
+    fn close_owned_fd(self, fd: i32) -> NativeResult<()> {
+        if fd < 0 {
+            return Err(native_error("EBADF", "invalid native-owned file descriptor"));
+        }
+        let mut request = UvFsRequest([MaybeUninit::uninit(); UV_FS_REQUEST_CAPACITY]);
+        let request = request.0.as_mut_ptr().cast();
+        // SAFETY: admission verified this storage fits the host's uv_fs_t.
+        // A null callback selects synchronous close; it initializes the request.
+        let result = unsafe { (self.fs_close)(null_mut(), request, fd, None) };
+        // SAFETY: even a failed synchronous close leaves a request for cleanup.
+        unsafe { (self.fs_req_cleanup)(request) };
+        if result >= 0 {
+            return Ok(());
+        }
+        // Never retry: the host may have consumed its descriptor before failing.
+        let name = unsafe { (self.err_name)(result) };
+        let code = if name.is_null() {
+            "EIO".into()
+        } else {
+            // SAFETY: uv_err_name returns a libuv-owned NUL-terminated string.
+            unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned()
+        };
+        Err(native_error(
+            code,
+            format!("close native-owned file descriptor failed with libuv error {result}"),
+        ))
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 struct UvBridge {
     get_osfhandle: UvGetOsfhandle,
     open_osfhandle: UvOpenOsfhandle,
+    close: Option<UvCloseBridge>,
 }
 
 impl UvBridge {
     fn from_symbols(
         get_osfhandle: Option<UvGetOsfhandle>,
         open_osfhandle: Option<UvOpenOsfhandle>,
+        close: Option<UvCloseBridge>,
     ) -> Option<Self> {
         Some(Self {
             get_osfhandle: get_osfhandle?,
             open_osfhandle: open_osfhandle?,
+            close,
         })
+    }
+
+    fn require_close(self) -> NativeResult<UvCloseBridge> {
+        self.close.ok_or_else(|| native_error(
+            "ENOTSUP",
+            "runtime libuv descriptor close bridge is unavailable",
+        ))
     }
 }
 
@@ -173,12 +249,26 @@ fn uv_bridge() -> NativeResult<UvBridge> {
         let open_osfhandle = unsafe {
             GetProcAddress(runtime, c"uv_open_osfhandle".as_ptr().cast())
         }?;
+        // SAFETY: these are libuv's public C signatures from this same runtime.
+        let close = unsafe {
+            UvCloseBridge::from_symbols(
+                GetProcAddress(runtime, c"uv_req_size".as_ptr().cast())
+                    .map(|symbol| std::mem::transmute::<_, UvReqSize>(symbol)),
+                GetProcAddress(runtime, c"uv_fs_close".as_ptr().cast())
+                    .map(|symbol| std::mem::transmute::<_, UvFsClose>(symbol)),
+                GetProcAddress(runtime, c"uv_fs_req_cleanup".as_ptr().cast())
+                    .map(|symbol| std::mem::transmute::<_, UvFsReqCleanup>(symbol)),
+                GetProcAddress(runtime, c"uv_err_name".as_ptr().cast())
+                    .map(|symbol| std::mem::transmute::<_, UvErrName>(symbol)),
+            )
+        };
         // SAFETY: libuv exports these symbols with the documented
         // `intptr_t uv_get_osfhandle(int)` and
         // `int uv_open_osfhandle(intptr_t)` signatures.
         UvBridge::from_symbols(
             Some(unsafe { std::mem::transmute::<_, UvGetOsfhandle>(get_osfhandle) }),
             Some(unsafe { std::mem::transmute::<_, UvOpenOsfhandle>(open_osfhandle) }),
+            close,
         )
     }))
 }
@@ -199,6 +289,7 @@ pub(crate) fn root_handle(fd: i32) -> NativeResult<HANDLE> {
 }
 
 fn runtime_fd_for_handle(handle: HANDLE, bridge: UvBridge) -> NativeResult<i32> {
+    bridge.require_close()?;
     let fd = unsafe { (bridge.open_osfhandle)(handle as isize) };
     if fd < 0 {
         return Err(native_error(
@@ -219,9 +310,8 @@ fn runtime_fd_from_handle_with_bridge(
     Ok(fd)
 }
 
-fn runtime_fd_from_handle(handle: OwnedHandle) -> NativeResult<i32> {
-    let bridge = uv_bridge()?;
-    runtime_fd_from_handle_with_bridge(handle, bridge)
+pub fn close_owned_fd(fd: i32) -> NativeResult<()> {
+    uv_bridge()?.require_close()?.close_owned_fd(fd)
 }
 
 fn wide_relative(path: &str) -> NativeResult<Vec<u16>> {
@@ -501,13 +591,17 @@ fn disposition_from_flags(flags: i32) -> u32 {
 }
 
 pub fn open_beneath(root_fd: i32, rel_path: &str, flags: i32) -> NativeResult<i32> {
+    let bridge = uv_bridge()?;
+    // Require host-owned closure before creating or duplicating any descriptor.
+    bridge.require_close()?;
+    let root = runtime_handle_from_fd(root_fd, bridge)?;
     if rel_path.is_empty() || rel_path == "." {
         let process = unsafe { GetCurrentProcess() };
         let mut duplicate = null_mut();
         if unsafe {
             DuplicateHandle(
                 process,
-                root_handle(root_fd)?,
+                root,
                 process,
                 &mut duplicate,
                 0,
@@ -523,16 +617,16 @@ pub fn open_beneath(root_fd: i32, rel_path: &str, flags: i32) -> NativeResult<i3
         }
         let duplicate = OwnedHandle(duplicate);
         assert_not_reparse(duplicate.0)?;
-        return runtime_fd_from_handle(duplicate);
+        return runtime_fd_from_handle_with_bridge(duplicate, bridge);
     }
     let handle = nt_open_relative(
-        root_handle(root_fd)?,
+        root,
         rel_path,
         access_from_flags(flags),
         disposition_from_flags(flags),
         0,
     )?;
-    runtime_fd_from_handle(handle)
+    runtime_fd_from_handle_with_bridge(handle, bridge)
 }
 
 pub fn mkdir_beneath(root_fd: i32, rel_path: &str, _mode: u32) -> NativeResult<()> {
@@ -1184,6 +1278,7 @@ pub fn copy_file_range_exclusive(
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
     use std::collections::BTreeMap;
     use std::fs::{self, OpenOptions};
     use std::os::windows::fs::OpenOptionsExt;
@@ -1212,12 +1307,112 @@ mod tests {
         73
     }
 
+    thread_local! {
+        static CLOSE_EVENTS: RefCell<Vec<(&'static str, i32)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    unsafe extern "C" fn test_req_size(kind: i32) -> usize {
+        assert_eq!(kind, UV_FS);
+        256
+    }
+
+    unsafe extern "C" fn test_empty_req_size(_kind: i32) -> usize {
+        0
+    }
+
+    unsafe extern "C" fn test_oversized_req_size(_kind: i32) -> usize {
+        UV_FS_REQUEST_CAPACITY + 1
+    }
+
+    unsafe extern "C" fn test_fs_close(
+        event_loop: *mut c_void,
+        request: *mut c_void,
+        fd: i32,
+        callback: Option<UvFsCallback>,
+    ) -> i32 {
+        assert!(event_loop.is_null());
+        assert!(callback.is_none());
+        assert_eq!(request as usize % 16, 0);
+        // SAFETY: the close wrapper supplies sufficient aligned request storage.
+        unsafe { request.cast::<i32>().write(fd) };
+        CLOSE_EVENTS.with(|events| events.borrow_mut().push(("close", fd)));
+        if fd == 74 { -4083 } else { 0 }
+    }
+
+    unsafe extern "C" fn test_fs_req_cleanup(request: *mut c_void) {
+        // SAFETY: test_fs_close initialized the request's first field.
+        let fd = unsafe { request.cast::<i32>().read() };
+        CLOSE_EVENTS.with(|events| events.borrow_mut().push(("cleanup", fd)));
+    }
+
+    unsafe extern "C" fn test_err_name(error: i32) -> *const c_char {
+        assert_eq!(error, -4083);
+        c"EBADF".as_ptr()
+    }
+
+    fn test_close_bridge() -> Option<UvCloseBridge> {
+        UvCloseBridge::from_symbols(
+            Some(test_req_size),
+            Some(test_fs_close),
+            Some(test_fs_req_cleanup),
+            Some(test_err_name),
+        )
+    }
+
+    #[test]
+    fn runtime_close_requires_all_host_exports_and_supported_request_storage() {
+        let size = Some(test_req_size as UvReqSize);
+        let close = Some(test_fs_close as UvFsClose);
+        let cleanup = Some(test_fs_req_cleanup as UvFsReqCleanup);
+        let name = Some(test_err_name as UvErrName);
+        for (req_size, fs_close, fs_cleanup, err_name) in [
+            (None, close, cleanup, name),
+            (size, None, cleanup, name),
+            (size, close, None, name),
+            (size, close, cleanup, None),
+            (Some(test_empty_req_size as UvReqSize), close, cleanup, name),
+            (Some(test_oversized_req_size as UvReqSize), close, cleanup, name),
+        ] {
+            assert!(UvCloseBridge::from_symbols(req_size, fs_close, fs_cleanup, err_name).is_none());
+        }
+        assert!(test_close_bridge().is_some());
+    }
+
+    #[test]
+    fn runtime_close_consumes_once_cleans_up_and_preserves_host_errors() {
+        CLOSE_EVENTS.with(|events| events.borrow_mut().clear());
+        let bridge = test_close_bridge().unwrap();
+        bridge.close_owned_fd(73).unwrap();
+        let error = bridge.close_owned_fd(74).unwrap_err();
+        assert_eq!(error.status, "EBADF");
+        assert!(error.reason.contains("-4083"));
+        assert_eq!(bridge.close_owned_fd(-1).unwrap_err().status, "EBADF");
+        CLOSE_EVENTS.with(|events| assert_eq!(
+            *events.borrow(),
+            [("close", 73), ("cleanup", 73), ("close", 74), ("cleanup", 74)],
+        ));
+    }
+
+    #[test]
+    fn runtime_missing_close_bridge_still_borrows_but_never_exports_a_descriptor() {
+        let bridge = UvBridge::from_symbols(
+            Some(test_get_osfhandle),
+            Some(test_open_osfhandle_success),
+            None,
+        ).unwrap();
+        assert_eq!(runtime_handle_from_fd(37, bridge).unwrap() as usize, 0x1025);
+        assert_eq!(
+            runtime_fd_for_handle(0x1025 as HANDLE, bridge).unwrap_err().status,
+            "ENOTSUP",
+        );
+    }
+
     #[test]
     fn runtime_descriptor_bridge_requires_both_host_exports() {
         for bridge in [
-            UvBridge::from_symbols(None, None),
-            UvBridge::from_symbols(Some(test_get_osfhandle), None),
-            UvBridge::from_symbols(None, Some(test_open_osfhandle)),
+            UvBridge::from_symbols(None, None, test_close_bridge()),
+            UvBridge::from_symbols(Some(test_get_osfhandle), None, test_close_bridge()),
+            UvBridge::from_symbols(None, Some(test_open_osfhandle), test_close_bridge()),
         ] {
             let error = require_uv_bridge(bridge).unwrap_err();
             assert_eq!(error.status, "ENOTSUP");
@@ -1225,6 +1420,7 @@ mod tests {
         assert!(UvBridge::from_symbols(
             Some(test_get_osfhandle),
             Some(test_open_osfhandle),
+            test_close_bridge(),
         ).is_some());
     }
 
@@ -1233,6 +1429,7 @@ mod tests {
         let bridge = UvBridge::from_symbols(
             Some(test_get_osfhandle),
             Some(test_open_osfhandle),
+            test_close_bridge(),
         ).unwrap();
         let fd = 37;
         let handle = runtime_handle_from_fd(fd, bridge).unwrap();
@@ -1243,6 +1440,7 @@ mod tests {
         let null_bridge = UvBridge::from_symbols(
             Some(test_null_osfhandle),
             Some(test_open_osfhandle),
+            test_close_bridge(),
         ).unwrap();
         assert_eq!(
             runtime_handle_from_fd(fd, null_bridge).unwrap_err().status,
@@ -1273,6 +1471,7 @@ mod tests {
         let failure_bridge = UvBridge::from_symbols(
             Some(test_get_osfhandle),
             Some(test_open_osfhandle_failure),
+            test_close_bridge(),
         ).unwrap();
         assert_eq!(
             runtime_fd_from_handle_with_bridge(OwnedHandle(failed_handle), failure_bridge)
@@ -1286,6 +1485,7 @@ mod tests {
         let success_bridge = UvBridge::from_symbols(
             Some(test_get_osfhandle),
             Some(test_open_osfhandle_success),
+            test_close_bridge(),
         ).unwrap();
         assert_eq!(
             runtime_fd_from_handle_with_bridge(OwnedHandle(transferred_handle), success_bridge)

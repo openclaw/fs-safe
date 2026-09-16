@@ -18,10 +18,10 @@ describe.skipIf(process.platform !== "linux" || !native)("native directory admis
     try {
       const opened = native!.openBeneath(root, "nested", directoryFlags);
       try { expect(fs.fstatSync(opened.fd).isDirectory()).toBe(true); }
-      finally { fs.closeSync(opened.fd); }
+      finally { native!.closeOwnedFd(opened.fd); }
       const file = native!.openBeneath(root, "created", fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL);
       try { expect(fs.fstatSync(file.fd).isFile()).toBe(true); }
-      finally { fs.closeSync(file.fd); }
+      finally { native!.closeOwnedFd(file.fd); }
     } finally { fs.closeSync(root); }
   });
 

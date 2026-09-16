@@ -112,8 +112,18 @@ for (const backend of ["javascript", "native", "windows fallback branch"] as con
       it.skipIf(backend !== "native")("surfaces a successful publication's close failure and closes the other native descriptors", async () => {
         const binding = __loadBundledNativeForTest();
         const descriptors: number[] = [];
+        const sentinel = Object.assign(new Error("close failed after publication"), { code: "EIO" });
+        let retainedFd: number | undefined;
+        let closed = false;
         __setNativeLoaderForTest(() => ({
           ...binding,
+          closeOwnedFd(fd) {
+            binding.closeOwnedFd(fd);
+            if (fd === retainedFd) {
+              closed = true;
+              throw sentinel;
+            }
+          },
           openBeneath(...args) {
             const opened = binding.openBeneath(...args);
             descriptors.push(opened.fd);
@@ -128,18 +138,9 @@ for (const backend of ["javascript", "native", "windows fallback branch"] as con
         configureFsSafeNative({ mode: "require" });
         const directory = await tempRoot("fs-safe-mode-native-close-");
         const safe = await root(directory);
-        const sentinel = Object.assign(new Error("close failed after publication"), { code: "EIO" });
-        let closed = false;
         vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params) => {
           await verifyPublished(params);
-          const realClose = fsSync.closeSync.bind(fsSync);
-          vi.spyOn(fsSync, "closeSync").mockImplementation((fd) => {
-            realClose(fd);
-            if (fd === params.fd) {
-              closed = true;
-              throw sentinel;
-            }
-          });
+          retainedFd = params.fd;
         });
         await expect(safe.write("target", "payload", { mode: 0 })).rejects.toMatchObject({
           cause: sentinel,
@@ -212,11 +213,24 @@ for (const backend of ["javascript", "native", "windows fallback branch"] as con
         if (backend === "windows fallback branch") Object.defineProperty(process, "platform", { value: "win32" });
         const directory = await tempRoot("fs-safe-mode-close-");
         const target = path.join(directory, "target");
-        const safe = await root(directory);
         const sentinel = Object.assign(new Error("verification failed"), { code: "EIO" });
         const closeFailure = new Error("close failed after closing");
         let retainedFd: number | undefined;
         let closed = false;
+        if (backend === "native") {
+          const binding = __loadBundledNativeForTest();
+          __setNativeLoaderForTest(() => ({
+            ...binding,
+            closeOwnedFd(fd) {
+              binding.closeOwnedFd(fd);
+              if (fd === retainedFd) {
+                closed = true;
+                throw closeFailure;
+              }
+            },
+          }));
+        }
+        const safe = await root(directory);
         const handles: FileHandle[] = [];
         const realOpen = fs.open.bind(fs);
         vi.spyOn(fs, "open").mockImplementation(async (...args) => {
@@ -228,16 +242,7 @@ for (const backend of ["javascript", "native", "windows fallback branch"] as con
           if (params.targetPath !== target) return await verifyPublished(params);
           const { fd } = params;
           retainedFd = fd;
-          if (backend === "native") {
-            const realClose = fsSync.closeSync.bind(fsSync);
-            vi.spyOn(fsSync, "closeSync").mockImplementation((closingFd) => {
-              realClose(closingFd);
-              if (closingFd === fd) {
-                closed = true;
-                throw closeFailure;
-              }
-            });
-          } else {
+          if (backend !== "native") {
             const handle = handles.find((candidate) => candidate.fd === fd)!;
             const realClose = handle.close.bind(handle);
             vi.spyOn(handle, "close").mockImplementation(async () => {

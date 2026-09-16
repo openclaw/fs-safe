@@ -7,6 +7,7 @@ import { runPinnedWriteWindows } from "./native-pinned-write-windows.js";
 import { openNativeParentAdmission, openNativeRootAdmission } from "./native-parent-admission.js";
 import { assertNativeStaging, writeNativeStage, type NativeStagingBinding } from "./native-staged-file.js";
 import type { NativeBinding } from "./native.js";
+import { captureNativeFdClose } from "./native-binding.js";
 import type {
   PinnedCreatedDirectoryReceipt,
   PinnedMutationAdmissionReceipt,
@@ -160,6 +161,7 @@ async function capturePolicyAwarePosixParent(
   rootFd: number,
   directoryFlags: number,
 ): Promise<PosixParentAdmission> {
+  const closeFd = captureNativeFdClose(binding);
   const segments = relativeParentSegments(params.relativeParentPath);
   const parentSpelling = segments.length
     ? path.join(params.rootPath, ...segments)
@@ -209,7 +211,7 @@ async function capturePolicyAwarePosixParent(
       assertPosixParentCurrent(admitted);
       return admitted;
     } catch (error) {
-      fsSync.closeSync(parentFd);
+      closeFd(parentFd);
       throw error;
     }
   }
@@ -329,7 +331,7 @@ async function capturePolicyAwarePosixParent(
           assertPosixParentCurrent(child);
         }
       } catch (error) {
-        fsSync.closeSync(childFd);
+        closeFd(childFd);
         throw error;
       }
 
@@ -338,7 +340,7 @@ async function capturePolicyAwarePosixParent(
       currentFd = child.parentFd;
       currentPath = child.parentPath;
       current = child;
-      if (previousOwnedFd !== undefined) fsSync.closeSync(previousOwnedFd);
+      if (previousOwnedFd !== undefined) closeFd(previousOwnedFd);
       if (index === segments.length - 1) {
         currentOwnedFd = undefined;
         return child;
@@ -348,11 +350,12 @@ async function capturePolicyAwarePosixParent(
     // Empty relative parents are handled by the complete-parent fast path.
     throw new FsSafeError("path-mismatch", "native write parent admission did not complete");
   } finally {
-    if (currentOwnedFd !== undefined) fsSync.closeSync(currentOwnedFd);
+    if (currentOwnedFd !== undefined) closeFd(currentOwnedFd);
   }
 }
 
 export async function runPinnedWriteNative(binding: NativeBinding, params: PinnedWriteParams): Promise<FileIdentityStat> {
+  const closeFd = captureNativeFdClose(binding);
   const windows = process.platform === "win32";
   if (!windows) {
     assertNativeStaging(binding);
@@ -372,7 +375,7 @@ export async function runPinnedWriteNative(binding: NativeBinding, params: Pinne
   using parentGuard = {
     [Symbol.dispose]() {
       if (!windows && parentFd !== undefined) {
-        fsSync.closeSync(parentFd);
+        closeFd(parentFd);
       }
     },
   };
@@ -435,7 +438,7 @@ export async function runPinnedWriteNative(binding: NativeBinding, params: Pinne
     const ownedParent = parentFd;
     parentFd = undefined;
     return await writeNativeStage(
-      binding as NativeStagingBinding, ownedParent, directory!, params, verificationGuard,
+      binding as NativeStagingBinding, ownedParent, closeFd, directory!, params, verificationGuard,
     );
   } finally {
     if (windows && !windowsOwnsDirectories) {
@@ -445,7 +448,7 @@ export async function runPinnedWriteNative(binding: NativeBinding, params: Pinne
         // a close attempt. In particular, a parent close failure must not skip
         // the root FileHandle close.
         try {
-          fsSync.closeSync(parentFd);
+          closeFd(parentFd);
         } catch {
           // Best effort while propagating the operation failure.
         }

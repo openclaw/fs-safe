@@ -185,6 +185,11 @@ pub(crate) fn into_napi<T>(env: Env, result: NativeResult<T>) -> Result<T> {
     }
 }
 
+#[napi(js_name = "closeOwnedFd")]
+pub fn close_owned_fd(env: Env, fd: i32) -> Result<()> {
+    into_napi(env, platform::close_owned_fd(fd))
+}
+
 #[napi(js_name = "openBeneath")]
 pub fn open_beneath(
     env: Env,

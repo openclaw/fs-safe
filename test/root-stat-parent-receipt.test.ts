@@ -77,7 +77,7 @@ async function scriptedLookup(
     events.push("parent-canonical");
     return { dev: 7n, ino: changed ? 13n : 11n, realPath: selected };
   });
-  __setNativeLoaderForTest(() => ({ observeDirectory } as unknown as NativeBinding));
+  __setNativeLoaderForTest(() => ({ observeDirectory, closeOwnedFd: vi.fn() } as unknown as NativeBinding));
   configureFsSafeNative({ mode: backend === "off" ? "off" : "require" });
 
   return {

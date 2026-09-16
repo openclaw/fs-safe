@@ -139,7 +139,7 @@ describe("native helper configuration", () => {
     expectFsSafeErrorSync(() => getNativeBinding(), "helper-unavailable");
     expect(first).toHaveBeenCalledOnce();
 
-    const present = {} as NativeBinding;
+    const present = { closeOwnedFd: vi.fn() } as unknown as NativeBinding;
     const second = vi.fn(() => present);
     __setNativeLoaderForTest(second);
     expect(getNativeBinding()).toBe(present);
@@ -153,6 +153,18 @@ describe("native helper configuration", () => {
     expect(getNativeBinding()).toBeUndefined();
     expect(loader).not.toHaveBeenCalled();
   });
+
+  it.each([undefined, true])("rejects a helper with invalid close ownership (%s) before descriptor allocation", (closeOwnedFd) => {
+    const openBeneath = vi.fn();
+    const loader = vi.fn(() => ({ openBeneath, closeOwnedFd }) as unknown as NativeBinding);
+    __setNativeLoaderForTest(loader);
+    configureFsSafeNative({ mode: "auto" });
+    expect(getNativeBinding()).toBeUndefined();
+    configureFsSafeNative({ mode: "require" });
+    expectFsSafeErrorSync(() => getNativeBinding(), "helper-unavailable");
+    expect(loader).toHaveBeenCalledOnce();
+    expect(openBeneath).not.toHaveBeenCalled();
+  });
 });
 
 describe("platform native loader", () => {
@@ -164,6 +176,7 @@ describe("platform native loader", () => {
   }
 
   it.runIf(Boolean(hostBinding))("loads the platform binary for the host target", () => {
+    expect(hostBinding?.closeOwnedFd).toBeTypeOf("function");
     expect(hostBinding?.openBeneath).toBeTypeOf("function");
     expect(hostBinding?.sha256File).toBeTypeOf("function");
   });

@@ -39,7 +39,7 @@ export async function observeHashPath(
     events.push("native");
     return abcHash;
   });
-  const loader = vi.fn(() => ({ sha256File: nativeHash }) as unknown as NativeBinding);
+  const loader = vi.fn(() => ({ sha256File: nativeHash, closeOwnedFd: vi.fn() }) as unknown as NativeBinding);
   __setNativeLoaderForTest(loader);
   configureFsSafeNative({ mode: mode === "off" ? "off" : "auto" });
 

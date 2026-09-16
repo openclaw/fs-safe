@@ -333,6 +333,7 @@ describe("exclusive publication failure fencing", () => {
         targetFd = fsSync.openSync(target, "r+");
         return targetFd;
       },
+      closeOwnedFd: fsSync.closeSync,
     }));
     configureFsSafeNative({ mode: "require" });
     const realFchmod = fsSync.fchmodSync.bind(fsSync);
@@ -391,6 +392,7 @@ describe("exclusive publication failure fencing", () => {
         fsSync.copyFileSync(source, target, fsSync.constants.COPYFILE_EXCL);
         return fsSync.openSync(target, "r+");
       },
+      closeOwnedFd: fsSync.closeSync,
     }));
     configureFsSafeNative({ mode: "require" });
     __setFsSafeTestHooksForTest({

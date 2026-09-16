@@ -358,6 +358,7 @@ describe("bounded archive reads", () => {
     });
     const openZipBufferNative = vi.fn(async () => ({ entries: manifest, readEntry }));
     __setNativeLoaderForTest(() => ({
+      closeOwnedFd: vi.fn(),
       openZipBufferNative,
     }) as unknown as NativeBinding);
     configureFsSafeNative({ mode: "require" });

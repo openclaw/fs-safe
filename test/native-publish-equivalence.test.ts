@@ -79,7 +79,7 @@ describe.runIf(Boolean(native))("native publication primitives", () => {
         expect(error).toMatchObject({ code: "ENOTSUP" });
         return;
       }
-      fsSync.closeSync(clonedFd);
+      native!.closeOwnedFd(clonedFd);
       await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("clone-payload");
       await expect(() => native!.cloneFileExclusive(source.fd, directory.fd, "target")).toThrow(
         expect.objectContaining({ code: "EEXIST" }),
@@ -105,7 +105,7 @@ describe.runIf(Boolean(native))("native publication primitives", () => {
     );
     try {
       const clonedFd = native!.cloneFileExclusive(source.fd, directory.fd, "target-xattr");
-      fsSync.closeSync(clonedFd);
+      native!.closeOwnedFd(clonedFd);
     } finally {
       await source.close();
       await directory.close();
@@ -131,6 +131,7 @@ describe.runIf(Boolean(native))("native publication primitives", () => {
         fsSync.chmodSync(targetPath, 0o600);
         return fsSync.openSync(targetPath, "r+");
       },
+      closeOwnedFd: fsSync.closeSync,
     }));
     configureFsSafeNative({ mode: "require" });
 
@@ -159,6 +160,7 @@ describe.runIf(Boolean(native))("native publication primitives", () => {
         fsSync.chmodSync(targetPath, 0o600);
         return fsSync.openSync(targetPath, "r+");
       },
+      closeOwnedFd: fsSync.closeSync,
       async sha256File(fd) {
         const result = await native!.sha256File(fd);
         hashCalls += 1;
@@ -180,7 +182,7 @@ describe.runIf(Boolean(native))("native publication primitives", () => {
     try {
       const copied = await native!.copyFileRangeExclusive(source.fd, directory.fd, "target");
       expect(copied.bytes).toBe(13);
-      fsSync.closeSync(copied.fd);
+      native!.closeOwnedFd(copied.fd);
       await expect(fs.readFile(path.join(root, "target"), "utf8")).resolves.toBe("range-payload");
     } finally {
       await source.close();

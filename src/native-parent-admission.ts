@@ -6,6 +6,7 @@ import { inspectDirectoryIdentity } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import type { FileIdentityStat } from "./file-identity.js";
 import type { NativeBinding } from "./native.js";
+import { captureNativeFdClose } from "./native-binding.js";
 import { realpathSync } from "./realpath.js";
 import { describeStagedDirectory, exactIdentityMatches } from "./staged-directory.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
@@ -23,6 +24,7 @@ export type NativeRootAdmission = {
 
 export type NativeParentAdmission = {
   fd: number;
+  close(): void;
   guard: { dir: string; realPath: string; stat: Stats | BigIntStats };
   stagedDirectory?: ReturnType<typeof describeStagedDirectory>;
 };
@@ -42,6 +44,7 @@ function assertParentAdmissionAvailable(binding: NativeBinding): void {
   if (typeof binding.openBeneath !== "function") {
     throw unavailable("native parent directory admission is unavailable");
   }
+  captureNativeFdClose(binding);
 }
 
 export async function openNativeRootAdmission(
@@ -103,6 +106,7 @@ export async function openNativeParentAdmission(
   relativeParentPath: string,
 ): Promise<NativeParentAdmission> {
   assertParentAdmissionAvailable(binding);
+  const closeFd = captureNativeFdClose(binding);
   const directoryFlags = fsSync.constants.O_RDONLY | (fsSync.constants.O_DIRECTORY ?? 0);
   assertNoWindowsPathAlias(relativeParentPath, "relative", "native parent uses a Windows filesystem namespace alias");
   const opened = binding.openBeneath(
@@ -149,12 +153,13 @@ export async function openNativeParentAdmission(
     }
     return {
       fd: parentFd,
+      close: () => closeFd(parentFd),
       guard: { dir: parentPath, realPath: parentPath, stat: parentPathStat },
       stagedDirectory,
     };
   } catch (error) {
     try {
-      fsSync.closeSync(parentFd);
+      closeFd(parentFd);
     } catch (closeError) {
       if (process.platform !== "win32") {
         throw createSuppressedError(closeError, error, "native parent admission and close failed");
@@ -165,5 +170,5 @@ export async function openNativeParentAdmission(
 }
 
 export function closeNativeParentAdmission(admission: NativeParentAdmission | undefined): void {
-  if (admission) fsSync.closeSync(admission.fd);
+  admission?.close();
 }

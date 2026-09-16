@@ -8,7 +8,7 @@ import type { AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { MutationAuthorityError } from "./mutation-authority.js";
 import type { FileIdentityStat } from "./file-identity.js";
-import type { NativeBinding } from "./native-binding.js";
+import { captureNativeFdClose, type NativeBinding } from "./native-binding.js";
 import { writeNativeInput } from "./native-operations.js";
 import { assertNativeCopyCompleted, createNativeCopyFile } from "./copy-file-input.js";
 import type { PinnedWriteInput, PinnedWriteParams } from "./pinned-write.js";
@@ -30,6 +30,7 @@ export type NativeStagingBinding = NativeBinding & Required<Pick<
 
 export function assertNativeStaging(binding: NativeBinding): asserts binding is NativeStagingBinding {
   if ([
+    binding.closeOwnedFd,
     binding.createStagedFile,
     binding.stagedFileMatches,
     binding.removeStagedFile,
@@ -69,7 +70,9 @@ function failure(error: unknown, details: StagedFileFailureDetails): FsSafeError
 
 class NativeStagedFile implements StagedFile {
   readonly #binding: NativeStagingBinding;
+  readonly #closeFd: (fd: number) => void;
   readonly #parentFd: number;
+  readonly #closeParentFd: (fd: number) => void;
   readonly #directory: StagedFileReceipt["directory"];
   readonly #portableNames: boolean;
   readonly #publishedMode: number;
@@ -83,14 +86,17 @@ class NativeStagedFile implements StagedFile {
   constructor(
     binding: NativeStagingBinding,
     parentFd: number,
+    closeParentFd: (fd: number) => void,
     directory: StagedFileReceipt["directory"],
     portableNames: boolean,
     publishedMode: number,
     sync: boolean,
     assertBeforeMutation?: () => void,
   ) {
+    this.#closeFd = captureNativeFdClose(binding);
     this.#binding = binding;
     this.#parentFd = parentFd;
+    this.#closeParentFd = closeParentFd;
     this.#directory = directory;
     this.#portableNames = portableNames;
     this.#publishedMode = publishedMode;
@@ -98,10 +104,12 @@ class NativeStagedFile implements StagedFile {
     this.#assertBeforeMutation = assertBeforeMutation;
   }
 
-  // Takes ownership of parentFd, including all construction and preparation failures.
+  // Public staging supplies a Node parent; pinned writes supply a native parent.
+  // The supplied closer owns parentFd even on construction or preparation failure.
   static async create(
     binding: NativeStagingBinding,
     parentFd: number,
+    closeParentFd: (fd: number) => void,
     directory: StagedFileReceipt["directory"],
     input: PinnedWriteInput,
     mode: number,
@@ -113,10 +121,10 @@ class NativeStagedFile implements StagedFile {
   ): Promise<NativeStagedFile> {
     let staged: NativeStagedFile;
     try {
-      staged = new NativeStagedFile(binding, parentFd, directory, portableNames, mode, sync, assertBeforeMutation);
+      staged = new NativeStagedFile(binding, parentFd, closeParentFd, directory, portableNames, mode, sync, assertBeforeMutation);
     } catch (error) {
       try {
-        fs.closeSync(parentFd);
+        closeParentFd(parentFd);
       } catch (closeError) {
         throw new AggregateError([error, closeError], "staged owner construction and close failed");
       }
@@ -129,6 +137,7 @@ class NativeStagedFile implements StagedFile {
   static async write(
     binding: NativeStagingBinding,
     parentFd: number,
+    closeParentFd: (fd: number) => void,
     directory: StagedFileReceipt["directory"],
     params: PinnedWriteParams,
     parentGuard: AnyAsyncDirectoryGuard,
@@ -136,7 +145,7 @@ class NativeStagedFile implements StagedFile {
     // This owner never escapes. Only the internal verifier borrows its fd;
     // public descriptor methods remain await-free and cannot race disposal.
     await using staged = await NativeStagedFile.create(
-      binding, parentFd, directory, params.input, params.mode, params.maxBytes, false, params.sync, params.assertBeforeMutation,
+      binding, parentFd, closeParentFd, directory, params.input, params.mode, params.maxBytes, false, params.sync, params.assertBeforeMutation,
     );
     staged.#rejectFinalSymlink = params.rejectFinalSymlink === true;
     if (params.input.kind === "file") await params.input.verifySource();
@@ -332,12 +341,15 @@ class NativeStagedFile implements StagedFile {
       }
     }
     let resources: StagedFileCleanupReceipt["resources"] = "closed";
-    for (const fd of [state.fileFd, this.#parentFd]) {
+    for (const [fd, closeFd] of [
+      [state.fileFd, this.#closeFd],
+      [this.#parentFd, this.#closeParentFd],
+    ] as const) {
       if (fd === undefined) {
         continue;
       }
       try {
-        fs.closeSync(fd);
+        closeFd(fd);
       } catch (error) {
         resources = "close-failed";
         errors.push(error);
@@ -398,5 +410,5 @@ export async function stageFileInDirectory(options: {
   const input = { kind: "buffer" as const, data: Buffer.from(options.content) };
   const mode = options.mode ?? 0o600;
   const parent = openStagedDirectory(options.directory);
-  return await createNativeStage(binding, parent.fd, parent.receipt, input, mode);
+  return await createNativeStage(binding, parent.fd, fs.closeSync, parent.receipt, input, mode);
 }

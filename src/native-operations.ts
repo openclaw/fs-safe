@@ -5,6 +5,7 @@ import type { ContainmentGuarantee } from "./containment.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup } from "./file-identity.js";
 import { getNativeBinding, type NativeBinding } from "./native.js";
+import { captureNativeFdClose } from "./native-binding.js";
 import type { PinnedWriteInput } from "./pinned-write.js";
 import { writeAllToFile } from "./write-file-handle.js";
 import { writeCopyFileToFd } from "./copy-file-input.js";
@@ -64,7 +65,11 @@ export async function writeNativeInput(
   }
 }
 
-function wrapNativeFd(fd: number, containment: ContainmentGuarantee): NativeFileHandle {
+function wrapNativeFd(
+  fd: number,
+  containment: ContainmentGuarantee,
+  closeFd: (fd: number) => void,
+): NativeFileHandle {
   let open = true;
   return {
     fd,
@@ -72,7 +77,7 @@ function wrapNativeFd(fd: number, containment: ContainmentGuarantee): NativeFile
     async close() {
       if (open) {
         open = false;
-        fsSync.closeSync(fd);
+        closeFd(fd);
       }
     },
     async stat() {
@@ -120,6 +125,7 @@ export async function createNativeExclusiveFile(
   if (!binding) {
     return undefined;
   }
+  const closeFd = captureNativeFdClose(binding);
   const parentPath = path.dirname(targetPath);
   const basename = path.basename(targetPath);
   const parent = await fs.open(
@@ -152,11 +158,11 @@ export async function createNativeExclusiveFile(
     fd = opened.fd;
     fsSync.fchmodSync(fd, mode);
     created = fsSync.fstatSync(fd, { bigint: true });
-    return wrapNativeFd(fd, opened.containment);
+    return wrapNativeFd(fd, opened.containment, closeFd);
   } catch (error) {
     if (fd !== undefined) {
       try {
-        fsSync.closeSync(fd);
+        closeFd(fd);
       } catch {
         // Preserve the original error.
       }

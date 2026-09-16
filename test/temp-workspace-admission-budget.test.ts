@@ -76,6 +76,7 @@ for (const variant of ["async", "sync"] as const) {
       if (nativeProbe) {
         configureFsSafeNative({ mode: "auto" });
         __setNativeLoaderForTest(() => ({
+          closeOwnedFd: vi.fn(),
           renameNoReplace: vi.fn(),
           removeOwnedTree: vi.fn(),
           removeOwnedTreeSync: vi.fn(),

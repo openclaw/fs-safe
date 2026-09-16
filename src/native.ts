@@ -6,7 +6,7 @@ import {
 } from "node:fs";
 import { createRequire } from "node:module";
 import { FsSafeError } from "./errors.js";
-import type { NativeBinding } from "./native-binding.js";
+import { captureNativeFdClose, type NativeBinding } from "./native-binding.js";
 import { getFsSafeNativeConfig } from "./native-config.js";
 
 export type { NativeBinding } from "./native-binding.js";
@@ -172,7 +172,9 @@ function loadBundledBinding(): NativeBinding {
   if (!target) {
     throw new Error(`Unsupported OS or architecture: ${process.platform}-${process.arch}`);
   }
-  return require(nativePackageForTarget(target)) as NativeBinding;
+  const loaded = require(nativePackageForTarget(target)) as NativeBinding;
+  captureNativeFdClose(loaded);
+  return loaded;
 }
 
 export function __loadBundledNativeForTest(): NativeBinding {
@@ -205,7 +207,9 @@ export function getNativeBinding(): NativeBinding | undefined {
   if (!attempted) {
     attempted = true;
     try {
-      binding = loadBinding();
+      const loaded = loadBinding();
+      captureNativeFdClose(loaded);
+      binding = loaded;
     } catch (error) {
       loadError = error;
     }

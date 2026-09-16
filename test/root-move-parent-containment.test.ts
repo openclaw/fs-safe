@@ -33,6 +33,7 @@ it.skipIf(process.platform === "win32").each(
   let sameDescriptor = false;
   let renamed = false;
   const binding = {
+    closeOwnedFd: fsSync.closeSync,
     openBeneath(_rootFd: number, relativePath: string, flags: number) {
       const canonical = fsSync.realpathSync(path.join(directory, relativePath));
       if (canonical !== directory && !canonical.startsWith(directory + path.sep)) {
@@ -94,6 +95,7 @@ it.skipIf(process.platform === "win32").each(["root", "source", "target"] as con
     const directoryPaths = new Map<number, string>();
     let renamed = false;
     const binding = {
+      closeOwnedFd: fsSync.closeSync,
       openBeneath(_rootFd: number, relativePath: string, flags: number) {
         const parent = path.join(directory, relativePath);
         const fd = fsSync.openSync(parent, flags);

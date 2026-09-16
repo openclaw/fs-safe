@@ -22,6 +22,7 @@ function isOpen(fd: number, stat = fsSync.fstatSync): boolean {
 }
 function nativeCopy(target: string, created: (fd: number) => void): NativeBinding {
   return {
+    closeOwnedFd: (fd: number) => fsSync.closeSync(fd),
     linkBeneath() { throw Object.assign(new Error("cross-device"), { code: "EXDEV" }); },
     cloneFileExclusive(sourceFd: number) {
       const bytes = Buffer.alloc(fsSync.fstatSync(sourceFd).size);

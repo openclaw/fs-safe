@@ -183,6 +183,7 @@ for (const variant of ["async", "sync"] as const) {
           if (cleanupSafety === "require-bounded") {
             configureFsSafeNative({ mode: "auto" });
             __setNativeLoaderForTest(() => ({
+              closeOwnedFd: vi.fn(),
               renameNoReplace: vi.fn(), removeOwnedTree: vi.fn(), removeOwnedTreeSync: vi.fn(),
               ownedTreeRemovalAvailable: vi.fn(() => true),
             }) as unknown as NativeBinding);

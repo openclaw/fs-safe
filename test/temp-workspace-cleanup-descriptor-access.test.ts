@@ -27,6 +27,7 @@ afterEach(() => {
 describe.runIf(supportsSearchOnlyDirectory)("temp workspace cleanup descriptor access", () => {
   function availableCleanupBinding() {
     return {
+      closeOwnedFd: vi.fn(),
       renameNoReplace: vi.fn(),
       removeOwnedTree: vi.fn(),
       removeOwnedTreeSync: vi.fn(),

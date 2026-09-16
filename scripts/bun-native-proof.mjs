@@ -113,7 +113,7 @@ if (scenario === "all") {
             const openedStat = fs.fstatSync(opened.fd, { bigint: true });
             assert.equal(openedStat.isFile(), true);
             assert.equal(openedStat.size, BigInt(payload.length));
-          } finally { fs.closeSync(opened.fd); }
+          } finally { binding.closeOwnedFd(opened.fd); }
           const rootAfter = fs.fstatSync(rootFd, { bigint: true });
           assert.equal(rootAfter.isDirectory(), true);
           assert.equal(rootAfter.dev, rootBefore.dev);

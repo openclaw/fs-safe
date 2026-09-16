@@ -121,6 +121,7 @@ describe("Windows namespace-alias admission for miscellaneous path APIs", () => 
     const readOwnerAndDaclNative = vi.fn();
     const createPrivateDirectoryNative = vi.fn();
     __setNativeLoaderForTest(() => ({
+      closeOwnedFd: vi.fn(),
       readOwnerAndDacl: readOwnerAndDaclNative,
       createPrivateDirectory: createPrivateDirectoryNative,
     }) as unknown as NativeBinding);

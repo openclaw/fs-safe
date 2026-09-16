@@ -11,6 +11,8 @@ import {
   type NativeBinding,
 } from "../src/native.js";
 import { runPinnedWriteHelper } from "../src/pinned-write.js";
+import { createNativeStage, type NativeStagingBinding } from "../src/native-staged-file.js";
+import { openStagedDirectory } from "../src/staged-directory.js";
 import { useTempDirs } from "./helpers/vitest.js";
 
 let native: NativeBinding | undefined;
@@ -26,6 +28,33 @@ afterEach(() => {
   vi.restoreAllMocks();
   configureFsSafeNative({ mode: "auto" });
   __resetNativeLoaderForTest();
+});
+
+it.each([false, true])("retains Node parent ownership when stage construction fails (close failure=%s)", async (failClose) => {
+  const directory = await tempRoot("fs-safe-stage-construction-close-");
+  const parent = openStagedDirectory(directory);
+  const createStagedFile = vi.fn();
+  const stale = { createStagedFile } as unknown as NativeStagingBinding;
+  const closeFailure = new Error("parent closed before reporting failure");
+  const closeParent = vi.fn((fd: number) => {
+    fsSync.closeSync(fd);
+    if (failClose) throw closeFailure;
+  });
+  const error = await createNativeStage(
+    stale, parent.fd, closeParent, parent.receipt, { kind: "buffer", data: "uncreated" }, 0o600,
+  ).catch((error: unknown) => error);
+  if (failClose) {
+    expect(error).toBeInstanceOf(AggregateError);
+    expect((error as AggregateError).errors).toEqual([
+      expect.objectContaining({ code: "helper-unavailable" }), closeFailure,
+    ]);
+  } else {
+    expect(error).toMatchObject({ code: "helper-unavailable" });
+  }
+  expect(closeParent).toHaveBeenCalledExactlyOnceWith(parent.fd);
+  expect(createStagedFile).not.toHaveBeenCalled();
+  expect(() => fsSync.fstatSync(parent.fd)).toThrow(expect.objectContaining({ code: "EBADF" }));
+  expect(await fs.readdir(directory)).toEqual([]);
 });
 
 describe.runIf(native)("staged ownership failure boundaries", () => {
@@ -210,16 +239,20 @@ describe.runIf(native)("staged ownership failure boundaries", () => {
     const directory = await tempRoot("fs-safe-writer-double-failure-");
     const writeFailure = Object.assign(new Error("publication failed"), { code: "EACCES" });
     const cleanupFailure = new Error(`${fault} failed`);
-    const close = fsSync.closeSync;
+    let failClose = false;
     __setNativeLoaderForTest(() => ({
       ...native!,
+      closeOwnedFd(fd) {
+        native!.closeOwnedFd(fd);
+        if (failClose) {
+          failClose = false;
+          throw cleanupFailure;
+        }
+      },
       renameReplace(...args) {
         if (fault === "close") {
           native!.renameReplace(...args);
-          vi.spyOn(fsSync, "closeSync").mockImplementationOnce((fd) => {
-            close(fd);
-            throw cleanupFailure;
-          });
+          failClose = true;
           vi.spyOn(fsSync, "fchmodSync").mockImplementationOnce(() => {
             throw writeFailure;
           });
@@ -277,22 +310,23 @@ describe.runIf(native)("staged ownership failure boundaries", () => {
 
   it("reports close failure after successful removal and never reuses the closed descriptor", async () => {
     const directory = await tempRoot("fs-safe-stage-close-");
-    const staged = await stageFileInDirectory({ directory, content: "remove me" });
-    const close = fsSync.closeSync;
     const closeError = Object.assign(new Error("close reported failure"), { code: "EIO" });
-    const spy = vi.spyOn(fsSync, "closeSync").mockImplementationOnce((fd) => {
-      close(fd);
+    const close = vi.fn((fd: number) => native!.closeOwnedFd(fd)).mockImplementationOnce((fd) => {
+      native!.closeOwnedFd(fd);
       throw closeError;
     });
+    __setNativeLoaderForTest(() => ({ ...native!, closeOwnedFd: close }));
+    const staged = await stageFileInDirectory({ directory, content: "remove me" });
     await expect(staged.cleanup()).rejects.toMatchObject({
       cause: closeError, details: { cleanup: { status: "removed", resources: "close-failed" } },
     });
-    spy.mockRestore();
+    expect(close).toHaveBeenCalledOnce();
     expect(await fs.readdir(directory)).toEqual([]);
     const unrelated = await fs.open(path.join(directory, "unrelated"), "w+");
     try {
       await expect(staged.cleanup()).rejects.toMatchObject({ cause: closeError });
       await expect(staged[Symbol.asyncDispose]()).rejects.toMatchObject({ cause: closeError });
+      expect(close).toHaveBeenCalledOnce();
       await unrelated.writeFile("still open");
       expect(await fs.readFile(path.join(directory, "unrelated"), "utf8")).toBe("still open");
     } finally {

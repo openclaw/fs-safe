@@ -56,7 +56,7 @@ function noReplaceAdapter(rootPath: string, onRename?: () => void, onOpen?: (rel
     }
     fsSync.renameSync(source, target);
   });
-  const binding = { openBeneath, renameNoReplace } as unknown as NativeBinding;
+  const binding = { openBeneath, renameNoReplace, closeOwnedFd: (fd: number) => fsSync.closeSync(fd) } as unknown as NativeBinding;
   return { binding, openBeneath, renameNoReplace };
 }
 
@@ -211,7 +211,7 @@ it("fails closed when the loaded binding lacks bounded parent admission", async 
   const target = path.join(directory, "target.txt");
   await fs.writeFile(source, "source");
   const renameNoReplace = vi.fn();
-  __setNativeLoaderForTest(() => ({ renameNoReplace }) as unknown as NativeBinding);
+  __setNativeLoaderForTest(() => ({ renameNoReplace, closeOwnedFd: vi.fn() }) as unknown as NativeBinding);
   configureFsSafeNative({ mode: "require" });
 
   const scoped = await root(directory);

@@ -33,7 +33,7 @@ function cleanupBinding(rootDir: string) {
     },
   );
   const ownedTreeRemovalAvailable = vi.fn(() => true);
-  return { renameNoReplace, removeOwnedTree, removeOwnedTreeSync, ownedTreeRemovalAvailable };
+  return { closeOwnedFd: vi.fn(), renameNoReplace, removeOwnedTree, removeOwnedTreeSync, ownedTreeRemovalAvailable };
 }
 
 afterEach(() => {
@@ -87,6 +87,7 @@ describe("temp file cleanup capability", () => {
       const rootDir = await tempRoot("fs-safe-temp-file-unavailable-");
       configureFsSafeNative({ mode: "auto" });
       const binding = {
+        closeOwnedFd: vi.fn(),
         renameNoReplace: vi.fn(),
         removeOwnedTree: vi.fn(),
         removeOwnedTreeSync: vi.fn(),

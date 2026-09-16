@@ -54,6 +54,7 @@ function install(
 ): ReturnType<typeof vi.fn> {
   const method = vi.fn(inspect);
   __setNativeLoaderForTest(() => ({
+    closeOwnedFd: vi.fn(),
     inspectWindowsSecureFileHandle: method,
     readOwnerAndDacl: vi.fn(() => security()),
   }) as unknown as NativeBinding);
@@ -210,7 +211,7 @@ describe("secure Windows descriptor ACL facts", () => {
 
   it.each(["off", "auto", "require"] as const)("fails closed on a stale helper in %s mode", (mode) => {
     configureFsSafeNative({ mode });
-    __setNativeLoaderForTest(() => ({ readOwnerAndDacl: vi.fn() }) as unknown as NativeBinding);
+    __setNativeLoaderForTest(() => ({ closeOwnedFd: vi.fn(), readOwnerAndDacl: vi.fn() }) as unknown as NativeBinding);
     expect(() => inspectSecureWindowsDescriptor({ fd: 1, identity: { dev: 1n, ino: 2n }, stat }))
       .toThrow(expect.objectContaining({ code: "permission-unverified" }));
   });
@@ -220,6 +221,7 @@ describe("secure Windows descriptor ACL facts", () => {
     expect(() => inspectSecureWindowsDescriptor({ fd: 1, identity: { dev: 1n, ino: 2n }, stat }))
       .toThrow(expect.objectContaining({ code: "permission-unverified", cause: expect.any(Error) }));
     __setNativeLoaderForTest(() => ({
+      closeOwnedFd: vi.fn(),
       readOwnerAndDacl: vi.fn(),
       inspectWindowsSecureFileHandle: vi.fn(() => { throw new Error("query denied"); }),
     }) as unknown as NativeBinding);

@@ -40,8 +40,10 @@ describe.skipIf(!native)("Root.copyIn Windows native publication", () => {
       Object.defineProperty(process, "platform", { value: "win32" });
       configureFsSafeNative({ mode: "require" });
       const opened: number[] = [];
+      const close = vi.fn((fd: number) => native!.closeOwnedFd(fd));
       __setNativeLoaderForTest(() => ({
         ...native!,
+        closeOwnedFd: close,
         openBeneath(...args) {
           const result = native!.openBeneath(...args);
           opened.push(result.fd);
@@ -58,7 +60,6 @@ describe.skipIf(!native)("Root.copyIn Windows native publication", () => {
       __setFsSafeTestHooksForTest({
         afterOpen(candidate, handle) { if (candidate === source) admitted = handle; },
       });
-      const close = vi.spyOn(fsSync, "closeSync");
       const failure = Object.assign(new Error(`published ${fault} failed`), { code: "EIO" });
       let receipt: RootCopyPublicationReceipt | undefined;
       const chmod = fsSync.fchmodSync.bind(fsSync);

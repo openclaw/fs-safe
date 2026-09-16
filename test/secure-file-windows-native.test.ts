@@ -77,6 +77,7 @@ function installBinding(params: {
   const legacy = vi.fn(() => { throw new Error("legacy pathname ACL API must not run"); });
   const inspect = params.inspect && vi.fn(params.inspect);
   __setNativeLoaderForTest(() => ({
+    closeOwnedFd: vi.fn(),
     readOwnerAndDacl: legacy,
     ...(inspect ? { inspectWindowsSecureFileHandle: inspect } : {}),
   }) as unknown as NativeBinding);

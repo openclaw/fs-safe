@@ -27,6 +27,7 @@ pub(crate) fn os_error(error: rustix::io::Errno, operation: &str) -> napi::Error
         rustix::io::Errno::XDEV => "EXDEV",
         rustix::io::Errno::NOTEMPTY => "ENOTEMPTY",
         rustix::io::Errno::BADF => "EBADF",
+        rustix::io::Errno::INTR => "EINTR",
         rustix::io::Errno::BUSY => "EBUSY",
         rustix::io::Errno::INVAL => "EINVAL",
         rustix::io::Errno::ISDIR => "EISDIR",
@@ -42,6 +43,16 @@ pub(crate) fn os_error(error: rustix::io::Errno, operation: &str) -> napi::Error
         _ => "EIO",
     };
     native_error(code, format!("{operation}: {error}"))
+}
+
+pub fn close_owned_fd(fd: i32) -> NativeResult<()> {
+    if fd < 0 {
+        return Err(native_error("EBADF", "invalid native-owned file descriptor"));
+    }
+    // SAFETY: the caller transfers an addon-owned descriptor for one close.
+    // An error also consumes ownership: retrying can close a reused descriptor.
+    unsafe { rustix::io::try_close(fd) }
+        .map_err(|error| os_error(error, "close native-owned file descriptor"))
 }
 
 fn validate_beneath_path(path: &str) -> NativeResult<()> {
@@ -1520,6 +1531,28 @@ mod tests {
         ));
         fs::create_dir(&path).unwrap();
         path
+    }
+
+    #[test]
+    fn closes_only_the_exported_descriptor_and_preserves_close_errors() {
+        let root = temp_root("close-owned");
+        fs::write(root.join("file"), b"owned").unwrap();
+        let root_handle = fs::File::open(&root).unwrap();
+        let fd = open_beneath(root_handle.as_raw_fd(), "file", OFlags::RDONLY.bits() as i32)
+            .unwrap();
+        assert_eq!(fstat_identity(fd).unwrap().size, 5.0);
+        let lock = rustix::fs::FlockOperation::NonBlockingLockExclusive;
+        rustix::fs::flock(borrowed(fd), lock).unwrap();
+        let observer = fs::File::open(root.join("file")).unwrap();
+        assert!(rustix::fs::flock(&observer, lock).is_err());
+        close_owned_fd(fd).unwrap();
+        rustix::fs::flock(&observer, lock).unwrap();
+        assert!(root_handle.metadata().unwrap().is_dir());
+        assert_eq!(close_owned_fd(-1).unwrap_err().status, "EBADF");
+        assert_eq!(os_error(rustix::io::Errno::INTR, "close").status, "EINTR");
+        drop(observer);
+        drop(root_handle);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

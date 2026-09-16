@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Close native-owned file descriptors through their originating native binding, eliminating unmanaged-descriptor warnings in Node worker threads during guarded writes, moves, and cleanup. Node-owned roots and borrowed handles retain their existing ownership; stale helpers without native close support fail before allocation.
+
 ## 0.13.0 - 2026-09-16
 
 ### Highlights

@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import fsSync, { type BigIntStats, type Stats } from "node:fs";
-import type { FileHandle } from "node:fs/promises";
-import fs from "node:fs/promises";
+import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import {
   pinDirectory,
@@ -17,6 +16,7 @@ import {
 } from "./file-identity.js";
 import { syncFileBestEffortSync } from "./file-sync.js";
 import { getNativeBinding, requireNativeBinding, type NativeBinding } from "./native.js";
+import { captureNativeFdClose } from "./native-binding.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import {
   directorySyncFailure,
@@ -113,6 +113,7 @@ async function copyPinnedSource(params: {
   bytes: number;
 }> {
   if (params.native && params.targetNativeParent) {
+    const closeFd = captureNativeFdClose(params.native);
     for (const method of ["clone", "copy-file-range"] as const) {
       let nativeFd: number | undefined;
       try {
@@ -167,7 +168,7 @@ async function copyPinnedSource(params: {
         const hashed = await hashFileHandle(target, params.native);
         const completedFd = nativeFd;
         nativeFd = undefined;
-        fsSync.closeSync(completedFd);
+        closeFd(completedFd);
         return {
           handle: target,
           exactIdentity: opened,
@@ -178,7 +179,7 @@ async function copyPinnedSource(params: {
         await target?.close().catch(() => undefined);
         throw error;
       } finally {
-        if (nativeFd !== undefined) fsSync.closeSync(nativeFd);
+        if (nativeFd !== undefined) closeFd(nativeFd);
       }
     }
   }

@@ -24,7 +24,7 @@ try {
     const identity = native.fstatIdentity(fd);
     if (!identity.isFile || identity.size !== 6) throw new Error("unexpected native identity");
   } finally {
-    fs.closeSync(fd);
+    native.closeOwnedFd(fd);
   }
 
   console.log("native smoke: link");

@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative } from "../src/config.js";
-import { __loadBundledNativeForTest, __resetNativeLoaderForTest } from "../src/native.js";
+import { __loadBundledNativeForTest, __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
 import { createSecretFileAtomic, writeSecretFileAtomic } from "../src/secret.js";
 import * as verification from "../src/root-write-verification.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
@@ -143,6 +143,11 @@ for (const backend of ["off", "require"] as const) {
           let borrowedFd: number | undefined;
           let publishedPath = filePath;
           let injected = false;
+          const binding = backend === "require" ? __loadBundledNativeForTest() : undefined;
+          const closeNative = binding && vi.fn((fd: number) => binding.closeOwnedFd(fd));
+          if (binding && closeNative) {
+            __setNativeLoaderForTest(() => ({ ...binding, closeOwnedFd: closeNative }));
+          }
           const handles: Array<{ fd: number; close: ReturnType<typeof vi.spyOn> }> = [];
           const open = fs.open.bind(fs);
           vi.spyOn(fs, "open").mockImplementation(async (...args) => {
@@ -218,6 +223,7 @@ for (const backend of ["off", "require"] as const) {
           expect(borrowedFd).toBeTypeOf("number");
           expect(() => fsSync.fstatSync(borrowedFd!)).toThrowError(expect.objectContaining({ code: "EBADF" }));
           const closes = closeSync.mock.calls.filter(([fd]) => fd === borrowedFd).length
+            + (closeNative?.mock.calls.filter(([fd]) => fd === borrowedFd).length ?? 0)
             + handles.filter(({ fd }) => fd === borrowedFd).reduce((sum, { close }) => sum + close.mock.calls.length, 0);
           expect(closes).toBe(1);
           vi.restoreAllMocks();

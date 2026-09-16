@@ -24,6 +24,7 @@ const { tempRoot } = useRealTempDirs();
 
 function unavailableCleanupBinding(result: "missing" | "false" | "throws") {
   return {
+    closeOwnedFd: vi.fn(),
     renameNoReplace: vi.fn(),
     removeOwnedTree: vi.fn(),
     removeOwnedTreeSync: vi.fn(),
@@ -78,7 +79,7 @@ for (const variant of ["async", "sync", "with-async", "with-sync"] as const) {
           mode: availability === "off" ? "off" : availability.endsWith("require") ? "require" : "auto",
         });
         const loader = vi.fn(() => {
-          if (availability.startsWith("missing")) return {} as NativeBinding;
+          if (availability.startsWith("missing")) return { closeOwnedFd: vi.fn() } as unknown as NativeBinding;
           throw new Error("injected unavailable binding");
         });
         __setNativeLoaderForTest(loader);
@@ -187,6 +188,7 @@ for (const variant of ["async", "sync", "with-async", "with-sync"] as const) {
         const rootDir = await tempRoot("fs-safe-workspace-mode-required-");
         configureFsSafeNative({ mode: "auto" });
         const loader = vi.fn(() => ({
+          closeOwnedFd: vi.fn(),
           renameNoReplace: vi.fn(),
           removeOwnedTree: vi.fn(),
           removeOwnedTreeSync: vi.fn(),
@@ -245,6 +247,7 @@ for (const variant of ["async", "sync", "with-async", "with-sync"] as const) {
       const rootDir = await tempRoot("fs-safe-workspace-parent-unavailable-");
       configureFsSafeNative({ mode: "auto" });
       __setNativeLoaderForTest(() => ({
+        closeOwnedFd: vi.fn(),
         renameNoReplace: vi.fn(),
         removeOwnedTree: vi.fn(),
         removeOwnedTreeSync: vi.fn(),
@@ -275,6 +278,7 @@ for (const variant of ["async", "sync"] as const) {
   describe(`${variant} workspace final-mode cleanup authority`, () => {
     function availableCleanupBinding() {
       return {
+        closeOwnedFd: vi.fn(),
         renameNoReplace: vi.fn(),
         removeOwnedTree: vi.fn(),
         removeOwnedTreeSync: vi.fn(),

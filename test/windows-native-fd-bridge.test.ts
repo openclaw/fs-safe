@@ -10,6 +10,16 @@ const windowsSource = fs.readFileSync(
 );
 const { tempRoot } = useRealTempDirs();
 
+function fdMatchesIdentity(fd: number, expected: { dev: bigint; ino: bigint }): boolean {
+  try {
+    const actual = fs.fstatSync(fd, { bigint: true });
+    return actual.dev === expected.dev && actual.ino === expected.ino;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EBADF") return false;
+    throw error;
+  }
+}
+
 it("keeps the Windows N-API descriptor boundary exclusively in one host libuv table", () => {
   expect(windowsSource).toContain("static BRIDGE: OnceLock<Option<UvBridge>>");
   expect(windowsSource).toContain('c"uv_get_osfhandle"');
@@ -67,7 +77,7 @@ describe.runIf(process.platform === "win32" && native)("Windows host libuv descr
     }
   });
 
-  it("returns a descriptor that Node independently reads, stats, and closes", async () => {
+  it("returns a descriptor that Node reads and stats before its native owner closes it", async () => {
     const root = await tempRoot("fs-safe-win-fd-open-");
     const payload = Buffer.from("host libuv descriptor proof");
     const target = path.join(root, "payload");
@@ -75,6 +85,7 @@ describe.runIf(process.platform === "win32" && native)("Windows host libuv descr
     const rootFd = fs.openSync(root, fs.constants.O_RDONLY);
     try {
       const rootBefore = fs.fstatSync(rootFd, { bigint: true });
+      const fileBefore = fs.statSync(target, { bigint: true });
       const opened = native!.openBeneath(rootFd, "payload", fs.constants.O_RDONLY);
       try {
         const received = Buffer.alloc(payload.length);
@@ -83,9 +94,20 @@ describe.runIf(process.platform === "win32" && native)("Windows host libuv descr
         const stat = fs.fstatSync(opened.fd, { bigint: true });
         expect(stat.isFile()).toBe(true);
         expect(stat.size).toBe(BigInt(payload.length));
+        expect({ dev: stat.dev, ino: stat.ino }).toEqual({ dev: fileBefore.dev, ino: fileBefore.ino });
       } finally {
-        fs.closeSync(opened.fd);
+        native!.closeOwnedFd(opened.fd);
       }
+      // A reused descriptor may identify another file; it must not retain ours.
+      expect(fdMatchesIdentity(opened.fd, fileBefore)).toBe(false);
+
+      const duplicated = native!.openBeneath(rootFd, ".", fs.constants.O_RDONLY);
+      try {
+        expect(fdMatchesIdentity(duplicated.fd, rootBefore)).toBe(true);
+      } finally {
+        native!.closeOwnedFd(duplicated.fd);
+      }
+      expect(fdMatchesIdentity(duplicated.fd, rootBefore)).toBe(false);
       const rootAfter = fs.fstatSync(rootFd, { bigint: true });
       expect({ dev: rootAfter.dev, ino: rootAfter.ino }).toEqual({
         dev: rootBefore.dev,

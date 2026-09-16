@@ -47,7 +47,7 @@ function queryOutput(value: NativeWindowsSecurityFacts) {
 
 function install(value: NativeWindowsSecurityFacts) {
   const readOwnerAndDacl = vi.fn(() => value);
-  __setNativeLoaderForTest(() => ({ readOwnerAndDacl }) as unknown as NativeBinding);
+  __setNativeLoaderForTest(() => ({ closeOwnedFd: vi.fn(), readOwnerAndDacl }) as unknown as NativeBinding);
   exec.mockResolvedValue(queryOutput(value));
   return readOwnerAndDacl;
 }
@@ -66,7 +66,7 @@ afterEach(() => {
 describe.skipIf(process.platform !== "win32")("native advanced Windows ACL inspection", () => {
   it("rejects namespace aliases before native loading, stat, or command fallback", async () => {
     const readOwnerAndDacl = vi.fn(() => facts());
-    const load = vi.fn(() => ({ readOwnerAndDacl }) as unknown as NativeBinding);
+    const load = vi.fn(() => ({ closeOwnedFd: vi.fn(), readOwnerAndDacl }) as unknown as NativeBinding);
     __setNativeLoaderForTest(load);
     const lstat = vi.spyOn(fsSync, "lstatSync");
 

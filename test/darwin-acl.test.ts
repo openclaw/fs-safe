@@ -13,7 +13,7 @@ afterEach(() => {
 
 function install(facts: unknown) {
   const inspect = vi.fn(() => facts as NativeDarwinAclFacts);
-  __setNativeLoaderForTest(() => ({ inspectDarwinAcl: inspect }) as unknown as NativeBinding);
+  __setNativeLoaderForTest(() => ({ inspectDarwinAcl: inspect, closeOwnedFd: vi.fn() }) as unknown as NativeBinding);
   return inspect;
 }
 
@@ -41,7 +41,7 @@ describe("internal Darwin descriptor ACL capability", () => {
 
   it.each(["auto", "require"] as const)("rejects an older binding without ACL capability in %s mode", mode => {
     configureFsSafeNative({ mode });
-    __setNativeLoaderForTest(() => ({}) as NativeBinding);
+    __setNativeLoaderForTest(() => ({ closeOwnedFd: vi.fn() }) as unknown as NativeBinding);
     expect(() => inspectDarwinAcl(42)).toThrowError(expect.objectContaining({ code: "helper-unavailable" }));
   });
 

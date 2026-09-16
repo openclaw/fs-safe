@@ -75,7 +75,7 @@ describe.runIf(native)("native filesystem primitives", () => {
       try {
         expect(native!.fstatIdentity(opened.fd)).toMatchObject({ isFile: true, size: 2 });
       } finally {
-        fsSync.closeSync(opened.fd);
+        native!.closeOwnedFd(opened.fd);
       }
       expect(() => native!.openBeneath(rootFd, "../outside", fsSync.constants.O_RDONLY)).toThrow();
     } finally {

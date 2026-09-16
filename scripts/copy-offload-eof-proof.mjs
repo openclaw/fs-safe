@@ -85,6 +85,7 @@ if (process.argv[2] === "--child") {
       assert.equal(result.method, "exclusive-copy");
     } else if (kind.endsWith("offset") || kind === "progress-eof") {
       const { requireNativeBinding } = await import("../dist/native.js");
+      const binding = requireNativeBinding();
       const source = await fs.open(sourcePath, "r");
       const parent = await fs.open(
         destinationDirectory,
@@ -92,7 +93,7 @@ if (process.argv[2] === "--child") {
       );
       try {
         await source.read(Buffer.alloc(7), 0, 7, null);
-        const copied = await requireNativeBinding().copyFileExclusive(
+        const copied = await binding.copyFileExclusive(
           source.fd,
           parent.fd,
           "copy",
@@ -111,7 +112,7 @@ if (process.argv[2] === "--child") {
           assert.equal(next[0], expected[0], "copy must leave the created target cursor at zero");
           cursorsPreserved = true;
         } finally {
-          fsSync.closeSync(copied.fd);
+          binding.closeOwnedFd(copied.fd);
         }
       } finally {
         await source.close();

@@ -47,7 +47,7 @@ function installDirectoryObserver(
     if (!stat.isDirectory()) throw Object.assign(new Error("not a directory"), { code: "ENOTDIR" });
     return { dev: stat.dev, ino: stat.ino, realPath: rawRealpath(pathname) };
   });
-  __setNativeLoaderForTest(() => ({ observeDirectory } as unknown as NativeBinding));
+  __setNativeLoaderForTest(() => ({ observeDirectory, closeOwnedFd: vi.fn() } as unknown as NativeBinding));
   return observeDirectory;
 }
 
@@ -208,7 +208,7 @@ it.each(["auto", "require"] as const)(
     const rootDir = await tempRoot(`fs-safe-native-observation-absent-${mode}-`);
     await fs.mkdir(path.join(rootDir, "selected"));
     configureFsSafeNative({ mode });
-    __setNativeLoaderForTest(() => ({} as NativeBinding));
+    __setNativeLoaderForTest(() => ({ closeOwnedFd: vi.fn() } as unknown as NativeBinding));
     const capability = await root(rootDir);
     const lstat = vi.spyOn(fsSync, "lstatSync");
     const canonical = vi.spyOn(realpathSync, "native");

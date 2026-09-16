@@ -31,7 +31,7 @@ it.each(["win32", "linux"] as const)("preserves %s root-admission disposal seman
   });
   const identity = await fs.lstat(directory, { bigint: true });
   Object.defineProperty(process, "platform", { value: platform });
-  const failure = await openNativeRootAdmission({ openBeneath: vi.fn() } as unknown as NativeBinding, {
+  const failure = await openNativeRootAdmission({ openBeneath: vi.fn(), closeOwnedFd: vi.fn() } as unknown as NativeBinding, {
     rootPath: directory,
     rootIdentity: { dev: identity.dev, ino: identity.ino + 1n },
   }).catch(error => error);
@@ -51,6 +51,7 @@ it.each(["win32", "linux"] as const)("preserves %s parent-admission disposal sem
   const actualClose = fsSync.closeSync.bind(fsSync);
   let descriptor = -1;
   const binding = {
+    closeOwnedFd: (fd: number) => fsSync.closeSync(fd),
     openBeneath: (_root: number, _relative: string, flags: number) => {
       descriptor = fsSync.openSync(directory, flags);
       return { fd: descriptor, containment: "best-effort" };

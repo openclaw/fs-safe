@@ -12,14 +12,15 @@ import {
   writeNativeInput,
 } from "./native-operations.js";
 import type { NativeBinding } from "./native.js";
+import { captureNativeFdClose } from "./native-binding.js";
 import type { PinnedWriteParams } from "./pinned-write.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
 
-function closeWriteFd(fd: number | undefined): unknown {
+function closeWriteFd(closeFd: (fd: number) => void, fd: number | undefined): unknown {
   if (fd === undefined) return;
   try {
-    fsSync.closeSync(fd);
+    closeFd(fd);
   } catch (error) {
     return error;
   }
@@ -32,6 +33,7 @@ export async function runPinnedWriteWindows(
   parentFd: number,
   parentGuard: AnyAsyncDirectoryGuard,
 ): Promise<FileIdentityStat> {
+  const closeFd = captureNativeFdClose(binding);
   const parentPath = parentGuard.realPath;
   let tempFd: number | undefined;
   let targetFd: number | undefined;
@@ -86,7 +88,7 @@ export async function runPinnedWriteWindows(
       fsSync.fchmodSync(targetFd, params.mode);
       if (params.sync !== false) syncFileBestEffortSync(targetFd);
     } catch (error) {
-      closeWriteFd(targetFd);
+      closeWriteFd(closeFd, targetFd);
       targetFd = undefined;
       // Staged copies and streamed creates preserve publication for caller recovery.
       if (params.input.kind === "buffer" ||
@@ -106,8 +108,8 @@ export async function runPinnedWriteWindows(
     completed = true;
     return { dev: targetIdentity.dev, ino: targetIdentity.ino };
   } finally {
-    const targetCloseError = closeWriteFd(targetFd);
-    const tempCloseError = closeWriteFd(tempFd);
+    const targetCloseError = closeWriteFd(closeFd, targetFd);
+    const tempCloseError = closeWriteFd(closeFd, tempFd);
     if (!renamed) {
       removeNativeCreatedFileIfStillPinned({
         parentPath,
@@ -116,7 +118,7 @@ export async function runPinnedWriteWindows(
         created: tempIdentity,
       });
     }
-    const parentCloseError = closeWriteFd(parentFd);
+    const parentCloseError = closeWriteFd(closeFd, parentFd);
     await root.close().catch(() => undefined);
     const closeError = targetCloseError ?? tempCloseError ?? parentCloseError;
     if (completed && closeError !== undefined) throw closeError;

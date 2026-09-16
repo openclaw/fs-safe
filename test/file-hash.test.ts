@@ -108,7 +108,7 @@ describe("sha256File", () => {
         const lstat = vi.spyOn(fsSync, "lstatSync");
         if (failureAt === "native") {
           const nativeHash = vi.fn(async () => { throw failure; });
-          __setNativeLoaderForTest(() => ({ sha256File: nativeHash }) as unknown as NativeBinding);
+          __setNativeLoaderForTest(() => ({ sha256File: nativeHash, closeOwnedFd: vi.fn() }) as unknown as NativeBinding);
         } else if (failureAt === "stat") {
           vi.spyOn(fsSync, "fstatSync").mockImplementationOnce(() => { throw failure; });
         } else {
@@ -155,7 +155,7 @@ describe("sha256File", () => {
     const failure = new Error("hash failed");
     configureFsSafeNative({ mode: failureAt === "native" ? "auto" : "off" });
     const nativeHash = vi.fn(async () => { throw failure; });
-    __setNativeLoaderForTest(() => ({ sha256File: nativeHash }) as unknown as NativeBinding);
+    __setNativeLoaderForTest(() => ({ sha256File: nativeHash, closeOwnedFd: vi.fn() }) as unknown as NativeBinding);
     const realOpen = fs.open.bind(fs);
     let close: ReturnType<typeof vi.spyOn> | undefined;
     let read: ReturnType<typeof vi.spyOn> | undefined;
@@ -184,7 +184,7 @@ describe("sha256File", () => {
     await fs.writeFile(filePath, "native");
     const nativeHash = vi.fn(async () => ({ bytes: 6, digest: "native-digest" }));
     __setNativeLoaderForTest(
-      () => ({ sha256File: nativeHash }) as unknown as NativeBinding,
+      () => ({ sha256File: nativeHash, closeOwnedFd: vi.fn() }) as unknown as NativeBinding,
     );
 
     await expect(sha256File(filePath)).resolves.toEqual({
