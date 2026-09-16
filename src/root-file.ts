@@ -165,6 +165,11 @@ function openRootFileResolved(params: {
   allowedType?: PinnedOpenSyncAllowedType;
   ioFs: BoundaryReadFs;
 }): RootFileOpenResult {
+  const finalAdmission = createRootFileFinalAdmission(
+    params.ioFs,
+    params.rootObservation,
+    params.boundaryLabel,
+  );
   const opened = openPinnedFileSync({
     filePath: params.absolutePath,
     resolvedPath: params.resolvedPath,
@@ -172,11 +177,10 @@ function openRootFileResolved(params: {
     maxBytes: params.maxBytes,
     allowedType: params.allowedType,
     ioFs: params.ioFs,
-    finalAdmission: createRootFileFinalAdmission(
-      params.ioFs,
-      params.rootObservation,
-      params.boundaryLabel,
-    ),
+    finalAdmission: ({ path }) => {
+      void finalAdmission;
+      return path;
+    },
   });
   if (!opened.ok) {
     return opened;
