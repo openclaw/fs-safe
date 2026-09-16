@@ -14,12 +14,10 @@ function checkSize(size: number, limits: ResolvedArchiveExtractLimits): void {
 }
 
 /** Admit physical records before a decoder can normalize or collapse names. */
-export function admitZipBuffer(
-  input: Uint8Array, limits: ResolvedArchiveExtractLimits, onEntry?: (entry: ZipDirectoryEntry) => void,
-): number {
+export function admitZipBuffer(input: Uint8Array, limits: ResolvedArchiveExtractLimits): number {
   checkSize(input.byteLength, limits);
   const buffer = Buffer.from(input.buffer, input.byteOffset, input.byteLength);
-  const scan = scanZipDirectory(buffer.length, limits, onEntry);
+  const scan = scanZipDirectory(buffer.length, limits);
   let step = scan.next();
   while (!step.done) {
     const { offset, length } = step.value;

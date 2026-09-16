@@ -9,7 +9,6 @@ use std::sync::{
 use napi::bindgen_prelude::{AbortSignal, AsyncTask, Buffer, Task};
 use napi::{Env, Error, Result, Status};
 use napi_derive::napi;
-use zip::HasZipMetadata;
 
 use crate::tar_meter::{TarMetadataMeter, TarMeterLimits, MAX_SAFE_INTEGER, MAX_MANIFEST_BYTES};
 use crate::{NativeResult, native_error, platform, validate_portable_relative_path};
@@ -214,14 +213,9 @@ fn inspect_tar_reader<R: Read>(mut reader: TarMetadataMeter<R>) -> Result<Vec<Ar
 
 fn zip_kind<R: Read>(file: &zip::read::ZipFile<'_, R>) -> &'static str {
     let mode = file.unix_mode().unwrap_or(0);
-    // Attribute-only directories need no terminal separator. Keep high-word
-    // symlinks first, including modes recorded by non-UNIX creators.
     if mode & 0o170000 == 0o120000 {
         "symlink"
-    } else if file.get_metadata().external_attributes & 0x10 != 0
-        || mode & 0o170000 == 0o040000
-        || file.is_dir()
-    {
+    } else if file.is_dir() {
         "directory"
     } else if file.is_file() {
         "file"

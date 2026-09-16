@@ -3,7 +3,6 @@ import {
   type ResolvedArchiveExtractLimits,
 } from "./archive-limits.js";
 import { admitZipNames, zipExtraFields, zipFormat, zipUInt64 } from "./archive-zip-names.js";
-import type { ArchiveEntryKind } from "./archive-policy.js";
 
 export type ZipRead = { offset: number; length: number };
 export type ZipScan = Generator<ZipRead, number, Buffer>;
@@ -13,18 +12,7 @@ export type ZipDirectoryEntry = {
   externalAttributes: number;
   size: number;
   path?: string;
-  portablePath: string;
-  kind: ArchiveEntryKind;
 };
-
-function entryKind(attributes: number, directory: boolean): ArchiveEntryKind {
-  const type = (attributes >>> 16) & 0o170000;
-  // High-word symlinks remain links regardless of the creator or directory bits.
-  if (type === 0o120000) return "symlink";
-  if ((attributes & 0x10) || type === 0o040000 || directory) return "directory";
-  // Preserve the native decoder's rejection of unrecognized link-like types.
-  return (type & 0o120000) === 0o120000 ? "other" : "file";
-}
 
 function* read(offset: number, length: number, bound: number): Generator<ZipRead, Buffer, Buffer> {
   if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(length) || offset < 0 || length < 0 || length > bound - offset) {
@@ -195,7 +183,7 @@ export function* scanZipDirectory(
     const localExtraLength = local.readUInt16LE(28);
     const localNames = yield* read(localAt + 30, localNameLength + localExtraLength, directory.start);
     const localExtra = zipExtraFields(localNames.subarray(localNameLength));
-    const admittedName = admitZipNames({ central: centralName, local: localNames.subarray(0, localNameLength), flags, centralExtra, localExtra, seen });
+    const entryPath = admitZipNames({ central: centralName, local: localNames.subarray(0, localNameLength), flags, centralExtra, localExtra, seen });
     const localValues = wideValues(local, localExtra, false);
     const crc = central.readUInt32LE(16);
     if (!(flags & 8) && (local.readUInt32LE(14) !== crc || localValues.compressed !== values.compressed || localValues.uncompressed !== values.uncompressed)) {
@@ -213,8 +201,7 @@ export function* scanZipDirectory(
     spans.push({ start: localAt, end: dataEnd });
     onEntry?.({
       index: count - 1, creatorSystem: central[5]!, externalAttributes: central.readUInt32LE(38),
-      size: values.uncompressed, path: admittedName.path, portablePath: admittedName.portablePath,
-      kind: entryKind(central.readUInt32LE(38), admittedName.directory),
+      size: values.uncompressed, path: entryPath,
     });
     at = next;
   }
