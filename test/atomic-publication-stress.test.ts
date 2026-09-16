@@ -8,15 +8,36 @@ import {
   replaceFileAtomic,
   replaceFileAtomicSync,
 } from "../src/atomic.js";
+import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
+import {
+  __loadBundledNativeForTest,
+  __resetNativeLoaderForTest,
+  __setNativeLoaderForTest,
+  type NativeBinding,
+} from "../src/native.js";
 import { writeExternalFileWithinRoot } from "../src/output.js";
 import { __cleanupRegisteredTempPathsForTest } from "../src/temp-cleanup.js";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useTempDirs();
 
+let directoryReplacementNative: NativeBinding | undefined;
+try {
+  const native = __loadBundledNativeForTest();
+  if (typeof native.renameNoReplace === "function" &&
+    typeof native.removeOwnedTree === "function" &&
+    typeof native.ownedTreeRemovalAvailable === "function") {
+    directoryReplacementNative = native;
+  }
+} catch (error) {
+  if (process.env.FS_SAFE_NATIVE_MODE === "require") throw error;
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
   __cleanupRegisteredTempPathsForTest();
+  __resetNativeLoaderForTest();
+  __resetFsSafeNativeConfigForTest();
 });
 
 describe("atomic publication stress regressions", () => {
@@ -106,51 +127,74 @@ describe("atomic publication stress regressions", () => {
     expect(() => fsSync.statSync(tempPath)).toThrow(expect.objectContaining({ code: "ENOENT" }));
   });
 
-  it("serializes concurrent directory replacements for one target", async () => {
-    const root = await tempRoot("fs-safe-atomic-directory-queue-");
-    const target = path.join(root, "target");
-    const stagedA = path.join(root, "staged-a");
-    const stagedB = path.join(root, "staged-b");
-    await Promise.all([target, stagedA, stagedB].map((directory) => fs.mkdir(directory)));
-    await fs.writeFile(path.join(target, "value.txt"), "original");
-    await fs.writeFile(path.join(stagedA, "value.txt"), "a");
-    await fs.writeFile(path.join(stagedB, "value.txt"), "b");
+  it.runIf(Boolean(directoryReplacementNative))(
+    "serializes concurrent directory replacements for one target",
+    async () => {
+      const root = await tempRoot("fs-safe-atomic-directory-queue-");
+      const target = path.join(root, "target");
+      const stagedA = path.join(root, "staged-a");
+      const stagedB = path.join(root, "staged-b");
+      await Promise.all([target, stagedA, stagedB].map((directory) => fs.mkdir(directory)));
+      await fs.writeFile(path.join(target, "value.txt"), "original");
+      await fs.writeFile(path.join(stagedA, "value.txt"), "a");
+      await fs.writeFile(path.join(stagedB, "value.txt"), "b");
 
-    const realRename = fs.rename.bind(fs);
-    let firstBackupMoved!: () => void;
-    const firstMoved = new Promise<void>((resolve) => {
-      firstBackupMoved = resolve;
-    });
-    let releaseFirst!: () => void;
-    const firstRelease = new Promise<void>((resolve) => {
-      releaseFirst = resolve;
-    });
-    vi.spyOn(fs, "rename").mockImplementation(async (from, to) => {
-      await realRename(from, to);
-      if (from === target && String(to).includes("backup-a")) {
-        firstBackupMoved();
-        await firstRelease;
+      let firstCleanupStarted!: () => void;
+      const cleanupStarted = new Promise<void>((resolve) => {
+        firstCleanupStarted = resolve;
+      });
+      let releaseFirstCleanup!: () => void;
+      const firstCleanupRelease = new Promise<void>((resolve) => {
+        releaseFirstCleanup = resolve;
+      });
+      const renameNoReplace = vi.fn(directoryReplacementNative!.renameNoReplace.bind(
+        directoryReplacementNative!,
+      ));
+      const removeOwnedTree = vi.fn<NonNullable<NativeBinding["removeOwnedTree"]>>(
+        async (...args) => {
+          if (removeOwnedTree.mock.calls.length === 1) {
+            firstCleanupStarted();
+            await firstCleanupRelease;
+          }
+          return await directoryReplacementNative!.removeOwnedTree!(...args);
+        },
+      );
+      __setNativeLoaderForTest(() => ({
+        ...directoryReplacementNative!,
+        renameNoReplace,
+        removeOwnedTree,
+      }));
+      configureFsSafeNative({ mode: "require" });
+      const mkdir = vi.spyOn(fs, "mkdir").mockResolvedValue(undefined);
+
+      const first = replaceDirectoryAtomic({
+        stagedDir: stagedA,
+        targetDir: target,
+        backupPrefix: "backup-a-",
+      });
+      await cleanupStarted;
+      expect(mkdir).toHaveBeenCalledTimes(1);
+      const second = replaceDirectoryAtomic({
+        stagedDir: stagedB,
+        targetDir: target,
+        backupPrefix: "backup-b-",
+      });
+      try {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(mkdir).toHaveBeenCalledTimes(1);
+        expect(renameNoReplace).toHaveBeenCalledTimes(2);
+      } finally {
+        releaseFirstCleanup();
       }
-    });
 
-    const first = replaceDirectoryAtomic({
-      stagedDir: stagedA,
-      targetDir: target,
-      backupPrefix: "backup-a-",
-    });
-    await firstMoved;
-    const second = replaceDirectoryAtomic({
-      stagedDir: stagedB,
-      targetDir: target,
-      backupPrefix: "backup-b-",
-    });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    releaseFirst();
-
-    await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined]);
-    await expect(fs.readFile(path.join(target, "value.txt"), "utf8")).resolves.toBe("b");
-    expect((await fs.readdir(root)).filter((entry) => entry.includes("backup"))).toEqual([]);
-  });
+      await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined]);
+      expect(mkdir).toHaveBeenCalledTimes(2);
+      expect(renameNoReplace).toHaveBeenCalledTimes(4);
+      expect(removeOwnedTree).toHaveBeenCalledTimes(2);
+      await expect(fs.readFile(path.join(target, "value.txt"), "utf8")).resolves.toBe("b");
+      expect((await fs.readdir(root)).filter((entry) => entry.includes("backup"))).toEqual([]);
+    },
+  );
 
   it("rejects directory backup prefixes that can escape the target parent", async () => {
     const root = await tempRoot("fs-safe-atomic-directory-prefix-");

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Security and compatibility
+
+- Harden `replaceDirectoryAtomic()` publication and recovery against directory substitution and concurrent-target clobbering. Every publication now requires usable native no-replace rename support and retained staged/target parent descriptors; replacing an existing target additionally requires retained native bounded owned-tree cleanup. Existing-target replacement is documented as a two-rename protocol with a temporary target-absence interval, conditional no-replace rollback, and possible post-commit verification or cleanup errors rather than an atomic swap or transactional commit-or-rollback. Windows native rename failures now preserve the syscall's error instead of inferring a definite collision from a later target observation.
+
 ## 0.13.0 - 2026-09-16
 
 ### Highlights

@@ -5,7 +5,6 @@ import { describe, expect, it, vi } from "vitest";
 import { expectFsSafeError, expectFsSafeErrorSync } from "./helpers/security.js";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import {
-  replaceDirectoryAtomic,
   replaceFileAtomic,
   replaceFileAtomicSync,
 } from "../src/atomic.js";
@@ -16,8 +15,6 @@ import {
 } from "../src/temp-cleanup.js";
 
 const { tempRoot } = useTempDirs();
-
-
 
 describe("atomic helpers", () => {
   it("replaces a file through a sibling temp path", async () => {
@@ -470,21 +467,5 @@ describe("atomic helpers", () => {
 
     expect(result).toEqual({ method: "rename" });
     expect(fsSync.readFileSync(filePath, "utf8")).toBe("sync");
-  });
-
-  it("replaces directories through a staged directory", async () => {
-    const root = await tempRoot("fs-safe-atomic-");
-    const targetDir = path.join(root, "target");
-    const stagedDir = path.join(root, "staged");
-    await fs.mkdir(targetDir);
-    await fs.writeFile(path.join(targetDir, "old.txt"), "old", "utf8");
-    await fs.mkdir(stagedDir);
-    await fs.writeFile(path.join(stagedDir, "new.txt"), "new", "utf8");
-
-    await replaceDirectoryAtomic({ stagedDir, targetDir });
-
-    await expect(fs.readFile(path.join(targetDir, "new.txt"), "utf8")).resolves.toBe("new");
-    await expect(fs.stat(path.join(targetDir, "old.txt"))).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(fs.stat(stagedDir)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

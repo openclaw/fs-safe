@@ -16,6 +16,10 @@ import {
   resolveSafeInstallDir,
   safePathSegmentHashed,
 } from "../src/install-path.js";
+import {
+  __resetFsSafeNativeConfigForTest,
+  configureFsSafeNative,
+} from "../src/native-config.js";
 import { replaceDirectoryAtomic } from "../src/replace-directory.js";
 import { root as openRoot } from "../src/root.js";
 import {
@@ -33,6 +37,7 @@ const { tempRoot } = useTempDirs();
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  __resetFsSafeNativeConfigForTest();
 });
 
 describe("root error helpers", () => {
@@ -113,7 +118,7 @@ describe("root error helpers", () => {
 });
 
 describe("directory replacement and file store boundary helpers", () => {
-  it("rolls back directory replacement when the staged rename fails", async () => {
+  it("preserves both directories when native replacement authority is disabled", async () => {
     const root = await tempRoot("fs-safe-replace-dir-");
     const target = path.join(root, "target");
     const staged = path.join(root, "staged");
@@ -122,16 +127,12 @@ describe("directory replacement and file store boundary helpers", () => {
     await fs.mkdir(staged);
     await fs.writeFile(path.join(staged, "new.txt"), "new", "utf8");
 
-    const realRename = fs.rename.bind(fs);
-    vi.spyOn(fs, "rename").mockImplementation(async (from, to) => {
-      if (from === staged && to === target) {
-        throw Object.assign(new Error("boom"), { code: "EACCES" });
-      }
-      return await realRename(from, to);
-    });
+    configureFsSafeNative({ mode: "off" });
+    const rename = vi.spyOn(fs, "rename");
 
     await expect(replaceDirectoryAtomic({ stagedDir: staged, targetDir: target })).rejects
-      .toMatchObject({ code: "EACCES" });
+      .toMatchObject({ code: "helper-unavailable" });
+    expect(rename).not.toHaveBeenCalled();
     await expect(fs.readFile(path.join(target, "old.txt"), "utf8")).resolves.toBe("old");
     await expect(fs.readFile(path.join(staged, "new.txt"), "utf8")).resolves.toBe("new");
   });

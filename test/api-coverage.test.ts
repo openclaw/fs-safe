@@ -27,7 +27,6 @@ import * as safePath from "../src/path.js";
 import { assertNoHardlinkedFinalPath, assertNoPathAliasEscape } from "../src/path-policy.js";
 import { ROOT_PATH_ALIAS_POLICIES, resolveRootPath, resolveRootPathSync } from "../src/root-path.js";
 import * as rootPaths from "../src/root-paths.js";
-import { replaceDirectoryAtomic } from "../src/replace-directory.js";
 import { openLocalFileSafely, readLocalFileSafely, root as openRoot } from "../src/root.js";
 import {
   readSecretFileSync,
@@ -52,8 +51,6 @@ import {
 import { withTimeout } from "../src/timing.js";
 
 const { tempRoot } = useTempDirs();
-
-
 
 describe("root handle coverage", () => {
   it("covers root reads, absolute reads, append newline logic, and writable handles", async () => {
@@ -867,8 +864,8 @@ describe("secret files and temp roots", () => {
   });
 });
 
-describe("policy and directory replacement helpers", () => {
-  it("covers alias policy and atomic directory replacement outcomes", async () => {
+describe("path policy helpers", () => {
+  it("covers alias and hardlink policy outcomes", async () => {
     const root = await tempRoot("fs-safe-policy-");
     const file = path.join(root, "file.txt");
     await fs.writeFile(file, "ok", "utf8");
@@ -893,20 +890,5 @@ describe("policy and directory replacement helpers", () => {
         assertNoHardlinkedFinalPath({ filePath: hardlink, root, boundaryLabel: "root" }),
       ).rejects.toThrow("Hardlinked");
     }
-
-    const next = path.join(root, "next");
-    await fs.mkdir(next);
-    await fs.writeFile(path.join(next, "new.txt"), "new", "utf8");
-    const target = path.join(root, "target");
-    await fs.mkdir(target);
-    await fs.writeFile(path.join(target, "old.txt"), "old", "utf8");
-    await replaceDirectoryAtomic({ stagedDir: next, targetDir: target });
-    await expect(fs.readFile(path.join(target, "new.txt"), "utf8")).resolves.toBe("new");
-    await expect(fs.stat(next)).rejects.toMatchObject({ code: "ENOENT" });
-
-    const notDir = path.join(root, "not-dir");
-    await fs.writeFile(notDir, "x", "utf8");
-    await expect(replaceDirectoryAtomic({ sourceDir: notDir, targetDir: target })).rejects
-      .toThrow();
   });
 });

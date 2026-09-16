@@ -7,6 +7,7 @@ import {
   resolveSafeInstallDir,
 } from "../src/install-path.js";
 import { movePathWithCopyFallback } from "../src/move-path.js";
+import { getNativeBinding, type NativeBinding } from "../src/native.js";
 import { openPinnedFileSync } from "../src/pinned-open.js";
 import {
   appendRegularFile,
@@ -21,6 +22,16 @@ import { readSecureFile } from "../src/secure-file.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
+
+let directoryReplacementNative: NativeBinding | undefined;
+try {
+  const native = getNativeBinding();
+  if (typeof native?.renameNoReplace === "function") {
+    directoryReplacementNative = native;
+  }
+} catch (error) {
+  if (process.env.FS_SAFE_NATIVE_MODE === "require") throw error;
+}
 
 describe("owned caller pathname snapshots", () => {
   it("keeps asynchronous regular reads and appends on their first pathname", async () => {
@@ -215,17 +226,16 @@ describe("owned caller pathname snapshots", () => {
     const target = path.join(root, "target");
     const decoyStaged = path.join(root, "decoy-staged");
     const decoyTarget = path.join(root, "decoy-target");
-    for (const directory of [staged, target, decoyStaged, decoyTarget]) {
+    for (const directory of [staged, decoyStaged, decoyTarget]) {
       await fs.mkdir(directory);
     }
     await fs.writeFile(path.join(staged, "value.txt"), "staged-first");
-    await fs.writeFile(path.join(target, "value.txt"), "target-old");
     await fs.writeFile(path.join(decoyStaged, "value.txt"), "decoy-staged");
     await fs.writeFile(path.join(decoyTarget, "value.txt"), "decoy-target");
     let stagedCalls = 0;
     let targetCalls = 0;
 
-    await replaceDirectoryAtomic({
+    const replacement = replaceDirectoryAtomic({
       get stagedDir() {
         stagedCalls += 1;
         return stagedCalls === 1 ? staged : decoyStaged;
@@ -236,10 +246,22 @@ describe("owned caller pathname snapshots", () => {
       },
     });
 
+    if (directoryReplacementNative) {
+      await expect(replacement).resolves.toBeUndefined();
+    } else {
+      await expect(replacement).rejects.toMatchObject({ code: "helper-unavailable" });
+    }
     expect(stagedCalls).toBe(1);
     expect(targetCalls).toBe(1);
-    await expect(fs.readFile(path.join(target, "value.txt"), "utf8"))
-      .resolves.toBe("staged-first");
+    if (directoryReplacementNative) {
+      await expect(fs.readFile(path.join(target, "value.txt"), "utf8"))
+        .resolves.toBe("staged-first");
+      await expect(fs.stat(staged)).rejects.toMatchObject({ code: "ENOENT" });
+    } else {
+      await expect(fs.stat(target)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(fs.readFile(path.join(staged, "value.txt"), "utf8"))
+        .resolves.toBe("staged-first");
+    }
     await expect(fs.readFile(path.join(decoyStaged, "value.txt"), "utf8"))
       .resolves.toBe("decoy-staged");
     await expect(fs.readFile(path.join(decoyTarget, "value.txt"), "utf8"))
