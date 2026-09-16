@@ -9,6 +9,7 @@ import {
   __setNativeLoaderForTest,
   type NativeBinding,
 } from "../src/native.js";
+import { realpathSync } from "../src/realpath.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -187,6 +188,23 @@ describe("retained directory replacement authority", () => {
         .resolves.toBe("new");
     },
   );
+
+  it("accepts distinct ordinary and native spellings for the same retained parent", async () => {
+    const setup = await fixture({ existingTarget: false });
+    const resolveNative = realpathSync.native;
+    const parentCanonical = resolveNative(setup.targetParent);
+    const nativeSpelling = `${parentCanonical}.native-spelling`;
+    vi.spyOn(realpathSync, "native").mockImplementation(candidate => {
+      const resolved = resolveNative(candidate);
+      return resolved === parentCanonical ? nativeSpelling : resolved;
+    });
+
+    await replaceDirectoryAtomic({ stagedDir: setup.staged, targetDir: setup.target });
+
+    expect(setup.renameNoReplace).toHaveBeenCalledOnce();
+    await expect(fs.readFile(path.join(setup.target, "value.txt"), "utf8"))
+      .resolves.toBe("new");
+  });
 
   it.each([false, true])(
     "replaces and cleans an existing target through retained ownership (distinct=%s)",

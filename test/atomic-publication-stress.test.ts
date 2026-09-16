@@ -176,10 +176,7 @@ describe("atomic publication stress regressions", () => {
       try {
         const firstProgress = await Promise.race([
           cleanupStarted.then(() => "cleanup-started" as const),
-          first.then(
-            () => "replacement-settled" as const,
-            () => "replacement-settled" as const,
-          ),
+          first.then(() => "replacement-settled" as const),
         ]);
         expect(firstProgress).toBe("cleanup-started");
         second = replaceDirectoryAtomic({
