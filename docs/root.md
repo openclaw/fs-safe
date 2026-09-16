@@ -221,7 +221,7 @@ source)` can reject a legal POSIX basename such as `c:photo.png`; callers that
 derive portable destination names from host files must sanitize or map that
 basename first.
 
-`openWritable` opens a writable file with options `mode?: number` and `writeMode?: "replace" | "append" | "update"`. `replace` truncates existing files and is the default; `update` keeps existing contents. Use it for streaming output. Prefer `await using` for cleanup.
+`openWritable` opens a writable file with options `mode?: number` and `writeMode?: "replace" | "append" | "update"`. `replace` truncates existing files and is the default; `update` keeps existing contents. Before truncation or handle return, descriptor and pathname identities are compared with lossless bigint metadata; persistently unknown Windows identities fail closed. The returned `stat` remains an ordinary numeric Node `Stats` object. Use it for streaming output. Prefer `await using` for cleanup.
 
 `remove` leaves non-empty directories unchanged unless `recursive: true` is
 provided. Recursive removal defaults to streaming entries in filesystem order;

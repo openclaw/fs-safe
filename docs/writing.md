@@ -426,6 +426,13 @@ opens, including for mode `0o200` files; replacement truncation happens only
 after type, identity, and boundary checks pass. Rejected existing paths are
 never cleanup-owned or unlinked.
 
+Identity admission uses bigint descriptor and pathname receipts even though the
+public `stat` field remains a numeric Node `Stats` object. Windows retries an
+unknown device or file index once while retaining known components, then rejects
+persistent ambiguity. If admission of a newly created file fails, cleanup only
+unlinks a pathname that still has the exact created identity; rounded aliases,
+symlinks, and unknown identities are preserved.
+
 ## Write defaults vs per-call options
 
 Set `mkdir: true` once on `root()`; pass text encodings per call when needed:
