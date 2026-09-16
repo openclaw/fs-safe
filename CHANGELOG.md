@@ -4,6 +4,7 @@
 
 ### Security
 
+- Stop native zstd and bzip2 TAR decoders from refilling compressed input after cancellation, including file extraction and buffered member reads; retain cancellation checks on buffered decoded output and complete stream validation.
 - Use the effective POSIX user identity for secure-file ownership checks, failing closed before reading when ownership checks are enabled and the effective identity or descriptor owner cannot be established; descriptor-bound Windows ACL verification is unchanged.
 - Isolate the manual split-credential proof across separate candidate, historical, and clean execution runners, bind bounded build artifacts to exact provenance, and run only root-staged, identity-checked proof tools and harness files.
 - Authenticate the manual proof runtime against pinned official Node archives before checkout, keep staging private under a verified system parent, and diagnose dropped-credential startup, traversal, and authenticated code-read admission with bounded inline probes before the unchanged seven behavioral cases.
@@ -17,6 +18,7 @@
 
 ### Validation and tooling
 
+- Add portable zstd/bzip2 method-audit fixtures for normal extraction and buffered reads of small, many-member, and 16 MiB archives, with exact payload checks and explicit native-only skips.
 - Separate the reviewed manual method-audit harness from immutable candidate and baseline checkouts, validate and resolve dispatch inputs before platform fan-out, and support Node 22/24 plus rebuild and same-artifact controls without changing the ordinary PR/schedule benchmark job.
 - Add versioned, mutation-checked benchmark provenance for trusted reviewed revisions, including harness/source identities, measurement and report-file receipts, manifests, lockfiles, dist trees, bounded dependency layouts, native addons, and runner metadata; this detects accidental drift but is not a sandbox for hostile benchmark code.
 - Bind filename-sanitizer benchmark expectations to the measured revision's tracked source, validate all 17 profile rows before filtering, strengthen four long-name endpoint checks, add paired shared-mutation-admission fixtures with 60 portable and 96 Windows rows, and cover temp-workspace mode correction plus existing/missing roots at depths 4/8/32.

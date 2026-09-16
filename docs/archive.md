@@ -321,6 +321,11 @@ codes remain `"destination-not-directory"`, `"destination-symlink"`, and
 - **Slow-loris archives:** `timeoutMs` is a hard wall-clock budget for non-mutating work. Extraction is aborted on overrun; if a destination mutation is already in flight, that mutation and rollback are joined before rejection so archive-controlled publication cannot continue afterward.
 - **Metadata bombs:** a streaming pass-through reader rejects oversized PAX, GNU long-name, and GNU long-link bodies before buffering their bodies. It understands octal and base-256 fixed sizes and validates bounded local PAX bodies before using their size overrides for member framing. Original archive bytes remain unchanged.
 
+Native gzip, zstd, and bzip2 readers check cancellation before refilling
+compressed input and before each decoded read, including buffered output. These checks
+apply to file extraction and in-memory member reads; they cannot interrupt an
+already-running filesystem read or a decoder step using already-buffered input.
+
 ### Raw TAR framing
 
 Extraction and bounded reads admit the complete decoded TAR stream through the

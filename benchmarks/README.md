@@ -103,6 +103,16 @@ small-file read overhead. The archive is assembled in memory outside timing;
 every returned path, kind, and size is verified after measurement.
 Gzip member reads and inspection also cover a small member followed by 64 MiB
 of valid zero container padding, separating suffix validation from payload decoding.
+The `native-codec/` filter selects 12 zstd/bzip2 rows: normal extraction and
+buffered member reads for one 128-byte member, 512 128-byte members, and one
+16 MiB member. These rows require native mode and record explicit skips when
+the binding is unavailable. Checked-in compressed fixtures need no external
+compressor on Linux, macOS, Windows, or Node 22. Every extracted filename and
+payload, and the complete selected read payload, is checked outside timing;
+setup and destination cleanup are also outside timing. Payloads are constant
+bytes and compress well, so these rows measure normal codec, admission, and
+output costs, not high-entropy input refill throughput or cancellation latency.
+Deterministic Rust tests separately check cancellation between raw input reads.
 ZIP reads and extraction also cover 1 MiB and 16 MiB stored and deflated members
 to expose payload integrity costs beyond tiny archive fixtures. ZIP admission and
 member reads also cover 512 ASCII and Unicode names with stored and deflated data.

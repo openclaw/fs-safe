@@ -131,14 +131,20 @@ fn open_tar_source<'a, R: Read + Seek + Send + 'a>(
     mut file: R, format: ArchiveFormat, cancelled: Arc<AtomicBool>, limits: TarMeterLimits,
     buffer_plain: bool,
 ) -> Result<TarMetadataMeter<Box<dyn Read + Send + 'a>>> {
+    // Decoders may refill compressed input without returning output. Guard both
+    // those refills and decoded reads, which can use already-buffered input.
     let decoded: Box<dyn Read + Send + 'a> = match format {
         ArchiveFormat::TarZstd => Box::new(CancellationReader {
-            inner: zstd::stream::read::Decoder::new(file)
+            inner: zstd::stream::read::Decoder::new(CancellationReader {
+                inner: file, cancelled: Arc::clone(&cancelled),
+            })
                 .map_err(|error| io_error("open zstd archive", error))?,
             cancelled,
         }),
         ArchiveFormat::TarBzip2 => Box::new(CancellationReader {
-            inner: bzip2::read::MultiBzDecoder::new(file),
+            inner: bzip2::read::MultiBzDecoder::new(CancellationReader {
+                inner: file, cancelled: Arc::clone(&cancelled),
+            }),
             cancelled,
         }),
         ArchiveFormat::Tar => {
@@ -1310,6 +1316,114 @@ mod tests {
             reader.read(&mut [0_u8; 8]).unwrap_err().kind(),
             std::io::ErrorKind::Other
         );
+    }
+
+    struct CancelOnRawRead<R> {
+        inner: R,
+        cancelled: Arc<AtomicBool>,
+        reads: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl<R: Read> Read for CancelOnRawRead<R> {
+        fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+            self.reads.fetch_add(1, Ordering::Relaxed);
+            // One compressed header byte cannot produce decoded TAR output.
+            // Abort inside the first raw read, after the outer guard has passed.
+            let length = output.len().min(1);
+            let read = self.inner.read(&mut output[..length])?;
+            self.cancelled.store(true, Ordering::Relaxed);
+            Ok(read)
+        }
+    }
+
+    impl<R: Seek> Seek for CancelOnRawRead<R> {
+        fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
+            self.inner.seek(position)
+        }
+    }
+
+    fn check_compressed_raw_cancellation<R: Read + Seek + Send>(inner: R, format: ArchiveFormat, file_backed: bool) {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let source = CancelOnRawRead { inner, cancelled: Arc::clone(&cancelled), reads: Arc::clone(&reads) };
+        let mut reader = open_tar_source(source, format, cancelled, limits(10).tar, file_backed).unwrap();
+        for _ in 0..2 {
+            let error = reader.read(&mut [0; 512]).unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::Other);
+            assert!(error.to_string().contains("archive operation aborted"), "{error}");
+            assert_eq!(reads.load(Ordering::Relaxed), 1, "decoder refilled raw input after cancellation");
+        }
+    }
+
+    #[test]
+    fn compressed_raw_refills_stop_before_the_decoder_produces_output() {
+        let raw = fixture_tar();
+        for (format, bytes) in [
+            (ArchiveFormat::TarZstd, zstd::stream::encode_all(raw.as_slice(), 1).unwrap()),
+            (ArchiveFormat::TarBzip2, bzip(&raw)),
+        ] {
+            check_compressed_raw_cancellation(Cursor::new(bytes.as_slice()), format, false);
+            let path = temp_path("tar-raw-cancellation");
+            std::fs::write(&path, &bytes).unwrap();
+            check_compressed_raw_cancellation(File::open(&path).unwrap(), format, true);
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn compressed_buffered_output_still_checks_cancellation() {
+        let raw = fixture_tar();
+        for (format, bytes) in [
+            (ArchiveFormat::TarZstd, zstd::stream::encode_all(raw.as_slice(), 1).unwrap()),
+            (ArchiveFormat::TarBzip2, bzip(&raw)),
+        ] {
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let mut reader = open_tar_source(Cursor::new(bytes), format, Arc::clone(&cancelled), limits(10).tar, false).unwrap();
+            assert_eq!(reader.read(&mut [0; 512]).unwrap(), 512);
+            cancelled.store(true, Ordering::Relaxed);
+            let error = reader.read(&mut [0; 512]).unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::Other);
+            assert!(error.to_string().contains("archive operation aborted"), "{error}");
+        }
+    }
+
+    #[test]
+    fn compressed_concatenation_keeps_later_stream_and_trailer_checks() {
+        let raw = fixture_tar();
+        for format in [ArchiveFormat::TarZstd, ArchiveFormat::TarBzip2] {
+            let encode = |bytes: &[u8]| match format {
+                ArchiveFormat::TarZstd => zstd::stream::encode_all(bytes, 1).unwrap(),
+                ArchiveFormat::TarBzip2 => bzip(bytes),
+                _ => unreachable!(),
+            };
+            // The TAR spans codec members; the second contains a later entry and EOF.
+            let first = encode(&raw[..1024]);
+            let second = encode(&raw[1024..]);
+            let valid = [first.as_slice(), second.as_slice()].concat();
+            let mut corrupt = valid.clone();
+            corrupt[first.len()] ^= 0x80;
+            let truncated = valid[..valid.len() - 1].to_vec();
+            for (bytes, accepted) in [(valid, true), (corrupt, false), (truncated, false)] {
+                let cancelled = || Arc::new(AtomicBool::new(false));
+                let reader = open_tar_source(Cursor::new(bytes.as_slice()), format, cancelled(), limits(10).tar, false).unwrap();
+                let path = temp_path("tar-concatenation");
+                std::fs::write(&path, &bytes).unwrap();
+                let results = [
+                    inspect_tar_reader(reader),
+                    inspect_tar(path.to_str().unwrap(), format, limits(10), cancelled()),
+                ];
+                std::fs::remove_file(path).unwrap();
+                for result in results {
+                    if accepted {
+                        let members = result.unwrap();
+                        assert_eq!(members.iter().map(|member| member.path.as_str()).collect::<Vec<_>>(), ["one.txt", "two.txt"]);
+                        assert!(members.iter().all(|member| member.size == 3));
+                    } else {
+                        assert!(result.is_err(), "later stream corruption or truncation was ignored");
+                    }
+                }
+            }
+        }
     }
 
     #[test]

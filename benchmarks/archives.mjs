@@ -3,8 +3,11 @@ import fs from "node:fs";
 import path from "node:path";
 import JSZip from "jszip";
 import * as tar from "tar";
+import { registerNativeArchives } from "./native-archives.mjs";
 
-export async function registerArchives({ api: a, workspace: w, register: add }) {
+export async function registerArchives(context) {
+  const { api: a, workspace: w, register: add } = context;
+  registerNativeArchives(context);
   const source = path.join(w, "archive-source");
   fs.mkdirSync(source);
   fs.writeFileSync(path.join(source, "entry.json"), '{"ok":true}');
