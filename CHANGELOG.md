@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- Report actionable errno diagnostics from guarded write preparation while preserving error codes, categories, original causes, and already-classified failures.
+
 ### Security
 
 - Use the effective POSIX user identity for secure-file ownership checks, failing closed before reading when ownership checks are enabled and the effective identity or descriptor owner cannot be established; descriptor-bound Windows ACL verification is unchanged.

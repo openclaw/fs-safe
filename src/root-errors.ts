@@ -2,6 +2,12 @@ import { FsSafeError, type FsSafeErrorDetails } from "./errors.js";
 import { hasNodeErrorCode, isNodeError, isNotFoundPathError } from "./path.js";
 
 const REMOVE_NOT_EMPTY_CODES = new Set(["ENOTEMPTY", "EEXIST"]);
+const PINNED_WRITE_ERRNO_MESSAGES = new Map([
+  ["EACCES", "permission denied"],
+  ["EPERM", "permission denied"],
+  ["EROFS", "read-only filesystem"],
+  ["ENOSPC", "no space left on device"],
+]);
 
 export function fileNotFoundError(cause?: unknown, details?: FsSafeErrorDetails): FsSafeError {
   return cause === undefined
@@ -38,7 +44,12 @@ export function normalizePinnedWriteError(error: unknown): Error {
   if (isNotFoundPathError(error)) {
     return fileNotFoundError(error instanceof Error ? error : undefined);
   }
-  return new FsSafeError("invalid-path", "path is not a regular file under root", {
+  const code = isNodeError(error) && typeof error.code === "string" && /^E[A-Z0-9_]+$/.test(error.code)
+    ? error.code : undefined;
+  const message = code
+    ? `${PINNED_WRITE_ERRNO_MESSAGES.get(code) ?? "filesystem write failed"} (${code})`
+    : "path is not a regular file under root";
+  return new FsSafeError("invalid-path", message, {
     cause: error instanceof Error ? error : undefined,
   });
 }

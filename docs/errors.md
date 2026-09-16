@@ -38,6 +38,14 @@ class FsSafeError extends Error {
 
 `cause` is available through the standard `Error` `cause` property when the failure was triggered by a `NodeJS.ErrnoException` (e.g. a wrapped `EACCES`). Inspect it for the original `code` / `errno` / `syscall` if you need finer-grained reporting.
 
+Guarded write preparation describes permission, read-only filesystem, and disk-space
+failures with messages such as `permission denied (EACCES)` or
+`no space left on device (ENOSPC)`. Other errno failures include their code in
+`filesystem write failed (EIO)`. These wrappers retain the existing `invalid-path`
+code and `policy` category for compatibility, along with the original `cause`;
+they do not expose native message text or paths. Already-classified `FsSafeError`
+instances and missing-path errors keep their existing classification.
+
 `details` is an operation-specific receipt, not an alternate error code. For
 example, `publishFileExclusive()` uses it to report the failing phase, created
 target identity, cleanup decision, and failed directory-sync outcome. Narrow
