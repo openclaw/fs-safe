@@ -1,11 +1,9 @@
 import syncFs, { type BigIntStats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
-import path from "node:path";
-import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
+import { assertAsyncDirectoryGuard, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup, sha256Hex } from "./file-identity.js";
-import { withAsyncDirectoryGuards } from "./guarded-mutation.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import { registerTempPathForExit, type TempPathRegistration } from "./temp-cleanup.js";
 
@@ -16,18 +14,6 @@ type SyncOwnerFileSystem = Pick<
 >;
 
 const PUBLISHED_READ_FLAGS = resolveReadOpenFlags();
-
-export async function removePathIfIdentityUnchanged(
-  targetPath: string,
-  identity: Pick<BigIntStats, "dev" | "ino">,
-): Promise<void> {
-  const parentGuard = await createAsyncDirectoryGuard(path.dirname(targetPath), { bigint: true });
-  await withAsyncDirectoryGuards([parentGuard], async () => {
-    const current = syncFs.lstatSync(targetPath, { bigint: true });
-    if (current.isSymbolicLink() || !current.isFile() || !sameFileIdentityForCleanup(current, identity)) return;
-    await fs.unlink(targetPath);
-  });
-}
 
 function assertOwnedFile(stat: BigIntStats, pathname: string, pathnameEntry: boolean): void {
   if (stat.isSymbolicLink()) {
