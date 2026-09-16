@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Security
+
+- Retain source-root and child-directory authority during archive merges, and bind file identity and modes to the single admitted copy descriptor. Source ancestor or leaf replacements, including distinct Windows identities that round to the same number, cannot redirect published bytes; completed publications retain the existing nontransactional cleanup semantics.
+
 ## 0.13.0 - 2026-09-16
 
 ### Highlights
