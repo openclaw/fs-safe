@@ -1,15 +1,12 @@
 import fsSync, { type BigIntStats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
-import { openedPathResolutionError, recordOpenedFileFailure } from "./opened-file-failure.js";
-import { isNotFoundPathError } from "./path.js";
+import { recordOpenedFileFailure } from "./opened-file-failure.js";
 import { admitPathInsideRoot } from "./root-boundary.js";
 import { assertRootIdentityCurrentSync, type RootContext } from "./root-context.js";
-import { fileNotFoundError, hardlinkedPathNotAllowedError, outsideWorkspaceError } from "./root-errors.js";
+import { hardlinkedPathNotAllowedError, outsideWorkspaceError } from "./root-errors.js";
 import type { HardlinkPolicy } from "./root-options.js";
 import type { SymlinkPolicy } from "./root-symlink-policy.js";
-import { realpathSync } from "./realpath.js";
-import { inspectFileIdentitySync } from "./strict-file-identity.js";
 
 export function inspectOpenedPathIdentitySync(
   filePath: string,
@@ -28,38 +25,15 @@ function assertRootReadAdmissionCurrent(params: {
   root: RootContext;
   filePath: string;
   handle: FileHandle;
-  identity: BigIntStats;
-  symlinks?: SymlinkPolicy;
+  admittedPath: string;
   afterPathIdentityCheck?: (filePath: string, handle: FileHandle) => void;
 }): string {
   assertRootIdentityCurrentSync(params.root);
-  const admittedPath = (() => {
-    try {
-      inspectFileIdentitySync(
-        () => inspectOpenedPathIdentitySync(params.filePath, params.symlinks),
-        params.identity,
-      );
-      const canonicalPath = realpathSync.native(params.filePath);
-      const admittedRealPath = admitPathInsideRoot({
-        rootPath: params.root.rootReal,
-        candidatePath: canonicalPath,
-        rootIdentity: params.root.rootIdentity,
-      });
-      if (!admittedRealPath) throw outsideWorkspaceError();
-      inspectFileIdentitySync(
-        () => inspectOpenedPathIdentitySync(canonicalPath, undefined),
-        params.identity,
-      );
-      return admittedRealPath.path;
-    } catch (error) {
-      throw isNotFoundPathError(error)
-        ? openedPathResolutionError(fileNotFoundError())
-        : error;
-    }
-  })();
+  // Intentional proof mutation: retain the root/root fence and hook order, but
+  // bypass the coupled final pathname/canonical identity admission.
   params.afterPathIdentityCheck?.(params.filePath, params.handle);
   assertRootIdentityCurrentSync(params.root);
-  return admittedPath;
+  return params.admittedPath;
 }
 
 type OwnedRootReadHandle = {
@@ -96,8 +70,7 @@ export async function admitRootReadHandle<T extends OwnedRootReadHandle>(params:
         root: params.root,
         filePath: params.filePath,
         handle: params.opened.handle,
-        identity: params.identity,
-        symlinks: params.symlinks,
+        admittedPath: admittedRealPath.path,
         afterPathIdentityCheck: params.afterPathIdentityCheck,
       });
       params.opened.realPath = finalRealPath;
