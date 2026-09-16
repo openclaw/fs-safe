@@ -1,6 +1,7 @@
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { resolveSecureTempRoot, type ResolveSecureTempRootOptions } from "../src/secure-temp-dir.js";
+import { itPosix } from "./helpers/vitest.js";
 
 type TmpDirOptions = ResolveSecureTempRootOptions;
 
@@ -102,7 +103,7 @@ describe("resolveSecureTempRoot", () => {
     expect(tmpdir).not.toHaveBeenCalled();
   });
 
-  it("creates the preferred directory when the parent is writable", () => {
+  itPosix("requires descriptor finalization after a legacy adapter creates the preferred directory", () => {
     const lstatSync = vi
       .fn<NonNullable<TmpDirOptions["lstatSync"]>>()
       .mockImplementationOnce(() => {
@@ -112,7 +113,7 @@ describe("resolveSecureTempRoot", () => {
 
     const { resolved, accessSync, mkdirSync } = resolveWithMocks({ lstatSync });
 
-    expect(resolved).toBe("/tmp/example");
+    expect(resolved).toBe(path.join("/var/fallback", "example-501"));
     expect(accessSync).toHaveBeenCalledWith("/tmp", expect.any(Number));
     expect(mkdirSync).toHaveBeenCalledWith("/tmp/example", { recursive: true, mode: 0o700 });
   });
@@ -133,24 +134,19 @@ describe("resolveSecureTempRoot", () => {
     expect(tmpdir).toHaveBeenCalled();
   });
 
-  it("repairs broad permissions before accepting a directory", () => {
-    let preferredMode = 0o40777;
-    const chmodSync = vi.fn((target: string, mode: number) => {
-      if (target === "/tmp/example" && mode === 0o700) {
-        preferredMode = 0o40700;
-      }
-    });
+  itPosix("does not use a legacy pathname chmod adapter to repair broad permissions", () => {
+    const chmodSync = vi.fn();
     const warn = vi.fn();
 
     const { resolved } = resolveWithMocks({
       chmodSync,
-      lstatSync: vi.fn(() => makeDirStat({ mode: preferredMode })),
+      lstatSync: vi.fn(() => makeDirStat({ mode: 0o40777 })),
       warn,
     });
 
-    expect(resolved).toBe("/tmp/example");
-    expect(chmodSync).toHaveBeenCalledWith("/tmp/example", 0o700);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("[example] tightened permissions"));
+    expect(resolved).toBe(path.join("/var/fallback", "example-501"));
+    expect(chmodSync).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("skips the preferred POSIX path on Windows when requested", () => {

@@ -400,6 +400,7 @@ Consumers that only need this resolver can use the narrow package subpath:
 import {
   resolveSecureTempRoot,
   type ResolveSecureTempRootOptions,
+  type SecureTempRootDescriptorAdapter,
 } from "@openclaw/fs-safe/secure-temp-root";
 ```
 
@@ -424,12 +425,13 @@ type ResolveSecureTempRootOptions = {
   getuid?: () => number | undefined;
   tmpdir?: () => string;
   accessSync?: typeof import("node:fs").accessSync;
-  chmodSync?: typeof import("node:fs").chmodSync;
+  chmodSync?: typeof import("node:fs").chmodSync; // deprecated, never read or called
+  descriptor?: SecureTempRootDescriptorAdapter; // complete bundle; see below
   lstatSync?: (path: string) => {
     isDirectory(): boolean;
     isSymbolicLink(): boolean;
-    mode?: number;
-    uid?: number;
+    mode?: number | bigint;
+    uid?: number | bigint;
   };
   mkdirSync?: (
     path: string,
@@ -447,6 +449,61 @@ owned by the current user without group/world write bits. It creates or repairs
 the fallback to mode `0o700` where mode bits apply. If it cannot establish that
 state, it throws an ordinary `Error`; there is no native mode or
 `helper-unavailable` branch on this API.
+
+Existing secure directories retain the one-`lstat`/access fast path, with no
+descriptor open or chmod. On POSIX, a directory created by this call is instead
+finalized through a pinned descriptor and must finish at exactly `0o700`, even
+when a privileged caller can access its initial restrictive mode. A concurrent
+recursive-`mkdir` winner is inspected as an untrusted existing directory.
+Broad-mode repair also uses a pinned descriptor; there is no pathname chmod.
+
+Repair and finalization require a known nonnegative safe-integer UID and exact
+bigint device, inode, owner, mode, and directory-type facts. They open with
+`O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK`, verify the descriptor and
+current directory entry against the initial receipt before `fchmod`, then
+verify identity, permissions, and write/search access again before closing.
+Trailing separators are stripped only for entry inspection, preserving filesystem
+roots and symlink-sensitive `..` components. Unknown, numeric, or malformed
+identity facts cannot authorize a mutation. A failed chmod is tolerated only for
+the existing `EPERM`/`EACCES`/`ENOENT` cases when the same exact pinned directory
+has concurrently become safe and accessible; it emits no repair warning.
+
+There is no search-only descriptor or `/proc` fallback. A newly created `000`
+directory that cannot be opened read-only is left in place; the resolver tries
+the secure fallback or throws. Actual Windows uses directory-type and access
+checks and performs no POSIX chmod, regardless of an injected `platform` value.
+Failures keep the ordinary `Error` contract; available underlying repair and
+close failures are retained in `cause`, including paired errors.
+
+The optional descriptor adapter is a complete authority bundle:
+
+```ts
+type SecureTempRootDescriptorAdapter = {
+  lstatSync(path: string, options: { bigint: true }): Pick<import("node:fs").BigIntStats,
+    "dev" | "ino" | "uid" | "mode" | "isDirectory" | "isSymbolicLink">;
+  fstatSync(fd: number, options: { bigint: true }): ReturnType<SecureTempRootDescriptorAdapter["lstatSync"]>;
+  openSync(path: string, flags: number): number;
+  fchmodSync(fd: number, mode: number): void;
+  closeSync(fd: number): void;
+  constants: { O_RDONLY: number; O_DIRECTORY: number; O_NOFOLLOW: number; O_NONBLOCK: number };
+};
+```
+
+Options, adapter functions, and flags are captured synchronously before callbacks.
+On POSIX a complete bundle supplies exact admission and repair observations,
+taking precedence over the legacy `lstatSync` hook. Partial bundles or unavailable
+flags make repair/finalization unavailable. Injecting `lstatSync`, `accessSync`,
+or `mkdirSync` disables the default host descriptor bundle. Injected observations
+also require an explicit `mkdirSync` for creation; supplying a descriptor bundle
+likewise never implicitly authorizes host mkdir. A custom mkdir requires the
+complete descriptor bundle for POSIX finalization. The deprecated `chmodSync`
+option is inert and alone does not disable normal host behavior.
+
+These checks bind chmod to the admitted object and reject observed replacements;
+the returned path is not a retained capability. Pathname access and identity
+checks remain separate syscalls, and another process can replace the path after
+the final check. Applications still need a trusted namespace or OS isolation
+when other processes can mutate it.
 
 ## Common patterns
 

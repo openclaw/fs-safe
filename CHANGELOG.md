@@ -4,6 +4,7 @@
 
 ### Security
 
+- Bind secure-temp mode repair and created-directory finalization to exact owned no-follow descriptors, removing pathname chmod and rejecting observed replacements; require a complete explicit descriptor adapter for injected filesystems, retain the deprecated unused chmod hook, and preserve the secure existing-directory fast path plus Windows type/access admission.
 - Use the effective POSIX user identity for secure-file ownership checks, failing closed before reading when ownership checks are enabled and the effective identity or descriptor owner cannot be established; descriptor-bound Windows ACL verification is unchanged.
 - Isolate the manual split-credential proof across separate candidate, historical, and clean execution runners, bind bounded build artifacts to exact provenance, and run only root-staged, identity-checked proof tools and harness files.
 - Authenticate the manual proof runtime against pinned official Node archives before checkout, keep staging private under a verified system parent, and diagnose dropped-credential startup, traversal, and authenticated code-read admission with bounded inline probes before the unchanged seven behavioral cases.

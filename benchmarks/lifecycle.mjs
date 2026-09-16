@@ -3,6 +3,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { registerTempWorkspaceCoverage } from "./temp-workspace-fixtures.mjs";
+import { registerSecureTempRootCoverage } from "./secure-temp-root-fixtures.mjs";
 
 export async function registerLifecycle({ api: a, workspace: w, native, binding, register: add, contract, onCleanup, args }) {
   const cloneBackend = a.probeTreeClone(w);
@@ -107,7 +108,7 @@ export async function registerLifecycle({ api: a, workspace: w, native, binding,
   add("writeSiblingTempFile", () => a.writeSiblingTempFile({ dir: w, writeTemp: (p) => fsp.writeFile(p, data), resolveFinalPath: () => output }));
   add("writeViaSiblingTempPath", () => a.writeViaSiblingTempPath({ rootDir: w, targetPath: output, writeTemp: (p) => fsp.writeFile(p, data) }));
   const tempOptions = { rootDir: w, prefix: "fixture" };
-  add("resolveSecureTempRoot", () => a.resolveSecureTempRoot({ preferredDir: secretRoot, fallbackPrefix: "fs-safe-benchmark" }), { sync: true });
+  registerSecureTempRootCoverage({ api: a, workspace: w, register: add });
   for (const suffix of ["", "Sync"]) {
     const name = `tempWorkspace${suffix}`;
     const type = `TempWorkspace${suffix}`;

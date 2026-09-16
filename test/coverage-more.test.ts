@@ -4,7 +4,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { expectFsSafeError } from "./helpers/security.js";
-import { useTempDirs } from "./helpers/vitest.js";
+import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { createMaxBytesTransform } from "../src/bounded-read-stream.js";
 import {
   assertAsyncDirectoryGuard,
@@ -58,11 +58,11 @@ afterEach(async () => {
 });
 
 describe("secure temp root fallback coverage", () => {
-  it("creates the uid-less fallback when no preferred directory is configured", () => {
+  itPosix("rejects creation without a known UID or descriptor finalization", () => {
     const fallbackPath = path.join("/tmp", "fs-safe-test");
     let created = false;
 
-    const resolved = resolveSecureTempRoot({
+    expect(() => resolveSecureTempRoot({
       fallbackPrefix: "fs-safe-test",
       getuid: () => undefined,
       lstatSync: vi.fn((candidate: string) => {
@@ -80,9 +80,8 @@ describe("secure temp root fallback coverage", () => {
       accessSync: vi.fn(),
       tmpdir: () => "/tmp",
       warn: vi.fn(),
-    });
-
-    expect(resolved).toBe(fallbackPath);
+    })).toThrow("Unsafe fallback");
+    expect(created).toBe(true);
   });
 
   it("rejects an unsafe fallback directory that cannot be repaired", () => {
@@ -101,11 +100,11 @@ describe("secure temp root fallback coverage", () => {
     ).toThrow("Unsafe fallback test temp");
   });
 
-  it("accepts a fallback directory after a chmod-denied recheck proves it safe", () => {
+  itPosix("does not repair a legacy-only fallback by adopting later pathname observations", () => {
     const fallbackPath = path.join("/tmp", "fs-safe-test-501");
     let calls = 0;
 
-    const resolved = resolveSecureTempRoot({
+    expect(() => resolveSecureTempRoot({
       fallbackPrefix: "fs-safe-test",
       getuid: () => 501,
       lstatSync: vi.fn((candidate: string) => {
@@ -120,9 +119,8 @@ describe("secure temp root fallback coverage", () => {
       accessSync: vi.fn(),
       tmpdir: () => "/tmp",
       warn: vi.fn(),
-    });
-
-    expect(resolved).toBe(fallbackPath);
+    })).toThrow("Unsafe fallback");
+    expect(calls).toBe(1);
   });
 });
 

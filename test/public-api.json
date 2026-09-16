@@ -529,6 +529,7 @@
       ],
       "types": [
         "ResolveSecureTempRootOptions",
+        "SecureTempRootDescriptorAdapter",
         "TempPathIdentityReceipt",
         "TempWorkspace",
         "TempWorkspaceCleanupResult",
@@ -543,7 +544,8 @@
         "resolveSecureTempRoot"
       ],
       "types": [
-        "ResolveSecureTempRootOptions"
+        "ResolveSecureTempRootOptions",
+        "SecureTempRootDescriptorAdapter"
       ],
       "errorCodes": {}
     },

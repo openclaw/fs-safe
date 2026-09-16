@@ -121,6 +121,13 @@ returned bytes. Detection uses the selected `--dist` directory, so a saved
 current build is not mistaken for a legacy baseline. These labels retain
 `readSecureFile` callable coverage; rejection timing is not successful-read timing.
 
+`resolveSecureTempRoot/existing`, `/create`, `/repair`, and `/reject` distinguish
+the secure-directory fast path, creation/finalization, mode repair, and unsafe
+fallback rejection. Fixture setup, permission resets, result/mode verification,
+and cleanup run outside timing. The repair row is explicitly skipped on
+Windows, where this resolver performs no POSIX chmod. Use the same harness with
+`--filter resolveSecureTempRoot/` in native `off` and `require` comparisons.
+
 For a quick executable coverage check:
 
 ```sh
