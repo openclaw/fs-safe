@@ -7,6 +7,10 @@ import { sameFileIdentityForCleanup, type FileIdentityStat } from "./file-identi
 import { assertSafePathSegment, sanitizeSafePathSegment, trimHyphenEdges } from "./safe-path-segment.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
 import { registerTempPathForExit } from "./temp-cleanup.js";
+import type {
+  TempWorkspaceCleanupOwner as TempWorkspaceCleanupOwnerType,
+  TempWorkspaceCleanupSafety,
+} from "./temp-workspace-owner.js";
 
 export type TempFile = {
   dir: string;
@@ -21,6 +25,7 @@ type TempFileOptions = {
   prefix: string;
   fileName?: string;
   onCleanupError?: (error: unknown) => void;
+  cleanupSafety?: TempWorkspaceCleanupSafety;
 };
 
 const HYPHEN_CHAR_CODE = 0x2d;
@@ -150,12 +155,73 @@ function resolveTempRoot(rootDir?: string): string {
   return path.resolve(rootDir ?? resolveSecureTempRoot({ fallbackPrefix: "fs-safe" }));
 }
 
+function resolveTempFileCleanupSafety(
+  value: TempWorkspaceCleanupSafety | undefined,
+): TempWorkspaceCleanupSafety {
+  if (value === undefined || value === "compatible") return "compatible";
+  if (value === "require-bounded") return value;
+  throw new TypeError("cleanupSafety must be compatible or require-bounded");
+}
+
 export async function createOwnedTempFile(params: TempFileOptions): Promise<{
   target: TempFile;
   identity: Readonly<Pick<fsSync.BigIntStats, "dev" | "ino">>;
 }> {
+  const cleanupSafety = resolveTempFileCleanupSafety(params.cleanupSafety);
   const rootDir = resolveTempRoot(params.rootDir);
   const prefix = `${sanitizePrefix(params.prefix)}-`;
+  if (cleanupSafety === "require-bounded") {
+    const { TempWorkspaceCleanupCapability, TempWorkspaceCleanupOwner } =
+      await import("./temp-workspace-owner.js");
+    const capability = new TempWorkspaceCleanupCapability(rootDir, cleanupSafety);
+    let dir: string;
+    let identity: fsSync.BigIntStats;
+    let cleanupOwner: TempWorkspaceCleanupOwnerType | undefined;
+    let unregisterTempDir: () => void;
+    try {
+      dir = await fs.mkdtemp(path.join(rootDir, prefix));
+      identity = fsSync.lstatSync(dir, { bigint: true });
+      capability.assertCurrent();
+      cleanupOwner = new TempWorkspaceCleanupOwner(dir, identity, capability);
+      unregisterTempDir = registerTempPathForExit(dir, {
+        cleanupSync: () => cleanupOwner!.cleanupSync(),
+      });
+    } catch (error) {
+      try {
+        if (cleanupOwner) cleanupOwner.cleanupSync();
+        else capability.close();
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], "temp file creation and cleanup both failed");
+      }
+      throw error;
+    }
+    const owner = cleanupOwner!;
+    const file = (fileName?: string) =>
+      path.join(dir, sanitizeTempFileName(fileName ?? params.fileName ?? "download.bin"));
+    const cleanup = async () => {
+      try {
+        try {
+          await owner.cleanup();
+        } catch (err) {
+          if (!isNodeErrorWithCode(err, "ENOENT")) {
+            params.onCleanupError?.(err);
+          }
+        }
+      } finally {
+        unregisterTempDir();
+      }
+    };
+    return {
+      target: {
+        dir,
+        path: file(),
+        file,
+        cleanup,
+        [Symbol.asyncDispose]: cleanup,
+      },
+      identity: Object.freeze({ dev: identity.dev, ino: identity.ino }),
+    };
+  }
   const dir = await fs.mkdtemp(path.join(rootDir, prefix));
   // Windows file indexes can exceed Number.MAX_SAFE_INTEGER. Cleanup receipts
   // must retain the exact identity or adjacent directories can compare equal.
