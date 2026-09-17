@@ -242,7 +242,9 @@ export class AsyncAtomicTempOwner {
       if (sha256Hex(await published.readFile()) !== expectedHash) {
         throw new FsSafeError("path-mismatch", `Atomic replace published content changed: ${pathname}`);
       }
-      await this.#handle?.close();
+      const previousHandle = this.#handle;
+      this.#handle = undefined;
+      await previousHandle?.close();
       this.#handle = published;
       this.#identity = identity;
       published = undefined;
@@ -277,8 +279,10 @@ export class AsyncAtomicTempOwner {
       }
     }
     if (cleanupComplete) this.#unregister();
+    const handle = this.#handle;
+    this.#handle = undefined;
     try {
-      await this.#handle?.close();
+      await handle?.close();
     } catch (closeError) {
       deferredError = deferredError
         ? new AggregateError([deferredError, closeError], "Atomic temp cleanup and close failed")

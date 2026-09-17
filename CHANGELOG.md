@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixes and compatibility
+
+- Consume async atomic temp-owner adapter handles before awaiting `close()`. An adapter close that releases its resource and then rejects is reported without retrying that same retained handle during publication recovery or terminal settlement; a locally opened publication handle still receives its existing best-effort close attempt.
+
+### Validation
+
+- Add owner-level and public-boundary close-rejection regressions plus a receipt-bound real-filesystem benchmark for the successful async replacement and terminal-finish path.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights

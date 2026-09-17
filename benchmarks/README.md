@@ -39,6 +39,15 @@ cases exclude later close/release, which have their own rows. Representative
 payload assertions run outside measurement. Reads cover 128 B, 64 KiB, 1 MiB,
 2 MiB, the default Root budget of 16 MiB, and an explicit 32 MiB budget;
 writes compare both durability settings without changing package defaults.
+The `replaceFileAtomic/terminal-handle-finish` row measures a successful public
+async rename with an existing target and a 32-byte payload, including terminal
+owner settlement and handle close. Its immutable workload receipt records the
+public operation, outcome, payload, durability options, timed boundary, and
+verification contract. Every invocation creates its fixture before timing, then
+checks the exact return value, published bytes, and absence of owned sibling
+temps before removing the fixture after timing. Injected close-rejection behavior
+belongs to correctness tests and is not represented as a portable filesystem
+performance workload.
 Thirty-six synchronous file-store directory-mode rows cross existing matching,
 existing mismatched, and wholly new directory chains at depths 0/4/16 with both
 durability and private-mode settings. Fixture creation, mode setup, verification,
