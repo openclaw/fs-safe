@@ -323,6 +323,8 @@ export async function copyFallbackReplace(params: {
   });
   const { replacement } = source;
   let destHandle: FileHandle | null = null;
+  let operationSucceeded = false;
+  let closeRequiredForSuccess = false;
   try {
     if (params.restore === "restore-original") {
       const pinned = await openPinnedDestination(
@@ -366,14 +368,24 @@ export async function copyFallbackReplace(params: {
         OPEN_WRITE_EXCLUSIVE_FLAGS,
         source.mode & 0o777,
       );
+      closeRequiredForSuccess = !params.sync;
       await destHandle.writeFile(replacement);
       await destHandle.chmod(source.mode);
       if (params.sync) {
         await destHandle.sync();
       }
     }
+    operationSucceeded = true;
   } finally {
-    await destHandle?.close().catch(() => undefined);
+    if (destHandle) {
+      try {
+        await destHandle.close();
+      } catch (closeError) {
+        if (operationSucceeded && closeRequiredForSuccess) {
+          throw closeError;
+        }
+      }
+    }
   }
 }
 
@@ -395,6 +407,8 @@ export function copyFallbackReplaceSync(params: {
   });
   const { replacement } = source;
   let destFd: number | undefined;
+  let operationSucceeded = false;
+  let closeRequiredForSuccess = false;
   try {
     if (params.restore === "restore-original") {
       const pinned = openPinnedDestinationSync(
@@ -438,18 +452,22 @@ export function copyFallbackReplaceSync(params: {
         OPEN_WRITE_EXCLUSIVE_FLAGS,
         source.mode & 0o777,
       );
+      closeRequiredForSuccess = !params.sync;
       writeAllSync(params.fsModule, destFd, replacement);
       params.fchmodSync?.(destFd, source.mode);
       if (params.sync) {
         params.fsModule.fsyncSync(destFd);
       }
     }
+    operationSucceeded = true;
   } finally {
     if (destFd !== undefined) {
       try {
         params.fsModule.closeSync(destFd);
-      } catch {
-        // Best-effort close after fallback replacement.
+      } catch (closeError) {
+        if (operationSucceeded && closeRequiredForSuccess) {
+          throw closeError;
+        }
       }
     }
   }

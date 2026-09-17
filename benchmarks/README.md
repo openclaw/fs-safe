@@ -91,7 +91,12 @@ regressions above 20% or 100 us. Forced permission-error replacement cases exerc
 filesystem adapter with 128 B, 1 MiB, and 16 MiB payloads, both restoration
 policies, and both sync/async methods. Temp-file and parent syncing are disabled
 for these cases; `restore-original` still includes its required destination
-sync. Fixture reset remains outside timing.
+sync. Each row carries an immutable receipt for the public method, forced
+`EPERM` trigger, existing-file layout, restore policy, payload size, sync
+settings, and timed/untimed boundaries. Report admission requires the exact
+selected row set without skips, the divisor-adjusted iteration count, and the
+unchanged receipt. Fixture reset, result/content verification, and confirmation
+that no owned staging temp remains are outside timing.
 Name-collection cases cover ASCII, NFC, and decomposed paths at depths 1/8/32;
 rejected paths and store keys; 2,048-member ZIPs with shallow/deep ASCII and
 Unicode names; and long callback-output filenames. The 17 filename-sanitizer

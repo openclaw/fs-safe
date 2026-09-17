@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Atomic replacement
+
+- Propagate asynchronous and synchronous destination-writer close failures after an otherwise successful unsynchronized copy fallback when a new destination writer is opened, including `copyFallbackRestore: "restore-original"` with an absent destination. Preserve any earlier operation failure exactly, including falsy thrown values, and attempt the destination close only once; the destination may already be replaced or partial when the close reports failure.
+- Bind the existing public copy-fallback success benchmarks to immutable workload receipts and fail report admission on missing, skipped, mutated, mis-filtered, or incorrectly iterated rows. Fixture reset, receipt/content checks, and staging-temp verification remain outside timing.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights

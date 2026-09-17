@@ -1,4 +1,5 @@
 import { sidecarPathSnapshotCases } from "../../benchmarks/sidecar-path-snapshot.mjs";
+import { copyFallbackSuccessDescriptors } from "../../benchmarks/copy-fallback-success.mjs";
 
 function measured(row: object, sampleCount: number, iterations: number) {
   return {
@@ -20,5 +21,10 @@ export function completeSyntheticBenchmarkResults(sampleCount: number, iteration
   return [
     measured({ name: "root" }, sampleCount, iterations),
     ...sidecarRows.map((row) => measured(row, sampleCount, iterations)),
+    ...copyFallbackSuccessDescriptors().map((row) => measured({
+      name: row.name,
+      workloadSemantics: row.workloadSemantics,
+      workloadDetails: row.workloadDetails,
+    }, sampleCount, Math.max(1, Math.floor(iterations / row.divisor)))),
   ];
 }
