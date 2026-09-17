@@ -1,0 +1,64 @@
+name: sync lockRoot performance proof (draft)
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_ref:
+        description: Exact 40-hex candidate commit containing the reviewed production fix
+        required: true
+        type: string
+      expected_harness_sha:
+        description: Exact 40-hex workflow commit reviewed as the measurement harness
+        required: true
+        type: string
+      expected_workflow_database_id:
+        description: Predeclared GitHub Actions workflow database ID
+        required: true
+        type: string
+      expected_workflow_file_sha256:
+        description: SHA-256 of the workflow blob at the reviewed harness commit
+        required: true
+        type: string
+      expected_actions_run_number:
+        description: Exact next run_number predeclared before dispatch; any race abandons the campaign
+        required: true
+        type: number
+      campaign_initialized_at:
+        description: Exact RFC3339 creation time of the write-once campaign state
+        required: true
+        type: string
+      campaign_id:
+        description: Predeclared UUIDv4 shared by the hosted run and both WSL2 captures
+        required: true
+        type: string
+      wsl2_node_22_capture:
+        description: Predeclared single-use UUIDv4 for the Node 22 WSL2 capture
+        required: true
+        type: string
+      wsl2_node_24_capture:
+        description: Predeclared single-use UUIDv4 for the Node 24 WSL2 capture
+        required: true
+        type: string
+      expected_crabbox_version:
+        description: Exact inspected output of crabbox --version for both WSL2 captures
+        required: true
+        type: string
+      acknowledge_draft:
+        description: Run the costly serialized draft campaign; this is not release clearance without WSL2
+        required: true
+        default: false
+        type: boolean
+
+permissions: {}
+
+jobs:
+  registration-only:
+    name: Refuse registration-only execution
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Require an exact reviewed campaign ref
+        shell: bash
+        run: |
+          printf '%s\n' 'Registration only; dispatch an exact reviewed campaign ref.' >&2
+          exit 1
