@@ -119,16 +119,67 @@ it.each(["include", "descend"] as const)("propagates rejected %s decisions", asy
   })).rejects.toBe(failure);
 });
 
-it.each(["include", "descend"] as const)("rejects non-boolean %s decisions", async (callback) => {
-  const directory = await tempRoot("fs-safe-walk-invalid-filter-");
+it.each(["include", "descend"] as const)("preserves resolved %s truthiness and nullish defaults", async (callback) => {
+  const directory = await tempRoot("fs-safe-walk-compatible-filter-");
   await fs.mkdir(path.join(directory, "nested"));
-  for (const value of ["false", undefined, null, 1]) {
+  await fs.writeFile(path.join(directory, "nested", "value.txt"), "value");
+  for (const { value, selected } of [
+    { value: "false", selected: true },
+    { value: undefined, selected: true },
+    { value: null, selected: true },
+    { value: 1, selected: true },
+    { value: {}, selected: true },
+    { value: "", selected: false },
+    { value: 0, selected: false },
+    { value: false, selected: false },
+  ]) {
     for (const asynchronous of [false, true]) {
-      await expect(walkDirectory(directory, {
+      const result = await walkDirectory(directory, {
         [callback]: () => (asynchronous ? Promise.resolve(value) : value) as never,
-      })).rejects.toThrow(`walkDirectory ${callback} callback must return a boolean`);
+      });
+      expect(result.entries.map((entry) => entry.relativePath)).toEqual(
+        selected ? ["nested", path.join("nested", "value.txt")]
+          : callback === "include" ? [] : ["nested"],
+      );
     }
   }
+});
+
+it.each(["include", "descend"] as const)("uses native await semantics for %s promise decisions", async (callback) => {
+  const directory = await tempRoot("fs-safe-walk-native-await-");
+  await fs.mkdir(path.join(directory, "nested"));
+  await fs.writeFile(path.join(directory, "nested", "value.txt"), "value");
+  const decision = Promise.resolve(false);
+  Object.defineProperty(decision, "then", {
+    get() { throw new Error("native await must not read an overridden then property"); },
+  });
+  const result = await walkDirectory(directory, { [callback]: () => decision });
+  expect(result.entries.map((entry) => entry.relativePath)).toEqual(callback === "include" ? [] : ["nested"]);
+});
+
+it.each(["include", "descend"] as const)("reads a %s thenable accessor once with its original receiver", async (callback) => {
+  const directory = await tempRoot("fs-safe-walk-thenable-await-");
+  await fs.mkdir(path.join(directory, "nested"));
+  await fs.writeFile(path.join(directory, "nested", "value.txt"), "value");
+  let reads = 0;
+  let invocations = 0;
+  const result = await walkDirectory(directory, {
+    [callback]: () => {
+      invocations += 1;
+      const decision = {
+        get then() {
+          reads += 1;
+          return function (this: unknown, resolve: (value: boolean) => void) {
+            expect(this).toBe(decision);
+            resolve(false);
+          };
+        },
+      };
+      return decision as never;
+    },
+  });
+  expect(reads).toBe(invocations);
+  expect(result.entries.map((entry) => entry.relativePath)).toEqual(callback === "include" ? [] : ["nested"]);
 });
 
 it.each(["include", "descend"] as const)("rejects falsy non-callable %s callbacks", async (callback) => {

@@ -69,11 +69,9 @@ function validateWalkOptions(options: Pick<WalkDirectoryOptions, "maxDepth" | "m
   }
 }
 
-function validateFilterResult(name: "include" | "descend", result: unknown): boolean {
-  if (typeof result !== "boolean") {
-    throw new TypeError(`walkDirectory ${name} callback must return a boolean`);
-  }
-  return result;
+function isObjectResult(result: unknown): result is object {
+  return result !== null &&
+    (typeof result === "object" || typeof result === "function");
 }
 
 function kindForDirent(dirent: fsSync.Dirent): WalkEntryKind {
@@ -248,7 +246,7 @@ export async function walkDirectory(
       const entry = buildEntry({ relativePath, fullPath, dirent, depth, kind });
       const include = options.include;
       const included: unknown = include == null ? true : Reflect.apply(include, options, [entry]);
-      if (typeof included === "boolean" ? included : validateFilterResult("include", await included)) {
+      if ((isObjectResult(included) ? await included : included) ?? true) {
         result.entries.push(entry);
       }
       if (
@@ -257,7 +255,7 @@ export async function walkDirectory(
       ) {
         const descend = options.descend;
         const descended: unknown = descend == null ? true : Reflect.apply(descend, options, [entry]);
-        if (typeof descended === "boolean" ? descended : validateFilterResult("descend", await descended)) {
+        if ((isObjectResult(descended) ? await descended : descended) ?? true) {
           await visit(fullPath, relativePath, depth + 1);
           if (result.truncated) return;
         }

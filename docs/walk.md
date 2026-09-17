@@ -59,13 +59,20 @@ type WalkDirectoryOptions = {
   include?: (entry: WalkDirectoryEntry) => boolean;
   descend?: (entry: WalkDirectoryEntry) => boolean;
 };
+
+type AsyncWalkDirectoryOptions = Omit<WalkDirectoryOptions, "include" | "descend"> & {
+  include?: (entry: WalkDirectoryEntry) => boolean | Promise<boolean>;
+  descend?: (entry: WalkDirectoryEntry) => boolean | Promise<boolean>;
+};
 ```
 
 `symlinks` defaults to `"skip"`. `"include"` returns symlink entries without following them. `"follow"` resolves symlinks with `stat()` and may descend into linked directories, so use it only when that is intentional. Already-visited real directories are skipped so symlink cycles do not recurse forever.
 
 `include` controls which entries are returned. `descend` controls which directory entries are traversed. A skipped directory can still be returned if `include` accepts it.
 
-The asynchronous `walkDirectory()` also accepts `AsyncWalkDirectoryOptions`, whose `include` and `descend` callbacks can return `boolean | Promise<boolean>`. It resolves each selection before calling `descend`, and resolves descent before reading the directory's children. Decisions run serially in the existing filesystem-order depth-first traversal. Synchronous callbacks and absent callbacks do not add asynchronous handoffs. Both callbacks retain the supplied options object as their `this` receiver.
+The asynchronous `walkDirectory()` accepts `AsyncWalkDirectoryOptions`. It resolves each `include` decision before calling `descend`, and resolves descent before reading the directory's children. Decisions run serially in the existing filesystem-order depth-first traversal. Both callbacks retain the supplied options object as their `this` receiver.
+
+Absent callbacks and primitive results keep the synchronous selection path. Object and function results are awaited directly, including promises and thenables. For JavaScript callers, nullish results retain the default `true`; other resolved values use their existing truthiness. Return booleans or promises of booleans for the typed API.
 
 ```ts
 import fs from "node:fs/promises";
@@ -81,7 +88,7 @@ const scan = await walkDirectory("/safe/workspace", {
 });
 ```
 
-This prunes a directory after finding its marker without listing that directory's children. Callback throws and promise rejections reject the walk; they are not directory failures in `failedDirs`. A callback result other than a boolean rejects with `TypeError`. Filtering still consumes the examined-entry budget. `WalkDirectoryOptions` and `walkDirectorySync()` remain synchronous; the async options do not add confinement or cancellation to the standalone walker.
+This prunes a directory after finding its marker without listing that directory's children. Callback throws and promise rejections reject the walk; they are not directory failures in `failedDirs`. Filtering still consumes the examined-entry budget. `WalkDirectoryOptions` and `walkDirectorySync()` remain synchronous; the async options do not add confinement or cancellation to the standalone walker.
 
 Unreadable directories are skipped rather than throwing, but every skipped directory is recorded in `failedDirs`. This keeps the helper suitable for best-effort inventories while letting pruning jobs tell an incomplete scan from an empty one: a destructive reconcile that deletes state for paths missing from `entries` must first confirm `failedDirs` holds no real read failures, or a transient `EIO`/`EACCES` blip would be mistaken for mass deletion. Use a stricter root-bounded operation when every entry must be accounted for.
 
@@ -141,7 +148,9 @@ If a thrown walk failure and directory close both fail, disposal throws a
 `SuppressedError` with the close failure in `error` and the original failure in
 `suppressed`, preserving both causes.
 
-`entryFilter` is evaluated for each resolved file, directory, or other entry:
+`entryFilter` is evaluated for each resolved file, directory, or other entry.
+The `RootWalkEntryFilter` callback returns a `RootWalkEntryFilterResult`
+or a `Promise<RootWalkEntryFilterResult>`:
 
 ```ts
 for await (const entry of capability.walk("", {
@@ -165,10 +174,43 @@ The result values are `"include"`, `"skip"`, and `"skip-subtree"`. Plain
 `"skip-subtree"` omits that directory and prunes its descendants. Returning
 `"skip-subtree"` for a non-directory is equivalent to `"skip"`.
 
+An asynchronous filter can inspect a marker before deciding whether to prune:
+
+```ts
+for await (const entry of capability.walk("", {
+  symlinkPolicy: "skip",
+  entryFilter: async (entry) => {
+    if (
+      entry.kind === "directory" &&
+      await capability.exists(`${entry.relativePath}/SKILL.md`)
+    ) {
+      return "skip-subtree";
+    }
+    return "include";
+  },
+})) {
+  consume(entry);
+}
+```
+
+Filters run serially outside metadata batches and retain the supplied options
+object as their `this` receiver. When an awaited filter resolves, the walk
+checks cancellation and revalidates the current listing directory and Root
+identities before using the decision. These checks do not refresh the entry's
+captured metadata or pin a later operation.
+
+Cancellation and iterator disposal wait for a pending filter to settle. The
+walk does not race the callback against the abort signal or close its directory
+while the callback is running; callbacks must settle their own work for
+cancellation to finish. Callback throws and promise rejections reject the walk
+through its normal cleanup path, even with `onDirectoryError: "skip-and-report"`.
+
 `onDirectoryError` defaults to `"throw"`, preserving the original fail-fast
 contract. `"skip-and-report"` yields a discriminated
 `{ kind: "directory-error", relativePath, size: 0, error }` marker for a
 directory that cannot be resolved or listed, then continues with its siblings.
+This policy also applies when the directory or Root identity recheck after an
+awaited filter fails; callback failures themselves are not directory errors.
 Every examined directory entry consumes `maxEntries` before filtering, so
 `"skip"` cannot turn the iterator into an unbounded traversal. Reporting and
 `"truncated"` markers describe already-reached state and do not authorize

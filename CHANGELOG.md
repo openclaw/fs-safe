@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Allow asynchronous `include` and `descend` callbacks in `walkDirectory()` for serial file selection and marker-based pruning; retain synchronous walker options, callback receivers, and examined-entry budgets.
+- Allow asynchronous `include`/`descend` in `walkDirectory()` and `entryFilter` in `Root.walk()` for serial selection and marker-based pruning, retaining callback receivers and budgets; Root walks settle pending callbacks and recheck cancellation and directory/root identity before using awaited decisions.
 
 ## 0.14.0 - 2026-09-17
 
