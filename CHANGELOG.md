@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Update development tooling to @napi-rs/cli 3.10.0, Node type definitions 26.6.0, and the coordinated Vitest/coverage 5.0.1 patch release.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights
