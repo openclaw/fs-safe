@@ -65,6 +65,24 @@ type WalkDirectoryOptions = {
 
 `include` controls which entries are returned. `descend` controls which directory entries are traversed. A skipped directory can still be returned if `include` accepts it.
 
+The asynchronous `walkDirectory()` also accepts `AsyncWalkDirectoryOptions`, whose `include` and `descend` callbacks can return `boolean | Promise<boolean>`. It resolves each selection before calling `descend`, and resolves descent before reading the directory's children. Decisions run serially in the existing filesystem-order depth-first traversal. Synchronous callbacks and absent callbacks do not add asynchronous handoffs. Both callbacks retain the supplied options object as their `this` receiver.
+
+```ts
+import fs from "node:fs/promises";
+import path from "node:path";
+
+const scan = await walkDirectory("/safe/workspace", {
+  include: (entry) => entry.kind === "file",
+  descend: async (entry) => {
+    const marked = await fs.access(path.join(entry.path, "SKILL.md"))
+      .then(() => true, () => false);
+    return !marked;
+  },
+});
+```
+
+This prunes a directory after finding its marker without listing that directory's children. Callback throws and promise rejections reject the walk; they are not directory failures in `failedDirs`. A callback result other than a boolean rejects with `TypeError`. Filtering still consumes the examined-entry budget. `WalkDirectoryOptions` and `walkDirectorySync()` remain synchronous; the async options do not add confinement or cancellation to the standalone walker.
+
 Unreadable directories are skipped rather than throwing, but every skipped directory is recorded in `failedDirs`. This keeps the helper suitable for best-effort inventories while letting pruning jobs tell an incomplete scan from an empty one: a destructive reconcile that deletes state for paths missing from `entries` must first confirm `failedDirs` holds no real read failures, or a transient `EIO`/`EACCES` blip would be mistaken for mass deletion. Use a stricter root-bounded operation when every entry must be accounted for.
 
 ## Root-bounded async iteration

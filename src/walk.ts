@@ -27,6 +27,11 @@ export type WalkDirectoryOptions = {
   descend?: (entry: WalkDirectoryEntry) => boolean;
 };
 
+export type AsyncWalkDirectoryOptions = Omit<WalkDirectoryOptions, "include" | "descend"> & {
+  include?: (entry: WalkDirectoryEntry) => boolean | Promise<boolean>;
+  descend?: (entry: WalkDirectoryEntry) => boolean | Promise<boolean>;
+};
+
 export type WalkDirectoryFailure = {
   path: string;
   relativePath: string;
@@ -53,7 +58,7 @@ function validateWalkBudget(name: string, value: number | undefined): void {
   }
 }
 
-function validateWalkOptions(options: WalkDirectoryOptions): void {
+function validateWalkOptions(options: Pick<WalkDirectoryOptions, "maxDepth" | "maxEntries" | "symlinks">): void {
   validateWalkBudget("maxDepth", options.maxDepth);
   validateWalkBudget("maxEntries", options.maxEntries);
   if (
@@ -64,6 +69,13 @@ function validateWalkOptions(options: WalkDirectoryOptions): void {
   }
 }
 
+function validateFilterResult(name: "include" | "descend", result: unknown): boolean {
+  if (typeof result !== "boolean") {
+    throw new TypeError(`walkDirectory ${name} callback must return a boolean`);
+  }
+  return result;
+}
+
 function kindForDirent(dirent: fsSync.Dirent): WalkEntryKind {
   if (dirent.isDirectory()) return "directory";
   if (dirent.isFile()) return "file";
@@ -71,7 +83,7 @@ function kindForDirent(dirent: fsSync.Dirent): WalkEntryKind {
   return "other";
 }
 
-function shouldStop(result: WalkDirectoryResult, options: WalkDirectoryOptions): boolean {
+function shouldStop(result: WalkDirectoryResult, options: Pick<WalkDirectoryOptions, "maxEntries">): boolean {
   return options.maxEntries !== undefined && result.scannedEntryCount >= Math.max(0, options.maxEntries);
 }
 
@@ -190,7 +202,7 @@ export function walkDirectorySync(
 
 export async function walkDirectory(
   rootDir: string,
-  options: WalkDirectoryOptions = {},
+  options: AsyncWalkDirectoryOptions = {},
 ): Promise<WalkDirectoryResultWithFailures> {
   validateWalkOptions(options);
   const root = resolvePathPreservingWindowsRoot(rootDir);
@@ -234,16 +246,21 @@ export async function walkDirectory(
       if (!kind) continue;
       const relativePath = relativeDir ? `${relativeDir}${path.sep}${dirent.name}` : dirent.name;
       const entry = buildEntry({ relativePath, fullPath, dirent, depth, kind });
-      if (options.include?.(entry) ?? true) {
+      const include = options.include;
+      const included: unknown = include == null ? true : Reflect.apply(include, options, [entry]);
+      if (typeof included === "boolean" ? included : validateFilterResult("include", await included)) {
         result.entries.push(entry);
       }
       if (
         kind === "directory" &&
-        (options.maxDepth === undefined || depth < options.maxDepth) &&
-        (options.descend?.(entry) ?? true)
+        (options.maxDepth === undefined || depth < options.maxDepth)
       ) {
-        await visit(fullPath, relativePath, depth + 1);
-        if (result.truncated) return;
+        const descend = options.descend;
+        const descended: unknown = descend == null ? true : Reflect.apply(descend, options, [entry]);
+        if (typeof descended === "boolean" ? descended : validateFilterResult("descend", await descended)) {
+          await visit(fullPath, relativePath, depth + 1);
+          if (result.truncated) return;
+        }
       }
     }
   }

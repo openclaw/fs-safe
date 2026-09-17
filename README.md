@@ -517,6 +517,8 @@ for (const file of scan.entries) {
 
 Check `scan.truncated` before treating the result as complete, and `scan.failedDirs` to tell an incomplete scan (a directory that could not be read) from an empty one before pruning state from the listing.
 
+`walkDirectory()` also awaits asynchronous `include` and `descend` callbacks, so a marker lookup can prune a directory before its children are read. Decisions remain serial; `walkDirectorySync()` and its options remain synchronous. See [Directory walking](docs/walk.md) for the callback and error contracts.
+
 For caller-controlled paths, `Root.walk()` is the root-bounded async iterator.
 It supports entry/depth budgets, in-root symlink following, cancellation, and a
 truncation marker (or typed error) when a budget is reached. Its `entryFilter`

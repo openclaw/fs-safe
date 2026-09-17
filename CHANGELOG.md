@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Allow asynchronous `include` and `descend` callbacks in `walkDirectory()` for serial file selection and marker-based pruning; retain synchronous walker options, callback receivers, and examined-entry budgets.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights
