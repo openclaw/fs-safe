@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as pinnedWrite from "../src/pinned-write.js";
 import { realpathSync } from "../src/realpath.js";
 import { withRootFallbackCompatibilityLock } from "../src/root-write-compatibility.js";
+import { canReuseParentWithMutationAssertion } from "../src/root-write-lock-binding.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -112,7 +113,7 @@ describe("Root compatibility destination resolution", () => {
     const resolve = vi.spyOn(realpathSync, "native");
     const lstat = vi.spyOn(fsSync, "lstatSync");
     await withRootFallbackCompatibilityLock({ rootPath: directory, targetPath: target }, async binding => {
-      expect(binding).toMatchObject({ targetPath: target, relativePath: "missing/target" });
+      expect(binding).toMatchObject({ targetPath: target, relativePath: path.join("missing", "target") });
     });
     expect(resolve.mock.calls).toEqual([[target], [directory]]);
     expect(lstat.mock.calls.map(([candidate]) => candidate)).toEqual([target, parent, directory]);
@@ -163,4 +164,50 @@ describe("Root compatibility destination resolution", () => {
       expect(pinnedWrite.withPinnedWriteRenameIdentityLock).not.toHaveBeenCalled();
     },
   );
+
+  it.each([
+    { spelling: "other", code: "path-mismatch" },
+    { spelling: "TARGET", code: "path-alias" },
+  ])("rejects $spelling leaf resolution after selecting an observation-only binding", async ({ spelling, code }) => {
+    const directory = await tempRoot("fs-safe-lock-observation-leaf-");
+    const target = path.join(directory, "target");
+    await fs.writeFile(target, "previous");
+    let changed = false;
+    const realpath = realpathSync.native;
+    vi.spyOn(realpathSync, "native").mockImplementation(candidate =>
+      candidate === target && changed ? path.join(directory, spelling) : realpath(candidate));
+
+    await expect(withRootFallbackCompatibilityLock({ rootPath: directory, targetPath: target }, async binding => {
+      expect(canReuseParentWithMutationAssertion(binding.assertBeforeMutation, directory, target)).toBe(true);
+      changed = true;
+      binding.assertBeforeMutation();
+    })).rejects.toMatchObject({ code });
+
+    expect(await fs.readFile(target, "utf8")).toBe("previous");
+    expect(await fs.readdir(directory)).toEqual(["target"]);
+  });
+
+  it("preserves user revocation before diagnosing a changed lock binding", async () => {
+    const directory = await tempRoot("fs-safe-lock-user-error-order-");
+    const target = path.join(directory, "target");
+    await fs.writeFile(target, "previous");
+    let changed = false;
+    const realpath = realpathSync.native;
+    const resolve = vi.spyOn(realpathSync, "native").mockImplementation(candidate =>
+      candidate === target && changed ? path.join(directory, "other") : realpath(candidate));
+    vi.mocked(pinnedWrite.withPinnedWriteRenameIdentityLock).mockImplementation(async (_params, run) => {
+      changed = true;
+      return await run();
+    });
+    const revoked = new Error("user revoked mutation");
+    const mutate = vi.fn(() => { throw revoked; });
+
+    await expect(withRootFallbackCompatibilityLock({
+      rootPath: directory, targetPath: target, assertBeforeMutation: mutate,
+    }, async binding => binding.assertBeforeMutation())).rejects.toBe(revoked);
+
+    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(resolve).toHaveBeenCalledExactlyOnceWith(target);
+    expect(await fs.readFile(target, "utf8")).toBe("previous");
+  });
 });

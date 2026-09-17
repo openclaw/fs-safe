@@ -16,6 +16,7 @@ import { admitPathInsideRoot } from "./root-boundary.js";
 import type { RootContext } from "./root-context.js";
 import { prepareRootWriteTarget } from "./root-directory-creation.js";
 import type { GuardedRootWriteTarget } from "./root-write-admission.js";
+import { canReuseParentWithMutationAssertion } from "./root-write-lock-binding.js";
 import { isSafePathSegment } from "./safe-path-segment.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
@@ -234,7 +235,8 @@ export async function prepareSharedRootWriteTarget(
     : undefined;
   if (mutationAdmission) await beforeParentAdmission?.(resolvedPath);
   const preparedParent = params.mkdir !== false &&
-    params.assertBeforeMutation === undefined && beforeParentAdmission === undefined
+    canReuseParentWithMutationAssertion(params.assertBeforeMutation, root.rootReal, guardedTarget.targetPath) &&
+    beforeParentAdmission === undefined
     ? await prepareCompleteRootWriteParent(root, guardedTarget, params.relativePath)
     : undefined;
   const targetPath = params.mkdir === false

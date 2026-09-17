@@ -55,6 +55,16 @@ pub struct DirectoryObservation {
     pub real_path: String,
 }
 
+#[cfg(unix)]
+#[napi(object)]
+pub struct DirectoryFdObservation {
+    pub dev: BigInt,
+    pub ino: BigInt,
+    pub mode: BigInt,
+    pub nlink: BigInt,
+    pub real_path: String,
+}
+
 #[napi(object)]
 pub struct OpenBeneathResult {
     pub fd: i32,
@@ -316,6 +326,26 @@ pub fn observe_directory(env: Env, path: String) -> Result<DirectoryObservation>
             ino: BigInt::from(observed.ino),
             real_path: observed.real_path,
         }),
+    )
+}
+
+#[cfg(unix)]
+#[napi(js_name = "observeDirectoryFd")]
+pub fn observe_directory_fd(
+    env: Env,
+    fd: i32,
+    expected_path: String,
+) -> Result<DirectoryFdObservation> {
+    into_napi(
+        env,
+        directory_observation::observe_directory_fd(fd, &expected_path)
+            .map(|observed| DirectoryFdObservation {
+                dev: BigInt::from(observed.dev),
+                ino: BigInt::from(observed.ino),
+                mode: BigInt::from(u64::from(observed.mode)),
+                nlink: BigInt::from(observed.nlink),
+                real_path: observed.real_path,
+            }),
     )
 }
 

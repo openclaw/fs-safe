@@ -40,9 +40,9 @@ it.runIf(process.platform !== "win32").each(
         fsp.chmod(outsideFirst, 0o755),
       ]);
 
-      const originalRealpathSync = realpath.realpathSync;
+      const originalRealpathSync = realpath.realpathSync.native;
       let swapped = false;
-      const realpathSpy = vi.spyOn(realpath, "realpathSync").mockImplementation((...args) => {
+      const realpathSpy = vi.spyOn(realpath.realpathSync, "native").mockImplementation((...args) => {
         const realPath = originalRealpathSync(...args);
         const trigger = swapAt === "root" ? storeRoot : firstDir;
         if (!swapped && String(args[0]) === trigger) {
@@ -68,6 +68,7 @@ it.runIf(process.platform !== "win32").each(
         expect(() => store.writeText("first/second/value.txt", "secret")).toThrow(
           expect.objectContaining({ code: "outside-workspace" }),
         );
+        expect(swapped).toBe(true);
         expect(fs.existsSync(path.join(outside, "first", "second", "value.txt"))).toBe(false);
         const outsideTarget = swapAt === "root" ? outside : outsideFirst;
         expect(fs.statSync(outsideTarget).mode & 0o777).toBe(0o755);

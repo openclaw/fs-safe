@@ -287,7 +287,7 @@ describe("Windows filesystem namespace admission for output and temp helpers", (
   itPosix("keeps colon-bearing POSIX roots and file names usable", async () => {
     const parent = await tempRoot("fs-safe-posix-colon-");
     const root = path.join(parent, "root:scope");
-    await fs.mkdir(root);
+    await fs.mkdir(root, { mode: 0o700 });
 
     const workspace = await tempWorkspace({ rootDir: root, prefix: "work:space" });
     await workspace.write("entry:value", "workspace");

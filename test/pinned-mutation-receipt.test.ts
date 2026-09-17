@@ -114,8 +114,8 @@ describe.runIf(process.platform !== "win32" && !process.versions.bun)("operation
     const token = receipt.admission.advanceCreatedDirectory!(evidence);
     expect(token).toBeTypeOf("object");
     expect(token).not.toBeInstanceOf(Promise);
-    expect(lstat).toHaveBeenCalledTimes(5);
-    expect(realpath).toHaveBeenCalledTimes(4);
+    expect(lstat).toHaveBeenCalledTimes(3);
+    expect(realpath).toHaveBeenCalledTimes(2);
     expect(receipt.resolveCurrent).toHaveBeenCalledTimes(1);
   });
 

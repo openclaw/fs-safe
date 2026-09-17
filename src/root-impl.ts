@@ -82,7 +82,8 @@ import {
 } from "./root-write-admission.js";
 import { prepareSharedRootWriteTarget } from "./root-write-complete-parent.js";
 import { finishRootFallbackWrite } from "./root-write-publication.js";
-import { assertRootFallbackWritePath, withRootFallbackCompatibilityLock } from "./root-write-compatibility.js";
+import { withRootFallbackCompatibilityLock } from "./root-write-compatibility.js";
+import { assertRootFallbackWritePath } from "./root-write-lock-binding.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import { movePathNoReplaceNative } from "./root-move-noreplace.js";
 import { admitRootReadHandle, inspectOpenedPathIdentitySync } from "./root-read-admission.js";

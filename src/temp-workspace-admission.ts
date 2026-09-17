@@ -172,6 +172,34 @@ function assertSnapshot(entry: DirectorySnapshot, uid: number | undefined): void
   assertCanonicalRoot(entry);
 }
 
+function snapshotMissingRootComponent(
+  parent: DirectorySnapshot,
+  dir: string,
+  ownerUid: number | undefined,
+): InspectedDirectorySnapshot {
+  if (parent.dir !== parent.realPath) {
+    assertSnapshot(parent, ownerUid);
+    return snapshot(dir, ownerUid);
+  }
+  const current = inspectSnapshotIdentity(parent);
+  assertTrustedTempWorkspaceDirectory(current, ownerUid);
+  let realPath: string;
+  try {
+    realPath = canonicalTempWorkspacePath(dir);
+  } catch (error) {
+    // Keep parent resolution failures ahead of a missing or unreadable child.
+    assertCanonicalRoot(parent);
+    throw error;
+  }
+  if (path.dirname(realPath) !== parent.realPath) {
+    assertCanonicalRoot(parent);
+    return snapshot(dir, ownerUid);
+  }
+  // The child's canonical parent confirms the same parent name at this phase.
+  // Its exact non-symlink/owner observation still precedes mode initialization.
+  return snapshot(dir, ownerUid, realPath);
+}
+
 function assertChain(chain: DirectorySnapshot[], uid: number | undefined): void {
   for (const entry of chain) {
     const current = inspectSnapshotIdentity(entry);
@@ -399,6 +427,7 @@ export async function admitTempWorkspaceRoot(rootDir: string): Promise<TempWorks
   if (admission) return admission;
   const guardedChain = chain!;
   for (const segment of missing) {
+    const parentEntry = guardedChain[guardedChain.length - 1]!;
     const parent = rootAdmission(guardedChain, ownerUid);
     const dir = path.join(parent.dir, segment);
     assertNoWindowsPathAlias(dir, "filesystem");
@@ -410,8 +439,7 @@ export async function admitTempWorkspaceRoot(rootDir: string): Promise<TempWorks
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
-    parent.assertCurrent();
-    const observed = snapshot(dir, ownerUid);
+    const observed = snapshotMissingRootComponent(parentEntry, dir, ownerUid);
     if (created) {
       const modeInitialization = admitTempWorkspaceChild(dir, observed.stat, parent, 0o700);
       if (modeInitialization) await modeInitialization;
@@ -426,6 +454,7 @@ export function admitTempWorkspaceRootSync(rootDir: string): TempWorkspaceRootAd
   if (admission) return admission;
   const guardedChain = chain!;
   for (const segment of missing) {
+    const parentEntry = guardedChain[guardedChain.length - 1]!;
     const parent = rootAdmission(guardedChain, ownerUid);
     const dir = path.join(parent.dir, segment);
     assertNoWindowsPathAlias(dir, "filesystem");
@@ -437,8 +466,7 @@ export function admitTempWorkspaceRootSync(rootDir: string): TempWorkspaceRootAd
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
-    parent.assertCurrent();
-    const observed = snapshot(dir, ownerUid);
+    const observed = snapshotMissingRootComponent(parentEntry, dir, ownerUid);
     if (created) admitTempWorkspaceChildSync(dir, observed.stat, parent, 0o700);
     guardedChain.push(observed.entry);
   }

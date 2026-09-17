@@ -21,9 +21,9 @@ import type { MutationSymlinkPolicy } from "./root-symlink-policy.js";
 import { getFsSafeNativeConfig } from "./native-config.js";
 import {
   advanceMutationObservation, mutationObservationCurrent, observeMutationPath,
-  mutationDirectoryObservationCurrent, mutationObservationUsesDirectory,
+  mutationObservationsCurrent, mutationObservationUsesDirectory,
   missingMutationSegments, nextMissingMutationPath,
-  type MutationPathObservation,
+  type MutationDirectoryObservation, type MutationPathObservation,
 } from "./pinned-mutation-observation.js";
 
 type AdmissionRequest = Parameters<PinnedWriteMutationAdmission["authorize"]>[0];
@@ -144,10 +144,12 @@ function captureEpoch(
   }
 }
 
-function epochCurrent(epoch: Epoch): boolean {
+function epochCurrent(epoch: Epoch, directories?: readonly MutationDirectoryObservation[]): boolean {
   return !process.versions.bun && epoch.mode === epoch.session.nativeMode &&
     getFsSafeNativeConfig().mode === epoch.mode &&
-    epoch.observations.every(mutationObservationCurrent);
+    (directories ? mutationObservationsCurrent(epoch.observations, directories) :
+      epoch.observations.every(mutationObservationCurrent)) &&
+    getFsSafeNativeConfig().mode === epoch.mode;
 }
 
 function assertCachedNotDenied(target: string, epoch: Epoch): void {
@@ -206,10 +208,8 @@ function advanceAuthorizedDirectory(
     target,
     observations: Object.freeze(complete),
   });
-  if (!mutationDirectoryObservationCurrent(receipt.parent) ||
-    !mutationDirectoryObservationCurrent(receipt.child) ||
-    !mutationObservationUsesDirectory(target, receipt.child) ||
-    !epochCurrent(next)) return undefined;
+  if (!mutationObservationUsesDirectory(target, receipt.child) ||
+    !epochCurrent(next, [receipt.parent, receipt.child])) return undefined;
   assertCachedNotDenied(target.path, next);
   assertCachedNotDenied(receipt.child.path, next);
   return next;
@@ -304,20 +304,14 @@ export async function preparePinnedWriteMutationAdmission(params: {
         if (!reusable || reusable.session !== session ||
           !reusableSharedCreateRequest(request, reusable) ||
           !mutationObservationUsesDirectory(reusable.target, parent) ||
-          !epochCurrent(reusable)) {
+          !nonzeroDirectoryObservation(parent) || !epochCurrent(reusable, [parent])) {
           disable();
           return undefined;
         }
         assertCachedNotDenied(request.targetPath, reusable);
         assertCachedNotDenied(request.mutationPath, reusable);
-        // This is the required end fence. A returned receipt remains usable
-        // only synchronously, while the exact parent identity and spelling
-        // still match the observation captured by this walk.
-        if (!nonzeroDirectoryObservation(parent) ||
-          !mutationDirectoryObservationCurrent(parent)) {
-          disable();
-          return undefined;
-        }
+        // The epoch check ends with the exact parent fence. The receipt is
+        // consumed synchronously before any intervening authority callback.
         sharedPending = Object.freeze({
           epoch: reusable,
           childPath: request.mutationPath,
@@ -410,19 +404,14 @@ export async function preparePinnedWriteMutationAdmission(params: {
       if (!reusable || reusable.session !== pinnedSession ||
         !reusableRequest(request, reusable) ||
         !mutationObservationUsesDirectory(reusable.target, parent) ||
-        !epochCurrent(reusable)) {
+        !epochCurrent(reusable, [parent])) {
         epoch = undefined;
         return undefined;
       }
       assertCachedNotDenied(request.targetPath, reusable);
       assertCachedNotDenied(request.mutationPath, reusable);
-      // This is the required end fence. The caller can consume the returned
-      // token without awaiting only while the exact pathname, canonical
-      // spelling, descriptor identity, type, mode, and link count still match.
-      if (!mutationDirectoryObservationCurrent(parent)) {
-        epoch = undefined;
-        return undefined;
-      }
+      // The epoch check ends at the exact parent pathname, canonical spelling,
+      // identity, type, mode and link-count fence, with no intervening await.
       if (request.phase === "parent-create") {
         pending = Object.freeze({
           epoch: reusable,

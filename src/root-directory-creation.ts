@@ -20,14 +20,17 @@ import type { PinnedWriteMutationAdmission } from "./pinned-write.js";
 import { admitPathInsideRoot } from "./root-boundary.js";
 import type { RootContext } from "./root-context.js";
 import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
+import { canReuseParentWithMutationAssertion } from "./root-write-lock-binding.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
 function mutationWalkOptions(
   mutationAdmission: PinnedWriteMutationAdmission,
   operationTarget: (prospectiveDirectory: string) => string,
   assertBeforeMutation: (() => void) | undefined,
+  rootPath: string,
+  targetPath: string,
 ) {
-  const session = assertBeforeMutation === undefined
+  const session = canReuseParentWithMutationAssertion(assertBeforeMutation, rootPath, targetPath)
     ? mutationAdmission.beginSharedParentWalk?.()
     : undefined;
   return {
@@ -198,6 +201,8 @@ export async function prepareRootWriteTarget(
       mutationAdmission,
       (prospectiveParent) => path.join(prospectiveParent, basename),
       assertBeforeMutation,
+      root.rootReal,
+      targetPath,
     )
     : undefined;
   let parentPath: string;
@@ -232,6 +237,8 @@ export async function mkdirPathFallback(
       mutationAdmission,
       (prospectiveDirectory) => prospectiveDirectory,
       assertBeforeMutation,
+      root.rootReal,
+      resolved.resolved,
     )
     : undefined;
   try {

@@ -206,6 +206,14 @@ that fallback does not apply to POSIX no-read modes.
 
 ## JavaScript fallback guarantees and delta
 
+Policy-bound parent creation can refresh exact directory facts through the
+retained POSIX descriptor. The optional native observer compares descriptor and
+no-follow pathname metadata and verifies the descriptor's canonical path before
+and after the observation. Ordinary paths can share that observation within one
+synchronous admission phase; callbacks, mutations, and later phases require fresh
+evidence. Unsupported helpers retain the guarded pathname checks. Policy and
+denied-path decisions remain in TypeScript.
+
 Public policy does not change with the selected mechanism: traversal and link
 rejection, archive filters/limits/modes, exclusive target creation, source and
 target identity fencing, publication cleanup receipts, and secret/lock policy

@@ -4,9 +4,13 @@ import type { DirectoryReceipt } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
 import type { FileIdentityStat } from "./file-identity.js";
 import { inspectDirectoryIdentitySync } from "./directory-guard.js";
+import type { NativeBinding } from "./native-binding.js";
+import { nativePolicyDirectoryObserver, NativePolicyDirectoryMismatch } from "./native-policy-directory-observation.js";
 import {
   checkedMutationDirectory,
   type MutationDirectoryObservation,
+  type MutationDirectoryObserver,
+  type MutationIdentity,
 } from "./pinned-mutation-observation.js";
 import { realpathSync } from "./realpath.js";
 import type { StagedFileReceipt } from "./staged-file-types.js";
@@ -18,6 +22,8 @@ export type PolicyStagedDirectory = Readonly<{
   directory: StagedDirectorySnapshot;
   observation: MutationDirectoryObservation;
   stat: BigIntStats;
+  observeCurrent?: MutationDirectoryObserver;
+  disposeObservation?(): void;
 }>;
 
 export function exactIdentityMatches(
@@ -55,7 +61,7 @@ export function assertStagedDirectoryCurrent(receipt: StagedDirectorySnapshot): 
   return current;
 }
 
-function sameDirectoryMetadata(left: BigIntStats, right: BigIntStats): boolean {
+function sameDirectoryMetadata(left: MutationIdentity, right: MutationIdentity): boolean {
   return left.dev === right.dev && left.ino === right.ino && left.mode === right.mode &&
     left.nlink === right.nlink;
 }
@@ -65,11 +71,31 @@ function sameDirectoryMetadata(left: BigIntStats, right: BigIntStats): boolean {
 export function describePolicyStagedDirectory(
   fd: number,
   pathname: string,
+  binding?: NativeBinding,
 ): PolicyStagedDirectory {
   const resolved = path.resolve(pathname);
   const descriptor = fs.fstatSync(fd, { bigint: true });
   if (!descriptor.isDirectory()) {
     throw new FsSafeError("not-file", "staging parent must be a directory");
+  }
+  const observeCurrent = nativePolicyDirectoryObserver(binding, fd, resolved);
+  const observed = observeCurrent?.();
+  if (observed) {
+    if (!sameDirectoryMetadata(descriptor, observed.identity)) {
+      throw new NativePolicyDirectoryMismatch();
+    }
+    const directory = Object.freeze({
+      path: resolved,
+      realPath: observed.canonicalPath,
+      identity: Object.freeze({ dev: descriptor.dev, ino: descriptor.ino }),
+    });
+    return Object.freeze({
+      directory,
+      observation: checkedMutationDirectory(resolved, observed.canonicalPath, observed.identity, observeCurrent),
+      stat: descriptor,
+      observeCurrent,
+      disposeObservation: observeCurrent!.dispose,
+    });
   }
   const before = inspectDirectoryIdentitySync(resolved);
   const canonicalPath = path.resolve(realpathSync.native(resolved));
@@ -94,6 +120,14 @@ export function describePolicyStagedDirectory(
 export function assertPolicyStagedDirectoryCurrent(
   captured: PolicyStagedDirectory,
 ): BigIntStats {
+  const observed = captured.observeCurrent?.();
+  if (observed) {
+    if (!sameDirectoryMetadata(captured.stat, observed.identity) ||
+      observed.canonicalPath !== captured.directory.realPath) {
+      throw new FsSafeError("path-mismatch", "staging directory pathname changed");
+    }
+    return captured.stat;
+  }
   const current = inspectDirectoryIdentitySync(captured.directory.path, captured.directory.identity);
   if (!sameDirectoryMetadata(captured.stat, current) ||
     path.resolve(realpathSync.native(captured.directory.path)) !== captured.directory.realPath) {
@@ -105,6 +139,16 @@ export function assertPolicyStagedDirectoryCurrent(
 export function refreshPolicyStagedDirectoryObservation(
   captured: PolicyStagedDirectory,
 ): MutationDirectoryObservation {
+  const observed = captured.observeCurrent?.();
+  if (observed) {
+    if (!exactIdentityMatches(captured.directory.identity, observed.identity) ||
+      observed.canonicalPath !== captured.directory.realPath) {
+      throw new FsSafeError("path-mismatch", "staging directory pathname changed");
+    }
+    return checkedMutationDirectory(
+      captured.directory.path, observed.canonicalPath, observed.identity, captured.observeCurrent,
+    );
+  }
   const current = inspectDirectoryIdentitySync(
     captured.directory.path,
     captured.directory.identity,

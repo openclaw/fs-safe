@@ -7,13 +7,23 @@ pub(crate) struct ExactDirectoryObservation {
 }
 
 #[cfg(unix)]
+#[derive(Debug)]
+pub(crate) struct ExactDirectoryFdObservation {
+    pub dev: u64,
+    pub ino: u64,
+    pub mode: u32,
+    pub nlink: u64,
+    pub real_path: String,
+}
+
+#[cfg(unix)]
 mod platform {
     use std::os::fd::AsRawFd;
 
-    use rustix::fs::{FileType, Mode, OFlags};
+    use rustix::fs::{AtFlags, CWD, FileType, Mode, OFlags, Stat};
 
-    use super::ExactDirectoryObservation;
-    use crate::{NativeResult, native_error, unix::os_error};
+    use super::{ExactDirectoryFdObservation, ExactDirectoryObservation};
+    use crate::{NativeResult, native_error, unix::{borrowed, os_error}};
 
     #[cfg(target_os = "linux")]
     fn observation_open_flags() -> OFlags {
@@ -82,6 +92,85 @@ mod platform {
             })
     }
 
+    fn same_directory(left: &Stat, right: &Stat) -> bool {
+        left.st_dev == right.st_dev && left.st_ino == right.st_ino &&
+            left.st_mode == right.st_mode && left.st_nlink == right.st_nlink
+    }
+
+    fn inspect_named_directory(path: &str) -> NativeResult<Stat> {
+        rustix::fs::statat(CWD, path, AtFlags::SYMLINK_NOFOLLOW)
+            .map_err(|error| os_error(error, "inspect observed directory name"))
+    }
+
+    fn observe_directory_fd_with(
+        fd: i32,
+        expected_path: &str,
+        inspect_name: impl FnOnce() -> NativeResult<Stat>,
+    ) -> NativeResult<ExactDirectoryFdObservation> {
+        if fd < 0 {
+            return Err(native_error("EBADF", "invalid observed directory descriptor"));
+        }
+        if !expected_path.starts_with('/') || expected_path.as_bytes().contains(&0) {
+            return Err(native_error("EINVAL", "directory observation requires an absolute path"));
+        }
+        // The synchronous caller retains ownership. Never duplicate or close
+        // this descriptor: closing another fd could release process locks.
+        let directory = borrowed(fd);
+        let before = rustix::fs::fstat(directory)
+            .map_err(|error| os_error(error, "inspect retained directory observation"))?;
+        if !FileType::from_raw_mode(before.st_mode).is_dir() {
+            return Err(native_error("ENOTDIR", "observed descriptor is not a directory"));
+        }
+        if before.st_nlink == 0 {
+            return Err(native_error("path-mismatch", "observed directory name changed"));
+        }
+        if canonical_path(fd, before.st_nlink as u64)? != expected_path {
+            // No matching observation has begun. Let the caller apply its
+            // ordered canonical-path admission to the selected descriptor.
+            return Err(native_error("OBSERVATION_REDIRECTED", "observed directory has another canonical name"));
+        }
+        let named = inspect_name().map_err(|error| match error.status.as_str() {
+            "ENOENT" | "ENOTDIR" | "ELOOP" => {
+                native_error("path-mismatch", "observed directory name changed")
+            }
+            _ => error,
+        })?;
+        let after = rustix::fs::fstat(directory)
+            .map_err(|error| os_error(error, "confirm retained directory observation"))?;
+        if after.st_nlink == 0 || !same_directory(&before, &named) ||
+            !same_directory(&before, &after) {
+            return Err(native_error("path-mismatch", "observed directory identity changed"));
+        }
+        let real_path = canonical_path(fd, after.st_nlink as u64)?;
+        if real_path != expected_path {
+            return Err(native_error("path-mismatch", "observed directory name changed"));
+        }
+        #[cfg(target_os = "linux")]
+        if real_path.ends_with(" (deleted)") {
+            // An attacker could rename a literal-suffix directory before
+            // unlinking it; disambiguate procfs text after the final read.
+            let confirmed = rustix::fs::fstat(directory)
+                .map_err(|error| os_error(error, "confirm retained directory link count"))?;
+            if confirmed.st_nlink == 0 || !same_directory(&after, &confirmed) {
+                return Err(native_error("path-mismatch", "observed directory identity changed"));
+            }
+        }
+        Ok(ExactDirectoryFdObservation {
+            dev: after.st_dev as u64,
+            ino: after.st_ino as u64,
+            mode: after.st_mode as u32,
+            nlink: after.st_nlink as u64,
+            real_path,
+        })
+    }
+
+    pub(super) fn observe_directory_fd(
+        fd: i32,
+        expected_path: &str,
+    ) -> NativeResult<ExactDirectoryFdObservation> {
+        observe_directory_fd_with(fd, expected_path, || inspect_named_directory(expected_path))
+    }
+
     pub(super) fn observe_directory(path: &str) -> NativeResult<ExactDirectoryObservation> {
         let directory = rustix::fs::open(path, observation_open_flags(), Mode::empty())
             .map_err(|error| os_error(error, "open directory observation"))?;
@@ -111,6 +200,11 @@ mod platform {
             real_path,
         })
     }
+
+    #[cfg(test)]
+    mod tests {
+        include!("directory_observation_tests.rs");
+    }
 }
 
 #[cfg(windows)]
@@ -128,7 +222,7 @@ mod platform {
     use super::ExactDirectoryObservation;
     use crate::{
         NativeResult, native_error,
-        windows::{OwnedHandle, handle_identity, handle_is_reparse, win_error},
+        windows::{OwnedHandle, observe_directory_identity, win_error},
     };
 
     fn wide_path(path: &str) -> NativeResult<Vec<u16>> {
@@ -148,32 +242,40 @@ mod platform {
         Ok(wide)
     }
 
-    fn canonical_path(handle: windows_sys::Win32::Foundation::HANDLE) -> NativeResult<String> {
-        // The query and copy both address the same retained directory handle.
-        let needed = unsafe { GetFinalPathNameByHandleW(handle, null_mut(), 0, 0) };
-        if needed == 0 {
-            return Err(native_error(
-                "OBSERVATION_UNAVAILABLE",
-                format!(
-                    "size observed directory path: Windows error {}",
-                    unsafe { GetLastError() },
-                ),
-            ));
+    const INITIAL_PATH_WCHARS: usize = 512;
+
+    fn unavailable_path() -> napi::Error<String> {
+        native_error("OBSERVATION_UNAVAILABLE", "observed directory path changed or could not be resolved")
+    }
+
+    fn canonical_path_with_query(
+        handle: windows_sys::Win32::Foundation::HANDLE,
+        mut query: impl FnMut(windows_sys::Win32::Foundation::HANDLE, &mut [u16]) -> NativeResult<usize>,
+    ) -> NativeResult<String> {
+        let mut stack = [0_u16; INITIAL_PATH_WCHARS];
+        let written = query(handle, &mut stack)?;
+        if written == 0 {
+            return Err(unavailable_path());
         }
-        let mut buffer = vec![0_u16; needed as usize + 1];
-        let written = unsafe {
-            GetFinalPathNameByHandleW(handle, buffer.as_mut_ptr(), buffer.len() as u32, 0)
+        let mut heap = Vec::new();
+        let encoded = if written < stack.len() {
+            &stack[..written]
+        } else {
+            // A too-small query reports the required capacity including NUL.
+            // Retry once on the same handle, retaining the previous fail-closed
+            // behavior if the normalized name grows beyond the new buffer.
+            let capacity = written.checked_add(1)
+                .filter(|capacity| *capacity <= u32::MAX as usize)
+                .ok_or_else(unavailable_path)?;
+            heap.try_reserve_exact(capacity).map_err(|_| unavailable_path())?;
+            heap.resize(capacity, 0_u16);
+            let confirmed = query(handle, &mut heap)?;
+            if confirmed == 0 || confirmed >= heap.len() {
+                return Err(unavailable_path());
+            }
+            &heap[..confirmed]
         };
-        if written == 0 || written as usize >= buffer.len() {
-            return Err(native_error(
-                "OBSERVATION_UNAVAILABLE",
-                format!(
-                    "resolve observed directory path: Windows error {}",
-                    unsafe { GetLastError() },
-                ),
-            ));
-        }
-        let path = String::from_utf16(&buffer[..written as usize]).map_err(|_| {
+        let path = String::from_utf16(encoded).map_err(|_| {
             native_error(
                 "OBSERVATION_UNAVAILABLE",
                 "observed directory path is not valid UTF-16",
@@ -183,6 +285,26 @@ mod platform {
             return Ok(format!(r"\\{path}"));
         }
         Ok(path.strip_prefix(r"\\?\").unwrap_or(&path).to_owned())
+    }
+
+    fn canonical_path(handle: windows_sys::Win32::Foundation::HANDLE) -> NativeResult<String> {
+        canonical_path_with_query(handle, |handle, buffer| {
+            // Keep normalized names (flags 0): the opened spelling cannot prove
+            // physical containment through a renamed or redirected ancestor.
+            let written = unsafe {
+                GetFinalPathNameByHandleW(handle, buffer.as_mut_ptr(), buffer.len() as u32, 0)
+            };
+            if written == 0 {
+                return Err(native_error(
+                    "OBSERVATION_UNAVAILABLE",
+                    format!(
+                        "resolve observed directory path: Windows error {}",
+                        unsafe { GetLastError() },
+                    ),
+                ));
+            }
+            Ok(written as usize)
+        })
     }
 
     pub(super) fn observe_directory(path: &str) -> NativeResult<ExactDirectoryObservation> {
@@ -202,13 +324,7 @@ mod platform {
             return Err(win_error(unsafe { GetLastError() }, "open directory observation"));
         }
         let handle = OwnedHandle(handle);
-        if handle_is_reparse(handle.0)? {
-            return Err(native_error("ELOOP", "observed directory is a reparse point"));
-        }
-        let (dev, ino, is_directory) = handle_identity(handle.0)?;
-        if !is_directory {
-            return Err(native_error("ENOTDIR", "observed path is not a directory"));
-        }
+        let (dev, ino) = observe_directory_identity(handle.0)?;
         let real_path = canonical_path(handle.0)?;
         Ok(ExactDirectoryObservation {
             dev: u64::from(dev),
@@ -216,8 +332,21 @@ mod platform {
             real_path,
         })
     }
+
+    #[cfg(test)]
+    mod tests {
+        include!("directory_observation_windows_tests.rs");
+    }
 }
 
 pub(crate) fn observe_directory(path: &str) -> NativeResult<ExactDirectoryObservation> {
     platform::observe_directory(path)
+}
+
+#[cfg(unix)]
+pub(crate) fn observe_directory_fd(
+    fd: i32,
+    expected_path: &str,
+) -> NativeResult<ExactDirectoryFdObservation> {
+    platform::observe_directory_fd(fd, expected_path)
 }

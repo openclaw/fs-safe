@@ -854,6 +854,25 @@ pub(crate) fn handle_identity(handle: HANDLE) -> NativeResult<(u32, u64, bool)> 
     handle_identity_and_size(handle).map(|(identity, _)| identity)
 }
 
+fn directory_observation_identity(
+    info: &BY_HANDLE_FILE_INFORMATION,
+) -> NativeResult<(u32, u64)> {
+    if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err(native_error("ELOOP", "observed directory is a reparse point"));
+    }
+    let (dev, ino, is_directory) = identity_from_handle_information(info);
+    if !is_directory {
+        return Err(native_error("ENOTDIR", "observed path is not a directory"));
+    }
+    Ok((dev, ino))
+}
+
+pub(crate) fn observe_directory_identity(handle: HANDLE) -> NativeResult<(u32, u64)> {
+    // The complete handle information already includes the reparse/directory
+    // attributes. Keep those facts with the exact identity in one observation.
+    directory_observation_identity(&guarded_handle_information(handle)?)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct HandleFileIdentity {
     volume_serial_number: u64,
@@ -1286,6 +1305,36 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+
+    #[test]
+    fn directory_observation_retains_exact_identity_and_unknown_values() {
+        let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { zeroed() };
+        info.dwFileAttributes = FILE_ATTRIBUTE_DIRECTORY;
+        info.dwVolumeSerialNumber = 0x11223344;
+        info.nFileIndexHigh = 0x12345678;
+        info.nFileIndexLow = 0xabcdef01;
+        assert_eq!(
+            directory_observation_identity(&info).unwrap(),
+            (0x11223344, 0x12345678abcdef01),
+        );
+        // JavaScript still owns the bounded retry for opaque Windows IDs.
+        info.dwVolumeSerialNumber = 0;
+        info.nFileIndexHigh = 0;
+        info.nFileIndexLow = 0;
+        assert_eq!(directory_observation_identity(&info).unwrap(), (0, 0));
+    }
+
+    #[test]
+    fn directory_observation_rejects_reparse_points_and_regular_files() {
+        let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { zeroed() };
+        for attributes in [FILE_ATTRIBUTE_REPARSE_POINT,
+            FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY] {
+            info.dwFileAttributes = attributes;
+            assert_eq!(directory_observation_identity(&info).unwrap_err().status, "ELOOP");
+        }
+        info.dwFileAttributes = 0;
+        assert_eq!(directory_observation_identity(&info).unwrap_err().status, "ENOTDIR");
+    }
 
     unsafe extern "C" fn test_get_osfhandle(fd: i32) -> isize {
         0x1000 + fd as isize

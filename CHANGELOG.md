@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reduce repeated filesystem observations during policy-bound native parent creation, Windows compatibility writes and metadata reads, synchronous store-directory permission repair, and missing temporary-root creation. Keep fresh identity, canonical-path, lock-destination, callback, and publication checks at mutation boundaries.
+
 ## 0.13.1 - 2026-09-16
 
 ### Highlights

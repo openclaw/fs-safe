@@ -90,7 +90,7 @@ describe.runIf(process.platform !== "win32" && !process.versions.bun)(
   "bounded synchronous mutation authorization",
   () => {
     it.each([1, 8, 32])(
-      "models exactly 13L + 11Rn + 0Rj + 1F per native exclusively-created parent at depth %s",
+      "shares same-phase pathname checks at depth %s without retaining live evidence",
       async (depth) => {
         const directory = await tempRoot(`fs-safe-policy-budget-${depth}-`);
         const parts = Array.from({ length: depth }, (_, index) => `level-${index}`);
@@ -141,8 +141,8 @@ describe.runIf(process.platform !== "win32" && !process.versions.bun)(
           parent = child;
         }
 
-        expect(lstat).toHaveBeenCalledTimes(13 * depth);
-        expect(nativeRealpath).toHaveBeenCalledTimes(11 * depth);
+        expect(lstat).toHaveBeenCalledTimes(11 * depth - 2);
+        expect(nativeRealpath).toHaveBeenCalledTimes(9 * depth - 2);
         expect(jsRealpath).not.toHaveBeenCalled();
         expect(fstat).toHaveBeenCalledTimes(depth);
         expect(prepared.resolveCurrent).toHaveBeenCalledTimes(1);
@@ -150,7 +150,7 @@ describe.runIf(process.platform !== "win32" && !process.versions.bun)(
     );
 
     it.runIf(nativeAvailable).each([1, 8, 32])(
-      "the real native walker uses its exact linear syscall budget at depth %s",
+      "the real native walker bounds JavaScript pathname observations at depth %s",
       async (depth) => {
         configureFsSafeNative({ mode: "require" });
         const directory = await tempRoot(`fs-safe-policy-native-budget-${depth}-`);
@@ -168,6 +168,8 @@ describe.runIf(process.platform !== "win32" && !process.versions.bun)(
             throw stopBeforeStage;
           },
         };
+        const directoryObservations = candidate.observeDirectoryFd
+          ? vi.spyOn(candidate, "observeDirectoryFd") : undefined;
 
         const originalNative = fsSync.realpathSync.native;
         const jsRealpath = vi.spyOn(fsSync, "realpathSync");
@@ -189,6 +191,7 @@ describe.runIf(process.platform !== "win32" && !process.versions.bun)(
               nativeRealpath.mockClear();
               jsRealpath.mockClear();
               fstat.mockClear();
+              directoryObservations?.mockClear();
             }
             return receipt;
           },
@@ -208,8 +211,9 @@ describe.runIf(process.platform !== "win32" && !process.versions.bun)(
         })).rejects.toBe(stopBeforeStage);
 
         expect(admissionReset).toBe(true);
-        expect(lstat).toHaveBeenCalledTimes(13 * depth + 2);
-        expect(nativeRealpath).toHaveBeenCalledTimes(11 * depth + 1);
+        expect(lstat).toHaveBeenCalledTimes(directoryObservations ? 4 * depth - 1 : 11 * depth);
+        expect(nativeRealpath).toHaveBeenCalledTimes(directoryObservations ? 2 * depth - 2 : 9 * depth - 1);
+        if (directoryObservations) expect(directoryObservations).toHaveBeenCalledTimes(6 * depth + 1);
         expect(jsRealpath).toHaveBeenCalledTimes(1);
         expect(fstat).toHaveBeenCalledTimes(depth);
       },

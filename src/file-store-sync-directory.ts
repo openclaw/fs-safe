@@ -37,7 +37,9 @@ function changedStoreDirectory(
 }
 
 function storeDirectoryRealPath(dir: string): string {
-  const realPath = realpathSync(pathForWindowsFilesystem(dir));
+  const operationPath = pathForWindowsFilesystem(dir);
+  const realPath = process.platform === "win32"
+    ? realpathSync(operationPath) : realpathSync.native(operationPath);
   assertNoWindowsPathAlias(realPath, "filesystem");
   return realPath;
 }
@@ -114,7 +116,7 @@ function assertRootCurrent(
 
 function assertAdmittedEdgeCurrent(
   receipts: readonly ExactDirectoryReceipt[],
-  rootReal: string,
+  rootReal: string | undefined,
   messagePrefix: StoreMessagePrefix,
 ): BigIntStats {
   const rootReceipt = receipts[0];
@@ -123,7 +125,9 @@ function assertAdmittedEdgeCurrent(
   if (!rootReceipt || !targetReceipt) {
     throw new FsSafeError("helper-failed", "store directory receipt is missing");
   }
-  const rootStat = assertRootCurrent(rootReceipt, rootReal, messagePrefix);
+  const rootStat = rootReal === undefined
+    ? inspectReceiptCurrent(rootReceipt, messagePrefix, true)
+    : assertRootCurrent(rootReceipt, rootReal, messagePrefix);
   if (targetIndex === 0) return rootStat;
   const parent = receipts[targetIndex - 1];
   if (!parent) throw new FsSafeError("helper-failed", "store directory receipt is missing");
@@ -140,18 +144,22 @@ function assertModeTargetCurrent(
   rootReal: string,
   messagePrefix: StoreMessagePrefix,
 ): BigIntStats {
+  const root = receipts[0];
   const target = receipts.at(-1);
-  if (!target) throw new FsSafeError("helper-failed", "store directory receipt is missing");
-  const stat = assertAdmittedEdgeCurrent(receipts, rootReal, messagePrefix);
+  if (!root || !target) throw new FsSafeError("helper-failed", "store directory receipt is missing");
+  // The target's canonical observation shares the exact identity fence. Keep
+  // the trailing root canonical check: an ancestor relocation can retain IDs.
+  assertAdmittedEdgeCurrent(receipts, undefined, messagePrefix);
   let targetReal: string;
   try {
     targetReal = storeDirectoryRealPath(target.dir);
   } catch (error) {
     throw changedStoreDirectory(messagePrefix, error);
   }
-  if (!isPathInside(rootReal, targetReal)) throw changedStoreDirectory(messagePrefix);
-  assertAdmittedEdgeCurrent(receipts, rootReal, messagePrefix);
-  return stat;
+  if (target === root ? targetReal !== rootReal : !isPathInside(rootReal, targetReal)) {
+    throw changedStoreDirectory(messagePrefix);
+  }
+  return assertAdmittedEdgeCurrent(receipts, rootReal, messagePrefix);
 }
 
 function assertReceiptChain(

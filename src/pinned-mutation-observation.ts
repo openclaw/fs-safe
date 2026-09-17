@@ -12,6 +12,13 @@ export type MutationIdentity = Readonly<{
 }>;
 
 const checkedDirectoryObservation = Symbol("checked mutation directory observation");
+const directoryObservers = new WeakMap<MutationDirectoryObservation, MutationDirectoryObserver>();
+
+export type MutationDirectoryCurrent = Readonly<{
+  canonicalPath: string;
+  identity: MutationIdentity;
+}>;
+export type MutationDirectoryObserver = () => MutationDirectoryCurrent | undefined;
 
 export type MutationDirectoryObservation = Readonly<{
   path: string;
@@ -31,7 +38,7 @@ export type MutationPathObservation = Readonly<{
   missingOffset: number;
 }>;
 
-function identity(stat: BigIntStats): MutationIdentity {
+function identity(stat: Pick<BigIntStats, "dev" | "ino" | "mode" | "nlink">): MutationIdentity {
   return Object.freeze({ dev: stat.dev, ino: stat.ino, mode: stat.mode, nlink: stat.nlink });
 }
 
@@ -74,17 +81,20 @@ export function nextMissingMutationPath(observation: MutationPathObservation): s
 export function checkedMutationDirectory(
   pathname: string,
   canonicalPath: string,
-  stat: BigIntStats,
+  stat: Pick<BigIntStats, "dev" | "ino" | "mode" | "nlink">,
+  observeCurrent?: MutationDirectoryObserver,
 ): MutationDirectoryObservation {
-  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+  if (!directoryMode(stat.mode)) {
     throw new TypeError("mutation directory evidence must describe a real directory");
   }
-  return Object.freeze({
+  const observation = Object.freeze({
     path: pathname,
     canonicalPath,
     identity: identity(stat),
     [checkedDirectoryObservation]: true as const,
   });
+  if (observeCurrent) directoryObservers.set(observation, observeCurrent);
+  return observation;
 }
 
 function checkedDirectory(observation: MutationDirectoryObservation): boolean {
@@ -98,6 +108,12 @@ export function mutationDirectoryObservationCurrent(
 ): boolean {
   if (!checkedDirectory(observation)) return false;
   try {
+    const observed = directoryObservers.get(observation)?.();
+    if (observed) {
+      return directoryMode(observed.identity.mode) &&
+        sameIdentity(observation.identity, observed.identity) &&
+        observed.canonicalPath === observation.canonicalPath;
+    }
     const stat = inspectFileIdentitySync(() => fs.lstatSync(observation.path, { bigint: true }));
     return stat.isDirectory() && !stat.isSymbolicLink() &&
       sameIdentity(observation.identity, stat) &&
@@ -157,6 +173,79 @@ export function mutationObservationCurrent(observation: MutationPathObservation)
     return sameIdentity(observation.identity, stat, stat.isDirectory()) &&
       (missingMutationSegments(observation) === 0 ||
         (stat.isDirectory() && absent(nextMissingMutationPath(observation)!)));
+  } catch {
+    return false;
+  }
+}
+
+// Share only ordinary spelling observations collected in this synchronous
+// phase. Aliases retain their independent raw/canonical binding checks, and no
+// fact escapes this call or crosses an authority callback or mutation.
+export function mutationObservationsCurrent(
+  observations: readonly MutationPathObservation[],
+  directories: readonly MutationDirectoryObservation[],
+): boolean {
+  type Group = {
+    observations: MutationPathObservation[];
+    directories: MutationDirectoryObservation[];
+  };
+  const groups = new Map<string, Group>();
+  const groupFor = (pathname: string): Group => {
+    let group = groups.get(pathname);
+    if (!group) {
+      group = { observations: [], directories: [] };
+      groups.set(pathname, group);
+    }
+    return group;
+  };
+  try {
+    for (const observation of observations) {
+      if (observation.ancestor !== observation.canonicalAncestor) {
+        if (!mutationObservationCurrent(observation)) return false;
+      } else {
+        groupFor(observation.ancestor).observations.push(observation);
+      }
+    }
+    for (const directory of directories) {
+      if (!checkedDirectory(directory)) return false;
+      groupFor(directory.path).directories.push(directory);
+    }
+    const current = (pathname: string, group: Group): boolean => {
+      const missing = new Set(group.observations.flatMap((observation) => {
+        const next = nextMissingMutationPath(observation);
+        return next === undefined ? [] : [next];
+      }));
+      // Exact directory roles are the end fence. Observe missing children
+      // before refreshing that parent, matching the ordered admission fence.
+      if (group.directories.length && ![...missing].every(absent)) return false;
+      const observed = group.directories.length
+        ? directoryObservers.get(group.directories[0]!)?.() : undefined;
+      const stat = observed?.identity ??
+        inspectFileIdentitySync(() => fs.lstatSync(pathname, { bigint: true }));
+      const canonical = observed?.canonicalPath ?? realpathSync.native(pathname);
+      const isDirectory = directoryMode(stat.mode);
+      if (!group.observations.every((observation) =>
+        canonical === observation.canonicalAncestor &&
+        sameIdentity(observation.entry, stat, isDirectory) &&
+        sameIdentity(observation.identity, stat, isDirectory) &&
+        (missingMutationSegments(observation) === 0 || isDirectory))) return false;
+      if (!group.directories.every((directory) =>
+        isDirectory &&
+        sameIdentity(directory.identity, stat) && canonical === directory.canonicalPath)) return false;
+      return group.directories.length > 0 || [...missing].every(absent);
+    };
+    for (const [pathname, group] of groups) {
+      if (!group.directories.length && !current(pathname, group)) return false;
+    }
+    // Preserve the supplied parent/child order, even when a directory also
+    // appeared earlier as the Root or a denied path's nearest ancestor.
+    const checked = new Set<string>();
+    for (const directory of directories) {
+      if (checked.has(directory.path)) continue;
+      if (!current(directory.path, groups.get(directory.path)!)) return false;
+      checked.add(directory.path);
+    }
+    return true;
   } catch {
     return false;
   }

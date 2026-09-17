@@ -46,7 +46,7 @@ itPosix.each([
         fs.chmod(directory, layout === "matching" ? 0o750 : 0o755)));
     }
     const lstats = vi.spyOn(fsSync, "lstatSync");
-    const realpaths = vi.spyOn(canonicalPath, "realpathSync");
+    const realpaths = vi.spyOn(canonicalPath.realpathSync, "native");
     const fstats = vi.spyOn(fsSync, "fstatSync");
     const fchmods = vi.spyOn(fsSync, "fchmodSync");
     const pathnameChmod = vi.spyOn(fsSync, "chmodSync");
@@ -65,7 +65,7 @@ itPosix.each([
 
     expect(lstats).toHaveBeenCalledTimes(layout === "matching" ? matchingLstats :
       layout === "new" ? newLstats : repairedLstats);
-    expect(realpaths).toHaveBeenCalledTimes(layout === "matching" ? depth + 5 : 6 * depth + 10);
+    expect(realpaths).toHaveBeenCalledTimes(layout === "matching" ? depth + 5 : 4 * depth + 8);
     expect(fstats).toHaveBeenCalledTimes(layout === "matching" ? 0 : 2 * (depth + 1));
     expect(fchmods).toHaveBeenCalledTimes(layout === "matching" ? 0 : depth + 1);
     expect(pathnameChmod).not.toHaveBeenCalled();
@@ -172,7 +172,7 @@ itPosix.each(["before-chmod", "after-chmod"])(
     const root = directories[0]!;
     const target = directories.at(-1)!;
     const realFstatSync = fsSync.fstatSync.bind(fsSync);
-    const realRealpath = canonicalPath.realpathSync;
+    const realRealpath = canonicalPath.realpathSync.native;
     let descriptorChecks = 0;
     let rejectedWhileOpen = false;
     const close = vi.spyOn(fsSync, "closeSync");
@@ -181,7 +181,7 @@ itPosix.each(["before-chmod", "after-chmod"])(
       descriptorChecks += 1;
       return realFstatSync(...args);
     }) as typeof fsSync.fstatSync);
-    vi.spyOn(canonicalPath, "realpathSync").mockImplementation((input) => {
+    vi.spyOn(canonicalPath.realpathSync, "native").mockImplementation((input) => {
       if (input === target && descriptorChecks >= (phase === "before-chmod" ? 1 : 2)) {
         rejectedWhileOpen = close.mock.calls.length === 0;
         return path.join(root, "..", "outside");

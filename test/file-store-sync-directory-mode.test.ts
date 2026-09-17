@@ -91,9 +91,9 @@ describe("sync file-store directory mode authority", () => {
       ...["a", "a/b", "a/b/c", "a/b/c/d"]
         .map((relative) => fs.chmod(path.join(root, relative), 0o700)),
     ]);
-    const realRealpath = canonicalPath.realpathSync;
+    const realRealpath = canonicalPath.realpathSync.native;
     const observed: string[] = [];
-    vi.spyOn(canonicalPath, "realpathSync").mockImplementation((input) => {
+    vi.spyOn(canonicalPath.realpathSync, "native").mockImplementation((input) => {
       observed.push(String(input));
       return realRealpath(input);
     });

@@ -354,3 +354,46 @@ it("exports an exact same-handle observation from the bundled binding", async (c
   await fs.symlink(rootDir, alias, process.platform === "win32" ? "junction" : "dir");
   expect(() => native.observeDirectory!(alias)).toThrow();
 });
+
+
+it.skipIf(process.platform !== "win32")("keeps native Windows directory observations exact across replacement and long paths", async (context) => {
+  let native: NativeBinding;
+  try {
+    native = __loadBundledNativeForTest();
+  } catch (error) {
+    if (requireNativeObservation) throw error;
+    return context.skip("native binding unavailable");
+  }
+  if (!native.observeDirectory) {
+    if (requireNativeObservation) throw new Error("native directory observation ABI is unavailable");
+    return context.skip("directory observation unavailable");
+  }
+  const container = await tempRoot("fs-safe-win-observation-epochs-");
+  const selected = path.join(container, "selected");
+  const moved = path.join(container, "moved");
+  await fs.mkdir(selected);
+  const before = native.observeDirectory(selected);
+  await fs.rename(selected, moved);
+  await fs.mkdir(selected);
+  const after = native.observeDirectory(selected);
+  expect(after.dev === before.dev && after.ino === before.ino).toBe(false);
+  const retained = native.observeDirectory(moved);
+  expect(retained).toMatchObject({ dev: before.dev, ino: before.ino });
+  expect(path.resolve(retained.realPath)).toBe(path.resolve(fsSync.realpathSync.native(moved)));
+
+  const regular = path.join(container, "file");
+  await fs.writeFile(regular, "file");
+  expect(() => native.observeDirectory!(regular)).toThrow();
+  const alias = path.join(container, "alias");
+  await fs.symlink(moved, alias, "junction");
+  expect(() => native.observeDirectory!(alias)).toThrow();
+
+  const deep = path.join(container, ...Array.from({ length: 32 }, (_, index) =>
+    `long-segment-${index}-directory`));
+  expect(deep.length).toBeGreaterThan(512);
+  await fs.mkdir(deep, { recursive: true });
+  const observedDeep = native.observeDirectory(deep);
+  const exact = fsSync.lstatSync(deep, { bigint: true });
+  expect(observedDeep).toMatchObject({ dev: exact.dev, ino: exact.ino });
+  expect(path.resolve(observedDeep.realPath)).toBe(path.resolve(fsSync.realpathSync.native(deep)));
+});

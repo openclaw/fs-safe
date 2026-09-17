@@ -537,6 +537,12 @@ Windows `Root.write()` and `Root.writeJson()` honor this policy both as a Root d
 
 The Windows buffered compatibility path resolves permitted in-root aliases before choosing its lock and binds publication to that effective destination. With the existing lock protocol, effective path components beneath the Root must contain only lower-case ASCII letters, digits, `.`, `_`, or `-`, with no trailing `.`. Unsupported spellings, including missing upper-case or non-ASCII names, fail with `path-alias` before mutation; no filesystem case-sensitivity or Unicode-folding behavior is guessed. This restriction does not apply to strict writes. Opaque Windows pathname identities still use strict verification against the retained original descriptor: they never, by themselves, authorize content-based acceptance of a replacement.
 
+The library's own lock-destination check permits the writer to reuse parent
+admission within that operation. The lock key and destination checks remain
+unchanged, and evidence is revoked when the locked operation finishes. Supplying
+an `assertBeforeMutation` callback retains full parent admission because caller
+code can change the filesystem before dispatch.
+
 Lock recovery is fail-closed. If a process crashes and leaves the root-level `.fs-safe-write-<sha256>.lock`, a later write reports the stale lock instead of deleting it based on a host-local PID. Recover only under external authority that excludes every competing writer; see [File lock](sidecar-lock.md#stale-recovery-guarded-remove-if-unchanged).
 
 ## See also

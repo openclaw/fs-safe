@@ -8,6 +8,7 @@ import { openNativeParentAdmission, openNativeRootAdmission } from "./native-par
 import { assertNativeStaging, writeNativeStage, type NativeStagingBinding } from "./native-staged-file.js";
 import type { NativeBinding } from "./native.js";
 import { captureNativeFdClose } from "./native-binding.js";
+import { NativePolicyDirectoryMismatch } from "./native-policy-directory-observation.js";
 import type {
   PinnedCreatedDirectoryReceipt,
   PinnedMutationAdmissionReceipt,
@@ -120,8 +121,10 @@ async function describePosixParent(parentFd: number, pathname: string): Promise<
   };
 }
 
-function describePolicyPosixParent(parentFd: number, pathname: string): PosixParentAdmission {
-  const policyDirectory = describePolicyStagedDirectory(parentFd, pathname);
+function describePolicyPosixParent(
+  binding: NativeBinding, parentFd: number, pathname: string,
+): PosixParentAdmission {
+  const policyDirectory = describePolicyStagedDirectory(parentFd, pathname, binding);
   return {
     parentFd,
     parentPath: policyDirectory.directory.realPath,
@@ -134,15 +137,17 @@ function describePolicyPosixParent(parentFd: number, pathname: string): PosixPar
 
 function policyParentCaptureDeopt(error: unknown): boolean {
   return error instanceof FsSafeError &&
+    !(error instanceof NativePolicyDirectoryMismatch) &&
     (error.code === "path-mismatch" || error.code === "not-file");
 }
 
 function tryDescribePolicyPosixParent(
+  binding: NativeBinding,
   parentFd: number,
   pathname: string,
 ): PosixParentAdmission | undefined {
   try {
-    return describePolicyPosixParent(parentFd, pathname);
+    return describePolicyPosixParent(binding, parentFd, pathname);
   } catch (error) {
     if (!policyParentCaptureDeopt(error)) throw error;
     return undefined;
@@ -162,6 +167,21 @@ async function capturePolicyAwarePosixParent(
   directoryFlags: number,
 ): Promise<PosixParentAdmission> {
   const closeFd = captureNativeFdClose(binding);
+  const observationDisposers = new Map<number, () => void>();
+  const disposeObservation = (fd: number) => {
+    const dispose = observationDisposers.get(fd);
+    observationDisposers.delete(fd);
+    dispose?.();
+  };
+  using observationScope = {
+    [Symbol.dispose]() { for (const dispose of observationDisposers.values()) dispose(); },
+  };
+  const capturePolicyParent = (fd: number, pathname: string) => {
+    const captured = tryDescribePolicyPosixParent(binding, fd, pathname);
+    const dispose = captured?.policyDirectory?.disposeObservation;
+    if (dispose) observationDisposers.set(fd, dispose);
+    return captured;
+  };
   const segments = relativeParentSegments(params.relativeParentPath);
   const parentSpelling = segments.length
     ? path.join(params.rootPath, ...segments)
@@ -196,7 +216,7 @@ async function capturePolicyAwarePosixParent(
     const parentFd = completeParentFd;
     try {
       let admitted = retainedTargetPath
-        ? tryDescribePolicyPosixParent(parentFd, parentSpelling)
+        ? capturePolicyParent(parentFd, parentSpelling)
         : undefined;
       if (!admitted) {
         retainedTargetPath = undefined;
@@ -211,6 +231,7 @@ async function capturePolicyAwarePosixParent(
       assertPosixParentCurrent(admitted);
       return admitted;
     } catch (error) {
+      disposeObservation(parentFd);
       closeFd(parentFd);
       throw error;
     }
@@ -226,7 +247,7 @@ async function capturePolicyAwarePosixParent(
   let currentOwnedFd: number | undefined;
   let currentPath = params.rootPath;
   let current = retainedTargetPath
-    ? tryDescribePolicyPosixParent(rootFd, currentPath)
+    ? capturePolicyParent(rootFd, currentPath)
     : undefined;
   if (!current) {
     retainedTargetPath = undefined;
@@ -282,7 +303,7 @@ async function capturePolicyAwarePosixParent(
       let child: PosixParentAdmission;
       try {
         const acceleratedChild = retainedTargetPath
-          ? tryDescribePolicyPosixParent(childFd, childPath)
+          ? capturePolicyParent(childFd, childPath)
           : undefined;
         if (acceleratedChild) {
           child = acceleratedChild;
@@ -331,11 +352,13 @@ async function capturePolicyAwarePosixParent(
           assertPosixParentCurrent(child);
         }
       } catch (error) {
+        disposeObservation(childFd);
         closeFd(childFd);
         throw error;
       }
 
       const previousOwnedFd = currentOwnedFd;
+      disposeObservation(current.parentFd);
       currentOwnedFd = child.parentFd;
       currentFd = child.parentFd;
       currentPath = child.parentPath;
@@ -350,7 +373,10 @@ async function capturePolicyAwarePosixParent(
     // Empty relative parents are handled by the complete-parent fast path.
     throw new FsSafeError("path-mismatch", "native write parent admission did not complete");
   } finally {
-    if (currentOwnedFd !== undefined) closeFd(currentOwnedFd);
+    if (currentOwnedFd !== undefined) {
+      disposeObservation(currentOwnedFd);
+      closeFd(currentOwnedFd);
+    }
   }
 }
 
