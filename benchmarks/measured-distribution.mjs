@@ -8,6 +8,10 @@ import {
   validateSidecarPathSnapshotReport,
   validateSidecarPathSnapshotWorkloadResult,
 } from "./sidecar-path-snapshot.mjs";
+import {
+  validateSyncCopyFallbackAdmissionReport,
+  validateSyncCopyFallbackAdmissionWorkloadResult,
+} from "./sync-copy-fallback-admission.mjs";
 import { validateGuestBenchmarkReport } from "./guest.mjs";
 
 const SHA1 = /^[0-9a-f]{40}$/u;
@@ -145,8 +149,10 @@ export function validateMeasuredDistribution(plan, reportPlan, report, expectedD
     }
     validateTempWorkspaceWorkloadResult(result);
     validateSidecarPathSnapshotWorkloadResult(result);
+    validateSyncCopyFallbackAdmissionWorkloadResult(result);
   }
   validateSidecarPathSnapshotReport(report, plan.settings.filter, plan.settings.iterations);
+  validateSyncCopyFallbackAdmissionReport(report, plan.settings.filter, plan.settings.iterations);
 }
 
 export const MEASURED_SOURCE_ARGUMENT_NAMES = Object.freeze(

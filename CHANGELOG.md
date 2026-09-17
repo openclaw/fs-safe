@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixes and compatibility
+
+- Preserve an already-selected synchronous destination-admission error when its one best-effort descriptor close also fails. Successful admission retains its existing close-error behavior, and synchronous atomic replacement adapters do not retry or double-close the destination descriptor.
+
+### Validation
+
+- Add paired-error regressions for direct hardlink-policy admission and public synchronous atomic replacement, including arbitrary falsy thrown values, plus receipt-bound timing rows that enforce unchanged destination observation and descriptor-call counts on successful rename and restored copy-fallback routes.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights
