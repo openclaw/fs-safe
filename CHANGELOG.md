@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Preserve falsy thrown values during atomic replacement settlement, including strict temp cleanup, retained-handle close, copy-fallback restoration, and synchronous store publication failures.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights

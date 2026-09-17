@@ -326,7 +326,7 @@ async function replaceFileAtomicUnserialized(
   const expectedHash = atomicExpectedContentHash(renameIdentity, options.content);
   const tempPath = buildReplaceTempPath(filePath, options.tempPrefix);
   const tempOwner = new AsyncAtomicTempOwner(tempPath);
-  let originalError: unknown;
+  let originalFailure: { error: unknown } | undefined;
   try {
     await fsModule.mkdir(fsModule === fs ? recursiveMkdirPath(dir) : dir, { recursive: true, mode: dirMode });
     await applyDirectoryMode({ fsModule, dirPath: dir, mode: dirMode });
@@ -381,12 +381,12 @@ async function replaceFileAtomicUnserialized(
     }
     return result;
   } catch (error) {
-    originalError = error;
+    originalFailure = { error };
     throw error;
   } finally {
     await tempOwner.finish({
       fsModule,
-      originalError,
+      originalFailure,
       throwOnCleanupError: options.throwOnCleanupError === true,
     });
   }
@@ -433,7 +433,7 @@ function replaceFileAtomicSyncUnserialized(
   }
   const tempPath = buildReplaceTempPath(filePath, options.tempPrefix);
   const tempOwner = new SyncAtomicTempOwner(tempPath);
-  let originalError: unknown;
+  let originalFailure: { error: unknown } | undefined;
   try {
     fsModule.mkdirSync(fsModule === syncFs ? recursiveMkdirPath(dir) : dir, { recursive: true, mode: dirMode });
     applyDirectoryModeSync({ fsModule, dirPath: dir, mode: dirMode, fchmodSync });
@@ -487,12 +487,12 @@ function replaceFileAtomicSyncUnserialized(
     }
     return result;
   } catch (error) {
-    originalError = error;
+    originalFailure = { error };
     throw error;
   } finally {
     tempOwner.finish({
       fsModule,
-      originalError,
+      originalFailure,
       throwOnCleanupError: options.throwOnCleanupError === true,
     });
   }

@@ -92,7 +92,7 @@ export function writeFileSyncAtomic(params: {
     `.fs-safe-${process.pid}-${randomUUID()}.tmp`,
   );
   const owner = new SyncAtomicTempOwner(tempPath);
-  let originalError: unknown;
+  let originalFailure: { error: unknown } | undefined;
   try {
     getFsSafeTestHooks()?.beforeFileStoreSyncPrivateWrite?.(filePath);
     if (parentGuard) {
@@ -145,9 +145,9 @@ export function writeFileSyncAtomic(params: {
     }
     return filePath;
   } catch (error) {
-    originalError = error;
+    originalFailure = { error };
     throw error;
   } finally {
-    owner.finish({ fsModule: fs, originalError, throwOnCleanupError: false });
+    owner.finish({ fsModule: fs, originalFailure, throwOnCleanupError: false });
   }
 }

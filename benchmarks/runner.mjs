@@ -17,6 +17,7 @@ import { registerBroad } from "./broad.mjs";
 import { registerScaling } from "./scaling.mjs";
 import { registerCollections } from "./collections.mjs";
 import { registerSyncStoreDirectoryModes } from "./sync-store-directory-mode.mjs";
+import { registerAtomicSettlement } from "./atomic-settlement.mjs";
 import { registerGuest, validateGuestBenchmarkReport } from "./guest.mjs";
 import { observeFilenameFallbackProfile } from "./filename-fallback-profile.mjs";
 import {
@@ -144,6 +145,7 @@ try {
   await registerScaling(context);
   await registerCollections(context);
   registerSyncStoreDirectoryModes(context);
+  registerAtomicSettlement(context);
   const guest = registerGuest(context);
   const covered = new Set(cases.flatMap((c) => c.covers));
   const required = [...exportsByName.keys(), ...[...contracts].flatMap(([type, keys]) => keys.map((key) => `${type}.${key}`))];

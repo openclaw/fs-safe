@@ -47,11 +47,16 @@ function missingOwnedFile(pathname: string, cause: unknown): FsSafeError {
   });
 }
 
-function cleanupFailure(originalError: unknown, cleanupError: unknown): Error {
-  if (originalError !== undefined) {
+type AtomicOperationFailure = { error: unknown };
+
+function cleanupFailure(
+  originalFailure: AtomicOperationFailure | undefined,
+  cleanupError: unknown,
+): Error {
+  if (originalFailure !== undefined) {
     return new Error(
-      `Atomic file replace failed (${String(originalError)}); cleanup also failed (${String(cleanupError)})`,
-      { cause: originalError },
+      `Atomic file replace failed (${String(originalFailure.error)}); cleanup also failed (${String(cleanupError)})`,
+      { cause: originalFailure.error },
     );
   }
   return cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError));
@@ -61,7 +66,7 @@ async function cleanupOwnedPath(params: {
   fsModule: AsyncOwnerFileSystem;
   pathname: string;
   identity?: BigIntStats;
-  originalError?: unknown;
+  originalFailure?: AtomicOperationFailure;
   throwOnCleanupError: boolean;
 }): Promise<boolean> {
   if (!params.identity) return true;
@@ -80,9 +85,9 @@ async function cleanupOwnedPath(params: {
     await params.fsModule.unlink(params.pathname);
     return true;
   } catch (cleanupError) {
-    if ((cleanupError as NodeJS.ErrnoException).code === "ENOENT") return true;
+    if ((cleanupError as NodeJS.ErrnoException | null | undefined)?.code === "ENOENT") return true;
     if (params.throwOnCleanupError) {
-      throw cleanupFailure(params.originalError, cleanupError);
+      throw cleanupFailure(params.originalFailure, cleanupError);
     }
     return false;
   }
@@ -123,7 +128,7 @@ function cleanupOwnedPathSync(params: {
   fsModule: SyncOwnerFileSystem;
   pathname: string;
   identity?: BigIntStats;
-  originalError?: unknown;
+  originalFailure?: AtomicOperationFailure;
   throwOnCleanupError: boolean;
 }): boolean {
   if (!params.identity) return true;
@@ -140,9 +145,9 @@ function cleanupOwnedPathSync(params: {
     params.fsModule.unlinkSync(params.pathname);
     return true;
   } catch (cleanupError) {
-    if ((cleanupError as NodeJS.ErrnoException).code === "ENOENT") return true;
+    if ((cleanupError as NodeJS.ErrnoException | null | undefined)?.code === "ENOENT") return true;
     if (params.throwOnCleanupError) {
-      throw cleanupFailure(params.originalError, cleanupError);
+      throw cleanupFailure(params.originalFailure, cleanupError);
     }
     return false;
   }
@@ -258,10 +263,10 @@ export class AsyncAtomicTempOwner {
 
   async finish(params: {
     fsModule: AsyncOwnerFileSystem;
-    originalError?: unknown;
+    originalFailure?: AtomicOperationFailure;
     throwOnCleanupError: boolean;
   }): Promise<void> {
-    let deferredError: unknown;
+    let deferredFailure: AtomicOperationFailure | undefined;
     let cleanupComplete = !this.#exists;
     if (this.#exists) {
       try {
@@ -269,27 +274,30 @@ export class AsyncAtomicTempOwner {
           fsModule: params.fsModule,
           pathname: this.pathname,
           identity: this.#identity,
-          originalError: params.originalError,
+          originalFailure: params.originalFailure,
           throwOnCleanupError: params.throwOnCleanupError,
         });
       } catch (error) {
-        deferredError = error;
+        deferredFailure = { error };
       }
     }
     if (cleanupComplete) this.#unregister();
     try {
       await this.#handle?.close();
     } catch (closeError) {
-      deferredError = deferredError
-        ? new AggregateError([deferredError, closeError], "Atomic temp cleanup and close failed")
-        : params.originalError !== undefined
-          ? new AggregateError(
-              [params.originalError, closeError],
+      deferredFailure = deferredFailure !== undefined
+        ? { error: new AggregateError(
+            [deferredFailure.error, closeError],
+            "Atomic temp cleanup and close failed",
+          ) }
+        : params.originalFailure !== undefined
+          ? { error: new AggregateError(
+              [params.originalFailure.error, closeError],
               "Atomic file replace and close failed",
-            )
-          : closeError;
+            ) }
+          : { error: closeError };
     }
-    if (deferredError) throw deferredError;
+    if (deferredFailure !== undefined) throw deferredFailure.error;
   }
 }
 
@@ -407,10 +415,10 @@ export class SyncAtomicTempOwner {
 
   finish(params: {
     fsModule: SyncOwnerFileSystem;
-    originalError?: unknown;
+    originalFailure?: AtomicOperationFailure;
     throwOnCleanupError: boolean;
   }): void {
-    let deferredError: unknown;
+    let deferredFailure: AtomicOperationFailure | undefined;
     let cleanupComplete = !this.#exists;
     if (this.#exists) {
       try {
@@ -418,11 +426,11 @@ export class SyncAtomicTempOwner {
           fsModule: params.fsModule,
           pathname: this.pathname,
           identity: this.#identity,
-          originalError: params.originalError,
+          originalFailure: params.originalFailure,
           throwOnCleanupError: params.throwOnCleanupError,
         });
       } catch (error) {
-        deferredError = error;
+        deferredFailure = { error };
       }
     }
     if (cleanupComplete) this.#unregister();
@@ -432,16 +440,19 @@ export class SyncAtomicTempOwner {
       try {
         params.fsModule.closeSync(fd);
       } catch (closeError) {
-        deferredError = deferredError
-          ? new AggregateError([deferredError, closeError], "Atomic temp cleanup and close failed")
-          : params.originalError !== undefined
-            ? new AggregateError(
-                [params.originalError, closeError],
+        deferredFailure = deferredFailure !== undefined
+          ? { error: new AggregateError(
+              [deferredFailure.error, closeError],
+              "Atomic temp cleanup and close failed",
+            ) }
+          : params.originalFailure !== undefined
+            ? { error: new AggregateError(
+                [params.originalFailure.error, closeError],
                 "Atomic file replace and close failed",
-              )
-            : closeError;
+              ) }
+            : { error: closeError };
       }
     }
-    if (deferredError) throw deferredError;
+    if (deferredFailure !== undefined) throw deferredFailure.error;
   }
 }
