@@ -26,8 +26,9 @@ const source = {
 };
 
 function fixture() {
-  const repositoryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-campaign-state-"));
-  roots.push(repositoryRoot);
+  const createdRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-campaign-state-"));
+  roots.push(createdRoot);
+  const repositoryRoot = fs.realpathSync.native(createdRoot);
   const outputA = path.join(repositoryRoot, "capture-a");
   const outputB = path.join(repositoryRoot, "capture-b");
   fs.mkdirSync(outputA, { mode: 0o700 });
@@ -86,6 +87,40 @@ describe("sync lockRoot fixed WSL2 campaign state", () => {
     })).toThrow();
     expect(fs.readFileSync(value.paths.campaign)).toEqual(original);
   });
+
+  it.each(["direct", "ancestor"] as const)(
+    "rejects a %s output-root alias before consuming a capture token",
+    (kind) => {
+      const value = fixture();
+      let outputRoot: string;
+      if (kind === "direct") {
+        outputRoot = path.join(value.repositoryRoot, "capture-alias");
+        fs.symlinkSync(
+          value.outputA,
+          outputRoot,
+          process.platform === "win32" ? "junction" : "dir",
+        );
+      } else {
+        const realParent = path.join(value.repositoryRoot, "real-parent");
+        const aliasParent = path.join(value.repositoryRoot, "parent-alias");
+        outputRoot = path.join(aliasParent, "capture");
+        fs.mkdirSync(path.join(realParent, "capture"), { recursive: true, mode: 0o700 });
+        fs.symlinkSync(
+          realParent,
+          aliasParent,
+          process.platform === "win32" ? "junction" : "dir",
+        );
+      }
+      expect(() => consumeWsl2CampaignCapture({
+        ...source,
+        repositoryRoot: value.repositoryRoot,
+        node: "22",
+        outputRoot,
+        now: "2026-09-16T00:00:01Z",
+      })).toThrow(kind === "direct" ? /not real/u : /aliased/u);
+      expect(fs.existsSync(value.paths.consumption("22"))).toBe(false);
+    },
+  );
 
   it("consumes Node 22 before invocation and retains failure across a fresh output root", () => {
     const value = fixture();
