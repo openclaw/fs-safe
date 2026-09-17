@@ -1,0 +1,2 @@
+benchmarks/sync-lock-root-crabbox-wsl2.sh text eol=lf
+benchmarks/sync-lock-root-crabbox-capture-wsl2.sh text eol=lf

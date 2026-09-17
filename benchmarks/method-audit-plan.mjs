@@ -17,7 +17,16 @@ const PLATFORM_MATRIX = Object.freeze({
   linux: [{ platform: "linux", os: "ubuntu-latest" }],
   macos: [{ platform: "macos", os: "macos-15" }],
   windows: [{ platform: "windows", os: "windows-latest" }],
+  wsl2: [{ platform: "wsl2", os: "crabbox-wsl2" }],
 });
+const WORKFLOW_PATHS = Object.freeze([
+  ".github/workflows/benchmarks.yml",
+  ".github/workflows/sync-lock-root-performance-proof.yml",
+]);
+
+export function validateMethodAuditWorkflowPath(value) {
+  return oneOf("workflow path", value, WORKFLOW_PATHS);
+}
 
 export const METHOD_AUDIT_DEFAULTS = Object.freeze({
   platform: "all",
@@ -210,7 +219,7 @@ export function normalizeSha256(name, value) {
 export function createMethodAuditPlan({ inputs, harness, candidate, baseline = null, context }) {
   const normalizedHarness = {
     workflowRef: boundedText("workflow ref", harness.workflowRef, 512, { allowEmpty: false }),
-    workflowPath: ".github/workflows/benchmarks.yml",
+    workflowPath: validateMethodAuditWorkflowPath(harness.workflowPath ?? WORKFLOW_PATHS[0]),
     sha: normalizeSha("workflow SHA", harness.sha),
     tree: normalizeSha("harness tree", harness.tree),
     workflowFileHash: normalizeSha256("workflow file hash", harness.workflowFileHash),

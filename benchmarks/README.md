@@ -353,3 +353,188 @@ are included in row names. Contents and directory listings are checked outside
 timing. On Windows, `TEMP`/`TMP` select the ordinary fixture volume; the
 sidecar-path exception above uses the cwd drive only when relative path semantics
 require it. On POSIX use `TMPDIR`.
+
+## Synchronous lockRoot security-cost campaign
+
+The manual `sync lockRoot performance proof (draft)` workflow measures the
+security change against exact immutable revisions. Supply a full candidate SHA
+and the separately reviewed workflow/harness SHA. The baseline is fixed at
+`6404191fd6e73bf34bcfacaefe2f113a2b8f6d99`. The workflow refuses reruns and
+mutable refs, and its 36 hosted studies are serialized per immutable campaign: Linux, macOS,
+and native Windows; Node 22 and 24; ABBA and BAAB; and source-comparison,
+same-source rebuild, and same-artifact studies. Each study uses five complete
+blocks, so each role is measured by ten fresh processes. Every process records
+nine sample averages per row after three untimed setup/verification calls and
+one mandatory checked call. Fsync-inclusive rows use ten effective iterations
+per sample; metadata-only rows use 100.
+
+The 16 fixed rows separate raw and Root create/release, explicit and default
+sidecars, flat, 16-component existing, and 16-component missing parents, and
+policy sizes 0, 10, and 100. Separate rows isolate clean verification, a custom
+parser, same-owner acquisition, nonfinal and final release, a no-op mutation
+assertion, approved stale reclaim, armed compromise-monitor cleanup, and
+deterministic compromised-byte detection. Setup, fixture reset, correctness
+checks, and emergency cleanup are outside timing. Create/reclaim rows are marked
+`fsync-inclusive`; verification and reentrant/release rows are marked
+`metadata-only`. Each worker proves the expected held-record domain, reference
+count, owned descriptor, optional timer, and absence of sidecars and `.reclaim`
+guards after cleanup.
+
+The missing-parent row uses an admitted explicit sidecar in the existing Root.
+Its receipt also records the intentional semantic boundary: the legacy baseline
+creates the target ancestry during normalization, while the candidate must leave
+that ancestry absent. The analyzer admits neither behavior under the wrong source.
+
+The analyzer rejects a row when any block median or the pooled median regresses
+by more than 10% **or** 50 microseconds. For every block and for the pooled
+sample set, it independently rejects the maximum sample average when it
+regresses by more than 20% **or** 100 microseconds.
+Control drift is evaluated in either direction; source regressions are directional.
+Controls are never subtracted from or used to cancel a source result. A missing,
+skipped, substituted, selectively rerun, duplicate, or provenance-inconsistent
+study rejects the cohort. The workflow's hosted analysis explicitly has
+`releaseClearance: false`, even when its three-platform cohort passes.
+Measured gate failures write their bound analysis receipt before returning a
+nonzero status, and the workflow uploads that receipt with `if: always()`.
+
+WSL2 is a separate native-Windows-host Crabbox lane. Before dispatch, inspect
+`crabbox --version`; choose three distinct UUIDv4 values; query the repository's
+workflow database ID and current last run number; and predeclare exactly the
+next run number. Compute the workflow SHA-256 from the immutable Git blob. If
+another dispatch consumes that number, abandon the entire campaign—never
+update it to “latest.” Materialize the capture launcher from that same Git blob
+at its fixed private state-root path, rather than executing checkout bytes:
+
+```sh
+CRABBOX_VERSION="$(crabbox --version)"
+CAMPAIGN_ID=<predeclared-uuidv4>
+NODE22_CAPTURE=<predeclared-uuidv4>
+NODE24_CAPTURE=<predeclared-uuidv4>
+HARNESS=<exact-harness-sha>
+CANDIDATE=<exact-candidate-sha>
+WORKFLOW_ID="$(gh api repos/openclaw/fs-safe/actions/workflows/sync-lock-root-performance-proof.yml --jq .id)"
+LAST_RUN="$(gh api "repos/openclaw/fs-safe/actions/workflows/$WORKFLOW_ID/runs?per_page=1" --jq '.workflow_runs[0].run_number // 0')"
+EXPECTED_RUN_NUMBER="$((LAST_RUN + 1))"
+WORKFLOW_SHA256="$(GIT_NO_REPLACE_OBJECTS=1 git --no-replace-objects cat-file blob "$HARNESS:.github/workflows/sync-lock-root-performance-proof.yml" | sha256sum | awk '{print $1}')"
+STATE_ROOT="$PWD/artifacts-sync-lock-root-state-v1"
+LAUNCHER="$STATE_ROOT/launchers/$CAMPAIGN_ID.sh"
+install -d -m 700 "$STATE_ROOT" "$STATE_ROOT/launchers"
+(umask 077; set -o noclobber; GIT_NO_REPLACE_OBJECTS=1 git --no-replace-objects cat-file blob "$HARNESS:benchmarks/sync-lock-root-crabbox-capture-wsl2.sh" >"$LAUNCHER")
+chmod 500 "$LAUNCHER"
+bash "$LAUNCHER" --initialize --repository-root "$PWD" \
+  --candidate "$CANDIDATE" --harness "$HARNESS" \
+  --campaign-id "$CAMPAIGN_ID" \
+  --node-22-capture "$NODE22_CAPTURE" \
+  --node-24-capture "$NODE24_CAPTURE" \
+  --crabbox-version "$CRABBOX_VERSION" \
+  --workflow-database-id "$WORKFLOW_ID" \
+  --workflow-file-sha256 "$WORKFLOW_SHA256" \
+  --expected-actions-run-number "$EXPECTED_RUN_NUMBER"
+CAMPAIGN_STATE="$STATE_ROOT/$CAMPAIGN_ID/campaign-state.json"
+CAMPAIGN_INITIALIZED_AT="$(node -e 'const fs=require("node:fs");process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).campaign.actions.initializedAt)' "$CAMPAIGN_STATE")"
+```
+
+Dispatch once with those values plus `campaign_initialized_at`. The workflow
+checks its actual repository, workflow ID/path, SHA, immutable workflow bytes,
+run number, first attempt, and API creation time before measurement. State is
+created with `wx` before dispatch and cannot be rebound. Retain it independently
+of WSL output until analysis completes. A run-number race or fail-closed clock
+disagreement requires a new campaign.
+
+```sh
+gh workflow run sync-lock-root-performance-proof.yml --ref "$HARNESS" \
+  -f candidate_ref="$CANDIDATE" -f expected_harness_sha="$HARNESS" \
+  -f expected_workflow_database_id="$WORKFLOW_ID" \
+  -f expected_workflow_file_sha256="$WORKFLOW_SHA256" \
+  -f expected_actions_run_number="$EXPECTED_RUN_NUMBER" \
+  -f campaign_initialized_at="$CAMPAIGN_INITIALIZED_AT" \
+  -f campaign_id="$CAMPAIGN_ID" -f wsl2_node_22_capture="$NODE22_CAPTURE" \
+  -f wsl2_node_24_capture="$NODE24_CAPTURE" \
+  -f expected_crabbox_version="$CRABBOX_VERSION" -f acknowledge_draft=true
+```
+
+The launcher bootstrap and every later trust-establishing Git read set
+`GIT_NO_REPLACE_OBJECTS=1` and pass `git --no-replace-objects`; commit, tree,
+blob, alternate-base, or namespaced replacement refs therefore cannot redirect
+the reviewed expectations. The immutable launcher checks its own raw bytes and
+every tracked benchmark, workflow, package, lockfile, and attributes input against blobs at `HARNESS`
+with `git hash-object --no-filters`; status, assume-unchanged, skip-worktree,
+and filters cannot hide a mismatch. It then invokes
+the fixed static-SSH native-WSL2 route, retains the wrapper's raw timing JSON
+and stderr, records local start/finish and exit status, hashes the returned
+archive and its extracted contents, and creates one immutable outer receipt.
+Neither provider nor provider ID is an input: the receipt derives
+`provider=ssh` and the actual ID from Crabbox's timing JSON. The remote script
+verifies WSL2, Node and pnpm, creates and independently stats a private worker
+temp root on the admitted filesystem, and forces every timed Node process to
+prove that `os.tmpdir()` selected it. It records machine/kernel/filesystem/temp
+receipts, runs all six order/control studies, and emits only a bounded ustar
+gzip artifact stream. The outer script validates all archive headers, paths,
+types, duplicates, and size limits before extracting into a new private
+directory. Numeric fields admit only leading ASCII spaces, one contiguous
+octal digit sequence, and trailing NUL/space padding; leading NULs, resumed
+digits, high-bit/base-256 encodings, or inexact ustar magic/version fail closed:
+
+```sh
+install -d -m 700 .artifacts/sync-lock-root
+bash "$LAUNCHER" --repository-root "$PWD" \
+  --candidate "$CANDIDATE" --harness "$HARNESS" \
+  --campaign-id "$CAMPAIGN_ID" \
+  --node-22-capture "$NODE22_CAPTURE" \
+  --node-24-capture "$NODE24_CAPTURE" \
+  --crabbox-version "$CRABBOX_VERSION" \
+  --workflow-database-id "$WORKFLOW_ID" \
+  --workflow-file-sha256 "$WORKFLOW_SHA256" \
+  --expected-actions-run-number "$EXPECTED_RUN_NUMBER" \
+  --campaign-initialized-at "$CAMPAIGN_INITIALIZED_AT" \
+  --node 22 --static-host <controlled-host> \
+  --output-root .artifacts/sync-lock-root
+```
+
+The Node 22 token is atomically consumed in the fixed state before `crabbox
+run` starts, and remains consumed on every later failure. Only a successfully
+admitted terminal Node 22 receipt permits Node 24 to begin. Repeat exactly once
+with `--node 24`, the same host/output directory and all the same bindings. The
+outer script refuses an existing capture or a consumed token, including when a
+different output root is supplied. Any failure requires a wholly new
+predeclared campaign; deleting or relocating output is not a retry. Retain both
+complete capture directories and the fixed state directory. Each capture
+includes the raw timing JSON, wrapper stderr, version, clock, archive,
+pre-extraction validation receipt, copied campaign/consumption/result receipts,
+private extracted `remote/`, and outer receipt. Report the actual `provider=ssh`
+and actual ID printed in each outer receipt. Both captures must identify the
+same controlled SSH provider, host, kernel, filesystem, and Crabbox version. A
+nonzero wrapper/remote/validation/extraction/finalizer exit, overlap, or
+disagreement rejects the campaign.
+
+Place the two untouched `wsl2-capture-node-*` directories beside the 36
+API-selected Actions artifact directories and pass the hosted API manifest,
+the exact Actions run/head, and every immutable campaign binding to the analyzer:
+
+```sh
+node benchmarks/sync-lock-root-analyze.mjs \
+  --root <combined-artifact-root> --manifest <hosted-api-manifest.json> \
+  --candidate-sha "$CANDIDATE" --harness-sha "$HARNESS" \
+  --campaign-id "$CAMPAIGN_ID" \
+  --node-22-capture "$NODE22_CAPTURE" \
+  --node-24-capture "$NODE24_CAPTURE" \
+  --crabbox-version "$CRABBOX_VERSION" \
+  --workflow-database-id "$WORKFLOW_ID" \
+  --workflow-file-sha256 "$WORKFLOW_SHA256" \
+  --expected-actions-run-number "$EXPECTED_RUN_NUMBER" \
+  --campaign-initialized-at "$CAMPAIGN_INITIALIZED_AT" \
+  --surfaces linux,macos,windows,wsl2 \
+  --run-id <hosted-api-run-id> --head-sha <exact-harness-sha> \
+  --output <new-analysis-receipt.json>
+```
+
+The analyzer binds every hosted artifact to its actual Actions API job ID,
+successful upload-step window, artifact creation time, report time, run ID and
+head SHA. Only the complete 48-study analysis can set
+`releaseClearance: true`. A failed hosted job, control or WSL2 capture requires
+a new predeclared full campaign; do not substitute receipts or cells, mix hosts
+or campaigns, selectively rerun, exclude/subtract samples, or use a control to
+waive a source regression.
+
+These warm-cache measurements omit cold storage, contention, crash durability,
+and hostile races; filesystem variance and shared-host load stay unnormalized.

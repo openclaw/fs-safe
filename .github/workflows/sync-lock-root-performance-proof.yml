@@ -49,16 +49,510 @@ on:
         default: false
         type: boolean
 
-permissions: {}
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: sync-lock-root-proof-${{ inputs.campaign_id }}-${{ inputs.expected_actions_run_number }}
+  cancel-in-progress: false
+
+env:
+  BASELINE_SHA: 6404191fd6e73bf34bcfacaefe2f113a2b8f6d99
+  GIT_NO_REPLACE_OBJECTS: "1"
+  PNPM_VERSION: 11.25.0
 
 jobs:
-  registration-only:
-    name: Refuse registration-only execution
+  preflight:
+    name: Validate immutable campaign inputs
     runs-on: ubuntu-latest
-    timeout-minutes: 1
+    timeout-minutes: 5
     steps:
-      - name: Require an exact reviewed campaign ref
+      - name: Reject reruns, mutable refs, and unreviewed dispatches
         shell: bash
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_ref }}
+          EXPECTED_HARNESS_SHA: ${{ inputs.expected_harness_sha }}
+          EXPECTED_WORKFLOW_DATABASE_ID: ${{ inputs.expected_workflow_database_id }}
+          EXPECTED_WORKFLOW_FILE_SHA256: ${{ inputs.expected_workflow_file_sha256 }}
+          EXPECTED_ACTIONS_RUN_NUMBER: ${{ inputs.expected_actions_run_number }}
+          CAMPAIGN_INITIALIZED_AT: ${{ inputs.campaign_initialized_at }}
+          CAMPAIGN_ID: ${{ inputs.campaign_id }}
+          NODE22_CAPTURE: ${{ inputs.wsl2_node_22_capture }}
+          NODE24_CAPTURE: ${{ inputs.wsl2_node_24_capture }}
+          CRABBOX_VERSION: ${{ inputs.expected_crabbox_version }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          EVENT_SHA: ${{ github.sha }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          ACTUAL_RUN_NUMBER: ${{ github.run_number }}
+          ACTUAL_REPOSITORY: ${{ github.repository }}
+          ACKNOWLEDGE_DRAFT: ${{ inputs.acknowledge_draft }}
         run: |
-          printf '%s\n' 'Registration only; dispatch an exact reviewed campaign ref.' >&2
-          exit 1
+          set -euo pipefail
+          [[ "$ACKNOWLEDGE_DRAFT" == "true" ]] || { echo "draft campaign was not acknowledged" >&2; exit 2; }
+          [[ "$RUN_ATTEMPT" == "1" ]] || { echo "selective workflow reruns are forbidden" >&2; exit 2; }
+          [[ "$ACTUAL_REPOSITORY" == "openclaw/fs-safe" ]] || { echo "repository identity mismatch" >&2; exit 2; }
+          [[ "$EXPECTED_WORKFLOW_DATABASE_ID" =~ ^[1-9][0-9]*$ ]] || { echo "workflow database ID is invalid" >&2; exit 2; }
+          [[ "$EXPECTED_WORKFLOW_FILE_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo "workflow byte hash is invalid" >&2; exit 2; }
+          [[ "$EXPECTED_ACTIONS_RUN_NUMBER" =~ ^[1-9][0-9]*$ && "$ACTUAL_RUN_NUMBER" == "$EXPECTED_ACTIONS_RUN_NUMBER" ]] || { echo "predeclared Actions run number was consumed or raced" >&2; exit 2; }
+          [[ "$CAMPAIGN_INITIALIZED_AT" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]] || { echo "campaign initialization time is invalid" >&2; exit 2; }
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "candidate_ref must be exact lowercase SHA" >&2; exit 2; }
+          [[ "$EXPECTED_HARNESS_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "expected_harness_sha must be exact lowercase SHA" >&2; exit 2; }
+          uuid='^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+          [[ "$CAMPAIGN_ID" =~ $uuid && "$NODE22_CAPTURE" =~ $uuid && "$NODE24_CAPTURE" =~ $uuid ]] || { echo "campaign bindings must be UUIDv4 values" >&2; exit 2; }
+          [[ "$CAMPAIGN_ID" != "$NODE22_CAPTURE" && "$CAMPAIGN_ID" != "$NODE24_CAPTURE" && "$NODE22_CAPTURE" != "$NODE24_CAPTURE" ]] || { echo "campaign bindings must be distinct" >&2; exit 2; }
+          [[ -n "$CRABBOX_VERSION" && ${#CRABBOX_VERSION} -le 128 ]] || { echo "expected Crabbox version is invalid" >&2; exit 2; }
+          [[ ! "$CRABBOX_VERSION" =~ [[:cntrl:]] ]] || { echo "expected Crabbox version contains control bytes" >&2; exit 2; }
+          [[ "$EXPECTED_HARNESS_SHA" == "$WORKFLOW_SHA" ]] || { echo "reviewed harness SHA mismatch" >&2; exit 2; }
+          [[ "$EVENT_SHA" == "$WORKFLOW_SHA" ]] || { echo "run head is not the reviewed harness commit" >&2; exit 2; }
+          [[ "$CANDIDATE_SHA" != "$BASELINE_SHA" ]] || { echo "candidate and security baseline must differ" >&2; exit 2; }
+
+      - name: Verify API run tuple against the predeclared campaign
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          EXPECTED_WORKFLOW_DATABASE_ID: ${{ inputs.expected_workflow_database_id }}
+          EXPECTED_ACTIONS_RUN_NUMBER: ${{ inputs.expected_actions_run_number }}
+          CAMPAIGN_INITIALIZED_AT: ${{ inputs.campaign_initialized_at }}
+          EXPECTED_HARNESS_SHA: ${{ inputs.expected_harness_sha }}
+        with:
+          script: |
+            const response = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId,
+            });
+            const run = response.data;
+            const rfc3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
+            const initialized = Date.parse(process.env.CAMPAIGN_INITIALIZED_AT);
+            const created = Date.parse(run.created_at);
+            if (run.id !== context.runId ||
+                `${context.repo.owner}/${context.repo.repo}` !== "openclaw/fs-safe" ||
+                run.repository?.full_name !== "openclaw/fs-safe" ||
+                String(run.workflow_id) !== process.env.EXPECTED_WORKFLOW_DATABASE_ID ||
+                run.path !== ".github/workflows/sync-lock-root-performance-proof.yml" ||
+                run.head_sha !== process.env.EXPECTED_HARNESS_SHA ||
+                run.run_number !== Number(process.env.EXPECTED_ACTIONS_RUN_NUMBER) ||
+                run.run_attempt !== 1 || !rfc3339.test(process.env.CAMPAIGN_INITIALIZED_AT) ||
+                !rfc3339.test(run.created_at) || !Number.isFinite(initialized) ||
+                !Number.isFinite(created) || initialized > created) {
+              throw new Error("Actions run does not match the preinitialized immutable campaign");
+            }
+
+      - name: Check out the exact reviewed workflow blob
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.expected_harness_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify immutable workflow bytes
+        shell: bash
+        env:
+          EXPECTED_HARNESS_SHA: ${{ inputs.expected_harness_sha }}
+          EXPECTED_WORKFLOW_FILE_SHA256: ${{ inputs.expected_workflow_file_sha256 }}
+        run: |
+          set -euo pipefail
+          actual="$(git --no-replace-objects cat-file blob "$EXPECTED_HARNESS_SHA:.github/workflows/sync-lock-root-performance-proof.yml" | sha256sum | awk '{print $1}')"
+          [[ "$actual" == "$EXPECTED_WORKFLOW_FILE_SHA256" ]] || { echo "reviewed workflow byte hash mismatch" >&2; exit 2; }
+
+  measure:
+    needs: preflight
+    name: ${{ matrix.platform.surface }} / Node ${{ matrix.node }} / ${{ matrix.order }} / ${{ matrix.study }}
+    runs-on: ${{ matrix.platform.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        platform:
+          - { surface: linux, os: ubuntu-latest }
+          - { surface: macos, os: macos-15 }
+          - { surface: windows, os: windows-latest }
+        node: ["22", "24"]
+        order: [abba, baab]
+        study: [source-comparison, same-source-rebuild, same-artifact]
+    defaults:
+      run:
+        shell: bash
+    env:
+      HARNESS_ROOT: ${{ github.workspace }}/harness
+      CANDIDATE_ROOT: ${{ github.workspace }}/candidate
+      BASELINE_ROOT: ${{ github.workspace }}/baseline
+      PLAN_PATH: ${{ runner.temp }}/sync-lock-root-plan.json
+      SNAPSHOT_PATH: ${{ runner.temp }}/sync-lock-root-before.json
+      REPORT_ROOT: ${{ github.workspace }}/sync-lock-root-report
+      ARTIFACT_NAME: sync-lock-root-${{ matrix.platform.surface }}-node-${{ matrix.node }}-${{ matrix.order }}-${{ matrix.study }}-${{ github.run_id }}-${{ github.run_attempt }}
+      METHOD_PLATFORM: ${{ matrix.platform.surface }}
+      METHOD_CANDIDATE_REF: ${{ inputs.candidate_ref }}
+      METHOD_COMPARE_REF: ${{ matrix.study == 'source-comparison' && '6404191fd6e73bf34bcfacaefe2f113a2b8f6d99' || inputs.candidate_ref }}
+      METHOD_ITERATIONS: "100"
+      METHOD_SAMPLES: "9"
+      METHOD_FILTER: syncLockRoot/
+      METHOD_ORDER: ${{ matrix.order }}
+      METHOD_BLOCKS: "5"
+      METHOD_NATIVE_MODE: off
+      METHOD_NODE_VERSION: ${{ matrix.node }}
+      METHOD_CONTROL: ${{ matrix.study == 'same-artifact' && 'same-artifact' || 'rebuild' }}
+      METHOD_TIMEOUT_MINUTES: "120"
+      METHOD_EXPECTED_HARNESS_SHA: ${{ inputs.expected_harness_sha }}
+      METHOD_WORKFLOW_SHA: ${{ github.workflow_sha }}
+      METHOD_EVENT_SHA: ${{ github.sha }}
+      METHOD_WORKFLOW_REF: ${{ github.workflow_ref }}
+      METHOD_WORKFLOW_PATH: .github/workflows/sync-lock-root-performance-proof.yml
+      METHOD_MATRIX_PLATFORM: ${{ matrix.platform.surface }}
+      SYNC_LOCK_ROOT_CAMPAIGN_ID: ${{ inputs.campaign_id }}
+      SYNC_LOCK_ROOT_WSL2_NODE_22_CAPTURE: ${{ inputs.wsl2_node_22_capture }}
+      SYNC_LOCK_ROOT_WSL2_NODE_24_CAPTURE: ${{ inputs.wsl2_node_24_capture }}
+      SYNC_LOCK_ROOT_CRABBOX_VERSION: ${{ inputs.expected_crabbox_version }}
+      SYNC_LOCK_ROOT_WORKFLOW_DATABASE_ID: ${{ inputs.expected_workflow_database_id }}
+      SYNC_LOCK_ROOT_WORKFLOW_FILE_SHA256: ${{ inputs.expected_workflow_file_sha256 }}
+      SYNC_LOCK_ROOT_EXPECTED_ACTIONS_RUN_NUMBER: ${{ inputs.expected_actions_run_number }}
+      SYNC_LOCK_ROOT_CAMPAIGN_INITIALIZED_AT: ${{ inputs.campaign_initialized_at }}
+      SYNC_LOCK_ROOT_EXECUTION_SURFACE: github-actions
+    steps:
+      - name: Configure byte-exact checkouts
+        run: |
+          git --no-replace-objects config --global core.autocrlf false
+          git --no-replace-objects config --global core.eol lf
+
+      - name: Check out reviewed harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.expected_harness_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: harness
+
+      - name: Check out exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.candidate_ref }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: candidate
+
+      - name: Check out exact comparison source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ matrix.study == 'source-comparison' && '6404191fd6e73bf34bcfacaefe2f113a2b8f6d99' || inputs.candidate_ref }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: baseline
+
+      - name: Resolve current first-attempt API job identity
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          EXPECTED_JOB_NAME: ${{ matrix.platform.surface }} / Node ${{ matrix.node }} / ${{ matrix.order }} / ${{ matrix.study }}
+        with:
+          script: |
+            const response = await github.rest.actions.listJobsForWorkflowRunAttempt({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId,
+              attempt_number: Number(process.env.GITHUB_RUN_ATTEMPT),
+              per_page: 100,
+            });
+            if (response.data.total_count !== response.data.jobs.length) {
+              throw new Error("Workflow job API response is incomplete");
+            }
+            const matches = response.data.jobs.filter(job =>
+              job.name === process.env.EXPECTED_JOB_NAME && job.status === "in_progress");
+            if (matches.length !== 1) throw new Error("Current matrix API job identity is ambiguous");
+            const job = matches[0];
+            if (job.run_id !== context.runId || job.run_attempt !== 1 ||
+                job.head_sha !== context.sha || job.runner_name !== process.env.RUNNER_NAME ||
+                !Number.isSafeInteger(job.id) || job.id < 1 || !job.started_at) {
+              throw new Error("Current matrix API job identity is invalid");
+            }
+            core.exportVariable("SYNC_LOCK_ROOT_API_JOB_ID", String(job.id));
+            core.exportVariable("SYNC_LOCK_ROOT_API_JOB_NAME", job.name);
+            core.exportVariable("SYNC_LOCK_ROOT_API_JOB_STARTED_AT", job.started_at);
+
+      - name: Resolve immutable method-audit plan
+        id: plan
+        run: >-
+          node "$HARNESS_ROOT/benchmarks/method-audit-evidence.mjs" prepare
+          --harness-root "$HARNESS_ROOT"
+          --output "$PLAN_PATH"
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Set up exact Node major
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Add portable TAR parser target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Install reviewed harness dependencies
+        run: pnpm --dir "$HARNESS_ROOT" install --frozen-lockfile
+
+      - name: Build exact candidate
+        run: |
+          pnpm --dir "$CANDIDATE_ROOT" install --frozen-lockfile
+          pnpm --dir "$CANDIDATE_ROOT" build
+
+      - name: Build independent comparison artifact
+        if: matrix.study != 'same-artifact'
+        run: |
+          pnpm --dir "$BASELINE_ROOT" install --frozen-lockfile
+          pnpm --dir "$BASELINE_ROOT" build
+
+      - name: Snapshot immutable installations
+        env:
+          EXPECTED_PLAN_FILE_HASH: ${{ steps.plan.outputs.plan_file_sha256 }}
+        run: >-
+          node "$HARNESS_ROOT/benchmarks/method-audit-evidence.mjs" snapshot
+          --plan "$PLAN_PATH"
+          --expected-plan-file-hash "$EXPECTED_PLAN_FILE_HASH"
+          --harness-root "$HARNESS_ROOT"
+          --candidate-root "$CANDIDATE_ROOT"
+          --baseline-root "$BASELINE_ROOT"
+          --output "$SNAPSHOT_PATH"
+
+      - name: Run one fully serialized study
+        env:
+          EXPECTED_PLAN_FILE_HASH: ${{ steps.plan.outputs.plan_file_sha256 }}
+          MSYS2_ARG_CONV_EXCL: "*"
+        run: >-
+          node "$HARNESS_ROOT/benchmarks/method-audit-evidence.mjs" measure
+          --plan "$PLAN_PATH"
+          --expected-plan-file-hash "$EXPECTED_PLAN_FILE_HASH"
+          --before "$SNAPSHOT_PATH"
+          --harness-root "$HARNESS_ROOT"
+          --candidate-root "$CANDIDATE_ROOT"
+          --baseline-root "$BASELINE_ROOT"
+          --output-root "$REPORT_ROOT"
+
+      - name: Finalize exact study receipt
+        run: >-
+          node "$HARNESS_ROOT/benchmarks/sync-lock-root-finalize-study.mjs"
+          --plan "$PLAN_PATH"
+          --output-root "$REPORT_ROOT"
+          --artifact-name "$ARTIFACT_NAME"
+          --surface "${{ matrix.platform.surface }}"
+          --node "${{ matrix.node }}"
+          --order "${{ matrix.order }}"
+          --control "${{ matrix.study }}"
+
+      - name: Upload exact first-attempt study artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.REPORT_ROOT }}/
+          if-no-files-found: warn
+          include-hidden-files: false
+          retention-days: 14
+
+  analyze-actions-cohort:
+    needs: [preflight, measure]
+    if: always() && needs.preflight.result == 'success' && needs.measure.result == 'success'
+    name: Analyze complete hosted cohort (not WSL2 clearance)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out reviewed analyzer
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.expected_harness_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Resolve exact current-run artifact IDs and digests
+        id: artifacts
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          MANIFEST_PATH: ${{ runner.temp }}/sync-lock-root-artifacts.json
+          CAMPAIGN_ID: ${{ inputs.campaign_id }}
+          NODE22_CAPTURE: ${{ inputs.wsl2_node_22_capture }}
+          NODE24_CAPTURE: ${{ inputs.wsl2_node_24_capture }}
+          CRABBOX_VERSION: ${{ inputs.expected_crabbox_version }}
+          WORKFLOW_DATABASE_ID: ${{ inputs.expected_workflow_database_id }}
+          WORKFLOW_FILE_SHA256: ${{ inputs.expected_workflow_file_sha256 }}
+          EXPECTED_ACTIONS_RUN_NUMBER: ${{ inputs.expected_actions_run_number }}
+          CAMPAIGN_INITIALIZED_AT: ${{ inputs.campaign_initialized_at }}
+        with:
+          script: |
+            const fs = require("node:fs");
+            const runAttempt = Number(process.env.GITHUB_RUN_ATTEMPT);
+            if (runAttempt !== 1) throw new Error("Only first-attempt artifacts are admissible");
+            const runResponse = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId,
+            });
+            const apiRun = runResponse.data;
+            const initialized = Date.parse(process.env.CAMPAIGN_INITIALIZED_AT);
+            const created = Date.parse(apiRun.created_at);
+            if (apiRun.id !== context.runId || apiRun.run_attempt !== 1 ||
+                apiRun.head_sha !== context.sha ||
+                apiRun.repository?.full_name !== "openclaw/fs-safe" ||
+                String(apiRun.workflow_id) !== process.env.WORKFLOW_DATABASE_ID ||
+                apiRun.path !== ".github/workflows/sync-lock-root-performance-proof.yml" ||
+                apiRun.run_number !== Number(process.env.EXPECTED_ACTIONS_RUN_NUMBER) ||
+                !Number.isFinite(initialized) || !Number.isFinite(created) || initialized > created) {
+              throw new Error("Workflow run identity differs from the preinitialized campaign");
+            }
+            const response = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId,
+              per_page: 100,
+            });
+            if (response.data.total_count !== response.data.artifacts.length) {
+              throw new Error("Artifact API response is incomplete");
+            }
+            const surfaces = ["linux", "macos", "windows"];
+            const nodes = ["22", "24"];
+            const orders = ["abba", "baab"];
+            const studies = ["source-comparison", "same-source-rebuild", "same-artifact"];
+            const names = surfaces.flatMap(surface => nodes.flatMap(node =>
+              orders.flatMap(order => studies.map(study =>
+                `sync-lock-root-${surface}-node-${node}-${order}-${study}-${context.runId}-1`))));
+            const jobNames = surfaces.flatMap(surface => nodes.flatMap(node =>
+              orders.flatMap(order => studies.map(study =>
+                `${surface} / Node ${node} / ${order} / ${study}`))));
+            const jobsResponse = await github.rest.actions.listJobsForWorkflowRunAttempt({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId,
+              attempt_number: runAttempt,
+              per_page: 100,
+            });
+            if (jobsResponse.data.total_count !== jobsResponse.data.jobs.length) {
+              throw new Error("Workflow job API response is incomplete");
+            }
+            const selectedJobs = jobNames.map(name => {
+              const matches = jobsResponse.data.jobs.filter(job => job.name === name);
+              if (matches.length !== 1) throw new Error(`Expected one first-attempt job: ${name}`);
+              const job = matches[0];
+              if (job.status !== "completed" || job.conclusion !== "success" ||
+                  job.run_id !== context.runId || job.run_attempt !== runAttempt ||
+                  job.head_sha !== context.sha || !Number.isSafeInteger(job.id) || job.id < 1) {
+                throw new Error(`Invalid first-attempt job identity: ${name}`);
+              }
+              const uploadMatches = (job.steps ?? []).filter(step =>
+                step.name === "Upload exact first-attempt study artifact");
+              if (uploadMatches.length !== 1) throw new Error(`Producer upload step is ambiguous: ${name}`);
+              const upload = uploadMatches[0];
+              if (upload.status !== "completed" || upload.conclusion !== "success" ||
+                  !upload.started_at || !upload.completed_at ||
+                  !Number.isSafeInteger(upload.number) || upload.number < 1 ||
+                  !job.started_at || !job.completed_at) {
+                throw new Error(`Producer upload step is invalid: ${name}`);
+              }
+              return { name, id: job.id, status: job.status, conclusion: job.conclusion,
+                runId: job.run_id, runAttempt: job.run_attempt, headSha: job.head_sha,
+                startedAt: job.started_at, completedAt: job.completed_at,
+                upload: { name: upload.name, number: upload.number, status: upload.status,
+                  conclusion: upload.conclusion, startedAt: upload.started_at,
+                  completedAt: upload.completed_at } };
+            });
+            if (response.data.artifacts.length !== names.length ||
+                response.data.artifacts.some(artifact => !names.includes(artifact.name))) {
+              throw new Error("Workflow artifact set contains an unexpected artifact");
+            }
+            const selected = names.map(name => {
+              const matches = response.data.artifacts.filter(artifact => artifact.name === name);
+              if (matches.length !== 1) throw new Error(`Expected one current-run artifact: ${name}`);
+              const artifact = matches[0];
+              if (artifact.expired || !Number.isSafeInteger(artifact.id) || artifact.id < 1 ||
+                  !Number.isSafeInteger(artifact.size_in_bytes) || artifact.size_in_bytes < 1 ||
+                  !/^sha256:[0-9a-f]{64}$/.test(artifact.digest ?? "") ||
+                  artifact.workflow_run?.id !== context.runId ||
+                  artifact.workflow_run?.head_sha !== context.sha ||
+                  !artifact.created_at || !artifact.updated_at) {
+                throw new Error(`Invalid artifact API identity: ${name}`);
+              }
+              const match = new RegExp(
+                "^sync-lock-root-(linux|macos|windows)-node-(22|24)-(abba|baab)-" +
+                  "(source-comparison|same-source-rebuild|same-artifact)-",
+              ).exec(name);
+              const jobName = `${match[1]} / Node ${match[2]} / ${match[3]} / ${match[4]}`;
+              const job = selectedJobs.find(entry => entry.name === jobName);
+              if (!job) throw new Error(`Artifact has no exact producer job: ${name}`);
+              return { name, id: artifact.id, digest: artifact.digest,
+                size: artifact.size_in_bytes, expired: false,
+                runId: artifact.workflow_run.id, headSha: artifact.workflow_run.head_sha,
+                producerJobId: job.id, createdAt: artifact.created_at,
+                updatedAt: artifact.updated_at };
+            });
+            fs.writeFileSync(process.env.MANIFEST_PATH, JSON.stringify({
+              schema: "fs-safe-sync-lock-root-artifacts-v3",
+              run: { id: apiRun.id, attempt: runAttempt, headSha: context.sha,
+                repository: apiRun.repository.full_name,
+                workflowDatabaseId: String(apiRun.workflow_id),
+                workflowPath: apiRun.path,
+                workflowFileSha256: process.env.WORKFLOW_FILE_SHA256,
+                runNumber: apiRun.run_number,
+                createdAt: apiRun.created_at,
+                campaign: {
+                  schema: "fs-safe-sync-lock-root-campaign-v3",
+                  id: process.env.CAMPAIGN_ID,
+                  actions: {
+                    repository: apiRun.repository.full_name,
+                    workflowDatabaseId: String(apiRun.workflow_id),
+                    workflowPath: apiRun.path,
+                    harnessSha: context.sha,
+                    workflowFileSha256: process.env.WORKFLOW_FILE_SHA256,
+                    expectedActionsRunNumber: apiRun.run_number,
+                    runAttempt: 1,
+                    initializedAt: process.env.CAMPAIGN_INITIALIZED_AT,
+                    clockPolicy: "campaign-initialized-no-later-than-actions-run-v1",
+                  },
+                  captures: { "22": process.env.NODE22_CAPTURE,
+                    "24": process.env.NODE24_CAPTURE },
+                  crabbox: {
+                    timingSchema: "crabbox-go-TimingReport-syncDelegated-omitempty-v1",
+                    version: process.env.CRABBOX_VERSION,
+                  },
+                } },
+              jobs: selectedJobs,
+              artifacts: selected,
+            }, null, 2) + "\n", { flag: "wx" });
+            core.setOutput("ids", selected.map(({ id }) => id).join(","));
+
+      - name: Download only API-selected study artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.artifacts.outputs.ids }}
+          path: ${{ runner.temp }}/sync-lock-root-studies
+          merge-multiple: false
+
+      - name: Apply strict hosted-cohort gates
+        run: >-
+          node benchmarks/sync-lock-root-analyze.mjs
+          --root "${{ runner.temp }}/sync-lock-root-studies"
+          --manifest "${{ runner.temp }}/sync-lock-root-artifacts.json"
+          --candidate-sha "${{ inputs.candidate_ref }}"
+          --harness-sha "${{ inputs.expected_harness_sha }}"
+          --campaign-id "${{ inputs.campaign_id }}"
+          --node-22-capture "${{ inputs.wsl2_node_22_capture }}"
+          --node-24-capture "${{ inputs.wsl2_node_24_capture }}"
+          --crabbox-version "${{ inputs.expected_crabbox_version }}"
+          --workflow-database-id "${{ inputs.expected_workflow_database_id }}"
+          --workflow-file-sha256 "${{ inputs.expected_workflow_file_sha256 }}"
+          --expected-actions-run-number "${{ inputs.expected_actions_run_number }}"
+          --campaign-initialized-at "${{ inputs.campaign_initialized_at }}"
+          --surfaces "linux,macos,windows"
+          --run-id "${{ github.run_id }}"
+          --head-sha "${{ github.sha }}"
+          --output "${{ runner.temp }}/sync-lock-root-actions-analysis.json"
+
+      - name: Upload non-clearance hosted analysis
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sync-lock-root-actions-analysis-${{ github.run_id }}-1
+          path: |
+            ${{ runner.temp }}/sync-lock-root-actions-analysis.json
+            ${{ runner.temp }}/sync-lock-root-artifacts.json
+          if-no-files-found: warn
+          include-hidden-files: false
+          retention-days: 14

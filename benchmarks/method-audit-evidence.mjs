@@ -13,10 +13,20 @@ import {
   selectNamedComparisonRef,
   validateCompleteReportSet,
   validateDispatchInputs,
+  validateMethodAuditWorkflowPath,
   validatePlanHash,
 } from "./method-audit-plan.mjs";
 import { profileForFilenameSource } from "./filename-fallback-profile.mjs";
 import { measuredSourceBinding } from "./measured-distribution.mjs";
+import {
+  SYNC_LOCK_ROOT_CAMPAIGN_SCHEMA,
+  SYNC_LOCK_ROOT_CRABBOX_TIMING_SCHEMA,
+  SYNC_LOCK_ROOT_FILTER,
+  SYNC_LOCK_ROOT_HOSTED_CLOCK_POLICY,
+  SYNC_LOCK_ROOT_REPOSITORY,
+  SYNC_LOCK_ROOT_WORKFLOW_PATH,
+  validateSyncLockRootCampaign,
+} from "./sync-lock-root-contract.mjs";
 
 const MAX_FILE_BYTES = 256 * 1024 * 1024;
 const DIST_LIMITS = Object.freeze({ maxEntries: 20_000, maxBytes: 1024 * 1024 * 1024 });
@@ -57,8 +67,9 @@ function absoluteOption(options, name) {
 }
 
 function git(root, args, { buffer = false, allowFailure = false } = {}) {
-  const result = spawnSync("git", ["-C", root, ...args], {
+  const result = spawnSync("git", ["--no-replace-objects", "-C", root, ...args], {
     encoding: buffer ? undefined : "utf8",
+    env: { ...process.env, GIT_NO_REPLACE_OBJECTS: "1" },
     maxBuffer: 32 * 1024 * 1024,
     windowsHide: true,
   });
@@ -460,6 +471,9 @@ function prepare(options) {
     expected_harness_sha: process.env.METHOD_EXPECTED_HARNESS_SHA,
   });
   const workflowSha = normalizeSha("github.workflow_sha", process.env.METHOD_WORKFLOW_SHA);
+  const workflowPath = validateMethodAuditWorkflowPath(
+    process.env.METHOD_WORKFLOW_PATH || ".github/workflows/benchmarks.yml",
+  );
   const eventSha = normalizeSha("github.sha", process.env.METHOD_EVENT_SHA);
   const checkedOutSha = normalizeSha("harness checkout SHA", gitText(harnessRoot, ["rev-parse", "HEAD"]));
   if (checkedOutSha !== workflowSha) fail("harness checkout does not match github.workflow_sha");
@@ -478,11 +492,12 @@ function prepare(options) {
   const harnessTree = normalizeSha("harness tree", gitText(harnessRoot, ["rev-parse", "HEAD^{tree}"]));
   const manifestHash = sha256(trackedBlob(harnessRoot, workflowSha, "package.json"));
   const lockfileHash = sha256(trackedBlob(harnessRoot, workflowSha, "pnpm-lock.yaml"));
-  const workflowFileHash = sha256(trackedBlob(harnessRoot, workflowSha, ".github/workflows/benchmarks.yml"));
-  const plan = attachPlanHash(createMethodAuditPlan({
+  const workflowFileHash = sha256(trackedBlob(harnessRoot, workflowSha, workflowPath));
+  const basePlan = createMethodAuditPlan({
     inputs,
     harness: {
       workflowRef: process.env.METHOD_WORKFLOW_REF,
+      workflowPath,
       sha: workflowSha,
       tree: harnessTree,
       workflowFileHash,
@@ -497,7 +512,35 @@ function prepare(options) {
       runId: process.env.GITHUB_RUN_ID,
       runAttempt: process.env.GITHUB_RUN_ATTEMPT,
     },
-  }));
+  });
+  const syncLockRootCampaign = inputs.filter === SYNC_LOCK_ROOT_FILTER
+    ? validateSyncLockRootCampaign({
+      schema: SYNC_LOCK_ROOT_CAMPAIGN_SCHEMA,
+      id: process.env.SYNC_LOCK_ROOT_CAMPAIGN_ID,
+      actions: {
+        repository: SYNC_LOCK_ROOT_REPOSITORY,
+        workflowDatabaseId: process.env.SYNC_LOCK_ROOT_WORKFLOW_DATABASE_ID,
+        workflowPath: SYNC_LOCK_ROOT_WORKFLOW_PATH,
+        harnessSha: process.env.METHOD_EXPECTED_HARNESS_SHA,
+        workflowFileSha256: process.env.SYNC_LOCK_ROOT_WORKFLOW_FILE_SHA256,
+        expectedActionsRunNumber: Number(process.env.SYNC_LOCK_ROOT_EXPECTED_ACTIONS_RUN_NUMBER),
+        runAttempt: 1,
+        initializedAt: process.env.SYNC_LOCK_ROOT_CAMPAIGN_INITIALIZED_AT,
+        clockPolicy: SYNC_LOCK_ROOT_HOSTED_CLOCK_POLICY,
+      },
+      captures: {
+        "22": process.env.SYNC_LOCK_ROOT_WSL2_NODE_22_CAPTURE,
+        "24": process.env.SYNC_LOCK_ROOT_WSL2_NODE_24_CAPTURE,
+      },
+      crabbox: {
+        timingSchema: SYNC_LOCK_ROOT_CRABBOX_TIMING_SCHEMA,
+        version: process.env.SYNC_LOCK_ROOT_CRABBOX_VERSION,
+      },
+    })
+    : null;
+  const plan = attachPlanHash(syncLockRootCampaign
+    ? { ...basePlan, syncLockRootCampaign }
+    : basePlan);
   fs.writeFileSync(output, `${JSON.stringify(plan, null, 2)}\n`, { flag: "wx" });
   const outputs = {
     matrix: JSON.stringify(plan.matrix),
@@ -548,11 +591,12 @@ function runnerInvocation(plan, reportPlan, roots, outputRoot) {
     executable: process.execPath,
     args,
     cwd: roots.harness,
-    env: { ...process.env, MSYS2_ARG_CONV_EXCL: "*" },
+    env: { ...process.env, GIT_NO_REPLACE_OBJECTS: "1", MSYS2_ARG_CONV_EXCL: "*" },
   };
 }
 
 function runnerMetadata() {
+  const executionSurface = process.env.SYNC_LOCK_ROOT_EXECUTION_SURFACE;
   return {
     platformSelection: process.env.METHOD_MATRIX_PLATFORM,
     runnerEnvironment: process.env.RUNNER_ENVIRONMENT || null,
@@ -563,6 +607,34 @@ function runnerMetadata() {
     githubRunId: process.env.GITHUB_RUN_ID,
     githubRunAttempt: process.env.GITHUB_RUN_ATTEMPT,
     githubJob: process.env.GITHUB_JOB,
+    ...(executionSurface ? {
+      executionSurface,
+      jobApi: executionSurface === "github-actions" ? {
+        id: process.env.SYNC_LOCK_ROOT_API_JOB_ID || null,
+        name: process.env.SYNC_LOCK_ROOT_API_JOB_NAME || null,
+        startedAt: process.env.SYNC_LOCK_ROOT_API_JOB_STARTED_AT || null,
+      } : null,
+      wsl2: executionSurface === "wsl2-crabbox" ? {
+        captureToken: process.env.SYNC_LOCK_ROOT_WSL2_CAPTURE_TOKEN || null,
+        filesystemDevice: process.env.SYNC_LOCK_ROOT_WSL2_FILESYSTEM_DEVICE || null,
+        filesystemType: process.env.SYNC_LOCK_ROOT_WSL2_FILESYSTEM_TYPE || null,
+        hostIdentityHash: process.env.SYNC_LOCK_ROOT_WSL2_HOST_IDENTITY_HASH || null,
+        kernelRelease: process.env.SYNC_LOCK_ROOT_WSL2_KERNEL_RELEASE || null,
+        versionReceiptHash: process.env.SYNC_LOCK_ROOT_WSL2_VERSION_HASH || null,
+        tempRoot: {
+          path: process.env.SYNC_LOCK_ROOT_WSL2_TEMP_PATH || null,
+          realPath: process.env.SYNC_LOCK_ROOT_WSL2_TEMP_PATH || null,
+          device: process.env.SYNC_LOCK_ROOT_WSL2_TEMP_DEVICE || null,
+          filesystemType: process.env.SYNC_LOCK_ROOT_WSL2_TEMP_FILESYSTEM_TYPE || null,
+          statfsType: process.env.SYNC_LOCK_ROOT_WSL2_TEMP_STATFS_TYPE || null,
+          environment: {
+            TMPDIR: process.env.TMPDIR || null,
+            TMP: process.env.TMP || null,
+            TEMP: process.env.TEMP || null,
+          },
+        },
+      } : null,
+    } : {}),
   };
 }
 
@@ -608,7 +680,9 @@ function measure(options) {
     reports.set(reportPlan.file, observed.report);
   }
   validateCompleteReportSet(plan, reports, before, after);
-  const expectedPlatform = { linux: "linux", macos: "darwin", windows: "win32" }[process.env.METHOD_MATRIX_PLATFORM];
+  const expectedPlatform = {
+    linux: "linux", macos: "darwin", windows: "win32", wsl2: "linux",
+  }[process.env.METHOD_MATRIX_PLATFORM];
   if (!expectedPlatform || !plan.matrix.include.some(({ platform }) => platform === process.env.METHOD_MATRIX_PLATFORM)) {
     fail("runner platform is not in the validated matrix");
   }

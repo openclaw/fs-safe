@@ -18,6 +18,7 @@ import { registerScaling } from "./scaling.mjs";
 import { registerCollections } from "./collections.mjs";
 import { registerSyncStoreDirectoryModes } from "./sync-store-directory-mode.mjs";
 import { registerGuest, validateGuestBenchmarkReport } from "./guest.mjs";
+import { registerSyncLockRoot, SYNC_LOCK_ROOT_FILTER } from "./sync-lock-root.mjs";
 import { observeFilenameFallbackProfile } from "./filename-fallback-profile.mjs";
 import {
   MEASURED_SOURCE_ARGUMENT_NAMES,
@@ -127,7 +128,7 @@ const contract = (name, object) => {
 };
 const cleanups = [];
 const context = {
-  api, workspace, native, binding, measuredFeatures, measuredProfiles,
+  api, workspace, native, binding, measuredFeatures, measuredProfiles, measuredSource,
   register, exclude, contract, args, onCleanup: (fn) => cleanups.push(fn),
 };
 let cleanup;
@@ -145,6 +146,8 @@ try {
   await registerCollections(context);
   registerSyncStoreDirectoryModes(context);
   const guest = registerGuest(context);
+  const syncLockRootProof = args.filter === SYNC_LOCK_ROOT_FILTER
+    ? await registerSyncLockRoot(context) : null;
   const covered = new Set(cases.flatMap((c) => c.covers));
   const required = [...exportsByName.keys(), ...[...contracts].flatMap(([type, keys]) => keys.map((key) => `${type}.${key}`))];
   const missing = required.filter((name) => !covered.has(name) && !exclusions.has(name));
@@ -232,10 +235,12 @@ try {
       distHash,
       measuredDistribution,
       guest,
+      ...(syncLockRootProof ? { syncLockRootProof } : {}),
       sampleSemantics: SAMPLE_SEMANTICS,
-      harnessRevision: execFileSync("git", ["rev-parse", "HEAD"], {
+      harnessRevision: execFileSync("git", ["--no-replace-objects", "rev-parse", "HEAD"], {
         cwd: packageRoot,
         encoding: "utf8",
+        env: { ...process.env, GIT_NO_REPLACE_OBJECTS: "1" },
       }).trim(),
       node: process.version,
       platform: process.platform,

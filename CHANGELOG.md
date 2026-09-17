@@ -4,6 +4,10 @@
 
 - Bind synchronous `lockRoot` sidecar creation, inspection, reentrant reuse, reclaim, verification, release, and exit cleanup to the genuine Root's retained exact identity and entry-time policies. Genuine Root validation and policy capture precede all remaining option and nested retry getters. Root-backed target-key normalization no longer creates external parents; structural/custom or cross-package-copy Root objects fail closed before those getters, callbacks, or filesystem effects.
 
+### Validation and tooling
+
+- Add a manual, provenance-bound synchronous `lockRoot` performance campaign covering hosted Linux, macOS, and native Windows plus a separately captured WSL2 Crabbox lane. The draft analyzer binds a preinitialized repository/workflow/run-number tuple, Git-replacement-disabled immutable harness blobs and launcher bytes, actual hosted API producer/upload windows, a versioned Crabbox timing schema, single-use fixed campaign state, pinned WSL temp-filesystem receipts, and raw-byte, strict-octal pre-extraction ustar validation to one campaign; source, same-source rebuild, and same-artifact controls run in both ABBA and BAAB order on Node 22/24, and incomplete or failed controls cannot clear a source regression.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights
