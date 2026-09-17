@@ -45,10 +45,10 @@ function probePathSuffixAliasesSync(
 ): boolean | undefined;
 ```
 
-The helper reads `directory`, rejects non-string and NUL-containing inputs, and
-resolves it to an absolute path before reading `resourceBudget`. It applies the
-selected directory-length limits before reading the suffixes or predicate. Each
-option is read once. Later option getters or the predicate cannot retarget a
+The helper reads `directory`, rejects non-string values and supplied paths longer
+than 32,768 code units, then rejects NUL-containing inputs. It resolves the path
+to an absolute path and applies the same limit to that result before reading
+`resourceBudget`. Each option is read once. Later option getters or the predicate cannot retarget a
 relative directory by changing the working directory. When
 filesystem observations are needed, the directory is canonicalized and its
 identity is checked; an initial directory alias can be followed.
@@ -82,6 +82,8 @@ one call:
 | Forward filesystem observations | 4,096 | `undefined` after cleanup |
 | Each generated actual path | 32,768 UTF-16 code units | `undefined` after cleanup |
 
+The supplied and resolved directory-path limits apply to both resource profiles.
+
 ### Input-scaled observations
 
 Applications comparing long prospective paths can explicitly select
@@ -97,7 +99,8 @@ const aliases = probePathSuffixAliasesSync({
 });
 ```
 
-This profile removes the fixed input-length and component-count ceilings.
+This profile removes the fixed suffix-length and suffix-component-count ceilings;
+it does not remove the supplied or resolved directory-path limits.
 Ordinary-component validation, Windows path controls, identity checks, and
 cleanup rules remain unchanged. A distinct early component can settle a
 comparison without materializing its long remaining suffix; the helper does
@@ -124,7 +127,7 @@ work for its supplied input. Parsing, normalization, randomness, filesystem
 calls, and trusted predicate work have no elapsed-time guarantee. Prefer the
 fixed default when input-scaled work is unnecessary.
 
-Fixed input limits are checked even for identical suffixes. Dynamic budgets count work
+Fixed suffix limits are checked even for identical suffixes. Dynamic budgets count work
 across the whole call, including collision retries; removing a probe does not
 restore its creation budget. Cleanup is still attempted when a forward budget is
 exhausted and is not disabled by that exhausted budget.

@@ -99,11 +99,15 @@ it.each(["", ".", "..", "a/../b", "a/./b", "a//b", "/absolute", "nul\0name"].fla
 itWin32.each([
   "C:foo", "a\\C:foo", "name:stream", "\\\\server\\share", "\\\\?\\C:\\x",
   "\\rooted", "a\\..\\b", "a\\.\\b", "a\\\\b", "a\\...\\b", "a\\ \\b", "a\\NUL.txt", "C:/absolute",
-])(
-  "rejects Windows path-control suffix %s", async suffix => {
+].flatMap(suffix => ([undefined, "fixed", "input-scaled"] as const)
+  .map(resourceBudget => ({ suffix, resourceBudget }))))(
+  "rejects Windows path-control suffix $suffix with resourceBudget $resourceBudget",
+  async ({ suffix, resourceBudget }) => {
     const directory = await tempRoot("fs-safe-suffix-win-invalid-");
     const mkdir = vi.spyOn(fs, "mkdirSync");
-    expect(() => probePathSuffixAliasesSync({ directory, left: suffix, right: suffix })).toThrow(TypeError);
+    expect(() => probePathSuffixAliasesSync({
+      directory, left: suffix, right: suffix, resourceBudget,
+    })).toThrow(TypeError);
     expect(mkdir).not.toHaveBeenCalled();
   },
 );
@@ -115,7 +119,11 @@ it("rejects Windows reserved components before filesystem work", () => {
   Object.defineProperty(process, "platform", { value: "win32", configurable: true });
   try {
     for (const name of ["CON", "NUL.sqlite", "CLOCK$", "CONIN$", "COM¹", "LPT³.sqlite"]) {
-      expect(() => probePathSuffixAliasesSync({ directory: ".", left: name, right: name })).toThrow(TypeError);
+      for (const resourceBudget of [undefined, "fixed", "input-scaled"] as const) {
+        expect(() => probePathSuffixAliasesSync({
+          directory: ".", left: name, right: name, resourceBudget,
+        })).toThrow(TypeError);
+      }
     }
     expect(mkdir).not.toHaveBeenCalled();
   } finally {

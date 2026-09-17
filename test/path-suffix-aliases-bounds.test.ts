@@ -116,15 +116,37 @@ it.each([
   expect(observe).not.toHaveBeenCalled();
 });
 
-it("rejects a directory that exceeds 32768 only after cwd resolution", () => {
-  const mkdir = vi.spyOn(fs, "mkdirSync");
-  const laterGetter = vi.fn(() => "same");
-  expect(() => probePathSuffixAliasesSync({
-    directory: "a".repeat(32768), get left() { return laterGetter(); }, right: "same",
-  })).toThrow(RangeError);
-  expect(laterGetter).not.toHaveBeenCalled();
-  expect(mkdir).not.toHaveBeenCalled();
-});
+it.each([undefined, "fixed", "input-scaled"] as const)(
+  "rejects an oversized supplied directory before resolution or later getters with resourceBudget %s",
+  (resourceBudget) => {
+    const resolve = vi.spyOn(path, "resolve");
+    const laterGetter = vi.fn(() => "same");
+    expect(() => probePathSuffixAliasesSync({
+      directory: "a".repeat(32769),
+      get resourceBudget() { laterGetter(); return resourceBudget; },
+      get left() { return laterGetter(); },
+      right: "same",
+    })).toThrow(RangeError);
+    expect(resolve).not.toHaveBeenCalled();
+    expect(laterGetter).not.toHaveBeenCalled();
+  },
+);
+
+it.each([undefined, "fixed", "input-scaled"] as const)(
+  "rejects a directory that exceeds 32768 after cwd resolution before later getters with resourceBudget %s",
+  (resourceBudget) => {
+    const mkdir = vi.spyOn(fs, "mkdirSync");
+    const laterGetter = vi.fn(() => "same");
+    expect(() => probePathSuffixAliasesSync({
+      directory: "a".repeat(32768),
+      get resourceBudget() { laterGetter(); return resourceBudget; },
+      get left() { return laterGetter(); },
+      right: "same",
+    })).toThrow(RangeError);
+    expect(laterGetter).not.toHaveBeenCalled();
+    expect(mkdir).not.toHaveBeenCalled();
+  },
+);
 
 it("counts suffix limits in UTF-16 code units rather than bytes or code points", () => {
   const exact = "\u{1f600}".repeat(4096);
@@ -154,13 +176,12 @@ it.each([null, "", "unbounded", 0, {}, []])("rejects invalid resourceBudget %j b
   expect(observe).not.toHaveBeenCalled();
 });
 
-it("admits input-sized strings without applying the fixed path or suffix caps", () => {
+it("admits input-sized suffixes without applying the fixed suffix caps", () => {
   const mkdir = vi.spyOn(fs, "mkdirSync");
   const observe = vi.spyOn(fs, "lstatSync");
-  const directory = `.${path.sep}`.repeat(16_385);
   const longSuffix = suffix("a", 20_000);
   expect(probePathSuffixAliasesSync({
-    directory, left: longSuffix, right: longSuffix, resourceBudget: "input-scaled",
+    directory: ".", left: longSuffix, right: longSuffix, resourceBudget: "input-scaled",
   })).toBe(true);
   expect(mkdir).not.toHaveBeenCalled();
   expect(observe).not.toHaveBeenCalled();
@@ -300,6 +321,26 @@ it("scales all operation budgets for deep probes with repeated alternate collisi
   expect(model.created.length).toBeGreaterThan(64);
   expect(model.attempts()).toBeGreaterThan(128);
   expect(model.observations()).toBeGreaterThan(4096);
+  model.expectClean();
+});
+
+it("budgets deep generated paths from the longer spelling at every level", async () => {
+  const directory = await tempRoot("fs-safe-suffix-scaled-alternating-lengths-");
+  const model = countedFilesystem(directory);
+  const decomposed = "A\u0301".repeat(64);
+  const composed = "\u00c1".repeat(64);
+  const left = Array.from({ length: 34 }, (_, index) => index % 2 === 0 ? decomposed : composed)
+    .join(path.sep);
+  const right = Array.from({ length: 34 }, (_, index) => index % 2 === 0 ? composed : decomposed)
+    .join(path.sep);
+  expect(probePathSuffixAliasesSync({
+    directory, left, right, resourceBudget: "input-scaled",
+  })).toBe(true);
+  expect(model.created).toHaveLength(68);
+  const finalAlternate = model.events.filter(({ operation, name }) =>
+    operation === "identity" && name !== directory && !model.created.includes(name)).at(-1);
+  expect(finalAlternate?.name.length - directory.length).toBe(3_600);
+  // A max-of-whole-suffixes mutant admits only 3,569 code units and rejects this path.
   model.expectClean();
 });
 

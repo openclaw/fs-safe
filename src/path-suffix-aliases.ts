@@ -367,19 +367,16 @@ function observeSuffixes(
 export function probePathSuffixAliasesSync(options: ProbePathSuffixAliasesOptions): boolean | undefined {
   const requestedDirectory = options.directory;
   if (typeof requestedDirectory !== "string") throw new TypeError("directory must be a string");
-  if (requestedDirectory.includes("\0")) {
-    if (requestedDirectory.length > MAX_PATH_LENGTH) throw new RangeError("directory exceeds 32768 code units");
-    throw new TypeError("directory must be a path without NUL bytes");
-  }
+  if (requestedDirectory.length > MAX_PATH_LENGTH) throw new RangeError("directory exceeds 32768 code units");
+  if (requestedDirectory.includes("\0")) throw new TypeError("directory must be a path without NUL bytes");
   // Preserve one-argument Windows drive-relative resolution before reentrant option getters.
   const directory = resolvePathPreservingWindowsRoot(requestedDirectory);
+  if (directory.length > MAX_PATH_LENGTH) throw new RangeError("resolved directory exceeds 32768 code units");
   const resourceBudget = options.resourceBudget;
   if (resourceBudget !== undefined && resourceBudget !== "fixed" && resourceBudget !== "input-scaled") {
     throw new TypeError("resourceBudget must be fixed or input-scaled");
   }
   const inputScaled = resourceBudget === "input-scaled";
-  if (!inputScaled && requestedDirectory.length > MAX_PATH_LENGTH) throw new RangeError("directory exceeds 32768 code units");
-  if (!inputScaled && directory.length > MAX_PATH_LENGTH) throw new RangeError("resolved directory exceeds 32768 code units");
   const leftInput = options.left;
   const rightInput = options.right;
   const predicate = options.shouldProbeCaseVariants;
