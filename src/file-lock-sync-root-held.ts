@@ -56,6 +56,12 @@ export type RootSyncHeldLock = {
   timer?: NodeJS.Timeout;
 };
 
+function readRootSyncHeldReleaseState(
+  held: RootSyncHeldLock,
+): RootSyncHeldLock["releaseState"] {
+  return held.releaseState;
+}
+
 export function readRootSidecarSnapshotSync(
   rootPath: FileLockSyncRootPath,
   parsePayload?: (raw: string) => unknown,
@@ -216,7 +222,7 @@ function releaseAllRootSyncHeldLocks(): void {
       };
       if (!entryIsContinuous()) {
         if (heldLocks.get(normalizedTargetPath) === held &&
-          held.releaseState !== "released" && held.refCount === 0) {
+          readRootSyncHeldReleaseState(held) !== "released" && held.refCount === 0) {
           beginFreshCleanupAttempt();
         } else {
           restoreExactHeldLockAfterExitCleanup(heldLocks, held);
@@ -251,7 +257,7 @@ function releaseAllRootSyncHeldLocks(): void {
         }
         const continuousEntry = entryIsContinuous();
         const exactEntry = heldLocks.get(normalizedTargetPath) === held &&
-          held.releaseState !== "released";
+          readRootSyncHeldReleaseState(held) !== "released";
         if (exactEntry && (continuityInterrupted || !continuousEntry) &&
           held.refCount === 0 && cleanupAttempt + 1 < MAX_CONTINUITY_CLEANUP_ATTEMPTS) {
           beginFreshCleanupAttempt();
@@ -350,7 +356,8 @@ function releaseRootSyncHeldLock(
     throw error;
   }
   if (!entryIsContinuous()) {
-    if (heldLocks.get(held.normalizedTargetPath) !== held || held.releaseState === "released") {
+    if (heldLocks.get(held.normalizedTargetPath) !== held ||
+      readRootSyncHeldReleaseState(held) === "released") {
       return true;
     }
     if (held.refCount > 0) {
@@ -394,7 +401,8 @@ function releaseRootSyncHeldLock(
       if (timer) clearInterval(timer);
       return true;
     }
-    if (heldLocks.get(held.normalizedTargetPath) !== held || held.releaseState === "released") {
+    if (heldLocks.get(held.normalizedTargetPath) !== held ||
+      readRootSyncHeldReleaseState(held) === "released") {
       return true;
     }
     if (held.refCount > 0) {
