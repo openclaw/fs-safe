@@ -5,12 +5,20 @@ import path from "node:path";
 import { registerTempWorkspaceCoverage } from "./temp-workspace-fixtures.mjs";
 import { registerSecureTempRootCoverage } from "./secure-temp-root-fixtures.mjs";
 import { registerSidecarPathSnapshot } from "./sidecar-path-snapshot.mjs";
+import {
+  PROBE_TREE_SUCCESS_WORKLOAD,
+  probeTreeSuccessFixtureReceipt,
+  registerCopyTreeSuccess,
+} from "./copy-tree-success.mjs";
 
 export async function registerLifecycle({ api: a, workspace: w, native, binding, register: add, contract, onCleanup, args }) {
   const cloneBackend = a.probeTreeClone(w);
   add("probeTreeClone", () => a.probeTreeClone(w), {
     sync: true,
-    verify: (backend) => assert.equal(backend, cloneBackend),
+    workloadSemantics: "equivalent-output",
+    workloadDetails: PROBE_TREE_SUCCESS_WORKLOAD,
+    fixturePlacement: probeTreeSuccessFixtureReceipt(cloneBackend ?? null, args.mode, native),
+    after: (backend) => assert.equal(backend, cloneBackend),
   });
   const cloneSource = path.join(w, "clone-source");
   const cloneTarget = path.join(w, "clone-target");
@@ -54,6 +62,9 @@ export async function registerLifecycle({ api: a, workspace: w, native, binding,
       });
     }
   }
+  await registerCopyTreeSuccess({
+    api: a, workspace: w, binding, register: add, nativeMode: args.mode,
+  });
   add("readCloneFileMetadata", () => a.readCloneFileMetadata([path.join(w, "input.json")]), {
     skip: !native ? "Native metadata reader unavailable." : undefined,
     verify: (entries) => {

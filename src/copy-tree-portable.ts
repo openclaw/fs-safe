@@ -10,6 +10,8 @@ import {
   openStagedDirectory,
 } from "./staged-directory.js";
 
+type Failure = { value: unknown };
+
 function timestampSeconds(nanoseconds: bigint): string {
   // Dates discard sub-millisecond precision; negative numbers mean "now" in
   // Node's utimes API. Numeric strings retain fractional, pre-epoch timestamps.
@@ -30,11 +32,16 @@ export async function copyOwnedTree(
   const cancellation = new AbortController();
   const signal = cancellation.signal;
   setMaxListeners(options.concurrency, signal);
-  const abort = () => cancellation.abort(options.signal?.reason);
-  options.signal?.addEventListener("abort", abort, { once: true });
   const pending = new Set<Promise<void>>();
   const finishing = new Set<Promise<void>>();
   const buffers: Buffer[] = [];
+  let failure = undefined as Failure | undefined;
+  function recordFailure(value: unknown): void {
+    failure ??= { value };
+    cancellation.abort(failure);
+  }
+  const abort = () => recordFailure(options.signal?.reason);
+  options.signal?.addEventListener("abort", abort, { once: true });
   async function schedule(
     operation: () => Promise<void>,
     children: Set<Promise<void>>,
@@ -42,7 +49,7 @@ export async function copyOwnedTree(
     signal.throwIfAborted();
     const task = operation()
       .catch((error: unknown) => {
-        cancellation.abort(error);
+        recordFailure(error);
       })
       .finally(() => {
         pending.delete(task);
@@ -84,12 +91,12 @@ export async function copyOwnedTree(
         try {
           let position = 0;
           while (true) {
-            signal?.throwIfAborted();
+            signal.throwIfAborted();
             const { bytesRead } = await input.read(buffer, 0, buffer.length, position);
             if (bytesRead === 0) break;
             let written = 0;
             while (written < bytesRead) {
-              signal?.throwIfAborted();
+              signal.throwIfAborted();
               const { bytesWritten } = await output.write(
                 buffer,
                 written,
@@ -109,14 +116,19 @@ export async function copyOwnedTree(
       if (process.platform !== "win32") await output.chmod(Number(stat.mode & 0o7777n));
       await output.utimes(timestampSeconds(stat.atimeNs), timestampSeconds(stat.mtimeNs));
     } catch (error) {
-      cancellation.abort(error);
-      throw error;
-    } finally {
+      recordFailure(error);
+    }
+    if (output) {
       try {
-        await output?.close();
-      } finally {
-        await input.close();
+        await output.close();
+      } catch (error) {
+        recordFailure(error);
       }
+    }
+    try {
+      await input.close();
+    } catch (error) {
+      recordFailure(error);
     }
   }
   async function copyDirectory(
@@ -124,7 +136,7 @@ export async function copyOwnedTree(
     to: string,
     parentChildren?: Set<Promise<void>>,
   ): Promise<void> {
-    signal?.throwIfAborted();
+    signal.throwIfAborted();
     const stat = await fsp.lstat(from, { bigint: true });
     // Exclusive admission prevents merging a pre-existing directory, including
     // any destination left by an unsuccessful native clone.
@@ -138,7 +150,7 @@ export async function copyOwnedTree(
         throw new FsSafeError("path-mismatch", "copy source directory changed while opening");
       }
       for (const entry of await fsp.readdir(from, { withFileTypes: true })) {
-        signal?.throwIfAborted();
+        signal.throwIfAborted();
         assertStagedDirectoryCurrent(target.receipt);
         assertStagedDirectoryCurrent(original.receipt);
         const childSource = path.join(from, entry.name);
@@ -176,14 +188,14 @@ export async function copyOwnedTree(
               throw error;
             }
           }
-          signal?.throwIfAborted();
+          signal.throwIfAborted();
           await fsp.symlink(link, childTarget, type);
         } else {
           throw new FsSafeError("not-file", "tree copying does not support special files");
         }
       }
     } catch (error) {
-      cancellation.abort(error);
+      recordFailure(error);
       throw error;
     } finally {
       // Traversal can advance into siblings while this directory's own files
@@ -199,16 +211,24 @@ export async function copyOwnedTree(
             await fsp.utimes(to, timestampSeconds(stat.atimeNs), timestampSeconds(stat.mtimeNs));
             assertStagedDirectoryCurrent(target.receipt);
           }
-        } finally {
+        } catch (error) {
+          recordFailure(error);
+        }
+        if (original) {
           try {
-            if (original) fs.closeSync(original.fd);
-          } finally {
-            fs.closeSync(target.fd);
+            fs.closeSync(original.fd);
+          } catch (error) {
+            recordFailure(error);
           }
+        }
+        try {
+          fs.closeSync(target.fd);
+        } catch (error) {
+          recordFailure(error);
         }
       })()
         .catch((error: unknown) => {
-          cancellation.abort(error);
+          recordFailure(error);
         })
         .finally(() => {
           finishing.delete(completion);
@@ -227,11 +247,12 @@ export async function copyOwnedTree(
     await Promise.all(finishing);
     signal.throwIfAborted();
   } catch (error) {
-    await Promise.all(finishing);
-    options.signal?.throwIfAborted();
-    throw error;
+    recordFailure(error);
   } finally {
     await Promise.all(finishing);
     options.signal?.removeEventListener("abort", abort);
   }
+  if (failure) throw failure.value;
+  options.signal?.throwIfAborted();
+  signal.throwIfAborted();
 }

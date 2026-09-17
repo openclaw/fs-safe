@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Directory copying
+
+- Preserve the first tree-copy operation failure exactly, including falsy thrown values and existing error codes, while still closing every acquired file and directory once. After a successful operation, report the first close failure in ownership order: output before input, copied-directory source before target, and public source before destination parent.
+- Bind successful public `probeTreeClone` and `copyTree` performance rows to admitted workload receipts. The copy rows cover nested small files and multichunk payloads with `clone: "never"` and `"auto"` selection with separately reported capability probes; setup, exact paths, hashes, POSIX relative symlinks or Windows absolute junctions, metadata, independent destination mutation, source preservation, and cleanup remain outside timing.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights
