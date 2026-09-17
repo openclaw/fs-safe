@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Reject sidecar cleanup when exact file identity is unknown instead of treating missing identities as a match.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights

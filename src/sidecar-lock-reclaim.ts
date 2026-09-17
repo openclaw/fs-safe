@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { readFileDescriptorBoundedSync, readFileHandleBounded } from "./bounded-read.js";
 import { FsSafeError } from "./errors.js";
-import { sameFileIdentity } from "./file-identity.js";
+import { sameFileIdentity, sameFileIdentityForCleanup } from "./file-identity.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import type { Root } from "./root-impl.js";
 import { openSidecarRoot } from "./sidecar-lock-root.js";
@@ -274,7 +274,11 @@ export function sidecarLockSnapshotMatches(
       current.raw === observed.raw
     );
   }
-  if (observed.stat && current.stat && !sameFileIdentity(observed.stat, current.stat)) {
+  if (
+    observed.stat &&
+    current.stat &&
+    !sameFileIdentityForCleanup(observed.stat, current.stat)
+  ) {
     return false;
   }
   if (observed.raw !== undefined) {

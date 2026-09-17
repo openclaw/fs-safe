@@ -49,14 +49,24 @@ export function sameFileIdentityForCleanup(
   right: FileIdentityStat,
   platform: NodeJS.Platform = process.platform,
 ): boolean {
+  if (platform !== "win32") {
+    return sameStatValue(left.dev, right.dev) && sameStatValue(left.ino, right.ino);
+  }
+
   // A zero Windows device or inode is unknown, not proof that a pathname still
   // names the object we created. Cleanup must fail closed rather than delete a
   // replacement that happens to share the known half of the identity.
-  if (
-    platform === "win32" &&
-    (isZero(left.dev) || isZero(left.ino) || isZero(right.dev) || isZero(right.ino))
-  ) {
-    return false;
-  }
-  return sameStatValue(left.dev, right.dev) && sameStatValue(left.ino, right.ino);
+  // Capture each potentially adapter-backed observation once. This strengthens
+  // the fence against changing accessors; exact legacy getter traces are not a
+  // compatibility contract.
+  const leftDev = left.dev;
+  if (isZero(leftDev)) return false;
+  const leftIno = left.ino;
+  if (isZero(leftIno)) return false;
+  const rightDev = right.dev;
+  if (isZero(rightDev)) return false;
+  const rightIno = right.ino;
+  if (isZero(rightIno)) return false;
+
+  return sameStatValue(leftDev, rightDev) && sameStatValue(leftIno, rightIno);
 }
