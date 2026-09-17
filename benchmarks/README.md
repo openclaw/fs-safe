@@ -56,6 +56,11 @@ the process umask on setup, operation, verification, and cleanup failures.
 Every row checks final mode and owner where portable, successful cleanup, and
 path absence outside timing. Depth-row reports also record the actual canonical
 root component count so runner-specific temporary path prefixes remain visible.
+The `cleanup/compatible-js-fallback` filter selects one async and one
+sync successful cleanup row in native-off mode. These rows time the guarded
+JavaScript recursive-removal path, verify `"removed"`, and bind reports to the
+compatible safety mode, native-off route, and empty-workspace fixture; setup and
+verification remain outside timing.
 The broader cases add lexical paths at depths 0/8/32, batches of 100/1,000
 paths, 1,000-entry listings and walks, private/public stores through 1 MiB with
 both durability settings, 1,000-item JSON documents and concurrent updates,

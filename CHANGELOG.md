@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Preserve every thrown value from compatible temporary-workspace recursive removal, including falsy values, while keeping uncertain quarantine or parent checks mapped to `"indeterminate"`.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights
