@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Add `copyFileDescriptorSync()` for bounded positional transfers between caller-owned regular-file descriptors, sharing `CopyFileHandleOptions` while preserving cursors, descriptor lifetime, destination suffixes, and caller-owned durability and publication.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights

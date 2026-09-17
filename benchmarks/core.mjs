@@ -303,6 +303,16 @@ export async function registerCore({ api: a, workspace: w, binding, measuredFeat
       after: (_, { source, target }) => Promise.all([source.close(), target.close()]),
       verify: (bytes) => { assert.equal(bytes, size); assert.deepEqual(fs.readFileSync(copyPath), payload); },
     });
+    add(`copyFileDescriptorSync/${size}`, ({ source, target }) => a.copyFileDescriptorSync(source, target), {
+      divisor, sync: true,
+      before: () => {
+        const source = fs.openSync(filePath, "r");
+        try { return { source, target: fs.openSync(copyPath, "w+", 0o600) }; }
+        catch (error) { fs.closeSync(source); throw error; }
+      },
+      after: (_, { source, target }) => { fs.closeSync(source); fs.closeSync(target); },
+      verify: (bytes) => { assert.equal(bytes, size); assert.deepEqual(fs.readFileSync(copyPath), payload); },
+    });
     if (size === 2 * 1024 * 1024) {
       const expectedMinimumChunks = size / (512 * 1024);
       const liveSignal = new AbortController().signal;

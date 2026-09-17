@@ -43,8 +43,9 @@ The advanced root-file primitive exports `OpenRootFileParams`,
 `RootFileOpenFailureReason`. These are composition types for callers building
 their own pinned-open flow, not substitutes for the higher-level `Root` verbs.
 
-`copyFileHandle` and `CopyFileHandleOptions` transfer bytes between already-open
-regular files without taking over their cursors, lifetime, or publication.
+`copyFileHandle` and `copyFileDescriptorSync` share `CopyFileHandleOptions` to
+transfer bytes between already-open regular files without taking over their
+cursors, lifetime, or publication.
 See [borrowed-handle transfers](copy.md#borrowed-filehandle-transfers).
 
 `readDirectoryIdentity`, `assertDirectoryIdentitySync`, and `DirectoryIdentity`

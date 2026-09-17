@@ -107,7 +107,7 @@ verify outside timing that the destination content is exact, the staging file
 is gone, `.txt.part` survives truncation, and both NFC and NFD forms of the
 staging component fit within 255 bytes. Expected synchronous
 rejections use the checked per-call timing path, including during measurement.
-Borrowed-handle transfers and Root byte-copy cases cover the same payload sizes;
+Borrowed-handle, synchronous descriptor, and Root byte-copy cases cover the same payload sizes;
 the Root cases use `clone: "never"` and `durable: false` to expose transfer costs.
 Dedicated 2 MiB borrowed-handle rows measure a live non-aborted signal,
 observer, mutation-authority, and combined callback costs over at least four

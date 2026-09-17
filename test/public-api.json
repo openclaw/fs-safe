@@ -245,6 +245,7 @@
         "canUseRootFileOpen",
         "canonicalPathFromExistingAncestor",
         "configureFsSafeLocks",
+        "copyFileDescriptorSync",
         "copyFileHandle",
         "createAsyncLock",
         "createIcaclsResetCommand",
