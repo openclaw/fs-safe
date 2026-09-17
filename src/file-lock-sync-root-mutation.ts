@@ -203,11 +203,44 @@ export function removeFileLockSyncRootFile(
   assertFileLockSyncRootMutationAllowed(pathAuthority.path, pathAuthority.authority.denyMutations);
   fs.rmSync(pathForWindowsFilesystem(pathAuthority.path));
   assertRetainedParentCurrent(pathAuthority, receipt.parent);
+  let successorStat: BigIntStats;
   try {
-    fs.lstatSync(pathForWindowsFilesystem(pathAuthority.path), { bigint: true });
+    successorStat = inspectFileIdentitySync(
+      () => fs.lstatSync(pathForWindowsFilesystem(pathAuthority.path), { bigint: true }),
+    );
   } catch (error) {
     if (isNotFoundPathError(error)) return true;
     throw error;
+  }
+  assertRegularFile(successorStat, pathAuthority.authority.hardlinks);
+  assertRetainedParentCurrent(pathAuthority, receipt.parent);
+  if (!sameExactIdentity(exactFileIdentity(successorStat), receipt.identity)) return true;
+  if (expected) {
+    const successor = readFileLockSyncRootSnapshot(pathAuthority);
+    assertRetainedParentCurrent(pathAuthority, receipt.parent);
+    if (successor) {
+      if (!sameExactIdentity(successor.receipt.identity, receipt.identity) ||
+        !sidecarLockSnapshotMatches(successor.snapshot, expected)) return true;
+    } else {
+      // A null descriptor-bound snapshot can mean confirmed absence, a distinct
+      // replacement, or unverifiable identity. Re-observe once and accept only
+      // the first two states; ambiguity about the removed generation fails closed.
+      let current: BigIntStats;
+      try {
+        current = inspectFileIdentitySync(
+          () => fs.lstatSync(pathForWindowsFilesystem(pathAuthority.path), { bigint: true }),
+        );
+      } catch (error) {
+        if (isNotFoundPathError(error)) {
+          assertRetainedParentCurrent(pathAuthority, receipt.parent);
+          return true;
+        }
+        throw error;
+      }
+      assertRegularFile(current, pathAuthority.authority.hardlinks);
+      assertRetainedParentCurrent(pathAuthority, receipt.parent);
+      if (!sameExactIdentity(exactFileIdentity(current), receipt.identity)) return true;
+    }
   }
   throw new FsSafeError("path-mismatch", "sidecar lock was replaced during removal");
 }
