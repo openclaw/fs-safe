@@ -47,14 +47,16 @@ it.each(orders.flatMap((mode) => ["root", "directory"].map((replaced) => ({ ...m
   async ({ options, replaced }) => {
     const container = await tempRoot("fs-safe-root-async-filter-swap-");
     const directory = path.join(container, "root");
-    const nested = path.join(directory, "nested");
-    await fs.mkdir(nested, { recursive: true });
-    await fs.writeFile(path.join(nested, "value"), "original");
+    // Windows allows renaming the streamed directory, but not its ancestor.
+    const walkPath = replaced === "root" && options.order === "filesystem" ? "" : "nested";
+    const listedDirectory = path.join(directory, walkPath);
+    await fs.mkdir(listedDirectory, { recursive: true });
+    await fs.writeFile(path.join(listedDirectory, "value"), "original");
     const capability = await root(directory);
-    const iterator = capability.walk("nested", {
+    const iterator = capability.walk(walkPath, {
       ...options, symlinkPolicy: "skip",
       entryFilter: async () => {
-        const target = replaced === "root" ? directory : nested;
+        const target = replaced === "root" ? directory : listedDirectory;
         await fs.rename(target, path.join(container, "moved"));
         await fs.mkdir(target);
         return "include";
