@@ -295,6 +295,46 @@ deadline budget. Errors from descriptor reads/stats or parsing are not treated
 as missing snapshots, even when their code is `ENOENT`. Held verification,
 release, and reclaim do not retry open denials.
 
+Synchronous `lockRoot` is an authority boundary, not only a containment hint.
+It requires a genuine `Root` returned by the same loaded package copy; a
+structural/custom Root lookalike or a handle constructed by another installed
+copy fails with `helper-unavailable` before any remaining acquisition option or
+nested retry getter, payload evaluation, or filesystem effects. After reading
+`lockRoot` once, the genuine Root and its policies are snapshotted before those
+getters run. Construct `lockRoot` through the same import instance that provides
+the synchronous lock function. The acquirer retains the original Root context,
+exact root, parent, and file identities, and the Root's entry-time read, hardlink,
+mutation-symlink, `denyMutations`, and `assertBeforeMutation` policies. Those
+receipts remain authoritative through same-owner reuse, compromise checks,
+reclaim, explicit release, and process-exit cleanup. If the Root, an admitted
+parent, or the owned entry changes, cleanup leaves the ambiguous path in place.
+Root-backed synchronous records and their exit handler use a separate versioned
+global domain; legacy raw-lock handlers and legacy package copies cannot adopt or
+pathname-delete those records. Root and raw acquisitions never share a
+reentrant reference, even when their owner strings match.
+
+As with asynchronous Root-backed acquisition, synchronous target normalization
+does not create the target's parent. An explicit in-root `lockPath` can therefore
+guard an external or not-yet-created target key without creating anything next
+to that target. Missing directories for the sidecar itself are created one
+component at a time through the retained Root policy; the returned `lockPath`
+uses the admitted canonical spelling. This strengthens earlier synchronous
+behavior that treated `lockRoot` as a one-time lexical/canonical bound and used
+raw pathname operations afterward.
+
+Windows Root-backed target keys use native existing-ancestor canonicalization,
+so long and short spellings of the same target parent share an arbitration key.
+Sidecar admission applies both the retained mutation policy and read/final-link
+policy before payload evaluation; a dangling final sidecar link is rejected
+without creating its target.
+
+Exact Root, parent, and file receipts narrow replacement races but do not make a
+pathname check and the following `open`, `mkdir`, `unlink`, or `rmdir` one atomic
+filesystem operation. A hostile peer with direct write access can still race the
+final syscall. An observed mismatch fails closed and ambiguous entries remain;
+use OS-enforced directory permissions or a native descriptor-relative primitive
+when that attacker model must be excluded.
+
 Both synchronous helpers consume the [process-wide lock defaults](config.md#configurefssafelocks-config).
 A synchronous retry sleep is clamped to the remaining finite deadline, so a long or jittered backoff cannot extend the configured timeout or block forever.
 Per-call options take precedence, including zero values; a per-call `retry`

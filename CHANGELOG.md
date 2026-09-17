@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Bind synchronous `lockRoot` sidecar creation, inspection, reentrant reuse, reclaim, verification, release, and exit cleanup to the genuine Root's retained exact identity and entry-time policies. Genuine Root validation and policy capture precede all remaining option and nested retry getters. Root-backed target-key normalization no longer creates external parents; structural/custom or cross-package-copy Root objects fail closed before those getters, callbacks, or filesystem effects.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights

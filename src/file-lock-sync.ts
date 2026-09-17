@@ -34,6 +34,11 @@ import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 import { realpathSync } from "./realpath.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { createSuppressedError } from "./suppressed-error.js";
+import { acquireFileLockSyncWithRoot } from "./file-lock-sync-root-acquire.js";
+import {
+  isRootSyncHeldLockHandle,
+  withRootSyncHeldLockHandle,
+} from "./file-lock-sync-root-held.js";
 
 export type FileLockSyncAcquireOptions<TPayload extends Record<string, unknown>> = {
   lockPath?: string;
@@ -226,6 +231,10 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
   targetPath: string,
   options: FileLockSyncAcquireOptions<TPayload>,
 ): FileLockSyncHandle {
+  const lockRoot = options.lockRoot;
+  if (lockRoot) {
+    return acquireFileLockSyncWithRoot(targetPath, options, lockRoot);
+  }
   const defaults = getFsSafeLockConfig();
   const retry = options.retry ?? defaults.retry ?? {};
   const timeoutMs = options.timeoutMs ?? defaults.timeoutMs;
@@ -238,7 +247,7 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
   assertNoWindowsPathAlias(targetPath);
   if (explicitLockPath !== undefined) assertNoWindowsPathAlias(explicitLockPath);
   const normalizedTargetPath = normalizeTargetPath(targetPath);
-  const lockPath = boundedLockPath(explicitLockPath ?? `${normalizedTargetPath}.lock`, options.lockRoot);
+  const lockPath = boundedLockPath(explicitLockPath ?? `${normalizedTargetPath}.lock`, lockRoot);
   const heldLocks = getSyncHeldLocks();
   const held = heldLocks.get(normalizedTargetPath);
   if (
@@ -453,6 +462,9 @@ export function withFileLockSync<T, TPayload extends Record<string, unknown>>(
   fn: () => T,
 ): T {
   const lock = acquireFileLockSync(targetPath, options);
+  if (isRootSyncHeldLockHandle(lock)) {
+    return withRootSyncHeldLockHandle(lock, fn);
+  }
   try {
     return fn();
   } finally {
