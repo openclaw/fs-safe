@@ -163,7 +163,7 @@ function hiddenGitMutation(kind: "assume-unchanged" | "skip-worktree" | "filter-
     fs.writeFileSync(path.join(value.root, ".gitattributes"), `${helper.path} filter=hide\n`);
     fs.writeFileSync(path.join(value.root, "hide-filter.cjs"),
       "let s='';process.stdin.setEncoding('utf8');process.stdin.on('data',d=>s+=d);" +
-      "process.stdin.on('end',()=>process.stdout.write(s.replace(/modified\\n/g,'')));\n");
+      "process.stdin.on('end',()=>process.stdout.write(s.replace(/^modified-/,'reviewed-')));\n");
     git(value.root, "config", "filter.hide.clean", "node hide-filter.cjs");
     git(value.root, "config", "filter.hide.required", "true");
     git(value.root, "add", ".gitattributes", "hide-filter.cjs");
@@ -176,7 +176,21 @@ function hiddenGitMutation(kind: "assume-unchanged" | "skip-worktree" | "filter-
   } else if (kind === "skip-worktree") {
     git(value.root, "update-index", "--skip-worktree", "--", helper.path);
   }
-  fs.appendFileSync(helperFile, "modified\n");
+  if (kind === "filter-hidden") {
+    const original = fs.readFileSync(helperFile);
+    const changed = Buffer.from(original.toString("utf8").replace(/^reviewed-/u, "modified-"));
+    const manifestHelper = manifest.files.find(({ path: relative }) => relative === helper.path)!;
+    expect(changed).not.toEqual(original);
+    expect(changed.length).toBe(original.length);
+    fs.writeFileSync(helperFile, changed);
+    expect(sha256(changed)).not.toBe(manifestHelper.sha256);
+    expect(gitInput(value.root, changed, "hash-object", "--stdin", `--path=${helper.path}`))
+      .toBe(manifestHelper.blob);
+    expect(gitInput(value.root, changed, "hash-object", "--stdin", "--no-filters"))
+      .not.toBe(manifestHelper.blob);
+  } else {
+    fs.appendFileSync(helperFile, "modified\n");
+  }
   expect(git(value.root, "status", "--porcelain", "--", helper.path)).toBe("");
   return { ...value, manifest };
 }
