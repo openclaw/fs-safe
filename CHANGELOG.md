@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Permissions and diagnostics
+
+- Keep the Windows owner/ACL compatibility inspector fail-closed when an
+  injected executor rejects with a proxy, accessor-bearing object, function,
+  symbol, or another value whose ordinary string conversion can run or throw.
+  Best-effort command metadata now reads bounded data descriptors without
+  invoking getters or proxy traps. String, `Buffer`, and `Uint8Array` stderr is
+  retained through bounded private byte snapshots without consulting receiver
+  properties, iterators, constructors, or altered prototypes, while preserving
+  ordinary diagnostics and the exact original `errorCause`.
+
+### Validation
+
+- Add cross-public-route hostile-diagnostic regressions and receipt-bound
+  Windows owner failure benchmarks with injected success/error cohorts plus
+  live native/POSIX controls. Hostile changed-outcome cases remain
+  correctness-only rather than being treated as equivalent performance work.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights

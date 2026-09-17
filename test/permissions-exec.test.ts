@@ -222,6 +222,63 @@ describe("Windows permission command execution", () => {
     expect(exec).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    { label: "undefined", value: undefined },
+    { label: "null", value: null },
+    { label: "false", value: false },
+    { label: "+0", value: 0 },
+    { label: "-0", value: -0 },
+    { label: "0n", value: 0n },
+    { label: "empty string", value: "" },
+    { label: "NaN", value: Number.NaN },
+  ])("preserves a rejected $label owner-query diagnostic", async ({ value }) => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-permission-falsy-owner-"));
+    tempDirs.push(dir);
+    const target = path.join(dir, "secret.json");
+    await fs.writeFile(target, "{}", { mode: 0o600 });
+    const exec = vi.fn().mockRejectedValue(value);
+
+    const result = await inspectPathPermissions(target, {
+      platform: "win32",
+      env: { SystemRoot: "C:\\Windows" },
+      exec,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.source).toBe("unknown");
+    expect(result.ownerError).toBe(String(value));
+    expect(result.error).toBe(`Windows owner inspection failed: ${String(value)}`);
+    expect(Object.hasOwn(result, "errorCause")).toBe(true);
+    expect(Object.is(result.errorCause, value)).toBe(true);
+    expect(exec).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves a synchronously thrown empty owner-query diagnostic", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-permission-empty-owner-"));
+    tempDirs.push(dir);
+    const target = path.join(dir, "secret.json");
+    await fs.writeFile(target, "{}", { mode: 0o600 });
+    const exec = vi.fn(() => {
+      throw "";
+    });
+
+    const result = await inspectPathPermissions(target, {
+      platform: "win32",
+      env: { SystemRoot: "C:\\Windows" },
+      exec,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      source: "unknown",
+      ownerError: "",
+      error: "Windows owner inspection failed: ",
+    });
+    expect(Object.hasOwn(result, "errorCause")).toBe(true);
+    expect(result.errorCause).toBe("");
+    expect(exec).toHaveBeenCalledTimes(1);
+  });
+
   it("fails closed when a successful query yields incomplete descriptor facts", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-permission-empty-acl-"));
     tempDirs.push(dir);

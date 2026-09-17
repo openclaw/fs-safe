@@ -29,3 +29,22 @@ export async function finalizeBenchmarkRun({ initialFailures = [], cleanup, clea
 
   throwBenchmarkFailures(failures, "benchmark execution or cleanup failed");
 }
+
+export async function finalizeBenchmarkReport({
+  initialFailures = [],
+  validateReport,
+  cleanup,
+  cleanups = [],
+  workspace,
+  reportPath,
+  report,
+}) {
+  const failures = [...initialFailures];
+  if (failures.length === 0) {
+    await attemptBenchmarkCleanup(failures, validateReport);
+  }
+  await finalizeBenchmarkRun({ initialFailures: failures, cleanup, cleanups, workspace });
+  if (reportPath) {
+    fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+  }
+}

@@ -1,4 +1,10 @@
 import { sidecarPathSnapshotCases } from "../../benchmarks/sidecar-path-snapshot.mjs";
+import {
+  WINDOWS_OWNER_CAUGHT_FAILURE_FIXTURE,
+  WINDOWS_OWNER_CAUGHT_FAILURE_NAMES,
+  WINDOWS_OWNER_CAUGHT_FAILURE_RECEIPT,
+  windowsOwnerCaughtFailureIterations,
+} from "../../benchmarks/windows-owner-caught-failure.mjs";
 
 function measured(row: object, sampleCount: number, iterations: number) {
   return {
@@ -20,5 +26,14 @@ export function completeSyntheticBenchmarkResults(sampleCount: number, iteration
   return [
     measured({ name: "root" }, sampleCount, iterations),
     ...sidecarRows.map((row) => measured(row, sampleCount, iterations)),
+    ...WINDOWS_OWNER_CAUGHT_FAILURE_NAMES.map((name) => measured({
+      name,
+      workloadSemantics: "equivalent-output",
+      workloadDetails: {
+        ...WINDOWS_OWNER_CAUGHT_FAILURE_RECEIPT,
+        cohort: name.split("/").at(-1),
+      },
+      fixturePlacement: WINDOWS_OWNER_CAUGHT_FAILURE_FIXTURE,
+    }, sampleCount, windowsOwnerCaughtFailureIterations(name, iterations))),
   ];
 }

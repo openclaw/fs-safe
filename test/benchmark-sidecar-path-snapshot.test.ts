@@ -177,6 +177,7 @@ describe("sidecar path snapshot benchmark", () => {
     const source = fs.readFileSync("benchmarks/sidecar-path-snapshot.mjs", "utf8");
     const lifecycle = fs.readFileSync("benchmarks/lifecycle.mjs", "utf8");
     const runner = fs.readFileSync("benchmarks/runner.mjs", "utf8");
+    const runnerCleanup = fs.readFileSync("benchmarks/runner-cleanup.mjs", "utf8");
     const evidence = fs.readFileSync("benchmarks/measured-distribution.mjs", "utf8");
     expect(source).toContain("register(row.name, () => manager.acquire(targetPath, options), {");
     expect(source).not.toContain("process.chdir");
@@ -188,7 +189,10 @@ describe("sidecar path snapshot benchmark", () => {
     expect(once.indexOf("await c.run(input)")).toBeLessThan(once.indexOf("elapsed = performance.now() - start"));
     expect(once.indexOf("elapsed = performance.now() - start")).toBeLessThan(once.indexOf("c.verify?.(output)"));
     expect(once.indexOf("elapsed = performance.now() - start")).toBeLessThan(once.indexOf("finishBenchmarkInvocation("));
-    expect(runner.indexOf("await finalizeBenchmarkRun({")).toBeLessThan(runner.indexOf("fs.writeFileSync(path.resolve(args.json)"));
+    expect(runner).toContain("await finalizeBenchmarkReport({");
+    expect(runner.indexOf("validateReport: () => {")).toBeLessThan(runner.indexOf("reportPath: args.json"));
+    expect(runnerCleanup.indexOf("await finalizeBenchmarkRun({"))
+      .toBeLessThan(runnerCleanup.indexOf("fs.writeFileSync(reportPath"));
   });
 
   it("cleans allocations after setup failures and removes orphan artifacts before reporting them", async () => {
