@@ -2,14 +2,34 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { isPathInside, normalizeWindowsPathForComparison } from "../src/path.js";
+import { isPathInside } from "../src/path.js";
 import { safePathSegmentHashed } from "../src/install-path.js";
 import { sanitizeUntrustedFileName } from "../src/filename.js";
 
 const posixPath = fc.array(fc.constantFrom("a", "ab", ".", "..", "", "é", "two words", "..hidden"), { maxLength: 12 })
   .map((parts) => `/${parts.join("/")}`);
 
+function windowsPathForOracle(input: string): string {
+  let resolved = path.win32.resolve(input);
+  // Node drops the final separator when a rooted namespace path collapses to its drive root.
+  if (/^[/\\]{2}[?.][/\\][A-Za-z]:[/\\][^:]*$/u.test(input) && /^\\\\[?.]\\[A-Za-z]:$/u.test(resolved)) {
+    resolved += "\\";
+  }
+  return path.win32.normalize(resolved)
+    .replace(/^\\\\\?\\(UNC\\)?/iu, (_prefix: string, unc: string | undefined) => unc ? "\\\\" : "")
+    .toLowerCase();
+}
+
 describe("path utility fast paths", () => {
+  it.skipIf(process.platform !== "win32")("keeps a namespace path that normalizes to a drive root absolute", () => {
+    const root = String.raw`\\?\C:\safe\..`;
+    const child = `${root}\\child`;
+    expect(windowsPathForOracle(root)).toBe("c:\\");
+    expect(windowsPathForOracle(child)).toBe("c:\\child");
+    expect(isPathInside(root, child)).toBe(true);
+    expect(isPathInside(root, String.raw`D:\child`)).toBe(false);
+  });
+
   it.skipIf(process.platform !== "win32")("matches Windows relative semantics after drive and namespace normalization", () => {
     const windowsPath = fc.tuple(
       fc.constantFrom("", ".", "C:", "C:\\", "D:\\", "C:\\safe", "C:\\safe ", "\\\\?\\C:\\safe", "\\\\?\\UNC\\server\\share", "\\\\server\\share\\safe"),
@@ -19,8 +39,8 @@ describe("path utility fast paths", () => {
     fc.assert(fc.property(windowsPath, windowsPath, (root, other) => {
       for (const target of [root, `${root}\\child`, `${root}\\..\\neighbor`, other]) {
         const relative = path.win32.relative(
-          normalizeWindowsPathForComparison(path.win32.resolve(root)),
-          normalizeWindowsPathForComparison(path.win32.resolve(target)),
+          windowsPathForOracle(root),
+          windowsPathForOracle(target),
         );
         const expected = relative === "" || (relative !== ".." && !relative.startsWith("..\\") && !path.win32.isAbsolute(relative));
         expect(isPathInside(root, target), `${root} -> ${target}`).toBe(expected);
