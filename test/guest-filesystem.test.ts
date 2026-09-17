@@ -242,12 +242,14 @@ describe.skipIf(process.platform === "win32")("guest filesystem protocol", () =>
     const mkdir = runGuest(["mkdirp", root, "moved/deeper"]);
     expect(mkdir.error).toBeUndefined();
     expect(mkdir.status, mkdir.stderr.toString()).toBe(0);
+    await fs.symlink("deeper", path.join(root, "moved", "alias"));
     const listing = runGuest(["readdir", root, "moved"]);
     expect(listing.error).toBeUndefined();
     expect(listing.status, listing.stderr.toString()).toBe(0);
     expect(JSON.parse(listing.stdout.toString()).sort((a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name))).toEqual([
-      { name: "copy.bin", isDirectory: false },
-      { name: "deeper", isDirectory: true },
+      { name: "alias", isDirectory: false, isFile: false },
+      { name: "copy.bin", isDirectory: false, isFile: true },
+      { name: "deeper", isDirectory: true, isFile: false },
     ]);
 
     const remove = runGuest(["remove", root, "", "moved", "1", "0"]);

@@ -59,7 +59,7 @@ export const GUEST_FILESYSTEM_DISPATCH_PYTHON = [
   "    try:",
   "        target_fd = walk_dir(root_fd, sys.argv[3], False)",
   "        with os.scandir(target_fd) as entries:",
-  "            print(json.dumps([{'name': entry.name, 'isDirectory': entry.is_dir(follow_symlinks=False)} for entry in entries]))",
+  "            print(json.dumps([{'name': entry.name, 'isDirectory': entry.is_dir(follow_symlinks=False), 'isFile': entry.is_file(follow_symlinks=False)} for entry in entries]))",
   "    finally:",
   "        if target_fd is not None:",
   "            os.close(target_fd)",

@@ -80,7 +80,7 @@ disables. Do not omit required fields.
 | Rename | `rename srcRoot srcParent srcBasename dstRoot dstParent dstBasename mkdir` | Rename with cross-device copy/delete fallback. |
 | Remove | `remove root parent basename recursive force` | Removes the leaf, or recursively removes its tree. |
 | Make directories | `mkdirp root directory` | Creates missing relative directory components. |
-| List directory | `readdir root directory` | JSON array of `{ name, isDirectory }`; no sorting guarantee. |
+| List directory | `readdir root directory` | JSON array of `{ name, isDirectory, isFile }`; both kind fields are false for symlinks and special entries; no sorting guarantee. |
 
 The complete program rejects empty, `.`, `..`, slash-containing, and NUL
 basenames before opening roots or creating parents. Both leaf operands of copy
