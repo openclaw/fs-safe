@@ -153,9 +153,11 @@ jobs:
     steps:
       - name: Configure byte-exact checkouts
         run: |
-          echo "PLAN_PATH=$RUNNER_TEMP/proof-plan.json" >> "$GITHUB_ENV"
-          echo "BEFORE_PATH=$RUNNER_TEMP/before.json" >> "$GITHUB_ENV"
-          echo "MANIFEST_PATH=$RUNNER_TEMP/campaign/campaign-manifest.json" >> "$GITHUB_ENV"
+          {
+            echo "PLAN_PATH=$RUNNER_TEMP/proof-plan.json"
+            echo "BEFORE_PATH=$RUNNER_TEMP/before.json"
+            echo "MANIFEST_PATH=$RUNNER_TEMP/campaign/campaign-manifest.json"
+          } >> "$GITHUB_ENV"
           git config --global core.autocrlf false
           git config --global core.eol lf
       - name: Download immutable campaign manifest
