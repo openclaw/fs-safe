@@ -57,7 +57,7 @@ function executionReceipt(row: typeof PATH_PREFIX_CAMPAIGN_ROWS[number], samples
     campaign: "resolve-path-prefix-cursor-v1",
     effectiveIterations: row.effectiveIterations,
     fixtureReceipt: fixture,
-    fixtureObservations: { before: fixture, after: fixture },
+    fixtureObservations: { before: structuredClone(fixture), after: structuredClone(fixture) },
     warmupBatches: 1,
     warmupBatchIds: ["warmup-1"],
     warmupInvocations: row.effectiveIterations,
@@ -229,6 +229,10 @@ describe("path-prefix campaign receipt validation", () => {
   it("accepts complete receipts and rejects skipped, missing, and mutated evidence", () => {
     const fixture = registerFixture("resolvePathPrefixSync/");
     const report = completeReport(fixture);
+    const execution = report.results[0]!.pathPrefixCampaignReceipt;
+    expect(execution.fixtureObservations.before).not.toBe(execution.fixtureReceipt);
+    expect(execution.fixtureObservations.after).not.toBe(execution.fixtureReceipt);
+    expect(execution.fixtureObservations.after).not.toBe(execution.fixtureObservations.before);
     expect(() => validatePathPrefixCampaignReport(report, "resolvePathPrefixSync/"))
       .not.toThrow();
 

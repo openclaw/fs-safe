@@ -1,14 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { resolvePathPrefixSync } from "../src/advanced.js";
+import { observeArrayShifts } from "./helpers/observe-array-shifts.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const SHIFT_QUEUE_COMPONENT_LIMIT = 32;
 const directoryLink = process.platform === "win32" ? "junction" : "dir";
 const { tempRoot } = useRealTempDirs();
-
-afterEach(() => vi.restoreAllMocks());
 
 function rawComponentCount(absolutePath: string): number {
   const root = path.parse(absolutePath).root;
@@ -16,21 +15,9 @@ function rawComponentCount(absolutePath: string): number {
 }
 
 function resolveWithMarkedShiftCounts(input: string, markerGroups: readonly (readonly string[])[]) {
-  const originalShift = Array.prototype.shift;
-  const markedShifts = markerGroups.map(() => 0);
-  const mock = vi.spyOn(Array.prototype, "shift").mockImplementation(function (this: unknown[]) {
-    for (let index = 0; index < markerGroups.length; index++) {
-      if (markerGroups[index]!.every(marker => this.includes(marker))) {
-        markedShifts[index] = markedShifts[index]! + 1;
-      }
-    }
-    return originalShift.call(this);
-  });
-  try {
-    return { result: resolvePathPrefixSync(input), markedShifts };
-  } finally {
-    mock.mockRestore();
-  }
+  const observed = observeArrayShifts(markerGroups, () => resolvePathPrefixSync(input));
+  if (!observed.ok) throw observed.error;
+  return { result: observed.result, markedShifts: observed.markedShifts };
 }
 
 function populatedPathAtComponentCount(base: string, componentCount: number): string {
@@ -93,6 +80,7 @@ describe("resolvePathPrefixSync forced cursor mode", () => {
       },
     ];
 
+    const shiftDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "shift");
     for (const testCase of cases) {
       expect(rawComponentCount(testCase.input)).toBeGreaterThan(SHIFT_QUEUE_COMPONENT_LIMIT);
       const { result, markedShifts } = resolveWithMarkedShiftCounts(
@@ -106,6 +94,7 @@ describe("resolvePathPrefixSync forced cursor mode", () => {
         unresolvedSegments: testCase.unresolvedSegments,
       });
     }
+    expect(Object.getOwnPropertyDescriptor(Array.prototype, "shift")).toEqual(shiftDescriptor);
   });
 
   it("rejects a non-directory followed only by trailing separators", async () => {
@@ -114,18 +103,13 @@ describe("resolvePathPrefixSync forced cursor mode", () => {
     fs.writeFileSync(file, "kept");
     const input = `${file}${path.sep.repeat(40)}`;
     expect(rawComponentCount(input)).toBeGreaterThan(SHIFT_QUEUE_COMPONENT_LIMIT);
-    const originalShift = Array.prototype.shift;
-    let markedShifts = 0;
-    const mock = vi.spyOn(Array.prototype, "shift").mockImplementation(function (this: unknown[]) {
-      if (this.includes("file-marker")) markedShifts++;
-      return originalShift.call(this);
-    });
-    try {
-      expect(() => resolvePathPrefixSync(input)).toThrow(expect.objectContaining({ code: "ENOTDIR" }));
-      expect(markedShifts).toBe(0);
-    } finally {
-      mock.mockRestore();
-    }
+    const shiftDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "shift");
+    const observed = observeArrayShifts([["file-marker"]], () => resolvePathPrefixSync(input));
+    expect(observed.ok).toBe(false);
+    if (observed.ok) throw new Error("non-directory traversal unexpectedly succeeded");
+    expect(observed.error).toEqual(expect.objectContaining({ code: "ENOTDIR" }));
+    expect(observed.markedShifts).toEqual([0]);
+    expect(Object.getOwnPropertyDescriptor(Array.prototype, "shift")).toEqual(shiftDescriptor);
   });
 
   it.each([

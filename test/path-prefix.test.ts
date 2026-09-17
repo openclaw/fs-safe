@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolvePathPrefixSync } from "../src/advanced.js";
 import { realpathSync } from "../src/realpath.js";
 import { itPosix, itWin32, useRealTempDirs } from "./helpers/vitest.js";
+import { observeArrayShifts } from "./helpers/observe-array-shifts.js";
 
 const { tempRoot, tempDirs } = useRealTempDirs();
 afterEach(() => vi.restoreAllMocks());
@@ -12,14 +13,9 @@ const directoryLink = process.platform === "win32" ? "junction" : "dir";
 const SHIFT_QUEUE_COMPONENT_LIMIT = 32;
 
 function resolveAndCountMarkedShifts(input: string, markers: readonly string[]) {
-  const shift = Array.prototype.shift;
-  let markedShifts = 0;
-  vi.spyOn(Array.prototype, "shift").mockImplementation(function (this: unknown[]) {
-    if (markers.every(marker => this.includes(marker))) markedShifts++;
-    return shift.call(this);
-  });
-  const result = resolvePathPrefixSync(input);
-  return { result, markedShifts };
+  const observed = observeArrayShifts([markers], () => resolvePathPrefixSync(input));
+  if (!observed.ok) throw observed.error;
+  return { result: observed.result, markedShifts: observed.markedShifts[0]! };
 }
 
 describe("resolvePathPrefixSync", () => {
