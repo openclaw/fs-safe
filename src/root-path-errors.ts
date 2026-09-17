@@ -1,5 +1,17 @@
 import { formatErrorDetail, shortPath } from "./error-detail.js";
 
+const rootPathEscapeErrors = new WeakSet<Error>();
+
+function rootPathEscapeError(message: string): Error {
+  const error = new Error(message);
+  rootPathEscapeErrors.add(error);
+  return error;
+}
+
+export function isRootPathEscapeError(error: unknown): error is Error {
+  return error instanceof Error && rootPathEscapeErrors.has(error);
+}
+
 export function sanitizeRootPathError(error: unknown): unknown {
   if (error instanceof Error) {
     error.message = formatErrorDetail(error.message);
@@ -12,7 +24,7 @@ export function pathEscapeError(params: {
   rootPath: string;
   absolutePath: string;
 }): Error {
-  return new Error(
+  return rootPathEscapeError(
     `Path escapes ${params.boundaryLabel} (${shortPath(params.rootPath)}): ${shortPath(params.absolutePath)}`,
   );
 }
@@ -22,7 +34,7 @@ export function symlinkEscapeError(params: {
   rootCanonicalPath: string;
   symlinkPath: string;
 }): Error {
-  return new Error(
+  return rootPathEscapeError(
     `Symlink escapes ${params.boundaryLabel} (${shortPath(params.rootCanonicalPath)}): ${shortPath(params.symlinkPath)}`,
   );
 }

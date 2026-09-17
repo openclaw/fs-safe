@@ -4,6 +4,7 @@ import { type DenyMutationPolicy } from "./deny-mutations.js";
 import { FsSafeError } from "./errors.js";
 import { assertNoNulPathInput, isNotFoundPathError, isPathInside } from "./path.js";
 import { resolveRootPathSync } from "./root-path.js";
+import { isRootPathEscapeError } from "./root-path-errors.js";
 import { admitPathInsideRoot } from "./root-boundary.js";
 import {
   assertRootIdentityCurrentSync,
@@ -251,16 +252,28 @@ function resolveAdmittedPath(
   rootPath: string,
 ): { path: string; relativePath: string } {
   const context = authority.context;
-  const resolved = resolveRootPathSync({
-    absolutePath,
-    // The shared resolver identity-gates ambiguous Windows matches against the
-    // original Root spelling before rebasing them to the retained canonical root.
-    rootPath,
-    rootCanonicalPath: context.rootReal,
-    rootIdentity: context.rootIdentity,
-    boundaryLabel: "sidecar lock root",
-    ...policy,
-  });
+  let resolved: ReturnType<typeof resolveRootPathSync>;
+  try {
+    resolved = resolveRootPathSync({
+      absolutePath,
+      // The shared resolver identity-gates ambiguous Windows matches against the
+      // original Root spelling before rebasing them to the retained canonical root.
+      rootPath,
+      rootCanonicalPath: context.rootReal,
+      rootIdentity: context.rootIdentity,
+      boundaryLabel: "sidecar lock root",
+      ...policy,
+    });
+  } catch (error) {
+    if (isRootPathEscapeError(error)) {
+      throw new FsSafeError(
+        "outside-workspace",
+        "sidecar lock path is outside lockRoot",
+        { cause: error },
+      );
+    }
+    throw error;
+  }
   const admitted = admitPathInsideRoot({
     rootPath: context.rootReal,
     candidatePath: resolved.canonicalPath,

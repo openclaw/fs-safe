@@ -255,8 +255,6 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
       if (heldLocks.has(normalizedTargetPath)) {
         const reused = reuseCurrentHeld();
         if (reused) return reused;
-        waitForRetry();
-        continue;
       }
       const payload = options.payload.call(options.optionsReceiver);
       const { raw, ownershipToken } = serializeSidecarLockPayload(payload);
