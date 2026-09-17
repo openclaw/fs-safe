@@ -1,4 +1,5 @@
 import { sidecarPathSnapshotCases } from "../../benchmarks/sidecar-path-snapshot.mjs";
+import { ATOMIC_TEMP_SETTLEMENT_CASES } from "../../benchmarks/atomic-temp-settlement.mjs";
 
 function measured(row: object, sampleCount: number, iterations: number) {
   return {
@@ -20,5 +21,9 @@ export function completeSyntheticBenchmarkResults(sampleCount: number, iteration
   return [
     measured({ name: "root" }, sampleCount, iterations),
     ...sidecarRows.map((row) => measured(row, sampleCount, iterations)),
+    ...ATOMIC_TEMP_SETTLEMENT_CASES.map((row) => measured({
+      ...row,
+      fixturePlacement: "unique child directory on the runner workspace filesystem",
+    }, sampleCount, iterations)),
   ];
 }

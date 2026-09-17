@@ -92,6 +92,17 @@ await replaceFileAtomic({
 
 If `beforeRename` throws, the rename is skipped and the owned temp file is removed — the destination is unchanged. Cleanup unlinks only the exact admitted single-link file; a substitute observed at the temp name is preserved and removed from cleanup authority. The same identity is rechecked before every rename retry, when entering copy fallback, and at the final name after rename. A post-rename verification failure reports the race without rolling back or deleting the published name.
 
+JavaScript permits `beforeRename` callbacks to throw any value, including
+`undefined`, `null`, `false`, signed zero, `0n`, an empty string, and `NaN`.
+Once such an operation failure reaches temp-owner settlement, atomic replacement
+preserves that value when cleanup and close succeed. With
+`throwOnCleanupError: true`, an additional owned-temp cleanup failure keeps the
+existing cleanup wrapper whose `cause` is the original thrown value. A later
+descriptor-close failure is reported in an `AggregateError`, in operation/cleanup
+then close order. The default `throwOnCleanupError: false` omits only the cleanup
+failure: the temp stays registered for identity-checked process-exit cleanup, the
+descriptor is still closed, and a close failure remains reportable.
+
 Identity checks and pathname rename/unlink remain separate syscalls, not atomic conditional mutations. Use an approved writable parent plus cooperative locking or OS isolation when arbitrary concurrent namespace mutation is in scope.
 
 ### FUSE, Windows exFAT/FAT32, and unstable rename identity
@@ -396,7 +407,7 @@ type ReplaceFileAtomicSyncFileSystem = {
 };
 ```
 
-The async interface already requires `open()`, whose `FileHandle` supplies `chmod()`, so injecting `node:fs` or another conforming adapter needs no new async member. On POSIX, that `open()` must support no-follow directory descriptors as Node does. A custom synchronous filesystem that passes `mode`, `dirMode`, or `preserveExistingMode` must supply `fchmodSync`; omission fails before any file or directory is created and never falls back to a pathname `chmod`. Existing synchronous adapters that request none of those options may omit it; their parent is still opened and identity-checked through a no-follow directory descriptor. Injecting plain `node:fs` supports explicit file and directory modes. Older adapter literals may continue to include `chmod` or `chmodSync` for source compatibility, but those operations are ignored. Copy fallback applies the file mode through its pinned destination descriptor as well, preserving exact modes despite the process umask.
+The async interface already requires `open()`, whose `FileHandle` supplies `chmod()`, so injecting `node:fs` or another conforming adapter needs no new async member. The async temp owner consumes its retained handle before awaiting `close()` during publication handoff and terminal settlement: if a custom adapter releases the resource and then rejects, that rejection is reported without calling `close()` on the same retained handle again. If publication verification opened a replacement handle before the previous retained handle failed to close, the replacement receives one best-effort close attempt. On POSIX, `open()` must support no-follow directory descriptors as Node does. A custom synchronous filesystem that passes `mode`, `dirMode`, or `preserveExistingMode` must supply `fchmodSync`; omission fails before any file or directory is created and never falls back to a pathname `chmod`. Existing synchronous adapters that request none of those options may omit it; their parent is still opened and identity-checked through a no-follow directory descriptor. Injecting plain `node:fs` supports explicit file and directory modes. Older adapter literals may continue to include `chmod` or `chmodSync` for source compatibility, but those operations are ignored. Copy fallback applies the file mode through its pinned destination descriptor as well, preserving exact modes despite the process umask.
 
 ## See also
 

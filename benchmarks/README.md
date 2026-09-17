@@ -39,6 +39,14 @@ cases exclude later close/release, which have their own rows. Representative
 payload assertions run outside measurement. Reads cover 128 B, 64 KiB, 1 MiB,
 2 MiB, the default Root budget of 16 MiB, and an explicit 32 MiB budget;
 writes compare both durability settings without changing package defaults.
+The `temp-settlement` rows exercise successful public async and sync atomic
+replacement plus synchronous store writes with 32-byte and 1 MiB payloads,
+default and explicit durability behavior, and both existing and missing targets.
+Each row owns a unique fixture directory. Setup first proves that no sibling temp
+is present; every invocation then verifies the returned method or path, exact
+published bytes, applicable POSIX mode, and absence of orphan temps before reset.
+Only the public write call is timed. These immutable workload receipts are
+validated against the complete predeclared row set selected by the report filter.
 Thirty-six synchronous file-store directory-mode rows cross existing matching,
 existing mismatched, and wholly new directory chains at depths 0/4/16 with both
 durability and private-mode settings. Fixture creation, mode setup, verification,

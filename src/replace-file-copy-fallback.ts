@@ -235,7 +235,7 @@ function restoreFailure(
 ): FsSafeError {
   const primary = writeError instanceof Error ? writeError : new Error(String(writeError));
   const details: ReplaceFileAtomicRestoreFailureDetails = { cleanup };
-  const cause = restoreError
+  const cause = cleanup === "restore-failed"
     ? new AggregateError([primary, restoreError], "copy fallback and original restoration both failed")
     : primary;
   return new FsSafeError(

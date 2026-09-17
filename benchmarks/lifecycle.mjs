@@ -5,6 +5,7 @@ import path from "node:path";
 import { registerTempWorkspaceCoverage } from "./temp-workspace-fixtures.mjs";
 import { registerSecureTempRootCoverage } from "./secure-temp-root-fixtures.mjs";
 import { registerSidecarPathSnapshot } from "./sidecar-path-snapshot.mjs";
+import { registerAtomicTempSettlementCoverage } from "./atomic-temp-settlement.mjs";
 
 export async function registerLifecycle({ api: a, workspace: w, native, binding, register: add, contract, onCleanup, args }) {
   const cloneBackend = a.probeTreeClone(w);
@@ -96,7 +97,12 @@ export async function registerLifecycle({ api: a, workspace: w, native, binding,
   const output = path.join(w, "lifecycle-output");
   const secretRoot = path.join(w, "secret-writes");
   fs.mkdirSync(secretRoot, { mode: 0o700 });
-  for (const name of ["replaceFileAtomic", "replaceFileAtomicSync"]) add(name, () => a[name]({ filePath: output, content: data }), { sync: name.endsWith("Sync") });
+  registerAtomicTempSettlementCoverage({
+    api: a,
+    workspace: w,
+    register: add,
+    onCleanup,
+  });
   add("writeTextAtomic", () => a.writeTextAtomic(output, "synthetic benchmark"));
   add("replaceDirectoryAtomic", () => a.replaceDirectoryAtomic({ stagedDir: path.join(w, "staged-dir"), targetDir: path.join(w, "target-dir") }), { before: () => fs.mkdirSync(path.join(w, "staged-dir")), after: () => fs.rmSync(path.join(w, "target-dir"), { recursive: true, force: true }) });
   add("movePathWithCopyFallback", () => a.movePathWithCopyFallback({ from: path.join(w, "move-source"), to: output }), { before: () => fs.writeFileSync(path.join(w, "move-source"), data) });

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Preserve falsy atomic operation, cleanup, close, and restoration failures, and consume retained async temp handles before close to avoid repeated release.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights

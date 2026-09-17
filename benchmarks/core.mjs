@@ -370,7 +370,10 @@ export async function registerCore({ api: a, workspace: w, binding, measuredFeat
     const sync = name.endsWith("Sync");
     add(`${type}.path`, () => store.path("input.json"), { sync: true });
     for (const method of ["readTextIfExists", "readJsonIfExists", ...(sync ? [] : ["read", "readBytes", "readText", "readJson", "exists"])]) add(`${type}.${method}`, () => store[method]("input.json"), { sync });
-    for (const durable of [true, false]) for (const method of ["write", "writeText", "writeJson"]) add(`${type}.${method}/durable=${durable}`, () => store[method](`store-${method}.json`, method === "writeJson" ? { ok: true } : data, { durable }), { sync, divisor: 10, before: () => {} });
+    for (const durable of [true, false]) for (const method of ["write", "writeText", "writeJson"]) {
+      if (type === "FileStoreSync" && method === "write") continue;
+      add(`${type}.${method}/durable=${durable}`, () => store[method](`store-${method}.json`, method === "writeJson" ? { ok: true } : data, { durable }), { sync, divisor: 10, before: () => {} });
+    }
     if (sync) continue;
     add(`${type}.root`, () => store.root());
     add(`${type}.open`, () => store.open("input.json"), { after: (r) => r?.handle.close() });
