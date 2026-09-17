@@ -46,7 +46,7 @@ sha='^[0-9a-f]{40}$'
 uuid='^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
 [[ "$candidate" =~ $sha ]] || { echo "candidate must be an exact lowercase SHA" >&2; exit 2; }
 [[ "$harness" =~ $sha ]] || { echo "harness must be an exact lowercase SHA" >&2; exit 2; }
-[[ "$candidate" != "5f6ac8cafeb9f301e66b80b3b589dc4ebfd68136" ]] || {
+[[ "$candidate" != "9ea2f89a5b4f117e460947346abdf3af60a40104" ]] || {
   echo "candidate and security baseline must differ" >&2; exit 2;
 }
 [[ "$node_major" == "22" || "$node_major" == "24" ]] || {
@@ -179,7 +179,7 @@ for order in abba baab; do
     baseline="${candidate}"
     control="rebuild"
     if [[ "$study" == "source-comparison" ]]; then
-      baseline="5f6ac8cafeb9f301e66b80b3b589dc4ebfd68136"
+      baseline="9ea2f89a5b4f117e460947346abdf3af60a40104"
     elif [[ "$study" == "same-artifact" ]]; then
       control="same-artifact"
     fi
@@ -310,7 +310,7 @@ fs.writeFileSync(file, JSON.stringify({
     },
   },
   candidateSha,
-  baselineSha: "5f6ac8cafeb9f301e66b80b3b589dc4ebfd68136",
+  baselineSha: "9ea2f89a5b4f117e460947346abdf3af60a40104",
   harnessSha,
   node,
   captureToken,

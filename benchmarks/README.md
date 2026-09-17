@@ -359,7 +359,7 @@ require it. On POSIX use `TMPDIR`.
 The manual `sync lockRoot performance proof (draft)` workflow measures the
 security change against exact immutable revisions. Supply a full candidate SHA
 and the separately reviewed workflow/harness SHA. The baseline is fixed at
-`5f6ac8cafeb9f301e66b80b3b589dc4ebfd68136`. The workflow refuses reruns and
+`9ea2f89a5b4f117e460947346abdf3af60a40104`. The workflow refuses reruns and
 mutable refs, and its 36 hosted studies are serialized per immutable campaign: Linux, macOS,
 and native Windows; Node 22 and 24; ABBA and BAAB; and source-comparison,
 same-source rebuild, and same-artifact studies. Each study uses five complete
