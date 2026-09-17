@@ -69,7 +69,9 @@ describe.skipIf(process.platform === "win32")("guest filesystem boundaries", () 
     const listed = runGuest(["readdir", root, ""]);
     expect(listed.error).toBeUndefined();
     expect(listed.status, listed.stderr.toString()).toBe(0);
-    expect(JSON.parse(listed.stdout.toString())).toEqual([{ name: "link", isDirectory: false }]);
+    expect(JSON.parse(listed.stdout.toString())).toEqual([
+      { name: "link", isDirectory: false, isFile: false },
+    ]);
 
     const removed = runGuest(["remove", root, "", "link", recursive, "0"]);
     expect(removed.error).toBeUndefined();
