@@ -58,7 +58,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  BASELINE_SHA: 9ea2f89a5b4f117e460947346abdf3af60a40104
+  BASELINE_SHA: 1cce8aed225fe5a62367a466d1720de9db68ab80
   GIT_NO_REPLACE_OBJECTS: "1"
   PNPM_VERSION: 11.25.0
 
@@ -182,7 +182,7 @@ jobs:
       ARTIFACT_NAME: sync-lock-root-${{ matrix.platform.surface }}-node-${{ matrix.node }}-${{ matrix.order }}-${{ matrix.study }}-${{ github.run_id }}-${{ github.run_attempt }}
       METHOD_PLATFORM: ${{ matrix.platform.surface }}
       METHOD_CANDIDATE_REF: ${{ inputs.candidate_ref }}
-      METHOD_COMPARE_REF: ${{ matrix.study == 'source-comparison' && '9ea2f89a5b4f117e460947346abdf3af60a40104' || inputs.candidate_ref }}
+      METHOD_COMPARE_REF: ${{ matrix.study == 'source-comparison' && '1cce8aed225fe5a62367a466d1720de9db68ab80' || inputs.candidate_ref }}
       METHOD_ITERATIONS: "100"
       METHOD_SAMPLES: "9"
       METHOD_FILTER: syncLockRoot/
@@ -240,7 +240,7 @@ jobs:
       - name: Check out exact comparison source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ matrix.study == 'source-comparison' && '9ea2f89a5b4f117e460947346abdf3af60a40104' || inputs.candidate_ref }}
+          ref: ${{ matrix.study == 'source-comparison' && '1cce8aed225fe5a62367a466d1720de9db68ab80' || inputs.candidate_ref }}
           fetch-depth: 1
           persist-credentials: false
           path: baseline
