@@ -194,7 +194,7 @@ function preflightFixture(api, fixture, sourceCommit) {
   }
 }
 
-function registerCase(context, proof, fixture, hooks) {
+export function registerCase(context, proof, fixture, hooks) {
   const spec = fixture.spec;
   const observation = proof.observations[spec.name];
   context.register(spec.name, hooks.run, {
@@ -208,19 +208,21 @@ function registerCase(context, proof, fixture, hooks) {
       return hooks.before?.() ?? {};
     },
     after: (output, input) => {
+      let didFail = false;
       let failure;
       try {
         hooks.after(output, input);
         assertMissingParentSemantics(fixture, proof.sourceCommit, `${spec.name} after`);
         assertBalanced(fixture, `${spec.name} after`);
       } catch (error) {
+        didFail = true;
         failure = error;
       } finally {
         releaseQuietly(input?.nested);
         releaseQuietly(input?.handle);
         cleanupPaths(fixture);
       }
-      if (failure) throw failure;
+      if (didFail) throw failure;
       observation.invocations += 1;
       observation.mutationAssertions += fixture.callbackState.mutationAssertions;
       fixture.callbackState.mutationAssertions = 0;

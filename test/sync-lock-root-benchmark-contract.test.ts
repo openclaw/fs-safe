@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   SYNC_LOCK_ROOT_BASE_SHA,
@@ -13,6 +16,7 @@ import {
   validateSyncLockRootPlanSources,
   validateSyncLockRootArtifactManifest,
 } from "../benchmarks/sync-lock-root-analysis.mjs";
+import { registerCase } from "../benchmarks/sync-lock-root.mjs";
 
 const candidateSha = "a".repeat(40);
 const harnessSha = "b".repeat(40);
@@ -117,7 +121,73 @@ function syntheticStudy(candidateUs: number, baselineUs: number, control = "sour
   };
 }
 
+const FALSY_AFTER_FAILURES = [
+  { label: "undefined", value: undefined },
+  { label: "null", value: null },
+  { label: "false", value: false },
+  { label: "zero", value: 0 },
+  { label: "negative zero", value: -0 },
+  { label: "bigint zero", value: 0n },
+  { label: "empty string", value: "" },
+  { label: "NaN", value: Number.NaN },
+] as const;
+
+function captureThrown(run: () => void) {
+  let didThrow = false;
+  let value: unknown;
+  try {
+    run();
+  } catch (error) {
+    didThrow = true;
+    value = error;
+  }
+  return { didThrow, value };
+}
+
 describe("synchronous lockRoot benchmark worker contract", () => {
+  it.each(FALSY_AFTER_FAILURES)("never records a falsy $label after-hook failure as success", ({ value }) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-lock-root-after-"));
+    const name = "syncLockRoot/falsy-after-hook";
+    const lockPath = path.join(directory, "state.json.lock");
+    const guardPath = `${lockPath}.reclaim`;
+    const observation = { invocations: 0, mutationAssertions: 0 };
+    const callbackState = { mutationAssertions: 0 };
+    let after: ((output: unknown, input: Record<string, unknown>) => void) | undefined;
+    try {
+      fs.writeFileSync(lockPath, "occupied");
+      fs.mkdirSync(guardPath);
+      registerCase({
+        register: (
+          _name: string,
+          _run: (input: unknown) => unknown,
+          options: { after: (output: unknown, input: Record<string, unknown>) => void },
+        ) => { after = options.after; },
+      }, {
+        observations: { [name]: observation },
+        sourceCommit: candidateSha,
+      }, {
+        callbackState,
+        guardPath,
+        lockPath,
+        missingParent: false,
+        spec: { details: {}, divisor: 1, name },
+        targetParent: directory,
+      }, {
+        after: () => { throw value; },
+        run: () => true,
+      });
+      expect(after).toBeTypeOf("function");
+      const result = captureThrown(() => after!(true, {}));
+      expect(result.didThrow).toBe(true);
+      expect(Object.is(result.value, value)).toBe(true);
+      expect(observation).toEqual({ invocations: 0, mutationAssertions: 0 });
+      expect(fs.existsSync(lockPath)).toBe(false);
+      expect(fs.existsSync(guardPath)).toBe(false);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("rejects a source plan bound to the historical comparator", () => {
     const plan = {
       sources: {
