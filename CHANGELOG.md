@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Require security-owner review for native and archive code, platform packages, executable benchmarks, and root build, test, workspace, and release-policy configuration.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights
