@@ -200,6 +200,12 @@ dated `CHANGELOG.md` section to match the tag. It builds and publishes all seven
 platform packages before publishing `@openclaw/fs-safe`, verifies every registry
 artifact and provenance statement, and then creates the GitHub release.
 
+The publish job is bound to the protected `npm-publish` environment. A reviewer
+other than the maintainer who started the release must approve that deployment;
+the environment accepts only protected `vX.Y.Z` tags. Every package's npm trusted
+publisher must require that exact environment as well as this repository and
+`.github/workflows/release.yml`.
+
 Each package needs its own npm trusted-publisher configuration for
 `openclaw/fs-safe` and `release.yml`. A new platform package must be created and
 configured on npm before the first tag that references it; npm trust is

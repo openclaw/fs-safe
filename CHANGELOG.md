@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Require independent approval through the protected `npm-publish` environment before the release workflow receives npm publishing authority.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights
