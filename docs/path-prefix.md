@@ -56,6 +56,16 @@ they are collapsed. Native realpath alone does not establish this permission
 on every platform. Empty components from repeated or trailing separators do
 not introduce a `.` lookup.
 
+Raw component queues of at most 32 entries retain the legacy small-array
+consumption path. After both the initial parse and every symlink expansion, a
+longer queue uses forward cursor bookkeeping instead of moving the unprocessed
+suffix for every component. The fixed small-queue bound limits repeated front
+removal while retaining legacy shift-based consumption for shallow paths. This
+asymptotic bound is not a platform performance result; performance acceptance
+requires separate benchmark evidence. Callers should still apply their own
+input-size limits: the helper is synchronous, retains the raw suffix, and
+performs filesystem work for each non-empty existing component.
+
 This is a read-only path observation. It neither pins files nor creates a root
 boundary, authorizes access, or guarantees a consistent snapshot during
 concurrent changes. Results can become stale immediately. Use a guarded Root

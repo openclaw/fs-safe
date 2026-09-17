@@ -5,10 +5,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolvePathPrefixSync } from "../src/advanced.js";
 import { realpathSync } from "../src/realpath.js";
 import { itPosix, itWin32, useRealTempDirs } from "./helpers/vitest.js";
+import { observeArrayShifts } from "./helpers/observe-array-shifts.js";
 
 const { tempRoot, tempDirs } = useRealTempDirs();
 afterEach(() => vi.restoreAllMocks());
 const directoryLink = process.platform === "win32" ? "junction" : "dir";
+const SHIFT_QUEUE_COMPONENT_LIMIT = 32;
+
+function resolveAndCountMarkedShifts(input: string, markers: readonly string[]) {
+  const observed = observeArrayShifts([markers], () => resolvePathPrefixSync(input));
+  if (!observed.ok) throw observed.error;
+  return { result: observed.result, markedShifts: observed.markedShifts[0]! };
+}
 
 describe("resolvePathPrefixSync", () => {
   itWin32("resolves namespace drive roots and their immediately missing children", async ({ skip }) => {
@@ -55,6 +63,35 @@ describe("resolvePathPrefixSync", () => {
     },
   );
 
+  it("preserves every raw token after a consumed existing prefix", async () => {
+    const directory = await tempRoot("fs-safe-prefix-cursor-suffix-");
+    const existing = path.join(directory, "existing", "nested");
+    fs.mkdirSync(existing, { recursive: true });
+    const input = `${existing}${path.sep}missing${path.sep}${path.sep}.${path.sep}..${path.sep}`;
+    expect(resolvePathPrefixSync(input)).toEqual({
+      absolutePath: input,
+      existingPath: existing,
+      unresolvedSegments: ["missing", "", ".", "..", ""],
+    });
+  });
+
+  it.each([
+    { queueLength: SHIFT_QUEUE_COMPONENT_LIMIT, expectedShifts: SHIFT_QUEUE_COMPONENT_LIMIT },
+    { queueLength: SHIFT_QUEUE_COMPONENT_LIMIT + 1, expectedShifts: 0 },
+  ])("uses the bounded queue mode for an initial queue of $queueLength components", ({
+    queueLength, expectedShifts,
+  }) => {
+    const root = path.parse(process.cwd()).root;
+    const marker = `.fs-safe-prefix-queue-${randomUUID()}`;
+    const input = `${root}${path.sep.repeat(queueLength - 1)}${marker}`;
+    expect(fs.existsSync(path.join(root, marker))).toBe(false);
+
+    const { result, markedShifts } = resolveAndCountMarkedShifts(input, [marker]);
+
+    expect(result.unresolvedSegments).toEqual([marker]);
+    expect(markedShifts).toBe(expectedShifts);
+  });
+
   it.each(["absolute", "relative"])("resolves %s link/.. from the physical target", async form => {
     const rawDirectory = form === "relative"
       ? fs.mkdtempSync(path.join(process.cwd(), ".fs-safe-prefix-parent-"))
@@ -93,6 +130,63 @@ describe("resolvePathPrefixSync", () => {
       existingPath: target.startsWith("inner") ? path.join(directory, "deep") : directory,
       unresolvedSegments: target.startsWith("inner") ? ["future"] : ["missing", "..", "live"],
     });
+  });
+
+  itPosix("orders a missing symlink-target suffix before the caller suffix", async () => {
+    const directory = await tempRoot("fs-safe-prefix-cursor-link-");
+    fs.mkdirSync(path.join(directory, "existing"));
+    const alias = path.join(directory, "alias");
+    fs.symlinkSync("existing/missing//target", alias);
+    const input = `${alias}${path.sep}caller${path.sep}${path.sep}tail${path.sep}`;
+    expect(resolvePathPrefixSync(input)).toEqual({
+      absolutePath: input,
+      existingPath: path.join(directory, "existing"),
+      unresolvedSegments: ["missing", "", "target", "caller", "", "tail", ""],
+    });
+  });
+
+  itPosix.each([
+    { expandedLength: SHIFT_QUEUE_COMPONENT_LIMIT, expectedShifts: SHIFT_QUEUE_COMPONENT_LIMIT - 1 },
+    { expandedLength: SHIFT_QUEUE_COMPONENT_LIMIT + 1, expectedShifts: 0 },
+  ])("selects queue mode again after a symlink expands to $expandedLength components", async ({
+    expandedLength, expectedShifts,
+  }) => {
+    const directory = await tempRoot("fs-safe-prefix-queue-link-");
+    const existingName = `existing-${randomUUID()}`;
+    const missing = `missing-${randomUUID()}`;
+    const caller = `caller-${randomUUID()}`;
+    fs.mkdirSync(path.join(directory, existingName));
+    const targetSegments = [
+      existingName,
+      ...Array(expandedLength - 3).fill(""),
+      missing,
+    ];
+    fs.symlinkSync(targetSegments.join(path.sep), path.join(directory, "alias"));
+
+    const { result, markedShifts } = resolveAndCountMarkedShifts(
+      `${directory}${path.sep}alias${path.sep}${caller}`,
+      [missing, caller],
+    );
+
+    expect(result.unresolvedSegments).toEqual([missing, caller]);
+    expect(markedShifts).toBe(expectedShifts);
+  });
+
+  itPosix("returns to bounded shifting when a large queue expands to a small queue", async () => {
+    const directory = await tempRoot("fs-safe-prefix-queue-shrink-");
+    const existingName = `existing-${randomUUID()}`;
+    const missing = `missing-${randomUUID()}`;
+    const caller = `caller-${randomUUID()}`;
+    fs.mkdirSync(path.join(directory, existingName));
+    fs.symlinkSync(`${existingName}${path.sep}${missing}`, path.join(directory, "alias"));
+    const input = `${directory}${path.sep.repeat(SHIFT_QUEUE_COMPONENT_LIMIT + 1)}alias${path.sep}${caller}`;
+    expect(input.slice(path.parse(input).root.length).split(path.sep).length)
+      .toBeGreaterThan(SHIFT_QUEUE_COMPONENT_LIMIT);
+
+    const { result, markedShifts } = resolveAndCountMarkedShifts(input, [missing, caller]);
+
+    expect(result.unresolvedSegments).toEqual([missing, caller]);
+    expect(markedShifts).toBe(2);
   });
 
   it("allows a repeated symlink with a different remaining suffix", async () => {

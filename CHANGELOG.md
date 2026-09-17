@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Bound path-prefix queue consumption on long paths while preserving short-path behavior and path-resolution checks.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights
