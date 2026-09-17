@@ -253,9 +253,13 @@ export function readSidecarLockRawSnapshotSync(
 export function removeSidecarLockIfUnchangedSync(
   lockPath: string,
   observed: SidecarLockSnapshot,
+  assertAuthorized?: () => void,
 ): boolean {
+  assertAuthorized?.();
   const current = readSidecarLockSnapshotSync(lockPath);
+  assertAuthorized?.();
   if (!current || !sidecarLockSnapshotMatches(current, observed)) return false;
+  assertAuthorized?.();
   fsSync.rmSync(lockPath);
   return true;
 }
@@ -358,12 +362,20 @@ export async function removeStaleSidecarLockIfAllowed(params: {
   shouldRemoveStaleLock?: (snapshot: SidecarLockStaleSnapshot) => boolean | Promise<boolean>;
   lockRoot?: Root;
   parsePayload?: (raw: string) => unknown;
+  assertAuthorized?: () => void;
 }): Promise<"removed" | "changed" | "not-approved"> {
   if (!params.shouldRemoveStaleLock || params.snapshot.raw === undefined) {
     return "not-approved";
   }
   const ioOptions = { lockRoot: params.lockRoot, parsePayload: params.parsePayload };
-  if (!(await sidecarLockSnapshotStillPresent(params.lockPath, params.snapshot, ioOptions))) {
+  params.assertAuthorized?.();
+  const presentBeforeApproval = await sidecarLockSnapshotStillPresent(
+    params.lockPath,
+    params.snapshot,
+    ioOptions,
+  );
+  params.assertAuthorized?.();
+  if (!presentBeforeApproval) {
     return "changed";
   }
   if (
@@ -376,12 +388,23 @@ export async function removeStaleSidecarLockIfAllowed(params: {
   ) {
     return "not-approved";
   }
-  if (!(await sidecarLockSnapshotStillPresent(params.lockPath, params.snapshot, ioOptions))) {
+  params.assertAuthorized?.();
+  const presentBeforeRemoval = await sidecarLockSnapshotStillPresent(
+    params.lockPath,
+    params.snapshot,
+    ioOptions,
+  );
+  params.assertAuthorized?.();
+  if (!presentBeforeRemoval) {
     return "changed";
   }
+  params.assertAuthorized?.();
   try {
     if (params.lockRoot) {
-      await params.lockRoot.remove(relativeSidecarLockPath(params.lockRoot, params.lockPath));
+      await params.lockRoot.remove(
+      relativeSidecarLockPath(params.lockRoot, params.lockPath),
+      { assertBeforeMutation: params.assertAuthorized },
+    );
     } else {
       await fs.rm(params.lockPath);
     }

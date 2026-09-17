@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Serialize sidecar lock admission across raw and Root-based synchronous callers while retaining separate Root cleanup authority, and recheck async authorization at the final stale-removal mutation boundary.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights
