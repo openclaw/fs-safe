@@ -66,10 +66,12 @@ export function cleanupCreatedRootSyncLock(
   receipt: FileLockSyncRootFileReceipt,
   timer?: NodeJS.Timeout,
 ): void {
+  let timerCleanupFailed = false;
   let timerCleanupError: unknown;
   try {
     if (timer) clearInterval(timer);
   } catch (error) {
+    timerCleanupFailed = true;
     timerCleanupError = error;
   }
   try {
@@ -78,7 +80,7 @@ export function cleanupCreatedRootSyncLock(
       throw new FsSafeError("path-mismatch", "created sidecar lock changed before cleanup");
     }
   } catch (fileCleanupError) {
-    if (timerCleanupError !== undefined) {
+    if (timerCleanupFailed) {
       throw createSuppressedError(
         timerCleanupError,
         fileCleanupError,
@@ -87,5 +89,5 @@ export function cleanupCreatedRootSyncLock(
     }
     throw fileCleanupError;
   }
-  if (timerCleanupError !== undefined) throw timerCleanupError;
+  if (timerCleanupFailed) throw timerCleanupError;
 }

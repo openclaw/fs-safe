@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Bind synchronous `lockRoot` sidecar creation, inspection, reentrant reuse, reclaim, verification, release, and exit cleanup to the genuine Root's retained exact identity and entry-time policies. Genuine Root validation and policy capture precede all remaining option and nested retry getters. Root-backed target-key normalization no longer creates external parents; structural/custom or cross-package-copy Root objects fail closed before those getters, callbacks, or filesystem effects.
+- Bind synchronous `lockRoot` sidecar creation, inspection, reentrant reuse, reclaim, verification, release, and exit cleanup to the genuine Root's retained exact identity and entry-time policies. Genuine Root validation and policy capture precede all remaining option and nested retry getters. Root-backed target-key normalization no longer creates external parents; structural/custom or cross-package-copy Root objects fail closed before those getters, callbacks, or filesystem effects. Exit-listener rollback and unpublished-lock cleanup preserve even `undefined` thrown values.
 
 ### Validation and tooling
 

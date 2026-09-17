@@ -5,6 +5,7 @@ import { acquireFileLockSync } from "../src/file-lock.js";
 import { root, type Root } from "../src/root.js";
 import {
   countExactExitListener,
+  originalProcessOn,
   originalProcessRemoveListener,
   removeExactExitListeners,
   ROOT_SYNC_CLEANUP_FAILED_KEY,
@@ -42,43 +43,61 @@ describe("synchronous Root exit-cleanup registration", () => {
     });
   });
 
-  it("rolls back the exact attempted listener and permits a safe retry", async () => {
+  it.each([
+    ["an Error", new Error("process.on rejected cleanup")],
+    ["undefined", undefined],
+  ] as const)("rolls back the exact attempted listener and permits a safe retry when registration throws %s", async (
+    _failureKind,
+    registrationFailure,
+  ) => {
     const directory = await tempRoot("fs-safe-sync-root-register-throw-");
     const lockRoot = await root(directory);
     const lockPath = path.join(directory, "missing", "state.lock");
     const target = path.join(directory, "state.json");
     const payload = vi.fn(() => ({ owner: "outer" }));
-    const registrationFailure = new Error("newListener rejected cleanup");
     let candidateHandler: (() => void) | undefined;
     let retry: ReturnType<typeof acquireFileLockSync> | undefined;
+    let restoreProcessOn: (() => void) | undefined;
     let injected = false;
-    const rejectRegistration = (eventName: string | symbol, listener: (...args: unknown[]) => void) => {
-      if (eventName !== "exit" || injected) return;
-      injected = true;
-      candidateHandler = listener;
-      expect(Reflect.get(globalThis, ROOT_SYNC_CLEANUP_REGISTERING_KEY)).toBe(true);
-      expect(Reflect.get(globalThis, ROOT_SYNC_CLEANUP_REGISTERED_KEY)).toBeUndefined();
-      expect(Reflect.get(globalThis, ROOT_SYNC_CLEANUP_HANDLER_KEY)).toBeUndefined();
-      // Simulate an observer that inserts the candidate and then rejects the
-      // original registration. Rollback must remove only this exact listener.
-      process.on("exit", listener);
-      throw registrationFailure;
-    };
     await withIsolatedRootSyncRegistration(async () => {
-      const baselineExitListeners = process.listeners("exit").length;
+      const baselineExitListeners = process.listeners("exit");
+      const processOnDescriptor = Object.getOwnPropertyDescriptor(process, "on");
       const mkdir = vi.spyOn(fs, "mkdirSync");
       const open = vi.spyOn(fs, "openSync");
-      process.on("newListener", rejectRegistration);
-      expect(() => acquireFileLockSync(target, {
-        ...immediate,
-        lockPath,
-        lockRoot,
-        payload,
-      })).toThrow(registrationFailure);
-      originalProcessRemoveListener("newListener", rejectRegistration);
+      const processOn = vi.spyOn(process, "on").mockImplementation((eventName, listener) => {
+        if (eventName !== "exit" || injected) return originalProcessOn(eventName, listener);
+        injected = true;
+        candidateHandler = listener as () => void;
+        expect(Reflect.get(globalThis, ROOT_SYNC_CLEANUP_REGISTERING_KEY)).toBe(true);
+        expect(Reflect.get(globalThis, ROOT_SYNC_CLEANUP_REGISTERED_KEY)).toBeUndefined();
+        expect(Reflect.get(globalThis, ROOT_SYNC_CLEANUP_HANDLER_KEY)).toBeUndefined();
+        originalProcessOn(eventName, listener);
+        expect(countExactExitListener(candidateHandler)).toBe(1);
+        throw registrationFailure;
+      });
+      restoreProcessOn = () => { processOn.mockRestore(); };
+      let acquisitionThrew = false;
+      let acquisitionError: unknown;
+      try {
+        acquireFileLockSync(target, {
+          ...immediate,
+          lockPath,
+          lockRoot,
+          payload,
+        });
+      } catch (error) {
+        acquisitionThrew = true;
+        acquisitionError = error;
+      }
+      expect(acquisitionThrew).toBe(true);
+      expect(acquisitionError).toBe(registrationFailure);
+      restoreProcessOn();
+      restoreProcessOn = undefined;
+      expect(Object.getOwnPropertyDescriptor(process, "on")).toEqual(processOnDescriptor);
+      expect(injected).toBe(true);
       expect(candidateHandler).toBeTypeOf("function");
       expect(countExactExitListener(candidateHandler!)).toBe(0);
-      expect(process.listeners("exit")).toHaveLength(baselineExitListeners);
+      expect(process.listeners("exit")).toEqual(baselineExitListeners);
       expect(Reflect.get(globalThis, ROOT_SYNC_CLEANUP_REGISTERING_KEY)).toBe(false);
       expect(Reflect.get(globalThis, ROOT_SYNC_CLEANUP_REGISTERED_KEY)).toBe(false);
       expect(Reflect.get(globalThis, ROOT_SYNC_CLEANUP_FAILED_KEY)).toBe(false);
@@ -99,9 +118,10 @@ describe("synchronous Root exit-cleanup registration", () => {
       expect(Reflect.get(globalThis, ROOT_SYNC_CLEANUP_FAILED_KEY)).toBe(false);
       expect(registeredHandler).toBe(candidateHandler);
       expect(countExactExitListener(registeredHandler)).toBe(1);
-      expect(process.listeners("exit")).toHaveLength(baselineExitListeners + 1);
+      expect(process.listeners("exit")).toEqual([...baselineExitListeners, registeredHandler]);
+      expect(retry.verifyStillHeld()).toBe(true);
     }, [
-      () => { originalProcessRemoveListener("newListener", rejectRegistration); },
+      () => { restoreProcessOn?.(); },
       () => { retry?.release(); },
       () => removeExactExitListeners(candidateHandler, "retry candidate cleanup"),
     ]);
@@ -169,64 +189,100 @@ describe("synchronous Root exit-cleanup registration", () => {
     ]);
   });
 
-  it("fails closed with paired errors when exact listener rollback is ambiguous", async () => {
+  it.each([
+    ["an Error", new Error("listener rollback result is unknown")],
+    ["undefined", undefined],
+  ] as const)("fails closed when exact listener rollback throws %s", async (
+    _failureKind,
+    rollbackFailure,
+  ) => {
     const directory = await tempRoot("fs-safe-sync-root-register-rollback-");
     const lockRoot = await root(directory);
     const target = path.join(directory, "state.json");
     const payload = vi.fn(() => ({ owner: "outer" }));
     const registrationFailure = new Error("registration failed after insertion");
-    const rollbackFailure = new Error("listener rollback result is unknown");
     let candidateHandler: (() => void) | undefined;
     let rollbackReentryError: unknown;
+    let restoreProcessOn: (() => void) | undefined;
+    let restoreProcessRemoveListener: (() => void) | undefined;
     let injected = false;
-    const rejectRegistration = (eventName: string | symbol, listener: (...args: unknown[]) => void) => {
-      if (eventName !== "exit" || injected) return;
-      injected = true;
-      candidateHandler = listener;
-      process.on("exit", listener);
-      throw registrationFailure;
-    };
     await withIsolatedRootSyncRegistration(async () => {
-      const baselineExitListeners = process.listeners("exit").length;
-      process.on("newListener", rejectRegistration);
-      vi.spyOn(process, "removeListener").mockImplementation((eventName, listener) => {
+      const baselineExitListeners = process.listeners("exit");
+      const processOnDescriptor = Object.getOwnPropertyDescriptor(process, "on");
+      const processRemoveListenerDescriptor = Object.getOwnPropertyDescriptor(process, "removeListener");
+      const mkdir = vi.spyOn(fs, "mkdirSync");
+      const open = vi.spyOn(fs, "openSync");
+      const processOn = vi.spyOn(process, "on").mockImplementation((eventName, listener) => {
+        if (eventName !== "exit" || injected) return originalProcessOn(eventName, listener);
+        injected = true;
+        candidateHandler = listener as () => void;
+        expect(Reflect.get(globalThis, ROOT_SYNC_CLEANUP_REGISTERING_KEY)).toBe(true);
+        expect(Reflect.get(globalThis, ROOT_SYNC_CLEANUP_REGISTERED_KEY)).toBeUndefined();
+        expect(Reflect.get(globalThis, ROOT_SYNC_CLEANUP_HANDLER_KEY)).toBeUndefined();
+        originalProcessOn(eventName, listener);
+        expect(countExactExitListener(candidateHandler)).toBe(1);
+        throw registrationFailure;
+      });
+      restoreProcessOn = () => { processOn.mockRestore(); };
+      const processRemoveListener = vi.spyOn(process, "removeListener").mockImplementation((
+        eventName,
+        listener,
+      ) => {
         if (eventName === "exit" && listener === candidateHandler) {
+          expect(Reflect.get(globalThis, ROOT_SYNC_CLEANUP_REGISTERING_KEY)).toBe(true);
+          expect(Reflect.get(globalThis, ROOT_SYNC_CLEANUP_REGISTERED_KEY)).toBeUndefined();
+          expect(Reflect.get(globalThis, ROOT_SYNC_CLEANUP_HANDLER_KEY)).toBeUndefined();
           try {
             acquireFileLockSync(target, { ...immediate, lockRoot, payload });
           } catch (error) {
             rollbackReentryError = error;
           }
+          originalProcessRemoveListener(eventName, listener);
+          expect(countExactExitListener(candidateHandler!)).toBe(0);
+          throw rollbackFailure;
         }
-        const result = originalProcessRemoveListener(eventName, listener);
-        if (eventName === "exit" && listener === candidateHandler) throw rollbackFailure;
-        return result;
+        return originalProcessRemoveListener(eventName, listener);
       });
-      let error: unknown;
+      restoreProcessRemoveListener = () => { processRemoveListener.mockRestore(); };
+      let acquisitionThrew = false;
+      let acquisitionError: unknown;
       try {
         acquireFileLockSync(target, { ...immediate, lockRoot, payload });
       } catch (caught) {
-        error = caught;
+        acquisitionThrew = true;
+        acquisitionError = caught;
       }
-      expect(error).toMatchObject({
-        name: "SuppressedError",
-        error: registrationFailure,
-        suppressed: rollbackFailure,
-      });
+      restoreProcessRemoveListener();
+      restoreProcessRemoveListener = undefined;
+      restoreProcessOn();
+      restoreProcessOn = undefined;
+      expect(Object.getOwnPropertyDescriptor(process, "removeListener"))
+        .toEqual(processRemoveListenerDescriptor);
+      expect(Object.getOwnPropertyDescriptor(process, "on")).toEqual(processOnDescriptor);
+      expect(acquisitionThrew).toBe(true);
+      expect(acquisitionError).toMatchObject({ name: "SuppressedError" });
+      expect((acquisitionError as { error: unknown }).error).toBe(registrationFailure);
+      expect(Object.hasOwn(acquisitionError as object, "suppressed")).toBe(true);
+      expect((acquisitionError as { suppressed: unknown }).suppressed).toBe(rollbackFailure);
+      expect(injected).toBe(true);
       expect(candidateHandler).toBeTypeOf("function");
       expect(countExactExitListener(candidateHandler!)).toBe(0);
-      expect(process.listeners("exit")).toHaveLength(baselineExitListeners);
+      expect(process.listeners("exit")).toEqual(baselineExitListeners);
       expect(Reflect.get(globalThis, ROOT_SYNC_CLEANUP_REGISTERING_KEY)).toBe(false);
       expect(Reflect.get(globalThis, ROOT_SYNC_CLEANUP_REGISTERED_KEY)).toBe(false);
       expect(Reflect.get(globalThis, ROOT_SYNC_CLEANUP_FAILED_KEY)).toBe(true);
       expect(Reflect.get(globalThis, ROOT_SYNC_CLEANUP_HANDLER_KEY)).toBeUndefined();
       expect(rollbackReentryError).toMatchObject({ code: "helper-unavailable" });
       expect(payload).not.toHaveBeenCalled();
+      expect(mkdir).not.toHaveBeenCalled();
+      expect(open).not.toHaveBeenCalled();
       expect(() => acquireFileLockSync(target, { ...immediate, lockRoot, payload })).toThrow(
         expect.objectContaining({ code: "helper-unavailable" }),
       );
       expect(payload).not.toHaveBeenCalled();
     }, [
-      () => { originalProcessRemoveListener("newListener", rejectRegistration); },
+      () => { restoreProcessRemoveListener?.(); },
+      () => { restoreProcessOn?.(); },
       () => removeExactExitListeners(candidateHandler, "rollback candidate cleanup"),
     ]);
   });

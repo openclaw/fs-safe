@@ -71,6 +71,7 @@ export function ensureFileLockSyncRootExitCleanupRegistered(
     state[ROOT_SYNC_CLEANUP_FAILED_KEY] = false;
     state[ROOT_SYNC_CLEANUP_REGISTERING_KEY] = false;
   } catch (registrationError) {
+    let rollbackFailed = false;
     let rollbackError: unknown;
     if (registrationAttempted && baselineCount !== undefined) {
       try {
@@ -87,6 +88,7 @@ export function ensureFileLockSyncRootExitCleanupRegistered(
           throw unavailable("Root sidecar exit cleanup listener rollback was ambiguous");
         }
       } catch (error) {
+        rollbackFailed = true;
         rollbackError = error;
       }
     }
@@ -98,7 +100,7 @@ export function ensureFileLockSyncRootExitCleanupRegistered(
       state[ROOT_SYNC_CLEANUP_FAILED_KEY] = true;
       throw registrationError;
     }
-    if (rollbackError !== undefined) {
+    if (rollbackFailed) {
       state[ROOT_SYNC_CLEANUP_FAILED_KEY] = true;
       throw createSuppressedError(
         registrationError,
