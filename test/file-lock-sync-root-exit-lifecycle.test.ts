@@ -6,6 +6,7 @@ import { root } from "../src/root.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
+const immediate = { timeoutMs: 0, retry: { retries: 0 } } as const;
 
 afterEach(() => {
   vi.useRealTimers();
@@ -96,6 +97,7 @@ describe("synchronous Root-backed file-lock exit lifecycle", () => {
         try {
           cleanup!();
           successor = acquireFileLockSync(target, {
+            ...immediate,
             lockRoot,
             payload: successorPayload,
             reentrantOwner: owner,

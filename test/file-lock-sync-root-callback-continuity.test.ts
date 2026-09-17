@@ -175,6 +175,7 @@ describe("synchronous Root callback continuity", () => {
         (flags & fs.constants.O_EXCL) !== 0) {
         inject = false;
         nested = acquireFileLockSync(target, {
+          ...immediate,
           lockPath,
           lockRoot,
           payload: nestedPayload,
@@ -185,6 +186,7 @@ describe("synchronous Root callback continuity", () => {
     });
     const outerPayload = vi.fn(() => ({ owner: "outer" }));
     const outer = acquireFileLockSync(target, {
+      ...immediate,
       lockPath,
       lockRoot,
       payload: outerPayload,
@@ -214,6 +216,7 @@ describe("synchronous Root callback continuity", () => {
         if (!armed) return;
         armed = false;
         nested = acquireFileLockSync(target, {
+          ...immediate,
           lockPath: nestedLockPath,
           lockRoot,
           payload: () => ({ owner: "nested" }),
@@ -263,6 +266,7 @@ describe("synchronous Root callback continuity", () => {
       if (!armed) return;
       armed = false;
       nested = acquireFileLockSync(target, {
+        ...immediate,
         lockPath: nestedLockPath,
         lockRoot,
         payload: () => ({ owner: "nested" }),
@@ -309,6 +313,7 @@ describe("synchronous Root callback continuity", () => {
       if (!armed) return;
       armed = false;
       nested = acquireFileLockSync(target, {
+        ...immediate,
         lockPath: nestedLockPath,
         lockRoot,
         payload: () => ({ owner: "nested" }),
