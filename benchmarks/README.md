@@ -319,6 +319,81 @@ nanosecond modification time must remain unchanged through all later launches
 and the post-measurement installation snapshot. Provenance annotation happens
 only after that receipt is revalidated.
 
+## Atomic settlement acceptance campaign
+
+The dedicated `atomic-settlement-performance.yml` workflow measures the three
+successful atomic settlement rows against the exact pre-fix B and reviewed C.
+Each Linux, macOS, and Windows cell runs Node 22 and 24, native modes `off` and
+`require`, five complete ABBA or BAAB blocks, and nine sample averages per
+position. Source comparison, an independent same-source rebuild, and a
+same-artifact control are separate fail-fast-disabled jobs. Controls are never
+subtracted from source results and cannot waive a source regression.
+
+Every workload/platform/Node/mode/order block and pooled set fails when its
+median regression exceeds 10 percent **or** 50 microseconds, or its maximum
+sample-average regression exceeds 20 percent **or** 100 microseconds. Source
+comparisons are directional; both controls use absolute drift. Any source or
+control failure, missing raw report, missing upload, unavailable required native
+mode, rerun, replacement artifact, or incomplete job prevents acceptance.
+Study and aggregate uploads still run on failure paths so partial reports and
+the raw API census remain available for diagnosis; a partial upload never
+satisfies the exact producer-job, file-set, or completed-run checks.
+
+The workflow is intentionally inert until an exact registration-only workflow
+is landed on the default branch and its commit and byte hash replace the pending
+binding in `atomic-settlement-performance-campaign.mjs`. That stub has identical
+dispatch inputs, `permissions: {}`, no checkout or repository execution, and a
+single job that exits unsuccessfully. The executable H never stores its own
+commit. After H is reviewed, a protected lightweight
+`refs/tags/atomic-settlement-performance-h-<full-H>` seal supplies H externally;
+the dispatcher must also predeclare the exact next Actions run number and
+attempt 1. An active tag ruleset must protect that exact namespace; a release
+rule covering only `v*` does not satisfy this contract. There is no
+workflow-level concurrency group because GitHub can cancel an older pending
+run even when running jobs are protected.
+
+Before fanout, the prepare job binds the run API, protected seal, registration
+stub, H/C/B commits and trees, workflow bytes, every harness file, manifests,
+and lockfiles. Each study additionally seals its plan, physical dist,
+dependency layout, staged native artifacts, and before/after installation
+identity. The aggregate downloads only API-selected artifact IDs, binds archive
+digests and producer upload windows, requires all 1,440 raw report processes, and
+retains the raw Actions API snapshots with the decision. Actions artifact and
+runner-step timestamps come from different service clocks with one-second
+serialization; the fixed policy permits at most 5,000 milliseconds around the
+named upload step while still requiring every artifact timestamp to remain
+inside the producer job's hard start/completion bounds. A failed or rerun
+campaign is replaced only as a whole; selective reruns are inadmissible. The
+aggregate job and final analysis artifact necessarily require separate
+post-run verification because a running job cannot certify its own completion.
+After the run is complete, an external trusted verifier must capture the run,
+artifact, and first-attempt job API responses, select and retain the exact ZIP
+for the one `atomic-settlement-analysis-<run-id>-1` artifact by its numeric API
+ID, extract that same ZIP without modification, and run
+`atomic-settlement-performance-evidence.mjs finalize`. The finalizer rechecks
+the protected H seal and unchanged default-main registration commit, all 38
+completed first-attempt jobs, all 38 exact artifacts, every earlier artifact
+identity and producer window, the aggregate job's successful upload window,
+the retained ZIP's byte count and SHA-256 against the selected API record, its
+exact ZIP32 store/deflate inventory and CRCs, and each extracted file byte for
+byte before parsing the accepted analysis or writing a separate final seal.
+The final seal is inadmissible if any campaign job or artifact is missing,
+replaced, rerun, unsuccessful, captured before run completion, or not derived
+from that exact retained archive.
+
+```sh
+node benchmarks/atomic-settlement-performance-evidence.mjs finalize \
+  --manifest /evidence/campaign-manifest.json \
+  --manifest-file-hash EXPECTED_SHA256 --harness-root /checkouts/harness \
+  --analysis-root /downloads/atomic-settlement-analysis \
+  --analysis-archive /downloads/atomic-settlement-analysis.zip \
+  --analysis-artifact-id NUMERIC_API_ID \
+  --run-api /evidence/final-run.json \
+  --artifacts-api /evidence/final-artifacts.json \
+  --jobs-api /evidence/final-attempt-1-jobs.json \
+  --output /evidence/final-seal.json
+```
+
 Dependency identity schema `pnpm-layout-manifests-locks-native-v1` hashes all
 dependency paths, entry types and sizes, safe in-checkout link targets, package
 manifests, pnpm layout/lock metadata, and native addons. It is deliberately not
@@ -331,9 +406,10 @@ platform package available too.
 Compare builds on the same host, runtime, filesystem, and native mode. Alternate
 baseline/candidate runs and inspect sample spread; fsync timings and shared-host
 load can dwarf JavaScript changes. Warm-cache sequential latency does not measure
-cold storage, concurrent throughput, or event-loop responsiveness. This report is
-not a timing assertion in CI. CI smoke runs verify that the benchmark continues
-to exercise real callable APIs.
+cold storage, concurrent throughput, or event-loop responsiveness. Ordinary CI
+smoke reports are not timing assertions; they verify that the benchmark continues
+to exercise real callable APIs. Only the dedicated sealed acceptance campaign
+applies the regression gates above.
 
 For copy comparisons, specify identical worker counts: native tree cloning
 defaults to 16 workers while portable Windows copying defaults to 4. Use the

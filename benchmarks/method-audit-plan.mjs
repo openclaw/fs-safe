@@ -208,9 +208,14 @@ export function normalizeSha256(name, value) {
 }
 
 export function createMethodAuditPlan({ inputs, harness, candidate, baseline = null, context }) {
+  const workflowPath = harness.workflowPath ?? ".github/workflows/benchmarks.yml";
+  if (![".github/workflows/benchmarks.yml", ".github/workflows/atomic-settlement-performance.yml"]
+    .includes(workflowPath)) {
+    fail("unsupported method-audit workflow path");
+  }
   const normalizedHarness = {
     workflowRef: boundedText("workflow ref", harness.workflowRef, 512, { allowEmpty: false }),
-    workflowPath: ".github/workflows/benchmarks.yml",
+    workflowPath,
     sha: normalizeSha("workflow SHA", harness.sha),
     tree: normalizeSha("harness tree", harness.tree),
     workflowFileHash: normalizeSha256("workflow file hash", harness.workflowFileHash),
@@ -265,6 +270,8 @@ export function createMethodAuditPlan({ inputs, harness, candidate, baseline = n
     buildId: roleBuilds[measurement.role],
     file: `${measurement.label}-${mode}.json`,
   })));
+  const campaignManifestSha256 = context.campaignManifestSha256 === undefined
+    ? undefined : normalizeSha256("campaign manifest hash", context.campaignManifestSha256);
   return {
     schemaVersion: 1,
     repository: boundedText("repository", context.repository, 256, { allowEmpty: false }),
@@ -279,6 +286,7 @@ export function createMethodAuditPlan({ inputs, harness, candidate, baseline = n
     matrix: { include: PLATFORM_MATRIX[inputs.platform].map((entry) => ({ ...entry })) },
     builds,
     reports,
+    ...(campaignManifestSha256 ? { campaignManifestSha256 } : {}),
   };
 }
 

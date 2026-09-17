@@ -1,0 +1,387 @@
+name: atomic settlement performance acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_harness_sha:
+        description: Exact reviewed 40-hex H named by the protected immutable harness seal; H is not stored inside H
+        required: true
+        type: string
+      harness_seal_ref:
+        description: Exact protected lightweight refs/tags/atomic-settlement-performance-h-<H> seal created after H
+        required: true
+        type: string
+      candidate_sha:
+        description: Exact reviewed 40-hex candidate commit (C)
+        required: true
+        type: string
+      baseline_sha:
+        description: Exact reviewed 40-hex pre-fix baseline commit (B), distinct from C
+        required: true
+        type: string
+      expected_run_number:
+        description: Exact next workflow run number predeclared before dispatch
+        required: true
+        type: string
+      expected_run_attempt:
+        description: Exact first run attempt; must be 1 and reruns are inadmissible
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  prepare:
+    name: Prepare immutable atomic settlement campaign
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      manifest_sha256: ${{ steps.manifest.outputs.manifest_sha256 }}
+      manifest_artifact_id: ${{ steps.manifest_upload.outputs.artifact-id }}
+      manifest_artifact_digest: ${{ steps.manifest_upload.outputs.artifact-digest }}
+    steps:
+      - name: Configure byte-exact checkout
+        shell: bash
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+      - name: Check out reviewed harness history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: harness
+      - name: Capture authoritative dispatch identity before fanout
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" > "$RUNNER_TEMP/run-api.json"
+      - name: Admit exact sealed H, C, B, workflow, run number, and attempt
+        id: manifest
+        shell: bash
+        env:
+          EXPECTED_HARNESS_SHA: ${{ inputs.expected_harness_sha }}
+          HARNESS_SEAL_REF: ${{ inputs.harness_seal_ref }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          BASELINE_SHA: ${{ inputs.baseline_sha }}
+          EXPECTED_RUN_NUMBER: ${{ inputs.expected_run_number }}
+          EXPECTED_RUN_ATTEMPT: ${{ inputs.expected_run_attempt }}
+        run: |
+          node "$GITHUB_WORKSPACE/harness/benchmarks/atomic-settlement-performance-evidence.mjs" prepare \
+            --harness-root "$GITHUB_WORKSPACE/harness" \
+            --harness "$EXPECTED_HARNESS_SHA" \
+            --harness-seal-ref "$HARNESS_SEAL_REF" \
+            --candidate "$CANDIDATE_SHA" \
+            --baseline "$BASELINE_SHA" \
+            --expected-run-number "$EXPECTED_RUN_NUMBER" \
+            --expected-run-attempt "$EXPECTED_RUN_ATTEMPT" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-number "$GITHUB_RUN_NUMBER" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --dispatch-repository "$GITHUB_REPOSITORY" \
+            --dispatch-event "$GITHUB_EVENT_NAME" \
+            --dispatch-ref "$GITHUB_REF" \
+            --dispatch-ref-protected "$GITHUB_REF_PROTECTED" \
+            --dispatch-ref-type "$GITHUB_REF_TYPE" \
+            --dispatch-workflow-ref "$GITHUB_WORKFLOW_REF" \
+            --dispatch-workflow-sha "$GITHUB_WORKFLOW_SHA" \
+            --dispatch-event-sha "$GITHUB_SHA" \
+            --run-api "$RUNNER_TEMP/run-api.json" \
+            --output "$RUNNER_TEMP/campaign-manifest.json"
+      - name: Upload immutable campaign manifest
+        id: manifest_upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: atomic-settlement-campaign-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/campaign-manifest.json
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 14
+
+  measure:
+    needs: prepare
+    name: Measure atomic settlement (${{ matrix.platform }}, ${{ matrix.node }}, ${{ matrix.order }}, ${{ matrix.study }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [linux, macos, windows]
+        node: ["22", "24"]
+        order: [abba, baab]
+        study: [source-comparison, same-source-rebuild, same-artifact]
+        include:
+          - platform: linux
+            os: ubuntu-latest
+          - platform: macos
+            os: macos-15
+          - platform: windows
+            os: windows-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      HARNESS_ROOT: ${{ github.workspace }}/harness
+      CANDIDATE_ROOT: ${{ github.workspace }}/candidate
+      BASELINE_ROOT: ${{ github.workspace }}/baseline
+      REPORT_ROOT: ${{ github.workspace }}/atomic-settlement-results
+      MANIFEST_FILE_HASH: ${{ needs.prepare.outputs.manifest_sha256 }}
+      MANIFEST_ARTIFACT_ID: ${{ needs.prepare.outputs.manifest_artifact_id }}
+      METHOD_PLATFORM: ${{ matrix.platform }}
+      METHOD_CANDIDATE_REF: ${{ inputs.candidate_sha }}
+      METHOD_COMPARE_REF: ${{ matrix.study == 'source-comparison' && inputs.baseline_sha || inputs.candidate_sha }}
+      METHOD_ITERATIONS: "200"
+      METHOD_SAMPLES: "9"
+      METHOD_FILTER: settlement/success
+      METHOD_ORDER: ${{ matrix.order }}
+      METHOD_BLOCKS: "5"
+      METHOD_NATIVE_MODE: both
+      METHOD_NODE_VERSION: ${{ matrix.node }}
+      METHOD_CONTROL: ${{ matrix.study == 'same-artifact' && 'same-artifact' || 'rebuild' }}
+      METHOD_TIMEOUT_MINUTES: "120"
+      METHOD_EXPECTED_HARNESS_SHA: ${{ inputs.expected_harness_sha }}
+      METHOD_WORKFLOW_SHA: ${{ github.workflow_sha }}
+      METHOD_EVENT_SHA: ${{ github.sha }}
+      METHOD_WORKFLOW_REF: ${{ github.workflow_ref }}
+      METHOD_WORKFLOW_PATH: .github/workflows/atomic-settlement-performance.yml
+      METHOD_CAMPAIGN_MANIFEST_SHA256: ${{ needs.prepare.outputs.manifest_sha256 }}
+      METHOD_MATRIX_PLATFORM: ${{ matrix.platform }}
+    steps:
+      - name: Configure byte-exact checkouts
+        run: |
+          echo "PLAN_PATH=$RUNNER_TEMP/proof-plan.json" >> "$GITHUB_ENV"
+          echo "BEFORE_PATH=$RUNNER_TEMP/before.json" >> "$GITHUB_ENV"
+          echo "MANIFEST_PATH=$RUNNER_TEMP/campaign/campaign-manifest.json" >> "$GITHUB_ENV"
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+      - name: Download immutable campaign manifest
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ env.MANIFEST_ARTIFACT_ID }}
+          path: ${{ runner.temp }}/campaign
+      - name: Check out reviewed harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.expected_harness_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: harness
+      - name: Check out exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: candidate
+      - name: Check out exact study baseline
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ matrix.study == 'source-comparison' && inputs.baseline_sha || inputs.candidate_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: baseline
+      - name: Verify immutable campaign and reviewed harness
+        run: |
+          node "$HARNESS_ROOT/benchmarks/atomic-settlement-performance-evidence.mjs" verify \
+            --manifest "$MANIFEST_PATH" \
+            --manifest-file-hash "$MANIFEST_FILE_HASH" \
+            --harness-root "$HARNESS_ROOT"
+      - name: Prepare exact study process plan
+        id: plan
+        run: |
+          node "$HARNESS_ROOT/benchmarks/method-audit-evidence.mjs" prepare \
+            --harness-root "$HARNESS_ROOT" \
+            --output "$PLAN_PATH"
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.25.0
+          run_install: false
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Add portable TAR parser target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Install reviewed harness dependencies
+        run: pnpm --dir "$HARNESS_ROOT" install --frozen-lockfile
+      - name: Build exact candidate installation
+        run: |
+          pnpm --dir "$CANDIDATE_ROOT" install --frozen-lockfile
+          pnpm --dir "$CANDIDATE_ROOT" build
+          pnpm --dir "$CANDIDATE_ROOT" native:build
+      - name: Build independent baseline installation
+        if: steps.plan.outputs.baseline_build_required == 'true'
+        run: |
+          pnpm --dir "$BASELINE_ROOT" install --frozen-lockfile
+          pnpm --dir "$BASELINE_ROOT" build
+          pnpm --dir "$BASELINE_ROOT" native:build
+      - name: Snapshot source, build, dist, dependency, native, and install identities
+        run: |
+          node "$HARNESS_ROOT/benchmarks/method-audit-evidence.mjs" snapshot \
+            --plan "$PLAN_PATH" \
+            --expected-plan-file-hash "${{ steps.plan.outputs.plan_file_sha256 }}" \
+            --harness-root "$HARNESS_ROOT" \
+            --candidate-root "$CANDIDATE_ROOT" \
+            --baseline-root "$BASELINE_ROOT" \
+            --output "$BEFORE_PATH"
+      - name: Run five complete ABBA or BAAB blocks
+        env:
+          MSYS2_ARG_CONV_EXCL: "*"
+        run: |
+          node "$HARNESS_ROOT/benchmarks/method-audit-evidence.mjs" measure \
+            --plan "$PLAN_PATH" \
+            --expected-plan-file-hash "${{ steps.plan.outputs.plan_file_sha256 }}" \
+            --before "$BEFORE_PATH" \
+            --harness-root "$HARNESS_ROOT" \
+            --candidate-root "$CANDIDATE_ROOT" \
+            --baseline-root "$BASELINE_ROOT" \
+            --output-root "$REPORT_ROOT"
+          cp "$PLAN_PATH" "$REPORT_ROOT/proof-plan.json"
+          cp "$MANIFEST_PATH" "$REPORT_ROOT/campaign-manifest.json"
+      - name: Upload exact first-attempt study artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: atomic-settlement-${{ matrix.platform }}-node-${{ matrix.node }}-${{ matrix.order }}-${{ matrix.study }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.REPORT_ROOT }}/
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 14
+
+  aggregate:
+    if: always() && needs.prepare.result == 'success'
+    needs: [prepare, measure]
+    name: Aggregate complete atomic settlement campaign
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Configure byte-exact checkout
+        shell: bash
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+      - name: Check out reviewed harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.expected_harness_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: harness
+      - name: Resolve exact first-attempt artifact IDs, digests, jobs, and upload windows
+        id: artifacts
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          RUN_API_PATH: ${{ runner.temp }}/run-api.json
+          ARTIFACTS_API_PATH: ${{ runner.temp }}/artifacts-api.json
+          JOBS_API_PATH: ${{ runner.temp }}/jobs-api.json
+          EXPECTED_MANIFEST_ARTIFACT_ID: ${{ needs.prepare.outputs.manifest_artifact_id }}
+          EXPECTED_MANIFEST_ARTIFACT_DIGEST: ${{ needs.prepare.outputs.manifest_artifact_digest }}
+        with:
+          script: |
+            const fs = require("node:fs");
+            if (Number(process.env.GITHUB_RUN_ATTEMPT) !== 1) {
+              throw new Error("Only first-attempt campaign artifacts are admissible");
+            }
+            const run = (await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner, repo: context.repo.repo, run_id: context.runId,
+            })).data;
+            const artifacts = (await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner, repo: context.repo.repo,
+              run_id: context.runId, per_page: 100,
+            })).data;
+            const jobs = (await github.rest.actions.listJobsForWorkflowRunAttempt({
+              owner: context.repo.owner, repo: context.repo.repo,
+              run_id: context.runId, attempt_number: 1, per_page: 100,
+            })).data;
+            if (artifacts.total_count !== artifacts.artifacts.length ||
+                jobs.total_count !== jobs.jobs.length) {
+              throw new Error("Actions API response is incomplete");
+            }
+            fs.writeFileSync(process.env.RUN_API_PATH, JSON.stringify(run, null, 2) + "\n", { flag: "wx" });
+            fs.writeFileSync(process.env.ARTIFACTS_API_PATH,
+              JSON.stringify(artifacts, null, 2) + "\n", { flag: "wx" });
+            fs.writeFileSync(process.env.JOBS_API_PATH,
+              JSON.stringify(jobs, null, 2) + "\n", { flag: "wx" });
+            const names = ["linux", "macos", "windows"].flatMap(platform =>
+              ["22", "24"].flatMap(node => ["abba", "baab"].flatMap(order =>
+                ["source-comparison", "same-source-rebuild", "same-artifact"].map(study =>
+                  `atomic-settlement-${platform}-node-${node}-${order}-${study}-${context.runId}-1`))));
+            const manifestName = `atomic-settlement-campaign-${context.runId}-1`;
+            const expected = [manifestName, ...names];
+            if (artifacts.artifacts.length !== expected.length ||
+                artifacts.artifacts.some(({ name }) => !expected.includes(name))) {
+              throw new Error("Current-run artifact set is incomplete or unexpected");
+            }
+            const select = name => {
+              const matches = artifacts.artifacts.filter(artifact => artifact.name === name);
+              if (matches.length !== 1) throw new Error(`Artifact identity is ambiguous: ${name}`);
+              const artifact = matches[0];
+              if (artifact.expired || !Number.isSafeInteger(artifact.id) || artifact.id < 1 ||
+                  !Number.isSafeInteger(artifact.size_in_bytes) || artifact.size_in_bytes < 1 ||
+                  !/^sha256:[0-9a-f]{64}$/.test(artifact.digest ?? "") ||
+                  artifact.workflow_run?.id !== context.runId ||
+                  artifact.workflow_run?.head_sha !== context.sha) {
+                throw new Error(`Artifact identity is invalid: ${name}`);
+              }
+              return artifact;
+            };
+            const manifestArtifact = select(manifestName);
+            const expectedManifestDigest = process.env.EXPECTED_MANIFEST_ARTIFACT_DIGEST ?? "";
+            if (!/^[0-9a-f]{64}$/.test(expectedManifestDigest)) {
+              throw new Error("Prepare job returned an invalid manifest artifact digest");
+            }
+            if (String(manifestArtifact.id) !== process.env.EXPECTED_MANIFEST_ARTIFACT_ID ||
+                manifestArtifact.digest.slice("sha256:".length) !== expectedManifestDigest) {
+              throw new Error("Manifest artifact differs from the prepare job outputs");
+            }
+            core.setOutput("manifest_id", String(manifestArtifact.id));
+            core.setOutput("measurement_ids", names.map(name => select(name).id).join(","));
+      - name: Retain raw aggregate API census on every validation path
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/atomic-settlement-aggregate"
+          for name in run-api.json artifacts-api.json jobs-api.json; do
+            if [[ -f "$RUNNER_TEMP/$name" ]]; then
+              cp "$RUNNER_TEMP/$name" "$RUNNER_TEMP/atomic-settlement-aggregate/$name"
+            fi
+          done
+      - name: Download only the API-selected campaign manifest
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.artifacts.outputs.manifest_id }}
+          path: ${{ runner.temp }}/campaign
+      - name: Download only API-selected measurement artifacts without merging
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.artifacts.outputs.measurement_ids }}
+          path: ${{ runner.temp }}/measurements
+          merge-multiple: false
+      - name: Enforce cardinality, provenance, controls, and performance gates
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/atomic-settlement-aggregate"
+          cp "$RUNNER_TEMP/campaign/campaign-manifest.json" "$RUNNER_TEMP/atomic-settlement-aggregate/campaign-manifest.json"
+          node "$GITHUB_WORKSPACE/harness/benchmarks/atomic-settlement-performance-evidence.mjs" analyze \
+            --manifest "$RUNNER_TEMP/campaign/campaign-manifest.json" \
+            --manifest-file-hash "${{ needs.prepare.outputs.manifest_sha256 }}" \
+            --harness-root "$GITHUB_WORKSPACE/harness" \
+            --artifact-root "$RUNNER_TEMP/measurements" \
+            --run-api "$RUNNER_TEMP/run-api.json" \
+            --artifacts-api "$RUNNER_TEMP/artifacts-api.json" \
+            --jobs-api "$RUNNER_TEMP/jobs-api.json" \
+            --output "$RUNNER_TEMP/atomic-settlement-aggregate/analysis.json"
+      - name: Upload aggregate decision
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: atomic-settlement-analysis-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/atomic-settlement-aggregate/
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 14

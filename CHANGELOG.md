@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Preserve falsy thrown values during atomic replacement settlement, including strict temp cleanup, retained-handle close, copy-fallback restoration, and synchronous store publication failures.
+- Add a fail-closed, provenance-bound performance campaign and external post-run seal for the atomic settlement hot paths across Linux, macOS, and Windows; Node 22/24; native off/require; both balanced orders; and independent source, rebuild, and same-artifact controls. Finalization binds the retained analysis ZIP byte-for-byte to its selected API artifact.
 
 ## 0.14.0 - 2026-09-17
 

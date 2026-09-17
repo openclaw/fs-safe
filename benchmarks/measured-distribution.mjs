@@ -9,6 +9,10 @@ import {
   validateSidecarPathSnapshotWorkloadResult,
 } from "./sidecar-path-snapshot.mjs";
 import { validateGuestBenchmarkReport } from "./guest.mjs";
+import {
+  validateAtomicSettlementPerformanceReport,
+  validateAtomicSettlementPerformanceResult,
+} from "./atomic-settlement.mjs";
 
 const SHA1 = /^[0-9a-f]{40}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
@@ -145,8 +149,10 @@ export function validateMeasuredDistribution(plan, reportPlan, report, expectedD
     }
     validateTempWorkspaceWorkloadResult(result);
     validateSidecarPathSnapshotWorkloadResult(result);
+    validateAtomicSettlementPerformanceResult(result);
   }
   validateSidecarPathSnapshotReport(report, plan.settings.filter, plan.settings.iterations);
+  validateAtomicSettlementPerformanceReport(report, plan.settings.filter, plan.settings.iterations);
 }
 
 export const MEASURED_SOURCE_ARGUMENT_NAMES = Object.freeze(

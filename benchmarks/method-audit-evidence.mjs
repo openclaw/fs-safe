@@ -10,6 +10,7 @@ import {
   createRunnerArguments,
   digestJson,
   normalizeSha,
+  normalizeSha256,
   selectNamedComparisonRef,
   validateCompleteReportSet,
   validateDispatchInputs,
@@ -57,7 +58,7 @@ function absoluteOption(options, name) {
 }
 
 function git(root, args, { buffer = false, allowFailure = false } = {}) {
-  const result = spawnSync("git", ["-C", root, ...args], {
+  const result = spawnSync("git", ["--no-replace-objects", "-C", root, ...args], {
     encoding: buffer ? undefined : "utf8",
     maxBuffer: 32 * 1024 * 1024,
     windowsHide: true,
@@ -460,7 +461,15 @@ function prepare(options) {
     expected_harness_sha: process.env.METHOD_EXPECTED_HARNESS_SHA,
   });
   const workflowSha = normalizeSha("github.workflow_sha", process.env.METHOD_WORKFLOW_SHA);
+  const workflowPath = process.env.METHOD_WORKFLOW_PATH ?? ".github/workflows/benchmarks.yml";
+  if (![".github/workflows/benchmarks.yml", ".github/workflows/atomic-settlement-performance.yml"]
+    .includes(workflowPath)) {
+    fail("unsupported method-audit workflow path");
+  }
   const eventSha = normalizeSha("github.sha", process.env.METHOD_EVENT_SHA);
+  const campaignManifestSha256 = process.env.METHOD_CAMPAIGN_MANIFEST_SHA256 === undefined
+    ? undefined
+    : normalizeSha256("campaign manifest hash", process.env.METHOD_CAMPAIGN_MANIFEST_SHA256);
   const checkedOutSha = normalizeSha("harness checkout SHA", gitText(harnessRoot, ["rev-parse", "HEAD"]));
   if (checkedOutSha !== workflowSha) fail("harness checkout does not match github.workflow_sha");
   if (inputs.expectedHarnessSha && inputs.expectedHarnessSha !== workflowSha) fail("expected_harness_sha does not match github.workflow_sha");
@@ -478,11 +487,12 @@ function prepare(options) {
   const harnessTree = normalizeSha("harness tree", gitText(harnessRoot, ["rev-parse", "HEAD^{tree}"]));
   const manifestHash = sha256(trackedBlob(harnessRoot, workflowSha, "package.json"));
   const lockfileHash = sha256(trackedBlob(harnessRoot, workflowSha, "pnpm-lock.yaml"));
-  const workflowFileHash = sha256(trackedBlob(harnessRoot, workflowSha, ".github/workflows/benchmarks.yml"));
+  const workflowFileHash = sha256(trackedBlob(harnessRoot, workflowSha, workflowPath));
   const plan = attachPlanHash(createMethodAuditPlan({
     inputs,
     harness: {
       workflowRef: process.env.METHOD_WORKFLOW_REF,
+      workflowPath,
       sha: workflowSha,
       tree: harnessTree,
       workflowFileHash,
@@ -496,6 +506,7 @@ function prepare(options) {
       repository: process.env.GITHUB_REPOSITORY,
       runId: process.env.GITHUB_RUN_ID,
       runAttempt: process.env.GITHUB_RUN_ATTEMPT,
+      campaignManifestSha256,
     },
   }));
   fs.writeFileSync(output, `${JSON.stringify(plan, null, 2)}\n`, { flag: "wx" });
