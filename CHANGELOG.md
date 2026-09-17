@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Add opt-in input-scaled resource budgets to `probePathSuffixAliasesSync()` for long prospective paths, preserving fixed defaults, identity checks, and cleanup behavior.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights

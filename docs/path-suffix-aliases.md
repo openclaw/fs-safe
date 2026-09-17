@@ -36,6 +36,7 @@ type ProbePathSuffixAliasesOptions = {
   directory: string;
   left: string;
   right: string;
+  resourceBudget?: "fixed" | "input-scaled";
   shouldProbeCaseVariants?: (leftNfc: string, rightNfc: string) => boolean;
 };
 
@@ -44,9 +45,11 @@ function probePathSuffixAliasesSync(
 ): boolean | undefined;
 ```
 
-The helper reads and validates `directory`, then resolves it to an absolute path
-before reading the suffixes or predicate. Later option getters or the predicate
-cannot retarget a relative directory by changing the working directory. When
+The helper reads `directory`, rejects non-string and NUL-containing inputs, and
+resolves it to an absolute path before reading `resourceBudget`. It applies the
+selected directory-length limits before reading the suffixes or predicate. Each
+option is read once. Later option getters or the predicate cannot retarget a
+relative directory by changing the working directory. When
 filesystem observations are needed, the directory is canonicalized and its
 identity is checked; an initial directory alias can be followed.
 
@@ -55,16 +58,19 @@ components, `.` and `..`, absolute suffixes, NUL characters, and non-string path
 inputs are rejected with `TypeError`. Windows additionally rejects drive-relative
 components, colons, and reserved device names, including device aliases with
 extensions or trailing ignored characters. On POSIX, backslashes and colons are
-ordinary filename characters. The optional predicate must be a function.
+ordinary filename characters. The optional predicate must be a function. An
+unknown `resourceBudget` value throws `TypeError` before mutation or an
+identical-suffix return.
 
 Both suffixes and the predicate are validated before the identical-suffix fast
 path. Identical, valid, within-budget suffixes return `true` without filesystem
 access or a predicate call. This does not prove that the directory exists or that
 the suffix can be created.
 
-## Fixed resource limits
+## Resource budgets
 
-These limits apply to one call and cannot be raised through options:
+Omitting `resourceBudget`, or selecting `"fixed"`, preserves these limits for
+one call:
 
 | Resource | Limit | On exceeding the limit |
 |---|---|---|
@@ -76,7 +82,49 @@ These limits apply to one call and cannot be raised through options:
 | Forward filesystem observations | 4,096 | `undefined` after cleanup |
 | Each generated actual path | 32,768 UTF-16 code units | `undefined` after cleanup |
 
-Input limits are checked even for identical suffixes. Dynamic budgets count work
+### Input-scaled observations
+
+Applications comparing long prospective paths can explicitly select
+`resourceBudget: "input-scaled"`:
+
+```ts
+const prefix = "future/".repeat(32);
+const aliases = probePathSuffixAliasesSync({
+  directory: "/trusted/existing-directory",
+  left: `${prefix}Report.sqlite`,
+  right: `${prefix}report.sqlite`,
+  resourceBudget: "input-scaled",
+});
+```
+
+This profile removes the fixed input-length and component-count ceilings.
+Ordinary-component validation, Windows path controls, identity checks, and
+cleanup rules remain unchanged. A distinct early component can settle a
+comparison without materializing its long remaining suffix; the helper does
+not reject that suffix merely because the complete hypothetical path would
+exceed a filesystem limit.
+
+For a validated suffix depth `D`, directory-creation attempts are limited to
+`128 × D`, successfully created directories to `64 × D`, and forward filesystem
+observations to `4,096 × D²`. The quadratic observation allowance accommodates
+the rechecked chain of owned ancestor directories. Counts include collisions
+and are not replenished by cleanup.
+
+The generated-path length limit starts with the admitted canonical parent's
+length. For each component pair, it adds the longer component's length plus
+eight code units: two separators and at most six characters for an additional
+neutral probe directory. Taking the longer spelling at each level accommodates
+paths whose longer components alternate between the two suffixes. These budgets
+use UTF-16 code units and saturate at `Number.MAX_SAFE_INTEGER`; none becomes
+unbounded. The filesystem can still reject a generated name or path before its
+budget is exhausted, producing `undefined` after cleanup attempts.
+
+Use this profile only when the caller accepts substantially more synchronous
+work for its supplied input. Parsing, normalization, randomness, filesystem
+calls, and trusted predicate work have no elapsed-time guarantee. Prefer the
+fixed default when input-scaled work is unnecessary.
+
+Fixed input limits are checked even for identical suffixes. Dynamic budgets count work
 across the whole call, including collision retries; removing a probe does not
 restore its creation budget. Cleanup is still attempted when a forward budget is
 exhausted and is not disabled by that exhausted budget.

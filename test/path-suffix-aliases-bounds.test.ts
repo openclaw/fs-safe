@@ -132,14 +132,36 @@ it("counts suffix limits in UTF-16 code units rather than bytes or code points",
   expect(() => probePathSuffixAliasesSync({ directory: ".", left: exact + "a", right: exact + "a" })).toThrow(RangeError);
 });
 
-it("admits exactly 32 components and rejects deeper inputs before observations", () => {
+it.each([undefined, "fixed"] as const)("keeps the 32-component limit with resourceBudget %s", (resourceBudget) => {
   const mkdir = vi.spyOn(fs, "mkdirSync");
   const observe = vi.spyOn(fs, "lstatSync");
   const exact = suffix("a", 32);
-  expect(probePathSuffixAliasesSync({ directory: ".", left: exact, right: exact })).toBe(true);
+  expect(probePathSuffixAliasesSync({ directory: ".", left: exact, right: exact, resourceBudget })).toBe(true);
   for (const field of ["left", "right"] as const) {
-    expect(() => probePathSuffixAliasesSync({ directory: ".", left: exact, right: exact, [field]: suffix("a", 33) })).toThrow(RangeError);
+    expect(() => probePathSuffixAliasesSync({ directory: ".", left: exact, right: exact, resourceBudget, [field]: suffix("a", 33) })).toThrow(RangeError);
   }
+  expect(mkdir).not.toHaveBeenCalled();
+  expect(observe).not.toHaveBeenCalled();
+});
+
+it.each([null, "", "unbounded", 0, {}, []])("rejects invalid resourceBudget %j before equal-input return", (resourceBudget) => {
+  const mkdir = vi.spyOn(fs, "mkdirSync");
+  const observe = vi.spyOn(fs, "lstatSync");
+  expect(() => Reflect.apply(probePathSuffixAliasesSync, undefined, [{
+    directory: ".", left: "same", right: "same", resourceBudget,
+  }])).toThrow(TypeError);
+  expect(mkdir).not.toHaveBeenCalled();
+  expect(observe).not.toHaveBeenCalled();
+});
+
+it("admits input-sized strings without applying the fixed path or suffix caps", () => {
+  const mkdir = vi.spyOn(fs, "mkdirSync");
+  const observe = vi.spyOn(fs, "lstatSync");
+  const directory = `.${path.sep}`.repeat(16_385);
+  const longSuffix = suffix("a", 20_000);
+  expect(probePathSuffixAliasesSync({
+    directory, left: longSuffix, right: longSuffix, resourceBudget: "input-scaled",
+  })).toBe(true);
   expect(mkdir).not.toHaveBeenCalled();
   expect(observe).not.toHaveBeenCalled();
 });
@@ -155,7 +177,7 @@ it("bounds very large segment lists without an arbitrary-spread or call-stack fa
   expect(mkdir).not.toHaveBeenCalled();
 });
 
-it.each(["left", "right", "predicate-getter", "predicate"])(
+it.each(["resource-budget", "left", "right", "predicate-getter", "predicate"])(
   "reads each option once and snapshots relative directory before a %s cwd change", async (changeAt) => {
     const directory = await tempRoot("fs-safe-suffix-snapshot-");
     const other = await tempRoot("fs-safe-suffix-other-cwd-");
@@ -176,6 +198,7 @@ it.each(["left", "right", "predicate-getter", "predicate"])(
       process.chdir(directory);
       const result = probePathSuffixAliasesSync({
         get directory() { read("directory"); return "."; },
+        get resourceBudget() { read("resource-budget"); return changeAt === "resource-budget" ? "input-scaled" : undefined; },
         get left() { read("left"); return "猫"; },
         get right() { read("right"); return "犬"; },
         get shouldProbeCaseVariants() {
@@ -184,7 +207,7 @@ it.each(["left", "right", "predicate-getter", "predicate"])(
         },
       });
       expect(result).toBe(false);
-      expect(reads).toEqual(["directory", "left", "right", "predicate-getter"]);
+      expect(reads).toEqual(["directory", "resource-budget", "left", "right", "predicate-getter"]);
       expect(mutations.length).toBeGreaterThan(0);
       expect(mutations.every(name => {
         const relative = path.relative(directory, name);
@@ -265,6 +288,28 @@ it("allows a complete 32-component first-success chain within the observation bu
   // 3529 conservative forward units plus 1155 cleanup units; cleanup is not
   // charged against the 4096 forward allowance and must finish in full.
   expect(model.observations()).toBe(4684);
+  model.expectClean();
+});
+
+it("scales all operation budgets for deep probes with repeated alternate collisions", async () => {
+  const directory = await tempRoot("fs-safe-suffix-scaled-collisions-");
+  const model = countedFilesystem(directory, { collision: (_depth, attempt) => attempt % 24 !== 0 });
+  expect(probePathSuffixAliasesSync({
+    directory, left: suffix("ABC", 33), right: suffix("abc", 33), resourceBudget: "input-scaled",
+  })).toBe(true);
+  expect(model.created.length).toBeGreaterThan(64);
+  expect(model.attempts()).toBeGreaterThan(128);
+  expect(model.observations()).toBeGreaterThan(4096);
+  model.expectClean();
+});
+
+it("cleans the owned deep chain when input-scaled candidate retries are exhausted", async () => {
+  const directory = await tempRoot("fs-safe-suffix-scaled-exhausted-");
+  const model = countedFilesystem(directory, { exists: (parentDepth) => parentDepth === 32 });
+  expect(probePathSuffixAliasesSync({
+    directory, left: suffix("ABC", 34), right: suffix("abc", 34), resourceBudget: "input-scaled",
+  })).toBeUndefined();
+  expect(model.created).toHaveLength(32);
   model.expectClean();
 });
 
