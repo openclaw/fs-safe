@@ -10,6 +10,7 @@ import {
 import {
   SYNC_LOCK_ROOT_GATES,
   analyzeSyncLockRootStudy,
+  validateSyncLockRootPlanSources,
   validateSyncLockRootArtifactManifest,
 } from "../benchmarks/sync-lock-root-analysis.mjs";
 
@@ -117,6 +118,22 @@ function syntheticStudy(candidateUs: number, baselineUs: number, control = "sour
 }
 
 describe("synchronous lockRoot benchmark worker contract", () => {
+  it("rejects a source plan bound to the historical comparator", () => {
+    const plan = {
+      sources: {
+        candidate: { commit: candidateSha },
+        baseline: { commit: SYNC_LOCK_ROOT_BASE_SHA },
+      },
+    };
+    expect(() => validateSyncLockRootPlanSources(plan, {
+      candidateSha, control: "source-comparison",
+    })).not.toThrow();
+    plan.sources.baseline.commit = "6404191fd6e73bf34bcfacaefe2f113a2b8f6d99";
+    expect(() => validateSyncLockRootPlanSources(plan, {
+      candidateSha, control: "source-comparison",
+    })).toThrow(/baseline SHA mismatch/u);
+  });
+
   it("predeclares the complete, non-overlapping workload matrix", () => {
     expect(SYNC_LOCK_ROOT_FILTER).toBe("syncLockRoot/");
     expect(SYNC_LOCK_ROOT_ROWS).toHaveLength(16);
@@ -148,7 +165,7 @@ describe("synchronous lockRoot benchmark worker contract", () => {
     expect(SYNC_LOCK_ROOT_ROWS.some(({ details }) => details.monitor === "armed")).toBe(true);
   });
 
-  it("accepts exact candidate and legacy-base worker receipts", () => {
+  it("accepts exact candidate and current-main worker receipts", () => {
     expect(() => validateSyncLockRootBenchmarkReport(
       workerReport(), SYNC_LOCK_ROOT_FILTER, 100,
     )).not.toThrow();

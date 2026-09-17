@@ -9,6 +9,7 @@ import {
   stateFileReceipt,
   WSL2_STATE_ROOT_DIRECTORY,
 } from "../benchmarks/sync-lock-root-campaign-state.mjs";
+import { SYNC_LOCK_ROOT_BASE_SHA } from "../benchmarks/sync-lock-root-contract.mjs";
 
 const roots: string[] = [];
 const source = {
@@ -42,6 +43,7 @@ function outerFile(
   paths: ReturnType<typeof initializeWsl2CampaignState>,
   node: "22" | "24",
   accepted: boolean,
+  baselineSha = SYNC_LOCK_ROOT_BASE_SHA,
 ) {
   const file = path.join(directory, "outer-receipt.json");
   const campaign = JSON.parse(fs.readFileSync(paths.campaign, "utf8")).campaign;
@@ -53,7 +55,7 @@ function outerFile(
     captureToken: campaign.captures[node],
     ...(accepted ? {
       candidateSha: source.candidateSha,
-      baselineSha: "6404191fd6e73bf34bcfacaefe2f113a2b8f6d99",
+      baselineSha,
       harnessSha: source.harnessSha,
     } : {}),
     state: {
@@ -166,6 +168,25 @@ describe("sync lockRoot fixed WSL2 campaign state", () => {
       outputRoot: value.outputB, now: "2026-09-16T00:00:03Z",
     })).toThrow();
     expect(fs.existsSync(value.paths.consumption("24"))).toBe(false);
+  });
+
+  it("rejects an accepted receipt bound to the historical comparator", () => {
+    const value = fixture();
+    consumeWsl2CampaignCapture({
+      ...source, repositoryRoot: value.repositoryRoot, node: "22",
+      outputRoot: value.outputA, now: "2026-09-16T00:00:01Z",
+    });
+    expect(() => completeWsl2CampaignCapture({
+      repositoryRoot: value.repositoryRoot,
+      campaignId: source.campaignId,
+      node: "22",
+      outerFile: outerFile(
+        value.outputA, value.paths, "22", true,
+        "6404191fd6e73bf34bcfacaefe2f113a2b8f6d99",
+      ),
+      now: "2026-09-16T00:00:02Z",
+      finalizerStatus: 0,
+    })).toThrow(/baseline mismatch/u);
   });
 
   it("rejects hosted-identity rebinding before consuming a capture token", () => {

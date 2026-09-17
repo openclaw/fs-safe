@@ -65,6 +65,16 @@ function validateSurfaces(surfaces) {
   return surfaces;
 }
 
+export function validateSyncLockRootPlanSources(plan, expected) {
+  assert.equal(plan.sources.candidate.commit, expected.candidateSha, "candidate SHA mismatch");
+  if (expected.control === "source-comparison") {
+    assert.equal(plan.sources.baseline.commit, SYNC_LOCK_ROOT_BASE_SHA, "baseline SHA mismatch");
+  } else {
+    assert.equal(plan.sources.baseline.commit, expected.candidateSha, "control source mismatch");
+    assert.deepEqual(plan.sources.baseline, plan.sources.candidate, "control source identity mismatch");
+  }
+}
+
 function validatePlan(plan, expected) {
   validatePlanHash(plan);
   if (expected.surface !== "wsl2") {
@@ -84,7 +94,7 @@ function validatePlan(plan, expected) {
     "measurement attempt differs from the predeclared campaign");
   assert.equal(plan.harness.workflowPath,
     ".github/workflows/sync-lock-root-performance-proof.yml", "workflow binding mismatch");
-  assert.equal(plan.sources.candidate.commit, expected.candidateSha, "candidate SHA mismatch");
+  validateSyncLockRootPlanSources(plan, expected);
   assert.equal(plan.settings.platform, expected.surface, "measurement surface setting mismatch");
   assert.equal(plan.settings.filter, SYNC_LOCK_ROOT_FILTER, "measurement filter mismatch");
   assert.equal(plan.settings.iterations, 100, "configured iterations mismatch");
@@ -97,12 +107,6 @@ function validatePlan(plan, expected) {
   assert.equal(plan.settings.control, expected.control === "same-artifact" ? "same-artifact" : "rebuild",
     "control input mismatch");
   assert.equal(plan.settings.timeoutMinutes, 120, "measurement timeout setting mismatch");
-  if (expected.control === "source-comparison") {
-    assert.equal(plan.sources.baseline.commit, SYNC_LOCK_ROOT_BASE_SHA, "baseline SHA mismatch");
-  } else {
-    assert.equal(plan.sources.baseline.commit, expected.candidateSha, "control source mismatch");
-    assert.deepEqual(plan.sources.baseline, plan.sources.candidate, "control source identity mismatch");
-  }
   const os = {
     linux: "ubuntu-latest", macos: "macos-15", windows: "windows-latest", wsl2: "crabbox-wsl2",
   }[expected.surface];

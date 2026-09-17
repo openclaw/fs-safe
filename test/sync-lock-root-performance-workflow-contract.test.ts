@@ -38,7 +38,8 @@ describe("synchronous lockRoot performance workflow contract", () => {
       "METHOD_NATIVE_MODE: off",
       "METHOD_FILTER: syncLockRoot/",
     ]) expect(workflow).toContain(value);
-    expect(workflow.match(/6404191fd6e73bf34bcfacaefe2f113a2b8f6d99/gu)).not.toBeNull();
+    expect(workflow.match(/5f6ac8cafeb9f301e66b80b3b589dc4ebfd68136/gu)).not.toBeNull();
+    expect(workflow).not.toContain("6404191fd6e73bf34bcfacaefe2f113a2b8f6d99");
     expect(workflow).toContain("METHOD_CANDIDATE_REF: ${{ inputs.candidate_ref }}");
     expect(workflow).toContain("METHOD_EXPECTED_HARNESS_SHA: ${{ inputs.expected_harness_sha }}");
     expect(workflow).toContain("METHOD_WORKFLOW_SHA: ${{ github.workflow_sha }}");
