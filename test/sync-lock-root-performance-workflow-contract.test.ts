@@ -25,6 +25,41 @@ describe("synchronous lockRoot performance workflow contract", () => {
 
   it("predeclares every hosted OS, Node, order, and independent control", async () => {
     const workflow = await text(".github/workflows/sync-lock-root-performance-proof.yml");
+    const hostedJobStart = workflow.indexOf("  measure:");
+    const hostedStepsStart = workflow.indexOf("    steps:", hostedJobStart);
+    const hostedJobHeader = workflow.slice(hostedJobStart, hostedStepsStart);
+    const configureStepStart = workflow.indexOf(
+      "      - name: Configure byte-exact checkouts",
+      hostedStepsStart,
+    );
+    const checkoutStepStart = workflow.indexOf(
+      "      - name: Check out reviewed harness",
+      configureStepStart,
+    );
+    const configureStep = workflow.slice(configureStepStart, checkoutStepStart);
+    const planPathExport =
+      "printf 'PLAN_PATH=%s/sync-lock-root-plan.json\\n' " +
+      '"$METHOD_RUNNER_TEMP" >> "$GITHUB_ENV"';
+    const snapshotPathExport =
+      "printf 'SNAPSHOT_PATH=%s/sync-lock-root-before.json\\n' " +
+      '"$METHOD_RUNNER_TEMP" >> "$GITHUB_ENV"';
+    expect(hostedJobStart).toBeGreaterThanOrEqual(0);
+    expect(hostedStepsStart).toBeGreaterThan(hostedJobStart);
+    expect(hostedJobHeader).not.toContain("${{ runner.");
+    expect(hostedJobHeader).not.toContain("PLAN_PATH:");
+    expect(hostedJobHeader).not.toContain("SNAPSHOT_PATH:");
+    expect(configureStepStart).toBeGreaterThan(hostedStepsStart);
+    expect(checkoutStepStart).toBeGreaterThan(configureStepStart);
+    expect(configureStep).toContain("METHOD_RUNNER_TEMP: ${{ runner.temp }}");
+    expect(configureStep).toContain('if [[ -z "$METHOD_RUNNER_TEMP" ]]; then');
+    expect(configureStep).toContain('echo "runner temp directory is unavailable" >&2');
+    expect(configureStep).toContain("exit 2");
+    expect(configureStep).toContain(planPathExport);
+    expect(configureStep).toContain(snapshotPathExport);
+    expect(configureStep.indexOf(planPathExport))
+      .toBeLessThan(configureStep.indexOf("git --no-replace-objects config --global core.autocrlf false"));
+    expect(configureStep.indexOf(snapshotPathExport))
+      .toBeLessThan(configureStep.indexOf("git --no-replace-objects config --global core.autocrlf false"));
     for (const value of [
       "surface: linux, os: ubuntu-latest",
       "surface: macos, os: macos-15",

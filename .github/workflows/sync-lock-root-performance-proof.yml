@@ -178,8 +178,6 @@ jobs:
       HARNESS_ROOT: ${{ github.workspace }}/harness
       CANDIDATE_ROOT: ${{ github.workspace }}/candidate
       BASELINE_ROOT: ${{ github.workspace }}/baseline
-      PLAN_PATH: ${{ runner.temp }}/sync-lock-root-plan.json
-      SNAPSHOT_PATH: ${{ runner.temp }}/sync-lock-root-before.json
       REPORT_ROOT: ${{ github.workspace }}/sync-lock-root-report
       ARTIFACT_NAME: sync-lock-root-${{ matrix.platform.surface }}-node-${{ matrix.node }}-${{ matrix.order }}-${{ matrix.study }}-${{ github.run_id }}-${{ github.run_attempt }}
       METHOD_PLATFORM: ${{ matrix.platform.surface }}
@@ -211,7 +209,15 @@ jobs:
       SYNC_LOCK_ROOT_EXECUTION_SURFACE: github-actions
     steps:
       - name: Configure byte-exact checkouts
+        env:
+          METHOD_RUNNER_TEMP: ${{ runner.temp }}
         run: |
+          if [[ -z "$METHOD_RUNNER_TEMP" ]]; then
+            echo "runner temp directory is unavailable" >&2
+            exit 2
+          fi
+          printf 'PLAN_PATH=%s/sync-lock-root-plan.json\n' "$METHOD_RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'SNAPSHOT_PATH=%s/sync-lock-root-before.json\n' "$METHOD_RUNNER_TEMP" >> "$GITHUB_ENV"
           git --no-replace-objects config --global core.autocrlf false
           git --no-replace-objects config --global core.eol lf
 
