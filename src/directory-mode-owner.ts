@@ -61,7 +61,7 @@ export function ownDirectoryMode(params: {
       // Hooks/ancestor checks can yield; recheck the original named association.
       await params.inspect();
       checks.check?.();
-      let dispatchDeadlineError: unknown;
+      let dispatchDeadlineFailure: { error: unknown } | undefined;
       if (currentMode !== mode) {
         try {
           checks.check?.();
@@ -70,11 +70,11 @@ export function ownDirectoryMode(params: {
           if (!params.ignoreChmodError) throw error;
         }
         // Expiry cannot release the fd while post-dispatch verification is pending.
-        try { checks.check?.(); } catch (error) { dispatchDeadlineError = error; }
+        try { checks.check?.(); } catch (error) { dispatchDeadlineFailure = { error }; }
         await params.verifyChmod?.();
       }
       const finalMode = await params.inspect();
-      if (dispatchDeadlineError) throw dispatchDeadlineError;
+      if (dispatchDeadlineFailure) throw dispatchDeadlineFailure.error;
       checks.check?.();
       if (!params.ignoreChmodError && finalMode !== mode) {
         throw new FsSafeError("path-mismatch", "directory final mode could not be verified");

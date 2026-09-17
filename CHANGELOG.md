@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Preserve deferred directory-mode check failures after descriptor-bound mode changes, including falsy JavaScript values, while still completing the existing post-dispatch identity verification.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights
