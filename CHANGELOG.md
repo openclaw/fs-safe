@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixes and compatibility
+
+- Propagate portable ZIP output fallback-close failures before staged publication. Existing destination entries remain untouched, cleanup retains its best-effort `FileHandle` close, and no raw or native descriptor close is attempted.
+
+### Validation
+
+- Add public extraction regressions for rejected and successful defensive fallback closes, and bind the existing successful public ZIP extraction benchmark to an immutable workload receipt with setup and verification outside timing.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights

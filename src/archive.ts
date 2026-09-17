@@ -188,7 +188,7 @@ async function writeZipFileEntry(params: {
         }
         params.deadline.check();
         if (!handleClosedByStream) {
-          await tempHandle.close().catch(() => undefined);
+          await tempHandle.close();
           handleClosedByStream = true;
         }
         tempHandle = null;

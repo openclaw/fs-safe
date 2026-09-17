@@ -4,6 +4,12 @@ import path from "node:path";
 import JSZip from "jszip";
 import * as tar from "tar";
 import { registerNativeArchives } from "./native-archives.mjs";
+import {
+  PUBLIC_ZIP_EXTRACTION_BENCHMARK_NAME,
+  PUBLIC_ZIP_EXTRACTION_DIVISOR,
+  PUBLIC_ZIP_EXTRACTION_FIXTURE,
+  PUBLIC_ZIP_EXTRACTION_WORKLOAD,
+} from "./public-zip-extraction-contract.mjs";
 
 export async function registerArchives(context) {
   const { api: a, workspace: w, register: add } = context;
@@ -76,10 +82,29 @@ export async function registerArchives(context) {
     after: () => fs.rmSync(path.join(destination, "entry.json"), { force: true }), divisor: 10,
   });
   for (const [kind, archivePath] of [["zip", zipPath], ["tar", tarPath], ["gzip", gzipPath]]) {
-    add(`extractArchive/${kind}`, () => a.extractArchive({ archivePath, destDir: destination, timeoutMs: 30_000 }), {
-      after: () => fs.rmSync(path.join(destination, "entry.json"), { force: true }), divisor: 10,
-      verify: () => assert.deepEqual(JSON.parse(fs.readFileSync(path.join(destination, "entry.json"), "utf8")), { ok: true }),
-    });
+    const verifySmallExtraction = () => {
+      assert.deepEqual(fs.readdirSync(destination), ["entry.json"]);
+      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(destination, "entry.json"), "utf8")), { ok: true });
+    };
+    const cleanupSmallExtraction = () => fs.rmSync(path.join(destination, "entry.json"), { force: true });
+    const zipReceipt = kind === "zip" ? {
+      before: () => assert.deepEqual(fs.readdirSync(destination), []),
+      after: () => {
+        try { verifySmallExtraction(); }
+        finally { cleanupSmallExtraction(); }
+      },
+      workloadSemantics: "equivalent-output",
+      workloadDetails: PUBLIC_ZIP_EXTRACTION_WORKLOAD,
+      fixturePlacement: PUBLIC_ZIP_EXTRACTION_FIXTURE,
+    } : {
+      after: cleanupSmallExtraction,
+      verify: verifySmallExtraction,
+    };
+    add(kind === "zip" ? PUBLIC_ZIP_EXTRACTION_BENCHMARK_NAME : `extractArchive/${kind}`,
+      () => a.extractArchive({ archivePath, destDir: destination, timeoutMs: 30_000 }), {
+        ...zipReceipt,
+        divisor: kind === "zip" ? PUBLIC_ZIP_EXTRACTION_DIVISOR : 10,
+      });
     add(`readArchiveEntry/${kind}`, () => a.readArchiveEntry(archivePath, "entry.json", { maxBytes: 1024 }), { divisor: 10 });
     if (kind !== "zip") add(`inspectTarArchive/${kind}`, () => a.inspectTarArchive({ archivePath, timeoutMs: 30_000 }), { divisor: 10 });
   }
