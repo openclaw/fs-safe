@@ -95,8 +95,7 @@ function isFilesystemRoot(candidate: string): boolean {
 
 async function pathExists(targetPath: string): Promise<boolean> {
   try {
-    fs.lstatSync(pathForWindowsFilesystem(targetPath));
-    return true;
+    return fs.lstatSync(pathForWindowsFilesystem(targetPath), { throwIfNoEntry: false }) !== undefined;
   } catch (error) {
     if (isNotFoundPathError(error)) {
       return false;

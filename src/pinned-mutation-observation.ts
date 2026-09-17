@@ -58,8 +58,7 @@ function directoryMode(mode: bigint): boolean {
 
 function absent(pathname: string): boolean {
   try {
-    fs.lstatSync(pathname);
-    return false;
+    return fs.lstatSync(pathname, { throwIfNoEntry: false }) === undefined;
   } catch (error) {
     // ENOTDIR is incomplete evidence, not a missing child of a directory.
     return isNotFoundPathError(error) && (error as NodeJS.ErrnoException).code === "ENOENT";
