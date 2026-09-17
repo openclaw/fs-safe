@@ -87,7 +87,7 @@ import { assertRootFallbackWritePath } from "./root-write-lock-binding.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import { movePathNoReplaceNative } from "./root-move-noreplace.js";
 import { admitRootReadHandle, inspectOpenedPathIdentitySync } from "./root-read-admission.js";
-import { createCopyPublicationObserver, onCopyPublication, type CopyPublicationOptions } from "./copy-publication.js";
+import { createCopyPublicationObserver, onCopyPublication, onCopySourceAdmission, type CopyPublicationOptions } from "./copy-publication.js";
 import { writeAllToFile } from "./write-file-handle.js";
 import { createInputOptions, rethrowCreateInputError, rootWriteInput, type RootWriteParams } from "./root-create-input.js";
 import { assertFinalSymlinkRejected, mutationSymlinkResolution, readSymlinkResolution, type MutationSymlinkPolicy, type SymlinkPolicy } from "./root-symlink-policy.js";
@@ -506,6 +506,7 @@ export class RootHandle implements Root {
       mode: options.mode ?? this.defaults.mode,
       durable: options.durable ?? this.defaults.durable ?? true,
       verifyPublished: (options as CopyPublicationOptions)[onCopyPublication],
+      admitSource: (options as CopyPublicationOptions)[onCopySourceAdmission],
     }).catch(rethrowMutationAuthorityError);
   }
 
@@ -1148,6 +1149,7 @@ async function copyFileInRoot(
     source: RootCopySource;
     relativePath: string;
     verifyPublished?: CopyPublicationOptions[typeof onCopyPublication];
+    admitSource?: CopyPublicationOptions[typeof onCopySourceAdmission];
   },
 ): Promise<void> {
   params.signal?.throwIfAborted();
@@ -1178,11 +1180,13 @@ async function copyFileInRoot(
   }
 
   try {
+    const sourceAdmission = params.admitSource?.(sourceIdentity, source.realPath);
+    const mode = sourceAdmission?.mode ?? params.mode;
     await serializePathWrite(rootWriteQueueKey(root, params.relativePath), async () => {
       const pinned = await resolvePinnedWriteTargetInRoot(
         root,
         params.relativePath,
-        params.mode ?? (params.preserveSourceMode ? Number(sourceIdentity.mode & 0o7777n) : undefined),
+        mode ?? (params.preserveSourceMode ? Number(sourceIdentity.mode & 0o7777n) : undefined),
         params.denyMutations,
         params.overwrite !== false,
         params.mutationSymlinks,
@@ -1191,6 +1195,8 @@ async function copyFileInRoot(
         await assertCopySourceCurrent(source, sourceIdentity);
         const verifySource = async () => {
           params.signal?.throwIfAborted();
+          try { sourceAdmission?.verify(); }
+          catch (error) { throw new MutationAuthorityError(error); }
           if (typeof params.source !== "string") {
             await params.source.root.stat(".");
           }

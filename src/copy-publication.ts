@@ -1,3 +1,4 @@
+import type { BigIntStats } from "node:fs";
 import type { PinnedWriteParams, PublishedWriteIdentity } from "./pinned-write.js";
 import { FsSafeError } from "./errors.js";
 
@@ -39,6 +40,13 @@ export function createCopyPublicationObserver(
 // Internal composition hook; the descriptor is borrowed until the callback returns.
 // Kept off RootCopyOptions and all public package exports.
 export const onCopyPublication = Symbol("onCopyPublication");
+// Reuse the copy's admitted descriptor identity before any bytes are staged.
+// Internal callers can bind prior observations and select its publication mode.
+export const onCopySourceAdmission = Symbol("onCopySourceAdmission");
 export type CopyPublicationOptions = {
   [onCopyPublication]?: PinnedWriteParams["verifyPublished"];
+  [onCopySourceAdmission]?: (identity: BigIntStats, realPath: string) => {
+    mode: number;
+    verify(): void;
+  };
 };
