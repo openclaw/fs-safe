@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Preserve files and symlinks that replace an observed empty FileStore directory while pruning is prepared; directories that become nonempty remain untouched.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights

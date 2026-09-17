@@ -30,6 +30,11 @@ import { getFsSafeTestHooks } from "./test-hooks.js";
 const DEFAULT_MAX_ENTRIES = 100_000;
 const DEFAULT_MAX_DEPTH = 64;
 
+export const nonrecursiveRemovalKind: unique symbol = Symbol("nonrecursive removal kind");
+type InternalRemoveOptions = RootRemoveOptions & {
+  [nonrecursiveRemovalKind]?: "directory";
+};
+
 export function validateRemoveOptions(options: RootRemoveOptions): void {
   if (options.order !== undefined && options.order !== "filesystem" && options.order !== "sorted") {
     throw new TypeError("remove order must be filesystem or sorted");
@@ -250,7 +255,7 @@ async function captureNonrecursiveRemovalAdmission(
   });
 }
 
-async function removeOne(root: RootContext, targetPath: string, options: RootRemoveOptions, receipts?: RemovalPathReceipts): Promise<void> {
+async function removeOne(root: RootContext, targetPath: string, options: InternalRemoveOptions, receipts?: RemovalPathReceipts): Promise<void> {
   const admission = await captureNonrecursiveRemovalAdmission(root, targetPath, options, receipts);
   if (!admission) return;
   try {
@@ -261,6 +266,9 @@ async function removeOne(root: RootContext, targetPath: string, options: RootRem
   }
   try {
     const isDirectory = fsSync.lstatSync(targetPath).isDirectory();
+    if (!isDirectory && options[nonrecursiveRemovalKind] === "directory") {
+      throw new FsSafeError("path-mismatch", "store entry is no longer a directory");
+    }
     assertFinalSymlinkRejected(targetPath, options.mutationSymlinks !== undefined);
     assertNotAborted(options.signal);
     options.assertBeforeMutation?.();
