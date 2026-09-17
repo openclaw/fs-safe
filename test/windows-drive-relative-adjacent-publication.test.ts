@@ -5,12 +5,23 @@ import { afterEach, describe, expect, it } from "vitest";
 import { writeJsonDurableQueueEntry } from "../src/json-durable-queue.js";
 import { jsonStore } from "../src/json-store.js";
 import { movePathWithCopyFallback } from "../src/move-path.js";
+import { getNativeBinding, type NativeBinding } from "../src/native.js";
 import { publishFileExclusive } from "../src/publish-file.js";
 import { replaceDirectoryAtomic } from "../src/replace-directory.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
+
+let directoryReplacementNative: NativeBinding | undefined;
+try {
+  const native = getNativeBinding();
+  if (typeof native?.renameNoReplaceWithIdentity === "function") {
+    directoryReplacementNative = native;
+  }
+} catch (error) {
+  if (process.env.FS_SAFE_NATIVE_MODE === "require") throw error;
+}
 
 function driveRelativePath(absolutePath: string): string {
   const drive = path.parse(absolutePath).root.slice(0, 2);
@@ -71,11 +82,9 @@ describe.runIf(process.platform === "win32")(
         const stagedDir = path.join(root, "staged");
         const targetDir = path.join(root, "target");
         await fs.mkdir(stagedDir);
-        await fs.mkdir(targetDir);
         await fs.writeFile(path.join(stagedDir, "new.txt"), "new");
-        await fs.writeFile(path.join(targetDir, "old.txt"), "old");
 
-        await replaceDirectoryAtomic({
+        const replacement = replaceDirectoryAtomic({
           stagedDir: relativeOperand === "target"
             ? stagedDir
             : driveRelativePath(stagedDir),
@@ -84,11 +93,17 @@ describe.runIf(process.platform === "win32")(
             : driveRelativePath(targetDir),
         });
 
+        if (!directoryReplacementNative) {
+          await expect(replacement).rejects.toMatchObject({ code: "helper-unavailable" });
+          await expect(fs.access(targetDir)).rejects.toMatchObject({ code: "ENOENT" });
+          await expect(fs.readFile(path.join(stagedDir, "new.txt"), "utf8"))
+            .resolves.toBe("new");
+          return;
+        }
+
+        await expect(replacement).resolves.toBeUndefined();
         await expect(fs.readFile(path.join(targetDir, "new.txt"), "utf8")).resolves.toBe("new");
         await expect(fs.access(stagedDir)).rejects.toMatchObject({ code: "ENOENT" });
-        await expect(fs.access(path.join(targetDir, "old.txt"))).rejects.toMatchObject({
-          code: "ENOENT",
-        });
       },
     );
 

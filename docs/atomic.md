@@ -168,7 +168,9 @@ synchronous boot paths or test setup code. It returns the same
 
 ## `replaceDirectoryAtomic`
 
-Atomically swap one directory's contents with another, using a temporary backup during the swap.
+Publish one staged directory at a target without overwriting a concurrently
+created entry. Despite the historical name, replacing an existing target is a
+guarded two-rename protocol, not an atomic directory exchange.
 
 ```ts
 import { replaceDirectoryAtomic } from "@openclaw/fs-safe/atomic";
@@ -179,15 +181,64 @@ await replaceDirectoryAtomic({
 });
 ```
 
-The helper renames `targetDir` to a generated backup path, renames `stagedDir → targetDir`, then removes the backup. If the second rename fails, it tries to restore the original target before rethrowing.
-Concurrent replacements of the same resolved target are serialized inside the
-current process so their backup, commit, and cleanup phases cannot interleave.
-On Windows, ordinary drive-relative staged and target paths are anchored at
-entry before namespace-alias admission and resolution.
+Every publication requires the dedicated native identity-fenced,
+descriptor-relative no-replace rename capability and readable retained
+descriptors for the staged and target parents. Older bindings that expose only
+the legacy four-argument no-replace rename fail with `helper-unavailable`
+before target-parent creation or any other replacement effect. This applies
+when the parents are the same or different. There is no JavaScript rename
+fallback, and a cross-device rename still fails. Replacing an existing target
+additionally requires usable native bounded owned-tree cleanup and a readable
+retained descriptor for the original target.
+
+If the target is absent, the helper publishes `stagedDir → targetDir` with a
+single no-replace rename. If the target exists, it renames `targetDir` to a
+randomized sibling backup and then renames `stagedDir → targetDir`. The target
+name is temporarily absent between those two operations. A competing entry is
+never overwritten. Publication rollback is attempted only when the staged
+rename is known not to have committed and the target name is still absent; the
+rollback itself is no-replace, so a competitor is preserved and the backup is
+left for recovery.
+
+Exact staged-directory identity and parent checks run before and after each
+rename. On Windows, the native rename opens the source relative to the retained
+parent, compares that handle's exact volume and file-index identity with the
+pre-rename bigint receipt, and only then mutates it. POSIX does not provide a
+rename operation that also compares an expected source inode, so on POSIX a
+source-name substitution in the final check-to-rename gap can be moved briefly
+and then detected by the post-rename verification. Similarly, a successful
+rename can be followed by a verification error. Inspect the error's
+`details.publication` value rather than treating rejection as proof that
+publication did not happen.
+
+A Windows source-identity mismatch is rejected before mutation, reported
+publicly as `path-mismatch`, and treated as definitely uncommitted so an earlier
+backup can be rolled back. Other `path-mismatch`-shaped native errors are not
+assumed to be pre-commit failures; their publication outcome remains
+indeterminate and observed competitors are preserved.
+
+An unclassified native rename error has an indeterminate outcome. The helper
+does not guess whether that rename committed or perform another rename or
+cleanup based on that guess; observed names are preserved for caller-directed
+recovery. An error `details.backupPath`, when present, is only the attempted or
+last-observed backup pathname. It does not prove that the path still exists or
+still names the original directory.
+
+After a verified commit, the original backup is removed through its retained
+directory identity and bounded native traversal. Cleanup failures reject after
+publication and can leave the backup. On POSIX, cleanup retains the
+[bounded final-entry unlink limitation](temp.md#private-temp-workspaces).
+
+Concurrent calls for the same resolved target are serialized inside the current
+process so their backup, publication, and cleanup phases cannot interleave.
+Other processes are not serialized; no-replace renames provide the competitor
+boundary. On Windows, ordinary drive-relative staged and target paths are
+anchored at entry before namespace-alias admission and resolution.
 `backupPrefix`, when supplied, is sanitized as one path prefix and cannot contain
 path separators or NUL bytes; the generated backup tail is randomized.
 
-Use it when callers must see a whole staged tree at the target path. For single-file replacement, `replaceFileAtomic` is the right tool.
+Use it when callers must publish a whole staged tree with these recovery
+semantics. For single-file replacement, `replaceFileAtomic` is the right tool.
 
 ## `writeTextAtomic`
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Retain directory replacement and cleanup authority across backup, publication, and rollback. Directory replacement now requires supported native no-replace transitions; unavailable helpers reject before target-parent creation. Indeterminate outcomes preserve entries for recovery.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights

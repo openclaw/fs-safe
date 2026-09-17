@@ -501,7 +501,11 @@ for (const file of files) await fs.write(`${stagingDir}/${file.name}`, file.body
 await fs.move(stagingDir, "snapshots/2026-05-05", { overwrite: true });
 ```
 
-For a true commit-or-rollback over a *directory*, use [`replaceDirectoryAtomic`](atomic.md#replacedirectoryatomic).
+For guarded whole-directory publication, use
+[`replaceDirectoryAtomic`](atomic.md#replacedirectoryatomic). Replacing an
+existing target is a two-rename protocol with a temporary target-absence
+interval and conditional no-replace rollback, not a transactional
+commit-or-rollback.
 
 ### Rotate logs
 

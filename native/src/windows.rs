@@ -27,7 +27,9 @@ use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
-use crate::{FileIdentity, NativeResult, native_error};
+use crate::{
+    ExactFileIdentity, FileIdentity, NativeResult, RENAME_SOURCE_IDENTITY_MISMATCH, native_error,
+};
 
 const O_WRONLY: i32 = 0x0001;
 const O_RDWR: i32 = 0x0002;
@@ -738,12 +740,10 @@ fn set_rename_information(
         )
     };
     if status < 0 {
-        if !replace
-            && nt_open_relative(target_root, target_path, FILE_READ_ATTRIBUTES, FILE_OPEN, 0)
-                .is_ok()
-        {
-            return Err(native_error("EEXIST", "rename destination already exists"));
-        }
+        // The target may exist because this rename was refused, because it was
+        // committed before an acknowledgement failed, or because another actor
+        // created it. Only the NTSTATUS conversion may classify a collision;
+        // a second pathname observation cannot prove an uncommitted outcome.
         return Err(rename_nt_error(status, operation));
     }
     Ok(())
@@ -825,6 +825,33 @@ pub fn rename_no_replace(
     target_rel_path: &str,
 ) -> NativeResult<()> {
     let source = open_source_for_rename(root_handle(source_root_fd)?, source_rel_path)?;
+    set_rename_information(
+        source.0,
+        root_handle(target_root_fd)?,
+        target_rel_path,
+        false,
+        "rename without replacement",
+    )
+}
+
+pub fn rename_no_replace_with_identity(
+    source_root_fd: i32,
+    source_rel_path: &str,
+    target_root_fd: i32,
+    target_rel_path: &str,
+    expected_source_identity: ExactFileIdentity,
+) -> NativeResult<()> {
+    let source = open_source_for_rename(root_handle(source_root_fd)?, source_rel_path)?;
+    let (dev, ino, _) = handle_identity(source.0)?;
+    if u64::from(dev) != expected_source_identity.dev || ino != expected_source_identity.ino {
+        // This internal-only code is emitted before the mutating syscall, so
+        // retained replacement can distinguish a definitely uncommitted fence
+        // rejection from an arbitrary path-mismatch-shaped native failure.
+        return Err(native_error(
+            RENAME_SOURCE_IDENTITY_MISMATCH,
+            "rename source identity changed before mutation",
+        ));
+    }
     set_rename_information(
         source.0,
         root_handle(target_root_fd)?,
@@ -1669,6 +1696,18 @@ mod tests {
             rename_win_error(ERROR_DISK_FULL, "rename file").status,
             "ENOSPC"
         );
+        for (code, expected) in [
+            (ERROR_FILE_EXISTS, "EEXIST"),
+            (ERROR_ALREADY_EXISTS, "EEXIST"),
+            (ERROR_ACCESS_DENIED, "EPERM"),
+            (ERROR_SHARING_VIOLATION, "EBUSY"),
+        ] {
+            assert_eq!(
+                rename_win_error(code, "rename file").status,
+                expected,
+                "Windows error {code} must retain its own rename outcome"
+            );
+        }
     }
 
     #[test]

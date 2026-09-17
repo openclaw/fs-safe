@@ -1038,6 +1038,19 @@ jobs:
       - name: Build and stage host binding
         run: pnpm native:build
 
+      - name: Prove retained directory replacement authority
+        env:
+          FS_SAFE_NATIVE_MODE: require
+        run: >-
+          pnpm test
+          test/native-rename-authority.test.ts
+          test/atomic-publication-stress.test.ts
+          test/replace-directory-authority.test.ts
+          test/replace-directory-identity-rename.test.ts
+          test/replace-directory-retained-admission.test.ts
+          test/path-input-snapshot.test.ts
+          test/windows-drive-relative-adjacent-publication.test.ts
+
       - name: Prove native directory observation
         env:
           FS_SAFE_REQUIRE_NATIVE_DIRECTORY_OBSERVATION: "1"

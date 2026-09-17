@@ -5,8 +5,9 @@ use std::io::{Read, Write};
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd};
 
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, RenameFlags};
+use rustix::path::Arg;
 
-use crate::{FileIdentity, NativeResult, native_error};
+use crate::{ExactFileIdentity, FileIdentity, NativeResult, native_error};
 
 pub(crate) fn borrowed(fd: i32) -> BorrowedFd<'static> {
     // SAFETY: Every public operation borrows the descriptor only for the
@@ -170,12 +171,86 @@ pub fn link_beneath(
     .map_err(|error| os_error(error, "linkat beneath roots"))
 }
 
+fn direct_rename_no_replace(
+    source_root_fd: i32,
+    source_name: &str,
+    target_root_fd: i32,
+    target_name: &str,
+) -> NativeResult<()> {
+    // Reject signed descriptor sentinels in deterministic argument order
+    // before any BorrowedFd can be constructed. The raw syscall also handles
+    // stale, closed positive descriptors without assuming Rust fd validity.
+    if source_root_fd < 0 {
+        return Err(native_error("EBADF", "invalid source root descriptor"));
+    }
+    if target_root_fd < 0 {
+        return Err(native_error("EBADF", "invalid target root descriptor"));
+    }
+    crate::validate_child_basename(source_name)?;
+    crate::validate_child_basename(target_name)?;
+    let result = source_name.into_with_c_str(|source_name| {
+        target_name.into_with_c_str(|target_name| {
+            #[cfg(target_os = "linux")]
+            // SAFETY: both names are live NUL-terminated buffers. renameat2
+            // accepts raw integers and reports invalid or closed descriptors.
+            let status = unsafe {
+                libc::syscall(
+                    libc::SYS_renameat2,
+                    source_root_fd,
+                    source_name.as_ptr(),
+                    target_root_fd,
+                    target_name.as_ptr(),
+                    libc::RENAME_NOREPLACE,
+                )
+            };
+            #[cfg(target_os = "macos")]
+            // SAFETY: both names are live NUL-terminated buffers. renameatx_np
+            // accepts raw integers and reports invalid or closed descriptors.
+            let status = unsafe {
+                libc::renameatx_np(
+                    source_root_fd,
+                    source_name.as_ptr(),
+                    target_root_fd,
+                    target_name.as_ptr(),
+                    libc::RENAME_EXCL,
+                )
+            };
+            if status == 0 {
+                Ok(())
+            } else {
+                let error = std::io::Error::last_os_error();
+                Err(rustix::io::Errno::from_raw_os_error(
+                    error.raw_os_error().unwrap_or(libc::EIO),
+                ))
+            }
+        })
+    });
+    match result {
+        Ok(()) => Ok(()),
+        Err(rustix::io::Errno::EXIST | rustix::io::Errno::NOTEMPTY) => {
+            Err(native_error("EEXIST", "rename destination already exists"))
+        }
+        Err(error) => Err(os_error(error, "rename without replacement")),
+    }
+}
+
 pub fn rename_no_replace(
     source_root_fd: i32,
     source_rel_path: &str,
     target_root_fd: i32,
     target_rel_path: &str,
 ) -> NativeResult<()> {
+    if !source_rel_path.contains('/') && !target_rel_path.contains('/') {
+        // lib.rs validated both names before dispatch. Direct children can use
+        // the already-retained parent descriptors without a duplicate/reopen
+        // (and, on macOS, without another F_GETPATH containment query).
+        return direct_rename_no_replace(
+            source_root_fd,
+            source_rel_path,
+            target_root_fd,
+            target_rel_path,
+        );
+    }
     let (source_parent, source_name) = open_parent(source_root_fd, source_rel_path)?;
     let (target_parent, target_name) = open_parent(target_root_fd, target_rel_path)?;
     let result = rustix::fs::renameat_with(
@@ -194,6 +269,24 @@ pub fn rename_no_replace(
         }
         Err(error) => Err(os_error(error, "rename without replacement")),
     }
+}
+
+pub fn rename_no_replace_with_identity(
+    source_root_fd: i32,
+    source_rel_path: &str,
+    target_root_fd: i32,
+    target_rel_path: &str,
+    expected_source_identity: ExactFileIdentity,
+) -> NativeResult<()> {
+    // POSIX can dispatch atomically through the retained parents without
+    // opening another source receipt; the caller's pre-dispatch fence remains.
+    let _ = (expected_source_identity.dev, expected_source_identity.ino);
+    rename_no_replace(
+        source_root_fd,
+        source_rel_path,
+        target_root_fd,
+        target_rel_path,
+    )
 }
 
 pub fn rename_replace(
@@ -2211,6 +2304,130 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.status, "EEXIST");
         assert_eq!(fs::read(root.join("target")).unwrap(), b"target");
+        assert!(root_handle.metadata().unwrap().is_dir());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn direct_rename_rejects_negative_descriptors_in_argument_order() {
+        let source_first = rename_no_replace(-1, "source", -1, "target").unwrap_err();
+        assert_eq!(source_first.status, "EBADF");
+        assert!(source_first.reason.contains("source root descriptor"));
+
+        let root = temp_root("rename-negative-target");
+        fs::write(root.join("source"), b"source").unwrap();
+        let source_parent = OpenOptions::new().read(true).open(&root).unwrap();
+        let target_second =
+            rename_no_replace(source_parent.as_raw_fd(), "source", -1, "target").unwrap_err();
+        assert_eq!(target_second.status, "EBADF");
+        assert!(target_second.reason.contains("target root descriptor"));
+        assert!(source_parent.metadata().unwrap().is_dir());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn direct_rename_rejects_invalid_and_closed_descriptors() {
+        const TEST: &str =
+            "unix::tests::direct_rename_rejects_invalid_and_closed_descriptors";
+        const CLOSED_DESCRIPTOR_CASE: &str = "FS_SAFE_RENAME_CLOSED_DESCRIPTOR_CASE";
+
+        if let Ok(case) = std::env::var(CLOSED_DESCRIPTOR_CASE) {
+            let root = temp_root("rename-closed-descriptor");
+            fs::write(root.join("source"), b"source").unwrap();
+            match case.as_str() {
+                "source" => {
+                    let live_target = OpenOptions::new().read(true).open(&root).unwrap();
+                    let closed_source = OpenOptions::new().read(true).open(&root).unwrap();
+                    let closed_source_fd = closed_source.as_raw_fd();
+                    drop(closed_source);
+                    let error = rename_no_replace(
+                        closed_source_fd,
+                        "source",
+                        live_target.as_raw_fd(),
+                        "target",
+                    )
+                    .unwrap_err();
+                    assert_eq!(error.status, "EBADF");
+                    assert!(live_target.metadata().unwrap().is_dir());
+                }
+                "target" => {
+                    let live_source = OpenOptions::new().read(true).open(&root).unwrap();
+                    let closed_target = OpenOptions::new().read(true).open(&root).unwrap();
+                    let closed_target_fd = closed_target.as_raw_fd();
+                    drop(closed_target);
+                    let error = rename_no_replace(
+                        live_source.as_raw_fd(),
+                        "source",
+                        closed_target_fd,
+                        "target",
+                    )
+                    .unwrap_err();
+                    assert_eq!(error.status, "EBADF");
+                    assert!(live_source.metadata().unwrap().is_dir());
+                }
+                _ => panic!("unexpected closed descriptor test case: {case}"),
+            }
+            fs::remove_dir_all(root).unwrap();
+            return;
+        }
+
+        let root = temp_root("rename-invalid-descriptors");
+        fs::write(root.join("source"), b"source").unwrap();
+        let live_target = OpenOptions::new().read(true).open(&root).unwrap();
+        let invalid_source = rename_no_replace(
+            i32::MAX,
+            "source",
+            live_target.as_raw_fd(),
+            "target",
+        )
+        .unwrap_err();
+        assert_eq!(invalid_source.status, "EBADF");
+        let invalid_target = rename_no_replace(
+            live_target.as_raw_fd(),
+            "source",
+            i32::MAX,
+            "target",
+        )
+        .unwrap_err();
+        assert_eq!(invalid_target.status, "EBADF");
+        assert!(live_target.metadata().unwrap().is_dir());
+        fs::remove_dir_all(root).unwrap();
+
+        for case in ["source", "target"] {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", TEST, "--test-threads=1"])
+                .env(CLOSED_DESCRIPTOR_CASE, case)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "closed {case} descriptor child failed\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+        }
+    }
+
+    #[test]
+    fn direct_rename_keeps_distinct_caller_descriptors_open() {
+        let root = temp_root("rename-live-descriptors");
+        let source_root = root.join("source-root");
+        let target_root = root.join("target-root");
+        fs::create_dir(&source_root).unwrap();
+        fs::create_dir(&target_root).unwrap();
+        fs::write(source_root.join("source"), b"source").unwrap();
+        let source_parent = OpenOptions::new().read(true).open(&source_root).unwrap();
+        let target_parent = OpenOptions::new().read(true).open(&target_root).unwrap();
+        rename_no_replace(
+            source_parent.as_raw_fd(),
+            "source",
+            target_parent.as_raw_fd(),
+            "target",
+        )
+        .unwrap();
+        assert!(source_parent.metadata().unwrap().is_dir());
+        assert!(target_parent.metadata().unwrap().is_dir());
+        assert_eq!(fs::read(target_root.join("target")).unwrap(), b"source");
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -98,7 +98,80 @@ export async function registerLifecycle({ api: a, workspace: w, native, binding,
   fs.mkdirSync(secretRoot, { mode: 0o700 });
   for (const name of ["replaceFileAtomic", "replaceFileAtomicSync"]) add(name, () => a[name]({ filePath: output, content: data }), { sync: name.endsWith("Sync") });
   add("writeTextAtomic", () => a.writeTextAtomic(output, "synthetic benchmark"));
-  add("replaceDirectoryAtomic", () => a.replaceDirectoryAtomic({ stagedDir: path.join(w, "staged-dir"), targetDir: path.join(w, "target-dir") }), { before: () => fs.mkdirSync(path.join(w, "staged-dir")), after: () => fs.rmSync(path.join(w, "target-dir"), { recursive: true, force: true }) });
+  const newRootBytes = Buffer.from("new-root\n");
+  const newNestedBytes = Buffer.from("new-nested\n");
+  for (const targetState of ["absent", "existing"]) {
+    for (const parentShape of ["shared", "distinct"]) {
+      const rowRoot = path.join(w, `replace-directory-${targetState}-${parentShape}`);
+      const targetParent = path.join(rowRoot, "target-parent");
+      const stagedParent = parentShape === "shared"
+        ? targetParent
+        : path.join(rowRoot, "staged-parent");
+      const stagedDir = path.join(stagedParent, "staged");
+      const targetDir = path.join(targetParent, "target");
+      fs.mkdirSync(targetParent, { recursive: true });
+      fs.mkdirSync(stagedParent, { recursive: true });
+      const parentIdentities = [...new Set([targetParent, stagedParent])]
+        .map(parent => [parent, fs.lstatSync(parent, { bigint: true })]);
+      add(`replaceDirectoryAtomic/${targetState}/${parentShape}`, () => a.replaceDirectoryAtomic({
+        stagedDir,
+        targetDir,
+        backupPrefix: ".bench-backup-",
+      }), {
+        skip: !native ? "Directory replacement requires the native binding." : undefined,
+        workloadDetails: { targetState, parentShape, files: 2 },
+        fixturePlacement: "The staged and existing trees are recreated before timing; validation and reset run after timing.",
+        before: () => {
+          fs.mkdirSync(path.join(stagedDir, "nested"), { recursive: true });
+          fs.writeFileSync(path.join(stagedDir, "new.txt"), newRootBytes);
+          fs.writeFileSync(path.join(stagedDir, "nested", "new.txt"), newNestedBytes);
+          if (targetState === "existing") {
+            fs.mkdirSync(path.join(targetDir, "nested"), { recursive: true });
+            fs.writeFileSync(path.join(targetDir, "old.txt"), "old-root\n");
+            fs.writeFileSync(path.join(targetDir, "nested", "old.txt"), "old-nested\n");
+          }
+          return fs.lstatSync(stagedDir, { bigint: true });
+        },
+        after: (_, stagedIdentity) => {
+          const published = fs.lstatSync(targetDir, { bigint: true });
+          assert.equal(published.dev, stagedIdentity.dev);
+          assert.equal(published.ino, stagedIdentity.ino);
+          assert.equal(fs.existsSync(stagedDir), false);
+          assert.deepEqual(fs.readdirSync(targetDir).sort(), ["nested", "new.txt"]);
+          assert.deepEqual(fs.readdirSync(path.join(targetDir, "nested")), ["new.txt"]);
+          assert(fs.readFileSync(path.join(targetDir, "new.txt")).equals(newRootBytes));
+          assert(fs.readFileSync(path.join(targetDir, "nested", "new.txt")).equals(newNestedBytes));
+          assert.equal(fs.existsSync(path.join(targetDir, "old.txt")), false);
+          assert.equal(fs.existsSync(path.join(targetDir, "nested", "old.txt")), false);
+          assert.deepEqual(
+            fs.readdirSync(targetParent).filter(name => name.startsWith(".bench-backup-")),
+            [],
+          );
+          for (const [parent, expected] of parentIdentities) {
+            const current = fs.lstatSync(parent, { bigint: true });
+            assert.equal(current.dev, expected.dev);
+            assert.equal(current.ino, expected.ino);
+          }
+          fs.rmSync(targetDir, { recursive: true, force: true });
+        },
+      });
+    }
+  }
+  const invalidDirectoryStage = path.join(w, "invalid-staged-dir");
+  const invalidDirectoryTarget = path.join(w, "invalid-target-dir");
+  add("replaceDirectoryAtomic/validation/invalid-backup-prefix", () => a.replaceDirectoryAtomic({
+    stagedDir: invalidDirectoryStage,
+    targetDir: invalidDirectoryTarget,
+    backupPrefix: "invalid/prefix",
+  }), {
+    expectError: true,
+    verify: error => assert.equal(error?.code, "invalid-path"),
+    after: error => {
+      assert.equal(error?.code, "invalid-path");
+      assert.equal(fs.existsSync(invalidDirectoryStage), false);
+      assert.equal(fs.existsSync(invalidDirectoryTarget), false);
+    },
+  });
   add("movePathWithCopyFallback", () => a.movePathWithCopyFallback({ from: path.join(w, "move-source"), to: output }), { before: () => fs.writeFileSync(path.join(w, "move-source"), data) });
   for (const shape of ["empty", "wide", "deep"]) {
     const source = path.join(w, `move-copy-${shape}-source`);
@@ -201,6 +274,101 @@ export async function registerLifecycle({ api: a, workspace: w, native, binding,
   add("stageFileInDirectory", stage, { skip: stagingSkip, after: (r) => r?.cleanup() });
   if (!stagingSkip) { const r = await stage(); contract("StagedFile", r); await r.cleanup(); }
   for (const method of ["assertCurrent", "cleanup", "publish"]) add(`StagedFile.${method}`, (r) => method === "publish" ? r.publish("published-stage", { overwrite: true }) : r[method](), { skip: stagingSkip, before: stage, after: (_, r) => r.cleanup() });
+  const noReplaceSuccessParent = path.join(w, "staged-no-replace-success");
+  const noReplaceCollisionParent = path.join(w, "staged-no-replace-collision");
+  fs.mkdirSync(noReplaceSuccessParent);
+  fs.mkdirSync(noReplaceCollisionParent);
+  const noReplaceBytes = Buffer.from("staged-no-replace\n");
+  const finishStagedPublish = async (staged, target, verifyPublication, verifyCleanup) => {
+    const failures = [];
+    try { verifyPublication(); } catch (error) { failures.push(error); }
+    try { verifyCleanup(await staged.cleanup()); } catch (error) { failures.push(error); }
+    try { fs.rmSync(target, { force: true }); } catch (error) { failures.push(error); }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) {
+      throw new AggregateError(failures, "staged publish benchmark validation and cleanup failed");
+    }
+  };
+  const noReplaceSuccessTarget = path.join(noReplaceSuccessParent, "published");
+  add("StagedFile.publish/overwrite=false/success", staged => staged.publish(
+    "published",
+    { overwrite: false },
+  ), {
+    skip: stagingSkip,
+    fixturePlacement: "Stage creation and final-name reset occur outside the timed publish call.",
+    before: async () => {
+      fs.rmSync(noReplaceSuccessTarget, { force: true });
+      return a.stageFileInDirectory({ directory: noReplaceSuccessParent, content: noReplaceBytes });
+    },
+    after: (published, staged) => finishStagedPublish(
+      staged,
+      noReplaceSuccessTarget,
+      () => {
+        assert.equal(published.status, "published");
+        assert.equal(published.basename, "published");
+        assert.equal(published.overwrite, false);
+        assert.equal(published.staged, staged.receipt);
+        const current = fs.lstatSync(noReplaceSuccessTarget, { bigint: true });
+        assert.equal(current.dev, staged.receipt.identity.dev);
+        assert.equal(current.ino, staged.receipt.identity.ino);
+        assert(fs.readFileSync(noReplaceSuccessTarget).equals(noReplaceBytes));
+        assert.equal(
+          fs.existsSync(path.join(noReplaceSuccessParent, staged.receipt.temporaryBasename)),
+          false,
+        );
+      },
+      cleanup => {
+        assert.equal(cleanup.resources, "closed");
+        assert.equal(cleanup.status, "not-needed");
+        assert.equal(cleanup.publication, published);
+      },
+    ),
+  });
+  const competitorBytes = Buffer.from("competitor\n");
+  const noReplaceCollisionTarget = path.join(noReplaceCollisionParent, "published");
+  add("StagedFile.publish/overwrite=false/collision", fixture => fixture.staged.publish(
+    "published",
+    { overwrite: false },
+  ), {
+    skip: stagingSkip,
+    expectError: true,
+    fixturePlacement: "Stage and competitor creation occur outside the timed collision call; cleanup and validation follow it.",
+    before: async () => {
+      fs.writeFileSync(noReplaceCollisionTarget, competitorBytes);
+      const competitor = fs.lstatSync(noReplaceCollisionTarget, { bigint: true });
+      const staged = await a.stageFileInDirectory({
+        directory: noReplaceCollisionParent,
+        content: noReplaceBytes,
+      });
+      return { competitor, staged };
+    },
+    after: (error, { competitor, staged }) => {
+      const stagedPath = path.join(noReplaceCollisionParent, staged.receipt.temporaryBasename);
+      return finishStagedPublish(
+        staged,
+        noReplaceCollisionTarget,
+        () => {
+          assert.equal(error?.code, "already-exists");
+          assert.equal(error?.details?.phase, "publish");
+          assert.equal(error?.details?.publication?.status, "not-published");
+          assert.equal(error?.cause?.code, "EEXIST");
+          const currentCompetitor = fs.lstatSync(noReplaceCollisionTarget, { bigint: true });
+          assert.equal(currentCompetitor.dev, competitor.dev);
+          assert.equal(currentCompetitor.ino, competitor.ino);
+          assert(fs.readFileSync(noReplaceCollisionTarget).equals(competitorBytes));
+          const currentStage = fs.lstatSync(stagedPath, { bigint: true });
+          assert.equal(currentStage.dev, staged.receipt.identity.dev);
+          assert.equal(currentStage.ino, staged.receipt.identity.ino);
+        },
+        cleanup => {
+          assert.equal(cleanup.resources, "closed");
+          assert.equal(cleanup.status, "removed");
+          assert.equal(cleanup.publication.status, "not-published");
+          assert.equal(fs.existsSync(stagedPath), false);
+        },
+      );
+    },
+  });
   add("StagedFile.[Symbol.asyncDispose]", (r) => r[Symbol.asyncDispose](), { skip: stagingSkip, before: stage });
   const lockOptions = { payload: () => ({ pid: process.pid, createdAt: new Date().toISOString() }), timeoutMs: 1000 };
   const lockPath = path.join(w, "locked");

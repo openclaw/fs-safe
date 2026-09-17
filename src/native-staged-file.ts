@@ -22,6 +22,7 @@ import type {
   StagedFilePublication,
   StagedFileReceipt,
 } from "./staged-file-types.js";
+import { classifyNativeRenameFailure } from "./native-rename-outcome.js";
 
 export type NativeStagingBinding = NativeBinding & Required<Pick<
   NativeBinding,
@@ -51,12 +52,6 @@ function assertBasename(name: string, portable: boolean): void {
 }
 
 const NOT_PUBLISHED = Object.freeze({ status: "not-published" as const });
-const UNCOMMITTED_RENAME_ERRORS = new Set([
-  "EACCES", "EBADF", "EBUSY", "EEXIST", "EINVAL", "EISDIR", "ELOOP", "EMLINK",
-  "ENAMETOOLONG", "ENOENT", "ENOSPC", "ENOSYS", "ENOTDIR", "ENOTEMPTY", "ENOTSUP",
-  "EPERM", "EROFS", "ETXTBSY", "EXDEV",
-]);
-
 type State =
   | { status: "open"; fileFd?: number; publication: StagedFilePublication }
   | { status: "closed"; receipt: StagedFileCleanupReceipt; error?: FsSafeError };
@@ -283,7 +278,7 @@ class NativeStagedFile implements StagedFile {
         }
       } catch (error) {
         // Unknown rename errors can be indeterminate on remote filesystems.
-        if (!UNCOMMITTED_RENAME_ERRORS.has((error as NodeJS.ErrnoException | undefined)?.code ?? "")) {
+        if (classifyNativeRenameFailure(error) === "indeterminate") {
           state.publication = Object.freeze({ status: "indeterminate", basename, overwrite });
         }
         throw error;
