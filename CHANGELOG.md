@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Enforce Windows native parent mutation policies before creating each missing component, retaining native descriptor ownership through cleanup.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights
