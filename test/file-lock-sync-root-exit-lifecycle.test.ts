@@ -19,35 +19,34 @@ describe("synchronous Root-backed file-lock exit lifecycle", () => {
       payload: () => ({ owner: "legacy" }),
     });
     const original = path.join(directory, "root");
-    const moved = path.join(directory, "moved");
     fs.mkdirSync(original);
-    const lockRoot = await root(original);
-    const lock = acquireFileLockSync(path.join(original, "state.json"), {
-      lockRoot,
-      payload: () => ({ owner: "test" }),
-    });
-    const raw = fs.readFileSync(lock.lockPath, "utf8");
-    let movedRoot = false;
+    let lock: ReturnType<typeof acquireFileLockSync> | undefined;
     try {
-      fs.renameSync(original, moved);
-      movedRoot = true;
-      fs.mkdirSync(original);
-      fs.writeFileSync(path.join(original, "state.json.lock"), raw);
+      const lockRoot = await root(original);
+      const rootLock = acquireFileLockSync(path.join(original, "state.json"), {
+        lockRoot,
+        payload: () => ({ owner: "test" }),
+      });
+      lock = rootLock;
+      const rootBytes = fs.readFileSync(rootLock.lockPath);
+      const rootIdentity = fs.lstatSync(rootLock.lockPath, { bigint: true });
       const cleanup = Reflect.get(
         globalThis,
         Symbol.for("fsSafe.syncSidecarLockCleanupHandler"),
       ) as () => void;
       cleanup();
       expect(fs.existsSync(rawLock.lockPath)).toBe(false);
-      expect(fs.readFileSync(path.join(original, "state.json.lock"), "utf8")).toBe(raw);
-      expect(fs.existsSync(path.join(moved, "state.json.lock"))).toBe(true);
+      expect(fs.readFileSync(rootLock.lockPath)).toEqual(rootBytes);
+      const currentIdentity = fs.lstatSync(rootLock.lockPath, { bigint: true });
+      expect([currentIdentity.dev, currentIdentity.ino])
+        .toEqual([rootIdentity.dev, rootIdentity.ino]);
+      expect(rootLock.verifyStillHeld()).toBe(true);
     } finally {
-      rawLock.release();
-      if (movedRoot) {
-        fs.rmSync(original, { recursive: true, force: true });
-        fs.renameSync(moved, original);
+      try {
+        rawLock.release();
+      } finally {
+        lock?.release();
       }
-      lock.release();
     }
   });
 
@@ -141,29 +140,68 @@ describe("synchronous Root-backed file-lock exit lifecycle", () => {
     const directory = await tempRoot("fs-safe-sync-root-exit-authority-");
     const original = path.join(directory, "root");
     const moved = path.join(directory, "moved");
+    const replacementLockPath = path.join(original, "state.json.lock");
+    const movedLockPath = path.join(moved, "state.json.lock");
     fs.mkdirSync(original);
-    const lockRoot = await root(original);
+    let armed = false;
+    let originalMoved = false;
+    let replacementRootCreated = false;
+    let replacementWritten = false;
+    let mutationAssertions = 0;
+    let raw: Buffer | undefined;
+    const lockRoot = await root(original, {
+      assertBeforeMutation: () => {
+        if (!armed || originalMoved) return;
+        // Exit cleanup consumes the owned descriptor before reaching this
+        // retained-authority callback, so the physical swap works on Windows.
+        mutationAssertions += 1;
+        fs.renameSync(original, moved);
+        originalMoved = true;
+        fs.mkdirSync(original);
+        replacementRootCreated = true;
+        if (raw === undefined) throw new Error("exit-cleanup fixture bytes are unavailable");
+        fs.writeFileSync(replacementLockPath, raw, { flag: "wx" });
+        replacementWritten = true;
+      },
+    });
     const lock = acquireFileLockSync(path.join(original, "state.json"), {
       lockRoot,
       payload: () => ({ owner: "test" }),
     });
-    const raw = fs.readFileSync(lock.lockPath, "utf8");
-    fs.renameSync(original, moved);
-    fs.mkdirSync(original);
-    fs.writeFileSync(path.join(original, "state.json.lock"), raw);
-    const cleanup = Reflect.get(
-      globalThis,
-      Symbol.for("fsSafe.syncRootSidecarLockCleanupHandler.v1"),
-    ) as () => void;
     try {
+      raw = fs.readFileSync(lock.lockPath);
+      const ownedIdentity = fs.lstatSync(lock.lockPath, { bigint: true });
+      const cleanup = Reflect.get(
+        globalThis,
+        Symbol.for("fsSafe.syncRootSidecarLockCleanupHandler.v1"),
+      ) as () => void;
+      armed = true;
       cleanup();
-      expect(fs.readFileSync(path.join(original, "state.json.lock"), "utf8")).toBe(raw);
-      expect(fs.readFileSync(path.join(moved, "state.json.lock"), "utf8")).toBe(raw);
+      expect(mutationAssertions).toBe(1);
+      expect(originalMoved && replacementRootCreated && replacementWritten).toBe(true);
+      expect(fs.readFileSync(replacementLockPath)).toEqual(raw);
+      expect(fs.readFileSync(movedLockPath)).toEqual(raw);
+      const replacementIdentity = fs.lstatSync(replacementLockPath, { bigint: true });
+      const movedIdentity = fs.lstatSync(movedLockPath, { bigint: true });
+      expect([movedIdentity.dev, movedIdentity.ino])
+        .toEqual([ownedIdentity.dev, ownedIdentity.ino]);
+      expect([replacementIdentity.dev, replacementIdentity.ino])
+        .not.toEqual([ownedIdentity.dev, ownedIdentity.ino]);
     } finally {
-      fs.rmSync(original, { recursive: true, force: true });
-      fs.renameSync(moved, original);
-      fs.unlinkSync(path.join(original, "state.json.lock"));
-      lock.release();
+      armed = false;
+      if (replacementRootCreated && fs.existsSync(original)) {
+        fs.rmSync(original, { recursive: true, force: true });
+      }
+      if (originalMoved && fs.existsSync(moved) && !fs.existsSync(original)) {
+        fs.renameSync(moved, original);
+      }
+      try {
+        lock.release();
+      } finally {
+        if (fs.existsSync(path.join(original, "state.json.lock"))) {
+          fs.unlinkSync(path.join(original, "state.json.lock"));
+        }
+      }
     }
   });
 });

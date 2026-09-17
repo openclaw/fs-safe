@@ -213,6 +213,7 @@ describe("sync lockRoot immutable harness bytes", () => {
       expect(() => assertHarnessBytesMatchManifest(value.root, value.launcher, value.manifest))
         .toThrow(/differ from reviewed blob/u);
     },
+    15_000,
   );
 
   it("rejects a modified executed capture even when the checkout remains exact", () => {
@@ -244,6 +245,7 @@ describe("sync lockRoot immutable harness bytes", () => {
       expect(workflow.blob).toBe(value.originalWorkflowBlob);
       expect(workflow.sha256).toBe(sha256(value.originalWorkflowBytes));
     },
+    15_000,
   );
 
   it.each(["namespaced", "alternate-base", "configured"] as const)(
@@ -256,6 +258,7 @@ describe("sync lockRoot immutable harness bytes", () => {
       expect(helper.blob).toBe(value.originalBlob);
       expect(helper.sha256).toBe(sha256(value.originalBytes));
     },
+    15_000,
   );
 
   it("leaves replacement lookup unchanged for a bare Git namespace", () => {

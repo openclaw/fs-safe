@@ -117,40 +117,53 @@ describe("synchronous Root-backed file-lock lifecycle", () => {
   it("preserves protected callback and Root release failures together", async () => {
     const directory = await tempRoot("fs-safe-sync-root-with-release-");
     const original = path.join(directory, "root");
-    const moved = path.join(directory, "moved");
     fs.mkdirSync(original);
-    const lockRoot = await root(original);
     const callbackFailure = new Error("protected callback failed");
+    const releaseFailure = new Error("retained Root mutation assertion failed during release");
+    const lockPath = path.join(original, "state.json.lock");
+    let armed = false;
+    let protectedCallbackEntered = false;
+    let releaseAssertions = 0;
+    const lockRoot = await root(original, {
+      assertBeforeMutation: () => {
+        if (!armed) return;
+        releaseAssertions += 1;
+        throw releaseFailure;
+      },
+    });
     let failure: unknown;
     try {
       withFileLockSync(path.join(original, "state.json"), {
         lockRoot,
         payload: () => ({ owner: "test" }),
       }, () => {
-        fs.renameSync(original, moved);
-        fs.mkdirSync(original);
+        protectedCallbackEntered = true;
+        armed = true;
         throw callbackFailure;
       });
     } catch (error) {
       failure = error;
     }
     try {
+      expect(protectedCallbackEntered).toBe(true);
+      expect(releaseAssertions).toBe(1);
       expect(failure).toMatchObject({
         name: "SuppressedError",
-        error: expect.objectContaining({ code: "path-mismatch" }),
       });
+      expect((failure as { error: unknown }).error).toBe(releaseFailure);
       expect((failure as { suppressed: unknown }).suppressed).toBe(callbackFailure);
-      expect(fs.existsSync(path.join(moved, "state.json.lock"))).toBe(true);
+      expect(fs.existsSync(lockPath)).toBe(true);
     } finally {
-      fs.rmdirSync(original);
-      fs.renameSync(moved, original);
-      const cleanup = Reflect.get(
-        globalThis,
-        Symbol.for("fsSafe.syncRootSidecarLockCleanupHandler.v1"),
-      ) as () => void;
-      cleanup();
+      armed = false;
+      if (protectedCallbackEntered && fs.existsSync(lockPath)) {
+        const cleanup = Reflect.get(
+          globalThis,
+          Symbol.for("fsSafe.syncRootSidecarLockCleanupHandler.v1"),
+        ) as () => void;
+        cleanup();
+      }
     }
-    expect(fs.existsSync(path.join(original, "state.json.lock"))).toBe(false);
+    expect(fs.existsSync(lockPath)).toBe(false);
   });
 
   it("preserves a same-owner handle acquired by the final release callback", async () => {
