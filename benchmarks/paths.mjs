@@ -3,6 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { registerFilenameFallbackBenchmarks } from "./filename-fallback-profile.mjs";
+import {
+  registerWindowsOwnerDiagnostic,
+  verifyLivePermissionControl,
+} from "./windows-owner-diagnostic.mjs";
 
 export async function registerPaths({
   api: a,
@@ -13,6 +17,7 @@ export async function registerPaths({
   args,
   native,
   measuredProfiles,
+  onCleanup,
 }) {
   const input = path.join(w, "input.json");
   const error = Object.assign(new Error("synthetic"), { code: "ENOENT" });
@@ -77,7 +82,17 @@ export async function registerPaths({
   });
   add("FsSafeError", () => new a.FsSafeError("invalid-path", "synthetic"), { sync: true, batch: 100 });
   for (const name of ["safeRealpathSync", "safeStatSync", "pathExistsSync"]) add(name, () => a[name](input), { sync: true });
-  for (const name of ["pathExists", "safeStat", "inspectPathPermissions"]) add(name, () => a[name](input));
+  for (const name of ["pathExists", "safeStat"]) add(name, () => a[name](input));
+  add("inspectPathPermissions", () => a.inspectPathPermissions(input), {
+    after: (result) => verifyLivePermissionControl(result),
+  });
+  registerWindowsOwnerDiagnostic({
+    api: a,
+    workspace: w,
+    native,
+    register: add,
+    onCleanup,
+  });
   add("isPathInsideWithRealpath", () => a.isPathInsideWithRealpath(w, input), { sync: true });
   for (const name of ["findExistingAncestor", "canonicalPathFromExistingAncestor"]) add(name, () => a[name](input));
   for (const name of ["resolveAbsolutePathForRead", "resolveAbsolutePathForWrite"]) add(name, () => a[name](input));

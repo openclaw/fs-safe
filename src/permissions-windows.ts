@@ -145,7 +145,7 @@ export async function inspectWindowsPermissions(params: {
     env: params.opts?.env,
     exec: params.opts?.exec ?? defaultPermissionExec,
   });
-  if (owner.error) {
+  if (owner.error !== undefined) {
     const error = `Windows owner inspection failed: ${owner.error}`;
     return { ...unverified, ownerError: owner.error, error, errorDetail: owner.errorDetail, errorCause: owner.errorCause };
   }

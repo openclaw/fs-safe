@@ -1,4 +1,10 @@
 import { sidecarPathSnapshotCases } from "../../benchmarks/sidecar-path-snapshot.mjs";
+import {
+  LIVE_PERMISSION_CONTROL_NAME,
+  WINDOWS_OWNER_DIAGNOSTIC_BENCHMARK_NAME,
+  WINDOWS_OWNER_DIAGNOSTIC_FIXTURE,
+  WINDOWS_OWNER_DIAGNOSTIC_WORKLOAD,
+} from "../../benchmarks/windows-owner-diagnostic.mjs";
 
 function measured(row: object, sampleCount: number, iterations: number) {
   return {
@@ -20,5 +26,12 @@ export function completeSyntheticBenchmarkResults(sampleCount: number, iteration
   return [
     measured({ name: "root" }, sampleCount, iterations),
     ...sidecarRows.map((row) => measured(row, sampleCount, iterations)),
+    measured({ name: LIVE_PERMISSION_CONTROL_NAME }, sampleCount, iterations),
+    measured({
+      name: WINDOWS_OWNER_DIAGNOSTIC_BENCHMARK_NAME,
+      workloadSemantics: "equivalent-output",
+      workloadDetails: WINDOWS_OWNER_DIAGNOSTIC_WORKLOAD,
+      fixturePlacement: WINDOWS_OWNER_DIAGNOSTIC_FIXTURE,
+    }, sampleCount, Math.max(1, Math.floor(iterations / 20))),
   ];
 }

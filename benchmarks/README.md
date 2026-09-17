@@ -39,6 +39,14 @@ cases exclude later close/release, which have their own rows. Representative
 payload assertions run outside measurement. Reads cover 128 B, 64 KiB, 1 MiB,
 2 MiB, the default Root budget of 16 MiB, and an explicit 32 MiB budget;
 writes compare both durability settings without changing package defaults.
+The `inspectPathPermissions/windows-owner-routing-success` row isolates the
+Windows permission route in both native modes. It prefers the native reader on
+Windows when required and otherwise uses prebuilt complete descriptor JSON, so
+process startup does not hide the fallback comparison. Fixture checks and exact
+route/result/call-count verification occur outside timing. The immutable receipt
+records both modes and the native-preferred routing contract. The ordinary
+`inspectPathPermissions` row remains the live platform control and rejects
+unknown-source or insecure fixture results outside timing.
 Thirty-six synchronous file-store directory-mode rows cross existing matching,
 existing mismatched, and wholly new directory chains at depths 0/4/16 with both
 durability and private-mode settings. Fixture creation, mode setup, verification,

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixes and compatibility
+
+- Preserve empty-string Windows owner-query failures as explicit inspection diagnostics, including the original thrown value, instead of losing the owner-error prefix through a truthiness check.
+
+### Validation
+
+- Add public fallback regressions for every falsy JavaScript rejection value and a receipt-bound, all-mode Windows permission-routing benchmark whose setup and verification stay outside timing.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights
