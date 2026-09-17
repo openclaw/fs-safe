@@ -85,6 +85,11 @@ For `fileStore(...).json(rel, options)`, `options.durable` overrides the parent
 file store's durability, while omission or `undefined` inherits it. Modes,
 identity checks, mutation serialization, and sidecar locking are unchanged.
 
+Each `write`, `update`, or `updateOr` invocation captures the retained options'
+`durable` and `trailingNewline` values before queueing, locking, reading, or
+calling the updater. Changes to those options affect later invocations only,
+including when a mutation is waiting behind another operation.
+
 The store does **not** validate the parsed value against `T` at runtime — the cast is unchecked. Wrap with a schema (zod/valibot) if the file might be hand-edited or written by another process you don't control.
 
 ## `read()`

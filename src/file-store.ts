@@ -49,6 +49,24 @@ export type FileStoreWriteOptions = {
   tempPrefix?: string;
 };
 
+function snapshotWriteOptions(
+  options?: FileStoreWriteOptions,
+  durabilityFirst = true,
+): FileStoreWriteOptions | undefined {
+  if (options == null) return undefined;
+  return durabilityFirst ? {
+    maxBytes: options.maxBytes,
+    durable: options.durable,
+    dirMode: options.dirMode,
+    mode: options.mode,
+  } : {
+    maxBytes: options.maxBytes,
+    dirMode: options.dirMode,
+    mode: options.mode,
+    durable: options.durable,
+  };
+}
+
 export type FileStoreReadOptions = RootReadOptions & { encoding?: BufferEncoding };
 
 export type FileStore = {
@@ -206,6 +224,8 @@ export function fileStore(options: FileStoreOptions): FileStore {
       return destination;
     }
     const writeDirMode = writeOptions?.dirMode ?? dirMode;
+    const writeMode = writeOptions?.mode ?? mode;
+    const writeDurable = writeOptions?.durable ?? durable;
     const scopedRoot = await openWritableStoreRoot({
       rootDir,
       dirMode: writeDirMode,
@@ -214,8 +234,8 @@ export function fileStore(options: FileStoreOptions): FileStore {
     await ensureParentInRoot(scopedRoot, safeRelativePath, writeDirMode);
     await scopedRoot.write(safeRelativePath, content, {
       mkdir: false,
-      mode: writeOptions?.mode ?? mode,
-      durable: writeOptions?.durable ?? durable,
+      mode: writeMode,
+      durable: writeDurable,
     });
     return destination;
   }
@@ -231,6 +251,9 @@ export function fileStore(options: FileStoreOptions): FileStore {
       const configuredLimit = normalizeMaxBytes(writeOptions?.maxBytes, { defaultValue: maxBytes });
       const limit = configuredLimit ?? (privateMode ? DEFAULT_ROOT_MAX_BYTES : undefined);
       if (privateMode) {
+        const writeDurable = writeOptions?.durable ?? durable;
+        const writeDirMode = writeOptions?.dirMode ?? dirMode;
+        const writeMode = writeOptions?.mode ?? mode;
         const chunks: Buffer[] = [];
         let total = 0;
         for await (const chunk of stream) {
@@ -244,27 +267,30 @@ export function fileStore(options: FileStoreOptions): FileStore {
           rootDir,
           filePath: destination,
           content: Buffer.concat(chunks),
-          durable: writeOptions?.durable ?? durable,
-          dirMode: writeOptions?.dirMode ?? dirMode,
-          mode: writeOptions?.mode ?? mode,
+          durable: writeDurable,
+          dirMode: writeDirMode,
+          mode: writeMode,
         });
         return destination;
       }
+      const writeMode = writeOptions?.mode ?? mode;
+      const writeDurable = writeOptions?.durable ?? durable;
+      const writeDirMode = writeOptions?.dirMode ?? dirMode;
       const staged = await writeStreamToTempSource({
         stream,
         maxBytes: limit,
-        mode: writeOptions?.mode ?? mode,
+        mode: writeMode,
       });
       try {
         await copyIntoRoot({
           rootDir,
           relativePath: safeRelativePath,
           sourcePath: staged.path,
-          durable: writeOptions?.durable ?? durable,
+          durable: writeDurable,
           maxBytes: limit,
-          mode: writeOptions?.mode ?? mode,
+          mode: writeMode,
           tempPrefix: writeOptions?.tempPrefix,
-          dirMode: writeOptions?.dirMode ?? dirMode,
+          dirMode: writeDirMode,
         });
       } finally {
         await staged.cleanup();
@@ -274,11 +300,19 @@ export function fileStore(options: FileStoreOptions): FileStore {
     copyIn: async (relativePath, sourcePath, writeOptions) => {
       const configuredLimit = normalizeMaxBytes(writeOptions?.maxBytes, { defaultValue: maxBytes });
       if (privateMode) {
+        const policy = writeOptions == null
+          ? undefined
+          : {
+              maxBytes: configuredLimit,
+              durable: writeOptions?.durable,
+              dirMode: writeOptions?.dirMode,
+              mode: writeOptions?.mode,
+            };
         const buffer = await readFileStoreCopySource({
           sourcePath,
           maxBytes: configuredLimit ?? DEFAULT_ROOT_MAX_BYTES,
         });
-        return await write(relativePath, buffer, writeOptions);
+        return await write(relativePath, buffer, policy);
       }
       return await copyIntoRoot({
         rootDir,
@@ -338,11 +372,13 @@ export function fileStore(options: FileStoreOptions): FileStore {
     exists: async (relativePath) => await (await openRoot()).exists(assertRelativePath(relativePath)),
     writeText: async (relativePath, data, writeOptions) => await write(relativePath, data, writeOptions),
     writeJson: async (relativePath, data, writeOptions) => {
+      const trailingNewline = writeOptions?.trailingNewline;
+      const policy = snapshotWriteOptions(writeOptions, privateMode);
       const json = stringifyJsonDocument(data, null, 2);
       return await write(
         relativePath,
-        writeOptions?.trailingNewline === false ? json : `${json}\n`,
-        writeOptions,
+        trailingNewline === false ? json : `${json}\n`,
+        policy,
       );
     },
     json: <T = unknown>(relativePath: string, jsonOptions?: JsonFileStoreOptions) => {
@@ -450,11 +486,13 @@ export function fileStoreSync(options: FileStoreOptions): FileStoreSync {
     write,
     writeText: (relativePath, data, writeOptions) => write(relativePath, data, writeOptions),
     writeJson: (relativePath, data, writeOptions) => {
+      const trailingNewline = writeOptions?.trailingNewline;
+      const policy = snapshotWriteOptions(writeOptions);
       const json = stringifyJsonDocument(data, null, 2);
       return write(
         relativePath,
-        writeOptions?.trailingNewline === false ? json : `${json}\n`,
-        writeOptions,
+        trailingNewline === false ? json : `${json}\n`,
+        policy,
       );
     },
   };
