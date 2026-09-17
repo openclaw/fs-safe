@@ -1,11 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.14.0 - 2026-09-17
 
-- Register the synchronous `lockRoot` performance workflow on the default branch so exact reviewed non-release refs can be dispatched manually. The registration stub fails closed without checkout, repository code execution, or permissions.
-- Report both directory and regular-file kinds from descriptor-relative guest listings without following symlinks.
-- Register the path-prefix performance workflow on the default branch so an exact reviewed non-release ref can be dispatched manually. The default-branch registration stub fails closed without checking out or executing repository code.
-- Reduce repeated filesystem observations during policy-bound native parent creation, Windows compatibility writes and metadata reads, synchronous store-directory permission repair, and missing temporary-root creation. Keep fresh identity, canonical-path, lock-destination, callback, and publication checks at mutation boundaries.
+### Highlights
+
+- **Safer guest directory selection:** descriptor-relative listings now report regular files as well as directories without following symlinks, so consumers can select files without reopening path-type checks.
+
+### Filesystem boundaries and performance
+
+- Report both directory and regular-file kinds from descriptor-relative guest listings. Symlinks and special entries report neither kind.
+- Reduce repeated filesystem observations during policy-bound native parent creation, Windows compatibility writes and metadata reads, synchronous store-directory permission repair, and missing temporary-root creation. Fresh identity, canonical-path, lock-destination, callback, and publication checks remain at mutation boundaries.
+
+### Validation
+
+- Register the path-prefix and synchronous `lockRoot` performance workflows on the default branch. Their dispatch stubs fail closed without checking out or executing repository code.
 
 ## 0.13.1 - 2026-09-16
 
