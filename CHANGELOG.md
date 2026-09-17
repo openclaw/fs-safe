@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Add opt-in input-scaled resource budgets to `probePathSuffixAliasesSync()` for long prospective paths, preserving fixed defaults, identity checks, and cleanup behavior.
+- Add `maxDepth` to `probePathSuffixAliasesSync()` for deeper prospective paths, with proportional operation budgets and unchanged default, string-length, identity, and cleanup limits.
 
 ## 0.14.0 - 2026-09-17
 
