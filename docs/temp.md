@@ -410,6 +410,12 @@ files, hardlinks, and changes between the pre-open pathname, opened descriptor,
 and current pathname are rejected. The callback must finish and close its
 writer before returning. Its return value is preserved as `result`.
 
+Each option is read once before directory creation starts, including both
+callbacks, the temp prefix, isolation, directory and file modes, and sync flags.
+Later changes to the options object do not change the in-flight operation.
+`writeTemp` and `resolveFinalPath` retain their shared internal staging object
+as the callback receiver.
+
 Generated temp filenames suffix Windows reserved-device basenames on every
 platform. Before either an ordinary or isolated producer runs, the completed staging
 name must be a nonempty, non-dot path component with no POSIX or Windows
@@ -536,6 +542,11 @@ await writeViaSiblingTempPath({
 If `replaceFileAtomic` does what you need, prefer that. Use
 `writeViaSiblingTempPath` when the producer needs a concrete temp pathname but
 the final destination still needs root-boundary checks.
+
+The root, target, callback, fallback filename, and temp prefix are read once
+before setup. Later changes to the parameters do not affect the in-flight
+operation; `writeTemp` retains the original parameters object as its receiver.
+
 Its private workspace uses `tempFile()`'s compatible identity-aware cleanup.
 It preserves replacements observed before removal, but retains the final
 pathname-recursive-removal gap described above; this helper does not expose
