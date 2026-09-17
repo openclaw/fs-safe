@@ -4,7 +4,19 @@
 
 - Register the path-prefix performance workflow on the default branch so an exact reviewed non-release ref can be dispatched manually. The default-branch registration stub fails closed without checking out or executing repository code.
 - Reduce repeated filesystem observations during policy-bound native parent creation, Windows compatibility writes and metadata reads, synchronous store-directory permission repair, and missing temporary-root creation. Keep fresh identity, canonical-path, lock-destination, callback, and publication checks at mutation boundaries.
-- Consume raw path-prefix components with a forward cursor so separator-heavy untrusted input cannot trigger repeated whole-suffix moves; symlink expansion, missing-suffix order, and filesystem observations remain unchanged.
+- Bound path-prefix queue front-removal work while retaining shift-based
+  consumption for short paths: after both initial parsing and symlink
+  expansion, queues above 32 raw components use a forward cursor.
+  Missing-suffix order and filesystem observations remain unchanged.
+- Add an independently dispatched, fail-closed path-prefix performance
+  acceptance campaign spanning Linux, macOS, Windows, Node 22/24, balanced
+  orders, native modes, rebuild controls, and exact raw-evidence gates.
+  Bind acceptance to successful preparation and measurement jobs (including
+  artifact uploads), clean source checkpoints across build and measurement,
+  and canonical dependency identity while retaining each installation's raw metadata.
+  Validate pinned pnpm workspace and completed-task metadata, normalize verified
+  checkout-local workspace paths, and bind an independent reviewed build contract
+  while retaining checkout-specific invocation IDs as raw operational evidence.
 
 ## 0.13.1 - 2026-09-16
 

@@ -27,6 +27,26 @@ Each `samplesUs` element is explicitly the average microseconds per call across
 that row's recorded `iterations`; it is not an individual-call latency sample.
 Cheap synchronous functions run batches of 100 calls per requested iteration.
 Expensive archive, durable-store, and large-payload cases use fewer iterations, recorded per row.
+The focused `resolvePathPrefixSync/` campaign freezes eleven portable rows:
+existing, missing, queue lengths 32 and 33, separator-heavy, populated existing
+raw-component queues of 32 and 33, and all four small/large symlink-expansion
+transitions. Windows uses genuine directory junctions for the expansion rows;
+none of the eleven rows may be skipped or replaced by an unsupported-platform
+control. The exact full-method filters `resolvePathPrefixSync` and
+`resolvePathPrefixSync/` activate campaign-local measurement settings: 10,000
+calls per sample for the five short rows and 2,000
+for each populated-depth or symlink row. Before timed samples, every runner
+process position performs exactly one untimed batch of that row's full effective
+iteration count. Every returned `absolutePath`, `existingPath`, and raw suffix is
+retained through its batch timer and checked afterward. Reports record and
+validate actual warmup/timed invocation and verified-result counts, every timed
+sample, and immutable per-row fixture receipts. Those receipts bind the exact
+input, owned workspace depth and identity, effective root spelling, directory-link
+kind and observed target, and initial/target/pending/expanded queue counts. Live
+fixtures are re-observed before warmup and after the final verification, outside
+all timers. Generic runs retain the original existing, missing, and separator-heavy
+rows and construct no deep or link fixtures; their `--iterations` and `--warmup`
+behavior remains unchanged. Inside the full campaign, its receipts are authoritative.
 Inputs are synthetic. Fixture setup and cleanup run outside the timer; callback
 work and cleanup performed *by the method* remain inside it. The Windows
 workspace receives a private ACL before fixture creation so its files inherit
@@ -327,6 +347,107 @@ the remaining package-content identity. This limitation is recorded in every
 report and must not be interpreted as a full installed-tree content hash. The
 addon is resolved relative to the selected measured build, so keep its matching
 platform package available too.
+
+### Path-prefix acceptance campaign
+
+The independently dispatched `path-prefix performance acceptance` workflow is
+the acceptance gate for the bounded path-prefix queue change. It has no
+platform, Node, order, family, block, row, or exclusion selectors. Dispatch it
+with exact reviewed H and C commits and an exact distinct frozen B commit. The
+prepare job freezes and hashes a twelve-cell outer matrix:
+`ubuntu-latest|macos-15|windows-latest` × Node `22|24` × `ABBA|BAAB`.
+Outer jobs use `max-parallel: 1`, all twelve finish with fail-fast disabled,
+and concurrent campaign dispatches queue instead of overlapping.
+
+Every outer job runs three complete comparisons: C versus B source bytes, two
+physically independent builds of C, and candidate/baseline labels over one
+identical C artifact. Each comparison contains native modes `off` and
+`require`, three independent balanced blocks, and all eleven frozen
+`resolvePathPrefixSync/` rows. Each position records nine raw sample averages;
+the focused row receipts remain authoritative for the exact 10,000- or
+2,000-call effective batch counts and fixture observations. A same-source
+control is invalid unless the two dist trees, dependency layouts, and
+native-artifact inventories match, the dist trees live at distinct physical paths, and no
+dist file is hardlinked across the installations. A
+same-artifact control is invalid unless both labels bind the same build and
+physical dist snapshot.
+
+Each build requires a checkout without tracked or untracked changes and a
+descriptor-stable read of live `src/path-prefix.ts` matching the frozen source
+blob. The same file identity and bytes must survive the build and measurement;
+the analyzer revalidates all three lifecycle checkpoints against the snapshots.
+Independent installs compare canonical dependency identities. For pnpm 11.25.0,
+the canonicalizer normalizes validated `.modules.yaml` `prunedAt` and
+checkout-local `virtualStoreDir`, plus `.pnpm-workspace-state-v1.json`'s
+`lastValidatedTimestamp` and absolute project keys after checking that every
+project is a physical directory inside that checkout. All workspace settings,
+project names/versions, pnpmfile entries, filtered-install state and config
+dependencies remain bound. Unknown top-level workspace fields reject.
+
+The filtered native build also creates `.pnpm-task-run-state-v1`. Its reviewed
+semantics come from pinned pnpm commit
+[`6d90c71`](https://github.com/pnpm/pnpm/blob/6d90c71efdffbc909b499490b64c66badc720327/pnpm11/exec/commands/src/taskRunState.ts):
+a successful task run retains its latest header and empty finished marker and
+removes its journal and published marker. Only that complete, quiescent shape is
+accepted, and this workflow requires exactly one completed native invocation.
+Invocation IDs, run generation/UUIDs, latest selection, finished filenames and
+file hashes/sizes remain raw operational receipts. They must be stable within
+each installation. They do not define cross-install dependency equality: pnpm's
+opaque invocation hash includes checkout-absolute `extraBinPaths`, and its full
+input is not persisted. Incomplete journals, published
+markers, locks, unknown entries, duplicate generations and mismatched headers
+reject rather than being excluded from dependency evidence.
+
+Cross-install identity independently binds the reviewed install/build/native-build
+command plan, selected native project, root and native package scripts, source
+commit/tree, package/lock/workspace file hashes, canonical workspace/modules
+settings and observed `NODE_OPTIONS`. The declared pnpm workspace bin path is
+checked as exactly `<checkout>/node_modules/.bin`; command, project and source
+file paths likewise require their exact declared checkout-local locations and
+physical checks before normalization. Unknown shapes and external paths reject.
+The execution receipt is recomputed during aggregation. It identifies the
+reviewed workflow contract and source/configuration inputs; it does not claim
+to reconstruct or verify the unavailable preimage of a raw pnpm invocation ID.
+Meaningful command, script, source or setting differences reject the contract or
+change this independently derived identity. Raw operational metadata is retained
+separately and remains subject to the complete before/after stability gate.
+
+Raw metadata paths, hashes, sizes, original timestamps, project roots and task
+run identities remain in every installation's before/after evidence and must
+remain unchanged. Canonical records replace both file size and hash, so unequal
+checkout-name lengths in modules/workspace state do not change cross-install
+identity. Task-state files remain outside this dependency record list, with their
+complete validated raw inventory retained alongside the execution receipt. The workspace
+timestamp interpretation is pinned to pnpm's
+[`createWorkspaceState`](https://github.com/pnpm/pnpm/blob/6d90c71efdffbc909b499490b64c66badc720327/pnpm11/workspace/state/src/createWorkspaceState.ts).
+Lockfiles, manifests, other layouts and native hashes still bind.
+
+The campaign manifest binds its own bytes and hash; H/C/B requested refs,
+commits, trees, source blobs, manifests, and lockfiles; the tracked benchmark
+file inventory; workflow run and attempt; reviewed workflow and analyzer
+blobs; and the exact outer matrix. Each outer job adds a unique launch nonce
+and actual OS, architecture, Node, hosted image, runner environment, method
+plan hashes, measured dist hashes and physical identities, immutable report
+hashes, raw samples, effective counts, and fixture/execution receipt hashes.
+Final aggregation downloads every job and recomputes every file inventory and
+hash before accepting it. Missing, duplicate, mismatched, failed, excluded, or
+unexpected cells reject the whole campaign. Selective reruns produce a
+different workflow attempt and cannot be mixed into the frozen attempt.
+Aggregation also requires successful preparation and all measurement jobs,
+including their artifact-upload steps. An `ACCEPT` analysis is valid only with a
+successful aggregate job: its own final upload happens after analysis and cannot
+be certified by that earlier file.
+
+For each workload/platform/Node/native-mode/order/family combination, gates are
+applied separately to every block (18 samples per arm) and to the exact pooled
+three-block stream (54 samples per arm). Median regression fails when it is
+greater than 10% **or** greater than 50 microseconds. Maximum raw sample-average
+regression fails when it is greater than 20% **or** greater than 100
+microseconds. A positive candidate over a zero baseline has infinite relative
+regression. Source failures always bind, controls are never subtracted or used
+to cancel a source result, and any failing control rejects acceptance. The
+workflow's analysis is evidence only; adding the contract does not constitute
+a performance pass.
 
 Compare builds on the same host, runtime, filesystem, and native mode. Alternate
 baseline/candidate runs and inspect sample spread; fsync timings and shared-host

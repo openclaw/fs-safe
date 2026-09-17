@@ -20,6 +20,10 @@ import { registerSyncStoreDirectoryModes } from "./sync-store-directory-mode.mjs
 import { registerGuest, validateGuestBenchmarkReport } from "./guest.mjs";
 import { observeFilenameFallbackProfile } from "./filename-fallback-profile.mjs";
 import {
+  measurePathPrefixCampaignCase,
+  validatePathPrefixCampaignReport,
+} from "./path-prefix-campaign.mjs";
+import {
   MEASURED_SOURCE_ARGUMENT_NAMES,
   SAMPLE_SEMANTICS,
   measuredDistributionMetadata,
@@ -136,7 +140,7 @@ let completionMessage;
 const executionFailures = [];
 try {
   cleanup = await registerCore(context);
-  await registerPaths(context);
+  const pathPrefixCampaign = await registerPaths(context);
   await registerLifecycle(context);
   await registerDarwinClone(context);
   await registerArchives(context);
@@ -159,10 +163,13 @@ try {
         workloadSemantics: c.workloadSemantics,
         workloadDetails: c.workloadDetails,
         fixturePlacement: c.fixturePlacement,
+        ...(c.pathPrefixFixtureReceipt
+          ? { pathPrefixFixtureReceipt: c.pathPrefixFixtureReceipt }
+          : {}),
       });
       continue;
     }
-    const iterations = Math.max(1, Math.floor(args.iterations / (c.divisor ?? 1))) *
+    let iterations = Math.max(1, Math.floor(args.iterations / (c.divisor ?? 1))) *
       (c.sync && !c.before && !c.after ? (c.batch ?? 1) : 1);
     const once = async (timed) => {
       const input = await c.before?.();
@@ -192,20 +199,28 @@ try {
       );
       return elapsed;
     };
-    const samplesUs = [];
-    for (let i = 0; i < args.warmup; i++) await once(false);
-    // Always run one checked call, including --warmup 0.
-    await once(false);
-    for (let sample = 0; sample < args.samples; sample++) {
-      let elapsed = 0;
-      if (c.sync && !c.before && !c.after && !c.expectError) {
-        const start = performance.now();
-        for (let i = 0; i < iterations; i++) c.run();
-        elapsed = performance.now() - start;
-      } else {
-        for (let i = 0; i < iterations; i++) elapsed += await once(true);
+    let samplesUs = [];
+    let pathPrefixCampaignReceipt;
+    if (pathPrefixCampaign && c.pathPrefixCampaign) {
+      const measured = measurePathPrefixCampaignCase(c, args.samples);
+      iterations = measured.iterations;
+      samplesUs = measured.samplesUs;
+      pathPrefixCampaignReceipt = measured.receipt;
+    } else {
+      for (let i = 0; i < args.warmup; i++) await once(false);
+      // Always run one checked call, including --warmup 0.
+      await once(false);
+      for (let sample = 0; sample < args.samples; sample++) {
+        let elapsed = 0;
+        if (c.sync && !c.before && !c.after && !c.expectError) {
+          const start = performance.now();
+          for (let i = 0; i < iterations; i++) c.run();
+          elapsed = performance.now() - start;
+        } else {
+          for (let i = 0; i < iterations; i++) elapsed += await once(true);
+        }
+        samplesUs.push(elapsed * 1000 / iterations);
       }
-      samplesUs.push(elapsed * 1000 / iterations);
     }
     const sorted = [...samplesUs].sort((a, b) => a - b);
     const medianUs = (sorted[Math.floor((sorted.length - 1) / 2)] + sorted[Math.floor(sorted.length / 2)]) / 2;
@@ -219,6 +234,10 @@ try {
       workloadSemantics: c.workloadSemantics,
       workloadDetails: c.workloadDetails,
       fixturePlacement: c.fixturePlacement,
+      ...(c.pathPrefixFixtureReceipt
+        ? { pathPrefixFixtureReceipt: c.pathPrefixFixtureReceipt }
+        : {}),
+      ...(pathPrefixCampaignReceipt ? { pathPrefixCampaignReceipt } : {}),
     };
     results.push(result);
     process.stderr.write(`${c.name}: ${medianUs.toFixed(2)} us/call\n`);
@@ -232,6 +251,7 @@ try {
       distHash,
       measuredDistribution,
       guest,
+      ...(pathPrefixCampaign ? { pathPrefixCampaign } : {}),
       sampleSemantics: SAMPLE_SEMANTICS,
       harnessRevision: execFileSync("git", ["rev-parse", "HEAD"], {
         cwd: packageRoot,
@@ -255,6 +275,7 @@ try {
     results,
   };
   validateGuestBenchmarkReport(completedReport, args.filter);
+  validatePathPrefixCampaignReport(completedReport, args.filter);
   completionMessage = `Measured ${results.filter((r) => !r.skipped).length} cases; ${required.length} callable exports/methods accounted for. Native ${args.mode}: ${native ? "loaded" : "off/unavailable"}.\n`;
 } catch (error) {
   executionFailures.push(error);

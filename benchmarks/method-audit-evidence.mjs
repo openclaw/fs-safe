@@ -17,6 +17,12 @@ import {
 } from "./method-audit-plan.mjs";
 import { profileForFilenameSource } from "./filename-fallback-profile.mjs";
 import { measuredSourceBinding } from "./measured-distribution.mjs";
+import {
+  PNPM_METADATA_SOURCE, PNPM_TASK_STATE, PNPM_WORKSPACE_STATE,
+  canonicalPathPrefixExecutionIdentity, canonicalPnpmDependencyRecords, canonicalPnpmModules,
+  canonicalPnpmTaskState, canonicalPnpmWorkspaceState,
+} from "./method-audit-dependency-identity.mjs";
+import { collectPathPrefixSourceBinding } from "./path-prefix-source-binding.mjs";
 
 const MAX_FILE_BYTES = 256 * 1024 * 1024;
 const DIST_LIMITS = Object.freeze({ maxEntries: 20_000, maxBytes: 1024 * 1024 * 1024 });
@@ -181,16 +187,100 @@ function hashDistTree(distRoot) {
   return { algorithm: "bounded-tree-sha256-v1", hash: digestJson(records), entries, bytes };
 }
 
-function shouldHashDependency(relative) {
-  const base = path.posix.basename(relative);
-  return base === "package.json" || base === ".modules.yaml" || base === "lock.yaml" ||
-    base === "pnpm-lock.yaml" || relative.endsWith(".node");
+function physicalDistSnapshot(distRoot) {
+  const root = assertRealDirectory(distRoot, "dist root");
+  const rootStat = fs.lstatSync(root, { bigint: true });
+  const entries = [];
+  let count = 0;
+  const identity = (stat) => ({
+    dev: String(stat.dev),
+    ino: String(stat.ino),
+    nlink: String(stat.nlink),
+  });
+  const walk = (directory, relativeDirectory) => {
+    for (const name of fs.readdirSync(directory).sort()) {
+      count += 1;
+      if (count > DIST_LIMITS.maxEntries) fail("dist physical snapshot exceeds the entry limit");
+      const full = path.join(directory, name);
+      const relative = slash(path.join(relativeDirectory, name));
+      const stat = fs.lstatSync(full, { bigint: true });
+      if (stat.isSymbolicLink()) fail(`dist physical snapshot contains a link: ${relative}`);
+      if (stat.isDirectory()) {
+        entries.push({ path: `${relative}/`, type: "directory", ...identity(stat) });
+        walk(full, relative);
+      } else if (stat.isFile()) {
+        if (stat.nlink !== 1n) fail(`dist physical snapshot contains a hardlinked file: ${relative}`);
+        entries.push({ path: relative, type: "file", size: Number(stat.size), ...identity(stat) });
+      } else {
+        fail(`dist physical snapshot contains an unsupported entry: ${relative}`);
+      }
+    }
+  };
+  walk(root, "");
+  return {
+    schemaVersion: 1,
+    path: root,
+    realpath: fs.realpathSync.native(root),
+    identity: identity(rootStat),
+    entries,
+  };
 }
 
-function snapshotDependencies(checkoutRoot) {
+function shouldHashDependency(relative, canonical = false) {
+  const base = path.posix.basename(relative);
+  return base === "package.json" || base === ".modules.yaml" || base === "lock.yaml" ||
+    base === "pnpm-lock.yaml" || relative.endsWith(".node") ||
+    (canonical && (relative === PNPM_WORKSPACE_STATE || relative.startsWith(`${PNPM_TASK_STATE}/`)));
+}
+
+function independentExecutionIdentity(checkout, replacements) {
+  const names = ["package.json", "native/package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"];
+  const inspected = names.map(name => {
+    const file = path.join(checkout, ...name.split("/"));
+    const observed = inspectFile(file, MAX_FILE_BYTES, true);
+    return { file, bytes: observed.bytes, sha256: observed.receipt.sha256, size: observed.receipt.size };
+  });
+  const rootManifest = JSON.parse(inspected[0].bytes.toString("utf8"));
+  const nativeManifest = JSON.parse(inspected[1].bytes.toString("utf8"));
+  const raw = {
+    schemaVersion: 1,
+    packageManager: rootManifest.packageManager,
+    commands: [
+      ["pnpm", "--dir", checkout, "install", "--frozen-lockfile"],
+      ["pnpm", "--dir", checkout, "build"],
+      ["pnpm", "--dir", checkout, "native:build"],
+    ],
+    taskPlan: { command: "run", params: ["build"], project: path.join(checkout, "native"), packageName: nativeManifest.name },
+    scripts: { root: rootManifest.scripts, native: nativeManifest.scripts },
+    settings: { extraBinPaths: [path.join(checkout, "node_modules", ".bin")], modulesDir: "node_modules",
+      nodeOptions: process.env.NODE_OPTIONS ?? "",
+      workspaceStateHash: replacements.get(PNPM_WORKSPACE_STATE).sha256,
+      modulesStateHash: replacements.get(".modules.yaml").sha256 },
+    source: { commit: gitText(checkout, ["rev-parse", "HEAD"]), tree: gitText(checkout, ["rev-parse", "HEAD^{tree}"]) },
+    files: inspected.map(({ file, sha256, size }) => ({ path: file, sha256, size })),
+  };
+  // This binds the explicit reviewed workflow contract and source/configuration
+  // bytes. It does not claim to recover pnpm's unavailable invocation preimage.
+  const canonical = canonicalPathPrefixExecutionIdentity(raw, checkout, file => {
+    if (inspected.some(entry => entry.file === file)) {
+      const physical = fs.realpathSync.native(file);
+      if (process.platform === "win32" ? physical.toLowerCase() !== file.toLowerCase() : physical !== file) {
+        fail("execution source file must have a physical path");
+      }
+    } else assertRealDirectory(file, "execution directory");
+  });
+  return { raw, canonical };
+}
+
+function snapshotDependencies(checkoutRoot, canonical = false) {
   const checkout = assertRealDirectory(checkoutRoot, "checkout root");
   const dependencyRoot = assertRealDirectory(path.join(checkout, "node_modules"), "dependency root");
   const records = [];
+  const canonicalRecords = new Map();
+  let modulesMetadata;
+  let workspaceMetadata;
+  const taskStateFiles = [];
+  const taskRawReceipts = [];
   const nativeArtifacts = [];
   let entries = 0;
   let hashedBytes = 0;
@@ -202,6 +292,17 @@ function snapshotDependencies(checkoutRoot) {
       const relative = slash(path.join(relativeDirectory, name));
       if (Buffer.byteLength(relative, "utf8") > 4096) fail("dependency layout contains an oversized path");
       const stat = fs.lstatSync(full, { bigint: true });
+      const taskFile = relative.startsWith(`${PNPM_TASK_STATE}/`);
+      const normalizedMetadata = relative === ".modules.yaml" || relative === PNPM_WORKSPACE_STATE || taskFile;
+      if (canonical && normalizedMetadata && (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1n)) {
+        fail(`pnpm metadata is not an independent regular file: ${relative}`);
+      }
+      if (canonical && relative === PNPM_TASK_STATE && (!stat.isDirectory() || stat.isSymbolicLink())) {
+        fail("pnpm task state is not a physical directory");
+      }
+      if (canonical && taskFile && relative.slice(PNPM_TASK_STATE.length + 1).includes("/")) {
+        fail("pnpm task state contains an unexpected nested path");
+      }
       if (stat.isSymbolicLink()) {
         const target = fs.realpathSync.native(full);
         const targetRelative = slash(assertInside(checkout, target, `dependency link ${relative}`));
@@ -212,11 +313,29 @@ function snapshotDependencies(checkoutRoot) {
       } else if (stat.isFile()) {
         if (stat.size > BigInt(Number.MAX_SAFE_INTEGER)) fail(`dependency file is too large to identify: ${relative}`);
         const record = { path: relative, type: "file", size: Number(stat.size) };
-        if (shouldHashDependency(relative)) {
-          const identity = hashFile(full);
+        if (shouldHashDependency(relative, canonical)) {
+          const inspected = inspectFile(full, MAX_FILE_BYTES, canonical && normalizedMetadata);
+          const identity = { sha256: inspected.receipt.sha256, size: inspected.receipt.size };
           hashedBytes += identity.size;
           if (hashedBytes > DEPENDENCY_LIMITS.maxHashedBytes) fail("dependency layout exceeds the evidence hash byte limit");
           record.sha256 = identity.sha256;
+          if (canonical && relative === ".modules.yaml") {
+            const normalized = canonicalPnpmModules(inspected.bytes, checkout);
+            modulesMetadata = { path: relative, ...identity,
+              prunedAt: normalized.prunedAt, virtualStoreDir: normalized.virtualStoreDir };
+            canonicalRecords.set(relative, { path: relative, type: "file", size: normalized.size,
+              sha256: normalized.sha256 });
+          } else if (canonical && relative === PNPM_WORKSPACE_STATE) {
+            const normalized = canonicalPnpmWorkspaceState(inspected.bytes, checkout,
+              project => assertRealDirectory(project, "pnpm workspace project"));
+            workspaceMetadata = { path: relative, ...identity,
+              lastValidatedTimestamp: normalized.lastValidatedTimestamp, projectRoots: normalized.projectRoots };
+            canonicalRecords.set(relative, { path: relative, type: "file", size: normalized.size,
+              sha256: normalized.sha256 });
+          } else if (canonical && taskFile) {
+            taskStateFiles.push({ path: relative.slice(PNPM_TASK_STATE.length + 1), bytes: inspected.bytes });
+            taskRawReceipts.push({ path: relative, ...identity });
+          }
           if (relative.endsWith(".node")) nativeArtifacts.push({ path: `node_modules/${relative}`, ...identity });
         }
         records.push(record);
@@ -226,6 +345,12 @@ function snapshotDependencies(checkoutRoot) {
     }
   };
   walk(dependencyRoot, "");
+  if (canonical && !modulesMetadata) fail("canonical dependency identity requires pnpm modules metadata");
+  if (canonical && !workspaceMetadata) fail("canonical dependency identity requires pnpm workspace state");
+  const taskState = canonical ? canonicalPnpmTaskState(taskStateFiles) : null;
+  const executionIdentity = canonical ? independentExecutionIdentity(checkout, canonicalRecords) : null;
+  const normalizedRecords = canonical ? canonicalPnpmDependencyRecords(records, canonicalRecords, taskState,
+    executionIdentity.canonical) : null;
   return {
     snapshot: {
       schemaVersion: 1,
@@ -235,6 +360,17 @@ function snapshotDependencies(checkoutRoot) {
       hashedBytes,
       limits: { ...DEPENDENCY_LIMITS },
       limitation: DEPENDENCY_LIMITATION,
+      ...(canonical ? {
+        canonical: { schemaVersion: 2, scope: "pnpm-install-and-build-identity-v2",
+          hash: digestJson({ dependencies: normalizedRecords, execution: executionIdentity.canonical }),
+          entries: normalizedRecords.length, executionHash: executionIdentity.canonical.sha256 },
+        executionIdentity,
+        modulesMetadata,
+        workspaceMetadata,
+        taskMetadata: { schemaVersion: 1, sourceCommit: PNPM_METADATA_SOURCE,
+          latest: taskState.latest, completedInvocations: taskState.completedInvocations,
+          files: taskRawReceipts },
+      } : {}),
     },
     nativeArtifacts,
   };
@@ -319,14 +455,16 @@ function gitCheckoutIdentity(root, expected, role) {
   };
 }
 
-function installationSnapshot(root, source, role) {
+function installationSnapshot(root, source, role, pathPrefix = false) {
   const checkout = gitCheckoutIdentity(root, source, role);
   const distRoot = path.join(root, "dist");
-  const dependencies = snapshotDependencies(root);
+  const dependencies = snapshotDependencies(root, pathPrefix);
   return {
     installationSchemaVersion: 1,
     ...checkout,
+    ...(pathPrefix ? { pathPrefixSourceBinding: collectPathPrefixSourceBinding(root) } : {}),
     distTreeHash: hashDistTree(distRoot),
+    distPhysicalSnapshot: physicalDistSnapshot(distRoot),
     runnerDistHash: runnerDistHash(distRoot),
     dependencySnapshot: dependencies.snapshot,
     nativeArtifacts: collectStagedNative(root, dependencies.nativeArtifacts),
@@ -366,6 +504,7 @@ function verifyHarnessCheckout(plan, harnessRoot) {
 }
 
 function createSnapshot(plan, roots) {
+  const pathPrefix = ["resolvePathPrefixSync/", "resolvePathPrefixSync"].includes(plan.settings.filter);
   const harnessCheckout = verifyHarnessCheckout(plan, roots.harness);
   const harnessDependencies = snapshotDependencies(roots.harness).snapshot;
   const checkouts = {
@@ -373,10 +512,15 @@ function createSnapshot(plan, roots) {
     baseline: null,
   };
   if (plan.sources.baseline) checkouts.baseline = gitCheckoutIdentity(roots.baseline, plan.sources.baseline, "baseline");
+  if (pathPrefix) {
+    for (const role of ["candidate", "baseline"]) {
+      if (checkouts[role]) checkouts[role].pathPrefixSourceBinding = collectPathPrefixSourceBinding(roots[role]);
+    }
+  }
   const builds = {};
   for (const build of plan.builds) {
     const root = roots[build.checkout];
-    builds[build.id] = installationSnapshot(root, plan.sources[build.sourceRole], build.sourceRole);
+    builds[build.id] = installationSnapshot(root, plan.sources[build.sourceRole], build.sourceRole, pathPrefix);
   }
   return {
     schemaVersion: 1,
@@ -563,6 +707,7 @@ function runnerMetadata() {
     githubRunId: process.env.GITHUB_RUN_ID,
     githubRunAttempt: process.env.GITHUB_RUN_ATTEMPT,
     githubJob: process.env.GITHUB_JOB,
+    campaignLaunchNonce: process.env.METHOD_CAMPAIGN_LAUNCH_NONCE || null,
   };
 }
 

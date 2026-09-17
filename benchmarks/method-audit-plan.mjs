@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { validateFilenameFallbackProfile } from "./filename-fallback-profile.mjs";
 import { measuredSourceArguments, validateMeasuredDistribution } from "./measured-distribution.mjs";
+import { pathPrefixCampaignMetadata } from "./path-prefix-campaign.mjs";
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/iu;
 const CONTROL_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u;
@@ -305,13 +306,24 @@ export function createRunnerArguments({ runnerFile, distRoot, reportFile, mode, 
     "--mode", mode,
     "--iterations", String(settings.iterations),
     "--samples", String(settings.samples),
-    "--warmup", "3",
+    "--warmup", pathPrefixCampaignMetadata(settings.filter) ? "0" : "3",
     "--json", reportFile,
     "--dist", distRoot,
   ];
   if (settings.filter) args.push("--filter", settings.filter);
   if (measuredSource) args.push(...measuredSourceArguments(measuredSource));
   return args;
+}
+
+export function pathPrefixMeasurementProvenance(settings, reportMetadata = {}) {
+  const expected = pathPrefixCampaignMetadata(settings.filter);
+  const actual = reportMetadata.pathPrefixCampaign;
+  if (!expected) {
+    if (actual !== undefined) fail("generic report contains unexpected path-prefix campaign provenance");
+    return { warmup: 3, specializedMeasurement: null };
+  }
+  if (!actual) fail("focused path-prefix report is missing specialized measurement provenance");
+  return { warmup: 0, specializedMeasurement: actual };
 }
 
 export function validatePlanHash(plan) {
@@ -431,6 +443,7 @@ export function createReportEvidence(plan, reportPlan, report, snapshot, runner,
   const buildPlan = buildForReport(plan, reportPlan);
   const source = plan.sources[reportPlan.role];
   const build = snapshot.builds[reportPlan.buildId];
+  const pathPrefixProvenance = pathPrefixMeasurementProvenance(plan.settings, report.metadata);
   return {
     schemaVersion: 1,
     planHash: plan.planHash,
@@ -472,7 +485,7 @@ export function createReportEvidence(plan, reportPlan, report, snapshot, runner,
       mode: reportPlan.mode,
       iterations: plan.settings.iterations,
       samples: plan.settings.samples,
-      warmup: 3,
+      ...pathPrefixProvenance,
       filter: plan.settings.filter,
       runnerOutputReceipt: outputReceipt,
     },
@@ -481,6 +494,7 @@ export function createReportEvidence(plan, reportPlan, report, snapshot, runner,
       manifestHash: build.manifestHash,
       lockfileHash: build.lockfileHash,
       distTreeHash: build.distTreeHash,
+      distPhysicalSnapshot: build.distPhysicalSnapshot,
       dependencySnapshot: build.dependencySnapshot,
       nativeArtifacts: build.nativeArtifacts,
       loadedNativeHash: report.metadata.nativeHash,

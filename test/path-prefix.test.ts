@@ -9,6 +9,18 @@ import { itPosix, itWin32, useRealTempDirs } from "./helpers/vitest.js";
 const { tempRoot, tempDirs } = useRealTempDirs();
 afterEach(() => vi.restoreAllMocks());
 const directoryLink = process.platform === "win32" ? "junction" : "dir";
+const SHIFT_QUEUE_COMPONENT_LIMIT = 32;
+
+function resolveAndCountMarkedShifts(input: string, markers: readonly string[]) {
+  const shift = Array.prototype.shift;
+  let markedShifts = 0;
+  vi.spyOn(Array.prototype, "shift").mockImplementation(function (this: unknown[]) {
+    if (markers.every(marker => this.includes(marker))) markedShifts++;
+    return shift.call(this);
+  });
+  const result = resolvePathPrefixSync(input);
+  return { result, markedShifts };
+}
 
 describe("resolvePathPrefixSync", () => {
   itWin32("resolves namespace drive roots and their immediately missing children", async ({ skip }) => {
@@ -67,6 +79,23 @@ describe("resolvePathPrefixSync", () => {
     });
   });
 
+  it.each([
+    { queueLength: SHIFT_QUEUE_COMPONENT_LIMIT, expectedShifts: SHIFT_QUEUE_COMPONENT_LIMIT },
+    { queueLength: SHIFT_QUEUE_COMPONENT_LIMIT + 1, expectedShifts: 0 },
+  ])("uses the bounded queue mode for an initial queue of $queueLength components", ({
+    queueLength, expectedShifts,
+  }) => {
+    const root = path.parse(process.cwd()).root;
+    const marker = `.fs-safe-prefix-queue-${randomUUID()}`;
+    const input = `${root}${path.sep.repeat(queueLength - 1)}${marker}`;
+    expect(fs.existsSync(path.join(root, marker))).toBe(false);
+
+    const { result, markedShifts } = resolveAndCountMarkedShifts(input, [marker]);
+
+    expect(result.unresolvedSegments).toEqual([marker]);
+    expect(markedShifts).toBe(expectedShifts);
+  });
+
   it.each(["absolute", "relative"])("resolves %s link/.. from the physical target", async form => {
     const rawDirectory = form === "relative"
       ? fs.mkdtempSync(path.join(process.cwd(), ".fs-safe-prefix-parent-"))
@@ -118,6 +147,50 @@ describe("resolvePathPrefixSync", () => {
       existingPath: path.join(directory, "existing"),
       unresolvedSegments: ["missing", "", "target", "caller", "", "tail", ""],
     });
+  });
+
+  itPosix.each([
+    { expandedLength: SHIFT_QUEUE_COMPONENT_LIMIT, expectedShifts: SHIFT_QUEUE_COMPONENT_LIMIT - 1 },
+    { expandedLength: SHIFT_QUEUE_COMPONENT_LIMIT + 1, expectedShifts: 0 },
+  ])("selects queue mode again after a symlink expands to $expandedLength components", async ({
+    expandedLength, expectedShifts,
+  }) => {
+    const directory = await tempRoot("fs-safe-prefix-queue-link-");
+    const existingName = `existing-${randomUUID()}`;
+    const missing = `missing-${randomUUID()}`;
+    const caller = `caller-${randomUUID()}`;
+    fs.mkdirSync(path.join(directory, existingName));
+    const targetSegments = [
+      existingName,
+      ...Array(expandedLength - 3).fill(""),
+      missing,
+    ];
+    fs.symlinkSync(targetSegments.join(path.sep), path.join(directory, "alias"));
+
+    const { result, markedShifts } = resolveAndCountMarkedShifts(
+      `${directory}${path.sep}alias${path.sep}${caller}`,
+      [missing, caller],
+    );
+
+    expect(result.unresolvedSegments).toEqual([missing, caller]);
+    expect(markedShifts).toBe(expectedShifts);
+  });
+
+  itPosix("returns to bounded shifting when a large queue expands to a small queue", async () => {
+    const directory = await tempRoot("fs-safe-prefix-queue-shrink-");
+    const existingName = `existing-${randomUUID()}`;
+    const missing = `missing-${randomUUID()}`;
+    const caller = `caller-${randomUUID()}`;
+    fs.mkdirSync(path.join(directory, existingName));
+    fs.symlinkSync(`${existingName}${path.sep}${missing}`, path.join(directory, "alias"));
+    const input = `${directory}${path.sep.repeat(SHIFT_QUEUE_COMPONENT_LIMIT + 1)}alias${path.sep}${caller}`;
+    expect(input.slice(path.parse(input).root.length).split(path.sep).length)
+      .toBeGreaterThan(SHIFT_QUEUE_COMPONENT_LIMIT);
+
+    const { result, markedShifts } = resolveAndCountMarkedShifts(input, [missing, caller]);
+
+    expect(result.unresolvedSegments).toEqual([missing, caller]);
+    expect(markedShifts).toBe(2);
   });
 
   it("allows a repeated symlink with a different remaining suffix", async () => {

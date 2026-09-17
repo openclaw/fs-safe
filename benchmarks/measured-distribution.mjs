@@ -9,6 +9,10 @@ import {
   validateSidecarPathSnapshotWorkloadResult,
 } from "./sidecar-path-snapshot.mjs";
 import { validateGuestBenchmarkReport } from "./guest.mjs";
+import {
+  validatePathPrefixCampaignReport,
+  validatePathPrefixCampaignWorkloadResult,
+} from "./path-prefix-campaign.mjs";
 
 const SHA1 = /^[0-9a-f]{40}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
@@ -145,8 +149,10 @@ export function validateMeasuredDistribution(plan, reportPlan, report, expectedD
     }
     validateTempWorkspaceWorkloadResult(result);
     validateSidecarPathSnapshotWorkloadResult(result);
+    validatePathPrefixCampaignWorkloadResult(result);
   }
   validateSidecarPathSnapshotReport(report, plan.settings.filter, plan.settings.iterations);
+  validatePathPrefixCampaignReport(report, plan.settings.filter);
 }
 
 export const MEASURED_SOURCE_ARGUMENT_NAMES = Object.freeze(

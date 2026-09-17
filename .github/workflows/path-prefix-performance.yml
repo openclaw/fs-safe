@@ -16,20 +16,444 @@ on:
         required: true
         type: string
 
-permissions: {}
+permissions:
+  contents: read
 
 concurrency:
   group: path-prefix-performance-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
-  registration-only:
-    name: Refuse registration-only execution
+  prepare:
+    name: Freeze path-prefix campaign
     runs-on: ubuntu-latest
-    timeout-minutes: 1
-    steps:
-      - name: Require an exact reviewed campaign ref
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.campaign.outputs.matrix }}
+      campaign_hash: ${{ steps.campaign.outputs.campaign_hash }}
+      manifest_file_sha256: ${{ steps.campaign.outputs.manifest_file_sha256 }}
+      harness_sha: ${{ steps.campaign.outputs.harness_sha }}
+      candidate_sha: ${{ steps.campaign.outputs.candidate_sha }}
+      baseline_sha: ${{ steps.campaign.outputs.baseline_sha }}
+    defaults:
+      run:
         shell: bash
+    steps:
+      - name: Configure byte-exact checkout
         run: |
-          printf '%s\n' 'Registration only; dispatch an exact reviewed campaign ref.' >&2
-          exit 1
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+      - name: Check out reviewed harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: harness
+      - name: Set up manifest runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      - name: Freeze exact campaign manifest
+        id: campaign
+        env:
+          PATH_PREFIX_EXPECTED_HARNESS_SHA: ${{ inputs.expected_harness_sha }}
+          PATH_PREFIX_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          PATH_PREFIX_BASELINE_SHA: ${{ inputs.baseline_sha }}
+        run: |
+          node "$GITHUB_WORKSPACE/harness/benchmarks/path-prefix-performance-evidence.mjs" prepare \
+            --harness-root "$GITHUB_WORKSPACE/harness" \
+            --output "$RUNNER_TEMP/path-prefix-performance-manifest.json"
+      - name: Upload frozen campaign manifest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: path-prefix-performance-manifest-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/path-prefix-performance-manifest.json
+          if-no-files-found: error
+
+  path-prefix-study:
+    needs: prepare
+    name: Path prefix (${{ matrix.platform }}, Node ${{ matrix.nodeVersion }}, ${{ matrix.order }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      HARNESS_ROOT: ${{ github.workspace }}/harness
+      CANDIDATE_ROOT: ${{ github.workspace }}/candidate
+      BASELINE_ROOT: ${{ github.workspace }}/baseline
+      JOB_ROOT: ${{ github.workspace }}/path-prefix-job
+      CAMPAIGN_FILE_HASH: ${{ needs.prepare.outputs.manifest_file_sha256 }}
+      METHOD_MATRIX_PLATFORM: ${{ matrix.platform }}
+    steps:
+      - name: Configure byte-exact checkouts
+        if: always()
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+          printf 'CAMPAIGN_FILE=%s/path-prefix-campaign/path-prefix-performance-manifest.json\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Download frozen campaign manifest
+        if: always()
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: path-prefix-performance-manifest-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/path-prefix-campaign
+      - name: Check out reviewed harness
+        if: always()
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.harness_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: harness
+      - name: Check out exact candidate
+        if: always()
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.candidate_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: candidate
+      - name: Check out exact source baseline
+        if: always()
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.baseline_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: baseline
+      - name: Set up pnpm
+        if: always()
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.25.0
+          run_install: false
+      - name: Set up exact Node major
+        if: always()
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.nodeVersion }}
+      - name: Initialize immutable outer-job receipt
+        if: always()
+        id: start
+        env:
+          PATH_PREFIX_MATRIX_OS: ${{ matrix.os }}
+          PATH_PREFIX_MATRIX_ORDER: ${{ matrix.order }}
+        run: |
+          mkdir -p "$JOB_ROOT"
+          node "$HARNESS_ROOT/benchmarks/path-prefix-performance-evidence.mjs" start-job \
+            --campaign "$CAMPAIGN_FILE" \
+            --expected-campaign-file-hash "$CAMPAIGN_FILE_HASH" \
+            --job-id "${{ matrix.id }}" \
+            --output "$JOB_ROOT/job-start.json"
+      - name: Freeze the three comparison plans
+        if: always()
+        id: source_plan
+        env:
+          METHOD_PLATFORM: ${{ matrix.platform }}
+          METHOD_COMPARE_REF: ${{ needs.prepare.outputs.baseline_sha }}
+          METHOD_CANDIDATE_REF: ${{ needs.prepare.outputs.candidate_sha }}
+          METHOD_ITERATIONS: "10000"
+          METHOD_SAMPLES: "9"
+          METHOD_FILTER: resolvePathPrefixSync/
+          METHOD_ORDER: ${{ matrix.order }}
+          METHOD_BLOCKS: "3"
+          METHOD_NATIVE_MODE: both
+          METHOD_NODE_VERSION: ${{ matrix.nodeVersion }}
+          METHOD_CONTROL: rebuild
+          METHOD_TIMEOUT_MINUTES: "120"
+          METHOD_EXPECTED_HARNESS_SHA: ${{ needs.prepare.outputs.harness_sha }}
+          METHOD_WORKFLOW_SHA: ${{ needs.prepare.outputs.harness_sha }}
+          METHOD_EVENT_SHA: ${{ github.sha }}
+          METHOD_WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          mkdir -p "$JOB_ROOT/source-comparison"
+          node "$HARNESS_ROOT/benchmarks/method-audit-evidence.mjs" prepare \
+            --harness-root "$HARNESS_ROOT" \
+            --output "$JOB_ROOT/source-comparison/method-audit-plan.json"
+      - name: Freeze same-source-rebuild plan
+        if: always()
+        id: rebuild_plan
+        env:
+          METHOD_PLATFORM: ${{ matrix.platform }}
+          METHOD_COMPARE_REF: ${{ needs.prepare.outputs.candidate_sha }}
+          METHOD_CANDIDATE_REF: ${{ needs.prepare.outputs.candidate_sha }}
+          METHOD_ITERATIONS: "10000"
+          METHOD_SAMPLES: "9"
+          METHOD_FILTER: resolvePathPrefixSync/
+          METHOD_ORDER: ${{ matrix.order }}
+          METHOD_BLOCKS: "3"
+          METHOD_NATIVE_MODE: both
+          METHOD_NODE_VERSION: ${{ matrix.nodeVersion }}
+          METHOD_CONTROL: rebuild
+          METHOD_TIMEOUT_MINUTES: "120"
+          METHOD_EXPECTED_HARNESS_SHA: ${{ needs.prepare.outputs.harness_sha }}
+          METHOD_WORKFLOW_SHA: ${{ needs.prepare.outputs.harness_sha }}
+          METHOD_EVENT_SHA: ${{ github.sha }}
+          METHOD_WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          mkdir -p "$JOB_ROOT/same-source-rebuild"
+          node "$HARNESS_ROOT/benchmarks/method-audit-evidence.mjs" prepare \
+            --harness-root "$HARNESS_ROOT" \
+            --output "$JOB_ROOT/same-source-rebuild/method-audit-plan.json"
+      - name: Freeze same-artifact plan
+        if: always()
+        id: artifact_plan
+        env:
+          METHOD_PLATFORM: ${{ matrix.platform }}
+          METHOD_COMPARE_REF: ${{ needs.prepare.outputs.candidate_sha }}
+          METHOD_CANDIDATE_REF: ${{ needs.prepare.outputs.candidate_sha }}
+          METHOD_ITERATIONS: "10000"
+          METHOD_SAMPLES: "9"
+          METHOD_FILTER: resolvePathPrefixSync/
+          METHOD_ORDER: ${{ matrix.order }}
+          METHOD_BLOCKS: "3"
+          METHOD_NATIVE_MODE: both
+          METHOD_NODE_VERSION: ${{ matrix.nodeVersion }}
+          METHOD_CONTROL: same-artifact
+          METHOD_TIMEOUT_MINUTES: "120"
+          METHOD_EXPECTED_HARNESS_SHA: ${{ needs.prepare.outputs.harness_sha }}
+          METHOD_WORKFLOW_SHA: ${{ needs.prepare.outputs.harness_sha }}
+          METHOD_EVENT_SHA: ${{ github.sha }}
+          METHOD_WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          mkdir -p "$JOB_ROOT/same-artifact"
+          node "$HARNESS_ROOT/benchmarks/method-audit-evidence.mjs" prepare \
+            --harness-root "$HARNESS_ROOT" \
+            --output "$JOB_ROOT/same-artifact/method-audit-plan.json"
+      - name: Verify all three reviewed harness bindings
+        if: always()
+        run: |
+          node "$HARNESS_ROOT/benchmarks/method-audit-evidence.mjs" verify-harness \
+            --plan "$JOB_ROOT/source-comparison/method-audit-plan.json" \
+            --expected-plan-file-hash "${{ steps.source_plan.outputs.plan_file_sha256 }}" \
+            --harness-root "$HARNESS_ROOT"
+          node "$HARNESS_ROOT/benchmarks/method-audit-evidence.mjs" verify-harness \
+            --plan "$JOB_ROOT/same-source-rebuild/method-audit-plan.json" \
+            --expected-plan-file-hash "${{ steps.rebuild_plan.outputs.plan_file_sha256 }}" \
+            --harness-root "$HARNESS_ROOT"
+          node "$HARNESS_ROOT/benchmarks/method-audit-evidence.mjs" verify-harness \
+            --plan "$JOB_ROOT/same-artifact/method-audit-plan.json" \
+            --expected-plan-file-hash "${{ steps.artifact_plan.outputs.plan_file_sha256 }}" \
+            --harness-root "$HARNESS_ROOT"
+      - name: Add portable TAR parser target
+        if: always()
+        run: rustup target add wasm32-unknown-unknown
+      - name: Install reviewed harness dependencies
+        if: always()
+        run: pnpm --dir "$HARNESS_ROOT" install --frozen-lockfile
+      - name: Build exact candidate once
+        if: always()
+        run: |
+          node "$HARNESS_ROOT/benchmarks/path-prefix-performance-evidence.mjs" source-check \
+            --campaign "$CAMPAIGN_FILE" --expected-campaign-file-hash "$CAMPAIGN_FILE_HASH" \
+            --binding-id candidate --phase before-build --checkout-root "$CANDIDATE_ROOT" \
+            --output "$JOB_ROOT/source-bindings/candidate-before-build.json"
+          pnpm --dir "$CANDIDATE_ROOT" install --frozen-lockfile
+          pnpm --dir "$CANDIDATE_ROOT" build
+          pnpm --dir "$CANDIDATE_ROOT" native:build
+          node "$HARNESS_ROOT/benchmarks/path-prefix-performance-evidence.mjs" source-check \
+            --campaign "$CAMPAIGN_FILE" --expected-campaign-file-hash "$CAMPAIGN_FILE_HASH" \
+            --binding-id candidate --phase after-build --checkout-root "$CANDIDATE_ROOT" \
+            --output "$JOB_ROOT/source-bindings/candidate-after-build.json"
+      - name: Build exact source baseline
+        if: always()
+        run: |
+          node "$HARNESS_ROOT/benchmarks/path-prefix-performance-evidence.mjs" source-check \
+            --campaign "$CAMPAIGN_FILE" --expected-campaign-file-hash "$CAMPAIGN_FILE_HASH" \
+            --binding-id source-baseline --phase before-build --checkout-root "$BASELINE_ROOT" \
+            --output "$JOB_ROOT/source-bindings/source-baseline-before-build.json"
+          pnpm --dir "$BASELINE_ROOT" install --frozen-lockfile
+          pnpm --dir "$BASELINE_ROOT" build
+          pnpm --dir "$BASELINE_ROOT" native:build
+          node "$HARNESS_ROOT/benchmarks/path-prefix-performance-evidence.mjs" source-check \
+            --campaign "$CAMPAIGN_FILE" --expected-campaign-file-hash "$CAMPAIGN_FILE_HASH" \
+            --binding-id source-baseline --phase after-build --checkout-root "$BASELINE_ROOT" \
+            --output "$JOB_ROOT/source-bindings/source-baseline-after-build.json"
+      - name: Measure source comparison
+        if: always()
+        env:
+          METHOD_CAMPAIGN_LAUNCH_NONCE: ${{ steps.start.outputs.launch_nonce }}
+          MSYS2_ARG_CONV_EXCL: "*"
+        run: |
+          node "$HARNESS_ROOT/benchmarks/method-audit-evidence.mjs" snapshot \
+            --plan "$JOB_ROOT/source-comparison/method-audit-plan.json" \
+            --expected-plan-file-hash "${{ steps.source_plan.outputs.plan_file_sha256 }}" \
+            --harness-root "$HARNESS_ROOT" \
+            --candidate-root "$CANDIDATE_ROOT" \
+            --baseline-root "$BASELINE_ROOT" \
+            --output "$JOB_ROOT/source-comparison/before-snapshot.json"
+          node "$HARNESS_ROOT/benchmarks/method-audit-evidence.mjs" measure \
+            --plan "$JOB_ROOT/source-comparison/method-audit-plan.json" \
+            --expected-plan-file-hash "${{ steps.source_plan.outputs.plan_file_sha256 }}" \
+            --before "$JOB_ROOT/source-comparison/before-snapshot.json" \
+            --harness-root "$HARNESS_ROOT" \
+            --candidate-root "$CANDIDATE_ROOT" \
+            --baseline-root "$BASELINE_ROOT" \
+            --output-root "$JOB_ROOT/source-comparison/reports"
+          node "$HARNESS_ROOT/benchmarks/path-prefix-performance-evidence.mjs" source-check \
+            --campaign "$CAMPAIGN_FILE" --expected-campaign-file-hash "$CAMPAIGN_FILE_HASH" \
+            --binding-id source-baseline --phase after-measurement --checkout-root "$BASELINE_ROOT" \
+            --output "$JOB_ROOT/source-bindings/source-baseline-after-measurement.json"
+      - name: Replace baseline checkout with an independent candidate checkout
+        if: always()
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.candidate_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: baseline
+          clean: true
+      - name: Build independent same-source baseline
+        if: always()
+        run: |
+          node "$HARNESS_ROOT/benchmarks/path-prefix-performance-evidence.mjs" source-check \
+            --campaign "$CAMPAIGN_FILE" --expected-campaign-file-hash "$CAMPAIGN_FILE_HASH" \
+            --binding-id rebuild-baseline --phase before-build --checkout-root "$BASELINE_ROOT" \
+            --output "$JOB_ROOT/source-bindings/rebuild-baseline-before-build.json"
+          pnpm --dir "$BASELINE_ROOT" install --frozen-lockfile
+          pnpm --dir "$BASELINE_ROOT" build
+          pnpm --dir "$BASELINE_ROOT" native:build
+          node "$HARNESS_ROOT/benchmarks/path-prefix-performance-evidence.mjs" source-check \
+            --campaign "$CAMPAIGN_FILE" --expected-campaign-file-hash "$CAMPAIGN_FILE_HASH" \
+            --binding-id rebuild-baseline --phase after-build --checkout-root "$BASELINE_ROOT" \
+            --output "$JOB_ROOT/source-bindings/rebuild-baseline-after-build.json"
+      - name: Measure same-source-rebuild control
+        if: always()
+        env:
+          METHOD_CAMPAIGN_LAUNCH_NONCE: ${{ steps.start.outputs.launch_nonce }}
+          MSYS2_ARG_CONV_EXCL: "*"
+        run: |
+          node "$HARNESS_ROOT/benchmarks/method-audit-evidence.mjs" snapshot \
+            --plan "$JOB_ROOT/same-source-rebuild/method-audit-plan.json" \
+            --expected-plan-file-hash "${{ steps.rebuild_plan.outputs.plan_file_sha256 }}" \
+            --harness-root "$HARNESS_ROOT" \
+            --candidate-root "$CANDIDATE_ROOT" \
+            --baseline-root "$BASELINE_ROOT" \
+            --output "$JOB_ROOT/same-source-rebuild/before-snapshot.json"
+          node "$HARNESS_ROOT/benchmarks/method-audit-evidence.mjs" measure \
+            --plan "$JOB_ROOT/same-source-rebuild/method-audit-plan.json" \
+            --expected-plan-file-hash "${{ steps.rebuild_plan.outputs.plan_file_sha256 }}" \
+            --before "$JOB_ROOT/same-source-rebuild/before-snapshot.json" \
+            --harness-root "$HARNESS_ROOT" \
+            --candidate-root "$CANDIDATE_ROOT" \
+            --baseline-root "$BASELINE_ROOT" \
+            --output-root "$JOB_ROOT/same-source-rebuild/reports"
+          node "$HARNESS_ROOT/benchmarks/path-prefix-performance-evidence.mjs" source-check \
+            --campaign "$CAMPAIGN_FILE" --expected-campaign-file-hash "$CAMPAIGN_FILE_HASH" \
+            --binding-id rebuild-baseline --phase after-measurement --checkout-root "$BASELINE_ROOT" \
+            --output "$JOB_ROOT/source-bindings/rebuild-baseline-after-measurement.json"
+      - name: Measure same-artifact control
+        if: always()
+        env:
+          METHOD_CAMPAIGN_LAUNCH_NONCE: ${{ steps.start.outputs.launch_nonce }}
+          MSYS2_ARG_CONV_EXCL: "*"
+        run: |
+          node "$HARNESS_ROOT/benchmarks/method-audit-evidence.mjs" snapshot \
+            --plan "$JOB_ROOT/same-artifact/method-audit-plan.json" \
+            --expected-plan-file-hash "${{ steps.artifact_plan.outputs.plan_file_sha256 }}" \
+            --harness-root "$HARNESS_ROOT" \
+            --candidate-root "$CANDIDATE_ROOT" \
+            --baseline-root "$BASELINE_ROOT" \
+            --output "$JOB_ROOT/same-artifact/before-snapshot.json"
+          node "$HARNESS_ROOT/benchmarks/method-audit-evidence.mjs" measure \
+            --plan "$JOB_ROOT/same-artifact/method-audit-plan.json" \
+            --expected-plan-file-hash "${{ steps.artifact_plan.outputs.plan_file_sha256 }}" \
+            --before "$JOB_ROOT/same-artifact/before-snapshot.json" \
+            --harness-root "$HARNESS_ROOT" \
+            --candidate-root "$CANDIDATE_ROOT" \
+            --baseline-root "$BASELINE_ROOT" \
+            --output-root "$JOB_ROOT/same-artifact/reports"
+          node "$HARNESS_ROOT/benchmarks/path-prefix-performance-evidence.mjs" source-check \
+            --campaign "$CAMPAIGN_FILE" --expected-campaign-file-hash "$CAMPAIGN_FILE_HASH" \
+            --binding-id candidate --phase after-measurement --checkout-root "$CANDIDATE_ROOT" \
+            --output "$JOB_ROOT/source-bindings/candidate-after-measurement.json"
+      - name: Seal and validate complete outer-job evidence
+        if: always()
+        run: |
+          node "$HARNESS_ROOT/benchmarks/path-prefix-performance-evidence.mjs" seal-job \
+            --campaign "$CAMPAIGN_FILE" \
+            --expected-campaign-file-hash "$CAMPAIGN_FILE_HASH" \
+            --start "$JOB_ROOT/job-start.json" \
+            --job-root "$JOB_ROOT" \
+            --output "$JOB_ROOT/job-receipt.json"
+      - name: Upload complete outer-job evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: path-prefix-job-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.JOB_ROOT }}/
+          if-no-files-found: error
+
+  aggregate:
+    if: always()
+    needs: [prepare, path-prefix-study]
+    name: Fail-closed path-prefix acceptance gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      CAMPAIGN_FILE_HASH: ${{ needs.prepare.outputs.manifest_file_sha256 }}
+      ANALYSIS_ROOT: ${{ github.workspace }}/path-prefix-analysis
+    steps:
+      - name: Configure byte-exact checkout
+        if: always()
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+          printf 'CAMPAIGN_FILE=%s/path-prefix-campaign/path-prefix-performance-manifest.json\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'EVIDENCE_ROOT=%s/path-prefix-jobs\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Check out reviewed analyzer
+        if: always()
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.harness_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: harness
+      - name: Set up analyzer runtime
+        if: always()
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      - name: Download frozen campaign manifest
+        if: always()
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: path-prefix-performance-manifest-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/path-prefix-campaign
+      - name: Download every predeclared outer job
+        if: always()
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: path-prefix-job-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/path-prefix-jobs
+          merge-multiple: false
+      - name: Recompute inventory and apply all gates
+        if: always()
+        env:
+          PREPARE_RESULT: ${{ needs.prepare.result }}
+          STUDY_RESULT: ${{ needs.path-prefix-study.result }}
+        run: |
+          mkdir -p "$ANALYSIS_ROOT"
+          node "$GITHUB_WORKSPACE/harness/benchmarks/path-prefix-performance-evidence.mjs" aggregate \
+            --campaign "$CAMPAIGN_FILE" \
+            --expected-campaign-file-hash "$CAMPAIGN_FILE_HASH" \
+            --evidence-root "$EVIDENCE_ROOT" \
+            --prepare-result "$PREPARE_RESULT" \
+            --study-result "$STUDY_RESULT" \
+            --output "$ANALYSIS_ROOT/analysis.json"
+      - name: Upload acceptance analysis
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: path-prefix-performance-analysis-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.ANALYSIS_ROOT }}/
+          if-no-files-found: error

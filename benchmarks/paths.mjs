@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { registerFilenameFallbackBenchmarks } from "./filename-fallback-profile.mjs";
+import { registerPathPrefixCampaign } from "./path-prefix-campaign.mjs";
 
 export async function registerPaths({
   api: a,
@@ -113,27 +114,11 @@ export async function registerPaths({
     verify: (result) => assert.equal(result.canonicalPath, input),
   });
   add("resolvePathViaExistingAncestorSync", () => a.resolvePathViaExistingAncestorSync(input), { sync: true });
-  add("resolvePathPrefixSync", () => a.resolvePathPrefixSync(input), {
-    sync: true,
-    skip: typeof a.resolvePathPrefixSync !== "function"
-      ? "Not exported by this explicitly selected older comparison build."
-      : undefined,
-    verify: result => assert.deepEqual(result.unresolvedSegments, []),
-  });
-  add("resolvePathPrefixSync/missing", () => a.resolvePathPrefixSync(`${w}${path.sep}future${path.sep}..${path.sep}input.json`), {
-    sync: true,
-    skip: typeof a.resolvePathPrefixSync !== "function"
-      ? "Not exported by this explicitly selected older comparison build."
-      : undefined,
-    verify: result => assert.deepEqual(result.unresolvedSegments, ["future", "..", "input.json"]),
-  });
-  const separatorHeavyPrefix = `${w}${path.sep.repeat(4096)}future`;
-  add("resolvePathPrefixSync/separator-heavy", () => a.resolvePathPrefixSync(separatorHeavyPrefix), {
-    sync: true,
-    skip: typeof a.resolvePathPrefixSync !== "function"
-      ? "Not exported by this explicitly selected older comparison build."
-      : undefined,
-    verify: result => assert.deepEqual(result.unresolvedSegments, ["future"]),
+  const pathPrefixCampaign = registerPathPrefixCampaign({
+    api: a,
+    workspace: w,
+    register: add,
+    filter: args.filter,
   });
   for (const name of ["resolveLocalPathFromRootsSync", "readLocalFileFromRoots"]) add(name, () => a[name]({ filePath: input, roots: [w] }), { sync: name.endsWith("Sync") });
   const base = { rootDir: w, scopeLabel: "benchmark" };
@@ -175,4 +160,5 @@ export async function registerPaths({
   add("movePathToTrash/rejection", () => a.movePathToTrash(input, { allowedRoots: [path.join(w, "tree")] }), {
     expectError: true, verify: (error) => assert.match(error.message, /outside allowed roots/),
   });
+  return pathPrefixCampaign;
 }
