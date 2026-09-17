@@ -1,0 +1,35 @@
+name: path-prefix performance acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_harness_sha:
+        description: Exact reviewed 40-hex harness/workflow commit (H)
+        required: true
+        type: string
+      candidate_sha:
+        description: Exact reviewed 40-hex candidate commit (C)
+        required: true
+        type: string
+      baseline_sha:
+        description: Exact frozen 40-hex baseline commit (B), distinct from C
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: path-prefix-performance-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  registration-only:
+    name: Refuse registration-only execution
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Require an exact reviewed campaign ref
+        shell: bash
+        run: |
+          printf '%s\n' 'Registration only; dispatch an exact reviewed campaign ref.' >&2
+          exit 1
