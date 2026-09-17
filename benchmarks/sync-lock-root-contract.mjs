@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
 export const SYNC_LOCK_ROOT_FILTER = "syncLockRoot/";
-export const SYNC_LOCK_ROOT_BASE_SHA = "1cce8aed225fe5a62367a466d1720de9db68ab80";
+export const SYNC_LOCK_ROOT_BASE_SHA = "af017899d1f7045f3da2b4cc5a7583712a0f93be";
 export const SYNC_LOCK_ROOT_SCHEMA = "fs-safe-sync-lock-root-benchmark-v1";
 export const SYNC_LOCK_ROOT_CAMPAIGN_SCHEMA = "fs-safe-sync-lock-root-campaign-v3";
 export const SYNC_LOCK_ROOT_CRABBOX_TIMING_SCHEMA =
