@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Keep directory-mode authority checks outside best-effort mode-change error handling, so one-shot check failures still reject while actual unsupported mode changes retain their existing fallback behavior.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights

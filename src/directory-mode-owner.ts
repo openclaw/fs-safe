@@ -63,8 +63,8 @@ export function ownDirectoryMode(params: {
       checks.check?.();
       let dispatchDeadlineError: unknown;
       if (currentMode !== mode) {
+        checks.check?.();
         try {
-          checks.check?.();
           await params.chmod(mode);
         } catch (error) {
           if (!params.ignoreChmodError) throw error;
