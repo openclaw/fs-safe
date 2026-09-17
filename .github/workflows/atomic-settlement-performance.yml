@@ -1,0 +1,42 @@
+name: atomic settlement performance acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_harness_sha:
+        description: Exact reviewed 40-hex H named by the protected immutable harness seal; H is not stored inside H
+        required: true
+        type: string
+      harness_seal_ref:
+        description: Exact protected lightweight refs/tags/atomic-settlement-performance-h-<H> seal created after H
+        required: true
+        type: string
+      candidate_sha:
+        description: Exact reviewed 40-hex candidate commit (C)
+        required: true
+        type: string
+      baseline_sha:
+        description: Exact reviewed 40-hex pre-fix baseline commit (B), distinct from C
+        required: true
+        type: string
+      expected_run_number:
+        description: Exact next workflow run number predeclared before dispatch
+        required: true
+        type: string
+      expected_run_attempt:
+        description: Exact first run attempt; must be 1 and reruns are inadmissible
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  registration-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Refuse execution from the registration stub
+        shell: bash
+        run: |
+          echo "This default-branch workflow only registers workflow_dispatch. Dispatch the reviewed protected H seal." >&2
+          exit 1
