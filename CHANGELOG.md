@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Preserve every thrown value from Windows native write descriptor cleanup, while still attempting all owned closes after publication.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights
