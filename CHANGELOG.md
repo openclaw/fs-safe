@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Security
+
+- Snapshot external-output and sibling-temp options before asynchronous setup so caller mutation cannot change in-flight producers, staging paths, permissions, or sync policy, while preserving callback receivers.
+
 ### Fixes and compatibility
 
 - Preserve an already-selected synchronous destination-admission error when its one best-effort descriptor close also fails. Successful admission retains its existing close-error behavior, and synchronous atomic replacement adapters do not retry or double-close the destination descriptor.
