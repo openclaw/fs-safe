@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- Require security-owner review for native and archive code, platform packages, executable benchmarks, and root build, test, workspace, and release-policy configuration.
+- Allow asynchronous `include`/`descend` in `walkDirectory()` and `entryFilter` in `Root.walk()` for serial selection and marker-based pruning, retaining callback receivers and budgets; Root walks settle pending callbacks and recheck cancellation and directory/root identity before using awaited decisions.
+- Expand security-owner review coverage to native and archive code, platform packages, executable benchmarks, and root build, test, workspace, and release-policy configuration.
 
 ## 0.14.0 - 2026-09-17
 
