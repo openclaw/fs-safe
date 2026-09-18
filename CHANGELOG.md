@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Recheck native no-clobber `Root.move()` source identity, type, and hardlink policy after the final authority callback so replaced or newly hardlinked sources remain untouched.
+
 ### Permissions and diagnostics
 
 - Windows raw owner/DACL inspection, private-directory creation, and secure-file reads use packaged, readable PowerShell/C# scripts when native support is unavailable in `auto` or `off` mode. Private DACLs are applied at creation and secure reads inspect the same open handle before reading bytes. Scripts run under normal system policy, fail closed when disallowed, emit a path-free warning once per capability per process, and add startup and compilation overhead; explicit `require` mode and native operation failures remain fail-closed.

@@ -1,4 +1,4 @@
-import fsSync, { type Stats } from "node:fs";
+import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import path from "node:path";
 import { assertAsyncDirectoryGuard, assertSyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
@@ -22,6 +22,7 @@ import {
 } from "./root-errors.js";
 import { assertFinalSymlinkRejected, type MutationSymlinkPolicy } from "./root-symlink-policy.js";
 import { createSuppressedError } from "./suppressed-error.js";
+import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
 function nativeParentRelativePath(rootReal: string, parentPath: string): string {
@@ -71,6 +72,19 @@ function normalizeRenameNoReplaceError(error: unknown): unknown {
     });
   }
   return normalizeMoveError(error);
+}
+
+function admitMoveSourceStat<T extends Stats | BigIntStats>(stat: T): T {
+  if (stat.isSymbolicLink()) {
+    throw new FsSafeError("symlink", "symlink not allowed");
+  }
+  if (stat.isFile() && stat.nlink > 1) {
+    throw hardlinkedPathNotAllowedError();
+  }
+  if (stat.isDirectory()) {
+    throw new FsSafeError("invalid-path", "directory moves require overwrite: true");
+  }
+  return stat;
 }
 
 export async function movePathNoReplaceNative(
@@ -133,20 +147,12 @@ export async function movePathNoReplaceNative(
     }
     await assertRootIdentityCurrent(root);
     for (const admission of parentAdmissions) assertSyncDirectoryGuard(admission.guard);
-    let sourceStat: Stats;
-    try {
-      sourceStat = fsSync.lstatSync(admittedSourcePath);
-    } catch (error) {
-      throw normalizeMoveError(error);
-    }
-    if (sourceStat.isSymbolicLink()) {
-      throw new FsSafeError("symlink", "symlink not allowed");
-    }
-    if (sourceStat.isFile() && sourceStat.nlink > 1) {
-      throw hardlinkedPathNotAllowedError();
-    }
-    if (sourceStat.isDirectory()) {
-      throw new FsSafeError("invalid-path", "directory moves require overwrite: true");
+    // Capture an exact receipt only when admission must survive a callback.
+    let sourceStat: BigIntStats | undefined;
+    if (params.assertBeforeMutation) {
+      sourceStat = inspectFileIdentitySync(() => admitMoveSourceStat(fsSync.lstatSync(admittedSourcePath, { bigint: true })));
+    } else {
+      admitMoveSourceStat(fsSync.lstatSync(admittedSourcePath));
     }
     assertFinalSymlinkRejected(admittedTargetPath, params.mutationSymlinks !== undefined);
     params.assertBeforeMutation?.();
@@ -169,6 +175,10 @@ export async function movePathNoReplaceNative(
         }
       }
       for (const admission of parentAdmissions) assertSyncDirectoryGuard(admission.guard);
+    }
+    // The callback can change a leaf without replacing its admitted parent.
+    if (sourceStat !== undefined) {
+      inspectFileIdentitySync(() => admitMoveSourceStat(fsSync.lstatSync(admittedSourcePath, { bigint: true })), sourceStat);
     }
     try {
       binding.renameNoReplace(
