@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Fixes and compatibility
+
+- Preserve an already-selected synchronous destination-admission error when its one best-effort descriptor close also fails. Successful admission retains its existing close-error behavior, and synchronous atomic replacement adapters do not retry or double-close the destination descriptor.
 - Preserve directory-mode authority and deadline check failures before and after dispatch, including one-shot checks and falsy JavaScript values. Best-effort suppression stays limited to mode-change failures, and deferred check failures retain the existing post-dispatch identity verification.
 - Preserve every thrown value from compatible temporary-workspace recursive removal, including falsy values, while keeping uncertain quarantine or parent checks mapped to `"indeterminate"`.
 - Preserve every thrown value from Windows native write descriptor cleanup, while still attempting all owned closes after publication.
@@ -10,6 +13,10 @@
 - Allow asynchronous `include`/`descend` in `walkDirectory()` and `entryFilter` in `Root.walk()` for serial selection and marker-based pruning, retaining callback receivers and budgets; Root walks settle pending callbacks and recheck cancellation and directory/root identity before using awaited decisions.
 - Expand security-owner review coverage to native and archive code, platform packages, executable benchmarks, and root build, test, workspace, and release-policy configuration.
 - Add `copyFileDescriptorSync()` for bounded positional transfers between caller-owned regular-file descriptors, sharing `CopyFileHandleOptions` while preserving cursors, descriptor lifetime, destination suffixes, and caller-owned durability and publication.
+
+### Validation
+
+- Add paired-error regressions for direct hardlink-policy admission and public synchronous atomic replacement, including arbitrary falsy thrown values, plus receipt-bound timing rows that enforce unchanged destination observation and descriptor-call counts on successful rename and restored copy-fallback routes.
 
 ### Release operations
 

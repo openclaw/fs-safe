@@ -103,6 +103,14 @@ filesystem adapter with 128 B, 1 MiB, and 16 MiB payloads, both restoration
 policies, and both sync/async methods. Temp-file and parent syncing are disabled
 for these cases; `restore-original` still includes its required destination
 sync. Fixture reset remains outside timing.
+Two focused `replaceFileAtomicSync/sync-destination-admission/` rows time successful
+public adapter routes with hardlink rejection: an ordinary rename and a forced
+permission-error fallback with bounded original restoration. Per-invocation checks
+outside timing require the exact result, replacement bytes, no retained destination
+descriptor, and immutable destination-only `lstatSync`/`openSync`/`fstatSync`/`closeSync`
+call receipts. Both rows are portable across native modes, admit no skips, and their
+exact row set, workload receipt, and divisor-adjusted iteration count are required
+when the matching filter is selected.
 Name-collection cases cover ASCII, NFC, and decomposed paths at depths 1/8/32;
 rejected paths and store keys; 2,048-member ZIPs with shallow/deep ASCII and
 Unicode names; and long callback-output filenames. The 17 filename-sanitizer
