@@ -85,7 +85,7 @@ import { finishRootFallbackWrite } from "./root-write-publication.js";
 import { withRootFallbackCompatibilityLock } from "./root-write-compatibility.js";
 import { assertRootFallbackWritePath } from "./root-write-lock-binding.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
-import { movePathNoReplaceNative } from "./root-move-noreplace.js";
+import { movePathNoReplace } from "./root-move-noreplace.js";
 import { admitRootReadHandle, inspectOpenedPathIdentitySync } from "./root-read-admission.js";
 import { createCopyPublicationObserver, onCopyPublication, type CopyPublicationOptions } from "./copy-publication.js";
 import { writeAllToFile } from "./write-file-handle.js";
@@ -1428,7 +1428,7 @@ async function movePathFallback(
     if (!pinnedTarget) {
       throw new FsSafeError("path-mismatch", "destination admission was not completed");
     }
-    await movePathNoReplaceNative(root, params, {
+    await movePathNoReplace(root, params, {
       sourcePath: source.resolved,
       sourceParentPath: path.dirname(pinnedSource.canonicalPath),
       targetPath: target.resolved,

@@ -82,7 +82,7 @@ describe("temp file cleanup capability", () => {
   );
 
   it.each(["tempFile", "withTempFile"] as const)(
-    "rejects require-bounded before child creation through %s when cleanup is unavailable",
+    "uses guarded require-bounded cleanup through %s when native cleanup is unavailable",
     async (variant) => {
       const rootDir = await tempRoot("fs-safe-temp-file-unavailable-");
       configureFsSafeNative({ mode: "auto" });
@@ -94,18 +94,16 @@ describe("temp file cleanup capability", () => {
         ownedTreeRemovalAvailable: vi.fn(() => false),
       };
       __setNativeLoaderForTest(() => binding as unknown as NativeBinding);
-      const mkdtemp = vi.spyOn(fs, "mkdtemp");
       const run = vi.fn();
       const options = { rootDir, prefix: "download", cleanupSafety: "require-bounded" as const };
       const operation = variant === "tempFile"
         ? tempFile(options)
         : withTempFile(options, async () => run());
-      await expect(operation).rejects.toMatchObject({
-        name: "FsSafeError",
-        code: "helper-unavailable",
-      });
-      expect(mkdtemp).not.toHaveBeenCalled();
-      expect(run).not.toHaveBeenCalled();
+      const created = await operation;
+      if (variant === "tempFile") {
+        expect(created.cleanupMechanism).toBe("guarded-path");
+        await created.cleanup();
+      } else expect(run).toHaveBeenCalledTimes(1);
       expect(binding.ownedTreeRemovalAvailable).toHaveBeenCalledTimes(1);
       expect(await fs.readdir(rootDir)).toEqual([]);
     },
@@ -160,6 +158,7 @@ describe("temp file cleanup capability", () => {
       prefix: "download",
       cleanupSafety: "require-bounded",
     });
+    expect(target.cleanupMechanism).toBe("native-bounded");
     expect(Object.keys(register.mock.calls[0]?.[1] ?? {})).toEqual(["cleanupSync"]);
     expect(target[Symbol.asyncDispose]).toBe(target.cleanup);
     await fs.mkdir(path.join(target.dir, "nested"));

@@ -18,6 +18,7 @@ afterEach(() => { __resetFsSafeNativeConfigForTest(); __resetNativeLoaderForTest
 // ZIP includes Unicode Path metadata. Native routes use the actual binding.
 const routes = [
   { mode: "off", format: "zip" }, { mode: "off", format: "tar" }, { mode: "off", format: "gzip" },
+  { mode: "off", format: "tar-zstd" }, { mode: "off", format: "tar-bzip2" },
   { mode: "require", format: "zip" }, { mode: "require", format: "tar" }, { mode: "require", format: "gzip" },
   { mode: "require", format: "tar-zstd" }, { mode: "require", format: "tar-bzip2" },
 ] as const;

@@ -26,7 +26,7 @@ it("has no imports, rejects invalid limits and inbox lengths, and bounds linear 
     expect(p.push(offset!, length!)).toBe(-1);
   }
   expect(p.input_ptr() + 65536).toBeLessThanOrEqual(p.memory.buffer.byteLength);
-  expect(() => p.memory.grow(4096)).toThrow();
+  expect(() => p.memory.grow(12288)).toThrow();
   p.dispose();
   expect(p.push(0, 1)).toBe(-1);
   expect(p.finish()).toBe(-1);
@@ -56,7 +56,7 @@ it("keeps concurrent parser states isolated and consumes one bounded event at a 
 });
 it("fails metadata allocation within the memory ceiling without accepting its body", () => {
   const p = parser();
-  const size = 300 * 1024 * 1024;
+  const size = 900 * 1024 * 1024;
   expect(p.init(10, size, size + 1024, 4096, 0)).toBe(0);
   const header = tarFixture([{ path: "PaxHeader", type: "x", mutateHeader(block) {
     block.write(`${size.toString(8).padStart(11, "0")}\0`, 124);

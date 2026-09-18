@@ -17,8 +17,10 @@ guarded JavaScript path. Native loading is lazy; installs do not compile Rust,
 run postinstall code, or fetch binaries at runtime. Seven exact-version optional
 packages are filtered by OS, CPU, and Linux libc, so an installation receives
 only its matching prebuilt binding.
-Native-only formats and creation-time Windows DACL guarantees fail explicitly
-instead of substituting a weaker implementation.
+Portable archives use Node gzip, bundled WASM bzip2/zstd decoders, a shared WASM
+TAR parser, and required JSZip. Built-in Windows security
+commands preserve descriptor inspection and creation-time DACL guarantees when
+the addon is absent; other weaker mechanisms are reported explicitly.
 
 ## The beneath model
 
@@ -111,7 +113,8 @@ binding and bundled WASM module compile the same source. No `tar::Archive` or
 Node TAR parser reinterprets admitted identities or sizes. Executors replay
 admitted payload ranges after complete bounded admission; native writes retain
 the platform's descriptor-relative primitives, while fallback writes retain
-the guarded Node staging/publication boundary. ZIP behavior is unchanged.
+the guarded Node staging/publication boundary. ZIP retains physical-record
+admission before decoder metadata is used; see [archive admission](archive.md).
 `maxMetaEntryBytes` bounds bodies before allocation; unsupported global/old
 metadata and sparse forms fail closed. See [bounded local PAX support](archive.md#bounded-local-pax-support).
 
@@ -164,19 +167,20 @@ not bypass the byte limit.
 
 | Mode | Native loading | Fallback |
 |---|---|---|
-| `auto` | Try once, cache the result | Use guarded JavaScript when safe; reject native-only operations |
-| `require` | Try once, cache the result | Throw `FsSafeError("helper-unavailable")` |
-| `off` | Never attempt a binding load | Use guarded JavaScript when safe; reject native-only operations |
+| `auto` | Try once, cache the result | Use the feature's guarded portable implementation |
+| `require` | Try once, cache the result | Binding lookup throws `FsSafeError("helper-unavailable")` if the addon cannot load; a loaded addon may use per-feature fallbacks |
+| `off` | Never attempt a binding load | Use portable implementations for every feature |
 
 `sha256FileSync()` is a synchronous Node implementation in all three modes and
 does not load the binding. Use asynchronous `sha256File()` for native hashing
 and cancellation that can respond while JavaScript callbacks run.
 
-Features without a safe JavaScript implementation, including no-clobber
-`Root.move()`, zstd/bzip2 TAR, Windows private-directory creation, and
-[retained-directory staging](staged-file.md), fail with `helper-unavailable`
-when native support is absent or off. Staging is currently Linux/macOS only and
-rejects Windows with `unsupported-platform`.
+No-clobber moves, compressed TAR, Windows security operations, and
+[staging](staged-file.md) all have portable implementations. Native mechanism
+absence selects those implementations; weaker guarantees emit a deduplicated
+`FS_SAFE_NATIVE_FALLBACK` warning. Staging and temporary-file receipts report
+their targeting/cleanup mechanism. Explicit `require` diagnoses a missing
+addon, rather than guaranteeing that every operation uses a native primitive.
 
 The staged-file owner also serves POSIX native pinned writes, including streaming.
 Unpublished files remain at `0600`; requested modes are applied through the
@@ -217,21 +221,21 @@ denied-path decisions remain in TypeScript.
 Public policy does not change with the selected mechanism: traversal and link
 rejection, archive filters/limits/modes, exclusive target creation, source and
 target identity fencing, publication cleanup receipts, and secret/lock policy
-remain TypeScript-owned. What changes is the syscall strength or availability:
+remain TypeScript-owned. What changes is the mechanism strength and performance:
 
 | Capability | Native path | Guarded JavaScript path |
 |---|---|---|
-| Root-relative opens/mutations | Descriptor-relative beneath operations. Pinned writes create parents and publish both replacement and no-replace targets relative to open directory descriptors. No-clobber `Root.move()` admits both parents and uses the native no-replace rename. Linux reports `kernel-atomic`; macOS and Windows report `best-effort`. macOS uses `O_RESOLVE_BENEATH` when available plus an `F_GETPATH` detector, while Windows rejects reparse traversal in the object-manager call. | Reports `best-effort`: component-wise alias checks, no-follow opens where Node exposes them, private temp/rename, and post-operation identity verification. No-clobber `Root.move()` is unsupported because a check followed by a replacing rename is unsafe. A same-privilege peer can replace a writable parent after a guard assertion but before Node resolves another pathname mutation; the mutation may land outside the intended root before the post-check detects it. |
-| ZIP/TAR/gzip | Rust streaming decode and fd-relative output creation. | Optional JSZip or bundled WASM TAR into guarded private staging, then the same guarded merge policy. |
-| Zstd/bzip2 TAR | Supported. | Unsupported; typed `helper-unavailable`. |
+| Root-relative opens/mutations | Descriptor-relative beneath operations. Pinned writes create parents and publish both replacement and no-replace targets relative to open directory descriptors. No-clobber `Root.move()` admits both parents and uses the native no-replace rename. Linux reports `kernel-atomic`; macOS and Windows report `best-effort`. macOS uses `O_RESOLVE_BENEATH` when available plus an `F_GETPATH` detector, while Windows rejects reparse traversal in the object-manager call. | Reports `best-effort`: component-wise alias checks, no-follow opens where Node exposes them, private temp/rename, and post-operation identity verification. No-clobber moves normally use exclusive hardlinks followed by verified source retirement, with metadata-only source custody on Linux. Unavailable hardlinks or content-denied macOS/Windows files select atomic system-command rename. Destination collisions remain atomic; the ordinary move has separate publication and retirement steps. A writable parent can change between a pathname guard and mutation, so use OS isolation against hostile concurrent directory replacement. |
+| ZIP/TAR/gzip | Rust streaming decode and fd-relative output creation. | Required lazy JSZip, or Node gzip plus the bundled WASM TAR parser, into guarded private staging and the same guarded merge policy. |
+| Zstd/bzip2 TAR | Native streaming decoders. | Bundled WASM decoders feed the shared TAR parser, preserving framing, integrity, budgets, and cancellation. |
 | Publication copy | Clone, Linux `copy_file_range`, async native SHA-256. | Exclusive `wx` byte loop and Node SHA-256 with the same content/identity fences. |
-| `rename-noreplace` | Atomic platform no-replace rename. | Unsupported; no emulation by check-then-rename. |
-| Windows DACL read | Direct `GetSecurityInfo`; the public facts API exposes ordered basic allow/deny ACE SIDs, masks, and decoded flags without trust policy. Secure-file reads query the borrowed open descriptor and compare its 32-bit volume serial and 64-bit file-index projection with Node's bigint receipt. | Structured .NET owner/DACL inspection remains available to standalone pathname reporting. Secure-file reads fail closed without the descriptor capability. |
-| Windows private directory | Creation-time protected DACL. | Unsupported; no weaker pathname-only substitute. |
+| `rename-noreplace` | Atomic platform no-replace rename. | Exclusive hardlink followed by verified source retirement, or atomic system-command rename when hardlinks are unavailable. Reports actual `method`, `sourceConsumed`, and retained `sourceRecovery` on failure; preserves publication on later failure. |
+| Windows DACL read | Direct `GetSecurityInfo`; the public facts API exposes ordered basic allow/deny ACE SIDs, masks, and decoded flags without trust policy. Secure-file reads query the borrowed open descriptor and compare its 32-bit volume serial and 64-bit file-index projection with Node's bigint receipt. | Built-in Windows PowerShell/.NET queries raw security facts. Secure reads inspect the inherited open file handle rather than a separately resolved pathname. |
+| Windows private directory | Creation-time protected DACL. | Built-in Windows PowerShell/.NET performs exclusive parent-relative creation with a protected DACL and exact handle-based verification/cleanup. |
 
-Use `off` in CI to keep the fallback contract exercised. Use `require` when a
-deployment depends on the stronger mechanism or a native-only feature; do not
-infer native loading from timing.
+Use `off` and optional-free package installs in CI to exercise portability.
+Use `require` to diagnose an unavailable binding. Inspect operation receipts
+for the actual guarantee; do not infer native loading or atomicity from timing.
 
 ## Loader security
 

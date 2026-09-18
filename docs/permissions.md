@@ -42,7 +42,7 @@ POSIX remediation strings shell-quote paths with whitespace or metacharacters
 and protect option-like paths with `--`, so they can be presented as commands
 without letting the inspected pathname add shell syntax.
 
-`inspectPathPermissions()` follows symlink targets for the effective mode but tells you whether the original path was a symlink. On POSIX it reports owner/group/world bits. On Windows it delegates to the ACL helpers below and also reports `ownerSid` plus `ownerTrusted` when ownership can be verified. `ownerTrusted` is true only for a local volume owned by the current user, LocalSystem, or built-in Administrators; remote filesystems fail closed. This remains a pathname reporting API with the fallbacks described below. `readSecureFile()` does not use those pathname fallbacks on Windows: it requires descriptor-bound native owner/DACL facts for the exact handle it reads.
+`inspectPathPermissions()` follows symlink targets for the effective mode but tells you whether the original path was a symlink. On POSIX it reports owner/group/world bits. On Windows it delegates to the ACL helpers below and also reports `ownerSid` plus `ownerTrusted` when ownership can be verified. `ownerTrusted` is true only for a local volume owned by the current user, LocalSystem, or built-in Administrators; remote filesystems fail closed. This remains a pathname reporting API with the fallbacks described below. `readSecureFile()` queries descriptor-bound owner/DACL facts for the exact handle it reads, using the addon or the built-in Windows system-command fallback.
 
 ## Advanced Windows ACL helpers
 
@@ -158,10 +158,15 @@ Object-specific and other ACE layouts are not guessed: they are omitted,
 `complete` becomes false, and their numeric types appear in
 `unsupportedAceTypes`, allowing a security-sensitive caller to fail closed.
 Non-Windows systems return `{ status: "unsupported-platform", platform }`.
-Windows requires the native binding; if it is unavailable or forced
-off, the call throws `FsSafeError("helper-unavailable")`. The existing coarse
-`inspectPathPermissions()` API still owns its compatibility fallback and trust
-classification.
+When the native binding or capability is unavailable or forced off, Windows
+uses a bounded built-in Windows PowerShell/.NET command. It reads the raw OS
+security descriptor and retains ACE order and flags without .NET access-rule
+normalization. This synchronous API waits for the command, which has a
+30-second deadline and a bounded output budget. A warning is emitted once
+because system-command inspection is slower. Failed commands and invalid
+descriptor responses reject; they do not produce empty or trusted ACL facts.
+The existing coarse `inspectPathPermissions()` API still owns its separate
+compatibility fallback and trust classification.
 
 ## Private directories
 
@@ -175,10 +180,12 @@ await createPrivateDirectory(sqliteDirectory);
 await openSqlite(path.join(sqliteDirectory, "sessions.sqlite"));
 ```
 
-On Windows with native support, this creates the directory and applies a
-protected owner + LocalSystem + Administrators full-control DACL directly with
-an atomic security descriptor; no PowerShell or `icacls` process is launched.
-The native operation retains the parent and exact created-directory handles
+On Windows, this creates the directory and applies a protected owner +
+LocalSystem + Administrators full-control DACL atomically. The addon is the
+fast path. When it or its capability is unavailable or forced off, a bounded
+built-in Windows PowerShell/.NET command uses the same OS handle operations;
+the directory is created privately, without a later pathname permission repair.
+Both mechanisms retain the parent and exact created-directory handles
 through ACL and final pathname validation. If validation fails, it attempts only
 nonrecursive deletion through the created handle, preserving any pathname
 replacement. If cleanup also fails, the error retains the original failure and
@@ -203,9 +210,14 @@ also rejects explicit `.` and `..` components, including spellings such as
 `.\private` and `parent\..\private`, as a compatibility restriction. Simple
 relative names without these components remain supported.
 
-This API is Windows-only and native-only; it fails closed with
-`FsSafeError("helper-unavailable")` on other platforms, when native mode is off,
-or when the binding is unavailable. POSIX callers should create private
+This API is Windows-only; it fails with `FsSafeError("helper-unavailable")` on
+other platforms. Missing or disabled addons use the system-command fallback,
+with a warning once about its additional process overhead. Existing paths still
+reject with `EEXIST`, and unsafe or unverifiable state still rejects. The command
+has a 30-second deadline and needs the built-in Windows PowerShell/.NET host.
+An interrupted command can leave its privately created directory for caller
+cleanup; it never guesses ownership to remove a pathname after interruption.
+POSIX callers should create private
 directories through their existing trusted-root creation policy rather than a
 pathname-only compatibility shim. Existing Windows permission inspection still
 retains its structured .NET compatibility fallback.
@@ -241,4 +253,4 @@ type PermissionCheck = {
 - [Secure file reads](secure-file.md) — fd-pinned reads that enforce these checks.
 - [Errors](errors.md) — permission-related `FsSafeError` codes.
 - [Native architecture](native.md) — direct Windows security descriptor mechanisms.
-- [Migrating to 0.5](migrating-to-0.5.md) — native-only feature checklist.
+- [Migrating to 0.5](migrating-to-0.5.md) — historical native-helper migration.

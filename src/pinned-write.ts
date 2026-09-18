@@ -398,6 +398,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
   let tempIdentity: BigIntStats | undefined;
   let readHandle: FileHandle | undefined;
   let renamed = false;
+  let preserveTemporary = false;
   try {
     params.assertBeforeMutation?.();
     handle = await fs.open(tempPath, tempFlags, params.mode);
@@ -433,6 +434,8 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
           temporaryPath: tempPath, targetPath, fd: handle!.fd,
           identity: tempIdentity!, parentGuard,
           assertBeforeMutation: params.assertBeforeMutation,
+          rejectFinalSymlink: params.rejectFinalSymlink,
+          onIndeterminate: () => { preserveTemporary = true; },
           onPublished: (identity) => {
             renamed = true;
             params.onPublished?.(identity);
@@ -478,7 +481,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
     return { dev: verifiedIdentity.dev, ino: verifiedIdentity.ino };
   } finally {
     try {
-      if (!renamed && handle) {
+      if (!renamed && !preserveTemporary && handle) {
         await cleanupPinnedFilePath({ pathname: tempPath, handle, identity: tempIdentity, parentGuard });
       }
     } finally {

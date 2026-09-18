@@ -14,8 +14,7 @@ import {
   sameFileIdentityForCleanup,
   type FileIdentityStat,
 } from "./file-identity.js";
-import { syncFileBestEffortSync } from "./file-sync.js";
-import { getNativeBinding, requireNativeBinding, type NativeBinding } from "./native.js";
+import { getNativeBinding, type NativeBinding } from "./native.js";
 import { captureNativeFdClose } from "./native-binding.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import {
@@ -27,6 +26,7 @@ import {
   type PublishFileExclusiveSyncFailurePolicy,
 } from "./publish-file-failure.js";
 import { admitStandalonePublicationPath } from "./standalone-publication-path.js";
+import { publishByMovingSource } from "./publish-file-move.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
@@ -44,6 +44,7 @@ export type PublishFileExclusiveResult = {
   method: "hardlink" | "exclusive-copy" | "rename-noreplace";
   identity: Stats;
   directorySync: DirectorySyncOutcome;
+  sourceConsumed?: boolean;
 };
 
 const HARDLINK_FALLBACK_CODES = new Set(["EPERM", "EXDEV", "ENOTSUP", "EOPNOTSUPP", "ENOSYS"]);
@@ -118,12 +119,14 @@ async function copyPinnedSource(params: {
       let nativeFd: number | undefined;
       try {
         if (method === "clone") {
+          if (typeof params.native.cloneFileExclusive !== "function") continue;
           nativeFd = params.native.cloneFileExclusive(
             params.source.fd,
             params.targetNativeParent.handle.fd,
             params.targetNativeParent.basename,
           );
         } else {
+          if (typeof params.native.copyFileRangeExclusive !== "function") continue;
           const copied = await params.native.copyFileRangeExclusive(
             params.source.fd,
             params.targetNativeParent.handle.fd,
@@ -303,6 +306,7 @@ export async function publishFileExclusive(params: {
     throw new FsSafeError("not-file", "publication source must be a regular file");
   }
   const source = await fs.open(sourcePath, sourceOpenFlags());
+  const sourceOwner = { handle: source };
   let parent: Awaited<ReturnType<typeof pinDirectory>> | undefined;
   let sourceNativeParent: Awaited<ReturnType<typeof openNativeParent>> | undefined;
   let targetNativeParent: Awaited<ReturnType<typeof openNativeParent>> | undefined;
@@ -338,63 +342,34 @@ export async function publishFileExclusive(params: {
     await parent.assertCurrent();
     await assertPinnedSourceCurrent({ sourcePath, handle: source, identity: sourceExactIdentity });
 
-    const native = strategy === "rename-noreplace"
-      ? requireNativeBinding()
-      : getNativeBinding();
-    if (native) {
+    const native = getNativeBinding();
+    const nativeRename = strategy === "rename-noreplace" && typeof native?.renameNoReplace === "function";
+    const nativeLink = strategy !== "rename-noreplace" && typeof native?.linkBeneath === "function";
+    if (nativeRename || nativeLink) {
       sourceNativeParent = await openNativeParent(sourcePath);
       targetNativeParent = await openNativeParent(targetPath);
     }
 
     if (strategy === "rename-noreplace") {
-      const binding = requireNativeBinding();
-      binding.renameNoReplace(
-        sourceNativeParent!.handle.fd,
-        sourceNativeParent!.basename,
-        targetNativeParent!.handle.fd,
-        targetNativeParent!.basename,
-      );
-      rememberCreatedTarget(failure, sourceExactIdentity, "rename-verify");
-      // A failed post-rename fence must not delete the only remaining name.
-      failure.preserveTarget = true;
-      await getFsSafeTestHooks()?.afterPublishTargetCreated?.(
-        "rename-noreplace",
-        targetPath,
-        sourceExactIdentity,
-      );
-      const targetExactIdentity = fsSync.lstatSync(targetPath, { bigint: true });
-      if (
-        targetExactIdentity.isSymbolicLink() ||
-        !targetExactIdentity.isFile() ||
-        !sameFileIdentity(targetExactIdentity, sourceExactIdentity)
-      ) {
-        throw new FsSafeError("path-mismatch", "no-replace publication target changed");
+      const moved = await publishByMovingSource({
+        sourcePath, targetPath, source: sourceOwner, sourceIdentity: sourceExactIdentity, parent,
+        native, sourceNativeParent, targetNativeParent, failure,
+      });
+      const directorySync = await syncPublishedParent({ parent, failure, method: moved.method, targetPath });
+      failure.phase = "rename-verify";
+      const current = fsSync.lstatSync(targetPath, { bigint: true });
+      if (current.isSymbolicLink() || !current.isFile() || !sameFileIdentityForCleanup(current, sourceExactIdentity)) {
+        throw new FsSafeError("path-mismatch", "no-replace publication target changed during synchronization");
       }
-      try {
-        fsSync.lstatSync(sourcePath);
-        throw new FsSafeError("path-mismatch", "no-replace publication source still exists");
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-          throw error;
-        }
-      }
-      syncFileBestEffortSync(sourceNativeParent!.handle.fd);
-      const targetIdentity = fsSync.lstatSync(targetPath);
       return {
-        method: "rename-noreplace",
-        identity: targetIdentity,
-        directorySync: await syncPublishedParent({
-          parent,
-          failure,
-          method: "rename-noreplace",
-          targetPath,
-        }),
+        ...moved,
+        directorySync,
       };
     }
 
     try {
-      if (native) {
-        native.linkBeneath(
+      if (nativeLink) {
+        native!.linkBeneath(
           sourceNativeParent!.handle.fd,
           sourceNativeParent!.basename,
           targetNativeParent!.handle.fd,
@@ -443,6 +418,12 @@ export async function publishFileExclusive(params: {
     let target: FileHandle | undefined;
     let targetIdentity: Stats | undefined;
     try {
+      if (!targetNativeParent && (
+        typeof native?.cloneFileExclusive === "function" ||
+        typeof native?.copyFileRangeExclusive === "function"
+      )) {
+        targetNativeParent = await openNativeParent(targetPath);
+      }
       const copied = await copyPinnedSource({
         source,
         targetPath,
@@ -493,7 +474,7 @@ export async function publishFileExclusive(params: {
   } finally {
     await sourceNativeParent?.handle.close().catch(() => undefined);
     await targetNativeParent?.handle.close().catch(() => undefined);
-    await source.close().catch(() => undefined);
+    await sourceOwner.handle.close().catch(() => undefined);
     await parent?.close().catch(() => undefined);
   }
 }

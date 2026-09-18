@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Highlights
+
+- **Every feature works without the optional native addon:** add portable no-clobber moves, moving publication, retained-file staging, bzip2/zstd TAR, Windows private-directory creation, and descriptor-bound Windows secure reads. Native acceleration remains preferred; weaker fallback mechanisms emit deduplicated `FS_SAFE_NATIVE_FALLBACK` warnings.
+- **Complete archives in optional-free installs:** bundle bounded portable compressed-TAR decoders and make the lazy ZIP decoder a required dependency, preserving traversal, type, integrity, cancellation, and extraction budgets.
+- **Consistent ZIP metadata and integrity checks:** preserve admitted directory/symlink metadata across native and portable decoding, and reject corrupt entries whose declared-zero size previously caused the portable decoder to discard payload or CRC checks.
+- **Visible fallback guarantees:** staging receipts report targeting and publication method, temporary objects report their cleanup mechanism, and moving-publication receipts report source consumption. Requested cloning and bounded cleanup warn and use their portable equivalents when native mechanisms are absent. Explicit global native `require` remains a diagnostic opt-in.
+
+### Fixes and compatibility
+
+- Move regular files without requiring content-read or content-write permission, preserving their inode and permissions. Detect Windows read-only attribute changes before a portable link/unlink mutation instead of restoring a stale attribute state.
+- Preserve a substituted source during portable no-clobber moves and moving publication: capture and verify the source before removal, retain unexpected content for recovery, and report partial source consumption.
+- Keep publication and hashing usable with partial addons: select native parent access, linking, cloning, range copying, and hashing only when the corresponding primitive exists; retain content verification and propagate operational failures.
+- Support no-clobber moves and publication on filesystems without hardlinks using atomic platform commands, preserving complete contents, inode, and permissions. Linux uses isolated system Python 3 for this fallback; command startup warns about overhead.
+- Reject malformed portable zstd Huffman streams with redistributed output lengths or truncated symbols before archive filtering or extraction.
+- Reject malformed portable compressed TAR promptly on Node 22 by closing both decoder stream owners when parsing fails, preserving the original archive error instead of waiting for the extraction deadline.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights

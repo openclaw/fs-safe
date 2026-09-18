@@ -15,8 +15,8 @@ afterEach(() => {
   __resetNativeLoaderForTest();
 });
 
-describe.each(["auto", "require"] as const)("compressed TAR framing mode=%s", (mode) => {
-  describe.skipIf(!paxNative).each(["tar-zstd", "tar-bzip2"] as const)("%s", (kind) => {
+describe.each(["off", ...(paxNative ? ["auto", "require"] as const : [])] as const)("compressed TAR framing mode=%s", (mode) => {
+  describe.each(["tar-zstd", "tar-bzip2"] as const)("%s", (kind) => {
     beforeEach(() => {
       configureFsSafeNative({ mode });
       __setNativeLoaderForTest(() => paxNative!);
@@ -49,12 +49,14 @@ describe.each(["auto", "require"] as const)("compressed TAR framing mode=%s", (m
       await expect(extractArchive({ archivePath, destDir, kind, limits, timeoutMs: 10_000, entryFilter, onFiltered: "skip-entry" }))
         .rejects.toMatchObject({ name: "ArchiveLimitError", code });
       expect(entryFilter).not.toHaveBeenCalled();
-      const directory = await fs.open(destDir, "r");
-      try {
-        await expect(paxNative!.extractArchiveNative(archivePath, kind, directory.fd, [], resolveTarMeterLimits(limits), new AbortController().signal)).rejects.toThrow(code);
-        await expect(paxNative!.readArchiveEntryNative(archivePath, kind, "absent", 7, resolveTarMeterLimits(limits), new AbortController().signal)).rejects.toThrow(code);
-      } finally {
-        await directory.close();
+      if (mode !== "off") {
+        const directory = await fs.open(destDir, "r");
+        try {
+          await expect(paxNative!.extractArchiveNative(archivePath, kind, directory.fd, [], resolveTarMeterLimits(limits), new AbortController().signal)).rejects.toThrow(code);
+          await expect(paxNative!.readArchiveEntryNative(archivePath, kind, "absent", 7, resolveTarMeterLimits(limits), new AbortController().signal)).rejects.toThrow(code);
+        } finally {
+          await directory.close();
+        }
       }
       expect(await fs.readdir(destDir)).toEqual([]);
     });
@@ -65,7 +67,7 @@ describe.each(["auto", "require"] as const)("compressed TAR framing mode=%s", (m
       await fs.writeFile(archivePath, Buffer.from(compressedTarFraming[0][kind], "base64"));
       const requested = "directory/" + "x".repeat(120);
       expect(await readArchiveEntry(archivePath, requested, { kind, maxBytes: 3 })).toEqual(Buffer.from("gnu"));
-      expect(await paxNative!.readArchiveEntryNative(archivePath, kind, requested, 3, resolveTarMeterLimits(), new AbortController().signal)).toEqual(Buffer.from("gnu"));
+      if (mode !== "off") expect(await paxNative!.readArchiveEntryNative(archivePath, kind, requested, 3, resolveTarMeterLimits(), new AbortController().signal)).toEqual(Buffer.from("gnu"));
       await expect(readArchiveEntry(archivePath, requested, { kind, maxBytes: 2 })).rejects.toMatchObject({
         name: "ArchiveLimitError", code: "archive-entry-extracted-size-exceeds-limit",
       });
@@ -97,7 +99,7 @@ describe.each(["auto", "require"] as const)("compressed TAR framing mode=%s", (m
   });
 });
 
-it.each(["off", "auto", "require"] as const)("keeps unavailable native codec policy in mode=%s", async (mode) => {
+it.each(["off", "auto", "require"] as const)("supports omitted native codecs unless explicitly required in mode=%s", async (mode) => {
   configureFsSafeNative({ mode });
   __setNativeLoaderForTest(() => { throw new Error("fixture: native unavailable"); });
   const root = await tempRoot("fs-safe-tar-framing-unavailable-");
@@ -106,7 +108,13 @@ it.each(["off", "auto", "require"] as const)("keeps unavailable native codec pol
   await fs.mkdir(destDir);
   for (const kind of ["tar-zstd", "tar-bzip2"] as const) {
     await fs.writeFile(archivePath, Buffer.from(compressedTarFraming[0][kind], "base64"));
-    await expect(extractArchive({ archivePath, destDir, kind, timeoutMs: 10_000 })).rejects.toMatchObject({ code: "helper-unavailable" });
-    await expect(readArchiveEntry(archivePath, "value", { kind, maxBytes: 7 })).rejects.toMatchObject({ code: "helper-unavailable" });
+    if (mode === "require") {
+      await expect(extractArchive({ archivePath, destDir, kind, timeoutMs: 10_000 })).rejects.toMatchObject({ code: "helper-unavailable" });
+      await expect(readArchiveEntry(archivePath, "value", { kind, maxBytes: 7 })).rejects.toMatchObject({ code: "helper-unavailable" });
+    } else {
+      await extractArchive({ archivePath, destDir, kind, timeoutMs: 10_000 });
+      expect(await fs.readFile(path.join(destDir, "value"), "utf8")).toBe("payload");
+      expect(await readArchiveEntry(archivePath, "value", { kind, maxBytes: 7 })).toEqual(Buffer.from("payload"));
+    }
   }
 });

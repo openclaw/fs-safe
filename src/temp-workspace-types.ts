@@ -1,6 +1,6 @@
 import type { FileStore, FileStoreSync } from "./file-store.js";
 import type { TempPathIdentityReceipt } from "./temp-cleanup.js";
-import type { TempWorkspaceCleanupResult, TempWorkspaceCleanupSafety } from "./temp-workspace-owner.js";
+import type { TempWorkspaceCleanupMechanism, TempWorkspaceCleanupResult, TempWorkspaceCleanupSafety } from "./temp-workspace-owner.js";
 
 export type TempWorkspaceOptions = {
   rootDir: string;
@@ -11,6 +11,7 @@ export type TempWorkspaceOptions = {
 };
 
 export type TempWorkspace = {
+  readonly cleanupMechanism: TempWorkspaceCleanupMechanism;
   dir: string;
   identity: TempPathIdentityReceipt;
   store: FileStore;
@@ -29,6 +30,7 @@ export type TempWorkspace = {
 };
 
 export type TempWorkspaceSync = {
+  readonly cleanupMechanism: TempWorkspaceCleanupMechanism;
   dir: string;
   identity: TempPathIdentityReceipt;
   store: FileStoreSync;
@@ -40,4 +42,3 @@ export type TempWorkspaceSync = {
   cleanup(): TempWorkspaceCleanupResult;
   [Symbol.dispose](): void;
 };
-

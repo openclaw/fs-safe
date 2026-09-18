@@ -14,7 +14,7 @@ const { tempRoot } = useTempDirs();
 afterEach(() => { __resetFsSafeNativeConfigForTest(); __resetNativeLoaderForTest(); });
 
 for (const mode of ["off", "auto", "require"] as const) {
-  const formats = mode === "off" ? ["tar", "gzip"] as const : ["tar", "gzip", "tar-zstd", "tar-bzip2"] as const;
+  const formats = ["tar", "gzip", "tar-zstd", "tar-bzip2"] as const;
   describe.skipIf(mode !== "off" && !paxNative).each(formats)(`GNU admission and TAR kinds ${mode} %s`, (format) => {
     let extractNative: ReturnType<typeof vi.fn>;
     beforeEach(() => {

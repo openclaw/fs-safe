@@ -1,6 +1,6 @@
 # Directory copying and cloning
 
-`@openclaw/fs-safe/copy` materializes independent, caller-owned directory trees. `copyTree` prefers native copy-on-write operations by default, can require cloning, or can copy regular file bytes without cloning or copy offload.
+`@openclaw/fs-safe/copy` materializes independent, caller-owned directory trees. `copyTree` prefers native copy-on-write operations by default and can copy regular file bytes without cloning or copy offload. In native `auto` or `off` mode, missing native support never prevents an ordinary copy, including with `clone: "always"`; that request emits a deduplicated warning when cloning is unavailable.
 
 ```ts
 import { copyTree, createCloneSource, probeTreeClone } from "@openclaw/fs-safe/copy";
@@ -30,7 +30,7 @@ if (backend) {
 
 Native cloning requires source and destination filesystems that support cloning between them. Automatic and ordinary copying can cross filesystems. The source repository used to populate a template can live elsewhere. ReFS, XFS, and ZFS share file data rather than the whole directory metadata tree, so creating many small files still has a cost.
 
-ZFS uses strict file reflinks within one dataset, not dataset snapshots. The installed Linux OpenZFS version must implement `FICLONE`, and the pool must enable `feature@block_cloning`. The probe identifies ZFS even when that feature is unavailable; `clone: "always"` then fails and `"auto"` can copy bytes. Native cloning was verified on OpenZFS 2.4.1 with POSIX ACLs. See the [OpenZFS block-cloning contract](https://openzfs.github.io/openzfs-docs/Basic%20Concepts/Data%20Storage/Block%20Cloning.html) for filesystem limits and pool sharing counters.
+ZFS uses file reflinks within one dataset, not dataset snapshots. The installed Linux OpenZFS version must implement `FICLONE`, and the pool must enable `feature@block_cloning`. The probe identifies ZFS even when that feature is unavailable; `clone: "always"` then warns and copies bytes, while `"auto"` copies bytes without a clone-specific warning. Native cloning was verified on OpenZFS 2.4.1 with POSIX ACLs. See the [OpenZFS block-cloning contract](https://openzfs.github.io/openzfs-docs/Basic%20Concepts/Data%20Storage/Block%20Cloning.html) for filesystem limits and pool sharing counters.
 
 Btrfs preserves native subvolume snapshot semantics: nested subvolume contents are not included. Prepare source-only templates without nested subvolumes. This API does not recursively snapshot a hierarchy of subvolumes.
 
@@ -48,17 +48,17 @@ Apple [strongly discourages general directory cloning](https://github.com/apple-
 
 `probeTreeClone(parentPath)` synchronously inspects an existing directory and returns its supported backend name or `undefined`. It creates no probe artifacts. A filesystem name identifies a candidate backend; for example, an older XFS volume may have reflinks disabled. The actual operation determines availability. An unavailable native binding produces `undefined` in automatic mode; the package's explicit native `require` mode still reports a missing binding as an error.
 
-`createCloneSource(destination, { signal? })` creates an empty cloneable source. Its parent must already exist and the destination must be absent.
+`createCloneSource(destination, { signal? })` creates an empty source, using native clone preparation when supported. Without that capability it warns and exclusively creates a verified ordinary directory. Its parent must already exist and the destination must be absent. An ordinary directory remains usable for byte copying; it is not a Btrfs subvolume or evidence of clone support.
 
 `copyTree(source, destination, { clone?, signal?, concurrency? })` copies a directory into an absent destination. Existing destinations are never merged or overwritten. The destination must be outside the source tree.
 
 | `clone` policy     | Behavior                                                                                                                                     |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `"auto"` (default) | Prefer native cloning; copy bytes when the binding or filesystem capability is unavailable, or cloning cannot cross the filesystem boundary. |
-| `"always"`         | Require native cloning. Unsupported operations fail without a byte-copy fallback.                                                            |
+| `"always"`         | Prefer native cloning; warn and copy independent bytes when the binding or clone capability is unavailable. This is not a clone guarantee. |
 | `"never"`          | Copy regular file bytes using reads and writes. No native cloning or copy-offload calls. Works without a native binding.                     |
 
-Automatic copying does not recover from permission errors, I/O errors, cancellation, or rejected source contents such as ReFS named streams. A failed clone must leave the destination absent before fallback can create it; otherwise copying fails rather than merging into a partial tree.
+Neither automatic copying nor `clone: "always"` recovers from permission errors, I/O errors, cancellation, or rejected source contents such as ReFS named streams. A failed clone must leave the destination absent before fallback can create it; otherwise copying fails rather than merging into a partial tree. Both APIs retain their `Promise<void>` result; successful completion proves the copy or directory creation, not shared storage. Explicit process-global native `require` mode still rejects a missing binding.
 
 `concurrency` accepts integers from 1 through 32 and bounds active file copies. ReFS, XFS, and ZFS cloning default to 16 workers. Byte copying defaults to four concurrent files on Windows and one elsewhere. Btrfs uses its bulk operation. APFS uses a bulk clone followed by native directory-entry enumeration to restore directory timestamps; known regular files and symbolic links need no additional stat or open.
 
@@ -66,7 +66,7 @@ On Windows, automatic byte copying uses the native binding when available to tra
 
 On Linux, automatic byte copying also uses the native binding when available. It reads in chunks up to 1 MiB, using smaller buffers for smaller source-size hints, and leaves leading and trailing zero-filled portions of each chunk unwritten in the new file, avoiding their allocation on filesystems that support sparse files. A final size update preserves trailing holes and all-zero files. This path uses reads and writes, without cloning or copy offload; it still reads the full logical contents and does not promise identical sparse extent layout. `clone: "never"` retains the JavaScript byte-copy path.
 
-Clones preserve file contents, empty directories, timestamps, executable modes where supported, and literal symbolic links. Editing a clone does not modify its source. Unsupported filesystem operations fail; callers may choose their own copy or checkout fallback after the failed operation has settled.
+Clones preserve file contents, empty directories, timestamps, executable modes where supported, and literal symbolic links. Editing a clone does not modify its source. Unavailable clone mechanisms select portable copying; unsafe or unsupported source contents and operational failures still reject after admitted work has settled.
 
 Native Windows byte copies can store large zero-filled chunks as sparse ranges when the destination is initially empty and its filesystem supports sparse files. This still reads every source byte and creates an independent copy.
 
@@ -74,7 +74,7 @@ The ReFS backend rejects files with alternate data streams and unsupported repar
 
 XFS and ZFS preserve regular-file and directory modes, timestamps, extended attributes, and ACLs. They reject special files, symlink extended attributes, non-UTF-8 names, and directory nesting deeper than 128 levels. Hardlinked source files become independent reflinked files. Portable byte copying preserves file contents, empty directories, modes where supported, file and directory timestamps, and literal symbolic links; it does not promise ownership, ACL, extended-attribute, alternate-stream, or sparse-layout preservation. On Windows, byte copying rejects unresolved symbolic links because Node does not expose their file/directory link type; resolved links keep their literal target and source type. POSIX dangling links are preserved. Choose a copying policy that meets the caller's metadata requirements; automatic copying can select either path.
 
-`readCloneFileMetadata(files)` asynchronously reads APFS data-stream identities and file metadata in one native batch. Results correspond to input order; missing or unsupported entries return `undefined`. The returned `CloneFileMetadata` includes clone ID, device/inode, size, mode, ownership, and timestamps. These are point-in-time observations, not authorization or proof that later reads remain unchanged. Consumers such as Git index adapters must validate their own content and timestamp invariants. The reader does not follow leaf symbolic links.
+`readCloneFileMetadata(files)` asynchronously reads APFS data-stream identities and file metadata in one native batch. Results correspond to input order; missing or unsupported entries return `undefined`. Without native metadata support it validates every input, warns once, and returns `undefined` for every requested entry. It never substitutes a fabricated clone ID. The returned `CloneFileMetadata` includes clone ID, device/inode, size, mode, ownership, and timestamps. These are point-in-time observations, not authorization or proof that later reads remain unchanged. Consumers such as Git index adapters must validate their own content and timestamp invariants. The reader does not follow leaf symbolic links.
 
 ## Borrowed FileHandle transfers
 
@@ -151,8 +151,8 @@ Byte copying retains fractional file and directory access/modification timestamp
 
 After building the host native binding, run `pnpm test test/clone.test.ts test/copy-tree.test.ts`. APFS tests can use the normal macOS temporary directory. For Btrfs, ReFS, XFS, or ZFS, set `FS_SAFE_CLONE_TEST_ROOT` to an existing writable directory on that filesystem. The test creates and cleans only its own temporary children. An explicitly configured unsupported directory fails the test rather than silently skipping platform proof. XFS and ZFS metadata tests require the `attr` and `acl` utilities.
 
-Run `node scripts/clone-xfs-proof.mjs MOUNT` on a real XFS volume to verify the public API, hashes, independent writes, and shared physical extents. It requires `filefrag` from `e2fsprogs`. Add `no-reflink` for an XFS fixture formatted with reflinks disabled; strict copying must fail and automatic copying must succeed through byte copying.
+Run `node scripts/clone-xfs-proof.mjs MOUNT` on a real XFS volume to verify the public API, hashes, independent writes, and shared physical extents. It requires `filefrag` from `e2fsprogs`. Add `no-reflink` for an XFS fixture formatted with reflinks disabled; both `always` and `auto` must succeed through verified byte copying, with a warning for the unfulfilled cloning request.
 
-Run `node scripts/clone-zfs-proof.mjs MOUNT POOL` on a dedicated, otherwise idle Linux ZFS pool with compression and deduplication disabled. It verifies both `copyTree` and `Root.copyIn` through hashes and changes in the documented `bclonesaved` pool counter. It requires `zfs`, `zpool`, and `findmnt`, including permission to run `zpool sync`. Add `no-reflink` for a pool without block cloning to verify strict refusal and automatic byte fallback. The script creates and removes only its temporary directory; it does not create pools or change their properties.
+Run `node scripts/clone-zfs-proof.mjs MOUNT POOL` on a dedicated, otherwise idle Linux ZFS pool with compression and deduplication disabled. It verifies both `copyTree` and `Root.copyIn` through hashes and changes in the documented `bclonesaved` pool counter. It requires `zfs`, `zpool`, and `findmnt`, including permission to run `zpool sync`. Add `no-reflink` for a pool without block cloning to verify byte fallback for both `always` and `auto`. The script creates and removes only its temporary directory; it does not create pools or change their properties.
 
 Run `node benchmarks/clone.mjs SOURCE DESTINATION_PARENT` after `pnpm build` to compare one, four, and 16 workers on the same immutable source. Add `3 auto` or `3 never` to measure three samples of ordinary copying, including NTFS destinations. It records copying time separately from fixture preparation and full file-hash verification, and retains its uniquely named output directory for inspection. Prepare Btrfs sources with `createCloneSource` first.

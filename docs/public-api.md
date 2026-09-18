@@ -111,10 +111,10 @@ manager controls; production code should not use them as lock recovery.
 
 Standalone walkers use the `WalkEntryKind` and `WalkSymlinkPolicy` unions.
 Private workspaces expose `TempPathIdentityReceipt`,
-`TempWorkspaceCleanupResult`, and `TempWorkspaceCleanupSafety` so callers can
-distinguish outcomes and select compatible or required bounded-tree cleanup.
-Strict workspace creation requires native no-replace quarantine plus retained
-parent/workspace descriptors; see the
+`TempWorkspaceCleanupResult`, `TempWorkspaceCleanupSafety`, and
+`TempWorkspaceCleanupMechanism` so callers can distinguish outcomes and the
+actual cleanup mechanism. Requested native bounded cleanup falls back with a
+warning when unavailable; returned objects report `cleanupMechanism`. See the
 [creation and cleanup contract](temp.md#private-temp-workspaces).
 
 ## Atomic replacement and durability

@@ -15,7 +15,7 @@ consumer Rust build.
 import { configureFsSafeNative } from "@openclaw/fs-safe/config";
 
 configureFsSafeNative({ mode: "auto" });    // default
-configureFsSafeNative({ mode: "off" });     // guarded JavaScript; reject native-only operations
+configureFsSafeNative({ mode: "off" });     // portable implementations; do not load the addon
 configureFsSafeNative({ mode: "require" }); // fail closed when the binding is unavailable
 ```
 
@@ -25,14 +25,22 @@ The equivalent environment variables are `FS_SAFE_NATIVE_MODE` and `OPENCLAW_FS_
 
 | Mode | Behavior |
 |---|---|
-| `auto` | Prefer native primitives when the current platform package loads; otherwise use guarded JavaScript where a safe fallback exists and reject native-only operations. |
-| `off` | Do not load a native package. Use guarded JavaScript where safe and reject native-only operations deterministically. |
-| `require` | Throw `FsSafeError("helper-unavailable")` instead of falling back when an operation needs the native binding and it cannot load. |
+| `auto` | Prefer native primitives when the current platform package loads; otherwise use the feature's guarded portable implementation. |
+| `off` | Do not load a native package. Use portable implementations for every feature, retaining validation and filesystem-error handling. |
+| `require` | Binding lookup throws `FsSafeError("helper-unavailable")` when the addon cannot load; public wrappers retain their documented error mapping. |
 
-TAR/gzip in the guarded JavaScript path uses a bundled, import-free WASM build
-of the same Rust parser used by native. `off` still disables the optional native
-filesystem helper; it does not disable this portable parser. ZIP fallback still requires
-optional `jszip`, and zstd/bzip2 remain native-only.
+Portable TAR uses bundled, import-free WASM and the same Rust TAR parser used
+by native. Node handles gzip decompression; bundled WASM handles bzip2 and zstd.
+`off` disables the optional addon, not this portable parser. ZIP uses lazily loaded, required `jszip`, so omitting optional
+dependencies does not remove archive functionality.
+
+`FS_SAFE_NATIVE_FALLBACK` warnings are deduplicated per affected feature and do
+not include caller paths or native error text. Warnings explain a weaker
+mechanism or system-command overhead. They never convert rejected
+paths, unknown identity, insecure permissions, I/O failures, or cancellation
+into successful results. Explicit global `require` remains a diagnostic choice
+that rejects an unavailable addon; it does not prohibit per-feature fallbacks
+when a loaded addon's particular primitive is unavailable.
 
 On Bun macOS/Linux, the [runtime path adapter](install.md#bun-runtime) uses the
 same Rust addon for system canonicalization in `auto` and `require`. No JIT is
@@ -57,21 +65,27 @@ open until process exit. The native close operation handles explicit cleanup,
 not forced worker termination.
 
 [`tempWorkspace()` and its scoped/sync variants](temp.md#private-temp-workspaces)
-remain available in every mode. Their default compatible cleanup uses guarded
+remain available without the addon in `auto` and `off`. Their default compatible cleanup uses guarded
 JavaScript quarantine when owned native tree removal is unavailable.
-`cleanupSafety: "require-bounded"` instead rejects before child creation unless
-no-replace quarantine plus descriptor-relative owned-tree removal are available.
+`cleanupSafety: "require-bounded"` selects no-replace quarantine and
+descriptor-relative owned-tree removal when available, otherwise warns and
+uses the existing compatible cleanup owner. Returned objects expose
+`cleanupMechanism` so callers can distinguish `"native-bounded"` from
+`"guarded-path"`.
 On Linux, admission probes the exact `openat2` child-directory flags, including
 `RESOLVE_NO_XDEV`, at runtime. An unavailable or denied probe selects compatible
-JavaScript cleanup even in global `require` mode; `require-bounded` rejects before
-child creation.
+JavaScript cleanup even in global `require` mode. Actual access, mode, and
+identity failures retain their existing error or preservation behavior.
 Already-created strict workspaces retain their binding
 and descriptors across later mode changes.
+Explicit global `require` still rejects a missing binding when requested
+bounded cleanup attempts to load it.
 
-[`stageFileInDirectory()`](staged-file.md) always requires native support on
-Linux/macOS and rejects before creation when off, unavailable, or missing the
-required capability. Windows is unsupported for this lifecycle. This does not
-change the mode policy of existing fallback-capable APIs.
+[`stageFileInDirectory()`](staged-file.md) uses native retained-directory
+operations on Linux/macOS when available and guarded Node staging otherwise,
+including Windows. Receipts report descriptor-relative or guarded-pathname
+`targeting` and the publication `method`. Portable cleanup preserves artifacts
+after parent drift instead of claiming access to a renamed directory.
 
 ## Native boundary
 
@@ -99,22 +113,36 @@ normalization, and the decision to fall back.
 - macOS 15.4 and newer prefer `O_RESOLVE_BENEATH`; older kernels resolve components with `O_NOFOLLOW` and restart in-root symlinks from the pinned root descriptor. Both routes use an `F_GETPATH` post-open escape detector and report `best-effort` because directory rename races are not atomic with that check. Publication uses `renameat` for replacement and `renameatx_np(RENAME_EXCL)` for no-replace; owned-tree cleanup uses descriptor-relative `openat`/`unlinkat`.
 - Windows uses handle-relative `NtCreateFile`, rejects reparse points during root-bounded traversal, uses `FileRenameInfoEx` with replacement selected explicitly by the TypeScript policy layer, and deletes owned trees through exact opened handles with `FileDispositionInfoEx`; symlink/reparse entries in owned trees are removed as leaves and never traversed. Descriptors crossing N-API are converted only by the host executable's paired `uv_get_osfhandle` and `uv_open_osfhandle` exports. A runtime without both exports is unsupported for these native operations; the binding never guesses a raw HANDLE or uses a foreign CRT descriptor table. Descriptor-producing operations also require that same host's synchronous libuv close and request-management APIs before exporting an owned descriptor.
 
-Native primitives back create-only and replacing pinned writes, no-clobber
-`Root.move()`, async sidecar creation, guarded publication, archive acceleration,
-and direct Windows ACL operations. Windows secure-file reads require
-descriptor-bound owner/DACL facts from the current helper; they do not use the
-standalone pathname inspector's command fallback. No-clobber moves fail with
-`helper-unavailable` when descriptor-relative parent admission or the atomic
-no-replace rename is unavailable; they never use a check followed by a replacing
-rename. Equivalent JavaScript paths remain available for documented
-fallback-capable features. See [Native architecture](native.md#javascript-fallback-guarantees-and-delta)
-for the exact difference.
+Native primitives accelerate guarded writes, moves, sidecars, publication,
+archives, and Windows security operations. Portable no-clobber moves normally
+use exclusive hardlink creation followed by guarded source removal, preserving
+the inode and refusing destination collisions atomically. Linux uses a
+metadata-only source descriptor. For macOS/Windows files without content-open
+permission, built-in JXA or PowerShell/.NET commands perform an atomic no-replace
+rename instead. Command startup adds overhead. Moving publication retains the
+hardlink fallback. Source removal captures and verifies a private POSIX entry
+or deletes a verified Windows source-name handle. This is not one atomic move;
+post-publication errors preserve the published name and report retained source
+recovery locations. Filesystems without hardlinks use atomic command-based
+no-replace rename; Linux needs isolated `/usr/bin/python3` and libc `renameat2`,
+while macOS and Windows use their system runtimes. The destination is never
+published with a replacing rename.
+Copy policies fall back to verified byte copies with a warning when cloning is
+unavailable; unavailable clone metadata remains `undefined`.
+
+Windows portable security uses bounded built-in PowerShell/.NET commands.
+Secure reads query an inherited descriptor, and private directories receive
+their protected DACL at exclusive parent-relative creation. Failed security
+queries and unsafe facts remain failures. See
+[Native architecture](native.md#javascript-fallback-guarantees-and-delta) for
+the mechanism differences.
 
 The guarded JavaScript mutation path is detection-based, not containment-atomic.
 If a same-privilege peer can replace a writable parent after its identity guard
 but before Node resolves a pathname mutation, the mutation can land outside the
-intended root before the post-operation guard throws. Select `require` rather
-than `auto` or `off` when that concurrent attacker is part of the threat model.
+intended root before the post-operation guard throws. Use OS isolation when
+that concurrent attacker is part of the threat model, and inspect available
+mechanism receipts rather than treating loader mode as an atomicity guarantee.
 
 `openBeneath()` returns `{ fd, containment }`. `containment` is
 `"kernel-atomic"` for Linux `openat2` and `"best-effort"` for macOS and
@@ -142,9 +170,10 @@ native mode, and then apply that mode. A legacy interpreter path without an
 explicit mode maps to `auto` and the path itself is ignored. Native config has
 the normal precedence over legacy environment config.
 
-There is no silent alias and no Python execution fallback. The bridge exists
-only to make shipped 0.4 configuration visible and predictable while the
-consumer performs its 0.5 upgrade.
+The configuration bridge exists only to make shipped 0.4 settings visible and
+predictable during the 0.5 upgrade; it does not restore the persistent worker.
+The current Linux no-hardlink rename fallback is a separate, isolated one-shot
+system command with no interpreter-path configuration.
 
 ## Related pages
 

@@ -15,9 +15,15 @@ import {
   type RetainedDirectory,
 } from "./temp-workspace-descriptor.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
+import { warnNativeFallback } from "./native-fallback-warning.js";
 
 export type TempWorkspaceCleanupResult = "removed" | "missing" | "identity-mismatch" | "indeterminate";
 export type TempWorkspaceCleanupSafety = "compatible" | "require-bounded";
+export type TempWorkspaceCleanupMechanism = "native-bounded" | "guarded-path";
+
+function warnCompatibleCleanup(): void {
+  warnNativeFallback("bounded temp cleanup", "Cleanup uses guarded pathname quarantine and removal; descriptor-bounded removal is not guaranteed.");
+}
 
 type Quarantine = { name: string; path: string; nativeRemoval: boolean };
 type CleanupCapabilityPhase = "new" | "ready" | "sealed" | "failed" | "closed";
@@ -66,12 +72,6 @@ export class TempWorkspaceCleanupCapability {
     // POSIX enumeration reopens fd-relative ".", so retaining O_RDONLY before
     // chmod cannot supply read/search authority that the final mode removes.
     const childModeAllowsRemoval = process.platform === "win32" || (dirMode & 0o500) === 0o500;
-    if (safety === "require-bounded" && !childModeAllowsRemoval) {
-      throw new FsSafeError(
-        "helper-unavailable",
-        "temp workspace owned-tree cleanup requires owner read and search in dirMode",
-      );
-    }
     let binding: NativeBinding | undefined;
     try {
       binding = getNativeBinding();
@@ -116,11 +116,7 @@ export class TempWorkspaceCleanupCapability {
     this.parent = parent;
     this.#ownedTreeRemovalAvailable = available;
     if (safety === "require-bounded" && !this.#ownedTreeRemovalAvailable) {
-      this.close();
-      throw new FsSafeError(
-        "helper-unavailable",
-        "temp workspace owned-tree cleanup is unavailable",
-      );
+      warnCompatibleCleanup();
     }
   }
 
@@ -165,10 +161,7 @@ export class TempWorkspaceCleanupCapability {
     this.#phase = "sealed";
     const bounded = this.canRemoveOwnedTree && canEnumerate;
     if (this.#safety === "require-bounded" && !bounded) {
-      throw new FsSafeError(
-        "helper-unavailable",
-        "temp workspace owned-tree cleanup requires a readable child descriptor",
-      );
+      warnCompatibleCleanup();
     }
     return bounded;
   }
@@ -189,6 +182,7 @@ export class TempWorkspaceCleanupCapability {
 }
 
 export class TempWorkspaceCleanupOwner {
+  readonly cleanupMechanism: TempWorkspaceCleanupMechanism;
   readonly #dir: string;
   readonly #identity: FileIdentityStat;
   readonly #capability: TempWorkspaceCleanupCapability;
@@ -209,6 +203,8 @@ export class TempWorkspaceCleanupOwner {
     this.#identity = child.identity;
     this.#capability = capability;
     this.#directory = child.directory;
+    this.cleanupMechanism = capability.canRemoveOwnedTree && child.directory !== undefined
+      ? "native-bounded" : "guarded-path";
   }
 
   #repeat(): TempWorkspaceCleanupResult {

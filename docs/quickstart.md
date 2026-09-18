@@ -60,7 +60,7 @@ await fs.move("notes/today.txt", "notes/archive/today.txt", { overwrite: true })
 await fs.remove("notes/archive/today.txt");
 ```
 
-`move()` defaults to no clobber. That mode requires the native helper so a concurrent target cannot be replaced between an absence check and the rename; without it, the call fails with `helper-unavailable`. Pass `{ overwrite: true }` when replacing the target is intentional. `remove()` works on files and empty directories. For non-empty directories, list and remove children first or use [`replaceDirectoryAtomic`](atomic.md#replacedirectoryatomic).
+`move()` defaults to no clobber. Native support provides atomic no-replace rename; portable mode uses exclusive hardlink publication followed by source removal and warns that the complete move has separate steps. Neither route replaces a concurrent target. Pass `{ overwrite: true }` when replacement is intentional. `remove()` works on files and empty directories. For non-empty directories, list and remove children first or use [`replaceDirectoryAtomic`](atomic.md#replacedirectoryatomic).
 
 ## 5. Inspect
 
@@ -145,7 +145,7 @@ await withTempWorkspace({ rootDir: "/srv/jobs/tmp", prefix: "build-" }, async (w
 });
 ```
 
-The directory is mode `0700` under the caller-provided root, and cleanup runs when the callback returns or throws. Compatible cleanup remains available without native support; pass `cleanupSafety: "require-bounded"` to require native no-replace quarantine and descriptor-bounded tree removal before creating a child. Cleanup preserves raced or ambiguous entries under a private quarantine name. See the [temp workspace compatibility and security contract](temp.md#private-temp-workspaces).
+The directory is mode `0700` under the caller-provided root, and cleanup runs when the callback returns or throws. `cleanupSafety: "require-bounded"` selects native bounded cleanup when available; otherwise it warns and uses compatible cleanup. Inspect `cleanupMechanism` on the returned workspace when that distinction matters. Cleanup preserves raced or ambiguous entries under a private quarantine name. See the [temp workspace compatibility and security contract](temp.md#private-temp-workspaces).
 
 ## Where to next
 

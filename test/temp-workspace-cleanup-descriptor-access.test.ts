@@ -103,23 +103,24 @@ describe.runIf(supportsSearchOnlyDirectory)("temp workspace cleanup descriptor a
   );
 
   it.each(["async", "sync"] as const)(
-    "rejects require-bounded %s cleanup when only a search child fd is available", async (variant) => {
+    "uses guarded require-bounded %s cleanup when only a search child fd is available", async (variant) => {
       const rootDir = await tempRoot("fs-safe-workspace-search-required-");
       configureFsSafeNative({ mode: "require" });
       const binding = availableCleanupBinding();
       __setNativeLoaderForTest(() => binding as unknown as NativeBinding);
       const forced = forceSearchOnlyChild(rootDir);
       const register = vi.spyOn(cleanup, "registerTempPathForExit");
-      await expect(async () => variant === "async"
+      const workspace = variant === "async"
         ? await tempWorkspace({ rootDir, prefix: "workspace-", cleanupSafety: "require-bounded" })
-        : tempWorkspaceSync({ rootDir, prefix: "workspace-", cleanupSafety: "require-bounded" }))
-        .rejects.toMatchObject({ code: "helper-unavailable" });
+        : tempWorkspaceSync({ rootDir, prefix: "workspace-", cleanupSafety: "require-bounded" });
       expect(forced()).toBe(3);
-      expect(register).not.toHaveBeenCalled();
+      expect(register).toHaveBeenCalledTimes(1);
+      expect(workspace.cleanupMechanism).toBe("guarded-path");
+      expect(await workspace.cleanup()).toBe("removed");
       expect(binding.renameNoReplace).not.toHaveBeenCalled();
       expect(binding.removeOwnedTree).not.toHaveBeenCalled();
       expect(binding.removeOwnedTreeSync).not.toHaveBeenCalled();
-      expect((await fs.readdir(rootDir)).some((name) => name.startsWith("workspace-"))).toBe(true);
+      expect(await fs.readdir(rootDir)).toEqual([]);
     },
   );
 

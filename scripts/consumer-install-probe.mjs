@@ -49,13 +49,8 @@ for (const name of expected.platforms) {
     assert.throws(() => rootRequire.resolve(name), { code: "MODULE_NOT_FOUND" });
   }
 }
-if (expected.omitted) {
-  for (const name of ["jszip", "tar"]) {
-    assert.throws(() => rootRequire.resolve(name), { code: "MODULE_NOT_FOUND" });
-  }
-} else {
-  insideConsumer(rootRequire.resolve("jszip"));
-}
+assert.equal(typeof expected.rootPkg.dependencies.jszip, "string", "portable ZIP is a required dependency");
+insideConsumer(rootRequire.resolve("jszip"));
 assert.throws(() => rootRequire.resolve("tar"), { code: "MODULE_NOT_FOUND" });
 for (const subpath of Object.keys(expected.rootPkg.exports)) {
   if (subpath !== "./package.json") {

@@ -6,11 +6,11 @@ import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/
 import { __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
 import { readOwnerAndDacl } from "../src/owner-dacl.js";
 import { createPrivateDirectory } from "../src/private-directory.js";
+import { readSecureFile } from "../src/secure-file.js";
+import { compressedTarFraming } from "./helpers/archive-tar-framing-compressed.js";
 import { useTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useTempDirs();
-const guidance = "install @openclaw/fs-safe with optional dependencies enabled on a supported platform " +
-  "and use FS_SAFE_NATIVE_MODE=auto or require";
 
 afterEach(() => {
   __resetFsSafeNativeConfigForTest();
@@ -18,48 +18,58 @@ afterEach(() => {
 });
 
 for (const mode of ["off", "auto"] as const) {
-  describe(`native-only diagnostics with mode ${mode}`, () => {
+  describe(`portable feature availability with mode ${mode}`, () => {
     function unavailable() {
       configureFsSafeNative({ mode });
       __setNativeLoaderForTest(() => { throw new Error("platform package omitted"); });
     }
 
-    it.each(["tar-zstd", "tar-bzip2"] as const)("explains recovery for %s detection, extraction and reads", async (kind) => {
+    it.each(["tar-zstd", "tar-bzip2"] as const)("detects, extracts and reads %s without the addon", async (kind) => {
       unavailable();
       const root = await tempRoot("fs-safe-native-diagnostics-");
       const archivePath = path.join(root, kind === "tar-zstd" ? "fixture.tar.zst" : "fixture.tar.bz2");
       const destDir = path.join(root, "destination");
-      await fs.writeFile(archivePath, "not compressed");
-      const expected = {
-        code: "helper-unavailable",
-        message: `${kind} archives require the matching optional native platform package; ${guidance}`,
-      };
-      expect(() => resolveArchiveKind(archivePath)).toThrow(expect.objectContaining(expected));
-      await expect(extractArchive({ archivePath, destDir, kind })).rejects.toMatchObject(expected);
-      await expect(readArchiveEntry(archivePath, "value", { maxBytes: 5, kind })).rejects.toMatchObject(expected);
-      await expect(fs.stat(destDir)).rejects.toMatchObject({ code: "ENOENT" });
+      await fs.mkdir(destDir);
+      await fs.writeFile(archivePath, Buffer.from(compressedTarFraming[0][kind], "base64"));
+      expect(resolveArchiveKind(archivePath)).toBe(kind);
+      await extractArchive({ archivePath, destDir, kind });
+      expect(await fs.readFile(path.join(destDir, "value"), "utf8")).toBe("payload");
+      expect(await readArchiveEntry(archivePath, "value", { maxBytes: 7, kind })).toEqual(Buffer.from("payload"));
+      await expect(readArchiveEntry(archivePath, "value", { maxBytes: 6, kind })).rejects.toMatchObject({
+        code: "archive-entry-extracted-size-exceeds-limit",
+      });
     });
 
-    it("explains Windows recovery without creating a directory or returning ACL facts", async () => {
+    it.each(["tar-zstd", "tar-bzip2"] as const)("still rejects malformed %s before publication", async (kind) => {
+      unavailable();
+      const root = await tempRoot("fs-safe-native-format-diagnostics-");
+      const archivePath = path.join(root, "fixture");
+      const destDir = path.join(root, "destination");
+      await fs.mkdir(destDir);
+      await fs.writeFile(path.join(destDir, "sentinel"), "unchanged");
+      await fs.writeFile(archivePath, Buffer.from(compressedTarFraming[3][kind], "base64"));
+      const expected = { code: "archive-header-invalid" };
+      await expect(extractArchive({ archivePath, destDir, kind })).rejects.toMatchObject(expected);
+      await expect(readArchiveEntry(archivePath, "value", { maxBytes: 7, kind })).rejects.toMatchObject(expected);
+      expect(await fs.readdir(destDir)).toEqual(["sentinel"]);
+      expect(await fs.readFile(path.join(destDir, "sentinel"), "utf8")).toBe("unchanged");
+    });
+
+    it.runIf(process.platform === "win32")("creates a private Windows directory and verifies real security facts", async () => {
       unavailable();
       const root = await tempRoot("fs-safe-windows-diagnostics-");
       const target = path.join(root, "private");
-      await expect(createPrivateDirectory(target, { platform: "win32" })).rejects.toMatchObject({
-        code: "helper-unavailable",
-        message: `private Windows directory creation requires the matching optional native platform package; ${guidance}`,
-      });
-      await expect(fs.stat(target)).rejects.toMatchObject({ code: "ENOENT" });
-      const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
-      Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
-      try {
-        expect(() => readOwnerAndDacl(target)).toThrow(expect.objectContaining({
-          code: "helper-unavailable",
-          message: `Windows owner and DACL facts require the matching optional native platform package; ${guidance}`,
-        }));
-      } finally {
-        Object.defineProperty(process, "platform", descriptor);
-      }
-    });
+      await createPrivateDirectory(target);
+      const facts = readOwnerAndDacl(target);
+      expect(facts).toMatchObject({ status: "supported", complete: true, daclPresent: true, unsupportedAceTypes: [] });
+      if (facts.status !== "supported") throw new Error("Windows ACL facts missing");
+      expect(facts.ownerSid).toBe(facts.currentUserSid);
+      const secret = path.join(target, "secret");
+      await fs.writeFile(secret, "private bytes");
+      expect((await readSecureFile({ filePath: secret })).buffer.toString()).toBe("private bytes");
+      await expect(createPrivateDirectory(target)).rejects.toMatchObject({ code: "EEXIST" });
+      expect(await fs.readFile(secret, "utf8")).toBe("private bytes");
+    }, 95_000);
   });
 }
 

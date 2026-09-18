@@ -35,7 +35,7 @@ export async function hashFileHandle(
   if (stat.size > maxBytes) {
     throw new FsSafeError("too-large", `SHA-256 input exceeds ${maxBytes} bytes`);
   }
-  if (native) {
+  if (typeof native?.sha256File === "function") {
     // A completed N-API task can mask later aborts on the same signal.
     const nativeSignal = signal ? AbortSignal.any([signal]) : undefined;
     try {

@@ -37,7 +37,7 @@ async function cloneFixture(context: TestContext) {
 }
 
 describe("native directory cloning", () => {
-  it("does not create probe artifacts or silently copy when native support is disabled", async () => {
+  it("keeps probes read-only and copies when native support is disabled", async () => {
     const directory = await tempRoot("fs-safe-clone-disabled-");
     const source = path.join(directory, "source");
     const destination = path.join(directory, "destination");
@@ -45,9 +45,11 @@ describe("native directory cloning", () => {
     await fs.writeFile(path.join(source, "payload"), "original");
     configureFsSafeNative({ mode: "off" });
     expect(probeTreeClone(directory)).toBeUndefined();
-    await expect(createCloneSource(destination)).rejects.toThrow();
-    await expect(copyTree(source, destination, { clone: "always" })).rejects.toThrow();
     expect(await fs.readdir(directory)).toEqual(["source"]);
+    await createCloneSource(path.join(directory, "template"));
+    await copyTree(source, destination, { clone: "always" });
+    expect(await fs.readdir(directory)).toEqual(["destination", "source", "template"]);
+    expect(await fs.readFile(path.join(destination, "payload"), "utf8")).toBe("original");
     expect(await fs.readFile(path.join(source, "payload"), "utf8")).toBe("original");
   });
 
@@ -64,7 +66,7 @@ describe("native directory cloning", () => {
     expect(await fs.readdir(directory)).toEqual(["source"]);
   });
 
-  it("keeps unsupported filesystems on the caller's fallback path", async (context) => {
+  it("copies on filesystems without native cloning", async (context) => {
     const directory = await tempRoot("fs-safe-clone-unsupported-");
     if (!getNativeBinding() || probeTreeClone(directory)) {
       context.skip("requires native binding and an unsupported temporary filesystem");
@@ -74,9 +76,10 @@ describe("native directory cloning", () => {
     const destination = path.join(directory, "destination");
     await fs.mkdir(source);
     await fs.writeFile(path.join(source, "payload"), "original");
-    await expect(copyTree(source, destination, { clone: "always" })).rejects.toThrow();
-    await expect(createCloneSource(destination)).rejects.toThrow();
-    expect(await fs.readdir(directory)).toEqual(["source"]);
+    await copyTree(source, destination, { clone: "always" });
+    await createCloneSource(path.join(directory, "template"));
+    expect(await fs.readdir(directory)).toEqual(["destination", "source", "template"]);
+    expect(await fs.readFile(path.join(destination, "payload"), "utf8")).toBe("original");
   });
 
   it.each([0, -1, 1.5, 33, NaN, Infinity])(

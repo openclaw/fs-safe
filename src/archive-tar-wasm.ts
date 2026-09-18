@@ -1,9 +1,9 @@
 import { classifyArchiveParserError } from "./archive-parser-errors.js";
-import { readFileSync } from "node:fs";
 import { Transform, type TransformCallback } from "node:stream";
 import { ArchiveFormatError } from "./archive-errors.js";
 import type { TarMeterLimits } from "./archive-limits.js";
 import type { TarEntryInfo } from "./archive-tar.js";
+import { createArchiveWasmInstance } from "./archive-wasm.js";
 
 export type AdmittedTarMember = TarEntryInfo & { offset: number };
 type Abi = {
@@ -20,18 +20,6 @@ type Abi = {
   member_offset(): number;
   member_mode(): number;
 };
-// Node exposes WebAssembly without DOM globals; keep the private ABI types local.
-const wasm = (globalThis as unknown as { WebAssembly: {
-  Module: { new(bytes: Uint8Array): object; imports(module: object): unknown[] };
-  Instance: new(module: object) => { exports: object };
-} }).WebAssembly;
-let compiled: object | undefined;
-function instance(): Abi {
-  // src tests and dist consumers resolve the same generated package artifact.
-  compiled ??= new wasm.Module(readFileSync(new URL("../dist/archive-parser.wasm", import.meta.url)));
-  if (wasm.Module.imports(compiled).length) throw new Error("TAR WASM unexpectedly requires host imports");
-  return new wasm.Instance(compiled).exports as unknown as Abi;
-}
 const types = new Map([
   [0, "File"], [48, "File"], [49, "Link"], [50, "SymbolicLink"],
   [51, "CharacterDevice"], [52, "BlockDevice"], [53, "Directory"],
@@ -51,7 +39,7 @@ export class TarParserStream extends Transform {
   private abi: Abi | undefined;
   constructor(limits: TarMeterLimits, private readonly onMember?: (entry: AdmittedTarMember) => void) {
     super();
-    this.abi = instance();
+    this.abi = createArchiveWasmInstance() as Abi;
     if (this.abi.init(limits.maxEntries, limits.maxMetaEntryBytes, limits.maxDecodedBytes, limits.maxManifestBytes, Number(process.platform === "win32")) !== 0) {
       this.abi.dispose();
       this.abi = undefined;

@@ -133,14 +133,6 @@ try {
   }
 
   const results = [];
-  if (mode === "no-reflink") {
-    const rejected = path.join(owned, "strict-unavailable");
-    await assert.rejects(copyTree(source, rejected, { clone: "always" }), {
-      code: "unsupported-platform",
-    });
-    await assert.rejects(fs.access(rejected), { code: "ENOENT" });
-    results.push({ policy: "always", unsupported: true, destinationAbsent: true });
-  }
   const cases =
     mode === "reflink"
       ? [
@@ -150,6 +142,7 @@ try {
           { label: "never", clone: "never" },
         ]
       : [
+          { label: "always", clone: "always" },
           { label: "auto", clone: "auto" },
           { label: "never", clone: "never" },
         ];
@@ -200,6 +193,7 @@ try {
       milliseconds,
       sharedBytes,
       separateBytes,
+      cloned: sharedBytes > 0,
       hashesMatch: true,
       independentWrite: true,
     });

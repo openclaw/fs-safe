@@ -37,7 +37,7 @@ specific invariant.
 
 ## Operational Guidance
 
-- Keep `@openclaw/fs-safe`, Node.js, and optional archive dependencies current.
+- Keep `@openclaw/fs-safe`, Node.js, and installed dependencies current.
 - Treat pathnames and archive contents as untrusted.
 - Use OS-level sandboxing when the threat model includes a hostile process.
 - Pin and review dependency updates before publishing.

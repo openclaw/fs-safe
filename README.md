@@ -45,7 +45,7 @@ The same idea has landed in other languages. Go [added `os.Root` and `OpenInRoot
 | `path.resolve().startsWith()` | string check only | – | – | – | – |
 | [`write-file-atomic`](https://www.npmjs.com/package/write-file-atomic) | – | ✓ | – | – | – |
 | Go [`os.Root`](https://go.dev/blog/osroot) / Rust [`cap-std`](https://github.com/bytecodealliance/cap-std) | ✓ | platform | ✓ | ✓ | – |
-| **`@openclaw/fs-safe`** | **✓** | **✓** | **✓** | **Linux atomic; others best-effort** | **✓ (ZIP/TAR; native zstd/bzip2)** |
+| **`@openclaw/fs-safe`** | **✓** | **✓** | **✓** | **Linux atomic; others best-effort** | **✓ (ZIP/TAR/gzip/zstd/bzip2)** |
 
 ## Not a sandbox
 
@@ -57,7 +57,7 @@ This is a **library-level guardrail**, not OS-level isolation. It does not repla
 pnpm add @openclaw/fs-safe
 ```
 
-Node 22 or newer. Core root/path/json/temp helpers avoid framework dependencies. With all optional dependencies omitted, public subpaths remain safe to import and fallback-capable operations work in `auto` or `off`. Native-only features, including no-clobber `Root.move()`, remain unavailable and fail with `helper-unavailable`. TAR/gzip fallback uses the bundled WASM build of the same Rust parser as native and works with optional dependencies omitted. ZIP fallback still needs optional `jszip`. See the [0.6 migration guide](docs/migrating-to-0.6.md).
+Node 22 or newer. All public features have portable implementations in `auto` and `off`, including installs with all optional dependencies omitted. Native packages provide acceleration and stronger filesystem mechanisms. Portable TAR uses the bundled WASM parser, with Node gzip and bundled WASM bzip2/zstd decoders; the lazily loaded ZIP decoder is a required JavaScript dependency. Windows security fallbacks use built-in Windows PowerShell/.NET; moves without file-content access can use built-in macOS/Windows commands. Fallbacks for moves, staging, requested cloning, and bounded cleanup emit deduplicated `FS_SAFE_NATIVE_FALLBACK` warnings about their mechanism; Windows security commands warn about overhead. Operation receipts report the selected mechanism where available. Real filesystem errors and unsafe input still reject. See [native helper policy](docs/native-helper.md) and the [0.6 migration guide](docs/migrating-to-0.6.md).
 
 Bun 1.4.2 is also supported with the [Bun runtime requirements](docs/install.md#bun-runtime), including the matching Rust addon on macOS and Linux. JIT-disabled Bun works too.
 
@@ -70,7 +70,7 @@ environment policy:
 import { configureFsSafeNative } from "@openclaw/fs-safe";
 
 configureFsSafeNative({ mode: "auto" });    // default: native when available
-configureFsSafeNative({ mode: "off" });     // guarded JavaScript only
+configureFsSafeNative({ mode: "off" });     // portable implementations, no native addon
 configureFsSafeNative({ mode: "require" }); // fail closed if the binding is unavailable
 ```
 
@@ -80,13 +80,15 @@ replacement. The JavaScript path selected by `off`, or by `auto` when no
 binding can load, is explicitly best-effort: a same-privilege peer that can
 replace a writable parent between its identity check and Node's pathname
 mutation can redirect that mutation outside the root before the post-check
-reports the escape. Use `require` when hostile concurrent mutation is in scope.
+reports the escape. Use OS isolation against hostile concurrent mutation and
+inspect operation receipts for the actual mechanism. `require` diagnoses addon
+availability; it does not guarantee that every operation uses native primitives.
 
 Equivalent env var: `FS_SAFE_NATIVE_MODE=auto|off|require`. The seven bindings
 ship as exact-version optional packages filtered by OS, CPU, and Linux libc, so
 a normal install receives only its matching binary. There are no postinstall
 steps, runtime downloads, or consumer Rust builds. On a platform without a
-published binding, or when optional dependencies are omitted, `auto` silently retains lexical and canonical root
+published binding, or when optional dependencies are omitted, `auto` retains lexical and canonical root
 checks, no-follow opens, guarded temp+rename writes, and post-write identity
 verification. See the [native
 helper policy](docs/native-helper.md) for the exact boundary and deployment
@@ -103,8 +105,13 @@ Version 0.5 replaces the persistent Python worker with prebuilt native
 bindings. The modes map directly: `configureFsSafePython({ mode: "auto" })`
 becomes `configureFsSafeNative({ mode: "auto" })`, and likewise for `off` and
 `require`. Replace `FS_SAFE_PYTHON_MODE` with `FS_SAFE_NATIVE_MODE`; remove
-`pythonPath`, `FS_SAFE_PYTHON`, and interpreter provisioning because the native
-loader does not spawn Python.
+`pythonPath`, `FS_SAFE_PYTHON`, and legacy worker provisioning. The native loader
+does not spawn Python.
+
+Current no-hardlink Linux filesystems can use a separate isolated system-Python
+command for atomic no-replace moves and publication. The removed worker and
+interpreter-path settings do not configure this route; see the
+[platform command requirements](docs/install.md#platform-command-fallbacks).
 
 Version 0.5 retains the old function and documented `FS_SAFE_PYTHON*`
 and OpenClaw Python environment names emit one `FS_SAFE_PYTHON_DEPRECATED`
@@ -164,7 +171,7 @@ are written, support `maxBytes` and `signal`, and recheck mutation authority
 before writes and publication. See [streamed creation](docs/writing.md#streamed-creation)
 for producer ownership and cancellation semantics.
 
-`write()` replaces file contents by default; pass `{ overwrite: false }` or use `create()` when an existing file should be an error. `move()` defaults to no clobber because it can otherwise delete an unrelated target while also consuming the source. No-clobber moves require the native helper so the collision decision and rename are one descriptor-relative operation; they fail with `helper-unavailable` rather than falling back to a replacing rename. Pass `{ overwrite: true }` when replacing the target is intended.
+`write()` replaces file contents by default; pass `{ overwrite: false }` or use `create()` when an existing file should be an error. `move()` defaults to no clobber because it can otherwise delete an unrelated target while also consuming the source. Native support supplies an atomic no-replace rename. Its usual portable fallback creates an exclusive hardlink and then retires the source, preserving the inode and warning that the complete move has separate steps. Filesystems without hardlinks use an atomic system-command rename; Linux uses isolated Python 3. Linux source custody needs only metadata access; on macOS and Windows, files without content-open permission use their system rename commands. It never uses a check followed by a replacing rename. See [platform command requirements](docs/install.md#platform-command-fallbacks). Pass `{ overwrite: true }` when replacing the target is intended.
 
 Mutating methods accept `assertBeforeMutation: () => void` for live lease or
 cancellation checks immediately before filesystem dispatch. Root defaults and
@@ -319,11 +326,13 @@ publication policy, creation callback, and platform contract.
 
 ## Atomic writes
 
-For preparation that must survive a parent rename until abort cleanup, use
-[`stageFileInDirectory()`](docs/staged-file.md) from `advanced`. It retains the
-original directory on Linux/macOS and requires native support for this operation.
-It offers atomic replace/no-replace publication, not expected-inode replacement
-or a crash-durability promise; application checks and coordination remain yours.
+[`stageFileInDirectory()`](docs/staged-file.md) from `advanced` keeps one owner
+for file preparation, publication, and cleanup. Native Linux/macOS staging
+retains the original directory across parent renames. Portable staging uses
+guarded pathnames and preserves staged artifacts if the parent changes; receipts
+report `targeting` and publication `method`. No-replace publication uses native
+rename or exclusive hardlink followed by temporary-name removal. Neither route
+promises expected-inode replacement or crash durability.
 
 `replaceFileAtomic()` writes a sibling temp file, applies its exact mode through the still-open descriptor, optionally fsyncs it, and renames it over the destination. It never follows the published destination path to set file permissions. Mode preservation inherits only rwx bits from an existing non-symlink regular file; special bits, ownership, ACLs, and extended attributes are not copied. Pinned-destination hardlink rejection, rename retry / copy fallback on `EPERM`, bounded original-content restoration after a torn fallback, parent-directory fsync, and a `beforeRename` hook for backup or observer flows are all opt-in. `movePathWithCopyFallback()` stages cross-device moves before commit and removes only the copied source entries, so concurrent source additions or replacements are preserved. Its optional synchronous `assertBeforeMutation` hook rechecks caller authority before renames and each source removal; `onDestinationPublished` reports an exact bigint destination identity before later checks or cleanup can fail. See [mutation authority and publication receipts](docs/atomic.md#mutation-authority-and-publication-receipts).
 
@@ -437,15 +446,11 @@ or mutations. Retry, dedupe, and transport semantics stay with the caller.
 single-file scratch workflows without hand-rolled path joins, plus a `store: FileStore` view of
 the workspace dir for the richer cases (`writeStream`, `readJsonIfExists`, `store.json<T>(rel)`).
 Compatible creation and cleanup remain available without native support.
-Set `cleanupSafety: "require-bounded"` to require collision-safe quarantine and
-descriptor-bounded recursive cleanup before creating a child. See the
-[temp workspace contract](docs/temp.md).
-On POSIX, bounded cleanup requires owner read and search in the final `dirMode`
-(`0o500`); restrictive modes select compatible fallback or reject `require-bounded`
-before child creation.
-Linux bounded cleanup requires the exact `openat2`/`RESOLVE_NO_XDEV` capability
-at runtime; compatible mode falls back when unavailable, while `require-bounded`
-rejects before child creation.
+`cleanupSafety: "require-bounded"` selects native bounded cleanup when its
+capabilities are available. Otherwise it warns and uses compatible guarded
+cleanup; inspect `cleanupMechanism` (`"native-bounded"` or `"guarded-path"`)
+when that distinction matters. Filesystem permissions and identity checks still
+apply. See the [temp workspace contract](docs/temp.md).
 
 `tempFile()` is the smaller one-file temp helper. It is intentionally an
 advanced primitive: use `tempWorkspace()` for the stable temp surface and reach
@@ -465,9 +470,9 @@ Use `readSecureFile()` when the caller gives you an absolute credential path
 instead of a root-relative workspace path. It opens the file first, validates the
 same handle it will read from, checks trusted directories, owner, POSIX mode or
 Windows ACLs, hardlink count, size, and optional timeout, then reads through the
-pinned handle. On Windows, both the bytes and the owner/DACL facts come from that
-handle; secure reads require the matching current native package and do not fall
-back to a pathname ACL command.
+pinned handle. On Windows, both bytes and owner/DACL facts come from the opened
+handle. Without the addon, built-in Windows PowerShell/.NET inspects an inherited
+copy of that handle. It does not replace secure-read checks with pathname ACL guesses.
 
 ```ts
 import { readSecureFile } from "@openclaw/fs-safe/secure-file";

@@ -187,7 +187,6 @@ describe.runIf(nativeSupported)("native Windows secure descriptor ACL inspection
   });
 
   it.each([
-    ["missing helper", "permission-unverified", "missing"],
     ["query failure", "permission-unverified", "throw"],
     ["malformed identity", "path-mismatch", "malformed"],
     ["identity mismatch", "path-mismatch", "mismatch"],
@@ -197,9 +196,7 @@ describe.runIf(nativeSupported)("native Windows secure descriptor ACL inspection
   ] as const)("closes without reading on %s", async (_name, code, behavior) => {
     const filePath = await privateFile(`failure-${behavior}`);
     const watched = watchNextRead();
-    const binding = behavior === "missing"
-      ? installBinding({})
-      : installBinding({ inspect: (fd) => {
+    const binding = installBinding({ inspect: (fd) => {
           if (behavior === "throw") throw new Error("descriptor query denied");
           if (behavior === "malformed") return { identity: "not-an-identity", security: safeSecurity() };
           const stat = fsSync.fstatSync(fd, { bigint: true });

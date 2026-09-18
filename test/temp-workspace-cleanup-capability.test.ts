@@ -131,7 +131,7 @@ for (const variant of ["async", "sync", "with-async", "with-sync"] as const) {
       );
 
       it.each(["missing", "false", "throws"] as const)(
-        `rejects require-bounded before child creation in ${mode} mode when the probe is %s`,
+        `uses guarded cleanup for require-bounded in ${mode} mode when the probe is %s`,
         async (result) => {
           const rootDir = await tempRoot("fs-safe-workspace-probe-required-");
           configureFsSafeNative({ mode });
@@ -139,15 +139,13 @@ for (const variant of ["async", "sync", "with-async", "with-sync"] as const) {
           __setNativeLoaderForTest(() => binding as unknown as NativeBinding);
           const open = vi.spyOn(fsSync, "openSync");
           const close = vi.spyOn(fsSync, "closeSync");
-          const mkdtemp = vi.spyOn(fs, "mkdtemp");
-          const mkdtempSync = vi.spyOn(fsSync, "mkdtempSync");
           const run = vi.fn();
-          await expect(create(rootDir, run, "require-bounded")).rejects.toMatchObject({
-            name: "FsSafeError", code: "helper-unavailable",
-          });
-          expect(run).not.toHaveBeenCalled();
-          expect(mkdtemp).not.toHaveBeenCalled();
-          expect(mkdtempSync).not.toHaveBeenCalled();
+          const created = await create(rootDir, run, "require-bounded");
+          if (typeof created === "object") {
+            expect(created.cleanupMechanism).toBe("guarded-path");
+            expect(await created.cleanup()).toBe("removed");
+          } else expect(created).toBe("done");
+          expect(run).toHaveBeenCalledTimes(1);
           const parentOpen = open.mock.calls.findIndex(([name]) => name === rootDir);
           expect(parentOpen).toBeGreaterThanOrEqual(0);
           const parentFd = open.mock.results[parentOpen]!.value as number;
@@ -184,7 +182,7 @@ for (const variant of ["async", "sync", "with-async", "with-sync"] as const) {
     });
 
     it.runIf(process.platform !== "win32").each([0, 0o100, 0o200, 0o400, 0o600, 0o050])(
-      "rejects require-bounded dirMode %o before creating or registering a child", async (dirMode) => {
+      "selects guarded cleanup for require-bounded dirMode %o", async (dirMode) => {
         const rootDir = await tempRoot("fs-safe-workspace-mode-required-");
         configureFsSafeNative({ mode: "auto" });
         const loader = vi.fn(() => ({
@@ -195,20 +193,20 @@ for (const variant of ["async", "sync", "with-async", "with-sync"] as const) {
           ownedTreeRemovalAvailable: vi.fn(() => true),
         }) as unknown as NativeBinding);
         __setNativeLoaderForTest(loader);
-        const mkdtemp = vi.spyOn(fs, "mkdtemp");
-        const mkdtempSync = vi.spyOn(fsSync, "mkdtempSync");
         const register = vi.spyOn(cleanup, "registerTempPathForExit");
-        const run = vi.fn();
-        await expect(create(rootDir, run, "require-bounded", dirMode)).rejects.toMatchObject({
-          name: "FsSafeError",
-          code: "helper-unavailable",
-          message: "temp workspace owned-tree cleanup requires owner read and search in dirMode",
+        const run = vi.fn((dir: string) => {
+          expect(fsSync.statSync(dir).mode & 0o7777).toBe(dirMode);
+          // Restore caller-selected access before the scoped helper writes/cleans.
+          fsSync.chmodSync(dir, 0o700);
         });
-        expect(mkdtemp).not.toHaveBeenCalled();
-        expect(mkdtempSync).not.toHaveBeenCalled();
-        expect(register).not.toHaveBeenCalled();
-        expect(run).not.toHaveBeenCalled();
-        expect(loader).not.toHaveBeenCalled();
+        const created = await create(rootDir, run, "require-bounded", dirMode);
+        if (typeof created === "object") {
+          expect(created.cleanupMechanism).toBe("guarded-path");
+          expect(await created.cleanup()).toBe("removed");
+        } else expect(created).toBe("done");
+        expect(register).toHaveBeenCalledTimes(1);
+        expect(run).toHaveBeenCalledTimes(1);
+        expect(loader).toHaveBeenCalledTimes(1);
         expect(await fs.readdir(rootDir)).toEqual([]);
       },
     );
@@ -224,7 +222,7 @@ for (const variant of ["async", "sync", "with-async", "with-sync"] as const) {
       },
     );
 
-    it("rejects require-bounded cleanup in native-off mode before creating a child", async () => {
+    it("uses guarded require-bounded cleanup in native-off mode", async () => {
       const rootDir = await tempRoot("fs-safe-workspace-owned-required-");
       configureFsSafeNative({ mode: "off" });
       const options = { rootDir, prefix: "workspace-", cleanupSafety: "require-bounded" as const };
@@ -235,15 +233,15 @@ for (const variant of ["async", "sync", "with-async", "with-sync"] as const) {
         if (variant === "with-async") return await withTempWorkspace(options, async () => run());
         return withTempWorkspaceSync(options, () => run());
       };
-      await expect(operation()).rejects.toMatchObject({
-        name: "FsSafeError",
-        code: "helper-unavailable",
-      });
-      expect(run).not.toHaveBeenCalled();
+      const created = await operation();
+      if (created && typeof created === "object") {
+        expect(created.cleanupMechanism).toBe("guarded-path");
+        expect(await created.cleanup()).toBe("removed");
+      } else expect(run).toHaveBeenCalledTimes(1);
       expect(await fs.readdir(rootDir)).toEqual([]);
     });
 
-    it("rejects require-bounded cleanup when the parent descriptor is unavailable", async () => {
+    it("preserves a require-bounded workspace when its parent descriptor is unavailable", async () => {
       const rootDir = await tempRoot("fs-safe-workspace-parent-unavailable-");
       configureFsSafeNative({ mode: "auto" });
       __setNativeLoaderForTest(() => ({
@@ -265,11 +263,12 @@ for (const variant of ["async", "sync", "with-async", "with-sync"] as const) {
         if (variant === "with-async") return await withTempWorkspace(options, async () => undefined);
         return withTempWorkspaceSync(options, () => undefined);
       };
-      await expect(operation()).rejects.toMatchObject({
-        name: "FsSafeError",
-        code: "helper-unavailable",
-      });
-      expect(await fs.readdir(rootDir)).toEqual([]);
+      const created = await operation();
+      if (created) {
+        expect(created.cleanupMechanism).toBe("guarded-path");
+        expect(await created.cleanup()).toBe("indeterminate");
+      }
+      expect(await fs.readdir(rootDir)).toHaveLength(1);
     });
   });
 }

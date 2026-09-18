@@ -50,9 +50,13 @@ it("rejects decoder name changes even when its entry count matches", async () =>
   const dir = await tempRoot("fs-safe-zip-decoded-name-");
   const archivePath = path.join(dir, "input.zip");
   await fs.writeFile(archivePath, zipRecords([{ name: "value" }]));
-  const altered = new JSZip(); altered.file("../escape", "bad", { createFolders: false });
-  expect(Object.keys(altered.files)).toEqual(["../escape"]);
-  vi.spyOn(JSZip, "loadAsync").mockResolvedValue(altered);
+  const load = JSZip.prototype.loadAsync;
+  vi.spyOn(JSZip.prototype, "loadAsync").mockImplementation(async function(this: JSZip, ...args) {
+    const archive = await load.apply(this, args);
+    archive.files["../escape"] = archive.files.value!;
+    delete archive.files.value;
+    return archive;
+  });
   await expect(readArchiveEntry(archivePath, "value", { maxBytes: 3 })).rejects.toMatchObject({ code: "entry-path" });
 });
 
@@ -62,9 +66,12 @@ it("rejects portable decoder kind changes before returning a selected member", a
   const archivePath = path.join(dir, "input.zip");
   const bytes = zipRecords([{ name: "selected" }, { name: "unrelated" }]);
   await fs.writeFile(archivePath, bytes);
-  const altered = await JSZip.loadAsync(bytes);
-  altered.files.unrelated!.dir = true;
-  vi.spyOn(JSZip, "loadAsync").mockResolvedValue(altered);
+  const load = JSZip.prototype.loadAsync;
+  vi.spyOn(JSZip.prototype, "loadAsync").mockImplementation(async function(this: JSZip, ...args) {
+    const archive = await load.apply(this, args);
+    archive.files.unrelated!.dir = true;
+    return archive;
+  });
   const scan = vi.spyOn(admission, "admitZipBuffer");
   await expect(readArchiveEntry(archivePath, "selected", { maxBytes: 7 })).rejects.toMatchObject({ code: "archive-header-invalid" });
   expect(scan).toHaveBeenCalledTimes(1);

@@ -157,10 +157,21 @@ cannot provide that guarantee because Node exposes no `mkdirat` or `renameat`.
 It asserts directory identity around a pathname mutation and detects many
 swaps, but detection occurs after the kernel may already have followed a new
 parent symlink. A same-privilege peer with write access to the parent can
-therefore cause an out-of-root side effect before the operation throws. Use
-native `require` mode when concurrent hostile mutation is in scope.
+therefore cause an out-of-root side effect before the operation throws. Use OS
+isolation against concurrent hostile mutation and inspect mechanism receipts;
+native loader mode alone is not an atomicity guarantee.
 
-The separate [retained-directory staging lifecycle](staged-file.md) keeps abort
+Portable no-clobber moves and moving publication preserve a source replacement
+captured during retirement. POSIX moves the entry into an owned private sibling
+directory and checks its identity before deletion; Windows deletes through a
+verified handle opened from the source name. Failed POSIX capture or removal
+can retain a recovery entry, reported in the error details. The private
+directory restricts entry access while its ancestry remains unchanged, but
+pathname guards cannot exclude parent replacement or a peer with the same
+privileges from the final check-to-unlink window. Recovery requires external
+coordination; a reported path alone never grants cleanup ownership.
+
+The native [retained-directory staging lifecycle](staged-file.md) keeps abort
 cleanup anchored to the original directory after a parent or ancestor move.
 It preserves observed substituted temporary entries and never cleans a recorded
 publication. Directory anchoring is not expected-inode/CAS replacement, and
@@ -253,7 +264,7 @@ The public `OpenResult`, `ReadResult`, and `WritableOpenResult` expose `containm
 | Hardlink rejection is best-effort | Link-count checks depend on platform metadata. Treat `hardlinks: "reject"` as a tripwire, not an authorization primitive. |
 | Mode bits are not a full policy engine | `replaceFileAtomic` and secret-file helpers set requested modes, but you should still set umask and inspect modes when policy requires it. |
 | Archive extraction is path safety, not content safety | Unsafe entry paths and links are rejected; malicious payload contents remain your application layer's problem. |
-| Native package unavailable | `helper-unavailable` falls back in `auto` mode and fails closed in `require` mode for native-backed operations. Guarded JavaScript atomicity and identity checks remain. |
+| Native package unavailable | `auto` and `off` retain portable feature implementations, warning when the mechanism is weaker. Explicit `require` diagnoses an unavailable addon. Filesystem identity and security checks remain; inspect operation receipts for the selected mechanism. |
 | FUSE mounts with rename-unstable inode numbers | Some FUSE mounts (rclone is a confirmed example) do not preserve source inode identity at the rename destination. The explicit `renameIdentity: "verify-content-with-lock"` compatibility mode verifies content under a cooperative lock for that boundary only; subsequent path identity checks and the default remain strict. See [Writing](writing.md) for the weaker opt-in contract. |
 
 ## Recommended deployment shape

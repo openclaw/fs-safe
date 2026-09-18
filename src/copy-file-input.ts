@@ -6,6 +6,11 @@ import { getNativeBinding, type NativeBinding } from "./native.js";
 import { captureNativeFdClose, type NativeFileCopyResult } from "./native-binding.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 import { transferFileHandle } from "./file-handle-transfer.js";
+import { warnNativeFallback } from "./native-fallback-warning.js";
+
+function warnUnclonedCopy(): void {
+  warnNativeFallback("file cloning", "The guarded file transfer copies independent bytes without a clone guarantee.");
+}
 
 export type CopyFileInput = {
   kind: "file";
@@ -19,7 +24,7 @@ export type CopyFileInput = {
 export function resolveFileCopyCloneMode(mode?: CopyCloneMode): CopyCloneMode {
   const clone = resolveCopyCloneMode(mode, "never");
   if (clone === "always" && !getNativeBinding()?.copyFileExclusive) {
-    throw new FsSafeError("helper-unavailable", "native file cloning is unavailable");
+    warnUnclonedCopy();
   }
   return clone;
 }
@@ -59,9 +64,7 @@ export async function createNativeCopyFile(
 ): Promise<NativeFileCopyResult | undefined> {
   input.signal?.throwIfAborted();
   if (!native.copyFileExclusive) {
-    if (input.clone === "always") {
-      throw new FsSafeError("helper-unavailable", "native file cloning is unavailable");
-    }
+    if (input.clone === "always") warnUnclonedCopy();
     return undefined;
   }
   captureNativeFdClose(native);
@@ -69,7 +72,7 @@ export async function createNativeCopyFile(
   try {
     // The caller adopts this descriptor before observing a later cancellation.
     return await native.copyFileExclusive(
-      input.handle.fd, parentFd, basename, input.clone,
+      input.handle.fd, parentFd, basename, input.clone === "always" ? "auto" : input.clone,
       maxBytes !== undefined && Number.isFinite(maxBytes) ? maxBytes : undefined,
       nativeSignal, sync,
     );
@@ -79,9 +82,9 @@ export async function createNativeCopyFile(
     if (code === "too-large") {
       throw new FsSafeError("too-large", `file exceeds limit of ${maxBytes} bytes`, { cause: error });
     }
-    if (code === "ENOTSUP" && input.clone !== "always") return undefined;
     if (code === "ENOTSUP") {
-      throw new FsSafeError("unsupported-platform", "native file cloning is unsupported", { cause: error });
+      if (input.clone === "always") warnUnclonedCopy();
+      return undefined;
     }
     throw new FsSafeError("helper-failed", "native file copy failed", { cause: error });
   } finally {
@@ -99,5 +102,6 @@ export function assertNativeCopyCompleted(input: CopyFileInput, copied?: NativeF
       { cause: Object.assign(new Error(copied.errorMessage ?? "native file copy failed"), { code: copied.errorCode }) },
     );
   }
+  if (input.clone === "always" && copied && copied.method !== "clone") warnUnclonedCopy();
   input.signal?.throwIfAborted();
 }

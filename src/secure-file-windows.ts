@@ -7,7 +7,9 @@ import type {
   NativeWindowsSecurityFacts,
 } from "./native-binding.js";
 import { getNativeBinding } from "./native.js";
+import { warnNativeFallback } from "./native-fallback-warning.js";
 import type { PermissionCheck } from "./permissions.js";
+import { inspectWindowsDescriptorCommand } from "./windows-security-command.js";
 
 const IDENTITY_RE = /^([0-9a-f]{8}):([0-9a-f]{16})$/;
 const SID_RE = /^s-\d+-\d+(?:-\d+)+$/;
@@ -175,6 +177,13 @@ export function inspectSecureWindowsDescriptor(params: {
   } catch (cause) {
     permissionUnverified("Windows descriptor ACL verification failed", cause);
   }
+  return inspectDescriptorResult(params, result, "native");
+}
+
+function inspectDescriptorResult(params: {
+  identity: ExactIdentity;
+  stat: Stats;
+}, result: unknown, mechanism: "native" | "system-command"): PermissionCheck {
   if (!isRecord(result)) permissionUnverified("Windows descriptor ACL facts were malformed");
   const observed = parseIdentity(result.identity);
   if (observed.dev !== params.identity.dev || observed.ino !== params.identity.ino) {
@@ -196,8 +205,29 @@ export function inspectSecureWindowsDescriptor(params: {
     ownerSid: facts.ownerSid,
     ownerTrusted: TRUSTED_OWNER_CLASSES.has(facts.ownerClass),
     aclSummary:
-      `native descriptor owner=${facts.ownerClass} world=` +
+      `${mechanism} descriptor owner=${facts.ownerClass} world=` +
       `${facts.worldReadable ? "r" : "-"}${facts.worldWritable ? "w" : "-"} ` +
       `group=${facts.groupReadable ? "r" : "-"}${facts.groupWritable ? "w" : "-"}`,
   };
+}
+
+/** Both mechanisms inspect the same borrowed handle; the caller owns its lifetime. */
+export async function inspectSecureWindowsFile(params: {
+  fd: number;
+  identity: ExactIdentity;
+  stat: Stats;
+}): Promise<PermissionCheck> {
+  let native;
+  try { native = getNativeBinding(); } catch (cause) {
+    permissionUnverified("Windows descriptor ACL verification requires the matching native helper", cause);
+  }
+  if (typeof native?.inspectWindowsSecureFileHandle === "function") {
+    return inspectSecureWindowsDescriptor(params);
+  }
+  warnNativeFallback("windows-secure-file", "Windows descriptor ACL inspection uses a slower built-in system command.");
+  let result: unknown;
+  try { result = await inspectWindowsDescriptorCommand(params.fd); } catch (cause) {
+    permissionUnverified("Windows descriptor ACL verification failed", cause);
+  }
+  return inspectDescriptorResult(params, result, "system-command");
 }

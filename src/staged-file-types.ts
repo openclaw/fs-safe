@@ -1,4 +1,6 @@
 export type StagedFileReceipt = Readonly<{
+  /** Namespace targeting selected at admission; pathname targeting cannot follow parent moves. */
+  targeting: "descriptor-relative" | "guarded-pathname";
   directory: Readonly<{
     path: string;
     realPath: string;
@@ -24,6 +26,7 @@ export type PublishedFileReceipt = Readonly<{
   staged: StagedFileReceipt;
   basename: string;
   overwrite: boolean;
+  method: "rename" | "link-unlink";
 }>;
 
 export type StagedFilePublication =
@@ -32,6 +35,7 @@ export type StagedFilePublication =
   | Readonly<{ status: "indeterminate"; basename: string; overwrite: boolean }>;
 
 export type StagedFileCleanupReceipt = Readonly<{
+  targeting: StagedFileReceipt["targeting"];
   temporaryBasename: string;
   publication: StagedFilePublication;
   status: "removed" | "name-absent" | "preserved" | "failed" | "not-needed";

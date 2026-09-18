@@ -27,9 +27,11 @@ The helper:
 - enforces `maxBytes` before and after reading
 - closes the handle on success, error, and timeout
 
-On POSIX, unsafe permissions mean group/world writable, and group/world readable unless `permissions.allowReadableByOthers` is true. On Windows, the helper queries owner, DACL, and locality from the same open descriptor that supplies the bytes. The native query returns the 32-bit volume serial and 64-bit file-index projection used by Node, which must equal Node's bigint descriptor receipt before its ACL facts are trusted. This avoids JavaScript number rounding but does not represent the full 128-bit file identity available on ReFS. Only the current user, LocalSystem, and built-in Administrators are trusted owner classes.
+On POSIX, unsafe permissions mean group/world writable, and group/world readable unless `permissions.allowReadableByOthers` is true. On Windows, the helper queries owner, DACL, and locality from the same open descriptor that supplies the bytes. Both inspection mechanisms return the 32-bit volume serial and 64-bit file-index projection used by Node, which must equal Node's bigint descriptor receipt before its ACL facts are trusted. This avoids JavaScript number rounding but does not represent the full 128-bit file identity available on ReFS. Only the current user, LocalSystem, and built-in Administrators are trusted owner classes.
 
-Windows secure reads require the matching current optional native package. A missing or stale helper, fd-to-handle conversion failure, denied `READ_CONTROL`, remote handle, incomplete descriptor, or unsupported ACE form rejects with `permission-unverified` before content is read. A malformed or different handle identity rejects with `path-mismatch`. There is no pathname-command fallback for `readSecureFile()`; the standalone reporting APIs in [`permissions`](permissions.md) retain their documented fallbacks. `permissions.allowInsecure` remains the explicit escape hatch and bypasses the ACL query.
+Windows secure reads prefer the matching optional native package. When it or its descriptor capability is unavailable or forced off, a bounded built-in Windows PowerShell/.NET command inherits the already-open file handle and inspects its raw owner/DACL facts. It does not reopen the pathname, consume file contents, change the read position, or take ownership of the caller's descriptor. A warning is emitted once because this system-command route is slower. No optional addon is required.
+
+A failed handle conversion, denied `READ_CONTROL`, remote handle, incomplete descriptor, or unsupported ACE form still rejects with `permission-unverified` before content is read. A malformed or different handle identity rejects with `path-mismatch`. A native query failure does not retry through the command. The standalone reporting APIs in [`permissions`](permissions.md) retain their distinct pathname fallbacks. `permissions.allowInsecure` remains the explicit escape hatch and bypasses the ACL query.
 
 Descriptor, pathname, and realpath identity checks use bigint stats internally to avoid JavaScript number rounding. The returned `stat` remains a normal Node `Stats` object with numeric fields. A zero Windows device or inode is unverified, never a match: the helper re-inspects that identity once using the same descriptor or pathname, then rejects persistent ambiguity with `path-mismatch`. A definite mismatch rejects immediately; retries retain known identity components and still enforce symlink policy.
 
@@ -92,13 +94,16 @@ On an actual Windows process with effective `platform: "win32"`, `inject.env` an
 | `timeout` | `timeoutMs` elapsed while reading. |
 
 Windows descriptor-inspection failures are operational `permission-unverified`
-errors and refuse the read. The original native exception is retained as
+errors and refuse the read. The original native or system-command exception is retained as
 `cause`; treat causes as restricted local diagnostic data. No pathname or ACL
 content is copied into the display message. Test adapters that simulate Windows
 on another operating system retain the standalone pathname inspector's
 structured command diagnostics (`ownerError`, `command`, `durationMs`,
 `timedOut`, `exitCode`, `signal`, and bounded escaped `stderr`). Actual Windows
-secure reads do not start those commands. No retries are performed.
+secure reads use the inherited-handle command instead of those pathname queries.
+That command has its own 30-second deadline and bounded output budget; it fully
+exits and drains its pipes before the caller closes the borrowed descriptor.
+`io.timeoutMs` continues to bound the byte-reading phase. No retries are performed.
 
 ## See also
 

@@ -12,6 +12,7 @@ import {
 import { DEFAULT_PERMISSION_EXEC_TIMEOUT_MS, executePermissionCommand } from "../src/permission-exec.js";
 import { inspectPathPermissions, inspectWindowsAcl } from "../src/permissions.js";
 import { createPrivateDirectory } from "../src/permissions-public.js";
+import { readOwnerAndDacl } from "../src/owner-dacl.js";
 import { expectFsSafeError } from "./helpers/security.js";
 import { itPosix } from "./helpers/vitest.js";
 
@@ -46,16 +47,17 @@ describe("createPrivateDirectory", () => {
     await expect(fs.stat(target)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("fails closed when Windows native mode is off", async () => {
+  it.runIf(process.platform === "win32")("creates a verified private directory when native mode is off", async () => {
     const root = await tempRoot();
     const target = path.join(root, "fallback");
     configureFsSafeNative({ mode: "off" });
-    await expectFsSafeError(
-      createPrivateDirectory(target, { platform: "win32" }),
-      "helper-unavailable",
-    );
-    await expect(fs.stat(target)).rejects.toMatchObject({ code: "ENOENT" });
-  });
+    await createPrivateDirectory(target);
+    expect(readOwnerAndDacl(target)).toMatchObject({
+      status: "supported", isLocal: true, daclPresent: true, complete: true,
+      unsupportedAceTypes: [], aces: expect.arrayContaining([expect.objectContaining({ mask: 0x1f01ff })]),
+    });
+    expect((await fs.stat(target)).isDirectory()).toBe(true);
+  }, 65_000);
 
   it.runIf(process.platform === "win32" && Boolean(native))(
     "rejects ambiguous components before creating any directory",

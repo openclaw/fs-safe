@@ -13,11 +13,15 @@ export type PublishFileExclusiveFailurePhase =
   | "hardlink-create"
   | "hardlink-verify"
   | "rename-create"
-  | "rename-verify";
+  | "rename-verify"
+  | "source-remove";
 export type PublishFileExclusiveCleanup = "removed" | "preserved" | "unknown";
 export type PublishFileExclusiveFailureDetails = {
   phase: PublishFileExclusiveFailurePhase;
   targetCreated: boolean;
+  sourceConsumed?: boolean;
+  /** A recovery candidate, not current identity or authority to remove it. */
+  sourceRecovery?: { path: string; status: "preserved" | "indeterminate" };
   targetIdentity?: FileIdentityStat;
   cleanup: PublishFileExclusiveCleanup;
   directorySync?: PublishFileExclusiveDirectorySyncFailure;
@@ -26,6 +30,8 @@ export type PublishFileExclusiveFailureDetails = {
 export type PublishFailureState = {
   phase: PublishFileExclusiveFailurePhase;
   targetCreated: boolean;
+  sourceConsumed?: boolean;
+  sourceRecovery?: PublishFileExclusiveFailureDetails["sourceRecovery"];
   targetIdentity?: FileIdentityStat;
   targetCleanupIdentity?: FileIdentityStat;
   preserveTarget: boolean;
@@ -52,6 +58,8 @@ export function publicationFailure(
   const details: PublishFileExclusiveFailureDetails = {
     phase: state.phase,
     targetCreated: state.targetCreated,
+    ...(state.sourceConsumed !== undefined ? { sourceConsumed: state.sourceConsumed } : {}),
+    ...(state.sourceRecovery ? { sourceRecovery: { ...state.sourceRecovery } } : {}),
     ...(state.targetIdentity ? { targetIdentity: state.targetIdentity } : {}),
     ...(state.directorySync ? { directorySync: state.directorySync } : {}),
     cleanup,

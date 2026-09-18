@@ -85,6 +85,7 @@ try {
     "LICENSE",
     "README.md",
     "SECURITY.md",
+    "THIRD_PARTY_NOTICES.md",
     "package.json",
     ...collectExportTargets(pkg.exports),
   ]);

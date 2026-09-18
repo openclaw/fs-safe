@@ -7,8 +7,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { expectFsSafeError } from "./helpers/security.js";
 import { itPosix, itWin32, useTempDirs } from "./helpers/vitest.js";
 
-vi.mock("node:child_process", () => {
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
   return {
+    ...actual,
     spawn: () => {
       const child = new EventEmitter() as EventEmitter & {
         kill(signal?: NodeJS.Signals): void;

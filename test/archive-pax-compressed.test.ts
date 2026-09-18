@@ -20,7 +20,7 @@ afterEach(() => {
   __resetNativeLoaderForTest();
 });
 
-describe.skipIf(!paxNative).each(["auto", "require"] as const)("PAX compressed native mode=%s", (mode) => {
+describe.each(["off", ...(paxNative ? ["auto", "require"] as const : [])] as const)("PAX compressed mode=%s", (mode) => {
   beforeEach(() => {
     configureFsSafeNative({ mode });
     __setNativeLoaderForTest(() => paxNative!);

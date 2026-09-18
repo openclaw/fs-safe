@@ -34,6 +34,23 @@ const suffixScenarios = [
   "callback-replaces-owned-ancestor",
   "callback-makes-owned-directory-nonempty",
 ];
+const portableScenarios = [
+  "root-no-clobber-move", "standalone-no-clobber-publication",
+  "staged-publication-and-cleanup", "staged-parent-drift", "copy-and-clone-metadata",
+  "temp-cleanup-mechanism", "tar-bzip2", "tar-zstd", "zip", "windows-security",
+];
+const portableCompiledModules = [
+  "root-impl.js", "root-move-noreplace.js", "root-move-portable.js", "publish-file.js",
+  "root-move-command.js", "darwin-move-command.js", "linux-rename-command.js", "windows-move-command.js", "windows-move-source.js",
+  "publish-file-move.js", "publish-file-failure.js", "portable-source-retirement.js", "file-hash.js",
+  "windows-source-retirement.js", "windows-source-retirement-source.js",
+  "native-staged-file.js", "node-staged-file.js", "sibling-rename-command.js", "copy.js", "copy-file-input.js",
+  "clone-metadata.js", "private-temp-workspace.js", "temp-workspace-owner.js", "temp-target.js",
+  "archive.js", "archive-kind.js", "archive-read.js", "archive-tar-stream.js",
+  "archive-codec-wasm.js", "archive-parser.wasm", "native.js", "native-fallback-warning.js",
+  "private-directory.js", "owner-dacl.js", "secure-file.js", "secure-file-windows.js",
+  "windows-security-command.js", "windows-security-source.js",
+];
 
 export function isolatedConsumerEnv(directory) {
   mkdirSync(directory, { recursive: true });
@@ -148,6 +165,9 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
     const rootArtifact = artifacts.find((artifact) => artifact.pkg.name === rootPkg.name);
     assert.ok(rootArtifact?.integrity);
     const suffixProbeSource = readFileSync(new URL("./consumer-suffix-probe.mjs", import.meta.url));
+    const portableProbeSource = readFileSync(new URL("./consumer-portable-probe.mjs", import.meta.url));
+    const portableProbeHash = createHash("sha256").update(portableProbeSource).digest("hex");
+    const portableModuleHashes = Object.fromEntries(portableCompiledModules.map((name) => [name, sha256(join("dist", name))]));
     const metadataHelperSource = readFileSync(new URL("./consumer-proof-metadata.mjs", import.meta.url));
     const suffixExpected = {
       source,
@@ -185,6 +205,8 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
         writeFileSync(join(directory, "expected.json"), JSON.stringify({
           rootPkg, host, omitted, platforms: nativeTargets.map((target) => target.package),
           entryHash: createHash("sha256").update(readFileSync("dist/index.js")).digest("hex"),
+          portableProbeHash,
+          portableModuleHashes,
           sidecarModuleHashes: Object.fromEntries([
             "config.js", "file-lock.js", "native-config.js", "root.js", "root-impl.js",
             "sidecar-lock.js", "sidecar-lock-acquire.js", "sidecar-lock-handle.js",
@@ -213,6 +235,60 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
         cases.require = await hash("require", omitted);
         cases.auto = await hash("auto");
         cases.off = await hash("off");
+        if (omitted) {
+          const portableProbe = join(directory, "portable-probe.mjs");
+          writeFileSync(portableProbe, portableProbeSource);
+          cases.portableNoNative = [];
+          for (const mode of ["off", "auto"]) {
+            const receipt = JSON.parse(await run([process.execPath, portableProbe], [mode], directory, env));
+            assert.equal(receipt.mode, mode);
+            assert.deepEqual(receipt.packageManager, { name: manager, version });
+            assert.deepEqual(receipt.source, source);
+            assert.deepEqual(receipt.package, { name: rootPkg.name, version: rootPkg.version, integrity: rootArtifact.integrity });
+            assert.equal(receipt.probeSha256, portableProbeHash);
+            assert.deepEqual(receipt.modules, portableModuleHashes);
+            assert.deepEqual(receipt.nativePackages, []);
+            assert.equal(receipt.nativeLoaded, false);
+            assert.equal(receipt.importedSubpaths, Object.keys(rootPkg.exports).length - 1);
+            assert.deepEqual(receipt.rows.map((row) => row.scenario), portableScenarios);
+            if (process.platform !== "win32") {
+              const moved = receipt.rows[0].modeZero;
+              assert.equal(moved.mode, 0);
+              assert.equal(moved.moves, 2);
+              assert.equal(typeof moved.contentAccessDenied, "boolean");
+              for (const field of ["identityPreserved", "modePreserved", "sourceConsumed", "collisionPreserved", "bytesVerifiedAfterFixtureModeRestore"]) {
+                assert.equal(moved[field], true, `mode-zero move proof missing ${field}`);
+              }
+              if (process.geteuid?.() !== 0) assert.equal(moved.contentAccessDenied, true);
+              if (process.platform === "darwin") {
+                const atomicCommand = moved.contentAccessDenied ? 1 : 0;
+                assert.deepEqual(receipt.moveWarnings, { ordinary: 1, atomicCommand, total: 7 + atomicCommand });
+              }
+              for (const operation of receipt.rows.slice(0, 2)) {
+                const [mismatch, replaced] = operation.sourceRetirement;
+                assert.equal(operation.sourceRetirement.length, 2);
+                assert.equal(mismatch.case, "replacement-at-capture");
+                assert.equal(mismatch.errorCode, "path-mismatch");
+                assert.equal(mismatch.sourceConsumed, false);
+                assert.equal(mismatch.recovery.status, "preserved");
+                assert.equal(typeof mismatch.recovery.relativePath, "string");
+                for (const field of ["originalTargetPreserved", "originalRetiredPreserved", "capturedReplacementPreserved", "publicReplacementPreserved", "dispatchRestored"]) {
+                  assert.equal(mismatch[field], true, `source-capture proof missing ${field}`);
+                }
+                assert.equal(replaced.case, "public-replacement-after-capture");
+                for (const field of ["sourceConsumed", "originalTargetPreserved", "publicReplacementPreserved", "privateCaptureRemoved", "dispatchRestored"]) {
+                  assert.equal(replaced[field], true, `source-retirement proof missing ${field}`);
+                }
+                if (operation.scenario === "standalone-no-clobber-publication") {
+                  assert.equal(replaced.errorCode, "path-mismatch");
+                  assert.equal(replaced.cleanup, "preserved");
+                  assert.equal(replaced.recoveryAbsent, true);
+                } else assert.equal(Object.hasOwn(replaced, "errorCode"), false);
+              }
+            }
+            cases.portableNoNative.push(receipt);
+          }
+        }
         if (!omitted) {
           const suffixProbe = join(directory, "suffix-probe.mjs");
           writeFileSync(suffixProbe, suffixProbeSource);

@@ -2,15 +2,19 @@
 
 The `Root` handle exposes a tight set of mutation verbs. Replacement writes
 (`write`, `writeJson`, and `copyIn`) publish with a sibling-temp commit so no
-half-written replacement appears at the destination. Create-only writes
-(`create`, `createJson`, and `write` with `overwrite: false`) use sibling-temp
-staging with an atomic no-replace rename only on backends that provide one —
-the native binding, which `require` mode guarantees and `auto` mode uses when
-the binding loads. The pure-JavaScript fallback has no atomic no-clobber
-rename and does not stage: it claims the final name exclusively with `O_EXCL`
-and writes content in place, so a concurrent observer can see the new file
-before its content is complete. Use `require` mode when that visibility window
-matters.
+half-written replacement appears at the destination. Create-only `copyIn`
+and streamed `create` calls also stage complete contents before publishing the
+final name exclusively. The portable route uses an exclusive hardlink followed
+by temporary-name cleanup, or an atomic system-command rename when hardlinks
+are unavailable.
+
+Buffered create-only writes (`create`, `createJson`, and `write` with
+`overwrite: false`) stage privately on the native path. Their guarded
+JavaScript fallback claims the final name exclusively with `O_EXCL` and writes
+content in place, so a concurrent observer can see the new file before its
+content is complete. Use streamed creation or `stageFileInDirectory()` when
+the complete contents must be ready before the final name appears.
+
 `append` and `openWritable` intentionally modify an opened file in place;
 `move`, `remove`, and `mkdir` mutate directory entries rather than file bytes.
 Each verb applies the boundary checks appropriate to its operation.
@@ -30,7 +34,7 @@ await fs.mkdir("snapshots/2026/05");
 
 1. Resolve the relative target against the canonical root and reject anything that escapes (`outside-workspace`).
 2. If `mkdir: true`, create missing parent directories relative to a pinned parent fd in the native path, or with per-component identity guards in the JavaScript fallback. When `denyMutations` or an explicit `mutationSymlinks` policy is present, each missing POSIX-native component is authorized before creation and its opened descriptor is authorized again before descent.
-3. Pin or guard the parent directory for the selected mechanism. Native operations use a parent fd and reapply configured mutation policy to the actual canonical destination selected by that descriptor; the pinned JavaScript fallback verifies directory identity before and after mutation and performs the same policy revalidation before its pathname dispatch. The JavaScript check cannot make the intervening pathname syscall atomic, so a same-privilege peer that can replace the parent may cause an out-of-root side effect before detection. Use native `require` mode for that threat model; see the [security model](security-model.md#symlinks-write-side).
+3. Pin or guard the parent directory for the selected mechanism. Native operations use a parent fd and reapply configured mutation policy to the actual canonical destination selected by that descriptor; the pinned JavaScript fallback verifies directory identity before and after mutation and performs the same policy revalidation before its pathname dispatch. The JavaScript check cannot make the intervening pathname syscall atomic, so a same-privilege peer that can replace the parent may cause an out-of-root side effect before detection. Use OS isolation when hostile concurrent directory replacement is part of the threat model, and inspect available operation receipts for the actual mechanism. `require` diagnoses addon availability; it does not guarantee that every operation uses native primitives. See the [security model](security-model.md#symlinks-write-side).
 4. Write data to a sibling temp file in the same directory.
 5. Atomically rename the temp file over the destination.
 6. Stat the resulting fd and verify identity.
@@ -80,7 +84,9 @@ await fs.remove(".ssh/id_rsa");    // throws FsSafeError code "denied-path"
 
 ### `fs.write(rel, data, options?)`
 
-Overwrite or create. Always atomic.
+Overwrite or create. Replacement writes publish complete contents atomically;
+buffered create-only visibility depends on the selected backend, as described
+under [`create()`](#fscreaterel-data-options).
 
 ```ts
 await fs.write("state/last-run.json", JSON.stringify(run));
@@ -186,8 +192,9 @@ unlimited. Zero permits an empty input only. Invalid limits reject before I/O.
 Unlike buffered creation's JavaScript fallback, streamed creation stages all
 chunks before publishing the final name. Native mode uses no-replace rename;
 the JavaScript fallback hardlinks the completed stage and removes its temporary
-name in the same JavaScript turn. That fallback requires a filesystem supporting
-hardlinks; other processes may briefly observe both names. An existing or
+name in the same JavaScript turn. Filesystems without hardlinks use an atomic
+platform-command rename of the completed stage. Other processes may briefly
+observe both names on the hardlink route. An existing or
 concurrently created destination is preserved. Existing-target preflight does
 not consume the input. The final mode and durability policy use the same guarded
 writer as other Root operations.
@@ -268,20 +275,61 @@ await fs.move("incoming/foo.txt", "archive/foo.txt", { overwrite: true });
 
 Both `from` and `to` are bounded; `..` in either is rejected.
 
-The default no-clobber mode requires the native helper. It admits both parent
-directory descriptors and performs a descriptor-relative no-replace rename, so
-a competitor that creates the target first is preserved and the source remains
-in place. If the helper or safe parent admission is unavailable, the call fails
-with `helper-unavailable`; it never falls back to a check followed by a
-replacing rename. After dispatch it rechecks both parent identities, so a
-post-operation rejection can mean the no-replace rename completed. Directory
-moves continue to require `overwrite: true`.
+The default no-clobber mode prefers the native helper: it admits both parent
+directory descriptors and performs a descriptor-relative no-replace rename.
+Without that capability, including native `off` mode, the usual portable route
+uses an exclusive hardlink followed by identity-checked source removal, without copying
+bytes. Linux retains a metadata-only `O_PATH` descriptor, so file-content
+permissions do not prevent admission. On macOS and Windows, files that deny
+both read and write access use bounded built-in system commands for an atomic
+no-replace rename. These routes preserve a competitor that creates the
+destination first and emit `FS_SAFE_NATIVE_FALLBACK` warnings describing their
+mechanism or command overhead. If hardlinks are unavailable, the portable route
+uses an atomic platform-command rename instead; Linux uses isolated system
+Python 3 for `renameat2`. See [runtime requirements](install.md#platform-command-fallbacks).
+Actual filesystem and permission errors remain failures.
+Directory moves continue to require `overwrite: true`.
+
+The portable route retains the source descriptor and checks exact parent and
+file identities plus live mutation authority. On POSIX, it captures the source
+in a private sibling directory, verifies the captured entry against that
+descriptor, and only then removes it. The checks preserve observed replacement
+entries instead of deleting them. Windows opens the source name with
+metadata/delete rights, checks its identity, and deletes through that exact
+handle.
+
+The two public names briefly coexist. A failure preserves the destination
+because it may be the original inode's only remaining name. A failure after
+capture can leave the source in a recovery location instead of its original
+name; `error.details.sourceRecovery` reports `{ path, status }`, with status
+`"preserved"` or `"indeterminate"`. Treat this as recovery information, not
+permission to delete or overwrite that path. Recover under exclusive external
+authority and inspect the current identities first. `sourceConsumed: true`
+records completed retirement even if later cleanup or descriptor close fails;
+an unconfirmed mutation omits that field. Secondary close failures can wrap the
+original receipt in a suppressed error. Parent pathname checks and
+POSIX private-directory checks still cannot exclude a process with the same
+privileges that can tamper with those directories. Native moves recheck both
+parent identities after dispatch, so a post-operation rejection can also mean
+the rename completed.
+
+The atomic command routes select the source after awaited admission hooks and
+deny-policy checks, matching native rename admission. They recheck source and
+parent identities after the live authority callback and dispatch synchronously.
+macOS JavaScript for Automation (JXA) uses inherited parent descriptors; Windows PowerShell/.NET opens and
+holds the admitted root, parents, and metadata/delete source handle. File modes
+and ACLs are preserved. An interrupted command or failed post-operation check
+can follow a completed rename, so these errors never trigger a retry or rollback.
 
 Both selected canonical endpoints are admitted inside the retained Root after
-native parent admission. With `mutationSymlinks: "reject"`, both full operation
+parent admission. With `mutationSymlinks: "reject"`, both full operation
 paths are rechecked after the live mutation-authority callback and before
 dispatch. The Root and retained parents are fenced again after any such callback.
 These checks retain the documented final check-to-syscall race.
+On macOS, that interval includes JXA startup: a concurrent replacement of the
+source name can be moved before the post-operation identity check rejects it.
+The no-replace rename protects the destination from clobbering; it is not
+conditional on the source inode remaining unchanged.
 
 For `{ overwrite: true }`, the JavaScript path checks both parent directories
 before and after the rename. A failed post-operation check rejects even though

@@ -1,7 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { expectFsSafeErrorSync } from "./helpers/security.js";
 import { tarFixture, type TarFixtureEntry } from "./helpers/archive-fuzz.js";
 import { zipDirectoryLinkFixture } from "./helpers/archive-zip-link.js";
 import { useTempDirs } from "./helpers/vitest.js";
@@ -107,11 +106,10 @@ describe.each(archiveBackends)("%s archive path", (backend) => {
         if (policy !== "reject-link") {
           expect(seen).toEqual([
             { path: "keep.txt", kind: "file", size: 4 },
-            // Paths agree; preserve each decoder's existing declared-size behavior.
             {
               path: "link",
               kind: "symlink",
-              size: backend === "native" ? fixture.size : 0,
+              size: fixture.size,
             },
           ]);
         }
@@ -451,7 +449,7 @@ describe.each(archiveBackends)("%s archive path", (backend) => {
   });
 });
 
-describe.runIf(Boolean(native))("native-only compressed tar formats", () => {
+describe.runIf(Boolean(native))("native compressed tar formats", () => {
   const fixtures = {
     "tar-bzip2": "QlpoOTFBWSZTWR7OLWUAAE57kNIABIBAA3+AAIBuZt/ABAAgCCAAciIT1MmhkDQNAaeSCVNTyKeU9Qaek8oB6h6grzvOX5w+ADqMF1cEAQkPSi8X9JSUNEAhmhZFEfFXVrk06WnAZd6xiqSZl1ns0+55YMXVrY+KHgFL4hZYy28xFJSAznPLVCPxdyRThQkB7OLWUA==",
     "tar-zstd": "KLUv/WQAB7UDADKFEReQpzpAWzCQC1aaeGamglLuJoOiujuRBIXgqmerYAic+geI7xfhq/ZgabX5RhoV9CE0pyAWcvBMbNvORGdM2h6bWMCbSocRAPGAHwKkUFkZAg5E65ccFUDlwxo5gAxqHgpO4NMsGGCrmDkAOXBuxdo3ASQjp+s0",
@@ -474,8 +472,9 @@ describe.runIf(Boolean(native))("native-only compressed tar formats", () => {
     });
   }
 
-  it("reports a typed actionable error when a native-only format is forced off", async () => {
+  it("resolves compressed TAR kinds with native disabled", () => {
     configureFsSafeNative({ mode: "off" });
-    expectFsSafeErrorSync(() => resolveArchiveKind("fixture.tar.zst"), "helper-unavailable");
+    expect(resolveArchiveKind("fixture.tar.zst")).toBe("tar-zstd");
+    expect(resolveArchiveKind("fixture.tar.bz2")).toBe("tar-bzip2");
   });
 });

@@ -62,7 +62,7 @@ function afterFirstSourceRead(sourcePath: string, afterRead: () => Promise<void>
 
 describe("Root.copyIn source and clone options", () => {
   it.each((["path", "root"] as const).flatMap(source =>
-    (["never", "auto"] as const).map(clone => ({ source, clone }))))(
+    (["never", "auto", "always"] as const).map(clone => ({ source, clone }))))(
     "copies all $source bytes independently of source offset with clone=$clone and native off",
     async ({ source, clone }) => {
       const pattern = Buffer.from(Array.from({ length: 251 }, (_, index) => index));
@@ -91,12 +91,12 @@ describe("Root.copyIn source and clone options", () => {
     },
   );
 
-  it("fails clone=always without native support before creating the destination", async () => {
+  it("copies clone=always without native support through guarded destination creation", async () => {
     const copy = await fixture();
     await expect(copy.destination.copyIn("nested/target", {
       root: copy.source, relativePath: "input",
-    }, { clone: "always", mkdir: true })).rejects.toMatchObject({ code: "helper-unavailable" });
-    expect(await fs.readdir(copy.destinationDirectory)).toEqual([]);
+    }, { clone: "always", mkdir: true })).resolves.toBeUndefined();
+    expect(await fs.readFile(path.join(copy.destinationDirectory, "nested", "target"), "utf8")).toBe(copy.content);
     expect(await fs.readFile(copy.sourcePath, "utf8")).toBe(copy.content);
   });
 
@@ -349,13 +349,13 @@ describe("Root.copyIn exclusive publication", () => {
 });
 
 describe.skipIf(!nativeAvailable)("Root.copyIn native transfer", () => {
-  it.runIf(process.platform === "win32")("refuses clone=always with the Windows binding before destination creation", async () => {
+  it.runIf(process.platform === "win32")("copies clone=always with a Windows binding without cloning support", async () => {
     configureFsSafeNative({ mode: "require" });
     const copy = await fixture();
     await expect(copy.destination.copyIn("nested/target", copy.sourcePath, {
       clone: "always", overwrite: false,
-    })).rejects.toMatchObject({ code: "helper-unavailable" });
-    expect(await fs.readdir(copy.destinationDirectory)).toEqual([]);
+    })).resolves.toBeUndefined();
+    expect(await fs.readFile(path.join(copy.destinationDirectory, "nested", "target"), "utf8")).toBe(copy.content);
     expect(await fs.readFile(copy.sourcePath, "utf8")).toBe(copy.content);
   });
 
@@ -395,7 +395,7 @@ describe.skipIf(!nativeAvailable)("Root.copyIn native transfer", () => {
   });
 
   it.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
-    "honors clone=always only when the source and destination filesystem support it",
+    "prefers clone=always and copies bytes when the filesystem cannot clone",
     async () => {
       configureFsSafeNative({ mode: "require" });
       const content = Buffer.alloc(128 * 1024 + 1, 0x5a);
@@ -424,8 +424,10 @@ describe.skipIf(!nativeAvailable)("Root.copyIn native transfer", () => {
         await fs.writeFile(copy.target, "independent destination");
         expect((await fs.readFile(copy.sourcePath)).equals(content)).toBe(true);
       } else {
-        await expect(pending).rejects.toMatchObject({ code: "unsupported-platform" });
-        expect(await fs.readdir(copy.destinationDirectory)).toEqual([]);
+        await expect(pending).resolves.toBeUndefined();
+        expect((await fs.readFile(copy.target)).equals(content)).toBe(true);
+        await fs.writeFile(copy.target, "independent destination");
+        expect((await fs.readFile(copy.sourcePath)).equals(content)).toBe(true);
       }
     },
   );

@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      jszip:
+        specifier: ^3.10.2
+        version: 3.10.2
     devDependencies:
       '@emnapi/runtime':
         specifier: 2.0.0-alpha.5
@@ -69,9 +73,6 @@ importers:
       '@openclaw/fs-safe-win32-x64-msvc':
         specifier: 0.14.0
         version: link:packages/win32-x64-msvc
-      jszip:
-        specifier: ^3.10.2
-        version: 3.10.2
 
   native: {}
 
@@ -2619,8 +2620,7 @@ snapshots:
 
   content-type@3.0.0: {}
 
-  core-util-is@1.0.3:
-    optional: true
+  core-util-is@1.0.3: {}
 
   debug@4.4.3(supports-color@7.2.0):
     dependencies:
@@ -2729,16 +2729,13 @@ snapshots:
     dependencies:
       safer-buffer: 2.1.2
 
-  immediate@3.0.6:
-    optional: true
+  immediate@3.0.6: {}
 
-  inherits@2.0.4:
-    optional: true
+  inherits@2.0.4: {}
 
   ip-address@10.7.0: {}
 
-  isarray@1.0.0:
-    optional: true
+  isarray@1.0.0: {}
 
   istanbul-lib-coverage@3.2.2: {}
 
@@ -2767,12 +2764,10 @@ snapshots:
       pako: 1.0.11
       readable-stream: 2.3.8
       setimmediate: 1.0.5
-    optional: true
 
   lie@3.3.0:
     dependencies:
       immediate: 3.0.6
-    optional: true
 
   lightningcss-android-arm64@1.33.0:
     optional: true
@@ -2909,8 +2904,7 @@ snapshots:
 
   p-map@7.0.7: {}
 
-  pako@1.0.11:
-    optional: true
+  pako@1.0.11: {}
 
   path-scurry@2.0.2:
     dependencies:
@@ -2929,8 +2923,7 @@ snapshots:
 
   proc-log@7.0.0: {}
 
-  process-nextick-args@2.0.1:
-    optional: true
+  process-nextick-args@2.0.1: {}
 
   proxy-agent-negotiate@1.1.0: {}
 
@@ -2945,7 +2938,6 @@ snapshots:
       safe-buffer: 5.1.2
       string_decoder: 1.1.1
       util-deprecate: 1.0.2
-    optional: true
 
   rolldown@1.2.7:
     dependencies:
@@ -2968,15 +2960,13 @@ snapshots:
       '@rolldown/binding-win32-arm64-msvc': 1.2.7
       '@rolldown/binding-win32-x64-msvc': 1.2.7
 
-  safe-buffer@5.1.2:
-    optional: true
+  safe-buffer@5.1.2: {}
 
   safer-buffer@2.1.2: {}
 
   semver@7.8.5: {}
 
-  setimmediate@1.0.5:
-    optional: true
+  setimmediate@1.0.5: {}
 
   siginfo@2.0.0: {}
 
@@ -3022,7 +3012,6 @@ snapshots:
   string_decoder@1.1.1:
     dependencies:
       safe-buffer: 5.1.2
-    optional: true
 
   supports-color@7.2.0:
     dependencies:
@@ -3088,8 +3077,7 @@ snapshots:
 
   universal-user-agent@7.0.3: {}
 
-  util-deprecate@1.0.2:
-    optional: true
+  util-deprecate@1.0.2: {}
 
   vite@8.3.0(@types/node@26.5.1)(esbuild@0.28.1):
     dependencies:

@@ -139,8 +139,11 @@ with isolated configuration, caches, and stores; the registry never proxies to
 the Internet. The smoke verifies root integrity, consumer-local resolution,
 OS/CPU/libc selection, a native-required SHA-256 operation, and fresh-process
 `auto`/`off` fallbacks and `require` failures for missing bindings and omitted
-optionals. Omitted-optionals installs also verify that all public subpaths can
-be imported, without implying every operation remains available.
+optionals. Omitted-optionals installs verify every public subpath import plus
+real portable moves, publication, staging, copying, cleanup, compressed archives,
+ZIP integrity and Windows security operations where applicable. Fresh `off` and
+`auto` children verify packaged module/WASM hashes, absent native binaries,
+source and destination preservation, and deduplicated path-free warnings.
 
 Host-only smoke supplies the six foreign packages using their unchanged real
 manifests and clearly marked synthetic, non-executable payloads. Every foreign

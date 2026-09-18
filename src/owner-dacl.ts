@@ -1,6 +1,7 @@
-import { FsSafeError } from "./errors.js";
 import { getNativeBinding } from "./native.js";
+import { warnNativeFallback } from "./native-fallback-warning.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
+import { readWindowsSecurityFactsCommand } from "./windows-security-command.js";
 
 export type WindowsAceFlags = {
   raw: number;
@@ -48,14 +49,11 @@ export function readOwnerAndDacl(targetPath: string): OwnerAndDaclResult {
   );
 
   const native = getNativeBinding();
-  if (!native) {
-    throw new FsSafeError(
-      "helper-unavailable",
-      "Windows owner and DACL facts require the matching optional native platform package; " +
-        "install @openclaw/fs-safe with optional dependencies enabled on a supported platform and use FS_SAFE_NATIVE_MODE=auto or require",
-    );
+  const inspect = native?.readOwnerAndDacl;
+  if (typeof inspect !== "function") {
+    warnNativeFallback("windows-owner-dacl", "Windows owner and DACL inspection uses a slower built-in system command.");
   }
-  const facts = native.readOwnerAndDacl(targetPath);
+  const facts = typeof inspect === "function" ? inspect.call(native, targetPath) : readWindowsSecurityFactsCommand(targetPath);
   return {
     status: "supported",
     ownerSid: facts.ownerSid,

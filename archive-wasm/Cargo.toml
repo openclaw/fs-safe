@@ -10,4 +10,6 @@ license = "MIT"
 crate-type = ["cdylib"]
 
 [dependencies]
+bzip2 = "0.6.1"
 fs-safe-archive-core = { path = "../archive-core" }
+ruzstd = { path = "../vendor/ruzstd-0.9.0", version = "0.9.0" }

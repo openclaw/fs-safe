@@ -187,7 +187,7 @@ it("keeps the requested basename under an admitted contained parent alias", asyn
   await expect(fs.readFile(path.join(directory, "target.txt"), "utf8")).resolves.toBe("source");
 });
 
-it("fails closed when no native no-replace move helper is available", async () => {
+it("moves without loading the native helper when native mode is off", async () => {
   const directory = await tempRoot("fs-safe-root-move-unavailable-");
   const source = path.join(directory, "source.txt");
   const target = path.join(directory, "target.txt");
@@ -197,15 +197,14 @@ it("fails closed when no native no-replace move helper is available", async () =
   configureFsSafeNative({ mode: "off" });
 
   const scoped = await root(directory);
-  await expect(scoped.move("source.txt", "target.txt"))
-    .rejects.toMatchObject({ code: "helper-unavailable" });
+  await scoped.move("source.txt", "target.txt");
 
   expect(loader).not.toHaveBeenCalled();
-  await expect(fs.readFile(source, "utf8")).resolves.toBe("source");
-  await expect(fs.lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(fs.lstat(source)).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(fs.readFile(target, "utf8")).resolves.toBe("source");
 });
 
-it("fails closed when the loaded binding lacks bounded parent admission", async () => {
+it("uses portable no-clobber movement when the binding lacks bounded parent admission", async () => {
   const directory = await tempRoot("fs-safe-root-move-unbounded-");
   const source = path.join(directory, "source.txt");
   const target = path.join(directory, "target.txt");
@@ -215,33 +214,73 @@ it("fails closed when the loaded binding lacks bounded parent admission", async 
   configureFsSafeNative({ mode: "require" });
 
   const scoped = await root(directory);
-  await expect(scoped.move("source.txt", "target.txt"))
-    .rejects.toMatchObject({ code: "helper-unavailable" });
+  await scoped.move("source.txt", "target.txt");
 
   expect(renameNoReplace).not.toHaveBeenCalled();
-  await expect(fs.readFile(source, "utf8")).resolves.toBe("source");
-  await expect(fs.lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(fs.lstat(source)).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(fs.readFile(target, "utf8")).resolves.toBe("source");
 });
 
-it("maps renameNoReplace EINVAL to helper-unavailable only at native dispatch", async () => {
+it.each(["EINVAL", "ENOSYS", "ENOTSUP", "EOPNOTSUPP"])("falls back for renameNoReplace %s only at native dispatch", async code => {
   const directory = await tempRoot("fs-safe-root-move-unsupported-fs-");
   await fs.writeFile(path.join(directory, "source.txt"), "source");
-  const nativeFailure = Object.assign(new Error("renameat2 unsupported by filesystem"), { code: "EINVAL" });
+  const nativeFailure = Object.assign(new Error("renameat2 unsupported by filesystem"), { code });
   const adapter = noReplaceAdapter(directory, () => { throw nativeFailure; });
   __setNativeLoaderForTest(() => adapter.binding);
   configureFsSafeNative({ mode: "require" });
 
   const scoped = await root(directory);
-  await expect(scoped.move("source.txt", "target.txt")).rejects.toMatchObject({
-    code: "helper-unavailable",
-    cause: nativeFailure,
-  });
+  await scoped.move("source.txt", "target.txt");
+  expect(await fs.readFile(path.join(directory, "target.txt"), "utf8")).toBe("source");
+  await fs.writeFile(path.join(directory, "source.txt"), "second source");
 
-  const unrelatedFailure = Object.assign(new Error("policy rejected input"), { code: "EINVAL" });
+  const unrelatedFailure = Object.assign(new Error("policy rejected input"), { code });
   __setFsSafeTestHooksForTest({
     beforeRootFallbackMutation: async () => { throw unrelatedFailure; },
   });
   await expect(scoped.move("source.txt", "other.txt")).rejects.toBe(unrelatedFailure);
+});
+
+it.each([false, true])("does not retry native I/O failures (after mutation: %s)", async mutated => {
+  const directory = await tempRoot("fs-safe-root-move-native-io-");
+  const source = path.join(directory, "source");
+  const target = path.join(directory, "target");
+  await fs.writeFile(source, "source");
+  const failure = Object.assign(new Error("rename result unknown"), { code: "EIO" });
+  const adapter = noReplaceAdapter(directory, () => {
+    if (mutated) fsSync.renameSync(source, target);
+    throw failure;
+  });
+  __setNativeLoaderForTest(() => adapter.binding);
+  configureFsSafeNative({ mode: "require" });
+  const link = vi.spyOn(fsSync, "linkSync");
+  const scoped = await root(directory);
+  await expect(scoped.move("source", "target")).rejects.toBe(failure);
+  expect(link).not.toHaveBeenCalled();
+  expect(adapter.renameNoReplace).toHaveBeenCalledOnce();
+  expect(await fs.readFile(mutated ? target : source, "utf8")).toBe("source");
+  await expect(fs.lstat(mutated ? source : target)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("does not retry an unsupported native rename when descriptor close fails", async () => {
+  const directory = await tempRoot("fs-safe-root-move-native-unsupported-close-");
+  const source = path.join(directory, "source");
+  const target = path.join(directory, "target");
+  await fs.writeFile(source, "source");
+  const failure = Object.assign(new Error("rename unsupported"), { code: "ENOSYS" });
+  const closeFailure = new Error("native parent close failed");
+  const adapter = noReplaceAdapter(directory, () => { throw failure; });
+  adapter.binding.closeOwnedFd = fd => { fsSync.closeSync(fd); throw closeFailure; };
+  __setNativeLoaderForTest(() => adapter.binding);
+  configureFsSafeNative({ mode: "require" });
+  const link = vi.spyOn(fsSync, "linkSync");
+  const scoped = await root(directory);
+  await expect(scoped.move("source", "target")).rejects.toMatchObject({
+    name: "SuppressedError", error: closeFailure, suppressed: failure,
+  });
+  expect(link).not.toHaveBeenCalled();
+  expect(await fs.readFile(source, "utf8")).toBe("source");
+  await expect(fs.lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 it("preserves move and close failures without a global SuppressedError constructor", async () => {

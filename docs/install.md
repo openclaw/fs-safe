@@ -31,6 +31,21 @@ node --version
 # v22.0.0 or newer
 ```
 
+## Platform command fallbacks
+
+Normal Node operations and archives work without the optional native packages.
+If a filesystem refuses hardlinks, no-clobber moves and publication use a system
+command to preserve atomic destination creation and the original file identity.
+Linux needs `/usr/bin/python3` with its standard `ctypes` module and libc's
+`renameat2`; macOS uses its JavaScript for Automation runtime, and Windows uses
+PowerShell/.NET. Linux Python runs in isolated mode without project imports or
+user site configuration. These routes warn about process startup overhead.
+
+Windows permission inspection and private-directory creation also use
+PowerShell/.NET without the addon. A missing runtime, unsupported kernel
+operation, or actual permission/I/O error remains an explicit failure. The
+legacy Python-worker configuration does not select these command runtimes.
+
 ## Bun runtime
 
 Bun 1.4.2 can run the same public APIs and load the matching native package.
@@ -119,35 +134,32 @@ Use the main entry for the common surface, or the focused subpaths when you want
 
 ## Runtime dependencies
 
-`@openclaw/fs-safe` bundles an import-free WASM build of its Rust TAR parser for guarded JavaScript TAR/gzip [archive extraction](archive.md), including installs with optional dependencies omitted. ZIP fallback uses lazily loaded optional `jszip` and reports a missing-dependency error without it. Public subpaths remain safe to import with all optional dependencies omitted, but imports do not prove native availability.
+`@openclaw/fs-safe` bundles import-free WASM for portable TAR/gzip/bzip2/zstd [archive extraction](archive.md), including installs with optional dependencies omitted. ZIP uses lazily loaded, required `jszip`. Public subpaths and feature operations remain available without optional packages; imports alone do not prove which mechanism is selected.
 
 There are no peer dependencies. Exact-version optional packages carry the seven
 native targets and npm-compatible OS, CPU, and Linux libc filters install only
 the matching binary. Consumers do not run a native build, download code at
 runtime, or execute a postinstall step. Omitting optional dependencies keeps
-non-archive fallback-capable operations working in `auto` or `off`. Native-only
-features, including strict owned-tree temp cleanup, retained-directory staging,
-atomic `rename-noreplace` (including the default no-clobber `Root.move()`),
-zstd/bzip2 TAR handling, and Windows private-directory creation, remain
-unavailable. Operations without a safe fallback fail with `helper-unavailable`
-when the matching package is absent, incompatible, or disabled.
+all features working through portable implementations in `auto` or `off`.
+Where the mechanism is weaker, a deduplicated `FS_SAFE_NATIVE_FALLBACK` warning
+explains the difference. Windows security operations use built-in Windows
+PowerShell/.NET when the addon is unavailable. Genuine filesystem limitations,
+unsafe paths, permission failures, and cancellation still reject.
 
 Upgrading an existing 0.5 consumer? Follow [Migrating to 0.6](migrating-to-0.6.md)
-before deploying with native mode `require` or native-only features.
+before deploying with the explicit native diagnostic mode `require`.
 
 ## Native helper policy
 
 The platform native binaries provide fd-relative open/link/mkdir primitives,
 atomic no-replace rename, and file identity checks. The default is `auto`: use
-the matching binary when it loads, otherwise use the guarded JavaScript path
-where a safe fallback exists. Native-only operations fail with
-`helper-unavailable`.
+the matching binary when it loads, otherwise use guarded portable implementations.
 
 ```ts
 import { configureFsSafeNative } from "@openclaw/fs-safe/config";
 
 configureFsSafeNative({ mode: "auto" });    // default
-configureFsSafeNative({ mode: "off" });     // guarded JavaScript; reject native-only operations
+configureFsSafeNative({ mode: "off" });     // portable implementations; do not load the addon
 configureFsSafeNative({ mode: "require" }); // fail closed if unavailable
 ```
 
@@ -159,13 +171,14 @@ FS_SAFE_NATIVE_MODE=off      # auto | off | require
 
 `OPENCLAW_FS_SAFE_NATIVE_MODE` is also accepted.
 
-Disabling native loading keeps fallback-capable operations working through Node path
+Disabling native loading keeps features working through Node path
 operations guarded by lexical and canonical checks plus identity verification.
-Use `require` when native-backed operations must fail instead of falling back.
+Use `require` to diagnose an unavailable addon; loaded addons can still lack a
+particular primitive and select its documented portable fallback.
 Temp workspaces retain compatible JavaScript quarantine cleanup in `auto` and
-`off`. Set `cleanupSafety: "require-bounded"` to reject before child creation
-unless native no-replace quarantine and descriptor-bounded tree removal are
-available. See the [temp workspace contract](temp.md#private-temp-workspaces). The exact boundary
+`off`. `cleanupSafety: "require-bounded"` selects bounded native cleanup when
+available; otherwise it warns and reports `cleanupMechanism: "guarded-path"`.
+See the [temp workspace contract](temp.md#private-temp-workspaces). The exact boundary
 for other operations is documented in [native helper policy](native-helper.md).
 
 ## Verify the install

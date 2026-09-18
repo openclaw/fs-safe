@@ -144,7 +144,7 @@ try {
 |---|---|---|
 | `link-required` | Create a same-filesystem hardlink or propagate the failure. | No; guarded JS `link` fallback remains. |
 | `link-or-copy` | Try hardlink, then clone, Linux `copy_file_range`, then the JS byte loop for classified unsupported errors. | No; acceleration is optional. |
-| `rename-noreplace` | Atomically move the source without replacing an existing target. Success consumes `sourcePath`. | Yes. |
+| `rename-noreplace` | Move the source without replacing an existing target. Prefer atomic rename; portable fallback uses exclusive hardlink publication followed by source removal. | No. |
 
 `"link-required"` propagates an unsupported hardlink failure.
 `"link-or-copy"` falls back only for `EPERM`, `EXDEV`, `ENOTSUP`,
@@ -305,8 +305,10 @@ type PublishFileExclusiveFailureDetails = {
     | "hardlink-create" | "hardlink-verify"
     | "copy-create" | "copy-verify"
     | "rename-create" | "rename-verify"
-    | "directory-sync";
+    | "directory-sync" | "source-remove";
   targetCreated: boolean;
+  sourceConsumed?: boolean;
+  sourceRecovery?: { path: string; status: "preserved" | "indeterminate" };
   targetIdentity?: { dev: number | bigint; ino: number | bigint };
   cleanup: "removed" | "preserved" | "unknown";
   directorySync?: { status: "failed"; code?: string };
@@ -353,15 +355,40 @@ can make a failed directory sync succeed: rollback deletion is also not proven
 durable, and a preserved name may disappear after a crash. Always use the
 typed receipt rather than inferring ownership from `exists()`.
 
-`rename-noreplace` always preserves its target after a successful rename,
-because removing it would discard the source's only remaining name; its typed
-failure receipt makes that explicit regardless of `onSyncFailure`.
+`rename-noreplace` preserves its target after publication because either name
+may be the only one remaining; its typed failure receipt makes that explicit
+regardless of `onSyncFailure`. `sourceConsumed` records whether source removal
+completed, and `phase: "source-remove"` identifies portable source-retirement
+failures. Such a failure can leave both names for the original file or move the
+source into a retained recovery location. `sourceRecovery` identifies that
+location when present; `"indeterminate"` means its state could not be confirmed.
+The original source name may already be absent even when removal has not
+completed. `sourceConsumed` is omitted when the mutation outcome is unconfirmed;
+an error code alone is not treated as proof that no mutation occurred. The
+published target remains preserved for caller-directed recovery.
+Recovery paths are observations, not cleanup authority: inspect them while
+excluding competing writers, and never blindly delete or restore them.
 
-`"rename-noreplace"` requires the native helper and atomically moves the
-source to the target without replacement. A collision is reported as
-`EEXIST`, both files remain unchanged, and a successful call returns
-`method: "rename-noreplace"` after synchronizing the source and target parent
-directories. Unlike the link/copy strategies, success consumes `sourcePath`.
+With native support, `"rename-noreplace"` atomically moves the source and
+returns `method: "rename-noreplace"`. Without it, the guarded portable path
+creates an exclusive hardlink and verifies both names. POSIX captures the source
+in a private sibling directory and verifies the captured entry before removing
+it; Windows uses a verified source-name handle for deletion. Unexpected captured
+entries are retained and reported, never automatically restored over a public
+name or recursively cleaned.
+It returns `method: "hardlink"`, emits a deduplicated `FS_SAFE_NATIVE_FALLBACK`
+warning, and preserves the inode. Destination creation still refuses collisions
+atomically; the complete move and pathname identity checks are best-effort.
+Both routes consume `sourcePath` on success and report `sourceConsumed: true`.
+A collision reports `EEXIST` and preserves both files. When the filesystem
+refuses hardlinks, an atomic platform-command rename reports
+`method: "rename-noreplace"` and preserves the original inode. Linux uses
+isolated system Python 3; see [runtime requirements](install.md#platform-command-fallbacks).
+Source and target must still support a same-filesystem move. The POSIX hardlink
+route also needs permission to create a private sibling directory. The destination is never
+published with a replacing rename or a byte-copy substitute. A process with the
+same privileges can still tamper with a POSIX recovery directory; use OS
+isolation for that threat model.
 
 ## Scope
 

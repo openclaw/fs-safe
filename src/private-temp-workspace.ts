@@ -41,6 +41,7 @@ import { validateTempWorkspaceDirMode } from "./temp-workspace-permissions.js";
 import type { TempWorkspaceOptions, TempWorkspace, TempWorkspaceSync } from "./temp-workspace-types.js";
 
 export type {
+  TempWorkspaceCleanupMechanism,
   TempWorkspaceCleanupResult,
   TempWorkspaceCleanupSafety,
 } from "./temp-workspace-owner.js";
@@ -247,6 +248,7 @@ async function createTempWorkspace(
     dir,
     identity,
     store,
+    cleanupMechanism: owner.cleanupMechanism,
     path: (fileName) => resolveWorkspaceLeaf(dir, fileName),
     write: async (fileName, data) =>
       await store.write(assertWorkspaceFileName(fileName), data, { mode }),
@@ -409,6 +411,7 @@ function createTempWorkspaceSync(
     dir,
     identity,
     store,
+    cleanupMechanism: owner.cleanupMechanism,
     path: (fileName) => resolveWorkspaceLeaf(dir, fileName),
     write: (fileName, data) =>
       store.write(assertWorkspaceFileName(fileName), data, { mode }),

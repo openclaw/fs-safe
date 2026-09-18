@@ -37,9 +37,14 @@ Set the process-global loading policy. Configure once at startup, before the fir
 
 | Mode | Behavior |
 |---|---|
-| `auto` | Default. Prefer the platform binding and use guarded JavaScript when it is unavailable. |
-| `off` | Do not load the binding; use guarded JavaScript deterministically. |
-| `require` | Operations that need the binding raise `FsSafeError("helper-unavailable")` when it cannot load. |
+| `auto` | Default. Prefer the platform binding and use each feature's guarded portable implementation when unavailable. |
+| `off` | Do not load the binding; use portable implementations, including bundled archive WASM and built-in Windows security commands. |
+| `require` | Binding lookup raises `FsSafeError("helper-unavailable")` when the addon cannot load; public wrappers retain their documented error mapping. |
+
+Missing individual primitives can still select portable implementations after
+a binding loads. `FS_SAFE_NATIVE_FALLBACK` warnings are deduplicated per feature;
+mechanism receipts describe any reduced guarantee. Real errors and unsafe input
+remain errors in every mode.
 
 ## `getFsSafeNativeConfig()`
 

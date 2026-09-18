@@ -16,8 +16,8 @@ import {
 
 A private workspace is a uniquely named directory under a caller-provided temp
 root. The default requested mode is `0o700`. Calling `cleanup()` or leaving an
-`await using` scope moves an unchanged workspace through a private quarantine
-before removal. Descriptor-bounded cleanup prevents recursive traversal of
+`await using` scope attempts to move an unchanged workspace through a private quarantine
+before removal. Descriptor-bounded cleanup, when selected, prevents recursive traversal of
 substitutions; the compatible JavaScript fallback has the narrower race
 contract documented below.
 
@@ -147,7 +147,7 @@ The workspace owns cleanup; the store is only a view over the workspace
 directory.
 
 **Compatibility and security:** workspace creation remains available in native
-`auto`, `off`, and unavailable-native environments. The default
+`auto` and `off`, including when the addon is unavailable. The default
 `cleanupSafety: "compatible"` preserves the JavaScript cleanup behavior from
 0.6: it verifies the workspace identity, moves the public name to a fresh
 `.fs-safe-workspace-cleanup-<uuid>` sibling, verifies that quarantine, and then
@@ -156,13 +156,16 @@ removes the public workspace name, but it is not atomic conditional deletion: a
 same-privilege peer that discovers and replaces the private quarantine after
 verification can still redirect the final pathname removal.
 
-Set `cleanupSafety: "require-bounded"` when that concurrent attacker is in scope.
-Creation then requires native no-replace directory rename, native owned-tree
-removal, and a readable retained parent descriptor **before** child creation.
-On POSIX, the final requested `dirMode` must also include owner read
-and search (`(dirMode & 0o500) === 0o500`). Preflight failure throws
-`FsSafeError("helper-unavailable")` without creating a child or calling a scoped
-callback. The child descriptor is opened
+`cleanupSafety: "require-bounded"` prefers native no-replace directory rename,
+native owned-tree removal, and a readable retained parent descriptor. If those
+mechanisms are unavailable it emits one `FS_SAFE_NATIVE_FALLBACK` warning and
+uses the existing guarded cleanup owner. The returned workspace exposes
+`cleanupMechanism: "native-bounded" | "guarded-path"`, selected at admission;
+the requested option is not a claim that bounded cleanup was obtained.
+Callers whose threat model requires bounded cleanup must inspect that field
+before placing data in the workspace. On POSIX, bounded cleanup also needs
+owner read and search in the final `dirMode` (`(dirMode & 0o500) === 0o500`).
+The child descriptor is opened
 while the new directory still has its private creation mode, before an explicit
 `dirMode` can lower access. Retaining a read descriptor does not bypass the
 POSIX final-mode requirement: enumeration reopens the directory relative to
@@ -170,17 +173,18 @@ that descriptor. Compatible mode accepts these restrictive modes but selects
 the JavaScript fallback and does not retain native traversal authority for the
 child, even if the caller later restores its permissions. Windows cleanup
 does not use this POSIX mode gate. A search-only descriptor remains valid identity
-evidence but is never native traversal authority: compatible cleanup selects
-the JavaScript fallback, while `require-bounded` rejects and leaves the
-unregistered child in place for caller-directed recovery. The compatible
-default retains its fallback even if process-global native mode is `require`;
-select `require-bounded` to make cleanup capability mandatory for this API.
+evidence but is never native traversal authority: it selects guarded cleanup,
+with a warning when `require-bounded` was requested. The compatible default
+retains its fallback even if process-global native mode is `require`; an
+explicit `require-bounded` request still respects that mode's missing-binding
+error. Later native availability or restored permissions cannot upgrade the
+workspace's selected cleanup mechanism.
 
 On Linux, bounded cleanup requires a successful runtime probe of the exact
 `openat2` child-directory flags, including `RESOLVE_NO_XDEV`, against the retained
 parent descriptor. If the kernel or seccomp policy denies that capability,
-compatible mode uses the guarded JavaScript fallback; `require-bounded` rejects
-before child creation. For eligible modes, the probe runs once at creation,
+both cleanup options use the guarded JavaScript fallback, warning for
+`require-bounded`. For eligible modes, the probe runs once at creation,
 without filesystem mutation.
 
 Cleanup does not repair POSIX workspace or descendant permissions. In compatible
@@ -336,10 +340,11 @@ Returns:
 
 ```ts
 type TempFile = {
+  readonly cleanupMechanism: "native-bounded" | "guarded-path";
   path: string;                            // absolute path; safe to write to
   dir: string;                             // the enclosing private workspace dir
   file(fileName?: string): string;          // resolve another file in the same dir
-  cleanup(): Promise<void>;                 // removes the original private workspace dir
+  cleanup(): Promise<void>;                 // attempts owned-workspace cleanup
   [Symbol.asyncDispose](): Promise<void>;   // alias of cleanup()
 };
 ```
@@ -352,19 +357,20 @@ separate operations, however: a same-privilege peer can substitute a directory
 in the final gap and redirect recursive traversal. Process-exit cleanup has the
 same compatible contract.
 
-The bounded mode requires an existing supplied root and applies the same
+The `require-bounded` request requires an existing supplied root and applies the same
 trusted-ancestry admission as private temp workspaces. On POSIX it finalizes
 the new directory to `0o700` through its retained descriptor; Windows keeps
 identity checks without treating POSIX modes as ACL privacy. Unverified
 creation artifacts are preserved for caller-directed recovery.
 
-Set `cleanupSafety: "require-bounded"` to require the retained-parent,
+Set `cleanupSafety: "require-bounded"` to prefer the retained-parent,
 no-replace quarantine, and descriptor-bounded owned-tree removal described for
 [private temp workspaces](#private-temp-workspaces). Admission, including the
-runtime probe, completes before `mkdtemp`; unavailable support throws
-`FsSafeError("helper-unavailable")` before a child is created. Manual, disposal,
-scoped, and process-exit cleanup then share one owner, and no pathname-recursive
-fallback is used. `cleanup()` still resolves `Promise<void>`: operational
+runtime probe, completes before `mkdtemp`; unavailable support warns and selects
+the existing guarded owner. `TempFile.cleanupMechanism` reports
+`"native-bounded"` or `"guarded-path"`; default compatible temp files report
+`"guarded-path"`. Manual, disposal, scoped, and process-exit cleanup share
+the selected owner. `cleanup()` still resolves `Promise<void>`: operational
 cleanup errors are passed to `onCleanupError` when supplied and otherwise
 suppressed for compatibility. The bounded POSIX final-entry unlink limit still
 applies.
@@ -494,8 +500,8 @@ does not block the helper. Windows retains Node's guarded pathname-open behavior
 because Node has no portable no-follow flag there; metadata is checked before
 and after opening, and unknown Windows identities fail closed after one bounded
 re-inspection without reopening. These helpers remain available with native
-mode `off`; they do not acquire the native-required retained-directory contract
-of [`stageFileInDirectory`](staged-file.md).
+mode `off`; they do not acquire the native retained-directory mechanism of
+[`stageFileInDirectory`](staged-file.md), which also offers guarded portable staging.
 
 Identity checks and pathname rename/unlink are separate syscalls, not atomic
 conditional mutations. A hostile process can still replace a leaf or parent in

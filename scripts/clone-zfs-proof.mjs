@@ -68,13 +68,7 @@ try {
   }
 
   const results = [];
-  if (mode === "no-reflink") {
-    const rejected = path.join(owned, "strict-unavailable");
-    await assert.rejects(copyTree(source, rejected, { clone: "always" }), { code: "unsupported-platform" });
-    await assert.rejects(fs.access(rejected), { code: "ENOENT" });
-    results.push({ policy: "always", unsupported: true, destinationAbsent: true });
-  }
-  const policies = mode === "reflink" ? ["always", "auto", "never"] : ["auto", "never"];
+  const policies = ["always", "auto", "never"];
   for (const clone of policies) {
     const destination = path.join(owned, clone);
     const before = savedBytes();
@@ -92,7 +86,7 @@ try {
     Buffer.from("independent").copy(expected);
     assert.equal(hash(await fs.readFile(path.join(destination, "payload"))), hash(expected));
     await verify(source);
-    results.push({ policy: clone, bcloneSavedDelta: String(sharedDelta), hashesMatch: true, independentWrite: true });
+    results.push({ policy: clone, cloned: sharedDelta > 0n, bcloneSavedDelta: String(sharedDelta), hashesMatch: true, independentWrite: true });
   }
 
   // Exercise the independent guarded-file owner too; it already uses the
@@ -100,13 +94,6 @@ try {
   const guardedDirectory = path.join(owned, "guarded");
   await fs.mkdir(guardedDirectory);
   const guarded = await root(guardedDirectory);
-  if (mode === "no-reflink") {
-    await assert.rejects(guarded.copyIn("strict-unavailable", path.join(source, "payload"), {
-      clone: "always",
-    }), { code: "unsupported-platform" });
-    await assert.rejects(fs.access(path.join(guardedDirectory, "strict-unavailable")), { code: "ENOENT" });
-    results.push({ operation: "Root.copyIn", policy: "always", unsupported: true, destinationAbsent: true });
-  }
   for (const clone of policies) {
     const before = savedBytes();
     await guarded.copyIn(clone, path.join(source, "payload"), { clone });
@@ -114,7 +101,7 @@ try {
     if (mode === "reflink" && clone !== "never") assert(sharedDelta >= 1024n * 1024n);
     else assert.equal(sharedDelta, 0n);
     assert.equal(hash(await fs.readFile(path.join(guardedDirectory, clone))), hash(files.get("payload")));
-    results.push({ operation: "Root.copyIn", policy: clone, bcloneSavedDelta: String(sharedDelta), hashesMatch: true });
+    results.push({ operation: "Root.copyIn", policy: clone, cloned: sharedDelta > 0n, bcloneSavedDelta: String(sharedDelta), hashesMatch: true });
   }
   console.log(JSON.stringify({ backend: "zfs", mode, results }));
 } finally {

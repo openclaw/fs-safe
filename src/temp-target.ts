@@ -15,9 +15,11 @@ import type { TempWorkspaceRetainedChild as TempWorkspaceRetainedChildType } fro
 import type {
   TempWorkspaceCleanupOwner as TempWorkspaceCleanupOwnerType,
   TempWorkspaceCleanupSafety,
+  TempWorkspaceCleanupMechanism,
 } from "./temp-workspace-owner.js";
 
 export type TempFile = {
+  readonly cleanupMechanism: TempWorkspaceCleanupMechanism;
   dir: string;
   path: string;
   file(fileName?: string): string;
@@ -217,7 +219,8 @@ export async function createOwnedTempFile(params: TempFileOptions): Promise<{
       assertNoWindowsPathAlias(dir, "filesystem", "temp directory uses a Windows filesystem namespace alias");
       initialPath = path.join(dir, initialFileName);
       assertNoWindowsPathAlias(initialPath, "filesystem", "temp file path uses a Windows filesystem namespace alias");
-      capability.assertCurrent();
+      if (capability.parent) capability.assertCurrent();
+      else admission.assertCurrent();
       const initial = inspectDirectoryIdentitySync(dir);
       identity = Object.freeze({ dev: initial.dev, ino: initial.ino });
       const needsModeInitialization = validateInitialTempWorkspaceChild(
@@ -229,7 +232,8 @@ export async function createOwnedTempFile(params: TempFileOptions): Promise<{
       );
       if (modeInitialization) await modeInitialization;
       const retainDescriptor = capability.admitChildDescriptor(retainedChild.ensureReadable());
-      capability.assertAncestryCurrent();
+      if (capability.parent) capability.assertAncestryCurrent();
+      else admission.assertAncestry();
       retainedChild.finalizeAdmission(admission.ownerUid, 0o700);
       cleanupOwner = new TempWorkspaceCleanupOwner(retainedChild, capability, retainDescriptor);
       retainedChild = undefined;
@@ -275,6 +279,7 @@ export async function createOwnedTempFile(params: TempFileOptions): Promise<{
     return {
       target: {
         dir,
+        cleanupMechanism: owner.cleanupMechanism,
         path: initialPath,
         file,
         cleanup,
@@ -304,6 +309,7 @@ export async function createOwnedTempFile(params: TempFileOptions): Promise<{
   return {
     target: {
       dir,
+      cleanupMechanism: "guarded-path",
       path: file(),
       file,
       cleanup,

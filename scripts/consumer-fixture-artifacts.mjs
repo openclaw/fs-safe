@@ -93,7 +93,7 @@ export async function consumerFixtureArtifacts({ rootPkg, manifest, outputDir, f
       await collect(dependency, directory);
     }
   }
-  for (const name of Object.keys(rootPkg.optionalDependencies)) {
+  for (const name of Object.keys({ ...rootPkg.dependencies, ...rootPkg.optionalDependencies })) {
     if (!nativeTargets.some((target) => target.package === name)) await collect(name, process.cwd());
   }
   return { artifacts, synthetic };

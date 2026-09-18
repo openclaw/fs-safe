@@ -33,6 +33,7 @@
     "README.md",
     "CHANGELOG.md",
     "SECURITY.md",
+    "THIRD_PARTY_NOTICES.md",
     "LICENSE"
   ],
   "type": "module",
@@ -173,7 +174,9 @@
     "@openclaw/fs-safe-linux-arm64-musl": "0.14.0",
     "@openclaw/fs-safe-linux-x64-gnu": "0.14.0",
     "@openclaw/fs-safe-linux-x64-musl": "0.14.0",
-    "@openclaw/fs-safe-win32-x64-msvc": "0.14.0",
+    "@openclaw/fs-safe-win32-x64-msvc": "0.14.0"
+  },
+  "dependencies": {
     "jszip": "^3.10.2"
   },
   "devDependencies": {

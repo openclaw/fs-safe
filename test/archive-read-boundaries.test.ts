@@ -408,14 +408,14 @@ describe("bounded archive reads", () => {
     expect(readEntry).toHaveBeenCalledTimes(3);
   });
 
-  it("requires native support for explicitly selected zstd and bzip2 TAR reads", async () => {
+  it("validates explicitly selected zstd and bzip2 TAR bytes without native support", async () => {
     const root = await tempRoot("fs-safe-read-compressed-");
     const archivePath = path.join(root, "fixture.bin");
     await fs.writeFile(archivePath, "not compressed");
 
     await expect(readArchiveEntry(archivePath, "value", { maxBytes: 5, kind: "tar-zstd" }))
-      .rejects.toMatchObject({ code: "helper-unavailable" });
+      .rejects.toMatchObject({ code: "archive-header-invalid" });
     await expect(readArchiveEntry(archivePath, "value", { maxBytes: 5, kind: "tar-bzip2" }))
-      .rejects.toMatchObject({ code: "helper-unavailable" });
+      .rejects.toMatchObject({ code: "archive-header-invalid" });
   });
 });

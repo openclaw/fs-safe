@@ -4,7 +4,8 @@ import { assertAbsolutePathInput } from "./absolute-path.js";
 import { resolveCopyCloneMode, type CopyCloneMode } from "./copy-policy.js";
 import { copyOwnedTree } from "./copy-tree-portable.js";
 import { FsSafeError } from "./errors.js";
-import { getNativeBinding, requireNativeBinding } from "./native.js";
+import { getNativeBinding } from "./native.js";
+import { warnNativeFallback } from "./native-fallback-warning.js";
 import { assertStagedDirectoryCurrent, openStagedDirectory } from "./staged-directory.js";
 export { readCloneFileMetadata, type CloneFileMetadata } from "./clone-metadata.js";
 export type { CopyCloneMode } from "./copy-policy.js";
@@ -18,9 +19,10 @@ export type CopyTreeOptions = {
 
 /** Inspect an existing real directory without creating probe files. */
 export function probeTreeClone(parentPath: string): TreeCloneBackend | undefined {
+  const pathname = assertAbsolutePathInput(parentPath);
   const native = getNativeBinding();
-  if (!native) return undefined;
-  const parent = openStagedDirectory(assertAbsolutePathInput(parentPath));
+  if (typeof native?.probeTreeClone !== "function") return undefined;
+  const parent = openStagedDirectory(pathname);
   try {
     return native.probeTreeClone(parent.fd) ?? undefined;
   } finally {
@@ -66,25 +68,15 @@ async function materializeTree(
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 32) {
     throw new FsSafeError("invalid-path", "clone concurrency must be an integer between 1 and 32");
   }
-  const native =
-    policy === "always"
-      ? requireNativeBinding()
-      : policy === "auto"
-        ? getNativeBinding()
-        : undefined;
+  const native = policy === "never" ? undefined : getNativeBinding();
   const target = assertAbsolutePathInput(destination);
   const name = path.basename(target);
   if (!name) throw new FsSafeError("invalid-path", "clone destination must name a child directory");
   const parent = openStagedDirectory(path.dirname(target));
   let original: ReturnType<typeof openStagedDirectory> | undefined;
   try {
-    const supported = native?.probeTreeClone(parent.fd);
-    if (!supported && policy === "always") {
-      throw new FsSafeError(
-        "unsupported-platform",
-        "destination filesystem does not support tree cloning",
-      );
-    }
+    const supported = typeof native?.probeTreeClone === "function" &&
+      typeof native.cloneTree === "function" ? native.probeTreeClone(parent.fd) : undefined;
     if (source !== undefined) {
       original = openStagedDirectory(assertAbsolutePathInput(source));
       const relative = path.relative(
@@ -120,18 +112,16 @@ async function materializeTree(
       }
     } catch (error) {
       options.signal?.throwIfAborted();
-      if (policy !== "auto" || !cloneUnavailable(error)) {
-        if (error instanceof Error && "code" in error && error.code === "CLONE_UNAVAILABLE") {
-          throw new FsSafeError("unsupported-platform", error.message, { cause: error });
-        }
-        throw error;
-      }
+      if (!cloneUnavailable(error)) throw error;
     } finally {
       options.signal?.removeEventListener("abort", abort);
     }
     options.signal?.throwIfAborted();
     assertStagedDirectoryCurrent(parent.receipt);
     if (original) assertStagedDirectoryCurrent(original.receipt);
+    if (!cloned && policy === "always") {
+      warnNativeFallback("directory cloning", "An independent byte copy or ordinary source directory is used; filesystem cloning is not guaranteed.");
+    }
     if (!cloned && original) {
       await copyOwnedTree(original, target, {
         signal: options.signal,
@@ -144,6 +134,18 @@ async function materializeTree(
       options.signal?.throwIfAborted();
       assertStagedDirectoryCurrent(parent.receipt);
       assertStagedDirectoryCurrent(original.receipt);
+    }
+    if (!cloned && !original) {
+      // Exclusive creation refuses existing names, including partial native output.
+      assertStagedDirectoryCurrent(parent.receipt);
+      fs.mkdirSync(target, { mode: 0o700 });
+      const created = openStagedDirectory(target);
+      try {
+        assertStagedDirectoryCurrent(parent.receipt);
+        assertStagedDirectoryCurrent(created.receipt);
+      } finally {
+        fs.closeSync(created.fd);
+      }
     }
   } finally {
     try {

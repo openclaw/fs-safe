@@ -110,10 +110,11 @@ describe("directory copying", () => {
     },
   );
 
-  it("requires native cloning when the policy is always", async () => {
+  it("copies independent bytes when always cloning is unavailable", async () => {
     const { source, destination } = await copyFixture();
-    await expect(copyTree(source, destination, { clone: "always" })).rejects.toThrow();
-    await expect(fs.access(destination)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(copyTree(source, destination, { clone: "always" })).resolves.toBeUndefined();
+    expect(await fs.readFile(path.join(destination, "payload"), "utf8")).toBe("original");
+    await fs.writeFile(path.join(destination, "payload"), "independent");
     expect(await fs.readFile(path.join(source, "payload"), "utf8")).toBe("original");
   });
 

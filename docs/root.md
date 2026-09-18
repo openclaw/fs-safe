@@ -114,7 +114,7 @@ fs.createJson(rel, value, options?)      // create() variant of writeJson
 fs.append(rel, data, options?)           // append text/buffer; syncs before close by default
 fs.copyIn(rel, sourceAbsPath, options?)  // copy from outside the root, atomically, with size cap
 fs.openWritable(rel, options?)           // FileHandle for streaming writes; supports await using
-fs.move(from, to, options?)              // rename within the root; native-backed no clobber by default
+fs.move(from, to, options?)              // rename within the root; no clobber by default
 fs.remove(rel, options?)                 // unlink file, rmdir, or bounded recursive removal
 fs.mkdir(rel, options?)                  // mkdir -p (creates missing parents)
 fs.ensureRoot(options?)                  // accepts "" / "." as the root itself
@@ -178,8 +178,10 @@ With `overwrite: false`, an existing destination produces `already-exists` and
 is never altered. Copying prepares a private sibling file before publishing its
 completed contents. Native mode uses no-replace rename. The guarded JavaScript
 fallback links the completed stage and removes its temporary name in the same
-JavaScript turn; the filesystem must support hardlinks. Other processes can
-briefly observe both names. The source is never hardlinked to the destination.
+JavaScript turn. If hardlinks are unavailable, an atomic platform-command rename
+publishes that stage; see [runtime requirements](install.md#platform-command-fallbacks).
+Other processes can briefly observe both names on the hardlink route. The source
+is never hardlinked to the destination.
 
 `clone` chooses the file-data transfer strategy through `CopyCloneMode`, shared
 with [`copyTree`](copy.md#api). File copies default to `"never"`; tree copies
@@ -189,10 +191,10 @@ default to `"auto"`:
 | --- | --- |
 | `never` | Copy regular file bytes using reads and writes, without explicit cloning or copy offload. |
 | `auto` | Try native file cloning, then copy offload or ordinary byte copying when cloning is unavailable. |
-| `always` | Require native cloning; fail when the binding or filesystem cannot provide it. |
+| `always` | Request cloning; warn and use verified byte copying when the mechanism is unavailable. |
 
 Native file cloning supports APFS and supported Linux filesystems. Windows
-currently uses byte copying for `never` and `auto`; `always` fails. Clone choice
+currently uses byte copying, with a fallback warning for `always`. Clone choice
 does not change modes, durability, root confinement, or source and publication
 identity checks. The shared strategy does not replace Root's guarded regular-file
 contract with `copyTree`'s caller-owned immutable-tree and metadata contract.

@@ -4,10 +4,10 @@
 
 TAR admission uses one Rust core compiled into both the native binding and a
 bundled, import-free WebAssembly module. The guarded JavaScript fallback uses
-that module for TAR/gzip and optional `jszip` for ZIP. TAR needs no optional
-parser dependency, runtime download, install script, or consumer Rust toolchain.
-Installs omitting optional dependencies can import every public subpath and use
-TAR/gzip in `auto` or `off`; ZIP fallback still requires `jszip`.
+that module for TAR admission, Node's gzip decoder, bundled portable bzip2/zstd
+decoders, and `jszip` for ZIP. No format needs a native addon, runtime download,
+install script, or consumer Rust toolchain. Installs omitting optional
+dependencies can use ZIP, TAR, gzip, zstd, and bzip2 in `auto` or `off`.
 
 ```ts
 import { extractArchive, resolveArchiveKind } from "@openclaw/fs-safe/archive";
@@ -148,14 +148,24 @@ must agree with this kind, physical index, size, known path, and UNIX-creator mo
 before extraction or any member read. Bounded ZIP reads retain this metadata from
 their single admission pass without another input copy or scan.
 
-Portable ZIP preflight, extraction, and reads also check the decoded kind against
-admission. Unsupported JSZip metadata rejects with `ArchiveFormatError` before
-filters, including UNIX-only directory attributes without a terminal slash or DOS
-directory bit, backslash-only directory names without directory attributes, and
-non-UNIX creators whose high-word symlink mode JSZip does not expose. Symlinks that
-the decoder represents faithfully remain subject to the existing filter and
-blocked-link policy. UNIX creator metadata and permission defaults remain as
-described above.
+Portable ZIP preflight, extraction, and reads bind every decoder insertion to
+its admitted physical record before JSZip can coerce its type or discard its
+payload. Names, physical order, original directory/permission metadata,
+compression method, compressed and decoded sizes, and CRC must agree. The
+private loader then applies the admitted kind, preserving UNIX-only directory
+attributes, backslash-only directories, and high-word symlinks from any creator.
+Symlinks remain subject to the existing filter and blocked-link policy.
+UNIX socket and block-device type bits do not turn regular-file payloads into
+empty directories. Directory and symlink callbacks receive their physical
+declared sizes; directory bodies are not published as files. Unsupported
+link-like types remain visible as `other` and are safely omitted when accepted.
+UNIX creator metadata and permission defaults remain as described above.
+
+The loader adapter belongs to one private JSZip instance and is removed after
+loading, including failure. Public preflight still returns ordinary JSZip entry
+objects, with directory keys ending in `/` and recognizable symlink type bits.
+Compressed data is retained even for declared-zero entries, so an empty-size
+claim cannot bypass payload-size or CRC verification during extraction or reads.
 
 Within one ZIP entry, identical local and central name bytes reuse the same
 decoded validation. Unicode Path admission is shared only when both the raw names
@@ -173,7 +183,7 @@ collision checks, writes, and mode application agree.
 
 An `entryFilter` sees the validated **canonical effective archive path before
 stripping**, entry kind, and declared size. On every JavaScript and native
-ZIP/TAR backend (including gzip and native zstd/bzip2), backslashes become `/`,
+ZIP/TAR backend (including gzip, zstd, and bzip2), backslashes become `/`,
 empty and `.` components are removed, and trailing separators are removed from
 directory paths. For example, `./pkg//state\cache/value` is presented as
 `pkg/state/cache/value`, even with `stripComponents: 1`. Case and Unicode
@@ -345,9 +355,8 @@ already-running filesystem read or a decoder step using already-buffered input.
 ### Raw TAR framing
 
 Extraction and bounded reads admit the complete decoded TAR stream through the
-shared Rust core. This applies to plain TAR,
-gzip, and native-supported zstd/bzip2, without changing native-mode availability
-or fallback policy. The native and WASM builds enforce the same
+shared Rust core. This applies to plain TAR, gzip, zstd, and bzip2 on both
+native and portable routes. The native and WASM builds enforce the same
 framing rules:
 
 - Every nonzero header must have a valid unsigned octal checksum, delimited
@@ -394,9 +403,21 @@ bypass validation. Decompression remains streaming; no complete decoded archive
 is retained in memory or written to a decoded spool.
 
 The WASM transport has a fixed 64 KiB input buffer, one pending member event,
-and a 256 MiB maximum linear memory per isolated parser instance. JavaScript
-gzip decoding emits chunks of at most 64 KiB for both staged files and buffered
-inputs, matching that input window. Metadata is
+and a 768 MiB maximum linear memory per isolated parser or codec instance.
+Portable gzip, zstd, and bzip2 decoding emits chunks of at most 64 KiB for both
+staged files and buffered inputs, matching the parser's input window. The
+portable bzip2 decoder uses the same Rust implementation as the native addon.
+The portable zstd decoder buffers at most one compressed block plus its framing,
+retains a bounded history window, and checks frame checksums and declared
+content sizes. Its 128 MiB maximum window matches the native streaming decoder.
+The linear memory ceiling accommodates contiguous history-buffer growth,
+including overlapping allocations and freed space retained by the allocator.
+Decoded blocks remain limited to the
+smaller of the frame window and 128 KiB, checked before expansion.
+Concatenated bzip2/zstd members and zstd skippable frames are supported; truncated
+members and trailing garbage reject. Codec steps yield to the event loop so
+cancellation can stop buffered decompression, and stream teardown joins the
+input and decoder. Metadata is
 bounded before allocation; allocation failure rejects. Stream backpressure
 bounds queued chunks, and completion/error destroys the instance's parser
 state. The manifest retains the existing charged budget below; linear memory
@@ -497,7 +518,7 @@ parsers from disagreeing about a member's type.
 `K` validates encoding and NUL structure without authorizing link creation.
 Normal link/filter policy still governs the described member. Canonical
 pre-strip filter paths, decoded-stream ceilings, and physical EOF checks apply
-to plain/gzip TAR and native zstd/bzip2 alike.
+to plain/gzip TAR and zstd/bzip2 alike.
 
 ## `inspectTarArchive`
 
@@ -563,7 +584,7 @@ import { resolveArchiveKind, type ArchiveKind } from "@openclaw/fs-safe/archive"
 
 const kind = resolveArchiveKind("upload.zip"); // "zip"
 const tar = resolveArchiveKind("upload.tar.gz"); // "tar"
-const zstd = resolveArchiveKind("upload.tar.zst"); // "tar-zstd" when native is available
+const zstd = resolveArchiveKind("upload.tar.zst"); // "tar-zstd"
 const unknown = resolveArchiveKind("upload.bin"); // null
 ```
 
@@ -571,23 +592,20 @@ Recognizes:
 
 - `*.zip` → `"zip"`
 - `*.tar`, `*.tar.gz`, `*.tgz` → `"tar"`
-- `*.tar.zst`, `*.tar.zstd`, `*.tzst` → `"tar-zstd"` (native only)
-- `*.tar.bz2`, `*.tbz2`, `*.tbz` → `"tar-bzip2"` (native only)
+- `*.tar.zst`, `*.tar.zstd`, `*.tzst` → `"tar-zstd"`
+- `*.tar.bz2`, `*.tbz2`, `*.tbz` → `"tar-bzip2"`
 
 Returns `null` for unknown extensions; check the result before calling
-`extractArchive` if the filename is caller-controlled. A recognized zstd or
-bzip2 TAR extension with no native binding throws the typed
-`FsSafeError("helper-unavailable")` with installation guidance. This includes
-`mode: "off"`; those two formats have no JavaScript fallback.
+`extractArchive` if the filename is caller-controlled. Detection is independent
+of native availability. Every recognized format has a portable implementation;
+`auto` prefers native acceleration when available, and `off` uses the portable
+route. Explicit `require` mode still requires the addon when an operation starts.
 
-For a service whose input contract requires zstd, configure native mode before
-the first archive call so a packaging mistake fails at the boundary:
+For example, extracting zstd also works when optional native packages are omitted:
 
 ```ts
-import { configureFsSafeNative } from "@openclaw/fs-safe/config";
 import { extractArchive } from "@openclaw/fs-safe/archive";
 
-configureFsSafeNative({ mode: "require" });
 await extractArchive({
   archivePath: "/srv/restore/snapshot.tar.zst",
   destDir: "/srv/restore/staging",
@@ -614,7 +632,8 @@ plus the 768 MiB decoded ceiling derived from default extracted/archive byte
 limits. It does not apply payload budgets to unrequested members. ZIP
 inputs retain the archive subpath's 256 MiB compressed-input ceiling.
 With a native binding it uses the same Rust decoders as extraction, including
-zstd and bzip2 TAR. Without native it retains the JS ZIP/TAR/gzip implementation.
+zstd and bzip2 TAR. Without native it uses guarded portable implementations for
+the same formats.
 Archive member reads retain their private in-memory input without a disk
 snapshot. JavaScript ZIP member reads reuse their completed physical admission
 when loading the decoder, which still checks its decoded names and entry count.
@@ -626,10 +645,10 @@ Native TAR retains the fully admitted member offsets alongside the same input
 allocation. Plain TAR copies only the selected payload range after full archive
 validation. Gzip, zstd, and bzip2 replay bounded decompression and still validate
 all framing, trailers, and physical padding before returning. The JavaScript
-TAR/gzip fallback copies each input window into WASM once, consuming member
+TAR fallback copies each decoded input window into WASM once, consuming member
 events at offsets within that window. After full admission, plain TAR copies the
-selected range directly from its private snapshot; gzip still replays bounded
-decompression through the parser. WASM transport and selected output still
+selected range directly from its private snapshot; compressed TAR still replays
+bounded decompression through the parser. WASM transport and selected output still
 require copies.
 Returned buffers own their bytes, so changing a result cannot modify an archive
 reader or retain an unrelated part of the input through its backing ArrayBuffer.

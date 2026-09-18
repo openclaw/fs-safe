@@ -26,7 +26,7 @@ afterEach(() => {
 });
 
 for (const unavailable of ["off", "absent", "missing-capability", "windows"] as const) {
-  it(`rejects ${unavailable} before creating any stage`, async () => {
+  it(`uses portable staging when native support is ${unavailable}`, async () => {
     const directory = await tempRoot("fs-safe-stage-unavailable-");
     if (unavailable === "windows") {
       vi.spyOn(process, "platform", "get").mockReturnValue("win32");
@@ -42,10 +42,14 @@ for (const unavailable of ["off", "absent", "missing-capability", "windows"] as 
     if (unavailable === "missing-capability") {
       __setNativeLoaderForTest(() => ({ closeOwnedFd: vi.fn() } as never));
     }
-    await expect(stageFileInDirectory({ directory, content: "x" })).rejects.toMatchObject({
-      code: process.platform === "win32" ? "unsupported-platform" : "helper-unavailable",
+    await using staged = await stageFileInDirectory({ directory, content: "x" });
+    expect(staged.receipt.targeting).toBe("guarded-pathname");
+    expect(await staged.publish("final", { overwrite: false })).toMatchObject({
+      status: "published", method: "link-unlink", staged: { targeting: "guarded-pathname" },
     });
-    expect(await fs.readdir(directory)).toEqual([]);
+    expect(await fs.readFile(path.join(directory, "final"), "utf8")).toBe("x");
+    expect(await staged.cleanup()).toMatchObject({ status: "not-needed", targeting: "guarded-pathname" });
+    expect(await fs.readdir(directory)).toEqual(["final"]);
   });
 }
 
@@ -62,6 +66,7 @@ describe.runIf(nativeAvailable)("retained-directory staging", () => {
       expect(staged.receipt.identity).toMatchObject({
         dev: actual.dev, ino: actual.ino, size: actual.size, mode: 0o600,
       });
+      expect(staged.receipt.targeting).toBe("descriptor-relative");
       expect(actual.mode & 0o777n).toBe(0o600n);
       expect(staged.receipt.directory.identity).toEqual({ dev: before.dev, ino: before.ino });
       expect((await fs.lstat(directory)).mode & 0o777).toBe(0o750);
@@ -152,7 +157,7 @@ describe.runIf(nativeAvailable)("retained-directory staging", () => {
     }
     const staged = await stageFileInDirectory({ directory, content: "new", mode: 0o640 });
     const publication = await staged.publish("final", { overwrite });
-    expect(publication).toMatchObject({ status: "published", basename: "final", overwrite });
+    expect(publication).toMatchObject({ status: "published", basename: "final", overwrite, method: "rename" });
     expect(await fs.readFile(final, "utf8")).toBe("new");
     expect((await fs.stat(final)).mode & 0o777).toBe(0o640);
     expect(await staged.cleanup()).toMatchObject({ status: "not-needed", publication });

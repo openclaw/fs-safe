@@ -1,5 +1,6 @@
 import { assertAbsolutePathInput } from "./absolute-path.js";
-import { requireNativeBinding } from "./native.js";
+import { getNativeBinding } from "./native.js";
+import { warnNativeFallback } from "./native-fallback-warning.js";
 
 export type CloneFileMetadata = {
   dev: number;
@@ -23,10 +24,16 @@ export async function readCloneFileMetadata(
   files: readonly string[],
 ): Promise<(CloneFileMetadata | undefined)[]> {
   const paths = files.map(assertAbsolutePathInput);
-  const results = await requireNativeBinding().readCloneFileMetadata(paths);
-  return results.map((result) => {
+  const native = getNativeBinding();
+  if (typeof native?.readCloneFileMetadata !== "function") {
+    warnNativeFallback("clone metadata", "APFS clone identities cannot be observed; each requested metadata entry is undefined.");
+    return paths.map(() => undefined);
+  }
+  const results = await native.readCloneFileMetadata(paths);
+  return paths.map((_, index) => {
+    const result = results[index];
     if (
-      !result ||
+      !Buffer.isBuffer(result) ||
       result.length !== 100 ||
       result.readUInt32LE(0) !== 100 ||
       result.readUInt32LE(4) !== 0x82038c0a ||

@@ -536,6 +536,7 @@
         "SecureTempRootDescriptorAdapter",
         "TempPathIdentityReceipt",
         "TempWorkspace",
+        "TempWorkspaceCleanupMechanism",
         "TempWorkspaceCleanupResult",
         "TempWorkspaceCleanupSafety",
         "TempWorkspaceOptions",
