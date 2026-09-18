@@ -3,19 +3,15 @@ import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
-import { __loadBundledNativeForTest, __resetNativeLoaderForTest } from "../src/native.js";
+import { __resetNativeLoaderForTest } from "../src/native.js";
 import { root } from "../src/root.js";
+import { hasPrivateCreationNative } from "./helpers/private-creation-native.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
 const cases: { mode: "off" | "require"; atomic: boolean }[] = [{ mode: "off", atomic: true }];
-if (process.platform === "win32") {
-  try {
-    __loadBundledNativeForTest();
-    cases.push({ mode: "require", atomic: true }, { mode: "require", atomic: false });
-  } catch (error) {
-    if (process.env.FS_SAFE_NATIVE_MODE === "require") throw error;
-  }
+if (process.platform === "win32" && hasPrivateCreationNative()) {
+  cases.push({ mode: "require", atomic: true }, { mode: "require", atomic: false });
 }
 
 afterEach(() => {

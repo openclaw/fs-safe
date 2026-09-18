@@ -35,6 +35,7 @@ public static partial class FsSafeWindowsBridge {
   [DllImport("advapi32.dll")] static extern uint GetSecurityInfo(SafeFileHandle handle, int kind, uint sections, out IntPtr owner, out IntPtr group, out IntPtr dacl, out IntPtr sacl, out IntPtr descriptor);
   [DllImport("advapi32.dll")] static extern uint GetSecurityDescriptorLength(IntPtr descriptor);
   [DllImport("advapi32.dll", SetLastError=true)] static extern bool GetSecurityDescriptorDacl(IntPtr descriptor, out bool present, out IntPtr dacl, out bool defaulted);
+  [DllImport("advapi32.dll", SetLastError=true)] static extern bool GetSecurityDescriptorOwner(IntPtr descriptor, out IntPtr owner, out bool defaulted);
   [DllImport("advapi32.dll")] static extern uint SetSecurityInfo(SafeFileHandle handle, int kind, uint sections, IntPtr owner, IntPtr group, IntPtr dacl, IntPtr sacl);
   [DllImport("ntdll.dll")] static extern int NtQueryInformationFile(SafeFileHandle handle, out IoStatus io, [Out] byte[] information, uint length, int kind);
   [DllImport("ntdll.dll")] static extern int NtCreateFile(out SafeFileHandle handle, uint access, ref ObjectAttributes attributes, out IoStatus io, IntPtr allocation, uint flags, uint share, uint disposition, uint options, IntPtr ea, uint eaLength);
@@ -191,10 +192,11 @@ public static partial class FsSafeWindowsBridge {
       return created;
     } finally { if(unicodeBuffer!=IntPtr.Zero) Marshal.FreeHGlobal(unicodeBuffer); Marshal.FreeHGlobal(nameBuffer); pin.Free(); }
   }
-  static void RequirePrivate(Dictionary<string,object> facts, bool requireProtected=true, bool requirePrivateChildren=false) {
+  static void RequirePrivate(Dictionary<string,object> facts, bool requireProtected=true, bool requirePrivateChildren=false, bool allowAdministratorsOwner=false) {
+    string current=(string)facts["currentUserSid"], owner=(string)facts["ownerSid"];
     Require((bool)facts["isLocal"] && (bool)facts["daclPresent"] && (!requireProtected || (bool)facts["daclProtected"]) &&
-      (bool)facts["aceListComplete"] && (string)facts["ownerSid"]==(string)facts["currentUserSid"],"EACCES","private object security was not enforced");
-    string current=(string)facts["currentUserSid"];
+      (bool)facts["aceListComplete"] && (owner==current || (allowAdministratorsOwner && owner=="s-1-5-32-544")),
+      "EACCES","private object security was not enforced");
     foreach(Dictionary<string,object> ace in (object[])facts["aces"]) {
       var flags=(Dictionary<string,object>)ace["flags"];
       string sid=(string)ace["sid"];
@@ -230,17 +232,21 @@ public static partial class FsSafeWindowsBridge {
       return Row("identity",identity);
     }
   }
-  static void ProtectFileDacl(SafeFileHandle handle) {
+  static void ProtectFileSecurity(SafeFileHandle handle) {
     byte[] security=PrivateSecurity(false);
     var pin=GCHandle.Alloc(security,GCHandleType.Pinned);
     try {
-      bool present,defaulted; IntPtr dacl;
+      bool present,defaulted; IntPtr dacl,owner;
       if(!GetSecurityDescriptorDacl(pin.AddrOfPinnedObject(),out present,out dacl,out defaulted)) {
         throw OsFailure((uint)Marshal.GetLastWin32Error(),"inspect private file DACL");
       }
       Require(present && dacl!=IntPtr.Zero,"EIO","private file DACL is incomplete");
-      uint error=SetSecurityInfo(handle,1,0x80000004u,IntPtr.Zero,IntPtr.Zero,dacl,IntPtr.Zero);
-      if(error!=0) throw OsFailure(error,"protect private file DACL");
+      if(!GetSecurityDescriptorOwner(pin.AddrOfPinnedObject(),out owner,out defaulted)) {
+        throw OsFailure((uint)Marshal.GetLastWin32Error(),"inspect private file owner");
+      }
+      Require(owner!=IntPtr.Zero,"EIO","private file owner is incomplete");
+      uint error=SetSecurityInfo(handle,1,0x80000005u,owner,IntPtr.Zero,dacl,IntPtr.Zero);
+      if(error!=0) throw OsFailure(error,"protect private file owner and DACL");
     } finally { pin.Free(); }
   }
   static void CheckFileAssociation(SafeFileHandle held, string path, string identity, uint links, SafeFileHandle parent, string parentPath, string parentIdentity) {
@@ -260,16 +266,17 @@ public static partial class FsSafeWindowsBridge {
       Require(!held.IsInvalid,"EBADF","inherited file handle is unavailable");
       string identity=FileIdentity(held,links);
       if(!protect) Require(identity==expectedFile,"EIO","private file identity changed");
-      // Tightening an already-private inherited DACL is safe; repairing broad
-      // access could leave an earlier reader handle authorized for later bytes.
-      RequirePrivate(Security(held),!protect);
+      // Windows can use Administrators as the creating token's default owner.
+      // The inherited ACL must already be private: later changes cannot revoke
+      // an earlier reader handle.
+      RequirePrivate(Security(held),requireProtected:!protect,allowAdministratorsOwner:protect);
       using(var parent=Open(parentPath,0x80,true)) {
         CheckFileAssociation(held,path,identity,links,parent,parentPath,expectedParent);
-        if(protect) using(var writable=Open(path,0x00060080,true)) {
-          Require(FileIdentity(writable,links)==identity,"EIO","private file changed before DACL protection");
-          RequirePrivate(Security(writable),false);
+        if(protect) using(var writable=Open(path,0x000e0080,true)) {
+          Require(FileIdentity(writable,links)==identity,"EIO","private file changed before owner and DACL protection");
+          RequirePrivate(Security(writable),requireProtected:false,allowAdministratorsOwner:true);
           CheckParent(parent,parentPath,expectedParent);
-          ProtectFileDacl(writable);
+          ProtectFileSecurity(writable);
           RequirePrivate(Security(writable));
         }
         RequirePrivate(Security(held));

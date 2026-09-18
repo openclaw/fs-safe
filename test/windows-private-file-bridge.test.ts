@@ -26,8 +26,10 @@ async function privateStage() {
 }
 
 function expectPrivateFileAcl(facts: ReturnType<typeof readWindowsSecurityFactsCommand>, protectedDacl: boolean) {
+  if (protectedDacl) expect(facts.ownerSid).toBe(facts.currentUserSid);
+  else expect([facts.currentUserSid, "s-1-5-32-544"]).toContain(facts.ownerSid);
   expect(facts).toMatchObject({
-    ownerSid: facts.currentUserSid, daclPresent: true, daclProtected: protectedDacl,
+    daclPresent: true, daclProtected: protectedDacl,
     isLocal: true, aceListComplete: true, unsupportedAceTypes: [],
     worldReadable: false, worldWritable: false, groupReadable: false, groupWritable: false,
   });
@@ -48,7 +50,7 @@ function expectBorrowedFileUsable(fd: number, original: fs.BigIntStats) {
 }
 
 describe.runIf(process.platform === "win32")("Windows private-file command bridge", () => {
-  it("protects an inherited private file while retaining the caller's original descriptor", async () => {
+  it("normalizes inherited private-file ownership while retaining the caller's original descriptor", async () => {
     const { base, baseReceipt, stage, stageReceipt } = await privateStage();
     expect(() => createPrivateWindowsDirectoryCommandSync(stage, baseReceipt.identity)).toThrow(expect.objectContaining({ code: "EEXIST" }));
     const rejectedChild = path.join(base, "wrong-parent");

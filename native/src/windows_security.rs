@@ -374,7 +374,7 @@ mod windows {
 
     #[derive(Clone, Copy, Debug)]
     struct HandleSecurityInspection {
-        owner_is_current: bool,
+        owner_class: OwnerClass,
         dacl_protected: bool,
         dacl_present: bool,
         is_local: bool,
@@ -889,7 +889,7 @@ mod windows {
                 OwnerClass::Foreign
             };
             let mut inspection = HandleSecurityInspection {
-                owner_is_current: owner_class == OwnerClass::CurrentUser,
+                owner_class,
                 dacl_protected: control & SE_DACL_PROTECTED != 0,
                 dacl_present: control & SE_DACL_PRESENT != 0 && !dacl.is_null(),
                 is_local: local,
@@ -1223,7 +1223,7 @@ mod windows {
         if protect {
             let writable = open_existing_handle(
                 &wide(path)?,
-                FILE_READ_ATTRIBUTES | READ_CONTROL | WRITE_DAC,
+                FILE_READ_ATTRIBUTES | READ_CONTROL | WRITE_DAC | WRITE_OWNER,
                 FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
                 |code| win_error(code, "open private file for DACL protection"),
             )?;
@@ -1244,15 +1244,17 @@ mod windows {
                 SetSecurityInfo(
                     writable.0,
                     SE_FILE_OBJECT,
-                    DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-                    null_mut(),
+                    OWNER_SECURITY_INFORMATION
+                        | DACL_SECURITY_INFORMATION
+                        | PROTECTED_DACL_SECURITY_INFORMATION,
+                    current.sid,
                     null_mut(),
                     acl.0,
                     null_mut(),
                 )
             };
             if status != 0 {
-                return Err(win_error(status, "protect private file DACL"));
+                return Err(win_error(status, "protect private file security"));
             }
             validate_private_facts(
                 &read_owner_and_dacl_handle(writable.0, &current)?,
@@ -1332,11 +1334,15 @@ mod windows {
 
     fn validate_private_facts(
         inspection: &HandleSecurityInspection,
-        require_protected: bool,
+        require_final_security: bool,
         kind: &str,
     ) -> NativeResult<()> {
-        if (require_protected && !inspection.dacl_protected)
-            || !inspection.owner_is_current
+        // Elevated tokens can give newly created files an Administrators owner.
+        // Admit that inherited state only until the pinned file's owner is set.
+        let owner_admitted = inspection.owner_class == OwnerClass::CurrentUser
+            || (!require_final_security && inspection.owner_class == OwnerClass::Administrators);
+        if (require_final_security && !inspection.dacl_protected)
+            || !owner_admitted
             || !inspection.dacl_present
             || !inspection.is_local
             || !inspection.ace_list_complete
@@ -1596,7 +1602,7 @@ mod windows {
 
         fn valid_private_inspection() -> HandleSecurityInspection {
             HandleSecurityInspection {
-                owner_is_current: true,
+                owner_class: OwnerClass::CurrentUser,
                 dacl_protected: true,
                 dacl_present: true,
                 is_local: true,
@@ -1822,7 +1828,11 @@ mod windows {
                     ..valid
                 },
                 HandleSecurityInspection {
-                    owner_is_current: false,
+                    owner_class: OwnerClass::Foreign,
+                    ..valid
+                },
+                HandleSecurityInspection {
+                    owner_class: OwnerClass::Administrators,
                     ..valid
                 },
                 HandleSecurityInspection {
@@ -1883,10 +1893,7 @@ mod windows {
             let facts = read_owner_and_dacl(target.to_str().unwrap()).unwrap();
             let inspection = private_inspection.get().unwrap();
             assert!(inspection.dacl_protected);
-            assert_eq!(
-                inspection.owner_is_current,
-                facts.owner_class == "current-user"
-            );
+            assert_eq!(inspection.owner_class.as_str(), facts.owner_class);
             assert_eq!(inspection.dacl_present, facts.dacl_present);
             assert_eq!(inspection.is_local, facts.is_local);
             assert_eq!(inspection.ace_list_complete, facts.ace_list_complete);
@@ -2050,6 +2057,8 @@ mod windows {
                 handle_file_identity(handle).unwrap().to_string()
             );
             let facts = security_facts(handle, true).unwrap();
+            assert_eq!(facts.owner_class, "current-user");
+            assert_eq!(facts.owner_sid, facts.current_user_sid);
             assert!(facts.aces.iter().all(|ace| ace.flags.raw == 0));
             file.write_all(b"still owned by the caller").unwrap();
             fs::hard_link(&source, &published).unwrap();
@@ -2224,6 +2233,7 @@ mod windows {
                     }
                 );
                 let after = read_owner_and_dacl_handle(handle, &current).unwrap();
+                assert_eq!(after.owner_class, before.owner_class);
                 assert_eq!(after.dacl_protected, before.dacl_protected);
                 assert_eq!(after.dacl_present, before.dacl_present);
                 assert_eq!(after.untrusted_readable, before.untrusted_readable);
