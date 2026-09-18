@@ -17,6 +17,7 @@ describe("Windows UNC path spelling with a simulated filesystem", () => {
       const directoryStat = fs.lstatSync(process.cwd(), { bigint: true });
       const symlinkStat = Object.assign(Object.create(directoryStat), { isSymbolicLink: () => true });
       const alias = `${root}links\\alias`;
+      const input = `${alias}\\caller`;
       vi.spyOn(process, "cwd").mockReturnValue("C:\\workspace");
       vi.spyOn(fs, "lstatSync").mockImplementation(input => {
         if (String(input) === alias) return symlinkStat;
@@ -29,8 +30,8 @@ describe("Windows UNC path spelling with a simulated filesystem", () => {
         if (input !== `${root}target`) throw new Error("canonicalization lost containing drive/share");
         return input;
       });
-      expect(resolvePathPrefixSync(alias)).toEqual({
-        absolutePath: alias, existingPath: `${root}target`, unresolvedSegments: ["future"],
+      expect(resolvePathPrefixSync(input)).toEqual({
+        absolutePath: input, existingPath: `${root}target`, unresolvedSegments: ["future", "caller"],
       });
     },
   );

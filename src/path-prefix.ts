@@ -28,16 +28,25 @@ function resolutionError(code: "ELOOP" | "ENOTDIR", absolutePath: string): Error
   });
 }
 
+// Leave ample room for ordinary shallow paths to retain the legacy small-array
+// path. At 32 components, repeated front removal can reindex at most 496 array
+// positions per constructed queue; longer queues use a forward cursor instead.
+const SHIFT_QUEUE_COMPONENT_LIMIT = 32;
+
 export function resolvePathPrefixSync(input: string): ResolvedPathPrefix {
   assertNoNulPathInput(input);
   const absolutePath = absolutePathWithRawSegments(input);
   let resolved = rawRoot(absolutePath);
-  const remaining = absolutePath.slice(resolved.length).split(path.sep);
+  let remaining = absolutePath.slice(resolved.length).split(path.sep);
+  let shiftQueue = remaining.length <= SHIFT_QUEUE_COMPONENT_LIMIT;
+  let nextSegment = 0;
+  let remainingCount = remaining.length;
   const visitedStates = new Set<string>();
   let symlinkHops = 0;
 
-  while (remaining.length > 0) {
-    const segment = remaining.shift()!;
+  while (remainingCount > 0) {
+    const segment = shiftQueue ? remaining.shift()! : remaining[nextSegment++]!;
+    remainingCount--;
     if (segment === "") continue;
     if (segment === "." || segment === "..") {
       const atRoot = resolved === rawRoot(resolved);
@@ -57,29 +66,42 @@ export function resolvePathPrefixSync(input: string): ResolvedPathPrefix {
       return {
         absolutePath,
         existingPath: realpathSync.native(pathForWindowsFilesystem(resolved)),
-        unresolvedSegments: [segment, ...remaining],
+        unresolvedSegments: shiftQueue ? [segment, ...remaining] : remaining.slice(nextSegment - 1),
       };
     }
     if (!stat.isSymbolicLink()) {
-      if (!stat.isDirectory() && remaining.length > 0) throw resolutionError("ENOTDIR", absolutePath);
+      if (!stat.isDirectory() && remainingCount > 0) throw resolutionError("ENOTDIR", absolutePath);
       resolved = candidate;
       continue;
     }
-    const state = JSON.stringify([String(stat.dev), String(stat.ino), candidate, remaining]);
+    const pendingSuffix = shiftQueue ? remaining : remaining.slice(nextSegment);
+    const state = JSON.stringify([String(stat.dev), String(stat.ino), candidate, pendingSuffix]);
     if (symlinkHops >= 64 || visitedStates.has(state)) throw resolutionError("ELOOP", absolutePath);
     visitedStates.add(state);
     symlinkHops++;
     const target = fs.readlinkSync(candidate);
     const rawTarget = path.sep === "\\" ? target.replaceAll("/", "\\") : target;
+    let targetSegments: string[];
     if (path.isAbsolute(rawTarget)) {
       const targetRoot = rawRoot(rawTarget);
       // A rooted Windows link target uses the link's drive/share, not cwd's.
       resolved = path.sep === "\\" && targetRoot === "\\" ? rawRoot(resolved) : targetRoot;
-      remaining.unshift(...rawTarget.slice(targetRoot.length).split(path.sep));
+      targetSegments = rawTarget.slice(targetRoot.length).split(path.sep);
     } else {
       // A target's parent traversal applies after resolving its preceding links.
-      remaining.unshift(...rawTarget.split(path.sep));
+      targetSegments = rawTarget.split(path.sep);
     }
+    const expandedCount = targetSegments.length + pendingSuffix.length;
+    if (expandedCount <= SHIFT_QUEUE_COMPONENT_LIMIT) {
+      // The spread is bounded by the same fixed limit as subsequent shifts.
+      remaining = pendingSuffix;
+      remaining.unshift(...targetSegments);
+    } else {
+      remaining = targetSegments.concat(pendingSuffix);
+    }
+    remainingCount = remaining.length;
+    shiftQueue = remainingCount <= SHIFT_QUEUE_COMPONENT_LIMIT;
+    nextSegment = 0;
   }
   return { absolutePath, existingPath: realpathSync.native(pathForWindowsFilesystem(resolved)), unresolvedSegments: [] };
 }
