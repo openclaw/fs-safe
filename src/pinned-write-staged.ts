@@ -2,6 +2,9 @@ import { randomUUID } from "node:crypto";
 import fsSync, { type BigIntStats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
+import { createFileHandle } from "./create.js";
+import { hasPreservedCreationArtifacts } from "./creation-file-state.js";
+import { creationAdmissionFromParent } from "./creation-path.js";
 import type { AsyncDirectoryGuard } from "./directory-guard.js";
 import { syncDirectoryBestEffort } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
@@ -45,7 +48,11 @@ export async function runPinnedStagedWrite(
   let failure: { error: unknown } | undefined;
   try {
     params.assertBeforeMutation?.();
-    handle = await fs.open(tempPath, tempFlags, params.mode);
+    handle = params.private
+      ? await createFileHandle(tempPath, {
+        private: true, mode: 0o600, assertBeforeMutation: params.assertBeforeMutation,
+      }, creationAdmissionFromParent(parentGuard))
+      : await fs.open(tempPath, tempFlags, params.mode);
     let verificationIdentity = fsSync.fstatSync(handle.fd, { bigint: true });
     tempIdentity = verificationIdentity;
     await writePinnedInput(handle, params.input, params.maxBytes, params.assertBeforeMutation);
@@ -128,10 +135,12 @@ export async function runPinnedStagedWrite(
     failure = { error };
     throw error;
   } finally {
-    if (completeCreate) {
+    const preservedPreparation = params.private && !handle && hasPreservedCreationArtifacts(failure?.error);
+    if (completeCreate || preservedPreparation) {
       await settleStagedFile({
         temporaryBasename: path.basename(tempPath), publication, phase, failure,
         cleanup: async () => {
+          if (preservedPreparation) return "preserved";
           if (publication.status === "indeterminate") return "preserved";
           if (renamed) {
             return failure?.error instanceof FsSafeError && failure.error.details?.cleanup === "failed"

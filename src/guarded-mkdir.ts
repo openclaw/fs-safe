@@ -1,6 +1,7 @@
 import fsSync, { type BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createDirectoryWithAdmission } from "./create.js";
 import {
   assertAsyncDirectoryGuard,
   createAsyncDirectoryGuard,
@@ -8,7 +9,7 @@ import {
   type AsyncDirectoryGuard,
 } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
-import { isNotFoundPathError, isPathRelativeEscape } from "./path.js";
+import { hasNodeErrorCode, isNotFoundPathError, isPathRelativeEscape } from "./path.js";
 import { directoryComponentNotDirectoryError, rootPathChangedError } from "./root-errors.js";
 import {
   assertNoWindowsPathAlias,
@@ -32,6 +33,11 @@ import {
 function sameDirectoryFacts(left: BigIntStats, right: BigIntStats): boolean {
   return left.dev === right.dev && left.ino === right.ino && left.mode === right.mode &&
     left.nlink === right.nlink;
+}
+
+function isDirectoryCollision(error: unknown): boolean {
+  return hasNodeErrorCode(error, "EEXIST") ||
+    (error instanceof FsSafeError && error.code === "already-exists");
 }
 
 function inspectGuardCurrent(parent: AsyncDirectoryGuard<BigIntStats>): BigIntStats {
@@ -151,6 +157,7 @@ export async function mkdirPathComponentsWithGuards(params: {
   ) => PinnedMutationAuthorizationToken | undefined;
   assertBeforeMutation?: () => void;
   mode?: number;
+  private?: boolean;
   rejectSymlinks?: boolean;
   revalidateParentAfterBeforeComponent?: boolean;
   synchronousAuthorizationIncludesFence?: boolean;
@@ -261,22 +268,42 @@ export async function mkdirPathComponentsWithGuards(params: {
         // carried into a pathname mkdir after the parent was swapped.
         inspectGuardCurrent(parentGuard);
         try {
-          await fs.mkdir(next, { mode: params.mode });
+          if (params.private) {
+            await createDirectoryWithAdmission(next, {
+              private: true,
+              mode: params.mode,
+              assertBeforeMutation: params.assertBeforeMutation,
+            }, {
+              expectedParentIdentity: {
+                dev: parentGuard.stat.dev, ino: parentGuard.stat.ino, realPath: parentGuard.realPath,
+              },
+            });
+          } else {
+            await fs.mkdir(next, { mode: params.mode });
+          }
           created = true;
         } catch (error) {
-          if (!error || typeof error !== "object" || !("code" in error) || error.code !== "EEXIST") {
-            throw error;
-          }
+          if (!isDirectoryCollision(error)) throw error;
         }
       }
     } else {
       params.assertBeforeMutation?.();
       try {
-        await fs.mkdir(next, { mode: params.mode });
-      } catch (error) {
-        if (!error || typeof error !== "object" || !("code" in error) || error.code !== "EEXIST") {
-          throw error;
+        if (params.private) {
+          await createDirectoryWithAdmission(next, {
+            private: true,
+            mode: params.mode,
+            assertBeforeMutation: params.assertBeforeMutation,
+          }, {
+            expectedParentIdentity: {
+              dev: parentGuard.stat.dev, ino: parentGuard.stat.ino, realPath: parentGuard.realPath,
+            },
+          });
+        } else {
+          await fs.mkdir(next, { mode: params.mode });
         }
+      } catch (error) {
+        if (!isDirectoryCollision(error)) throw error;
       }
     }
     let createdAuthorization: PinnedMutationAuthorizationToken | undefined;

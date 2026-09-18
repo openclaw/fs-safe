@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import fsSync, { type BigIntStats } from "node:fs";
 import path from "node:path";
 import type { FileHandle } from "node:fs/promises";
+import { createFileHandle } from "./create.js";
+import { hasPreservedCreationArtifacts } from "./creation-file-state.js";
 import { assertSyncDirectoryGuard, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import type { FileIdentityStat } from "./file-identity.js";
@@ -78,6 +80,7 @@ export async function runPinnedWriteWindows(
   const closeFd = captureNativeFdClose(binding);
   const parentPath = parentGuard.realPath;
   let tempFd: number | undefined;
+  let privateHandle: FileHandle | undefined;
   let targetFd: number | undefined;
   let publicationProbeFd: number | undefined;
   let tempIdentity: BigIntStats | undefined;
@@ -89,16 +92,38 @@ export async function runPinnedWriteWindows(
   let publication: StagedFilePublication = Object.freeze({ status: "not-published" });
   let phase: StagedFileFailureDetails["phase"] = "prepare";
   let failure: { error: unknown } | undefined;
+  const closeTemp = async () => {
+    const handle = privateHandle;
+    const fd = tempFd;
+    privateHandle = undefined;
+    tempFd = undefined;
+    if (handle) await handle.close();
+    else if (fd !== undefined) closeFd(fd);
+  };
   try {
     tempName = `.fs-safe-${randomUUID()}.tmp`;
     params.assertBeforeMutation?.();
-    tempFd = binding.openBeneath(
-      parentFd,
-      tempName,
-      nativeOpenFlags(
-        fsSync.constants.O_WRONLY | fsSync.constants.O_CREAT | fsSync.constants.O_EXCL,
-      ),
-    ).fd;
+    if (params.private) {
+      const parentIdentity = fsSync.fstatSync(parentFd, { bigint: true });
+      privateHandle = await createFileHandle(path.join(parentPath, tempName), {
+        private: true,
+        mode: 0o600,
+        assertBeforeMutation: params.assertBeforeMutation,
+      }, {
+        expectedParentIdentity: {
+          dev: parentIdentity.dev, ino: parentIdentity.ino, realPath: parentPath,
+        },
+      });
+      tempFd = privateHandle.fd;
+    } else {
+      tempFd = binding.openBeneath(
+        parentFd,
+        tempName,
+        nativeOpenFlags(
+          fsSync.constants.O_WRONLY | fsSync.constants.O_CREAT | fsSync.constants.O_EXCL,
+        ),
+      ).fd;
+    }
     const verificationIdentity = inspectFileIdentitySync(() => fsSync.fstatSync(tempFd!, { bigint: true }));
     tempIdentity = verificationIdentity;
     // Creation is requested at 0600 in the binding, but a restrictive umask
@@ -200,10 +225,12 @@ export async function runPinnedWriteWindows(
     failure = { error };
     throw error;
   } finally {
-    if (completeCreate) {
+    const preservedPreparation = params.private && tempFd === undefined && hasPreservedCreationArtifacts(failure?.error);
+    if (completeCreate || preservedPreparation) {
       await settleStagedFile({
         temporaryBasename: tempName, publication, phase, failure,
         cleanup: async () => {
+          if (preservedPreparation) return "preserved";
           if (publication.status === "indeterminate") return "preserved";
           if (renamed || tempFd === undefined) return "not-needed";
           return await cleanupPinnedFilePath({
@@ -214,7 +241,7 @@ export async function runPinnedWriteWindows(
         close: [
           () => { if (targetFd !== undefined) closeFd(targetFd); },
           () => { if (publicationProbeFd !== undefined) closeFd(publicationProbeFd); },
-          () => { if (tempFd !== undefined) closeFd(tempFd); },
+          closeTemp,
           () => closeFd(parentFd),
           () => root.close(),
         ],
@@ -222,7 +249,8 @@ export async function runPinnedWriteWindows(
     } else {
       const targetCloseFailure = closeWriteFd(closeFd, targetFd);
       const probeCloseFailure = closeWriteFd(closeFd, publicationProbeFd);
-      const tempCloseFailure = closeWriteFd(closeFd, tempFd);
+      let tempCloseFailure: WriteFdCloseFailure | undefined;
+      try { await closeTemp(); } catch (error) { tempCloseFailure = { error }; }
       if (!renamed) {
         removeNativeCreatedFileIfStillPinned({
           parentPath,

@@ -8,11 +8,44 @@ import { parseWindowsSecurityCommandFacts } from "./windows-security-facts.js";
 
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const TERMINATION_GRACE_MS = 1_000;
+const FULL_IDENTITY = /^[0-9a-f]{16}:[0-9a-f]{32}$/;
 
-function command(operation: "path" | "descriptor" | "create", targetPath = "") {
+type CommandOperation = "path" | "descriptor" | "create" | "directory" | "protect-file" | "verify-file";
+type CommandParams = {
+  targetPath?: string;
+  fd?: number;
+  requirePrivate?: boolean;
+  expectedParentIdentity?: string;
+  expectedFileIdentity?: string;
+  expectedLinks?: number;
+};
+
+function isFullIdentity(identity: unknown): identity is string {
+  return typeof identity === "string" && identity.length === 49 && FULL_IDENTITY.test(identity);
+}
+
+function assertIdentity(identity: string): void {
+  if (!isFullIdentity(identity)) {
+    throw new TypeError("Windows security operation requires a complete file identity");
+  }
+}
+
+function command(operation: CommandOperation, params: CommandParams) {
+  const targetPath = params.targetPath ?? "";
   // Preserve native EINVAL before child-process environment validation runs.
   if (targetPath.includes("\0")) {
     throw Object.assign(new Error("Windows path contains a NUL byte"), { code: "EINVAL" });
+  }
+  if (params.fd !== undefined || operation === "descriptor" || operation === "protect-file" || operation === "verify-file") {
+    if (typeof params.fd !== "number" || !Number.isInteger(params.fd) || params.fd < 0 || params.fd > 0x7fff_ffff) {
+      unverified("Windows security inspection requires a valid descriptor");
+    }
+  }
+  if (params.expectedParentIdentity !== undefined) assertIdentity(params.expectedParentIdentity);
+  if (params.expectedFileIdentity !== undefined) assertIdentity(params.expectedFileIdentity);
+  if (params.expectedLinks !== undefined &&
+    (!Number.isInteger(params.expectedLinks) || params.expectedLinks < 1 || params.expectedLinks > 0xffff_ffff)) {
+    throw new TypeError("Windows security operation requires a positive uint32 link count");
   }
   const script = fileURLToPath(new URL("./windows-security-bridge.ps1", import.meta.url));
   return {
@@ -20,7 +53,14 @@ function command(operation: "path" | "descriptor" | "create", targetPath = "") {
     args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-File", script, "-Operation", operation],
     // Preserve Windows UTF-16 spelling and leave long paths out of the bounded
     // command line. This overrides any inherited value only in this child.
-    env: { ...process.env, FS_SAFE_WINDOWS_SECURITY_PATH: targetPath },
+    env: {
+      ...process.env,
+      FS_SAFE_WINDOWS_SECURITY_PATH: targetPath,
+      FS_SAFE_WINDOWS_SECURITY_REQUIRE_PRIVATE: params.requirePrivate ? "1" : "0",
+      FS_SAFE_WINDOWS_SECURITY_PARENT_IDENTITY: params.expectedParentIdentity ?? "",
+      FS_SAFE_WINDOWS_SECURITY_FILE_IDENTITY: params.expectedFileIdentity ?? "",
+      FS_SAFE_WINDOWS_SECURITY_EXPECTED_LINKS: String(params.expectedLinks ?? 1),
+    },
   };
 }
 
@@ -32,7 +72,18 @@ function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function parseReply(stdout: string): unknown {
+function parseReply(stdout: string, operation: CommandOperation): unknown {
+  try {
+    return parseReplyValue(stdout, operation);
+  } catch (error) {
+    if (operation === "create" && error instanceof Error && (error as NodeJS.ErrnoException).code !== "EEXIST") {
+      Object.assign(error, { creationOutcome: "unconfirmed" });
+    }
+    throw error;
+  }
+}
+
+function parseReplyValue(stdout: string, operation: CommandOperation): unknown {
   let response: unknown;
   try { response = JSON.parse(stdout.trim()); } catch (cause) {
     unverified("Windows security command returned invalid data", cause);
@@ -47,25 +98,31 @@ function parseReply(stdout: string): unknown {
     }
     throw Object.assign(new Error(response.message), { code: response.code });
   }
+  if (operation === "create" && (!record(response.result) || response.result.created !== true || !isFullIdentity(response.result.identity))) {
+    unverified("Windows security command did not verify private-directory creation");
+  }
   return response.result;
 }
 
-function executeSync(operation: "path", targetPath: string): unknown {
-  const { file, args, env } = command(operation, targetPath);
+function executeSync(operation: CommandOperation, params: CommandParams): unknown {
+  const { file, args, env } = command(operation, params);
   const startedAt = performance.now();
   const result = spawnSync(file, args, {
-    encoding: "utf8", windowsHide: true, env, stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf8", windowsHide: true, env, stdio: [params.fd ?? "ignore", "pipe", "pipe"],
     timeout: DEFAULT_PERMISSION_EXEC_TIMEOUT_MS, killSignal: "SIGKILL", maxBuffer: MAX_OUTPUT_BYTES,
   });
   if (result.error || result.status !== 0) {
-    throw new PermissionCommandError(file, performance.now() - startedAt, {
+    const error = new PermissionCommandError(file, performance.now() - startedAt, {
       cause: result.error, code: result.status,
       signal: (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT" ? "SIGKILL" : result.signal,
       stderr: result.stderr,
       killed: (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT",
+      ...(operation === "create" ? { creationOutcome: "unconfirmed" } as const : {}),
     });
+    if (operation === "create") Object.assign(error, { creationOutcome: "unconfirmed" });
+    throw error;
   }
-  return parseReply(result.stdout);
+  return parseReply(result.stdout, operation);
 }
 
 type CommandFailureReceipt = {
@@ -84,10 +141,14 @@ type CommandFailureReceipt = {
 
 class WindowsSecurityCommandError extends PermissionCommandError {
   override readonly timedOut: boolean;
+  readonly creationOutcome?: "unconfirmed";
+  readonly processExitConfirmed: boolean;
 
   constructor(file: string, durationMs: number, receipt: CommandFailureReceipt, timedOut: boolean) {
     super(file, durationMs, receipt);
     this.timedOut = timedOut;
+    this.creationOutcome = receipt.creationOutcome;
+    this.processExitConfirmed = receipt.processExitConfirmed;
     if (timedOut) this.message = `Windows permission inspection timed out after ${DEFAULT_PERMISSION_EXEC_TIMEOUT_MS}ms`;
     if (!receipt.processExitConfirmed) this.message += "; process exit was not confirmed";
     else if (!receipt.outputClosed) this.message += "; command output did not close";
@@ -95,10 +156,34 @@ class WindowsSecurityCommandError extends PermissionCommandError {
   }
 }
 
+/** Cleanup must preserve stages still reachable by an unsettled command. */
+export function hasUnsettledWindowsSecurityCommand(error: unknown): boolean {
+  const pending: unknown[] = [error];
+  const seen = new Set<unknown>();
+  for (let inspected = 0; pending.length && inspected < 32; inspected++) {
+    const current = pending.pop();
+    if (current === null || typeof current !== "object" || seen.has(current)) continue;
+    seen.add(current);
+    try {
+      if (current instanceof WindowsSecurityCommandError && !current.processExitConfirmed) return true;
+      const cause = Object.getOwnPropertyDescriptor(current, "cause");
+      if (cause && "value" in cause) pending.push(cause.value);
+      if (current instanceof AggregateError) {
+        const errors = Object.getOwnPropertyDescriptor(current, "errors");
+        if (errors && "value" in errors && Array.isArray(errors.value)) pending.push(...errors.value.slice(0, 32));
+      }
+    } catch {
+      // Unknown error wrappers cannot prove that command-owned handles settled.
+      return true;
+    }
+  }
+  return pending.length > 0;
+}
+
 function ignoreLateError(): void {}
 
-async function execute(operation: "descriptor" | "create", params: { fd?: number; targetPath?: string }): Promise<unknown> {
-  const { file, args, env } = command(operation, params.targetPath);
+async function execute(operation: CommandOperation, params: CommandParams): Promise<unknown> {
+  const { file, args, env } = command(operation, params);
   const startedAt = performance.now();
   return await new Promise((resolve, reject) => {
     const child = spawn(file, args, { windowsHide: true, env, stdio: [params.fd ?? "ignore", "pipe", "pipe"] });
@@ -153,7 +238,7 @@ async function execute(operation: "descriptor" | "create", params: { fd?: number
           ...(operation === "create" ? { creationOutcome: "unconfirmed" } as const : {}),
         }, timedOut));
       } else {
-        try { resolve(parseReply(Buffer.concat(output).toString("utf8"))); } catch (error) { reject(error); }
+        try { resolve(parseReply(Buffer.concat(output).toString("utf8"), operation)); } catch (error) { reject(error); }
       }
       output.length = 0;
       errors.length = 0;
@@ -214,13 +299,10 @@ async function execute(operation: "descriptor" | "create", params: { fd?: number
 }
 
 export function readWindowsSecurityFactsCommand(targetPath: string): NativeWindowsSecurityFacts {
-  return parseWindowsSecurityCommandFacts(executeSync("path", targetPath));
+  return parseWindowsSecurityCommandFacts(executeSync("path", { targetPath }));
 }
 
 export async function inspectWindowsDescriptorCommand(fd: number): Promise<NativeWindowsDescriptorSecurityFacts> {
-  if (!Number.isInteger(fd) || fd < 0 || fd > 0x7fff_ffff) {
-    unverified("Windows security inspection requires a valid descriptor");
-  }
   const response = await execute("descriptor", { fd });
   if (!record(response) || typeof response.identity !== "string") {
     unverified("Windows security command returned incomplete handle facts");
@@ -228,9 +310,58 @@ export async function inspectWindowsDescriptorCommand(fd: number): Promise<Nativ
   return { identity: response.identity, security: parseWindowsSecurityCommandFacts(response.security) };
 }
 
-export async function createPrivateWindowsDirectoryCommand(targetPath: string): Promise<void> {
-  const response = await execute("create", { targetPath });
-  if (!record(response) || response.created !== true) {
-    unverified("Windows security command did not verify private-directory creation");
+export async function createPrivateWindowsDirectoryCommand(targetPath: string, expectedParentIdentity?: string): Promise<{ identity: string }> {
+  return fullIdentityReceipt(await execute("create", { targetPath, expectedParentIdentity }));
+}
+
+export function createPrivateWindowsDirectoryCommandSync(targetPath: string, expectedParentIdentity?: string): { identity: string } {
+  return fullIdentityReceipt(executeSync("create", { targetPath, expectedParentIdentity }));
+}
+
+function fullIdentityReceipt(response: unknown, expected?: string): { identity: string } {
+  if (!record(response) || !isFullIdentity(response.identity)) {
+    unverified("Windows security command returned an incomplete file identity");
   }
+  if (expected !== undefined && response.identity !== expected) {
+    throw new FsSafeError("path-mismatch", "Windows security command observed a different file");
+  }
+  return { identity: response.identity };
+}
+
+export function inspectWindowsDirectoryCommandSync(targetPath: string, requirePrivate: boolean): { identity: string } {
+  return fullIdentityReceipt(executeSync("directory", { targetPath, requirePrivate }));
+}
+
+export async function inspectWindowsDirectoryCommand(targetPath: string, requirePrivate: boolean): Promise<{ identity: string }> {
+  return fullIdentityReceipt(await execute("directory", { targetPath, requirePrivate }));
+}
+
+export function protectPrivateWindowsFileCommandSync(fd: number, targetPath: string, expectedParentIdentity: string): { identity: string } {
+  assertIdentity(expectedParentIdentity);
+  return fullIdentityReceipt(executeSync("protect-file", { fd, targetPath, expectedParentIdentity }));
+}
+
+export async function protectPrivateWindowsFileCommand(fd: number, targetPath: string, expectedParentIdentity: string): Promise<{ identity: string }> {
+  assertIdentity(expectedParentIdentity);
+  return fullIdentityReceipt(await execute("protect-file", { fd, targetPath, expectedParentIdentity }));
+}
+
+export function verifyPrivateWindowsFileCommandSync(
+  fd: number, targetPath: string, expectedFileIdentity: string, expectedParentIdentity: string, expectedLinks = 1,
+): void {
+  assertIdentity(expectedFileIdentity);
+  assertIdentity(expectedParentIdentity);
+  fullIdentityReceipt(executeSync("verify-file", {
+    fd, targetPath, expectedFileIdentity, expectedParentIdentity, expectedLinks,
+  }), expectedFileIdentity);
+}
+
+export async function verifyPrivateWindowsFileCommand(
+  fd: number, targetPath: string, expectedFileIdentity: string, expectedParentIdentity: string, expectedLinks = 1,
+): Promise<void> {
+  assertIdentity(expectedFileIdentity);
+  assertIdentity(expectedParentIdentity);
+  fullIdentityReceipt(await execute("verify-file", {
+    fd, targetPath, expectedFileIdentity, expectedParentIdentity, expectedLinks,
+  }), expectedFileIdentity);
 }

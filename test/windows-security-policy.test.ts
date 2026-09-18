@@ -122,7 +122,9 @@ describe("Windows security native policy", () => {
     configureFsSafeNative({ mode });
     binding();
     vi.mocked(command.readWindowsSecurityFactsCommand).mockReturnValue(security());
-    vi.mocked(command.createPrivateWindowsDirectoryCommand).mockResolvedValue(undefined);
+    vi.mocked(command.createPrivateWindowsDirectoryCommand).mockResolvedValue({
+      identity: "0000000000000001:00000000000000000000000000000002",
+    });
     vi.mocked(command.inspectWindowsDescriptorCommand).mockResolvedValue({
       identity: "00000001:0000000000000002", security: security(),
     });

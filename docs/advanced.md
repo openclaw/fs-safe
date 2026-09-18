@@ -69,6 +69,7 @@ Operational filesystem failures such as permissions or I/O errors are rethrown.
 | Export | Page | Notes |
 |---|---|---|
 | `readFileDescriptorBounded`, `readFileDescriptorBoundedSync`, `readFileHandleBounded` | – | Incremental whole-file reads for already-open descriptors/handles. They consume at most `maxBytes + 1`, do not close the input, and throw `FsSafeError("too-large")` on overflow. |
+| `createDirectory`, `createDirectorySync`, `createFileSync` | [Exclusive leaf creation](creation.md) | Create one exclusive entry under an existing trusted parent, optionally with private permissions; file creation returns an owned disposable descriptor. |
 | `readFileWindowFully`, `readFileWindowFullySync`, `ReadFileWindowOptions` | [positional-read.md](positional-read.md) | Fill a caller-owned buffer at an explicit file position, completing short reads and returning the EOF count without moving or closing the descriptor. |
 | `copyFileHandle`, `copyFileDescriptorSync`, `CopyFileHandleOptions` | [copy.md](copy.md#borrowed-filehandle-transfers) | Copy caller-owned regular files through async handles or sync descriptors from position zero with byte limits and synchronous callbacks; preserves cursors and leaves publication and cleanup to the caller. |
 | `overwriteFileHandle`, `OverwriteFileHandleOptions` | [in-place-write.md](in-place-write.md) | Overwrite a borrowed read/write handle with prefix-only preparation and best-effort rollback; preserves its inode, cursor, and caller-owned lifetime. |

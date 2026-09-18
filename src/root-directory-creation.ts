@@ -1,6 +1,7 @@
 import fsSync, { type BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { assertPrivateDirectory } from "./creation-permissions.js";
 import {
   assertAsyncDirectoryGuard,
   assertDirectoryIdentitySync,
@@ -18,7 +19,7 @@ import {
 } from "./pinned-mutation-observation.js";
 import type { PinnedWriteMutationAdmission } from "./pinned-write.js";
 import { admitPathInsideRoot } from "./root-boundary.js";
-import type { RootContext } from "./root-context.js";
+import { assertRootIdentityCurrent, type RootContext } from "./root-context.js";
 import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
 import { canReuseParentWithMutationAssertion } from "./root-write-lock-binding.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
@@ -188,6 +189,7 @@ export async function prepareRootWriteTarget(
   targetPath: string,
   assertBeforeMutation?: () => void,
   mutationAdmission?: PinnedWriteMutationAdmission,
+  privateMode = false,
 ): Promise<string> {
   const basename = path.basename(targetPath);
   const baseParams = {
@@ -195,6 +197,8 @@ export async function prepareRootWriteTarget(
     rootIdentity: root.rootIdentity,
     targetPath: path.dirname(targetPath),
     assertBeforeMutation,
+    private: privateMode,
+    mode: privateMode ? 0o700 : undefined,
   };
   const mutationWalk = mutationAdmission
     ? mutationWalkOptions(
@@ -225,11 +229,14 @@ export async function mkdirPathFallback(
   assertBeforeMutation?: () => void,
   rejectSymlinks = false,
   mutationAdmission?: PinnedWriteMutationAdmission,
+  privateMode = false,
 ): Promise<void> {
   const baseParams = {
     rootReal: resolved.rootReal, targetPath: resolved.resolved, assertBeforeMutation,
     rootIdentity: root.rootIdentity,
     rejectSymlinks,
+    private: privateMode,
+    mode: privateMode ? 0o700 : undefined,
     beforeComponent: async (componentPath: string) => await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("mkdir", componentPath),
   };
   const mutationWalk = mutationAdmission
@@ -242,11 +249,17 @@ export async function mkdirPathFallback(
     )
     : undefined;
   try {
-    await mkdirPathComponentsWithGuards(mutationWalk ? {
+    const directory = await mkdirPathComponentsWithGuards(mutationWalk ? {
       ...baseParams,
       ...mutationWalk.options,
       rejectSymlinks: rejectSymlinks || mutationAdmission!.rejectParentSymlinks,
     } : baseParams);
+    if (privateMode) {
+      const guard = await createAsyncDirectoryGuard(directory, { bigint: true });
+      await assertPrivateDirectory(directory);
+      await assertAsyncDirectoryGuard(guard);
+      await assertRootIdentityCurrent(root);
+    }
   } finally {
     mutationWalk?.dispose();
   }

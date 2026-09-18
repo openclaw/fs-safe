@@ -7,6 +7,7 @@ import path from "node:path";
 import { normalizeMaxBytes } from "./byte-budget.js";
 import { assertCopySourceCurrent, resolveFileCopyCloneMode } from "./copy-file-input.js";
 import type { ContainmentGuarantee } from "./containment.js";
+import { assertPrivateFileCreationAvailable, resolveCreationPermissions } from "./creation-permissions.js";
 import { assertAsyncDirectoryGuard, assertSyncDirectoryGuard, createAsyncDirectoryGuard, createNearestExistingDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { syncDirectoryBestEffort } from "./directory-durability.js";
@@ -1012,14 +1013,12 @@ async function removePathInRoot(
 
 async function mkdirPathInRoot(
   root: RootContext,
-  params: {
+  params: RootMkdirOptions & {
     relativePath: string;
     allowRoot?: boolean;
-    denyMutations?: DenyMutationPolicy;
-    assertBeforeMutation?: () => void;
-    mutationSymlinks?: MutationSymlinkPolicy;
   },
 ): Promise<void> {
+  const privateMode = resolveCreationPermissions(params, true).private;
   validatePinnedOperationPayload({ relativePath: params.relativePath });
   const policy = params.denyMutations === undefined && params.mutationSymlinks === undefined
     ? undefined
@@ -1052,7 +1051,7 @@ async function mkdirPathInRoot(
     await getFsSafeTestHooks()?.beforePinnedWriteParentAdmission?.(resolved.resolved);
   }
   try {
-    if (prepared?.mutationAdmission && params.assertBeforeMutation === undefined &&
+    if (!privateMode && prepared?.mutationAdmission && params.assertBeforeMutation === undefined &&
       await tryMkdirAtExactParent(root, resolved.resolved, prepared.mutationAdmission)) return;
     await mkdirPathFallback(
       root,
@@ -1060,6 +1059,7 @@ async function mkdirPathInRoot(
       params.assertBeforeMutation,
       policy?.mutationSymlinks !== undefined,
       prepared?.mutationAdmission,
+      privateMode,
     );
   } catch (error) {
     throw normalizePinnedPathError(error);
@@ -1070,10 +1070,14 @@ async function writeFileInRoot(
   root: RootContext,
   params: RootWriteParams,
 ): Promise<void> {
+  if (params.private !== undefined) {
+    const permissions = resolveCreationPermissions(params, false);
+    params = { ...params, private: permissions.private, mode: permissions.mode };
+  }
   const input = rootWriteInput(params);
   await serializePathWrite(rootWriteQueueKey(root, params.relativePath), async () => {
     if (
-      input.kind === "buffer" && !input.stageBeforePublish && process.platform === "win32" &&
+      !params.private && input.kind === "buffer" && !input.stageBeforePublish && process.platform === "win32" &&
       (params.renameIdentity === "verify-content-with-lock" || !getNativeBinding())
     ) {
       await writeFileFallback(root, { ...params, data: input.data });
@@ -1103,13 +1107,23 @@ async function commitPinnedWriteInRoot(
 ): Promise<void> {
   let verifyingPublication = false;
   try {
+    if (params.private) assertPrivateFileCreationAvailable();
+    if (params.private && params.mkdir !== false) {
+      const target = await prepareRootWriteTarget(
+        root, pinned.targetPath, params.assertBeforeMutation, pinned.mutationAdmission, true,
+      );
+      if (target !== pinned.targetPath) {
+        throw new FsSafeError("path-mismatch", "private creation parent changed during admission");
+      }
+    }
     await runPinnedWriteWithRenamePolicy({
       rootPath: pinned.rootReal,
       relativeParentPath: pinned.relativeParentPath,
       basename: pinned.basename,
       targetPath: pinned.targetPath,
       renameIdentity: params.renameIdentity,
-      mkdir: params.mkdir !== false,
+      mkdir: !params.private && params.mkdir !== false,
+      private: params.private,
       mode: params.mode ?? pinned.mode,
       sync: params.durable !== false,
       strictFileSync: params.strictFileSync,

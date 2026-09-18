@@ -6,6 +6,10 @@
 - Support zstd and bzip2 TAR extraction and bounded entry reads through bundled WASM codecs when native support is disabled or absent, retaining full-stream validation, limits, and guarded publication; keep native `require` strict and ZIP's optional JSZip dependency unchanged.
 - Clarify that `resolveExistingPathsWithinRoot()` allows missing paths and `resolveStrictExistingPathsWithinRoot()` requires existing regular files.
 - Distinguish native beneath mechanisms from the best-effort containment reported by public Root open, read, and writable-open results in every native mode.
+- Add `private: true` to Root directory, buffered, streamed, and JSON creation, preserving existing entries and mutation authority while sharing protected platform creation with the synchronous leaf APIs.
+
+- Add exclusive, nonrecursive `createDirectory()`, `createDirectorySync()`, and owned-descriptor `createFileSync()` with `private: true`, creation-time Windows ACL privacy, verified same-file publication, and explicit settlement failures. Refs [#482](https://github.com/openclaw/fs-safe/issues/482).
+
 - Add opt-in `atomic: true` to buffered `Root.create()` and `createJson()`, reusing complete staged publication with a hardlink fallback when native support is disabled; retain existing defaults and durability policy. Report atomic/streamed-create cleanup and close failures with publication evidence, and preserve completed Windows destinations after finalization failures.
 - Add independent per-create `durable: "file"` to require file synchronization without strengthening parent-directory sync or changing boolean defaults; flush native Windows publication modes through the retained writable descriptor.
 - Recheck retained parent and staging identities after final publication authority callbacks on JavaScript and native writers, preserving substituted entries before their bytes can be published; retain exact directory identities in creation receipts.

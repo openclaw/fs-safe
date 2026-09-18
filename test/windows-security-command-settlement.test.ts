@@ -9,6 +9,10 @@ vi.mock("node:child_process", async importOriginal => ({
   ...await importOriginal<typeof import("node:child_process")>(), spawn: vi.fn(),
 }));
 
+const creationReply = Buffer.from(JSON.stringify({
+  ok: true, result: { created: true, identity: "0000000000000001:00000000000000000000000000000002" },
+}));
+
 function childProcess() {
   const child = Object.assign(new EventEmitter(), {
     stdout: new PassThrough(), stderr: new PassThrough(),
@@ -144,7 +148,7 @@ describe("Windows security command bounded settlement", () => {
     expect((failure as Error).message).toContain("command output did not close");
     expect(child.kill).not.toHaveBeenCalled();
     expect(() => {
-      child.stdout.emit("data", Buffer.from('{"ok":true,"result":{"created":true}}'));
+      child.stdout.emit("data", creationReply);
       child.emit("close", 0, null);
       for (const emitter of [child, child.stdout, child.stderr]) {
         emitter.emit("error", new Error("late error"));
@@ -178,7 +182,7 @@ describe("Windows security command bounded settlement", () => {
     const now = vi.spyOn(performance, "now").mockReturnValue(0);
     const child = childProcess();
     const { outcome, done } = observe(createPrivateWindowsDirectoryCommand("C:\\private"));
-    child.stdout.emit("data", Buffer.from('{"ok":true,"result":{"created":true}}'));
+    child.stdout.emit("data", creationReply);
     now.mockReturnValue(DEFAULT_PERMISSION_EXEC_TIMEOUT_MS + 1);
     child.emit("close", 0, null);
     await done;

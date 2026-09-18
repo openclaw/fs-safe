@@ -27,6 +27,7 @@ const security = (overrides: Record<string, unknown> = {}) => ({
   isLocal: true, aceListComplete: true, unsupportedAceTypes: [], aces: [ace()], ...overrides,
 });
 const receipt = (overrides: Record<string, unknown> = {}) => ({ identity: "00000001:0000000000000002", security: security(), ...overrides });
+const creationReceipt = { created: true, identity: "0000000000000001:00000000000000000000000000000002" };
 
 function syncReply(result: unknown) {
   vi.mocked(spawnSync).mockReturnValue({ status: 0, signal: null, stdout: JSON.stringify({ ok: true, result }), stderr: "" } as ReturnType<typeof spawnSync>);
@@ -74,7 +75,7 @@ describe("Windows security command facts", () => {
     readWindowsSecurityFactsCommand(targetPath);
     expect(vi.mocked(spawnSync).mock.calls[0]?.[1]).toEqual([...prefix, "path"]);
     expect(vi.mocked(spawnSync).mock.calls[0]?.[2]).toMatchObject({ env: { FS_SAFE_WINDOWS_SECURITY_PATH: targetPath } });
-    childReply({ created: true });
+    childReply(creationReceipt);
     await createPrivateWindowsDirectoryCommand(targetPath);
     expect(vi.mocked(spawn).mock.calls[0]?.[1]).toEqual([...prefix, "create"]);
     expect(vi.mocked(spawn).mock.calls[0]?.[2]).toMatchObject({ env: { FS_SAFE_WINDOWS_SECURITY_PATH: targetPath } });
@@ -93,7 +94,7 @@ describe("Windows security command facts", () => {
   });
 
   it.each(["\0C:\\private", "C:\\pri\0vate", "C:\\private\0"])("rejects NUL in a creation path before spawning: %j", async targetPath => {
-    childReply({ created: true });
+    childReply(creationReceipt);
     await expect(createPrivateWindowsDirectoryCommand(targetPath)).rejects.toMatchObject({ code: "EINVAL" });
     expect(spawn).not.toHaveBeenCalled();
   });
@@ -227,7 +228,7 @@ describe("Windows fallback admission", () => {
     configureFsSafeNative({ mode });
     __setNativeLoaderForTest(() => { throw new Error("package omitted"); });
     syncReply(security());
-    childReply({ created: true });
+    childReply(creationReceipt);
     const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
     Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
     try {
@@ -269,7 +270,7 @@ describe("Windows fallback admission", () => {
     try {
       syncReply(security());
       expect(readOwnerAndDacl("C:\\private")).toMatchObject({ status: "supported", complete: true });
-      childReply({ created: true });
+      childReply(creationReceipt);
       await createPrivateDirectory("C:\\private");
       childReply(receipt());
       await expect(inspectSecureWindowsFile(params)).resolves.toMatchObject({ source: "windows-acl", ownerTrusted: true });
@@ -313,9 +314,9 @@ describe("Windows fallback admission", () => {
   });
 
   it("warns once without exposing caller paths", async () => {
-    childReply({ created: true });
+    childReply(creationReceipt);
     await createPrivateDirectory("C:\\confidential-one", { platform: "win32" });
-    childReply({ created: true });
+    childReply(creationReceipt);
     await createPrivateDirectory("C:\\confidential-two", { platform: "win32" });
     expect(process.emitWarning).toHaveBeenCalledOnce();
     expect(String(vi.mocked(process.emitWarning).mock.calls[0]?.[0])).not.toContain("confidential");

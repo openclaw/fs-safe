@@ -26,6 +26,7 @@ public static partial class FsSafeWindowsBridge {
   }
   [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode, ExactSpelling=true)] static extern SafeFileHandle CreateFileW(string path, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
   [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr GetStdHandle(int standard);
+  [DllImport("kernel32.dll", SetLastError=true)] static extern uint GetFileType(SafeFileHandle handle);
   [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetFileInformationByHandle(SafeFileHandle handle, out FileInfo information);
   [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int kind, out FileId information, uint size);
   [DllImport("kernel32.dll", SetLastError=true)] static extern bool SetFileInformationByHandle(SafeFileHandle handle, int kind, ref uint information, uint size);
@@ -33,6 +34,8 @@ public static partial class FsSafeWindowsBridge {
   [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr memory);
   [DllImport("advapi32.dll")] static extern uint GetSecurityInfo(SafeFileHandle handle, int kind, uint sections, out IntPtr owner, out IntPtr group, out IntPtr dacl, out IntPtr sacl, out IntPtr descriptor);
   [DllImport("advapi32.dll")] static extern uint GetSecurityDescriptorLength(IntPtr descriptor);
+  [DllImport("advapi32.dll", SetLastError=true)] static extern bool GetSecurityDescriptorDacl(IntPtr descriptor, out bool present, out IntPtr dacl, out bool defaulted);
+  [DllImport("advapi32.dll")] static extern uint SetSecurityInfo(SafeFileHandle handle, int kind, uint sections, IntPtr owner, IntPtr group, IntPtr dacl, IntPtr sacl);
   [DllImport("ntdll.dll")] static extern int NtQueryInformationFile(SafeFileHandle handle, out IoStatus io, [Out] byte[] information, uint length, int kind);
   [DllImport("ntdll.dll")] static extern int NtCreateFile(out SafeFileHandle handle, uint access, ref ObjectAttributes attributes, out IoStatus io, IntPtr allocation, uint flags, uint share, uint disposition, uint options, IntPtr ea, uint eaLength);
   [DllImport("ntdll.dll")] static extern uint RtlNtStatusToDosError(int status);
@@ -79,10 +82,20 @@ public static partial class FsSafeWindowsBridge {
     Require((info.Attributes&0x400)==0,"ELOOP","private directory must not be a reparse point");
     Require((info.Attributes&0x10)!=0,"ENOTDIR","private directory handle must name a directory");
     if(requireLocal) Require(IsLocal(handle),"ENOTSUP","private directories require a local filesystem");
+    return FullIdentity(handle);
+  }
+  static string FullIdentity(SafeFileHandle handle) {
     FileId id;
-    if(!GetFileInformationByHandleEx(handle,18,out id,24)) throw OsFailure((uint)Marshal.GetLastWin32Error(),"inspect 128-bit directory identity",true,true);
-    Require(id.Id!=null && id.Id.Length==16,"EIO","directory identity is incomplete");
+    if(!GetFileInformationByHandleEx(handle,18,out id,24)) throw OsFailure((uint)Marshal.GetLastWin32Error(),"inspect 128-bit file identity",true,true);
+    Require(id.Id!=null && id.Id.Length==16,"EIO","file identity is incomplete");
     return id.Volume.ToString("x16")+":"+BitConverter.ToString(id.Id).Replace("-","").ToLowerInvariant();
+  }
+  static string FileIdentity(SafeFileHandle handle, uint expectedLinks) {
+    var info=Information(handle);
+    Require((info.Attributes&0x400)==0,"ELOOP","private file must not be a reparse point");
+    Require((info.Attributes&0x10)==0 && GetFileType(handle)==1,"EINVAL","private file must be a regular disk file");
+    Require(info.Links==expectedLinks,"EIO","private file link count changed");
+    return FullIdentity(handle);
   }
   static string FinalPath(SafeFileHandle handle, uint flags) {
     int capacity=512;
@@ -151,12 +164,13 @@ public static partial class FsSafeWindowsBridge {
         "isLocal",isLocal,"aceListComplete",unsupported.Count==0,"unsupportedAceTypes",unsupported.ToArray(),"aces",aces.ToArray());
     } finally { if(descriptor!=IntPtr.Zero) LocalFree(descriptor); }
   }
-  static byte[] PrivateSecurity() {
+  static byte[] PrivateSecurity(bool inherit=true) {
     SecurityIdentifier current;
     using(var identity=WindowsIdentity.GetCurrent()) current=identity.User;
     var acl=new RawAcl(2,3);
     var principals=new[]{current,new SecurityIdentifier("S-1-5-18"),new SecurityIdentifier("S-1-5-32-544")};
-    foreach(var principal in principals) acl.InsertAce(acl.Count,new CommonAce(AceFlags.ObjectInherit|AceFlags.ContainerInherit,AceQualifier.AccessAllowed,0x1f01ff,principal,false,null));
+    var flags=inherit ? AceFlags.ObjectInherit|AceFlags.ContainerInherit : AceFlags.None;
+    foreach(var principal in principals) acl.InsertAce(acl.Count,new CommonAce(flags,AceQualifier.AccessAllowed,0x1f01ff,principal,false,null));
     var descriptor=new RawSecurityDescriptor(ControlFlags.DiscretionaryAclPresent|ControlFlags.DiscretionaryAclProtected|ControlFlags.SelfRelative,current,null,null,acl);
     var bytes=new byte[descriptor.BinaryLength]; descriptor.GetBinaryForm(bytes,0); return bytes;
   }
@@ -177,27 +191,99 @@ public static partial class FsSafeWindowsBridge {
       return created;
     } finally { if(unicodeBuffer!=IntPtr.Zero) Marshal.FreeHGlobal(unicodeBuffer); Marshal.FreeHGlobal(nameBuffer); pin.Free(); }
   }
-  static void RequirePrivate(Dictionary<string,object> facts) {
-    Require((bool)facts["isLocal"] && (bool)facts["daclPresent"] && (bool)facts["daclProtected"] &&
-      (bool)facts["aceListComplete"] && (string)facts["ownerSid"]==(string)facts["currentUserSid"],"EACCES","private directory security was not enforced");
+  static void RequirePrivate(Dictionary<string,object> facts, bool requireProtected=true, bool requirePrivateChildren=false) {
+    Require((bool)facts["isLocal"] && (bool)facts["daclPresent"] && (!requireProtected || (bool)facts["daclProtected"]) &&
+      (bool)facts["aceListComplete"] && (string)facts["ownerSid"]==(string)facts["currentUserSid"],"EACCES","private object security was not enforced");
     string current=(string)facts["currentUserSid"];
     foreach(Dictionary<string,object> ace in (object[])facts["aces"]) {
       var flags=(Dictionary<string,object>)ace["flags"];
       string sid=(string)ace["sid"];
-      if((bool)flags["inheritOnly"] || (string)ace["aceType"]=="deny" || sid==current || sid=="s-1-5-18" || sid=="s-1-5-32-544") continue;
+      if((string)ace["aceType"]=="deny" || sid==current || sid=="s-1-5-18" || sid=="s-1-5-32-544") continue;
+      if((bool)flags["inheritOnly"] && (!requirePrivateChildren || (!(bool)flags["objectInherit"] && !(bool)flags["containerInherit"]))) continue;
       uint mask=(uint)ace["mask"];
-      Require((mask&0xd00d01dfu)==0,"EACCES","private directory permits untrusted access");
+      Require((mask&0xd00d01dfu)==0,"EACCES","private object permits untrusted access");
     }
   }
-  static object CreatePrivate(string path) {
+  static void SplitParent(string path, out string parentPath, out string name) {
     // JavaScript has already admitted and resolved this spelling. Keep extended
     // Win32 paths out of .NET Framework's separate pathname normalization.
     int separator=path.LastIndexOf('\\');
-    Require(separator>0 && separator<path.Length-1,"EINVAL","private directory must name a child");
-    string parentPath=path.Substring(0,separator), name=path.Substring(separator+1);
+    Require(separator>0 && separator<path.Length-1,"EINVAL","private object must name a child");
+    parentPath=path.Substring(0,separator); name=path.Substring(separator+1);
     if(parentPath.EndsWith(":")) parentPath+="\\";
+  }
+  static string ExpectedIdentity(string variable, bool required=true) {
+    string identity=Environment.GetEnvironmentVariable(variable) ?? "";
+    Require((!required && identity.Length==0) || System.Text.RegularExpressions.Regex.IsMatch(identity,@"\A[0-9a-f]{16}:[0-9a-f]{32}\z"),
+      "EINVAL","complete expected Windows identity is required");
+    return identity;
+  }
+  static void CheckParent(SafeFileHandle parent, string path, string identity) {
+    Require(DirectoryIdentity(parent,true)==identity,"EIO","retained private parent changed");
+    using(var named=Open(path,0x80,true)) Require(DirectoryIdentity(named,true)==identity,"EIO","private parent pathname changed");
+  }
+  static object InspectDirectory(string path) {
+    bool requirePrivate=Environment.GetEnvironmentVariable("FS_SAFE_WINDOWS_SECURITY_REQUIRE_PRIVATE")=="1";
+    using(var handle=Open(path,requirePrivate ? 0x00020080u : 0x80u,true)) {
+      string identity=DirectoryIdentity(handle,true);
+      if(requirePrivate) RequirePrivate(Security(handle),true,true);
+      return Row("identity",identity);
+    }
+  }
+  static void ProtectFileDacl(SafeFileHandle handle) {
+    byte[] security=PrivateSecurity(false);
+    var pin=GCHandle.Alloc(security,GCHandleType.Pinned);
+    try {
+      bool present,defaulted; IntPtr dacl;
+      if(!GetSecurityDescriptorDacl(pin.AddrOfPinnedObject(),out present,out dacl,out defaulted)) {
+        throw OsFailure((uint)Marshal.GetLastWin32Error(),"inspect private file DACL");
+      }
+      Require(present && dacl!=IntPtr.Zero,"EIO","private file DACL is incomplete");
+      uint error=SetSecurityInfo(handle,1,0x80000004u,IntPtr.Zero,IntPtr.Zero,dacl,IntPtr.Zero);
+      if(error!=0) throw OsFailure(error,"protect private file DACL");
+    } finally { pin.Free(); }
+  }
+  static void CheckFileAssociation(SafeFileHandle held, string path, string identity, uint links, SafeFileHandle parent, string parentPath, string parentIdentity) {
+    Require(FileIdentity(held,links)==identity,"EIO","retained private file changed");
+    using(var named=Open(path,0x80,true)) Require(FileIdentity(named,links)==identity,"EIO","private file pathname changed");
+    CheckParent(parent,parentPath,parentIdentity);
+  }
+  static object PrivateFile(string path, bool protect) {
+    string expectedParent=ExpectedIdentity("FS_SAFE_WINDOWS_SECURITY_PARENT_IDENTITY");
+    string expectedFile=protect ? "" : ExpectedIdentity("FS_SAFE_WINDOWS_SECURITY_FILE_IDENTITY");
+    uint links=1;
+    if(!protect) Require(uint.TryParse(Environment.GetEnvironmentVariable("FS_SAFE_WINDOWS_SECURITY_EXPECTED_LINKS"),
+      System.Globalization.NumberStyles.None,System.Globalization.CultureInfo.InvariantCulture,out links) && links>0,
+      "EINVAL","private file expected link count is invalid");
+    string parentPath,name; SplitParent(path,out parentPath,out name);
+    using(var held=new SafeFileHandle(GetStdHandle(-10),false)) {
+      Require(!held.IsInvalid,"EBADF","inherited file handle is unavailable");
+      string identity=FileIdentity(held,links);
+      if(!protect) Require(identity==expectedFile,"EIO","private file identity changed");
+      // Tightening an already-private inherited DACL is safe; repairing broad
+      // access could leave an earlier reader handle authorized for later bytes.
+      RequirePrivate(Security(held),!protect);
+      using(var parent=Open(parentPath,0x80,true)) {
+        CheckFileAssociation(held,path,identity,links,parent,parentPath,expectedParent);
+        if(protect) using(var writable=Open(path,0x00060080,true)) {
+          Require(FileIdentity(writable,links)==identity,"EIO","private file changed before DACL protection");
+          RequirePrivate(Security(writable),false);
+          CheckParent(parent,parentPath,expectedParent);
+          ProtectFileDacl(writable);
+          RequirePrivate(Security(writable));
+        }
+        RequirePrivate(Security(held));
+        CheckFileAssociation(held,path,identity,links,parent,parentPath,expectedParent);
+        return Row("identity",identity);
+      }
+    }
+  }
+  static object CreatePrivate(string path) {
+    string parentPath,name; SplitParent(path,out parentPath,out name);
+    string expectedParent=ExpectedIdentity("FS_SAFE_WINDOWS_SECURITY_PARENT_IDENTITY",false);
     using(var parent=Open(parentPath,0xa4,true)) {
       string parentId=DirectoryIdentity(parent,true);
+      if(expectedParent.Length!=0) Require(parentId==expectedParent,"EIO","private parent changed before creation");
       using(var created=CreateRelative(parent,name)) {
         try {
           string createdId=DirectoryIdentity(created);
@@ -207,7 +293,7 @@ public static partial class FsSafeWindowsBridge {
           using(var named=Open(path,0x80,true)) {
             Require(DirectoryIdentity(named,true)==createdId,"EIO","private directory pathname changed");
           }
-          return Row("created",true);
+          return Row("created",true,"identity",createdId);
         } catch(Exception primary) {
           uint flags=0x13;
           if(!SetFileInformationByHandle(created,21,ref flags,4)) {
@@ -225,6 +311,8 @@ public static partial class FsSafeWindowsBridge {
     try {
       object result;
       if(operation=="create") result=CreatePrivate(path);
+      else if(operation=="directory") result=InspectDirectory(path);
+      else if(operation=="protect-file" || operation=="verify-file") result=PrivateFile(path,operation=="protect-file");
       else if(operation=="descriptor") {
         using(var handle=new SafeFileHandle(GetStdHandle(-10),false)) {
           Require(!handle.IsInvalid,"EBADF","inherited file handle is unavailable");

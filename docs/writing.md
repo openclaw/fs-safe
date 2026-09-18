@@ -454,6 +454,19 @@ an atomic check-and-delete syscall. Use OS isolation for that threat model.
 await fs.mkdir("snapshots/2026/05");
 ```
 
+Pass `{ private: true }` to create missing components with private permissions.
+An existing requested directory must already satisfy that policy; fs-safe does
+not repair it or change existing ancestor permissions. Concurrent creators may
+reuse the winner only after it passes the same checks.
+
+Buffered, streamed, and JSON `create` calls also accept `private: true`.
+New POSIX directories default to `0700` and files to `0600`; conflicting
+group/world or privilege bits are rejected before creation. Restrictive
+owner-only file modes remain available through `mode`. On Windows, creation
+uses protected ACLs rather than interpreting POSIX mode bits as access rules.
+This does not change `create`'s no-overwrite behavior or select its durability
+policy. See [creation](creation.md) for supported backends and owned descriptors.
+
 ### `fs.ensureRoot()`
 
 Treats `""` / `"."` as the root itself. Useful when a generic helper computes a relative directory and might end up at the root.
