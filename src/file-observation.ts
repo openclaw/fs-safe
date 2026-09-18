@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-type FailureKind = "identity" | "resolution" | `open:${string}` | `exclusive-create:${string}` | `unlinked:${string}` | `changed:${string}` | `stat-leaf-missing:${string}`;
+type FailureKind = "identity" | "resolution" | `open:${string}` | `exclusive-create:${string}` | `unlinked:${string}` | `changed:${string}` | `stat-leaf-missing:${string}` | `stat-leaf-changed:${string}`;
 const active = new AsyncLocalStorage<Map<unknown, Set<FailureKind>>>();
 
 export function recordFileObservationFailure(error: unknown, kind: FailureKind): void {

@@ -295,10 +295,11 @@ Discarding an acquisition observation is not proof that the pathname is absent:
 another owner may already have created the next record. Every discarded
 observation consumes the normal retry/deadline budget and requires fresh
 exclusive creation. It supplies no release, reclaim, or held-lock authority.
-If that successor disappears during the recovery metadata probe, the waiter
-may discard the probe only with an operation-local receipt for an admitted
-regular file with one link, followed by current Root and canonical ancestor
-checks. A generic metadata error does not permit this retry, and public
+If that successor disappears or is replaced during the recovery metadata probe,
+the waiter may discard the probe only with an operation-local receipt for an
+admitted regular file with one link. Replacement also requires a single exact
+observation of a different regular file with one link. Current Root and canonical
+ancestor checks must still pass. A generic metadata error does not permit this retry, and public
 `Root.stat()` still rejects a file that changes during observation.
 Generic `Root.open()` and held-owner/reclaim reads still reject failed opens.
 Moving an already-matched pinned descriptor without unlinking it, unknown or
