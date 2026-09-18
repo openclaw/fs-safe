@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { registerTempWorkspaceCoverage } from "./temp-workspace-fixtures.mjs";
+import {
+  registerTempWorkspaceCoverage,
+  registerTempWorkspaceFallbackCleanup,
+} from "./temp-workspace-fixtures.mjs";
 import { registerSecureTempRootCoverage } from "./secure-temp-root-fixtures.mjs";
 import { registerSidecarPathSnapshot } from "./sidecar-path-snapshot.mjs";
 
@@ -170,7 +173,21 @@ export async function registerLifecycle({ api: a, workspace: w, native, binding,
     for (const method of ["path", "read", "write", "writeText", "writeJson", ...(sync ? [] : ["copyIn"])]) {
       add(`${type}.${method}`, () => tmp[method](method === "read" || method === "path" ? "input.json" : "output.json", method === "writeJson" ? { ok: true } : method === "copyIn" ? input : data), { sync: sync || method === "path", before: method.startsWith("write") && sync ? () => {} : undefined });
     }
-    add(`${type}.cleanup`, (r) => r.cleanup(), { sync, before: () => a[name](tempOptions) });
+    add(`${type}.cleanup`, (r) => r.cleanup(), {
+      sync,
+      before: () => a[name](tempOptions),
+      after: (result, workspace) => {
+        assert.equal(result, "removed", `${type}.cleanup did not remove its workspace`);
+        assert.equal(fs.existsSync(workspace.dir), false, `${type}.cleanup left its public path`);
+      },
+    });
+    registerTempWorkspaceFallbackCleanup({
+      api: a,
+      nativeMode: args.mode,
+      register: add,
+      suffix,
+      tempOptions,
+    });
     const symbol = sync ? Symbol.dispose : Symbol.asyncDispose;
     add(`${type}.[${sync ? "Symbol.dispose" : "Symbol.asyncDispose"}]`, (r) => r[symbol](), { sync, before: () => a[name](tempOptions) });
     // The fixture is owned by the runner's temporary workspace.
