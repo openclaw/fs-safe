@@ -279,6 +279,13 @@ private working mode after failure. Failure cleanup closes retained descriptors;
 it does not run a cleanup chmod sweep or roll back the archive. The public merge
 helper still derives modes from its external source tree and must be able to
 read that source; it never chmods an unreadable external source to admit it.
+It retains the source root and each active child directory's exact identity
+through traversal and copy verification. Each source file is opened once,
+admitted against that root and its earlier exact identity observation, and
+copied from the admitted descriptor; public file modes use that descriptor's
+ordinary permission bits. Replacing a source ancestor or leaf rejects the
+merge before replacement bytes can be published. These checks do not provide
+a snapshot against writes to the same source inode.
 That helper retains per-copy durability and immediate postorder directory-mode
 finalization; the deferred pass described above belongs to `extractArchive()`.
 
