@@ -138,7 +138,7 @@ try {
       const requestedMode = json ? 0o600 : 0o400;
       const create = () => json
         ? capability.createJson(relative, value, { private: true, durable: "file" })
-        : capability.create(relative, content, { private: true, mode: requestedMode, durable: "file" });
+        : capability.create(relative, content, { private: true, atomic: true, mode: requestedMode, durable: "file" });
       await create();
       assert.equal(fs.readFileSync(target, "utf8"), content);
       const permissions = privatePermissions(target, false, requestedMode);
