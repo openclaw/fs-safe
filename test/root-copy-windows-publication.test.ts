@@ -34,6 +34,7 @@ describe.skipIf(!native)("Root.copyIn Windows native publication", () => {
   it("retains a raced winner and an atomic-create admission close failure", async () => {
     Object.defineProperty(process, "platform", { value: "win32" });
     configureFsSafeNative({ mode: "require" });
+    __setNativeLoaderForTest(() => native!);
     const directory = await tempRoot("fs-safe-create-windows-admission-");
     const target = path.join(directory, "target");
     const scoped = await root(directory);
@@ -230,6 +231,7 @@ describe.skipIf(!native)("atomic Root.create Windows native publication", () => 
   it("uses native descriptor identity when the staged pathname reports zero identity", async () => {
     Object.defineProperty(process, "platform", { value: "win32" });
     configureFsSafeNative({ mode: "require" });
+    __setNativeLoaderForTest(() => native!);
     const directory = await tempRoot("fs-safe-create-windows-opaque-stage-");
     const scoped = await root(directory);
     const opened: number[] = [];
