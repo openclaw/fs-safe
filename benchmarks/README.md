@@ -152,6 +152,42 @@ not presented as an equivalent callback workload.
 Directory iteration includes full and early-stop scans in filesystem and sorted
 order. Tree-copy cases use explicit auto, never, and supported always policies
 over 64 small files, one 1 MiB file, and nested and empty directories.
+Four additional no-skip public `copyTree` rows bind terminal close-settlement
+costs to immutable receipts at concurrency two: 32 nested 4 KiB files and a
+2 MiB-plus-17-byte multichunk file, each with `clone: "never"` and `"auto"`.
+Native-off `"auto"` rows are admitted as verified JavaScript byte fallbacks;
+other automatic modes record the probed backend as capability evidence and
+leave the actual clone-or-copy route unverified. A receipt-bound `probeTreeClone` success row distinguishes the
+native parent-open/close path from the native-disabled short circuit.
+Source construction and checks for exact paths, SHA-256 content, POSIX mode,
+mtime, POSIX relative symlink or Windows absolute junction spelling and target,
+destination independence, source preservation, and target cleanup stay outside
+timing. Report admission requires the exact selected rows, no skips, unchanged
+receipts, configured native mode, and divisor-adjusted iteration counts.
+
+The final close-settlement study is predeclared as two separate focused
+campaigns and remains queued behind any active campaign; this change does not
+start it. Both use Linux, macOS, and Windows with Node 22 and 24, three blocks,
+nine samples, and complete separate `order=abba` and `order=baab` dispatches.
+The portable campaign uses the exact filter `copyTree/settled-success/`, native
+mode `off`, and `iterations=900`, yielding exactly nine calls per sample for
+each of the four divisor-100 rows. Thus both `clone: "never"` and `"auto"`
+traverse the admitted JavaScript byte fallback. The probe campaign uses the
+exact filter `probeTreeClone`, native mode `require`, and `iterations=1000` on
+supported native jobs; its receipt must say `native-probe-parent-open-close`,
+not the native-disabled short circuit. Every matrix job and selected row must
+finish.
+
+Each campaign runs the exact candidate against frozen main as the source
+comparison, then repeats the identical matrix with the candidate revision as
+separate same-source rebuilds and as one shared same-artifact build. In every
+complete block and in the pooled distribution, a median increase greater than
+10% or 50 microseconds fails, as does a maximum sample-average increase greater
+than 20% or 100 microseconds. A control failure blocks the source result and
+never offsets it. No samples or rows are excluded or subtracted, and no
+selective reruns are admitted; an invalid cell requires repeating the entire
+frozen campaign.
+
 The `movePathWithCopyFallback/forced-copy` rows use `sourceHardlinks: "reject"`
 to measure complete staged directory copies and source cleanup on one filesystem.
 An empty-directory row measures the smallest operation. Wide and deep trees

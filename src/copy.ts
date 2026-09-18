@@ -16,16 +16,36 @@ export type CopyTreeOptions = {
   concurrency?: number;
 };
 
+type Failure = { value: unknown };
+
+function firstFailure(current: Failure | undefined, value: unknown): Failure {
+  return current ?? { value };
+}
+
+function closeDescriptor(fd: number, failure: Failure | undefined): Failure | undefined {
+  try {
+    fs.closeSync(fd);
+    return failure;
+  } catch (error) {
+    return firstFailure(failure, error);
+  }
+}
+
 /** Inspect an existing real directory without creating probe files. */
 export function probeTreeClone(parentPath: string): TreeCloneBackend | undefined {
   const native = getNativeBinding();
   if (!native) return undefined;
   const parent = openStagedDirectory(assertAbsolutePathInput(parentPath));
+  let backend: TreeCloneBackend | undefined;
+  let failure: Failure | undefined;
   try {
-    return native.probeTreeClone(parent.fd) ?? undefined;
-  } finally {
-    fs.closeSync(parent.fd);
+    backend = native.probeTreeClone(parent.fd) ?? undefined;
+  } catch (error) {
+    failure = firstFailure(failure, error);
   }
+  failure = closeDescriptor(parent.fd, failure);
+  if (failure) throw failure.value;
+  return backend;
 }
 
 /** Create an empty clone source: a Btrfs subvolume or an ordinary supported directory. */
@@ -77,6 +97,7 @@ async function materializeTree(
   if (!name) throw new FsSafeError("invalid-path", "clone destination must name a child directory");
   const parent = openStagedDirectory(path.dirname(target));
   let original: ReturnType<typeof openStagedDirectory> | undefined;
+  let failure: Failure | undefined;
   try {
     const supported = native?.probeTreeClone(parent.fd);
     if (!supported && policy === "always") {
@@ -145,11 +166,10 @@ async function materializeTree(
       assertStagedDirectoryCurrent(parent.receipt);
       assertStagedDirectoryCurrent(original.receipt);
     }
-  } finally {
-    try {
-      if (original) fs.closeSync(original.fd);
-    } finally {
-      fs.closeSync(parent.fd);
-    }
+  } catch (error) {
+    failure = firstFailure(failure, error);
   }
+  if (original) failure = closeDescriptor(original.fd, failure);
+  failure = closeDescriptor(parent.fd, failure);
+  if (failure) throw failure.value;
 }

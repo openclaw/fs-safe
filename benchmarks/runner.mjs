@@ -20,6 +20,10 @@ import { registerSyncStoreDirectoryModes } from "./sync-store-directory-mode.mjs
 import { registerGuest, validateGuestBenchmarkReport } from "./guest.mjs";
 import { validateCopyFallbackSuccessReport } from "./copy-fallback-success.mjs";
 import { validateSyncCopyFallbackAdmissionReport } from "./sync-copy-fallback-admission.mjs";
+import {
+  validateCopyTreeSuccessReport,
+  validateProbeTreeSuccessReport,
+} from "./copy-tree-success.mjs";
 import { observeFilenameFallbackProfile } from "./filename-fallback-profile.mjs";
 import {
   MEASURED_SOURCE_ARGUMENT_NAMES,
@@ -259,6 +263,8 @@ try {
   validateSyncCopyFallbackAdmissionReport(completedReport, args.filter, args.iterations);
   validateGuestBenchmarkReport(completedReport, args.filter);
   validateCopyFallbackSuccessReport(completedReport, args.filter, args.iterations);
+  validateProbeTreeSuccessReport(completedReport, args.filter, args.iterations);
+  validateCopyTreeSuccessReport(completedReport, args.filter, args.iterations);
   completionMessage = `Measured ${results.filter((r) => !r.skipped).length} cases; ${required.length} callable exports/methods accounted for. Native ${args.mode}: ${native ? "loaded" : "off/unavailable"}.\n`;
 } catch (error) {
   executionFailures.push(error);
