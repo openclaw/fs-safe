@@ -1,6 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import { ownDirectoryMode } from "../src/directory-mode-owner.js";
 
+const falsyThrownValues: { name: string; value: unknown }[] = [
+  { name: "undefined", value: undefined },
+  { name: "null", value: null },
+  { name: "false", value: false },
+  { name: "positive zero", value: 0 },
+  { name: "negative zero", value: -0 },
+  { name: "zero bigint", value: 0n },
+  { name: "empty string", value: "" },
+  { name: "NaN", value: Number.NaN },
+];
+
 describe("directory mode owner observations", () => {
   it("inspects an unchanged mode once and keeps verify independent", async () => {
     const inspect = vi.fn(async () => 0o700);
@@ -44,4 +55,43 @@ describe("directory mode owner observations", () => {
     expect(events).toEqual(["inspect", "prepare", "hook", "inspect", "chmod", "verify chmod", "inspect"]);
     await owner.close();
   });
+
+  it.each(falsyThrownValues)(
+    "preserves a deferred $name check failure after chmod verification",
+    async ({ value }) => {
+      let mode = 0o700;
+      let checks = 0;
+      const events: string[] = [];
+      const owner = ownDirectoryMode({
+        inspect: async () => { events.push("inspect"); return mode; },
+        chmod: async (nextMode) => { events.push("chmod"); mode = nextMode; },
+        verifyChmod: async () => { events.push("verify chmod"); },
+        close: async () => undefined,
+      });
+      try {
+        let rejected = false;
+        let observed: unknown = Symbol("not rejected");
+        await owner.apply(0o755, {
+          check: () => {
+            checks += 1;
+            events.push(`check ${checks}`);
+            if (checks === 7) throw value;
+          },
+        }).then(
+          () => undefined,
+          (error: unknown) => { rejected = true; observed = error; },
+        );
+
+        expect(rejected).toBe(true);
+        expect(Object.is(observed, value)).toBe(true);
+        expect(mode).toBe(0o755);
+        expect(events).toEqual([
+          "check 1", "inspect", "check 2", "check 3", "check 4", "inspect",
+          "check 5", "check 6", "chmod", "check 7", "verify chmod", "inspect",
+        ]);
+      } finally {
+        await owner.close();
+      }
+    },
+  );
 });
