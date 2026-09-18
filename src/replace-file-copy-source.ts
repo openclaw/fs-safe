@@ -1,4 +1,4 @@
-import syncFs, { type BigIntStats } from "node:fs";
+import syncFs, { type BigIntStats, type Stats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import { readBoundedSync } from "./bounded-read.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
@@ -14,7 +14,7 @@ type SyncSourceFileSystem = Pick<
 
 const OPEN_READ_FLAGS = resolveReadOpenFlags();
 
-function assertSourcePreview(source: import("node:fs").Stats, src: string): void {
+function assertSourcePreview(source: Stats, src: string): void {
   if (source.isSymbolicLink()) {
     throw new FsSafeError("symlink", `Refusing copy fallback from non-file source: ${src}`);
   }
@@ -22,6 +22,15 @@ function assertSourcePreview(source: import("node:fs").Stats, src: string): void
     throw new FsSafeError("not-file", `Refusing copy fallback from non-file source: ${src}`);
   }
   if (source.nlink !== 1) {
+    throw new FsSafeError("hardlink", `Hardlinked copy fallback source not allowed: ${src}`);
+  }
+}
+
+function assertOpenedSource(opened: Stats, current: Stats, src: string): void {
+  if (!opened.isFile() || current.isSymbolicLink() || !sameFileIdentity(opened, current)) {
+    throw new FsSafeError("path-mismatch", `Copy fallback source changed while opening: ${src}`);
+  }
+  if (opened.nlink !== 1) {
     throw new FsSafeError("hardlink", `Hardlinked copy fallback source not allowed: ${src}`);
   }
 }
@@ -87,12 +96,7 @@ export async function readOwnedCopySource(params: {
     const opened = params.fsModule === fs ? syncFs.fstatSync(handle.fd) : await handle.stat();
     const current = params.fsModule === fs
       ? syncFs.lstatSync(params.src) : await params.fsModule.lstat(params.src);
-    if (!opened.isFile() || current.isSymbolicLink() || !sameFileIdentity(opened, current)) {
-      throw new FsSafeError("path-mismatch", `Copy fallback source changed while opening: ${params.src}`);
-    }
-    if (opened.nlink !== 1) {
-      throw new FsSafeError("hardlink", `Hardlinked copy fallback source not allowed: ${params.src}`);
-    }
+    assertOpenedSource(opened, current, params.src);
     return { replacement: await handle.readFile(), mode: opened.mode };
   } finally {
     await handle.close().catch(() => undefined);
@@ -119,12 +123,7 @@ export function readOwnedCopySourceSync(params: {
     }
     const opened = params.fsModule.fstatSync(fd);
     const current = params.fsModule.lstatSync(params.src);
-    if (!opened.isFile() || current.isSymbolicLink() || !sameFileIdentity(opened, current)) {
-      throw new FsSafeError("path-mismatch", `Copy fallback source changed while opening: ${params.src}`);
-    }
-    if (opened.nlink !== 1) {
-      throw new FsSafeError("hardlink", `Hardlinked copy fallback source not allowed: ${params.src}`);
-    }
+    assertOpenedSource(opened, current, params.src);
     return { replacement: readAllSync(params.fsModule, fd, opened.size), mode: opened.mode };
   } finally {
     try {

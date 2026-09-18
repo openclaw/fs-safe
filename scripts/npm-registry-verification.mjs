@@ -313,7 +313,6 @@ export async function verifyNpmProvenanceAttestation({
 }) {
   const expectedSubject = expectedProvenanceSubject(packageName, version);
   const expectedSha512 = Buffer.from(integrity.slice("sha512-".length), "base64").toString("hex");
-  let matchingSubject = false;
   for (const attestation of attestations) {
     if (attestation?.predicateType !== NPM_PROVENANCE_PREDICATE_TYPE) continue;
     const payload = attestation.bundle?.dsseEnvelope?.payload;
@@ -331,7 +330,6 @@ export async function verifyNpmProvenanceAttestation({
     ) {
       continue;
     }
-    matchingSubject = true;
     const policy = provenancePolicy(statement, version);
     try {
       await verifyBundle(attestation.bundle, policy);
@@ -350,9 +348,7 @@ export async function verifyNpmProvenanceAttestation({
     }
   }
   throw new RetryableRegistryError(
-    matchingSubject
-      ? `npm provenance verification is incomplete for ${packageName}@${version}`
-      : `npm provenance attestation does not match ${packageName}@${version} and its artifact digest`,
+    `npm provenance attestation does not match ${packageName}@${version} and its artifact digest`,
     { code: "incomplete-provenance" },
   );
 }

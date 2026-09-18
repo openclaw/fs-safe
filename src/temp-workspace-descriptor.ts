@@ -273,28 +273,24 @@ export class TempWorkspaceRetainedChild {
     fd: number,
     ownerUid: number | undefined,
   ): Promise<void> {
-    if ((await fs.statfs("/proc/self/fd", { bigint: true })).type !== 0x9fa0n) {
-      throw new FsSafeError("path-mismatch", "directory mode requires a trusted procfs fd namespace");
-    }
-    const procPath = `/proc/self/fd/${fd}`;
-    const opened = inspectFileIdentitySync(
-      () => fsSync.fstatSync(fd, { bigint: true }),
-      this.#identity,
-    );
-    const followed = inspectFileIdentitySync(
-      () => fsSync.statSync(procPath, { bigint: true }),
-      this.#identity,
-    );
-    assertOwnedDirectory(opened, followed);
-    assertTempWorkspaceChildState(opened, ownerUid);
-    assertTempWorkspaceChildState(followed, ownerUid);
+    const filesystem = await fs.statfs("/proc/self/fd", { bigint: true });
+    this.#assertProcDescriptorAuthority(fd, ownerUid, filesystem.type);
   }
 
   #assertProcAuthoritySync(
     fd: number,
     ownerUid: number | undefined,
   ): void {
-    if (fsSync.statfsSync("/proc/self/fd", { bigint: true }).type !== 0x9fa0n) {
+    const filesystem = fsSync.statfsSync("/proc/self/fd", { bigint: true });
+    this.#assertProcDescriptorAuthority(fd, ownerUid, filesystem.type);
+  }
+
+  #assertProcDescriptorAuthority(
+    fd: number,
+    ownerUid: number | undefined,
+    filesystemType: bigint,
+  ): void {
+    if (filesystemType !== 0x9fa0n) {
       throw new FsSafeError("path-mismatch", "directory mode requires a trusted procfs fd namespace");
     }
     const procPath = `/proc/self/fd/${fd}`;
@@ -418,15 +414,7 @@ export class TempWorkspaceRetainedChild {
     } catch (error) {
       // The readable replacement has not been installed. Give it exactly one
       // close attempt and leave neither indeterminate descriptor owned here.
-      try {
-        fsSync.closeSync(fd);
-      } catch (closeError) {
-        throw new AggregateError(
-          [error, closeError],
-          "temp workspace child descriptor replacement close failed",
-        );
-      }
-      throw error;
+      closeAfterAdmissionFailure(fd, error, "temp workspace child descriptor replacement close failed");
     }
     this.#fd = fd;
     this.#access = "read";
@@ -453,17 +441,10 @@ export class TempWorkspaceRetainedChild {
     const fd = this.#fd;
     this.#fd = undefined;
     if (retainDescriptor && !this.canEnumerate) {
-      try {
-        fsSync.closeSync(fd);
-      } catch (closeError) {
-        throw new AggregateError([
-          new FsSafeError("helper-unavailable", "temp workspace cleanup requires a readable child descriptor"),
-          closeError,
-        ], "temp workspace child descriptor rejection and close failed");
-      }
-      throw new FsSafeError(
-        "helper-unavailable",
-        "temp workspace cleanup requires a readable child descriptor",
+      closeAfterAdmissionFailure(
+        fd,
+        new FsSafeError("helper-unavailable", "temp workspace cleanup requires a readable child descriptor"),
+        "temp workspace child descriptor rejection and close failed",
       );
     }
     if (!retainDescriptor) {

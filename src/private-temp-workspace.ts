@@ -36,6 +36,7 @@ import {
 import {
   admitTempWorkspaceRoot,
   admitTempWorkspaceRootSync,
+  type TempWorkspaceRootAdmission,
 } from "./temp-workspace-admission.js";
 import { validateTempWorkspaceDirMode } from "./temp-workspace-permissions.js";
 import type { TempWorkspaceOptions, TempWorkspace, TempWorkspaceSync } from "./temp-workspace-types.js";
@@ -153,33 +154,85 @@ function throwTempWorkspaceOpenFailure(failure: RootFileOpenFailure): never {
   });
 }
 
-async function createTempWorkspace(
-  options: TempWorkspaceOptions,
-  scopedPrefix = false,
-): Promise<TempWorkspace> {
+function tempWorkspaceSettings(options: TempWorkspaceOptions) {
   const rootDir = options.rootDir;
   assertNoWindowsPathAlias(rootDir, "filesystem", "temp workspace root uses a Windows filesystem namespace alias");
   const dirMode = options.dirMode ?? 0o700;
   validateTempWorkspaceDirMode(dirMode);
   const mode = options.mode ?? 0o600;
   const cleanupSafety = resolveTempWorkspaceCleanupSafety(options.cleanupSafety);
-  const admission = await admitTempWorkspaceRoot(rootDir);
-  const root = admission.dir;
+  return { rootDir, dirMode, mode, cleanupSafety };
+}
+
+function tempWorkspaceChildPrefix(root: string, options: TempWorkspaceOptions, scopedPrefix: boolean): string {
   assertNoWindowsPathAlias(root, "filesystem", "temp workspace root uses a Windows filesystem namespace alias");
-  // Capture and sanitize caller-controlled prefix data before retaining descriptors.
-  const rawPrefix = options.prefix;
-  const workspacePrefix = scopedPrefix
-    ? `${sanitizeTempPrefix(rawPrefix)}${randomUUID()}-`
-    : rawPrefix;
+  // Capture and sanitize caller-controlled data before retaining descriptors.
+  const prefix = options.prefix;
+  const workspacePrefix = scopedPrefix ? `${sanitizeTempPrefix(prefix)}${randomUUID()}-` : prefix;
   const childPrefix = path.join(root, sanitizeTempPrefix(workspacePrefix));
   assertNoWindowsPathAlias(childPrefix, "filesystem", "temp workspace path uses a Windows filesystem namespace alias");
+  return childPrefix;
+}
+
+function throwTempWorkspaceCreationFailure(
+  error: unknown,
+  retainedChild: TempWorkspaceRetainedChild | undefined,
+  capability: TempWorkspaceCleanupCapability,
+  owner?: TempWorkspaceCleanupOwner,
+): never {
+  try {
+    if (owner) owner.cleanupSync();
+    else {
+      const closeErrors: unknown[] = [];
+      try { retainedChild?.close(); } catch (closeError) { closeErrors.push(closeError); }
+      try { capability.close(); } catch (closeError) { closeErrors.push(closeError); }
+      if (closeErrors.length === 1) throw closeErrors[0];
+      if (closeErrors.length > 1) {
+        throw new AggregateError(closeErrors, "temp workspace admission descriptor close failed");
+      }
+    }
+  } catch (cleanupError) {
+    throw new AggregateError([error, cleanupError], "temp workspace creation and cleanup both failed");
+  }
+  throw error;
+}
+
+function registerTempWorkspace(
+  dir: string,
+  retainedChild: TempWorkspaceRetainedChild,
+  capability: TempWorkspaceCleanupCapability,
+  admission: TempWorkspaceRootAdmission,
+  dirMode: number,
+) {
+  let owner: TempWorkspaceCleanupOwner | undefined;
+  let stat: BigIntStats | Stats;
+  let unregisterTempDir: () => void;
+  try {
+    const retainChildDescriptor = capability.admitChildDescriptor(retainedChild.ensureReadable());
+    // Final adoption orders ancestry and cleanup-parent authority before the
+    // original child's descriptor and named security-state checks.
+    if (capability.parent) capability.assertAncestryCurrent();
+    else admission.assertAncestry();
+    stat = retainedChild.finalizeAdmission(admission.ownerUid, dirMode);
+    owner = new TempWorkspaceCleanupOwner(retainedChild, capability, retainChildDescriptor);
+    unregisterTempDir = registerTempPathForExit(dir, { cleanupSync: () => owner!.cleanupSync() });
+  } catch (error) {
+    throwTempWorkspaceCreationFailure(error, retainedChild, capability, owner);
+  }
+  return { owner: owner!, unregisterTempDir, identity: { dev: Number(stat.dev), ino: Number(stat.ino) } };
+}
+
+async function createTempWorkspace(
+  options: TempWorkspaceOptions,
+  scopedPrefix = false,
+): Promise<TempWorkspace> {
+  const { rootDir, dirMode, mode, cleanupSafety } = tempWorkspaceSettings(options);
+  const admission = await admitTempWorkspaceRoot(rootDir);
+  const root = admission.dir;
+  const childPrefix = tempWorkspaceChildPrefix(root, options, scopedPrefix);
   const capability = new TempWorkspaceCleanupCapability(root, cleanupSafety, admission, dirMode);
   let dir: string;
-  let stat: BigIntStats | Stats;
   let retainedChild: TempWorkspaceRetainedChild | undefined;
-  let retainChildDescriptor = false;
-  let cleanupOwner: TempWorkspaceCleanupOwner | undefined;
-  let unregisterTempDir: () => void;
   try {
     // Native capability discovery is complete before this synchronous
     // boundary. The existing canonical-root route now captures the complete
@@ -190,7 +243,7 @@ async function createTempWorkspace(
     assertNoWindowsPathAlias(dir, "filesystem", "temp workspace path uses a Windows filesystem namespace alias");
     if (capability.parent) capability.assertCurrent();
     else admission.assertCurrent();
-    stat = inspectDirectoryIdentitySync(dir);
+    const stat = inspectDirectoryIdentitySync(dir);
     const needsModeInitialization = validateInitialTempWorkspaceChild(
       stat,
       admission.ownerUid,
@@ -206,40 +259,12 @@ async function createTempWorkspace(
       dirMode,
     );
     if (modeInitialization) await modeInitialization;
-    retainChildDescriptor = capability.admitChildDescriptor(retainedChild.ensureReadable());
-    // Final adoption order is deliberate: complete ancestry, retained cleanup
-    // parent, then descriptor and named checks of the original child identity.
-    if (capability.parent) capability.assertAncestryCurrent();
-    else admission.assertAncestry();
-    stat = retainedChild.finalizeAdmission(admission.ownerUid, dirMode);
-    cleanupOwner = new TempWorkspaceCleanupOwner(
-      retainedChild,
-      capability,
-      retainChildDescriptor,
-    );
-    retainedChild = undefined;
-    unregisterTempDir = registerTempPathForExit(dir, {
-      cleanupSync: () => cleanupOwner!.cleanupSync(),
-    });
   } catch (error) {
-    try {
-      if (cleanupOwner) cleanupOwner.cleanupSync();
-      else {
-        const closeErrors: unknown[] = [];
-        try { retainedChild?.close(); } catch (closeError) { closeErrors.push(closeError); }
-        try { capability.close(); } catch (closeError) { closeErrors.push(closeError); }
-        if (closeErrors.length === 1) throw closeErrors[0];
-        if (closeErrors.length > 1) {
-          throw new AggregateError(closeErrors, "temp workspace admission descriptor close failed");
-        }
-      }
-    } catch (cleanupError) {
-      throw new AggregateError([error, cleanupError], "temp workspace creation and cleanup both failed");
-    }
-    throw error;
+    throwTempWorkspaceCreationFailure(error, retainedChild, capability);
   }
-  const owner = cleanupOwner!;
-  const identity = { dev: Number(stat.dev), ino: Number(stat.ino) };
+  const { owner, identity, unregisterTempDir } = registerTempWorkspace(
+    dir, retainedChild, capability, admission, dirMode,
+  );
   // Once registered, even a store-construction failure remains exit-cleanable.
   const store = fileStore({ rootDir: dir, private: true, dirMode, mode });
 
@@ -305,30 +330,13 @@ function createTempWorkspaceSync(
   options: TempWorkspaceOptions,
   scopedPrefix = false,
 ): TempWorkspaceSync {
-  const rootDir = options.rootDir;
-  assertNoWindowsPathAlias(rootDir, "filesystem", "temp workspace root uses a Windows filesystem namespace alias");
-  const dirMode = options.dirMode ?? 0o700;
-  validateTempWorkspaceDirMode(dirMode);
-  const mode = options.mode ?? 0o600;
-  const cleanupSafety = resolveTempWorkspaceCleanupSafety(options.cleanupSafety);
+  const { rootDir, dirMode, mode, cleanupSafety } = tempWorkspaceSettings(options);
   const admission = admitTempWorkspaceRootSync(rootDir);
   const root = admission.dir;
-  assertNoWindowsPathAlias(root, "filesystem", "temp workspace root uses a Windows filesystem namespace alias");
-  // Capture and sanitize caller-controlled prefix data before retaining descriptors.
-  const rawPrefix = options.prefix;
-  const workspacePrefix = scopedPrefix
-    ? `${sanitizeTempPrefix(rawPrefix)}${randomUUID()}-`
-    : rawPrefix;
-  const childPrefix = path.join(root, sanitizeTempPrefix(workspacePrefix));
-  assertNoWindowsPathAlias(childPrefix, "filesystem", "temp workspace path uses a Windows filesystem namespace alias");
+  const childPrefix = tempWorkspaceChildPrefix(root, options, scopedPrefix);
   const capability = new TempWorkspaceCleanupCapability(root, cleanupSafety, admission, dirMode);
   let dir: string;
-  let stat: BigIntStats | Stats;
   let retainedChild: TempWorkspaceRetainedChild | undefined;
-  let retainChildDescriptor = false;
-  let needsModeInitialization: boolean;
-  let cleanupOwner: TempWorkspaceCleanupOwner | undefined;
-  let unregisterTempDir: () => void;
   try {
     const directRequestedMode = canCreateTempWorkspaceWithRequestedMode(dirMode);
     if (directRequestedMode) {
@@ -344,64 +352,28 @@ function createTempWorkspaceSync(
     assertNoWindowsPathAlias(dir, "filesystem", "temp workspace path uses a Windows filesystem namespace alias");
     if (capability.parent) capability.assertCurrent();
     else admission.assertCurrent();
+    let stat: BigIntStats;
     if (directRequestedMode) {
       const created = TempWorkspaceRetainedChild.retainCreated(dir);
       retainedChild = created.retained;
       stat = created.stat;
-      needsModeInitialization = validateInitialTempWorkspaceChild(
-        stat,
-        admission.ownerUid,
-        dirMode,
-      );
     } else {
       stat = inspectDirectoryIdentitySync(dir);
-      needsModeInitialization = validateInitialTempWorkspaceChild(
-        stat,
-        admission.ownerUid,
-        dirMode,
-      );
-      retainedChild = TempWorkspaceRetainedChild.retain(dir, stat);
     }
+    const needsModeInitialization = validateInitialTempWorkspaceChild(stat, admission.ownerUid, dirMode);
+    retainedChild ??= TempWorkspaceRetainedChild.retain(dir, stat);
     admitRetainedTempWorkspaceChildSync(
       retainedChild,
       needsModeInitialization,
       admission,
       dirMode,
     );
-    retainChildDescriptor = capability.admitChildDescriptor(retainedChild.ensureReadable());
-    // Match async adoption: complete ancestry and retained cleanup authority
-    // precede descriptor and named child security-state checks.
-    if (capability.parent) capability.assertAncestryCurrent();
-    else admission.assertAncestry();
-    stat = retainedChild.finalizeAdmission(admission.ownerUid, dirMode);
-    cleanupOwner = new TempWorkspaceCleanupOwner(
-      retainedChild,
-      capability,
-      retainChildDescriptor,
-    );
-    retainedChild = undefined;
-    unregisterTempDir = registerTempPathForExit(dir, {
-      cleanupSync: () => cleanupOwner!.cleanupSync(),
-    });
   } catch (error) {
-    try {
-      if (cleanupOwner) cleanupOwner.cleanupSync();
-      else {
-        const closeErrors: unknown[] = [];
-        try { retainedChild?.close(); } catch (closeError) { closeErrors.push(closeError); }
-        try { capability.close(); } catch (closeError) { closeErrors.push(closeError); }
-        if (closeErrors.length === 1) throw closeErrors[0];
-        if (closeErrors.length > 1) {
-          throw new AggregateError(closeErrors, "temp workspace admission descriptor close failed");
-        }
-      }
-    } catch (cleanupError) {
-      throw new AggregateError([error, cleanupError], "temp workspace creation and cleanup both failed");
-    }
-    throw error;
+    throwTempWorkspaceCreationFailure(error, retainedChild, capability);
   }
-  const owner = cleanupOwner!;
-  const identity = { dev: Number(stat.dev), ino: Number(stat.ino) };
+  const { owner, identity, unregisterTempDir } = registerTempWorkspace(
+    dir, retainedChild, capability, admission, dirMode,
+  );
   // Once registered, even a store-construction failure remains exit-cleanable.
   const store = fileStoreSync({ rootDir: dir, private: true, dirMode, mode });
 

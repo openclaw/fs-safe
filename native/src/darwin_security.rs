@@ -67,17 +67,17 @@ impl DarwinSecurityReceipt {
     fn from_stat(stat: &libc::stat, acl: AclState) -> Self {
         Self {
             device: stat.st_dev as u64,
-            inode: stat.st_ino as u64,
+            inode: stat.st_ino,
             mode: stat.st_mode,
-            uid: stat.st_uid as u32,
-            gid: stat.st_gid as u32,
+            uid: stat.st_uid,
+            gid: stat.st_gid,
             flags: stat.st_flags,
             acl,
         }
     }
 
     pub(crate) fn matches_identity(&self, stat: &rustix::fs::Stat) -> bool {
-        self.device == stat.st_dev as u64 && self.inode == stat.st_ino as u64
+        self.device == stat.st_dev as u64 && self.inode == stat.st_ino
     }
 
     pub(crate) fn is_directory(&self) -> bool {
