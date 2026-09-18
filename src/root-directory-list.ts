@@ -280,6 +280,7 @@ async function listGuardedDirectoryPath(
 }
 
 export type RootDirectoryListing = {
+  assertCurrent(): Promise<void>;
   next(): Promise<{ kind: "entry"; entry: DirEntry } | { kind: "limit"; name: string } | undefined>;
   [Symbol.asyncDispose](): Promise<void>;
 };
@@ -399,6 +400,7 @@ export async function openRootDirectoryListing(
   };
 
   return {
+    assertCurrent,
     async next() {
       try {
         options.signal?.throwIfAborted();

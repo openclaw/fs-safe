@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Add `copyFileDescriptorSync()` for bounded positional transfers between caller-owned regular-file descriptors, sharing `CopyFileHandleOptions` while preserving cursors, descriptor lifetime, destination suffixes, and caller-owned durability and publication.
+- Allow asynchronous `include`/`descend` in `walkDirectory()` and `entryFilter` in `Root.walk()` for serial selection and marker-based pruning, retaining callback receivers and budgets; Root walks settle pending callbacks and recheck cancellation and directory/root identity before using awaited decisions.
 
 ## 0.14.0 - 2026-09-17
 

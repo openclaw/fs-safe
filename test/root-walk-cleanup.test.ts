@@ -10,6 +10,7 @@ afterEach(() => vi.restoreAllMocks());
 
 it.each([
   "setup-abort", "setup-error", "read-abort", "read-error", "filter-error", "filter-undefined",
+  "async-filter-error", "async-filter-undefined", "async-filter-abort",
   "close-only", "iterator-return", "iterator-throw", "iterator-throw-undefined",
 ] as const)(
   "retains walk and close failures after %s",
@@ -48,9 +49,18 @@ it.each([
       order: "filesystem",
       symlinkPolicy: "skip",
       signal: controller.signal,
-      onDirectoryError: phase.endsWith("abort") ? "skip-and-report" : "throw",
+      onDirectoryError: phase.endsWith("abort") || phase.startsWith("async-filter-") ? "skip-and-report" : "throw",
       entryFilter: () => {
         if (phase === "filter-error" || phase === "filter-undefined") throw primaryFailure;
+        if (phase.startsWith("async-filter-")) {
+          return Promise.resolve().then(() => {
+            if (phase === "async-filter-abort") {
+              controller.abort(primaryFailure);
+              return "include" as const;
+            }
+            throw primaryFailure;
+          });
+        }
         return "include";
       },
     });
