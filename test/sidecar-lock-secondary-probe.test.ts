@@ -17,6 +17,7 @@ type ProbeMutation = "unlink" | "root" | "parent" | "ancestor" | "canonical" |
 async function prepareProbeLoss(options: {
   fallback?: boolean;
   kind?: "file" | "directory" | "hardlink";
+  replacement?: "file" | "directory" | "hardlink" | "symlink";
   mutation?: ProbeMutation;
 } = {}) {
   const mutation = options.mutation ?? "unlink";
@@ -43,7 +44,10 @@ async function prepareProbeLoss(options: {
     try { return await stat(...args); }
     catch (error) {
       probeFailure = error;
-      if (mutation === "canonical") await fs.symlink(outside, lockPath);
+      if (mutation === "canonical") {
+        if (options.replacement) await fs.unlink(lockPath);
+        await fs.symlink(outside, lockPath);
+      }
       throw error;
     }
   });
@@ -71,15 +75,25 @@ async function prepareProbeLoss(options: {
               cause: Object.assign(new Error("forged missing leaf"), { code: "ENOENT" }),
             });
           }
-          if (kind === "directory") await fs.rmdir(lockPath);
-          else await fs.unlink(lockPath);
-          if (mutation === "root") await fs.rename(rootPath, `${rootPath}.old`);
-          if (mutation === "parent") await fs.rename(parent, `${parent}.old`);
-          if (mutation === "ancestor") {
-            await fs.rename(ancestor, `${ancestor}.old`);
-            await fs.mkdir(ancestor);
-            await fs.rename(path.join(`${ancestor}.old`, "parent"), parent);
-          }
+          // Pin the outgoing inode so a fast replacement cannot reuse its identity.
+          const retained = options.replacement ? await fs.open(lockPath, "r") : undefined;
+          try {
+            if (kind === "directory") await fs.rmdir(lockPath);
+            else await fs.unlink(lockPath);
+            if (options.replacement === "directory") await fs.mkdir(lockPath);
+            else if (options.replacement === "symlink") await fs.symlink(outside, lockPath);
+            else if (options.replacement) {
+              await fs.writeFile(lockPath, '{"owner":"third"}', { flag: "wx" });
+              if (options.replacement === "hardlink") await fs.link(lockPath, path.join(base, "third-link"));
+            }
+            if (mutation === "root") await fs.rename(rootPath, `${rootPath}.old`);
+            if (mutation === "parent") await fs.rename(parent, `${parent}.old`);
+            if (mutation === "ancestor") {
+              await fs.rename(ancestor, `${ancestor}.old`);
+              await fs.mkdir(ancestor);
+              await fs.rename(path.join(`${ancestor}.old`, "parent"), parent);
+            }
+          } finally { await retained?.close(); }
         },
       });
       throw error;
@@ -142,6 +156,50 @@ itPosix.each([
   expect(parsePayload).not.toHaveBeenCalled();
   await expect(fs.readFile(fixture.outside, "utf8")).resolves.toBe("sentinel");
 });
+
+itPosix.each([false, true].flatMap(fallback =>
+  (["unlinked", "changed"] as const).map(discardObservation => ({ fallback, discardObservation } as const))))(
+  "discards a successor replaced during the $discardObservation metadata probe (fallback=$fallback)",
+  async ({ fallback, discardObservation }) => {
+    const fixture = await prepareProbeLoss({ fallback, replacement: "file" });
+    const parsePayload = vi.fn(JSON.parse);
+    await expect(readSidecarLockSnapshot(fixture.lockPath, {
+      lockRoot: fixture.capability, discardObservation, parsePayload,
+    })).resolves.toBeNull();
+    expect(fixture.evidence().probeFailure).toMatchObject({ code: "path-mismatch" });
+    expect(fixture.evidence().opened?.fd).toBe(-1);
+    expect(parsePayload).not.toHaveBeenCalled();
+    expect(await fs.readFile(fixture.lockPath, "utf8")).toBe('{"owner":"third"}');
+  },
+);
+
+itPosix.each([false, true].flatMap(fallback => [
+  { kind: "directory", replacement: "file", mutation: "unlink" },
+  { kind: "hardlink", replacement: "file", mutation: "unlink" },
+  ...["directory", "hardlink", "symlink"].map(replacement => ({ kind: "file", replacement, mutation: "unlink" })),
+  ...["root", "parent", "ancestor", "canonical", "callback-enoent", "callback-mismatch"]
+    .map(mutation => ({ kind: "file", replacement: "file", mutation })),
+].map(options => ({ ...options, fallback }))))(
+  "keeps $kind to $replacement / $mutation probe failures terminal (fallback=$fallback)",
+  async ({ fallback, kind, replacement, mutation }) => {
+    const fixture = await prepareProbeLoss({
+      fallback, kind: kind as "file" | "directory" | "hardlink",
+      replacement: replacement as "file" | "directory" | "hardlink" | "symlink", mutation: mutation as ProbeMutation,
+    });
+    const parsePayload = vi.fn(JSON.parse);
+    let failure: unknown;
+    try {
+      await readSidecarLockSnapshot(fixture.lockPath, {
+        lockRoot: fixture.capability, discardObservation: "changed", parsePayload,
+      });
+    } catch (error) { failure = error; }
+    expect(failure).toBe(fixture.evidence().openFailure);
+    expect(failure).toMatchObject({ code: "not-found" });
+    expect(fixture.evidence().opened?.fd).toBe(-1);
+    expect(parsePayload).not.toHaveBeenCalled();
+    expect(await fs.readFile(fixture.outside, "utf8")).toBe("sentinel");
+  },
+);
 
 itPosix("charges a lost successor probe to the acquisition retry budget", async () => {
   const fixture = await prepareProbeLoss();

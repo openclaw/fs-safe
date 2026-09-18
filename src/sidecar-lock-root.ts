@@ -58,7 +58,8 @@ export async function openSidecarRoot(
         if (!current.isFile || current.isSymbolicLink || current.nlink !== 1) throw error;
       } catch (probeError) {
         if (!(probeError instanceof FsSafeError && probeError.code === "not-found") &&
-          !probe.has(probeError, `stat-leaf-missing:${expectedRealPath}`)) throw probeError;
+          !probe.has(probeError, `stat-leaf-missing:${expectedRealPath}`) &&
+          !probe.has(probeError, `stat-leaf-changed:${expectedRealPath}`)) throw probeError;
       }
       for (const { dir, stat } of parents) await inspectDirectoryIdentity(dir, stat);
       await lockRoot.resolve(relative);
