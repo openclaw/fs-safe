@@ -268,6 +268,10 @@ await fs.move("incoming/foo.txt", "archive/foo.txt", { overwrite: true });
 
 Both `from` and `to` are bounded; `..` in either is rejected.
 
+Mutation policy is captured at call start; changes to caller-owned denial arrays
+apply to later moves. For live cancellation or revocation, throw from
+`assertBeforeMutation` immediately before dispatch.
+
 The default no-clobber mode requires the native helper. It admits both parent
 directory descriptors and performs a descriptor-relative no-replace rename, so
 a competitor that creates the target first is preserved and the source remains

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Snapshot `Root.move()` mutation policy before asynchronous admission so changes to caller-owned deny paths or prefixes cannot change an in-flight move; live revocation remains available through `assertBeforeMutation`.
 - Recheck native no-clobber `Root.move()` source identity, type, and hardlink policy after the final authority callback so replaced or newly hardlinked sources remain untouched.
 
 ### Permissions and diagnostics
