@@ -300,6 +300,11 @@ the caller, which must check authority before its own later writes.
 
 All mutation methods accept `denyMutations?: { paths?: string[]; prefixes?: string[] }`. Entries must be absolute paths. `paths` blocks those exact paths; `prefixes` blocks those paths and their descendants. fs-safe preserves path strings exactly and canonicalizes through existing ancestors before comparing, so a symlinked ancestor to a denied location is still denied. Denied mutations throw `FsSafeError` with code `denied-path`. Use this for caller-specific sensitive paths, not as a replacement for the root boundary, symlink, or hardlink checks.
 
+`move()` snapshots its merged default and per-call mutation policy before
+asynchronous preparation. Later changes to the original policy objects or arrays
+apply to subsequent calls. Use `assertBeforeMutation` for live revocation of an
+in-flight move.
+
 For writes, creates, streams, and copies, parent creation admits the prospective
 file and each missing directory before creating that directory, including on the
 Windows native route. An exact deny on an existing parent does not prevent using
