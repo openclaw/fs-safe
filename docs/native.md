@@ -233,9 +233,15 @@ rejection, archive filters/limits/modes, exclusive target creation, source and
 target identity fencing, publication cleanup receipts, and secret/lock policy
 remain TypeScript-owned. What changes is the syscall strength or availability:
 
+The table compares underlying mechanisms. On Node, public `Root.open()`,
+`Root.read()`, and `Root.openWritable()` use guarded Node file opens and report
+`containment: "best-effort"` in every native mode. `require` checks availability
+when an operation requests native support; it does not upgrade those results.
+See [Root containment guarantees](security-model.md#containment-guarantees-by-platform).
+
 | Capability | Native path | Guarded JavaScript path |
 |---|---|---|
-| Root-relative opens/mutations | Descriptor-relative beneath operations. Pinned writes create parents and publish both replacement and no-replace targets relative to open directory descriptors. No-clobber `Root.move()` admits both parents and uses the native no-replace rename. Linux reports `kernel-atomic`; macOS and Windows report `best-effort`. macOS uses `O_RESOLVE_BENEATH` when available plus an `F_GETPATH` detector, while Windows rejects reparse traversal in the object-manager call. | Reports `best-effort`: component-wise alias checks, no-follow opens where Node exposes them, private temp/rename, and post-operation identity verification. No-clobber `Root.move()` is unsupported because a check followed by a replacing rename is unsafe. A same-privilege peer can replace a writable parent after a guard assertion but before Node resolves another pathname mutation; the mutation may land outside the intended root before the post-check detects it. |
+| Native beneath opens and Root mutations | Descriptor-relative beneath operations. Pinned writes create parents and publish both replacement and no-replace targets relative to open directory descriptors. No-clobber `Root.move()` admits both parents and uses the native no-replace rename. Native `openBeneath()` reports `kernel-atomic` on Linux and `best-effort` on macOS and Windows. macOS uses `O_RESOLVE_BENEATH` when available plus an `F_GETPATH` detector, while Windows rejects reparse traversal in the object-manager call. | Reports `best-effort`: component-wise alias checks, no-follow opens where Node exposes them, private temp/rename, and post-operation identity verification. No-clobber `Root.move()` is unsupported because a check followed by a replacing rename is unsafe. A same-privilege peer can replace a writable parent after a guard assertion but before Node resolves another pathname mutation; the mutation may land outside the intended root before the post-check detects it. |
 | ZIP/TAR/gzip | Rust streaming decode and fd-relative output creation. | Optional JSZip or bundled WASM TAR into guarded private staging, then the same guarded merge policy. |
 | Zstd/bzip2 TAR | Supported. | Unsupported; typed `helper-unavailable`. |
 | Publication copy | Clone, Linux `copy_file_range`, async native SHA-256. | Exclusive `wx` byte loop and Node SHA-256 with the same content/identity fences. |
