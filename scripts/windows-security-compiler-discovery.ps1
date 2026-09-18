@@ -1,9 +1,12 @@
 param(
   [Parameter(Mandatory=$true)][string]$SourcePath,
-  [Parameter(Mandatory=$true)][string]$ConfiguredTemp
+  [Parameter(Mandatory=$true)][string]$ConfiguredTemp,
+  [switch]$SystemModulesOnly
 )
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
+$systemModules=[IO.Path]::Combine($PSHOME,'Modules')
+if($SystemModulesOnly){$env:PSModulePath=$systemModules}
 $clock=[Diagnostics.Stopwatch]::StartNew()
 function Write-ControlPhase([string]$phase) {
   try { [Console]::Error.WriteLine('FS_SAFE_COMPILER_CONTROL:'+$phase+':'+$clock.ElapsedMilliseconds) } catch {}
@@ -29,6 +32,8 @@ Write-ControlPhase 'runtime-facts:end'
   commandFound=$true
   moduleName=$command.ModuleName
   moduleVersion=$command.Module.Version.ToString()
+  systemModuleSearchOnly=[String]::Equals($env:PSModulePath,$systemModules,[StringComparison]::OrdinalIgnoreCase)
+  commandFromSystemModules=$command.Module.ModuleBase.StartsWith($systemModules+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)
   sourceReadable=$true
   sourceBytes=$sourceBytes
   tempSpellingMatchesConfigured=[String]::Equals($temp,$expected,[StringComparison]::OrdinalIgnoreCase)

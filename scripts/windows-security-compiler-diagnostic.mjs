@@ -10,6 +10,7 @@ import { windowsSecurityFixturePhases } from "./consumer-proof-metadata.mjs";
 
 const MAX_OUTPUT = 1024 * 1024;
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
+const systemModulePrelude = "$env:PSModulePath=[IO.Path]::Combine($PSHOME,'Modules')\n";
 const environmentKeys = ["PSModulePath", "ProgramFiles", "ProgramFiles(x86)", "USERPROFILE",
   "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "USERNAME", "USERDOMAIN", "HOMEDRIVE", "HOMEPATH"];
 const runtimeKeys = ["HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TMPDIR", "TMP", "TEMP",
@@ -200,14 +201,8 @@ export async function main() {
   const fixtureScript = extractRawFixture(probe, "aclScript");
   const powershell = path.join(process.env.SystemRoot ?? process.env.WINDIR ?? "C:\\Windows",
     "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-  const shippingAssets = {};
-  for (const name of ["windows-security-bridge.ps1", "windows-security-bridge.cs"]) {
-    shippingAssets[name] = fs.readFileSync(path.join(root, "dist", name));
-    assert(fs.readFileSync(path.join(root, "src", name)).equals(shippingAssets[name]));
-  }
   const rows = [];
-  const scenarios = ["isolated-command-discovery", "isolated-fixture", "isolated-fixture-stdin-ignore", "runtime-profile-fixture",
-    "isolated-shipping-reference", "isolated-fixture-retry"];
+  const scenarios = ["system-modules-command-discovery", "system-modules-fixture", "isolated-command-discovery", "isolated-fixture"];
   let stoppedAfter = null;
   for (const scenario of scenarios) {
     const temporary = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-consumer-proof-")));
@@ -215,27 +210,24 @@ export async function main() {
     fs.mkdirSync(consumer);
     const configuration = path.join(consumer, "config");
     const isolated = isolatedConsumerEnv(configuration);
-    const env = scenario === "runtime-profile-fixture" ? runtimeProfileControlEnv(isolated, process.env) : isolated;
+    const env = isolated;
     const sandbox = fs.mkdtempSync(path.join(consumer, "windows-security-proof-"));
     const driver = path.join(sandbox, "consumer-raw-security.ps1");
-    fs.writeFileSync(driver, fixtureScript, { flag: "wx" });
+    const systemModulesOnly = scenario.startsWith("system-modules-");
+    const executedFixtureScript = (systemModulesOnly ? systemModulePrelude : "") + fixtureScript;
+    fs.writeFileSync(driver, executedFixtureScript, { flag: "wx" });
     fs.writeFileSync(path.join(sandbox, "consumer-raw-security.cs"), fixtureSource, { flag: "wx" });
     env.FS_SAFE_SECURITY_PROOF_PATH = sandbox;
     env.FS_SAFE_SECURITY_PROOF_ACTION = "parent";
-    env.FS_SAFE_WINDOWS_SECURITY_PATH = sandbox;
-    const shipping = scenario === "isolated-shipping-reference";
-    const discovery = scenario === "isolated-command-discovery";
-    if (shipping) {
-      for (const [name, bytes] of Object.entries(shippingAssets)) fs.writeFileSync(path.join(sandbox, name), bytes, { flag: "wx" });
-    }
+    const discovery = scenario.endsWith("command-discovery");
     const discoveryScript = path.join(sandbox, "compiler-discovery.ps1");
     if (discovery) fs.copyFileSync(path.join(import.meta.dirname, "windows-security-compiler-discovery.ps1"), discoveryScript);
-    const shippingScript = path.join(sandbox, "windows-security-bridge.ps1");
-    const script = shipping ? shippingScript : discovery ? discoveryScript : driver;
+    const script = discovery ? discoveryScript : driver;
     const args = ["-NoLogo", "-NoProfile", "-NonInteractive", "-File", script,
-      ...(shipping ? ["-Operation", "path"] : discovery
-        ? ["-SourcePath", path.join(sandbox, "consumer-raw-security.cs"), "-ConfiguredTemp", configuration] : [])];
-    const stdin = scenario === "isolated-fixture-stdin-ignore" || shipping ? "ignore" : "pipe";
+      ...(discovery
+        ? ["-SourcePath", path.join(sandbox, "consumer-raw-security.cs"), "-ConfiguredTemp", configuration,
+          ...(systemModulesOnly ? ["-SystemModulesOnly"] : [])] : [])];
+    const stdin = "pipe";
     const workerConfiguration = path.join(consumer, "diagnostic-worker.json");
     fs.writeFileSync(workerConfiguration, JSON.stringify({ file: powershell, args, stdin }));
     const before = ownedTempInventory(configuration);
@@ -264,15 +256,17 @@ export async function main() {
     let discoveryResult;
     try {
       const value = JSON.parse(fixture.stdout);
-      validOutput = shipping ? value.ok === true : discovery ? value.commandFound === true && value.sourceReadable === true
+      validOutput = discovery ? value.commandFound === true && value.sourceReadable === true
         : value.complete === true && value.daclPresent === true && Array.isArray(value.aces);
+      if (discovery && systemModulesOnly) validOutput &&= value.systemModuleSearchOnly === true && value.commandFromSystemModules === true;
       if (discovery) discoveryResult = value;
     } catch {}
     let runtimePolicy;
-    if (ordinaryCompletion && validOutput && ["isolated-fixture", "runtime-profile-fixture", "isolated-fixture-retry"].includes(scenario)) {
+    if (ordinaryCompletion && validOutput && !discovery) {
       const policyScript = path.join(sandbox, "runtime-policy.ps1");
       fs.copyFileSync(path.join(import.meta.dirname, "windows-security-compiler-policy.ps1"), policyScript);
-      const policy = await runDiagnosticProcess(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-File", policyScript], {
+      const policy = await runDiagnosticProcess(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-File", policyScript,
+        ...(systemModulesOnly ? ["-SystemModulesOnly"] : [])], {
         cwd: consumer, env, stdin: "ignore", timeoutMs: 4_000,
       });
       ordinaryCompletion &&= completedProcess(policy);
@@ -282,12 +276,12 @@ export async function main() {
     }
     const { stdout, stderr, ...observation } = result;
     const presentKeys = new Set(Object.keys(env).map(key => key.toLowerCase()));
-    const row = { scenario, environment: scenario === "runtime-profile-fixture" ? "runtime-profile-allowlist" : "isolated-consumer",
-      stdin, cwd: "fresh-consumer", compilationBudgetMs: 30_000,
+    const row = { scenario, environment: "isolated-consumer",
+      stdin, cwd: "fresh-consumer", systemModulesOnly, compilationBudgetMs: 30_000,
       supervisorBudgetMs: 31_000,
       environmentPresence: Object.fromEntries(environmentKeys.map(key => [key, presentKeys.has(key.toLowerCase())])),
       fixtureSourceSha256: sha256(fixtureSource), fixtureScriptSha256: sha256(fixtureScript),
-      ...(shipping ? { shippingAssetsSha256: Object.fromEntries(Object.entries(shippingAssets).map(([name, bytes]) => [name, sha256(bytes)])) } : {}),
+      ...(!discovery ? { executedFixtureScriptSha256: sha256(executedFixtureScript) } : {}),
       supervisor: observation, fixture: fixture ? { pid: fixture.pid, elapsedMs: fixture.elapsedMs,
         exitCode: fixture.exitCode, signal: fixture.signal, errorCode: fixture.errorCode } : { status: "unavailable" },
       stdoutBytes: Buffer.byteLength(fixture?.stdout ?? ""), stderrBytes: Buffer.byteLength(fixture?.stderr ?? ""), validOutput,
@@ -307,9 +301,9 @@ export async function main() {
   }
   const receipt = { protocol: 1, node: process.version, platform: process.platform, arch: process.arch,
     scope: "Fixture-only diagnostic controls, not an installed-package proof. The workflow runs them after proof failure and does not replace that result. No environment values, command lines or file contents are collected; policies are only read.",
-    shippingReference: "Exact shipping assets are copied into the same disposable sandbox path class and use isolated environment/ignored stdin. Driver/payload differ; this is a reference, not a single-variable C# comparison.",
-    environmentControl: "Only allowlisted runtime/profile/system variables are restored. Installer configuration and baseline policy inputs stay unchanged; ambient policy overrides, auth, NODE_OPTIONS and arbitrary environment variables are not restored.",
-    cacheCaution: "Fresh processes share machine caches. The final isolated baseline retry checks whether later success could be warming instead of an environment/stdin effect.",
+    environmentControl: "Each control keeps the same isolated consumer environment. Only the read-only process samplers restore allowlisted runtime/profile/system variables. Installer configuration and baseline policy inputs stay unchanged; ambient policy overrides, auth, NODE_OPTIONS and arbitrary environment variables are not restored.",
+    systemModuleControl: "The first two controls change only PSModulePath inside the child script to the launched PowerShell installation's Modules directory, before command discovery. Fresh profile, temp, stdin, source, policies and deadlines stay unchanged. Their policy observer uses the same module scope. Later unmodified controls test whether cache warming alone explains success.",
+    cacheCaution: "Fresh processes share machine caches. Unmodified isolated discovery/fixture baselines run after the scoped-module controls to check whether cache warming alone explains success.",
     processCaution: "The failed package proof may already have left compiler descendants. These observations alone cannot establish causality. A failed or unconfirmed fixture stops subsequent controls; terminating its direct worker does not prove descendant exit. The failed ephemeral CI job must end before further comparisons.",
     stoppedAfter, unrunScenarios: scenarios.slice(rows.length),
     ...(stoppedAfter ? { descendantSettlement: "unconfirmed", runnerTeardownRequired: true } : {}),

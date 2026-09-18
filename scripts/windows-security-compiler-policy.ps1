@@ -1,5 +1,7 @@
+param([switch]$SystemModulesOnly)
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
+if($SystemModulesOnly){$env:PSModulePath=[IO.Path]::Combine($PSHOME,'Modules')}
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
 try {
   $principal=[Security.Principal.WindowsPrincipal]::new($identity)
