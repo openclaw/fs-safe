@@ -260,7 +260,7 @@ contract. Low-level helpers that OpenClaw needs to compose higher-level APIs are
 | `@openclaw/fs-safe/walk` | budget-bounded directory walking with symlink policy, filters, and truncation accounting; not root-bounded |
 | `@openclaw/fs-safe/copy` | directory copying with `clone: "auto"`, `"always"`, or `"never"`; native APFS, Btrfs, ReFS, XFS, and ZFS cloning, portable byte copying, and clone metadata; see [directory copying](docs/copy.md) |
 | `@openclaw/fs-safe/archive` | policy-driven ZIP/TAR extraction, clamp/filter policy, metadata/path-depth limits, native gzip/zstd/bzip2, and bounded entry reads |
-| `@openclaw/fs-safe/advanced` | lower-level composition helpers such as path scopes, root-file open, bounded descriptor reads, [borrowed-handle copying](docs/copy.md#borrowed-filehandle-transfers), [exact directory identity](docs/directory-identity.md), [case probing](docs/path-case.md), [suffix-alias probing](docs/path-suffix-aliases.md), [in-place writes](docs/in-place-write.md), [versioned install-ID encoding](docs/install-path.md#safepathsegmenthashedv2), filename sanitizing, temp-file targets, sibling-temp writes, local-root readers, regular-file helpers, `pathExists`, and `withTimeout`; less stable than focused public subpaths |
+| `@openclaw/fs-safe/advanced` | lower-level composition helpers such as path scopes, root-file open, bounded descriptor reads, [borrowed-handle and descriptor copying](docs/copy.md#borrowed-filehandle-transfers), [exact directory identity](docs/directory-identity.md), [case probing](docs/path-case.md), [suffix-alias probing](docs/path-suffix-aliases.md), [in-place writes](docs/in-place-write.md), [versioned install-ID encoding](docs/install-path.md#safepathsegmenthashedv2), filename sanitizing, temp-file targets, sibling-temp writes, local-root readers, regular-file helpers, `pathExists`, and `withTimeout`; less stable than focused public subpaths |
 | `@openclaw/fs-safe/errors` | `FsSafeError`, closed codes/categories, causes, and operation-specific details receipts |
 | `@openclaw/fs-safe/types` | shared types: `DirEntry`, `PathStat`, … |
 | `@openclaw/fs-safe/test-hooks` | hooks the test suite uses to inject races; registration requires `NODE_ENV=test` or `VITEST=true` |
@@ -517,12 +517,18 @@ for (const file of scan.entries) {
 
 Check `scan.truncated` before treating the result as complete, and `scan.failedDirs` to tell an incomplete scan (a directory that could not be read) from an empty one before pruning state from the listing.
 
+`walkDirectory()` accepts asynchronous `include` and `descend` callbacks through `AsyncWalkDirectoryOptions`, so a marker lookup can prune a directory before its children are read. Decisions remain serial and retain the options object as their `this` receiver; `walkDirectorySync()` and its options remain synchronous. See [Directory walking](docs/walk.md) for callback timing, JavaScript result compatibility, and error handling.
+
 For caller-controlled paths, `Root.walk()` is the root-bounded async iterator.
 It supports entry/depth budgets, in-root symlink following, cancellation, and a
 truncation marker (or typed error) when a budget is reached. Its `entryFilter`
-can return `"skip-subtree"` to prune a directory, and
-`onDirectoryError: "skip-and-report"` yields typed `"directory-error"` markers
-while preserving entries from readable subtrees.
+accepts `"include"`, `"skip"`, or `"skip-subtree"`, directly or through a Promise.
+After an awaited decision resolves, the walk rechecks cancellation and the
+current listing directory and Root identities before using it. Pending callbacks
+settle before cancellation or iterator disposal completes. Callback failures
+reject the walk. `onDirectoryError: "skip-and-report"` yields typed `"directory-error"` markers
+for directory read or identity-check failures while preserving entries from
+readable subtrees.
 
 ## Archive extraction
 

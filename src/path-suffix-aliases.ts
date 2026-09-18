@@ -17,6 +17,8 @@ export type ProbePathSuffixAliasesOptions = {
   directory: string;
   left: string;
   right: string;
+  /** Maximum relative component count; defaults to 32. */
+  maxDepth?: number;
   /** Synchronous caller policy for differing NFC pairs not equivalent under ASCII case folding. */
   shouldProbeCaseVariants?: (leftNfc: string, rightNfc: string) => boolean;
 };
@@ -27,6 +29,7 @@ const MAX_SUFFIX_DEPTH = 32;
 const MAX_MKDIR_ATTEMPTS = 128;
 const MAX_CREATED_DIRECTORIES = 64;
 const MAX_FORWARD_OBSERVATIONS = 4_096;
+const MAX_SCALED_FORWARD_OBSERVATIONS = 32_768;
 const PROBE_NAME_LENGTH = 6;
 const PROBE_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 const PROBE_FIRST_ALPHABET = "bdefghijkmoqrstuvwxyz";
@@ -47,7 +50,7 @@ function assertMutationPath(value: string): void {
   if (value.length > MAX_PATH_LENGTH) unavailable();
 }
 
-function suffixSegments(value: string): string[] {
+function suffixSegments(value: string, maxDepth: number): string[] {
   if (typeof value !== "string") throw new TypeError("suffix must be a string");
   if (value.length > MAX_SUFFIX_LENGTH) throw new RangeError("suffix exceeds 8192 code units");
   if (value.includes("\0") || path.isAbsolute(value)) {
@@ -55,7 +58,7 @@ function suffixSegments(value: string): string[] {
   }
   const windows = process.platform === "win32";
   const segments = (windows ? value.replaceAll("/", "\\") : value).split(path.sep);
-  if (segments.length > MAX_SUFFIX_DEPTH) throw new RangeError("suffix exceeds 32 components");
+  if (segments.length > maxDepth) throw new RangeError(`suffix exceeds ${maxDepth} components`);
   if (segments.some(segment => !segment || segment === "." || segment === ".." ||
       (windows && (segment.includes(":") || /^[ .]+$/u.test(segment) ||
         isWindowsReservedDeviceName(segment))))) {
@@ -163,8 +166,18 @@ class ProbeDirectories {
   private observations = 0;
   private mkdirAttempts = 0;
   private creations = 0;
+  private readonly maxObservations: number;
+  private readonly maxMkdirAttempts: number;
+  private readonly maxCreations: number;
 
-  constructor(private readonly requestedDirectory: string) {
+  constructor(private readonly requestedDirectory: string, depth: number) {
+    // The suffix-length limit bounds actual depth, so these products remain safe integers.
+    const scale = Math.max(1, depth / MAX_SUFFIX_DEPTH);
+    this.maxObservations = Math.min(
+      MAX_SCALED_FORWARD_OBSERVATIONS, MAX_FORWARD_OBSERVATIONS * scale * scale,
+    );
+    this.maxMkdirAttempts = MAX_MKDIR_ATTEMPTS * scale;
+    this.maxCreations = MAX_CREATED_DIRECTORIES * scale;
     this.observe(1);
     const canonical = realpathSync.native(pathForWindowsFilesystem(requestedDirectory));
     assertMutationPath(canonical);
@@ -174,7 +187,7 @@ class ProbeDirectories {
   }
 
   private reserveObservations(units: number): void {
-    if (this.observations + units > MAX_FORWARD_OBSERVATIONS) unavailable();
+    if (units > this.maxObservations - this.observations) unavailable();
   }
 
   private observe(units: number, cleanup = false): void {
@@ -196,7 +209,7 @@ class ProbeDirectories {
   }
 
   create(parent: ProbeDirectory, name: string): ProbeDirectory | undefined {
-    if (this.mkdirAttempts >= MAX_MKDIR_ATTEMPTS || this.creations >= MAX_CREATED_DIRECTORIES) unavailable();
+    if (this.mkdirAttempts >= this.maxMkdirAttempts || this.creations >= this.maxCreations) unavailable();
     const probePath = path.join(parent.path, name);
     assertMutationPath(probePath);
     this.assert(parent);
@@ -361,11 +374,16 @@ export function probePathSuffixAliasesSync(options: ProbePathSuffixAliasesOption
   // Preserve one-argument Windows drive-relative resolution before reentrant option getters.
   const directory = resolvePathPreservingWindowsRoot(requestedDirectory);
   if (directory.length > MAX_PATH_LENGTH) throw new RangeError("resolved directory exceeds 32768 code units");
+  const requestedMaxDepth = options.maxDepth;
+  const maxDepth = requestedMaxDepth === undefined ? MAX_SUFFIX_DEPTH : requestedMaxDepth;
+  if (!Number.isSafeInteger(maxDepth) || maxDepth < 0) {
+    throw new RangeError("maxDepth must be a non-negative safe integer");
+  }
   const leftInput = options.left;
   const rightInput = options.right;
   const predicate = options.shouldProbeCaseVariants;
-  const left = suffixSegments(leftInput);
-  const right = suffixSegments(rightInput);
+  const left = suffixSegments(leftInput, maxDepth);
+  const right = suffixSegments(rightInput, maxDepth);
   if (left.length !== right.length) throw new TypeError("suffixes must have the same component count");
   if (predicate !== undefined && typeof predicate !== "function") {
     throw new TypeError("shouldProbeCaseVariants must be a function");
@@ -390,7 +408,7 @@ export function probePathSuffixAliasesSync(options: ProbePathSuffixAliasesOption
   let observed: boolean | undefined;
   let cleaned = true;
   try {
-    observed = observeSuffixes(() => owner ??= new ProbeDirectories(directory), left, right, shouldProbe);
+    observed = observeSuffixes(() => owner ??= new ProbeDirectories(directory, left.length), left, right, shouldProbe);
     owner?.assert(owner.root);
   } catch {
     observed = undefined;

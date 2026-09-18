@@ -3,12 +3,21 @@ import {
   expectedWorkloadSemantics,
   validateFilenameFallbackProfile,
 } from "./filename-fallback-profile.mjs";
+import { validateDirectoryModeOwnerWorkloadResult } from "./directory-mode-owner.mjs";
 import { validateTempWorkspaceWorkloadResult } from "./temp-workspace-fixtures.mjs";
 import {
   validateSidecarPathSnapshotReport,
   validateSidecarPathSnapshotWorkloadResult,
 } from "./sidecar-path-snapshot.mjs";
+import {
+  validateSyncCopyFallbackAdmissionReport,
+  validateSyncCopyFallbackAdmissionWorkloadResult,
+} from "./sync-copy-fallback-admission.mjs";
 import { validateGuestBenchmarkReport } from "./guest.mjs";
+import {
+  validateCopyFallbackSuccessReport,
+  validateCopyFallbackSuccessWorkloadResult,
+} from "./copy-fallback-success.mjs";
 
 const SHA1 = /^[0-9a-f]{40}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
@@ -143,10 +152,15 @@ export function validateMeasuredDistribution(plan, reportPlan, report, expectedD
     if (semantics !== undefined) {
       assert.equal(result.workloadSemantics, semantics, `${reportPlan.file} workload semantics mismatch for ${result.name}`);
     }
+    validateDirectoryModeOwnerWorkloadResult(result);
     validateTempWorkspaceWorkloadResult(result);
     validateSidecarPathSnapshotWorkloadResult(result);
+    validateCopyFallbackSuccessWorkloadResult(result);
+    validateSyncCopyFallbackAdmissionWorkloadResult(result);
   }
   validateSidecarPathSnapshotReport(report, plan.settings.filter, plan.settings.iterations);
+  validateCopyFallbackSuccessReport(report, plan.settings.filter, plan.settings.iterations);
+  validateSyncCopyFallbackAdmissionReport(report, plan.settings.filter, plan.settings.iterations);
 }
 
 export const MEASURED_SOURCE_ARGUMENT_NAMES = Object.freeze(

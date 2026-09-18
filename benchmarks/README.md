@@ -44,6 +44,12 @@ existing mismatched, and wholly new directory chains at depths 0/4/16 with both
 durability and private-mode settings. Fixture creation, mode setup, verification,
 and cleanup remain outside timing; every POSIX row verifies the complete final
 directory chain at the requested mode.
+The `mergeExtractedTreeIntoDestination/directory-mode-owner-post-dispatch` row
+merges one empty `0555` staging directory into a missing destination. It verifies
+the distinct source mode before timing and the final directory afterward, while
+its receipt binds the public merge and supplied owner checks on both sides of
+mode dispatch. On POSIX this exercises descriptor-owned correction from private
+creation mode; Windows exercises the serialized owner's identity-only mode path.
 New-directory POSIX fixtures retain a restrictive `0077` umask during the
 timed write, so mode repair from the masked creation mode is included.
 Hash cases verify the digest as well as the byte count outside measurement.
@@ -56,6 +62,11 @@ the process umask on setup, operation, verification, and cleanup failures.
 Every row checks final mode and owner where portable, successful cleanup, and
 path absence outside timing. Depth-row reports also record the actual canonical
 root component count so runner-specific temporary path prefixes remain visible.
+The `cleanup/compatible-js-fallback` filter selects one async and one
+sync successful cleanup row in native-off mode. These rows time the guarded
+JavaScript recursive-removal path, verify `"removed"`, and bind reports to the
+compatible safety mode, native-off route, and empty-workspace fixture; setup and
+verification remain outside timing.
 The broader cases add lexical paths at depths 0/8/32, batches of 100/1,000
 paths, 1,000-entry listings and walks, private/public stores through 1 MiB with
 both durability settings, 1,000-item JSON documents and concurrent updates,
@@ -91,7 +102,20 @@ regressions above 20% or 100 us. Forced permission-error replacement cases exerc
 filesystem adapter with 128 B, 1 MiB, and 16 MiB payloads, both restoration
 policies, and both sync/async methods. Temp-file and parent syncing are disabled
 for these cases; `restore-original` still includes its required destination
-sync. Fixture reset remains outside timing.
+sync. Each row carries an immutable receipt for the public method, forced
+`EPERM` trigger, existing-file layout, restore policy, payload size, sync
+settings, and timed/untimed boundaries. Report admission requires the exact
+selected row set without skips, the divisor-adjusted iteration count, and the
+unchanged receipt. Fixture reset, result/content verification, and confirmation
+that no owned staging temp remains are outside timing.
+Two focused `replaceFileAtomicSync/sync-destination-admission/` rows time successful
+public adapter routes with hardlink rejection: an ordinary rename and a forced
+permission-error fallback with bounded original restoration. Per-invocation checks
+outside timing require the exact result, replacement bytes, no retained destination
+descriptor, and immutable destination-only `lstatSync`/`openSync`/`fstatSync`/`closeSync`
+call receipts. Both rows are portable across native modes, admit no skips, and their
+exact row set, workload receipt, and divisor-adjusted iteration count are required
+when the matching filter is selected.
 Name-collection cases cover ASCII, NFC, and decomposed paths at depths 1/8/32;
 rejected paths and store keys; 2,048-member ZIPs with shallow/deep ASCII and
 Unicode names; and long callback-output filenames. The 17 filename-sanitizer
@@ -107,7 +131,7 @@ verify outside timing that the destination content is exact, the staging file
 is gone, `.txt.part` survives truncation, and both NFC and NFD forms of the
 staging component fit within 255 bytes. Expected synchronous
 rejections use the checked per-call timing path, including during measurement.
-Borrowed-handle transfers and Root byte-copy cases cover the same payload sizes;
+Borrowed-handle, synchronous descriptor, and Root byte-copy cases cover the same payload sizes;
 the Root cases use `clone: "never"` and `durable: false` to expose transfer costs.
 Dedicated 2 MiB borrowed-handle rows measure a live non-aborted signal,
 observer, mutation-authority, and combined callback costs over at least four

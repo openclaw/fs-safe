@@ -22,7 +22,7 @@ function bindHandle(handle: FileHandle, overrides: Partial<FileHandle>): FileHan
 }
 
 describe("copy fallback cleanup failures", () => {
-  it("does not let best-effort close and source cleanup failures overturn a successful copy", async () => {
+  it("does not let close receipt failures overturn an explicitly synchronized copy", async () => {
     const root = await tempRoot("fs-safe-copy-cleanup-");
     const asyncSource = path.join(root, "async-source");
     const asyncDest = path.join(root, "async-dest");
@@ -37,10 +37,6 @@ describe("copy fallback cleanup failures", () => {
             throw new Error("close receipt lost");
           },
         });
-      },
-      async unlink(candidate: fs.PathLike) {
-        await fs.unlink(candidate);
-        throw new Error("unlink receipt lost");
       },
     };
     await expect(copyFallbackReplace({
@@ -60,10 +56,6 @@ describe("copy fallback cleanup failures", () => {
       closeSync(fd: number) {
         fsSync.closeSync(fd);
         throw new Error("close receipt lost");
-      },
-      unlinkSync(candidate: fsSync.PathLike) {
-        fsSync.unlinkSync(candidate);
-        throw new Error("unlink receipt lost");
       },
     };
     expect(copyFallbackReplaceSync({

@@ -5,6 +5,8 @@ import {
   registerRootWriteMutationAdmission,
   registerSharedMutationAdmission,
 } from "./shared-mutation-admission.mjs";
+import { registerCopyFallbackSuccess } from "./copy-fallback-success.mjs";
+import { registerSyncCopyFallbackAdmission } from "./sync-copy-fallback-admission.mjs";
 
 async function settledValues(pending) {
   const results = await Promise.allSettled(pending);
@@ -32,32 +34,8 @@ export async function registerScaling({ api: a, workspace: w, register: add, onC
   }
   registerRootWriteMutationAdmission({ root, workspace: w, register: add });
   registerSharedMutationAdmission({ root, workspace: w, register: add });
-
-  const renameDenied = () => { throw Object.assign(new Error("benchmark forces copy fallback"), { code: "EPERM" }); };
-  const asyncFs = { promises: { ...fs.promises, rename: async () => renameDenied() } };
-  const syncFs = { ...fs, renameSync: renameDenied };
-  const dest = path.join(w, "fallback-output");
-  for (const size of [128, 1024 * 1024, 16 * 1024 * 1024]) {
-    const original = Buffer.alloc(size, 0xa5), content = Buffer.alloc(size, 0x5a);
-    for (const restore of ["none", "restore-original"]) {
-      for (const sync of [false, true]) {
-        const name = sync ? "replaceFileAtomicSync" : "replaceFileAtomic";
-        add(`${name}/copy-fallback/${restore}/${size}`, () => a[name]({
-          filePath: dest, content, fileSystem: sync ? syncFs : asyncFs,
-          copyFallbackOnPermissionError: true, copyFallbackRestore: restore,
-          maxRestoreBytes: restore === "restore-original" ? size : undefined,
-          syncTempFile: false, syncParentDir: false,
-        }), {
-          sync, divisor: 100,
-          before: () => fs.writeFileSync(dest, original, { mode: 0o600 }),
-          verify: result => {
-            assert.equal(result.method, "copy-fallback");
-            assert.ok(fs.readFileSync(dest).equals(content));
-          },
-        });
-      }
-    }
-  }
+  registerCopyFallbackSuccess({ api: a, workspace: w, register: add });
+  registerSyncCopyFallbackAdmission({ api: a, workspace: w, register: add });
 
   for (const count of [0, 32, 128]) {
     const key = `scaling:${w}:${count}`, manager = a.createFileLockManager(key);

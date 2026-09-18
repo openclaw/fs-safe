@@ -2,7 +2,7 @@
 // public subpaths; prefer root/json/store/temp/archive unless you are building a
 // higher-level primitive.
 export { createAsyncLock } from "./async-lock.js";
-export { copyFileHandle, type CopyFileHandleOptions } from "./file-handle-transfer.js";
+export { copyFileHandle, copyFileDescriptorSync, type CopyFileHandleOptions } from "./file-handle-transfer.js";
 export { overwriteFileHandle, type OverwriteFileHandleOptions } from "./overwrite-file-handle.js";
 export { probePathCaseInsensitiveSync, type ProbePathCaseOptions } from "./path-case.js";
 export { resolvePathPrefixSync, type ResolvedPathPrefix } from "./path-prefix.js";

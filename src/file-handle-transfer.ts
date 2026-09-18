@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import { normalizeMaxBytes } from "./byte-budget.js";
 import { FsSafeError } from "./errors.js";
@@ -7,7 +8,7 @@ import {
   rethrowMutationAuthorityError,
 } from "./mutation-authority.js";
 import { writeAllToFile } from "./write-file-handle.js";
-import { inspectFileIdentity } from "./strict-file-identity.js";
+import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 
 export type CopyFileHandleOptions = {
   maxBytes?: number;
@@ -17,6 +18,62 @@ export type CopyFileHandleOptions = {
 };
 
 const NO_CALLBACK_ARGUMENTS = Object.freeze([]);
+
+function createTransferBuffer(sizeHint: number, limit: number): Buffer {
+  return Buffer.allocUnsafe(Math.min(512 * 1024, Math.max(64 * 1024, sizeHint), limit + 1));
+}
+
+/** Copies caller-owned regular-file descriptors without moving either cursor. */
+export function copyFileDescriptorSync(
+  sourceFd: number,
+  targetFd: number,
+  options: CopyFileHandleOptions = {},
+): number {
+  const signal = options.signal;
+  signal?.throwIfAborted();
+  const maxBytes = normalizeMaxBytes(options.maxBytes);
+  const onChunk = options.onChunk;
+  const assertBeforeMutation = options.assertBeforeMutation;
+  const sourceStat = inspectFileIdentitySync(() => {
+    signal?.throwIfAborted();
+    return fs.fstatSync(sourceFd, { bigint: true });
+  });
+  if (!sourceStat.isFile()) throw new FsSafeError("not-file", "copy source descriptor must be a regular file");
+  if (maxBytes !== undefined && Number.isFinite(maxBytes) && sourceStat.size > BigInt(maxBytes)) {
+    throw new FsSafeError("too-large", `file exceeds limit of ${maxBytes} bytes`);
+  }
+  const targetStat = inspectFileIdentitySync(() => {
+    signal?.throwIfAborted();
+    return fs.fstatSync(targetFd, { bigint: true });
+  });
+  if (!targetStat.isFile()) throw new FsSafeError("not-file", "copy target descriptor must be a regular file");
+  if (sourceStat.dev === targetStat.dev && sourceStat.ino === targetStat.ino) {
+    throw new FsSafeError("path-alias", "copy source and target descriptors refer to the same file");
+  }
+  const limit = maxBytes ?? Infinity;
+  const buffer = createTransferBuffer(Number(sourceStat.size), limit);
+  let position = 0;
+  while (true) {
+    signal?.throwIfAborted();
+    const bytesRead = fs.readSync(sourceFd, buffer, 0, Math.min(buffer.length, limit - position + 1), position);
+    if (bytesRead > limit - position) {
+      throw new FsSafeError("too-large", `file exceeds limit of ${limit} bytes`);
+    }
+    if (bytesRead === 0) return position;
+    const chunk = buffer.subarray(0, bytesRead);
+    assertSynchronousCallbackResult(onChunk?.(chunk), "onChunk");
+    let offset = 0;
+    while (offset < bytesRead) {
+      signal?.throwIfAborted();
+      assertSynchronousCallbackResult(assertBeforeMutation?.(), "assertBeforeMutation");
+      signal?.throwIfAborted();
+      const written = fs.writeSync(targetFd, chunk, offset, bytesRead - offset, position + offset);
+      if (written <= 0) throw new FsSafeError("helper-failed", "file write made no progress");
+      offset += written;
+    }
+    position += bytesRead;
+  }
+}
 
 function defineReceiverValue(
   receiver: Record<PropertyKey, unknown>,
@@ -156,7 +213,7 @@ async function transferFileHandleCore(
   callbackThis: unknown,
 ): Promise<number> {
   const limit = maxBytes ?? Infinity;
-  const buffer = Buffer.allocUnsafe(Math.min(512 * 1024, Math.max(64 * 1024, sizeHint), limit + 1));
+  const buffer = createTransferBuffer(sizeHint, limit);
   let position = 0;
   while (true) {
     signal?.throwIfAborted();

@@ -137,6 +137,37 @@ descriptor inspection does not prove that the source remained unchanged while
 copying. Keep existing source-fingerprint and publication checks around the
 transfer when building snapshot operations.
 
+### Synchronous descriptor transfers
+
+`copyFileDescriptorSync(sourceFd, targetFd, options?)` provides the same
+zero-origin byte transfer for borrowed numeric descriptors. It shares
+`CopyFileHandleOptions` and returns the copied byte count synchronously:
+
+```ts
+import { copyFileDescriptorSync } from "@openclaw/fs-safe/advanced";
+
+const bytes = copyFileDescriptorSync(sourceFd, targetFd, {
+  maxBytes: expectedSize,
+  assertBeforeMutation: assertSnapshotOwnerCurrent,
+});
+```
+
+The same regular-file and exact-identity admission, byte limits, short-I/O
+handling, cursor preservation, and caller-owned cleanup apply. The target must
+be opened without append mode, and both descriptors must remain open and free
+of concurrent I/O, including inside callbacks. Neither helper makes a mutable
+source into a consistent snapshot or truncates an existing destination suffix.
+
+The synchronous helper snapshots the four options once and invokes both
+callbacks with no receiver (`this` is `undefined` in strict callbacks).
+`onChunk` receives a borrowed view that must be consumed immediately without
+retaining or mutating it. Both callbacks must finish synchronously; thenables
+throw `TypeError` before the current write. Cancellation is cooperative: a
+pre-aborted signal or an abort triggered by a callback stops the transfer before
+the next write. Timers cannot interrupt synchronous filesystem calls while the
+event loop is blocked. Authority runs before every partial write; an abort
+triggered by that assertion prevents the same write.
+
 ## Ownership and cancellation
 
 These are low-level operations on caller-owned absolute paths, not Root-relative methods. The source and destination parent must be real directories. The library pins their descriptors and verifies their identities; it does not establish the caller's authorization to use them. Keep the source immutable for the operation, including writes through other aliases, and keep the destination namespace under the caller's control. Literal symlinks in the cloned contents are preserved rather than followed or sanitized.

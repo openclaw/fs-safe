@@ -41,6 +41,19 @@ const OPEN_READ_WRITE_FLAGS = syncFs.constants.O_RDWR | NOFOLLOW;
 const OPEN_WRITE_EXCLUSIVE_FLAGS =
   syncFs.constants.O_WRONLY | syncFs.constants.O_CREAT | syncFs.constants.O_EXCL | NOFOLLOW;
 
+function closeSyncAfterAdmissionFailure(
+  fsModule: Pick<SyncFallbackFs, "closeSync">,
+  fd: number,
+  error: unknown,
+): never {
+  try {
+    fsModule.closeSync(fd);
+  } catch {
+    // Preserve the already-selected admission failure.
+  }
+  throw error;
+}
+
 function notFound(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === "ENOENT";
 }
@@ -116,8 +129,7 @@ function openPinnedDestinationSync(
     assertPinnedDestination(fsModule.lstatSync(dest), opened, dest, hardlinks);
     return { fd, stat: opened };
   } catch (error) {
-    fsModule.closeSync(fd);
-    throw error;
+    closeSyncAfterAdmissionFailure(fsModule, fd, error);
   }
 }
 
@@ -176,9 +188,10 @@ export function assertDestinationHardlinkPolicySync(
     if (opened.nlink > 1) {
       throw new FsSafeError("hardlink", `Hardlinked atomic replace destination not allowed: ${dest}`);
     }
-  } finally {
-    fsModule.closeSync(fd);
+  } catch (error) {
+    closeSyncAfterAdmissionFailure(fsModule, fd, error);
   }
+  fsModule.closeSync(fd);
 }
 
 function restoreReadOptions(stat: Stats, maxBytes: number) {
@@ -323,6 +336,8 @@ export async function copyFallbackReplace(params: {
   });
   const { replacement } = source;
   let destHandle: FileHandle | null = null;
+  let operationSucceeded = false;
+  let closeRequiredForSuccess = false;
   try {
     if (params.restore === "restore-original") {
       const pinned = await openPinnedDestination(
@@ -366,14 +381,24 @@ export async function copyFallbackReplace(params: {
         OPEN_WRITE_EXCLUSIVE_FLAGS,
         source.mode & 0o777,
       );
+      closeRequiredForSuccess = !params.sync;
       await destHandle.writeFile(replacement);
       await destHandle.chmod(source.mode);
       if (params.sync) {
         await destHandle.sync();
       }
     }
+    operationSucceeded = true;
   } finally {
-    await destHandle?.close().catch(() => undefined);
+    if (destHandle) {
+      try {
+        await destHandle.close();
+      } catch (closeError) {
+        if (operationSucceeded && closeRequiredForSuccess) {
+          throw closeError;
+        }
+      }
+    }
   }
 }
 
@@ -395,6 +420,8 @@ export function copyFallbackReplaceSync(params: {
   });
   const { replacement } = source;
   let destFd: number | undefined;
+  let operationSucceeded = false;
+  let closeRequiredForSuccess = false;
   try {
     if (params.restore === "restore-original") {
       const pinned = openPinnedDestinationSync(
@@ -438,18 +465,22 @@ export function copyFallbackReplaceSync(params: {
         OPEN_WRITE_EXCLUSIVE_FLAGS,
         source.mode & 0o777,
       );
+      closeRequiredForSuccess = !params.sync;
       writeAllSync(params.fsModule, destFd, replacement);
       params.fchmodSync?.(destFd, source.mode);
       if (params.sync) {
         params.fsModule.fsyncSync(destFd);
       }
     }
+    operationSucceeded = true;
   } finally {
     if (destFd !== undefined) {
       try {
         params.fsModule.closeSync(destFd);
-      } catch {
-        // Best-effort close after fallback replacement.
+      } catch (closeError) {
+        if (operationSucceeded && closeRequiredForSuccess) {
+          throw closeError;
+        }
       }
     }
   }
