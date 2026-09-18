@@ -130,6 +130,23 @@ fs.mkdir(rel, options?)                  // mkdir -p (creates missing parents)
 fs.ensureRoot(options?)                  // accepts "" / "." as the root itself
 ```
 
+`mkdir`, `ensureRoot`, `create`, and `createJson` accept `private: true`.
+Missing directories are created with private permissions, and an existing
+requested directory must already be private. Existing ancestors are not
+chmodded or assigned new ACLs. Private files use owner-only POSIX permissions
+or a protected Windows DACL granting access to the current user, System, and
+Administrators. On macOS, private directories and files must also have no ACL;
+creation rejects relevant inheritable parent ACLs, while noninheriting parent
+ACLs remain allowed. A native helper with `inspectDarwinAcl` is required. Native
+`off`, a missing helper, or an older helper without that capability rejects with
+`helper-unavailable` before creating parents or stages. See [creation](creation.md)
+for platform support, synchronous leaf creation, and failure handling.
+
+```ts
+await fs.mkdir("private-data", { private: true });
+await fs.create("private-data/credential", "synthetic credential", { private: true });
+```
+
 `write`, `create`, `append`, `writeJson`, and `createJson` accept `mode?: number`; use `0o600` for credentials and other private state. `writeJson` also accepts the same options as `JSON.stringify` plus `trailingNewline?: boolean` (defaults `true` so the file ends in `\n`).
 
 Buffered `create` and `createJson` also accept `atomic?: boolean`. With `true`,

@@ -9,6 +9,7 @@ import {
 import { registerSecureTempRootCoverage } from "./secure-temp-root-fixtures.mjs";
 import { registerSidecarPathSnapshot } from "./sidecar-path-snapshot.mjs";
 import { registerAtomicTempSettlementCoverage } from "./atomic-temp-settlement.mjs";
+import { registerCreation } from "./creation.mjs";
 import {
   PROBE_TREE_SUCCESS_WORKLOAD,
   probeTreeSuccessFixtureReceipt,
@@ -35,6 +36,7 @@ export async function registerCloneMetadata({ api: a, workspace: w, cloneBackend
 }
 
 export async function registerLifecycle({ api: a, workspace: w, native, binding, register: add, contract, onCleanup, args }) {
+  registerCreation({ api: a, workspace: w, register: add, contract });
   const cloneBackend = a.probeTreeClone(w);
   add("probeTreeClone", () => a.probeTreeClone(w), {
     sync: true,

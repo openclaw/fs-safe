@@ -1,7 +1,10 @@
 import { syncFileBestEffort } from "./file-sync.js";
+import { assertDarwinCreationAcl, privateFileMutationAssertion } from "./creation-darwin.js";
 import fsSync, { type BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createFileHandle } from "./create.js";
+import { creationAdmissionFromParent } from "./creation-path.js";
 import { normalizeMaxBytes } from "./byte-budget.js";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, createNearestExistingDirectoryGuard, inspectDirectoryIdentity, type AsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
@@ -299,6 +302,11 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
       [parentGuard],
       async () => {
         assertBeforeMutation();
+        if (params.private) {
+          return await createFileHandle(targetPath, {
+            private: true, mode: 0o600, assertBeforeMutation,
+          }, creationAdmissionFromParent(parentGuard));
+        }
         return await fs.open(
           targetPath,
           fsSync.constants.O_WRONLY | fsSync.constants.O_CREAT | fsSync.constants.O_EXCL,
@@ -318,7 +326,9 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
     try {
       const verificationIdentity = fsSync.fstatSync(handle.fd, { bigint: true });
       createdIdentity = verificationIdentity;
-      await writePinnedInput(handle, params.input, params.maxBytes, assertBeforeMutation);
+      await writePinnedInput(handle, params.input, params.maxBytes, params.private
+        ? privateFileMutationAssertion(handle.fd, assertBeforeMutation) : assertBeforeMutation);
+      if (params.private) assertDarwinCreationAcl(handle.fd);
       // Content writes may clear set-ID bits; finalize them through the owned fd.
       await handle.chmod(params.mode);
       if (params.sync !== false) {

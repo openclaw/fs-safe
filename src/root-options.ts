@@ -66,6 +66,7 @@ export type RootWriteJsonOptions = RootWriteOptions & {
 export type RootCreateOptions = Omit<RootWriteOptions, "overwrite" | "durable"> & {
   /** Publish complete content without replacing an existing entry, including without native support. */
   atomic?: boolean;
+  private?: boolean;
   /** "file" requires file synchronization; directory synchronization remains best effort. */
   durable?: boolean | "file";
 };
@@ -73,7 +74,7 @@ export type RootCreateStreamOptions = Omit<RootCreateOptions, "atomic" | "encodi
   maxBytes?: number;
   signal?: AbortSignal;
 };
-export type RootCreateJsonOptions = Omit<RootWriteJsonOptions, "overwrite" | "durable"> & Pick<RootCreateOptions, "atomic" | "durable">;
+export type RootCreateJsonOptions = Omit<RootWriteJsonOptions, "overwrite" | "durable"> & Pick<RootCreateOptions, "atomic" | "durable" | "private">;
 
 export type RootAppendOptions = RootWriteOptions & {
   prependNewlineIfNeeded?: boolean;
@@ -91,7 +92,9 @@ export type RootRemoveOptions = Pick<RootDefaults, "assertBeforeMutation" | "den
   maxDepth?: number;
   signal?: AbortSignal;
 };
-export type RootMkdirOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks">;
+export type RootMkdirOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks"> & {
+  private?: boolean;
+};
 
 export type RootReadParams = Omit<RootReadOptions, "nonBlockingRead">;
 

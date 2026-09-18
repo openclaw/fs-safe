@@ -46,6 +46,12 @@ pub struct WindowsSecurityFacts {
     pub aces: Vec<WindowsAccessControlEntry>,
 }
 
+#[napi(object)]
+#[derive(Debug)]
+pub struct WindowsIdentityReceipt {
+    pub identity: String,
+}
+
 #[cfg(any(windows, test))]
 fn ace_flags(raw: u8) -> WindowsAceFlags {
     WindowsAceFlags {
@@ -81,6 +87,124 @@ pub fn create_private_directory(env: Env, path: String) -> Result<()> {
     }
 }
 
+#[napi(js_name = "inspectWindowsDirectory")]
+pub fn inspect_windows_directory(
+    env: Env,
+    path: String,
+    require_private: bool,
+) -> Result<WindowsIdentityReceipt> {
+    #[cfg(windows)]
+    return into_napi(
+        env,
+        validate_windows_filesystem_path(&path)
+            .and_then(|()| windows::inspect_directory(&path, require_private)),
+    );
+    #[cfg(not(windows))]
+    {
+        let _ = (path, require_private);
+        into_napi(
+            env,
+            Err(native_error(
+                "ENOTSUP",
+                "Windows directory inspection is only available on Windows",
+            )),
+        )
+    }
+}
+
+#[napi(js_name = "createPrivateDirectoryWithParentIdentity")]
+pub fn create_private_directory_with_parent_identity(
+    env: Env,
+    path: String,
+    expected_parent_identity: String,
+) -> Result<WindowsIdentityReceipt> {
+    #[cfg(windows)]
+    return into_napi(
+        env,
+        validate_windows_filesystem_path(&path).and_then(|()| {
+            windows::create_private_directory_with_parent_identity(&path, &expected_parent_identity)
+        }),
+    );
+    #[cfg(not(windows))]
+    {
+        let _ = (path, expected_parent_identity);
+        into_napi(
+            env,
+            Err(native_error(
+                "ENOTSUP",
+                "private Windows directories are only available on Windows",
+            )),
+        )
+    }
+}
+
+#[napi(js_name = "protectPrivateWindowsFile")]
+pub fn protect_private_windows_file(
+    env: Env,
+    fd: i32,
+    path: String,
+    expected_parent_identity: String,
+) -> Result<WindowsIdentityReceipt> {
+    #[cfg(windows)]
+    return into_napi(
+        env,
+        validate_windows_filesystem_path(&path)
+            .and_then(|()| windows::protect_private_file(fd, &path, &expected_parent_identity)),
+    );
+    #[cfg(not(windows))]
+    {
+        let _ = (fd, path, expected_parent_identity);
+        into_napi(
+            env,
+            Err(native_error(
+                "ENOTSUP",
+                "private Windows file protection is only available on Windows",
+            )),
+        )
+    }
+}
+
+#[napi(js_name = "verifyPrivateWindowsFile")]
+pub fn verify_private_windows_file(
+    env: Env,
+    fd: i32,
+    path: String,
+    expected_file_identity: String,
+    expected_parent_identity: String,
+    expected_links: u32,
+) -> Result<()> {
+    #[cfg(windows)]
+    return into_napi(
+        env,
+        validate_windows_filesystem_path(&path).and_then(|()| {
+            windows::verify_private_file(
+                fd,
+                &path,
+                &expected_file_identity,
+                &expected_parent_identity,
+                expected_links,
+            )
+        }),
+    );
+    #[cfg(not(windows))]
+    {
+        let _ = (
+            fd,
+            path,
+            expected_file_identity,
+            expected_parent_identity,
+            expected_links,
+        );
+        into_napi(
+            env,
+            Err(native_error(
+                "ENOTSUP",
+                "private Windows file verification is only available on Windows",
+            )),
+        )
+    }
+}
+
 #[napi(js_name = "readOwnerAndDacl")]
 pub fn read_owner_and_dacl(env: Env, path: String) -> Result<WindowsSecurityFacts> {
     #[cfg(windows)]
@@ -110,40 +234,42 @@ mod windows {
     use std::ptr::{null, null_mut};
 
     use windows_sys::Win32::Foundation::{
-        CloseHandle, ERROR_INSUFFICIENT_BUFFER, GetLastError, HANDLE,
-        LocalFree,
+        CloseHandle, ERROR_INSUFFICIENT_BUFFER, GetLastError, HANDLE, LocalFree,
     };
     use windows_sys::Win32::Security::Authorization::{
         ConvertSidToStringSidW, EXPLICIT_ACCESS_W, GRANT_ACCESS, GetSecurityInfo, SE_FILE_OBJECT,
-        SetEntriesInAclW, TRUSTEE_IS_SID, TRUSTEE_IS_UNKNOWN,
+        SetEntriesInAclW, SetSecurityInfo, TRUSTEE_IS_SID, TRUSTEE_IS_UNKNOWN,
     };
     use windows_sys::Win32::Security::{
         ACCESS_ALLOWED_ACE, ACCESS_DENIED_ACE, ACE_HEADER, ACL, CONTAINER_INHERIT_ACE,
         CreateWellKnownSid, DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetLengthSid,
         GetSecurityDescriptorControl, GetTokenInformation, InitializeSecurityDescriptor,
-        IsValidSid, IsWellKnownSid, OBJECT_INHERIT_ACE, OWNER_SECURITY_INFORMATION, PSID,
-        SE_DACL_PRESENT, SE_DACL_PROTECTED, SECURITY_DESCRIPTOR, SECURITY_MAX_SID_SIZE,
-        SetSecurityDescriptorControl, SetSecurityDescriptorDacl, SetSecurityDescriptorOwner,
-        TOKEN_QUERY, TOKEN_USER, TokenUser, WinAnonymousSid, WinAuthenticatedUserSid,
-        WinBuiltinAdministratorsSid, WinBuiltinGuestsSid, WinBuiltinUsersSid, WinInteractiveSid,
-        WinLocalSystemSid, WinNetworkSid, WinWorldSid,
+        IsValidSid, IsWellKnownSid, OBJECT_INHERIT_ACE, OWNER_SECURITY_INFORMATION,
+        PROTECTED_DACL_SECURITY_INFORMATION, PSID, SE_DACL_PRESENT, SE_DACL_PROTECTED,
+        SECURITY_DESCRIPTOR, SECURITY_MAX_SID_SIZE, SetSecurityDescriptorControl,
+        SetSecurityDescriptorDacl, SetSecurityDescriptorOwner, TOKEN_QUERY, TOKEN_USER, TokenUser,
+        WinAnonymousSid, WinAuthenticatedUserSid, WinBuiltinAdministratorsSid, WinBuiltinGuestsSid,
+        WinBuiltinUsersSid, WinInteractiveSid, WinLocalSystemSid, WinNetworkSid, WinWorldSid,
     };
     use windows_sys::Win32::Storage::FileSystem::{
-        FILE_ADD_SUBDIRECTORY, FILE_ALL_ACCESS, FILE_ATTRIBUTE_DIRECTORY,
-        FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS,
-        FILE_FLAG_OPEN_REPARSE_POINT, FILE_NAME_OPENED, FILE_READ_ATTRIBUTES,
-        FILE_TRAVERSE, GetFinalPathNameByHandleW,
+        BY_HANDLE_FILE_INFORMATION, FILE_ADD_SUBDIRECTORY, FILE_ALL_ACCESS,
+        FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS,
+        FILE_FLAG_OPEN_REPARSE_POINT, FILE_NAME_OPENED, FILE_READ_ATTRIBUTES, FILE_TRAVERSE,
+        FILE_TYPE_DISK, GetFileInformationByHandle, GetFileType, GetFinalPathNameByHandleW,
         VOLUME_NAME_GUID,
     };
     use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
-    use super::{WindowsAccessControlEntry, WindowsSecurityFacts, ace_flags};
+    use super::{
+        WindowsAccessControlEntry, WindowsIdentityReceipt, WindowsSecurityFacts, ace_flags,
+    };
     use crate::{
         NativeResult, native_error,
         windows::{
-            HandleFileIdentity, OwnedHandle, handle_attributes, handle_file_identity,
-            mark_handle_for_deletion, nt_create_directory_relative, open_existing_handle,
+            HandleFileIdentity, OwnedHandle, duplicate_handle, handle_attributes,
+            handle_file_identity, mark_handle_for_deletion, nt_create_directory_relative,
+            open_existing_handle, root_handle,
         },
     };
 
@@ -248,7 +374,7 @@ mod windows {
 
     #[derive(Clone, Copy, Debug)]
     struct HandleSecurityInspection {
-        owner_is_current: bool,
+        owner_class: OwnerClass,
         dacl_protected: bool,
         dacl_present: bool,
         is_local: bool,
@@ -256,6 +382,7 @@ mod windows {
         unsupported_ace_seen: bool,
         untrusted_readable: bool,
         untrusted_writable: bool,
+        untrusted_child_access: bool,
     }
 
     fn current_user_sid() -> NativeResult<TokenSid> {
@@ -354,10 +481,7 @@ mod windows {
             != 0
     }
 
-    fn parse_basic_ace(
-        raw: *mut c_void,
-        header: &ACE_HEADER,
-    ) -> NativeResult<Option<BasicAce>> {
+    fn parse_basic_ace(raw: *mut c_void, header: &ACE_HEADER) -> NativeResult<Option<BasicAce>> {
         let sid_offset = std::mem::offset_of!(ACCESS_ALLOWED_ACE, SidStart);
         if (header.AceSize as usize) < sid_offset + 8 {
             return Ok(None);
@@ -421,7 +545,10 @@ mod windows {
         if path.encode_utf16().any(|unit| unit == 0) {
             return Err(native_error("EINVAL", "Windows path contains a NUL byte"));
         }
-        for component in path.split(['/', '\\']).filter(|component| !component.is_empty()) {
+        for component in path
+            .split(['/', '\\'])
+            .filter(|component| !component.is_empty())
+        {
             if component.ends_with([' ', '.']) {
                 return Err(native_error(
                     "EINVAL",
@@ -537,7 +664,10 @@ mod windows {
                 &mut stack
             } else {
                 if capacity > MAX_FINAL_PATH_WCHARS {
-                    return Err(native_error("ENAMETOOLONG", "final Windows path is too long"));
+                    return Err(native_error(
+                        "ENAMETOOLONG",
+                        "final Windows path is too long",
+                    ));
                 }
                 heap.try_reserve_exact(capacity.saturating_sub(heap.len()))
                     .map_err(|_| native_error("ENOMEM", "allocate final Windows path buffer"))?;
@@ -546,7 +676,10 @@ mod windows {
             };
             let written = query(handle, buffer)?;
             if written == 0 {
-                return Err(native_error("EIO", "final Windows path query returned zero"));
+                return Err(native_error(
+                    "EIO",
+                    "final Windows path query returned zero",
+                ));
             }
             if written < buffer.len() {
                 return Ok(String::from_utf16_lossy(&buffer[..written]));
@@ -560,7 +693,10 @@ mod windows {
                     .ok_or_else(|| native_error("ENAMETOOLONG", "final Windows path is too long"))?
             };
             if capacity > MAX_FINAL_PATH_WCHARS {
-                return Err(native_error("ENAMETOOLONG", "final Windows path is too long"));
+                return Err(native_error(
+                    "ENAMETOOLONG",
+                    "final Windows path is too long",
+                ));
             }
         }
         Err(native_error(
@@ -683,12 +819,7 @@ mod windows {
             },
             |handle, buffer| {
                 let written = unsafe {
-                    GetFinalPathNameByHandleW(
-                        handle,
-                        buffer.as_mut_ptr(),
-                        buffer.len() as u32,
-                        0,
-                    )
+                    GetFinalPathNameByHandleW(handle, buffer.as_mut_ptr(), buffer.len() as u32, 0)
                 };
                 if written == 0 {
                     return Err(win_error(unsafe { GetLastError() }, "resolve final path"));
@@ -758,7 +889,7 @@ mod windows {
                 OwnerClass::Foreign
             };
             let mut inspection = HandleSecurityInspection {
-                owner_is_current: owner_class == OwnerClass::CurrentUser,
+                owner_class,
                 dacl_protected: control & SE_DACL_PROTECTED != 0,
                 dacl_present: control & SE_DACL_PRESENT != 0 && !dacl.is_null(),
                 is_local: local,
@@ -767,6 +898,7 @@ mod windows {
                 // An absent or null DACL grants unrestricted access.
                 untrusted_readable: dacl.is_null(),
                 untrusted_writable: dacl.is_null(),
+                untrusted_child_access: dacl.is_null(),
             };
             // Public reporting and private admission share the same ACE walk.
             // Private admission leaves this absent and compares binary SIDs
@@ -817,9 +949,7 @@ mod windows {
                     if let Some(facts) = report.as_mut() {
                         facts.aces.push(public_ace(entry)?);
                     }
-                    if entry.flags & INHERIT_ONLY_ACE_FLAG != 0
-                        || entry.ace_type == ACCESS_DENIED_ACE_TYPE
-                    {
+                    if entry.ace_type == ACCESS_DENIED_ACE_TYPE {
                         continue;
                     }
                     let trusted = unsafe { EqualSid(entry.sid, current.sid) } != 0
@@ -830,6 +960,12 @@ mod windows {
                     }
                     let readable = can_read(mask);
                     let writable = can_write(mask);
+                    if entry.flags & (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE) as u8 != 0 {
+                        inspection.untrusted_child_access |= readable || writable;
+                    }
+                    if entry.flags & INHERIT_ONLY_ACE_FLAG != 0 {
+                        continue;
+                    }
                     inspection.untrusted_readable |= readable;
                     inspection.untrusted_writable |= writable;
                     if let Some(facts) = report.as_mut() {
@@ -897,6 +1033,22 @@ mod windows {
     where
         FinalLocality: FnMut(HANDLE) -> NativeResult<bool>,
     {
+        verify_private_parent_association(parent_path, parent, parent_identity)?;
+        let named = open_private_directory_path(path)?;
+        if final_private_directory_identity(named.0, final_locality)? != created_identity {
+            return Err(native_error(
+                "EIO",
+                "private directory named association changed during validation",
+            ));
+        }
+        Ok(())
+    }
+
+    fn verify_private_parent_association(
+        parent_path: &Path,
+        parent: &OwnedHandle,
+        parent_identity: HandleFileIdentity,
+    ) -> NativeResult<()> {
         if handle_file_identity(parent.0)? != parent_identity {
             return Err(native_error(
                 "EIO",
@@ -913,14 +1065,250 @@ mod windows {
                 "private directory parent changed during validation",
             ));
         }
-        let named = open_private_directory_path(path)?;
-        if final_private_directory_identity(named.0, final_locality)? != created_identity {
+        Ok(())
+    }
+
+    fn validate_full_identity(identity: &str) -> NativeResult<()> {
+        if identity.len() != 49
+            || !identity.bytes().enumerate().all(|(index, byte)| {
+                if index == 16 {
+                    byte == b':'
+                } else {
+                    byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                }
+            })
+        {
             return Err(native_error(
-                "EIO",
-                "private directory named association changed during validation",
+                "EINVAL",
+                "full Windows file identity is invalid",
             ));
         }
         Ok(())
+    }
+
+    pub fn inspect_directory(
+        path: &str,
+        require_private: bool,
+    ) -> NativeResult<WindowsIdentityReceipt> {
+        let access =
+            PRIVATE_PARENT_METADATA_ACCESS | if require_private { READ_CONTROL } else { 0 };
+        let (directory, identity) = open_private_directory_parent(Path::new(path), access)?;
+        if require_private {
+            let current = current_user_sid()?;
+            let inspection = read_owner_and_dacl_handle(directory.0, &current)?;
+            validate_private_directory_facts(&inspection)?;
+            if inspection.untrusted_child_access {
+                return Err(native_error(
+                    "EACCES",
+                    "private directory permits untrusted child access",
+                ));
+            }
+        }
+        Ok(WindowsIdentityReceipt {
+            identity: identity.to_string(),
+        })
+    }
+
+    fn private_file_identity(
+        handle: HANDLE,
+        expected_links: u32,
+    ) -> NativeResult<HandleFileIdentity> {
+        let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { zeroed() };
+        if unsafe { GetFileInformationByHandle(handle, &mut info) } == 0 {
+            return Err(win_error(unsafe { GetLastError() }, "inspect private file"));
+        }
+        if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(native_error(
+                "ELOOP",
+                "private file must not be a reparse point",
+            ));
+        }
+        if info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0
+            || unsafe { GetFileType(handle) } != FILE_TYPE_DISK
+        {
+            return Err(native_error(
+                "EINVAL",
+                "private file must be a regular disk file",
+            ));
+        }
+        if info.nNumberOfLinks != expected_links {
+            return Err(native_error("EIO", "private file link count changed"));
+        }
+        handle_file_identity(handle)
+    }
+
+    fn verify_private_file_association(
+        handle: HANDLE,
+        path: &str,
+        identity: HandleFileIdentity,
+        expected_links: u32,
+        parent_path: &Path,
+        parent: &OwnedHandle,
+        parent_identity: HandleFileIdentity,
+    ) -> NativeResult<()> {
+        if private_file_identity(handle, expected_links)? != identity {
+            return Err(native_error("EIO", "retained private file changed"));
+        }
+        let named = open_existing_handle(
+            &wide(path)?,
+            FILE_READ_ATTRIBUTES,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            |code| win_error(code, "open private file through its public path"),
+        )?;
+        if private_file_identity(named.0, expected_links)? != identity {
+            return Err(native_error("EIO", "private file pathname changed"));
+        }
+        verify_private_parent_association(parent_path, parent, parent_identity)
+    }
+
+    #[derive(Clone, Copy)]
+    enum PrivateFileOperation<'a> {
+        Protect,
+        Verify { identity: &'a str, links: u32 },
+    }
+
+    fn private_file_with_handle(
+        handle: HANDLE,
+        path: &str,
+        expected_parent_identity: &str,
+        operation: PrivateFileOperation<'_>,
+    ) -> NativeResult<WindowsIdentityReceipt> {
+        validate_full_identity(expected_parent_identity)?;
+        let links = match operation {
+            PrivateFileOperation::Protect => 1,
+            PrivateFileOperation::Verify { identity, links } => {
+                validate_full_identity(identity)?;
+                if links == 0 {
+                    return Err(native_error(
+                        "EINVAL",
+                        "private file expected link count is invalid",
+                    ));
+                }
+                links
+            }
+        };
+        let identity = private_file_identity(handle, links)?;
+        if let PrivateFileOperation::Verify {
+            identity: expected, ..
+        } = operation
+        {
+            if identity.to_string() != expected {
+                return Err(native_error("EIO", "private file identity changed"));
+            }
+        }
+        let protect = matches!(operation, PrivateFileOperation::Protect);
+        let current = current_user_sid()?;
+        // Protection may tighten inherited private access, but cannot revoke a
+        // reader admitted while the file had a broadly accessible DACL.
+        validate_private_facts(
+            &read_owner_and_dacl_handle(handle, &current)?,
+            !protect,
+            "file",
+        )?;
+        let (parent_path, _) = split_parent(path)?;
+        let (parent, parent_identity) =
+            open_private_directory_parent(&parent_path, PRIVATE_PARENT_METADATA_ACCESS)?;
+        if parent_identity.to_string() != expected_parent_identity {
+            return Err(native_error("EIO", "private parent identity changed"));
+        }
+        verify_private_file_association(
+            handle,
+            path,
+            identity,
+            links,
+            &parent_path,
+            &parent,
+            parent_identity,
+        )?;
+        if protect {
+            let writable = open_existing_handle(
+                &wide(path)?,
+                FILE_READ_ATTRIBUTES | READ_CONTROL | WRITE_DAC | WRITE_OWNER,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                |code| win_error(code, "open private file for DACL protection"),
+            )?;
+            if private_file_identity(writable.0, links)? != identity {
+                return Err(native_error(
+                    "EIO",
+                    "private file changed before DACL protection",
+                ));
+            }
+            validate_private_facts(
+                &read_owner_and_dacl_handle(writable.0, &current)?,
+                false,
+                "file",
+            )?;
+            let acl = private_acl(&current, false)?;
+            verify_private_parent_association(&parent_path, &parent, parent_identity)?;
+            let status = unsafe {
+                SetSecurityInfo(
+                    writable.0,
+                    SE_FILE_OBJECT,
+                    OWNER_SECURITY_INFORMATION
+                        | DACL_SECURITY_INFORMATION
+                        | PROTECTED_DACL_SECURITY_INFORMATION,
+                    current.sid,
+                    null_mut(),
+                    acl.0,
+                    null_mut(),
+                )
+            };
+            if status != 0 {
+                return Err(win_error(status, "protect private file security"));
+            }
+            validate_private_facts(
+                &read_owner_and_dacl_handle(writable.0, &current)?,
+                true,
+                "file",
+            )?;
+        }
+        validate_private_facts(&read_owner_and_dacl_handle(handle, &current)?, true, "file")?;
+        verify_private_file_association(
+            handle,
+            path,
+            identity,
+            links,
+            &parent_path,
+            &parent,
+            parent_identity,
+        )?;
+        Ok(WindowsIdentityReceipt {
+            identity: identity.to_string(),
+        })
+    }
+
+    pub fn protect_private_file(
+        fd: i32,
+        path: &str,
+        expected_parent_identity: &str,
+    ) -> NativeResult<WindowsIdentityReceipt> {
+        let held = duplicate_handle(root_handle(fd)?, "duplicate borrowed private file handle")?;
+        private_file_with_handle(
+            held.0,
+            path,
+            expected_parent_identity,
+            PrivateFileOperation::Protect,
+        )
+    }
+
+    pub fn verify_private_file(
+        fd: i32,
+        path: &str,
+        expected_file_identity: &str,
+        expected_parent_identity: &str,
+        expected_links: u32,
+    ) -> NativeResult<()> {
+        let held = duplicate_handle(root_handle(fd)?, "duplicate borrowed private file handle")?;
+        private_file_with_handle(
+            held.0,
+            path,
+            expected_parent_identity,
+            PrivateFileOperation::Verify {
+                identity: expected_file_identity,
+                links: expected_links,
+            },
+        )
+        .map(|_| ())
     }
 
     fn created_directory_identity(handle: HANDLE) -> NativeResult<HandleFileIdentity> {
@@ -940,11 +1328,21 @@ mod windows {
         handle_file_identity(handle)
     }
 
-    fn validate_private_directory_facts(
+    fn validate_private_directory_facts(inspection: &HandleSecurityInspection) -> NativeResult<()> {
+        validate_private_facts(inspection, true, "directory")
+    }
+
+    fn validate_private_facts(
         inspection: &HandleSecurityInspection,
+        require_final_security: bool,
+        kind: &str,
     ) -> NativeResult<()> {
-        if !inspection.dacl_protected
-            || !inspection.owner_is_current
+        // Elevated tokens can give newly created files an Administrators owner.
+        // Admit that inherited state only until the pinned file's owner is set.
+        let owner_admitted = inspection.owner_class == OwnerClass::CurrentUser
+            || (!require_final_security && inspection.owner_class == OwnerClass::Administrators);
+        if (require_final_security && !inspection.dacl_protected)
+            || !owner_admitted
             || !inspection.dacl_present
             || !inspection.is_local
             || !inspection.ace_list_complete
@@ -954,10 +1352,48 @@ mod windows {
         {
             return Err(native_error(
                 "EACCES",
-                "filesystem did not enforce the private directory DACL",
+                format!("filesystem did not enforce the private {kind} DACL"),
             ));
         }
         Ok(())
+    }
+
+    struct PrivateAcl(*mut ACL);
+
+    impl Drop for PrivateAcl {
+        fn drop(&mut self) {
+            unsafe { LocalFree(self.0.cast()) };
+        }
+    }
+
+    fn private_acl(current: &TokenSid, inherit: bool) -> NativeResult<PrivateAcl> {
+        let system = well_known_sid(WinLocalSystemSid)?;
+        let administrators = well_known_sid(WinBuiltinAdministratorsSid)?;
+        let sids: [PSID; 3] = [
+            current.sid,
+            system.as_ptr().cast_mut().cast(),
+            administrators.as_ptr().cast_mut().cast(),
+        ];
+        let mut entries: [EXPLICIT_ACCESS_W; 3] = unsafe { zeroed() };
+        for (entry, sid) in entries.iter_mut().zip(sids) {
+            entry.grfAccessPermissions = FILE_ALL_ACCESS;
+            entry.grfAccessMode = GRANT_ACCESS;
+            entry.grfInheritance = if inherit {
+                OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE
+            } else {
+                0
+            };
+            entry.Trustee.TrusteeForm = TRUSTEE_IS_SID;
+            entry.Trustee.TrusteeType = TRUSTEE_IS_UNKNOWN;
+            entry.Trustee.ptstrName = sid.cast();
+        }
+        let mut acl: *mut ACL = null_mut();
+        let status =
+            unsafe { SetEntriesInAclW(entries.len() as u32, entries.as_ptr(), null(), &mut acl) };
+        if status != 0 {
+            return Err(win_error(status, "build private object DACL"));
+        }
+        Ok(PrivateAcl(acl))
     }
 
     fn with_private_directory_cleanup_error(
@@ -984,12 +1420,13 @@ mod windows {
         FinalLocality,
     >(
         path: &str,
+        expected_parent_identity: Option<&str>,
         mut after_create: AfterCreate,
         mut query_created: QueryCreated,
         mut after_validation: AfterValidation,
         mut inspect: Inspect,
         mut final_locality: FinalLocality,
-    ) -> NativeResult<()>
+    ) -> NativeResult<HandleFileIdentity>
     where
         AfterCreate: FnMut(),
         QueryCreated: FnMut(HANDLE) -> NativeResult<HandleFileIdentity>,
@@ -997,39 +1434,28 @@ mod windows {
         Inspect: FnMut(HANDLE, &TokenSid) -> NativeResult<HandleSecurityInspection>,
         FinalLocality: FnMut(HANDLE) -> NativeResult<bool>,
     {
+        if let Some(expected) = expected_parent_identity {
+            validate_full_identity(expected)?;
+        }
         let (parent_path, name) = split_parent(path)?;
         let (parent, parent_identity) =
             open_private_directory_parent(&parent_path, PRIVATE_PARENT_CREATE_ACCESS)?;
+        if expected_parent_identity.is_some_and(|expected| parent_identity.to_string() != expected)
+        {
+            return Err(native_error(
+                "EIO",
+                "private parent changed before creation",
+            ));
+        }
         let current = current_user_sid()?;
-        let system = well_known_sid(WinLocalSystemSid)?;
-        let administrators = well_known_sid(WinBuiltinAdministratorsSid)?;
-        let sids: [PSID; 3] = [
-            current.sid,
-            system.as_ptr().cast_mut().cast(),
-            administrators.as_ptr().cast_mut().cast(),
-        ];
-        let mut entries: [EXPLICIT_ACCESS_W; 3] = unsafe { zeroed() };
-        for (entry, sid) in entries.iter_mut().zip(sids) {
-            entry.grfAccessPermissions = FILE_ALL_ACCESS;
-            entry.grfAccessMode = GRANT_ACCESS;
-            entry.grfInheritance = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE;
-            entry.Trustee.TrusteeForm = TRUSTEE_IS_SID;
-            entry.Trustee.TrusteeType = TRUSTEE_IS_UNKNOWN;
-            entry.Trustee.ptstrName = sid.cast();
-        }
-        let mut acl: *mut ACL = null_mut();
-        let status =
-            unsafe { SetEntriesInAclW(entries.len() as u32, entries.as_ptr(), null(), &mut acl) };
-        if status != 0 {
-            return Err(win_error(status, "build private directory DACL"));
-        }
-        let result = (|| {
+        let acl = private_acl(&current, true)?;
+        (|| {
             let mut descriptor: SECURITY_DESCRIPTOR = unsafe { zeroed() };
             let descriptor_ptr = (&mut descriptor as *mut SECURITY_DESCRIPTOR).cast();
             if unsafe { InitializeSecurityDescriptor(descriptor_ptr, SECURITY_DESCRIPTOR_REVISION) }
                 == 0
                 || unsafe { SetSecurityDescriptorOwner(descriptor_ptr, current.sid, 0) } == 0
-                || unsafe { SetSecurityDescriptorDacl(descriptor_ptr, 1, acl, 0) } == 0
+                || unsafe { SetSecurityDescriptorDacl(descriptor_ptr, 1, acl.0, 0) } == 0
                 || unsafe {
                     SetSecurityDescriptorControl(
                         descriptor_ptr,
@@ -1064,31 +1490,51 @@ mod windows {
                     parent_identity,
                     created_identity,
                     &mut final_locality,
-                )
+                )?;
+                Ok(created_identity)
             })();
             operation.map_err(|error| {
                 with_private_directory_cleanup_error(error, mark_handle_for_deletion(created.0))
             })
-        })();
-        unsafe { LocalFree(acl.cast()) };
-        result
+        })()
     }
 
     pub fn create_private_directory(path: &str) -> NativeResult<()> {
         create_private_directory_with_hooks(
             path,
+            None,
             || {},
             created_directory_identity,
             || {},
             read_owner_and_dacl_handle,
             is_local_handle,
         )
+        .map(|_| ())
+    }
+
+    pub fn create_private_directory_with_parent_identity(
+        path: &str,
+        expected_parent_identity: &str,
+    ) -> NativeResult<WindowsIdentityReceipt> {
+        create_private_directory_with_hooks(
+            path,
+            Some(expected_parent_identity),
+            || {},
+            created_directory_identity,
+            || {},
+            read_owner_and_dacl_handle,
+            is_local_handle,
+        )
+        .map(|identity| WindowsIdentityReceipt {
+            identity: identity.to_string(),
+        })
     }
 
     #[cfg(test)]
     mod tests {
         use std::cell::Cell;
         use std::fs::{self, OpenOptions};
+        use std::io::Write;
         use std::os::windows::fs::OpenOptionsExt;
         use std::os::windows::io::AsRawHandle;
         use std::path::{Path, PathBuf};
@@ -1156,7 +1602,7 @@ mod windows {
 
         fn valid_private_inspection() -> HandleSecurityInspection {
             HandleSecurityInspection {
-                owner_is_current: true,
+                owner_class: OwnerClass::CurrentUser,
                 dacl_protected: true,
                 dacl_present: true,
                 is_local: true,
@@ -1164,6 +1610,7 @@ mod windows {
                 unsupported_ace_seen: false,
                 untrusted_readable: false,
                 untrusted_writable: false,
+                untrusted_child_access: false,
             }
         }
 
@@ -1223,10 +1670,8 @@ mod windows {
             );
             assert_eq!(capacities, [FINAL_PATH_STACK_WCHARS, MAX_FINAL_PATH_WCHARS]);
 
-            let too_long = final_path_with_query(handle, |_, _| {
-                Ok(MAX_FINAL_PATH_WCHARS + 1)
-            })
-            .unwrap_err();
+            let too_long =
+                final_path_with_query(handle, |_, _| Ok(MAX_FINAL_PATH_WCHARS + 1)).unwrap_err();
             assert_eq!(too_long.status, "ENAMETOOLONG");
             assert_eq!(too_long.reason, "final Windows path is too long");
 
@@ -1383,7 +1828,11 @@ mod windows {
                     ..valid
                 },
                 HandleSecurityInspection {
-                    owner_is_current: false,
+                    owner_class: OwnerClass::Foreign,
+                    ..valid
+                },
+                HandleSecurityInspection {
+                    owner_class: OwnerClass::Administrators,
                     ..valid
                 },
                 HandleSecurityInspection {
@@ -1428,6 +1877,7 @@ mod windows {
             let private_inspection = Cell::new(None);
             create_private_directory_with_hooks(
                 target.to_str().unwrap(),
+                None,
                 || {},
                 created_directory_identity,
                 || {},
@@ -1443,7 +1893,7 @@ mod windows {
             let facts = read_owner_and_dacl(target.to_str().unwrap()).unwrap();
             let inspection = private_inspection.get().unwrap();
             assert!(inspection.dacl_protected);
-            assert_eq!(inspection.owner_is_current, facts.owner_class == "current-user");
+            assert_eq!(inspection.owner_class.as_str(), facts.owner_class);
             assert_eq!(inspection.dacl_present, facts.dacl_present);
             assert_eq!(inspection.is_local, facts.is_local);
             assert_eq!(inspection.ace_list_complete, facts.ace_list_complete);
@@ -1475,12 +1925,349 @@ mod windows {
         }
 
         #[test]
+        fn parent_receipts_admit_only_the_exact_directory_before_creation() {
+            let root = temp_root("parent-receipt");
+            let target = root.join("private");
+            let receipt = inspect_directory(root.to_str().unwrap(), false).unwrap();
+            for index in [0, 17, 48] {
+                let mut stale = receipt.identity.clone();
+                let replacement = if &stale[index..index + 1] == "0" {
+                    "1"
+                } else {
+                    "0"
+                };
+                stale.replace_range(index..index + 1, replacement);
+                let error =
+                    create_private_directory_with_parent_identity(target.to_str().unwrap(), &stale)
+                        .unwrap_err();
+                assert_eq!(error.status, "EIO");
+                assert!(!target.exists());
+            }
+            let created = create_private_directory_with_parent_identity(
+                target.to_str().unwrap(),
+                &receipt.identity,
+            )
+            .unwrap();
+            assert_eq!(
+                inspect_directory(target.to_str().unwrap(), true)
+                    .unwrap()
+                    .identity,
+                created.identity,
+            );
+            let file = root.join("file");
+            fs::write(&file, b"sentinel").unwrap();
+            assert_eq!(
+                inspect_directory(file.to_str().unwrap(), false)
+                    .unwrap_err()
+                    .status,
+                "ENOTDIR",
+            );
+            assert_eq!(fs::read(&file).unwrap(), b"sentinel");
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn private_directory_inspection_rejects_broad_inherit_only_grants() {
+            let root = temp_root("child-inheritance");
+            let target = root.join("private");
+            create_private_directory(target.to_str().unwrap()).unwrap();
+            let writable = open_existing_handle(
+                &wide(target.to_str().unwrap()).unwrap(),
+                READ_CONTROL | WRITE_DAC,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                |code| win_error(code, "open synthetic inheritance fixture"),
+            )
+            .unwrap();
+            let current = current_user_sid().unwrap();
+            let base = private_acl(&current, true).unwrap();
+            let world = well_known_sid(WinWorldSid).unwrap();
+            let mut entry: EXPLICIT_ACCESS_W = unsafe { zeroed() };
+            entry.grfAccessPermissions = FILE_READ_DATA;
+            entry.grfAccessMode = GRANT_ACCESS;
+            entry.grfInheritance =
+                OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE | INHERIT_ONLY_ACE_FLAG as u32;
+            entry.Trustee.TrusteeForm = TRUSTEE_IS_SID;
+            entry.Trustee.TrusteeType = TRUSTEE_IS_UNKNOWN;
+            entry.Trustee.ptstrName = world.as_ptr().cast_mut().cast();
+            let mut extended = null_mut();
+            assert_eq!(
+                unsafe { SetEntriesInAclW(1, &entry, base.0, &mut extended) },
+                0
+            );
+            let extended = PrivateAcl(extended);
+            assert_eq!(
+                unsafe {
+                    SetSecurityInfo(
+                        writable.0,
+                        SE_FILE_OBJECT,
+                        DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                        null_mut(),
+                        null_mut(),
+                        extended.0,
+                        null_mut(),
+                    )
+                },
+                0
+            );
+            // The directory itself is private; its child inheritance is not.
+            assert!(!security_facts(writable.0, true).unwrap().world_readable);
+            assert!(inspect_directory(target.to_str().unwrap(), false).is_ok());
+            assert_eq!(
+                inspect_directory(target.to_str().unwrap(), true)
+                    .unwrap_err()
+                    .status,
+                "EACCES"
+            );
+            drop(writable);
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn protects_inherited_private_file_and_verifies_publication_links() {
+            let root = temp_root("private-file-publication");
+            let stage = root.join("stage");
+            create_private_directory(stage.to_str().unwrap()).unwrap();
+            let stage_receipt = inspect_directory(stage.to_str().unwrap(), true).unwrap();
+            let root_receipt = inspect_directory(root.to_str().unwrap(), false).unwrap();
+            let source = stage.join("file");
+            let published = root.join("published");
+            let mut file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+                .open(&source)
+                .unwrap();
+            let handle = file.as_raw_handle() as HANDLE;
+            let current = current_user_sid().unwrap();
+            assert!(
+                !read_owner_and_dacl_handle(handle, &current)
+                    .unwrap()
+                    .dacl_protected
+            );
+            let receipt = private_file_with_handle(
+                handle,
+                source.to_str().unwrap(),
+                &stage_receipt.identity,
+                PrivateFileOperation::Protect,
+            )
+            .unwrap();
+            assert_eq!(
+                receipt.identity,
+                handle_file_identity(handle).unwrap().to_string()
+            );
+            let facts = security_facts(handle, true).unwrap();
+            assert_eq!(facts.owner_class, "current-user");
+            assert_eq!(facts.owner_sid, facts.current_user_sid);
+            assert!(facts.aces.iter().all(|ace| ace.flags.raw == 0));
+            file.write_all(b"still owned by the caller").unwrap();
+            fs::hard_link(&source, &published).unwrap();
+            let error = private_file_with_handle(
+                handle,
+                published.to_str().unwrap(),
+                &root_receipt.identity,
+                PrivateFileOperation::Verify {
+                    identity: &receipt.identity,
+                    links: 1,
+                },
+            )
+            .unwrap_err();
+            assert_eq!(error.status, "EIO");
+            private_file_with_handle(
+                handle,
+                published.to_str().unwrap(),
+                &root_receipt.identity,
+                PrivateFileOperation::Verify {
+                    identity: &receipt.identity,
+                    links: 2,
+                },
+            )
+            .unwrap();
+            // Keep the same object retained while changing the opened name, as
+            // required before removing a Windows staging directory.
+            let retained = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+                .open(&published)
+                .unwrap();
+            assert_eq!(
+                handle_file_identity(retained.as_raw_handle() as HANDLE)
+                    .unwrap()
+                    .to_string(),
+                receipt.identity
+            );
+            drop(file);
+            fs::remove_file(&source).unwrap();
+            fs::remove_dir(&stage).unwrap();
+            let handle = retained.as_raw_handle() as HANDLE;
+            private_file_with_handle(
+                handle,
+                published.to_str().unwrap(),
+                &root_receipt.identity,
+                PrivateFileOperation::Verify {
+                    identity: &receipt.identity,
+                    links: 1,
+                },
+            )
+            .unwrap();
+            let mut wrong_identity = receipt.identity.clone();
+            wrong_identity.replace_range(
+                17..18,
+                if &receipt.identity[17..18] == "0" {
+                    "1"
+                } else {
+                    "0"
+                },
+            );
+            assert_eq!(
+                private_file_with_handle(
+                    handle,
+                    published.to_str().unwrap(),
+                    &root_receipt.identity,
+                    PrivateFileOperation::Verify {
+                        identity: &wrong_identity,
+                        links: 1
+                    },
+                )
+                .unwrap_err()
+                .status,
+                "EIO"
+            );
+            assert_eq!(fs::read(&published).unwrap(), b"still owned by the caller");
+            drop(retained);
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn private_file_protection_rejects_changed_admission_without_mutation() {
+            for scenario in ["parent", "pathname", "hardlink", "broad-acl"] {
+                let root = temp_root(scenario);
+                let stage = root.join("stage");
+                create_private_directory(stage.to_str().unwrap()).unwrap();
+                let mut parent_identity = inspect_directory(stage.to_str().unwrap(), true)
+                    .unwrap()
+                    .identity;
+                let source = stage.join("file");
+                let original = stage.join("original");
+                let file = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create_new(true)
+                    .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+                    .open(&source)
+                    .unwrap();
+                fs::write(&source, b"original").unwrap();
+                let handle = file.as_raw_handle() as HANDLE;
+                match scenario {
+                    "parent" => {
+                        parent_identity = inspect_directory(root.to_str().unwrap(), false)
+                            .unwrap()
+                            .identity
+                    }
+                    "pathname" => {
+                        fs::rename(&source, &original).unwrap();
+                        fs::write(&source, b"replacement").unwrap();
+                    }
+                    "hardlink" => fs::hard_link(&source, &original).unwrap(),
+                    "broad-acl" => {
+                        let writable = open_existing_handle(
+                            &wide(source.to_str().unwrap()).unwrap(),
+                            READ_CONTROL | WRITE_DAC,
+                            FILE_FLAG_OPEN_REPARSE_POINT,
+                            |code| win_error(code, "open synthetic broad-ACL fixture"),
+                        )
+                        .unwrap();
+                        let current = current_user_sid().unwrap();
+                        let base = private_acl(&current, false).unwrap();
+                        let world = well_known_sid(WinWorldSid).unwrap();
+                        let mut entry: EXPLICIT_ACCESS_W = unsafe { zeroed() };
+                        entry.grfAccessPermissions = FILE_READ_DATA;
+                        entry.grfAccessMode = GRANT_ACCESS;
+                        entry.Trustee.TrusteeForm = TRUSTEE_IS_SID;
+                        entry.Trustee.TrusteeType = TRUSTEE_IS_UNKNOWN;
+                        entry.Trustee.ptstrName = world.as_ptr().cast_mut().cast();
+                        let mut extended = null_mut();
+                        assert_eq!(
+                            unsafe { SetEntriesInAclW(1, &entry, base.0, &mut extended) },
+                            0
+                        );
+                        let extended = PrivateAcl(extended);
+                        assert_eq!(
+                            unsafe {
+                                SetSecurityInfo(
+                                    writable.0,
+                                    SE_FILE_OBJECT,
+                                    DACL_SECURITY_INFORMATION,
+                                    null_mut(),
+                                    null_mut(),
+                                    extended.0,
+                                    null_mut(),
+                                )
+                            },
+                            0
+                        );
+                    }
+                    _ => unreachable!(),
+                }
+                let current = current_user_sid().unwrap();
+                let before = read_owner_and_dacl_handle(handle, &current).unwrap();
+                if scenario == "broad-acl" {
+                    assert!(before.dacl_present);
+                    assert!(before.untrusted_readable);
+                    assert!(!before.dacl_protected);
+                }
+                let error = private_file_with_handle(
+                    handle,
+                    source.to_str().unwrap(),
+                    &parent_identity,
+                    PrivateFileOperation::Protect,
+                )
+                .unwrap_err();
+                assert_eq!(
+                    error.status,
+                    if scenario == "broad-acl" {
+                        "EACCES"
+                    } else {
+                        "EIO"
+                    }
+                );
+                let after = read_owner_and_dacl_handle(handle, &current).unwrap();
+                assert_eq!(after.owner_class, before.owner_class);
+                assert_eq!(after.dacl_protected, before.dacl_protected);
+                assert_eq!(after.dacl_present, before.dacl_present);
+                assert_eq!(after.untrusted_readable, before.untrusted_readable);
+                if scenario == "pathname" {
+                    assert_eq!(fs::read(&source).unwrap(), b"replacement");
+                    assert_eq!(fs::read(&original).unwrap(), b"original");
+                    let replacement = open_existing_handle(
+                        &wide(source.to_str().unwrap()).unwrap(),
+                        READ_CONTROL | FILE_READ_ATTRIBUTES,
+                        FILE_FLAG_OPEN_REPARSE_POINT,
+                        |code| win_error(code, "open replacement fixture"),
+                    )
+                    .unwrap();
+                    assert!(
+                        !read_owner_and_dacl_handle(replacement.0, &current)
+                            .unwrap()
+                            .dacl_protected
+                    );
+                } else {
+                    assert_eq!(fs::read(&source).unwrap(), b"original");
+                }
+                drop(file);
+                fs::remove_dir_all(root).unwrap();
+            }
+        }
+
+        #[test]
         fn rejects_an_unprotected_created_directory_and_cleans_its_handle() {
             let root = temp_root("unprotected-dacl");
             let target = root.join("private");
 
             let error = create_private_directory_with_hooks(
                 target.to_str().unwrap(),
+                None,
                 || {},
                 created_directory_identity,
                 || panic!("unprotected DACL must stop before final validation"),
@@ -1598,6 +2385,7 @@ mod windows {
 
             let error = create_private_directory_with_hooks(
                 target.to_str().unwrap(),
+                None,
                 || replacement = Some(replace_directory(&target, &original)),
                 |handle| {
                     created_handle.set(handle);
@@ -1628,6 +2416,7 @@ mod windows {
 
             let error = create_private_directory_with_hooks(
                 target.to_str().unwrap(),
+                None,
                 || {},
                 created_directory_identity,
                 || replacement = Some(replace_directory(&target, &original)),
@@ -1652,6 +2441,7 @@ mod windows {
 
             let error = create_private_directory_with_hooks(
                 target.to_str().unwrap(),
+                None,
                 || {},
                 created_directory_identity,
                 || {
@@ -1685,6 +2475,7 @@ mod windows {
 
             let error = create_private_directory_with_hooks(
                 target.to_str().unwrap(),
+                None,
                 || {},
                 created_directory_identity,
                 || {
@@ -1724,6 +2515,7 @@ mod windows {
 
             let error = create_private_directory_with_hooks(
                 target.to_str().unwrap(),
+                None,
                 || replacement = Some(replace_directory(&target, &original)),
                 created_directory_identity,
                 || panic!("failed inspection must stop before final validation"),
@@ -1754,6 +2546,7 @@ mod windows {
 
             let error = create_private_directory_with_hooks(
                 target.to_str().unwrap(),
+                None,
                 || replacement = Some(replace_directory(&target, &original)),
                 |_| {
                     Err(native_error(
@@ -1788,6 +2581,7 @@ mod windows {
 
             let error = create_private_directory_with_hooks(
                 target.to_str().unwrap(),
+                None,
                 || {},
                 created_directory_identity,
                 || replacement = Some(replace_directory(&target, &original)),
@@ -1815,6 +2609,7 @@ mod windows {
 
             let error = create_private_directory_with_hooks(
                 target.to_str().unwrap(),
+                None,
                 || fs::write(target.join("blocker"), b"keep").unwrap(),
                 created_directory_identity,
                 || panic!("failed inspection must stop before final validation"),

@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet('path', 'descriptor', 'create')]
+  [ValidateSet('path', 'descriptor', 'create', 'directory', 'protect-file', 'verify-file')]
   [string] $Operation
 )
 

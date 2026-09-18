@@ -7,6 +7,7 @@ import { basename, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { consumerFixtureArtifacts } from "./consumer-fixture-artifacts.mjs";
+import { creationCompiledFiles, creationProbeFiles, creationScenarioNames } from "./consumer-creation-contract.mjs";
 import { startConsumerRegistry } from "./consumer-registry.mjs";
 import { hostNativeTarget, nativePackageDirectory, nativeTargets } from "./native-targets.mjs";
 
@@ -174,6 +175,12 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
     const suffixProbeSource = readFileSync(new URL("./consumer-suffix-probe.mjs", import.meta.url));
     const metadataHelperSource = readFileSync(new URL("./consumer-proof-metadata.mjs", import.meta.url));
     const windowsSecurityProbeSource = readFileSync(new URL("./consumer-windows-security-probe.mjs", import.meta.url));
+    const creationExpected = {
+      protocol: 1,
+      compiledFiles: creationCompiledFiles("dist"),
+      probeFiles: Object.fromEntries(creationProbeFiles.map((name) => [name,
+        createHash("sha256").update(readFileSync(new URL(name, import.meta.url))).digest("hex")])),
+    };
     const windowsSecurityExpected = process.platform === "win32" ? {
       protocol: 2,
       compiledSha256: Object.fromEntries(windowsSecurityModules.map((name) => [name, sha256(join("dist", name))])),
@@ -232,6 +239,7 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
             .digest("hex"),
           manager: { name: manager, version },
           windowsSecurity: windowsSecurityExpected,
+          creation: creationExpected,
           ...suffixExpected,
         }));
         writeFileSync(join(directory, "probe.mjs"), readFileSync(new URL("./consumer-install-probe.mjs", import.meta.url)));
@@ -245,6 +253,27 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
         cases.require = await hash("require", omitted);
         cases.auto = await hash("auto");
         cases.off = await hash("off");
+        for (const name of [...creationProbeFiles, "consumer-proof-metadata.mjs"]) {
+          writeFileSync(join(directory, name), readFileSync(new URL(name, import.meta.url)));
+        }
+        cases.creation = [];
+        for (const mode of omitted ? ["off", "auto", "require"] : ["require"]) {
+          const receipt = JSON.parse(await run([process.execPath, join(directory, "consumer-creation-probe.mjs")], [mode], directory, env));
+          assert.equal(receipt.protocol, 1);
+          assert.equal(receipt.mode, mode);
+          assert.equal(receipt.omitted, omitted);
+          assert.equal(receipt.platform, process.platform);
+          assert.equal(receipt.arch, process.arch);
+          assert.equal(receipt.nativeLoaded, !omitted && mode === "require");
+          assert.equal(receipt.sourceMetadataProjection, true);
+          assert.deepEqual(receipt.source, source);
+          assert.equal(receipt.rootIntegrity, rootArtifact.integrity);
+          assert.deepEqual(receipt.packageManager, { name: manager, version });
+          assert.deepEqual(receipt.compiledFiles, creationExpected.compiledFiles);
+          assert.deepEqual(receipt.probeFiles, creationExpected.probeFiles);
+          assert.deepEqual(receipt.rows.map((row) => row.scenario), creationScenarioNames({ omitted, mode, platform: process.platform }));
+          cases.creation.push(receipt);
+        }
         if (process.platform === "win32") {
           const probe = join(directory, "windows-security-probe.mjs");
           writeFileSync(probe, windowsSecurityProbeSource);

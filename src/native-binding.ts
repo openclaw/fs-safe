@@ -103,6 +103,11 @@ export interface NativeWindowsDescriptorSecurityFacts {
   security: NativeWindowsSecurityFacts;
 }
 
+export interface NativeWindowsDirectoryReceipt {
+  /** Canonical 64-bit volume serial and all 128 file-ID bits, in Windows byte order. */
+  identity: string;
+}
+
 export interface NativeDarwinAclFacts {
   state: "absent" | "empty" | "present";
 }
@@ -111,7 +116,7 @@ export interface NativeBinding {
   /** Internal: consumes only a descriptor returned by this binding. */
   closeOwnedFd(fd: number): void;
   /** Internal Darwin-only synchronous inspection; the caller retains its fd. */
-  inspectDarwinAcl?(fd: number): NativeDarwinAclFacts;
+  inspectDarwinAcl?(fd: number, inheritanceTarget?: "file" | "directory"): NativeDarwinAclFacts;
   /** POSIX system canonicalization; confinement and identity policy stay with callers. */
   canonicalizePath?(path: string, ordinary: boolean): { path?: string; errno?: number };
   /** Internal: exact directory identity and canonical path from one no-follow handle. */
@@ -163,6 +168,25 @@ export interface NativeBinding {
     targetRelPath: string,
   ): Promise<NativeCopyResult>;
   createPrivateDirectory(path: string): void;
+  /** Internal Windows creation receipts use full FILE_ID_INFO, never Node's projection. */
+  inspectWindowsDirectory?(path: string, requirePrivate: boolean): NativeWindowsDirectoryReceipt;
+  createPrivateDirectoryWithParentIdentity?(
+    path: string,
+    expectedParentIdentity: string,
+  ): NativeWindowsDirectoryReceipt;
+  /** Protects an already-private borrowed Node file; descriptor ownership stays with Node. */
+  protectPrivateWindowsFile?(
+    fd: number,
+    path: string,
+    expectedParentIdentity: string,
+  ): NativeWindowsDirectoryReceipt;
+  verifyPrivateWindowsFile?(
+    fd: number,
+    path: string,
+    expectedFileIdentity: string,
+    expectedParentIdentity: string,
+    expectedLinks: number,
+  ): void;
   extractArchiveNative(
     path: string,
     kind: string,

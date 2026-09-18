@@ -72,6 +72,7 @@ export type PinnedWriteParams = {
   basename: string;
   mkdir: boolean;
   mode: number;
+  private?: boolean;
   sync?: boolean;
   strictFileSync?: boolean;
   overwrite?: boolean;
