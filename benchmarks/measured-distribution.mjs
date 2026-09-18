@@ -13,6 +13,10 @@ import {
   validateSyncCopyFallbackAdmissionReport,
   validateSyncCopyFallbackAdmissionWorkloadResult,
 } from "./sync-copy-fallback-admission.mjs";
+import {
+  validatePublicZipExtractionReport,
+  validatePublicZipExtractionWorkloadResult,
+} from "./public-zip-extraction-contract.mjs";
 import { validateGuestBenchmarkReport } from "./guest.mjs";
 import {
   validateCopyFallbackSuccessReport,
@@ -157,10 +161,12 @@ export function validateMeasuredDistribution(plan, reportPlan, report, expectedD
     validateSidecarPathSnapshotWorkloadResult(result);
     validateCopyFallbackSuccessWorkloadResult(result);
     validateSyncCopyFallbackAdmissionWorkloadResult(result);
+    validatePublicZipExtractionWorkloadResult(result);
   }
   validateSidecarPathSnapshotReport(report, plan.settings.filter, plan.settings.iterations);
   validateCopyFallbackSuccessReport(report, plan.settings.filter, plan.settings.iterations);
   validateSyncCopyFallbackAdmissionReport(report, plan.settings.filter, plan.settings.iterations);
+  validatePublicZipExtractionReport(report, plan.settings.filter, plan.settings.iterations);
 }
 
 export const MEASURED_SOURCE_ARGUMENT_NAMES = Object.freeze(

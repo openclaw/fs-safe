@@ -10,6 +10,7 @@
 
 ### Fixes and compatibility
 
+- Propagate portable ZIP output fallback-close failures before staged publication. Existing destination entries remain untouched, cleanup retains its best-effort `FileHandle` close, and no raw or native descriptor close is attempted.
 - Treat ordinary native rename errors as indeterminate, preserving staged files and directory backups when a remote rename may have committed before its reply was lost. Retry and automatic rollback require explicit evidence that rename was never dispatched.
 - Retain directory replacement and cleanup authority across backup, publication, and rollback. Directory replacement now requires supported native no-replace transitions; unavailable helpers reject before target-parent creation. Indeterminate outcomes preserve entries for recovery.
 - Enforce Windows native parent mutation policies before creating each missing component, retaining native descriptor ownership through cleanup. Reuse operation-local creation receipts for eligible Windows paths instead of repeating full policy walks at every depth.
@@ -33,6 +34,7 @@
 
 ### Validation
 
+- Add public extraction regressions for rejected and successful defensive fallback closes, and bind the existing successful public ZIP extraction benchmark to an immutable workload receipt with setup and verification outside timing.
 - Update development tooling to @napi-rs/cli 3.10.0, Node type definitions 26.6.0, and the coordinated Vitest/coverage 5.0.1 patch release.
 - Add paired-error regressions for direct hardlink-policy admission and public synchronous atomic replacement, including arbitrary falsy thrown values, plus receipt-bound timing rows that enforce unchanged destination observation and descriptor-call counts on successful rename and restored copy-fallback routes.
 

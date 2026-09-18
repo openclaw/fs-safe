@@ -1,6 +1,12 @@
 import { sidecarPathSnapshotCases } from "../../benchmarks/sidecar-path-snapshot.mjs";
 import { copyFallbackSuccessDescriptors } from "../../benchmarks/copy-fallback-success.mjs";
 import { syncCopyFallbackAdmissionDescriptors } from "../../benchmarks/sync-copy-fallback-admission.mjs";
+import {
+  PUBLIC_ZIP_EXTRACTION_BENCHMARK_NAME,
+  PUBLIC_ZIP_EXTRACTION_DIVISOR,
+  PUBLIC_ZIP_EXTRACTION_FIXTURE,
+  PUBLIC_ZIP_EXTRACTION_WORKLOAD,
+} from "../../benchmarks/public-zip-extraction-contract.mjs";
 
 function measured(row: object, sampleCount: number, iterations: number) {
   return {
@@ -30,5 +36,11 @@ export function completeSyntheticBenchmarkResults(sampleCount: number, iteration
     }, sampleCount, Math.max(1, Math.floor(iterations / row.divisor)))),
     ...syncAdmissionRows.map((row) => measured(row, sampleCount,
       Math.max(1, Math.floor(iterations / 10)))),
+    measured({
+      name: PUBLIC_ZIP_EXTRACTION_BENCHMARK_NAME,
+      workloadSemantics: "equivalent-output",
+      workloadDetails: PUBLIC_ZIP_EXTRACTION_WORKLOAD,
+      fixturePlacement: PUBLIC_ZIP_EXTRACTION_FIXTURE,
+    }, sampleCount, Math.max(1, Math.floor(iterations / PUBLIC_ZIP_EXTRACTION_DIVISOR))),
   ];
 }

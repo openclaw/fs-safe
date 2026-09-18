@@ -174,6 +174,13 @@ Deterministic Rust tests separately check cancellation between raw input reads.
 ZIP reads and extraction also cover 1 MiB and 16 MiB stored and deflated members
 to expose payload integrity costs beyond tiny archive fixtures. ZIP admission and
 member reads also cover 512 ASCII and Unicode names with stored and deflated data.
+The existing `extractArchive/zip` row is a receipt-bound successful public call:
+its immutable workload metadata records the archive shape, outcome, options,
+timed boundary, and verification contract. Every invocation asserts its empty
+destination before timing, times only `extractArchive()`, then verifies the exact
+entry set and parsed payload and removes the entry after timing. Use `--mode off`
+to compare the portable ZIP path; the method-audit report separately binds the
+exact source, distribution, harness, runtime, filesystem, and selected mode.
 Preflight rows verify the decoded file kinds as well as entry counts. Three
 `zip-512-mixed-kinds` rows cover preflight, bounded reads, and filtered extraction
 with 256 directories and 256 files, including physical-to-decoder kind association.
