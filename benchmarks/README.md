@@ -44,6 +44,12 @@ existing mismatched, and wholly new directory chains at depths 0/4/16 with both
 durability and private-mode settings. Fixture creation, mode setup, verification,
 and cleanup remain outside timing; every POSIX row verifies the complete final
 directory chain at the requested mode.
+The `mergeExtractedTreeIntoDestination/directory-mode-owner-post-dispatch` row
+merges one empty `0555` staging directory into a missing destination. It verifies
+the distinct source mode before timing and the final directory afterward, while
+its receipt binds the public merge and supplied owner checks on both sides of
+mode dispatch. On POSIX this exercises descriptor-owned correction from private
+creation mode; Windows exercises the serialized owner's identity-only mode path.
 New-directory POSIX fixtures retain a restrictive `0077` umask during the
 timed write, so mode repair from the masked creation mode is included.
 Hash cases verify the digest as well as the byte count outside measurement.
@@ -56,6 +62,11 @@ the process umask on setup, operation, verification, and cleanup failures.
 Every row checks final mode and owner where portable, successful cleanup, and
 path absence outside timing. Depth-row reports also record the actual canonical
 root component count so runner-specific temporary path prefixes remain visible.
+The `cleanup/compatible-js-fallback` filter selects one async and one
+sync successful cleanup row in native-off mode. These rows time the guarded
+JavaScript recursive-removal path, verify `"removed"`, and bind reports to the
+compatible safety mode, native-off route, and empty-workspace fixture; setup and
+verification remain outside timing.
 The broader cases add lexical paths at depths 0/8/32, batches of 100/1,000
 paths, 1,000-entry listings and walks, private/public stores through 1 MiB with
 both durability settings, 1,000-item JSON documents and concurrent updates,
