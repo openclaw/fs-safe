@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Preserve directory-mode authority and deadline check failures before and after dispatch, including one-shot checks and falsy JavaScript values. Best-effort suppression stays limited to mode-change failures, and deferred check failures retain the existing post-dispatch identity verification.
+- Preserve every thrown value from compatible temporary-workspace recursive removal, including falsy values, while keeping uncertain quarantine or parent checks mapped to `"indeterminate"`.
 - Preserve every thrown value from Windows native write descriptor cleanup, while still attempting all owned closes after publication.
 - Add `maxDepth` to `probePathSuffixAliasesSync()` for deeper prospective paths, with proportional operation budgets and unchanged default, string-length, identity, and cleanup limits.
 - Cap configurable-depth suffix probing at 32,768 forward observations while always completing owned cleanup.
