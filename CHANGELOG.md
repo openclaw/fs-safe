@@ -2,10 +2,19 @@
 
 ## Unreleased
 
+- Add `maxDepth` to `probePathSuffixAliasesSync()` for deeper prospective paths, with proportional operation budgets and unchanged default, string-length, identity, and cleanup limits.
+- Cap configurable-depth suffix probing at 32,768 forward observations while always completing owned cleanup.
+- Allow asynchronous `include`/`descend` in `walkDirectory()` and `entryFilter` in `Root.walk()` for serial selection and marker-based pruning, retaining callback receivers and budgets; Root walks settle pending callbacks and recheck cancellation and directory/root identity before using awaited decisions.
+- Expand security-owner review coverage to native and archive code, platform packages, executable benchmarks, and root build, test, workspace, and release-policy configuration.
+
 ### Atomic replacement
 
 - Propagate asynchronous and synchronous destination-writer close failures after an otherwise successful unsynchronized copy fallback when a new destination writer is opened, including `copyFallbackRestore: "restore-original"` with an absent destination. Preserve any earlier operation failure exactly, including falsy thrown values, and attempt the destination close only once; the destination may already be replaced or partial when the close reports failure.
 - Bind the existing public copy-fallback success benchmarks to immutable workload receipts and fail report admission on missing, skipped, mutated, mis-filtered, or incorrectly iterated rows. Fixture reset, receipt/content checks, and staging-temp verification remain outside timing.
+
+### Release operations
+
+- Raise the package-publication and release-proof job ceilings from 20 to 90 minutes, giving delayed registry visibility bounded headroom beyond their 70-minute-40-second aggregate retry-sleep schedule. Pathologically slow registry requests, npm publication, or Sigstore work can still reach the outer cap; normal-path steps and fail-closed artifact, signature, and provenance verification are unchanged.
 
 ## 0.14.0 - 2026-09-17
 

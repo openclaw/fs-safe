@@ -89,7 +89,9 @@ The workflow checks tag format, annotation, protection, main ancestry, matching 
 
 The automated order is source validation, seven-target native build, assembly and eight-package smoke validation, draft GitHub Release creation, platform-package publication, root-package publication, cryptographic registry verification, release-note proof generation, and draft promotion. A tag push alone is not a completed release.
 
-If a version already exists, the publishing helper verifies it instead of republishing it. Preserve the collected manifest and tarballs when investigating a failure. Never rebuild or replace published artifacts to work around a byte, signature, or provenance mismatch.
+Package publication and release-proof generation each verify all eight packages sequentially under a 90-minute job ceiling. The configured retry sleeps total 530 seconds per package, or 4,240 seconds (70 minutes 40 seconds) across eight packages, leaving 19 minutes 20 seconds of nominal headroom. This is an overall fail-closed cap, not a guarantee that every package can exhaust its retry schedule: each attempt can also make separately bounded registry requests, while npm publication and Sigstore verification have no separate total deadline. Pathologically slow or unbounded external work can still reach the outer ceiling. Raising it only increases possible runner occupancy; it does not add normal-path work or relax byte-identity, registry-signature, or provenance checks.
+
+If a version already exists, the publishing helper verifies it instead of republishing it. A retry after timeout reuses the collected manifest and tarballs from successful jobs in the same workflow run. Preserve those artifacts when investigating a failure; never rebuild or replace published artifacts to work around a byte, signature, or provenance mismatch.
 
 ## Verify the completed release
 
