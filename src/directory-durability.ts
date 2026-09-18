@@ -4,7 +4,15 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { ensureAbsoluteDirectory } from "./absolute-path.js";
 import { FsSafeError } from "./errors.js";
-import { sameFileIdentity, type FileIdentityStat } from "./file-identity.js";
+import type { FileIdentityStat } from "./file-identity.js";
+import {
+  assertDirectoryReceiptCurrentSync,
+  createDirectoryReceiptSync,
+  directoryReceiptAuthority,
+  directoryReceiptIdentity,
+  ownDirectoryReceipt,
+} from "./directory-receipt.js";
+import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { assertNoWindowsPathAlias, pathForWindowsFilesystem, resolvePathPreservingWindowsRoot } from "./windows-path-alias.js";
 import { realpathSync } from "./realpath.js";
 
@@ -77,133 +85,22 @@ function unsupportedOutcome(error: unknown): DirectorySyncOutcome {
   return code ? { status: "unsupported", code } : { status: "unsupported" };
 }
 
-function assertDirectory(identity: Stats, pathname: string, label: string): void {
-  if (identity.isSymbolicLink() || !identity.isDirectory()) {
-    throw new FsSafeError("not-file", `${label} must be a real directory: ${pathname}`);
-  }
-}
-
-function ownDirectoryReceipt(receipt: DirectoryReceipt): DirectoryReceipt {
-  const pathname = receipt.path;
-  const realPath = receipt.realPath;
-  const identity = receipt.identity;
-  return { path: pathname, realPath, identity };
-}
-
-function assertDirectoryReceiptPaths(receipt: DirectoryReceipt, label: string): void {
-  assertNoWindowsPathAlias(
-    receipt.path,
-    "filesystem",
-    `${label} path uses a Windows filesystem namespace alias`,
-  );
-  assertNoWindowsPathAlias(
-    receipt.realPath,
-    "filesystem",
-    `${label} real path uses a Windows filesystem namespace alias`,
-  );
-}
-
 async function createDirectoryReceipt(directoryPath: string, label: string): Promise<DirectoryReceipt> {
-  assertNoWindowsPathAlias(
-    directoryPath,
-    "filesystem",
-    `${label} path uses a Windows filesystem namespace alias`,
-  );
-  const resolvedPath = resolvePathPreservingWindowsRoot(directoryPath);
-  assertNoWindowsPathAlias(
-    resolvedPath,
-    "filesystem",
-    `${label} path uses a Windows filesystem namespace alias`,
-  );
-  const operationPath = pathForWindowsFilesystem(resolvedPath);
-  const identity = fsSync.lstatSync(operationPath);
-  assertDirectory(identity, resolvedPath, label);
-  const realPath = realpathSync.native(operationPath);
-  assertNoWindowsPathAlias(
-    realPath,
-    "filesystem",
-    `${label} real path uses a Windows filesystem namespace alias`,
-  );
-  return {
-    path: resolvedPath,
-    realPath,
-    identity,
-  };
+  return createDirectoryReceiptSync(directoryPath, label, realpathSync.native);
 }
 
-function createDirectoryReceiptSync(directoryPath: string, label: string): DirectoryReceipt {
-  assertNoWindowsPathAlias(
-    directoryPath,
-    "filesystem",
-    `${label} path uses a Windows filesystem namespace alias`,
-  );
-  const resolvedPath = resolvePathPreservingWindowsRoot(directoryPath);
-  assertNoWindowsPathAlias(
-    resolvedPath,
-    "filesystem",
-    `${label} path uses a Windows filesystem namespace alias`,
-  );
-  const operationPath = pathForWindowsFilesystem(resolvedPath);
-  const identity = fsSync.lstatSync(operationPath);
-  assertDirectory(identity, resolvedPath, label);
-  const realPath = realpathSync(operationPath);
-  assertNoWindowsPathAlias(
-    realPath,
-    "filesystem",
-    `${label} real path uses a Windows filesystem namespace alias`,
-  );
-  return {
-    path: resolvedPath,
-    realPath,
-    identity,
-  };
+async function assertDirectoryReceiptCurrent(receipt: DirectoryReceipt, label: string): Promise<void> {
+  assertDirectoryReceiptCurrentSync(receipt, label, realpathSync.native);
 }
 
-async function assertDirectoryReceiptCurrent(
-  receipt: DirectoryReceipt,
-  label: string,
-): Promise<void> {
-  assertDirectoryReceiptPaths(receipt, label);
-  const operationPath = pathForWindowsFilesystem(receipt.path);
-  const currentIdentity = fsSync.lstatSync(operationPath);
-  assertDirectory(currentIdentity, receipt.path, label);
-  const realPath = realpathSync.native(operationPath);
-  assertNoWindowsPathAlias(
-    realPath,
-    "filesystem",
-    `${label} real path uses a Windows filesystem namespace alias`,
-  );
-  if (
-    !sameFileIdentity(receipt.identity, currentIdentity) ||
-    realPath !== receipt.realPath
-  ) {
-    throw new FsSafeError(
-      "path-mismatch",
-      `${label} changed during durable directory operation: ${receipt.path}`,
-    );
-  }
-}
-
-function assertDirectoryReceiptCurrentSync(receipt: DirectoryReceipt, label: string): void {
-  assertDirectoryReceiptPaths(receipt, label);
-  const operationPath = pathForWindowsFilesystem(receipt.path);
-  const currentIdentity = fsSync.lstatSync(operationPath);
-  assertDirectory(currentIdentity, receipt.path, label);
-  const realPath = realpathSync(operationPath);
-  assertNoWindowsPathAlias(
-    realPath,
-    "filesystem",
-    `${label} real path uses a Windows filesystem namespace alias`,
-  );
-  if (
-    !sameFileIdentity(receipt.identity, currentIdentity) ||
-    realPath !== receipt.realPath
-  ) {
-    throw new FsSafeError(
-      "path-mismatch",
-      `${label} changed during durable directory operation: ${receipt.path}`,
-    );
-  }
+function assertOpenDirectoryIdentity(descriptor: number, receipt: DirectoryReceipt, label: string): void {
+  inspectFileIdentitySync(() => {
+    const opened = fsSync.fstatSync(descriptor, { bigint: true });
+    if (!opened.isDirectory()) {
+      throw new FsSafeError("not-file", `${label} must be a real directory: ${receipt.path}`);
+    }
+    return opened;
+  }, directoryReceiptAuthority(receipt).identity);
 }
 
 async function assertOpenDirectoryCurrent(
@@ -211,14 +108,7 @@ async function assertOpenDirectoryCurrent(
   receipt: DirectoryReceipt,
   label: string,
 ): Promise<void> {
-  const openedIdentity = fsSync.fstatSync(handle.fd);
-  assertDirectory(openedIdentity, receipt.path, label);
-  if (!sameFileIdentity(receipt.identity, openedIdentity)) {
-    throw new FsSafeError(
-      "path-mismatch",
-      `${label} handle changed during directory sync: ${receipt.path}`,
-    );
-  }
+  assertOpenDirectoryIdentity(handle.fd, receipt, label);
   await assertDirectoryReceiptCurrent(receipt, label);
 }
 
@@ -334,14 +224,7 @@ export function syncDirectorySync(
     return unsupportedOutcome(error);
   }
   try {
-    const openedIdentity = fsSync.fstatSync(descriptor);
-    assertDirectory(openedIdentity, receipt.path, label);
-    if (!sameFileIdentity(receipt.identity, openedIdentity)) {
-      throw new FsSafeError(
-        "path-mismatch",
-        `${label} handle changed during directory sync: ${receipt.path}`,
-      );
-    }
+    assertOpenDirectoryIdentity(descriptor, receipt, label);
     assertDirectoryReceiptCurrentSync(receipt, label);
     try {
       fsSync.fsyncSync(descriptor);
@@ -418,17 +301,19 @@ export async function ensureDurableDirectory(
     "filesystem",
     `${label} path uses a Windows filesystem namespace alias`,
   );
+  const expectedInput = options.expectedExistingIdentity;
+  const expectedIdentity = expectedInput && directoryReceiptIdentity(expectedInput);
   const ancestorReceipt = await findExistingAncestorReceipt(directoryPath, label);
   const targetExists = ancestorReceipt.path === directoryPath;
-  const expectedExistingIdentity = options.expectedExistingIdentity;
-  if (
-    expectedExistingIdentity &&
-    (!targetExists || !sameFileIdentity(expectedExistingIdentity, ancestorReceipt.identity))
-  ) {
+  if (expectedIdentity && !targetExists) {
     throw new FsSafeError(
       "path-mismatch",
       `${label} changed before durable directory pinning: ${directoryPath}`,
     );
+  }
+
+  if (expectedIdentity) {
+    inspectFileIdentitySync(() => directoryReceiptAuthority(ancestorReceipt).identity, expectedIdentity);
   }
 
   const ancestor = await pinDirectory(ancestorReceipt, { label });
@@ -491,7 +376,7 @@ export async function ensureDurableDirectory(
     }
     await ancestor.assertCurrent();
     await assertDirectoryReceiptCurrent(finalReceipt, label);
-    return { ...finalReceipt, parentSync };
+    return Object.assign(ownDirectoryReceipt(finalReceipt), { parentSync });
   } finally {
     await Promise.all(pinnedDirectories.toReversed().map(async (directory) => directory.close()));
   }

@@ -121,7 +121,7 @@ describe("directory durability", () => {
 
   it("returns not-needed for an existing directory", async () => {
     const directoryPath = await tempRoot("fs-safe-durable-existing-");
-    const identity = await fs.lstat(directoryPath);
+    const identity = await fs.lstat(directoryPath, { bigint: true });
 
     await expect(
       ensureDurableDirectory({ directoryPath, expectedExistingIdentity: identity }),
@@ -234,7 +234,7 @@ describe("directory durability", () => {
     const directoryPath = await tempRoot("fs-safe-durable-existing-race-");
     const displacedPath = `${directoryPath}.displaced`;
     tempDirs.push(displacedPath);
-    const expectedIdentity = await fs.lstat(directoryPath);
+    const expectedIdentity = await fs.lstat(directoryPath, { bigint: true });
     const originalOpen = fs.open.bind(fs);
     let replaced = false;
     vi.spyOn(fs, "open").mockImplementation(async (filePath, flags, mode) => {

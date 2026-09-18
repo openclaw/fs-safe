@@ -1,6 +1,7 @@
 import fs, { type BigIntStats } from "node:fs";
 import path from "node:path";
 import type { DirectoryReceipt } from "./directory-durability.js";
+import { directoryReceiptAuthority } from "./directory-receipt.js";
 import { FsSafeError } from "./errors.js";
 import type { FileIdentityStat } from "./file-identity.js";
 import { inspectDirectoryIdentitySync } from "./directory-guard.js";
@@ -164,18 +165,15 @@ export function openStagedDirectory(directory: string | DirectoryReceipt): {
   fd: number;
   receipt: StagedDirectorySnapshot;
 } {
-  // Copy supplied facts before any asynchronous work; receipts are not authority.
+  const expected = typeof directory === "string" ? undefined : directoryReceiptAuthority(directory);
   const pathname = resolvePathPreservingWindowsRoot(
-    typeof directory === "string" ? directory : directory.path,
+    typeof directory === "string" ? directory : expected!.path,
   );
-  const expected = typeof directory === "string" ? undefined : {
-    realPath: directory.realPath, dev: directory.identity.dev, ino: directory.identity.ino,
-  };
   const before = fs.lstatSync(pathname, { bigint: true });
   if (!before.isDirectory()) {
     throw new FsSafeError("not-file", "staging parent must be a real directory");
   }
-  if (expected && (!exactIdentityMatches(expected, before) || realpathSync(pathname) !== expected.realPath)) {
+  if (expected && (!exactIdentityMatches(expected.identity, before) || realpathSync(pathname) !== expected.realPath)) {
     throw new FsSafeError("path-mismatch", "stale staging directory receipt");
   }
   const fd = fs.openSync(

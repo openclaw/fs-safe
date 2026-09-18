@@ -8,6 +8,7 @@ import {
   type DirectorySyncOutcome,
 } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
+import { ownDirectoryReceipt } from "./directory-receipt.js";
 import { hashFileHandle } from "./file-hash.js";
 import {
   sameFileIdentity,
@@ -280,8 +281,7 @@ export async function publishFileExclusive(params: {
   const targetPathInput = admitStandalonePublicationPath(params.targetPath, "publication target uses a Windows filesystem namespace alias");
   const parentReceiptInput = params.parentReceipt;
   const parentReceipt = parentReceiptInput
-    ? { path: parentReceiptInput.path, realPath: parentReceiptInput.realPath,
-        identity: parentReceiptInput.identity }
+    ? ownDirectoryReceipt(parentReceiptInput)
     : undefined;
   if (parentReceipt) {
     assertNoWindowsPathAlias(parentReceipt.path, "filesystem", "publication parent uses a Windows filesystem namespace alias");

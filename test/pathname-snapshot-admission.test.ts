@@ -11,11 +11,11 @@ import {
   withStagedArchiveDestination,
 } from "../src/archive-staging.js";
 import {
+  ensureDurableDirectory,
   pinDirectory,
   syncDirectory,
   syncDirectoryBestEffort,
   syncDirectoryBestEffortSync,
-  type DirectoryReceipt,
 } from "../src/directory-durability.js";
 import { writeExternalFileWithinRoot } from "../src/output.js";
 import {
@@ -189,11 +189,7 @@ describe("caller-owned pathname snapshots", () => {
     const source = path.join(root, "source.bin");
     const target = path.join(root, "target.bin");
     await fs.writeFile(source, "snapshot");
-    const stableReceipt: DirectoryReceipt = {
-      path: root,
-      realPath: await fs.realpath(root),
-      identity: fsSync.lstatSync(root),
-    };
+    const stableReceipt = await ensureDurableDirectory({ directoryPath: root });
     const reads = { source: 0, target: 0, receipt: 0, path: 0, realPath: 0, identity: 0 };
     const receipt = {
       get path() {
@@ -234,11 +230,7 @@ describe("caller-owned pathname snapshots", () => {
 
   itWin32("owns supplied directory receipts and keeps pin authority private", async () => {
     const root = await tempRoot("fs-safe-snapshot-directory-");
-    const stableReceipt: DirectoryReceipt = {
-      path: root,
-      realPath: await fs.realpath(root),
-      identity: fsSync.lstatSync(root),
-    };
+    const stableReceipt = await ensureDurableDirectory({ directoryPath: root });
     const reads = { path: 0, realPath: 0, identity: 0 };
     const receipt = {
       get path() {

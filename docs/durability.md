@@ -69,6 +69,23 @@ descriptor, pathname identity, and canonical path. `assertCurrent()` repeats
 those checks. This prevents a pathname replacement from turning a later sync
 into proof for a different directory.
 
+Pathname and descriptor checks compare exact bigint device and inode values.
+Each inspection allows one retry for unknown Windows identity components,
+retaining known components and rejecting definite mismatches immediately.
+Persistent unknown identity fails closed with `path-mismatch`, including on an
+otherwise usable directory. A failed preflight identity check never syncs the
+descriptor; a replacement discovered after sync still rejects the operation.
+
+`DirectoryReceipt.identity` remains a numeric Node `Stats` object for metadata
+compatibility, projected from the same exact observation as the private
+identity. Library-created receipts and their identity objects retain a
+private exact snapshot; mutating their public fields cannot change the
+directory authorized by that snapshot. Pass the receipt or its original
+identity object through to later operations to retain this evidence. A copied
+or reconstructed numeric identity is accepted only when both components are
+safe integers and, on Windows, nonzero. Rounded or unknown caller identities
+fail with `path-mismatch` rather than authorizing a different directory.
+
 Call `close()` in `finally`. Closing is idempotent; using a closed pin fails.
 
 These checks intentionally reject a moved or replaced pathname. For one file's
@@ -94,6 +111,10 @@ accepted.
 `expectedExistingIdentity` binds an existing target to an identity observed by
 the caller before a separate permission or policy check. A missing or replaced
 target fails with `FsSafeError("path-mismatch")`.
+Use bigint `dev` and `ino` from `lstat(path, { bigint: true })` or
+[`readDirectoryIdentity()`](directory-identity.md) for caller-owned observations
+that may exceed the numeric safe-integer range. An original library receipt's
+`identity` object also retains its private exact identity for this option.
 
 ## Exclusive file publication
 
