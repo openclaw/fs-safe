@@ -4,6 +4,8 @@
 
 - Serialize sidecar lock admission across raw and Root-based synchronous callers while retaining separate Root cleanup authority, and recheck async authorization at the final stale-removal mutation boundary.
 
+- Reuse the exact Root identity sample when it is also the lock's immediate parent, while retaining separate read and mutation-policy checks.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights

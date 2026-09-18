@@ -69,8 +69,8 @@ export function observeDirectory(pathname: string): DirectoryReceipt {
   });
 }
 
-export function assertDirectoryCurrent(receipt: DirectoryReceipt): void {
-  inspectDirectoryIdentitySync(receipt.path, receipt.identity);
+export function assertDirectoryCurrent(receipt: DirectoryReceipt, initial?: BigIntStats): void {
+  inspectDirectoryIdentitySync(receipt.path, receipt.identity, initial);
   const currentReal = realpathSync.native(pathForWindowsFilesystem(receipt.path));
   assertNoWindowsPathAlias(currentReal, "filesystem", "sidecar lock parent uses a Windows filesystem namespace alias");
   if (currentReal !== receipt.realPath) {
@@ -82,9 +82,13 @@ export function assertRetainedParentCurrent(
   pathAuthority: FileLockSyncRootPath,
   parent: DirectoryReceipt,
 ): void {
-  assertRootIdentityCurrentSync(pathAuthority.authority.context);
-  assertDirectoryCurrent(parent);
-  assertRootIdentityCurrentSync(pathAuthority.authority.context);
+  const context = pathAuthority.authority.context;
+  const sharedIdentity = parent.path === context.rootReal &&
+    parent.identity.dev === context.rootIdentity.dev && parent.identity.ino === context.rootIdentity.ino;
+  let rootStat: BigIntStats | undefined;
+  assertRootIdentityCurrentSync(context, sharedIdentity ? stat => { rootStat = stat; } : undefined);
+  assertDirectoryCurrent(parent, rootStat);
+  assertRootIdentityCurrentSync(context);
 }
 
 export function exactFileIdentity(stat: BigIntStats): ExactIdentity {

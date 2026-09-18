@@ -8,6 +8,7 @@ import {
   captureFileLockSyncRootAuthority,
 } from "../src/file-lock-sync-root.js";
 import { root } from "../src/root.js";
+import { acquireFileLockSync } from "../src/file-lock.js";
 import { serializeSidecarLockPayload } from "../src/sidecar-lock-reclaim.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
@@ -138,4 +139,27 @@ describe("synchronous Root-backed fresh inspection identity", () => {
       }
     }
   });
+});
+
+
+it("preserves a replacement that replays the complete creator token and payload", async () => {
+  const directory = await tempRoot("fs-safe-sync-root-replayed-token-");
+  const lockRoot = await root(directory);
+  const target = path.join(directory, "state");
+  const lockPath = path.join(directory, "state.lock");
+  const displaced = path.join(directory, "original.lock");
+  const held = acquireFileLockSync(target, { lockRoot, lockPath, payload: () => ({ owner: "original" }) });
+  const raw = fs.readFileSync(lockPath, "utf8");
+  fs.renameSync(lockPath, displaced);
+  fs.writeFileSync(lockPath, raw, { flag: "wx" });
+  try {
+    expect(held.verifyStillHeld()).toBe(false);
+    expect(() => held.release()).toThrow(expect.objectContaining({ code: "path-mismatch" }));
+    expect(fs.readFileSync(lockPath, "utf8")).toBe(raw);
+    expect(fs.readFileSync(displaced, "utf8")).toBe(raw);
+  } finally {
+    fs.unlinkSync(lockPath);
+    fs.renameSync(displaced, lockPath);
+    held.release();
+  }
 });

@@ -224,7 +224,6 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
         const snapshot: SidecarLockSnapshot = {
           raw,
           payload,
-          stat: fs.fstatSync(fd),
           ownershipToken,
         };
         if (ownedReclaimGuard) releaseReclaimGuard();
