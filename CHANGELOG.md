@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Preserve every thrown value from compatible temporary-workspace recursive removal, including falsy values, while keeping uncertain quarantine or parent checks mapped to `"indeterminate"`.
+- Allow asynchronous `include`/`descend` in `walkDirectory()` and `entryFilter` in `Root.walk()` for serial selection and marker-based pruning, retaining callback receivers and budgets; Root walks settle pending callbacks and recheck cancellation and directory/root identity before using awaited decisions.
 
 ## 0.14.0 - 2026-09-17
 
