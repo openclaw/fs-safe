@@ -1,78 +1,54 @@
 # Changelog
 
-## Unreleased
+## 0.15.0 - 2026-09-18
 
-### Permissions and diagnostics
+### Highlights
 
-- Keep the Windows owner/ACL compatibility inspector fail-closed when an
-  injected executor rejects with a proxy, accessor-bearing object, function,
-  symbol, or another value whose ordinary string conversion can run or throw.
-  Best-effort command metadata now reads bounded data descriptors without
-  invoking getters or proxy traps. String, `Buffer`, and `Uint8Array` stderr is
-  retained through bounded private byte snapshots without consulting receiver
-  properties, iterators, constructors, or altered prototypes, while preserving
-  ordinary diagnostics and the exact original `errorCause`.
+- Enforce Root authority throughout synchronous lock admission, stale recovery, and cleanup; keep asynchronous reclaim guards inside the Root capability.
+- Preserve directory and archive-source identity across publication, callbacks, and recovery, and reject corrupt portable ZIP payloads and metadata.
+- Support asynchronous walk filters, configurable-depth suffix probing, and bounded synchronous descriptor copying.
 
-### Directory copying
+### Compatibility and upgrade notes
 
-- Bind successful public `probeTreeClone` and `copyTree` performance rows to admitted workload receipts. The copy rows cover nested small files and multichunk payloads with `clone: "never"` and `"auto"` selection with separately reported capability probes; setup, exact paths, hashes, POSIX relative symlinks or Windows absolute junctions, metadata, independent destination mutation, source preservation, and cleanup remain outside timing.
-- Preserve the first tree-copy operation failure exactly, including falsy thrown values and existing error codes, while still closing every acquired file and directory once. After a successful operation, report the first close failure in ownership order: output before input, copied-directory source before target, and public source before destination parent.
+- Directory replacement now requires compatible native identity-fenced, no-replace support, including when the destination is absent. Disabled, missing, or older helpers reject before target-parent creation.
+- Treat ordinary post-dispatch native rename errors as indeterminate. Preserve staged files and directory backups when a rename may have committed before its reply was lost; automatic retry and rollback require explicit evidence that dispatch never occurred.
+- Synchronous Root locks require a genuine registered Root handle and enforce its policies. Interrupted asynchronous Root reclaim guards can remain after process exit or reset; recover them only after an application-owned liveness check proves the attempt ended.
+- Root lock authority checks add measurable overhead. Removing redundant observations reduces some cost, but these paths remain slower than the earlier implementation that did not enforce the same boundary.
 
-### Security
+### Security and correctness
 
-- Keep asynchronous Root reclaim-guard creation, ownership checks, and cleanup inside the Root capability. Interrupted or ambiguous guard cleanup preserves its file instead of following a replaced parent through raw filesystem removal.
-- Retain source-root and child-directory authority during archive merges, and bind file identity and modes to the single admitted copy descriptor. Source ancestor or leaf replacements, including distinct Windows identities that round to the same number, cannot redirect published bytes; completed publications retain the existing nontransactional cleanup semantics.
-- Snapshot FileStore write policies before asynchronous work, streams, source reads, and JSON serialization, and JsonStore durability and newline options before each mutation queues or calls its updater; caller mutation cannot change an in-flight write's policy.
-- Snapshot external-output and sibling-temp options before asynchronous setup so caller mutation cannot change in-flight producers, staging paths, permissions, or sync policy, while preserving callback receivers.
+- Serialize sidecar admission across raw and Root-based synchronous callers, retain separate cleanup authority, and recheck asynchronous authorization at the final stale-removal boundary.
+- Keep asynchronous Root reclaim-guard creation, token/byte ownership checks, and removal inside the capability. Preserve unsettled guards instead of following replaced parents through raw cleanup.
+- Create native Root lock records through retained-parent exclusive opens so racing contenders retry normally. Ordinary Root writes retain private staging. Treat raw reclaim guards disappearing or changing during collision inspection as contention.
+- Verify reclaim-guard ownership after the final sidecar snapshot and parser, preserving mutation authorization and parser failures. Evaluate stale age after snapshot parsing and reject cleanup when exact identity is unknown.
+- Retain source-root and child-directory authority during archive merges and bind file identity and mode to the admitted copy descriptor, including exact large Windows identities.
+- Preserve ZIP payloads and physical entry metadata during portable loading so extraction rejects corrupt empty content and honors admitted directory, symlink, and special-file kinds without reordering callbacks.
+- Snapshot FileStore policies before asynchronous work, streams, source reads, and JSON serialization; snapshot JsonStore durability/newline options before queued mutations and updater callbacks.
+- Snapshot external-output and sibling-temp options before asynchronous setup while preserving callback receivers.
+- Enforce Windows native parent mutation policies before creating each missing component and retain originating native descriptor ownership through cleanup.
+- Preserve files and symlinks replacing an observed empty FileStore directory, and leave directories that become nonempty untouched.
+- Recheck child entries before walk descent so symlink replacements during filters honor the selected policy.
+- Keep Windows owner/ACL diagnostics bounded and fail-closed for hostile thrown values. Preserve ordinary diagnostics and the original cause without invoking getters, proxy traps, coercion, or altered buffer properties.
 
-### Fixes and compatibility
+### APIs and failure handling
 
-- Create native Root lock records and reclaim guards exclusively through their retained parent so competing acquisitions retry normally, while ordinary Root writes keep private staging. Treat a competing raw reclaim guard disappearing during inspection as contention.
-- Verify Root reclaim-guard ownership once after the final sidecar snapshot and parser instead of reading it on both sides; preserve final mutation authorization and parser failures.
-- Recheck child entries before walk descent so replacements with symlinks during filters honor the selected policy.
-- Reject sidecar cleanup when exact file identity is unknown instead of treating missing identities as a match.
-- Evaluate stale-lock age after snapshot observation and parsing so delayed reads do not give reclamation callbacks an outdated timestamp.
-- Reuse the exact Root identity sample when it is also the lock's immediate parent, while retaining separate read and mutation-policy checks.
-- Serialize sidecar lock admission across raw and Root-based synchronous callers while retaining separate Root cleanup authority, and recheck async authorization at the final stale-removal mutation boundary.
-- Preserve falsy atomic operation, cleanup, close, and restoration failures, and consume retained async temp handles before close to avoid repeated release.
-- Propagate portable ZIP output fallback-close failures before staged publication. Existing destination entries remain untouched, cleanup retains its best-effort `FileHandle` close, and no raw or native descriptor close is attempted.
-- Treat ordinary native rename errors as indeterminate, preserving staged files and directory backups when a remote rename may have committed before its reply was lost. Retry and automatic rollback require explicit evidence that rename was never dispatched.
-- Retain directory replacement and cleanup authority across backup, publication, and rollback. Directory replacement now requires supported native no-replace transitions; unavailable helpers reject before target-parent creation. Indeterminate outcomes preserve entries for recovery.
-- Enforce Windows native parent mutation policies before creating each missing component, retaining native descriptor ownership through cleanup. Reuse operation-local creation receipts for eligible Windows paths instead of repeating full policy walks at every depth.
-- Preserve files and symlinks that replace an observed empty FileStore directory while pruning is prepared; directories that become nonempty remain untouched.
-- Bound path-prefix queue consumption on long paths while preserving short-path behavior and path-resolution checks.
-- Preserve an already-selected synchronous destination-admission error when its one best-effort descriptor close also fails. Successful admission retains its existing close-error behavior, and synchronous atomic replacement adapters do not retry or double-close the destination descriptor.
-- Preserve directory-mode authority and deadline check failures before and after dispatch, including one-shot checks and falsy JavaScript values. Best-effort suppression stays limited to mode-change failures, and deferred check failures retain the existing post-dispatch identity verification.
-- Preserve every thrown value from compatible temporary-workspace recursive removal, including falsy values, while keeping uncertain quarantine or parent checks mapped to `"indeterminate"`.
-- Preserve every thrown value from Windows native write descriptor cleanup, while still attempting all owned closes after publication.
-- Preserve ZIP payloads and physical entry metadata through portable loading so bounded extraction rejects corrupt empty payloads and honors admitted directory, symlink, and special-file kinds.
-- Add `maxDepth` to `probePathSuffixAliasesSync()` for deeper prospective paths, with proportional operation budgets and unchanged default, string-length, identity, and cleanup limits.
-- Cap configurable-depth suffix probing at 32,768 forward observations while always completing owned cleanup.
-- Allow asynchronous `include`/`descend` in `walkDirectory()` and `entryFilter` in `Root.walk()` for serial selection and marker-based pruning, retaining callback receivers and budgets; Root walks settle pending callbacks and recheck cancellation and directory/root identity before using awaited decisions.
-- Expand security-owner review coverage to native and archive code, platform packages, executable benchmarks, and root build, test, workspace, and release-policy configuration.
-- Add `copyFileDescriptorSync()` for bounded positional transfers between caller-owned regular-file descriptors, sharing `CopyFileHandleOptions` while preserving cursors, descriptor lifetime, destination suffixes, and caller-owned durability and publication.
+- Allow asynchronous `include`/`descend` callbacks in `walkDirectory()` and `entryFilter` in `Root.walk()`, retaining serial selection, callback receivers, budgets, cancellation, and post-callback identity checks.
+- Add `maxDepth` to `probePathSuffixAliasesSync()` with proportional budgets, a 32,768-forward-observation ceiling, unchanged defaults and string limits, and complete owned cleanup.
+- Add `copyFileDescriptorSync()` for bounded positional transfers between caller-owned regular-file descriptors, preserving cursors, destination suffixes, descriptor lifetime, and caller-owned durability/publication.
+- Preserve the first tree-copy operation failure, including falsy values and existing codes, while closing each owned resource once. Successful operations retain output-before-input and source-before-parent close-failure precedence.
+- Preserve falsy atomic operation, cleanup, close, restoration, temporary-workspace removal, and Windows native cleanup failures; consume retained handles before close to prevent repeated release.
+- Propagate portable ZIP fallback-close failures before publication and copy-fallback writer close failures after successful unsynchronized writes, including restoration with an absent destination.
+- Preserve synchronous destination-admission failures when best-effort close also fails, and preserve directory-mode authority/deadline failures before and after dispatch.
 
-### Atomic replacement
+### Performance and maintenance
 
-- Propagate asynchronous and synchronous destination-writer close failures after an otherwise successful unsynchronized copy fallback when a new destination writer is opened, including `copyFallbackRestore: "restore-original"` with an absent destination. Preserve any earlier operation failure exactly, including falsy thrown values, and attempt the destination close only once; the destination may already be replaced or partial when the close reports failure.
-- Bind the existing public copy-fallback success benchmarks to immutable workload receipts and fail report admission on missing, skipped, mutated, mis-filtered, or incorrectly iterated rows. Fixture reset, receipt/content checks, and staging-temp verification remain outside timing.
-
-### Validation
-
-- Share descriptor ownership and cleanup across native copy operations, consolidate regular/secret-file admission, and remove redundant wrappers and policy preparation.
-- Reduce repeated parent observations in synchronous Root locks and use direct unlink after guarded regular-file admission, preserving final identity checks and cleanup-failure behavior.
-- Avoid repeated descriptor walks and missing-field allocations when formatting ordinary permission-command failures.
-- Add cross-public-route hostile-diagnostic regressions and receipt-bound
-  Windows owner failure benchmarks with injected success/error cohorts plus
-  live native/POSIX controls. Hostile changed-outcome cases remain
-  correctness-only rather than being treated as equivalent performance work.
-- Add public extraction regressions for rejected and successful defensive fallback closes, and bind the existing successful public ZIP extraction benchmark to an immutable workload receipt with setup and verification outside timing.
-- Update development tooling to @napi-rs/cli 3.10.0, Node type definitions 26.6.0, and the coordinated Vitest/coverage 5.0.1 patch release.
-- Add paired-error regressions for direct hardlink-policy admission and public synchronous atomic replacement, including arbitrary falsy thrown values, plus receipt-bound timing rows that enforce unchanged destination observation and descriptor-call counts on successful rename and restored copy-fallback routes.
-
-### Release operations
-
-- Raise the package-publication and release-proof job ceilings from 20 to 90 minutes, giving delayed registry visibility bounded headroom beyond their 70-minute-40-second aggregate retry-sleep schedule. Pathologically slow registry requests, npm publication, or Sigstore work can still reach the outer cap; normal-path steps and fail-closed artifact, signature, and provenance verification are unchanged.
+- Bound path-prefix queue consumption on long paths while preserving short-path behavior and resolution checks.
+- Reuse eligible Windows parent-creation receipts, equivalent Root identity observations, and guarded regular-file unlink paths while retaining final identity and policy checks.
+- Consolidate native copy ownership, regular/secret read admission, copy-fallback admission, and temporary-workspace setup and settlement; remove redundant wrappers, write-admission storage, and permission-diagnostic work.
+- Bind public copy, ZIP extraction, atomic settlement, and permission benchmarks to verified workload receipts; keep setup, content checks, and cleanup verification outside timing.
+- Update @napi-rs/cli to 3.10.0 and the locked Node type definitions to 26.6.0, and align Vitest/coverage on 5.0.1.
+- Expand security-owner coverage to native/archive code, platform packages, executable benchmarks, and build/test/release configuration.
+- Raise publication and release-proof job ceilings to 90 minutes, retaining bounded registry retries and fail-closed artifact, signature, and provenance checks.
 
 ## 0.14.0 - 2026-09-17
 
