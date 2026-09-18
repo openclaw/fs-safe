@@ -14,6 +14,17 @@ import { nativeBinaryLoaded } from "./consumer-proof-metadata.mjs";
 assert.equal(process.platform, "win32");
 const mode = process.argv[2];
 assert.ok(["off", "auto", "require"].includes(mode));
+const probeStarted = performance.now();
+let checkpointCount = 0;
+function checkpoint(phase, detail = {}) {
+  if (++checkpointCount > 128) return;
+  // Fixed phase names and synthetic scenario labels only; never paths or ACL data.
+  try {
+    fs.writeSync(2, JSON.stringify({ probe: "windows-security", phase,
+      elapsedMs: Math.round(performance.now() - probeStarted), ...detail }) + "\n");
+  } catch { /* Diagnostic output must not replace a proof failure. */ }
+}
+checkpoint("preflight:start", { node: process.version, mode });
 const expected = JSON.parse(fs.readFileSync("expected.json", "utf8"));
 assert.equal(expected.windowsSecurity.protocol, 2);
 assert.ok(expected.omitted || mode === "require");
@@ -87,7 +98,9 @@ function inspectPackages(directory) {
     }
   }
 }
+checkpoint("package-inventory:start");
 inspectPackages(path.join(consumer, "node_modules"));
+checkpoint("package-inventory:end");
 assert.deepEqual([...physical].sort(), expected.omitted ? [] : [expected.host.package]);
 let binary;
 const resolution = Object.fromEntries(expected.platforms.map((name) => {
@@ -100,11 +113,16 @@ const resolution = Object.fromEntries(expected.platforms.map((name) => {
   return [name, "absent"];
 }));
 function nativeLoaded() {
-  if (binary) return nativeBinaryLoaded(binary);
-  assert.deepEqual(process.report.getReport().sharedObjects.filter((file) => file.endsWith(".node")), []);
+  checkpoint("diagnostic-report:start");
+  let sharedObjects;
+  try { sharedObjects = process.report.getReport().sharedObjects; }
+  finally { checkpoint("diagnostic-report:end"); }
+  if (binary) return nativeBinaryLoaded(binary, sharedObjects);
+  assert.deepEqual(sharedObjects.filter((file) => file.endsWith(".node")), []);
   return false;
 }
 assert.equal(nativeLoaded(), false);
+checkpoint("preflight:end");
 
 const original = { spawn: childProcess.spawn, spawnSync: childProcess.spawnSync, open: fsp.open };
 const commands = [];
@@ -209,11 +227,16 @@ foreach($ace in $raw.DiscretionaryAcl) {
 `;
 const powershell = path.join(process.env.SystemRoot ?? process.env.WINDIR ?? "C:\\Windows",
   "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+let fixtureCount = 0;
 function independentAcl(target, action = "inspect") {
+  const fixture = ++fixtureCount;
+  checkpoint("fixture:start", { fixture, action });
   const result = original.spawnSync(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-File", aclScriptFile], {
     encoding: "utf8", windowsHide: true, timeout: 30_000, killSignal: "SIGKILL", maxBuffer: 1024 * 1024,
     env: { ...process.env, FS_SAFE_SECURITY_PROOF_PATH: target, FS_SAFE_SECURITY_PROOF_ACTION: action },
   });
+  checkpoint("fixture:end", { fixture, action, exitCode: result.status, signal: result.signal,
+    errorCode: result.error?.code ?? null });
   if (result.error) throw result.error;
   assert.equal(result.status, 0, "Independent Windows ACL fixture failed while running its readable PowerShell file. " +
     "The fixture obeys the system execution policy; a policy denial prevents this proof from running.\n" +
@@ -259,13 +282,17 @@ async function measureAsync(call) {
   return { result, durationMs: performance.now() - started };
 }
 async function operation(scenario, call) {
+  checkpoint("public-api-scenario:start", { scenario });
   const started = performance.now();
   const commandStart = commands.length;
   const readStart = reads.length;
-  const detail = await call();
+  let detail;
+  try { detail = await call(); }
+  catch (error) { checkpoint("public-api-scenario:error", { scenario }); throw error; }
   rows.push({ scenario, durationMs: performance.now() - started, commands: commands.slice(commandStart),
     contentReadCalls: reads.length - readStart,
     contentReadDescriptors: [...new Set(reads.slice(readStart).map((read) => read.fd))], ...detail });
+  checkpoint("public-api-scenario:end", { scenario });
 }
 async function failure(call, code) {
   const readStart = reads.length;
@@ -481,6 +508,7 @@ try {
       assert.equal(warning.name, "FsSafeWarning");
     }
   } else assert.deepEqual(warnings, []);
+  checkpoint("receipt:write");
   console.log(JSON.stringify({
     protocol: 2, platform: process.platform, arch: process.arch, node: process.version, mode,
     omitted: expected.omitted, packageManager: expected.manager, source: expected.source, sourceMetadataProjection: true,
@@ -504,5 +532,7 @@ try {
   fsp.open = original.open;
   syncBuiltinESMExports();
   process.removeListener("warning", onWarning);
+  checkpoint("cleanup:start");
   fs.rmSync(sandbox, { recursive: true, force: true });
+  checkpoint("cleanup:end");
 }

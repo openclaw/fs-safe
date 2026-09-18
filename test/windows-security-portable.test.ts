@@ -16,6 +16,21 @@ import { runWindowsSecurityScript, WINDOWS_SECURITY_SOURCE } from "./helpers/win
 const { tempRoot } = useTempDirs();
 const inspectDescriptor = command.inspectWindowsDescriptorCommand;
 
+function privateCreationFailureSource(source: string, ntstatus: string): string {
+  const normalized = source.replaceAll("\r\n", "\n");
+  const syscall = "IoStatus io; SafeFileHandle created;\n" +
+    "      int status=NtCreateFile(out created,0x00130180,ref attributes,out io,IntPtr.Zero,0,7,2,0x00200021,IntPtr.Zero,0);";
+  expect(normalized.split(syscall)).toHaveLength(2);
+  return normalized.replace(syscall, `SafeFileHandle created=null; int status=unchecked((int)0x${ntstatus});`);
+}
+
+it.each(["\n", "\r\n"])("injects a creation failure into a source fixture with %j line endings", newline => {
+  const source = WINDOWS_SECURITY_SOURCE.replaceAll("\r\n", "\n").replaceAll("\n", newline);
+  const injected = privateCreationFailureSource(source, "c000007f");
+  expect(injected).toContain("SafeFileHandle created=null; int status=unchecked((int)0xc000007f);");
+  expect(injected).not.toContain("int status=NtCreateFile(out created,");
+});
+
 function icacls(target: string, ...args: string[]): void {
   execFileSync(resolveWindowsSystemCommand("icacls.exe"), [target, ...args], {
     windowsHide: true, stdio: "pipe", timeout: 30_000,
@@ -64,11 +79,7 @@ describe.runIf(process.platform === "win32")("Windows built-in security commands
   ])("preserves $code from the private-directory creation syscall", async ({ ntstatus, code }) => {
     const directory = await tempRoot("fs-safe-win-create-error-");
     const target = path.join(directory, "private");
-    const syscall = "IoStatus io; SafeFileHandle created;\n" +
-      "      int status=NtCreateFile(out created,0x00130180,ref attributes,out io,IntPtr.Zero,0,7,2,0x00200021,IntPtr.Zero,0);";
-    expect(WINDOWS_SECURITY_SOURCE.split(syscall)).toHaveLength(2);
-    const source = WINDOWS_SECURITY_SOURCE.replace(syscall,
-      `SafeFileHandle created=null; int status=unchecked((int)0x${ntstatus});`);
+    const source = privateCreationFailureSource(WINDOWS_SECURITY_SOURCE, ntstatus);
     const stdout = runWindowsSecurityScript(source, [
       "[FsSafeWindowsBridge]::Execute('create',[Environment]::GetEnvironmentVariable('FS_SAFE_TEST_TARGET'))|ConvertTo-Json -Depth 8 -Compress",
     ], { FS_SAFE_TEST_TARGET: target });
