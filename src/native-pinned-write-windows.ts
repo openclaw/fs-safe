@@ -17,12 +17,19 @@ import type { PinnedWriteParams } from "./pinned-write.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
 
-function closeWriteFd(closeFd: (fd: number) => void, fd: number | undefined): unknown {
+interface WriteFdCloseFailure {
+  error: unknown;
+}
+
+function closeWriteFd(
+  closeFd: (fd: number) => void,
+  fd: number | undefined,
+): WriteFdCloseFailure | undefined {
   if (fd === undefined) return;
   try {
     closeFd(fd);
   } catch (error) {
-    return error;
+    return { error };
   }
 }
 
@@ -108,8 +115,8 @@ export async function runPinnedWriteWindows(
     completed = true;
     return { dev: targetIdentity.dev, ino: targetIdentity.ino };
   } finally {
-    const targetCloseError = closeWriteFd(closeFd, targetFd);
-    const tempCloseError = closeWriteFd(closeFd, tempFd);
+    const targetCloseFailure = closeWriteFd(closeFd, targetFd);
+    const tempCloseFailure = closeWriteFd(closeFd, tempFd);
     if (!renamed) {
       removeNativeCreatedFileIfStillPinned({
         parentPath,
@@ -118,9 +125,9 @@ export async function runPinnedWriteWindows(
         created: tempIdentity,
       });
     }
-    const parentCloseError = closeWriteFd(closeFd, parentFd);
+    const parentCloseFailure = closeWriteFd(closeFd, parentFd);
     await root.close().catch(() => undefined);
-    const closeError = targetCloseError ?? tempCloseError ?? parentCloseError;
-    if (completed && closeError !== undefined) throw closeError;
+    const closeFailure = targetCloseFailure ?? tempCloseFailure ?? parentCloseFailure;
+    if (completed && closeFailure) throw closeFailure.error;
   }
 }
