@@ -514,6 +514,7 @@
         "walkDirectorySync"
       ],
       "types": [
+        "AsyncWalkDirectoryOptions",
         "WalkDirectoryEntry",
         "WalkDirectoryFailure",
         "WalkDirectoryOptions",

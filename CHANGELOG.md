@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Allow asynchronous `include`/`descend` in `walkDirectory()` and `entryFilter` in `Root.walk()` for serial selection and marker-based pruning, retaining callback receivers and budgets; Root walks settle pending callbacks and recheck cancellation and directory/root identity before using awaited decisions.
+
 ### Release operations
 
 - Raise the package-publication and release-proof job ceilings from 20 to 90 minutes, giving delayed registry visibility bounded headroom beyond their 70-minute-40-second aggregate retry-sleep schedule. Pathologically slow registry requests, npm publication, or Sigstore work can still reach the outer cap; normal-path steps and fail-closed artifact, signature, and provenance verification are unchanged.
