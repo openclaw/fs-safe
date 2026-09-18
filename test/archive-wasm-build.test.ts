@@ -5,6 +5,11 @@ import { delimiter, dirname, isAbsolute, join, relative } from "node:path";
 import { expect, it } from "vitest";
 import { archiveWasmBuildEnvironment, validateArchiveWasm } from "../scripts/archive-wasm-build-tools.mjs";
 
+// These integration cases execute real LLVM tools. Match the build's 15-second
+// child deadline, with runner headroom beyond the sequential subprocess bounds.
+const TOOL_PROBE_TIMEOUT_MS = 15_000;
+const probeTestTimeout = (processes: number) => processes * TOOL_PROBE_TIMEOUT_MS + 5_000;
+
 function unsigned(value: number): number[] {
   const bytes: number[] = [];
   do {
@@ -64,13 +69,13 @@ it("reports an unusable explicit compiler instead of silently falling back", () 
   expect(result.status).toBe(1);
   expect(result.stderr).toContain("clang compiler with the wasm32 target");
   expect(result.stderr).toContain("CC_wasm32-unknown-unknown");
-});
+}, probeTestTimeout(2)); // The build-script child has its own 30-second deadline.
 
 it("requires an LLVM archiver even when an explicit host archiver can be executed", () => {
   expect(() => archiveWasmBuildEnvironment({
     ...process.env, "AR_wasm32-unknown-unknown": process.execPath,
   })).toThrow("LLVM llvm-ar archiver");
-});
+}, probeTestTimeout(2)); // One compiler probe, then the rejected archiver probe.
 
 it("scopes the verified compiler and LTO policy to the WASM child without changing caller settings", () => {
   const caller = { ...process.env, CARGO_PROFILE_RELEASE_LTO: "true" };
@@ -80,7 +85,7 @@ it("scopes the verified compiler and LTO policy to the WASM child without changi
   expect(env.CARGO_PROFILE_RELEASE_LTO).toBe("off");
   expect(env.CC).toBe(caller.CC);
   expect(env.AR).toBe(caller.AR);
-});
+}, probeTestTimeout(2)); // Compiler and archiver capability probes.
 
 it("keeps relative tool selections usable from Cargo dependency directories", () => {
   const selected = archiveWasmBuildEnvironment();
@@ -99,8 +104,12 @@ it("keeps relative tool selections usable from Cargo dependency directories", ()
     "CC_wasm32-unknown-unknown": relative(process.cwd(), compiler),
     "AR_wasm32-unknown-unknown": relative(process.cwd(), archiver),
   });
-  expect(spawnSync(explicit["CC_wasm32-unknown-unknown"], ["--print-targets"], { cwd: tmpdir() }).status).toBe(0);
-  expect(spawnSync(explicit["AR_wasm32-unknown-unknown"], ["--version"], { cwd: tmpdir() }).status).toBe(0);
+  expect(spawnSync(explicit["CC_wasm32-unknown-unknown"], ["--print-targets"], {
+    cwd: tmpdir(), timeout: TOOL_PROBE_TIMEOUT_MS,
+  }).status).toBe(0);
+  expect(spawnSync(explicit["AR_wasm32-unknown-unknown"], ["--version"], {
+    cwd: tmpdir(), timeout: TOOL_PROBE_TIMEOUT_MS,
+  }).status).toBe(0);
 
   const discoveredInput = { ...process.env, PATH: "", LLVM_PATH: relative(process.cwd(), join(dirname(archiver), "..")) };
   for (const name of ["CC", "AR"]) {
@@ -111,5 +120,7 @@ it("keeps relative tool selections usable from Cargo dependency directories", ()
   const discovered = archiveWasmBuildEnvironment(discoveredInput);
   expect(isAbsolute(discovered["CC_wasm32-unknown-unknown"])).toBe(true);
   expect(isAbsolute(discovered["AR_wasm32-unknown-unknown"])).toBe(true);
-  expect(spawnSync(discovered["CC_wasm32-unknown-unknown"], ["--print-targets"], { cwd: tmpdir() }).status).toBe(0);
-});
+  expect(spawnSync(discovered["CC_wasm32-unknown-unknown"], ["--print-targets"], {
+    cwd: tmpdir(), timeout: TOOL_PROBE_TIMEOUT_MS,
+  }).status).toBe(0);
+}, probeTestTimeout(9)); // Three compiler/archiver pairs plus three cwd probes.
