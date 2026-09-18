@@ -291,6 +291,10 @@ refreshes are preserved; replacements that are themselves expired remain
 eligible. This does not require read permission. The existing best-effort
 external-process race window after dispatch still applies.
 
+Empty-directory pruning likewise rechecks that the selected entry is still a
+directory immediately before guarded removal. File and symlink replacements
+are preserved, and a directory that becomes nonempty is left in place.
+
 ## Difference from `Root`
 
 | `FileStore` | `Root` |

@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { fileStore } from "../src/file-store.js";
+import { root } from "../src/root.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { itPosix, useRealTempDirs } from "./helpers/vitest.js";
 
@@ -12,6 +13,28 @@ const ttlMs = 30_000;
 afterEach(() => {
   vi.restoreAllMocks();
   __setFsSafeTestHooksForTest();
+});
+
+it("does not read the private removal marker from public options", async () => {
+  const directory = await tempRoot("fs-safe-remove-proxy-options-");
+  const target = path.join(directory, "file.txt");
+  await fs.writeFile(target, "owned");
+  const scopedRoot = await root(directory);
+  const symbols: symbol[] = [];
+  const options = new Proxy({}, {
+    get(target, property, receiver) {
+      if (typeof property === "symbol") {
+        symbols.push(property);
+        throw new Error("unexpected private option read");
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+
+  await scopedRoot.remove("file.txt", options);
+
+  expect(symbols).toEqual([]);
+  await expect(fs.lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 async function fixture(privateMode = false) {
@@ -156,3 +179,85 @@ it("keeps fractional-millisecond expiry comparisons at the removal boundary", as
   expect(refreshed).toBe(true);
   expect(await fs.readFile(target, "utf8")).toBe("expired");
 });
+
+it.each([false, true])(
+  "keeps a fresh file substituted for an observed empty directory (private=%s)",
+  async privateMode => {
+    const rootDir = await tempRoot("fs-safe-prune-empty-dir-");
+    const store = fileStore({ rootDir, private: privateMode });
+    const target = path.join(rootDir, "empty");
+    const sibling = path.join(rootDir, "expired.txt");
+    await fs.mkdir(target);
+    await fs.writeFile(sibling, "expired");
+    await fs.utimes(sibling, new Date(0), new Date(0));
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    let replaced = false;
+    __setFsSafeTestHooksForTest({
+      async beforeRootFallbackMutation(operation, targetPath) {
+        if (operation !== "remove" || targetPath !== target || replaced) return;
+        await fs.rmdir(target);
+        await fs.writeFile(target, "fresh replacement");
+        replaced = true;
+      },
+    });
+
+    await store.pruneExpired({ ttlMs, recursive: true, pruneEmptyDirs: true });
+
+    expect(replaced).toBe(true);
+    expect(await fs.readFile(target, "utf8")).toBe("fresh replacement");
+    await expect(fs.lstat(sibling)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+it.each([false, true])(
+  "keeps a directory that becomes nonempty before empty-directory removal (private=%s)",
+  async privateMode => {
+    const rootDir = await tempRoot("fs-safe-prune-nonempty-dir-");
+    const store = fileStore({ rootDir, private: privateMode });
+    const target = path.join(rootDir, "empty");
+    const child = path.join(target, "fresh.txt");
+    await fs.mkdir(target);
+    let populated = false;
+    __setFsSafeTestHooksForTest({
+      async beforeRootFallbackMutation(operation, targetPath) {
+        if (operation !== "remove" || targetPath !== target || populated) return;
+        await fs.writeFile(child, "fresh");
+        populated = true;
+      },
+    });
+
+    await store.pruneExpired({ ttlMs, recursive: true, pruneEmptyDirs: true });
+
+    expect(populated).toBe(true);
+    expect(await fs.readFile(child, "utf8")).toBe("fresh");
+  },
+);
+
+itPosix.each([false, true])(
+  "keeps a symlink substituted for an observed empty directory (private=%s)",
+  async privateMode => {
+    const rootDir = await tempRoot("fs-safe-prune-empty-dir-link-");
+    const store = fileStore({ rootDir, private: privateMode });
+    const target = path.join(rootDir, "empty");
+    const referent = path.join(rootDir, "referent");
+    const child = path.join(referent, "fresh.txt");
+    await fs.mkdir(target);
+    await fs.mkdir(referent);
+    await fs.writeFile(child, "fresh");
+    let replaced = false;
+    __setFsSafeTestHooksForTest({
+      async beforeRootFallbackMutation(operation, targetPath) {
+        if (operation !== "remove" || targetPath !== target || replaced) return;
+        await fs.rmdir(target);
+        await fs.symlink(referent, target);
+        replaced = true;
+      },
+    });
+
+    await store.pruneExpired({ ttlMs, recursive: true, pruneEmptyDirs: true });
+
+    expect(replaced).toBe(true);
+    expect((await fs.lstat(target)).isSymbolicLink()).toBe(true);
+    expect(await fs.readFile(child, "utf8")).toBe("fresh");
+  },
+);
