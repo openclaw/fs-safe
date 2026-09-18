@@ -13,8 +13,16 @@ const { tempRoot } = useRealTempDirs();
 const creationTimeout = process.platform === "win32" ? 120_000 : 10_000;
 let nativeAvailable = false;
 try {
-  __loadBundledNativeForTest();
-  nativeAvailable = true;
+  const native = __loadBundledNativeForTest();
+  nativeAvailable = process.platform !== "win32" || [
+    native.createPrivateDirectoryWithParentIdentity,
+    native.inspectWindowsDirectory,
+    native.protectPrivateWindowsFile,
+    native.verifyPrivateWindowsFile,
+  ].every(capability => typeof capability === "function");
+  if (!nativeAvailable && process.env.FS_SAFE_NATIVE_MODE === "require") {
+    throw new Error("required native addon lacks private creation capabilities");
+  }
 } catch (error) {
   if (process.env.FS_SAFE_NATIVE_MODE === "require") throw error;
 }
@@ -94,9 +102,9 @@ describe.each(nativeModes)("Root private creation (%s)", (nativeMode) => {
       yield content.subarray(0, 17);
       yield content.subarray(17);
     })(), { private: true });
-    expect(await fs.readFile(path.join(directory, "buffer", "value"))).toEqual(content);
-    expect(await fs.readFile(path.join(directory, "atomic", "value"))).toEqual(content);
-    expect(await fs.readFile(path.join(directory, "stream", "value"))).toEqual(content);
+    for (const child of ["buffer", "atomic", "stream"]) {
+      expect((await fs.readFile(path.join(directory, child, "value"))).equals(content)).toBe(true);
+    }
     expect(JSON.parse(await fs.readFile(path.join(directory, "json", "value"), "utf8")))
       .toEqual({ message: "private content" });
     for (const child of ["buffer", "atomic", "json", "stream"]) {
