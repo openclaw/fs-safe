@@ -58,9 +58,12 @@ describe("admitted ZIP portable keys", () => {
     expect(() => admitZipBuffer(zipRecords([{ name }]), resolveExtractLimits()))
       .toThrow(expect.objectContaining({ code: "entry-path" }));
     const bytes = zipRecords([{ name: "value" }]);
-    const altered = await JSZip.loadAsync(bytes);
-    altered.files.value!.name = name;
-    vi.spyOn(JSZip, "loadAsync").mockResolvedValue(altered);
+    const load = JSZip.prototype.loadAsync;
+    vi.spyOn(JSZip.prototype, "loadAsync").mockImplementation(async function(this: JSZip, ...args) {
+      const archive = await load.apply(this, args);
+      archive.files.value!.name = name;
+      return archive;
+    });
     await expect(loadZipArchiveWithPreflight(bytes)).rejects.toMatchObject({ code: "entry-path" });
   });
 
@@ -70,7 +73,7 @@ describe("admitted ZIP portable keys", () => {
     [{ name: "." }, { name: "./" }],
     [{ name: "legacy", extra: unicodePath(Buffer.from("legacy"), "café") }, { name: "café", flags: 0x800 }],
   ] satisfies ZipRecord[][])("rejects raw/Unicode collisions before decoder loading: %j", async (...records) => {
-    const load = vi.spyOn(JSZip, "loadAsync");
+    const load = vi.spyOn(JSZip.prototype, "loadAsync");
     for (const entries of [records, records.toReversed()]) {
       await expect(loadZipArchiveWithPreflight(zipRecords(entries))).rejects.toMatchObject({ code: "entry-path" });
     }
@@ -85,9 +88,12 @@ describe("admitted ZIP portable keys", () => {
 
   it("rejects an entry-name mismatch after canonical association", async () => {
     const bytes = zipRecords([{ name: "value" }]);
-    const altered = await JSZip.loadAsync(bytes);
-    altered.files.value!.name = "other";
-    vi.spyOn(JSZip, "loadAsync").mockResolvedValue(altered);
+    const load = JSZip.prototype.loadAsync;
+    vi.spyOn(JSZip.prototype, "loadAsync").mockImplementation(async function(this: JSZip, ...args) {
+      const archive = await load.apply(this, args);
+      archive.files.value!.name = "other";
+      return archive;
+    });
     await expect(loadZipArchiveWithPreflight(bytes)).rejects.toMatchObject({ code: "archive-header-invalid" });
   });
 });

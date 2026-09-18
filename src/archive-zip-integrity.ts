@@ -1,7 +1,6 @@
 import { Transform } from "node:stream";
 import { ArchiveFormatError } from "./archive-errors.js";
 import {
-  hasDeferredEmptyZipData,
   zipEntryIntegrityMetadata,
   type ZipEntry,
 } from "./archive-zip-entry.js";
@@ -20,9 +19,8 @@ export function normalizeZipIntegrityError(error: unknown): Error {
 
 export function createZipIntegrityTransform(entry: ZipEntry): Transform {
   const metadata = zipEntryIntegrityMetadata(entry);
-  const deferredEmpty = hasDeferredEmptyZipData(entry);
-  const expectedCrc32 = deferredEmpty ? 0 : metadata?.crc32;
-  const expectedSize = deferredEmpty ? 0 : metadata?.uncompressedSize;
+  const expectedCrc32 = metadata?.crc32;
+  const expectedSize = metadata?.uncompressedSize;
   if (
     typeof expectedCrc32 !== "number" ||
     !Number.isInteger(expectedCrc32) ||

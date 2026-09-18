@@ -28,7 +28,7 @@ import {
   createZipIntegrityTransform,
   normalizeZipIntegrityError,
 } from "./archive-zip-integrity.js";
-import type { ZipEntry } from "./archive-zip-entry.js";
+import { isZipSymlinkEntry, zipEntryKind, type ZipEntry } from "./archive-zip-entry.js";
 import { FsSafeError } from "./errors.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
@@ -40,9 +40,6 @@ import type { ZipDirectoryEntry } from "./archive-zip-directory.js";
 import { validateNativeZipManifest } from "./archive-zip-manifest.js";
 import { resolveExtractLimits, resolveTarMeterLimits } from "./archive-limits.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
-
-const ZIP_UNIX_FILE_TYPE_MASK = 0o170000;
-const ZIP_UNIX_SYMLINK_TYPE = 0o120000;
 
 function canonicalEntryPath(entryPath: string): string {
   validateArchiveEntryPath(entryPath, { escapeLabel: "archive root" });
@@ -134,12 +131,10 @@ async function readZipEntry(buffer: Buffer, entryPath: string, maxBytes: number,
   if (!entry || entry.dir) {
     throw new Error(`archive entry not found: ${formatErrorDetail(entryPath)}`);
   }
-  if (
-    typeof entry.unixPermissions === "number" &&
-    (entry.unixPermissions & ZIP_UNIX_FILE_TYPE_MASK) === ZIP_UNIX_SYMLINK_TYPE
-  ) {
+  if (isZipSymlinkEntry(entry)) {
     throw new Error(`archive entry is a link: ${formatErrorDetail(entryPath)}`);
   }
+  if (zipEntryKind(entry) !== "file") throw new Error(`archive entry is not a file: ${formatErrorDetail(entryPath)}`);
   const integrity = createZipIntegrityTransform(entry);
   const stream: NodeJS.ReadableStream =
     typeof entry.nodeStream === "function"

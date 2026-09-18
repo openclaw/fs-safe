@@ -40,7 +40,7 @@ import {
 import { mergePlannedArchiveIntoDestination, type ArchivePublicationEntry } from "./archive-merge.js";
 import { loadZipArchiveWithPreflight } from "./archive-zip-preflight.js";
 import {
-  isZipSymlinkEntry,
+  zipEntryKind,
   zipEntryDeclaredSize,
   zipEntryMode,
   type ZipEntry,
@@ -259,8 +259,7 @@ async function extractZip(params: {
           assertArchiveEntryPathComponentsWithinLimit(output.relPath, limits);
           trackOutputPath(output.relPath, entry.name);
 
-          const isSymlink = isZipSymlinkEntry(entry);
-          const entryKind = isSymlink ? "symlink" : entry.dir ? "directory" : "file";
+          const entryKind = zipEntryKind(entry);
           const entrySize = zipEntryDeclaredSize(entry);
           if (
             !shouldExtractArchiveEntry({
@@ -271,9 +270,10 @@ async function extractZip(params: {
           ) {
             continue;
           }
-          if (isSymlink) {
+          if (entryKind === "symlink") {
             throw new ArchiveSecurityError("entry-link", `zip entry is a link: ${entry.name}`);
           }
+          if (entryKind === "other") continue;
           const mode = zipEntryMode(entry, params.entryModes);
           acceptedEntries.push({ path: output.relPath, kind: entry.dir ? "directory" : "file", mode });
 

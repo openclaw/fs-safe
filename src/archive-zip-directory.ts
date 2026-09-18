@@ -12,8 +12,12 @@ export type ZipDirectoryEntry = {
   creatorSystem: number;
   externalAttributes: number;
   size: number;
+  compressedSize: number;
+  compressionMethod: number;
+  crc32: number;
   path?: string;
   portableKey: string;
+  portableDirectory: boolean;
   kind: ArchiveEntryKind;
 };
 
@@ -214,6 +218,8 @@ export function* scanZipDirectory(
     onEntry?.({
       index: count - 1, creatorSystem: central[5]!, externalAttributes: central.readUInt32LE(38),
       size: values.uncompressed, path: admittedName.path, portableKey: admittedName.portableKey,
+      compressedSize: values.compressed, compressionMethod: central.readUInt16LE(10), crc32: crc,
+      portableDirectory: admittedName.portableDirectory,
       kind: entryKind(central.readUInt32LE(38), admittedName.directory),
     });
     at = next;
