@@ -3,6 +3,7 @@ import {
   expectedWorkloadSemantics,
   validateFilenameFallbackProfile,
 } from "./filename-fallback-profile.mjs";
+import { validateDirectoryModeOwnerWorkloadResult } from "./directory-mode-owner.mjs";
 import { validateTempWorkspaceWorkloadResult } from "./temp-workspace-fixtures.mjs";
 import {
   validateSidecarPathSnapshotReport,
@@ -147,6 +148,7 @@ export function validateMeasuredDistribution(plan, reportPlan, report, expectedD
     if (semantics !== undefined) {
       assert.equal(result.workloadSemantics, semantics, `${reportPlan.file} workload semantics mismatch for ${result.name}`);
     }
+    validateDirectoryModeOwnerWorkloadResult(result);
     validateTempWorkspaceWorkloadResult(result);
     validateSidecarPathSnapshotWorkloadResult(result);
     validateCopyFallbackSuccessWorkloadResult(result);

@@ -44,6 +44,12 @@ existing mismatched, and wholly new directory chains at depths 0/4/16 with both
 durability and private-mode settings. Fixture creation, mode setup, verification,
 and cleanup remain outside timing; every POSIX row verifies the complete final
 directory chain at the requested mode.
+The `mergeExtractedTreeIntoDestination/directory-mode-owner-post-dispatch` row
+merges one empty `0555` staging directory into a missing destination. It verifies
+the distinct source mode before timing and the final directory afterward, while
+its receipt binds the public merge and supplied owner checks on both sides of
+mode dispatch. On POSIX this exercises descriptor-owned correction from private
+creation mode; Windows exercises the serialized owner's identity-only mode path.
 New-directory POSIX fixtures retain a restrictive `0077` umask during the
 timed write, so mode repair from the masked creation mode is included.
 Hash cases verify the digest as well as the byte count outside measurement.
