@@ -41,6 +41,19 @@ const OPEN_READ_WRITE_FLAGS = syncFs.constants.O_RDWR | NOFOLLOW;
 const OPEN_WRITE_EXCLUSIVE_FLAGS =
   syncFs.constants.O_WRONLY | syncFs.constants.O_CREAT | syncFs.constants.O_EXCL | NOFOLLOW;
 
+function closeSyncAfterAdmissionFailure(
+  fsModule: Pick<SyncFallbackFs, "closeSync">,
+  fd: number,
+  error: unknown,
+): never {
+  try {
+    fsModule.closeSync(fd);
+  } catch {
+    // Preserve the already-selected admission failure.
+  }
+  throw error;
+}
+
 function notFound(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === "ENOENT";
 }
@@ -116,8 +129,7 @@ function openPinnedDestinationSync(
     assertPinnedDestination(fsModule.lstatSync(dest), opened, dest, hardlinks);
     return { fd, stat: opened };
   } catch (error) {
-    fsModule.closeSync(fd);
-    throw error;
+    closeSyncAfterAdmissionFailure(fsModule, fd, error);
   }
 }
 
@@ -176,9 +188,10 @@ export function assertDestinationHardlinkPolicySync(
     if (opened.nlink > 1) {
       throw new FsSafeError("hardlink", `Hardlinked atomic replace destination not allowed: ${dest}`);
     }
-  } finally {
-    fsModule.closeSync(fd);
+  } catch (error) {
+    closeSyncAfterAdmissionFailure(fsModule, fd, error);
   }
+  fsModule.closeSync(fd);
 }
 
 function restoreReadOptions(stat: Stats, maxBytes: number) {
