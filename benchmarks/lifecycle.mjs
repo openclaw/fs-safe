@@ -55,7 +55,6 @@ export async function registerLifecycle({ api: a, workspace: w, native, binding,
     }
   }
   add("readCloneFileMetadata", () => a.readCloneFileMetadata([path.join(w, "input.json")]), {
-    skip: !native ? "Native metadata reader unavailable." : undefined,
     verify: (entries) => {
       assert.equal(entries.length, 1);
       if (cloneBackend === "apfs") assert.equal(entries[0]?.type, 1);
