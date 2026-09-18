@@ -89,11 +89,11 @@ export function createJsonStore<T>(
     return current === undefined ? cloneFallback(fallback) : current;
   }
 
-  async function write(value: T): Promise<void> {
-    await adapter.write(value, {
+  function snapshotWriteOptions() {
+    return {
       trailingNewline: options.trailingNewline ?? true,
       durable: options.durable,
-    });
+    };
   }
 
   async function withSerializedMutation<R>(run: () => Promise<R>): Promise<R> {
@@ -142,22 +142,27 @@ export function createJsonStore<T>(
     readOr,
     readRequired: adapter.readRequired,
     write: async (value) => {
+      const writeOptions = snapshotWriteOptions();
       await withSerializedMutation(async () => {
-        await write(value);
+        await adapter.write(value, writeOptions);
       });
     },
-    update: async (run) =>
-      await withSerializedMutation(async () => {
+    update: async (run) => {
+      const writeOptions = snapshotWriteOptions();
+      return await withSerializedMutation(async () => {
         const next = await run(await read());
-        await write(next);
+        await adapter.write(next, writeOptions);
         return next;
-      }),
-    updateOr: async (fallback, run) =>
-      await withSerializedMutation(async () => {
+      });
+    },
+    updateOr: async (fallback, run) => {
+      const writeOptions = snapshotWriteOptions();
+      return await withSerializedMutation(async () => {
         const current = await read();
         const next = await run(current === undefined ? cloneFallback(fallback) : current);
-        await write(next);
+        await adapter.write(next, writeOptions);
         return next;
-      }),
+      });
+    },
   };
 }

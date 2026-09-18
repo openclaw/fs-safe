@@ -219,6 +219,14 @@ with the same precedence as `write`.
 
 Per-call overrides for the store-level defaults:
 
+Writes capture byte limits, modes, and durability before asynchronous work or
+stream consumption. JSON writes capture those fields and the trailing-newline
+setting before serialization. Later mutation cannot change those captured values.
+Accessors run on the original options object. Ordinary writes retain content
+conversion and byte-limit validation before reading modes and durability.
+The legacy non-private stream `tempPrefix` accessor still runs after staging;
+it does not control the publication policy.
+
 ```ts
 type FileStoreWriteOptions = {
   durable?: boolean;   // store default, otherwise true

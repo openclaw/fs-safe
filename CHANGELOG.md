@@ -4,6 +4,7 @@
 
 ### Security
 
+- Snapshot FileStore write policies before asynchronous work, streams, source reads, and JSON serialization, and JsonStore durability and newline options before each mutation queues or calls its updater; caller mutation cannot change an in-flight write's policy.
 - Snapshot external-output and sibling-temp options before asynchronous setup so caller mutation cannot change in-flight producers, staging paths, permissions, or sync policy, while preserving callback receivers.
 
 ### Fixes and compatibility
