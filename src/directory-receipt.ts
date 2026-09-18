@@ -54,9 +54,12 @@ export function directoryReceiptIdentity(identity: FileIdentityStat): ExactIdent
 }
 
 function snapshotDirectoryReceipt(receipt: DirectoryReceipt): DirectoryAuthority {
-  const pathname = receipt.path;
-  const realPath = receipt.realPath;
-  const stat = receipt.identity;
+  const pathname = receipt?.path;
+  const realPath = receipt?.realPath;
+  const stat = receipt?.identity;
+  if (typeof pathname !== "string" || typeof realPath !== "string" || stat == null) {
+    throw new FsSafeError("path-mismatch", "directory receipt is incomplete");
+  }
   assertNoWindowsPathAlias(pathname, "filesystem");
   assertNoWindowsPathAlias(realPath, "filesystem");
   const identity = directoryReceiptIdentity(stat);

@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as durability from "../src/directory-durability.js";
 import { fileStoreSync } from "../src/store.js";
-import { useRealTempDirs } from "./helpers/vitest.js";
+import { itPosix, useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
 afterEach(() => vi.restoreAllMocks());
@@ -18,13 +18,16 @@ async function wideDirectoryFixture() {
   const originalInode = (1n << 56n) + 1n;
   const replacementInode = originalInode + 2n;
   const inodes = new Map<string, bigint>();
+  let parentIdentityKey = "";
   for (const [directory, inode] of [
     [rootDir, originalInode + 16n],
     [parent, originalInode],
     [replacement, replacementInode],
   ] as const) {
     const actual = await fs.lstat(directory, { bigint: true });
-    inodes.set(`${actual.dev}:${actual.ino}`, inode);
+    const identityKey = `${actual.dev}:${actual.ino}`;
+    inodes.set(identityKey, inode);
+    if (directory === parent) parentIdentityKey = identityKey;
   }
   const project = <T extends Stats | BigIntStats>(stat: T, exact: BigIntStats): T => {
     const inode = inodes.get(`${exact.dev}:${exact.ino}`);
@@ -50,6 +53,7 @@ async function wideDirectoryFixture() {
     rootDir, parent, replacement, originalInode, replacementInode,
     target: path.join(parent, "value"),
     numericDirectoryReads: () => numericDirectoryReads,
+    projectParentDrift: () => { inodes.set(parentIdentityKey, replacementInode); },
   };
 }
 
@@ -79,7 +83,7 @@ describe.each([false, true])("sync store exact durability identity (private=%s)"
     }
   });
 
-  it("rejects a colliding replacement at directory sync without readmitting it", async () => {
+  itPosix("rejects a colliding physical replacement at directory sync without readmitting it", async () => {
     const fixture = await wideDirectoryFixture();
     const moved = path.join(fixture.rootDir, "admitted-parent");
     const sync = durability.syncDirectorySync;
@@ -102,5 +106,35 @@ describe.each([false, true])("sync store exact durability identity (private=%s)"
     expect(await fs.readdir(fixture.parent)).toEqual([]);
     expect(await fs.readFile(path.join(moved, "value"), "utf8")).toBe("published before swap");
     expect(await fs.readdir(moved)).toEqual(["value"]);
+  });
+
+  it("rejects projected Windows identity drift at directory sync without reopening or flushing", async () => {
+    const fixture = await wideDirectoryFixture();
+    const sync = durability.syncDirectorySync;
+    const open = vi.spyOn(fsSync, "openSync");
+    const fsync = vi.spyOn(fsSync, "fsyncSync");
+    let reachedSync = false;
+    expect(Number(fixture.originalInode)).toBe(Number(fixture.replacementInode));
+    vi.spyOn(durability, "syncDirectorySync").mockImplementation((directory, options) => {
+      // Windows cannot rename this parent while its descendant writer is open.
+      // Change only the exact observation at the same post-publication boundary.
+      fixture.projectParentDrift();
+      vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+      expect(fsSync.lstatSync(fixture.parent, { bigint: true }).ino).toBe(fixture.replacementInode);
+      reachedSync = true;
+      open.mockClear();
+      fsync.mockClear();
+      return sync(directory, options);
+    });
+
+    expect(() => fileStoreSync({ rootDir: fixture.rootDir, private: privateMode })
+      .write("parent/value", "published before identity drift"))
+      .toThrow(expect.objectContaining({ code: "path-mismatch" }));
+    expect(reachedSync).toBe(true);
+    expect(open).not.toHaveBeenCalled();
+    expect(fsync).not.toHaveBeenCalled();
+    expect(await fs.readFile(fixture.target, "utf8")).toBe("published before identity drift");
+    expect(await fs.readdir(fixture.parent)).toEqual(["value"]);
+    expect(await fs.readdir(fixture.replacement)).toEqual([]);
   });
 });
