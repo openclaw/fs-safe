@@ -9,7 +9,7 @@
 ### Permissions and diagnostics
 
 - Windows raw owner/DACL inspection, private-directory creation, and secure-file reads use packaged, readable PowerShell/C# scripts when native support is unavailable in `auto` or `off` mode. Private DACLs are applied at creation and secure reads inspect the same open handle before reading bytes. Scripts run under normal system policy, fail closed when disallowed, emit a path-free warning once per capability per process, and add startup and compilation overhead; explicit `require` mode and native operation failures remain fail-closed.
-- Keep Windows fallback command discovery within PowerShell's bundled system modules to avoid slow scans of unrelated installed modules on cold starts.
+- Address Windows fallback commands by their built-in module names and keep module discovery within PowerShell's bundled system modules to avoid broad command discovery scans on cold starts.
 
 ## 0.15.0 - 2026-09-18
 
