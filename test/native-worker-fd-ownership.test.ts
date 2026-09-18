@@ -62,7 +62,7 @@ describe.runIf(nativeAvailable || process.env.FS_SAFE_NATIVE_MODE === "require")
         const [exitCode] = await once(worker, "exit", { signal: AbortSignal.timeout(15_000) });
         expect(exitCode).toBe(0);
         expect(result?.completed).toEqual([
-          "write", "create", "create-stream", "append", "open-writable", "copy-in",
+          "write", "policy-parent-create", "policy-parent-denial", "create", "create-stream", "append", "open-writable", "copy-in",
           "move", "private-sibling", "create-collision",
           ...(process.platform === "win32" ? [] : ["node-parent-staging"]),
         ]);

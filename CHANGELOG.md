@@ -10,6 +10,7 @@
 
 ### Fixes and compatibility
 
+- Enforce Windows native parent mutation policies before creating each missing component, retaining native descriptor ownership through cleanup. Reuse operation-local creation receipts for eligible Windows paths instead of repeating full policy walks at every depth.
 - Preserve files and symlinks that replace an observed empty FileStore directory while pruning is prepared; directories that become nonempty remain untouched.
 - Bound path-prefix queue consumption on long paths while preserving short-path behavior and path-resolution checks.
 - Preserve an already-selected synchronous destination-admission error when its one best-effort descriptor close also fails. Successful admission retains its existing close-error behavior, and synchronous atomic replacement adapters do not retry or double-close the destination descriptor.

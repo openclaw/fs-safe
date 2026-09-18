@@ -2,7 +2,8 @@ import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { inspectDirectoryIdentity } from "./directory-guard.js";
+import { inspectDirectoryIdentity, inspectDirectoryIdentitySync } from "./directory-guard.js";
+import { inspectNativeDirectoryObservation, type NativeDirectoryObservationBackend } from "./native-directory-observation.js";
 import { FsSafeError } from "./errors.js";
 import type { FileIdentityStat } from "./file-identity.js";
 import type { NativeBinding } from "./native.js";
@@ -102,8 +103,9 @@ export async function openNativeRootAdmission(
 
 export async function openNativeParentAdmission(
   binding: NativeBinding,
-  rootAdmission: NativeRootAdmission,
+  rootAdmission: Omit<NativeRootAdmission, "root"> & { root: Pick<FileHandle, "fd"> },
   relativeParentPath: string,
+  observation?: "native-directory",
 ): Promise<NativeParentAdmission> {
   assertParentAdmissionAvailable(binding);
   const closeFd = captureNativeFdClose(binding);
@@ -122,6 +124,27 @@ export async function openNativeParentAdmission(
     const parentInput = relativeParentPath
       ? path.join(rootAdmission.rootPath, ...relativeParentPath.split("/"))
       : rootAdmission.rootPath;
+    if (observation === "native-directory" && process.platform === "win32" && rootAdmission.exactRoot &&
+        typeof binding.observeDirectory === "function") {
+      const stat = inspectFileIdentitySync(() => fsSync.fstatSync(parentFd, { bigint: true }));
+      let observed;
+      try {
+        observed = inspectNativeDirectoryObservation(
+          binding as NativeDirectoryObservationBackend, parentInput, stat,
+        );
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code !== "OBSERVATION_UNAVAILABLE") throw error;
+      }
+      if (observed) {
+        assertNoWindowsPathAlias(observed.realPath, "filesystem", "native parent uses a Windows filesystem namespace alias");
+        inspectDirectoryIdentitySync(observed.realPath, stat, stat);
+        return {
+          fd: parentFd,
+          close: () => closeFd(parentFd),
+          guard: { dir: observed.realPath, realPath: observed.realPath, stat },
+        };
+      }
+    }
     const parentPath = realpathSync.native(pathForWindowsFilesystem(parentInput));
     assertNoWindowsPathAlias(
       parentPath,

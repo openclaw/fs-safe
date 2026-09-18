@@ -225,3 +225,27 @@ describe.runIf(process.platform !== "win32" && !process.versions.bun)(
     });
   },
 );
+
+it.runIf(process.platform === "win32" && !process.versions.bun)(
+  "admits portable separators only for the native no-follow parent walk",
+  async () => {
+    const directory = await tempRoot("fs-safe-native-portable-route-");
+    const context = await resolveRootContext(directory);
+    for (const [originalPath, allowed] of [["one/value", true], ["one/two\\value", true],
+      ["one//value", false], ["one/../value", false], ["one/CON.txt", false]] as const) {
+      const target = path.resolve(directory, originalPath);
+      const prepared = await preparePinnedWriteMutationAdmission({
+        ...context, originalPath, resolvedTargetPath: target, defaultRelativeParentPath: "one",
+        policy: snapshotPinnedMutationPolicy(undefined, "reject")!,
+        resolveCurrent: async () => ({ resolved: target }),
+      });
+      expect(prepared.mutationAdmission?.beginSharedParentWalk?.()).toBeUndefined();
+      const session = prepared.mutationAdmission?.beginNativeParentWalk?.();
+      expect(session !== undefined).toBe(allowed);
+      if (session) {
+        expect(session.retainedTargetPath).toBe(target);
+        session.dispose();
+      }
+    }
+  },
+);

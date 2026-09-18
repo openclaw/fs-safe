@@ -23,6 +23,14 @@ await scoped.write("deep/nested/write.txt", "write");
 assert.equal(await fs.readFile(path.join(directory, "deep/nested/write.txt"), "utf8"), "write");
 completed.push("write");
 
+await scoped.write("policy/nested/write.txt", "policy", { mutationSymlinks: "reject" });
+assert.equal(await fs.readFile(path.join(directory, "policy/nested/write.txt"), "utf8"), "policy");
+await assert.rejects(scoped.write("denied/nested/write.txt", "denied", {
+  denyMutations: { paths: [path.join(directory, "denied")] },
+}));
+assert.equal(fsSync.existsSync(path.join(directory, "denied")), false);
+completed.push("policy-parent-create", "policy-parent-denial");
+
 await scoped.create("created.txt", "create");
 await scoped.create("stream.txt", (async function* () { yield Buffer.from("stream"); })());
 assert.equal(await fs.readFile(path.join(directory, "stream.txt"), "utf8"), "stream");

@@ -240,6 +240,10 @@ export async function preparePinnedWriteMutationAdmission(params: {
     selectedTarget: params.resolvedTargetPath,
     policy,
   });
+  const nativeRoute = sharedRoute ?? (process.platform === "win32" && params.originalPath?.includes("/")
+    ? simpleSharedRoute({ rootReal: params.rootReal, rootIdentity: params.rootIdentity,
+      originalPath: params.originalPath.replaceAll("/", "\\"), selectedTarget: params.resolvedTargetPath, policy })
+    : undefined);
   let pinnedSession: ParentWalkSession | undefined;
   let epoch: Epoch | undefined;
   let pending: CreateReceipt | undefined;
@@ -268,13 +272,13 @@ export async function preparePinnedWriteMutationAdmission(params: {
     }
     return current;
   };
-  const beginSharedParentWalk = sharedRoute ? (): PinnedMutationParentWalkSession => {
+  const createSharedParentWalk = (admittedRoute: NonNullable<typeof sharedRoute>): PinnedMutationParentWalkSession => {
     const session: ParentWalkSession = Object.freeze({
       kind: "shared",
-      route: sharedRoute.route,
+      route: admittedRoute.route,
       selectedTarget: params.resolvedTargetPath,
       nativeMode: getFsSafeNativeConfig().mode,
-      rootIdentity: sharedRoute.rootIdentity,
+      rootIdentity: admittedRoute.rootIdentity,
       authorizationToken: Object.freeze({}),
     });
     let disposed = false;
@@ -382,7 +386,7 @@ export async function preparePinnedWriteMutationAdmission(params: {
         disable();
       },
     });
-  } : undefined;
+  };
   const mutationAdmission: PinnedWriteMutationAdmission = Object.freeze({
     rejectParentSymlinks: policy.mutationSymlinks === "reject",
     beginParentWalk: route ? () => {
@@ -397,7 +401,8 @@ export async function preparePinnedWriteMutationAdmission(params: {
       pending = undefined;
       return route;
     } : undefined,
-    beginSharedParentWalk,
+    beginSharedParentWalk: sharedRoute ? () => createSharedParentWalk(sharedRoute) : undefined,
+    beginNativeParentWalk: nativeRoute ? () => createSharedParentWalk(nativeRoute) : undefined,
     tryAuthorizeAtParent(request, parent) {
       pending = undefined;
       const reusable = epoch;

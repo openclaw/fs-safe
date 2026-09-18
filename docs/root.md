@@ -300,6 +300,15 @@ the caller, which must check authority before its own later writes.
 
 All mutation methods accept `denyMutations?: { paths?: string[]; prefixes?: string[] }`. Entries must be absolute paths. `paths` blocks those exact paths; `prefixes` blocks those paths and their descendants. fs-safe preserves path strings exactly and canonicalizes through existing ancestors before comparing, so a symlinked ancestor to a denied location is still denied. Denied mutations throw `FsSafeError` with code `denied-path`. Use this for caller-specific sensitive paths, not as a replacement for the root boundary, symlink, or hardlink checks.
 
+For writes, creates, streams, and copies, parent creation admits the prospective
+file and each missing directory before creating that directory, including on the
+Windows native route. An exact deny on an existing parent does not prevent using
+that parent to write an allowed child. If a deeper missing parent is denied,
+earlier admitted directories may remain; the denied directory and file are not
+created. With `mkdir: false`, missing parents are never created. Native Windows
+policy-aware creation requires the direct-child helper and fails with
+`helper-unavailable` if it is absent.
+
 All mutation methods also accept `mutationSymlinks`. `"reject"` rejects symlink
 components; `"follow-parents-within-root"` resolves contained parent directory
 aliases but rejects the final component if it is a symlink, including a dangling
