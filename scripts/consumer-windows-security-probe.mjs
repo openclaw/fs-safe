@@ -207,13 +207,13 @@ function Write-FixturePhase([string]$phase) {
 }
 Write-FixturePhase 'script:start'
 Write-FixturePhase 'add-type:start'
-Add-Type -LiteralPath (Join-Path $PSScriptRoot 'consumer-raw-security.cs')
+Microsoft.PowerShell.Utility\Add-Type -LiteralPath ([IO.Path]::Combine($PSScriptRoot, 'consumer-raw-security.cs'))
 Write-FixturePhase 'add-type:end'
 $p=[Environment]::GetEnvironmentVariable('FS_SAFE_SECURITY_PROOF_PATH')
 $action=[Environment]::GetEnvironmentVariable('FS_SAFE_SECURITY_PROOF_ACTION')
 if($action -in @('parent','broad','broad-write')) {
   Write-FixturePhase 'get-acl:start'
-  $acl=Get-Acl -LiteralPath $p
+  $acl=Microsoft.PowerShell.Security\Get-Acl -LiteralPath $p
   Write-FixturePhase 'get-acl:end'
   $sid=[Security.Principal.SecurityIdentifier]::new('S-1-1-0')
   $inherit=if($action -eq 'parent'){[Security.AccessControl.InheritanceFlags]3}else{[Security.AccessControl.InheritanceFlags]0}
@@ -221,7 +221,7 @@ if($action -in @('parent','broad','broad-write')) {
   $rule=[Security.AccessControl.FileSystemAccessRule]::new($sid,$rights,$inherit,[Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow)
   $acl.AddAccessRule($rule)
   Write-FixturePhase 'set-acl:start'
-  Set-Acl -LiteralPath $p -AclObject $acl
+  Microsoft.PowerShell.Security\Set-Acl -LiteralPath $p -AclObject $acl
   Write-FixturePhase 'set-acl:end'
 }
 Write-FixturePhase 'raw-security:start'
@@ -239,7 +239,7 @@ foreach($ace in $raw.DiscretionaryAcl) {
     inheritOnly=($f -band 8)-ne 0;inherited=($f -band 16)-ne 0;successfulAccess=($f -band 64)-ne 0;failedAccess=($f -band 128)-ne 0}}
 }
 @{ownerSid=$raw.Owner.Value.ToLowerInvariant();currentUserSid=$currentSid;daclPresent=($null -ne $raw.DiscretionaryAcl);
-  daclProtected=([int]$raw.ControlFlags -band 4096)-ne 0;complete=($unsupported.Count -eq 0);unsupportedAceTypes=@($unsupported);aces=@($aces)}|ConvertTo-Json -Depth 8 -Compress
+  daclProtected=([int]$raw.ControlFlags -band 4096)-ne 0;complete=($unsupported.Count -eq 0);unsupportedAceTypes=@($unsupported);aces=@($aces)}|Microsoft.PowerShell.Utility\ConvertTo-Json -Depth 8 -Compress
 Write-FixturePhase 'output:end'
 `;
 const powershell = path.join(process.env.SystemRoot ?? process.env.WINDIR ?? "C:\\Windows",

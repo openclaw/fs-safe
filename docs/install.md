@@ -143,8 +143,9 @@ PowerShell and its .NET `Add-Type` compilation support are available. The packag
 ships a readable, fixed `.ps1` driver and adjacent `.cs` source and invokes the
 driver with Windows PowerShell `-File`. Paths are passed as data. The fallback
 does not generate helper scripts at runtime or use an encoded launcher.
-The driver limits command discovery to PowerShell's bundled system modules,
-avoiding scans of unrelated installed modules during each helper startup.
+The driver addresses built-in commands by module name and limits module
+discovery to PowerShell's bundled system modules, avoiding broad command
+discovery scans during each helper startup.
 
 Normal PowerShell execution policy and Microsoft Defender policy must permit
 the packaged scripts, including their use of `Add-Type`. The package does not

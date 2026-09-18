@@ -352,11 +352,19 @@ describe("secure file reads", () => {
     [{ SystemRoot: ".\\fake-root", WINDIR: "E:\\Windows" }, "E:\\Windows"],
     [{ systemroot: "D:\\Windows" }, "D:\\Windows"],
     [{ SystemRoot: "D:\\Windows" + "/".repeat(10_000) }, "D:\\Windows"],
-  ])("resolves the structured Windows query from absolute system roots", async (env, expectedRoot) => {
-    const exec = vi.fn(async () => windowsAclOutput());
+  ])("resolves the structured Windows query and scopes command discovery to system modules", async (env, expectedRoot) => {
+    const exec = vi.fn(async (_command: string, _args: string[]) => windowsAclOutput());
     await expect(inspectWindowsAcl("C:\\fixture", { env, exec })).resolves.toMatchObject({ ok: true });
     expect(exec).toHaveBeenCalledWith(expectedRoot + "\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", expect.arrayContaining(["-EncodedCommand"]));
     expect(exec).toHaveBeenCalledTimes(1);
+    const args = exec.mock.calls[0]![1];
+    expect(args.slice(0, -1)).toEqual(["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand"]);
+    const query = Buffer.from(args.at(-1)!, "base64").toString("utf16le");
+    expect(query.split(";").slice(0, 2)).toEqual([
+      "$ErrorActionPreference='Stop'",
+      "$env:PSModulePath=[IO.Path]::Combine($PSHOME,'Modules')",
+    ]);
+    expect(query).toContain("|Microsoft.PowerShell.Utility\\ConvertTo-Json -Depth 4 -Compress");
   });
 
   it("covers permission formatting and ACL classification helpers", async () => {
