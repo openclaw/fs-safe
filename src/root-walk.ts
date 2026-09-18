@@ -23,7 +23,9 @@ export type RootWalkEntry =
   | { relativePath: string; kind: "truncated"; size: 0 }
   | { relativePath: string; kind: "directory-error"; size: 0; error: unknown };
 
-export type RootWalkEntryFilter = (entry: RootWalkDataEntry) => RootWalkEntryFilterResult;
+export type RootWalkEntryFilter = (
+  entry: RootWalkDataEntry,
+) => RootWalkEntryFilterResult | Promise<RootWalkEntryFilterResult>;
 
 export type RootWalkOptions = {
   maxDepth?: number;
@@ -197,7 +199,17 @@ export async function* walkRoot(
         }
 
         const walkEntry: RootWalkDataEntry = { relativePath: child, kind, size };
-        const filterResult = options.entryFilter?.(walkEntry) ?? "include";
+        let filterResult = options.entryFilter?.(walkEntry) ?? "include";
+        if (typeof filterResult !== "string") {
+          filterResult = (await filterResult) ?? "include";
+          options.signal?.throwIfAborted();
+          try {
+            await listing.assertCurrent();
+          } catch (error) {
+            yield onDirectoryError(directory, error);
+            return;
+          }
+        }
         if (!(["include", "skip", "skip-subtree"] as const).includes(filterResult)) {
           throw new TypeError(`invalid root walk entryFilter result: ${String(filterResult)}`);
         }

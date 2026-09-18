@@ -52,6 +52,20 @@ it.each([
   expect(fs.readdirSync(directory)).toEqual([]);
 });
 
+it.each([
+  { depth: 33, left: "Worker.sqlite", right: "worker.sqlite" },
+  { depth: 65, left: "caf\u00e9.sqlite", right: "cafe\u0301.sqlite" },
+])("observes the final component through $depth missing levels when opted in", async ({ depth, left, right }) => {
+  const directory = await tempRoot("fs-safe-suffix-deep-");
+  const prefix = Array.from({ length: depth - 1 }, () => "a").join(path.sep);
+  left = path.join(prefix, left);
+  right = path.join(prefix, right);
+  const expected = directObservation(directory, left, right);
+  expect(() => probePathSuffixAliasesSync({ directory, left, right })).toThrow(RangeError);
+  expect(probePathSuffixAliasesSync({ directory, left, right, maxDepth: depth })).toBe(expected);
+  expect(fs.readdirSync(directory)).toEqual([]);
+});
+
 itPosix.each([["part:É", "part:é"], ["part\\É", "part\\é"]])(
   "preserves POSIX literal component bytes %s / %s", async (left, right) => {
     const directory = await tempRoot("fs-safe-suffix-literal-");
@@ -61,11 +75,13 @@ itPosix.each([["part:É", "part:é"], ["part\\É", "part\\é"]])(
   },
 );
 
-it.each(["", ".", "..", "a/../b", "a/./b", "a//b", "/absolute", "nul\0name"])(
-  "rejects invalid suffix %j before mutation, including equal inputs", async (suffix) => {
+it.each(["", ".", "..", "a/../b", "a/./b", "a//b", "/absolute", "nul\0name"].flatMap(suffix =>
+  ([undefined, 65] as const).map(maxDepth => ({ suffix, maxDepth })),
+))(
+  "rejects invalid suffix $suffix with maxDepth $maxDepth before mutation", async ({ suffix, maxDepth }) => {
     const directory = await tempRoot("fs-safe-suffix-invalid-");
     const mkdir = vi.spyOn(fs, "mkdirSync");
-    expect(() => probePathSuffixAliasesSync({ directory, left: suffix, right: suffix })).toThrow(TypeError);
+    expect(() => probePathSuffixAliasesSync({ directory, left: suffix, right: suffix, maxDepth })).toThrow(TypeError);
     expect(mkdir).not.toHaveBeenCalled();
   },
 );
@@ -73,11 +89,15 @@ it.each(["", ".", "..", "a/../b", "a/./b", "a//b", "/absolute", "nul\0name"])(
 itWin32.each([
   "C:foo", "a\\C:foo", "name:stream", "\\\\server\\share", "\\\\?\\C:\\x",
   "\\rooted", "a\\..\\b", "a\\.\\b", "a\\\\b", "a\\...\\b", "a\\ \\b", "a\\NUL.txt", "C:/absolute",
-])(
-  "rejects Windows path-control suffix %s", async suffix => {
+].flatMap(suffix => ([undefined, 32, 65] as const)
+  .map(maxDepth => ({ suffix, maxDepth }))))(
+  "rejects Windows path-control suffix $suffix with maxDepth $maxDepth",
+  async ({ suffix, maxDepth }) => {
     const directory = await tempRoot("fs-safe-suffix-win-invalid-");
     const mkdir = vi.spyOn(fs, "mkdirSync");
-    expect(() => probePathSuffixAliasesSync({ directory, left: suffix, right: suffix })).toThrow(TypeError);
+    expect(() => probePathSuffixAliasesSync({
+      directory, left: suffix, right: suffix, maxDepth,
+    })).toThrow(TypeError);
     expect(mkdir).not.toHaveBeenCalled();
   },
 );
@@ -89,7 +109,11 @@ it("rejects Windows reserved components before filesystem work", () => {
   Object.defineProperty(process, "platform", { value: "win32", configurable: true });
   try {
     for (const name of ["CON", "NUL.sqlite", "CLOCK$", "CONIN$", "COM¹", "LPT³.sqlite"]) {
-      expect(() => probePathSuffixAliasesSync({ directory: ".", left: name, right: name })).toThrow(TypeError);
+      for (const maxDepth of [undefined, 32, 65] as const) {
+        expect(() => probePathSuffixAliasesSync({
+          directory: ".", left: name, right: name, maxDepth,
+        })).toThrow(TypeError);
+      }
     }
     expect(mkdir).not.toHaveBeenCalled();
   } finally {
@@ -135,11 +159,13 @@ it("does not skip earlier uncertainty to evaluate a later policy exclusion", asy
   expect(predicate).not.toHaveBeenCalled();
 });
 
-it("propagates a trusted predicate exception after cleaning earlier component probes", async () => {
+it.each([2, 34])("propagates a trusted predicate exception after cleaning %i levels", async (depth) => {
   const directory = await tempRoot("fs-safe-suffix-callback-");
   const failure = new Error("caller policy failed");
+  const prefix = Array.from({ length: depth - 1 }, () => "a").join(path.sep);
   expect(() => probePathSuffixAliasesSync({
-    directory, left: path.join("a", "É"), right: path.join("a", "é"),
+    directory, left: path.join(prefix, "É"), right: path.join(prefix, "é"),
+    maxDepth: depth,
     shouldProbeCaseVariants: () => { throw failure; },
   })).toThrow(failure);
   expect(fs.readdirSync(directory)).toEqual([]);
@@ -255,15 +281,17 @@ it("preserves a directory replaced after its creation observation", async () => 
   expect(fs.readFileSync(path.join(replaced, "sentinel"), "utf8")).toBe("preserve");
 });
 
-itPosix("rejects a replaced ancestor before probing through its symlink", async () => {
+itPosix.each([2, 34])("rejects a replaced ancestor before probing through its symlink at depth %i", async (depth) => {
   const parent = await tempRoot("fs-safe-suffix-ancestor-");
   const directory = path.join(parent, "root");
   const outside = path.join(parent, "outside");
   fs.mkdirSync(directory);
   fs.mkdirSync(outside);
   let replaced = "";
+  const prefix = Array.from({ length: depth - 1 }, () => "a").join(path.sep);
   expect(probePathSuffixAliasesSync({
-    directory, left: path.join("a", "É"), right: path.join("a", "é"),
+    directory, left: path.join(prefix, "É"), right: path.join(prefix, "é"),
+    maxDepth: depth,
     shouldProbeCaseVariants: () => {
       replaced = path.join(directory, fs.readdirSync(directory)[0]!);
       fs.renameSync(replaced, path.join(parent, "original"));
