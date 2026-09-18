@@ -42,6 +42,30 @@ POSIX creation requests `0700` for directories and `0600` for files by default;
 the umask may restrict those permissions further. Existing directory privacy
 checks never broaden permissions.
 
+On macOS (Darwin), private creation also requires an ACL-free result. The native
+helper must provide `inspectDarwinAcl`; native `off`, a missing helper, or an
+older helper without that capability rejects with `helper-unavailable` before
+creating parents or staging entries. There is no system-command fallback for
+Darwin private creation. Operations without `private: true` keep their existing
+native-mode behavior.
+
+Private Darwin directories must retain owner-read or owner-search permission
+after applying the umask so their ACL can be inspected. Modes `0000` and `0200`
+reject with `helper-unavailable` before directory creation. Existing private
+directories with neither permission also reject with `helper-unavailable`;
+permissions are never broadened to inspect them. Modes `0100`, `0300`, and `0400`
+remain supported, as does the default `0700`. Private files with mode `0000`
+remain supported because inspection uses the owned creation descriptor.
+
+Before creation, the parent ACL is inspected for entries that could be inherited
+by the new directory or file, as applicable. Relevant inheritable entries reject
+creation. Noninheriting parent ACLs, such as the usual macOS home-directory
+deny-delete entry, do not reject child creation. Created directories and files
+are checked for owner-only permissions and no ACL before admitting the directory
+or allowing payload writes. An existing directory requested with `private: true`
+must also be owned by the current user, have owner-only permissions, and have no
+ACL. These checks never clear an ACL after creation or repair an existing entry.
+
 On Windows, mode bits alone do not establish privacy. Private creation uses a
 protected current-user, LocalSystem and Administrators DACL. A private staging
 directory supplies trusted-only inheritable permissions before Node creates
@@ -65,8 +89,8 @@ verified destination descriptor with the creation descriptor before removing
 the temporary name. Requested read-only attributes are finalized through the
 retained destination descriptor after that handoff.
 
-Native `auto` uses available capabilities; native `off` and missing-capability
-`auto` use the packaged system-command security bridge. Native `require`
+On Windows, native `auto` uses available capabilities; native `off` and
+missing-capability `auto` use the packaged system-command security bridge. Native `require`
 rejects unavailable required capabilities instead of starting a command. The
 private-file capability check runs before creating parents or staging entries;
 directory-only operations require only their directory capabilities. The

@@ -15,7 +15,26 @@ export const creationScenarios = [
   "advanced-directory-async", "advanced-directory-sync", "advanced-file-descriptor",
 ];
 
-export function creationScenarioNames(missingRequired, platform) {
+const darwinUnavailableScenarios = [
+  "darwin-private-root-mkdir-unavailable", "darwin-private-root-create-unavailable",
+  "darwin-private-root-create-json-unavailable", "darwin-private-root-stream-unavailable",
+  "darwin-private-directory-async-unavailable", "darwin-private-directory-sync-unavailable",
+  "darwin-private-file-sync-unavailable",
+];
+const darwinAclScenarios = [
+  "darwin-noninheriting-parent-acl", "darwin-inheriting-parent-acl-rejected",
+  "darwin-existing-private-directory-acl-rejected",
+];
+
+export function creationScenarioNames({ omitted, mode, platform }) {
+  const missingRequired = omitted && mode === "require";
+  if (platform === "darwin") {
+    if (omitted || mode === "off") {
+      return [...darwinUnavailableScenarios, ...(missingRequired ? []
+        : creationScenarios.map((name) => name.replace("root-private-", "root-ordinary-")))];
+    }
+    return [...creationScenarios, ...darwinAclScenarios];
+  }
   if (!missingRequired) return creationScenarios;
   return [platform === "win32" ? "require-root-mkdir" : "root-private-directory",
     "require-root-create", "require-root-create-json", "require-root-stream",
@@ -89,7 +108,7 @@ export function bindCreationConsumer(importUrl, mode) {
       const nativeLoaded = binary ? nativeBinaryLoaded(binary) : process.report.getReport().sharedObjects
         .some((file) => /fs-safe.*\.node$/i.test(file));
       assert.equal(nativeLoaded, !expected.omitted && mode === "require");
-      assert.deepEqual(rows.map((row) => row.scenario), creationScenarioNames(expected.omitted && mode === "require", process.platform));
+      assert.deepEqual(rows.map((row) => row.scenario), creationScenarioNames({ omitted: expected.omitted, mode, platform: process.platform }));
       return { protocol: 1, platform: process.platform, arch: process.arch, node: process.version,
         mode, omitted: expected.omitted, nativeLoaded, source: expected.source,
         sourceMetadataProjection: true, rootIntegrity: expected.rootIntegrity,

@@ -1,15 +1,17 @@
 import fs from "node:fs";
 import fsAsync from "node:fs/promises";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDirectory, createDirectorySync, createDirectoryWithAdmission, createFileHandle, createFileSync } from "../src/create.js";
 import { assertPrivateDirectory, assertPrivateDirectorySync } from "../src/creation-permissions.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { __resetNativeLoaderForTest } from "../src/native.js";
 import { readWindowsSecurityFactsCommand } from "../src/windows-security-command.js";
+import { hasPrivateCreationNative } from "./helpers/private-creation-native.js";
 import { useTempDirs } from "./helpers/vitest.js";
 
 const tempDirs = useTempDirs();
+const privateCreationAvailable = process.platform !== "darwin" || hasPrivateCreationNative();
 afterEach(() => {
   vi.restoreAllMocks();
   __resetFsSafeNativeConfigForTest();
@@ -97,7 +99,11 @@ describe("exclusive leaf creation", () => {
   });
 });
 
-describe.skipIf(process.platform === "win32")("POSIX private creation", () => {
+describe.skipIf(process.platform === "win32" || !privateCreationAvailable)("POSIX private creation", () => {
+  beforeEach(() => {
+    if (process.platform === "darwin") configureFsSafeNative({ mode: "auto" });
+  });
+
   it("creates private directories and validates existing privacy without repairing it", async () => {
     const base = await tempDirs.tempRoot("fs-safe-create-");
     const target = path.join(base, "private");

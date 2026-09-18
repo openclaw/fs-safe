@@ -1,4 +1,5 @@
 import { syncFileBestEffort } from "./file-sync.js";
+import { assertDarwinCreationAcl, privateFileMutationAssertion } from "./creation-darwin.js";
 import fsSync, { type BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -325,7 +326,9 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
     try {
       const verificationIdentity = fsSync.fstatSync(handle.fd, { bigint: true });
       createdIdentity = verificationIdentity;
-      await writePinnedInput(handle, params.input, params.maxBytes, assertBeforeMutation);
+      await writePinnedInput(handle, params.input, params.maxBytes, params.private
+        ? privateFileMutationAssertion(handle.fd, assertBeforeMutation) : assertBeforeMutation);
+      if (params.private) assertDarwinCreationAcl(handle.fd);
       // Content writes may clear set-ID bits; finalize them through the owned fd.
       await handle.chmod(params.mode);
       if (params.sync !== false) {

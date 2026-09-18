@@ -116,7 +116,7 @@ export interface NativeBinding {
   /** Internal: consumes only a descriptor returned by this binding. */
   closeOwnedFd(fd: number): void;
   /** Internal Darwin-only synchronous inspection; the caller retains its fd. */
-  inspectDarwinAcl?(fd: number): NativeDarwinAclFacts;
+  inspectDarwinAcl?(fd: number, inheritanceTarget?: "file" | "directory"): NativeDarwinAclFacts;
   /** POSIX system canonicalization; confinement and identity policy stay with callers. */
   canonicalizePath?(path: string, ordinary: boolean): { path?: string; errno?: number };
   /** Internal: exact directory identity and canonical path from one no-follow handle. */

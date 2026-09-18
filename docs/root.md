@@ -135,8 +135,12 @@ Missing directories are created with private permissions, and an existing
 requested directory must already be private. Existing ancestors are not
 chmodded or assigned new ACLs. Private files use owner-only POSIX permissions
 or a protected Windows DACL granting access to the current user, System, and
-Administrators. See [creation](creation.md) for native-mode support, synchronous
-leaf creation, and failure handling.
+Administrators. On macOS, private directories and files must also have no ACL;
+creation rejects relevant inheritable parent ACLs, while noninheriting parent
+ACLs remain allowed. A native helper with `inspectDarwinAcl` is required. Native
+`off`, a missing helper, or an older helper without that capability rejects with
+`helper-unavailable` before creating parents or stages. See [creation](creation.md)
+for platform support, synchronous leaf creation, and failure handling.
 
 ```ts
 await fs.mkdir("private-data", { private: true });

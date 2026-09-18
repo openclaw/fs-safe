@@ -12,7 +12,9 @@ import { itPosix, useRealTempDirs } from "./helpers/vitest.js";
 const { tempRoot } = useRealTempDirs();
 // Native-off Windows cases execute several bounded system commands per creation.
 const creationTimeout = process.platform === "win32" ? 120_000 : 10_000;
-const nativeModes = hasPrivateCreationNative() ? ["off", "auto", "require"] as const : ["off", "auto"] as const;
+const nativeAvailable = hasPrivateCreationNative();
+const nativeModes = process.platform === "darwin" ? ["auto", "require"] as const
+  : nativeAvailable ? ["off", "auto", "require"] as const : ["off", "auto"] as const;
 
 async function expectPrivate(target: string, directory: boolean): Promise<void> {
   if (process.platform === "win32") {
@@ -45,7 +47,7 @@ it("rejects unavailable required private writes before creating parents", async 
   expect(await fs.readdir(directory)).toEqual([]);
 });
 
-describe.each(nativeModes)("Root private creation (%s)", (nativeMode) => {
+describe.skipIf(process.platform === "darwin" && !nativeAvailable).each(nativeModes)("Root private creation (%s)", (nativeMode) => {
   beforeEach(() => configureFsSafeNative({ mode: nativeMode }));
 
   it("creates private parents and accepts an unchanged private directory", async () => {

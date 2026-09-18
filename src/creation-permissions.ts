@@ -13,6 +13,7 @@ import {
   verifyPrivateWindowsFileCommandSync,
 } from "./windows-security-command.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
+import { assertDarwinCreationDirectoryAcl, assertDarwinPrivateCreationAvailable, assertDarwinPrivateDirectoryMode } from "./creation-darwin.js";
 
 export type CreationPermissions = { private?: boolean; mode?: number };
 
@@ -31,6 +32,8 @@ export function resolveCreationPermissions(
   if (privatePath && mode !== undefined && (mode & 0o7077) !== 0) {
     throw new FsSafeError("insecure-permissions", "private creation requires owner-only permission bits");
   }
+  if (privatePath) assertDarwinPrivateCreationAvailable();
+  if (privatePath && directory) assertDarwinPrivateDirectoryMode(mode ?? 0o700);
   return { private: privatePath === true, mode: mode ?? (privatePath ? directory ? 0o700 : 0o600 : undefined) };
 }
 
@@ -85,14 +88,20 @@ export async function inspectCreationDirectory(targetPath: string, privatePath: 
 export function assertPrivateDirectorySync(targetPath: string): void {
   const stat = inspectDirectoryIdentitySync(targetPath);
   if (process.platform === "win32") inspectCreationDirectorySync(targetPath, true);
-  else assertPrivatePosixDirectory(stat);
+  else {
+    assertPrivatePosixDirectory(stat);
+    assertDarwinCreationDirectoryAcl(targetPath, stat);
+  }
   inspectDirectoryIdentitySync(targetPath, stat);
 }
 
 export async function assertPrivateDirectory(targetPath: string): Promise<void> {
   const stat = inspectDirectoryIdentitySync(targetPath);
   if (process.platform === "win32") await inspectCreationDirectory(targetPath, true);
-  else assertPrivatePosixDirectory(stat);
+  else {
+    assertPrivatePosixDirectory(stat);
+    assertDarwinCreationDirectoryAcl(targetPath, stat);
+  }
   inspectDirectoryIdentitySync(targetPath, stat);
 }
 

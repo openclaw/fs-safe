@@ -4,6 +4,7 @@ import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup } from "./file-identity.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { hasUnsettledWindowsSecurityCommand } from "./windows-security-command.js";
+import { assertDarwinCreationAcl } from "./creation-darwin.js";
 
 export type CreationPublicationStatus = "not-published" | "published" | "indeterminate";
 
@@ -16,7 +17,7 @@ export function assertCreationFile(fd: number, pathname: string, expected?: BigI
   return opened;
 }
 
-export function assertPrivateCreationFile(stat: BigIntStats): void {
+export function assertPrivateCreationFile(stat: BigIntStats, fd: number): void {
   if (process.platform === "win32") return;
   if (typeof process.getuid !== "function" || stat.uid !== BigInt(process.getuid())) {
     throw new FsSafeError("not-owned", "created private file must belong to the current user");
@@ -24,6 +25,7 @@ export function assertPrivateCreationFile(stat: BigIntStats): void {
   if ((stat.mode & 0o7077n) !== 0n) {
     throw new FsSafeError("insecure-permissions", "created private file is not owner-only");
   }
+  assertDarwinCreationAcl(fd);
 }
 
 function assertRecordedFile(current: BigIntStats, identity: BigIntStats): void {

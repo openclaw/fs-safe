@@ -9,8 +9,12 @@ import { hasPrivateCreationNative } from "./helpers/private-creation-native.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
-const cases: { mode: "off" | "require"; atomic: boolean }[] = [{ mode: "off", atomic: true }];
-if (process.platform === "win32" && hasPrivateCreationNative()) {
+const darwin = process.platform === "darwin";
+const nativeAvailable = (darwin || process.platform === "win32") && hasPrivateCreationNative();
+const cases: { mode: "off" | "require"; atomic: boolean }[] = [
+  { mode: darwin ? "require" : "off", atomic: true },
+];
+if (process.platform === "win32" && nativeAvailable) {
   cases.push({ mode: "require", atomic: true }, { mode: "require", atomic: false });
 }
 
@@ -20,7 +24,7 @@ afterEach(() => {
   __resetNativeLoaderForTest();
 });
 
-it.each(cases)(
+it.skipIf(darwin && !nativeAvailable).each(cases)(
   "reports a preserved private stage as unpublished after admission fails (native $mode, atomic $atomic)",
   async ({ mode, atomic }) => {
     configureFsSafeNative({ mode });
@@ -55,6 +59,8 @@ it.each(cases)(
     try {
       const error: unknown = await files.create("requested", "complete content", {
         private: true, atomic, durable: "file",
+        // Retain the Node stage route while Darwin's ACL inspector is enabled.
+        renameIdentity: darwin ? "verify-content-with-lock" : undefined,
       }).catch((cause: unknown) => cause);
       expect(temporaryPath).toBeDefined();
       expect(opened.length).toBeGreaterThan(0);

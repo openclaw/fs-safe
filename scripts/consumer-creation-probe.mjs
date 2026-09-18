@@ -20,6 +20,8 @@ const sandbox = fs.realpathSync.native(fs.mkdtempSync(path.join(process.cwd(), "
 const previousUmask = process.platform === "win32" ? undefined : process.umask(0);
 const rows = [];
 const missingRequired = binding.expected.omitted && mode === "require";
+const darwinPrivateUnavailable = process.platform === "darwin" && (binding.expected.omitted || mode === "off");
+const privateCreation = !darwinPrivateUnavailable;
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const identity = (file) => {
   const stat = fs.statSync(file, { bigint: true });
@@ -27,7 +29,12 @@ const identity = (file) => {
 };
 const absent = (file) => assert.throws(() => fs.lstatSync(file), { code: "ENOENT" });
 
-function privatePermissions(file, directory, expectedMode = directory ? 0o700 : 0o600) {
+function darwinAclEntries(file) {
+  return execFileSync("/bin/ls", ["-lde", file], { encoding: "utf8" })
+    .split("\n").filter((line) => /^\s*\d+:/.test(line));
+}
+
+function creationPermissions(file, directory, expectedMode = directory ? 0o700 : 0o600, privatePath = true) {
   const stat = fs.lstatSync(file);
   assert.equal(stat.isSymbolicLink(), false);
   assert.equal(stat.isDirectory(), directory);
@@ -35,6 +42,10 @@ function privatePermissions(file, directory, expectedMode = directory ? 0o700 : 
   if (process.platform !== "win32") {
     assert.equal(stat.mode & 0o777, expectedMode);
     assert.equal(stat.uid, process.getuid());
+    if (process.platform === "darwin" && privatePath) {
+      assert.deepEqual(darwinAclEntries(file), [], "private creation retained a Darwin ACL");
+      return { kind: "darwin-mode-no-acl", mode: stat.mode & 0o777, currentOwner: true, aclEntries: 0 };
+    }
     return { kind: "posix-mode", mode: stat.mode & 0o777, currentOwner: true };
   }
   if (!directory) assert.equal(stat.mode & 0o200, expectedMode & 0o200);
@@ -107,12 +118,11 @@ async function observeBufferedCreation(target, content, create) {
   }
 }
 
-try {
-  const capability = await root(sandbox);
+async function proveCreation(capability) {
   if (!missingRequired || process.platform !== "win32") {
-    await capability.mkdir("private/nested", { private: true });
-    rows.push({ scenario: "root-private-directory", parents: ["private", "private/nested"].map((name) =>
-      privatePermissions(path.join(sandbox, name), true)) });
+    await capability.mkdir("private/nested", { private: privateCreation });
+    rows.push({ scenario: `root-${privateCreation ? "private" : "ordinary"}-directory`, parents: ["private", "private/nested"].map((name) =>
+      creationPermissions(path.join(sandbox, name), true, privateCreation ? 0o700 : 0o777, privateCreation)) });
   }
   if (missingRequired) {
     for (const [scenario, relative, operation] of [
@@ -137,16 +147,16 @@ try {
       const content = json ? `${JSON.stringify(value)}\n` : value.message;
       const requestedMode = json ? 0o600 : 0o400;
       const create = () => json
-        ? capability.createJson(relative, value, { private: true, durable: "file" })
-        : capability.create(relative, content, { private: true, atomic: true, mode: requestedMode, durable: "file" });
+        ? capability.createJson(relative, value, { private: privateCreation, mode: requestedMode, durable: "file" })
+        : capability.create(relative, content, { private: privateCreation, atomic: true, mode: requestedMode, durable: "file" });
       await create();
       assert.equal(fs.readFileSync(target, "utf8"), content);
-      const permissions = privatePermissions(target, false, requestedMode);
+      const permissions = creationPermissions(target, false, requestedMode, privateCreation);
       const parents = [path.dirname(target), path.dirname(path.dirname(target))]
-        .map((parent) => privatePermissions(parent, true));
+        .map((parent) => creationPermissions(parent, true, privateCreation ? 0o700 : 0o777, privateCreation));
       await collision(create, target);
-      assert.deepEqual(privatePermissions(target, false, requestedMode), permissions);
-      rows.push({ scenario: json ? "root-private-json" : "root-private-file", bytes: Buffer.byteLength(content),
+      assert.deepEqual(creationPermissions(target, false, requestedMode, privateCreation), permissions);
+      rows.push({ scenario: `root-${privateCreation ? "private" : "ordinary"}-${json ? "json" : "file"}`, bytes: Buffer.byteLength(content),
         sha256: digest(content), permissions, parents, collisionPreserved: true, durable: "file", requestedMode });
     }
     for (const json of [false, true]) {
@@ -156,15 +166,15 @@ try {
       const value = { value: "x".repeat(2 * 1024 * 1024 + 17) };
       const content = json ? Buffer.from(`${JSON.stringify(value)}\n`) : Buffer.alloc(8 * 1024 * 1024 + 37, 0x73);
       const observation = await observeBufferedCreation(target, content, (assertBeforeMutation) => json
-        ? capability.createJson(relative, value, { private: true, atomic: true, durable: "file", assertBeforeMutation })
-        : capability.create(relative, content, { private: true, atomic: true, durable: "file", assertBeforeMutation }));
+        ? capability.createJson(relative, value, { private: privateCreation, mode: 0o600, atomic: true, durable: "file", assertBeforeMutation })
+        : capability.create(relative, content, { private: privateCreation, mode: 0o600, atomic: true, durable: "file", assertBeforeMutation }));
       assert.deepEqual(fs.readFileSync(target), content);
       assert.deepEqual(fs.readdirSync(path.dirname(target)), [path.basename(target)]);
       await collision(() => json
-        ? capability.createJson(relative, value, { private: true, atomic: true, durable: "file" })
-        : capability.create(relative, content, { private: true, atomic: true, durable: "file" }), target);
+        ? capability.createJson(relative, value, { private: privateCreation, mode: 0o600, atomic: true, durable: "file" })
+        : capability.create(relative, content, { private: privateCreation, mode: 0o600, atomic: true, durable: "file" }), target);
       rows.push({ scenario: json ? "root-atomic-json" : "root-atomic-buffer", bytes: content.length,
-        sha256: digest(content), permissions: privatePermissions(target, false), collisionPreserved: true,
+        sha256: digest(content), permissions: creationPermissions(target, false, 0o600, privateCreation), collisionPreserved: true,
         durable: "file", ...observation });
     }
     const relative = "stream/value.bin";
@@ -176,7 +186,7 @@ try {
     let release;
     const released = new Promise((resolve) => { release = resolve; });
     async function* input() { yield parts[0]; reached(); await released; yield parts[1]; }
-    const pending = capability.create(relative, input(), { private: true, durable: "file" });
+    const pending = capability.create(relative, input(), { private: privateCreation, mode: 0o600, durable: "file" });
     try {
       await Promise.race([staged, pending.then(() => { throw new Error("stream finished before its producer was released"); })]);
       absent(target);
@@ -185,7 +195,7 @@ try {
     assert.deepEqual(fs.readFileSync(target), content);
     assert.deepEqual(fs.readdirSync(path.dirname(target)), ["value.bin"]);
     rows.push({ scenario: "root-stream-publication", absentWhileProducerPaused: true,
-      bytes: content.length, sha256: digest(content), permissions: privatePermissions(target, false), durable: "file" });
+      bytes: content.length, sha256: digest(content), permissions: creationPermissions(target, false, 0o600, privateCreation), durable: "file" });
   }
 
   for (const [kind, create] of [["async", createDirectory], ["sync", createDirectorySync]]) {
@@ -196,15 +206,15 @@ try {
       rows.push({ scenario: `require-directory-${kind}`, code: "helper-unavailable", mutated: false });
       continue;
     }
-    await create(target, { private: true });
-    const permissions = privatePermissions(target, true);
+    await create(target, { private: privateCreation, mode: 0o700 });
+    const permissions = creationPermissions(target, true, 0o700, privateCreation);
     fs.writeFileSync(path.join(target, "sentinel"), "unchanged");
-    await collision(() => create(target, { private: true }), target);
+    await collision(() => create(target, { private: privateCreation, mode: 0o700 }), target);
     assert.deepEqual(fs.readdirSync(target), ["sentinel"]);
     assert.equal(fs.readFileSync(path.join(target, "sentinel"), "utf8"), "unchanged");
-    assert.deepEqual(privatePermissions(target, true), permissions);
+    assert.deepEqual(creationPermissions(target, true, 0o700, privateCreation), permissions);
     const missingParent = path.join(sandbox, `missing-${kind}`);
-    await assert.rejects(async () => create(path.join(missingParent, "child"), { private: true }));
+    await assert.rejects(async () => create(path.join(missingParent, "child"), { private: privateCreation, mode: 0o700 }));
     absent(missingParent);
     rows.push({ scenario: `advanced-directory-${kind}`, permissions, collisionPreserved: true, recursive: false });
   }
@@ -218,7 +228,7 @@ try {
     for (const method of ["dispose", "close"]) {
       const file = `${target}-${method}`;
       const before = fs.readdirSync(sandbox).toSorted();
-      const owner = createFileSync(file, { private: true });
+      const owner = createFileSync(file, { private: privateCreation, mode: 0o600 });
       const descriptor = owner.fd;
       try {
         assert.ok(Number.isSafeInteger(descriptor) && descriptor >= 0);
@@ -226,20 +236,93 @@ try {
         assert.equal(typeof owner[Symbol.dispose], "function");
         const stat = fs.fstatSync(descriptor, { bigint: true });
         assert.deepEqual({ dev: String(stat.dev), ino: String(stat.ino), nlink: String(stat.nlink) }, identity(file));
+        creationPermissions(file, false, 0o600, privateCreation);
         fs.writeFileSync(descriptor, "owned descriptor bytes");
       } finally { if (method === "dispose") owner[Symbol.dispose](); else owner.close(); }
       assert.throws(() => fs.fstatSync(descriptor), { code: "EBADF" });
       assert.equal(fs.readFileSync(file, "utf8"), "owned descriptor bytes");
-      const permissions = privatePermissions(file, false);
-      await collision(() => createFileSync(file, { private: true }), file);
+      const permissions = creationPermissions(file, false, 0o600, privateCreation);
+      await collision(() => createFileSync(file, { private: privateCreation, mode: 0o600 }), file);
       assert.deepEqual(fs.readdirSync(sandbox).toSorted(), [...before, path.basename(file)].toSorted());
       descriptors.push({ method, permissions, descriptorClosed: true, filePreserved: true });
     }
     const missingParent = path.join(sandbox, "missing-file-parent");
-    assert.throws(() => createFileSync(path.join(missingParent, "file"), { private: true }));
+    assert.throws(() => createFileSync(path.join(missingParent, "file"), { private: privateCreation, mode: 0o600 }));
     absent(missingParent);
     rows.push({ scenario: "advanced-file-descriptor", descriptors, collisionPreserved: true, recursive: false });
   }
+}
+
+async function rejectedPrivateCreations(capability, directory, code) {
+  let producerStarted = false;
+  const operations = [
+    ["root-mkdir", () => capability.mkdir("root-directory/nested", { private: true })],
+    ["root-create", () => capability.create("root-file-parent/value", "private", { private: true, atomic: true, durable: "file" })],
+    ["root-create-json", () => capability.createJson("root-json-parent/value", { value: "private" }, { private: true, atomic: true, durable: "file" })],
+    ["root-stream", () => capability.create("root-stream-parent/value", (async function* () {
+      producerStarted = true; yield Buffer.from("private");
+    })(), { private: true, durable: "file" })],
+    ["directory-async", () => createDirectory(path.join(directory, "directory-async"), { private: true })],
+    ["directory-sync", () => createDirectorySync(path.join(directory, "directory-sync"), { private: true })],
+    ["file-sync", () => createFileSync(path.join(directory, "file-sync"), { private: true })],
+  ];
+  const before = fs.readdirSync(directory).toSorted();
+  const rejected = [];
+  for (const [operation, create] of operations) {
+    await assert.rejects(async () => create(), { code });
+    assert.deepEqual(fs.readdirSync(directory).toSorted(), before, `${operation} left parents or staging entries`);
+    assert.equal(producerStarted, false, "rejected private creation consumed its producer");
+    rejected.push({ operation, code, mutated: false });
+  }
+  return rejected;
+}
+
+async function proveDarwinAcls(capability) {
+  const parent = path.join(sandbox, "darwin-acl-parent");
+  fs.mkdirSync(parent, { mode: 0o700 });
+  try {
+    execFileSync("/bin/chmod", ["+a", "everyone deny delete", parent]);
+    const parentAcl = darwinAclEntries(parent);
+    assert.equal(parentAcl.length, 1);
+    const child = await root(parent);
+    await child.mkdir("nested", { private: true });
+    await child.create("value", "synthetic private payload", { private: true, atomic: true });
+    rows.push({ scenario: "darwin-noninheriting-parent-acl", parentAclPreserved: true,
+      directory: creationPermissions(path.join(parent, "nested"), true),
+      file: creationPermissions(path.join(parent, "value"), false) });
+    assert.deepEqual(darwinAclEntries(parent), parentAcl);
+    fs.rmSync(path.join(parent, "nested"), { recursive: true });
+    fs.unlinkSync(path.join(parent, "value"));
+    execFileSync("/bin/chmod", ["-N", parent]);
+    execFileSync("/bin/chmod", ["+a", "everyone allow read,readattr,file_inherit,directory_inherit", parent]);
+    const inheritingAcl = darwinAclEntries(parent);
+    assert.equal(inheritingAcl.length, 1);
+    const rejected = await rejectedPrivateCreations(child, parent, "insecure-permissions");
+    assert.deepEqual(darwinAclEntries(parent), inheritingAcl);
+    rows.push({ scenario: "darwin-inheriting-parent-acl-rejected", rejected, parentAclPreserved: true });
+  } finally { execFileSync("/bin/chmod", ["-N", parent]); }
+
+  const existing = path.join(sandbox, "darwin-existing-private-directory");
+  await createDirectory(existing, { private: true });
+  try {
+    execFileSync("/bin/chmod", ["+a", "everyone deny delete", existing]);
+    const before = { identity: identity(existing), acl: darwinAclEntries(existing) };
+    assert.equal(before.acl.length, 1);
+    await assert.rejects(() => capability.mkdir(path.basename(existing), { private: true }), { code: "insecure-permissions" });
+    assert.deepEqual({ identity: identity(existing), acl: darwinAclEntries(existing) }, before);
+    assert.deepEqual(fs.readdirSync(existing), []);
+    rows.push({ scenario: "darwin-existing-private-directory-acl-rejected", code: "insecure-permissions", mutated: false });
+  } finally { execFileSync("/bin/chmod", ["-N", existing]); }
+}
+
+try {
+  const capability = await root(sandbox);
+  if (darwinPrivateUnavailable) {
+    const rejected = await rejectedPrivateCreations(capability, sandbox, "helper-unavailable");
+    rows.push(...rejected.map(({ operation, ...result }) => ({ scenario: `darwin-private-${operation}-unavailable`, ...result })));
+  }
+  if (!darwinPrivateUnavailable || !missingRequired) await proveCreation(capability);
+  if (process.platform === "darwin" && !darwinPrivateUnavailable) await proveDarwinAcls(capability);
   const receipt = binding.receipt(rows);
   receipt.permissionObservation = "after public operation returns; creation-time protection requires implementation/race proof";
   receipt.durabilityObservation = "durable:file operations completed and bytes were reread; no power-loss durability claim";

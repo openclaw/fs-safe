@@ -10,6 +10,7 @@ import { syncDirectoryBestEffort } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity, sha256Hex, type FileIdentityStat } from "./file-identity.js";
 import { syncFileBestEffort } from "./file-sync.js";
+import { assertDarwinCreationAcl, privateFileMutationAssertion } from "./creation-darwin.js";
 import { withAsyncDirectoryGuards } from "./guarded-mutation.js";
 import { writePinnedInput } from "./pinned-write-input.js";
 import type { PinnedWriteParams } from "./pinned-write-types.js";
@@ -55,7 +56,10 @@ export async function runPinnedStagedWrite(
       : await fs.open(tempPath, tempFlags, params.mode);
     let verificationIdentity = fsSync.fstatSync(handle.fd, { bigint: true });
     tempIdentity = verificationIdentity;
-    await writePinnedInput(handle, params.input, params.maxBytes, params.assertBeforeMutation);
+    const assertBeforeMutation = params.private
+      ? privateFileMutationAssertion(handle.fd, params.assertBeforeMutation) : params.assertBeforeMutation;
+    await writePinnedInput(handle, params.input, params.maxBytes, assertBeforeMutation);
+    if (params.private) assertDarwinCreationAcl(handle.fd);
     tempStat = fsSync.fstatSync(handle.fd);
     const tempPathStat = fsSync.lstatSync(tempPath);
     if (tempPathStat.isSymbolicLink() || !sameFileIdentity(tempPathStat, tempStat)) {
@@ -83,7 +87,7 @@ export async function runPinnedStagedWrite(
         publishCopyStage({
           temporaryPath: tempPath, targetPath, fd: handle!.fd,
           identity: tempIdentity!, parentGuard,
-          assertBeforeMutation: params.assertBeforeMutation,
+          assertBeforeMutation,
           onPublicationAttempt: () => {
             if (receipt) publication = Object.freeze({ status: "indeterminate", basename: params.basename, overwrite: false });
           },
@@ -94,7 +98,7 @@ export async function runPinnedStagedWrite(
           },
         });
       } else {
-        params.assertBeforeMutation?.();
+        assertBeforeMutation?.();
         await fs.rename(tempPath, targetPath);
         renamed = true;
         params.onPublished?.(verificationIdentity);

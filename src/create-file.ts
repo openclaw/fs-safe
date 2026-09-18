@@ -28,6 +28,7 @@ import {
   type CreationPublicationStatus,
 } from "./creation-file-state.js";
 import { createPrivateWindowsFileHandle } from "./create-file-async.js";
+import { assertDarwinCreationDirectoryAcl } from "./creation-darwin.js";
 
 export type CreateFileOptions = CreateDirectoryOptions;
 function createPrivateWindowsFile(selected: CreationPath, options: CreateFileOptions, mode: number): OwnedFileDescriptorSync {
@@ -115,8 +116,10 @@ function createFileCore(targetPath: string, options: CreateFileOptions, admissio
     assertPrivateFileCreationAvailable();
     return createPrivateWindowsFile(selected, { ...permissions, assertBeforeMutation: assertion }, permissions.mode!);
   }
+  if (permissions.private) assertDarwinCreationDirectoryAcl(selected.parent.dir, selected.parent.stat, "file");
   assertSynchronousCallbackResult(assertion?.(), "assertBeforeMutation");
   selected.assertParent();
+  if (permissions.private) assertDarwinCreationDirectoryAcl(selected.parent.dir, selected.parent.stat, "file");
   let file: OwnedFileDescriptorSync;
   try {
     file = ownFileDescriptorSync(fs.openSync(selected.target, fs.constants.O_RDWR | fs.constants.O_CREAT |
@@ -125,7 +128,7 @@ function createFileCore(targetPath: string, options: CreateFileOptions, admissio
   try {
     const identity = assertCreationFile(file.fd, selected.target);
     selected.assertParent();
-    if (permissions.private) assertPrivateCreationFile(identity);
+    if (permissions.private) assertPrivateCreationFile(identity, file.fd);
     return file;
   } catch (primary) {
     let failure = primary;
@@ -151,15 +154,17 @@ export async function createFileHandle(
   const assertion = options.assertBeforeMutation;
   if (process.platform !== "win32" || !permissions.private) {
     const selected = prepareCreationPath(targetPath, admission.expectedParentIdentity);
+    if (permissions.private) assertDarwinCreationDirectoryAcl(selected.parent.dir, selected.parent.stat, "file");
     assertSynchronousCallbackResult(assertion?.(), "assertBeforeMutation");
     selected.assertParent();
+    if (permissions.private) assertDarwinCreationDirectoryAcl(selected.parent.dir, selected.parent.stat, "file");
     const handle = await fsAsync.open(selected.target, fs.constants.O_RDWR | fs.constants.O_CREAT |
       fs.constants.O_EXCL | resolveReadOpenFlags(), permissions.mode ?? 0o666)
       .catch(error => { throw creationCollision(error); });
     try {
       const identity = assertCreationFile(handle.fd, selected.target);
       selected.assertParent();
-      if (permissions.private) assertPrivateCreationFile(identity);
+      if (permissions.private) assertPrivateCreationFile(identity, handle.fd);
       return handle;
     } catch (primary) {
       let failure = primary;

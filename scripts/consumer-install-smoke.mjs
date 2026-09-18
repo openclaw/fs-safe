@@ -271,7 +271,7 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
           assert.deepEqual(receipt.packageManager, { name: manager, version });
           assert.deepEqual(receipt.compiledFiles, creationExpected.compiledFiles);
           assert.deepEqual(receipt.probeFiles, creationExpected.probeFiles);
-          assert.deepEqual(receipt.rows.map((row) => row.scenario), creationScenarioNames(omitted && mode === "require", process.platform));
+          assert.deepEqual(receipt.rows.map((row) => row.scenario), creationScenarioNames({ omitted, mode, platform: process.platform }));
           cases.creation.push(receipt);
         }
         if (process.platform === "win32") {

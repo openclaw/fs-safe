@@ -7,6 +7,7 @@
 - Clarify that `resolveExistingPathsWithinRoot()` allows missing paths and `resolveStrictExistingPathsWithinRoot()` requires existing regular files.
 - Distinguish native beneath mechanisms from the best-effort containment reported by public Root open, read, and writable-open results in every native mode.
 - Add `private: true` to Root directory, buffered, streamed, and JSON creation, preserving existing entries and mutation authority while sharing protected platform creation with the synchronous leaf APIs.
+- Require native Darwin ACL inspection for `private: true` creation on macOS, rejecting unavailable helpers and relevant parent ACL inheritance before creating entries; verify owner-only, ACL-free results without ACL repair, while allowing noninheriting parent ACLs and preserving nonprivate behavior.
 
 - Add exclusive, nonrecursive `createDirectory()`, `createDirectorySync()`, and owned-descriptor `createFileSync()` with `private: true`, creation-time Windows ACL privacy, verified same-file publication, and explicit settlement failures. Refs [#482](https://github.com/openclaw/fs-safe/issues/482).
 
