@@ -7,6 +7,7 @@ import {
   PUBLIC_ZIP_EXTRACTION_FIXTURE,
   PUBLIC_ZIP_EXTRACTION_WORKLOAD,
 } from "../../benchmarks/public-zip-extraction-contract.mjs";
+import { ATOMIC_TEMP_SETTLEMENT_CASES } from "../../benchmarks/atomic-temp-settlement.mjs";
 
 function measured(row: object, sampleCount: number, iterations: number) {
   return {
@@ -42,5 +43,9 @@ export function completeSyntheticBenchmarkResults(sampleCount: number, iteration
       workloadDetails: PUBLIC_ZIP_EXTRACTION_WORKLOAD,
       fixturePlacement: PUBLIC_ZIP_EXTRACTION_FIXTURE,
     }, sampleCount, Math.max(1, Math.floor(iterations / PUBLIC_ZIP_EXTRACTION_DIVISOR))),
+    ...ATOMIC_TEMP_SETTLEMENT_CASES.map((row) => measured({
+      ...row,
+      fixturePlacement: "unique child directory on the runner workspace filesystem",
+    }, sampleCount, iterations)),
   ];
 }

@@ -133,6 +133,13 @@ the published entry intact for caller-owned recovery. Ordinary write-only and
 mode-000 outputs do not require a readable descriptor when pathname metadata is
 available.
 
+If a synchronous write operation and its final temp-descriptor close both fail,
+the store reports them in operation-then-close order in an `AggregateError`.
+This ordering and the original JavaScript thrown value are preserved even when
+that value is `undefined` or otherwise falsy. An unsuccessful best-effort temp
+unlink remains registered for identity-checked process-exit cleanup; it does not
+prevent the close attempt or replace either reportable failure.
+
 If an opaque pathname cannot be reopened because of an ACL denial or sharing
 restriction, the synchronous writer intentionally rejects with `path-mismatch`:
 its exact publication identity cannot be verified. There is no equal-content

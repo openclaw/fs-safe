@@ -17,6 +17,35 @@ type SyncOwnerFileSystem = Pick<
 
 const PUBLISHED_READ_FLAGS = resolveReadOpenFlags();
 
+export type AtomicTempFailure = Readonly<{ error: unknown }>;
+
+function hasErrorCode(error: unknown, expected: string): boolean {
+  if ((typeof error !== "object" || error === null) && typeof error !== "function") {
+    return false;
+  }
+  try {
+    return Reflect.get(error as object, "code") === expected;
+  } catch {
+    return false;
+  }
+}
+
+function describeFailure(error: unknown): string {
+  try {
+    return String(error);
+  } catch {
+    return "<unprintable failure>";
+  }
+}
+
+function isErrorValue(error: unknown): error is Error {
+  try {
+    return error instanceof Error;
+  } catch {
+    return false;
+  }
+}
+
 export async function removePathIfIdentityUnchanged(
   targetPath: string,
   identity: Pick<BigIntStats, "dev" | "ino">,
@@ -47,21 +76,24 @@ function missingOwnedFile(pathname: string, cause: unknown): FsSafeError {
   });
 }
 
-function cleanupFailure(originalError: unknown, cleanupError: unknown): Error {
-  if (originalError !== undefined) {
+function cleanupFailure(
+  originalFailure: AtomicTempFailure | undefined,
+  cleanupError: unknown,
+): Error {
+  if (originalFailure) {
     return new Error(
-      `Atomic file replace failed (${String(originalError)}); cleanup also failed (${String(cleanupError)})`,
-      { cause: originalError },
+      `Atomic file replace failed (${describeFailure(originalFailure.error)}); cleanup also failed (${describeFailure(cleanupError)})`,
+      { cause: originalFailure.error },
     );
   }
-  return cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError));
+  return isErrorValue(cleanupError) ? cleanupError : new Error(describeFailure(cleanupError));
 }
 
 async function cleanupOwnedPath(params: {
   fsModule: AsyncOwnerFileSystem;
   pathname: string;
   identity?: BigIntStats;
-  originalError?: unknown;
+  originalFailure?: AtomicTempFailure;
   throwOnCleanupError: boolean;
 }): Promise<boolean> {
   if (!params.identity) return true;
@@ -80,9 +112,9 @@ async function cleanupOwnedPath(params: {
     await params.fsModule.unlink(params.pathname);
     return true;
   } catch (cleanupError) {
-    if ((cleanupError as NodeJS.ErrnoException).code === "ENOENT") return true;
+    if (hasErrorCode(cleanupError, "ENOENT")) return true;
     if (params.throwOnCleanupError) {
-      throw cleanupFailure(params.originalError, cleanupError);
+      throw cleanupFailure(params.originalFailure, cleanupError);
     }
     return false;
   }
@@ -123,7 +155,7 @@ function cleanupOwnedPathSync(params: {
   fsModule: SyncOwnerFileSystem;
   pathname: string;
   identity?: BigIntStats;
-  originalError?: unknown;
+  originalFailure?: AtomicTempFailure;
   throwOnCleanupError: boolean;
 }): boolean {
   if (!params.identity) return true;
@@ -140,9 +172,9 @@ function cleanupOwnedPathSync(params: {
     params.fsModule.unlinkSync(params.pathname);
     return true;
   } catch (cleanupError) {
-    if ((cleanupError as NodeJS.ErrnoException).code === "ENOENT") return true;
+    if (hasErrorCode(cleanupError, "ENOENT")) return true;
     if (params.throwOnCleanupError) {
-      throw cleanupFailure(params.originalError, cleanupError);
+      throw cleanupFailure(params.originalFailure, cleanupError);
     }
     return false;
   }
@@ -242,7 +274,9 @@ export class AsyncAtomicTempOwner {
       if (sha256Hex(await published.readFile()) !== expectedHash) {
         throw new FsSafeError("path-mismatch", `Atomic replace published content changed: ${pathname}`);
       }
-      await this.#handle?.close();
+      const previousHandle = this.#handle;
+      this.#handle = undefined;
+      await previousHandle?.close();
       this.#handle = published;
       this.#identity = identity;
       published = undefined;
@@ -258,10 +292,10 @@ export class AsyncAtomicTempOwner {
 
   async finish(params: {
     fsModule: AsyncOwnerFileSystem;
-    originalError?: unknown;
+    originalFailure?: AtomicTempFailure;
     throwOnCleanupError: boolean;
   }): Promise<void> {
-    let deferredError: unknown;
+    let deferredFailure: AtomicTempFailure | undefined;
     let cleanupComplete = !this.#exists;
     if (this.#exists) {
       try {
@@ -269,27 +303,34 @@ export class AsyncAtomicTempOwner {
           fsModule: params.fsModule,
           pathname: this.pathname,
           identity: this.#identity,
-          originalError: params.originalError,
+          originalFailure: params.originalFailure,
           throwOnCleanupError: params.throwOnCleanupError,
         });
       } catch (error) {
-        deferredError = error;
+        deferredFailure = { error };
       }
     }
     if (cleanupComplete) this.#unregister();
+    const handle = this.#handle;
+    this.#handle = undefined;
     try {
-      await this.#handle?.close();
+      await handle?.close();
     } catch (closeError) {
-      deferredError = deferredError
-        ? new AggregateError([deferredError, closeError], "Atomic temp cleanup and close failed")
-        : params.originalError !== undefined
+      deferredFailure = {
+        error: deferredFailure
           ? new AggregateError(
-              [params.originalError, closeError],
-              "Atomic file replace and close failed",
+              [deferredFailure.error, closeError],
+              "Atomic temp cleanup and close failed",
             )
-          : closeError;
+          : params.originalFailure
+            ? new AggregateError(
+                [params.originalFailure.error, closeError],
+                "Atomic file replace and close failed",
+              )
+            : closeError,
+      };
     }
-    if (deferredError) throw deferredError;
+    if (deferredFailure) throw deferredFailure.error;
   }
 }
 
@@ -407,10 +448,10 @@ export class SyncAtomicTempOwner {
 
   finish(params: {
     fsModule: SyncOwnerFileSystem;
-    originalError?: unknown;
+    originalFailure?: AtomicTempFailure;
     throwOnCleanupError: boolean;
   }): void {
-    let deferredError: unknown;
+    let deferredFailure: AtomicTempFailure | undefined;
     let cleanupComplete = !this.#exists;
     if (this.#exists) {
       try {
@@ -418,11 +459,11 @@ export class SyncAtomicTempOwner {
           fsModule: params.fsModule,
           pathname: this.pathname,
           identity: this.#identity,
-          originalError: params.originalError,
+          originalFailure: params.originalFailure,
           throwOnCleanupError: params.throwOnCleanupError,
         });
       } catch (error) {
-        deferredError = error;
+        deferredFailure = { error };
       }
     }
     if (cleanupComplete) this.#unregister();
@@ -432,16 +473,21 @@ export class SyncAtomicTempOwner {
       try {
         params.fsModule.closeSync(fd);
       } catch (closeError) {
-        deferredError = deferredError
-          ? new AggregateError([deferredError, closeError], "Atomic temp cleanup and close failed")
-          : params.originalError !== undefined
+        deferredFailure = {
+          error: deferredFailure
             ? new AggregateError(
-                [params.originalError, closeError],
-                "Atomic file replace and close failed",
+                [deferredFailure.error, closeError],
+                "Atomic temp cleanup and close failed",
               )
-            : closeError;
+            : params.originalFailure
+              ? new AggregateError(
+                  [params.originalFailure.error, closeError],
+                  "Atomic file replace and close failed",
+                )
+              : closeError,
+        };
       }
     }
-    if (deferredError) throw deferredError;
+    if (deferredFailure) throw deferredFailure.error;
   }
 }

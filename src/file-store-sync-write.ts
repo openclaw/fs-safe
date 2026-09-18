@@ -12,7 +12,7 @@ import {
 import { isPathInside } from "./path.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { writeTempFileSync } from "./replace-file-descriptor.js";
-import { SyncAtomicTempOwner } from "./replace-file-temp-owner.js";
+import { SyncAtomicTempOwner, type AtomicTempFailure } from "./replace-file-temp-owner.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
@@ -92,7 +92,7 @@ export function writeFileSyncAtomic(params: {
     `.fs-safe-${process.pid}-${randomUUID()}.tmp`,
   );
   const owner = new SyncAtomicTempOwner(tempPath);
-  let originalError: unknown;
+  let originalFailure: AtomicTempFailure | undefined;
   try {
     getFsSafeTestHooks()?.beforeFileStoreSyncPrivateWrite?.(filePath);
     if (parentGuard) {
@@ -145,9 +145,9 @@ export function writeFileSyncAtomic(params: {
     }
     return filePath;
   } catch (error) {
-    originalError = error;
+    originalFailure = { error };
     throw error;
   } finally {
-    owner.finish({ fsModule: fs, originalError, throwOnCleanupError: false });
+    owner.finish({ fsModule: fs, originalFailure, throwOnCleanupError: false });
   }
 }

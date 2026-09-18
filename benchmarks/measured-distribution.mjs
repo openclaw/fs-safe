@@ -22,6 +22,10 @@ import {
   validateCopyFallbackSuccessReport,
   validateCopyFallbackSuccessWorkloadResult,
 } from "./copy-fallback-success.mjs";
+import {
+  validateAtomicTempSettlementReport,
+  validateAtomicTempSettlementWorkloadResult,
+} from "./atomic-temp-settlement.mjs";
 
 const SHA1 = /^[0-9a-f]{40}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
@@ -162,11 +166,13 @@ export function validateMeasuredDistribution(plan, reportPlan, report, expectedD
     validateCopyFallbackSuccessWorkloadResult(result);
     validateSyncCopyFallbackAdmissionWorkloadResult(result);
     validatePublicZipExtractionWorkloadResult(result);
+    validateAtomicTempSettlementWorkloadResult(result);
   }
   validateSidecarPathSnapshotReport(report, plan.settings.filter, plan.settings.iterations);
   validateCopyFallbackSuccessReport(report, plan.settings.filter, plan.settings.iterations);
   validateSyncCopyFallbackAdmissionReport(report, plan.settings.filter, plan.settings.iterations);
   validatePublicZipExtractionReport(report, plan.settings.filter, plan.settings.iterations);
+  validateAtomicTempSettlementReport(report, plan.settings.filter);
 }
 
 export const MEASURED_SOURCE_ARGUMENT_NAMES = Object.freeze(

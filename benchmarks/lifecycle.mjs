@@ -8,6 +8,7 @@ import {
 } from "./temp-workspace-fixtures.mjs";
 import { registerSecureTempRootCoverage } from "./secure-temp-root-fixtures.mjs";
 import { registerSidecarPathSnapshot } from "./sidecar-path-snapshot.mjs";
+import { registerAtomicTempSettlementCoverage } from "./atomic-temp-settlement.mjs";
 
 export async function registerLifecycle({ api: a, workspace: w, native, binding, register: add, contract, onCleanup, args }) {
   const cloneBackend = a.probeTreeClone(w);
@@ -99,7 +100,12 @@ export async function registerLifecycle({ api: a, workspace: w, native, binding,
   const output = path.join(w, "lifecycle-output");
   const secretRoot = path.join(w, "secret-writes");
   fs.mkdirSync(secretRoot, { mode: 0o700 });
-  for (const name of ["replaceFileAtomic", "replaceFileAtomicSync"]) add(name, () => a[name]({ filePath: output, content: data }), { sync: name.endsWith("Sync") });
+  registerAtomicTempSettlementCoverage({
+    api: a,
+    workspace: w,
+    register: add,
+    onCleanup,
+  });
   add("writeTextAtomic", () => a.writeTextAtomic(output, "synthetic benchmark"));
   const newRootBytes = Buffer.from("new-root\n");
   const newNestedBytes = Buffer.from("new-nested\n");

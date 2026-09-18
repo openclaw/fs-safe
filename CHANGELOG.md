@@ -10,6 +10,7 @@
 
 ### Fixes and compatibility
 
+- Preserve falsy atomic operation, cleanup, close, and restoration failures, and consume retained async temp handles before close to avoid repeated release.
 - Propagate portable ZIP output fallback-close failures before staged publication. Existing destination entries remain untouched, cleanup retains its best-effort `FileHandle` close, and no raw or native descriptor close is attempted.
 - Treat ordinary native rename errors as indeterminate, preserving staged files and directory backups when a remote rename may have committed before its reply was lost. Retry and automatic rollback require explicit evidence that rename was never dispatched.
 - Retain directory replacement and cleanup authority across backup, publication, and rollback. Directory replacement now requires supported native no-replace transitions; unavailable helpers reject before target-parent creation. Indeterminate outcomes preserve entries for recovery.
