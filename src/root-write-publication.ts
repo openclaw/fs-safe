@@ -6,7 +6,7 @@ import type { AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { syncDirectoryBestEffort } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup, sha256Hex } from "./file-identity.js";
-import { cleanupPinnedFilePath } from "./replace-file-temp-owner.js";
+import { cleanupPinnedFilePath } from "./file-cleanup.js";
 import type { RootContext } from "./root-context.js";
 import type { RootWriteOptions } from "./root-options.js";
 import { verifyAtomicWriteResult } from "./root-write-verification.js";

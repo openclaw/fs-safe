@@ -158,6 +158,15 @@ const opened = await fs.open("notes/today.txt");
 await fs.create("notes/README.md", "seed\n"); // throws if it already exists
 ```
 
+Pass `{ atomic: true }` to buffered `create()` or `createJson()` to keep the
+destination absent until complete content is ready, including with native support
+disabled. The JavaScript fallback requires hardlinks and never downgrades to a
+partial visible file. Omitted or `false` retains the existing buffered behavior.
+Atomic visibility is separate from the existing `durable` synchronization policy.
+Use `durable: "file"` on `create()` or `createJson()` when file-flush errors,
+including `EPERM`, must propagate. It combines with `atomic: true` without
+requiring strict parent-directory synchronization.
+
 `create()` also accepts an `AsyncIterable<Uint8Array>` for large or incrementally
 produced files. Streamed creates keep the destination absent until all chunks
 are written, support `maxBytes` and `signal`, and recheck mutation authority

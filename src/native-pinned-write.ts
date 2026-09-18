@@ -388,15 +388,18 @@ export async function runPinnedWriteNative(binding: NativeBinding, params: Pinne
     assertNativeStaging(binding);
   }
   const directoryFlags = fsSync.constants.O_RDONLY | (fsSync.constants.O_DIRECTORY ?? 0);
+  const completeCreate = params.overwrite === false && params.input.kind !== "file" && params.input.stageBeforePublish === true;
   const rootAdmission = await openNativeRootAdmission(binding, {
     rootPath: params.rootPath,
     rootIdentity: params.rootIdentity,
     operation: "native write",
+    reportCloseErrors: completeCreate,
   });
   const root = rootAdmission.root;
   await using posixRoot = windows ? undefined : root;
   let parentFd: number | undefined;
   let windowsOwnsDirectories = false;
+  let admissionFailure: { error: unknown } | undefined;
   // Until stage construction takes ownership, even admission failures must close
   // the raw POSIX parent. Disposal preserves both admission and close failures.
   using parentGuard = {
@@ -458,8 +461,12 @@ export async function runPinnedWriteNative(binding: NativeBinding, params: Pinne
     return await writeNativeStage(
       binding as NativeStagingBinding, ownedParent, closeFd, directory!, params, verificationGuard,
     );
+  } catch (error) {
+    admissionFailure = { error };
+    throw error;
   } finally {
     if (windows && !windowsOwnsDirectories) {
+      const closeErrors: unknown[] = [];
       if (parentFd !== undefined) {
         // Match the Windows leaf cleanup contract: an admission or identity
         // failure remains primary, while every owned directory is still given
@@ -467,11 +474,21 @@ export async function runPinnedWriteNative(binding: NativeBinding, params: Pinne
         // the root FileHandle close.
         try {
           closeFd(parentFd);
-        } catch {
-          // Best effort while propagating the operation failure.
+        } catch (error) {
+          closeErrors.push(error);
         }
       }
-      await root.close().catch(() => undefined);
+      try {
+        await root.close();
+      } catch (error) {
+        closeErrors.push(error);
+      }
+      if (completeCreate && closeErrors.length > 0) {
+        throw new AggregateError(
+          [...(admissionFailure ? [admissionFailure.error] : []), ...closeErrors],
+          "native create admission and close failed",
+        );
+      }
     }
   }
 }

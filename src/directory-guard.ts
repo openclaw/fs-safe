@@ -141,6 +141,7 @@ export function assertSyncDirectoryGuard(guard: SyncDirectoryGuard | AnyAsyncDir
 }
 
 export function createNearestExistingDirectoryGuard(rootReal: string, targetPath: string): Promise<AsyncDirectoryGuard>;
+export function createNearestExistingDirectoryGuard(rootReal: string, targetPath: string, options: { bigint: true }): Promise<AsyncDirectoryGuard<BigIntStats>>;
 export function createNearestExistingDirectoryGuard(rootReal: string, targetPath: string, options: { bigint: boolean }): Promise<AnyAsyncDirectoryGuard>;
 export async function createNearestExistingDirectoryGuard(
   rootReal: string,

@@ -9,9 +9,10 @@ import type { RootCreateOptions, RootCreateStreamOptions, RootWriteOptions } fro
 const exclusiveSidecarCreate = Symbol("exclusiveSidecarCreate");
 export const sidecarExclusiveCreate = Object.freeze({ [exclusiveSidecarCreate]: true as const });
 
-export type RootWriteParams = RootWriteOptions & RootCreateStreamOptions & {
+export type RootWriteParams = RootWriteOptions & RootCreateOptions & RootCreateStreamOptions & {
   relativePath: string;
   data: string | Buffer | AsyncIterable<Uint8Array>;
+  strictFileSync?: boolean;
   [exclusiveSidecarCreate]?: true;
 };
 
@@ -48,9 +49,15 @@ export function createInputOptions(
 }
 
 export function rootWriteInput(params: RootWriteParams): PinnedWriteInput {
+  if (params.atomic !== undefined && typeof params.atomic !== "boolean") {
+    throw new TypeError("atomic must be a boolean");
+  }
   const data = params.data;
   if (typeof data === "string" || Buffer.isBuffer(data)) {
-    return { kind: "buffer", data, encoding: params.encoding, stageBeforePublish: !params[exclusiveSidecarCreate] };
+    return {
+      kind: "buffer", data, encoding: params.encoding,
+      stageBeforePublish: params[exclusiveSidecarCreate] ? false : params.atomic === true ? true : undefined,
+    };
   }
   return {
     kind: "stream",

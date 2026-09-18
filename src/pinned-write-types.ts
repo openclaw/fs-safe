@@ -73,6 +73,7 @@ export type PinnedWriteParams = {
   mkdir: boolean;
   mode: number;
   sync?: boolean;
+  strictFileSync?: boolean;
   overwrite?: boolean;
   assertBeforeMutation?: () => void;
   rejectFinalSymlink?: boolean;

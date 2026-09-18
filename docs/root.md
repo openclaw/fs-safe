@@ -132,6 +132,13 @@ fs.ensureRoot(options?)                  // accepts "" / "." as the root itself
 
 `write`, `create`, `append`, `writeJson`, and `createJson` accept `mode?: number`; use `0o600` for credentials and other private state. `writeJson` also accepts the same options as `JSON.stringify` plus `trailingNewline?: boolean` (defaults `true` so the file ends in `\n`).
 
+Buffered `create` and `createJson` also accept `atomic?: boolean`. With `true`,
+complete content is staged before exclusive publication even in native-off mode;
+the fallback requires hardlinks. Omitted or `false` keeps the existing buffered
+publication behavior. Streamed creates always stage complete content. The flag
+does not change `durable` or promise stronger containment or crash durability.
+See [atomic creation and settlement](writing.md#atomic-buffered-creation).
+
 `create` also accepts `AsyncIterable<Uint8Array>` with `RootCreateStreamOptions`:
 the same path, authority, mode, and durability options, plus `maxBytes` and
 `signal`, without `encoding` or `renameIdentity`. It consumes one chunk at a
@@ -151,6 +158,11 @@ the existing publication behavior, modes, and identity checks but skips file
 and parent-directory fsync calls. Use it only for reconstructible data: a crash
 may lose the write or leave the previous file. See [Writing](writing.md#write-options)
 for platform details.
+
+`create` and `createJson` additionally accept `durable: "file"` to require file
+synchronization, including propagating `EPERM`. Parent-directory synchronization
+retains its existing best-effort behavior. This option applies to buffered and
+streamed creation and does not select a publication strategy.
 
 `copyIn` accepts a `RootCopySource`: a trusted absolute source path or a file
 within another Root. The guarded form supplies `root` with only its `open` and

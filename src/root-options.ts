@@ -63,12 +63,17 @@ export type RootWriteJsonOptions = RootWriteOptions & {
   trailingNewline?: boolean;
 };
 
-export type RootCreateOptions = Omit<RootWriteOptions, "overwrite">;
-export type RootCreateStreamOptions = Omit<RootCreateOptions, "encoding" | "renameIdentity"> & {
+export type RootCreateOptions = Omit<RootWriteOptions, "overwrite" | "durable"> & {
+  /** Publish complete content without replacing an existing entry, including without native support. */
+  atomic?: boolean;
+  /** "file" requires file synchronization; directory synchronization remains best effort. */
+  durable?: boolean | "file";
+};
+export type RootCreateStreamOptions = Omit<RootCreateOptions, "atomic" | "encoding" | "renameIdentity"> & {
   maxBytes?: number;
   signal?: AbortSignal;
 };
-export type RootCreateJsonOptions = Omit<RootWriteJsonOptions, "overwrite">;
+export type RootCreateJsonOptions = Omit<RootWriteJsonOptions, "overwrite" | "durable"> & Pick<RootCreateOptions, "atomic" | "durable">;
 
 export type RootAppendOptions = RootWriteOptions & {
   prependNewlineIfNeeded?: boolean;

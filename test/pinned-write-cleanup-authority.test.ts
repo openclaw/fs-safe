@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAsyncDirectoryGuard } from "../src/directory-guard.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { runPinnedWriteHelper } from "../src/pinned-write.js";
-import { cleanupPinnedFilePath } from "../src/replace-file-temp-owner.js";
+import { cleanupPinnedFilePath } from "../src/file-cleanup.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();

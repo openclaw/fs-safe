@@ -18,6 +18,7 @@ type RootIdentity = Pick<FileIdentityStat, "dev" | "ino">;
 
 export type NativeRootAdmission = {
   exactRoot: boolean;
+  reportCloseErrors?: boolean;
   operation: string;
   root: FileHandle;
   rootPath: string;
@@ -50,7 +51,7 @@ function assertParentAdmissionAvailable(binding: NativeBinding): void {
 
 export async function openNativeRootAdmission(
   binding: NativeBinding,
-  params: { rootPath: string; rootIdentity?: RootIdentity; operation?: string },
+  params: { rootPath: string; rootIdentity?: RootIdentity; operation?: string; reportCloseErrors?: boolean },
 ): Promise<NativeRootAdmission> {
   assertParentAdmissionAvailable(binding);
   const directoryFlags = fsSync.constants.O_RDONLY | (fsSync.constants.O_DIRECTORY ?? 0);
@@ -84,6 +85,7 @@ export async function openNativeRootAdmission(
     }
     return {
       exactRoot,
+      reportCloseErrors: params.reportCloseErrors,
       operation: params.operation ?? "native admission",
       root,
       rootPath: params.rootPath,
@@ -93,7 +95,7 @@ export async function openNativeRootAdmission(
       await root.close();
     } catch (closeError) {
       // Windows admission keeps the typed boundary failure primary.
-      if (process.platform !== "win32") {
+      if (process.platform !== "win32" || params.reportCloseErrors) {
         throw createSuppressedError(closeError, error, "native root admission and close failed");
       }
     }
@@ -184,7 +186,7 @@ export async function openNativeParentAdmission(
     try {
       closeFd(parentFd);
     } catch (closeError) {
-      if (process.platform !== "win32") {
+      if (process.platform !== "win32" || rootAdmission.reportCloseErrors) {
         throw createSuppressedError(closeError, error, "native parent admission and close failed");
       }
     }

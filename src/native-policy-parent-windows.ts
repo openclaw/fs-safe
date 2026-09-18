@@ -16,6 +16,7 @@ import type { PinnedWriteParams, PinnedMutationAdmissionReceipt, PinnedMutationP
 import { checkedMutationDirectory, type MutationDirectoryObservation } from "./pinned-mutation-observation.js";
 import { canReuseParentWithMutationAssertion } from "./root-write-lock-binding.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
+import { createSuppressedError } from "./suppressed-error.js";
 
 type PolicyParent = {
   fd: number;
@@ -33,12 +34,19 @@ function assertParentCurrent(parent: PolicyParent): BigIntStats {
   return current;
 }
 
-function closeAfterFailure(closeFd: (fd: number) => void, fd: number | undefined): void {
+function closeAfterFailure(
+  closeFd: (fd: number) => void,
+  fd: number | undefined,
+  failure?: { error: unknown },
+  report = false,
+): void {
   if (fd === undefined) return;
   try {
     closeFd(fd);
-  } catch {
-    // Windows retains the operation failure while attempting every owned close.
+  } catch (error) {
+    if (report) throw failure
+      ? createSuppressedError(error, failure.error, "native parent admission and close failed")
+      : error;
   }
 }
 
@@ -110,7 +118,7 @@ export async function capturePolicyAwareWindowsParent(
       assertParentCurrent(complete);
       return complete;
     } catch (error) {
-      closeAfterFailure(closeFd, complete.fd);
+      closeAfterFailure(closeFd, complete.fd, { error }, rootAdmission.reportCloseErrors);
       throw error;
     }
   }
@@ -128,6 +136,7 @@ export async function capturePolicyAwareWindowsParent(
     }),
   };
   let ownedFd: number | undefined;
+  let failure: { error: unknown } | undefined;
   const initialTarget = joinPathSegmentRoute(params.rootPath, route, 0, params.basename);
   if (canReuseParentWithMutationAssertion(params.assertBeforeMutation, params.rootPath, initialTarget)) {
     session = params.mutationAdmission?.beginNativeParentWalk?.() ??
@@ -200,7 +209,7 @@ export async function capturePolicyAwareWindowsParent(
           assertParentCurrent(child);
         }
       } catch (error) {
-        closeAfterFailure(closeFd, child.fd);
+        closeAfterFailure(closeFd, child.fd, { error }, rootAdmission.reportCloseErrors);
         throw error;
       }
       const previousFd = ownedFd;
@@ -213,8 +222,11 @@ export async function capturePolicyAwareWindowsParent(
     }
     ownedFd = undefined;
     return current;
+  } catch (error) {
+    failure = { error };
+    throw error;
   } finally {
     session?.dispose();
-    closeAfterFailure(closeFd, ownedFd);
+    closeAfterFailure(closeFd, ownedFd, failure, rootAdmission.reportCloseErrors);
   }
 }

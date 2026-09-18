@@ -28,7 +28,8 @@ import {
   isSymlinkOpenError,
 } from "./path.js";
 import { readOpenedFileSafely, type ReadResult } from "./read-opened-file.js";
-import { cleanupPinnedFilePath, removePathIfIdentityUnchanged } from "./replace-file-temp-owner.js";
+import { cleanupPinnedFilePath } from "./file-cleanup.js";
+import { removePathIfIdentityUnchanged } from "./replace-file-temp-owner.js";
 import { realpathSync } from "./realpath.js";
 import { mkdirPathFallback, prepareRootWriteTarget, tryMkdirAtExactParent } from "./root-directory-creation.js";
 import { isNonRegularWriteOpenError, resolveNonblockingWriteFlag } from "./write-open-flags.js";
@@ -459,13 +460,15 @@ export class RootHandle implements Root {
     options: RootCreateOptions & RootCreateStreamOptions = {},
   ): Promise<void> {
     assertValidRootDestinationPath(relativePath);
+    const durable = options.durable ?? this.defaults.durable ?? true;
     await writeFileInRoot(this.context, {
       relativePath,
       data,
       mkdir: this.defaults.mkdir,
       mode: this.defaults.mode,
       ...this.mutationOptions(createInputOptions(data, options, this.defaults.maxBytes)),
-      durable: options.durable ?? this.defaults.durable ?? true,
+      durable: durable !== false,
+      strictFileSync: durable === "file",
       overwrite: false,
     }).catch(rethrowMutationAuthorityError).catch(rethrowCreateInputError);
   }
@@ -1070,7 +1073,7 @@ async function writeFileInRoot(
   const input = rootWriteInput(params);
   await serializePathWrite(rootWriteQueueKey(root, params.relativePath), async () => {
     if (
-      input.kind === "buffer" && process.platform === "win32" &&
+      input.kind === "buffer" && !input.stageBeforePublish && process.platform === "win32" &&
       (params.renameIdentity === "verify-content-with-lock" || !getNativeBinding())
     ) {
       await writeFileFallback(root, { ...params, data: input.data });
@@ -1109,6 +1112,7 @@ async function commitPinnedWriteInRoot(
       mkdir: params.mkdir !== false,
       mode: params.mode ?? pinned.mode,
       sync: params.durable !== false,
+      strictFileSync: params.strictFileSync,
       overwrite: params.overwrite,
       rejectFinalSymlink: params.mutationSymlinks !== undefined,
       input,
