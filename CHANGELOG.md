@@ -27,6 +27,7 @@
 
 ### Fixes and compatibility
 
+- Reject sidecar cleanup when exact file identity is unknown instead of treating missing identities as a match.
 - Evaluate stale-lock age after snapshot observation and parsing so delayed reads do not give reclamation callbacks an outdated timestamp.
 - Reuse the exact Root identity sample when it is also the lock's immediate parent, while retaining separate read and mutation-policy checks.
 - Serialize sidecar lock admission across raw and Root-based synchronous callers while retaining separate Root cleanup authority, and recheck async authorization at the final stale-removal mutation boundary.
