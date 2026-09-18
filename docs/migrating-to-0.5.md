@@ -167,10 +167,15 @@ See [File locks](sidecar-lock.md), [Secret files](secret-file.md), and
 
 ## 7. Gate native-only features
 
-`createPrivateDirectory()` is Windows-only and native-only because a pathname
-fallback cannot promise the same creation-time DACL. Zstd/bzip2 extraction and
-`strategy: "rename-noreplace"` are also native-only. Test the unavailable path
-instead of assuming installation always succeeds.
+Version 0.5 required native support for `createPrivateDirectory()`. Current
+releases also support a packaged PowerShell script in native `auto` and `off`
+modes, retaining its creation-time protected DACL. Check the
+[Windows security fallback prerequisites](install.md#windows-security-fallback)
+before relying on this route. The API remains Windows-only, explicit native
+`require` rejects a missing binding or capability, and native operation failures
+remain terminal.
+Zstd/bzip2 extraction and `strategy: "rename-noreplace"` remain native-only.
+Test the unavailable path instead of assuming installation always succeeds.
 
 ## 8. Run both behavior families in CI
 

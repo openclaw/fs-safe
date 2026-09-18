@@ -46,10 +46,11 @@ describe("createPrivateDirectory", () => {
     await expect(fs.stat(target)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("fails closed when Windows native mode is off", async () => {
+  it("fails closed when Windows native mode requires a missing binding", async () => {
     const root = await tempRoot();
     const target = path.join(root, "fallback");
-    configureFsSafeNative({ mode: "off" });
+    configureFsSafeNative({ mode: "require" });
+    __setNativeLoaderForTest(() => { throw new Error("optional native package omitted"); });
     await expectFsSafeError(
       createPrivateDirectory(target, { platform: "win32" }),
       "helper-unavailable",

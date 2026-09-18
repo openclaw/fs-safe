@@ -34,6 +34,30 @@ const suffixScenarios = [
   "callback-replaces-owned-ancestor",
   "callback-makes-owned-directory-nonempty",
 ];
+const windowsSecurityModules = [
+  "bounded-read.js", "byte-budget.js", "config.js", "device-path.js", "effective-uid.js",
+  "error-detail.js", "errors.js", "file-observation.js", "local-file-access.js", "lock-config.js",
+  "native-binding.js", "native-config.js", "native-fallback-warning.js", "native.js", "owner-dacl.js",
+  "path.js", "permission-exec.js", "permissions-public.js", "permissions-windows.js", "permissions.js",
+  "private-directory.js", "read-open-flags.js", "realpath.js", "safe-path-segment.js", "secure-file-windows.js",
+  "secure-file.js", "strict-file-identity.js", "string-coerce.js", "timing.js", "windows-command.js",
+  "windows-owner.js", "windows-path-alias.js", "windows-security-command.js", "windows-security-facts.js",
+];
+const windowsSecurityAssets = ["windows-security-bridge.cs", "windows-security-bridge.ps1"];
+const windowsSecurityScenarios = [
+  "private-directory-created", "private-directory-created-repeat", "raw-owner-and-dacl", "raw-owner-and-dacl-repeat",
+  "private-directory-collision", "populated-private-directory-collision", "descriptor-secure-read", "descriptor-secure-read-repeat",
+  "broad-acl-rejected-before-read", "explicit-readable-policy", "broad-write-rejected-with-readable-opt-in",
+  "replaced-path-rejected-before-read",
+];
+const windowsSecurityTimingPairs = [
+  ["createPrivateDirectory", "private-directory-created", "private-directory-created-repeat"],
+  ["readOwnerAndDacl", "raw-owner-and-dacl", "raw-owner-and-dacl-repeat"],
+  ["readSecureFile", "descriptor-secure-read", "descriptor-secure-read-repeat"],
+];
+const windowsSecurityRequireScenarios = [
+  "require-owner-fails-closed", "require-private-directory-fails-closed", "require-secure-read-fails-closed",
+];
 
 export function isolatedConsumerEnv(directory) {
   mkdirSync(directory, { recursive: true });
@@ -149,6 +173,13 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
     assert.ok(rootArtifact?.integrity);
     const suffixProbeSource = readFileSync(new URL("./consumer-suffix-probe.mjs", import.meta.url));
     const metadataHelperSource = readFileSync(new URL("./consumer-proof-metadata.mjs", import.meta.url));
+    const windowsSecurityProbeSource = readFileSync(new URL("./consumer-windows-security-probe.mjs", import.meta.url));
+    const windowsSecurityExpected = process.platform === "win32" ? {
+      protocol: 2,
+      compiledSha256: Object.fromEntries(windowsSecurityModules.map((name) => [name, sha256(join("dist", name))])),
+      assetsSha256: Object.fromEntries(windowsSecurityAssets.map((name) => [name, sha256(join("dist", name))])),
+      probeSha256: createHash("sha256").update(windowsSecurityProbeSource).digest("hex"),
+    } : undefined;
     const suffixExpected = {
       source,
       rootIntegrity: rootArtifact.integrity,
@@ -200,6 +231,7 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
             .update(readFileSync(new URL("./consumer-proof-metadata.mjs", import.meta.url)))
             .digest("hex"),
           manager: { name: manager, version },
+          windowsSecurity: windowsSecurityExpected,
           ...suffixExpected,
         }));
         writeFileSync(join(directory, "probe.mjs"), readFileSync(new URL("./consumer-install-probe.mjs", import.meta.url)));
@@ -213,6 +245,27 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
         cases.require = await hash("require", omitted);
         cases.auto = await hash("auto");
         cases.off = await hash("off");
+        if (process.platform === "win32") {
+          const probe = join(directory, "windows-security-probe.mjs");
+          writeFileSync(probe, windowsSecurityProbeSource);
+          writeFileSync(join(directory, "consumer-proof-metadata.mjs"), metadataHelperSource);
+          cases.windowsSecurity = [];
+          for (const mode of omitted ? ["off", "auto", "require"] : ["require"]) {
+            const receipt = JSON.parse(await run([process.execPath, probe], [mode], directory, env));
+            assert.equal(receipt.protocol, 2);
+            assert.equal(receipt.mode, mode);
+            assert.equal(receipt.omitted, omitted);
+            assert.equal(receipt.nativeLoaded, !omitted);
+            assert.deepEqual(receipt.packageManager, { name: manager, version });
+            assert.deepEqual(receipt.source, source);
+            assert.equal(receipt.rootPackage.integrity, rootArtifact.integrity);
+            assert.deepEqual(receipt.compiledModules, windowsSecurityExpected.compiledSha256);
+            assert.deepEqual(receipt.scriptAssets, windowsSecurityExpected.assetsSha256);
+            assert.deepEqual(receipt.rows.map((row) => row.scenario),
+              omitted && mode === "require" ? windowsSecurityRequireScenarios : windowsSecurityScenarios);
+            cases.windowsSecurity.push(receipt);
+          }
+        }
         if (!omitted) {
           const suffixProbe = join(directory, "suffix-probe.mjs");
           writeFileSync(suffixProbe, suffixProbeSource);
@@ -242,6 +295,27 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
         }
         managerProof.cases.push(cases);
         console.log(`${manager}@${version} root-only ${omitted ? "omitted optionals" : host.label}: ${JSON.stringify(cases)}`);
+      }
+      if (process.platform === "win32") {
+        const native = managerProof.cases.find((item) => !item.omitted).windowsSecurity[0];
+        const portable = managerProof.cases.find((item) => item.omitted).windowsSecurity;
+        const measuredPair = (receipt, first, repeated) => Object.fromEntries([
+          ["firstCall", first], ["repeatedCall", repeated],
+        ].map(([label, scenario]) => {
+          const row = receipt.rows.find((item) => item.scenario === scenario);
+          return [label, { publicDurationMs: row.publicCallDurationMs,
+            childCommands: row.commands.map(({ pid, durationMs }) => ({ pid, durationMs })) }];
+        }));
+        managerProof.windowsSecurityTiming = {
+          unit: "milliseconds", samplesPerOperationAndMode: 2,
+          interpretation: "First versus repeated invocation of the same public operation in one consumer process. Each portable call still launches and compiles a fresh PowerShell child; there is no persistent warm helper. Informational measurements without timing thresholds or performance guarantees.",
+          firstAndRepeated: windowsSecurityTimingPairs.map(([operation, first, repeated]) => ({
+            operation,
+            nativeRequire: measuredPair(native, first, repeated),
+            portableOff: measuredPair(portable.find((item) => item.mode === "off"), first, repeated),
+            portableAuto: measuredPair(portable.find((item) => item.mode === "auto"), first, repeated),
+          })),
+        };
       }
       proof.managers.push(managerProof);
     }

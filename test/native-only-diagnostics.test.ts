@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { extractArchive, readArchiveEntry, resolveArchiveKind } from "../src/archive.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
-import { readOwnerAndDacl } from "../src/owner-dacl.js";
 import { createPrivateDirectory } from "../src/private-directory.js";
 import { useTempDirs } from "./helpers/vitest.js";
 
@@ -40,26 +39,6 @@ for (const mode of ["off", "auto"] as const) {
       await expect(fs.stat(destDir)).rejects.toMatchObject({ code: "ENOENT" });
     });
 
-    it("explains Windows recovery without creating a directory or returning ACL facts", async () => {
-      unavailable();
-      const root = await tempRoot("fs-safe-windows-diagnostics-");
-      const target = path.join(root, "private");
-      await expect(createPrivateDirectory(target, { platform: "win32" })).rejects.toMatchObject({
-        code: "helper-unavailable",
-        message: `private Windows directory creation requires the matching optional native platform package; ${guidance}`,
-      });
-      await expect(fs.stat(target)).rejects.toMatchObject({ code: "ENOENT" });
-      const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
-      Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
-      try {
-        expect(() => readOwnerAndDacl(target)).toThrow(expect.objectContaining({
-          code: "helper-unavailable",
-          message: `Windows owner and DACL facts require the matching optional native platform package; ${guidance}`,
-        }));
-      } finally {
-        Object.defineProperty(process, "platform", descriptor);
-      }
-    });
   });
 }
 

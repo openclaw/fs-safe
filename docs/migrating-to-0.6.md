@@ -25,9 +25,11 @@ binding in the root tarball; version 0.6 intentionally does not.
 
 Omitting optional dependencies remains supported for fallback-capable APIs in
 `auto` mode. It disables native-only features such as zstd/bzip2 TAR handling,
-retained-directory staging, atomic `rename-noreplace`, and Windows private
-directory creation. Native mode `require` reports `helper-unavailable` when the
-matching package is absent or incompatible.
+retained-directory staging, and atomic `rename-noreplace`. Native mode `require`
+reports `helper-unavailable` when the matching package is absent or incompatible.
+Windows private-directory creation required the binding in version 0.6; current
+releases also support [packaged Windows security scripts](install.md#windows-security-fallback)
+in `auto` and `off` mode while preserving the creation-time protected DACL.
 
 ## Deployment checklist
 

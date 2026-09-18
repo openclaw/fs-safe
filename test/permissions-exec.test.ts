@@ -20,6 +20,20 @@ import { readSecureFile } from "../src/secure-file.js";
 const tempDirs: string[] = [];
 const itSimulatedWindows = it.skipIf(process.platform === "win32");
 
+function incompleteDescriptorExec() {
+  return vi.fn(async () => ({
+    stdout: JSON.stringify({
+      ownerSid: "S-1-5-21-42",
+      currentUserSid: "S-1-5-21-42",
+      complete: false,
+      daclPresent: true,
+      aces: [],
+      remote: false,
+    }),
+    stderr: "",
+  }));
+}
+
 beforeEach(() => {
   configureFsSafeNative({ mode: "off" });
 });
@@ -279,27 +293,12 @@ describe("Windows permission command execution", () => {
     expect(exec).toHaveBeenCalledTimes(1);
   });
 
-  it("fails closed when a successful query yields incomplete descriptor facts", async () => {
+  it("reports unverified permissions when a successful query yields incomplete descriptor facts", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-permission-empty-acl-"));
     tempDirs.push(dir);
     const target = path.join(dir, "secret.json");
     await fs.writeFile(target, "{}", { mode: 0o600 });
-    const exec = vi.fn(async (command: string) => {
-      if (command.toLowerCase().endsWith("powershell.exe")) {
-        return {
-          stdout: JSON.stringify({
-            ownerSid: "S-1-5-21-42",
-            currentUserSid: "S-1-5-21-42",
-            complete: false,
-            daclPresent: true,
-            aces: [],
-            remote: false,
-          }),
-          stderr: "",
-        };
-      }
-      return { stdout: "", stderr: "" };
-    });
+    const exec = incompleteDescriptorExec();
 
     await expect(
       inspectPathPermissions(target, {
@@ -312,15 +311,21 @@ describe("Windows permission command execution", () => {
       source: "unknown",
       error: expect.stringContaining("incomplete descriptor data"),
     });
+  });
 
+  itSimulatedWindows("rejects a simulated Windows secure read with incomplete pathname-query facts", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-permission-incomplete-read-"));
+    tempDirs.push(dir);
+    const target = path.join(dir, "secret.json");
+    await fs.writeFile(target, "{}", { mode: 0o600 });
     await expectFsSafeError(readSecureFile({
-        filePath: target,
-        inject: {
-          platform: "win32",
-          env: { SystemRoot: "C:\\Windows" },
-          exec,
-        },
-      }), "permission-unverified");
+      filePath: target,
+      inject: {
+        platform: "win32",
+        env: { SystemRoot: "C:\\Windows" },
+        exec: incompleteDescriptorExec(),
+      },
+    }), "permission-unverified");
   });
 
   itSimulatedWindows("inspects permissions once for one simulated Windows secure read", async () => {

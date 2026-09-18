@@ -15,7 +15,7 @@ consumer Rust build.
 import { configureFsSafeNative } from "@openclaw/fs-safe/config";
 
 configureFsSafeNative({ mode: "auto" });    // default
-configureFsSafeNative({ mode: "off" });     // guarded JavaScript; reject native-only operations
+configureFsSafeNative({ mode: "off" });     // disable the addon; reject native-only operations
 configureFsSafeNative({ mode: "require" }); // fail closed when the binding is unavailable
 ```
 
@@ -25,14 +25,17 @@ The equivalent environment variables are `FS_SAFE_NATIVE_MODE` and `OPENCLAW_FS_
 
 | Mode | Behavior |
 |---|---|
-| `auto` | Prefer native primitives when the current platform package loads; otherwise use guarded JavaScript where a safe fallback exists and reject native-only operations. |
-| `off` | Do not load a native package. Use guarded JavaScript where safe and reject native-only operations deterministically. |
+| `auto` | Prefer native primitives when the current platform package loads; otherwise use supported fallbacks and reject native-only operations. |
+| `off` | Do not load a native package. Use supported fallbacks and reject native-only operations deterministically. |
 | `require` | Throw `FsSafeError("helper-unavailable")` instead of falling back when an operation needs the native binding and it cannot load. |
 
 TAR/gzip in the guarded JavaScript path uses a bundled, import-free WASM build
 of the same Rust parser used by native. `off` still disables the optional native
 filesystem helper; it does not disable this portable parser. ZIP fallback still requires
 optional `jszip`, and zstd/bzip2 remain native-only.
+
+Windows security operations can use the package's readable PowerShell/C# scripts
+in `auto` and `off`, subject to the [Windows security fallback prerequisites](install.md#windows-security-fallback).
 
 On Bun macOS/Linux, the [runtime path adapter](install.md#bun-runtime) uses the
 same Rust addon for system canonicalization in `auto` and `require`. No JIT is
@@ -109,8 +112,13 @@ there. Deeper names retain guarded parent traversal.
 Native primitives back create-only and replacing pinned writes, no-clobber
 `Root.move()`, async sidecar creation, guarded publication, archive acceleration,
 and direct Windows ACL operations. Windows secure-file reads require
-descriptor-bound owner/DACL facts from the current helper; they do not use the
-standalone pathname inspector's command fallback. No-clobber moves fail with
+descriptor-bound owner/DACL facts. In native `auto` or `off` mode, a missing
+binding or capability can use a packaged PowerShell script that inspects the
+borrowed handle. Raw owner/DACL inspection and private-directory creation also support
+this fallback, subject to the [Windows security fallback prerequisites](install.md#windows-security-fallback).
+Each capability emits a path-free warning once per process and adds PowerShell
+startup and compilation overhead per call. Native `require` rejects missing
+capabilities, and native operation failures remain terminal. No-clobber moves fail with
 `helper-unavailable` when descriptor-relative parent admission or the atomic
 no-replace rename is unavailable; they never use a check followed by a replacing
 rename. Equivalent JavaScript paths remain available for documented

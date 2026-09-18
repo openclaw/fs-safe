@@ -17,7 +17,7 @@ guarded JavaScript path. Native loading is lazy; installs do not compile Rust,
 run postinstall code, or fetch binaries at runtime. Seven exact-version optional
 packages are filtered by OS, CPU, and Linux libc, so an installation receives
 only its matching prebuilt binding.
-Native-only formats and creation-time Windows DACL guarantees fail explicitly
+Native-only formats fail explicitly
 instead of substituting a weaker implementation.
 
 ## The beneath model
@@ -173,10 +173,24 @@ does not load the binding. Use asynchronous `sha256File()` for native hashing
 and cancellation that can respond while JavaScript callbacks run.
 
 Features without a safe JavaScript implementation, including no-clobber
-`Root.move()`, zstd/bzip2 TAR, Windows private-directory creation, and
+`Root.move()`, zstd/bzip2 TAR, and
 [retained-directory staging](staged-file.md), fail with `helper-unavailable`
 when native support is absent or off. Staging is currently Linux/macOS only and
 rejects Windows with `unsupported-platform`.
+
+Windows raw owner/DACL inspection, private-directory creation, and secure-file
+descriptor inspection can use a package-shipped, readable `.ps1` driver and
+adjacent `.cs` source in `auto` or `off` mode when their binding or capability is
+unavailable. System Windows PowerShell runs the fixed driver with `-File`;
+paths remain data, with no runtime-generated helper script or encoded launcher.
+The [Windows security fallback prerequisites](install.md#windows-security-fallback)
+apply, and unsupported or disallowed command execution fails closed. This route
+preserves raw ACL facts, private DACLs at creation, and descriptor-bound secure
+reads, and emits a path-free `FS_SAFE_NATIVE_FALLBACK` warning once per capability
+per process. Each call adds PowerShell startup and compilation overhead.
+`require` rejects missing capabilities without a command, and an available native operation's
+failure never triggers this fallback. See [Permissions](permissions.md) and
+[Secure file reads](secure-file.md) for error and platform contracts.
 
 The staged-file owner also serves POSIX native pinned writes, including streaming.
 Unpublished files remain at `0600`; requested modes are applied through the
@@ -226,8 +240,8 @@ remain TypeScript-owned. What changes is the syscall strength or availability:
 | Zstd/bzip2 TAR | Supported. | Unsupported; typed `helper-unavailable`. |
 | Publication copy | Clone, Linux `copy_file_range`, async native SHA-256. | Exclusive `wx` byte loop and Node SHA-256 with the same content/identity fences. |
 | `rename-noreplace` | Atomic platform no-replace rename. | Unsupported; no emulation by check-then-rename. |
-| Windows DACL read | Direct `GetSecurityInfo`; the public facts API exposes ordered basic allow/deny ACE SIDs, masks, and decoded flags without trust policy. Secure-file reads query the borrowed open descriptor and compare its 32-bit volume serial and 64-bit file-index projection with Node's bigint receipt. | Structured .NET owner/DACL inspection remains available to standalone pathname reporting. Secure-file reads fail closed without the descriptor capability. |
-| Windows private directory | Creation-time protected DACL. | Unsupported; no weaker pathname-only substitute. |
+| Windows DACL read | Direct `GetSecurityInfo`; the public facts API exposes ordered basic allow/deny ACE SIDs, masks, and decoded flags without trust policy. Secure-file reads query the borrowed open descriptor and compare its 32-bit volume serial and 64-bit file-index projection with Node's bigint receipt. | The packaged PowerShell/C# bridge preserves raw facts and inspects the borrowed descriptor for secure reads, with the same Node identity comparison; its command failures reject. Structured .NET pathname reporting retains its separate compatibility query. |
+| Windows private directory | Creation-time protected DACL. | The packaged PowerShell/C# bridge applies the protected DACL at creation and retains exact handles through identity validation and failure cleanup. Command failures reject. |
 
 Use `off` in CI to keep the fallback contract exercised. Use `require` when a
 deployment depends on the stronger mechanism or a native-only feature; do not

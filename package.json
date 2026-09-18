@@ -25,6 +25,8 @@
   },
   "files": [
     "dist/archive-parser.wasm",
+    "dist/windows-security-bridge.cs",
+    "dist/windows-security-bridge.ps1",
     "dist/**/*.js",
     "dist/**/*.d.ts",
     "dist/**/*.d.ts.map",

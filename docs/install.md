@@ -123,17 +123,39 @@ Use the main entry for the common surface, or the focused subpaths when you want
 
 There are no peer dependencies. Exact-version optional packages carry the seven
 native targets and npm-compatible OS, CPU, and Linux libc filters install only
-the matching binary. Consumers do not run a native build, download code at
+the matching binary. Consumers do not run a Rust build, download code at
 runtime, or execute a postinstall step. Omitting optional dependencies keeps
 non-archive fallback-capable operations working in `auto` or `off`. Native-only
 features, including strict owned-tree temp cleanup, retained-directory staging,
 atomic `rename-noreplace` (including the default no-clobber `Root.move()`),
-zstd/bzip2 TAR handling, and Windows private-directory creation, remain
+and zstd/bzip2 TAR handling remain
 unavailable. Operations without a safe fallback fail with `helper-unavailable`
 when the matching package is absent, incompatible, or disabled.
 
 Upgrading an existing 0.5 consumer? Follow [Migrating to 0.6](migrating-to-0.6.md)
 before deploying with native mode `require` or native-only features.
+
+### Windows security fallback
+
+Windows raw owner/DACL inspection, private-directory creation, and secure-file
+reads work without the addon in `auto` or `off` mode when system Windows
+PowerShell and its .NET `Add-Type` compilation support are available. The package
+ships a readable, fixed `.ps1` driver and adjacent `.cs` source and invokes the
+driver with Windows PowerShell `-File`. Paths are passed as data. The fallback
+does not generate helper scripts at runtime or use an encoded launcher.
+
+Normal PowerShell execution policy and Microsoft Defender policy must permit
+the packaged scripts, including their use of `Add-Type`. The package does not
+bypass restrictions, change policies, or add exclusions. Unsupported or
+disallowed command execution fails closed.
+
+The fallback preserves private DACLs at creation and inspects the same open
+handle that supplies secure-file bytes. Each capability emits a path-free
+`FS_SAFE_NATIVE_FALLBACK` warning once per process; each call adds PowerShell
+startup and compilation overhead. Execution or compilation failure also fails
+closed. Native `require` still rejects a missing binding or capability, and an
+available native operation's error never triggers a command retry. See
+[Permissions](permissions.md) and [Secure file reads](secure-file.md).
 
 ## Native helper policy
 
@@ -147,7 +169,7 @@ where a safe fallback exists. Native-only operations fail with
 import { configureFsSafeNative } from "@openclaw/fs-safe/config";
 
 configureFsSafeNative({ mode: "auto" });    // default
-configureFsSafeNative({ mode: "off" });     // guarded JavaScript; reject native-only operations
+configureFsSafeNative({ mode: "off" });     // disable the addon; reject native-only operations
 configureFsSafeNative({ mode: "require" }); // fail closed if unavailable
 ```
 

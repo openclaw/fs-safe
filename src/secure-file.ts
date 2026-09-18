@@ -24,7 +24,7 @@ import {
   type PermissionCheckOptions,
 } from "./permissions.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
-import { inspectSecureWindowsDescriptor } from "./secure-file-windows.js";
+import { inspectSecureWindowsFile } from "./secure-file-windows.js";
 import { scheduleTimeout } from "./timing.js";
 import {
   anchorWindowsDriveRelativePath,
@@ -284,7 +284,7 @@ async function assertSecurePermissions(
   const platform = options.inject?.platform ?? process.platform;
   const permissions = platform === "win32"
     ? process.platform === "win32"
-      ? inspectSecureWindowsDescriptor({ fd, identity, stat })
+      ? await inspectSecureWindowsFile({ fd, identity, stat })
       : await inspectPathPermissions(realPath, options.inject)
     : inspectOpenedPermissions(stat, platform);
   const reason = permissions.error ? `: ${formatPermissionErrorDetail(permissions.error)}` : "";

@@ -42,7 +42,7 @@ POSIX remediation strings shell-quote paths with whitespace or metacharacters
 and protect option-like paths with `--`, so they can be presented as commands
 without letting the inspected pathname add shell syntax.
 
-`inspectPathPermissions()` follows symlink targets for the effective mode but tells you whether the original path was a symlink. On POSIX it reports owner/group/world bits. On Windows it delegates to the ACL helpers below and also reports `ownerSid` plus `ownerTrusted` when ownership can be verified. `ownerTrusted` is true only for a local volume owned by the current user, LocalSystem, or built-in Administrators; remote filesystems fail closed. This remains a pathname reporting API with the fallbacks described below. `readSecureFile()` does not use those pathname fallbacks on Windows: it requires descriptor-bound native owner/DACL facts for the exact handle it reads.
+`inspectPathPermissions()` follows symlink targets for the effective mode but tells you whether the original path was a symlink. On POSIX it reports owner/group/world bits. On Windows it delegates to the ACL helpers below and also reports `ownerSid` plus `ownerTrusted` when ownership can be verified. `ownerTrusted` is true only for a local volume owned by the current user, LocalSystem, or built-in Administrators; remote filesystems fail closed. This remains a pathname reporting API with the fallbacks described below. `readSecureFile()` obtains descriptor-bound owner/DACL facts for the exact handle it reads, using native support or the packaged PowerShell/C# bridge in `auto` and `off` modes.
 
 ## Advanced Windows ACL helpers
 
@@ -171,10 +171,12 @@ Object-specific and other ACE layouts are not guessed: they are omitted,
 `complete` becomes false, and their numeric types appear in
 `unsupportedAceTypes`, allowing a security-sensitive caller to fail closed.
 Non-Windows systems return `{ status: "unsupported-platform", platform }`.
-Windows requires the native binding; if it is unavailable or forced
-off, the call throws `FsSafeError("helper-unavailable")`. The existing coarse
-`inspectPathPermissions()` API still owns its compatibility fallback and trust
-classification.
+Windows prefers the native binding. In native `auto` or `off` mode, a missing
+binding or capability uses the packaged PowerShell/C# bridge with
+the same raw ACE projection. Native `require` rejects either absence with
+`FsSafeError("helper-unavailable")` and starts no command. An available native
+query's failure is terminal. The existing coarse `inspectPathPermissions()` API
+still owns its compatibility fallback and trust classification.
 
 ## Private directories
 
@@ -188,10 +190,11 @@ await createPrivateDirectory(sqliteDirectory);
 await openSqlite(path.join(sqliteDirectory, "sessions.sqlite"));
 ```
 
-On Windows with native support, this creates the directory and applies a
+On Windows, this creates the directory and applies a
 protected owner + LocalSystem + Administrators full-control DACL directly with
-an atomic security descriptor; no PowerShell or `icacls` process is launched.
-The native operation retains the parent and exact created-directory handles
+an atomic security descriptor. The native route launches no command. When its
+binding or capability is unavailable, native `auto` and `off` modes use the
+packaged PowerShell/C# bridge. Both routes retain the parent and exact created-directory handles
 through ACL and final pathname validation. If validation fails, it attempts only
 nonrecursive deletion through the created handle, preserving any pathname
 replacement. If cleanup also fails, the error retains the original failure and
@@ -216,12 +219,31 @@ also rejects explicit `.` and `..` components, including spellings such as
 `.\private` and `parent\..\private`, as a compatibility restriction. Simple
 relative names without these components remain supported.
 
-This API is Windows-only and native-only; it fails closed with
-`FsSafeError("helper-unavailable")` on other platforms, when native mode is off,
-or when the binding is unavailable. POSIX callers should create private
+This API is Windows-only; it fails closed with `FsSafeError("helper-unavailable")`
+on other platforms. Native `require` also fails if the binding or capability is
+missing and never starts a command. An available native operation's failure is
+terminal. POSIX callers should create private
 directories through their existing trusted-root creation policy rather than a
 pathname-only compatibility shim. Existing Windows permission inspection still
 retains its structured .NET compatibility fallback.
+
+The raw owner/DACL and private-directory fallbacks each emit one path-free
+`FS_SAFE_NATIVE_FALLBACK` warning per process. PowerShell startup and C#
+compilation add overhead to each call; install the native package for frequent
+operations. These routes run the package's readable, fixed scripts under normal
+system PowerShell policy; see the [Windows security fallback prerequisites](install.md#windows-security-fallback).
+If command support is unavailable, disallowed, or fails, the operation rejects.
+Private-directory creation never falls back to inherited permissions.
+The asynchronous creation command has a 30-second deadline. After a timeout or
+transport failure, fs-safe requests termination and waits at most one further
+second before rejecting and closing its output pipes. The error distinguishes
+observed process exit from an unconfirmed termination attempt. If the OS refuses
+termination, the command can still create the directory after rejection. An
+already-created object retains its protected DACL, but pathname validation and
+owned-handle cleanup may not finish. An error therefore does not prove the
+pathname is absent; a retry can report `EEXIST`. Before retrying or using the
+pathname, establish that the earlier operation stopped and verify any existing
+directory's security. The library does not attempt pathname-based cleanup.
 
 Use `createIcaclsResetCommand()` when you need a structured command and argv pair. Use `formatIcaclsResetCommand()` when you only need a remediation string for a user-facing message.
 

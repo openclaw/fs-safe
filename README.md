@@ -70,7 +70,7 @@ environment policy:
 import { configureFsSafeNative } from "@openclaw/fs-safe";
 
 configureFsSafeNative({ mode: "auto" });    // default: native when available
-configureFsSafeNative({ mode: "off" });     // guarded JavaScript only
+configureFsSafeNative({ mode: "off" });     // disable the addon; use supported fallbacks
 configureFsSafeNative({ mode: "require" }); // fail closed if the binding is unavailable
 ```
 
@@ -466,8 +466,13 @@ instead of a root-relative workspace path. It opens the file first, validates th
 same handle it will read from, checks trusted directories, owner, POSIX mode or
 Windows ACLs, hardlink count, size, and optional timeout, then reads through the
 pinned handle. On Windows, both the bytes and the owner/DACL facts come from that
-handle; secure reads require the matching current native package and do not fall
-back to a pathname ACL command.
+handle. In native `auto` or `off` mode, a packaged, readable PowerShell script can
+inspect that borrowed handle when the native capability is unavailable, subject
+to the [Windows security fallback prerequisites](docs/install.md#windows-security-fallback).
+It emits one fallback warning per process for secure reads and adds PowerShell
+startup and compilation overhead per call. Native `require` remains strict, and
+native operation failures are terminal. Neither route reopens the pathname to
+inspect its ACL.
 
 ```ts
 import { readSecureFile } from "@openclaw/fs-safe/secure-file";

@@ -37,9 +37,13 @@ Set the process-global loading policy. Configure once at startup, before the fir
 
 | Mode | Behavior |
 |---|---|
-| `auto` | Default. Prefer the platform binding and use guarded JavaScript when it is unavailable. |
-| `off` | Do not load the binding; use guarded JavaScript deterministically. |
+| `auto` | Default. Prefer the platform binding and use supported fallbacks when it is unavailable. |
+| `off` | Do not load the binding; use supported fallbacks and reject native-only operations. |
 | `require` | Operations that need the binding raise `FsSafeError("helper-unavailable")` when it cannot load. |
+
+Fallbacks include guarded JavaScript, the bundled TAR/gzip WASM parser, and the
+[packaged Windows security scripts](install.md#windows-security-fallback).
+Windows command fallbacks remain subject to normal system execution policy.
 
 ## `getFsSafeNativeConfig()`
 
