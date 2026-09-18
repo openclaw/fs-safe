@@ -151,6 +151,15 @@ describe.skipIf(!native)("atomic Root.create Windows native publication", () => 
       ...native!,
       closeOwnedFd: close,
       openBeneath(...args) {
+        if (boundary === "parent" && !substituted && args[1].startsWith(".fs-safe-") &&
+          (args[2] & fsSync.constants.O_CREAT) !== 0) {
+          // Windows cannot rename a parent after its staged child is opened.
+          stageName = args[1];
+          native!.renameNoReplace(attackRoot.fd, "parent", attackRoot.fd, "retained");
+          fsSync.mkdirSync(parent);
+          substituted = path.join(parent, "sentinel");
+          fsSync.writeFileSync(substituted, "substituted bytes", { flag: "wx" });
+        }
         const result = native!.openBeneath(...args);
         opened.push(result.fd);
         if (substituted && args[1] === stageName &&
@@ -163,6 +172,7 @@ describe.skipIf(!native)("atomic Root.create Windows native publication", () => 
     await fs.mkdir(parent);
     const target = path.join(parent, "target");
     const retained = path.join(directory, "retained");
+    await using attackRoot = await fs.open(directory, fsSync.constants.O_RDONLY | (fsSync.constants.O_DIRECTORY ?? 0));
     const scoped = await root(directory);
     const handles: FileHandle[] = [];
     const open = fs.open.bind(fs);
@@ -182,19 +192,13 @@ describe.skipIf(!native)("atomic Root.create Windows native publication", () => 
         const stage = path.join(parent, name);
         if (fsSync.statSync(stage).size !== Buffer.byteLength(content)) return;
         stageName = name;
-        if (boundary === "parent") {
-          fsSync.renameSync(parent, retained);
-          fsSync.mkdirSync(parent);
-          substituted = path.join(parent, "sentinel");
-        } else {
-          fsSync.renameSync(stage, retained);
-          substituted = stage;
-        }
+        fsSync.renameSync(stage, retained);
+        substituted = stage;
         fsSync.writeFileSync(substituted, "substituted bytes", { flag: "wx" });
       },
     }).catch((failure: unknown) => failure);
 
-    expect(substituted).toBeDefined();
+    expect(substituted, String(error)).toBeDefined();
     await expect(fs.lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
     expect(error).toMatchObject({
       details: {
