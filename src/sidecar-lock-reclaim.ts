@@ -9,6 +9,7 @@ import { resolveReadOpenFlags } from "./read-open-flags.js";
 import type { Root } from "./root-impl.js";
 import { openSidecarRoot } from "./sidecar-lock-root.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
+import { sidecarExclusiveCreate } from "./root-create-input.js";
 
 const MAX_LOCK_PAYLOAD_BYTES = 1024 * 1024;
 
@@ -350,12 +351,14 @@ export async function tryAcquireSidecarReclaimGuard(
     const payload = { pid: process.pid, createdAt: new Date().toISOString() };
     const snapshot = { ...serializeSidecarLockPayload(payload), payload };
     try {
-      await lockRoot.create(relative, snapshot.raw, { mkdir: false, mode: 0o600, durable: false });
+      await lockRoot.create(relative, snapshot.raw, { ...sidecarExclusiveCreate, mkdir: false, mode: 0o600, durable: false });
     } catch (error) {
       if (error instanceof FsSafeError && error.code === "already-exists") return;
       // A raw reclaimer can create its directory after our occupancy check.
-      if (error instanceof FsSafeError && error.code === "not-file" &&
-          (await lockRoot.stat(relative)).isDirectory) return;
+      if (error instanceof FsSafeError && error.code === "not-file") {
+        await sidecarReclaimGuardExists(pathname, lockRoot);
+        return;
+      }
       throw error;
     }
     // This attempt owns only its minted token and exact bytes. Root guards
@@ -423,7 +426,6 @@ export async function removeStaleSidecarLockIfAllowed(params: {
   ) {
     return "not-approved";
   }
-  if (params.assertGuardHeld) await params.assertGuardHeld();
   params.assertAuthorized?.();
   const presentBeforeRemoval = await sidecarLockSnapshotStillPresent(
     params.lockPath,

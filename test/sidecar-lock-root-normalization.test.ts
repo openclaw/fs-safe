@@ -27,7 +27,7 @@ describe.each(["off", "auto"] as const)("Root-backed lock normalization (%s)", (
     const lock = await manager.acquire({ targetPath, lockPath, lockRoot, payload: () => ({ owner: "synthetic" }) });
     try {
       expect(lock.normalizedTargetPath).toBe(targetPath);
-      expect(create).toHaveBeenCalledWith("state.lock", expect.any(String), { mkdir: true, mode: 0o600 });
+      expect(create).toHaveBeenCalledWith("state.lock", expect.any(String), expect.objectContaining({ mkdir: true, mode: 0o600 }));
       await expect(fs.lstat(parent)).rejects.toMatchObject({ code: "ENOENT" });
       await expect(lock.verifyStillHeld()).resolves.toBe(true);
     } finally {
@@ -57,7 +57,7 @@ describe.each(["off", "auto"] as const)("Root-backed lock normalization (%s)", (
         expect(first.normalizedTargetPath).toBe(canonical);
         expect(second.normalizedTargetPath).toBe(canonical);
         expect(create).toHaveBeenCalledTimes(1);
-        expect(create).toHaveBeenCalledWith("missing/state.json.lock", expect.any(String), { mkdir: true, mode: 0o600 });
+        expect(create).toHaveBeenCalledWith("missing/state.json.lock", expect.any(String), expect.objectContaining({ mkdir: true, mode: 0o600 }));
       } finally {
         await second.release();
       }

@@ -6,10 +6,31 @@ import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/
 import { root } from "../src/root.js";
 import { acquireFileLockSync } from "../src/file-lock.js";
 import { createSidecarLockManager } from "../src/sidecar-lock.js";
+import { tryAcquireSidecarReclaimGuard } from "../src/sidecar-lock-reclaim.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
 afterEach(() => { vi.restoreAllMocks(); __resetFsSafeNativeConfigForTest(); });
+
+it.each(["missing", "file", "directory"] as const)("treats a colliding raw reclaim guard becoming %s as contention", async replacement => {
+  configureFsSafeNative({ mode: "off" });
+  const directory = await tempRoot("fs-safe-root-guard-released-");
+  const lockRoot = await root(directory);
+  const guardPath = path.join(directory, "state.lock.reclaim");
+  await fs.mkdir(guardPath);
+  const create = lockRoot.create.bind(lockRoot);
+  vi.spyOn(lockRoot, "create").mockImplementationOnce(async (...args) => {
+    try {
+      return await create(...args);
+    } catch (error) {
+      await fs.rmdir(guardPath);
+      if (replacement === "file") await fs.writeFile(guardPath, "other owner", { flag: "wx" });
+      if (replacement === "directory") await fs.mkdir(guardPath);
+      throw error;
+    }
+  });
+  await expect(tryAcquireSidecarReclaimGuard(new Set(), guardPath, lockRoot)).resolves.toBeUndefined();
+});
 
 it("retains Root mutation authority after an awaited stale-removal decision", async () => {
   configureFsSafeNative({ mode: "off" });
@@ -104,6 +125,37 @@ it("excludes raw and Root synchronous contenders while a Root file guard is held
   });
   await held.release();
   await expect(fs.lstat(`${lockPath}.reclaim`)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it.each([false, true])("checks the guard after the final parser observation (parser throws: %s)", async parserThrows => {
+  configureFsSafeNative({ mode: "off" });
+  const directory = await tempRoot("fs-safe-root-guard-final-observation-");
+  const lockRoot = await root(directory);
+  const targetPath = path.join(directory, "state"), lockPath = `${targetPath}.lock`;
+  const guardPath = `${lockPath}.reclaim`, original = JSON.stringify({ owner: "stale" });
+  await fs.writeFile(lockPath, original);
+  const failure = new Error("final parser rejected the sidecar");
+  let approved = false, parsedAfterApproval = 0;
+  const operation = createSidecarLockManager(directory).acquire({
+    targetPath, lockPath, lockRoot, staleMs: 0, timeoutMs: 0,
+    payload: async () => ({ owner: "new" }), shouldReclaim: () => true,
+    staleRecovery: "remove-if-unchanged",
+    parsePayload(raw) {
+      if (approved) { parsedAfterApproval += 1; if (parserThrows) throw failure; }
+      return JSON.parse(raw);
+    },
+    async shouldRemoveStaleLock() {
+      await fs.rename(guardPath, `${guardPath}.saved`);
+      await fs.writeFile(guardPath, "replacement", { flag: "wx" });
+      approved = true;
+      return true;
+    },
+  });
+  if (parserThrows) await expect(operation).rejects.toBe(failure);
+  else await expect(operation).rejects.toMatchObject({ code: "path-mismatch" });
+  expect(parsedAfterApproval).toBe(1);
+  expect(await fs.readFile(lockPath, "utf8")).toBe(original);
+  expect(await fs.readFile(guardPath, "utf8")).toBe("replacement");
 });
 
 it("keeps same-target cleanup callbacks inside the failed attempt's admission", async () => {

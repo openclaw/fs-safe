@@ -57,10 +57,25 @@ describe.each(modes)("streamed Root.create (native %s)", (mode) => {
       yield Buffer.from("replacement");
       await fs.writeFile(target, "winner", { flag: "wx" });
     }
-    await expect(capability.create("file", input())).rejects.toMatchObject({ code: "already-exists" });
+    const indeterminate = mode === "require" && process.platform !== "win32" && scenario === "competing";
+    await expect(capability.create("file", input())).rejects.toMatchObject(indeterminate ? {
+      cause: {
+        name: "SuppressedError",
+        error: { code: "not-removable", details: { publication: { status: "indeterminate" } } },
+        suppressed: { code: "already-exists", details: { publication: { status: "indeterminate" } } },
+      },
+    } : { code: "already-exists" });
     expect(consumed).toBe(scenario === "competing");
     expect(await fs.readFile(target, "utf8")).toBe("winner");
-    expect(await fs.readdir(capability.rootReal)).toEqual(["file"]);
+    const names = await fs.readdir(capability.rootReal);
+    if (indeterminate) {
+      expect(names).toHaveLength(2);
+      const stage = names.find(name => name !== "file")!;
+      expect(stage).toMatch(/^\.fs-safe-.*\.tmp$/);
+      expect(await fs.readFile(path.join(capability.rootReal, stage), "utf8")).toBe("replacement");
+    } else {
+      expect(names).toEqual(["file"]);
+    }
   });
 
   it.each([0, 3])("enforces the Root byte budget of %s across chunks and closes the producer", async (maxBytes) => {

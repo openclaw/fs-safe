@@ -4,9 +4,15 @@ import { MutationAuthorityError } from "./mutation-authority.js";
 import type { PinnedWriteInput } from "./pinned-write.js";
 import type { RootCreateOptions, RootCreateStreamOptions, RootWriteOptions } from "./root-options.js";
 
+// Lock records need exclusive creation, not private-before-visible publication.
+// Keep this composition hook off the public Root options and package exports.
+const exclusiveSidecarCreate = Symbol("exclusiveSidecarCreate");
+export const sidecarExclusiveCreate = Object.freeze({ [exclusiveSidecarCreate]: true as const });
+
 export type RootWriteParams = RootWriteOptions & RootCreateStreamOptions & {
   relativePath: string;
   data: string | Buffer | AsyncIterable<Uint8Array>;
+  [exclusiveSidecarCreate]?: true;
 };
 
 class CreateInputError extends FsSafeError {
@@ -44,7 +50,7 @@ export function createInputOptions(
 export function rootWriteInput(params: RootWriteParams): PinnedWriteInput {
   const data = params.data;
   if (typeof data === "string" || Buffer.isBuffer(data)) {
-    return { kind: "buffer", data, encoding: params.encoding };
+    return { kind: "buffer", data, encoding: params.encoding, stageBeforePublish: !params[exclusiveSidecarCreate] };
   }
   return {
     kind: "stream",

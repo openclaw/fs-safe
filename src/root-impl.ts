@@ -76,8 +76,7 @@ import {
   resolvePinnedWriteTargetInRoot,
   refreshRetainedRootWriteAdmission,
   refreshRootWritePathSelection,
-  retainRootWriteSelection,
-  takeRootWriteSelection,
+  type RetainedRootWriteSelection,
   type PinnedWriteTarget,
 } from "./root-write-admission.js";
 import { prepareSharedRootWriteTarget } from "./root-write-complete-parent.js";
@@ -728,7 +727,7 @@ async function openWritableFileInRoot(
     append?: boolean;
     expectedWritePath?: string;
   },
-): Promise<{ opened: WritableOpenResult; identity: BigIntStats }> {
+): Promise<{ opened: WritableOpenResult; identity: BigIntStats; writeSelection?: RetainedRootWriteSelection }> {
   const guardedTarget = params.denyMutations === undefined && params.mutationSymlinks === undefined
     ? undefined
     : await resolveGuardedWriteTargetInRoot(root, {
@@ -907,8 +906,7 @@ async function openWritableFileInRoot(
       stat,
       [Symbol.asyncDispose]: () => handle.close().catch(() => undefined),
     };
-    if (writeSelection) retainRootWriteSelection(result, writeSelection);
-    return { opened: result, identity };
+    return { opened: result, identity, writeSelection };
   } catch (err) {
     const cleanupCreatedPath = createdForWrite && err instanceof FsSafeError;
     const cleanupPath = realPathForCleanup ?? ioPath;
@@ -1497,7 +1495,7 @@ async function writeFileFallbackUnlocked(
     return;
   }
 
-  const { opened: target, identity: targetIdentity } = await openWritableFileInRoot(root, {
+  const { opened: target, identity: targetIdentity, writeSelection: retainedSelection } = await openWritableFileInRoot(root, {
     relativePath: params.relativePath,
     mkdir: params.mkdir,
     // Private, writable placeholder: Windows cannot rename over a read-only file.
@@ -1509,7 +1507,6 @@ async function writeFileFallbackUnlocked(
     expectedWritePath,
   });
   const policyEnabled = params.denyMutations !== undefined || params.mutationSymlinks !== undefined;
-  const retainedSelection = policyEnabled ? takeRootWriteSelection(target) : undefined;
   const destinationPath = retainedSelection?.selectedPath ?? target.realPath;
   const mode = params.mode ?? (target.stat.mode & 0o777);
   if (policyEnabled && !retainedSelection) {

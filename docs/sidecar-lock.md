@@ -9,6 +9,13 @@ normal meaning, and ordinary colon-bearing POSIX paths remain valid.
 
 JavaScript raw-sidecar creation passes mode `0o600` to that exclusive open. On POSIX, the process umask may further restrict the new file but cannot add group or other access. No pathname `chmod` fallback is used.
 
+Root-backed lock records and reclaim guards also claim their final name
+exclusively, including with the native backend. The native path retains the
+admitted parent descriptor and removes incomplete claims only while their exact
+identity remains owned. Ordinary Root creates still stage privately; lock records
+use this internal exclusive-create path so racing contenders can retry without
+an ambiguous rename outcome.
+
 ```ts
 import { acquireFileLock } from "@openclaw/fs-safe/file-lock";
 
@@ -42,6 +49,10 @@ cleanup authority, identity changes, or process exit can leave the guard in
 place; recover it only after an application-owned liveness check proves the
 attempt has ended. There is no raw-path cleanup fallback. These token/byte
 checks retain the sidecar protocol's cooperative, non-atomic removal boundary.
+The final guard check follows the last sidecar snapshot and parser call, before
+removal. Parsers can run before guard ownership is established or verified;
+invocation is not mutation authority. A failing final parser keeps its error
+even if guard ownership has also changed.
 `manager.reset()` invalidates admission bookkeeping but preserves a pending
 Root guard; let its original attempt settle before retrying that guarded path.
 

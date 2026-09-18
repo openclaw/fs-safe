@@ -27,6 +27,8 @@
 
 ### Fixes and compatibility
 
+- Create native Root lock records and reclaim guards exclusively through their retained parent so competing acquisitions retry normally, while ordinary Root writes keep private staging. Treat a competing raw reclaim guard disappearing during inspection as contention.
+- Verify Root reclaim-guard ownership once after the final sidecar snapshot and parser instead of reading it on both sides; preserve final mutation authorization and parser failures.
 - Recheck child entries before walk descent so replacements with symlinks during filters honor the selected policy.
 - Reject sidecar cleanup when exact file identity is unknown instead of treating missing identities as a match.
 - Evaluate stale-lock age after snapshot observation and parsing so delayed reads do not give reclamation callbacks an outdated timestamp.

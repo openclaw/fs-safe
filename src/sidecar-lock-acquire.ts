@@ -44,6 +44,7 @@ import { sidecarLockTimeout, type HeldSidecarLock, type SidecarLockAcquisitionCo
 import { resolveSidecarLockPaths } from "./sidecar-lock-target.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { sleep } from "./timing.js";
+import { sidecarExclusiveCreate } from "./root-create-input.js";
 
 export type { HeldSidecarLock } from "./sidecar-lock-admission.js";
 
@@ -284,7 +285,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
           const relativeLockPath = relativeSidecarLockPath(lockRoot, lockPath);
           const observation = fileObservation();
           try {
-            await observation.run(() => lockRoot.create(relativeLockPath, raw, { mkdir: true, mode: 0o600 }));
+            await observation.run(() => lockRoot.create(relativeLockPath, raw, { ...sidecarExclusiveCreate, mkdir: true, mode: 0o600 }));
           } catch (error) {
             // Only this invocation's failed exclusive open grants denial retry authority.
             lockFileCreateDenied = observation.has(error, `exclusive-create:${lockPath}`) &&

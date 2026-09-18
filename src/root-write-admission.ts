@@ -67,15 +67,6 @@ export type RetainedRootWriteSelection = RootWritePathSelection & Readonly<{
   identity: Readonly<Pick<BigIntStats, "dev" | "ino">>;
 }>;
 
-const retainedRootWriteSelections = new WeakMap<object, RetainedRootWriteSelection>();
-
-export function retainRootWriteSelection(
-  owner: object,
-  selection: RetainedRootWriteSelection,
-): void {
-  retainedRootWriteSelections.set(owner, selection);
-}
-
 export function createRootWriteSelectionForFd(
   selection: RootWritePathSelection,
   fd: number,
@@ -85,12 +76,6 @@ export function createRootWriteSelectionForFd(
     ...selection,
     identity: Object.freeze({ dev: stat.dev, ino: stat.ino }),
   });
-}
-
-export function takeRootWriteSelection(owner: object): RetainedRootWriteSelection | undefined {
-  const selection = retainedRootWriteSelections.get(owner);
-  retainedRootWriteSelections.delete(owner);
-  return selection;
 }
 
 function writeSelectionChanged(cause?: unknown): FsSafeError {

@@ -73,7 +73,7 @@ class NativeStagedFile implements StagedFile {
   readonly #publishedMode: number;
   readonly #sync: boolean;
   readonly #assertBeforeMutation?: () => void;
-  readonly #name = `.fs-safe-${randomUUID()}.tmp`;
+  readonly #name: string;
   #state: State = { status: "open", publication: NOT_PUBLISHED };
   #receipt?: StagedFileReceipt;
   #rejectFinalSymlink = false;
@@ -87,7 +87,10 @@ class NativeStagedFile implements StagedFile {
     publishedMode: number,
     sync: boolean,
     assertBeforeMutation?: () => void,
+    name = `.fs-safe-${randomUUID()}.tmp`,
   ) {
+    assertBasename(name, portableNames);
+    this.#name = name;
     this.#closeFd = captureNativeFdClose(binding);
     this.#binding = binding;
     this.#parentFd = parentFd;
@@ -113,10 +116,11 @@ class NativeStagedFile implements StagedFile {
     portableNames = true,
     sync = true,
     assertBeforeMutation?: () => void,
+    exclusiveBasename?: string,
   ): Promise<NativeStagedFile> {
     let staged: NativeStagedFile;
     try {
-      staged = new NativeStagedFile(binding, parentFd, closeParentFd, directory, portableNames, mode, sync, assertBeforeMutation);
+      staged = new NativeStagedFile(binding, parentFd, closeParentFd, directory, portableNames, mode, sync, assertBeforeMutation, exclusiveBasename);
     } catch (error) {
       try {
         closeParentFd(parentFd);
@@ -137,16 +141,22 @@ class NativeStagedFile implements StagedFile {
     params: PinnedWriteParams,
     parentGuard: AnyAsyncDirectoryGuard,
   ): Promise<FileIdentityStat> {
+    const exclusive = params.overwrite === false && params.input.kind === "buffer" && params.input.stageBeforePublish === false;
     // This owner never escapes. Only the internal verifier borrows its fd;
     // public descriptor methods remain await-free and cannot race disposal.
     await using staged = await NativeStagedFile.create(
       binding, parentFd, closeParentFd, directory, params.input, params.mode, params.maxBytes, false, params.sync, params.assertBeforeMutation,
+      exclusive ? params.basename : undefined,
     );
     staged.#rejectFinalSymlink = params.rejectFinalSymlink === true;
     if (params.input.kind === "file") await params.input.verifySource();
-    const published = await staged.publish(
-      params.basename, { overwrite: params.overwrite !== false }, params.onPublished,
-    );
+    if (exclusive) {
+      staged.#assertCurrent();
+      params.assertBeforeMutation?.();
+    }
+    const published = exclusive
+      ? staged.#completePublication(params.basename, false, params.onPublished)
+      : await staged.publish(params.basename, { overwrite: params.overwrite !== false }, params.onPublished);
     const identity = published.staged.identity;
     await params.verifyPublished?.(staged.#file(), identity, parentGuard);
     return { dev: identity.dev, ino: identity.ino };
@@ -283,31 +293,7 @@ class NativeStagedFile implements StagedFile {
         }
         throw error;
       }
-      // Commit is recorded synchronously before any post-rename operation.
-      const receipt: PublishedFileReceipt = Object.freeze({
-        status: "published",
-        staged: this.receipt,
-        basename,
-        overwrite,
-      });
-      state.publication = receipt;
-      onPublished?.(receipt.staged.identity);
-      const stagedMode = this.#assertNamed(basename);
-      assertStagedDirectoryCurrent(this.#directory);
-      // Keep contents private until the published name passes its identity
-      // fence. Mode changes use the owned fd, including for final mode 000.
-      const fd = this.#file();
-      if (this.#publishedMode !== 0o600 || stagedMode !== 0o600) fs.fchmodSync(fd, this.#publishedMode);
-      // With sync enabled, content was synced before rename. A lost chmod leaves staged 0600,
-      // no wider than modes retaining owner rw. Restrictive modes and observed
-      // widening of the stage still need the permission correction made durable.
-      if (this.#sync && ((this.#publishedMode & 0o600) !== 0o600 || (stagedMode & ~this.#publishedMode) !== 0)) {
-        syncFileBestEffortSync(fd);
-      }
-      if (this.#sync) syncFileBestEffortSync(this.#parentFd);
-      this.#assertNamed(basename);
-      assertStagedDirectoryCurrent(this.#directory);
-      return receipt;
+      return this.#completePublication(basename, overwrite, onPublished);
     } catch (error) {
       if (error instanceof MutationAuthorityError) throw error;
       // Closure rejects further use, not the recorded outcome of an earlier publication.
@@ -316,6 +302,28 @@ class NativeStagedFile implements StagedFile {
         : this.#state.publication;
       throw failure(error, { phase: "publish", publication });
     }
+  }
+
+  #completePublication(basename: string, overwrite: boolean, onPublished?: PinnedWriteParams["onPublished"]): PublishedFileReceipt {
+    // Record complete content before fallible post-publication verification.
+    const receipt: PublishedFileReceipt = Object.freeze({ status: "published", staged: this.receipt, basename, overwrite });
+    this.#open().publication = receipt;
+    onPublished?.(receipt.staged.identity);
+    const stagedMode = this.#assertNamed(basename);
+    assertStagedDirectoryCurrent(this.#directory);
+    // Keep contents private until the name passes its identity fence. Mode
+    // changes use the owned fd, including for final mode 000.
+    const fd = this.#file();
+    if (this.#publishedMode !== 0o600 || stagedMode !== 0o600) fs.fchmodSync(fd, this.#publishedMode);
+    // Content was synced during preparation. A lost chmod leaves 0600, no wider
+    // than modes retaining owner rw; restrictive modes still need a durable correction.
+    if (this.#sync && ((this.#publishedMode & 0o600) !== 0o600 || (stagedMode & ~this.#publishedMode) !== 0)) {
+      syncFileBestEffortSync(fd);
+    }
+    if (this.#sync) syncFileBestEffortSync(this.#parentFd);
+    this.#assertNamed(basename);
+    assertStagedDirectoryCurrent(this.#directory);
+    return receipt;
   }
 
   #finalize(): Extract<State, { status: "closed" }> {
