@@ -105,9 +105,13 @@ touching descriptors.
 basename. Empty, dot, dotdot, separators, absolute paths, NUL, control characters,
 drive-relative spellings, and the stage's own name are rejected.
 
-With `overwrite: false`, publication is genuine kernel no-replace rename; a
-collision leaves both names unchanged and raises `FsSafeError("already-exists")`.
-The stage may then be cleaned or published under another name. With
+With `overwrite: false`, publication is genuine kernel no-replace rename.
+A native collision raises `FsSafeError("already-exists")`, but ordinary errno
+does not prove that a remote rename never committed. Native rename failures
+without explicit pre-dispatch provenance therefore report `indeterminate`:
+cleanup preserves names and closes descriptors, and further publication rejects.
+Only rejection before rename dispatch leaves the stage eligible for cleanup or
+publication under another name. With
 `overwrite: true`, publication is plain atomic replacement. Neither route
 copies. Both source and destination resolve through the retained original
 parent, with checks immediately before rename and after publication.

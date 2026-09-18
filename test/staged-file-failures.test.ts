@@ -240,8 +240,14 @@ describe.runIf(native)("staged ownership failure boundaries", () => {
     const writeFailure = Object.assign(new Error("publication failed"), { code: "EACCES" });
     const cleanupFailure = new Error(`${fault} failed`);
     let failClose = false;
+    let matchesCalls = 0;
     __setNativeLoaderForTest(() => ({
       ...native!,
+      stagedFileMatches(...args) {
+        // Preparation checks once; publication's second check precedes dispatch.
+        if (fault === "unlink" && ++matchesCalls === 2) throw writeFailure;
+        return native!.stagedFileMatches(...args);
+      },
       closeOwnedFd(fd) {
         native!.closeOwnedFd(fd);
         if (failClose) {
@@ -287,13 +293,17 @@ describe.runIf(native)("staged ownership failure boundaries", () => {
     expect((await fs.lstat(retained)).mode & 0o777).toBe(0o600);
   });
 
-  it.each(["io-error", "empty-error"])("preserves an indeterminate %s without treating it as an unpublished temp", async (kind) => {
+  it.each(["ENOENT", "EEXIST", "EACCES", "EIO", undefined])("preserves committed rename after %s without treating it as an unpublished temp", async (code) => {
     const directory = await tempRoot("fs-safe-stage-indeterminate-");
+    const remove = vi.fn(native!.removeStagedFile);
+    const close = vi.fn(native!.closeOwnedFd);
     __setNativeLoaderForTest(() => ({
       ...native!,
+      removeStagedFile: remove,
+      closeOwnedFd: close,
       renameNoReplace(...args) {
         native!.renameNoReplace(...args);
-        throw kind === "empty-error" ? undefined : Object.assign(new Error("reply lost after rename"), { code: "EIO" });
+        throw code === undefined ? undefined : Object.assign(new Error("reply lost after rename"), { code });
       },
     }));
     const staged = await stageFileInDirectory({ directory, content: "published" });
@@ -301,8 +311,10 @@ describe.runIf(native)("staged ownership failure boundaries", () => {
       details: { publication: { status: "indeterminate", basename: "final" } },
     });
     expect(await staged.cleanup()).toMatchObject({
-      status: "preserved", publication: { status: "indeterminate" },
+      status: "preserved", resources: "closed", publication: { status: "indeterminate" },
     });
+    expect(remove).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledOnce();
     await expect(staged[Symbol.asyncDispose]()).rejects.toMatchObject({ code: "not-removable" });
     expect(await fs.readdir(directory)).toEqual(["final"]);
     expect(await fs.readFile(path.join(directory, "final"), "utf8")).toBe("published");

@@ -10,6 +10,8 @@
 
 ### Fixes and compatibility
 
+- Treat ordinary native rename errors as indeterminate, preserving staged files and directory backups when a remote rename may have committed before its reply was lost. Retry and automatic rollback require explicit evidence that rename was never dispatched.
+- Retain directory replacement and cleanup authority across backup, publication, and rollback. Directory replacement now requires supported native no-replace transitions; unavailable helpers reject before target-parent creation. Indeterminate outcomes preserve entries for recovery.
 - Enforce Windows native parent mutation policies before creating each missing component, retaining native descriptor ownership through cleanup. Reuse operation-local creation receipts for eligible Windows paths instead of repeating full policy walks at every depth.
 - Preserve files and symlinks that replace an observed empty FileStore directory while pruning is prepared; directories that become nonempty remain untouched.
 - Bound path-prefix queue consumption on long paths while preserving short-path behavior and path-resolution checks.

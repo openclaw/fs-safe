@@ -216,6 +216,15 @@ export interface NativeBinding {
     targetRootFd: number,
     targetRelPath: string,
   ): void;
+  /** Identity-fenced retained-directory rename capability. */
+  renameNoReplaceWithIdentity?(
+    sourceRootFd: number,
+    sourceRelPath: string,
+    targetRootFd: number,
+    targetRelPath: string,
+    expectedSourceDev: bigint,
+    expectedSourceIno: bigint,
+  ): void;
   renameReplace(
     sourceRootFd: number,
     sourceRelPath: string,

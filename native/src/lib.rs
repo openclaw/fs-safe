@@ -65,6 +65,16 @@ pub struct DirectoryFdObservation {
     pub real_path: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ExactFileIdentity {
+    pub dev: u64,
+    pub ino: u64,
+}
+
+#[cfg(windows)]
+pub(crate) const RENAME_SOURCE_IDENTITY_MISMATCH: &str =
+    "FS_SAFE_INTERNAL_RENAME_SOURCE_IDENTITY_MISMATCH";
+
 #[napi(object)]
 pub struct OpenBeneathResult {
     pub fd: i32,
@@ -79,6 +89,23 @@ pub(crate) fn native_error(code: impl Into<String>, message: impl Into<String>) 
 
 fn invalid_path(message: impl Into<String>) -> Error<String> {
     native_error("EINVAL", message)
+}
+
+fn exact_identity_component(value: &BigInt, label: &str) -> NativeResult<u64> {
+    let (negative, value, lossless) = value.get_u64();
+    if negative || !lossless {
+        return Err(invalid_path(format!(
+            "expected source {label} must be an unsigned 64-bit bigint",
+        )));
+    }
+    Ok(value)
+}
+
+fn exact_file_identity(dev: &BigInt, ino: &BigInt) -> NativeResult<ExactFileIdentity> {
+    Ok(ExactFileIdentity {
+        dev: exact_identity_component(dev, "device")?,
+        ino: exact_identity_component(ino, "inode")?,
+    })
 }
 
 #[inline]
@@ -289,6 +316,33 @@ pub fn rename_no_replace(
     )
 }
 
+#[napi(js_name = "renameNoReplaceWithIdentity")]
+pub fn rename_no_replace_with_identity(
+    env: Env,
+    source_root_fd: i32,
+    source_rel_path: String,
+    target_root_fd: i32,
+    target_rel_path: String,
+    expected_source_dev: BigInt,
+    expected_source_ino: BigInt,
+) -> Result<()> {
+    into_napi(
+        env,
+        validate_relative_path(&source_rel_path, false)
+            .and_then(|()| validate_relative_path(&target_rel_path, false))
+            .and_then(|()| exact_file_identity(&expected_source_dev, &expected_source_ino))
+            .and_then(|expected_source_identity| {
+                platform::rename_no_replace_with_identity(
+                    source_root_fd,
+                    &source_rel_path,
+                    target_root_fd,
+                    &target_rel_path,
+                    expected_source_identity,
+                )
+            }),
+    )
+}
+
 #[napi(js_name = "renameReplace")]
 pub fn rename_replace(
     env: Env,
@@ -379,6 +433,28 @@ pub use windows_secure_file::{
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exact_identity_inputs_require_lossless_unsigned_components() {
+        assert_eq!(
+            exact_file_identity(&BigInt::from(u64::MAX), &BigInt::from(0_u64)).unwrap(),
+            ExactFileIdentity {
+                dev: u64::MAX,
+                ino: 0,
+            },
+        );
+        assert!(exact_file_identity(&BigInt::from(-1_i64), &BigInt::from(1_u64)).is_err());
+        assert!(
+            exact_file_identity(
+                &BigInt {
+                    sign_bit: false,
+                    words: vec![0, 1],
+                },
+                &BigInt::from(1_u64),
+            )
+            .is_err()
+        );
+    }
 
     #[test]
     fn filesystem_paths_follow_host_separator_rules() {

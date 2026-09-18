@@ -160,27 +160,30 @@ describe.runIf(nativeAvailable)("retained-directory staging", () => {
     expect(await fs.readdir(directory)).toEqual(["final"]);
   });
 
-  it("preserves no-replace collisions and permits a later publication", async () => {
+  it("preserves names and rejects retry after a native no-replace collision", async () => {
     const directory = await tempRoot("fs-safe-stage-collision-");
     await fs.writeFile(path.join(directory, "final"), "old");
     const staged = await stageFileInDirectory({ directory, content: "new" });
     try {
       await expect(staged.publish("final", { overwrite: false })).rejects.toMatchObject({
-        code: "already-exists", details: { publication: { status: "not-published" } },
+        code: "already-exists", details: { publication: { status: "indeterminate" } },
       });
       expect(await fs.readFile(path.join(directory, "final"), "utf8")).toBe("old");
-      await staged.assertCurrent();
-      await staged.publish("other", { overwrite: false });
-      expect(await fs.readFile(path.join(directory, "other"), "utf8")).toBe("new");
+      await expect(staged.assertCurrent()).rejects.toMatchObject({ code: "helper-failed" });
+      await expect(staged.publish("other", { overwrite: false })).rejects.toMatchObject({
+        details: { publication: { status: "indeterminate" } },
+      });
+      expect(await fs.readFile(path.join(directory, staged.receipt.temporaryBasename), "utf8")).toBe("new");
     } finally {
-      await staged[Symbol.asyncDispose]();
+      expect(await staged.cleanup()).toMatchObject({ status: "preserved", resources: "closed" });
+      await expect(staged[Symbol.asyncDispose]()).rejects.toMatchObject({ code: "not-removable" });
     }
   });
 
   it.each([
     { kind: "directory", code: "EISDIR" },
     { kind: "overlong basename", code: "ENAMETOOLONG" },
-  ])("cleans its stage after $kind rejection", async ({ kind, code }) => {
+  ])("preserves its stage after native $kind rejection", async ({ kind, code }) => {
     const directory = await tempRoot("fs-safe-stage-rejected-");
     const basename = kind === "directory" ? "target" : "x".repeat(256);
     if (kind === "directory") {
@@ -190,10 +193,11 @@ describe.runIf(nativeAvailable)("retained-directory staging", () => {
     const staged = await stageFileInDirectory({ directory, content: "unpublished" });
     try {
       await expect(staged.publish(basename, { overwrite: true })).rejects.toMatchObject({
-        cause: { code }, details: { publication: { status: "not-published" } },
+        cause: { code }, details: { publication: { status: "indeterminate" } },
       });
-      expect(await staged.cleanup()).toMatchObject({ status: "removed" });
-      expect(await fs.readdir(directory)).toEqual(kind === "directory" ? [basename] : []);
+      expect(await staged.cleanup()).toMatchObject({ status: "preserved", resources: "closed" });
+      expect(await fs.readFile(path.join(directory, staged.receipt.temporaryBasename), "utf8"))
+        .toBe("unpublished");
       if (kind === "directory") {
         expect(await fs.readFile(path.join(directory, basename, "sentinel"), "utf8")).toBe("unchanged");
       }
