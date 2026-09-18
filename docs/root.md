@@ -72,12 +72,22 @@ The default `order: "sorted"` enumerates and sorts each directory's names;
 wide directories. Budget exhaustion yields a `"truncated"` marker by
 default or throws `FsSafeError("too-large")` with `limitBehavior: "throw"`.
 Use `entryFilter(entry)` to return `"include"`, `"skip"`, or
-`"skip-subtree"`. `"skip"` omits the current entry but still descends into a
-directory; `"skip-subtree"` omits a directory and all of its descendants.
+`"skip-subtree"`, directly or through a Promise. `"skip"` omits the current
+entry but still descends into a directory; `"skip-subtree"` omits a directory
+and all of its descendants.
+Filters run serially outside metadata batches, with the options object as their
+`this` receiver. After an awaited filter resolves, the walk checks cancellation
+and revalidates the current listing directory and Root identities before using
+the decision. Captured entry metadata retains its snapshot semantics.
+
+Cancellation and iterator disposal wait for a pending filter to settle; they do
+not race the callback or close its directory while it is running. Callback
+throws and promise rejections reject the walk through normal cleanup.
 Directory reads remain fail-fast by default. With
 `onDirectoryError: "skip-and-report"`, the iterator instead yields
 `{ relativePath, kind: "directory-error", size: 0, error }` and continues with
-the remaining tree.
+the remaining tree. That policy also covers identity-check failures after an
+awaited filter, while callback failures always reject.
 See [Directory walking](walk.md) for the pure-Node guarantees and the contrast
 with the standalone best-effort walkers.
 

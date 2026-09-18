@@ -107,7 +107,7 @@ cleanup rules also remain unchanged.
 Operation budgets grow proportionally from the actual admitted suffix depth,
 not the requested `maxDepth`. For actual depth `D`, let `B = max(32, D)`.
 Directory-creation attempts are limited to `4 × B`, successfully created
-directories to `2 × B`, and forward filesystem observations to `4 × B²`.
+directories to `2 × B`, and forward filesystem observations to `min(32,768, 4 × B²)`.
 The quadratic observation allowance accommodates rechecks of owned ancestors.
 
 For example, 33 components allow 132 creation attempts, 66 created directories,
