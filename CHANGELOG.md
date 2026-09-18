@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Preserve every thrown value from Windows native write descriptor cleanup, while still attempting all owned closes after publication.
+- Allow asynchronous `include`/`descend` in `walkDirectory()` and `entryFilter` in `Root.walk()` for serial selection and marker-based pruning, retaining callback receivers and budgets; Root walks settle pending callbacks and recheck cancellation and directory/root identity before using awaited decisions.
 
 ## 0.14.0 - 2026-09-17
 
