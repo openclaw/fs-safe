@@ -15,6 +15,8 @@ mod clone_linux;
 mod clone_unix;
 #[cfg(windows)]
 mod clone_windows;
+#[cfg(any(target_os = "linux", windows))]
+mod copy_contents;
 #[cfg(windows)]
 mod copy_windows;
 #[cfg(target_os = "linux")]
@@ -410,10 +412,8 @@ pub use archive::{
 pub use fast_file::{
     FileHash, NativeCopyResult, clone_file_exclusive, copy_file_range_exclusive, sha256_file,
 };
-#[cfg(windows)]
-pub use copy_windows::copy_file_contents;
-#[cfg(target_os = "linux")]
-pub use copy_linux::copy_file_contents;
+#[cfg(any(target_os = "linux", windows))]
+pub use copy_contents::copy_file_contents;
 #[cfg(unix)]
 pub use file_copy::{NativeFileCopyResult, copy_file_exclusive};
 pub use owned_tree::{

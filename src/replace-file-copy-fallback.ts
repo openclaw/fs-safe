@@ -336,7 +336,6 @@ export async function copyFallbackReplace(params: {
   });
   const { replacement } = source;
   let destHandle: FileHandle | null = null;
-  let operationSucceeded = false;
   let closeRequiredForSuccess = false;
   try {
     if (params.restore === "restore-original") {
@@ -381,20 +380,19 @@ export async function copyFallbackReplace(params: {
         OPEN_WRITE_EXCLUSIVE_FLAGS,
         source.mode & 0o777,
       );
-      closeRequiredForSuccess = !params.sync;
       await destHandle.writeFile(replacement);
       await destHandle.chmod(source.mode);
       if (params.sync) {
         await destHandle.sync();
       }
+      closeRequiredForSuccess = !params.sync;
     }
-    operationSucceeded = true;
   } finally {
     if (destHandle) {
       try {
         await destHandle.close();
       } catch (closeError) {
-        if (operationSucceeded && closeRequiredForSuccess) {
+        if (closeRequiredForSuccess) {
           throw closeError;
         }
       }
@@ -420,7 +418,6 @@ export function copyFallbackReplaceSync(params: {
   });
   const { replacement } = source;
   let destFd: number | undefined;
-  let operationSucceeded = false;
   let closeRequiredForSuccess = false;
   try {
     if (params.restore === "restore-original") {
@@ -465,20 +462,19 @@ export function copyFallbackReplaceSync(params: {
         OPEN_WRITE_EXCLUSIVE_FLAGS,
         source.mode & 0o777,
       );
-      closeRequiredForSuccess = !params.sync;
       writeAllSync(params.fsModule, destFd, replacement);
       params.fchmodSync?.(destFd, source.mode);
       if (params.sync) {
         params.fsModule.fsyncSync(destFd);
       }
+      closeRequiredForSuccess = !params.sync;
     }
-    operationSucceeded = true;
   } finally {
     if (destFd !== undefined) {
       try {
         params.fsModule.closeSync(destFd);
       } catch (closeError) {
-        if (operationSucceeded && closeRequiredForSuccess) {
+        if (closeRequiredForSuccess) {
           throw closeError;
         }
       }

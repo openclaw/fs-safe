@@ -1,5 +1,5 @@
 import fsSync, { type BigIntStats } from "node:fs";
-import fs from "node:fs/promises";
+import fs, { type FileHandle } from "node:fs/promises";
 import { assertAsyncDirectoryGuard, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
@@ -56,59 +56,42 @@ export async function verifyAtomicWriteResult(params: {
     return stat;
   };
   try {
-    // This descriptor remains owned by the writer, even when final mode forbids opens.
-    const stat = assertDescriptor();
-    assertPath(fsSync.lstatSync(params.targetPath, { bigint: true }));
-    const { realPath, stat: resolvedStat } = await resolveOpenedFileRealPathForFd(params.fd, stat, params.targetPath);
-    // Consume the resolver's observation only in this pass; the checks after
-    // the directory guards must still sample the current path and descriptor.
-    assertPath(resolvedStat);
-    if (!admitPathInsideRoot({
-      rootPath: params.root.rootReal,
-      candidatePath: realPath,
-      rootIdentity: params.root.rootIdentity,
-    })) {
-      throw outsideWorkspaceError();
-    }
-    await assertAsyncDirectoryGuard(params.parentGuard);
-    await assertRootIdentityCurrent(params.root);
-    // Recheck after canonical resolution and directory checks, including late links.
-    assertPath(fsSync.lstatSync(params.targetPath, { bigint: true }));
-    assertDescriptor();
-    if (needsPathOpen) {
-      // A retained fd cannot prove that an opaque Windows pathname still names it.
-      // Reopen only for publication verification: the writer's exact identity is
-      // independent proof unavailable to ordinary readers. Never read any bytes.
-      assertNoUnsafeDeviceReadPath(params.targetPath);
-      const opened = await fs.open(params.targetPath, resolveReadOpenFlags()).catch((error: unknown) => {
-        if (isSymlinkOpenError(error)) {
-          throw new FsSafeError("symlink", "symlink open blocked", { cause: error });
-        }
-        if (hasNodeErrorCode(error, "EISDIR")) {
-          throw new FsSafeError("not-file", "not a file");
-        }
-        throw error;
-      });
-      try {
-        const reopenedStat = assertDescriptor(opened.fd);
+    let opened: FileHandle | undefined;
+    try {
+      while (true) {
+        // The original descriptor remains borrowed; only a verification reopen is owned here.
+        const fd = opened?.fd ?? params.fd;
+        const stat = assertDescriptor(fd);
         assertPath(fsSync.lstatSync(params.targetPath, { bigint: true }));
-        const { realPath: reopenedPath, stat: reopenedPathStat } =
-          await resolveOpenedFileRealPathForFd(opened.fd, reopenedStat, params.targetPath);
-        assertPath(reopenedPathStat);
+        const { realPath, stat: resolvedStat } = await resolveOpenedFileRealPathForFd(fd, stat, params.targetPath);
+        // Consume the resolver's observation only in this pass; the checks after
+        // the directory guards must still sample the current path and descriptor.
+        assertPath(resolvedStat);
         if (!admitPathInsideRoot({
           rootPath: params.root.rootReal,
-          candidatePath: reopenedPath,
+          candidatePath: realPath,
           rootIdentity: params.root.rootIdentity,
         })) {
           throw outsideWorkspaceError();
         }
         await assertAsyncDirectoryGuard(params.parentGuard);
         await assertRootIdentityCurrent(params.root);
+        // Recheck after canonical resolution and directory checks, including late links.
         assertPath(fsSync.lstatSync(params.targetPath, { bigint: true }));
-        assertDescriptor(opened.fd);
-      } finally {
-        await opened.close().catch(() => undefined);
+        assertDescriptor(fd);
+        if (opened || !needsPathOpen) break;
+        // Opaque Windows pathname identity needs one independent, read-free reopen.
+        assertNoUnsafeDeviceReadPath(params.targetPath);
+        opened = await fs.open(params.targetPath, resolveReadOpenFlags()).catch((error: unknown) => {
+          if (isSymlinkOpenError(error)) {
+            throw new FsSafeError("symlink", "symlink open blocked", { cause: error });
+          }
+          if (hasNodeErrorCode(error, "EISDIR")) throw new FsSafeError("not-file", "not a file");
+          throw error;
+        });
       }
+    } finally {
+      if (opened) await opened.close().catch(() => undefined);
     }
   } catch (error) {
     if (isNotFoundPathError(error)) throw fileNotFoundError();

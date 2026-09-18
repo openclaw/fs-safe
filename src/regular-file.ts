@@ -64,20 +64,7 @@ function translateBoundedReadOverflow(error: unknown, filePath: string, maxBytes
 }
 
 export async function statRegularFile(filePath: string): Promise<RegularFileStatResult> {
-  assertNoWindowsPathAlias(filePath, "filesystem", "file path uses a Windows filesystem namespace alias");
-  let stat: Stats;
-  try {
-    stat = fsSync.lstatSync(filePath);
-  } catch (err) {
-    if (isNotFoundPathError(err)) {
-      return { missing: true };
-    }
-    throw err;
-  }
-  if (stat.isSymbolicLink() || !stat.isFile()) {
-    throw new Error("path must be a regular file");
-  }
-  return { missing: false, stat };
+  return statRegularFileSync(filePath);
 }
 
 export function statRegularFileSync(filePath: string): RegularFileStatResult {

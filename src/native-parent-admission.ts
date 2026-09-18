@@ -191,7 +191,3 @@ export async function openNativeParentAdmission(
     throw error;
   }
 }
-
-export function closeNativeParentAdmission(admission: NativeParentAdmission | undefined): void {
-  admission?.close();
-}

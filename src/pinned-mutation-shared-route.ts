@@ -19,7 +19,7 @@ function windowsReservedDeviceSegment(segment: string): boolean {
   return WINDOWS_RESERVED_DEVICE_NAMES.has(stem);
 }
 
-function ordinaryWindowsSegments(relativePath: string): boolean {
+export function ordinaryWindowsSegments(relativePath: string): boolean {
   if (relativePath === "" || relativePath.includes("/") || relativePath.includes("\0")) return false;
   const segments = relativePath.split("\\");
   return segments.every((segment) => isSafePathSegment(segment, { allowDotPrefix: true }) &&

@@ -293,10 +293,3 @@ export async function resolvePathInRoot(
   }
   return { rootReal: root.rootReal, rootWithSep: root.rootWithSep, resolved };
 }
-
-export async function resolvePathWithinRoot(params: {
-  rootDir: string;
-  relativePath: string;
-}): Promise<{ rootReal: string; rootWithSep: string; resolved: string }> {
-  return await resolvePathInRoot(await resolveRootContext(params.rootDir), params.relativePath);
-}

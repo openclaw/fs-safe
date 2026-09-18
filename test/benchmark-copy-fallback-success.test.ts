@@ -150,7 +150,7 @@ describe("copy-fallback success benchmark receipt", () => {
       .not.toThrow();
   });
 
-  it("rejects unknown rows and validates runner reports before completion or emission", () => {
+  it("rejects unknown rows and validates runner reports during finalization", () => {
     expect(() => validateCopyFallbackSuccessWorkloadResult({
       name: "replaceFileAtomic/copy-fallback/unknown/128",
     })).toThrow("Unknown copy-fallback success row");
@@ -164,21 +164,20 @@ describe("copy-fallback success benchmark receipt", () => {
     expect(imports).toContain(
       'import { validateCopyFallbackSuccessReport } from "./copy-fallback-success.mjs";',
     );
-    expect(runner).toContain(
-      "  validateGuestBenchmarkReport(completedReport, args.filter);\n" +
-      "  validateCopyFallbackSuccessReport(completedReport, args.filter, args.iterations);\n" +
-      "  completionMessage =",
-    );
     const guestAdmission = runner.indexOf("validateGuestBenchmarkReport(completedReport, args.filter);");
     const fallbackAdmission = runner.indexOf(
       "validateCopyFallbackSuccessReport(completedReport, args.filter, args.iterations);",
     );
-    const completion = runner.indexOf("completionMessage =", guestAdmission);
-    const emission = runner.indexOf("if (args.json) fs.writeFileSync");
-    expect(guestAdmission).toBeGreaterThan(-1);
+    const finalization = runner.indexOf("await finalizeBenchmarkReport({");
+    const validation = runner.indexOf("validateReport: () => {", finalization);
+    const cleanup = runner.indexOf("\n  cleanup,", validation);
+    const emission = runner.indexOf("process.stdout.write(completionMessage);", cleanup);
+    expect(finalization).toBeGreaterThan(-1);
+    expect(validation).toBeGreaterThan(finalization);
+    expect(guestAdmission).toBeGreaterThan(validation);
     expect(fallbackAdmission).toBeGreaterThan(guestAdmission);
-    expect(fallbackAdmission).toBeLessThan(completion);
-    expect(completion).toBeLessThan(emission);
+    expect(fallbackAdmission).toBeLessThan(cleanup);
+    expect(cleanup).toBeLessThan(emission);
     const once = runner.slice(runner.indexOf("const once = async"), runner.indexOf("const samplesUs = []"));
     expect(once.indexOf("await c.before?.()")).toBeLessThan(once.indexOf("const start = performance.now()"));
     expect(once.indexOf("elapsed = performance.now() - start"))

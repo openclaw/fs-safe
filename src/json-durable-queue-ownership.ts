@@ -67,12 +67,6 @@ function processingPathFromJsonPath(jsonPath: string): string {
     : `${jsonPath}.processing`;
 }
 
-export function durableQueueProcessingPath(paths: DurableQueueEntryPathsLike): string {
-  const processingPath = paths.processingPath;
-  if (processingPath) return processingPath;
-  return processingPathFromJsonPath(paths.jsonPath);
-}
-
 async function regularQueueFileIdentity(filePath: string): Promise<BigIntStats | null> {
   const identity = await lstatOrNull(filePath);
   if (!identity) return null;

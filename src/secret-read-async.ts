@@ -5,10 +5,9 @@ import { assertNoUnsafeDeviceReadPath } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { realpathSync } from "./realpath.js";
-import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
+import { inspectFileIdentity } from "./strict-file-identity.js";
 import {
-  assertSecretFilePreview,
-  resolveSecretReadPolicy,
+  prepareSecretRead,
   secretPathErrorCode,
   secretReadError,
   trimSecretFileContent,
@@ -21,32 +20,8 @@ export async function readSecretFile(
   label: string,
   options: SecretFileReadOptions = {},
 ): Promise<string> {
-  const { resolvedPath, maxBytes } = resolveSecretReadPolicy(filePath, label, options);
-  let rejectSymlink: boolean;
-  let previewStat: fsSync.BigIntStats;
-  try {
-    assertNoUnsafeDeviceReadPath(resolvedPath);
-    rejectSymlink = Boolean(options.rejectSymlink);
-    previewStat = inspectFileIdentitySync(() =>
-      inspectInput(`${label} file at ${resolvedPath} must not be a symlink.`),
-    );
-  } catch (error) {
-    throw secretReadError(
-      error instanceof FsSafeError ? error.code : secretPathErrorCode(error),
-      "inspect", label, resolvedPath, error,
-    );
-  }
-  function inspectInput(symlinkMessage: string): fsSync.BigIntStats {
-    const stat = rejectSymlink
-      ? fsSync.lstatSync(resolvedPath, { bigint: true })
-      : fsSync.statSync(resolvedPath, { bigint: true });
-    if (rejectSymlink && stat.isSymbolicLink()) {
-      throw new FsSafeError("symlink", symlinkMessage);
-    }
-    return stat;
-  }
-  const rejectHardlinks = options.rejectHardlinks !== false;
-  assertSecretFilePreview(previewStat, label, resolvedPath, maxBytes, rejectHardlinks);
+  const { resolvedPath, maxBytes, rejectSymlink, rejectHardlinks, previewStat, inspectInput } =
+    prepareSecretRead(filePath, label, options);
 
   let handle: fs.FileHandle | undefined;
   let raw: string;

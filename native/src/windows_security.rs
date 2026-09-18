@@ -110,7 +110,7 @@ mod windows {
     use std::ptr::{null, null_mut};
 
     use windows_sys::Win32::Foundation::{
-        CloseHandle, ERROR_INSUFFICIENT_BUFFER, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
+        CloseHandle, ERROR_INSUFFICIENT_BUFFER, GetLastError, HANDLE,
         LocalFree,
     };
     use windows_sys::Win32::Security::Authorization::{
@@ -129,11 +129,11 @@ mod windows {
         WinLocalSystemSid, WinNetworkSid, WinWorldSid,
     };
     use windows_sys::Win32::Storage::FileSystem::{
-        CreateFileW, FILE_ADD_SUBDIRECTORY, FILE_ALL_ACCESS, FILE_ATTRIBUTE_DIRECTORY,
+        FILE_ADD_SUBDIRECTORY, FILE_ALL_ACCESS, FILE_ATTRIBUTE_DIRECTORY,
         FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS,
-        FILE_FLAG_OPEN_REPARSE_POINT, FILE_NAME_OPENED, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
-        FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, GetFinalPathNameByHandleW,
-        OPEN_EXISTING, VOLUME_NAME_GUID,
+        FILE_FLAG_OPEN_REPARSE_POINT, FILE_NAME_OPENED, FILE_READ_ATTRIBUTES,
+        FILE_TRAVERSE, GetFinalPathNameByHandleW,
+        VOLUME_NAME_GUID,
     };
     use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
@@ -143,7 +143,7 @@ mod windows {
         NativeResult, native_error,
         windows::{
             HandleFileIdentity, OwnedHandle, handle_attributes, handle_file_identity,
-            mark_handle_for_deletion, nt_create_directory_relative,
+            mark_handle_for_deletion, nt_create_directory_relative, open_existing_handle,
         },
     };
 
@@ -409,24 +409,12 @@ mod windows {
     }
 
     fn open_security_handle(path: &[u16]) -> NativeResult<OwnedHandle> {
-        let handle = unsafe {
-            CreateFileW(
-                path.as_ptr(),
-                FILE_READ_ATTRIBUTES | READ_CONTROL,
-                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                null(),
-                OPEN_EXISTING,
-                FILE_FLAG_BACKUP_SEMANTICS,
-                null_mut(),
-            )
-        };
-        if handle == INVALID_HANDLE_VALUE {
-            return Err(win_error(
-                unsafe { GetLastError() },
-                "open path for locality check",
-            ));
-        }
-        Ok(OwnedHandle(handle))
+        open_existing_handle(
+            path,
+            FILE_READ_ATTRIBUTES | READ_CONTROL,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            |code| win_error(code, "open path for locality check"),
+        )
     }
 
     fn split_parent(path: &str) -> NativeResult<(PathBuf, String)> {
@@ -469,24 +457,12 @@ mod windows {
             .to_str()
             .ok_or_else(|| native_error("EINVAL", "Windows parent path is not valid UTF-8"))?;
         let path = wide(path)?;
-        let handle = unsafe {
-            CreateFileW(
-                path.as_ptr(),
-                desired_access,
-                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                null(),
-                OPEN_EXISTING,
-                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
-                null_mut(),
-            )
-        };
-        if handle == INVALID_HANDLE_VALUE {
-            return Err(win_error(
-                unsafe { GetLastError() },
-                "open private directory parent",
-            ));
-        }
-        let owned = OwnedHandle(handle);
+        let owned = open_existing_handle(
+            &path,
+            desired_access,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            |code| win_error(code, "open private directory parent"),
+        )?;
         let attributes = handle_attributes(owned.0)?;
         if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
             return Err(native_error(
@@ -512,24 +488,12 @@ mod windows {
 
     fn open_private_directory_path(path: &str) -> NativeResult<OwnedHandle> {
         let path = wide(path)?;
-        let handle = unsafe {
-            CreateFileW(
-                path.as_ptr(),
-                FILE_READ_ATTRIBUTES,
-                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                null(),
-                OPEN_EXISTING,
-                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
-                null_mut(),
-            )
-        };
-        if handle == INVALID_HANDLE_VALUE {
-            return Err(win_error(
-                unsafe { GetLastError() },
-                "open private directory through its public path",
-            ));
-        }
-        Ok(OwnedHandle(handle))
+        open_existing_handle(
+            &path,
+            FILE_READ_ATTRIBUTES,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            |code| win_error(code, "open private directory through its public path"),
+        )
     }
 
     fn final_private_directory_identity<Locality>(

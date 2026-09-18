@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { inspectDarwinAcl } from "../src/darwin-acl.js";
 import type { NativeBinding } from "../src/native-binding.js";
 import {
   configureFsSafeNative,
@@ -49,7 +48,7 @@ describe.runIf(binding !== undefined)("Darwin native descriptor ACL inspection",
       const bytes = Buffer.alloc(2);
       fs.readSync(fd, bytes);
       expect(bytes.toString()).toBe("ab");
-      expect(["absent", "empty", "present"]).toContain(inspectDarwinAcl(fd).state);
+      expect(["absent", "empty", "present"]).toContain(binding!.inspectDarwinAcl!(fd).state);
       fs.readSync(fd, bytes);
       expect(bytes.toString()).toBe("cd");
       expect(fs.fstatSync(fd).isFile()).toBe(true);

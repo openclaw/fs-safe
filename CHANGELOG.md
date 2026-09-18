@@ -27,6 +27,7 @@
 
 ### Fixes and compatibility
 
+- Recheck child entries before walk descent so replacements with symlinks during filters honor the selected policy.
 - Reject sidecar cleanup when exact file identity is unknown instead of treating missing identities as a match.
 - Evaluate stale-lock age after snapshot observation and parsing so delayed reads do not give reclamation callbacks an outdated timestamp.
 - Reuse the exact Root identity sample when it is also the lock's immediate parent, while retaining separate read and mutation-policy checks.
@@ -56,6 +57,8 @@
 
 ### Validation
 
+- Share descriptor ownership and cleanup across native copy operations, consolidate regular/secret-file admission, and remove redundant wrappers and policy preparation.
+- Reduce repeated parent observations in synchronous Root locks and use direct unlink after guarded regular-file admission, preserving final identity checks and cleanup-failure behavior.
 - Avoid repeated descriptor walks and missing-field allocations when formatting ordinary permission-command failures.
 - Add cross-public-route hostile-diagnostic regressions and receipt-bound
   Windows owner failure benchmarks with injected success/error cohorts plus

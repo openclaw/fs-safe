@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { NativeBinding } from "../src/native-binding.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { __loadBundledNativeForTest, __resetNativeLoaderForTest } from "../src/native.js";
-import { mutationDirectoryObservationCurrent } from "../src/pinned-mutation-observation.js";
+import { mutationObservationsCurrent } from "../src/pinned-mutation-observation.js";
 import { realpathSync } from "../src/realpath.js";
 import {
   assertPolicyStagedDirectoryCurrent,
@@ -98,7 +98,7 @@ describe.runIf(typeof binding?.observeDirectoryFd === "function")("retained POSI
       const canonical = vi.spyOn(realpathSync, "native");
       const captured = describePolicyStagedDirectory(fd, directory, binding);
       expect(captured.observeCurrent).toBeTypeOf("function");
-      expect(mutationDirectoryObservationCurrent(captured.observation)).toBe(true);
+      expect(mutationObservationsCurrent([], [captured.observation])).toBe(true);
       expect(assertPolicyStagedDirectoryCurrent(captured).ino).toBe(captured.stat.ino);
       const refreshed = refreshPolicyStagedDirectoryObservation(captured);
       expect(refreshed.identity).toEqual(captured.observation.identity);
@@ -123,7 +123,7 @@ describe.runIf(typeof binding?.observeDirectoryFd === "function")("retained POSI
           fs.renameSync(parent, path.join(directory, "saved"));
           fs.mkdirSync(parent);
         }
-        expect(mutationDirectoryObservationCurrent(captured.observation)).toBe(false);
+        expect(mutationObservationsCurrent([], [captured.observation])).toBe(false);
         expect(() => assertPolicyStagedDirectoryCurrent(captured)).toThrow(expect.objectContaining({ code: "path-mismatch" }));
         if (change === "link-count") {
           expect(refreshPolicyStagedDirectoryObservation(captured).identity.nlink)
@@ -142,7 +142,7 @@ describe.runIf(typeof binding?.observeDirectoryFd === "function")("retained POSI
       const captured = describePolicyStagedDirectory(fd, directory, binding);
       captured.disposeObservation?.();
       observe.mockClear();
-      expect(mutationDirectoryObservationCurrent(captured.observation)).toBe(false);
+      expect(mutationObservationsCurrent([], [captured.observation])).toBe(false);
       expect(() => assertPolicyStagedDirectoryCurrent(captured)).toThrow(expect.objectContaining({ code: "path-mismatch" }));
       expect(observe).not.toHaveBeenCalled();
     } finally { fs.closeSync(fd); }

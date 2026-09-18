@@ -26,7 +26,8 @@ import {
   assertRegularFile,
   assertRetainedParentCurrent,
   exactFileIdentity,
-  fileReceiptCurrent,
+  fileLockSyncRootReceiptStillCurrent,
+  fileReceiptCurrentAfterParentCheck,
   observeDirectory,
   readFileLockSyncRootSnapshot,
   sameExactIdentity,
@@ -55,8 +56,9 @@ function ensureParent(pathAuthority: FileLockSyncRootPath): DirectoryReceipt {
     assertRootIdentityCurrentSync(context);
     assertDirectoryCurrent(currentReceipt);
     let missing = false;
+    let existing: BigIntStats | undefined;
     try {
-      const existing = fs.lstatSync(pathForWindowsFilesystem(next), { bigint: true });
+      existing = fs.lstatSync(pathForWindowsFilesystem(next), { bigint: true });
       if (existing.isSymbolicLink() || !existing.isDirectory()) {
         throw directoryComponentNotDirectoryError();
       }
@@ -85,36 +87,14 @@ function ensureParent(pathAuthority: FileLockSyncRootPath): DirectoryReceipt {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       }
     }
-    const nextReceipt = observeDirectory(next);
+    const nextReceipt = observeDirectory(next, existing);
     assertDirectoryCurrent(currentReceipt);
-    assertRootIdentityCurrentSync(context);
     current = nextReceipt.realPath;
     currentReceipt = nextReceipt;
   }
   assertRootIdentityCurrentSync(context);
   assertDirectoryCurrent(currentReceipt);
   return currentReceipt;
-}
-
-function fileReceiptCurrentAfterParentCheck(
-  pathAuthority: FileLockSyncRootPath,
-  receipt: FileLockSyncRootFileReceipt,
-): boolean {
-  try {
-    const current = inspectFileIdentitySync(
-      () => fs.lstatSync(pathForWindowsFilesystem(pathAuthority.path), { bigint: true }),
-      receipt.identity,
-    );
-    assertRegularFile(current, pathAuthority.authority.hardlinks);
-  } catch (error) {
-    if (isNotFoundPathError(error) ||
-      (error instanceof FsSafeError && error.code === "path-mismatch")) return false;
-    throw error;
-  }
-  // A retained-parent check immediately before this stage supplies the first
-  // half of the fence; avoid repeating it before the pathname observation.
-  assertRetainedParentCurrent(pathAuthority, receipt.parent);
-  return true;
 }
 
 export function createFileLockSyncRootFile(
@@ -188,7 +168,7 @@ export function removeFileLockSyncRootFile(
 ): boolean {
   assertFileLockSyncRootMutationAllowed(pathAuthority.path, pathAuthority.authority.denyMutations);
   const matches = (): boolean => {
-    if (!expected) return fileReceiptCurrent(pathAuthority, receipt);
+    if (!expected) return fileLockSyncRootReceiptStillCurrent(pathAuthority, receipt);
     const current = readFileLockSyncRootSnapshot(pathAuthority, {
       expectedReceipt: receipt,
     });
@@ -201,7 +181,7 @@ export function removeFileLockSyncRootFile(
   if (invokeFileLockSyncRootMutationAuthority(pathAuthority.authority) && !matches()) return false;
   if (assertBeforeRemove?.() === false) return false;
   assertFileLockSyncRootMutationAllowed(pathAuthority.path, pathAuthority.authority.denyMutations);
-  fs.rmSync(pathForWindowsFilesystem(pathAuthority.path));
+  fs.unlinkSync(pathForWindowsFilesystem(pathAuthority.path));
   assertRetainedParentCurrent(pathAuthority, receipt.parent);
   let successorStat: BigIntStats;
   try {

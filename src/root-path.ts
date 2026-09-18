@@ -774,18 +774,7 @@ async function getPathKind(
   absolutePath: string,
   preserveFinalSymlink: boolean,
 ): Promise<{ exists: boolean; kind: ResolvedRootPathKind }> {
-  try {
-    const operationPath = pathForWindowsFilesystem(absolutePath);
-    const stat = preserveFinalSymlink
-      ? fs.lstatSync(operationPath)
-      : fs.statSync(operationPath);
-    return { exists: true, kind: toResolvedKind(stat) };
-  } catch (error) {
-    if (isNotFoundPathError(error)) {
-      return { exists: false, kind: "missing" };
-    }
-    throw error;
-  }
+  return getPathKindSync(absolutePath, preserveFinalSymlink);
 }
 
 function getPathKindSync(
@@ -852,4 +841,3 @@ function assertInsideBoundary(params: {
     `Path resolves outside ${params.boundaryLabel} (${shortPath(params.rootCanonicalPath)}): ${shortPath(params.absolutePath)}`,
   );
 }
-

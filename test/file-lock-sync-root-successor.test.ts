@@ -35,10 +35,10 @@ describe("synchronous Root-backed file-lock lifecycle", () => {
       payload: () => ({ owner: "original" }),
     });
     const successorRaw = serializeSidecarLockPayload({ owner: "successor" }).raw;
-    const realRm = fs.rmSync.bind(fs);
+    const realUnlink = fs.unlinkSync.bind(fs);
     let successorPublished = false;
-    const remove = vi.spyOn(fs, "rmSync").mockImplementation((candidate, ...args) => {
-      realRm(candidate, ...args);
+    const remove = vi.spyOn(fs, "unlinkSync").mockImplementation((candidate, ...args) => {
+      realUnlink(candidate, ...args);
       if (!successorPublished) {
         fs.writeFileSync(owner.lockPath, successorRaw, { flag: "wx", mode: 0o600 });
         successorPublished = true;
@@ -67,12 +67,12 @@ describe("synchronous Root-backed file-lock lifecycle", () => {
       payload: () => ({ owner: "original" }),
     });
     const successorRaw = serializeSidecarLockPayload({ owner: "successor" }).raw;
-    const realRm = fs.rmSync.bind(fs);
+    const realUnlink = fs.unlinkSync.bind(fs);
     const realLstat = fs.lstatSync.bind(fs);
     let successorPublished = false;
     let unknownObservations = 0;
-    const remove = vi.spyOn(fs, "rmSync").mockImplementation((candidate, ...args) => {
-      realRm(candidate, ...args);
+    const remove = vi.spyOn(fs, "unlinkSync").mockImplementation((candidate, ...args) => {
+      realUnlink(candidate, ...args);
       fs.writeFileSync(owner.lockPath, successorRaw, { flag: "wx", mode: 0o600 });
       successorPublished = true;
     });
@@ -106,13 +106,13 @@ describe("synchronous Root-backed file-lock lifecycle", () => {
     });
     const ownedIdentity = fs.lstatSync(owner.lockPath, { bigint: true });
     const successorRaw = serializeSidecarLockPayload({ owner: "successor" }).raw;
-    const realRm = fs.rmSync.bind(fs);
+    const realUnlink = fs.unlinkSync.bind(fs);
     const realLstat = fs.lstatSync.bind(fs);
     const realFstat = fs.fstatSync.bind(fs);
     let successorPublished = false;
     let descriptorMismatchObserved = false;
-    const remove = vi.spyOn(fs, "rmSync").mockImplementation((candidate, ...args) => {
-      realRm(candidate, ...args);
+    const remove = vi.spyOn(fs, "unlinkSync").mockImplementation((candidate, ...args) => {
+      realUnlink(candidate, ...args);
       fs.writeFileSync(owner.lockPath, successorRaw, { flag: "wx", mode: 0o600 });
       successorPublished = true;
     });
@@ -154,13 +154,13 @@ describe("synchronous Root-backed file-lock lifecycle", () => {
     const ownedIdentity = fs.lstatSync(owner.lockPath, { bigint: true });
     const successorRaw = serializeSidecarLockPayload({ owner: "successor" }).raw;
     const replacementRaw = serializeSidecarLockPayload({ owner: "replacement-parent" }).raw;
-    const realRm = fs.rmSync.bind(fs);
+    const realUnlink = fs.unlinkSync.bind(fs);
     const realLstat = fs.lstatSync.bind(fs);
     let successorPublished = false;
     let lockObservations = 0;
     let parentSwapped = false;
-    const remove = vi.spyOn(fs, "rmSync").mockImplementation((candidate, ...args) => {
-      realRm(candidate, ...args);
+    const remove = vi.spyOn(fs, "unlinkSync").mockImplementation((candidate, ...args) => {
+      realUnlink(candidate, ...args);
       fs.writeFileSync(owner.lockPath, successorRaw, { flag: "wx", mode: 0o600 });
       successorPublished = true;
     });

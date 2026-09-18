@@ -210,19 +210,17 @@ mod platform {
 #[cfg(windows)]
 mod platform {
     use std::os::windows::ffi::OsStrExt;
-    use std::ptr::{null, null_mut};
 
-    use windows_sys::Win32::Foundation::{GetLastError, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Foundation::GetLastError;
     use windows_sys::Win32::Storage::FileSystem::{
-        CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-        FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        GetFinalPathNameByHandleW, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_READ_ATTRIBUTES, GetFinalPathNameByHandleW,
     };
 
     use super::ExactDirectoryObservation;
     use crate::{
         NativeResult, native_error,
-        windows::{OwnedHandle, observe_directory_identity, win_error},
+        windows::{observe_directory_identity, open_existing_handle, win_error},
     };
 
     fn wide_path(path: &str) -> NativeResult<Vec<u16>> {
@@ -309,21 +307,12 @@ mod platform {
 
     pub(super) fn observe_directory(path: &str) -> NativeResult<ExactDirectoryObservation> {
         let path = wide_path(path)?;
-        let handle = unsafe {
-            CreateFileW(
-                path.as_ptr(),
-                FILE_READ_ATTRIBUTES,
-                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                null(),
-                OPEN_EXISTING,
-                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
-                null_mut(),
-            )
-        };
-        if handle == INVALID_HANDLE_VALUE {
-            return Err(win_error(unsafe { GetLastError() }, "open directory observation"));
-        }
-        let handle = OwnedHandle(handle);
+        let handle = open_existing_handle(
+            &path,
+            FILE_READ_ATTRIBUTES,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            |code| win_error(code, "open directory observation"),
+        )?;
         let (dev, ino) = observe_directory_identity(handle.0)?;
         let real_path = canonical_path(handle.0)?;
         Ok(ExactDirectoryObservation {

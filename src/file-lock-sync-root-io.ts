@@ -55,8 +55,8 @@ export type FileLockSyncRootSnapshot = Readonly<{
 const samePath = (left: string, right: string) =>
   path.relative(path.resolve(left), path.resolve(right)) === "";
 
-export function observeDirectory(pathname: string): DirectoryReceipt {
-  const stat = inspectDirectoryIdentitySync(pathname);
+export function observeDirectory(pathname: string, initial?: BigIntStats): DirectoryReceipt {
+  const stat = inspectDirectoryIdentitySync(pathname, undefined, initial);
   const realPath = realpathSync.native(pathForWindowsFilesystem(pathname));
   assertNoWindowsPathAlias(realPath, "filesystem", "sidecar lock parent uses a Windows filesystem namespace alias");
   if (!samePath(realPath, pathname)) {
@@ -256,11 +256,10 @@ export function fileLockSyncRootSnapshotStillCurrent(
     sidecarLockSnapshotMatches(current.snapshot, observed.snapshot);
 }
 
-export function fileReceiptCurrent(
+export function fileReceiptCurrentAfterParentCheck(
   pathAuthority: FileLockSyncRootPath,
   receipt: FileLockSyncRootFileReceipt,
 ): boolean {
-  assertRetainedParentCurrent(pathAuthority, receipt.parent);
   let current: BigIntStats;
   try {
     current = inspectFileIdentitySync(
@@ -281,5 +280,6 @@ export function fileLockSyncRootReceiptStillCurrent(
   pathAuthority: FileLockSyncRootPath,
   receipt: FileLockSyncRootFileReceipt,
 ): boolean {
-  return fileReceiptCurrent(pathAuthority, receipt);
+  assertRetainedParentCurrent(pathAuthority, receipt.parent);
+  return fileReceiptCurrentAfterParentCheck(pathAuthority, receipt);
 }

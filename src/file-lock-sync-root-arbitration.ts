@@ -6,7 +6,6 @@ import type { FileLockSyncHandle } from "./file-lock-sync.js";
 import {
   type FileLockSyncRootAuthority,
   type FileLockSyncRootPath,
-  sameFileLockSyncRootAuthority,
 } from "./file-lock-sync-root.js";
 import type { FileLockSyncRootFileReceipt } from "./file-lock-sync-root-io.js";
 import { removeFileLockSyncRootFile } from "./file-lock-sync-root-mutation.js";
@@ -43,7 +42,7 @@ export function tryReuseCurrentRootSyncHeldLock(
     arbitration.reentrantOwner !== undefined &&
     held.reentrantOwner !== undefined &&
     arbitration.reentrantOwner === held.reentrantOwner &&
-    sameFileLockSyncRootAuthority(arbitration.authority, held.rootAuthority) &&
+    arbitration.authority.adapter === held.rootAuthority.adapter &&
     sameRootLockPath(arbitration.lockRootPath, held.rootPath) &&
     held.releaseState !== "released";
   if (!reusable) return undefined;

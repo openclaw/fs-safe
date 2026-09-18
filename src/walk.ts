@@ -154,6 +154,7 @@ export function walkDirectorySync(
     let realDir: string;
     const operationPath = pathForWindowsFilesystem(dir);
     try {
+      if (depth > 1 && symlinks !== "follow" && fsSync.lstatSync(operationPath).isSymbolicLink()) return;
       realDir = realpathSync(operationPath);
     } catch (error) {
       recordFailedDir(result, root, dir, depth, error);
@@ -218,6 +219,7 @@ export async function walkDirectory(
     let realDir: string;
     const operationPath = pathForWindowsFilesystem(dir);
     try {
+      if (depth > 1 && symlinks !== "follow" && fsSync.lstatSync(operationPath).isSymbolicLink()) return;
       realDir = realpathSync.native(operationPath);
     } catch (error) {
       recordFailedDir(result, root, dir, depth, error);

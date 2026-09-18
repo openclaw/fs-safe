@@ -1,6 +1,6 @@
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
-import { resolveRootPath } from "./root-path.js";
+import { resolveRootPath, ROOT_PATH_ALIAS_POLICIES } from "./root-path.js";
 import type { RootDirectoryListing, RootDirectoryListingOptions } from "./root-directory-list.js";
 import type { DirEntry, PathStat } from "./types.js";
 import { createSuppressedError } from "./suppressed-error.js";
@@ -121,12 +121,15 @@ export async function* walkRoot(
     options.signal?.throwIfAborted();
     let listing: RootDirectoryListing;
     try {
+      const skipChildSymlinks = depth > 0 && options.symlinkPolicy === "skip";
       const resolvedDirectory = await resolveRootPath({
         absolutePath: path.resolve(root.rootReal, directory),
         rootPath: root.rootReal,
         rootCanonicalPath: root.rootReal,
         boundaryLabel: "root walk",
+        policy: skipChildSymlinks ? ROOT_PATH_ALIAS_POLICIES.unlinkTarget : undefined,
       });
+      if (skipChildSymlinks && resolvedDirectory.kind === "symlink") return;
       if (!resolvedDirectory.exists || resolvedDirectory.kind !== "directory") {
         throw new FsSafeError(
           "not-file",

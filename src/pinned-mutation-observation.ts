@@ -102,26 +102,6 @@ function checkedDirectory(observation: MutationDirectoryObservation): boolean {
     directoryMode(observation.identity.mode);
 }
 
-export function mutationDirectoryObservationCurrent(
-  observation: MutationDirectoryObservation,
-): boolean {
-  if (!checkedDirectory(observation)) return false;
-  try {
-    const observed = directoryObservers.get(observation)?.();
-    if (observed) {
-      return directoryMode(observed.identity.mode) &&
-        sameIdentity(observation.identity, observed.identity) &&
-        observed.canonicalPath === observation.canonicalPath;
-    }
-    const stat = inspectFileIdentitySync(() => fs.lstatSync(observation.path, { bigint: true }));
-    return stat.isDirectory() && !stat.isSymbolicLink() &&
-      sameIdentity(observation.identity, stat) &&
-      realpathSync.native(observation.path) === observation.canonicalPath;
-  } catch {
-    return false;
-  }
-}
-
 export function mutationObservationUsesDirectory(
   observation: MutationPathObservation,
   directory: MutationDirectoryObservation,

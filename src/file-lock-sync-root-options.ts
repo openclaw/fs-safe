@@ -1,6 +1,5 @@
 import type { FileLockSyncAcquireOptions } from "./file-lock-sync.js";
 import { getFsSafeLockConfig } from "./lock-config.js";
-import type { Root } from "./root-impl.js";
 import { validateSidecarLockCompromiseCheckIntervalMs, validateSidecarLockRetryOptions,
   validateSidecarLockStaleMs, validateSidecarLockTimeoutMs } from "./sidecar-lock-policy.js";
 import type { SidecarLockCompromisedInfo, SidecarLockRetryOptions,
@@ -9,7 +8,6 @@ import type { SidecarLockCompromisedInfo, SidecarLockRetryOptions,
 type CapturedRootSyncAcquireOptions<TPayload extends Record<string, unknown>> = Readonly<{
   compromiseCheckIntervalMs?: number;
   lockPath?: string;
-  lockRoot: Root;
   onCompromised?: (info: SidecarLockCompromisedInfo) => void;
   optionsReceiver: FileLockSyncAcquireOptions<TPayload>;
   parsePayload?: (raw: string) => unknown;
@@ -25,7 +23,6 @@ type CapturedRootSyncAcquireOptions<TPayload extends Record<string, unknown>> = 
 
 export function captureRootSyncAcquireOptions<TPayload extends Record<string, unknown>>(
   options: FileLockSyncAcquireOptions<TPayload>,
-  lockRoot: Root,
 ): CapturedRootSyncAcquireOptions<TPayload> {
   // Root authority is already validated and snapshotted before entering this
   // helper. Snapshot every remaining caller-owned property before validating
@@ -69,7 +66,6 @@ export function captureRootSyncAcquireOptions<TPayload extends Record<string, un
   return Object.freeze({
     compromiseCheckIntervalMs,
     lockPath,
-    lockRoot,
     onCompromised,
     optionsReceiver: options,
     parsePayload,
@@ -83,4 +79,3 @@ export function captureRootSyncAcquireOptions<TPayload extends Record<string, un
     timeoutMs,
   });
 }
-

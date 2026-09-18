@@ -132,14 +132,8 @@ function createPrivateProbeName(nameLength: number): string {
 }
 
 function* asciiCaseProbePairs(nameLength: number, forbidden: ForbiddenName): Generator<ProbePair, void> {
-  let count = 0;
-  for (let attempt = 0; attempt < 96 && count < 24; attempt++) {
-    const first = createPrivateProbeName(nameLength);
-    const second = `${first[0]!.toUpperCase()}${first.slice(1)}`;
-    if (!forbidden(first) && !forbidden(second)) {
-      count++;
-      yield [first, second];
-    }
+  for (const first of privateProbeNames(nameLength, forbidden)) {
+    yield [first, `${first[0]!.toUpperCase()}${first.slice(1)}`];
   }
 }
 

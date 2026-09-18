@@ -3,6 +3,11 @@ import { inspectDirectoryIdentitySync } from "./directory-guard.js";
 import { isPathRelativeEscape } from "./path.js";
 import { realpathSync } from "./realpath.js";
 
+export function sameNormalizedPathSpelling(left: string, right: string): boolean {
+  // Preserve case on Windows, where individual directories can be case-sensitive.
+  return path.resolve(left) === path.resolve(right);
+}
+
 export type RootBoundaryIdentity = Readonly<{
   dev: number | bigint;
   ino: number | bigint;

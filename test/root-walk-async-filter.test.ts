@@ -15,6 +15,32 @@ const orders = [
   { name: "filesystem", options: { order: "filesystem" } },
 ] as const;
 
+it.each(["filter", "yield"])("keeps skip policy when a child becomes a symlink during %s", async phase => {
+  const container = await tempRoot("fs-safe-root-child-symlink-swap-");
+  const directory = path.join(container, "root");
+  await fs.mkdir(path.join(directory, "a"), { recursive: true });
+  await fs.mkdir(path.join(directory, "b"));
+  await fs.writeFile(path.join(directory, "b/value"), "retained target");
+  const capability = await root(directory);
+  const swap = async () => {
+    await fs.rename(path.join(directory, "a"), path.join(container, "moved"));
+    await fs.symlink(path.join(directory, "b"), path.join(directory, "a"), process.platform === "win32" ? "junction" : "dir");
+  };
+  const entries: string[] = [];
+  for await (const entry of capability.walk("", {
+    symlinkPolicy: "skip",
+    entryFilter: phase === "filter" ? async entry => {
+      if (entry.relativePath === "a") await swap();
+      return "include";
+    } : undefined,
+  })) {
+    entries.push(entry.relativePath);
+    if (phase === "yield" && entry.relativePath === "a") await swap();
+  }
+  expect(entries).not.toContain("a/value");
+  expect(entries).toContain("b/value");
+});
+
 it.each(orders)("awaits marker pruning in $name order", async ({ options: mode }) => {
   const directory = await tempRoot("fs-safe-root-async-prune-");
   for (const name of ["keep", "prune", "skip"]) {

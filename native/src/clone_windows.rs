@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 
 use windows_sys::Win32::Foundation::{
-    DUPLICATE_SAME_ACCESS, DuplicateHandle, ERROR_HANDLE_EOF, ERROR_MORE_DATA, GetLastError, HANDLE,
+    ERROR_HANDLE_EOF, ERROR_MORE_DATA, GetLastError, HANDLE,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL,
@@ -21,10 +21,9 @@ use windows_sys::Win32::System::Ioctl::{
     FSCTL_SET_INTEGRITY_INFORMATION, FSCTL_SET_INTEGRITY_INFORMATION_BUFFER,
     FSCTL_SET_REPARSE_POINT, FSCTL_SET_SPARSE,
 };
-use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
 use crate::windows::{
-    OwnedHandle, ReparsePolicy, handle_identity, handle_is_reparse, list_directory_entries,
+    OwnedHandle, ReparsePolicy, duplicate_handle, handle_identity, handle_is_reparse, list_directory_entries,
     mark_handle_for_deletion, nt_open_relative_with_policy, nt_open_relative_with_sharing,
     remove_directory_handle, root_handle, win_error,
 };
@@ -599,26 +598,10 @@ fn clone_tree_handles(
     }
     // The facade gives this operation its own pinned directory descriptor. Duplicate
     // its ownership for the worker scope without re-resolving any source pathname.
-    let process = unsafe { GetCurrentProcess() };
-    let mut source = null_mut();
-    if unsafe {
-        DuplicateHandle(
-            process,
-            source_handle,
-            process,
-            &mut source,
-            0,
-            0,
-            DUPLICATE_SAME_ACCESS,
-        )
-    } == 0
-    {
-        return Err(win_error(
-            unsafe { GetLastError() },
-            "duplicate pinned clone source",
-        ));
-    }
-    let source = Arc::new(Directory(OwnedHandle(source)));
+    let source = Arc::new(Directory(duplicate_handle(
+        source_handle,
+        "duplicate pinned clone source",
+    )?));
     let target = create_directory(parent_handle, basename)?;
     if let Err(error) = copy_tree(source, target.clone(), cancelled, concurrency) {
         let cleanup =

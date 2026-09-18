@@ -68,6 +68,12 @@ type AsyncWalkDirectoryOptions = Omit<WalkDirectoryOptions, "include" | "descend
 
 `symlinks` defaults to `"skip"`. `"include"` returns symlink entries without following them. `"follow"` resolves symlinks with `stat()` and may descend into linked directories, so use it only when that is intentional. Already-visited real directories are skipped so symlink cycles do not recurse forever.
 
+Before descending into a child directory, `skip` and `include` recheck whether
+that entry has become a symlink, including changes made while a filter waits.
+The explicitly supplied walk root may still be a symlink. This best-effort
+child check does not turn the standalone walker into a confinement boundary;
+use `Root.walk()` when root confinement is required.
+
 `include` controls which entries are returned. `descend` controls which directory entries are traversed. A skipped directory can still be returned if `include` accepts it.
 
 The asynchronous `walkDirectory()` accepts `AsyncWalkDirectoryOptions`. It resolves each `include` decision before calling `descend`, and resolves descent before reading the directory's children. Decisions run serially in the existing filesystem-order depth-first traversal. Both callbacks retain the supplied options object as their `this` receiver.

@@ -2,11 +2,9 @@ import fs from "node:fs";
 import { acquireFileLockSyncWithRoot } from "./file-lock-sync-root-acquire.js";
 import { isRootSyncHeldLockHandle, withRootSyncHeldLockHandle } from "./file-lock-sync-root-held.js";
 import path from "node:path";
-import { FsSafeError } from "./errors.js";
 import type { Root } from "./root-impl.js";
 import {
   readSidecarLockSnapshotSync,
-  relativeSidecarLockPath,
   removeSidecarLockIfUnchangedSync,
   serializeSidecarLockPayload,
   sidecarLockSnapshotMatches,
@@ -165,23 +163,6 @@ function normalizeTargetPath(targetPath: string): string {
   return normalized;
 }
 
-function boundedLockPath(lockPath: string, lockRoot?: Root): string {
-  const resolved = path.resolve(lockPath);
-  assertNoWindowsPathAlias(resolved);
-  if (!lockRoot) return resolved;
-  relativeSidecarLockPath(lockRoot, resolved);
-  const parent = path.dirname(resolved);
-  const parentReal = canonicalLockParentSync(parent);
-  assertNoWindowsPathAlias(parentReal);
-  const parentRelative = path.relative(lockRoot.rootReal, parentReal);
-  if (parentRelative === ".." || parentRelative.startsWith(`..${path.sep}`) || path.isAbsolute(parentRelative)) {
-    throw new FsSafeError("outside-workspace", "sidecar lock parent is outside lockRoot");
-  }
-  const bounded = path.join(parentReal, path.basename(resolved));
-  assertNoWindowsPathAlias(bounded);
-  return bounded;
-}
-
 export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
   targetPath: string,
   options: FileLockSyncAcquireOptions<TPayload>,
@@ -201,7 +182,8 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
   assertNoWindowsPathAlias(targetPath);
   if (explicitLockPath !== undefined) assertNoWindowsPathAlias(explicitLockPath);
   const normalizedTargetPath = normalizeTargetPath(targetPath);
-  const lockPath = boundedLockPath(explicitLockPath ?? `${normalizedTargetPath}.lock`, lockRoot);
+  const lockPath = path.resolve(explicitLockPath ?? `${normalizedTargetPath}.lock`);
+  assertNoWindowsPathAlias(lockPath);
   const requestedReentrantOwner = options.reentrantOwner;
   const heldLocks = getSyncHeldLocks();
   const currentTargetHolder = () => heldLocks.get(normalizedTargetPath) ??

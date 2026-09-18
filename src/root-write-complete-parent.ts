@@ -7,17 +7,16 @@ import {
   inspectDirectoryIdentitySync,
   type AsyncDirectoryGuard,
 } from "./directory-guard.js";
-import { WINDOWS_RESERVED_DEVICE_NAMES } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
 import { getFsSafeNativeConfig } from "./native-config.js";
 import { hasNodeErrorCode } from "./path.js";
 import { realpathSync } from "./realpath.js";
-import { admitPathInsideRoot } from "./root-boundary.js";
+import { admitPathInsideRoot, sameNormalizedPathSpelling } from "./root-boundary.js";
+import { ordinaryWindowsSegments } from "./pinned-mutation-shared-route.js";
 import type { RootContext } from "./root-context.js";
 import { prepareRootWriteTarget } from "./root-directory-creation.js";
 import type { GuardedRootWriteTarget } from "./root-write-admission.js";
 import { canReuseParentWithMutationAssertion } from "./root-write-lock-binding.js";
-import { isSafePathSegment } from "./safe-path-segment.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
@@ -60,18 +59,6 @@ function writeSelectionChanged(cause?: unknown): FsSafeError {
   });
 }
 
-function sameNormalizedPathSpelling(left: string, right: string): boolean {
-  // Windows can expose case-sensitive directories, so normalize separators
-  // and roots without using path.relative's case-folding comparison.
-  return path.resolve(left) === path.resolve(right);
-}
-
-function windowsReservedDeviceSegment(segment: string): boolean {
-  const extension = segment.indexOf(".");
-  const stem = segment.slice(0, extension < 0 ? segment.length : extension).toUpperCase();
-  return WINDOWS_RESERVED_DEVICE_NAMES.has(stem);
-}
-
 function ordinarySharedWriteRoute(
   root: RootContext,
   relativePath: string,
@@ -79,15 +66,11 @@ function ordinarySharedWriteRoute(
 ): boolean {
   if (process.versions.bun || relativePath === "" || relativePath.startsWith("~") ||
     relativePath.includes("\0") || path.isAbsolute(relativePath)) return false;
-  const separator = process.platform === "win32" ? "\\" : "/";
-  const alternateSeparator = process.platform === "win32" ? "/" : "\\";
-  if (relativePath.includes(alternateSeparator)) return false;
-  const segments = relativePath.split(separator);
-  if (segments.some((segment) => segment === "" || segment === "." || segment === ".." ||
-    (process.platform === "win32" &&
-      (!isSafePathSegment(segment, { allowDotPrefix: true }) ||
-        segment.endsWith(".") || segment.endsWith(" ") ||
-        windowsReservedDeviceSegment(segment))))) return false;
+  if (process.platform === "win32") {
+    if (!ordinaryWindowsSegments(relativePath)) return false;
+  } else if (relativePath.includes("\\") || relativePath.split("/").some(
+    segment => segment === "" || segment === "." || segment === "..",
+  )) return false;
   const routed = path.resolve(root.rootReal, relativePath);
   const admitted = admitPathInsideRoot({
     rootPath: root.rootReal,

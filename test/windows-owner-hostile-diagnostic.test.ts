@@ -3,6 +3,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   PermissionCommandError,
+  formatCaughtPermissionFailure,
 } from "../src/permission-exec.js";
 import {
   __resetFsSafeNativeConfigForTest,
@@ -173,6 +174,8 @@ describe("Windows owner caught-failure diagnostics", () => {
     0,
     -0,
     Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
     12n,
     "",
     "plain rejection",
@@ -193,6 +196,21 @@ describe("Windows owner caught-failure diagnostics", () => {
       error: pathname.ownerError,
       errorCause: pathname.errorCause,
     }, value);
+  });
+
+  it("formats primitives without calling their mutable prototype methods", () => {
+    const values = [null, undefined, false, true, -0, Number.NaN, Infinity, -Infinity, 12n, Symbol("value")];
+    const unexpected = () => { throw new Error("primitive prototype conversion was invoked"); };
+    let actual: string[];
+    try {
+      vi.spyOn(Number.prototype, "toString").mockImplementation(unexpected);
+      vi.spyOn(BigInt.prototype, "toString").mockImplementation(unexpected);
+      vi.spyOn(Symbol.prototype, "toString").mockImplementation(unexpected);
+      actual = values.map(formatCaughtPermissionFailure);
+    } finally {
+      vi.restoreAllMocks();
+    }
+    expect(actual).toEqual(["null", "undefined", "false", "true", "0", "NaN", "Infinity", "-Infinity", "12", "Symbol(value)"]);
   });
 
   it.each([

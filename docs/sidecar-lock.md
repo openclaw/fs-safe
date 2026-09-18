@@ -30,7 +30,7 @@ The lock file sits next to the protected resource. If a process crashes mid-lock
 
 On natural event-loop shutdown, a globally deduplicated `process.on("beforeExit")` handler attempts asynchronous cleanup of held Root-backed locks through their retained Root capability and ownership receipt. The synchronous `process.on("exit")` handler provides last-chance cleanup for raw locks and raw-path reclaim guards. Changed sidecars and failed Root cleanup remain in place; cleanup does not keep retrying during shutdown unless another acquisition re-arms it. Locks acquired with `retainOnExit: true` are exempt from both handlers: their sidecar stays in place after exit and is governed only by the caller's own stale policy. Because exit handlers are globally deduplicated across package copies, `retainOnExit` fails closed with `helper-unavailable` if an older copy that cannot honor it registered the handlers first.
 
-Asynchronous Root-backed stale recovery uses a private regular file at the
+Asynchronous Root-backed stale recovery uses a regular file at the
 `.reclaim` name, created, verified, and removed through that Root. Its ownership
 token and exact bytes are checked after awaited decisions and before stale
 removal; Root mutation policies also apply to the guard. Raw and synchronous

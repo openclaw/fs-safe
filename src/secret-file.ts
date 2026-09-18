@@ -7,7 +7,6 @@ import { readFileDescriptorBoundedSync } from "./bounded-read.js";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, inspectDirectoryIdentity, type AsyncDirectoryGuard } from "./directory-guard.js";
 import { pinNodeDirectoryForMode } from "./directory-mode-node.js";
 import { assertOwnedDirectory } from "./directory-mode-owner.js";
-import { assertNoUnsafeDeviceReadPath } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
 import { resolveHomeRelativePath } from "./home-dir.js";
 import { openPinnedFileSync } from "./pinned-open.js";
@@ -15,9 +14,7 @@ import { runPinnedWriteHelper } from "./pinned-write.js";
 import { ensureTrailingSep } from "./root-context.js";
 import { verifyAtomicWriteResult } from "./root-write-verification.js";
 import {
-  assertSecretFilePreview,
-  resolveSecretReadPolicy,
-  secretPathErrorCode,
+  prepareSecretRead,
   secretReadError,
   trimSecretFileContent,
   type SecretFileReadOptions,
@@ -37,32 +34,8 @@ export function readSecretFileSync(
   label: string,
   options: SecretFileReadOptions = {},
 ): string {
-  const { resolvedPath, maxBytes } = resolveSecretReadPolicy(filePath, label, options);
-  let rejectSymlink: boolean;
-  let previewStat: fs.BigIntStats;
-  try {
-    assertNoUnsafeDeviceReadPath(resolvedPath);
-    rejectSymlink = Boolean(options.rejectSymlink);
-    previewStat = inspectFileIdentitySync(() =>
-      inspectInput(`${label} file at ${resolvedPath} must not be a symlink.`),
-    );
-  } catch (error) {
-    throw secretReadError(
-      error instanceof FsSafeError ? error.code : secretPathErrorCode(error),
-      "inspect", label, resolvedPath, error,
-    );
-  }
-  function inspectInput(symlinkMessage: string): fs.BigIntStats {
-    const stat = rejectSymlink
-      ? fs.lstatSync(resolvedPath, { bigint: true })
-      : fs.statSync(resolvedPath, { bigint: true });
-    if (rejectSymlink && stat.isSymbolicLink()) {
-      throw new FsSafeError("symlink", symlinkMessage);
-    }
-    return stat;
-  }
-  const rejectHardlinks = options.rejectHardlinks !== false;
-  assertSecretFilePreview(previewStat, label, resolvedPath, maxBytes, rejectHardlinks);
+  const { resolvedPath, maxBytes, rejectSymlink, rejectHardlinks, previewStat, inspectInput } =
+    prepareSecretRead(filePath, label, options);
 
   const opened = openPinnedFileSync({
     filePath: resolvedPath,

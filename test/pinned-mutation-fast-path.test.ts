@@ -16,7 +16,7 @@ import {
 } from "../src/pinned-mutation-admission.js";
 import {
   checkedMutationDirectory,
-  mutationDirectoryObservationCurrent,
+  mutationObservationsCurrent,
 } from "../src/pinned-mutation-observation.js";
 import { realpathSync } from "../src/realpath.js";
 import { resolvePathInRoot, resolveRootContext } from "../src/root-context.js";
@@ -123,7 +123,7 @@ describe.runIf(process.platform !== "win32" && !process.versions.bun)(
           );
           expect(createReceipt).toBeTypeOf("object");
           expect(createReceipt).not.toBeInstanceOf(Promise);
-          expect(mutationDirectoryObservationCurrent(parent)).toBe(true);
+          expect(mutationObservationsCurrent([], [parent])).toBe(true);
           await fs.mkdir(childPath);
           const parentAfter = directoryObservation(parentPath);
           const childFd = fsSync.openSync(

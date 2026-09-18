@@ -53,8 +53,9 @@ export type FileLockSyncRootAuthority = Readonly<{
     prefixes?: readonly string[];
   }>;
   hardlinks?: RootDefaults["hardlinks"];
-  mutationSymlinks?: RootDefaults["mutationSymlinks"];
-  symlinks?: RootDefaults["symlinks"];
+  mutationPolicy: RootPathResolutionPolicy;
+  readPolicy: RootPathResolutionPolicy;
+  policiesMatch: boolean;
 }>;
 
 export type FileLockSyncRootPath = Readonly<{
@@ -99,27 +100,34 @@ export function captureFileLockSyncRootAuthority(
     rootWithSep: retainedContext.rootWithSep,
   });
   const defaults = retainedDefaults;
-  const authority = Object.freeze({
+  const assertBeforeMutation = defaults.assertBeforeMutation;
+  const denyMutations = snapshotPolicy(defaults.denyMutations);
+  const hardlinks = defaults.hardlinks;
+  const mutationSymlinks = defaults.mutationSymlinks;
+  const symlinks = defaults.symlinks;
+  // Snapshot all defaults before the Root check and mutation-policy validation.
+  assertRootIdentityCurrentSync(context);
+  const mutation = mutationSymlinkResolution(mutationSymlinks);
+  const mutationPolicy: RootPathResolutionPolicy = Object.freeze({
+    rejectSymlinks: mutation.rejectSymlinks,
+    rejectFinalSymlink: mutation.rejectFinalSymlink,
+    rejectUnresolvedSymlinks: true,
+  });
+  const readPolicy: RootPathResolutionPolicy = Object.freeze({
+    ...readSymlinkResolution(symlinks),
+    rejectUnresolvedSymlinks: true,
+  });
+  return Object.freeze({
     adapter,
     context,
-    assertBeforeMutation: defaults.assertBeforeMutation,
-    denyMutations: snapshotPolicy(defaults.denyMutations),
-    hardlinks: defaults.hardlinks,
-    mutationSymlinks: defaults.mutationSymlinks,
-    symlinks: defaults.symlinks,
+    assertBeforeMutation,
+    denyMutations,
+    hardlinks,
+    mutationPolicy,
+    readPolicy,
+    policiesMatch: mutationPolicy.rejectSymlinks === readPolicy.rejectSymlinks &&
+      mutationPolicy.rejectFinalSymlink === readPolicy.rejectFinalSymlink,
   });
-  // Validate the retained object before any caller callback or filesystem effect.
-  assertRootIdentityCurrentSync(authority.context);
-  mutationSymlinkResolution(authority.mutationSymlinks);
-  readSymlinkResolution(authority.symlinks);
-  return authority;
-}
-
-export function sameFileLockSyncRootAuthority(
-  left: FileLockSyncRootAuthority,
-  right: FileLockSyncRootAuthority,
-): boolean {
-  return left.adapter === right.adapter;
 }
 
 export function invokeFileLockSyncRootMutationAuthority(
@@ -220,31 +228,6 @@ type RootPathResolutionPolicy = Readonly<{
   rejectUnresolvedSymlinks: true;
 }>;
 
-function mutationResolutionPolicy(
-  authority: FileLockSyncRootAuthority,
-): RootPathResolutionPolicy {
-  const policy = mutationSymlinkResolution(authority.mutationSymlinks);
-  return {
-    rejectSymlinks: policy.rejectSymlinks,
-    rejectFinalSymlink: policy.rejectFinalSymlink,
-    rejectUnresolvedSymlinks: true,
-  };
-}
-
-function readResolutionPolicy(
-  authority: FileLockSyncRootAuthority,
-): RootPathResolutionPolicy {
-  return { ...readSymlinkResolution(authority.symlinks), rejectUnresolvedSymlinks: true };
-}
-
-function sameResolutionPolicy(
-  left: RootPathResolutionPolicy,
-  right: RootPathResolutionPolicy,
-): boolean {
-  return left.rejectSymlinks === right.rejectSymlinks &&
-    left.rejectFinalSymlink === right.rejectFinalSymlink;
-}
-
 function resolveAdmittedPath(
   authority: FileLockSyncRootAuthority,
   absolutePath: string,
@@ -293,15 +276,14 @@ function resolveBothPolicies(
   absolutePath: string,
   rootPath: string,
 ): { path: string; relativePath: string } {
-  const mutationPolicy = mutationResolutionPolicy(authority);
-  const readPolicy = readResolutionPolicy(authority);
+  const { mutationPolicy, readPolicy, policiesMatch } = authority;
   const mutation = resolveAdmittedPath(
     authority,
     absolutePath,
     mutationPolicy,
     rootPath,
   );
-  const readable = sameResolutionPolicy(mutationPolicy, readPolicy)
+  const readable = policiesMatch
     ? mutation
     : resolveAdmittedPath(authority, absolutePath, readPolicy, rootPath);
   if (!samePath(mutation.path, readable.path)) {

@@ -6,13 +6,12 @@ import type {
   FileLockSyncHandle,
 } from "./file-lock-sync.js";
 import { captureRootSyncAcquireOptions } from "./file-lock-sync-root-options.js";
-import { foreignSyncHeldLock, getSyncLockAdmissions, syncLockTimeout } from "./file-lock-sync-admission.js";
+import { defaultSyncShouldReclaim, foreignSyncHeldLock, getSyncLockAdmissions, syncLockTimeout } from "./file-lock-sync-admission.js";
 import type { Root } from "./root-impl.js";
 import {
   computeSidecarLockDelayMs,
   isTransientLockFileDenial,
   maxTransientLockDenials,
-  sidecarLockPayloadCreatedAtMs,
 } from "./sidecar-lock-policy.js";
 import {
   serializeSidecarLockPayload,
@@ -56,17 +55,6 @@ import {
   type RootSyncHeldLock,
 } from "./file-lock-sync-root-held.js";
 
-function defaultShouldReclaim(
-  snapshot: SidecarLockSnapshot,
-  staleMs: number,
-  nowMs: number,
-): boolean {
-  const createdAtMs = sidecarLockPayloadCreatedAtMs(snapshot.payload);
-  if (createdAtMs !== null) return nowMs - createdAtMs > staleMs;
-  // A cooperating holder can unlink after the snapshot; use its observed age.
-  return !snapshot.stat || nowMs - snapshot.stat.mtimeMs > staleMs;
-}
-
 export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unknown>>(
   targetPath: string,
   inputOptions: FileLockSyncAcquireOptions<TPayload>,
@@ -76,7 +64,7 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
   // snapshot that genuine Root before any remaining option or retry getter can
   // mutate its defaults or retained policy inputs.
   const authority = captureFileLockSyncRootAuthority(lockRoot);
-  const options = captureRootSyncAcquireOptions(inputOptions, lockRoot);
+  const options = captureRootSyncAcquireOptions(inputOptions);
   ensureRootSyncExitCleanupRegistered();
   assertNoWindowsPathAlias(targetPath);
   if (options.lockPath !== undefined) assertNoWindowsPathAlias(options.lockPath);
@@ -132,11 +120,7 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
     const elapsed = Date.now() - startedAt;
     const timedOut = options.timeoutMs !== undefined && elapsed >= options.timeoutMs;
     if (timedOut || (options.retry.retries !== undefined && attempt >= options.retry.retries)) {
-      throw Object.assign(new Error(`file lock timeout for ${normalizedTargetPath}`), {
-        code: "file_lock_timeout",
-        lockPath,
-        normalizedTargetPath,
-      });
+      throw syncLockTimeout(lockPath, normalizedTargetPath);
     }
     const remaining =
       options.timeoutMs === undefined || options.timeoutMs === Number.POSITIVE_INFINITY
@@ -353,7 +337,7 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
             throw new FsSafeError("path-mismatch", "sidecar changed during reclaim policy callback");
           }
         } else {
-          reclaim = defaultShouldReclaim(snapshot, options.staleMs, nowMs);
+          reclaim = defaultSyncShouldReclaim(snapshot, options.staleMs, nowMs);
         }
         if (reclaim) {
           if (

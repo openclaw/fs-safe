@@ -5,7 +5,8 @@ import { Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { expectFsSafeError } from "./helpers/security.js";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
-import { createMaxBytesTransform } from "../src/bounded-read-stream.js";
+import { createByteLimitTransform } from "../src/bounded-read-stream.js";
+import { FsSafeError } from "../src/errors.js";
 import {
   assertAsyncDirectoryGuard,
   assertSyncDirectoryGuard,
@@ -170,7 +171,8 @@ describe("small identity and lock wrappers", () => {
 describe("bounded streams and directory guard coverage", () => {
   it("rejects oversized limited streams", async () => {
     await expectFsSafeError((async () => {
-      for await (const _chunk of Readable.from(["ab", "cd"]).pipe(createMaxBytesTransform(3))) {
+      const limit = createByteLimitTransform(3, () => new FsSafeError("too-large", "stream exceeds limit"));
+      for await (const _chunk of Readable.from(["ab", "cd"]).pipe(limit)) {
         // Drain the stream so transform errors surface.
       }
     })(), "too-large");

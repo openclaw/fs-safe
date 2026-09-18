@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { expectFsSafeError } from "./helpers/security.js";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { openLocalFileSafely, root as openRoot } from "../src/root.js";
-import { resolvePathWithinRoot, resolveRootContext } from "../src/root-context.js";
+import { resolvePathInRoot, resolveRootContext } from "../src/root-context.js";
 import { resolveStrictExistingPathsWithinRoot } from "../src/root-paths.js";
 import { realpathSync } from "../src/realpath.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
@@ -199,9 +199,9 @@ describe("Root writable error paths", () => {
 });
 
 describe("root context error paths", () => {
-  it("exposes the public convenience resolver and preserves an unexpected root lookup errno", async () => {
+  it("resolves through the retained context and preserves an unexpected root lookup errno", async () => {
     const rootDir = await fs.realpath(await tempRoot("fs-safe-root-context-"));
-    await expect(resolvePathWithinRoot({ rootDir, relativePath: "value.txt" }))
+    await expect(resolvePathInRoot(await resolveRootContext(rootDir), "value.txt"))
       .resolves.toMatchObject({ resolved: path.join(rootDir, "value.txt") });
 
     const denied = Object.assign(new Error("permission denied"), { code: "EACCES" });

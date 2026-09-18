@@ -285,7 +285,7 @@ describe("failed sidecar creation with unknown Windows identity", () => {
       fsSync.renameSync(lockPath, displacedPath);
       fsSync.renameSync(replacementPath, lockPath);
     });
-    const remove = vi.spyOn(fsSync, "rmSync");
+    const remove = vi.spyOn(fsSync, "unlinkSync");
     let caught: unknown;
     try {
       acquireFileLockSync(targetPath, {
@@ -317,7 +317,7 @@ describe("failed sidecar creation with unknown Windows identity", () => {
     const write = vi.spyOn(fsSync, "writeFileSync");
     const open = vi.spyOn(fsSync, "openSync");
     const close = vi.spyOn(fsSync, "closeSync");
-    const remove = vi.spyOn(fsSync, "rmSync");
+    const remove = vi.spyOn(fsSync, "unlinkSync");
     expect(() => acquireFileLockSync(targetPath, {
       lockRoot: capability, payload: () => ({ owner: "sync" }), retry, timeoutMs: 0,
     })).toThrow(expect.objectContaining({ code: "path-mismatch" }));

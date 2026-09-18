@@ -16,7 +16,7 @@ import {
   snapshotPinnedMutationPolicy,
 } from "./pinned-mutation-admission.js";
 import type { PinnedWriteMutationAdmission } from "./pinned-write.js";
-import { admitPathInsideRoot } from "./root-boundary.js";
+import { admitPathInsideRoot, sameNormalizedPathSpelling } from "./root-boundary.js";
 import type { RootContext } from "./root-context.js";
 import { resolvePathInRoot } from "./root-context.js";
 import { hardlinkedPathNotAllowedError, outsideWorkspaceError } from "./root-errors.js";
@@ -121,12 +121,6 @@ function inspectRegularSelectionPath(
   }
   if (observed.nlink > 1n) throw hardlinkedPathNotAllowedError();
   return observed;
-}
-
-function sameNormalizedPathSpelling(left: string, right: string): boolean {
-  // Windows can expose case-sensitive directories, so normalize separators
-  // and roots without using path.relative's case-folding comparison.
-  return path.resolve(left) === path.resolve(right);
 }
 
 function inspectSelectionBindingSync(

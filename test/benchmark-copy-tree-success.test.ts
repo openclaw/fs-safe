@@ -295,12 +295,16 @@ describe("copyTree successful-settlement benchmark receipts", () => {
     expect(distribution).toContain("validateCopyTreeSuccessWorkloadResult(result);");
     const probeAdmission = runner.indexOf("validateProbeTreeSuccessReport(completedReport");
     const copyAdmission = runner.indexOf("validateCopyTreeSuccessReport(completedReport");
-    const completion = runner.indexOf("completionMessage =", probeAdmission);
-    const emission = runner.indexOf("if (args.json) fs.writeFileSync");
-    expect(probeAdmission).toBeGreaterThan(-1);
+    const finalization = runner.indexOf("await finalizeBenchmarkReport({");
+    const validation = runner.indexOf("validateReport: () => {", finalization);
+    const cleanup = runner.indexOf("\n  cleanup,", validation);
+    const emission = runner.indexOf("process.stdout.write(completionMessage);", cleanup);
+    expect(finalization).toBeGreaterThan(-1);
+    expect(validation).toBeGreaterThan(finalization);
+    expect(probeAdmission).toBeGreaterThan(validation);
     expect(copyAdmission).toBeGreaterThan(probeAdmission);
-    expect(copyAdmission).toBeLessThan(completion);
-    expect(completion).toBeLessThan(emission);
+    expect(copyAdmission).toBeLessThan(cleanup);
+    expect(cleanup).toBeLessThan(emission);
   });
 
   it("freezes the serialized final-study cells, controls, and rejection thresholds", () => {

@@ -27,9 +27,7 @@ type DataProperty =
 
 const MISSING_DATA_PROPERTY = Object.freeze({ found: false } as const);
 const MAX_CAUGHT_FAILURE_PROTOTYPES = 4;
-const numberToString = Number.prototype.toString;
-const bigintToString = BigInt.prototype.toString;
-const symbolToString = Symbol.prototype.toString;
+const primitiveString = String;
 const isUint8Array = utilTypes.isUint8Array;
 const Uint8ArrayIntrinsic = Uint8Array;
 const typedArrayPrototype = Object.getPrototypeOf(Uint8ArrayIntrinsic.prototype) as object;
@@ -93,16 +91,8 @@ function dataProperty(value: unknown, name: string): DataProperty {
 }
 
 function caughtPrimitiveDisplay(value: unknown): string | undefined {
-  if (value === null) return "null";
-  switch (typeof value) {
-    case "undefined": return "undefined";
-    case "string": return value;
-    case "boolean": return value ? "true" : "false";
-    case "number": return Reflect.apply(numberToString, value, []);
-    case "bigint": return Reflect.apply(bigintToString, value, []);
-    case "symbol": return Reflect.apply(symbolToString, value, []);
-    default: return undefined;
-  }
+  if (value !== null && (typeof value === "object" || typeof value === "function")) return undefined;
+  return primitiveString(value);
 }
 
 /** Formats only caught permission-query failures without invoking user code. */
@@ -155,24 +145,11 @@ function safeStderr(value: unknown): string {
   }
 }
 
-type CommandFieldSnapshot = {
-  killed: DataProperty;
-  code: DataProperty;
-  signal: DataProperty;
-  stderr: DataProperty;
-};
-
-function commandFieldSnapshot(error: unknown): CommandFieldSnapshot {
-  return {
-    killed: dataProperty(error, "killed"),
-    code: dataProperty(error, "code"),
-    signal: dataProperty(error, "signal"),
-    stderr: dataProperty(error, "stderr"),
-  };
-}
-
-function commandFailureFields(fields: CommandFieldSnapshot) {
-  const { killed, code, signal, stderr } = fields;
+function commandFailureFields(error: unknown) {
+  const killed = dataProperty(error, "killed");
+  const code = dataProperty(error, "code");
+  const signal = dataProperty(error, "signal");
+  const stderr = dataProperty(error, "stderr");
   return {
     found: killed.found || code.found || signal.found || stderr.found,
     timedOut: killed.found && killed.value === true &&
@@ -197,7 +174,7 @@ export class PermissionCommandError extends Error implements PermissionCommandFa
     cause: unknown,
     timeoutMs = DEFAULT_PERMISSION_EXEC_TIMEOUT_MS,
   ) {
-    const fields = commandFailureFields(commandFieldSnapshot(cause));
+    const fields = commandFailureFields(cause);
     super(fields.timedOut
       ? `Windows permission inspection timed out after ${timeoutMs}ms`
       : `Windows permission command ${formatPermissionErrorDetail(path.win32.basename(command))} failed (exit code ${fields.exitCode}, signal ${formatPermissionErrorDetail(fields.signal ?? "none")})`,
@@ -244,7 +221,7 @@ export function getPermissionCommandFailure(
       }
     }
   }
-  const fields = commandFailureFields(commandFieldSnapshot(error));
+  const fields = commandFailureFields(error);
   if (!fields.found) return undefined;
   const { found: _found, ...detail } = fields;
   return { command, durationMs: Math.round(durationMs), ...detail };

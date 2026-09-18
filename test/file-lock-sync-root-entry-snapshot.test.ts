@@ -16,6 +16,34 @@ afterEach(() => {
 });
 
 describe("synchronous Root entry snapshots", () => {
+  it.each([false, true])("preserves policy getter and validation order with replaced Root=%s", async (replaceRoot) => {
+    const parent = await tempRoot("fs-safe-sync-root-policy-order-");
+    const directory = path.join(parent, "root");
+    fs.mkdirSync(directory);
+    const lockRoot = await root(directory);
+    const reads: string[] = [];
+    Object.defineProperties(lockRoot.defaults, {
+      mutationSymlinks: { get: () => { reads.push("mutation"); return "invalid"; } },
+      symlinks: { get: () => { reads.push("read"); return "reject"; } },
+    });
+    if (replaceRoot) {
+      fs.renameSync(directory, path.join(parent, "previous-root"));
+      fs.mkdirSync(directory);
+    }
+    const payload = vi.fn(() => ({ owner: "test" }));
+    const acquire = () => acquireFileLockSync(path.join(directory, "state.json"), {
+      ...immediate,
+      lockRoot,
+      payload,
+    });
+
+    if (replaceRoot) expect(acquire).toThrow(expect.objectContaining({ code: "path-mismatch" }));
+    else expect(acquire).toThrow("mutationSymlinks must be reject or follow-parents-within-root");
+    expect(reads).toEqual(["mutation", "read"]);
+    expect(payload).not.toHaveBeenCalled();
+    expect(fs.readdirSync(directory)).toEqual([]);
+  });
+
   it("rejects a structural Root before reading any remaining option getter", async () => {
     const directory = await tempRoot("fs-safe-sync-root-entry-structural-");
     const genuine = await root(directory);

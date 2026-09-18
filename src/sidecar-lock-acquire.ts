@@ -128,7 +128,6 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
   const withinDenialBudget = (): boolean => ++transientDenials <= maxTransientLockDenials;
   const waitForRetry = async (): Promise<void> => {
     admission.release();
-    if (activeDescendant) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
     const elapsed = Date.now() - startedAt;
     if (
       (timeoutMs !== undefined &&
@@ -170,7 +169,6 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
           requestedReentrantOwner === held.reentrantOwner
         ) {
           if (held.releasePromise) {
-            if (activeDescendant) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
             await held.releasePromise.catch(() => undefined);
             held = context.held.get(normalizedTargetPath);
           }
@@ -236,7 +234,6 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
       if (holderWasReplaced()) { await waitForRetry(); continue; }
       held = context.held.get(normalizedTargetPath);
       if (held?.releasePromise) {
-        if (activeDescendant) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
         // Release cleanup never acquires this admission; retaining it here lets
         // the serialized attempt continue without another callback or retry.
         await held.releasePromise.catch(() => undefined);

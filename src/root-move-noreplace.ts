@@ -4,7 +4,6 @@ import { assertAsyncDirectoryGuard, assertSyncDirectoryGuard } from "./directory
 import { FsSafeError } from "./errors.js";
 import { assertMutationNotDenied, type DenyMutationPolicy } from "./deny-mutations.js";
 import {
-  closeNativeParentAdmission,
   openNativeParentAdmission,
   openNativeRootAdmission,
   type NativeParentAdmission,
@@ -202,7 +201,7 @@ export async function movePathNoReplaceNative(
     if (!admission || closedFds.has(admission.fd)) continue;
     closedFds.add(admission.fd);
     try {
-      closeNativeParentAdmission(admission);
+      admission.close();
     } catch (error) {
       closeErrors.push(error);
     }
