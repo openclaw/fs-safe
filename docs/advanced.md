@@ -28,7 +28,8 @@ The exports group into a handful of themes. Each documented helper has its own p
 | `pathScope`, `PathScope`, `PathScopeOptions`, `PathScopeResolveOptions` | [path-scope.md](path-scope.md) | Absolute-path boundary helper with `Result`-shaped returns. |
 | `ensureDirectoryWithinRoot` | [path-scope.md](path-scope.md#ensuredir-rel-options) | Create a directory while enforcing the root boundary; same result contract as `pathScope().ensureDir()`. |
 | `resolvePathWithinRoot`, `resolvePathsWithinRoot` | – | Resolve one or many relative paths against a trusted root. |
-| `resolveExistingPathsWithinRoot`, `resolveStrictExistingPathsWithinRoot` | – | Same, but require the targets to exist. |
+| `resolveExistingPathsWithinRoot` | – | Validate existing regular files inside the root, while allowing missing paths. |
+| `resolveStrictExistingPathsWithinRoot` | – | Require every target to exist as a regular non-symlink file inside the root. |
 | `resolveWritablePathWithinRoot` | – | Resolve a write target inside a root. |
 | `resolveRootPath`, `resolveRootPathSync`, `ResolvedRootPath`, `ROOT_PATH_ALIAS_POLICIES`, `RootPathAliasPolicy` | – | Resolve a root directory honoring alias policy. |
 | `resolvePathViaExistingAncestorSync` | – | Walk to an existing ancestor for paths whose tail does not yet exist. |

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Clarify that `resolveExistingPathsWithinRoot()` allows missing paths and `resolveStrictExistingPathsWithinRoot()` requires existing regular files.
+- Distinguish native beneath mechanisms from the best-effort containment reported by public Root open, read, and writable-open results in every native mode.
 - Snapshot `Root.move()` mutation policy before asynchronous admission so changes to caller-owned deny paths or prefixes cannot change an in-flight move; live revocation remains available through `assertBeforeMutation`.
 - Keep async Root-backed file locks waiting through successive owner handoffs instead of failing with `path-mismatch`, while preserving identity checks and requiring a fresh exclusive acquisition.
 - Recheck native no-clobber `Root.move()` source identity, type, and hardlink policy after the final authority callback so replaced or newly hardlinked sources remain untouched.
