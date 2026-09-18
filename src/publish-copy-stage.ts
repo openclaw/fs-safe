@@ -1,6 +1,6 @@
 import fs, { type BigIntStats } from "node:fs";
 import path from "node:path";
-import type { AnyAsyncDirectoryGuard } from "./directory-guard.js";
+import { assertSyncDirectoryGuard, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup } from "./file-identity.js";
 import type { PublishedWriteIdentity } from "./pinned-write.js";
@@ -14,17 +14,25 @@ export function publishCopyStage(params: {
   identity: BigIntStats;
   parentGuard: AnyAsyncDirectoryGuard;
   assertBeforeMutation?: () => void;
+  onPublicationAttempt?: () => void;
   onPublished?: (identity: PublishedWriteIdentity) => void;
 }): void {
   const { identity, temporaryPath, targetPath } = params;
-  const staged = fs.lstatSync(temporaryPath, { bigint: true });
-  const opened = fs.fstatSync(params.fd, { bigint: true });
-  if (!staged.isFile() || staged.isSymbolicLink() || staged.nlink !== 1n ||
-    !sameFileIdentityForCleanup(staged, identity) ||
-    !sameFileIdentityForCleanup(opened, identity)) {
-    throw new FsSafeError("path-mismatch", "exclusive copy stage changed before publication");
-  }
+  const assertCurrent = () => {
+    assertSyncDirectoryGuard(params.parentGuard);
+    const staged = fs.lstatSync(temporaryPath, { bigint: true });
+    const opened = fs.fstatSync(params.fd, { bigint: true });
+    if (!staged.isFile() || staged.isSymbolicLink() || staged.nlink !== 1n ||
+      !sameFileIdentityForCleanup(staged, identity) ||
+      !sameFileIdentityForCleanup(opened, identity)) {
+      throw new FsSafeError("path-mismatch", "exclusive copy stage changed before publication");
+    }
+  };
+  assertCurrent();
   params.assertBeforeMutation?.();
+  // Caller authority checks can synchronously replace a parent or staged entry.
+  if (params.assertBeforeMutation) assertCurrent();
+  params.onPublicationAttempt?.();
   fs.linkSync(temporaryPath, targetPath);
   let observerRejected = false;
   let observerError: unknown;

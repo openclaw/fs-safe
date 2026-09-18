@@ -5,6 +5,10 @@
 - Compare exact directory identities before and after durability syncs, retry unknown Windows observations once, and reject rounded or unverifiable caller receipts; bind numeric metadata to the same observation and preserve private identity authority across receipt mutation, durable creation, publication, and retained staging.
 - Clarify that `resolveExistingPathsWithinRoot()` allows missing paths and `resolveStrictExistingPathsWithinRoot()` requires existing regular files.
 - Distinguish native beneath mechanisms from the best-effort containment reported by public Root open, read, and writable-open results in every native mode.
+- Add opt-in `atomic: true` to buffered `Root.create()` and `createJson()`, reusing complete staged publication with a hardlink fallback when native support is disabled; retain existing defaults and durability policy. Report atomic/streamed-create cleanup and close failures with publication evidence, and preserve completed Windows destinations after finalization failures.
+- Add independent per-create `durable: "file"` to require file synchronization without strengthening parent-directory sync or changing boolean defaults; flush native Windows publication modes through the retained writable descriptor.
+- Recheck retained parent and staging identities after final publication authority callbacks on JavaScript and native writers, preserving substituted entries before their bytes can be published; retain exact directory identities in creation receipts.
+
 - Snapshot `Root.move()` mutation policy before asynchronous admission so changes to caller-owned deny paths or prefixes cannot change an in-flight move; live revocation remains available through `assertBeforeMutation`.
 - Keep async Root-backed file locks waiting through successive owner handoffs instead of failing with `path-mismatch`, while preserving identity checks and requiring a fresh exclusive acquisition.
 - Recheck native no-clobber `Root.move()` source identity, type, and hardlink policy after the final authority callback so replaced or newly hardlinked sources remain untouched.

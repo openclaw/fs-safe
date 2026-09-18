@@ -1,7 +1,8 @@
 import syncFs, { type BigIntStats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
-import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
+import { createAsyncDirectoryGuard } from "./directory-guard.js";
+import { hasErrorCode, removeOwnedPath } from "./file-cleanup.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup, sha256Hex } from "./file-identity.js";
@@ -19,16 +20,6 @@ const PUBLISHED_READ_FLAGS = resolveReadOpenFlags();
 
 export type AtomicTempFailure = Readonly<{ error: unknown }>;
 
-function hasErrorCode(error: unknown, expected: string): boolean {
-  if ((typeof error !== "object" || error === null) && typeof error !== "function") {
-    return false;
-  }
-  try {
-    return Reflect.get(error as object, "code") === expected;
-  } catch {
-    return false;
-  }
-}
 
 function describeFailure(error: unknown): string {
   try {
@@ -89,6 +80,7 @@ function cleanupFailure(
   return isErrorValue(cleanupError) ? cleanupError : new Error(describeFailure(cleanupError));
 }
 
+
 async function cleanupOwnedPath(params: {
   fsModule: AsyncOwnerFileSystem;
   pathname: string;
@@ -96,23 +88,10 @@ async function cleanupOwnedPath(params: {
   originalFailure?: AtomicTempFailure;
   throwOnCleanupError: boolean;
 }): Promise<boolean> {
-  if (!params.identity) return true;
   try {
-    const current = params.fsModule === fs
-      ? syncFs.lstatSync(params.pathname, { bigint: true })
-      : await params.fsModule.lstat(params.pathname, { bigint: true });
-    if (
-      current.isSymbolicLink() ||
-      !current.isFile() ||
-      current.nlink !== 1n ||
-      !sameFileIdentityForCleanup(current, params.identity)
-    ) {
-      return true;
-    }
-    await params.fsModule.unlink(params.pathname);
+    await removeOwnedPath(params);
     return true;
   } catch (cleanupError) {
-    if (hasErrorCode(cleanupError, "ENOENT")) return true;
     if (params.throwOnCleanupError) {
       throw cleanupFailure(params.originalFailure, cleanupError);
     }
@@ -120,36 +99,6 @@ async function cleanupOwnedPath(params: {
   }
 }
 
-// Borrowed handle: the caller retains it until this best-effort cleanup finishes.
-export async function cleanupPinnedFilePath(params: {
-  pathname: string;
-  handle: FileHandle;
-  identity?: BigIntStats;
-  parentGuard: AnyAsyncDirectoryGuard;
-}): Promise<void> {
-  if (!params.identity) return;
-  try {
-    const guard = params.parentGuard;
-    if ([guard.stat.dev, guard.stat.ino].some(
-      (value) => typeof value === "number" && !Number.isSafeInteger(value),
-    )) return;
-    await assertAsyncDirectoryGuard(guard);
-    const parent = syncFs.lstatSync(guard.dir, { bigint: true });
-    if (parent.isSymbolicLink() || !parent.isDirectory() ||
-      !sameFileIdentityForCleanup(parent, guard.stat)) return;
-    const opened = syncFs.fstatSync(params.handle.fd, { bigint: true });
-    if (!opened.isFile() || opened.nlink !== 1n ||
-      !sameFileIdentityForCleanup(opened, params.identity)) return;
-    await cleanupOwnedPath({
-      fsModule: fs,
-      pathname: params.pathname,
-      identity: params.identity,
-      throwOnCleanupError: false,
-    });
-  } catch {
-    // Unverifiable authority must preserve the path and the original write failure.
-  }
-}
 
 function cleanupOwnedPathSync(params: {
   fsModule: SyncOwnerFileSystem;

@@ -57,13 +57,16 @@ describe.each(modes)("streamed Root.create (native %s)", (mode) => {
       yield Buffer.from("replacement");
       await fs.writeFile(target, "winner", { flag: "wx" });
     }
-    const indeterminate = mode === "require" && process.platform !== "win32" && scenario === "competing";
-    await expect(capability.create("file", input())).rejects.toMatchObject(indeterminate ? {
+    const indeterminate = scenario === "competing";
+    await expect(capability.create("file", input())).rejects.toMatchObject(indeterminate && mode === "require" && process.platform !== "win32" ? {
       cause: {
         name: "SuppressedError",
         error: { code: "not-removable", details: { publication: { status: "indeterminate" } } },
         suppressed: { code: "already-exists", details: { publication: { status: "indeterminate" } } },
       },
+    } : indeterminate ? {
+      code: "already-exists",
+      details: { publication: { status: "indeterminate" }, cleanup: { status: "preserved" } },
     } : { code: "already-exists" });
     expect(consumed).toBe(scenario === "competing");
     expect(await fs.readFile(target, "utf8")).toBe("winner");

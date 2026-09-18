@@ -1,28 +1,24 @@
 import { syncFileBestEffort } from "./file-sync.js";
-import { randomUUID } from "node:crypto";
 import fsSync, { type BigIntStats } from "node:fs";
-import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { normalizeMaxBytes } from "./byte-budget.js";
-import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, createNearestExistingDirectoryGuard, inspectDirectoryIdentity, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
+import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, createNearestExistingDirectoryGuard, inspectDirectoryIdentity, type AsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { syncDirectoryBestEffort } from "./directory-durability.js";
 import type { FileIdentityStat } from "./file-identity.js";
-import { sameFileIdentity, sha256Hex } from "./file-identity.js";
+import { sha256Hex } from "./file-identity.js";
 import { withAsyncDirectoryGuards } from "./guarded-mutation.js";
 import { mkdirPathComponentsWithGuards } from "./guarded-mkdir.js";
 import { runPinnedWriteNative } from "./native-pinned-write.js";
 import { getNativeBinding } from "./native.js";
 import { validatePinnedOperationPayload } from "./pinned-operation.js";
-import { resolveReadOpenFlags } from "./read-open-flags.js";
-import { cleanupPinnedFilePath } from "./replace-file-temp-owner.js";
+import { cleanupPinnedFilePath } from "./file-cleanup.js";
 import { withSidecarLock } from "./sidecar-lock.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
-import { writeAllToFile } from "./write-file-handle.js";
+import { writePinnedInput } from "./pinned-write-input.js";
+import { runPinnedStagedWrite } from "./pinned-write-staged.js";
 import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
-import { writeCopyFileToFd } from "./copy-file-input.js";
-import { publishCopyStage } from "./publish-copy-stage.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 import type { MutationDirectoryObservation } from "./pinned-mutation-observation.js";
 import type { PinnedWriteParams, RenameIdentityPolicy } from "./pinned-write-types.js";
@@ -32,12 +28,6 @@ export type {
   PinnedCreatedDirectoryReceipt, PinnedMutationParentWalkSession,
   PinnedWriteMutationAdmission, PinnedWriteParams,
 } from "./pinned-write-types.js";
-
-function byteLength(input: string | Buffer, encoding: BufferEncoding | undefined): number {
-  return typeof input === "string"
-    ? Buffer.byteLength(input, encoding ?? "utf8")
-    : input.byteLength;
-}
 
 function assertSafeBasename(basename: string): void {
   if (
@@ -52,33 +42,9 @@ function assertSafeBasename(basename: string): void {
   }
 }
 
-function assertWithinMaxBytes(bytes: number, maxBytes: number | undefined): void {
-  if (maxBytes !== undefined && bytes > maxBytes) {
-    throw new FsSafeError(
-      "too-large",
-      `file exceeds limit of ${maxBytes} bytes (got at least ${bytes})`,
-    );
-  }
-}
-
 function fastParentGuardDeopt(error: unknown): error is FsSafeError {
   return error instanceof FsSafeError &&
     (error.code === "path-mismatch" || error.code === "not-file");
-}
-
-async function writeStreamToHandle(
-  stream: AsyncIterable<Uint8Array | string>,
-  handle: FileHandle,
-  maxBytes: number | undefined,
-  assertBeforeMutation?: () => void,
-): Promise<void> {
-  let bytes = 0;
-  for await (const chunk of stream) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
-    bytes += buffer.byteLength;
-    assertWithinMaxBytes(bytes, maxBytes);
-    await writeAllToFile(handle, buffer, { assertBeforeMutation });
-  }
 }
 
 const PINNED_WRITE_SNAPSHOT_KEYS: readonly PropertyKey[] = [
@@ -222,7 +188,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
   let parentPath = params.relativeParentPath
     ? path.join(params.rootPath, ...params.relativeParentPath.split("/"))
     : params.rootPath;
-  let parentGuard: AnyAsyncDirectoryGuard | undefined;
+  let parentGuard: AsyncDirectoryGuard<BigIntStats> | undefined;
   let parentAdmitted = false;
   const initialTargetPath = path.join(parentPath, params.basename);
   const retainedTargetPath = mutationAdmission?.beginParentWalk?.();
@@ -324,8 +290,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
     }));
     await assertAsyncDirectoryGuard(parentGuard);
   }
-  if (params.overwrite === false && (params.input.kind === "buffer" ||
-    (params.input.kind === "stream" && !params.input.stageBeforePublish))) {
+  if (params.overwrite === false && params.input.kind !== "file" && !params.input.stageBeforePublish) {
     const assertBeforeMutation = () => {
       assertFinalSymlinkRejected(targetPath, params.rejectFinalSymlink);
       params.assertBeforeMutation?.();
@@ -353,20 +318,13 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
     try {
       const verificationIdentity = fsSync.fstatSync(handle.fd, { bigint: true });
       createdIdentity = verificationIdentity;
-      if (params.input.kind === "buffer") {
-        assertWithinMaxBytes(
-          byteLength(params.input.data, params.input.encoding),
-          params.maxBytes,
-        );
-        await writeAllToFile(handle, params.input.data, {
-          encoding: params.input.encoding, assertBeforeMutation,
-        });
-      } else {
-        await writeStreamToHandle(params.input.stream, handle, params.maxBytes, assertBeforeMutation);
-      }
+      await writePinnedInput(handle, params.input, params.maxBytes, assertBeforeMutation);
       // Content writes may clear set-ID bits; finalize them through the owned fd.
       await handle.chmod(params.mode);
-      if (params.sync !== false) await syncFileBestEffort(handle);
+      if (params.sync !== false) {
+        if (params.strictFileSync) await handle.sync();
+        else await syncFileBestEffort(handle);
+      }
       const stat = fsSync.fstatSync(handle.fd);
       if (params.sync !== false) await syncDirectoryBestEffort(parentPath);
       // Publication is complete. A failed outer check must not remove its target.
@@ -384,106 +342,5 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
     }
   }
 
-  // Private staging must not consume the destination basename's filename budget.
-  const tempPath = path.join(parentPath, `.fs-safe-${randomUUID()}.tmp`);
-  const tempFlags =
-    fsSync.constants.O_WRONLY |
-    fsSync.constants.O_CREAT |
-    fsSync.constants.O_EXCL |
-    (process.platform !== "win32" && "O_NOFOLLOW" in fsSync.constants
-      ? fsSync.constants.O_NOFOLLOW
-      : 0);
-  let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
-  let tempStat: Awaited<ReturnType<NonNullable<typeof handle>["stat"]>> | undefined;
-  let tempIdentity: BigIntStats | undefined;
-  let readHandle: FileHandle | undefined;
-  let renamed = false;
-  try {
-    params.assertBeforeMutation?.();
-    handle = await fs.open(tempPath, tempFlags, params.mode);
-    let verificationIdentity = fsSync.fstatSync(handle.fd, { bigint: true });
-    tempIdentity = verificationIdentity;
-    if (params.input.kind === "buffer") {
-      assertWithinMaxBytes(
-        byteLength(params.input.data, params.input.encoding),
-        params.maxBytes,
-      );
-      await writeAllToFile(handle, params.input.data, {
-        encoding: params.input.encoding, assertBeforeMutation: params.assertBeforeMutation,
-      });
-    } else if (params.input.kind === "file") {
-      await writeCopyFileToFd(handle.fd, params.input, params.maxBytes, params.assertBeforeMutation);
-    } else {
-      await writeStreamToHandle(params.input.stream, handle, params.maxBytes, params.assertBeforeMutation);
-    }
-    tempStat = fsSync.fstatSync(handle.fd);
-    const tempPathStat = fsSync.lstatSync(tempPath);
-    if (tempPathStat.isSymbolicLink() || !sameFileIdentity(tempPathStat, tempStat)) {
-      throw new FsSafeError("path-mismatch", "fallback temp path changed during write");
-    }
-    const expectedTempStat = tempStat;
-    await handle.chmod(params.mode);
-    if (params.sync !== false) await syncFileBestEffort(handle);
-    if (params.input.kind === "file") await params.input.verifySource();
-    let verifiedIdentity: FileIdentityStat = expectedTempStat;
-    await withAsyncDirectoryGuards([parentGuard], async () => {
-      assertFinalSymlinkRejected(targetPath, params.rejectFinalSymlink);
-      if (params.overwrite === false) {
-        publishCopyStage({
-          temporaryPath: tempPath, targetPath, fd: handle!.fd,
-          identity: tempIdentity!, parentGuard,
-          assertBeforeMutation: params.assertBeforeMutation,
-          onPublished: (identity) => {
-            renamed = true;
-            params.onPublished?.(identity);
-          },
-        });
-      } else {
-        params.assertBeforeMutation?.();
-        await fs.rename(tempPath, targetPath);
-        renamed = true;
-        params.onPublished?.(verificationIdentity);
-      }
-      await getFsSafeTestHooks()?.afterPinnedWriteFallbackRename?.(targetPath);
-      if (params.sync !== false) await syncDirectoryBestEffort(parentPath);
-      const targetStat = fsSync.lstatSync(targetPath);
-      if (targetStat.isSymbolicLink()) {
-        throw new FsSafeError("path-mismatch", "fallback target changed during write");
-      }
-      if (!sameFileIdentity(targetStat, expectedTempStat)) {
-        // On filesystems like rclone FUSE, rename(2) can give the destination a
-        // different inode from the source temp fd even with zero concurrency. The
-        // caller must ensure mutual exclusion before passing "verify-content";
-        // fall back to a content hash for this rename-boundary check only.
-        if (params.onRenameIdentityMismatch !== "verify-content") {
-          throw new FsSafeError("path-mismatch", "fallback target changed during write");
-        }
-        if (params.input.kind !== "buffer") {
-          throw new FsSafeError("path-mismatch", "fallback target changed during write");
-        }
-        const expectedHash = sha256Hex(params.input.data, params.input.encoding);
-        readHandle = await fs.open(targetPath, resolveReadOpenFlags());
-        const readHandleStat = fsSync.fstatSync(readHandle.fd, { bigint: true });
-        const actualHash = sha256Hex(await readHandle.readFile());
-        if (actualHash !== expectedHash) {
-          throw new FsSafeError("path-mismatch", "fallback target changed during write");
-        }
-        // The content-verified destination, not the old temp inode, is now pinned.
-        verificationIdentity = readHandleStat;
-        // Preserve the helper's legacy numeric return facts, not the private proof.
-        verifiedIdentity = { dev: Number(readHandleStat.dev), ino: Number(readHandleStat.ino) };
-      }
-    });
-    await params.verifyPublished?.((readHandle ?? handle).fd, verificationIdentity, parentGuard);
-    return { dev: verifiedIdentity.dev, ino: verifiedIdentity.ino };
-  } finally {
-    try {
-      if (!renamed && handle) {
-        await cleanupPinnedFilePath({ pathname: tempPath, handle, identity: tempIdentity, parentGuard });
-      }
-    } finally {
-      await readHandle?.close().catch(() => undefined);
-      await handle?.close().catch(() => undefined);
-    }
-  }
+  return await runPinnedStagedWrite(params, parentPath, parentGuard);
 }

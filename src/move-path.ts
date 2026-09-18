@@ -18,7 +18,7 @@ import {
 } from "./move-path-cleanup.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { realpathSync } from "./realpath.js";
-import { cleanupPinnedFilePath } from "./replace-file-temp-owner.js";
+import { cleanupPinnedFilePath } from "./file-cleanup.js";
 import { createMoveStageOwner } from "./move-path-stage.js";
 import { admitStandalonePublicationPath } from "./standalone-publication-path.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";

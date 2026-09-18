@@ -6,11 +6,11 @@ half-written replacement appears at the destination. Create-only writes
 (`create`, `createJson`, and `write` with `overwrite: false`) use sibling-temp
 staging with an atomic no-replace rename only on backends that provide one —
 the native binding, which `require` mode guarantees and `auto` mode uses when
-the binding loads. The pure-JavaScript fallback has no atomic no-clobber
-rename and does not stage: it claims the final name exclusively with `O_EXCL`
-and writes content in place, so a concurrent observer can see the new file
-before its content is complete. Use `require` mode when that visibility window
-matters.
+the binding loads. Ordinary buffered creation in the pure-JavaScript fallback
+claims the final name exclusively with `O_EXCL` and writes content in place, so
+a concurrent observer can see the new file before its content is complete.
+Buffered `create` and `createJson` accept `atomic: true` to stage complete content
+on this fallback too. Streamed creation already stages before publication.
 `append` and `openWritable` intentionally modify an opened file in place;
 `move`, `remove`, and `mkdir` mutate directory entries rather than file bytes.
 Each verb applies the boundary checks appropriate to its operation.
@@ -113,6 +113,14 @@ Native and pure-JavaScript Windows writers honor the option. Replacement writes
 sync staged content before rename and the final mode through the retained file
 handle. Directory sync remains best-effort.
 
+For `create` and `createJson`, `durable: "file"` requires each file sync to succeed,
+including on `EPERM`; it overrides a disabled Root durability default. Parent
+directory synchronization retains the existing best-effort policy. This also
+applies to streamed creation and is independent of publication strategy. Boolean
+durability options keep their existing behavior, including compatibility paths
+that tolerate `EPERM`. A failed file sync before staged publication prevents
+publication; a failure after publication can leave the complete file present.
+
 POSIX modes without read permission, including `0o000` and `0o200`, succeed:
 final verification uses a descriptor retained by the writer rather than reopening
 the published file. The requested mode is not relaxed for verification.
@@ -153,6 +161,41 @@ try {
   if (err instanceof FsSafeError && err.code !== "already-exists") throw err;
 }
 ```
+
+### Atomic buffered creation
+
+```ts
+await fs.create("config/seed.json", initial, { atomic: true });
+await fs.createJson("config/settings.json", { enabled: true }, { atomic: true });
+await fs.create("config/flushed.json", initial, { atomic: true, durable: "file" });
+```
+
+`atomic: true` keeps the destination absent until all bytes have been written.
+The native backend uses its no-replace rename; the JavaScript fallback hardlinks
+the completed stage and unlinks its temporary name in the same JavaScript turn.
+The fallback requires hardlink support and fails without publishing partial bytes
+when that mechanism is unavailable. Other processes can briefly observe both
+names. Existing and raced entries are preserved, including dangling symlinks;
+ordinary confinement, type, hardlink, and symlink-policy rejections still apply.
+`assertBeforeMutation` retains its live checks through content writes and publication.
+
+Omitted or `false` preserves the existing buffered behavior. The option belongs
+to buffered `create` and `createJson`, not replacement writes or Root defaults.
+Streamed creation has no atomic opt-out. `atomic` changes visibility, not the
+existing `durable` file/directory synchronization policy; it does not turn
+best-effort synchronization into a strict crash-durability guarantee or strengthen
+JavaScript pathname containment.
+
+Atomic and streamed creates settle owned cleanup and close operations before
+returning. Failed or unverifiable cleanup is reported rather than silently
+discarded. Errors after publication and incomplete-settlement errors carry the
+existing `StagedFileFailureDetails` publication/cleanup receipts where the writer
+can establish them; native disposal can retain them inside a `SuppressedError`
+cause. Preserve those details when handling errors: a rejection can follow
+complete publication, and an indeterminate link or native rename must preserve names for
+recovery. A cleanup or close failure also retains the original operation failure.
+No later verification, mode, or synchronization failure authorizes deleting an
+already published complete destination. See [receipt meanings](staged-file.md).
 
 ### Streamed creation
 
