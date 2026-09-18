@@ -20,6 +20,8 @@
   live native/POSIX controls. Hostile changed-outcome cases remain
   correctness-only rather than being treated as equivalent performance work.
 
+- Avoid repeated descriptor walks and missing-field allocations when formatting ordinary permission-command failures.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights
