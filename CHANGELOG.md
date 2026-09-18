@@ -4,6 +4,8 @@
 
 - Add `maxDepth` to `probePathSuffixAliasesSync()` for deeper prospective paths, with proportional operation budgets and unchanged default, string-length, identity, and cleanup limits.
 
+- Cap configurable-depth suffix probing at 32,768 forward observations while always completing owned cleanup.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights

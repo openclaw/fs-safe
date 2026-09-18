@@ -339,6 +339,19 @@ it.each([{ depth: 33, creations: 66 }, { depth: 65, creations: 130 }])(
   model.expectClean();
 });
 
+it("bounds maximum-length configurable-depth probes and completes owned cleanup", async () => {
+  const directory = await tempRoot("fs-safe-suffix-absolute-work-budget-");
+  const model = countedFilesystem(directory);
+  expect(probePathSuffixAliasesSync({
+    directory, left: suffix("A", 4096), right: suffix("a", 4096),
+    maxDepth: Number.MAX_SAFE_INTEGER,
+  })).toBeUndefined();
+  // Includes mandatory reverse cleanup, which is never abandoned at the forward cap.
+  expect(model.observations()).toBeLessThan(65_536);
+  expect(model.created.length).toBeLessThan(4096);
+  model.expectClean();
+});
+
 it("cleans normalization-heavy deep probes when their observation budget is exhausted", async () => {
   const directory = await tempRoot("fs-safe-suffix-scaled-alternating-lengths-");
   const model = countedFilesystem(directory);

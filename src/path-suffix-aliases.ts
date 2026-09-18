@@ -29,6 +29,7 @@ const MAX_SUFFIX_DEPTH = 32;
 const MAX_MKDIR_ATTEMPTS = 128;
 const MAX_CREATED_DIRECTORIES = 64;
 const MAX_FORWARD_OBSERVATIONS = 4_096;
+const MAX_SCALED_FORWARD_OBSERVATIONS = 32_768;
 const PROBE_NAME_LENGTH = 6;
 const PROBE_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 const PROBE_FIRST_ALPHABET = "bdefghijkmoqrstuvwxyz";
@@ -172,7 +173,9 @@ class ProbeDirectories {
   constructor(private readonly requestedDirectory: string, depth: number) {
     // The suffix-length limit bounds actual depth, so these products remain safe integers.
     const scale = Math.max(1, depth / MAX_SUFFIX_DEPTH);
-    this.maxObservations = MAX_FORWARD_OBSERVATIONS * scale * scale;
+    this.maxObservations = Math.min(
+      MAX_SCALED_FORWARD_OBSERVATIONS, MAX_FORWARD_OBSERVATIONS * scale * scale,
+    );
     this.maxMkdirAttempts = MAX_MKDIR_ATTEMPTS * scale;
     this.maxCreations = MAX_CREATED_DIRECTORIES * scale;
     this.observe(1);

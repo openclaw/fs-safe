@@ -68,6 +68,10 @@ path. Identical, valid, within-budget suffixes return `true` without filesystem
 access or a predicate call. This does not prove that the directory exists or that
 the suffix can be created.
 
+The forward-observation allowance never exceeds 32,768, even with a large
+`maxDepth`. A deeper or repeatedly colliding probe can return `undefined` when
+that ceiling is reached. Reverse cleanup still runs outside this allowance.
+
 ## Resource budgets
 
 The default limits for one call are:
