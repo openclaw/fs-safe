@@ -3,6 +3,11 @@
 use fs_safe_archive_core::{TarMetadataMeter, TarMeterLimits, TarMember};
 use std::cell::RefCell;
 
+mod allocation;
+mod bzip2;
+mod codec;
+mod zstd;
+
 struct State {
     input: [u8; 65536],
     parser: Option<TarMetadataMeter<()>>,

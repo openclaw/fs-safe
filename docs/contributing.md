@@ -19,10 +19,48 @@ manager version declared in `package.json`.
 pnpm build
 ```
 
-Runs TypeScript compilation and builds the portable Rust TAR parser for
-`wasm32-unknown-unknown`. Contributors need Rust (the native crate's declared
-minimum or newer) and `rustup target add wasm32-unknown-unknown`; Alpine's
-packaged toolchain uses `rust-wasm`. `pnpm archive:wasm` rebuilds just the parser.
+Runs TypeScript compilation and builds the portable Rust TAR parser and its
+bzip2/zstd codecs for `wasm32-unknown-unknown`. Contributors need Rust (the
+native crate's declared minimum or newer), `rustup target add
+wasm32-unknown-unknown`, and LLVM's WebAssembly-capable `clang` and `llvm-ar`.
+The system's native `ar` is not sufficient. `pnpm archive:wasm` rebuilds just
+the portable module.
+
+Linux, macOS, and Windows CI use the same pinned WASI SDK 27 LLVM toolchain;
+Alpine uses its versioned LLVM 20 packages alongside `rust-wasm`. For local
+builds, install LLVM through your package manager or use the official
+[WASI SDK](https://github.com/WebAssembly/wasi-sdk/releases/tag/wasi-sdk-27).
+On macOS, `brew install llvm` supplies the archiver missing from Apple's
+Command Line Tools. On Windows, install the LLVM distribution with both
+`clang.exe` and `llvm-ar.exe`. On Linux, install the matching `clang` and
+`llvm` packages; a GCC-only build toolchain cannot compile these WASM codecs.
+
+The build discovers tools on `PATH`, in `LLVM_PATH/bin`, in Homebrew's LLVM
+prefixes, and in Windows' standard LLVM installation. It also checks the
+versioned `clang-18` through `clang-21` and `llvm-ar-18` through `llvm-ar-21`
+executables. To select another installation explicitly, set
+`CC_wasm32_unknown_unknown` and `AR_wasm32_unknown_unknown` to its compiler
+and archiver. The corresponding hyphenated target variables and cc-rs's
+`TARGET_CC`/`TARGET_AR` or `CC`/`AR` overrides are also respected; an unusable
+explicit override fails with a builder diagnostic instead of being ignored.
+Clang's implicit configuration is disabled for this target so the WASI SDK's
+default libc/sysroot cannot leak into the import-free module. These settings
+affect compilation only and do not become runtime dependencies.
+
+The build disables release LTO only in the WASM Cargo subprocess. An observed
+Rust 1.98.1 optimized-WASM-LTO allocation/free failure makes that necessary;
+the native release profile stays unchanged. The WASM linker strips debug
+sections to keep the bundled module small without stripping native binaries.
+The build verifies zero host
+imports and one unshared 32-bit memory with the existing 256 MiB maximum
+before copying the artifact. Allocator regression tests build a separate
+instrumented module with `pnpm archive:wasm:allocator-tests` under the Cargo
+target directory. That module is never copied to `dist/` or packaged. `pnpm
+check` and coverage collection build it explicitly before testing. After a
+fresh checkout, run that command before `pnpm test`, `pnpm test:coverage`, or
+focused `test/archive-codec-wasm-allocator.test.ts` runs; the tests fail if
+their prerequisite artifact is missing.
+
 The import-free asset lands at `dist/archive-parser.wasm`; source tests and
 compiled consumers both resolve that generated artifact. Run `pnpm build`
 before source tests in a fresh checkout. Do not commit `dist/` or built WASM.

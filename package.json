@@ -146,10 +146,10 @@
     "test:bun": "bun node_modules/vitest/vitest.mjs run --config scripts/bun-vitest.config.ts",
     "test:bun:native": "bun scripts/bun-native-proof.mjs && bun node_modules/vitest/vitest.mjs run --config scripts/bun-native-vitest.config.ts",
     "test:coverage": "vitest run --coverage",
-    "test:coverage:collect": "pnpm build && vitest run --coverage --coverage.reporter=json --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 --coverage.thresholds.statements=0 --coverage.thresholds.branches=0",
+    "test:coverage:collect": "pnpm build && pnpm archive:wasm:allocator-tests && vitest run --coverage --coverage.reporter=json --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 --coverage.thresholds.statements=0 --coverage.thresholds.branches=0",
     "test:coverage:merge": "node scripts/merge-coverage.mjs",
     "test:security": "vitest run test/fs-safe.test.ts test/read-boundary-bypass.test.ts test/write-boundary-bypass.test.ts test/additional-boundary-bypass.test.ts test/adversarial-boundary-payloads.test.ts",
-    "check": "pnpm lint:file-size && pnpm lint:fs-boundary && pnpm build && pnpm docs:check && pnpm test && node scripts/check-pack.mjs",
+    "check": "pnpm lint:file-size && pnpm lint:fs-boundary && pnpm build && pnpm archive:wasm:allocator-tests && pnpm docs:check && pnpm test && node scripts/check-pack.mjs",
     "docs:check": "node scripts/check-doc-examples.mjs",
     "docs:site": "node scripts/build-docs-site.mjs",
     "native:build": "pnpm --filter @openclaw/fs-safe-native-build build",
@@ -166,6 +166,7 @@
     "crabbox:stop": "crabbox stop",
     "crabbox:warmup": "crabbox warmup",
     "archive:wasm": "node scripts/build-archive-wasm.mjs",
+    "archive:wasm:allocator-tests": "node scripts/build-archive-wasm.mjs --allocator-tests",
     "archive:producer-smoke": "node scripts/archive-producer-smoke.mjs"
   },
   "optionalDependencies": {

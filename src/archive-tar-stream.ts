@@ -1,11 +1,12 @@
 import fs from "node:fs";
 import { Readable, Writable } from "node:stream";
-import { pipeline } from "node:stream/promises";
+import { finished, pipeline } from "node:stream/promises";
 import { createGunzip } from "node:zlib";
 import { GzipInput, isGzipBuffer, validateGzipBufferTail, validateGzipContainerTail } from "./archive-gzip-tail.js";
 import { ArchiveFormatError } from "./archive-errors.js";
+import type { ArchiveKind } from "./archive-kind.js";
 import type { TarMeterLimits } from "./archive-limits.js";
-import { TarParserStream, type AdmittedTarMember } from "./archive-tar-wasm.js";
+import { TarParserStream, TarWasmSession, type AdmittedTarMember } from "./archive-tar-wasm.js";
 import { readFileWindowFully } from "./positional-read.js";
 
 /** Buffers are private immutable snapshots, just like the staged file route. */
@@ -25,47 +26,66 @@ async function gzipFile(filePath: string): Promise<boolean> {
 }
 
 async function withTarStream<T>(params: TarInput & {
-  limits: TarMeterLimits; signal?: AbortSignal;
+  limits: TarMeterLimits; signal?: AbortSignal; kind?: Exclude<ArchiveKind, "zip">;
   onMember?: (entry: AdmittedTarMember) => void;
 }, consume: (parser: TarParserStream) => Promise<T>): Promise<T> {
   const buffer = params.archiveBuffer;
-  const gzip = buffer !== undefined ? isGzipBuffer(buffer) : await gzipFile(params.archivePath!);
-  const parser = new TarParserStream(params.limits, params.onMember);
-  const input = buffer !== undefined
-    ? Readable.from(bufferChunks(buffer), { objectMode: false, highWaterMark: 65536 })
-    : fs.createReadStream(params.archivePath!, { highWaterMark: 65536 });
-  // Match the WASM input window for both staged files and buffered reads.
-  const decoder = gzip ? createGunzip({ chunkSize: 65536 }) : undefined;
-  const gzipInput = decoder ? new GzipInput(decoder) : undefined;
-  const destroy = (error?: Error) => {
-    input.destroy(error); gzipInput?.destroy(error); decoder?.destroy(error); parser.destroy(error);
-  };
-  const pumps = decoder && gzipInput
-    ? [pipeline(decoder, parser, { signal: params.signal }), pipeline(input, gzipInput, { signal: params.signal })]
-    : [pipeline(input, parser, { signal: params.signal })];
-  // Either pump tears down both routes; join every pump even after the first failure.
-  const settled = Promise.all(pumps.map((pump) => pump.then(() => undefined, (cause: unknown) => {
-    const error = cause instanceof Error ? cause : new Error(String(cause));
-    destroy(error);
-    return error;
-  }))).then((errors) => errors.find((error) => error !== undefined));
+  const kind = params.kind ?? "tar";
+  const gzip = kind === "tar" && (buffer !== undefined ? isGzipBuffer(buffer) : await gzipFile(params.archivePath!));
+  const session = new TarWasmSession(params.limits);
   try {
-    const result = await consume(parser);
-    const error = await settled;
-    if (error) throw error;
-    if (gzipInput) {
-      if (buffer !== undefined) await validateGzipBufferTail(buffer, gzipInput.tailOffset, params.signal);
-      else await validateGzipContainerTail(params.archivePath!, gzipInput.tailOffset, params.signal);
+    const parser = new TarParserStream(params.limits, params.onMember, session);
+    const input = buffer !== undefined
+      ? Readable.from(bufferChunks(buffer), { objectMode: false, highWaterMark: 65536 })
+      : fs.createReadStream(params.archivePath!, { highWaterMark: 65536 });
+    // Match the WASM input window for both staged files and buffered reads.
+    const decoder = gzip ? createGunzip({ chunkSize: 65536 }) : undefined;
+    const gzipInput = decoder ? new GzipInput(decoder) : undefined;
+    const destroy = (error?: Error) => {
+      input.destroy(error); gzipInput?.destroy(error); decoder?.destroy(error); parser.destroy(error);
+    };
+    // A pipeline with an async-generator stage can settle before its file's
+    // asynchronous close. Join the actual close events before freeing WASM.
+    const closed = Promise.all([input, parser, ...(decoder ? [decoder] : []), ...(gzipInput ? [gzipInput] : [])].map(stream => {
+      const closing = new Promise<void>(resolve => { stream.once("close", resolve); });
+      return finished(stream, { cleanup: true }).then(() => undefined, (cause: unknown) =>
+        cause instanceof Error ? cause : new Error(String(cause)),
+      ).then(async error => { await closing; return error; });
+    }));
+    const pumps = decoder && gzipInput
+      ? [pipeline(decoder, parser, { signal: params.signal }), pipeline(input, gzipInput, { signal: params.signal })]
+      : kind !== "tar"
+        ? [pipeline(input, (source) => session.decode(source, kind, params.signal), parser, { signal: params.signal })]
+        : [pipeline(input, parser, { signal: params.signal })];
+    // Either pump tears down both routes; join every pump even after the first failure.
+    const settled = Promise.all(pumps.map((pump) => pump.then(() => undefined, (cause: unknown) => {
+      const error = cause instanceof Error ? cause : new Error(String(cause));
+      destroy(error);
+      return error;
+    }))).then((errors) => errors.find((error) => error !== undefined));
+    try {
+      const result = await consume(parser);
+      const error = await settled;
+      if (error) throw error;
+      const closeError = (await closed).find(error => error !== undefined);
+      if (closeError) throw closeError;
+      if (gzipInput) {
+        if (buffer !== undefined) await validateGzipBufferTail(buffer, gzipInput.tailOffset, params.signal);
+        else await validateGzipContainerTail(params.archivePath!, gzipInput.tailOffset, params.signal);
+      }
+      return result;
+    } finally {
+      destroy();
+      await settled;
+      await closed;
     }
-    return result;
   } finally {
-    destroy();
-    await settled;
+    session.dispose();
   }
 }
 
 export async function inspectTar(params: TarInput & {
-  limits: TarMeterLimits; signal?: AbortSignal;
+  limits: TarMeterLimits; signal?: AbortSignal; kind?: Exclude<ArchiveKind, "zip">;
   onMember?: (entry: AdmittedTarMember) => void;
 }): Promise<void> {
   await withTarStream(params, async (parser) => {
@@ -76,7 +96,7 @@ export async function inspectTar(params: TarInput & {
 /** Replay in physical order, retaining at most one decoded chunk. Every range
  * comes from complete admission of the immutable input. */
 export async function replayTar<T extends AdmittedTarMember>(params: TarInput & {
-  limits: TarMeterLimits; signal?: AbortSignal;
+  limits: TarMeterLimits; signal?: AbortSignal; kind?: Exclude<ArchiveKind, "zip">;
   members: readonly T[];
   consume(member: T, payload: AsyncIterable<Buffer>): Promise<void>;
 }): Promise<void> {

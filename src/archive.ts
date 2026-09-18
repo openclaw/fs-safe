@@ -31,7 +31,7 @@ import {
   type ResolvedArchiveExtractLimits,
   type TarMeterLimits,
 } from "./archive-limits.js";
-import { assertPortableArchiveKind, resolveArchiveKind } from "./archive-kind.js";
+import { resolveArchiveKind, type ArchiveKind } from "./archive-kind.js";
 import {
   prepareArchiveDestinationGuard,
   preparePrivateArchiveOutputPath,
@@ -343,8 +343,7 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
     );
     return;
   }
-  assertPortableArchiveKind(kind);
-  if (kind === "tar") {
+  if (kind !== "zip") {
     await withExtractionDeadline(params.timeoutMs, label, async (deadline) => {
       const stagedArchive = await stageArchiveFileForExtraction({
         archivePath: options.archivePath,
@@ -352,7 +351,7 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
         deadline,
       });
       try {
-        await extractWasmTar({ archivePath: stagedArchive.path, options, limits, tarLimits, deadline });
+        await extractWasmTar({ archivePath: stagedArchive.path, kind, options, limits, tarLimits, deadline });
       } finally {
         await stagedArchive.cleanup();
       }
@@ -366,13 +365,13 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
 }
 
 async function extractWasmTar(params: {
-  archivePath: string; options: Pick<ExtractArchiveOptions, "destDir" | "durable" | "stripComponents" | "entryModes" | "entryFilter" | "onFiltered">;
+  archivePath: string; kind: Exclude<ArchiveKind, "zip">; options: Pick<ExtractArchiveOptions, "destDir" | "durable" | "stripComponents" | "entryModes" | "entryFilter" | "onFiltered">;
   limits: ResolvedArchiveExtractLimits;
   tarLimits: TarMeterLimits; deadline: ExtractionDeadline;
 }): Promise<void> {
   const { options, deadline, tarLimits } = params;
   const manifest: AdmittedTarMember[] = [];
-  await inspectTar({ archivePath: params.archivePath, limits: tarLimits, signal: deadline.signal,
+  await inspectTar({ archivePath: params.archivePath, kind: params.kind, limits: tarLimits, signal: deadline.signal,
     onMember: (entry) => { manifest.push(entry); } });
   deadline.check();
   const destinationGuard = await prepareArchiveDestinationGuard(options.destDir);
@@ -385,7 +384,7 @@ async function extractWasmTar(params: {
       const planned = planEntry(entry);
       return planned ? [{ ...entry, ...planned }] : [];
     });
-    await replayTar({ archivePath: params.archivePath, limits: tarLimits, signal: deadline.signal, members: accepted,
+    await replayTar({ archivePath: params.archivePath, kind: params.kind, limits: tarLimits, signal: deadline.signal, members: accepted,
       async consume(member, payload) {
         deadline.check();
         await preparePrivateArchiveOutputPath({ destinationDir: stagingDir, destinationRealDir: stagingDir,

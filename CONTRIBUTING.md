@@ -16,7 +16,9 @@ described in [SECURITY.md](SECURITY.md).
 
 ## Development Setup
 
-Use the Node.js and pnpm versions declared by the repository.
+Use the Node.js and pnpm versions declared by the repository. Source builds also
+need Rust and a WebAssembly-capable LLVM toolchain (`clang` and `llvm-ar`); see
+the [builder setup](docs/contributing.md#build) for Linux, macOS, and Windows.
 
 ```bash
 rustup target add wasm32-unknown-unknown

@@ -5,6 +5,7 @@ import { gzipSync } from "node:zlib";
 import JSZip from "jszip";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { tarFixture, updateTarChecksum } from "./helpers/archive-fuzz.js";
+import { compressedTarFraming } from "./helpers/archive-tar-framing-compressed.js";
 import { useTempDirs } from "./helpers/vitest.js";
 import {
   ARCHIVE_LIMIT_ERROR_CODE,
@@ -408,14 +409,24 @@ describe("bounded archive reads", () => {
     expect(readEntry).toHaveBeenCalledTimes(3);
   });
 
-  it("requires native support for explicitly selected zstd and bzip2 TAR reads", async () => {
-    const root = await tempRoot("fs-safe-read-compressed-");
-    const archivePath = path.join(root, "fixture.bin");
-    await fs.writeFile(archivePath, "not compressed");
+  describe.each(["off", "auto"] as const)("explicit compressed TAR reads mode=%s", (mode) => {
+    it.each(["tar-zstd", "tar-bzip2"] as const)("bounds the selected %s member without a native helper", async (kind) => {
+      configureFsSafeNative({ mode });
+      const loader = vi.fn(() => { throw new Error("platform package omitted"); });
+      __setNativeLoaderForTest(loader);
+      const root = await tempRoot("fs-safe-read-compressed-");
+      const archivePath = path.join(root, "fixture.bin");
+      await fs.writeFile(archivePath, Buffer.from(compressedTarFraming[0][kind], "base64"));
 
-    await expect(readArchiveEntry(archivePath, "value", { maxBytes: 5, kind: "tar-zstd" }))
-      .rejects.toMatchObject({ code: "helper-unavailable" });
-    await expect(readArchiveEntry(archivePath, "value", { maxBytes: 5, kind: "tar-bzip2" }))
-      .rejects.toMatchObject({ code: "helper-unavailable" });
+      await expect(readArchiveEntry(archivePath, "value", { maxBytes: 7, kind }))
+        .resolves.toEqual(Buffer.from("payload"));
+      for (const maxBytes of [0, 6]) {
+        await expect(readArchiveEntry(archivePath, "value", { maxBytes, kind }))
+          .rejects.toMatchObject({ name: "ArchiveLimitError", code: "archive-entry-extracted-size-exceeds-limit" });
+      }
+      await expect(readArchiveEntry(archivePath, "missing", { maxBytes: 7, kind }))
+        .rejects.toThrow("archive entry not found: missing");
+      expect(loader).toHaveBeenCalledTimes(mode === "off" ? 0 : 1);
+    });
   });
 });

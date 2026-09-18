@@ -1,37 +1,27 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { FsSafeError } from "./errors.js";
 import { getNativeBinding } from "./native.js";
 import { normalizeLowercaseStringOrEmpty } from "./string-coerce.js";
 
 export type ArchiveKind = "tar" | "tar-bzip2" | "tar-zstd" | "zip";
 
 const TAR_SUFFIXES = [".tgz", ".tar.gz", ".tar"];
-const NATIVE_TAR_SUFFIXES = [
+const COMPRESSED_TAR_SUFFIXES = [
   { suffixes: [".tbz2", ".tbz", ".tar.bz2"], kind: "tar-bzip2" },
   { suffixes: [".tzst", ".tar.zst", ".tar.zstd"], kind: "tar-zstd" },
 ] as const;
-
-function requireNativeArchiveKind(kind: "tar-bzip2" | "tar-zstd"): ArchiveKind {
-  if (!getNativeBinding()) {
-    throw new FsSafeError(
-      "helper-unavailable",
-      `${kind} archives require the matching optional native platform package; ` +
-        "install @openclaw/fs-safe with optional dependencies enabled on a supported platform and use FS_SAFE_NATIVE_MODE=auto or require",
-    );
-  }
-  return kind;
-}
 
 export function resolveArchiveKind(filePath: string): ArchiveKind | null {
   const lower = normalizeLowercaseStringOrEmpty(filePath);
   if (lower.endsWith(".zip")) {
     return "zip";
   }
-  for (const { suffixes, kind } of NATIVE_TAR_SUFFIXES) {
+  for (const { suffixes, kind } of COMPRESSED_TAR_SUFFIXES) {
     if (suffixes.some((suffix) => lower.endsWith(suffix))) {
-      return requireNativeArchiveKind(kind);
+      // Preserve strict require diagnostics even when only resolving a suffix.
+      getNativeBinding();
+      return kind;
     }
   }
   if (TAR_SUFFIXES.some((suffix) => lower.endsWith(suffix))) {
@@ -91,14 +81,4 @@ export async function resolvePackedRootDir(
     throw new Error("unexpected archive layout (no package dir found)");
   }
   return path.join(extractDir, onlyDir);
-}
-
-export function assertPortableArchiveKind(kind: ArchiveKind): void {
-  if (kind === "tar-zstd" || kind === "tar-bzip2") {
-    throw new FsSafeError(
-      "helper-unavailable",
-      `${kind} archives require the matching optional native platform package; ` +
-        "install @openclaw/fs-safe with optional dependencies enabled on a supported platform and use FS_SAFE_NATIVE_MODE=auto or require",
-    );
-  }
 }

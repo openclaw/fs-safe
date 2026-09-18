@@ -1,0 +1,10 @@
+name: Set up archive LLVM
+description: Install checksum-pinned LLVM tools for the portable archive build only
+runs:
+  using: composite
+  steps:
+    - name: Install portable archive compiler and archiver
+      shell: bash
+      env:
+        ARCHIVE_LLVM_ACTION_PATH: ${{ github.action_path }}
+      run: node "$ARCHIVE_LLVM_ACTION_PATH/install.mjs"

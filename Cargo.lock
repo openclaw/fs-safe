@@ -164,7 +164,11 @@ dependencies = [
 name = "fs-safe-archive-wasm"
 version = "0.1.0"
 dependencies = [
+ "bzip2",
  "fs-safe-archive-core",
+ "libbz2-rs-sys",
+ "zstd",
+ "zstd-sys",
 ]
 
 [[package]]

@@ -22,6 +22,9 @@
       - name: Add portable TAR parser target
         run: rustup target add wasm32-unknown-unknown
 
+      - name: Set up portable archive LLVM
+        uses: ./.github/actions/setup-archive-llvm
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 

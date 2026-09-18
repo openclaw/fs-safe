@@ -10,6 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { normalizePackResult } from "./npm-pack-result.mjs";
+import { validateArchiveWasm } from "./archive-wasm-build-tools.mjs";
 import { WINDOWS_COMMAND_ASSETS } from "./windows-command-assets.mjs";
 import {
   assertPublicApi,
@@ -112,6 +113,7 @@ try {
     encoding: "utf8",
     stdio: "pipe",
   });
+  validateArchiveWasm(readFileSync(join(workdir, "node_modules", "@openclaw", "fs-safe", "dist", "archive-parser.wasm")));
   for (const name of WINDOWS_COMMAND_ASSETS) {
     const installed = join(workdir, "node_modules", "@openclaw", "fs-safe", "dist", name);
     if (!readFileSync(installed).equals(readFileSync(new URL(`../src/${name}`, import.meta.url)))) {

@@ -29,10 +29,15 @@ The equivalent environment variables are `FS_SAFE_NATIVE_MODE` and `OPENCLAW_FS_
 | `off` | Do not load a native package. Use supported fallbacks and reject native-only operations deterministically. |
 | `require` | Throw `FsSafeError("helper-unavailable")` instead of falling back when an operation needs the native binding and it cannot load. |
 
-TAR/gzip in the guarded JavaScript path uses a bundled, import-free WASM build
-of the same Rust parser used by native. `off` still disables the optional native
-filesystem helper; it does not disable this portable parser. ZIP fallback still requires
-optional `jszip`, and zstd/bzip2 remain native-only.
+Plain TAR, gzip, zstd, and bzip2 extraction and bounded entry reads use a bundled,
+import-free WASM build of the same Rust TAR parser when native support is absent
+or disabled. Zstd/bzip2 codecs are bundled alongside the parser; gzip uses Node's
+built-in decoder. These archive fallbacks require no runtime interpreter or
+download. `off` disables the optional native filesystem helper, not the bundled
+WASM. `auto` prefers native and does not retry a native operation failure through
+WASM; `require` still rejects an unavailable native binding. ZIP fallback still
+requires optional `jszip`. `inspectTarArchive()` remains limited to plain TAR
+and gzip.
 
 Windows security operations can use the package's readable PowerShell/C# scripts
 in `auto` and `off`, subject to the [Windows security fallback prerequisites](install.md#windows-security-fallback).

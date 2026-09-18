@@ -24,9 +24,12 @@ uses native mode `require` or any native-only feature. Version 0.5 kept its
 binding in the root tarball; version 0.6 intentionally does not.
 
 Omitting optional dependencies remains supported for fallback-capable APIs in
-`auto` mode. It disables native-only features such as zstd/bzip2 TAR handling,
-retained-directory staging, and atomic `rename-noreplace`. Native mode `require`
+`auto` mode. It disables native-only features such as retained-directory staging
+and atomic `rename-noreplace`. Native mode `require`
 reports `helper-unavailable` when the matching package is absent or incompatible.
+Zstd/bzip2 TAR extraction and bounded reads required the binding in version 0.6;
+current versions also support bundled WASM codecs in `auto` and `off` through the
+same guarded TAR pipeline. ZIP fallback still requires optional JSZip.
 Windows private-directory creation required the binding in version 0.6; current
 releases also support [packaged Windows security scripts](install.md#windows-security-fallback)
 in `auto` and `off` mode while preserving the creation-time protected DACL.

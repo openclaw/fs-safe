@@ -45,7 +45,7 @@ The same idea has landed in other languages. Go [added `os.Root` and `OpenInRoot
 | `path.resolve().startsWith()` | string check only | – | – | – | – |
 | [`write-file-atomic`](https://www.npmjs.com/package/write-file-atomic) | – | ✓ | – | – | – |
 | Go [`os.Root`](https://go.dev/blog/osroot) / Rust [`cap-std`](https://github.com/bytecodealliance/cap-std) | ✓ | platform | ✓ | ✓ | – |
-| **`@openclaw/fs-safe`** | **✓** | **✓** | **✓** | **Linux atomic; others best-effort** | **✓ (ZIP/TAR; native zstd/bzip2)** |
+| **`@openclaw/fs-safe`** | **✓** | **✓** | **✓** | **Linux atomic; others best-effort** | **✓ (ZIP/TAR/gzip/zstd/bzip2)** |
 
 ## Not a sandbox
 
@@ -57,7 +57,7 @@ This is a **library-level guardrail**, not OS-level isolation. It does not repla
 pnpm add @openclaw/fs-safe
 ```
 
-Node 22 or newer. Core root/path/json/temp helpers avoid framework dependencies. With all optional dependencies omitted, public subpaths remain safe to import and fallback-capable operations work in `auto` or `off`. Native-only features, including no-clobber `Root.move()`, remain unavailable and fail with `helper-unavailable`. TAR/gzip fallback uses the bundled WASM build of the same Rust parser as native and works with optional dependencies omitted. ZIP fallback still needs optional `jszip`. See the [0.6 migration guide](docs/migrating-to-0.6.md).
+Node 22 or newer. Core root/path/json/temp helpers avoid framework dependencies. With all optional dependencies omitted, public subpaths remain safe to import and fallback-capable operations work in `auto` or `off`. Native-only features, including no-clobber `Root.move()`, remain unavailable and fail with `helper-unavailable`. TAR, gzip, zstd, and bzip2 extraction and bounded entry reads use the same Rust TAR parser through bundled WASM when native support is disabled or absent. Zstd/bzip2 codecs are bundled too; gzip uses Node's built-in decoder. ZIP fallback still needs optional `jszip`. See the [0.6 migration guide](docs/migrating-to-0.6.md).
 
 Bun 1.4.2 is also supported with the [Bun runtime requirements](docs/install.md#bun-runtime), including the matching Rust addon on macOS and Linux. JIT-disabled Bun works too.
 
@@ -268,7 +268,7 @@ contract. Low-level helpers that OpenClaw needs to compose higher-level APIs are
 | `@openclaw/fs-safe/permissions` | POSIX mode and Windows ACL inspection, raw owner/ACE facts, private-directory creation, and remediation helpers |
 | `@openclaw/fs-safe/walk` | budget-bounded directory walking with symlink policy, filters, and truncation accounting; not root-bounded |
 | `@openclaw/fs-safe/copy` | directory copying with `clone: "auto"`, `"always"`, or `"never"`; native APFS, Btrfs, ReFS, XFS, and ZFS cloning, portable byte copying, and clone metadata; see [directory copying](docs/copy.md) |
-| `@openclaw/fs-safe/archive` | policy-driven ZIP/TAR extraction, clamp/filter policy, metadata/path-depth limits, native gzip/zstd/bzip2, and bounded entry reads |
+| `@openclaw/fs-safe/archive` | policy-driven ZIP/TAR extraction, clamp/filter policy, metadata/path-depth limits, gzip/zstd/bzip2 support, and bounded entry reads |
 | `@openclaw/fs-safe/advanced` | lower-level composition helpers such as path scopes, root-file open, bounded descriptor reads, [borrowed-handle and descriptor copying](docs/copy.md#borrowed-filehandle-transfers), [exact directory identity](docs/directory-identity.md), [case probing](docs/path-case.md), [suffix-alias probing](docs/path-suffix-aliases.md), [in-place writes](docs/in-place-write.md), [versioned install-ID encoding](docs/install-path.md#safepathsegmenthashedv2), filename sanitizing, temp-file targets, sibling-temp writes, local-root readers, regular-file helpers, `pathExists`, and `withTimeout`; less stable than focused public subpaths |
 | `@openclaw/fs-safe/errors` | `FsSafeError`, closed codes/categories, causes, and operation-specific details receipts |
 | `@openclaw/fs-safe/types` | shared types: `DirEntry`, `PathStat`, … |

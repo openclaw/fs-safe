@@ -119,17 +119,16 @@ Use the main entry for the common surface, or the focused subpaths when you want
 
 ## Runtime dependencies
 
-`@openclaw/fs-safe` bundles an import-free WASM build of its Rust TAR parser for guarded JavaScript TAR/gzip [archive extraction](archive.md), including installs with optional dependencies omitted. ZIP fallback uses lazily loaded optional `jszip` and reports a missing-dependency error without it. Public subpaths remain safe to import with all optional dependencies omitted, but imports do not prove native availability.
+`@openclaw/fs-safe` bundles an import-free WASM build of its Rust TAR parser and zstd/bzip2 codecs for guarded [archive extraction and bounded entry reads](archive.md). Plain TAR, gzip, zstd, and bzip2 work in `off` and missing-native `auto`, including installs with all optional dependencies omitted; gzip uses Node's built-in decoder. These archive fallbacks need no runtime interpreter, download, or consumer compiler. ZIP fallback uses lazily loaded optional `jszip` and reports a missing-dependency error without it. Public subpaths remain safe to import with all optional dependencies omitted, but imports do not prove native availability. Native `require` remains strict, and an available native operation's failure never triggers a WASM retry.
 
 There are no peer dependencies. Exact-version optional packages carry the seven
 native targets and npm-compatible OS, CPU, and Linux libc filters install only
 the matching binary. Consumers do not run a Rust build, download code at
 runtime, or execute a postinstall step. Omitting optional dependencies keeps
-non-archive fallback-capable operations working in `auto` or `off`. Native-only
+fallback-capable operations working in `auto` or `off`. Native-only
 features, including strict owned-tree temp cleanup, retained-directory staging,
-atomic `rename-noreplace` (including the default no-clobber `Root.move()`),
-and zstd/bzip2 TAR handling remain
-unavailable. Operations without a safe fallback fail with `helper-unavailable`
+and atomic `rename-noreplace` (including the default no-clobber `Root.move()`),
+remain unavailable. Operations without a safe fallback fail with `helper-unavailable`
 when the matching package is absent, incompatible, or disabled.
 
 Upgrading an existing 0.5 consumer? Follow [Migrating to 0.6](migrating-to-0.6.md)

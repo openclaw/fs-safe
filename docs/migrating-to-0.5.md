@@ -88,8 +88,10 @@ await extractArchive({
 ```
 
 Returning `"skip"` rejects the archive unless `onFiltered: "skip-entry"` is
-explicit. Zstd and bzip2 TAR are native-only; ZIP, TAR, and gzip retain guarded
-JavaScript implementations. Catch `ArchiveLimitError` by its code, including
+explicit. Zstd and bzip2 TAR required native support in version 0.5; current
+versions also use bundled WASM codecs in `off` or missing-native `auto`, through
+the same guarded TAR pipeline. ZIP fallback still requires optional JSZip.
+Catch `ArchiveLimitError` by its code, including
 `archive-entry-path-components-exceeds-limit` for deep implicit-directory
 attacks. See [Archive extraction](archive.md).
 
@@ -174,8 +176,10 @@ modes, retaining its creation-time protected DACL. Check the
 before relying on this route. The API remains Windows-only, explicit native
 `require` rejects a missing binding or capability, and native operation failures
 remain terminal.
-Zstd/bzip2 extraction and `strategy: "rename-noreplace"` remain native-only.
-Test the unavailable path instead of assuming installation always succeeds.
+`strategy: "rename-noreplace"` remains native-only. Current zstd/bzip2 extraction
+and bounded reads have bundled WASM fallbacks, while explicit native `require`
+remains strict. Test unavailable native-only operations instead of assuming
+installation always succeeds.
 
 ## 8. Run both behavior families in CI
 

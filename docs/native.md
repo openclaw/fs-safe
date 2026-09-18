@@ -115,6 +115,17 @@ the guarded Node staging/publication boundary. ZIP behavior is unchanged.
 `maxMetaEntryBytes` bounds bodies before allocation; unsupported global/old
 metadata and sparse forms fail closed. See [bounded local PAX support](archive.md#bounded-local-pax-support).
 
+The bundled module also compiles the same zstd and bzip2 codec implementations
+used by native. In `off` or missing-native `auto`, those decoders feed the shared
+TAR parser through fixed 64 KiB windows in one import-free WASM session with a
+256 MiB linear-memory ceiling. Gzip retains Node's built-in decoder. Complete
+container and TAR admission precedes policy evaluation and guarded publication;
+concatenated compressed members and zstd skippable frames are consumed through
+physical EOF. No runtime command, interpreter, download, or consumer compilation
+is needed for these archive routes. `require` stays strict, and available native
+operation failures do not retry through WASM. Public `inspectTarArchive()` still
+accepts only plain TAR/gzip; ZIP fallback still requires optional JSZip.
+
 Every raw pass receives only TypeScript's resolved `maxEntries`,
 `maxMetaEntryBytes`, and `maxDecodedBytes`. Shared resolution caps metadata and
 decoded byte fields at JavaScript's safe-integer maximum and entry counts at
@@ -172,8 +183,8 @@ not bypass the byte limit.
 does not load the binding. Use asynchronous `sha256File()` for native hashing
 and cancellation that can respond while JavaScript callbacks run.
 
-Features without a safe JavaScript implementation, including no-clobber
-`Root.move()`, zstd/bzip2 TAR, and
+Features without a safe fallback, including no-clobber
+`Root.move()` and
 [retained-directory staging](staged-file.md), fail with `helper-unavailable`
 when native support is absent or off. Staging is currently Linux/macOS only and
 rejects Windows with `unsupported-platform`.
@@ -243,7 +254,7 @@ See [Root containment guarantees](security-model.md#containment-guarantees-by-pl
 |---|---|---|
 | Native beneath opens and Root mutations | Descriptor-relative beneath operations. Pinned writes create parents and publish both replacement and no-replace targets relative to open directory descriptors. No-clobber `Root.move()` admits both parents and uses the native no-replace rename. Native `openBeneath()` reports `kernel-atomic` on Linux and `best-effort` on macOS and Windows. macOS uses `O_RESOLVE_BENEATH` when available plus an `F_GETPATH` detector, while Windows rejects reparse traversal in the object-manager call. | Reports `best-effort`: component-wise alias checks, no-follow opens where Node exposes them, private temp/rename, and post-operation identity verification. No-clobber `Root.move()` is unsupported because a check followed by a replacing rename is unsafe. A same-privilege peer can replace a writable parent after a guard assertion but before Node resolves another pathname mutation; the mutation may land outside the intended root before the post-check detects it. |
 | ZIP/TAR/gzip | Rust streaming decode and fd-relative output creation. | Optional JSZip or bundled WASM TAR into guarded private staging, then the same guarded merge policy. |
-| Zstd/bzip2 TAR | Supported. | Unsupported; typed `helper-unavailable`. |
+| Zstd/bzip2 TAR | Rust streaming decode and fd-relative output creation. | Bundled WASM codecs feed the shared Rust TAR parser, then guarded private staging and the same merge policy; no optional codec dependency. |
 | Publication copy | Clone, Linux `copy_file_range`, async native SHA-256. | Exclusive `wx` byte loop and Node SHA-256 with the same content/identity fences. |
 | `rename-noreplace` | Atomic platform no-replace rename. | Unsupported; no emulation by check-then-rename. |
 | Windows DACL read | Direct `GetSecurityInfo`; the public facts API exposes ordered basic allow/deny ACE SIDs, masks, and decoded flags without trust policy. Secure-file reads query the borrowed open descriptor and compare its 32-bit volume serial and 64-bit file-index projection with Node's bigint receipt. | The packaged PowerShell/C# bridge preserves raw facts and inspects the borrowed descriptor for secure reads, with the same Node identity comparison; its command failures reject. Structured .NET pathname reporting retains its separate compatibility query. |

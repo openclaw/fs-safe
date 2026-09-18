@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Compare exact directory identities before and after durability syncs, retry unknown Windows observations once, and reject rounded or unverifiable caller receipts; bind numeric metadata to the same observation and preserve private identity authority across receipt mutation, durable creation, publication, and retained staging.
+- Support zstd and bzip2 TAR extraction and bounded entry reads through bundled WASM codecs when native support is disabled or absent, retaining full-stream validation, limits, and guarded publication; keep native `require` strict and ZIP's optional JSZip dependency unchanged.
 - Clarify that `resolveExistingPathsWithinRoot()` allows missing paths and `resolveStrictExistingPathsWithinRoot()` requires existing regular files.
 - Distinguish native beneath mechanisms from the best-effort containment reported by public Root open, read, and writable-open results in every native mode.
 - Add opt-in `atomic: true` to buffered `Root.create()` and `createJson()`, reusing complete staged publication with a hardlink fallback when native support is disabled; retain existing defaults and durability policy. Report atomic/streamed-create cleanup and close failures with publication evidence, and preserve completed Windows destinations after finalization failures.

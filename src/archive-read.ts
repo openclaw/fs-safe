@@ -14,7 +14,7 @@ import {
   stripArchivePath,
   validateArchiveEntryPath,
 } from "./archive-entry.js";
-import { assertPortableArchiveKind, resolveArchiveKind, type ArchiveKind } from "./archive-kind.js";
+import { resolveArchiveKind, type ArchiveKind } from "./archive-kind.js";
 import {
   DEFAULT_MAX_ARCHIVE_BYTES_ZIP,
   ArchiveLimitError,
@@ -162,11 +162,11 @@ async function readZipEntry(buffer: Buffer, entryPath: string, maxBytes: number,
   }
 }
 
-async function readTarEntry(archiveBuffer: Buffer, entryPath: string, maxBytes: number): Promise<Buffer> {
+async function readTarEntry(archiveBuffer: Buffer, entryPath: string, maxBytes: number, kind: Exclude<ArchiveKind, "zip">): Promise<Buffer> {
   const seenPaths = new Set<string>();
   let selected: AdmittedTarMember | undefined;
   const limits = resolveTarMeterLimits();
-  await inspectTar({ archiveBuffer, limits, onMember(info) {
+  await inspectTar({ archiveBuffer, kind, limits, onMember(info) {
     const normalized = canonicalEntryPath(info.path);
     if (seenPaths.has(normalized)) {
       throw new ArchiveSecurityError("entry-path", `archive contains duplicate entry path: ${formatErrorDetail(normalized)}`);
@@ -179,7 +179,7 @@ async function readTarEntry(archiveBuffer: Buffer, entryPath: string, maxBytes: 
     throw new Error(`archive entry is not a file: ${formatErrorDetail(entryPath)}`);
   }
   if (selected.size > maxBytes) throw new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT);
-  if (!isGzipBuffer(archiveBuffer)) {
+  if (kind === "tar" && !isGzipBuffer(archiveBuffer)) {
     // Complete admission already validated this private snapshot through EOF.
     // Copy the admitted payload so the result cannot expose or mutate its input.
     const end = selected.offset + selected.size;
@@ -190,7 +190,7 @@ async function readTarEntry(archiveBuffer: Buffer, entryPath: string, maxBytes: 
     return Buffer.from(archiveBuffer.subarray(selected.offset, end));
   }
   let result: Buffer | undefined;
-  await replayTar({ archiveBuffer, limits, members: [selected], async consume(member, payload) {
+  await replayTar({ archiveBuffer, kind, limits, members: [selected], async consume(member, payload) {
     result = await readAdmittedTarPayload(payload, member.size);
   } });
   return result!;
@@ -262,7 +262,6 @@ export async function readArchiveEntry(
   if (kind === "zip") admitZipBuffer(buffer, resolveExtractLimits(), entry => { zipEntries.push(entry); });
   const native = getNativeBinding();
   if (native) return await readNativeBufferEntry(native, buffer, kind, requestedEntry, entryPath, options.maxBytes, zipEntries);
-  assertPortableArchiveKind(kind);
   return kind === "zip" ? await readZipEntry(buffer, requestedEntry, options.maxBytes, zipEntries)
-    : await readTarEntry(buffer, requestedEntry, options.maxBytes);
+    : await readTarEntry(buffer, requestedEntry, options.maxBytes, kind);
 }

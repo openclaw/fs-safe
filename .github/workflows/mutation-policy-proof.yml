@@ -87,6 +87,9 @@ jobs:
         id: wasm
         run: rustup target add wasm32-unknown-unknown
 
+      - name: Set up portable archive LLVM
+        uses: ./.github/actions/setup-archive-llvm
+
       - name: Install dependencies
         id: install
         run: pnpm install --frozen-lockfile

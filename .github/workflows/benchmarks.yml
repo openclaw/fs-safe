@@ -214,6 +214,8 @@ jobs:
           node-version: ${{ needs.prepare_method_audit.outputs.node_version }}
       - name: Add portable TAR parser target
         run: rustup target add wasm32-unknown-unknown
+      - name: Set up portable archive LLVM
+        uses: ./harness/.github/actions/setup-archive-llvm
       - name: Install reviewed harness dependencies
         run: pnpm --dir "$HARNESS_ROOT" install --frozen-lockfile
       - name: Build candidate
@@ -282,6 +284,9 @@ jobs:
 
       - name: Add portable TAR parser target
         run: rustup target add wasm32-unknown-unknown
+
+      - name: Set up portable archive LLVM
+        uses: ./.github/actions/setup-archive-llvm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

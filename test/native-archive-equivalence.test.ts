@@ -1,7 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { expectFsSafeErrorSync } from "./helpers/security.js";
 import { tarFixture, type TarFixtureEntry } from "./helpers/archive-fuzz.js";
 import { zipDirectoryLinkFixture } from "./helpers/archive-zip-link.js";
 import { useTempDirs } from "./helpers/vitest.js";
@@ -450,7 +449,7 @@ describe.each(archiveBackends)("%s archive path", (backend) => {
   });
 });
 
-describe.runIf(Boolean(native))("native-only compressed tar formats", () => {
+describe.each(archiveBackends)("%s compressed tar formats", (backend) => {
   const fixtures = {
     "tar-bzip2": "QlpoOTFBWSZTWR7OLWUAAE57kNIABIBAA3+AAIBuZt/ABAAgCCAAciIT1MmhkDQNAaeSCVNTyKeU9Qaek8oB6h6grzvOX5w+ADqMF1cEAQkPSi8X9JSUNEAhmhZFEfFXVrk06WnAZd6xiqSZl1ns0+55YMXVrY+KHgFL4hZYy28xFJSAznPLVCPxdyRThQkB7OLWUA==",
     "tar-zstd": "KLUv/WQAB7UDADKFEReQpzpAWzCQC1aaeGamglLuJoOiujuRBIXgqmerYAic+geI7xfhq/ZgabX5RhoV9CE0pyAWcvBMbNvORGdM2h6bWMCbSocRAPGAHwKkUFkZAg5E65ccFUDlwxo5gAxqHgpO4NMsGGCrmDkAOXBuxdo3ASQjp+s0",
@@ -458,7 +457,7 @@ describe.runIf(Boolean(native))("native-only compressed tar formats", () => {
 
   for (const [kind, base64] of Object.entries(fixtures) as Array<[keyof typeof fixtures, string]>) {
     it(`extracts and reads ${kind}`, async () => {
-      useBackend("native");
+      useBackend(backend);
       const root = await tempRoot();
       const extension = kind === "tar-zstd" ? "tar.zst" : "tar.bz2";
       const archivePath = path.join(root, `fixture.${extension}`);
@@ -470,11 +469,9 @@ describe.runIf(Boolean(native))("native-only compressed tar formats", () => {
       await extractArchive({ archivePath, destDir: destination, timeoutMs: 10_000 });
       await expect(fs.readFile(path.join(destination, "value.txt"), "utf8")).resolves.toBe("compressed-value");
       await expect(readArchiveEntry(archivePath, "value.txt", { maxBytes: 16 })).resolves.toEqual(Buffer.from("compressed-value"));
+      await expect(readArchiveEntry(archivePath, "value.txt", { maxBytes: 15 })).rejects.toMatchObject({
+        name: "ArchiveLimitError", code: "archive-entry-extracted-size-exceeds-limit",
+      });
     });
   }
-
-  it("reports a typed actionable error when a native-only format is forced off", async () => {
-    configureFsSafeNative({ mode: "off" });
-    expectFsSafeErrorSync(() => resolveArchiveKind("fixture.tar.zst"), "helper-unavailable");
-  });
 });
