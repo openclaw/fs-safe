@@ -7,6 +7,7 @@ import { FsSafeError } from "./errors.js";
 import type { FileIdentityStat } from "./file-identity.js";
 import {
   assertDirectoryReceiptCurrentSync,
+  copyRetainedDirectoryReceipt,
   createDirectoryReceiptSync,
   directoryReceiptAuthority,
   directoryReceiptIdentity,
@@ -122,7 +123,7 @@ class PinnedDirectoryImpl implements PinnedDirectory {
   constructor(handle: FileHandle, receipt: DirectoryReceipt, label: string) {
     this.#handle = handle;
     this.#authority = receipt;
-    this.receipt = ownDirectoryReceipt(receipt);
+    this.receipt = copyRetainedDirectoryReceipt(receipt);
     this.#label = label;
   }
 
@@ -376,7 +377,7 @@ export async function ensureDurableDirectory(
     }
     await ancestor.assertCurrent();
     await assertDirectoryReceiptCurrent(finalReceipt, label);
-    return Object.assign(ownDirectoryReceipt(finalReceipt), { parentSync });
+    return Object.assign(copyRetainedDirectoryReceipt(finalReceipt), { parentSync });
   } finally {
     await Promise.all(pinnedDirectories.toReversed().map(async (directory) => directory.close()));
   }

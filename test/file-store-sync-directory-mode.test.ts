@@ -316,7 +316,6 @@ describe("sync file-store directory mode authority", () => {
     });
     const original = guard.exactStat.ino;
     expect(typeof original).toBe("bigint");
-    expect(typeof guard.stat.ino).toBe("number");
     projected.set(nested, original + 2n);
     expect(Number(original + 2n)).toBe(Number(original));
     expect(() => assertSyncDirectoryGuard(guard)).toThrow(

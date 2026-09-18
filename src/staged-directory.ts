@@ -1,7 +1,7 @@
 import fs, { type BigIntStats } from "node:fs";
 import path from "node:path";
 import type { DirectoryReceipt } from "./directory-durability.js";
-import { directoryReceiptAuthority } from "./directory-receipt.js";
+import { directoryReceiptAuthority, ownDirectoryReceipt } from "./directory-receipt.js";
 import { FsSafeError } from "./errors.js";
 import type { FileIdentityStat } from "./file-identity.js";
 import { inspectDirectoryIdentitySync } from "./directory-guard.js";
@@ -165,7 +165,9 @@ export function openStagedDirectory(directory: string | DirectoryReceipt): {
   fd: number;
   receipt: StagedDirectorySnapshot;
 } {
-  const expected = typeof directory === "string" ? undefined : directoryReceiptAuthority(directory);
+  const expected = typeof directory === "string"
+    ? undefined
+    : directoryReceiptAuthority(ownDirectoryReceipt(directory));
   const pathname = resolvePathPreservingWindowsRoot(
     typeof directory === "string" ? directory : expected!.path,
   );

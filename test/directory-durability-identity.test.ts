@@ -287,6 +287,39 @@ describe("exact directory durability identities", () => {
       .rejects.toMatchObject({ code: "path-mismatch" });
   });
 
+  itPosix.each(["path", "realPath", "device", "inode", "identity"] as const)(
+    "keeps a live pin current but rejects new admissions after public %s mutation",
+    async field => {
+      const { base, directory } = await directoryFixture();
+      const other = path.join(base, "other");
+      await fs.mkdir(other);
+      const pinned = await pinDirectory(directory);
+      const receipt = pinned.receipt;
+      try {
+        if (field === "path") receipt.path = other;
+        else if (field === "realPath") receipt.realPath = other;
+        else if (field === "device") receipt.identity.dev = receipt.identity.dev === 0 ? 1 : 0;
+        else if (field === "inode") receipt.identity.ino = receipt.identity.ino === 0 ? 1 : 0;
+        else receipt.identity = await fs.lstat(other);
+        await expect(pinned.assertCurrent()).resolves.toBeUndefined();
+        await expect(pinned.sync()).resolves.toEqual({ status: "synced" });
+        await expect(pinDirectory(receipt)).rejects.toMatchObject({ code: "path-mismatch" });
+        await expect(syncDirectory(receipt)).rejects.toMatchObject({ code: "path-mismatch" });
+        expect(() => syncDirectorySync(receipt)).toThrow(expect.objectContaining({ code: "path-mismatch" }));
+        expect(() => openStagedDirectory(receipt)).toThrow(expect.objectContaining({ code: "path-mismatch" }));
+        const sourcePath = path.join(base, "source");
+        const targetPath = path.join(directory, "target");
+        await fs.writeFile(sourcePath, "source");
+        await expect(publishFileExclusive({ sourcePath, targetPath, parentReceipt: receipt, strategy: "link-required" }))
+          .rejects.toMatchObject({ code: "path-mismatch" });
+        expect(await fs.readdir(directory)).toEqual(["keep"]);
+        expect(await fs.readdir(other)).toEqual([]);
+      } finally {
+        await pinned.close();
+      }
+    },
+  );
+
   it("accepts a safe external numeric receipt and snapshots it before asynchronous admission", async () => {
     const { directory } = await directoryFixture();
     const lstat = fsSync.lstatSync.bind(fsSync);
@@ -309,6 +342,7 @@ describe("exact directory durability identities", () => {
     try {
       await expect(pinned.assertCurrent()).resolves.toBeUndefined();
       expect(pinned.receipt.path).toBe(directory);
+      expect(pinned.receipt.identity.ino).toBe(42);
     } finally {
       await pinned.close();
     }

@@ -80,7 +80,10 @@ descriptor; a replacement discovered after sync still rejects the operation.
 compatibility, projected from the same exact observation as the private
 identity. Library-created receipts and their identity objects retain a
 private exact snapshot; mutating their public fields cannot change the
-directory authorized by that snapshot. Pass the receipt or its original
+directory authorized by that snapshot. Each returned receipt owns a mutable
+numeric metadata copy. Later admissions retain the original metadata snapshot
+even if advisory fields such as mode or timestamps were edited; changed paths
+or identity components reject. Pass the receipt or its original
 identity object through to later operations to retain this evidence. A copied
 or reconstructed numeric identity is accepted only when both components are
 safe integers and, on Windows, nonzero. Rounded or unknown caller identities

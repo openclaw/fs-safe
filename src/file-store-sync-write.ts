@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs, { type BigIntStats } from "node:fs";
 import path from "node:path";
 import { syncDirectorySync } from "./directory-durability.js";
+import { createDirectoryReceiptFromIdentity } from "./directory-receipt.js";
 import { FsSafeError } from "./errors.js";
 import {
   assertSyncDirectoryGuard,
@@ -135,11 +136,11 @@ export function writeFileSyncAtomic(params: {
     if (parentGuard) {
       assertSyncDirectoryGuard(parentGuard);
       if (params.durable) {
-        syncDirectorySync({
-          path: parentGuard.dir,
-          realPath: parentGuard.realPath,
-          identity: parentGuard.stat,
-        }, { label: "store parent" });
+        syncDirectorySync(createDirectoryReceiptFromIdentity(
+          parentGuard.dir,
+          parentGuard.realPath,
+          parentGuard.exactStat,
+        ), { label: "store parent" });
       }
       assertSyncDirectoryGuard(parentGuard);
     }

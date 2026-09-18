@@ -47,7 +47,6 @@ it.each(["?", "."])("adapts %s namespace root dispatch while retaining the store
   });
 
   expect(receipt).toMatchObject({ dir: namespaceRoot, realPath: driveRoot });
-  expect(typeof receipt.stat.ino).toBe("number");
   expect(typeof receipt.exactStat.ino).toBe("bigint");
   expect(observed.mkdir).toHaveBeenCalledExactlyOnceWith(driveRoot, { recursive: true, mode: 0o700 });
   expect(observed.lstat).toHaveBeenCalled();

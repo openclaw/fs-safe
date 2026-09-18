@@ -1,15 +1,15 @@
-import syncFs, { type BigIntStats } from "node:fs";
+import syncFs from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Transform, Readable } from "node:stream";
 import { createByteLimitTransform } from "./bounded-read-stream.js";
 import { normalizeMaxBytes } from "./byte-budget.js";
 import { pipeline } from "node:stream/promises";
-import type { SyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import {
   assertSyncStoreDirectoryReceipt,
   ensureSyncStoreDirectory,
+  type SyncStoreDirectoryReceipt,
 } from "./file-store-sync-directory.js";
 import { isPathInside } from "./path.js";
 import { resolveOpenedFileRealPathForHandle, root, type Root } from "./root.js";
@@ -18,12 +18,9 @@ import { RootHandle } from "./root-impl.js";
 import { prepareSecretFileWrite } from "./secret-file.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
-import { assertNoWindowsPathAlias, pathForWindowsFilesystem } from "./windows-path-alias.js";
+import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
-export type SyncParentGuard = SyncDirectoryGuard & {
-  /** Exact authority retained separately from the legacy numeric durability receipt. */
-  readonly exactStat: BigIntStats;
-};
+export type SyncParentGuard = SyncStoreDirectoryReceipt;
 
 function parentRelativePath(relativePath: string): string {
   const parent = path.posix.dirname(relativePath);
@@ -180,13 +177,7 @@ export function ensureStoreDirectorySync(params: {
   mode: number;
   messagePrefix: "private store" | "store";
 }): SyncParentGuard {
-  const receipt = ensureSyncStoreDirectory(params);
-  const guard: SyncParentGuard = {
-    dir: receipt.dir,
-    realPath: receipt.realPath,
-    stat: syncFs.lstatSync(pathForWindowsFilesystem(receipt.dir)),
-    exactStat: receipt.exactStat,
-  };
+  const guard = ensureSyncStoreDirectory(params);
   assertSyncDirectoryGuard(guard);
   return guard;
 }
