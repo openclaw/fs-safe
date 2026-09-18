@@ -8,7 +8,7 @@ import path from "node:path";
 import { configureFsSafeNative, getFsSafeNativeConfig } from "@openclaw/fs-safe/config";
 import { createPrivateDirectory, readOwnerAndDacl } from "@openclaw/fs-safe/permissions";
 import { readSecureFile } from "@openclaw/fs-safe/secure-file";
-import { nativeBinaryLoaded } from "./consumer-proof-metadata.mjs";
+import { nativeBinaryLoaded, windowsSecurityFixturePhases } from "./consumer-proof-metadata.mjs";
 
 // This file is copied into disposable consumers and uses only public subpaths.
 assert.equal(process.platform, "win32");
@@ -200,18 +200,33 @@ public static class ConsumerRawSecurity {
 `;
 const aclScript = String.raw`
 $ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue'
+$fixtureClock=[Diagnostics.Stopwatch]::StartNew()
+function Write-FixturePhase([string]$phase) {
+  try { [Console]::Error.WriteLine('FS_SAFE_SECURITY_FIXTURE:'+$phase+':'+$fixtureClock.ElapsedMilliseconds) } catch {}
+}
+Write-FixturePhase 'script:start'
+Write-FixturePhase 'add-type:start'
 Add-Type -LiteralPath (Join-Path $PSScriptRoot 'consumer-raw-security.cs')
+Write-FixturePhase 'add-type:end'
 $p=[Environment]::GetEnvironmentVariable('FS_SAFE_SECURITY_PROOF_PATH')
 $action=[Environment]::GetEnvironmentVariable('FS_SAFE_SECURITY_PROOF_ACTION')
 if($action -in @('parent','broad','broad-write')) {
+  Write-FixturePhase 'get-acl:start'
   $acl=Get-Acl -LiteralPath $p
+  Write-FixturePhase 'get-acl:end'
   $sid=[Security.Principal.SecurityIdentifier]::new('S-1-1-0')
   $inherit=if($action -eq 'parent'){[Security.AccessControl.InheritanceFlags]3}else{[Security.AccessControl.InheritanceFlags]0}
   $rights=if($action -eq 'broad-write'){[Security.AccessControl.FileSystemRights]::Write}else{[Security.AccessControl.FileSystemRights]::ReadAndExecute}
   $rule=[Security.AccessControl.FileSystemAccessRule]::new($sid,$rights,$inherit,[Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow)
-  $acl.AddAccessRule($rule);Set-Acl -LiteralPath $p -AclObject $acl
+  $acl.AddAccessRule($rule)
+  Write-FixturePhase 'set-acl:start'
+  Set-Acl -LiteralPath $p -AclObject $acl
+  Write-FixturePhase 'set-acl:end'
 }
+Write-FixturePhase 'raw-security:start'
 $raw=[Security.AccessControl.RawSecurityDescriptor]::new([ConsumerRawSecurity]::Read($p),0)
+Write-FixturePhase 'raw-security:end'
+Write-FixturePhase 'output:start'
 $current=[Security.Principal.WindowsIdentity]::GetCurrent()
 try {$currentSid=$current.User.Value.ToLowerInvariant()}finally{$current.Dispose()}
 $aces=@();$unsupported=@()
@@ -224,6 +239,7 @@ foreach($ace in $raw.DiscretionaryAcl) {
 }
 @{ownerSid=$raw.Owner.Value.ToLowerInvariant();currentUserSid=$currentSid;daclPresent=($null -ne $raw.DiscretionaryAcl);
   daclProtected=([int]$raw.ControlFlags -band 4096)-ne 0;complete=($unsupported.Count -eq 0);unsupportedAceTypes=@($unsupported);aces=@($aces)}|ConvertTo-Json -Depth 8 -Compress
+Write-FixturePhase 'output:end'
 `;
 const powershell = path.join(process.env.SystemRoot ?? process.env.WINDIR ?? "C:\\Windows",
   "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
@@ -235,8 +251,10 @@ function independentAcl(target, action = "inspect") {
     encoding: "utf8", windowsHide: true, timeout: 30_000, killSignal: "SIGKILL", maxBuffer: 1024 * 1024,
     env: { ...process.env, FS_SAFE_SECURITY_PROOF_PATH: target, FS_SAFE_SECURITY_PROOF_ACTION: action },
   });
+  const phases = windowsSecurityFixturePhases(result.stderr);
+  for (const phase of phases) checkpoint("fixture:child", { fixture, action, ...phase });
   checkpoint("fixture:end", { fixture, action, exitCode: result.status, signal: result.signal,
-    errorCode: result.error?.code ?? null });
+    errorCode: result.error?.code ?? null, observedPhases: phases.length });
   if (result.error) throw result.error;
   assert.equal(result.status, 0, "Independent Windows ACL fixture failed while running its readable PowerShell file. " +
     "The fixture obeys the system execution policy; a policy denial prevents this proof from running.\n" +

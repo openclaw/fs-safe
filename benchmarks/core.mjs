@@ -7,7 +7,7 @@ import { Readable } from "node:stream";
 import { secureFileBenchmarkCase } from "./secure-file-contract.mjs";
 import { applyBenchmarkPrivateWindowsAcl } from "./windows-private-directory.mjs";
 
-export async function registerCore({ api: a, workspace: w, binding, measuredFeatures, register: add, contract, onCleanup }) {
+export async function registerCore({ api: a, workspace: w, binding, measuredFeatures, args, register: add, contract, onCleanup }) {
   const data = Buffer.from(' {"ok":true,"label":"synthetic benchmark"}\n');
   const input = path.join(w, "input.json");
   applyBenchmarkPrivateWindowsAcl(a, w);
@@ -203,7 +203,7 @@ export async function registerCore({ api: a, workspace: w, binding, measuredFeat
   add("openLocalFileSafely", () => a.openLocalFileSafely({ filePath: input }), { after: (r) => r?.handle.close() });
   add("resolveOpenedFileRealPathForHandle", (h) => a.resolveOpenedFileRealPathForHandle(h, input), { before: () => fsp.open(input, "r"), after: (_, h) => h.close() });
   const { name: secureReadName, ...secureReadOptions } = secureFileBenchmarkCase({
-    platform: process.platform, measuredFeatures, binding,
+    platform: process.platform, measuredFeatures, binding, nativeMode: args.mode,
   }, data);
   const secureReadRealPath = fs.realpathSync.native(input);
   const verifyPermissionSkippedSecureRead = (result) => {

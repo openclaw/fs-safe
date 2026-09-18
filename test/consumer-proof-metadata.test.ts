@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { nativeBinaryLoaded, packageProofSource } from "../scripts/consumer-proof-metadata.mjs";
+import { nativeBinaryLoaded, packageProofSource, windowsSecurityFixturePhases } from "../scripts/consumer-proof-metadata.mjs";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -51,4 +51,34 @@ it("does not silently accept an unreadable reported native object", async () => 
   await fs.writeFile(binary, "synthetic metadata fixture");
   expect(() => nativeBinaryLoaded(binary, [path.join(directory, "missing.node")]))
     .toThrowError(expect.objectContaining({ code: "ENOENT" }));
+});
+
+it.each(["\n", "\r\n"])("retains ordered path-free fixture checkpoints with %j line endings", newline => {
+  const stderr = [
+    "FS_SAFE_SECURITY_FIXTURE:script:start:0",
+    "FS_SAFE_SECURITY_FIXTURE:add-type:start:1",
+    "unrelated diagnostic with C:\\private\\fixture.ps1",
+    "FS_SAFE_SECURITY_FIXTURE:private-path:start:2",
+    "FS_SAFE_SECURITY_FIXTURE:add-type:end:500",
+    "FS_SAFE_SECURITY_FIXTURE:get-acl:start:501",
+  ].join(newline) + newline;
+  expect(windowsSecurityFixturePhases(stderr)).toEqual([
+    { step: "script:start", childElapsedMs: 0 },
+    { step: "add-type:start", childElapsedMs: 1 },
+    { step: "add-type:end", childElapsedMs: 500 },
+    { step: "get-acl:start", childElapsedMs: 501 },
+  ]);
+});
+
+it("bounds fixture diagnostics and ignores malformed or absent markers", () => {
+  const marker = "FS_SAFE_SECURITY_FIXTURE:script:start:0\n";
+  expect(windowsSecurityFixturePhases(marker.repeat(100))).toHaveLength(16);
+  expect(windowsSecurityFixturePhases("x".repeat(1024 * 1024) + "\n" + marker)).toEqual([]);
+  expect(windowsSecurityFixturePhases([
+    "FS_SAFE_SECURITY_FIXTURE:script:start:-1",
+    "FS_SAFE_SECURITY_FIXTURE:script:start:1.5",
+    "FS_SAFE_SECURITY_FIXTURE:script:start:9999999999",
+    "FS_SAFE_SECURITY_FIXTURE:script:start:1 trailing data",
+  ].join("\n"))).toEqual([]);
+  expect(windowsSecurityFixturePhases(null)).toEqual([]);
 });

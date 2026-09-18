@@ -282,11 +282,18 @@ both pooled and within each complete measurement-order block.
 
 Windows secure-read rows distinguish the measured JavaScript contract from the
 loaded addon's capabilities. A build containing `secure-file-windows.js` uses
-`readSecureFile/descriptor-acl` when its descriptor capability is available, or
-`readSecureFile/permission-unverified` for a verified expected rejection when
-it is not. Older builds use `readSecureFile/legacy-pathname-acl` and verify a
-successful read, including in native-off mode. All successful rows check the
-returned bytes. Detection uses the selected `--dist` directory, so a saved
+`readSecureFile/descriptor-acl` when its native descriptor capability is available.
+Builds also containing `windows-security-command.js` use
+`readSecureFile/command-descriptor-acl` when the native capability is unavailable
+in `off` or `auto` mode. Descriptor-only builds without that native capability,
+and `require` mode with a missing capability, retain
+`readSecureFile/permission-unverified` as a verified expected rejection.
+Older builds use `readSecureFile/legacy-pathname-acl` and verify a successful
+read, including in native-off mode. All successful rows check the returned
+bytes; descriptor rows also verify private Windows ACL evidence, trusted
+ownership, and the expected native or system-command descriptor mechanism.
+A failed command or missing command asset fails a command row. Detection uses
+the selected `--dist` directory, so a saved
 current build is not mistaken for a legacy baseline. These labels retain
 `readSecureFile` callable coverage; rejection timing is not successful-read timing.
 Each secure-read contract also has a `/trusted-root` row with one absolute
