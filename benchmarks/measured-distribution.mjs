@@ -9,6 +9,10 @@ import {
   validateSidecarPathSnapshotReport,
   validateSidecarPathSnapshotWorkloadResult,
 } from "./sidecar-path-snapshot.mjs";
+import {
+  validateSyncCopyFallbackAdmissionReport,
+  validateSyncCopyFallbackAdmissionWorkloadResult,
+} from "./sync-copy-fallback-admission.mjs";
 import { validateGuestBenchmarkReport } from "./guest.mjs";
 import {
   validateCopyFallbackSuccessReport,
@@ -152,9 +156,11 @@ export function validateMeasuredDistribution(plan, reportPlan, report, expectedD
     validateTempWorkspaceWorkloadResult(result);
     validateSidecarPathSnapshotWorkloadResult(result);
     validateCopyFallbackSuccessWorkloadResult(result);
+    validateSyncCopyFallbackAdmissionWorkloadResult(result);
   }
   validateSidecarPathSnapshotReport(report, plan.settings.filter, plan.settings.iterations);
   validateCopyFallbackSuccessReport(report, plan.settings.filter, plan.settings.iterations);
+  validateSyncCopyFallbackAdmissionReport(report, plan.settings.filter, plan.settings.iterations);
 }
 
 export const MEASURED_SOURCE_ARGUMENT_NAMES = Object.freeze(

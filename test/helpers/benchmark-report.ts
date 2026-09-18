@@ -1,5 +1,6 @@
 import { sidecarPathSnapshotCases } from "../../benchmarks/sidecar-path-snapshot.mjs";
 import { copyFallbackSuccessDescriptors } from "../../benchmarks/copy-fallback-success.mjs";
+import { syncCopyFallbackAdmissionDescriptors } from "../../benchmarks/sync-copy-fallback-admission.mjs";
 
 function measured(row: object, sampleCount: number, iterations: number) {
   return {
@@ -18,6 +19,7 @@ export function completeSyntheticBenchmarkResults(sampleCount: number, iteration
     cwd: "C:\\work",
     workspace: "C:\\temp\\fixture",
   });
+  const syncAdmissionRows = syncCopyFallbackAdmissionDescriptors();
   return [
     measured({ name: "root" }, sampleCount, iterations),
     ...sidecarRows.map((row) => measured(row, sampleCount, iterations)),
@@ -26,5 +28,7 @@ export function completeSyntheticBenchmarkResults(sampleCount: number, iteration
       workloadSemantics: row.workloadSemantics,
       workloadDetails: row.workloadDetails,
     }, sampleCount, Math.max(1, Math.floor(iterations / row.divisor)))),
+    ...syncAdmissionRows.map((row) => measured(row, sampleCount,
+      Math.max(1, Math.floor(iterations / 10)))),
   ];
 }

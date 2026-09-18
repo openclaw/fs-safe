@@ -6,6 +6,7 @@ import {
   registerSharedMutationAdmission,
 } from "./shared-mutation-admission.mjs";
 import { registerCopyFallbackSuccess } from "./copy-fallback-success.mjs";
+import { registerSyncCopyFallbackAdmission } from "./sync-copy-fallback-admission.mjs";
 
 async function settledValues(pending) {
   const results = await Promise.allSettled(pending);
@@ -34,6 +35,7 @@ export async function registerScaling({ api: a, workspace: w, register: add, onC
   registerRootWriteMutationAdmission({ root, workspace: w, register: add });
   registerSharedMutationAdmission({ root, workspace: w, register: add });
   registerCopyFallbackSuccess({ api: a, workspace: w, register: add });
+  registerSyncCopyFallbackAdmission({ api: a, workspace: w, register: add });
 
   for (const count of [0, 32, 128]) {
     const key = `scaling:${w}:${count}`, manager = a.createFileLockManager(key);

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Fixes and compatibility
+
+- Preserve an already-selected synchronous destination-admission error when its one best-effort descriptor close also fails. Successful admission retains its existing close-error behavior, and synchronous atomic replacement adapters do not retry or double-close the destination descriptor.
 - Preserve directory-mode authority and deadline check failures before and after dispatch, including one-shot checks and falsy JavaScript values. Best-effort suppression stays limited to mode-change failures, and deferred check failures retain the existing post-dispatch identity verification.
 - Preserve every thrown value from compatible temporary-workspace recursive removal, including falsy values, while keeping uncertain quarantine or parent checks mapped to `"indeterminate"`.
 - Preserve every thrown value from Windows native write descriptor cleanup, while still attempting all owned closes after publication.
@@ -14,6 +17,10 @@
 
 - Propagate asynchronous and synchronous destination-writer close failures after an otherwise successful unsynchronized copy fallback when a new destination writer is opened, including `copyFallbackRestore: "restore-original"` with an absent destination. Preserve any earlier operation failure exactly, including falsy thrown values, and attempt the destination close only once; the destination may already be replaced or partial when the close reports failure.
 - Bind the existing public copy-fallback success benchmarks to immutable workload receipts and fail report admission on missing, skipped, mutated, mis-filtered, or incorrectly iterated rows. Fixture reset, receipt/content checks, and staging-temp verification remain outside timing.
+
+### Validation
+
+- Add paired-error regressions for direct hardlink-policy admission and public synchronous atomic replacement, including arbitrary falsy thrown values, plus receipt-bound timing rows that enforce unchanged destination observation and descriptor-call counts on successful rename and restored copy-fallback routes.
 
 ### Release operations
 
