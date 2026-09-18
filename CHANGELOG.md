@@ -21,6 +21,7 @@
 
 ### Validation
 
+- Update development tooling to @napi-rs/cli 3.10.0, Node type definitions 26.6.0, and the coordinated Vitest/coverage 5.0.1 patch release.
 - Add paired-error regressions for direct hardlink-policy admission and public synchronous atomic replacement, including arbitrary falsy thrown values, plus receipt-bound timing rows that enforce unchanged destination observation and descriptor-call counts on successful rename and restored copy-fallback routes.
 
 ### Release operations
