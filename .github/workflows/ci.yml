@@ -1329,9 +1329,24 @@ jobs:
         run: pnpm native:build
 
       - name: Verify root-only npm and pnpm consumer installs
+        id: consumer_proof
         env:
           FS_SAFE_EXPECTED_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: pnpm package:smoke
+
+      - name: Diagnose Windows compiler state after consumer proof failure
+        if: failure() && runner.os == 'Windows' && steps.consumer_proof.outcome == 'failure'
+        timeout-minutes: 4
+        continue-on-error: true
+        run: node scripts/windows-security-compiler-diagnostic.mjs
+
+      - name: Upload Windows compiler diagnostics
+        if: always() && runner.os == 'Windows' && steps.consumer_proof.outcome == 'failure'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-compiler-diagnostic-node-${{ matrix.node }}
+          path: release-artifacts/windows-security-compiler-diagnostic.json
+          if-no-files-found: warn
 
       - name: Prove native descriptor ownership in Node workers
         env:
