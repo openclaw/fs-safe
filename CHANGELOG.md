@@ -5,6 +5,7 @@
 ### Fixes and compatibility
 
 - Preserve an already-selected synchronous destination-admission error when its one best-effort descriptor close also fails. Successful admission retains its existing close-error behavior, and synchronous atomic replacement adapters do not retry or double-close the destination descriptor.
+- Preserve every thrown value from Windows native write descriptor cleanup, while still attempting all owned closes after publication.
 - Add `maxDepth` to `probePathSuffixAliasesSync()` for deeper prospective paths, with proportional operation budgets and unchanged default, string-length, identity, and cleanup limits.
 - Cap configurable-depth suffix probing at 32,768 forward observations while always completing owned cleanup.
 - Allow asynchronous `include`/`descend` in `walkDirectory()` and `entryFilter` in `Root.walk()` for serial selection and marker-based pruning, retaining callback receivers and budgets; Root walks settle pending callbacks and recheck cancellation and directory/root identity before using awaited decisions.
