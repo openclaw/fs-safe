@@ -1,10 +1,10 @@
 import { execFileSync } from "node:child_process";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
-import { afterEach, assert, describe, expect, it, type TestContext } from "vitest";
+import { afterEach, assert, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative } from "../src/config.js";
+import { __resetNativeFallbackWarningsForTest } from "../src/native-fallback-warning.js";
 import { copyTree, createCloneSource, probeTreeClone, readCloneFileMetadata } from "../src/copy.js";
 import {
   __resetNativeLoaderForTest,
@@ -12,29 +12,13 @@ import {
   getNativeBinding,
 } from "../src/native.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { cloneFixture } from "./helpers/clone.js";
 
 const { tempDirs, tempRoot } = useRealTempDirs();
 afterEach(() => {
   configureFsSafeNative({ mode: "auto" });
   __resetNativeLoaderForTest();
 });
-
-async function cloneFixture(context: TestContext) {
-  const explicitParent = process.env.FS_SAFE_CLONE_TEST_ROOT;
-  const parent = await fs.realpath(explicitParent ?? os.tmpdir());
-  const backend = probeTreeClone(parent);
-  if (!backend) {
-    if (explicitParent) throw new Error("FS_SAFE_CLONE_TEST_ROOT requires native clone support");
-    context.skip("native APFS, Btrfs, ReFS, XFS, or ZFS volume unavailable");
-    throw new Error("unreachable");
-  }
-  const directory = await fs.mkdtemp(path.join(parent, "fs-safe-clone-"));
-  tempDirs.push(directory);
-  const source = path.join(directory, "source");
-  const destination = path.join(directory, "destination-é space");
-  await createCloneSource(source);
-  return { directory, source, destination, backend };
-}
 
 describe("native directory cloning", () => {
   it("keeps probes read-only and copies when native support is disabled", async () => {
@@ -162,7 +146,7 @@ describe("native directory cloning", () => {
   ])(
     "preserves tree data and metadata with $label and independent writes",
     async ({ concurrency }, context) => {
-      const { source, destination } = await cloneFixture(context);
+      const { source, destination } = await cloneFixture(context, tempDirs);
       await fs.mkdir(path.join(source, "nested"));
       await fs.mkdir(path.join(source, "empty-directory"));
       const payload = Buffer.alloc(1024 * 1024, 0x5a);
@@ -220,7 +204,7 @@ describe("native directory cloning", () => {
   );
 
   it("preserves literal symlinks and refuses a symlink as the clone source", async (context) => {
-    const { directory, source, destination } = await cloneFixture(context);
+    const { directory, source, destination } = await cloneFixture(context, tempDirs);
     await fs.writeFile(path.join(source, "payload"), "original");
     try {
       await fs.symlink("payload", path.join(source, "link"), "file");
@@ -266,19 +250,43 @@ describe("native directory cloning", () => {
     });
   });
 
-  it("requires a Btrfs subvolume source instead of copying an ordinary directory", async (context) => {
-    const { directory, destination, backend } = await cloneFixture(context);
-    if (backend !== "btrfs") context.skip("Btrfs-specific source requirement");
+  it("warns and independently copies an ordinary Btrfs directory when snapshots are unavailable", async (context) => {
+    const { directory, destination, backend } = await cloneFixture(context, tempDirs);
+    if (backend !== "btrfs") context.skip("Btrfs-specific ordinary directory fallback");
     const ordinary = path.join(directory, "ordinary");
     await fs.mkdir(ordinary);
-    await fs.writeFile(path.join(ordinary, "payload"), "original");
-    await expect(copyTree(ordinary, destination, { clone: "always" })).rejects.toThrow();
-    await expect(fs.access(destination)).rejects.toMatchObject({ code: "ENOENT" });
-    expect(await fs.readFile(path.join(ordinary, "payload"), "utf8")).toBe("original");
+    const sourcePayload = path.join(ordinary, "payload"), copiedPayload = path.join(destination, "payload");
+    await fs.writeFile(sourcePayload, "original");
+    const sourceDirectoryBefore = await fs.stat(ordinary, { bigint: true });
+    const sourceFileBefore = await fs.stat(sourcePayload, { bigint: true });
+    __resetNativeFallbackWarningsForTest();
+    const warning = vi.spyOn(process, "emitWarning").mockImplementation(() => undefined);
+    try {
+      await expect(copyTree(ordinary, destination, { clone: "always" })).resolves.toBeUndefined();
+      expect(warning).toHaveBeenCalledExactlyOnceWith(
+        expect.stringContaining("filesystem cloning is not guaranteed"),
+        { code: "FS_SAFE_NATIVE_FALLBACK", type: "FsSafeWarning" },
+      );
+      expect(await fs.readdir(destination)).toEqual(["payload"]);
+      expect(await fs.readFile(copiedPayload, "utf8")).toBe("original");
+      expect(await fs.readFile(sourcePayload, "utf8")).toBe("original");
+      const copied = await fs.stat(copiedPayload, { bigint: true });
+      expect({ dev: copied.dev, ino: copied.ino }).not.toEqual({ dev: sourceFileBefore.dev, ino: sourceFileBefore.ino });
+      expect(copied.nlink).toBe(1n);
+      await fs.writeFile(copiedPayload, "destination edit");
+      expect(await fs.readFile(sourcePayload, "utf8")).toBe("original");
+      await fs.writeFile(sourcePayload, "source edit");
+      expect(await fs.readFile(copiedPayload, "utf8")).toBe("destination edit");
+      expect(await fs.stat(ordinary, { bigint: true })).toMatchObject({ dev: sourceDirectoryBefore.dev, ino: sourceDirectoryBefore.ino });
+      expect(await fs.stat(sourcePayload, { bigint: true })).toMatchObject({ dev: sourceFileBefore.dev, ino: sourceFileBefore.ino, nlink: 1n });
+    } finally {
+      warning.mockRestore();
+      __resetNativeFallbackWarningsForTest();
+    }
   });
 
   it("rejects ReFS alternate streams without reporting a lossy clone as success", async (context) => {
-    const { source, destination, backend } = await cloneFixture(context);
+    const { source, destination, backend } = await cloneFixture(context, tempDirs);
     if (backend !== "refs") context.skip("ReFS-specific stream preservation");
     const original = path.join(source, "payload");
     await fs.writeFile(original, "main data");
@@ -290,7 +298,7 @@ describe("native directory cloning", () => {
   });
 
   it("removes a failed Linux reflink clone without altering its source and permits retry", async (context) => {
-    const { source, destination, backend } = await cloneFixture(context);
+    const { source, destination, backend } = await cloneFixture(context, tempDirs);
     if (backend !== "xfs" && backend !== "zfs") context.skip("Linux reflink partial clone cleanup");
     const readonly = path.join(source, "readonly");
     const copiedReadonly = path.join(destination, "readonly");
@@ -332,7 +340,7 @@ describe("native directory cloning", () => {
   ])(
     "preserves Linux reflink extended attributes and ACLs on $label",
     async ({ fileMode, directoryMode }, context) => {
-      const { source, destination, backend } = await cloneFixture(context);
+      const { source, destination, backend } = await cloneFixture(context, tempDirs);
       if (backend !== "xfs" && backend !== "zfs") context.skip("Linux reflink extended metadata");
       await fs.mkdir(path.join(source, "nested"));
       await fs.writeFile(path.join(source, "nested", "payload"), "original");
@@ -387,7 +395,7 @@ describe("native directory cloning", () => {
   );
 
   it("preserves Linux reflink directory attributes when umask removes owner-write", async (context) => {
-    const { source, destination, backend } = await cloneFixture(context);
+    const { source, destination, backend } = await cloneFixture(context, tempDirs);
     if ((backend !== "xfs" && backend !== "zfs") || process.getuid?.() === 0)
       context.skip("requires unprivileged Linux reflink attribute permissions");
     execFileSync("setfattr", ["-n", "user.fs-safe-clone", "-v", "original", source]);
@@ -431,7 +439,7 @@ describe("native directory cloning", () => {
   });
 
   it("rejects cloning a tree into itself or its descendants", async (context) => {
-    const { source } = await cloneFixture(context);
+    const { source } = await cloneFixture(context, tempDirs);
     await fs.writeFile(path.join(source, "payload"), "original");
     await expect(copyTree(source, source, { clone: "always" })).rejects.toThrow();
     await expect(
@@ -441,7 +449,7 @@ describe("native directory cloning", () => {
   });
 
   it("reports APFS clone provenance and stops matching after an independent edit", async (context) => {
-    const { source, destination, backend } = await cloneFixture(context);
+    const { source, destination, backend } = await cloneFixture(context, tempDirs);
     if (backend !== "apfs") context.skip("APFS clone provenance");
     const original = path.join(source, "payload");
     const cloned = path.join(destination, "payload");

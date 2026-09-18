@@ -299,18 +299,47 @@ try {
   const driftDir = await child("stage-drift");
   const drift = await stageFileInDirectory({ directory: driftDir, content: "original stage" });
   const retiredDir = path.join(directory, "retired-stage-parent");
-  await fs.rename(driftDir, retiredDir);
-  await fs.mkdir(driftDir);
-  await fs.writeFile(path.join(driftDir, drift.receipt.temporaryBasename), "replacement stage");
-  await assert.rejects(drift.publish("must-not-publish", { overwrite: false }), (error) =>
-    error?.details?.publication?.status === "not-published");
-  const driftCleanup = await drift.cleanup();
-  assert.equal(driftCleanup.status, "preserved");
-  assert.equal(driftCleanup.resources, "closed");
-  assert.equal(await text(path.join(retiredDir, drift.receipt.temporaryBasename)), "original stage");
-  assert.equal(await text(path.join(driftDir, drift.receipt.temporaryBasename)), "replacement stage");
-  await assert.rejects(fs.lstat(path.join(driftDir, "must-not-publish")), { code: "ENOENT" });
-  rows.push({ scenario: "staged-parent-drift", targeting: driftCleanup.targeting, cleanup: driftCleanup.status, bothSentinelsPreserved: true });
+  if (process.platform === "win32") {
+    const parentIdentity = await identity(driftDir);
+    const temporary = path.join(driftDir, drift.receipt.temporaryBasename);
+    const stageIdentity = await identity(temporary);
+    // Retained Windows handles prevent the directory replacement itself.
+    await assert.rejects(fs.rename(driftDir, retiredDir), { code: "EPERM" });
+    await assert.rejects(fs.lstat(retiredDir), { code: "ENOENT" });
+    assert.deepEqual(await identity(driftDir), parentIdentity);
+    assert.deepEqual(await identity(temporary), stageIdentity);
+    assert.equal(await text(temporary), "original stage");
+    await drift.assertCurrent();
+    const publication = await drift.publish("published", { overwrite: false });
+    assert.equal(publication.status, "published");
+    assert.ok(["link-unlink", "rename"].includes(publication.method));
+    const driftCleanup = await drift.cleanup();
+    assert.equal(driftCleanup.status, "not-needed");
+    assert.equal(driftCleanup.resources, "closed");
+    await drift[Symbol.asyncDispose]();
+    assert.deepEqual(await fs.readdir(driftDir), ["published"]);
+    await fs.rename(driftDir, retiredDir);
+    await assert.rejects(fs.lstat(driftDir), { code: "ENOENT" });
+    assert.deepEqual(await identity(retiredDir), parentIdentity);
+    assert.deepEqual(await identity(path.join(retiredDir, "published")), stageIdentity);
+    assert.equal(await text(path.join(retiredDir, "published")), "original stage");
+    rows.push({ scenario: "staged-parent-drift", targeting: driftCleanup.targeting, cleanup: driftCleanup.status,
+      driftPrevented: true, originalIdentityAndBytesPreserved: true, resources: driftCleanup.resources,
+      renameAfterCloseVerified: true, publication: publication.status });
+  } else {
+    await fs.rename(driftDir, retiredDir);
+    await fs.mkdir(driftDir);
+    await fs.writeFile(path.join(driftDir, drift.receipt.temporaryBasename), "replacement stage");
+    await assert.rejects(drift.publish("must-not-publish", { overwrite: false }), (error) =>
+      error?.details?.publication?.status === "not-published");
+    const driftCleanup = await drift.cleanup();
+    assert.equal(driftCleanup.status, "preserved");
+    assert.equal(driftCleanup.resources, "closed");
+    assert.equal(await text(path.join(retiredDir, drift.receipt.temporaryBasename)), "original stage");
+    assert.equal(await text(path.join(driftDir, drift.receipt.temporaryBasename)), "replacement stage");
+    await assert.rejects(fs.lstat(path.join(driftDir, "must-not-publish")), { code: "ENOENT" });
+    rows.push({ scenario: "staged-parent-drift", targeting: driftCleanup.targeting, cleanup: driftCleanup.status, bothSentinelsPreserved: true });
+  }
 
   const copyDir = await child("copy");
   const cloneSource = path.join(copyDir, "source");

@@ -44,9 +44,15 @@ function runSource(source: string, f: Awaited<ReturnType<typeof fixture>>) {
   ], { input: source, encoding: "utf8", windowsHide: true, timeout: 30_000,
     env: { ...process.env, FS_SAFE_RETIRE_TEST_REQUEST: JSON.stringify(request), FS_SAFE_RETIRE_TEST_SOURCE: f.source } }).trim());
 }
-function parentAccess(directory: string, restricted: boolean): void {
+function parentAccess(directory: string, restricted: boolean, sourcePath: string): void {
   const query = [
     "$ErrorActionPreference='Stop'", "$p=[Environment]::GetEnvironmentVariable('FS_SAFE_RETIRE_PARENT')",
+    // Keep the payload's existing rights while changing only its parent's ACL.
+    ...(restricted ? [
+      "$source=[Environment]::GetEnvironmentVariable('FS_SAFE_RETIRE_SOURCE')",
+      "$child=[IO.File]::GetAccessControl($source,[Security.AccessControl.AccessControlSections]::Access)",
+      "$child.SetAccessRuleProtection($true,$true);[IO.File]::SetAccessControl($source,$child)",
+    ] : []),
     "$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User",
     "$a=[Security.AccessControl.DirectorySecurity]::new();$a.SetAccessRuleProtection($true,$false)",
     ...(restricted ? ["$a.SetOwner($sid)"] : []),
@@ -55,7 +61,8 @@ function parentAccess(directory: string, restricted: boolean): void {
     "[IO.Directory]::SetAccessControl($p,$a)",
   ].join(";");
   execFileSync(resolveWindowsSystemCommand(String.raw`WindowsPowerShell\v1.0\powershell.exe`), ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", query], {
-    windowsHide: true, stdio: "pipe", timeout: 30_000, env: { ...process.env, FS_SAFE_RETIRE_PARENT: directory },
+    windowsHide: true, stdio: "pipe", timeout: 30_000,
+    env: { ...process.env, FS_SAFE_RETIRE_PARENT: directory, FS_SAFE_RETIRE_SOURCE: sourcePath },
   });
 }
 
@@ -91,13 +98,17 @@ describe.runIf(process.platform === "win32")("Windows exact-source-handle retire
   it("does not require source-directory listing or subdirectory creation", async () => {
     const f = await fixture(); const pin = fsSync.openSync(f.target, "r");
     try {
-      parentAccess(f.directory, true);
+      parentAccess(f.directory, true, f.source);
       await expect(fs.readdir(f.directory)).rejects.toMatchObject({ code: expect.stringMatching(/^(EACCES|EPERM)$/) });
       await expect(fs.mkdir(path.join(f.directory, "forbidden-directory"))).rejects.toMatchObject({ code: expect.stringMatching(/^(EACCES|EPERM)$/) });
+      expect(await fs.readFile(f.target, "utf8")).toBe("payload A");
       retire(f.args);
       expect(fsSync.fstatSync(pin, { bigint: true }).nlink).toBe(1n);
       expect(await fs.readFile(f.target, "utf8")).toBe("payload A");
-    } finally { parentAccess(f.directory, false); fsSync.closeSync(pin); }
+    } finally {
+      try { parentAccess(f.directory, false, f.source); }
+      finally { fsSync.closeSync(pin); }
+    }
   }, 95_000);
 
   it.each(["before-open", "after-open"] as const)("preserves B and target A when source substitution occurs %s", async timing => {
