@@ -1161,6 +1161,12 @@ jobs:
           FS_SAFE_NATIVE_MODE: require
         run: pnpm test test/secure-file-windows-descriptor.test.ts test/secure-file-windows-native.test.ts
 
+      - name: Test Windows owner benchmark control with required native binding
+        if: runner.os == 'Windows'
+        env:
+          FS_SAFE_NATIVE_MODE: require
+        run: pnpm test test/benchmark-windows-owner-caught-failure.test.ts
+
       - name: Test native archive buffer ownership and validation
         env:
           FS_SAFE_NATIVE_MODE: require
@@ -1331,6 +1337,12 @@ jobs:
         env:
           FS_SAFE_NATIVE_MODE: require
         run: pnpm test test/native-worker-fd-ownership.test.ts test/windows-native-fd-bridge.test.ts
+
+      - name: Test Windows owner benchmark control with required native binding
+        if: runner.os == 'Windows'
+        env:
+          FS_SAFE_NATIVE_MODE: require
+        run: pnpm test test/benchmark-windows-owner-caught-failure.test.ts
 
       - name: Upload behavior proof
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

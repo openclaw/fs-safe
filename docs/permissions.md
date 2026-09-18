@@ -102,6 +102,19 @@ characters, including a trailing `…` when truncated. Diagnostics do not copy
 stdout or read target file contents. The separate `errorCause` retains the
 original exception for restricted local diagnosis; do not serialize or expose
 it as display text.
+Custom executors may reject with any JavaScript value. The fallback display
+formatter handles primitives directly and reads only string-valued `name` and
+`message` data descriptors through a small, fixed prototype budget. It does not
+coerce objects, invoke accessors, or inspect proxy targets; unavailable display
+facts use a bounded generic reason. Command fields follow the same best-effort
+data-descriptor rule. Raw string, `Buffer`, or genuine `Uint8Array` stderr
+retains the sanitization above. Byte stderr is copied through captured
+typed-array intrinsics into a private bounded snapshot before replacement-based
+UTF-8 decoding; receiver properties, iterators, constructors, and altered
+prototypes are not consulted. Detached or out-of-bounds byte views contribute
+no stderr detail. These diagnostic limits do not relax permission policy:
+incomplete owner or ACL inspection remains unverified, and `errorCause` remains
+the exact rejected value even when no display metadata is safe to obtain.
 The parser and remediation command builders remain on the advanced surface for
 CLIs processing captured `icacls` output or presenting an explicit repair.
 Runtime inspection does not parse that display text. A null DACL reports

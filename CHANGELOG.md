@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Permissions and diagnostics
+
+- Keep the Windows owner/ACL compatibility inspector fail-closed when an
+  injected executor rejects with a proxy, accessor-bearing object, function,
+  symbol, or another value whose ordinary string conversion can run or throw.
+  Best-effort command metadata now reads bounded data descriptors without
+  invoking getters or proxy traps. String, `Buffer`, and `Uint8Array` stderr is
+  retained through bounded private byte snapshots without consulting receiver
+  properties, iterators, constructors, or altered prototypes, while preserving
+  ordinary diagnostics and the exact original `errorCause`.
+
 ### Directory copying
 
 - Bind successful public `probeTreeClone` and `copyTree` performance rows to admitted workload receipts. The copy rows cover nested small files and multichunk payloads with `clone: "never"` and `"auto"` selection with separately reported capability probes; setup, exact paths, hashes, POSIX relative symlinks or Windows absolute junctions, metadata, independent destination mutation, source preservation, and cleanup remain outside timing.
@@ -40,6 +51,11 @@
 
 ### Validation
 
+- Avoid repeated descriptor walks and missing-field allocations when formatting ordinary permission-command failures.
+- Add cross-public-route hostile-diagnostic regressions and receipt-bound
+  Windows owner failure benchmarks with injected success/error cohorts plus
+  live native/POSIX controls. Hostile changed-outcome cases remain
+  correctness-only rather than being treated as equivalent performance work.
 - Add public extraction regressions for rejected and successful defensive fallback closes, and bind the existing successful public ZIP extraction benchmark to an immutable workload receipt with setup and verification outside timing.
 - Update development tooling to @napi-rs/cli 3.10.0, Node type definitions 26.6.0, and the coordinated Vitest/coverage 5.0.1 patch release.
 - Add paired-error regressions for direct hardlink-policy admission and public synchronous atomic replacement, including arbitrary falsy thrown values, plus receipt-bound timing rows that enforce unchanged destination observation and descriptor-call counts on successful rename and restored copy-fallback routes.

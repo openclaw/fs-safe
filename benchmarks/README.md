@@ -47,6 +47,37 @@ is present; every invocation then verifies the returned method or path, exact
 published bytes, applicable POSIX mode, and absence of orphan temps before reset.
 Only the public write call is timed. These immutable workload receipts are
 validated against the complete predeclared row set selected by the report filter.
+Eight `windows-owner-caught` rows bind the Windows owner diagnostic study to an
+immutable workload receipt. Six `inspectWindowsAcl` rows use injected,
+prebuilt executors for empty and populated DACL success, ordinary `Error`, raw
+command failure with `Buffer` stderr, wrapped timeout, and malformed JSON.
+The runner workspace must already have its private Windows ACL before these
+rows register or create their child fixture. The normal runner establishes that
+precondition in `registerCore()` via `applyBenchmarkPrivateWindowsAcl()`; any
+standalone registration must call the same helper first. A failed ACL setup is
+a failed campaign job, not a skipped or substituted control.
+Source cohorts run at the configured iteration count. An
+`inspectPathPermissions` Windows-policy control uses the native reader on a
+native Windows run and otherwise consumes prebuilt descriptor facts, proving
+the route by an exact injected-executor call count. A forced-POSIX policy
+control covers the other branch. Both controls run at one twentieth of the
+configured count. Fixture creation, content checks, exact result/cause/detail
+checks, and executor call counts stay outside timing; no row skips on a
+supported campaign platform or native mode.
+
+Hostile values are correctness-only because the repair deliberately changes
+their public outcome from a rejected inspector to an unverified result; they
+are declared in the receipt and are not subtracted from timings or substituted
+for an equivalent cohort. For the final study use filter
+`windows-owner-caught`, 20 iterations, nine samples, three blocks, both ABBA
+and BAAB orders, Node 22 and 24, native modes `off` and `require`, and Linux,
+macOS, and Windows. Every declared job, row, block, and pooled comparison must
+finish; controls cannot cancel a source regression or be selectively rerun.
+Run the source comparison and separate same-source-rebuild and same-artifact
+controls serially. For each block and the pooled result, fail a row when its
+median regresses by more than 10% or 50 microseconds, or its maximum sample
+average regresses by more than 20% or 100 microseconds; a failing control blocks
+the campaign and never offsets a source result.
 Thirty-six synchronous file-store directory-mode rows cross existing matching,
 existing mismatched, and wholly new directory chains at depths 0/4/16 with both
 durability and private-mode settings. Fixture creation, mode setup, verification,

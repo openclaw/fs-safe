@@ -14,6 +14,12 @@ import {
   PROBE_TREE_SUCCESS_WORKLOAD,
   probeTreeSuccessFixtureReceipt,
 } from "../../benchmarks/copy-tree-success.mjs";
+import {
+  WINDOWS_OWNER_CAUGHT_FAILURE_FIXTURE,
+  WINDOWS_OWNER_CAUGHT_FAILURE_NAMES,
+  WINDOWS_OWNER_CAUGHT_FAILURE_RECEIPT,
+  windowsOwnerCaughtFailureIterations,
+} from "../../benchmarks/windows-owner-caught-failure.mjs";
 
 function measured(row: object, sampleCount: number, iterations: number) {
   return {
@@ -69,5 +75,14 @@ export function completeSyntheticBenchmarkResults(
       workloadDetails: row.workloadDetails,
       fixturePlacement: copyTreeSuccessFixtureReceipt(row, { nativeMode }),
     }, sampleCount, Math.max(1, Math.floor(iterations / row.divisor)))),
+    ...WINDOWS_OWNER_CAUGHT_FAILURE_NAMES.map((name) => measured({
+      name,
+      workloadSemantics: "equivalent-output",
+      workloadDetails: {
+        ...WINDOWS_OWNER_CAUGHT_FAILURE_RECEIPT,
+        cohort: name.split("/").at(-1),
+      },
+      fixturePlacement: WINDOWS_OWNER_CAUGHT_FAILURE_FIXTURE,
+    }, sampleCount, windowsOwnerCaughtFailureIterations(name, iterations))),
   ];
 }

@@ -24,6 +24,7 @@ import {
   validateCopyTreeSuccessReport,
   validateProbeTreeSuccessReport,
 } from "./copy-tree-success.mjs";
+import { validateWindowsOwnerCaughtFailureReport } from "./windows-owner-caught-failure.mjs";
 import { observeFilenameFallbackProfile } from "./filename-fallback-profile.mjs";
 import {
   MEASURED_SOURCE_ARGUMENT_NAMES,
@@ -31,7 +32,7 @@ import {
   measuredDistributionMetadata,
   parseMeasuredSourceArguments,
 } from "./measured-distribution.mjs";
-import { finalizeBenchmarkRun, finishBenchmarkInvocation } from "./runner-cleanup.mjs";
+import { finalizeBenchmarkReport, finishBenchmarkInvocation } from "./runner-cleanup.mjs";
 
 const args = { iterations: 100, samples: 5, warmup: 5, mode: "off", "copy-shape": "mixed", "copy-files": 64, "copy-file-bytes": 4096 };
 for (let i = 2; i < process.argv.length; i++) {
@@ -104,6 +105,9 @@ const measuredDistribution = measuredDistributionMetadata(
 api.configureFsSafeNative({ mode: args.mode });
 const { getNativeBinding } = await import(pathToFileURL(path.join(dist, "native.js")));
 const binding = getNativeBinding();
+const { PermissionCommandError } = await import(
+  pathToFileURL(path.join(dist, "permission-exec.js"))
+);
 const native = Boolean(binding);
 const loadedAddon = native ? Object.values(createRequire(import.meta.url).cache)
   .find((module) => module?.filename.endsWith(".node") && module.exports === binding) : undefined;
@@ -134,6 +138,7 @@ const contract = (name, object) => {
 const cleanups = [];
 const context = {
   api, workspace, native, binding, measuredFeatures, measuredProfiles,
+  PermissionCommandError,
   register, exclude, contract, args, onCleanup: (fn) => cleanups.push(fn),
 };
 let cleanup;
@@ -260,15 +265,24 @@ try {
     coverage: { exports: Object.fromEntries(exportsByName), methods: Object.fromEntries(contracts), exclusions: Object.fromEntries(exclusions), registeredCases: cases.length, filtered: Boolean(args.filter) },
     results,
   };
-  validateSyncCopyFallbackAdmissionReport(completedReport, args.filter, args.iterations);
-  validateGuestBenchmarkReport(completedReport, args.filter);
-  validateCopyFallbackSuccessReport(completedReport, args.filter, args.iterations);
-  validateProbeTreeSuccessReport(completedReport, args.filter, args.iterations);
-  validateCopyTreeSuccessReport(completedReport, args.filter, args.iterations);
   completionMessage = `Measured ${results.filter((r) => !r.skipped).length} cases; ${required.length} callable exports/methods accounted for. Native ${args.mode}: ${native ? "loaded" : "off/unavailable"}.\n`;
 } catch (error) {
   executionFailures.push(error);
 }
-await finalizeBenchmarkRun({ initialFailures: executionFailures, cleanup, cleanups, workspace });
-if (args.json) fs.writeFileSync(path.resolve(args.json), `${JSON.stringify(completedReport, null, 2)}\n`);
+await finalizeBenchmarkReport({
+  initialFailures: executionFailures,
+  validateReport: () => {
+    validateSyncCopyFallbackAdmissionReport(completedReport, args.filter, args.iterations);
+    validateGuestBenchmarkReport(completedReport, args.filter);
+    validateCopyFallbackSuccessReport(completedReport, args.filter, args.iterations);
+    validateProbeTreeSuccessReport(completedReport, args.filter, args.iterations);
+    validateCopyTreeSuccessReport(completedReport, args.filter, args.iterations);
+    validateWindowsOwnerCaughtFailureReport(completedReport, args.filter, args.iterations);
+  },
+  cleanup,
+  cleanups,
+  workspace,
+  reportPath: args.json ? path.resolve(args.json) : undefined,
+  report: completedReport,
+});
 process.stdout.write(completionMessage);

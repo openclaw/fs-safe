@@ -1,4 +1,5 @@
 import {
+  formatCaughtPermissionFailure,
   formatPermissionErrorDetail,
   getPermissionCommandFailure,
   type PermissionCommandFailure,
@@ -132,7 +133,7 @@ export async function inspectWindowsOwner(params: {
     };
   } catch (err) {
     return {
-      error: formatPermissionErrorDetail(String(err)),
+      error: formatCaughtPermissionFailure(err),
       errorDetail: getPermissionCommandFailure(err, command, performance.now() - startedAt),
       errorCause: err,
     };
