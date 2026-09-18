@@ -96,13 +96,48 @@ if (process.platform === "win32") {
 assert.equal(readFileSync(prefixLive, "utf8"), "path-prefix-live");
 assert.equal(existsSync(prefixMissing), false);
 
+const { configureFsSafeNative } = await import("@openclaw/fs-safe/config");
+const { readCloneFileMetadata } = await import("@openclaw/fs-safe/copy");
+const cloneMetadata = [];
+for (const mode of ["off", "auto", "require"]) {
+  configureFsSafeNative({ mode });
+  const row = { mode, invalidPaths: [] };
+  for (const invalid of ["", "relative", `${prefixLive}\0hidden`]) {
+    await assert.rejects(readCloneFileMetadata([prefixLive, invalid]), (error) => {
+      assert.equal(error.code, "invalid-path");
+      row.invalidPaths.push(error.code);
+      return true;
+    });
+  }
+  const unavailable = (mode === "require" && expected.omitted)
+    || (process.platform === "darwin" && (mode === "off" || expected.omitted));
+  for (const [name, files] of [["batch", [prefixLive, prefixMissing, prefixLive]], ["empty", []]]) {
+    if (unavailable) {
+      await assert.rejects(readCloneFileMetadata(files), (error) => {
+        assert.equal(error.code, "helper-unavailable");
+        row[name] = error.code;
+        return true;
+      });
+    } else {
+      const metadata = await readCloneFileMetadata(files);
+      assert.equal(metadata.length, files.length);
+      if (process.platform !== "darwin") assert.deepEqual(metadata, files.map(() => undefined));
+      if (files.length) {
+        assert.equal(metadata[1], undefined);
+        assert.deepEqual(metadata[0], metadata[2]);
+      }
+      row[name] = metadata.map((entry) => entry === undefined ? "unsupported" : "metadata");
+    }
+  }
+  cloneMetadata.push(row);
+}
+
 writeFileSync("installed.json", JSON.stringify({
   root: expected.rootPkg.name, version: expected.rootPkg.version,
-  nativePackages: [...physical], binary,
+  nativePackages: [...physical], binary, cloneMetadata,
 }));
 
 // The bundled TAR parser works even in an install with every optional omitted.
-const { configureFsSafeNative } = await import("@openclaw/fs-safe/config");
 const { extractArchive, readArchiveEntry } = await import("@openclaw/fs-safe/archive");
 configureFsSafeNative({ mode: "off" });
 const header = Buffer.alloc(512);

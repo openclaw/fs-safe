@@ -249,7 +249,7 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
         async function hash(mode, missing = false) {
           return run([process.execPath], ["--input-type=module", "--eval", hashScript, mode, missing ? "missing" : "present"], directory, env);
         }
-        const cases = { omitted, nativePackages: installed.nativePackages };
+        const cases = { omitted, nativePackages: installed.nativePackages, cloneMetadata: installed.cloneMetadata };
         cases.require = await hash("require", omitted);
         cases.auto = await hash("auto");
         cases.off = await hash("off");

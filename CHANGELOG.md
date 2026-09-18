@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Retain streamed `Root.create()` authority callbacks and abort signals across producer waits so replacing caller options cannot detach a revoked lease or redirect cancellation; preserve live revocation, callback receivers, and owned-stage cleanup.
+- Return unsupported clone-metadata results without the native addon on non-macOS platforms in `auto` and `off` modes; preserve input validation, strict `require` mode, and native-only APFS metadata on macOS.
 - Compare exact directory identities before and after durability syncs, retry unknown Windows observations once, and reject rounded or unverifiable caller receipts; bind numeric metadata to the same observation and preserve private identity authority across receipt mutation, durable creation, publication, and retained staging.
 - Support zstd and bzip2 TAR extraction and bounded entry reads through bundled WASM codecs when native support is disabled or absent, retaining full-stream validation, limits, and guarded publication; keep native `require` strict and ZIP's optional JSZip dependency unchanged.
 - Clarify that `resolveExistingPathsWithinRoot()` allows missing paths and `resolveStrictExistingPathsWithinRoot()` requires existing regular files.
