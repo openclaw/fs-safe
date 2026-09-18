@@ -9,6 +9,7 @@ import {
   type NativeParentAdmission,
 } from "./native-parent-admission.js";
 import { getNativeBinding } from "./native.js";
+import { getFsSafeNativeConfig } from "./native-config.js";
 import { isNotFoundPathError } from "./path.js";
 import { assertRootIdentityCurrent, assertRootIdentityCurrentSync, type RootContext } from "./root-context.js";
 import { resolveRootPathSync } from "./root-path.js";
@@ -73,19 +74,23 @@ function normalizeRenameNoReplaceError(error: unknown): unknown {
   return normalizeMoveError(error);
 }
 
+export type NoReplaceMoveOptions = {
+  assertBeforeMutation?: () => void;
+  denyMutations?: DenyMutationPolicy;
+  mutationSymlinks?: MutationSymlinkPolicy;
+};
+
+export type NoReplaceMovePaths = {
+  sourcePath: string;
+  sourceParentPath: string;
+  targetPath: string;
+  targetParentPath: string;
+};
+
 export async function movePathNoReplaceNative(
   root: RootContext,
-  params: {
-    assertBeforeMutation?: () => void;
-    denyMutations?: DenyMutationPolicy;
-    mutationSymlinks?: MutationSymlinkPolicy;
-  },
-  paths: {
-    sourcePath: string;
-    sourceParentPath: string;
-    targetPath: string;
-    targetParentPath: string;
-  },
+  params: NoReplaceMoveOptions,
+  paths: NoReplaceMovePaths,
 ): Promise<void> {
   try {
     fsSync.lstatSync(paths.targetPath);
@@ -96,8 +101,21 @@ export async function movePathNoReplaceNative(
     // Advisory fast rejection only. renameNoReplace owns the collision decision.
   }
   const binding = getNativeBinding();
-  if (!binding || typeof binding.renameNoReplace !== "function") {
-    throw new FsSafeError("helper-unavailable", "native no-replace move is unavailable");
+  const needsNumericIdentity = process.platform === "win32" &&
+    (typeof root.rootIdentity.dev !== "bigint" || typeof root.rootIdentity.ino !== "bigint");
+  if (!binding || typeof binding.renameNoReplace !== "function" ||
+    typeof binding.openBeneath !== "function" || typeof binding.closeOwnedFd !== "function" ||
+    (needsNumericIdentity && typeof binding.fstatIdentity !== "function")) {
+    if (getFsSafeNativeConfig().mode === "require") {
+      throw new FsSafeError("helper-unavailable", "native no-replace move is unavailable");
+    }
+    const { movePathNoReplaceWithCommand } = await import("./root-move-command.js");
+    try {
+      await movePathNoReplaceWithCommand(root, params, paths);
+    } catch (error) {
+      throw normalizeMoveError(error);
+    }
+    return;
   }
   const rootAdmission = await openNativeRootAdmission(binding, {
     rootPath: root.rootReal,

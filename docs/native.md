@@ -13,8 +13,9 @@ Rust receives already-decided relative operations and performs the smallest
 platform syscall sequence that can preserve the boundary.
 
 Every operation that has an equivalent safe Node implementation keeps that
-guarded JavaScript path. Native loading is lazy; installs do not compile Rust,
-run postinstall code, or fetch binaries at runtime. Seven exact-version optional
+guarded JavaScript path. No-clobber `Root.move()` also has a guarded system-command
+route for true atomic no-replace rename. Native loading is lazy; installs do not
+compile Rust, run postinstall code, or fetch binaries at runtime. Seven exact-version optional
 packages are filtered by OS, CPU, and Linux libc, so an installation receives
 only its matching prebuilt binding.
 Native-only formats and creation-time Windows DACL guarantees fail explicitly
@@ -164,17 +165,18 @@ not bypass the byte limit.
 
 | Mode | Native loading | Fallback |
 |---|---|---|
-| `auto` | Try once, cache the result | Use guarded JavaScript when safe; reject native-only operations |
+| `auto` | Try once, cache the result | Use documented guarded fallbacks, including command-backed `Root.move()`; reject native-only operations |
 | `require` | Try once, cache the result | Throw `FsSafeError("helper-unavailable")` |
-| `off` | Never attempt a binding load | Use guarded JavaScript when safe; reject native-only operations |
+| `off` | Never attempt a binding load | Use documented guarded fallbacks, including command-backed `Root.move()`; reject native-only operations |
 
 `sha256FileSync()` is a synchronous Node implementation in all three modes and
 does not load the binding. Use asynchronous `sha256File()` for native hashing
 and cancellation that can respond while JavaScript callbacks run.
 
-Features without a safe JavaScript implementation, including no-clobber
-`Root.move()`, zstd/bzip2 TAR, Windows private-directory creation, and
-[retained-directory staging](staged-file.md), fail with `helper-unavailable`
+Features without a supported fallback, including
+`publishFileExclusive({ strategy: "rename-noreplace" })`, zstd/bzip2 TAR,
+Windows private-directory creation, and [retained-directory staging](staged-file.md),
+fail with `helper-unavailable`
 when native support is absent or off. Staging is currently Linux/macOS only and
 rejects Windows with `unsupported-platform`.
 
@@ -204,6 +206,42 @@ read metadata behavior are unchanged. Missing Windows pathname identity still
 requires a guarded path reopen and comparison with the original retained file;
 that fallback does not apply to POSIX no-read modes.
 
+## Portable no-clobber Root moves
+
+No-clobber `Root.move()` keeps the native path as its preferred mechanism.
+When the binding or an individually required capability is absent before
+dispatch, `auto` can select a system command; `off` selects that route without
+loading the binding. `require` fails closed in either missing-capability case.
+Once a native operation is selected, its failures propagate without retrying
+through a command.
+
+The command route retains Root confinement, mutation and symlink policy,
+source identity, parent custody, and live mutation-authority checks. On Linux,
+`/usr/bin/python3` uses standard-library `ctypes` to call
+`renameat2(RENAME_NOREPLACE)` with retained parents and source. On macOS,
+`/usr/bin/osascript` uses JavaScript for Automation's Objective-C bridge to call
+`renameatx_np(RENAME_EXCL)` with retained parent descriptors. On Windows, fixed,
+readable packaged `.ps1` and `.cs` assets use system Windows PowerShell and
+`NtSetInformationFile` with retained metadata handles and replacement disabled.
+No runtime download, tool installation, or Rust build is involved. See
+[installation requirements](install.md#portable-no-clobber-moves).
+
+Each route performs a true atomic no-replace rename. The collision decision
+and rename are one filesystem operation; there is no copying, hardlink/unlink,
+or check-then-replacing-rename emulation. The surrounding name and identity
+checks remain best-effort against concurrent name swaps. Command selection
+emits one `FS_SAFE_NATIVE_FALLBACK` warning per capability describing that limit
+and command startup overhead.
+
+Command failures carry the available commit receipt: `not-attempted` requires
+explicit admission or startup evidence that rename was not dispatched;
+`unknown` covers every failure errno or NTSTATUS returned by the dispatched
+rename itself, including collision errors; `committed` records a successful rename followed by a later
+verification or descriptor-close failure. Only `committed` carries
+`sourceConsumed: true`. Ordinary error codes cannot prove non-dispatch. An
+ambiguous result is never retried or cleaned up by deleting either name; owned
+descriptors still close. See [move recovery semantics](writing.md#move-guarantees-and-recovery).
+
 ## JavaScript fallback guarantees and delta
 
 Policy-bound parent creation can refresh exact directory facts through the
@@ -219,13 +257,14 @@ rejection, archive filters/limits/modes, exclusive target creation, source and
 target identity fencing, publication cleanup receipts, and secret/lock policy
 remain TypeScript-owned. What changes is the syscall strength or availability:
 
-| Capability | Native path | Guarded JavaScript path |
+| Capability | Native path | Guarded fallback path |
 |---|---|---|
-| Root-relative opens/mutations | Descriptor-relative beneath operations. Pinned writes create parents and publish both replacement and no-replace targets relative to open directory descriptors. No-clobber `Root.move()` admits both parents and uses the native no-replace rename. Linux reports `kernel-atomic`; macOS and Windows report `best-effort`. macOS uses `O_RESOLVE_BENEATH` when available plus an `F_GETPATH` detector, while Windows rejects reparse traversal in the object-manager call. | Reports `best-effort`: component-wise alias checks, no-follow opens where Node exposes them, private temp/rename, and post-operation identity verification. No-clobber `Root.move()` is unsupported because a check followed by a replacing rename is unsafe. A same-privilege peer can replace a writable parent after a guard assertion but before Node resolves another pathname mutation; the mutation may land outside the intended root before the post-check detects it. |
+| Root-relative opens/mutations | Descriptor-relative beneath operations. Pinned writes create parents and publish both replacement and no-replace targets relative to open directory descriptors. Linux opens report `kernel-atomic`; macOS and Windows report `best-effort`. macOS uses `O_RESOLVE_BENEATH` when available plus an `F_GETPATH` detector, while Windows rejects reparse traversal in the object-manager call. | Reports `best-effort`: component-wise alias checks, no-follow opens where Node exposes them, private temp/rename, and post-operation identity verification. A same-privilege peer can replace a writable parent after a guard assertion but before Node resolves a pathname mutation; the mutation may land outside the intended root before the post-check detects it. |
+| No-clobber `Root.move()` | Retained parent admission and native atomic no-replace rename. | System command invokes a true atomic no-replace rename with retained parents or handles; surrounding name-swap checks remain best-effort. See the command requirements and commit receipts above. |
 | ZIP/TAR/gzip | Rust streaming decode and fd-relative output creation. | Optional JSZip or bundled WASM TAR into guarded private staging, then the same guarded merge policy. |
 | Zstd/bzip2 TAR | Supported. | Unsupported; typed `helper-unavailable`. |
 | Publication copy | Clone, Linux `copy_file_range`, async native SHA-256. | Exclusive `wx` byte loop and Node SHA-256 with the same content/identity fences. |
-| `rename-noreplace` | Atomic platform no-replace rename. | Unsupported; no emulation by check-then-rename. |
+| `publishFileExclusive({ strategy: "rename-noreplace" })` | Atomic platform no-replace rename. | Unsupported; remains native-only. |
 | Windows DACL read | Direct `GetSecurityInfo`; the public facts API exposes ordered basic allow/deny ACE SIDs, masks, and decoded flags without trust policy. Secure-file reads query the borrowed open descriptor and compare its 32-bit volume serial and 64-bit file-index projection with Node's bigint receipt. | Structured .NET owner/DACL inspection remains available to standalone pathname reporting. Secure-file reads fail closed without the descriptor capability. |
 | Windows private directory | Creation-time protected DACL. | Unsupported; no weaker pathname-only substitute. |
 
@@ -242,9 +281,11 @@ loader conservatively attempts the glibc package and lets normal module loading
 fail into `auto` fallback. The loader requires only the package selected from
 the detected target; it never probes unrelated packages, downloads code, or
 runs a postinstall step. A missing or incompatible binary
-silently selects the JavaScript fallback in `auto`, throws typed
-`helper-unavailable` in `require`, and is never inspected in `off`. Tests reject
-`child_process`, `exec`, or `spawn` usage in the loader.
+selects an available guarded fallback in `auto`, throws typed
+`helper-unavailable` in `require`, and is never inspected in `off`. Loading itself
+is silent; command-backed no-clobber `Root.move()` warns once per capability
+when selected. Tests reject `child_process`, `exec`, or `spawn` usage in the loader;
+move commands run only when the operation is called.
 
 ## Related pages
 

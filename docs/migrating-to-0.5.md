@@ -46,8 +46,11 @@ configureFsSafeNative({ mode: "auto" });
 
 The old names warn once and map `auto`, `off`, or `require` so a shipped 0.4
 deployment does not silently change policy. Interpreter paths are ignored and
-Python is never spawned. Treat that warning as an upgrade diagnostic, not as a
-second supported helper path.
+the native loader never spawns Python. Treat that warning as an upgrade
+diagnostic, not as a second supported helper path. Current releases separately
+use `/usr/bin/python3` for portable no-clobber `Root.move()` on Linux; see
+[runtime requirements](install.md#portable-no-clobber-moves). That command does
+not use the former worker or its interpreter-path configuration.
 
 Choose the production mode deliberately:
 

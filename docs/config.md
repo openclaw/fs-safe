@@ -37,9 +37,13 @@ Set the process-global loading policy. Configure once at startup, before the fir
 
 | Mode | Behavior |
 |---|---|
-| `auto` | Default. Prefer the platform binding and use guarded JavaScript when it is unavailable. |
-| `off` | Do not load the binding; use guarded JavaScript deterministically. |
-| `require` | Operations that need the binding raise `FsSafeError("helper-unavailable")` when it cannot load. |
+| `auto` | Default. Prefer the platform binding and use documented guarded fallbacks when required native support is unavailable. |
+| `off` | Do not load the binding; use documented guarded fallbacks deterministically. |
+| `require` | Operations that need native support raise `FsSafeError("helper-unavailable")` when the binding or a required capability is unavailable. |
+
+No-clobber `Root.move()` can use a system command in `auto` or `off`; this does
+not enable native-only publication or staging. See [command requirements and
+failure semantics](writing.md#move-guarantees-and-recovery).
 
 ## `getFsSafeNativeConfig()`
 

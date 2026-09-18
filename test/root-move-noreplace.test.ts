@@ -187,20 +187,20 @@ it("keeps the requested basename under an admitted contained parent alias", asyn
   await expect(fs.readFile(path.join(directory, "target.txt"), "utf8")).resolves.toBe("source");
 });
 
-it("fails closed when no native no-replace move helper is available", async () => {
+it("fails closed when required native no-replace move helper is unavailable", async () => {
   const directory = await tempRoot("fs-safe-root-move-unavailable-");
   const source = path.join(directory, "source.txt");
   const target = path.join(directory, "target.txt");
   await fs.writeFile(source, "source");
-  const loader = vi.fn(() => noReplaceAdapter(directory).binding);
+  const loader = vi.fn(() => { throw new Error("native addon unavailable"); });
   __setNativeLoaderForTest(loader);
-  configureFsSafeNative({ mode: "off" });
+  configureFsSafeNative({ mode: "require" });
 
   const scoped = await root(directory);
   await expect(scoped.move("source.txt", "target.txt"))
     .rejects.toMatchObject({ code: "helper-unavailable" });
 
-  expect(loader).not.toHaveBeenCalled();
+  expect(loader).toHaveBeenCalledOnce();
   await expect(fs.readFile(source, "utf8")).resolves.toBe("source");
   await expect(fs.lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
 });

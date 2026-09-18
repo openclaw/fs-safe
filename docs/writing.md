@@ -268,20 +268,59 @@ await fs.move("incoming/foo.txt", "archive/foo.txt", { overwrite: true });
 
 Both `from` and `to` are bounded; `..` in either is rejected.
 
-The default no-clobber mode requires the native helper. It admits both parent
-directory descriptors and performs a descriptor-relative no-replace rename, so
-a competitor that creates the target first is preserved and the source remains
-in place. If the helper or safe parent admission is unavailable, the call fails
-with `helper-unavailable`; it never falls back to a check followed by a
-replacing rename. After dispatch it rechecks both parent identities, so a
-post-operation rejection can mean the no-replace rename completed. Directory
-moves continue to require `overwrite: true`.
+#### Move guarantees and recovery
+
+The default no-clobber mode prefers the native helper, which admits both parent
+directory descriptors and performs a descriptor-relative no-replace rename.
+In `auto` or `off`, missing native capabilities before dispatch can select a
+system command that performs the same atomic no-replace operation. Linux uses
+`/usr/bin/python3` and `ctypes` with `renameat2(RENAME_NOREPLACE)`; macOS uses
+`/usr/bin/osascript` and its JavaScript for Automation Objective-C bridge with
+`renameatx_np(RENAME_EXCL)`; Windows uses system Windows PowerShell and fixed,
+readable packaged `.ps1`/`.cs` assets with `NtSetInformationFile`. These commands
+need to be installed and the filesystem must support no-replace rename; fs-safe
+does not download tools, install them, or build Rust at runtime. See
+[runtime requirements](install.md#portable-no-clobber-moves).
+
+`require` fails with `helper-unavailable` if the binding or any required native
+capability is absent. A native error never selects the command route or causes
+a retry. The command fallback does not copy, hardlink/unlink, or use a target
+check followed by a replacing rename. A competing destination is preserved by
+the atomic collision decision. Directory moves continue to require
+`overwrite: true`.
 
 Both selected canonical endpoints are admitted inside the retained Root after
-native parent admission. With `mutationSymlinks: "reject"`, both full operation
+parent admission. Mutation policy is snapshotted before asynchronous work;
+changing caller-owned policy arrays during preparation or the final callback
+cannot change that move's admission. Use the callback for live revocation.
+The command route retains parent descriptors or metadata
+handles and source identity through dispatch and verification. With
+`mutationSymlinks: "reject"`, both full operation
 paths are rechecked after the live mutation-authority callback and before
 dispatch. The Root and retained parents are fenced again after any such callback.
-These checks retain the documented final check-to-syscall race.
+These checks retain the documented final check-to-syscall race; atomic no-clobber
+does not make surrounding name-swap checks containment-atomic. Command selection
+emits one `FS_SAFE_NATIVE_FALLBACK` warning per capability about that best-effort
+boundary and command startup overhead.
+
+After dispatch, a failed verification or descriptor close can reject even when
+rename succeeded. Command-backed failures report the available outcome in
+`FsSafeError.details`:
+
+| `details.commit` | Meaning |
+|---|---|
+| `"not-attempted"` | Explicit admission or command-startup evidence proves rename was not dispatched. Ordinary filesystem status codes do not establish this state. |
+| `"unknown"` | Rename may have committed. Every failure errno or NTSTATUS returned by the dispatched rename itself, including `EEXIST` or its Windows collision equivalent, is indeterminate. Lost, malformed, or interrupted command replies are also indeterminate. |
+| `"committed"` | Rename succeeded, but a later verification or descriptor-close failure rejected the call. Only this state includes `sourceConsumed: true`. |
+
+An `already-exists` or `helper-unavailable` code after dispatch does not prove
+that the source remains in place. Inspect the receipt before recovery. An
+ambiguous outcome never triggers another move or deletion of either name;
+retained descriptors still close. Preserve the available names and reconcile
+them with application-owned identity or content evidence before taking further
+action. Earlier policy or validation errors can occur without a commit receipt.
+The existing native path retains its error behavior and does not gain these
+command-specific receipts.
 
 For `{ overwrite: true }`, the JavaScript path checks both parent directories
 before and after the rename. A failed post-operation check rejects even though
@@ -471,7 +510,7 @@ await fs.write("data/blob.bin", buffer, { mkdir: false }); // override
 | Code | When |
 |---|---|
 | `outside-workspace` | Target resolves outside the root. |
-| `already-exists` | `create()` / `createJson()` / `move({ overwrite: false })` hit an existing target. |
+| `already-exists` | `create()` / `createJson()` / `move({ overwrite: false })` hit an existing target; a command-backed move's commit receipt still governs recovery after dispatch. |
 | `not-found` | Parent does not exist and `mkdir` is false. |
 | `not-empty` | `remove()` on a non-empty directory. |
 | `not-removable` | `remove()` could not unlink/rmdir (typically permissions or device busy). |

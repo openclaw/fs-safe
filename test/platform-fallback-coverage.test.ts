@@ -142,7 +142,7 @@ describe("platform fallback coverage", () => {
     await expect(scoped.move("source.txt", "existing.txt"))
       .rejects.toMatchObject({ code: "already-exists" });
     await expect(scoped.move("source.txt", "missing-parent/moved.txt"))
-      .rejects.toMatchObject({ code: "helper-unavailable" });
+      .rejects.toMatchObject({ code: "not-found" });
 
     await expect(fs.readFile(path.join(rootDir, "source.txt"), "utf8")).resolves.toBe("source");
     await expect(fs.readFile(path.join(rootDir, "existing.txt"), "utf8")).resolves.toBe("existing");

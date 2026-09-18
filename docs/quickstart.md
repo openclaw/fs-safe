@@ -60,7 +60,7 @@ await fs.move("notes/today.txt", "notes/archive/today.txt", { overwrite: true })
 await fs.remove("notes/archive/today.txt");
 ```
 
-`move()` defaults to no clobber. That mode requires the native helper so a concurrent target cannot be replaced between an absence check and the rename; without it, the call fails with `helper-unavailable`. Pass `{ overwrite: true }` when replacing the target is intentional. `remove()` works on files and empty directories. For non-empty directories, list and remove children first or use [`replaceDirectoryAtomic`](atomic.md#replacedirectoryatomic).
+`move()` defaults to no clobber. It prefers the native helper; `auto` and `off` can use an installed system command for a true atomic no-replace rename. `require` still rejects missing native capabilities. Check the [command requirements and failure receipts](writing.md#move-guarantees-and-recovery) before retrying a failed move. Pass `{ overwrite: true }` when replacing the target is intentional. `remove()` works on files and empty directories. For non-empty directories, list and remove children first or use [`replaceDirectoryAtomic`](atomic.md#replacedirectoryatomic).
 
 ## 5. Inspect
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Security
+
+- Snapshot Root.move mutation policy before asynchronous admission so caller-owned deny paths and prefixes cannot change an in-flight move; live authority callbacks retain their final dispatch fence.
+
+### Fixes and compatibility
+
+- Support no-clobber `Root.move()` without optional native packages in `auto` and `off` through guarded Linux, macOS, and Windows system commands that perform true atomic no-replace renames, warn once per capability about command overhead and best-effort name-swap checks, and preserve indeterminate outcomes with commit receipts; native `require` mode, standalone rename publication, and retained staging keep their existing requirements.
+
 ## 0.15.0 - 2026-09-18
 
 ### Highlights

@@ -25,6 +25,8 @@
   },
   "files": [
     "dist/archive-parser.wasm",
+    "dist/windows-move-bridge.cs",
+    "dist/windows-move-bridge.ps1",
     "dist/**/*.js",
     "dist/**/*.d.ts",
     "dist/**/*.d.ts.map",

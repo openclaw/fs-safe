@@ -5,12 +5,22 @@ import { inspectDirectoryIdentity, inspectDirectoryIdentitySync } from "./direct
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import { assertOwnedDirectory, ownDirectoryMode, type DirectoryModeOwner } from "./directory-mode-owner.js";
 
+// These Node Linux architectures use asm-generic/fcntl.h's O_PATH = 010000000.
+// Other Linux ABIs (alpha, parisc, sparc) assign different bits.
+const LINUX_O_PATH_ARCHITECTURES = new Set([
+  "arm", "arm64", "ia32", "loong64", "mips", "mipsel", "mips64el",
+  "ppc", "ppc64", "riscv64", "s390", "s390x", "x64",
+]);
+
 export function nodeDirectorySearchOnlyFlags(): { flags: number; proc: boolean } | undefined {
-  if (process.arch !== "x64" && process.arch !== "arm64") return undefined;
+  // O_PATH pins metadata without directory read access; it is not an fchmod fd.
+  if (process.platform === "linux" && LINUX_O_PATH_ARCHITECTURES.has(process.arch)) {
+    return { flags: 0x200000, proc: true };
+  }
   // Darwin SDK O_SEARCH = O_EXEC (0x40000000) | O_DIRECTORY, on x64/arm64.
-  if (process.platform === "darwin") return { flags: 0x40000000, proc: false };
-  // Linux x86-64/aarch64 UAPI O_PATH = 010000000. Not a usable fchmod fd.
-  if (process.platform === "linux") return { flags: 0x200000, proc: true };
+  if (process.platform === "darwin" && (process.arch === "x64" || process.arch === "arm64")) {
+    return { flags: 0x40000000, proc: false };
+  }
   return undefined;
 }
 

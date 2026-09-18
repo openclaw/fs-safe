@@ -548,7 +548,11 @@ export class RootHandle implements Root {
     assertValidRootRelativePath(fromRelative);
     assertValidRootDestinationPath(toRelative);
     validatePinnedOperationPayload({ from: fromRelative, to: toRelative });
-    const { denyMutations, assertBeforeMutation, mutationSymlinks } = this.mutationOptions(options);
+    const mutationOptions = this.mutationOptions(options);
+    const { assertBeforeMutation } = mutationOptions;
+    const { denyMutations, mutationSymlinks } = snapshotPinnedMutationPolicy(
+      mutationOptions.denyMutations, mutationOptions.mutationSymlinks,
+    ) ?? {};
     const overwrite = options.overwrite ?? false;
     await assertMoveMutationAllowed(this.context, {
       fromRelative,

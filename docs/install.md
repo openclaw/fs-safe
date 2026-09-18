@@ -127,10 +127,39 @@ the matching binary. Consumers do not run a native build, download code at
 runtime, or execute a postinstall step. Omitting optional dependencies keeps
 non-archive fallback-capable operations working in `auto` or `off`. Native-only
 features, including strict owned-tree temp cleanup, retained-directory staging,
-atomic `rename-noreplace` (including the default no-clobber `Root.move()`),
+`publishFileExclusive({ strategy: "rename-noreplace" })`,
 zstd/bzip2 TAR handling, and Windows private-directory creation, remain
 unavailable. Operations without a safe fallback fail with `helper-unavailable`
 when the matching package is absent, incompatible, or disabled.
+
+### Portable no-clobber moves
+
+The default no-clobber `Root.move()` supports `auto` and `off` installs without
+optional packages when the corresponding system command is available:
+
+| Platform | Required command and mechanism |
+|---|---|
+| Linux | `/usr/bin/python3` with its standard-library `ctypes` calls `renameat2(RENAME_NOREPLACE)` relative to retained parent descriptors, with the source retained for identity checks. |
+| macOS | `/usr/bin/osascript` runs JavaScript for Automation using the Objective-C bridge to call `renameatx_np(RENAME_EXCL)` through retained parent descriptors. |
+| Windows | System Windows PowerShell runs the package's fixed, readable `.ps1` and `.cs` assets, retaining metadata handles and calling `NtSetInformationFile` with replacement disabled. |
+
+Normal Windows execution policy and endpoint protection must permit the fixed
+packaged script. The command does not change or bypass either policy; a refusal
+fails closed without retrying another backend.
+
+The filesystem must support the corresponding no-replace operation. fs-safe
+does not download commands, install tools, or build Rust at runtime. These
+commands perform an atomic rename; they do not implement a move with copying,
+hardlink/unlink, or a target check followed by a replacing rename.
+
+Native support remains preferred. `auto` selects the command only when the
+binding or a required capability is missing before dispatch; `off` selects it
+without loading the addon. `require` rejects missing native capabilities.
+A native operation error never causes a command retry. Command selection emits
+one `FS_SAFE_NATIVE_FALLBACK` warning per capability about startup overhead and
+best-effort name-swap checks. Missing commands fail with `helper-unavailable`;
+failure after dispatch can have an unknown outcome. See [move failure
+semantics](writing.md#move-guarantees-and-recovery) before deciding how to recover.
 
 Upgrading an existing 0.5 consumer? Follow [Migrating to 0.6](migrating-to-0.6.md)
 before deploying with native mode `require` or native-only features.
@@ -139,16 +168,17 @@ before deploying with native mode `require` or native-only features.
 
 The platform native binaries provide fd-relative open/link/mkdir primitives,
 atomic no-replace rename, and file identity checks. The default is `auto`: use
-the matching binary when it loads, otherwise use the guarded JavaScript path
-where a safe fallback exists. Native-only operations fail with
+the matching binary when it loads, otherwise use a documented guarded fallback
+where available, including the system-command route for no-clobber `Root.move()`.
+Native-only operations fail with
 `helper-unavailable`.
 
 ```ts
 import { configureFsSafeNative } from "@openclaw/fs-safe/config";
 
 configureFsSafeNative({ mode: "auto" });    // default
-configureFsSafeNative({ mode: "off" });     // guarded JavaScript; reject native-only operations
-configureFsSafeNative({ mode: "require" }); // fail closed if unavailable
+configureFsSafeNative({ mode: "off" });     // guarded fallbacks; reject native-only operations
+configureFsSafeNative({ mode: "require" }); // fail closed if native capability is unavailable
 ```
 
 Environment variables are read at runtime:
@@ -160,7 +190,8 @@ FS_SAFE_NATIVE_MODE=off      # auto | off | require
 `OPENCLAW_FS_SAFE_NATIVE_MODE` is also accepted.
 
 Disabling native loading keeps fallback-capable operations working through Node path
-operations guarded by lexical and canonical checks plus identity verification.
+operations or the documented move commands, guarded by lexical and canonical
+checks plus identity verification.
 Use `require` when native-backed operations must fail instead of falling back.
 Temp workspaces retain compatible JavaScript quarantine cleanup in `auto` and
 `off`. Set `cleanupSafety: "require-bounded"` to reject before child creation

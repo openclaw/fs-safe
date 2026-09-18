@@ -25,8 +25,8 @@ binding in the root tarball; version 0.6 intentionally does not.
 
 Omitting optional dependencies remains supported for fallback-capable APIs in
 `auto` mode. It disables native-only features such as zstd/bzip2 TAR handling,
-retained-directory staging, atomic `rename-noreplace`, and Windows private
-directory creation. Native mode `require` reports `helper-unavailable` when the
+retained-directory staging, `publishFileExclusive({ strategy: "rename-noreplace" })`,
+and Windows private directory creation. Native mode `require` reports `helper-unavailable` when the
 matching package is absent or incompatible.
 
 ## Deployment checklist

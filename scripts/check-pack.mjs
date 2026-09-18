@@ -10,6 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { normalizePackResult } from "./npm-pack-result.mjs";
+import { WINDOWS_COMMAND_ASSETS } from "./windows-command-assets.mjs";
 import {
   assertPublicApi,
   inspectPublicApi,
@@ -81,6 +82,7 @@ try {
   const expected = new Set([
     "CHANGELOG.md",
     "dist/archive-parser.wasm",
+    ...WINDOWS_COMMAND_ASSETS.map((name) => `dist/${name}`),
     "docs/assets/readme-banner.jpg",
     "LICENSE",
     "README.md",

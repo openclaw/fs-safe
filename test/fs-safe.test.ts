@@ -89,8 +89,8 @@ describe("@openclaw/fs-safe", () => {
     await root.copyIn("nested/copied.txt", sourcePath, { maxBytes: 16 });
     await expect(root.stat("nested/file.txt")).resolves.toMatchObject({ isFile: true });
     await expect(root.list("nested")).resolves.toEqual(["copied.txt", "file.txt"]);
-    await expect(root.move("nested/file.txt", "nested/moved.txt")).rejects.toMatchObject({ code: "helper-unavailable" });
-    await expect(root.readText("nested/file.txt")).resolves.toBe("hello");
+    await expect(root.move("nested/file.txt", "nested/moved.txt")).resolves.toBeUndefined();
+    await expect(Promise.all([root.readText("nested/moved.txt"), root.exists("nested/file.txt")])).resolves.toEqual(["hello", false]);
     await root.remove("nested/copied.txt");
     await expect(root.exists("nested/copied.txt")).resolves.toBe(false);
   });

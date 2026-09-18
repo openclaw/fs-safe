@@ -57,7 +57,7 @@ This is a **library-level guardrail**, not OS-level isolation. It does not repla
 pnpm add @openclaw/fs-safe
 ```
 
-Node 22 or newer. Core root/path/json/temp helpers avoid framework dependencies. With all optional dependencies omitted, public subpaths remain safe to import and fallback-capable operations work in `auto` or `off`. Native-only features, including no-clobber `Root.move()`, remain unavailable and fail with `helper-unavailable`. TAR/gzip fallback uses the bundled WASM build of the same Rust parser as native and works with optional dependencies omitted. ZIP fallback still needs optional `jszip`. See the [0.6 migration guide](docs/migrating-to-0.6.md).
+Node 22 or newer. Core root/path/json/temp helpers avoid framework dependencies. With all optional dependencies omitted, public subpaths remain safe to import and fallback-capable operations work in `auto` or `off`. No-clobber `Root.move()` can use an installed system command for an atomic no-replace rename on Linux, macOS, and Windows; see [runtime requirements](docs/install.md#portable-no-clobber-moves). Standalone `publishFileExclusive({ strategy: "rename-noreplace" })` and retained-directory staging remain native-only and fail with `helper-unavailable` without native support. TAR/gzip fallback uses the bundled WASM build of the same Rust parser as native and works with optional dependencies omitted. ZIP fallback still needs optional `jszip`. See the [0.6 migration guide](docs/migrating-to-0.6.md).
 
 Bun 1.4.2 is also supported with the [Bun runtime requirements](docs/install.md#bun-runtime), including the matching Rust addon on macOS and Linux. JIT-disabled Bun works too.
 
@@ -70,8 +70,8 @@ environment policy:
 import { configureFsSafeNative } from "@openclaw/fs-safe";
 
 configureFsSafeNative({ mode: "auto" });    // default: native when available
-configureFsSafeNative({ mode: "off" });     // guarded JavaScript only
-configureFsSafeNative({ mode: "require" }); // fail closed if the binding is unavailable
+configureFsSafeNative({ mode: "off" });     // guarded fallbacks; no native addon
+configureFsSafeNative({ mode: "require" }); // fail closed if native capability is unavailable
 ```
 
 Native mode performs `write()`, `create()`, and `copyIn()` parent creation and
@@ -86,9 +86,11 @@ Equivalent env var: `FS_SAFE_NATIVE_MODE=auto|off|require`. The seven bindings
 ship as exact-version optional packages filtered by OS, CPU, and Linux libc, so
 a normal install receives only its matching binary. There are no postinstall
 steps, runtime downloads, or consumer Rust builds. On a platform without a
-published binding, or when optional dependencies are omitted, `auto` silently retains lexical and canonical root
+published binding, or when optional dependencies are omitted, `auto` retains lexical and canonical root
 checks, no-follow opens, guarded temp+rename writes, and post-write identity
-verification. See the [native
+verification. Command-backed no-clobber moves emit one `FS_SAFE_NATIVE_FALLBACK`
+warning per capability about command overhead and best-effort name-swap checks.
+See the [native
 helper policy](docs/native-helper.md) for the exact boundary and deployment
 tradeoff, and [native architecture](docs/native.md) for the platform mechanisms
 and policy ownership model.
@@ -103,8 +105,9 @@ Version 0.5 replaces the persistent Python worker with prebuilt native
 bindings. The modes map directly: `configureFsSafePython({ mode: "auto" })`
 becomes `configureFsSafeNative({ mode: "auto" })`, and likewise for `off` and
 `require`. Replace `FS_SAFE_PYTHON_MODE` with `FS_SAFE_NATIVE_MODE`; remove
-`pythonPath`, `FS_SAFE_PYTHON`, and interpreter provisioning because the native
-loader does not spawn Python.
+`pythonPath` and `FS_SAFE_PYTHON` because the native loader does not spawn Python.
+The separate portable no-clobber move fallback on Linux requires
+`/usr/bin/python3`; it does not revive the persistent worker or its configuration.
 
 Version 0.5 retains the old function and documented `FS_SAFE_PYTHON*`
 and OpenClaw Python environment names emit one `FS_SAFE_PYTHON_DEPRECATED`
@@ -164,7 +167,7 @@ are written, support `maxBytes` and `signal`, and recheck mutation authority
 before writes and publication. See [streamed creation](docs/writing.md#streamed-creation)
 for producer ownership and cancellation semantics.
 
-`write()` replaces file contents by default; pass `{ overwrite: false }` or use `create()` when an existing file should be an error. `move()` defaults to no clobber because it can otherwise delete an unrelated target while also consuming the source. No-clobber moves require the native helper so the collision decision and rename are one descriptor-relative operation; they fail with `helper-unavailable` rather than falling back to a replacing rename. Pass `{ overwrite: true }` when replacing the target is intended.
+`write()` replaces file contents by default; pass `{ overwrite: false }` or use `create()` when an existing file should be an error. `move()` defaults to no clobber because it can otherwise delete an unrelated target while also consuming the source. No-clobber moves prefer native support; `auto` and `off` can use a system command that performs a true atomic no-replace rename. `require` rejects missing native capabilities, and a native failure never triggers a command retry. Pass `{ overwrite: true }` when replacing the target is intended. See [move guarantees and recovery receipts](docs/writing.md#move-guarantees-and-recovery) before retrying a failed move: command errors after dispatch can leave the outcome unknown.
 
 Mutating methods accept `assertBeforeMutation: () => void` for live lease or
 cancellation checks immediately before filesystem dispatch. Root defaults and

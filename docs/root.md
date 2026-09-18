@@ -124,7 +124,7 @@ fs.createJson(rel, value, options?)      // create() variant of writeJson
 fs.append(rel, data, options?)           // append text/buffer; syncs before close by default
 fs.copyIn(rel, sourceAbsPath, options?)  // copy from outside the root, atomically, with size cap
 fs.openWritable(rel, options?)           // FileHandle for streaming writes; supports await using
-fs.move(from, to, options?)              // rename within the root; native-backed no clobber by default
+fs.move(from, to, options?)              // rename within the root; atomic no clobber by default
 fs.remove(rel, options?)                 // unlink file, rmdir, or bounded recursive removal
 fs.mkdir(rel, options?)                  // mkdir -p (creates missing parents)
 fs.ensureRoot(options?)                  // accepts "" / "." as the root itself
@@ -243,6 +243,17 @@ does not otherwise reject them.
 
 `openWritable` opens a writable file with options `mode?: number` and `writeMode?: "replace" | "append" | "update"`. `replace` truncates existing files and is the default; `update` keeps existing contents. Before truncation or handle return, descriptor and pathname identities are compared with lossless bigint metadata; persistently unknown Windows identities fail closed. The returned `stat` remains an ordinary numeric Node `Stats` object. Use it for streaming output. Prefer `await using` for cleanup.
 
+`move` defaults to no clobber and prefers the native atomic no-replace rename.
+In `auto` or `off`, it can use an installed system command when required native
+capabilities are absent before dispatch. `require` rejects missing native
+capabilities, and native operation failures never trigger command retries.
+The command route keeps Root, symlink, mutation-authority, and identity checks;
+it emits one `FS_SAFE_NATIVE_FALLBACK` warning per capability for command overhead
+and best-effort name-swap limits. Directory moves still require `overwrite: true`.
+See [move requirements and commit receipts](writing.md#move-guarantees-and-recovery):
+failure after command dispatch may leave either name for application recovery,
+and no retry or name cleanup occurs after an ambiguous result.
+
 `remove` leaves non-empty directories unchanged unless `recursive: true` is
 provided. Recursive removal defaults to streaming entries in filesystem order;
 `order: "sorted"` processes each directory's children lexicographically. The
@@ -300,6 +311,11 @@ the caller, which must check authority before its own later writes.
 
 All mutation methods accept `denyMutations?: { paths?: string[]; prefixes?: string[] }`. Entries must be absolute paths. `paths` blocks those exact paths; `prefixes` blocks those paths and their descendants. fs-safe preserves path strings exactly and canonicalizes through existing ancestors before comparing, so a symlinked ancestor to a denied location is still denied. Denied mutations throw `FsSafeError` with code `denied-path`. Use this for caller-specific sensitive paths, not as a replacement for the root boundary, symlink, or hardlink checks.
 
+`move()` snapshots its merged default and per-call mutation policy before its
+first asynchronous step. Later changes to caller-owned policy objects or arrays
+apply to subsequent calls. Use `assertBeforeMutation` for live revocation of an
+in-flight move.
+
 For writes, creates, streams, and copies, parent creation admits the prospective
 file and each missing directory before creating that directory, including on the
 Windows native route. An exact deny on an existing parent does not prevent using
@@ -351,14 +367,15 @@ new destination name is subject to the portable guard.
 ## Native helper mode
 
 Create-only writes prefer the platform native helper for fd-relative opens and
-atomic no-replace rename. Operations without native wiring retain their guarded
-JavaScript implementations.
+atomic no-replace rename. No-clobber `move()` also prefers native support, with
+the documented command route available in `auto` and `off`. Other operations
+without native wiring retain their guarded JavaScript implementations.
 
 ```ts
 import { configureFsSafeNative } from "@openclaw/fs-safe/config";
 
-configureFsSafeNative({ mode: "off" });     // guarded JavaScript path
-configureFsSafeNative({ mode: "require" }); // fail if the binding is unavailable
+configureFsSafeNative({ mode: "off" });     // guarded fallbacks; no native addon
+configureFsSafeNative({ mode: "require" }); // fail if native capability is unavailable
 ```
 
 `auto` is the default. Configure the mode before creating roots. See the
@@ -396,6 +413,13 @@ checking `err instanceof FsSafeError`. Common fs-safe codes:
 | `too-large` | Read exceeded `maxBytes`. |
 
 Full list in the [Errors](errors.md) reference.
+
+For command-backed no-clobber moves, inspect `details.commit` when present:
+`"not-attempted"` requires explicit proof of rejection before rename dispatch;
+`"unknown"` includes all failure errno/NTSTATUS results from rename itself, even collisions;
+`"committed"` means rename succeeded before a later failure and is the only
+state with `sourceConsumed: true`. An error code alone does not authorize retry
+or deletion of either name. See [move failure semantics](writing.md#move-guarantees-and-recovery).
 
 ## Defaults vs per-call options
 

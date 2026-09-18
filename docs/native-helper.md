@@ -15,8 +15,8 @@ consumer Rust build.
 import { configureFsSafeNative } from "@openclaw/fs-safe/config";
 
 configureFsSafeNative({ mode: "auto" });    // default
-configureFsSafeNative({ mode: "off" });     // guarded JavaScript; reject native-only operations
-configureFsSafeNative({ mode: "require" }); // fail closed when the binding is unavailable
+configureFsSafeNative({ mode: "off" });     // guarded fallbacks; reject native-only operations
+configureFsSafeNative({ mode: "require" }); // fail closed when native capability is unavailable
 ```
 
 The equivalent environment variables are `FS_SAFE_NATIVE_MODE` and `OPENCLAW_FS_SAFE_NATIVE_MODE`. Accepted values are `auto`, `off`, `require`, `true`, `false`, `on`, `never`, `required`, `1`, and `0`.
@@ -25,14 +25,25 @@ The equivalent environment variables are `FS_SAFE_NATIVE_MODE` and `OPENCLAW_FS_
 
 | Mode | Behavior |
 |---|---|
-| `auto` | Prefer native primitives when the current platform package loads; otherwise use guarded JavaScript where a safe fallback exists and reject native-only operations. |
-| `off` | Do not load a native package. Use guarded JavaScript where safe and reject native-only operations deterministically. |
-| `require` | Throw `FsSafeError("helper-unavailable")` instead of falling back when an operation needs the native binding and it cannot load. |
+| `auto` | Prefer native primitives when available; otherwise use documented guarded fallbacks, including command-backed no-clobber `Root.move()`, and reject native-only operations. |
+| `off` | Do not load a native package. Use documented guarded fallbacks, including command-backed no-clobber `Root.move()`, and reject native-only operations deterministically. |
+| `require` | Throw `FsSafeError("helper-unavailable")` instead of falling back when an operation needs the native binding or a required capability and it is unavailable. |
 
 TAR/gzip in the guarded JavaScript path uses a bundled, import-free WASM build
 of the same Rust parser used by native. `off` still disables the optional native
 filesystem helper; it does not disable this portable parser. ZIP fallback still requires
 optional `jszip`, and zstd/bzip2 remain native-only.
+
+No-clobber `Root.move()` selects a command only when native support is absent
+before dispatch; a native error never triggers a fallback retry. The command
+requires Linux `/usr/bin/python3`, macOS `/usr/bin/osascript`, or system Windows
+PowerShell and the package's readable `.ps1`/`.cs` assets. It invokes a true
+atomic no-replace rename and retains the surrounding Root policy and identity
+checks. There are no runtime downloads, tool installations, or Rust builds.
+One `FS_SAFE_NATIVE_FALLBACK` warning per capability explains command startup
+overhead and best-effort name-swap limits. See [runtime requirements](install.md#portable-no-clobber-moves)
+and [move failure receipts](writing.md#move-guarantees-and-recovery): every failure
+errno or NTSTATUS from the rename itself has an unknown outcome, including collisions.
 
 On Bun macOS/Linux, the [runtime path adapter](install.md#bun-runtime) uses the
 same Rust addon for system canonicalization in `auto` and `require`. No JIT is
@@ -110,10 +121,11 @@ Native primitives back create-only and replacing pinned writes, no-clobber
 `Root.move()`, async sidecar creation, guarded publication, archive acceleration,
 and direct Windows ACL operations. Windows secure-file reads require
 descriptor-bound owner/DACL facts from the current helper; they do not use the
-standalone pathname inspector's command fallback. No-clobber moves fail with
-`helper-unavailable` when descriptor-relative parent admission or the atomic
-no-replace rename is unavailable; they never use a check followed by a replacing
-rename. Equivalent JavaScript paths remain available for documented
+standalone pathname inspector's command fallback. No-clobber `Root.move()` can
+use the documented command route in `auto` and `off`; standalone
+`publishFileExclusive({ strategy: "rename-noreplace" })` and retained-directory
+staging remain native-only. No route substitutes a check followed by a replacing
+rename. Guarded paths remain available for documented
 fallback-capable features. See [Native architecture](native.md#javascript-fallback-guarantees-and-delta)
 for the exact difference.
 
@@ -149,9 +161,10 @@ native mode, and then apply that mode. A legacy interpreter path without an
 explicit mode maps to `auto` and the path itself is ignored. Native config has
 the normal precedence over legacy environment config.
 
-There is no silent alias and no Python execution fallback. The bridge exists
+There is no silent alias or persistent Python worker fallback. The bridge exists
 only to make shipped 0.4 configuration visible and predictable while the
-consumer performs its 0.5 upgrade.
+consumer performs its 0.5 upgrade. The separate Linux no-clobber move command
+uses `/usr/bin/python3` without the former worker or interpreter-path settings.
 
 ## Related pages
 

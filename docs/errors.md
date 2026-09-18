@@ -52,6 +52,23 @@ target identity, cleanup decision, and failed directory-sync outcome. Narrow
 by `code` and a documented details field before consuming it; do not assume all
 `FsSafeError` instances carry the same keys.
 
+Command-backed no-clobber `Root.move()` uses `details.commit` to distinguish
+`"not-attempted"`, `"unknown"`, and `"committed"`. `"not-attempted"` requires
+explicit admission or command-startup proof that rename was not dispatched.
+Every failure errno or NTSTATUS returned by the dispatched rename itself is
+indeterminate, including `EEXIST` or its Windows equivalent; an
+`already-exists` or `helper-unavailable` code
+does not establish that the source remains in place. Lost or malformed replies
+also report `"unknown"`. A successful rename followed by verification or
+descriptor-close failure reports `"committed"`, the only state that includes
+`sourceConsumed: true`. Earlier policy or validation errors can have no receipt.
+The existing native move path keeps its error behavior.
+
+An ambiguous command outcome never triggers retry or deletion of either name.
+Owned descriptors still close; callers should preserve the available names
+and reconcile them using application-owned identity or content evidence. See
+[move requirements and recovery](writing.md#move-guarantees-and-recovery).
+
 `replaceFileAtomic({ copyFallbackRestore: "restore-original" })` reports a
 failed copy fallback with the exported `ReplaceFileAtomicRestoreFailureDetails`
 shape:
@@ -122,7 +139,7 @@ type FsSafeErrorCode =
 | `device-path` | A read/open target is a known unsafe device or process-fd path. | `/dev/zero`, `/dev/random`, `/dev/stdin`, `/dev/fd/*`, `/proc/*/fd/*`, or a Windows reserved device name. |
 | `hardlink` | Read or copy with `hardlinks: "reject"` saw `nlink > 1`. | File is hardlinked — possibly an alias of an out-of-tree inode. |
 | `helper-failed` | A native mechanism or multi-step operational helper failed. | Inspect `cause` and any operation-specific `details`; retrying may be unsafe if the operation partially completed. |
-| `helper-unavailable` | A required native binding or bounded primitive could not be loaded. | Unsupported platform, omitted/missing/incompatible platform package, `FS_SAFE_NATIVE_MODE=off`, or a no-clobber `Root.move()` without safe native parent admission. `auto` falls back only where a safe fallback exists. |
+| `helper-unavailable` | A required native binding, capability, or system command is unavailable. | Unsupported platform or filesystem, omitted/missing/incompatible platform package, or disabled native support for a native-only operation. No-clobber `Root.move()` permits documented command fallback in `auto` and `off`, but `require` rejects missing native capabilities. After command dispatch, inspect the commit receipt before recovery. |
 | `insecure-permissions` | A secure file or path permission check found a mode/ACL that allows broader access than requested. | File or directory is group/world writable/readable; Windows ACL grants broad read. |
 | `invalid-path` | Input was empty, contained NUL, was an unparseable URL, or otherwise unusable; a FileStore key used a noncanonical spelling. | Noncanonical FileStore aliases, backslashes, or complete parent segments; a network path on Windows; a drive-relative segment in a portable relative path or store key; or a leading drive-relative spelling such as `C:name` used as a Root destination. Existing-object Root lookups retain broader confined path compatibility, including legal POSIX drive-like names. |
 | `not-empty` | Nonrecursive `remove()` on a non-empty directory, or new children appeared during recursive removal. | Use bounded `recursive: true` removal or coordinate concurrent writers. |
