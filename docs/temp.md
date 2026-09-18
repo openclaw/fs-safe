@@ -221,9 +221,15 @@ A missing workspace returns `"missing"`. A replacement observed at the public
 name before quarantine returns `"identity-mismatch"` when the parent is stable;
 an ambiguous parent returns `"indeterminate"`. After successful removal,
 repeated cleanup returns `"missing"` without touching a recreated public name.
-Other statuses remain stable. Operational removal errors propagate and later
-cleanup returns `"indeterminate"` without retrying. Disposal and scoped helpers
-ignore returned statuses, while manual cleanup exposes the result.
+Other statuses remain stable. Compatible recursive-removal failures propagate
+the exact thrown value, including `undefined`, `null`, `false`, positive or
+negative numeric zero, bigint zero, an empty string, and `NaN`; they are never
+inferred from value identity or truthiness. Uncertain quarantine and
+retained-parent checks instead return
+`"indeterminate"`. After a propagated removal failure, later cleanup returns
+`"indeterminate"` without retrying. Disposal and scoped helpers ignore returned
+statuses, while manual cleanup exposes the result. A terminal descriptor-close
+failure retains its existing precedence if it also fails during settlement.
 
 When cleanup is part of a retention or audit decision, inspect the receipt
 instead of treating cleanup as fire-and-forget:

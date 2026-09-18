@@ -20,6 +20,7 @@ export type TempWorkspaceCleanupResult = "removed" | "missing" | "identity-misma
 export type TempWorkspaceCleanupSafety = "compatible" | "require-bounded";
 
 type Quarantine = { name: string; path: string; nativeRemoval: boolean };
+type RemovalFailure = { readonly error: unknown };
 type CleanupCapabilityPhase = "new" | "ready" | "sealed" | "failed" | "closed";
 
 function isNativeCleanupBinding(
@@ -333,19 +334,19 @@ export class TempWorkspaceCleanupOwner {
         this.#directory!.fd,
       ));
     }
-    let removalError: unknown;
+    let removalFailure: RemovalFailure | undefined;
     try {
       this.#assertQuarantine(quarantine);
       try {
         await fs.rm(quarantine.path, { recursive: true, force: true });
       } catch (error) {
-        removalError = error;
+        removalFailure = { error };
         throw error;
       }
       this.#capability.assertCurrent();
       return "removed";
     } catch (error) {
-      if (error === removalError) throw error;
+      if (removalFailure !== undefined) throw removalFailure.error;
       return "indeterminate";
     }
   }
@@ -359,19 +360,19 @@ export class TempWorkspaceCleanupOwner {
         this.#directory!.fd,
       ));
     }
-    let removalError: unknown;
+    let removalFailure: RemovalFailure | undefined;
     try {
       this.#assertQuarantine(quarantine);
       try {
         fsSync.rmSync(quarantine.path, { recursive: true, force: true });
       } catch (error) {
-        removalError = error;
+        removalFailure = { error };
         throw error;
       }
       this.#capability.assertCurrent();
       return "removed";
     } catch (error) {
-      if (error === removalError) throw error;
+      if (removalFailure !== undefined) throw removalFailure.error;
       return "indeterminate";
     }
   }

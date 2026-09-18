@@ -4,6 +4,8 @@ import path from "node:path";
 
 const DEPTHS = Object.freeze([4, 8, 32]);
 const LAYOUTS = Object.freeze(["existing-root", "missing-root"]);
+const COMPATIBLE_FALLBACK_CLEANUP_SEMANTICS =
+  "temp-workspace-compatible-js-fallback-success-v1";
 
 export const TEMP_WORKSPACE_COVERAGE_NAMES = Object.freeze(
   ["", "Sync"].flatMap((suffix) => {
@@ -18,7 +20,27 @@ export const TEMP_WORKSPACE_COVERAGE_NAMES = Object.freeze(
   }),
 );
 
+export const TEMP_WORKSPACE_FALLBACK_CLEANUP_NAMES = Object.freeze(
+  ["TempWorkspace", "TempWorkspaceSync"]
+    .map((type) => `${type}.cleanup/compatible-js-fallback`),
+);
+
 export function validateTempWorkspaceWorkloadResult(result) {
+  const cleanupMatch = /^(TempWorkspace(?:Sync)?)\.cleanup\/compatible-js-fallback$/u
+    .exec(result.name);
+  if (cleanupMatch) {
+    assert.equal(result.workloadSemantics, COMPATIBLE_FALLBACK_CLEANUP_SEMANTICS,
+      `temp-workspace cleanup semantics mismatch for ${result.name}`);
+    assert.equal(result.workloadDetails?.cleanupSafety, "compatible",
+      `temp-workspace cleanup safety mismatch for ${result.name}`);
+    assert.equal(result.workloadDetails?.nativeMode, "off",
+      `temp-workspace cleanup native mode mismatch for ${result.name}`);
+    assert.equal(result.workloadDetails?.expectedRoute, "javascript-recursive-rm",
+      `temp-workspace cleanup route mismatch for ${result.name}`);
+    assert.equal(result.workloadDetails?.workspaceEntries, 0,
+      `temp-workspace cleanup entry count mismatch for ${result.name}`);
+    return;
+  }
   const match = /^(tempWorkspace(?:Sync)?)\/(existing-root|missing-root)\/depth=(4|8|32)$/u
     .exec(result.name);
   if (!match) return;
@@ -32,6 +54,61 @@ export function validateTempWorkspaceWorkloadResult(result) {
       result.workloadDetails.canonicalComponentCount > requestedDepth,
     `temp-workspace canonical component count mismatch for ${result.name}`,
   );
+}
+
+export function registerTempWorkspaceFallbackCleanup({
+  api,
+  nativeMode,
+  register,
+  suffix,
+  tempOptions,
+}) {
+  const factory = `tempWorkspace${suffix}`;
+  const type = `TempWorkspace${suffix}`;
+  const parentInventories = new WeakMap();
+  register(`${type}.cleanup/compatible-js-fallback`, (workspace) => workspace.cleanup(), {
+    sync: suffix === "Sync",
+    skip: nativeMode === "off"
+      ? undefined
+      : "The compatible JavaScript cleanup fallback requires native-off mode.",
+    before: async () => {
+      const workspace = await api[factory]({ ...tempOptions, cleanupSafety: "compatible" });
+      assert.deepEqual(
+        fs.readdirSync(workspace.dir),
+        [],
+        `${type} compatible-fallback cleanup fixture is not empty`,
+      );
+      const parent = path.dirname(workspace.dir);
+      parentInventories.set(workspace, {
+        parent,
+        entries: fs.readdirSync(parent).filter(name => name !== path.basename(workspace.dir)).sort(),
+      });
+      return workspace;
+    },
+    after: (result, workspace) => {
+      assert.equal(
+        result,
+        "removed",
+        `${type} compatible-fallback cleanup did not remove its workspace`,
+      );
+      assert.equal(
+        fs.existsSync(workspace.dir),
+        false,
+        `${type} compatible-fallback cleanup left its public path`,
+      );
+      const inventory = parentInventories.get(workspace);
+      assert.deepEqual(fs.readdirSync(inventory.parent).sort(), inventory.entries,
+        `${type} compatible-fallback cleanup left quarantined entries`);
+      parentInventories.delete(workspace);
+    },
+    workloadSemantics: COMPATIBLE_FALLBACK_CLEANUP_SEMANTICS,
+    workloadDetails: {
+      cleanupSafety: "compatible",
+      nativeMode: "off",
+      expectedRoute: "javascript-recursive-rm",
+      workspaceEntries: 0,
+    },
+  });
 }
 
 function canonicalComponentCount(directory) {
