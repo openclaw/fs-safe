@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Recheck native no-clobber `Root.move()` source identity, type, and hardlink policy after the final authority callback so replaced or newly hardlinked sources remain untouched.
+
 ## 0.15.0 - 2026-09-18
 
 ### Highlights
