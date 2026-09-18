@@ -107,11 +107,10 @@ describe.each(archiveBackends)("%s archive path", (backend) => {
         if (policy !== "reject-link") {
           expect(seen).toEqual([
             { path: "keep.txt", kind: "file", size: 4 },
-            // Paths agree; preserve each decoder's existing declared-size behavior.
             {
               path: "link",
               kind: "symlink",
-              size: backend === "native" ? fixture.size : 0,
+              size: fixture.size,
             },
           ]);
         }

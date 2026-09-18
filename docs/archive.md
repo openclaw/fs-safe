@@ -148,14 +148,24 @@ must agree with this kind, physical index, size, known path, and UNIX-creator mo
 before extraction or any member read. Bounded ZIP reads retain this metadata from
 their single admission pass without another input copy or scan.
 
-Portable ZIP preflight, extraction, and reads also check the decoded kind against
-admission. Unsupported JSZip metadata rejects with `ArchiveFormatError` before
-filters, including UNIX-only directory attributes without a terminal slash or DOS
-directory bit, backslash-only directory names without directory attributes, and
-non-UNIX creators whose high-word symlink mode JSZip does not expose. Symlinks that
-the decoder represents faithfully remain subject to the existing filter and
-blocked-link policy. UNIX creator metadata and permission defaults remain as
-described above.
+Portable ZIP preflight, extraction, and reads bind every decoder insertion to
+its admitted physical record before JSZip can coerce its type or discard its
+payload. Names, physical order, original directory/permission metadata,
+compression method, compressed and decoded sizes, and CRC must agree. The
+private loader then applies the admitted kind, preserving UNIX-only directory
+attributes, backslash-only directories, and high-word symlinks from any creator.
+Symlinks remain subject to the existing filter and blocked-link policy.
+UNIX socket and block-device type bits do not turn regular-file payloads into
+empty directories. Directory and symlink callbacks receive their physical
+declared sizes; directory bodies are not published as files. Unsupported
+link-like types remain visible as `other` and are safely omitted when accepted.
+UNIX creator metadata and permission defaults remain as described above.
+
+The loader adapter belongs to one private JSZip instance and is removed after
+loading, including failure. Public preflight still returns ordinary JSZip entry
+objects, with directory keys ending in `/` and recognizable symlink type bits.
+Compressed data is retained even for declared-zero entries, so an empty-size
+claim cannot bypass payload-size or CRC verification during extraction or reads.
 
 Within one ZIP entry, identical local and central name bytes reuse the same
 decoded validation. Unicode Path admission is shared only when both the raw names

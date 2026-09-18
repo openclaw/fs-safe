@@ -65,7 +65,7 @@ export function admitZipNames(params: {
   central: Buffer; local: Buffer; flags: number;
   centralExtra: Map<number, Buffer>; localExtra: Map<number, Buffer>;
   seen: Set<string>;
-}): { path?: string; portableKey: string; directory: boolean } {
+}): { path?: string; portableKey: string; portableDirectory: boolean; directory: boolean } {
   const { central, local, flags, centralExtra, localExtra, seen } = params;
   if (!central.length || !local.length) zipFormat("empty entry name");
   // Reuse only within this synchronous call; shared backing bytes can change
@@ -125,9 +125,15 @@ export function admitZipNames(params: {
   // Unflagged legacy names can decode differently and need their own key.
   const portableKey = portablePath === centralRaw ? centralKey
     : interpretations.includes(portablePath) ? interpretationKey! : zipPathKey(portablePath);
+  // JSZip prioritizes flagged local UTF-8 and checks a central Unicode field
+  // against local bytes. Canonically equal names can end in different separators.
+  const decoderPath = flags & 0x800 ? localUtf8!
+    : centralUnicode !== undefined && (sameName || centralField!.readUInt32LE(1) === updateCrc32(0, local))
+      ? centralUnicode : local.toString("utf8");
   return {
     path,
     portableKey,
+    portableDirectory: decoderPath.endsWith("/"),
     directory,
   };
 }

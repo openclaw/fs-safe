@@ -34,7 +34,7 @@ describe("shared ZIP Unicode metadata", () => {
     }
 
     it(`accepts unchanged Unicode metadata in ${label}`, () => {
-      expect(fixture().admit()).toEqual({ path: "é", portableKey: "é", directory: false });
+      expect(fixture().admit()).toEqual({ path: "é", portableKey: "é", portableDirectory: false, directory: false });
     });
 
     it(`revalidates local CRC after central decoding with ${label}`, () => {

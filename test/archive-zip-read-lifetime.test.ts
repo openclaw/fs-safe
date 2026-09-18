@@ -17,12 +17,12 @@ it.each(["STORE", "DEFLATE"] as const)("joins the %s decoder source when a selec
   const zip = new JSZip();
   zip.file("value", Buffer.alloc(1024 * 1024, 7));
   await fs.writeFile(archivePath, await zip.generateAsync({ type: "nodebuffer", compression }));
-  const load = JSZip.loadAsync.bind(JSZip);
+  const load = JSZip.prototype.loadAsync;
   let source: Readable | undefined;
   let cleanupFinished = false;
   let cleanupError: Error | null | undefined;
-  vi.spyOn(JSZip, "loadAsync").mockImplementation(async (...args) => {
-    const archive = await load(...args);
+  vi.spyOn(JSZip.prototype, "loadAsync").mockImplementation(async function(this: JSZip, ...args) {
+    const archive = await load.apply(this, args);
     const entry = archive.files.value!;
     const nodeStream = entry.nodeStream.bind(entry);
     vi.spyOn(entry, "nodeStream").mockImplementation((...params) => {

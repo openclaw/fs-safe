@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preserve ZIP payloads and physical entry metadata through portable loading so bounded extraction rejects corrupt empty payloads and honors admitted directory, symlink, and special-file kinds.
+
 - Preserve every thrown value from Windows native write descriptor cleanup, while still attempting all owned closes after publication.
 - Add `maxDepth` to `probePathSuffixAliasesSync()` for deeper prospective paths, with proportional operation budgets and unchanged default, string-length, identity, and cleanup limits.
 - Cap configurable-depth suffix probing at 32,768 forward observations while always completing owned cleanup.
