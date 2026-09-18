@@ -10,9 +10,20 @@
 
 # Protect package, release, and filesystem boundary surfaces.
 /CHANGELOG.md @openclaw/openclaw-secops
+/Cargo.lock @openclaw/openclaw-secops
+/Cargo.toml @openclaw/openclaw-secops
 /LICENSE @openclaw/openclaw-secops
+/RELEASE-PREREQS.md @openclaw/openclaw-secops
 /package.json @openclaw/openclaw-secops
 /pnpm-lock.yaml @openclaw/openclaw-secops
+/pnpm-workspace.yaml @openclaw/openclaw-secops
+/tsconfig.json @openclaw/openclaw-secops
+/vitest.config.ts @openclaw/openclaw-secops
+/archive-core/ @openclaw/openclaw-secops
+/archive-wasm/ @openclaw/openclaw-secops
+/benchmarks/ @openclaw/openclaw-secops
+/native/ @openclaw/openclaw-secops
+/packages/ @openclaw/openclaw-secops
 /scripts/ @openclaw/openclaw-secops
 /src/ @openclaw/openclaw-secops
 /test/ @openclaw/openclaw-secops
