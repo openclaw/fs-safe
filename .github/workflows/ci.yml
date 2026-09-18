@@ -1170,7 +1170,7 @@ jobs:
       - name: Test native Root publication verification
         env:
           FS_SAFE_NATIVE_MODE: require
-        run: pnpm test test/root-write-mode.test.ts test/root-write-verification.test.ts test/root-write-lifetime.test.ts test/root-write-exact-identity.test.ts test/secret-write-publication.test.ts test/native-write-mode-ownership.test.ts test/native-created-cleanup.test.ts test/file-mode-facades.test.ts
+        run: pnpm test test/root-write-mode.test.ts test/root-write-verification.test.ts test/root-write-lifetime.test.ts test/root-write-exact-identity.test.ts test/secret-write-publication.test.ts test/native-write-mode-ownership.test.ts test/native-created-cleanup.test.ts test/file-mode-facades.test.ts test/native-pinned-write-falsy-close.test.ts
 
       - name: Test guarded Root copying and mutation policies
         env:
