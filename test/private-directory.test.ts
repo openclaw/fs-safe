@@ -166,7 +166,12 @@ describe("createPrivateDirectory", () => {
       await fs.symlink(target, junction, "junction");
       const readOwnerAndDacl = vi.fn(native!.readOwnerAndDacl);
       __setNativeLoaderForTest(() => ({ ...native!, readOwnerAndDacl }));
-      const inspections = [target, file, junction].map((pathname) => ({
+      const inspections = [
+        { role: "private-directory", pathname: target },
+        { role: "inherited-file", pathname: file },
+        { role: "junction", pathname: junction },
+      ].map(({ role, pathname }) => ({
+        role,
         pathname,
         summary: inspectWindowsAcl(pathname),
         fallback: inspectWindowsAcl(pathname, { exec: executePermissionCommand }),
@@ -185,8 +190,14 @@ describe("createPrivateDirectory", () => {
       for (const inspection of inspections) {
         const summary = await inspection.summary;
         const fallback = await inspection.fallback;
-        expect(summary.ok).toBe(true);
-        expect(summary).toEqual(fallback);
+        const diagnostic = JSON.stringify({
+          role: inspection.role,
+          summary: { ok: summary.ok, error: summary.error, errorDetail: summary.errorDetail },
+          fallback: { ok: fallback.ok, error: fallback.error, errorDetail: fallback.errorDetail },
+        });
+        expect(summary.ok, diagnostic).toBe(true);
+        expect(fallback.ok, diagnostic).toBe(true);
+        expect(summary, diagnostic).toEqual(fallback);
         if (inspection.pathname !== junction) {
           expect(summary.trusted).toHaveLength(3);
           expect(summary.untrustedWorld).toEqual([]);

@@ -48,6 +48,7 @@ function windowsOwnerQueryCommand(targetPath: string): string {
   const encodedPath = Buffer.from(targetPath, "utf8").toString("base64");
   return [
     "$ErrorActionPreference='Stop'",
+    "$env:PSModulePath=[IO.Path]::Combine($PSHOME,'Modules')",
     `$p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedPath}'))`,
     "$sections=[System.Security.AccessControl.AccessControlSections]::Access -bor [System.Security.AccessControl.AccessControlSections]::Owner",
     "$acl=if([IO.Directory]::Exists($p)){[IO.Directory]::GetAccessControl($p,$sections)}else{[IO.File]::GetAccessControl($p,$sections)}",
@@ -63,7 +64,7 @@ function windowsOwnerQueryCommand(targetPath: string): string {
     "$raw=[System.Security.AccessControl.RawSecurityDescriptor]::new($acl.GetSecurityDescriptorBinaryForm(),0)",
     "$dacl=$raw.DiscretionaryAcl;$complete=$true",
     "$aces=@(foreach($ace in $dacl){if($ace -isnot [System.Security.AccessControl.CommonAce] -or $ace.IsCallback -or [int]$ace.AceType -notin @(0,1)){$complete=$false;continue};@{sid=$ace.SecurityIdentifier.Value;mask=([long]$ace.AccessMask -band 4294967295);deny=([int]$ace.AceType -eq 1);inheritOnly=([int]$ace.AceFlags -band 8) -ne 0}})",
-    "@{ownerSid=$ownerSid;currentUserSid=$currentSid;daclPresent=($null -ne $dacl);aces=$aces;complete=$complete;remote=$remote}|ConvertTo-Json -Depth 4 -Compress",
+    "@{ownerSid=$ownerSid;currentUserSid=$currentSid;daclPresent=($null -ne $dacl);aces=$aces;complete=$complete;remote=$remote}|Microsoft.PowerShell.Utility\\ConvertTo-Json -Depth 4 -Compress",
   ].join(";");
 }
 
