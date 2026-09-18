@@ -14,6 +14,11 @@
 - Expand security-owner review coverage to native and archive code, platform packages, executable benchmarks, and root build, test, workspace, and release-policy configuration.
 - Add `copyFileDescriptorSync()` for bounded positional transfers between caller-owned regular-file descriptors, sharing `CopyFileHandleOptions` while preserving cursors, descriptor lifetime, destination suffixes, and caller-owned durability and publication.
 
+### Atomic replacement
+
+- Propagate asynchronous and synchronous destination-writer close failures after an otherwise successful unsynchronized copy fallback when a new destination writer is opened, including `copyFallbackRestore: "restore-original"` with an absent destination. Preserve any earlier operation failure exactly, including falsy thrown values, and attempt the destination close only once; the destination may already be replaced or partial when the close reports failure.
+- Bind the existing public copy-fallback success benchmarks to immutable workload receipts and fail report admission on missing, skipped, mutated, mis-filtered, or incorrectly iterated rows. Fixture reset, receipt/content checks, and staging-temp verification remain outside timing.
+
 ### Validation
 
 - Add paired-error regressions for direct hardlink-policy admission and public synchronous atomic replacement, including arbitrary falsy thrown values, plus receipt-bound timing rows that enforce unchanged destination observation and descriptor-call counts on successful rename and restored copy-fallback routes.

@@ -148,6 +148,19 @@ that same descriptor, and synchronizes the result. Any write, mode, or sync
 failure triggers a byte-and-mode restore and another sync through the same
 descriptor.
 
+With `syncTempFile: false`, an exclusive-create copy fallback does not report
+success until its new destination writer closes successfully. This includes
+`"restore-original"` when the destination did not exist. A close rejection or throw is
+propagated exactly, including falsy values. The destination may already contain
+all or part of the replacement, so a close failure does not prove that the old
+destination survived or that the replacement was published. The outer atomic
+operation still attempts identity-bound cleanup of its owned source temp; an
+unverifiable or substituted temp remains preserved. If writing, mode adjustment,
+or another earlier operation also fails, that earlier value remains the reported
+failure and the destination close is attempted once. Successful synchronized
+fallbacks and in-place `"restore-original"` replacements retain their existing best-effort final-close
+handling.
+
 Restore failures are `FsSafeError("helper-failed")` values with typed
 `details.cleanup` set to `"restored"` or `"restore-failed"`. An original larger
 than `maxRestoreBytes` fails with `too-large` before mutation. A missing

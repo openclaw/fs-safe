@@ -14,6 +14,10 @@ import {
   validateSyncCopyFallbackAdmissionWorkloadResult,
 } from "./sync-copy-fallback-admission.mjs";
 import { validateGuestBenchmarkReport } from "./guest.mjs";
+import {
+  validateCopyFallbackSuccessReport,
+  validateCopyFallbackSuccessWorkloadResult,
+} from "./copy-fallback-success.mjs";
 
 const SHA1 = /^[0-9a-f]{40}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
@@ -151,9 +155,11 @@ export function validateMeasuredDistribution(plan, reportPlan, report, expectedD
     validateDirectoryModeOwnerWorkloadResult(result);
     validateTempWorkspaceWorkloadResult(result);
     validateSidecarPathSnapshotWorkloadResult(result);
+    validateCopyFallbackSuccessWorkloadResult(result);
     validateSyncCopyFallbackAdmissionWorkloadResult(result);
   }
   validateSidecarPathSnapshotReport(report, plan.settings.filter, plan.settings.iterations);
+  validateCopyFallbackSuccessReport(report, plan.settings.filter, plan.settings.iterations);
   validateSyncCopyFallbackAdmissionReport(report, plan.settings.filter, plan.settings.iterations);
 }
 
