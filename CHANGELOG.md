@@ -20,12 +20,16 @@
 
 ### Security
 
+- Keep asynchronous Root reclaim-guard creation, ownership checks, and cleanup inside the Root capability. Interrupted or ambiguous guard cleanup preserves its file instead of following a replaced parent through raw filesystem removal.
 - Retain source-root and child-directory authority during archive merges, and bind file identity and modes to the single admitted copy descriptor. Source ancestor or leaf replacements, including distinct Windows identities that round to the same number, cannot redirect published bytes; completed publications retain the existing nontransactional cleanup semantics.
 - Snapshot FileStore write policies before asynchronous work, streams, source reads, and JSON serialization, and JsonStore durability and newline options before each mutation queues or calls its updater; caller mutation cannot change an in-flight write's policy.
 - Snapshot external-output and sibling-temp options before asynchronous setup so caller mutation cannot change in-flight producers, staging paths, permissions, or sync policy, while preserving callback receivers.
 
 ### Fixes and compatibility
 
+- Evaluate stale-lock age after snapshot observation and parsing so delayed reads do not give reclamation callbacks an outdated timestamp.
+- Reuse the exact Root identity sample when it is also the lock's immediate parent, while retaining separate read and mutation-policy checks.
+- Serialize sidecar lock admission across raw and Root-based synchronous callers while retaining separate Root cleanup authority, and recheck async authorization at the final stale-removal mutation boundary.
 - Preserve falsy atomic operation, cleanup, close, and restoration failures, and consume retained async temp handles before close to avoid repeated release.
 - Propagate portable ZIP output fallback-close failures before staged publication. Existing destination entries remain untouched, cleanup retains its best-effort `FileHandle` close, and no raw or native descriptor close is attempted.
 - Treat ordinary native rename errors as indeterminate, preserving staged files and directory backups when a remote rename may have committed before its reply was lost. Retry and automatic rollback require explicit evidence that rename was never dispatched.

@@ -11,6 +11,7 @@ const { tempRoot } = useRealTempDirs();
 
 type SharedManagerState = {
   held: Map<string, HeldSidecarLock>;
+  admissions?: Map<string, object>;
   reclaimGuards?: Set<string>;
   reclaimCleanupRegistered?: boolean;
 };
@@ -102,10 +103,12 @@ describe("shared sidecar manager state", () => {
     const state = managerState(key);
     const held = state.held.get(first.normalizedTargetPath)!;
     delete (held as Partial<HeldSidecarLock>).refCount;
+    delete state.admissions;
     delete state.reclaimGuards;
     delete state.reclaimCleanupRegistered;
     try {
       const reopened = createFileLockManager(key);
+      expect(state.admissions).toBeInstanceOf(Map);
       expect(state.reclaimGuards).toBeInstanceOf(Set);
       expect(state.reclaimCleanupRegistered).toBe(false);
       expect(held.refCount).toBeUndefined();

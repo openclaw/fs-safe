@@ -1,18 +1,12 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
-import path from "node:path";
-import { canonicalPathFromExistingAncestor } from "./absolute-path.js";
 import { FsSafeError } from "./errors.js";
 import { fileObservation } from "./file-observation.js";
 import { readFileHandleBounded } from "./bounded-read.js";
-import { realpathSync } from "./realpath.js";
-import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { openSidecarRoot } from "./sidecar-lock-root.js";
-import { createNativeExclusiveFile, type NativeFileHandle } from "./native-operations.js";
-import type { Root } from "./root-impl.js";
+import { createNativeExclusiveFile } from "./native-operations.js";
 import {
   computeSidecarLockDelayMs,
-  defaultSidecarLockShouldReclaim,
   isTransientLockFileDenial,
   maxTransientLockDenials,
   validateSidecarLockStaleMs,
@@ -21,176 +15,138 @@ import {
   validateSidecarLockTimeoutMs,
 } from "./sidecar-lock-policy.js";
 import {
-  readSidecarLockRawSnapshot,
-  parseSidecarLockSnapshot,
   relativeSidecarLockPath,
-  releaseSidecarReclaimGuard,
   removeSidecarLockIfUnchanged,
-  removeStaleSidecarLockIfAllowed,
   serializeSidecarLockPayload,
-  sidecarLockSnapshotStillPresent,
   sidecarReclaimGuardExists,
-  tryAcquireSidecarReclaimGuard,
   type SidecarLockSnapshot,
+  type SidecarReclaimGuard,
 } from "./sidecar-lock-reclaim.js";
+import {
+  awaitSidecarAdmissionBoundary,
+  conditionalSidecarLockParser,
+  observeHeldSidecarParser,
+  observeSidecarLockParser,
+  runSidecarAdmissionBoundary,
+  type SidecarLockParserState,
+} from "./sidecar-lock-admission-parser.js";
+import {
+  handleStaleSidecarAdmission,
+  type SidecarLockStaleOptionsState,
+} from "./sidecar-lock-stale-admission.js";
 import type { SidecarLockAcquireOptions, SidecarLockHandle } from "./sidecar-lock-types.js";
+import {
+  ancestryHasSidecarAdmission,
+  captureSidecarAdmissionAncestry,
+  createSidecarAdmissionController,
+} from "./sidecar-lock-admission-context.js";
+import { sidecarLockTimeout, type HeldSidecarLock, type SidecarLockAcquisitionContext } from "./sidecar-lock-admission.js";
+import { resolveSidecarLockPaths } from "./sidecar-lock-target.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { sleep } from "./timing.js";
-import { anchorWindowsDriveRelativePath, assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
-type SidecarFileHandle = Pick<NativeFileHandle, "fd" | "close" | "stat" | "writeFile">;
-
-export type HeldSidecarLock = {
-  refCount: number;
-  reentrantOwner?: string;
-  handle: SidecarFileHandle;
-  lockPath: string;
-  snapshot: SidecarLockSnapshot;
-  acquiredAt: number;
-  metadata: Record<string, unknown>;
-  releasePromise?: Promise<void>;
-  lockRoot?: Root;
-  retainOnExit?: boolean;
-  parsePayload?: (raw: string) => unknown;
-  compromiseTimer?: NodeJS.Timeout;
-};
-
-type SidecarLockAcquisitionContext = {
-  held: Map<string, HeldSidecarLock>;
-  reclaimGuards: Set<string>;
-  ensureExitCleanupRegistered(): void;
-  handleForHeldLock(normalizedTargetPath: string, held: HeldSidecarLock): SidecarLockHandle;
-  releaseHeldLock(
-    normalizedTargetPath: string,
-    held: HeldSidecarLock,
-    options?: { force?: boolean },
-  ): Promise<boolean>;
-};
-
-function isCwdIndependentAbsolutePath(filePath: string): boolean {
-  if (!path.isAbsolute(filePath)) return false;
-  // A leading separator on Windows is rooted on the process's current drive.
-  // Drive-qualified, UNC, and namespace roots are longer and need no cwd state.
-  return process.platform !== "win32" || path.parse(filePath).root.length > 1;
-}
-
-async function resolveNormalizedTargetPath(resolved: string, lockRoot?: Root): Promise<string> {
-  assertNoWindowsPathAlias(resolved);
-  const dir = path.dirname(resolved);
-  if (lockRoot) {
-    // The target is an arbitration key, not necessarily inside the lock Root.
-    // Leave parent creation to the Root-backed sidecar write.
-    await lockRoot.resolve(".");
-    const parent = await canonicalPathFromExistingAncestor(dir);
-    await lockRoot.resolve(".");
-    assertNoWindowsPathAlias(parent);
-    const normalized = path.join(parent, path.basename(resolved));
-    assertNoWindowsPathAlias(normalized);
-    return normalized;
-  }
-  await fs.mkdir(recursiveMkdirPath(dir), { recursive: true });
-  let parent: string;
-  try {
-    parent = realpathSync.native(dir);
-  } catch {
-    return resolved;
-  }
-  assertNoWindowsPathAlias(parent);
-  const normalized = path.join(parent, path.basename(resolved));
-  assertNoWindowsPathAlias(normalized);
-  return normalized;
-}
+export type { HeldSidecarLock } from "./sidecar-lock-admission.js";
 
 export async function acquireSidecarLock<TPayload extends Record<string, unknown>>(
   options: SidecarLockAcquireOptions<TPayload>,
   context: SidecarLockAcquisitionContext,
 ): Promise<SidecarLockHandle> {
+  const admissionAncestry = captureSidecarAdmissionAncestry();
+  const retainOnExit = options.retainOnExit;
+  context.assertRetainOnExitSupported(retainOnExit);
   const retry = options.retry ?? {};
+  const timeoutMs = options.timeoutMs;
+  const staleMs = options.staleMs;
+  const compromiseCheckIntervalMs = options.compromiseCheckIntervalMs;
   validateSidecarLockRetryOptions(retry);
-  validateSidecarLockTimeoutMs(options.timeoutMs);
-  validateSidecarLockStaleMs(options.staleMs);
-  validateSidecarLockCompromiseCheckIntervalMs(options.compromiseCheckIntervalMs);
+  validateSidecarLockTimeoutMs(timeoutMs);
+  validateSidecarLockStaleMs(staleMs);
+  validateSidecarLockCompromiseCheckIntervalMs(compromiseCheckIntervalMs);
   const targetPath = options.targetPath;
   const explicitLockPath = options.lockPath;
-  const anchoredTargetPath = anchorWindowsDriveRelativePath(targetPath);
-  assertNoWindowsPathAlias(anchoredTargetPath);
-  const resolvedTargetPath = path.resolve(anchoredTargetPath);
-  let resolvedLockPath: string | undefined;
-  if (explicitLockPath !== undefined) {
-    const anchoredLockPath = anchorWindowsDriveRelativePath(explicitLockPath);
-    assertNoWindowsPathAlias(anchoredLockPath);
-    resolvedLockPath = isCwdIndependentAbsolutePath(explicitLockPath)
-      ? explicitLockPath
-      : path.resolve(anchoredLockPath);
-  }
-  context.ensureExitCleanupRegistered();
   const lockRoot = options.lockRoot;
-  const normalizedTargetPath = await resolveNormalizedTargetPath(resolvedTargetPath, lockRoot);
-  const lockPath = resolvedLockPath ?? `${normalizedTargetPath}.lock`;
-  assertNoWindowsPathAlias(lockPath);
+  const requestedReentrantOwner = options.reentrantOwner;
+  const { lockPath, normalizedTargetPath } = await resolveSidecarLockPaths(
+    targetPath, explicitLockPath, lockRoot,
+  );
+  const activeDescendant = ancestryHasSidecarAdmission(admissionAncestry, context.admissions, normalizedTargetPath);
   let held = context.held.get(normalizedTargetPath);
   if (
     held &&
-    options.reentrantOwner !== undefined &&
+    requestedReentrantOwner !== undefined &&
     held.reentrantOwner !== undefined &&
-    options.reentrantOwner === held.reentrantOwner
+    requestedReentrantOwner === held.reentrantOwner
   ) {
-    // A final release may already have decremented the count to zero and be
-    // removing the sidecar. Do not admit a new reentrant handle until that
-    // cleanup settles: successful cleanup requires a fresh acquisition, while
-    // failed cleanup leaves the existing sidecar held for a retry.
+    // Join a final release before deciding whether this completed owner remains.
+    // Successful cleanup requires a fresh acquisition; failed cleanup can retry.
     if (held.releasePromise) {
+      if (activeDescendant) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
       await held.releasePromise.catch(() => undefined);
       held = context.held.get(normalizedTargetPath);
     }
     if (
       held &&
-      options.reentrantOwner !== undefined &&
+      requestedReentrantOwner !== undefined &&
       held.reentrantOwner !== undefined &&
-      options.reentrantOwner === held.reentrantOwner
+      requestedReentrantOwner === held.reentrantOwner
     ) {
-      held.refCount = (held.refCount ?? 1) + 1;
-      // Retention is monotonic: any same-owner request to keep the sidecar on
-      // exit upgrades the held lock; a later default acquisition never revokes it.
-      if (options.retainOnExit === true) {
-        held.retainOnExit = true;
+      const lifecycle = context.ensureExitCleanupRegistered();
+      context.assertRetainOnExitSupported(retainOnExit);
+      if (context.held.get(normalizedTargetPath) === held && !held.releasePromise) {
+        held.refCount = (held.refCount ?? 1) + 1;
+        // Retention is monotonic: any same-owner request to keep the sidecar on
+        // exit upgrades the held lock; a later default acquisition never revokes it.
+        if (retainOnExit === true) {
+          held.retainOnExit = true;
+        }
+        const returnedHandle = context.handleForHeldLock(normalizedTargetPath, held);
+        context.armExitCleanup(lifecycle);
+        return returnedHandle;
       }
-      return context.handleForHeldLock(normalizedTargetPath, held);
     }
   }
+  if (activeDescendant) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
 
+  const admission = createSidecarAdmissionController(admissionAncestry, context.admissions, normalizedTargetPath);
   const startedAt = Date.now();
   const reclaimGuardPath = `${lockPath}.reclaim`;
-  let ownsReclaimGuard = false;
+  let reclaimGuard: SidecarReclaimGuard | undefined;
+  const releaseReclaimGuard = async (): Promise<void> => {
+    if (!reclaimGuard) return;
+    await admission.run(() => reclaimGuard!.release());
+    reclaimGuard = undefined;
+  };
   let attempt = 0;
   // Bounded so a genuine denial still surfaces as EPERM, not a lock timeout.
   let transientDenials = 0;
+  let payloadCallback: typeof options.payload | undefined;
+  let metadata: typeof options.metadata = undefined;
+  let metadataObserved = false;
+  let onCompromised: typeof options.onCompromised = undefined;
+  let onCompromisedObserved = false;
+  const staleOptionsState: SidecarLockStaleOptionsState = {};
   const withinDenialBudget = (): boolean => ++transientDenials <= maxTransientLockDenials;
   const waitForRetry = async (): Promise<void> => {
+    admission.release();
+    if (activeDescendant) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
     const elapsed = Date.now() - startedAt;
     if (
-      (options.timeoutMs !== undefined &&
-        options.timeoutMs !== Number.POSITIVE_INFINITY &&
-        elapsed >= options.timeoutMs) ||
+      (timeoutMs !== undefined &&
+        timeoutMs !== Number.POSITIVE_INFINITY &&
+        elapsed >= timeoutMs) ||
       (retry.retries !== undefined && attempt >= retry.retries)
     ) {
-      throw Object.assign(new Error(`file lock timeout for ${normalizedTargetPath}`), {
-        code: "file_lock_timeout",
-        lockPath,
-        normalizedTargetPath,
-      });
+      throw sidecarLockTimeout(lockPath, normalizedTargetPath);
     }
     const remaining =
-      options.timeoutMs === undefined || options.timeoutMs === Number.POSITIVE_INFINITY
+      timeoutMs === undefined || timeoutMs === Number.POSITIVE_INFINITY
         ? Number.POSITIVE_INFINITY
-        : Math.max(0, options.timeoutMs - elapsed);
+        : Math.max(0, timeoutMs - elapsed);
     const delay = Math.min(computeSidecarLockDelayMs(retry, attempt), remaining);
     attempt += 1;
     await sleep(delay);
   };
-  // Waiting can fail on the caller's own retry or deadline limits. Classifying
-  // a denial as contention must not cost them the original diagnosis, so hand
-  // the denial back when no further attempt can be scheduled.
+  // Preserve a denial diagnosis if contention backoff has no remaining budget.
   const retryOrRethrowDenial = async (denial: unknown): Promise<void> => {
     try {
       await waitForRetry();
@@ -199,18 +155,133 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
       throw waitError;
     }
   };
+  const assertAdmissionToken = (): void => {
+    if (!admission.hasToken()) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
+  };
 
   try {
     while (true) {
-      if (!ownsReclaimGuard && (await sidecarReclaimGuardExists(reclaimGuardPath))) {
+      if (!admission.owns) {
+        held = context.held.get(normalizedTargetPath);
+        if (
+          held &&
+          requestedReentrantOwner !== undefined &&
+          held.reentrantOwner !== undefined &&
+          requestedReentrantOwner === held.reentrantOwner
+        ) {
+          if (held.releasePromise) {
+            if (activeDescendant) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
+            await held.releasePromise.catch(() => undefined);
+            held = context.held.get(normalizedTargetPath);
+          }
+          if (
+            held &&
+            requestedReentrantOwner !== undefined &&
+            held.reentrantOwner !== undefined &&
+            requestedReentrantOwner === held.reentrantOwner
+          ) {
+            const lifecycle = context.ensureExitCleanupRegistered();
+            context.assertRetainOnExitSupported(retainOnExit);
+            if (context.held.get(normalizedTargetPath) !== held || held.releasePromise) {
+              continue;
+            }
+            held.refCount = (held.refCount ?? 1) + 1;
+            if (retainOnExit === true) held.retainOnExit = true;
+            const returnedHandle = context.handleForHeldLock(normalizedTargetPath, held);
+            context.armExitCleanup(lifecycle);
+            return returnedHandle;
+          }
+        }
+        if (context.admissions.has(normalizedTargetPath)) {
+          await waitForRetry();
+          continue;
+        }
+        admission.reserve();
+      }
+      const attemptHeld = context.held.get(normalizedTargetPath);
+      const holderWasReplaced = (): boolean => {
+        const current = context.held.get(normalizedTargetPath);
+        return current !== undefined && current !== attemptHeld;
+      };
+      const lifecycle = admission.run(() => context.ensureExitCleanupRegistered());
+      assertAdmissionToken();
+      if (holderWasReplaced()) { await waitForRetry(); continue; }
+      admission.run(() => context.assertRetainOnExitSupported(retainOnExit));
+      assertAdmissionToken();
+      if (holderWasReplaced()) { await waitForRetry(); continue; }
+      if (reclaimGuard?.assertHeld) await admission.run(() => reclaimGuard!.assertHeld!());
+      const reclaimGuardExists = !reclaimGuard && (await (lockRoot
+        ? admission.run(() => sidecarReclaimGuardExists(reclaimGuardPath, lockRoot))
+        : sidecarReclaimGuardExists(reclaimGuardPath)));
+      assertAdmissionToken();
+      if (holderWasReplaced()) { await waitForRetry(); continue; }
+      if (reclaimGuardExists) {
         await waitForRetry();
         continue;
       }
-      let handle: SidecarFileHandle | null = null;
-      let createdSnapshot: SidecarLockSnapshot | null = null;
+      let handle: HeldSidecarLock["handle"] | null = null;
+      let createdSnapshot: SidecarLockSnapshot | null = null, createdHeld: HeldSidecarLock | undefined;
+      let admissionConflict = false;
+      let exclusiveCreateConflict = false;
       let lockFileCreateDenied = false;
-      const payload = await options.payload();
-      const { raw, ownershipToken } = serializeSidecarLockPayload(payload);
+      const parserState: SidecarLockParserState = { observed: false };
+      if (!payloadCallback) payloadCallback = runSidecarAdmissionBoundary(
+        admission, assertAdmissionToken, () => options.payload);
+      if (holderWasReplaced()) { await waitForRetry(); continue; }
+      const { value: payload } = await awaitSidecarAdmissionBoundary(
+        admission, assertAdmissionToken, () => Reflect.apply(payloadCallback!, options, []));
+      if (holderWasReplaced()) { await waitForRetry(); continue; }
+      const { raw, ownershipToken } = runSidecarAdmissionBoundary(
+        admission, assertAdmissionToken, () => serializeSidecarLockPayload(payload));
+      if (holderWasReplaced()) { await waitForRetry(); continue; }
+      held = context.held.get(normalizedTargetPath);
+      if (held?.releasePromise) {
+        if (activeDescendant) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
+        // Release cleanup never acquires this admission; retaining it here lets
+        // the serialized attempt continue without another callback or retry.
+        await held.releasePromise.catch(() => undefined);
+        assertAdmissionToken();
+        held = context.held.get(normalizedTargetPath);
+      }
+      if (held?.lockPath === lockPath) {
+        const observedHeld = held;
+        const observation = await observeHeldSidecarParser({
+          admission, assertToken: assertAdmissionToken,
+          currentHeld: () => context.held.get(normalizedTargetPath), held: observedHeld,
+          lockPath, lockRoot, parserState,
+          parserAccessor: () => options.parsePayload,
+          isTransientDenial: (error) => isTransientLockFileDenial(error, lockPath),
+        });
+        assertAdmissionToken();
+        held = context.held.get(normalizedTargetPath);
+        if (held !== observedHeld || observedHeld.releasePromise) {
+          await waitForRetry();
+          continue;
+        }
+        if (observation.kind === "read-error") {
+          if (!observation.transientDenial || !withinDenialBudget()) throw observation.error;
+          await retryOrRethrowDenial(observation.error);
+          continue;
+        }
+      }
+      if (held) { await waitForRetry(); continue; }
+      if (!metadataObserved) {
+        metadata = runSidecarAdmissionBoundary(
+          admission, assertAdmissionToken, () => options.metadata);
+        metadataObserved = true;
+        if (context.held.has(normalizedTargetPath)) { await waitForRetry(); continue; }
+      }
+      if (!onCompromisedObserved) {
+        onCompromised = runSidecarAdmissionBoundary(
+          admission, assertAdmissionToken, () => options.onCompromised);
+        onCompromisedObserved = true;
+        if (context.held.has(normalizedTargetPath)) { await waitForRetry(); continue; }
+      }
+      assertAdmissionToken();
+      if (context.held.has(normalizedTargetPath)) {
+        await waitForRetry();
+        continue;
+      }
       try {
         if (lockRoot) {
           const relativeLockPath = relativeSidecarLockPath(lockRoot, lockPath);
@@ -222,6 +293,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
             lockFileCreateDenied = observation.has(error, `exclusive-create:${lockPath}`) &&
               isTransientLockFileDenial(error, lockPath);
             if (error instanceof FsSafeError && error.code === "already-exists") {
+              exclusiveCreateConflict = true;
               throw Object.assign(new Error("sidecar lock exists"), { code: "EEXIST" });
             }
             throw error;
@@ -250,65 +322,88 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
               (await fs.open(lockPath, "wx", 0o600));
           } catch (createError) {
             lockFileCreateDenied = isTransientLockFileDenial(createError, lockPath);
+            exclusiveCreateConflict = (createError as NodeJS.ErrnoException).code === "EEXIST";
             throw createError;
           }
           await handle.writeFile(raw, "utf8");
         }
         const snapshot = { raw, payload, stat: fsSync.fstatSync(handle.fd), ownershipToken };
+        createdSnapshot = snapshot;
         if (snapshot.stat.nlink === 0) {
           await handle.close();
           handle = null;
           await waitForRetry();
           continue;
         }
-        const createdHeld: HeldSidecarLock = {
+        observeSidecarLockParser(
+          parserState,
+          admission,
+          () => options.parsePayload,
+          assertAdmissionToken,
+        );
+        if (context.held.has(normalizedTargetPath)) {
+          admissionConflict = true;
+          throw Object.assign(new Error("sidecar lock admission changed"), { code: "EEXIST" });
+        }
+        createdHeld = {
           refCount: 1,
-          reentrantOwner: options.reentrantOwner,
+          reentrantOwner: requestedReentrantOwner,
           handle,
           lockPath,
           snapshot,
           acquiredAt: Date.now(),
-          metadata: options.metadata ?? {},
+          metadata: metadata ?? {},
           lockRoot,
-          retainOnExit: options.retainOnExit,
-          parsePayload: options.parsePayload,
+          retainOnExit,
+          parsePayload: parserState.parser,
         };
-        context.held.set(normalizedTargetPath, createdHeld);
-        if (ownsReclaimGuard) {
-          try {
-            await releaseSidecarReclaimGuard(context.reclaimGuards, reclaimGuardPath);
-            ownsReclaimGuard = false;
-          } catch (err) {
-            await context.releaseHeldLock(normalizedTargetPath, createdHeld, { force: true });
-            throw err;
-          }
-        }
-        const returnedHandle = context.handleForHeldLock(normalizedTargetPath, createdHeld);
-        const interval = options.compromiseCheckIntervalMs;
-        if (options.onCompromised && interval !== undefined && interval > 0) {
+        const candidateHeld = createdHeld;
+        if (reclaimGuard) await releaseReclaimGuard();
+        const returnedHandle = admission.run(() =>
+          context.handleForHeldLock(normalizedTargetPath, candidateHeld));
+        if (
+          onCompromised &&
+          compromiseCheckIntervalMs !== undefined &&
+          compromiseCheckIntervalMs > 0
+        ) {
+          const compromisedCallback = onCompromised;
           let compromiseCheckInFlight = false;
-          createdHeld.compromiseTimer = setInterval(() => {
+          candidateHeld.compromiseTimer = admission.run(() => setInterval(() => {
             if (compromiseCheckInFlight) return;
             compromiseCheckInFlight = true;
             void returnedHandle
               .verifyStillHeld()
               .catch(() => false)
               .then((stillHeld) => {
-                if (!stillHeld && createdHeld.compromiseTimer) {
-                  clearInterval(createdHeld.compromiseTimer);
-                  createdHeld.compromiseTimer = undefined;
-                  options.onCompromised?.({ lockPath, normalizedTargetPath });
+                if (!stillHeld && candidateHeld.compromiseTimer) {
+                  clearInterval(candidateHeld.compromiseTimer);
+                  candidateHeld.compromiseTimer = undefined;
+                  Reflect.apply(compromisedCallback, options, [{ lockPath, normalizedTargetPath }]);
                 }
               })
               .finally(() => {
                 compromiseCheckInFlight = false;
               });
-          }, interval);
-          createdHeld.compromiseTimer.unref();
+          }, compromiseCheckIntervalMs));
+          admission.run(() => candidateHeld.compromiseTimer?.unref());
         }
+        if (
+          !admission.hasToken() ||
+          context.held.has(normalizedTargetPath)
+        ) {
+          admissionConflict = true;
+          throw Object.assign(new Error("sidecar lock admission changed"), { code: "EEXIST" });
+        }
+        context.held.set(normalizedTargetPath, candidateHeld);
+        admission.release();
+        context.armExitCleanup(lifecycle);
         return returnedHandle;
       } catch (err) {
         try {
+          if (createdHeld?.compromiseTimer) {
+            clearInterval(createdHeld.compromiseTimer);
+            createdHeld.compromiseTimer = undefined;
+          }
           if (handle) {
             const failedSnapshot: SidecarLockSnapshot = createdSnapshot ?? { payload: null };
             try {
@@ -317,20 +412,27 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
               // Best-effort cleanup of a failed exclusive create.
             }
             const current = context.held.get(normalizedTargetPath);
-            if (current?.handle === handle) {
+            if (createdHeld && current === createdHeld) {
               context.held.delete(normalizedTargetPath);
             }
             await handle.close().catch(() => undefined);
-            // Root-created records retain the creator's byte/token receipt;
-            // partial direct writes use the exclusive descriptor's identity.
+            // Root records use the creator receipt; partial raw writes use fd identity.
             await removeSidecarLockIfUnchanged(lockPath, failedSnapshot, {
               lockRoot,
-              parsePayload: options.parsePayload,
+              parsePayload: conditionalSidecarLockParser(
+                parserState,
+                admission,
+                () => admission.hasToken() && !context.held.has(normalizedTargetPath),
+              ),
             });
           } else if (createdSnapshot) {
             await removeSidecarLockIfUnchanged(lockPath, createdSnapshot, {
               lockRoot,
-              parsePayload: options.parsePayload,
+              parsePayload: conditionalSidecarLockParser(
+                parserState,
+                admission,
+                () => admission.hasToken() && !context.held.has(normalizedTargetPath),
+              ),
             });
           }
         } catch (cleanupError) {
@@ -340,99 +442,57 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
             "file lock acquisition and cleanup both failed",
           );
         }
-        if (lockFileCreateDenied && withinDenialBudget()) {
-          await retryOrRethrowDenial(err);
+        if (admissionConflict) {
+          await waitForRetry();
           continue;
         }
-        if ((err as { code?: unknown }).code !== "EEXIST") {
+        if (lockFileCreateDenied) {
+          assertAdmissionToken();
+          if (context.held.has(normalizedTargetPath)) {
+            await waitForRetry();
+            continue;
+          }
+          if (withinDenialBudget()) {
+            await retryOrRethrowDenial(err);
+            continue;
+          }
           throw err;
         }
-        if (ownsReclaimGuard) {
-          await releaseSidecarReclaimGuard(context.reclaimGuards, reclaimGuardPath);
-          ownsReclaimGuard = false;
-          await waitForRetry();
-          continue;
-        }
-        const nowMs = Date.now();
-        let rawSnapshot: Awaited<ReturnType<typeof readSidecarLockRawSnapshot>>;
-        let lockFileOpenDenied = false;
-        try {
-          rawSnapshot = await readSidecarLockRawSnapshot(lockPath, {
-            lockRoot,
-            rejectNonFile: true,
-            discardObservation: "changed",
-            onOpenFailure: (error) => { lockFileOpenDenied = isTransientLockFileDenial(error, lockPath); },
-          });
-        } catch (readErr) {
-          if (!lockFileOpenDenied || !withinDenialBudget()) throw readErr;
-          await retryOrRethrowDenial(readErr);
-          continue;
-        }
-        const snapshot = parseSidecarLockSnapshot(rawSnapshot, options.parsePayload);
-        if (!snapshot) {
-          await waitForRetry();
-          continue;
-        }
+        if (!exclusiveCreateConflict) throw err;
+        assertAdmissionToken();
         if (context.held.has(normalizedTargetPath)) {
           await waitForRetry();
           continue;
         }
-        const shouldReclaim = options.shouldReclaim ?? defaultSidecarLockShouldReclaim;
-        if (
-          await shouldReclaim({
-            lockPath,
-            normalizedTargetPath,
-            payload: snapshot?.payload ?? null,
-            staleMs: options.staleMs,
-            nowMs,
-            heldByThisProcess: context.held.has(normalizedTargetPath),
-          })
-        ) {
-          if (
-            !(await sidecarLockSnapshotStillPresent(lockPath, snapshot, {
-              lockRoot,
-              parsePayload: options.parsePayload,
-            }))
-          ) {
-            await waitForRetry();
-            continue;
-          }
-          const staleRecovery = options.staleRecovery ?? "fail-closed";
-          if (staleRecovery === "remove-if-unchanged") {
-            if (!(await tryAcquireSidecarReclaimGuard(context.reclaimGuards, reclaimGuardPath))) {
-              await waitForRetry();
-              continue;
-            }
-            ownsReclaimGuard = true;
-            const removal = await removeStaleSidecarLockIfAllowed({
-              lockPath,
-              normalizedTargetPath,
-              snapshot,
-              shouldRemoveStaleLock: options.shouldRemoveStaleLock,
-              lockRoot,
-              parsePayload: options.parsePayload,
-            });
-            if (removal === "removed" || removal === "changed") {
-              if (removal === "changed") await waitForRetry();
-              continue;
-            }
-            await releaseSidecarReclaimGuard(context.reclaimGuards, reclaimGuardPath);
-            ownsReclaimGuard = false;
-          }
-          throw Object.assign(new Error(`file lock stale for ${normalizedTargetPath}`), {
-            code: "file_lock_stale",
-            lockPath,
-            normalizedTargetPath,
-          });
+        if (reclaimGuard) {
+          await releaseReclaimGuard();
+          await waitForRetry();
+          continue;
         }
-        await waitForRetry();
+        await handleStaleSidecarAdmission({
+          admission,
+          assertToken: assertAdmissionToken,
+          currentHeld: () => context.held.get(normalizedTargetPath),
+          lockPath,
+          lockRoot,
+          normalizedTargetPath,
+          options,
+          parserState,
+          reclaimGuardPath,
+          reclaimGuards: context.reclaimGuards,
+          setReclaimGuard: (guard) => { reclaimGuard = guard; },
+          releaseReclaimGuard,
+          staleOptionsState,
+          staleMs,
+          withinDenialBudget,
+          retryOrRethrowDenial,
+          waitForRetry,
+        });
+        continue;
       }
     }
   } finally {
-    if (ownsReclaimGuard) {
-      await releaseSidecarReclaimGuard(context.reclaimGuards, reclaimGuardPath).catch(
-        () => undefined,
-      );
-    }
+    if (reclaimGuard) await releaseReclaimGuard().catch(() => undefined);
+    admission.release();
   }
 }

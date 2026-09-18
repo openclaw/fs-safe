@@ -63,6 +63,47 @@ describe("synchronous Windows lock-file open denials", () => {
     expect(fs.existsSync(lockPath)).toBe(false);
   });
 
+  it.each(["EPERM", "EEXIST"])(
+    "does not treat a Root mutation callback %s as an exclusive-open result",
+    async (code) => {
+      const directory = await tempRoot("fs-safe-sync-root-callback-provenance-");
+      const target = path.join(directory, "state");
+      const lockPath = `${target}.lock`;
+      const error = failure(lockPath, code);
+      let assertions = 0;
+      const lockRoot = await root(directory, {
+        assertBeforeMutation: () => {
+          assertions += 1;
+          if (assertions === 2) throw error;
+        },
+      });
+      Object.defineProperty(process, "platform", { value: "win32" });
+      const payload = vi.fn(defaults.payload);
+      const open = vi.spyOn(fs, "openSync");
+      expect(() => acquireFileLockSync(target, { ...defaults, lockRoot, payload })).toThrow(error);
+      expect(assertions).toBe(2);
+      expect(payload).toHaveBeenCalledTimes(1);
+      expect(open).not.toHaveBeenCalled();
+      expect(fs.existsSync(lockPath)).toBe(false);
+    },
+  );
+
+  it.each(["EPERM", "EEXIST"])(
+    "does not treat Root-created file metadata %s as an exclusive-open result",
+    async (code) => {
+      const { target, lockPath, options } = await fixture(true);
+      const error = Object.assign(failure(lockPath, code), { syscall: "fstat" });
+      const inspect = vi.fn((): never => { throw error; });
+      vi.spyOn(fs, "fstatSync").mockImplementationOnce(inspect);
+      const payload = vi.fn(options.payload);
+      expect(() => acquireFileLockSync(target, { ...options, payload })).toThrow(error);
+      expect(inspect).toHaveBeenCalledTimes(1);
+      expect(payload).toHaveBeenCalledTimes(1);
+      expect(fs.existsSync(lockPath)).toBe(true);
+      fs.unlinkSync(lockPath);
+    },
+  );
+
   for (const stage of ["create", "snapshot"] as const) {
     it.each([
       { name: "internal cap", retries: undefined, timeoutMs: Infinity, attempts: 9 },

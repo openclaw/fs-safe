@@ -11,15 +11,14 @@ import {
   parseSidecarLockPayload,
   readSidecarLockSnapshot,
   readSidecarLockSnapshotSync,
-  releaseSidecarReclaimGuard,
   removeSidecarLockIfUnchanged,
   removeSidecarLockIfUnchangedSync,
   removeStaleSidecarLockIfAllowed,
   serializeSidecarLockPayload,
-  sidecarLockSnapshotMatches,
-  sidecarLockSnapshotStillPresent,
   sidecarReclaimGuardExists,
   tryAcquireSidecarReclaimGuard,
+  sidecarLockSnapshotMatches,
+  sidecarLockSnapshotStillPresent,
 } from "../src/sidecar-lock-reclaim.js";
 import {
   computeSidecarLockDelayMs,
@@ -201,10 +200,11 @@ describe("sidecar lock helper failure handling", () => {
     const guard = path.join(root, "state.lock.reclaim");
     const guards = new Set<string>();
     await expect(sidecarReclaimGuardExists(guard)).resolves.toBe(false);
-    await expect(tryAcquireSidecarReclaimGuard(guards, guard)).resolves.toBe(true);
+    const acquired = await tryAcquireSidecarReclaimGuard(guards, guard);
+    expect(acquired).toBeDefined();
     await expect(sidecarReclaimGuardExists(guard)).resolves.toBe(true);
-    await expect(tryAcquireSidecarReclaimGuard(guards, guard)).resolves.toBe(false);
-    await releaseSidecarReclaimGuard(guards, guard);
+    await expect(tryAcquireSidecarReclaimGuard(guards, guard)).resolves.toBeUndefined();
+    await acquired!.release();
     expect(guards.has(guard)).toBe(false);
 
     const denied = Object.assign(new Error("guard denied"), { code: "EACCES" });

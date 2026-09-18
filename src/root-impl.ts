@@ -93,6 +93,7 @@ import { createInputOptions, rethrowCreateInputError, rootWriteInput, type RootW
 import { assertFinalSymlinkRejected, mutationSymlinkResolution, readSymlinkResolution, type MutationSymlinkPolicy, type SymlinkPolicy } from "./root-symlink-policy.js";
 import { assertNoWindowsPathAlias, resolvePathPreservingWindowsRoot } from "./windows-path-alias.js";
 import { resolvePinnedObservedPathInRoot, type PinnedObservedPath } from "./root-observed-path.js";
+import { registerFileLockSyncRootAdapter } from "./file-lock-sync-root.js";
 
 import {
   mergeReadOptions, readDefaults,
@@ -294,6 +295,7 @@ export class RootHandle implements Root {
     this.rootReal = context.rootReal;
     this.rootWithSep = context.rootWithSep;
     this.defaults = defaults;
+    registerFileLockSyncRootAdapter(this, context, defaults);
   }
 
   private get context(): RootContext {

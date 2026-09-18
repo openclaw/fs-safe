@@ -62,6 +62,9 @@ for (const mode of ["raw async", "Root async", "raw sync", "Root sync"] as const
       const target = path.join(directory, "state");
       const lockPath = `${target}.lock`;
       const lockRoot = mode.startsWith("Root") ? await root(directory) : undefined;
+      const heldTarget = lockRoot
+        ? path.join(lockRoot.rootReal, path.relative(lockRoot.rootDir, target))
+        : target;
       const manager = createFileLockManager(`payload:${target}`);
       const acquire = async (options: AcquireOptions) => mode.endsWith("async")
         ? await manager.acquire(target, { ...options, lockRoot })
@@ -71,9 +74,12 @@ for (const mode of ["raw async", "Root async", "raw sync", "Root sync"] as const
           expect(manager.heldEntries()).toHaveLength(count);
         } else {
           // Sync locks have no public diagnostics; inspect only this fixture's entry.
-          const held = Reflect.get(globalThis, Symbol.for("fsSafe.syncSidecarLocks")) as
+          const heldKey = lockRoot
+            ? Symbol.for("fsSafe.syncRootSidecarLocks.v1")
+            : Symbol.for("fsSafe.syncSidecarLocks");
+          const held = Reflect.get(globalThis, heldKey) as
             Map<string, unknown> | undefined;
-          expect(held?.has(target) ?? false).toBe(count === 1);
+          expect(held?.has(heldTarget) ?? false).toBe(count === 1);
         }
       };
       const expectEmpty = async () => {

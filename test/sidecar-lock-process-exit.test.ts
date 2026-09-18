@@ -87,6 +87,30 @@ async function expectAbsent(directory: string, name = "state.json.lock"): Promis
 }
 
 describe("sidecar lock natural process exit", () => {
+  it.each(["natural", "explicit"])("preserves an unsettled Root reclaim guard on %s exit", async kind => {
+    const directory = await tempRoot("fs-safe-root-guard-exit-");
+    const original = JSON.stringify({ owner: "stale" });
+    await fs.writeFile(path.join(directory, "state.json.lock"), original);
+    const output = await runChild(directory, `
+      void acquireFileLock(targetPath, {
+        ...options, staleMs: 0, staleRecovery: "remove-if-unchanged",
+        shouldReclaim: () => true,
+        shouldRemoveStaleLock: async () => {
+          console.log("guard-owned");
+          if (${JSON.stringify(kind)} === "explicit") process.exit(0);
+          return await new Promise(() => {});
+        },
+      }).catch((error) => { console.error(error); process.exitCode = 1; });
+    `);
+    expect(output).toBe("guard-owned");
+    const guard = path.join(directory, "state.json.lock.reclaim");
+    expect((await fs.lstat(guard)).isFile()).toBe(true);
+    expect(JSON.parse(await fs.readFile(guard, "utf8"))).toMatchObject({
+      pid: expect.any(Number), createdAt: expect.any(String),
+    });
+    expect(await fs.readFile(path.join(directory, "state.json.lock"), "utf8")).toBe(original);
+  });
+
   it("cleans every manager when an older package copy has no reclaim state", async () => {
     const directory = await tempRoot("fs-safe-lock-exit-legacy-state-");
     await runChild(directory, `

@@ -187,7 +187,10 @@ posix.each(["before-probe", "after-probe"])("replacement %s cannot be acquired o
   });
   const replacement = '{"owner":"replacement"}\n';
   const realStat = capability.stat.bind(capability);
-  const probe = vi.spyOn(capability, "stat").mockImplementationOnce(async (...args) => {
+  let probed = false;
+  const probe = vi.spyOn(capability, "stat").mockImplementation(async (...args) => {
+    if (args[0] !== relative || probed) return await realStat(...args);
+    probed = true;
     if (when === "before-probe") await fs.writeFile(lockPath, replacement, { flag: "wx" });
     try {
       return await realStat(...args);
@@ -200,7 +203,7 @@ posix.each(["before-probe", "after-probe"])("replacement %s cannot be acquired o
   try {
     await expect(waiterManager.acquire(target, { ...options, payload: () => ({ owner: "waiter" }) }))
       .rejects.toMatchObject({ code: "file_lock_timeout" });
-    expect(probe).toHaveBeenCalledExactlyOnceWith(relative);
+    expect(probe.mock.calls.filter(([candidate]) => candidate === relative)).toEqual([[relative]]);
     expect(opened?.()?.fd).toBe(-1);
     expect(waiterManager.heldEntries()).toEqual([]);
     await expect(fs.readFile(lockPath, "utf8")).resolves.toBe(replacement);

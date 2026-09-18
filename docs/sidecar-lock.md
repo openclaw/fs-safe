@@ -28,11 +28,26 @@ try {
 
 The lock file sits next to the protected resource. If a process crashes mid-lock, the next acquirer notices the held entry, inspects its payload (PID, host, acquired-at timestamp), and decides — via `shouldReclaim` (defaulting to "is the lock older than `staleMs`?") — whether it should keep waiting or fail.
 
-On natural event-loop shutdown, a globally deduplicated `process.on("beforeExit")` handler attempts asynchronous cleanup of held Root-backed locks through their retained Root capability and ownership receipt. The synchronous `process.on("exit")` handler provides last-chance cleanup for raw locks and reclaim guards. Changed sidecars and failed Root cleanup remain in place; cleanup does not keep retrying during shutdown unless another acquisition re-arms it. Locks acquired with `retainOnExit: true` are exempt from both handlers: their sidecar stays in place after exit and is governed only by the caller's own stale policy. Because exit handlers are globally deduplicated across package copies, `retainOnExit` fails closed with `helper-unavailable` if an older copy that cannot honor it registered the handlers first.
+On natural event-loop shutdown, a globally deduplicated `process.on("beforeExit")` handler attempts asynchronous cleanup of held Root-backed locks through their retained Root capability and ownership receipt. The synchronous `process.on("exit")` handler provides last-chance cleanup for raw locks and raw-path reclaim guards. Changed sidecars and failed Root cleanup remain in place; cleanup does not keep retrying during shutdown unless another acquisition re-arms it. Locks acquired with `retainOnExit: true` are exempt from both handlers: their sidecar stays in place after exit and is governed only by the caller's own stale policy. Because exit handlers are globally deduplicated across package copies, `retainOnExit` fails closed with `helper-unavailable` if an older copy that cannot honor it registered the handlers first.
+
+Asynchronous Root-backed stale recovery uses a private regular file at the
+`.reclaim` name, created, verified, and removed through that Root. Its ownership
+token and exact bytes are checked after awaited decisions and before stale
+removal; Root mutation policies also apply to the guard. Raw and synchronous
+Root reclaimers use directories and recognize these files as occupied guards.
+Each asynchronous attempt owns its guard directly, outside process-exit cleanup,
+so `beforeExit` cannot release an exclusion still needed by an unsettled attempt.
+Normal completion removes it through the Root. Interrupted creation, revoked
+cleanup authority, identity changes, or process exit can leave the guard in
+place; recover it only after an application-owned liveness check proves the
+attempt has ended. There is no raw-path cleanup fallback. These token/byte
+checks retain the sidecar protocol's cooperative, non-atomic removal boundary.
+`manager.reset()` invalidates admission bookkeeping but preserves a pending
+Root guard; let its original attempt settle before retrying that guarded path.
 
 Always release locks in a `finally` block. Application-managed graceful shutdown can await `release()` or `manager.drain()` before terminating. Explicit `process.exit()`, uncaught failures, crashes, default signal handling, and fatal termination (including `SIGKILL`) do not reliably run asynchronous Root cleanup and may leave sidecars. Recover only after an application-owned liveness policy proves the holder cannot still be writing.
 
-Exit cleanup tolerates shared managers created by older package copies that lack reclaim-guard state, and continues through later manager domains. Handler ownership remains first-registration-wins: loading an updated copy does not replace an older copy's registered handler. Restart with the updated copy registering first to obtain the fix. After building, `node scripts/legacy-lock-exit-proof.mjs` checks clean exit, removal of legacy and modern raw locks, and preservation of a retained lock using synthetic temporary files.
+Exit cleanup tolerates shared managers created by older package copies that lack reclaim-guard state, and continues through later manager domains. Handler ownership remains first-registration-wins: loading an updated copy does not replace an older copy's registered handler. First registration is committed only after Node accepts the listener; synchronous `newListener` reentry fails closed and a thrown registration rolls back so a later acquisition can retry. Restart with the updated copy registering first to obtain the fix. After building, `node scripts/legacy-lock-exit-proof.mjs` checks clean exit, removal of legacy and modern raw locks, and preservation of a retained lock using synthetic temporary files.
 
 Each new sidecar also carries an internal random ownership token encoded as JSON trailing whitespace. `JSON.parse()` and every payload callback still see exactly the caller-provided object. Only the process that successfully created the sidecar keeps that token as release authority; merely reading token-shaped bytes from disk does not enable this mode. Release compares the in-memory token and exact serialized bytes, and requires the pathname to remain a regular file, instead of requiring an opened descriptor and pathname lookup to report the same inode identity. This preserves ownership checks on filesystems such as Docker Desktop VirtioFS where those two views can legitimately differ. Sidecars created by older releases have no token and retain the legacy identity-plus-content check.
 
@@ -61,6 +76,41 @@ function withFileLockSync<T, TPayload>(targetPath: string, options: FileLockSync
 ```
 
 `managerKey` is an optional identifier used to keep state isolated across multiple lock domains in the same process. Use distinct keys for distinct domains (`"snapshot"`, `"compact"`, `"build"`). If omitted, fs-safe derives one from the target path.
+
+Within one manager domain, the canonical target path is the in-process
+arbitration key even when callers supply different explicit `lockPath` values.
+Admission remains pending while payload serialization and stale-policy callbacks
+run, and becomes reentrant only after a matching owner is fully published.
+Foreign owners wait or reach the configured timeout without opening their
+alternate sidecar. Each unguarded attempt still invokes and serializes `payload`
+before a completed foreign holder consumes retry budget, preserving callback and
+retry compatibility; the holder is rechecked before delayed option accessors or
+sidecar I/O. When the candidate resolves to the holder's actual sidecar (the
+default path or an explicitly identical path), asynchronous retries also preserve
+the existing parser observation: bytes are observed first, then its accessor is
+read and the current holder bytes are parsed once per unguarded attempt.
+Distinct alternate sidecars do not trigger that observation. Async acquisition releases
+pending admission before retry backoff;
+synchronous callback reentry cannot let the active stack progress, so it fails
+closed with the normal `file_lock_timeout` fields. Async payload, serialization,
+delayed-option, and stale-policy callbacks carry a process-shared ancestry scope:
+a nested acquisition of the same canonical target in the same manager domain
+fails before waiting on its ancestor, while independent tasks, different targets,
+and different manager domains retain their normal retry behavior. The synchronous
+API uses one process-wide domain. An ancestry snapshot keeps each ancestor that
+is active when the child acquisition starts, even if the current callback's own
+scope already became inactive; later deactivation cannot reclassify that child.
+Detached work started only after every matching ancestor has finished is not
+retained as a descendant. Promise-like callback results are assimilated inside
+that ancestry scope, and the resolved payload crosses the internal return
+boundary in a non-thenable envelope. The helper therefore does not observe a
+stateful payload `then` accessor again outside the reservation.
+
+The pending-admission registry coordinates package copies that implement this
+protocol without placing incomplete state in the legacy held-lock map. An older
+already-loaded executable copy does not consult that registry, so a mixed-version
+process cannot rely on the new in-process arbitration until every copy is updated
+and the process is restarted.
 
 ## Acquire options
 
@@ -105,7 +155,11 @@ type FileLockRetryOptions = {
 };
 ```
 
-`payload` is a function so you can re-evaluate it on each retry (e.g. timestamp, PID).
+`payload` is a function so you can re-evaluate it on each retry (e.g. timestamp,
+PID). Callback-valued option accessors are otherwise captured once for an
+acquisition; the asynchronous same-sidecar parser observation above reads
+`parsePayload` once per unguarded attempt. Callback invocation keeps its
+established receiver behavior.
 
 Asynchronous acquisition snapshots `targetPath`, an explicit `lockPath`, and
 `lockRoot` before its first asynchronous operation. Cwd-dependent path spellings
@@ -294,6 +348,46 @@ canonicalization or an out-of-root parent still rejects. Missing-path observatio
 deadline budget. Errors from descriptor reads/stats or parsing are not treated
 as missing snapshots, even when their code is `ENOENT`. Held verification,
 release, and reclaim do not retry open denials.
+
+Synchronous `lockRoot` is an authority boundary, not only a containment hint.
+It requires a genuine `Root` returned by the same loaded package copy; a
+structural/custom Root lookalike or a handle constructed by another installed
+copy fails with `helper-unavailable` before any remaining acquisition option or
+nested retry getter, payload evaluation, or filesystem effects. After reading
+`lockRoot` once, the genuine Root and its policies are snapshotted before those
+getters run. Construct `lockRoot` through the same import instance that provides
+the synchronous lock function. The acquirer retains the original Root context,
+exact root, parent, and file identities, and the Root's entry-time read, hardlink,
+mutation-symlink, `denyMutations`, and `assertBeforeMutation` policies. Those
+receipts remain authoritative through same-owner reuse, compromise checks,
+reclaim, explicit release, and process-exit cleanup. If the Root, an admitted
+parent, or the owned entry changes, cleanup leaves the ambiguous path in place.
+Root-backed synchronous records and their exit handler use a separate versioned
+global domain; legacy raw-lock handlers and legacy package copies cannot adopt or
+pathname-delete those records. Root and raw acquisitions never share a
+reentrant reference, even when their owner strings match.
+
+As with asynchronous Root-backed acquisition, synchronous target normalization
+does not create the target's parent. An explicit in-root `lockPath` can therefore
+guard an external or not-yet-created target key without creating anything next
+to that target. Missing directories for the sidecar itself are created one
+component at a time through the retained Root policy; the returned `lockPath`
+uses the admitted canonical spelling. This strengthens earlier synchronous
+behavior that treated `lockRoot` as a one-time lexical/canonical bound and used
+raw pathname operations afterward.
+
+Windows Root-backed target keys use native existing-ancestor canonicalization,
+so long and short spellings of the same target parent share an arbitration key.
+Sidecar admission applies both the retained mutation policy and read/final-link
+policy before payload evaluation; a dangling final sidecar link is rejected
+without creating its target.
+
+Exact Root, parent, and file receipts narrow replacement races but do not make a
+pathname check and the following `open`, `mkdir`, `unlink`, or `rmdir` one atomic
+filesystem operation. A hostile peer with direct write access can still race the
+final syscall. An observed mismatch fails closed and ambiguous entries remain;
+use OS-enforced directory permissions or a native descriptor-relative primitive
+when that attacker model must be excluded.
 
 Both synchronous helpers consume the [process-wide lock defaults](config.md#configurefssafelocks-config).
 A synchronous retry sleep is clamped to the remaining finite deadline, so a long or jittered backoff cannot extend the configured timeout or block forever.
