@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Preserve deferred directory-mode check failures after descriptor-bound mode changes, including falsy JavaScript values, while still completing the existing post-dispatch identity verification.
+- Preserve directory-mode authority and deadline check failures before and after dispatch, including one-shot checks and falsy JavaScript values. Best-effort suppression stays limited to mode-change failures, and deferred check failures retain the existing post-dispatch identity verification.
 - Add `maxDepth` to `probePathSuffixAliasesSync()` for deeper prospective paths, with proportional operation budgets and unchanged default, string-length, identity, and cleanup limits.
 - Cap configurable-depth suffix probing at 32,768 forward observations while always completing owned cleanup.
 - Allow asynchronous `include`/`descend` in `walkDirectory()` and `entryFilter` in `Root.walk()` for serial selection and marker-based pruning, retaining callback receivers and budgets; Root walks settle pending callbacks and recheck cancellation and directory/root identity before using awaited decisions.

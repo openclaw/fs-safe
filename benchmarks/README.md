@@ -47,9 +47,9 @@ directory chain at the requested mode.
 The `mergeExtractedTreeIntoDestination/directory-mode-owner-post-dispatch` row
 merges one empty `0555` staging directory into a missing destination. It verifies
 the distinct source mode before timing and the final directory afterward, while
-its receipt binds the public merge, supplied owner check, and post-dispatch path.
-On POSIX this exercises descriptor-owned correction from private creation mode;
-Windows exercises the same serialized owner's identity-only mode path.
+its receipt binds the public merge and supplied owner checks on both sides of
+mode dispatch. On POSIX this exercises descriptor-owned correction from private
+creation mode; Windows exercises the serialized owner's identity-only mode path.
 New-directory POSIX fixtures retain a restrictive `0077` umask during the
 timed write, so mode repair from the masked creation mode is included.
 Hash cases verify the digest as well as the byte count outside measurement.

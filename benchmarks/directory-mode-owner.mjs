@@ -6,11 +6,12 @@ export const DIRECTORY_MODE_OWNER_BENCHMARK_NAME =
   "mergeExtractedTreeIntoDestination/directory-mode-owner-post-dispatch";
 
 const WORKLOAD_SEMANTICS =
-  "successful public directory-mode finalization through owner post-dispatch checks";
+  "successful public directory-mode finalization through owner dispatch checks";
 const WORKLOAD_DETAILS = Object.freeze({
   sourceDirectoryMode: "0555",
   destinationLayout: "missing-empty-directory",
   ownerCheckCallbackSupplied: true,
+  preDispatchCheck: true,
   postDispatchCheck: true,
 });
 

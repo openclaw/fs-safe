@@ -124,10 +124,12 @@ Readable directories do not depend on procfs. A Linux search-only directory
 needing a mode change requires accessible, genuine procfs; unavailable or
 untrusted authority rejects explicitly instead of silently accepting a wrong
 mode. Other unsupported search-only routes also fail closed. Windows retains
-its existing bounded lack of POSIX mode enforcement. A check failure observed
-immediately after a mode dispatch is retained while post-dispatch authority
-verification and final mode inspection settle, then propagated regardless of
-the thrown JavaScript value.
+its existing bounded lack of POSIX mode enforcement. Best-effort mode handling
+applies only to the mode change itself: an authority or deadline check that
+fails immediately before dispatch still propagates, including a custom
+one-shot structural check. A check failure observed immediately after dispatch
+is retained while post-dispatch authority verification and final mode inspection
+settle, then propagated with its exact JavaScript value, including falsy values.
 
 Extraction and TAR inspection first copy the admitted source into a private
 staging file. This copy reuses at most 512 KiB of scratch space, reduced for

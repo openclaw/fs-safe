@@ -11,11 +11,12 @@ import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
 const workloadSemantics =
-  "successful public directory-mode finalization through owner post-dispatch checks";
+  "successful public directory-mode finalization through owner dispatch checks";
 const workloadDetails = {
   sourceDirectoryMode: "0555",
   destinationLayout: "missing-empty-directory",
   ownerCheckCallbackSupplied: true,
+  preDispatchCheck: true,
   postDispatchCheck: true,
 };
 
@@ -65,13 +66,15 @@ describe("directory-mode owner benchmark", () => {
     expect(merge).toHaveBeenCalledOnce();
   });
 
-  it("rejects tampered post-dispatch workload receipts", () => {
+  it("rejects tampered pre- and post-dispatch workload receipts", () => {
     const result = { name: DIRECTORY_MODE_OWNER_BENCHMARK_NAME, workloadSemantics, workloadDetails };
     expect(() => validateDirectoryModeOwnerWorkloadResult(result)).not.toThrow();
-    expect(() => validateDirectoryModeOwnerWorkloadResult({
-      ...result,
-      workloadDetails: { ...workloadDetails, postDispatchCheck: false },
-    })).toThrow("directory-mode owner workload details mismatch");
+    for (const field of ["preDispatchCheck", "postDispatchCheck"] as const) {
+      expect(() => validateDirectoryModeOwnerWorkloadResult({
+        ...result,
+        workloadDetails: { ...workloadDetails, [field]: false },
+      })).toThrow("directory-mode owner workload details mismatch");
+    }
     expect(() => validateDirectoryModeOwnerWorkloadResult({
       ...result,
       workloadSemantics: "unbound",
