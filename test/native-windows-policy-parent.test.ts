@@ -189,3 +189,51 @@ it("preserves recursive dispatch when mutationAdmission is absent", async () => 
   expect(f.authorize).not.toHaveBeenCalled();
   expect(f.directoryOpens).toHaveLength(1);
 });
+
+it.each([true, false, undefined])("reuses only proven native creations (mkdir result %s)", async mkdirResult => {
+  const f = await fixture();
+  let pending: object | undefined;
+  let disabled = false;
+  const authorization = Object.freeze({});
+  const session = {
+    retainedTargetPath: path.join(f.rootPath, "one/two/three/value"),
+    tryAuthorizeAtParent: vi.fn((request: { phase: string }) => {
+      expect(request.phase).toBe("parent-create");
+      if (disabled || !pending) return undefined;
+      return pending = Object.freeze({});
+    }),
+    authorize: vi.fn(async (request: { phase: string }) => {
+      if (request.phase === "parent") { disabled = true; return undefined; }
+      return pending = Object.freeze({});
+    }),
+    advanceCreatedDirectory: vi.fn((receipt: {
+      admission: object; parent: { path: string }; child: { path: string };
+    }) => {
+      expect(receipt.admission).toBe(pending);
+      expect(path.dirname(receipt.child.path)).toBe(receipt.parent.path);
+      return authorization;
+    }),
+    dispose: vi.fn(),
+  };
+  f.params.mutationAdmission = { ...f.params.mutationAdmission!, beginSharedParentWalk: () => session };
+  const create = f.calls.mkdirChildBeneath.getMockImplementation()!;
+  f.calls.mkdirChildBeneath.mockImplementation(function (...args) {
+    create.apply(f.binding, args);
+    return mkdirResult as boolean;
+  });
+  await runPinnedWriteNative(f.binding, f.params);
+  expect(session.advanceCreatedDirectory).toHaveBeenCalledTimes(mkdirResult === true ? 3 : 0);
+  expect(session.authorize).toHaveBeenCalledTimes(mkdirResult === true ? 1 : 6);
+  expect(session.dispose).toHaveBeenCalledOnce();
+  expect(await fs.readFile(path.join(f.rootPath, "one/two/three/value"), "utf8")).toBe("payload");
+});
+
+it("keeps arbitrary mutation callbacks outside shared-session reuse", async () => {
+  const f = await fixture();
+  const begin = vi.fn();
+  f.params.mutationAdmission = { ...f.params.mutationAdmission!, beginSharedParentWalk: begin };
+  f.params.assertBeforeMutation = () => undefined;
+  await runPinnedWriteNative(f.binding, f.params);
+  expect(begin).not.toHaveBeenCalled();
+  expect(f.authorize).toHaveBeenCalledTimes(6);
+});

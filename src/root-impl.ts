@@ -1208,10 +1208,10 @@ async function copyFileInRoot(
             rejectFinalSymlink: params.mutationSymlinks !== undefined,
             maxBytes: params.maxBytes,
             sync: params.durable !== false,
-            assertBeforeMutation: () => {
+            assertBeforeMutation: params.signal || params.assertBeforeMutation ? () => {
               if (params.signal?.aborted) throw new MutationAuthorityError(params.signal.reason);
               params.assertBeforeMutation?.();
-            },
+            } : undefined,
             verifyPublished: params.verifyPublished,
             onPublished: observer.onPublished,
             input: { kind: "file", handle: source.handle, size: source.stat.size, clone, signal: params.signal, verifySource },

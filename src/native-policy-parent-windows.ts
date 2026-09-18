@@ -9,23 +9,28 @@ import { FsSafeError } from "./errors.js";
 import { openNativeParentAdmission, type NativeRootAdmission } from "./native-parent-admission.js";
 import type { NativeBinding } from "./native.js";
 import { captureNativeFdClose } from "./native-binding.js";
+import { inspectNativeDirectoryObservation, type NativeDirectoryObservationBackend } from "./native-directory-observation.js";
 import { createPathSegmentRoute, joinPathSegmentRoute } from "./path-segment-route.js";
 import { isSymlinkOpenError } from "./path.js";
-import type { PinnedWriteParams } from "./pinned-write.js";
+import type { PinnedWriteParams, PinnedMutationAdmissionReceipt, PinnedMutationParentWalkSession, PinnedCreatedDirectoryReceipt } from "./pinned-write.js";
+import { checkedMutationDirectory, type MutationDirectoryObservation } from "./pinned-mutation-observation.js";
+import { canReuseParentWithMutationAssertion } from "./root-write-lock-binding.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 
 type PolicyParent = {
   fd: number;
   guard: AsyncDirectoryGuard<BigIntStats>;
+  observation: MutationDirectoryObservation;
 };
 
-function assertParentCurrent(parent: PolicyParent): void {
-  inspectFileIdentitySync(() => fsSync.fstatSync(parent.fd, { bigint: true }), parent.guard.stat);
+function assertParentCurrent(parent: PolicyParent): BigIntStats {
+  const current = inspectFileIdentitySync(() => fsSync.fstatSync(parent.fd, { bigint: true }), parent.guard.stat);
   assertDirectoryIdentitySync(parent.guard.dir, {
     dev: parent.guard.stat.dev,
     ino: parent.guard.stat.ino,
     realPath: parent.guard.realPath,
   });
+  return current;
 }
 
 function closeAfterFailure(closeFd: (fd: number) => void, fd: number | undefined): void {
@@ -43,6 +48,24 @@ export async function capturePolicyAwareWindowsParent(
   rootAdmission: NativeRootAdmission,
 ): Promise<PolicyParent> {
   const closeFd = captureNativeFdClose(binding);
+  let session: PinnedMutationParentWalkSession | undefined;
+  function parentObservation(fd: number, guard: AsyncDirectoryGuard<BigIntStats>) {
+    return checkedMutationDirectory(guard.dir, guard.realPath, guard.stat,
+      typeof binding.observeDirectory === "function" ? () => {
+        const stat = inspectFileIdentitySync(() => fsSync.fstatSync(fd, { bigint: true }), guard.stat);
+        let observed;
+        try {
+          observed = inspectNativeDirectoryObservation(
+            binding as NativeDirectoryObservationBackend, guard.dir, stat,
+          );
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException)?.code === "OBSERVATION_UNAVAILABLE") return undefined;
+          throw error;
+        }
+        return { canonicalPath: observed.realPath,
+          identity: { dev: stat.dev, ino: stat.ino, mode: stat.mode, nlink: stat.nlink } };
+      } : undefined);
+  }
   async function openParent(fd: number, parentPath: string, relativePath: string): Promise<PolicyParent> {
     const admitted = await openNativeParentAdmission(binding, {
       ...rootAdmission,
@@ -50,19 +73,18 @@ export async function capturePolicyAwareWindowsParent(
       rootPath: parentPath,
       // Policy fences retain every identity bit even with a legacy numeric root.
       exactRoot: true,
-    }, relativePath);
-    return {
-      fd: admitted.fd,
-      guard: { ...admitted.guard, stat: admitted.guard.stat as BigIntStats },
-    };
+    }, relativePath, "native-directory");
+    const guard = { ...admitted.guard, stat: admitted.guard.stat as BigIntStats };
+    return { fd: admitted.fd, guard, observation: parentObservation(admitted.fd, guard) };
   }
 
   async function authorize(
     targetPath: string,
     mutationPath = targetPath,
     phase: "parent" | "parent-create" = "parent",
-  ): Promise<void> {
-    await params.mutationAdmission!.authorize(Object.freeze({ targetPath, mutationPath, phase }));
+  ): Promise<PinnedMutationAdmissionReceipt | undefined> {
+    const request = Object.freeze({ targetPath, mutationPath, phase });
+    return await (session ? session.authorize(request) : params.mutationAdmission!.authorize(request));
   }
 
   async function openChild(parent: PolicyParent, segment: string): Promise<PolicyParent> {
@@ -99,48 +121,88 @@ export async function capturePolicyAwareWindowsParent(
 
   const segments = params.relativeParentPath.split("/").filter(Boolean);
   const route = createPathSegmentRoute(segments);
+  const rootStat = inspectDirectoryIdentitySync(params.rootPath, inspectFileIdentitySync(
+    () => fsSync.fstatSync(rootAdmission.root.fd, { bigint: true }),
+  ));
   let current: PolicyParent = {
     fd: rootAdmission.root.fd,
-    guard: {
-      dir: params.rootPath,
-      realPath: params.rootPath,
-      stat: inspectDirectoryIdentitySync(params.rootPath, inspectFileIdentitySync(
-        () => fsSync.fstatSync(rootAdmission.root.fd, { bigint: true }),
-      )),
-    },
+    guard: { dir: params.rootPath, realPath: params.rootPath, stat: rootStat },
+    observation: parentObservation(rootAdmission.root.fd, {
+      dir: params.rootPath, realPath: params.rootPath, stat: rootStat,
+    }),
   };
   let ownedFd: number | undefined;
+  const initialTarget = joinPathSegmentRoute(params.rootPath, route, 0, params.basename);
+  if (canReuseParentWithMutationAssertion(params.assertBeforeMutation, params.rootPath, initialTarget)) {
+    session = params.mutationAdmission?.beginNativeParentWalk?.() ??
+      params.mutationAdmission?.beginSharedParentWalk?.();
+    if (session && session.retainedTargetPath !== initialTarget) {
+      session.dispose();
+      session = undefined;
+    }
+  }
   try {
     for (let index = 0; index < segments.length; index += 1) {
       const segment = segments[index]!;
       const parentPath = current.guard.realPath;
       let child: PolicyParent;
+      let createdByMkdir = false;
+      let createReceipt: PinnedMutationAdmissionReceipt | undefined;
       try {
         child = await openChild(current, segment);
       } catch (error) {
         if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
         // The request admits both the prospective leaf and this missing direct
         // child. A deeper denial can leave already admitted ancestors intact.
-        await authorize(
-          joinPathSegmentRoute(parentPath, route, index, params.basename),
-          path.join(parentPath, segment),
-          "parent-create",
-        );
-        assertParentCurrent(current);
-        params.assertBeforeMutation?.();
-        // Authority callbacks can change paths; no await separates this fence
-        // from descriptor-relative creation through the retained parent.
-        assertParentCurrent(current);
+        const targetPath = session?.retainedTargetPath ??
+          joinPathSegmentRoute(parentPath, route, index, params.basename);
+        const mutationPath = path.join(parentPath, segment);
+        const request = Object.freeze({ targetPath, mutationPath, phase: "parent-create" as const });
+        createReceipt = session?.tryAuthorizeAtParent(request, current.observation);
+        if (!createReceipt) {
+          createReceipt = await authorize(targetPath, mutationPath, "parent-create");
+          assertParentCurrent(current);
+        }
+        if (params.assertBeforeMutation) {
+          // Opaque callbacks retain their post-callback descriptor/path fence.
+          params.assertBeforeMutation();
+          assertParentCurrent(current);
+        }
+        // Synchronous session admission already ends at the exact parent fence.
         const mkdirChild = binding.mkdirChildBeneath;
         if (typeof mkdirChild !== "function") {
           throw new FsSafeError("helper-unavailable", "native direct-child parent creation is unavailable");
         }
-        mkdirChild.call(binding, current.fd, segment, 0o777);
+        createdByMkdir = mkdirChild.call(binding, current.fd, segment, 0o777) === true;
         child = await openChild(current, segment);
       }
       try {
-        await authorize(joinPathSegmentRoute(child.guard.realPath, route, index + 1, params.basename));
-        assertParentCurrent(child);
+        const targetPath = joinPathSegmentRoute(child.guard.realPath, route, index + 1, params.basename);
+        if (session && targetPath !== session.retainedTargetPath) {
+          session.dispose();
+          session = undefined;
+        }
+        let evidence: PinnedCreatedDirectoryReceipt | undefined;
+        if (session && createdByMkdir && createReceipt) {
+          try {
+            evidence = Object.freeze({
+              admission: createReceipt,
+              parent: parentObservation(current.fd, { ...current.guard,
+                stat: inspectFileIdentitySync(() => fsSync.fstatSync(current.fd, { bigint: true }), current.guard.stat),
+              }),
+              child: child.observation,
+            });
+          } catch {
+            // Incomplete optional evidence returns to ordered admission below.
+          }
+        }
+        // Advancement refreshes both named directories after all Root/policy
+        // observations; these receipts supply expectations, not cached authority.
+        const advanced = evidence && session!.advanceCreatedDirectory(evidence);
+        if (!advanced) {
+          await authorize(targetPath);
+          assertParentCurrent(child);
+        }
       } catch (error) {
         closeAfterFailure(closeFd, child.fd);
         throw error;
@@ -156,6 +218,7 @@ export async function capturePolicyAwareWindowsParent(
     ownedFd = undefined;
     return current;
   } finally {
+    session?.dispose();
     closeAfterFailure(closeFd, ownedFd);
   }
 }

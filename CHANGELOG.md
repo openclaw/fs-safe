@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Enforce Windows native parent mutation policies before creating each missing component, retaining native descriptor ownership through cleanup.
+- Enforce Windows native parent mutation policies before creating each missing component, retaining native descriptor ownership through cleanup. Reuse operation-local creation receipts for eligible Windows paths instead of repeating full policy walks at every depth.
 
 ## 0.14.0 - 2026-09-17
 

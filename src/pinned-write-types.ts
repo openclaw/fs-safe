@@ -50,6 +50,7 @@ export type PinnedWriteMutationAdmission = Readonly<{
   rejectParentSymlinks: boolean;
   beginParentWalk?(): string | undefined;
   beginSharedParentWalk?(): PinnedMutationParentWalkSession | undefined;
+  beginNativeParentWalk?(): PinnedMutationParentWalkSession | undefined;
   tryAuthorizeAtParent?(request: Readonly<{
     targetPath: string;
     mutationPath: string;
