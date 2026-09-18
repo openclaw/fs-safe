@@ -6,6 +6,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+# Avoid scanning unrelated installed modules before loading system cmdlets.
+$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 
 Add-Type -LiteralPath (Join-Path $PSScriptRoot 'windows-security-bridge.cs')

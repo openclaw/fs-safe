@@ -200,6 +200,7 @@ public static class ConsumerRawSecurity {
 `;
 const aclScript = String.raw`
 $ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue'
+$env:PSModulePath=[IO.Path]::Combine($PSHOME,'Modules')
 $fixtureClock=[Diagnostics.Stopwatch]::StartNew()
 function Write-FixturePhase([string]$phase) {
   try { [Console]::Error.WriteLine('FS_SAFE_SECURITY_FIXTURE:'+$phase+':'+$fixtureClock.ElapsedMilliseconds) } catch {}
