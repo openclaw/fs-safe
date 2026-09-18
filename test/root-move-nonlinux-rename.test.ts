@@ -106,16 +106,24 @@ for (const backend of ["darwin", "win32"] as const) {
       await expect(fs.lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
     });
 
-    it.each(["root", "source-parent", "target-parent"] as const)("refences a replaced %s after fallback authority", async boundary => {
-      const { directory, rootPath, sourceParent, targetParent, source, target, command, move } = await fixture();
+    it.each(["root", "source-parent", "target-parent"] as const)("refences or prevents replacement of %s after fallback authority", async boundary => {
+      const { directory, rootPath, sourceParent, targetParent, source, target, identity, command, move } = await fixture();
       const changed = boundary === "root" ? rootPath : boundary === "source-parent" ? sourceParent : targetParent;
       const preserved = path.join(directory, "preserved");
+      const pinnedBoundary = actualPlatform === "win32" && boundary !== "target-parent";
       let calls = 0;
       await expect(move({ assertBeforeMutation: () => {
         if (++calls !== 2) return;
         fsSync.renameSync(changed, preserved); fsSync.mkdirSync(changed);
-      } })).rejects.toMatchObject({ code: "path-mismatch" });
+      } })).rejects.toMatchObject({ code: pinnedBoundary ? "EPERM" : "path-mismatch" });
       expect(command).not.toHaveBeenCalled();
+      expect(calls).toBe(2);
+      if (pinnedBoundary) {
+        // Windows keeps an open child's ancestors in place until the move closes its pin.
+        expect(await fs.stat(source, { bigint: true })).toMatchObject({ dev: identity.dev, ino: identity.ino });
+        await expect(fs.lstat(preserved)).rejects.toMatchObject({ code: "ENOENT" });
+        await fs.rename(changed, preserved);
+      }
       const original = boundary === "root" ? path.join(preserved, "incoming", path.basename(source))
         : boundary === "source-parent" ? path.join(preserved, path.basename(source)) : source;
       expect(await fs.readFile(original, "utf8")).toBe("original A");

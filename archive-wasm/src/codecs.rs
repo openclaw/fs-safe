@@ -41,7 +41,7 @@ impl BzipDecoder {
     }
 }
 
-enum Decoder { Bzip(BzipDecoder), Zstd(crate::zstd::Decoder) }
+enum Decoder { Bzip(BzipDecoder), Zstd(Box<crate::zstd::Decoder>) }
 struct State {
     input: [u8; WINDOW], output: [u8; WINDOW], decoder: Option<Decoder>,
     used: usize, written: usize, decoded: u64, limit: u64, error: String,
@@ -76,7 +76,7 @@ pub extern "C" fn codec_init(kind: u32, limit: f64) -> i32 {
         s.limit = limit;
         s.decoder = Some(match kind {
             1 => Decoder::Bzip(BzipDecoder::new()),
-            2 => Decoder::Zstd(crate::zstd::Decoder::new()),
+            2 => Decoder::Zstd(Box::new(crate::zstd::Decoder::new())),
             _ => return -1,
         });
         0

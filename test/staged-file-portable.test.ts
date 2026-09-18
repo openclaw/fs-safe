@@ -84,7 +84,7 @@ describe("portable staged ownership", () => {
     expect(await fs.readFile(path.join(directory, "other"), "utf8")).toBe("new");
   });
 
-  it.each(["replacement", "rename-only", "ancestor"])("preserves the original and replacement sentinels after %s drift", async (kind) => {
+  it.each(["replacement", "rename-only", "ancestor"])("preserves staged ownership when %s drift is attempted", async (kind) => {
     const base = await tempRoot("fs-safe-node-stage-drift-");
     const ancestor = path.join(base, "ancestor");
     const directory = path.join(ancestor, "parent");
@@ -92,8 +92,25 @@ describe("portable staged ownership", () => {
     const staged = await stageFileInDirectory({ directory, content: "owned" });
     const name = staged.receipt.temporaryBasename;
     const moved = path.join(base, "moved");
-    await fs.rename(kind === "ancestor" ? ancestor : directory, moved);
+    const changed = kind === "ancestor" ? ancestor : directory;
     const original = kind === "ancestor" ? path.join(moved, "parent") : moved;
+    if (process.platform === "win32") {
+      // The retained Windows handles prevent renaming their parent or its ancestors.
+      await expect(fs.rename(changed, moved)).rejects.toMatchObject({ code: "EPERM" });
+      await expect(fs.lstat(moved)).rejects.toMatchObject({ code: "ENOENT" });
+      await staged.assertCurrent();
+      expect(await staged.publish("final", { overwrite: true })).toMatchObject({ status: "published" });
+      expect(await staged.cleanup()).toMatchObject({ status: "not-needed", resources: "closed" });
+      await staged[Symbol.asyncDispose]();
+      await fs.rename(changed, moved);
+      expect(await fs.lstat(path.join(original, "final"), { bigint: true })).toMatchObject({
+        dev: staged.receipt.identity.dev, ino: staged.receipt.identity.ino, nlink: 1n,
+      });
+      expect(await fs.readFile(path.join(original, "final"), "utf8")).toBe("owned");
+      expect(await fs.readdir(original)).toEqual(["final"]);
+      return;
+    }
+    await fs.rename(changed, moved);
     if (kind !== "rename-only") {
       await fs.mkdir(directory, { recursive: true });
       await fs.writeFile(path.join(directory, name), "stage sentinel");
@@ -166,7 +183,7 @@ describe("portable staged ownership", () => {
     expect(await fs.readFile(path.join(directory, "retired"), "utf8")).toBe("published");
   });
 
-  it("records link publication while preserving both parents after subsequent directory drift", async () => {
+  it("records link publication while preventing or detecting subsequent directory drift", async () => {
     const base = await tempRoot("fs-safe-node-stage-linked-parent-");
     const directory = path.join(base, "parent");
     const moved = path.join(base, "moved");
@@ -176,11 +193,27 @@ describe("portable staged ownership", () => {
     const link = fsSync.linkSync;
     vi.spyOn(fsSync, "linkSync").mockImplementation((from, to) => {
       link(from, to);
+      if (process.platform === "win32") {
+        expect(() => fsSync.renameSync(directory, moved)).toThrow(expect.objectContaining({ code: "EPERM" }));
+        return;
+      }
       fsSync.renameSync(directory, moved);
       fsSync.mkdirSync(directory);
       fsSync.writeFileSync(path.join(directory, temporary), "temporary sentinel");
       fsSync.writeFileSync(path.join(directory, "final"), "final sentinel");
     });
+    if (process.platform === "win32") {
+      expect(await staged.publish("final", { overwrite: false })).toMatchObject({ status: "published", method: "link-unlink" });
+      await expect(fs.lstat(moved)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await staged.cleanup()).toMatchObject({ status: "not-needed", publication: { status: "published" }, resources: "closed" });
+      await fs.rename(directory, moved);
+      expect(await fs.lstat(path.join(moved, "final"), { bigint: true })).toMatchObject({
+        dev: staged.receipt.identity.dev, ino: staged.receipt.identity.ino, nlink: 1n,
+      });
+      expect(await fs.readFile(path.join(moved, "final"), "utf8")).toBe("published");
+      expect(await fs.readdir(moved)).toEqual(["final"]);
+      return;
+    }
     await expect(staged.publish("final", { overwrite: false })).rejects.toMatchObject({
       code: "path-mismatch", details: { publication: { status: "published" } },
     });

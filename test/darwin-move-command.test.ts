@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { getSystemErrorName } from "node:util";
 import { beforeEach, expect, it, vi } from "vitest";
 import { renameDarwinNoReplace } from "../src/darwin-move-command.js";
 import type { RootMoveCommandInput } from "../src/root-move-command.js";
@@ -6,6 +7,10 @@ import type { RootMoveCommandInput } from "../src/root-move-command.js";
 vi.mock("node:child_process", async importOriginal => ({
   ...await importOriginal<typeof import("node:child_process")>(), spawnSync: vi.fn(),
 }));
+vi.mock("node:util", async importOriginal => {
+  const original = await importOriginal<typeof import("node:util")>();
+  return { ...original, getSystemErrorName: vi.fn(original.getSystemErrorName) };
+});
 beforeEach(() => vi.clearAllMocks());
 
 const identity = { dev: 1n, ino: 2n };
@@ -37,7 +42,10 @@ it("passes untrusted names only as JSON and inherits the admitted parent descrip
 
 it("preserves an explicit atomic no-replace collision", () => {
   reply('{"result":-1,"errno":17}');
+  // The command returns Darwin errno values even when this unit test runs elsewhere.
+  if (process.platform !== "darwin") vi.mocked(getSystemErrorName).mockReturnValueOnce("EEXIST");
   expect(() => renameDarwinNoReplace(input)).toThrow(expect.objectContaining({ code: "EEXIST", errno: -17, syscall: "renameatx_np" }));
+  expect(getSystemErrorName).toHaveBeenCalledExactlyOnceWith(-17);
   expect(spawnSync).toHaveBeenCalledOnce();
 });
 

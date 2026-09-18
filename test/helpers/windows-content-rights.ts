@@ -8,7 +8,10 @@ export function setWindowsMoveFixtureAcl(targetPath: string, restricted: boolean
     "$ErrorActionPreference='Stop'",
     "$p=[Environment]::GetEnvironmentVariable('FS_SAFE_MOVE_FIXTURE_PATH')",
     "$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User",
-    "$a=[Security.AccessControl.FileSecurity]::new();$a.SetOwner($sid);$a.SetAccessRuleProtection($true,$false)",
+    "$a=[Security.AccessControl.FileSecurity]::new()",
+    // Restoring the DACL needs the owner's implicit WRITE_DAC, not WRITE_OWNER.
+    ...(restricted ? ["$a.SetOwner($sid)"] : []),
+    "$a.SetAccessRuleProtection($true,$false)",
     ...(restricted ? ["$a.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid,[Security.AccessControl.FileSystemRights]7,[Security.AccessControl.AccessControlType]::Deny))"] : []),
     `$a.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid,[Security.AccessControl.FileSystemRights]${restricted ? 0x00130180 : 0x001f01ff},[Security.AccessControl.AccessControlType]::Allow))`,
     "[IO.File]::SetAccessControl($p,$a)",

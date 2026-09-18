@@ -48,7 +48,7 @@ describe("native directory cloning", () => {
     expect(await fs.readdir(directory)).toEqual(["source"]);
     await createCloneSource(path.join(directory, "template"));
     await copyTree(source, destination, { clone: "always" });
-    expect(await fs.readdir(directory)).toEqual(["destination", "source", "template"]);
+    expect((await fs.readdir(directory)).sort()).toEqual(["destination", "source", "template"]);
     expect(await fs.readFile(path.join(destination, "payload"), "utf8")).toBe("original");
     expect(await fs.readFile(path.join(source, "payload"), "utf8")).toBe("original");
   });
@@ -78,7 +78,7 @@ describe("native directory cloning", () => {
     await fs.writeFile(path.join(source, "payload"), "original");
     await copyTree(source, destination, { clone: "always" });
     await createCloneSource(path.join(directory, "template"));
-    expect(await fs.readdir(directory)).toEqual(["destination", "source", "template"]);
+    expect((await fs.readdir(directory)).sort()).toEqual(["destination", "source", "template"]);
     expect(await fs.readFile(path.join(destination, "payload"), "utf8")).toBe("original");
   });
 

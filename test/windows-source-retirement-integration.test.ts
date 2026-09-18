@@ -48,7 +48,8 @@ function parentAccess(directory: string, restricted: boolean): void {
   const query = [
     "$ErrorActionPreference='Stop'", "$p=[Environment]::GetEnvironmentVariable('FS_SAFE_RETIRE_PARENT')",
     "$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User",
-    "$a=[Security.AccessControl.DirectorySecurity]::new();$a.SetOwner($sid);$a.SetAccessRuleProtection($true,$false)",
+    "$a=[Security.AccessControl.DirectorySecurity]::new();$a.SetAccessRuleProtection($true,$false)",
+    ...(restricted ? ["$a.SetOwner($sid)"] : []),
     ...(restricted ? ["$a.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid,[Security.AccessControl.FileSystemRights]5,[Security.AccessControl.AccessControlType]::Deny))"] : []),
     `$a.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid,[Security.AccessControl.FileSystemRights]${restricted ? 0x001200e2 : 0x001f01ff},[Security.AccessControl.AccessControlType]::Allow))`,
     "[IO.Directory]::SetAccessControl($p,$a)",

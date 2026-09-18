@@ -229,7 +229,7 @@ describe("secure file reads", () => {
     expect(result.realPath).toBe(await fs.realpath(filePath));
   });
 
-  itWin32.each(["ascii", "café-日本"])("fails closed without descriptor ACL support at %s Windows paths", async (name) => {
+  itWin32.each(["ascii", "café-日本"])("reads descriptor-verified private files without native support at %s Windows paths", async (name) => {
     useWindowsPermissionFallback();
     const parent = path.join(root, name);
     await fs.mkdir(parent);
@@ -237,28 +237,40 @@ describe("secure file reads", () => {
     await fs.writeFile(filePath, '{"token":"ok"}', { mode: 0o600 });
     await secureWindowsTestFile(filePath);
 
-    await expect(readSecureFile({
+    const result = await readSecureFile({
       filePath,
       label: "test secret",
       io: { maxBytes: 1024 },
-    })).rejects.toMatchObject({ code: "permission-unverified" });
-    // Standalone pathname reporting deliberately retains its fallback.
+    });
+    expect(result.buffer.toString("utf8")).toBe('{"token":"ok"}');
+    expect(result.realPath).toBe(await fs.realpath(filePath));
+    expect(result.permissions).toMatchObject({
+      source: "windows-acl", ownerTrusted: true,
+      worldReadable: false, worldWritable: false, groupReadable: false, groupWritable: false,
+      aclSummary: expect.stringContaining("system-command descriptor"),
+    });
     await expect(inspectWindowsAcl(filePath)).resolves.toMatchObject({ ok: true, untrustedWorld: [], untrustedGroup: [] });
     await expect(inspectPathPermissions(parent)).resolves.toMatchObject({ source: "windows-acl" });
   }, 60_000);
 
-  itWin32("fails closed for an extended-length path without descriptor ACL support", async () => {
+  itWin32("reads an extended-length path through descriptor ACL verification without native support", async () => {
     useWindowsPermissionFallback();
     const filePath = path.join(root, "extended-secret.json");
     await fs.writeFile(filePath, '{"token":"ok"}', { mode: 0o600 });
     await secureWindowsTestFile(filePath);
     const extendedPath = `\\\\?\\${path.resolve(filePath)}`;
 
-    await expect(readSecureFile({
+    const result = await readSecureFile({
       filePath: extendedPath,
       label: "extended-path secret",
       io: { maxBytes: 1024 },
-    })).rejects.toMatchObject({ code: "permission-unverified" });
+    });
+    expect(result.buffer.toString("utf8")).toBe('{"token":"ok"}');
+    expect(result.permissions).toMatchObject({
+      source: "windows-acl", ownerTrusted: true,
+      worldReadable: false, worldWritable: false, groupReadable: false, groupWritable: false,
+      aclSummary: expect.stringContaining("system-command descriptor"),
+    });
   }, 60_000);
 
   it("rejects symlinks and files outside trusted dirs", async () => {

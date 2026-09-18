@@ -16,6 +16,7 @@ import {
 import { resolveSafeRelativePath } from "../src/path.js";
 import { summarizeWindowsAcl } from "../src/permissions.js";
 import { configureFsSafeNative, root as openRoot } from "../src/index.js";
+import { __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
 import { resolveExistingPathsWithinRoot, resolvePathWithinRoot } from "../src/root-paths.js";
 import { readSecureFile } from "../src/secure-file.js";
 import { realpathSync } from "../src/realpath.js";
@@ -26,6 +27,7 @@ const { tempRoot } = useTempDirs();
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  __resetNativeLoaderForTest();
   configureFsSafeNative({ mode: "auto" });
 });
 
@@ -396,9 +398,11 @@ describe("clawpatch regression coverage", () => {
     }
   });
 
-  itPosix("rolls back no-clobber move links when source unlink fails", async () => {
-    configureFsSafeNative({ mode: "auto" });
-    const rootDir = await tempRoot("fs-safe-root-move-link-rollback-");
+  itPosix.each(["off", "missing-auto"] as const)("preserves no-clobber publication when captured source unlink fails (%s)", async mode => {
+    const loader = vi.fn(() => { throw Object.assign(new Error("optional addon omitted"), { code: "MODULE_NOT_FOUND" }); });
+    __setNativeLoaderForTest(loader);
+    configureFsSafeNative({ mode: mode === "off" ? "off" : "auto" });
+    const rootDir = await tempRoot("fs-safe-root-move-retirement-failure-");
     const srcDir = path.join(rootDir, "src");
     const dstDir = path.join(rootDir, "dst");
     await fs.mkdir(srcDir);
@@ -406,16 +410,34 @@ describe("clawpatch regression coverage", () => {
     const sourcePath = path.join(srcDir, "file.txt");
     const destinationPath = path.join(dstDir, "file.txt");
     await fs.writeFile(sourcePath, "payload");
-    await fs.chmod(srcDir, 0o555);
+    const original = await fs.stat(sourcePath, { bigint: true });
+    const sourceParent = await fs.realpath(srcDir);
     const scoped = await openRoot(rootDir);
-
-    try {
-      await expect(scoped.move("src/file.txt", "dst/file.txt")).rejects.toBeTruthy();
-      await expect(fs.lstat(destinationPath)).rejects.toMatchObject({ code: "ENOENT" });
-      expect((await fs.stat(sourcePath)).nlink).toBe(1);
-    } finally {
-      await fs.chmod(srcDir, 0o755).catch(() => undefined);
+    const failure = Object.assign(new Error("captured source unlink failed"), { code: "EIO" });
+    let capturedPath: string | undefined;
+    const unlink = fsSync.unlinkSync.bind(fsSync);
+    const remove = vi.spyOn(fsSync, "unlinkSync").mockImplementation(file => {
+      const candidate = String(file);
+      if (path.dirname(path.dirname(candidate)) !== sourceParent ||
+        !path.basename(path.dirname(candidate)).startsWith(".fs-safe-move-")) return unlink(file);
+      capturedPath = candidate;
+      expect(fsSync.existsSync(sourcePath)).toBe(false);
+      expect(fsSync.lstatSync(candidate, { bigint: true })).toMatchObject({ dev: original.dev, ino: original.ino, nlink: 2n });
+      expect(fsSync.lstatSync(destinationPath, { bigint: true })).toMatchObject({ dev: original.dev, ino: original.ino, nlink: 2n });
+      throw failure;
+    });
+    const error = await scoped.move("src/file.txt", "dst/file.txt").catch(error => error);
+    expect(remove).toHaveBeenCalledOnce();
+    expect(capturedPath).toBeDefined();
+    expect(error).toMatchObject({ code: "helper-failed", cause: failure,
+      details: { sourceRecovery: { path: capturedPath, status: "indeterminate" } } });
+    expect(error.details).not.toHaveProperty("sourceConsumed");
+    await expect(fs.lstat(sourcePath)).rejects.toMatchObject({ code: "ENOENT" });
+    for (const preservedPath of [capturedPath!, destinationPath]) {
+      expect(await fs.stat(preservedPath, { bigint: true })).toMatchObject({ dev: original.dev, ino: original.ino, nlink: 2n });
+      expect(await fs.readFile(preservedPath, "utf8")).toBe("payload");
     }
+    expect(loader).toHaveBeenCalledTimes(mode === "off" ? 0 : 1);
   });
 
   itPosix("rejects no-clobber directory moves instead of racing rename", async () => {

@@ -20,6 +20,21 @@ import { readSecureFile } from "../src/secure-file.js";
 const tempDirs: string[] = [];
 const itSimulatedWindows = it.skipIf(process.platform === "win32");
 
+async function incompleteWindowsAclFixture() {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-permission-empty-acl-"));
+  tempDirs.push(dir);
+  const target = path.join(dir, "secret.json");
+  await fs.writeFile(target, "{}", { mode: 0o600 });
+  const exec = vi.fn(async () => ({
+    stdout: JSON.stringify({
+      ownerSid: "S-1-5-21-42", currentUserSid: "S-1-5-21-42", complete: false,
+      daclPresent: true, aces: [], remote: false,
+    }),
+    stderr: "",
+  }));
+  return { target, exec };
+}
+
 beforeEach(() => {
   configureFsSafeNative({ mode: "off" });
 });
@@ -222,28 +237,8 @@ describe("Windows permission command execution", () => {
     expect(exec).toHaveBeenCalledTimes(1);
   });
 
-  it("fails closed when a successful query yields incomplete descriptor facts", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-permission-empty-acl-"));
-    tempDirs.push(dir);
-    const target = path.join(dir, "secret.json");
-    await fs.writeFile(target, "{}", { mode: 0o600 });
-    const exec = vi.fn(async (command: string) => {
-      if (command.toLowerCase().endsWith("powershell.exe")) {
-        return {
-          stdout: JSON.stringify({
-            ownerSid: "S-1-5-21-42",
-            currentUserSid: "S-1-5-21-42",
-            complete: false,
-            daclPresent: true,
-            aces: [],
-            remote: false,
-          }),
-          stderr: "",
-        };
-      }
-      return { stdout: "", stderr: "" };
-    });
-
+  it("marks a successful pathname query with incomplete descriptor facts unverified", async () => {
+    const { target, exec } = await incompleteWindowsAclFixture();
     await expect(
       inspectPathPermissions(target, {
         platform: "win32",
@@ -255,7 +250,12 @@ describe("Windows permission command execution", () => {
       source: "unknown",
       error: expect.stringContaining("incomplete descriptor data"),
     });
+    expect(exec).toHaveBeenCalledOnce();
+  });
 
+  itSimulatedWindows("rejects incomplete injected facts through a simulated Windows secure read", async () => {
+    // Live Windows reads inspect the inherited handle and do not use pathname exec injection.
+    const { target, exec } = await incompleteWindowsAclFixture();
     await expectFsSafeError(readSecureFile({
         filePath: target,
         inject: {
@@ -264,6 +264,7 @@ describe("Windows permission command execution", () => {
           exec,
         },
       }), "permission-unverified");
+    expect(exec).toHaveBeenCalledOnce();
   });
 
   itSimulatedWindows("inspects permissions once for one simulated Windows secure read", async () => {
