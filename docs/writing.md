@@ -245,6 +245,12 @@ forcibly interrupted, so cancellation waits for its pending work and cleanup to
 settle. Do not mutate a yielded chunk until the next pull. Producer errors retain
 their original value when cleanup succeeds.
 
+Streamed creation retains the `signal` and `assertBeforeMutation` callback
+selected when the call starts. Replacing or deleting those options during a
+producer wait does not change the in-flight operation. Abort the original signal
+or update the live authority state checked by the original callback to revoke
+it; the callback continues to receive the original options object as `this`.
+
 An aborted or failed operation can leave created parent directories. If a
 stage's identity or parent cannot be verified during cleanup, the existing
 guarded cleanup preserves it. After publication, later verification or cleanup
