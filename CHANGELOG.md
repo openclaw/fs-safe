@@ -3,6 +3,8 @@
 ## Unreleased
 
 - Add `copyFileDescriptorSync()` for bounded positional transfers between caller-owned regular-file descriptors, sharing `CopyFileHandleOptions` while preserving cursors, descriptor lifetime, destination suffixes, and caller-owned durability and publication.
+- Add `maxDepth` to `probePathSuffixAliasesSync()` for deeper prospective paths, with proportional operation budgets and unchanged default, string-length, identity, and cleanup limits.
+- Cap configurable-depth suffix probing at 32,768 forward observations while always completing owned cleanup.
 - Allow asynchronous `include`/`descend` in `walkDirectory()` and `entryFilter` in `Root.walk()` for serial selection and marker-based pruning, retaining callback receivers and budgets; Root walks settle pending callbacks and recheck cancellation and directory/root identity before using awaited decisions.
 
 ## 0.14.0 - 2026-09-17

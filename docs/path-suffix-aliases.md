@@ -36,6 +36,7 @@ type ProbePathSuffixAliasesOptions = {
   directory: string;
   left: string;
   right: string;
+  maxDepth?: number;
   shouldProbeCaseVariants?: (leftNfc: string, rightNfc: string) => boolean;
 };
 
@@ -44,9 +45,11 @@ function probePathSuffixAliasesSync(
 ): boolean | undefined;
 ```
 
-The helper reads and validates `directory`, then resolves it to an absolute path
-before reading the suffixes or predicate. Later option getters or the predicate
-cannot retarget a relative directory by changing the working directory. When
+The helper reads `directory`, rejects non-string values and supplied paths longer
+than 32,768 code units, then rejects NUL-containing inputs. It resolves the path
+to an absolute path and applies the same limit to that result before reading
+`maxDepth`. Each option is read once. Later option getters or the predicate cannot retarget a
+relative directory by changing the working directory. When
 filesystem observations are needed, the directory is canonicalized and its
 identity is checked; an initial directory alias can be followed.
 
@@ -56,25 +59,67 @@ inputs are rejected with `TypeError`. Windows additionally rejects drive-relativ
 components, colons, and reserved device names, including device aliases with
 extensions or trailing ignored characters. On POSIX, backslashes and colons are
 ordinary filename characters. The optional predicate must be a function.
+`maxDepth` defaults to `32` and must be a non-negative safe integer; invalid
+values, including `Infinity`, throw `RangeError` before mutation or an
+identical-suffix return. A value of `0` admits no ordinary nonempty suffix.
 
 Both suffixes and the predicate are validated before the identical-suffix fast
 path. Identical, valid, within-budget suffixes return `true` without filesystem
 access or a predicate call. This does not prove that the directory exists or that
 the suffix can be created.
 
-## Fixed resource limits
+The forward-observation allowance never exceeds 32,768, even with a large
+`maxDepth`. A deeper or repeatedly colliding probe can return `undefined` when
+that ceiling is reached. Reverse cleanup still runs outside this allowance.
 
-These limits apply to one call and cannot be raised through options:
+## Resource budgets
+
+The default limits for one call are:
 
 | Resource | Limit | On exceeding the limit |
 |---|---|---|
 | Each supplied suffix | 8,192 UTF-16 code units | `RangeError` before mutation |
 | Supplied and resolved directory paths | 32,768 UTF-16 code units each | `RangeError` before mutation |
-| Each suffix's component count | 32 | `RangeError` before mutation |
+| Each suffix's component count | `maxDepth`, default 32 | `RangeError` before mutation |
 | Directory-creation attempts | 128 | `undefined` after cleanup |
 | Successfully created probe directories | 64 | `undefined` after cleanup |
 | Forward filesystem observations | 4,096 | `undefined` after cleanup |
 | Each generated actual path | 32,768 UTF-16 code units | `undefined` after cleanup |
+
+### Deeper observations
+
+Applications comparing deeper prospective paths can explicitly raise `maxDepth`:
+
+```ts
+const prefix = "future/".repeat(32);
+const aliases = probePathSuffixAliasesSync({
+  directory: "/trusted/existing-directory",
+  left: `${prefix}Report.sqlite`,
+  right: `${prefix}report.sqlite`,
+  maxDepth: 33,
+});
+```
+
+The 8,192-code-unit suffix limit and 32,768-code-unit path limits remain fixed.
+Ordinary-component validation, Windows path controls, identity checks, and
+cleanup rules also remain unchanged.
+
+Operation budgets grow proportionally from the actual admitted suffix depth,
+not the requested `maxDepth`. For actual depth `D`, let `B = max(32, D)`.
+Directory-creation attempts are limited to `4 × B`, successfully created
+directories to `2 × B`, and forward filesystem observations to `min(32,768, 4 × B²)`.
+The quadratic observation allowance accommodates rechecks of owned ancestors.
+
+For example, 33 components allow 132 creation attempts, 66 created directories,
+and 4,356 forward observations; 65 components allow 260, 130, and 16,900.
+Specifying a large `maxDepth` for a short suffix keeps the original budgets.
+The suffix-length limit bounds actual depth to at most 4,096, so every budget
+remains a finite safe integer.
+
+Admission does not guarantee a boolean result. Repeated collisions, many
+normalization probes, filesystem limits, or identity failures can exhaust the
+budget or prevent an observation. The helper then returns `undefined` after
+cleanup attempts; callers must preserve their explicit ambiguity policy.
 
 Input limits are checked even for identical suffixes. Dynamic budgets count work
 across the whole call, including collision retries; removing a probe does not
