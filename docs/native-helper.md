@@ -43,6 +43,15 @@ when admitting a temp workspace. Containment and identity checks stay intact.
 
 Configure the mode once during startup. Loading is lazy and cached; changing from `auto` to `require` after a failed load changes failure policy but does not repeatedly probe the binary.
 
+On macOS, [`readCloneFileMetadata()`](copy.md) also works without the addon in
+`auto` or `off`. A bounded built-in JXA command reads the same APFS attributes
+and emits one slower-fallback warning; clone IDs and inode IDs remain exact.
+`require` still rejects a missing addon or metadata reader. Native operational
+errors are terminal, and command failures do not become absent observations.
+Other known Node platforms return the same per-input unsupported metadata as
+the native reader without an addon in `auto` or `off`; `require` stays strict.
+This does not relax `clone: "always"`, `createCloneSource()`, or bounded cleanup.
+
 Native-created descriptors retain their originating native close operation through
 normal and error cleanup, including later mode changes. Node-created roots and
 directory handles keep Node's close operation, and borrowed handles keep their

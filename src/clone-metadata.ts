@@ -1,5 +1,13 @@
 import { assertAbsolutePathInput } from "./absolute-path.js";
-import { requireNativeBinding } from "./native.js";
+import { readDarwinCloneFileMetadata } from "./darwin-clone-metadata.js";
+import { FsSafeError } from "./errors.js";
+import { getFsSafeNativeConfig } from "./native-config.js";
+import { warnNativeFallback } from "./native-fallback-warning.js";
+import { getNativeBinding } from "./native.js";
+
+const NON_DARWIN_PLATFORMS = new Set<NodeJS.Platform>([
+  "aix", "android", "freebsd", "haiku", "linux", "openbsd", "sunos", "win32", "cygwin", "netbsd",
+]);
 
 export type CloneFileMetadata = {
   dev: number;
@@ -23,7 +31,24 @@ export async function readCloneFileMetadata(
   files: readonly string[],
 ): Promise<(CloneFileMetadata | undefined)[]> {
   const paths = files.map(assertAbsolutePathInput);
-  const results = await requireNativeBinding().readCloneFileMetadata(paths);
+  const native = getNativeBinding();
+  let results: (Buffer | null)[];
+  if (typeof native?.readCloneFileMetadata === "function") {
+    results = await native.readCloneFileMetadata(paths);
+  } else {
+    if (getFsSafeNativeConfig().mode === "require") {
+      throw new FsSafeError("helper-unavailable", "APFS clone metadata requires the matching native capability");
+    }
+    if (process.platform === "darwin") {
+      warnNativeFallback("APFS clone metadata", "A slower built-in macOS command reads the same filesystem attributes.");
+      results = await readDarwinCloneFileMetadata(paths);
+    } else if (NON_DARWIN_PLATFORMS.has(process.platform)) {
+      // The native reader also returns None on every non-macOS platform.
+      results = paths.map(() => null);
+    } else {
+      throw new FsSafeError("helper-unavailable", "APFS clone metadata is unavailable on this platform");
+    }
+  }
   return results.map((result) => {
     if (
       !result ||

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Improvements
+
+- Read exact APFS clone and file metadata on macOS without the optional native addon in `auto` or `off`, using a bounded built-in system command with a one-time performance warning. Preserve input order, Node pathname conversion, leaf-symlink observations, and 64-bit identifiers; other known platforms retain the native reader's unsupported results. Explicit native requirements and native query failures remain strict.
+
 ## 0.14.0 - 2026-09-17
 
 ### Highlights
