@@ -69,9 +69,10 @@ resolveWindowsUserPrincipal(env);
 ```
 
 The fallback Windows inspector reads the owner and DACL together through one
-built-in Windows PowerShell/.NET query. It returns canonical SIDs and numeric
-access masks, so Unicode paths and account names do not pass through lossy
-console display text. `inspectWindowsAcl()` uses native descriptor facts for
+built-in Windows PowerShell/.NET query. The query addresses its JSON command by
+module name and limits module discovery to PowerShell's bundled system modules.
+It returns canonical SIDs and numeric access masks, so Unicode paths and account
+names do not pass through lossy console display text. `inspectWindowsAcl()` uses native descriptor facts for
 complete local ACLs with nonzero inherited ACEs (or empty/null DACLs) when the
 optional Windows binding is available. It applies
 the same classifier to native facts and the fallback query, returning canonical
