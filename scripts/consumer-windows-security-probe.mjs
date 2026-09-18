@@ -8,7 +8,7 @@ import path from "node:path";
 import { configureFsSafeNative, getFsSafeNativeConfig } from "@openclaw/fs-safe/config";
 import { createPrivateDirectory, readOwnerAndDacl } from "@openclaw/fs-safe/permissions";
 import { readSecureFile } from "@openclaw/fs-safe/secure-file";
-import { nativeBinaryLoaded, windowsSecurityFixturePhases } from "./consumer-proof-metadata.mjs";
+import { assertInstalledScriptPath, nativeBinaryLoaded, windowsSecurityFixturePhases } from "./consumer-proof-metadata.mjs";
 
 // This file is copied into disposable consumers and uses only public subpaths.
 assert.equal(process.platform, "win32");
@@ -134,7 +134,7 @@ const onWarning = (warning) => warnings.push({ code: warning.code ?? null, name:
   feature: warningFeatures.find((feature) => warning.message.includes(feature)) ?? null });
 process.on("warning", onWarning);
 function observedCommandArgs(args) {
-  assert.equal(args[4], bridgeScript, "production helper must execute the verified installed script");
+  assertInstalledScriptPath(args[4], bridgeScript);
   return args.map((value, index) => index === 4 ? bridgeScriptRelative : value);
 }
 childProcess.spawn = (...args) => {

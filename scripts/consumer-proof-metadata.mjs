@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 
@@ -19,6 +20,12 @@ export function nativeBinaryLoaded(binary, sharedObjects = process.report.getRep
   const expected = realpathSync.native(binary);
   return sharedObjects.filter((file) => file.endsWith(".node"))
     .some((file) => realpathSync.native(file) === expected);
+}
+
+export function assertInstalledScriptPath(observed, verifiedCanonicalScript) {
+  // Windows short names can reach the same asset through a different spelling.
+  assert.equal(realpathSync.native(observed), verifiedCanonicalScript,
+    "production helper must execute the verified installed script");
 }
 
 const windowsFixtureSteps = new Set([
