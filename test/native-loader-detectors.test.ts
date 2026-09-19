@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { expectFsSafeErrorSync } from "./helpers/security.js";
 import {
   __nativeLoaderDetectorsForTest,
+  __loadBundledNativeForTest,
   __resetNativeLoaderForTest,
   __setNativeLoaderForTest,
   requireNativeBinding,
@@ -21,8 +22,17 @@ vi.mock("node:fs", async (importOriginal) => ({
   ...await importOriginal<typeof import("node:fs")>(),
   ...filesystem,
 }));
+const packageLoad = vi.hoisted(() => vi.fn());
+vi.mock("node:module", async (importOriginal) => ({
+  ...await importOriginal<typeof import("node:module")>(),
+  createRequire: () => packageLoad,
+}));
+const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform")!;
+const originalArch = Object.getOwnPropertyDescriptor(process, "arch")!;
 
 afterEach(() => {
+  Object.defineProperty(process, "platform", originalPlatform);
+  Object.defineProperty(process, "arch", originalArch);
   vi.restoreAllMocks();
   vi.resetAllMocks();
   __resetFsSafeNativeConfigForTest();
@@ -98,6 +108,35 @@ function elf32BigEndian(interpreter: string): Map<number, Buffer> {
 }
 
 describe("native libc detector failures", () => {
+  it.each([
+    { report: "glibc", interpreter: "musl", files: true, expected: "gnu", elfRead: false, scanned: false },
+    { report: "musl", interpreter: "glibc", files: false, expected: "musl", elfRead: false, scanned: false },
+    { report: "unknown", interpreter: "glibc", files: true, expected: "gnu", elfRead: true, scanned: false },
+    { report: "throws", interpreter: "glibc", files: true, expected: "gnu", elfRead: true, scanned: false },
+    { report: "unknown", interpreter: "musl", files: false, expected: "musl", elfRead: true, scanned: false },
+    { report: "unknown", interpreter: "invalid", files: true, expected: "musl", elfRead: true, scanned: true },
+    { report: "unknown", interpreter: "unreadable", files: true, expected: "musl", elfRead: true, scanned: true },
+    { report: "unknown", interpreter: "invalid", files: false, expected: "gnu", elfRead: true, scanned: true },
+  ])("selects libc from report=$report, interpreter=$interpreter, compatibility loader=$files", scenario => {
+    Object.defineProperty(process, "platform", { value: "linux" });
+    Object.defineProperty(process, "arch", { value: "x64" });
+    vi.spyOn(process.report, "getReport").mockImplementation(() => {
+      if (scenario.report === "throws") throw new Error("report disabled");
+      return (scenario.report === "glibc" ? { header: { glibcVersionRuntime: "2.39" } }
+        : { header: {}, sharedObjects: scenario.report === "musl" ? ["/lib/ld-musl-x86_64.so.1"] : [] }) as never;
+    });
+    installElfReads(scenario.interpreter === "invalid" ? new Map([[0, Buffer.alloc(64)]])
+      : elf64({ interpreter: scenario.interpreter === "musl" ? "/lib/ld-musl-x86_64.so.1" : "/lib64/ld-linux-x86-64.so.2" }));
+    if (scenario.interpreter === "unreadable") filesystem.openSync.mockImplementation(() => { throw new Error("unreadable executable"); });
+    filesystem.readdirSync.mockReturnValue((scenario.files ? ["ld-musl-x86_64.so.1"] : []) as never);
+    const binding = { closeOwnedFd() {} };
+    packageLoad.mockReturnValue(binding);
+    expect(__loadBundledNativeForTest()).toBe(binding);
+    expect(packageLoad).toHaveBeenCalledExactlyOnceWith(`@openclaw/fs-safe-linux-x64-${scenario.expected}`);
+    expect(filesystem.openSync.mock.calls.length > 0).toBe(scenario.elfRead);
+    expect(filesystem.readdirSync.mock.calls.length > 0).toBe(scenario.scanned);
+  });
+
   it("handles glibc, musl, inconclusive, and failed process reports", () => {
     const getReport = vi.spyOn(process.report, "getReport");
     getReport.mockReturnValue({ header: { glibcVersionRuntime: "2.39" } } as never);

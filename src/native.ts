@@ -31,7 +31,7 @@ function isMuslFromReport(): boolean | undefined {
     if (report.header?.glibcVersionRuntime) return false;
     if (report.sharedObjects?.some(isMuslFilename)) return true;
   } catch {
-    // Continue with filesystem and ELF inspection.
+    // Continue with ELF and filesystem inspection.
   }
   return undefined;
 }
@@ -137,7 +137,7 @@ function isMuslFromElfInterpreter(): boolean | undefined {
 
 function isMusl(): boolean {
   if (process.platform !== "linux") return false;
-  for (const detector of [isMuslFromReport, isMuslFromFilesystem, isMuslFromElfInterpreter]) {
+  for (const detector of [isMuslFromReport, isMuslFromElfInterpreter, isMuslFromFilesystem]) {
     const result = detector();
     if (result !== undefined) return result;
   }

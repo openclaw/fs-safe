@@ -267,8 +267,9 @@ infer native loading from timing.
 ## Loader security
 
 Importing fs-safe never executes a child process. Linux libc selection uses
-the Node process report, conventional musl library filenames, and the ELF
-`PT_INTERP` field of `process.execPath`. If all probes are inconclusive, the
+the Node process report, then the ELF `PT_INTERP` field of `process.execPath`,
+then conventional musl library filenames. An installed compatibility loader
+does not override the running executable's interpreter. If all probes are inconclusive, the
 loader conservatively attempts the glibc package and lets normal module loading
 fail into `auto` fallback. The loader requires only the package selected from
 the detected target; it never probes unrelated packages, downloads code, or
