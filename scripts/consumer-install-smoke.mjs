@@ -111,9 +111,9 @@ export function resolvePnpmCommand(cli = process.env.npm_execpath) {
   const resolved = cli && isAbsolute(cli) && statSync(cli, { throwIfNoEntry: false })?.isFile()
     ? realpathSync(cli) : undefined;
   if (resolved && /^pnpm\.(?:c?js|mjs)$/.test(basename(resolved))) return [process.execPath, resolved];
-  // @pnpm/exe supplies a standalone binary, not a script for the current Node.
+  // pnpm's native/Corepack installs supply a binary, not a script for Node.
   // Keep shell/cmd shims rejected and never substitute a different pnpm from PATH.
-  if (resolved && /^pnpm(?:\.exe)?$/.test(basename(resolved)) && isNativeExecutable(resolved)) return [resolved];
+  if (resolved && /^pnpm(?:-native)?(?:\.exe)?$/.test(basename(resolved)) && isNativeExecutable(resolved)) return [resolved];
   throw new Error("package collection requires a pnpm lifecycle CLI; run pnpm package:collect or pnpm package:smoke");
 }
 
