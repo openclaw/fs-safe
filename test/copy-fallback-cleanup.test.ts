@@ -78,9 +78,9 @@ describe("copy fallback cleanup failures", () => {
     const denied = Object.assign(new Error("inspection denied"), { code: "EACCES" });
     const asyncFs = {
       ...fs,
-      async lstat(candidate: fs.PathLike) {
+      async lstat(candidate: fs.PathLike, options?: fsSync.StatOptions) {
         if (String(candidate) === dest) throw denied;
-        return await fs.lstat(candidate);
+        return await fs.lstat(candidate, options);
       },
     };
     await expect(copyFallbackReplace({
@@ -94,9 +94,9 @@ describe("copy fallback cleanup failures", () => {
 
     const syncModule = {
       ...fsSync,
-      lstatSync(candidate: fsSync.PathLike) {
+      lstatSync(candidate: fsSync.PathLike, options?: fsSync.StatOptions) {
         if (String(candidate) === dest) throw denied;
-        return fsSync.lstatSync(candidate);
+        return fsSync.lstatSync(candidate, options);
       },
     };
     expect(() => copyFallbackReplaceSync({

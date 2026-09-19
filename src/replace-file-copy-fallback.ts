@@ -2,7 +2,7 @@ import syncFs, { type BigIntStats, type Stats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import { readBoundedAsync, readBoundedSync } from "./bounded-read.js";
 import { FsSafeError } from "./errors.js";
-import { sameFileIdentity } from "./file-identity.js";
+import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import { readOwnedCopySource, readOwnedCopySourceSync } from "./replace-file-copy-source.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 
@@ -60,34 +60,36 @@ function notFound(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === "ENOENT";
 }
 
-function assertPinnedDestination(
-  pathname: Stats,
-  opened: Stats,
+function admitDestinationKind(
+  pathname: BigIntStats,
+  opened: BigIntStats,
   dest: string,
-  hardlinks: ReplaceFileDestinationHardlinkPolicy | undefined,
   admission: DestinationAdmission,
-): void {
+): BigIntStats {
   if (admission === "hardlinks") {
-    if (pathname.isSymbolicLink() || !pathname.isFile() || !sameFileIdentity(pathname, opened)) {
+    if (pathname.isSymbolicLink() || !pathname.isFile()) {
       throw new FsSafeError("path-mismatch", `Atomic replace destination changed while opening: ${dest}`);
     }
-    if (opened.nlink > 1) {
-      throw new FsSafeError("hardlink", `Hardlinked atomic replace destination not allowed: ${dest}`);
-    }
-    return;
-  }
-  if (pathname.isSymbolicLink()) {
+  } else if (pathname.isSymbolicLink()) {
     throw new FsSafeError("symlink", `Refusing copy fallback through symlink destination: ${dest}`);
-  }
-  if (!pathname.isFile() || !opened.isFile()) {
+  } else if (!pathname.isFile() || !opened.isFile()) {
     throw new FsSafeError("not-file", `Copy fallback destination must be a regular file: ${dest}`);
   }
-  if (!sameFileIdentity(pathname, opened)) {
-    throw new FsSafeError("path-mismatch", `Copy fallback destination changed while opening: ${dest}`);
+  return pathname;
+}
+
+function assertDestinationLinks(opened: BigIntStats, dest: string, admission: DestinationAdmission,
+  hardlinks?: ReplaceFileDestinationHardlinkPolicy): void {
+  if ((admission === "hardlinks" || hardlinks === "reject") && opened.nlink > 1n) {
+    throw new FsSafeError("hardlink", `Hardlinked ${admission === "hardlinks" ? "atomic replace" : "copy fallback"} destination not allowed: ${dest}`);
   }
-  if (hardlinks === "reject" && opened.nlink > 1) {
-    throw new FsSafeError("hardlink", `Hardlinked copy fallback destination not allowed: ${dest}`);
-  }
+}
+
+function inspectPinnedDestinationSync(fsModule: SyncFallbackFs, fd: number, dest: string,
+  admission: DestinationAdmission, hardlinks?: ReplaceFileDestinationHardlinkPolicy): void {
+  const opened = inspectFileIdentitySync(() => fsModule.fstatSync(fd, { bigint: true }));
+  inspectFileIdentitySync(() => admitDestinationKind(fsModule.lstatSync(dest, { bigint: true }), opened, dest, admission), opened);
+  assertDestinationLinks(opened, dest, admission, hardlinks);
 }
 
 async function openPinnedDestination(
@@ -111,9 +113,12 @@ async function openPinnedDestination(
 
   const handle = await fsModule.open(dest, admission === "restore" ? OPEN_READ_WRITE_FLAGS : OPEN_READ_FLAGS);
   try {
-    const opened = fsModule === fs ? syncFs.fstatSync(handle.fd) : await handle.stat();
-    const current = fsModule === fs ? syncFs.lstatSync(dest) : await fsModule.lstat(dest);
-    assertPinnedDestination(current, opened, dest, hardlinks, admission);
+    if (fsModule === fs) inspectPinnedDestinationSync(syncFs, handle.fd, dest, admission, hardlinks);
+    else {
+      const opened = await inspectFileIdentity(() => handle.stat({ bigint: true }));
+      await inspectFileIdentity(async () => admitDestinationKind(await fsModule.lstat(dest, { bigint: true }), opened, dest, admission), opened);
+      assertDestinationLinks(opened, dest, admission, hardlinks);
+    }
     return handle;
   } catch (error) {
     await handle.close().catch(() => undefined);
@@ -141,8 +146,7 @@ function openPinnedDestinationSync(
 
   const fd = fsModule.openSync(dest, admission === "restore" ? OPEN_READ_WRITE_FLAGS : OPEN_READ_FLAGS);
   try {
-    const opened = fsModule.fstatSync(fd);
-    assertPinnedDestination(fsModule.lstatSync(dest), opened, dest, hardlinks, admission);
+    inspectPinnedDestinationSync(fsModule, fd, dest, admission, hardlinks);
     return fd;
   } catch (error) {
     closeSyncAfterAdmissionFailure(fsModule, fd, error);

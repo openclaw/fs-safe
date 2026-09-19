@@ -2,9 +2,8 @@ import { syncFileBestEffort, syncFileBestEffortSync } from "./file-sync.js";
 import syncFs, { type BigIntStats, type Stats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
-import { sameFileIdentity } from "./file-identity.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
-import { assertOwnedDirectory, ownDirectoryMode, type DirectoryModeOwner } from "./directory-mode-owner.js";
+import { ownDirectoryMode, type DirectoryModeOwner } from "./directory-mode-owner.js";
 
 type AsyncTempFileSystem = Pick<typeof fs, "lstat" | "open" | "writeFile">;
 type SyncTempFileSystem = Pick<
@@ -59,20 +58,11 @@ function directoryOpenFlags(): number {
   );
 }
 
-function assertDirectory(identity: Stats, dirPath: string): void {
+function assertDirectory<T extends Stats | BigIntStats>(identity: T, dirPath: string): T {
   if (identity.isSymbolicLink() || !identity.isDirectory()) {
     throw new FsSafeError("not-file", `Atomic replace parent must be a real directory: ${dirPath}`);
   }
-}
-
-function assertSameDirectory(expected: Stats, opened: Stats, dirPath: string): void {
-  assertDirectory(opened, dirPath);
-  if (!sameFileIdentity(expected, opened)) {
-    throw new FsSafeError(
-      "path-mismatch",
-      `Atomic replace parent changed before its mode could be applied: ${dirPath}`,
-    );
-  }
+  return identity;
 }
 
 export async function pinDirectoryForMode(params: {
@@ -89,15 +79,17 @@ export async function pinDirectoryForMode(params: {
   }
 
   const expected = params.fsModule === fs
-    ? syncFs.lstatSync(params.dirPath) : await params.fsModule.lstat(params.dirPath);
+    ? inspectFileIdentitySync(() => syncFs.lstatSync(params.dirPath, { bigint: true }))
+    : await inspectFileIdentity(() => params.fsModule.lstat(params.dirPath, { bigint: true }));
   assertDirectory(expected, params.dirPath);
   const handle = await params.fsModule.open(params.dirPath, directoryOpenFlags());
   try {
     const owner = ownDirectoryMode({
       async inspect() {
-        const opened = params.fsModule === fs ? syncFs.fstatSync(handle.fd) : await handle.stat();
-        assertOwnedDirectory(expected, opened);
-        return opened.mode & 0o7777;
+        const opened = params.fsModule === fs
+          ? inspectFileIdentitySync(() => assertDirectory(syncFs.fstatSync(handle.fd, { bigint: true }), params.dirPath), expected)
+          : await inspectFileIdentity(async () => assertDirectory(await handle.stat({ bigint: true }), params.dirPath), expected);
+        return Number(opened.mode & 0o7777n);
       },
       chmod: (mode) => handle.chmod(mode),
       close: () => handle.close(),
@@ -135,11 +127,11 @@ export function applyDirectoryModeSync(params: {
     return;
   }
 
-  const expected = params.fsModule.lstatSync(params.dirPath);
+  const expected = inspectFileIdentitySync(() => params.fsModule.lstatSync(params.dirPath, { bigint: true }));
   assertDirectory(expected, params.dirPath);
   const fd = params.fsModule.openSync(params.dirPath, directoryOpenFlags());
   try {
-    assertSameDirectory(expected, params.fsModule.fstatSync(fd), params.dirPath);
+    inspectFileIdentitySync(() => assertDirectory(params.fsModule.fstatSync(fd, { bigint: true }), params.dirPath), expected);
     // chmod ignores file-type bits; mask so raw stat modes are tolerated.
     params.fchmodSync?.(fd, params.mode & 0o7777);
   } finally {
