@@ -117,6 +117,9 @@ The broader cases add lexical paths at depths 0/8/32, batches of 100/1,000
 paths, 1,000-entry listings and walks, private/public stores through 1 MiB with
 both durability settings, 1,000-item JSON documents and concurrent updates,
 contended/distinct lock groups, and loading 100 fresh or resumed queue claims.
+Legacy install-name rows cover unchanged ASCII, path separators, Unicode and
+empty input, verifying the documented names and hash suffixes. Archive-name
+rows compare ASCII, NFC and NFD component checks at depths 1/8/32.
 `PathScope.resolveAll/count=100` and `count=1000` exercise repeated absolute-root
 normalization across ordinary lexical path batches. Compare these with the
 singleton `PathScope.resolveAll` row when evaluating batch optimizations; relative

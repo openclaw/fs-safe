@@ -42,6 +42,15 @@ export async function registerPaths({
     categorizeFsSafeError: ["outside-workspace"],
   };
   for (const [name, values] of Object.entries(simple)) add(name, () => a[name](...values), { sync: true, batch: 100 });
+  for (const [label, input, expected] of [
+    ["separator", "plugin/v1", "plugin-v1-d9ef8af2eb"],
+    ["unicode", "Über@", "ber-e392bba2b3"],
+    ["empty", "", "skill-e3b0c44298"],
+  ]) {
+    add(`safePathSegmentHashed/${label}`, () => a.safePathSegmentHashed(input), {
+      sync: true, batch: 100, verify: result => assert.equal(result, expected),
+    });
+  }
   registerFilenameFallbackBenchmarks({
     sanitize: a.sanitizeUntrustedFileName,
     register: add,

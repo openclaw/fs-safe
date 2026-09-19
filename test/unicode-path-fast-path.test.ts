@@ -22,6 +22,24 @@ function corpus(): string[] {
 }
 
 describe("path normalization fast paths", () => {
+  it("counts ASCII bytes exactly at component boundaries and on long inputs", () => {
+    for (let code = 0; code < 128; code++) {
+      for (const length of [0, 1, 200, 255, 256, 4096]) {
+        const value = String.fromCharCode(code).repeat(length);
+        expect(maxNormalizedUtf8Bytes(value)).toBe(length);
+        expect(maxNormalizedUtf8Bytes(value, true)).toBe(length);
+      }
+    }
+  });
+
+  it("preserves runtime handling of invalid and boxed string inputs", () => {
+    for (const value of [undefined, null, 42, {}]) {
+      expect(() => maxNormalizedUtf8Bytes(value as never)).toThrow(TypeError);
+    }
+    expect(maxNormalizedUtf8Bytes(new String("ascii") as never)).toBe(5);
+    expect(maxNormalizedUtf8Bytes(new String("é") as never)).toBe(3);
+  });
+
   it("matches normalization and UTF-8 byte budgets for ASCII and mixed UTF-16 input", () => {
     for (const value of corpus()) {
       const nfc = value.normalize("NFC"), nfd = value.normalize("NFD");

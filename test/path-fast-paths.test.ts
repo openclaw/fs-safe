@@ -77,6 +77,32 @@ describe("path utility fast paths", () => {
     expect(safePathSegmentHashed("..")).toBe(`skill-${hash("..")}`);
   });
 
+  it("preserves the legacy install encoding for mixed separator, hyphen and UTF-16 runs", () => {
+    const legacyEncode = (input: string): string => {
+      const trimmed = input.trim();
+      const base = trimmed.replaceAll(/[\\/]/g, "-")
+        .replaceAll(/[^a-zA-Z0-9._-]/g, "-")
+        .replaceAll(/-+/g, "-").replaceAll(/^-+/g, "").replaceAll(/-+$/g, "");
+      const safe = base === "" || base === "." || base === ".." ? "skill" : base;
+      return safe !== trimmed || safe.length > 60
+        ? `${safe.slice(0, 50)}-${createHash("sha256").update(trimmed).digest("hex").slice(0, 10)}`
+        : safe;
+    };
+    const values = ["", ".", "..", "...", "-", "---", "-.-", "--a--b--", " /-\\_--/ ",
+      "a".repeat(60), "a".repeat(61), "-a".repeat(100), "\ud800", "\udc00", "\ud800-\udc00"];
+    for (let code = 0; code < 256; code++) {
+      const character = String.fromCharCode(code);
+      values.push(character, `-${character}--a-/${character}\\-`, character.repeat(64));
+    }
+    for (const value of values) expect(safePathSegmentHashed(value)).toBe(legacyEncode(value));
+    const parts = fc.constantFrom("plain", "-", "--", "/", "\\", " ", "\0", ".", "..", "_",
+      "é", "e\u0301", "日本語", "😀", "\ud800", "\udc00", "\n", "\u00a0");
+    fc.assert(fc.property(fc.array(parts, { maxLength: 100 }), (parts) => {
+      const value = parts.join("");
+      expect(safePathSegmentHashed(value)).toBe(legacyEncode(value));
+    }), { numRuns: 5000, seed: 20260919 });
+  });
+
   it("strips every forbidden control without changing ordinary Unicode", () => {
     const controls = Array.from({ length: 0xa0 }, (_, value) => value)
       .filter((value) => value < 0x20 || value >= 0x7f)
