@@ -154,6 +154,10 @@ between native and JavaScript paths rather than reimplementing it in Rust.
 
 ZIP extraction and bounded reads admit every physical central-directory record and its referenced local header before either decoder can normalize or collapse names. Raw names and valid Unicode Path names must pass traversal checks before stripping, filtering, or selecting a requested member; duplicate or colliding names reject with `entry-path`, even in unrelated or skipped members. Materially conflicting local/central or Unicode interpretations, malformed critical metadata, and ambiguous framing reject with `ArchiveFormatError`. Harmless internal separator and dot-component equivalence is allowed only after validation; every raw and Unicode interpretation must also agree on whether its name ends in `/` or `\`. Ordinary legacy filename decoding remains backend-selected. Native ZIP extraction groups nearby metadata reads into at most two 4 KiB read-ahead buffers per admission pass; larger records retain separately bounded reads. Buffered record views remain stable across eviction, and cached work periodically yields for deadline checks.
 
+ZIP end-record admission searches the bounded comment window for signatures
+while retaining complete comment-length and ambiguity checks. Dense signature
+sequences fall back to the bounded byte scan.
+
 ZIP admission establishes each entry's kind before callbacks: a high-word UNIX
 symlink type takes precedence regardless of creator, followed by the DOS directory
 bit, the exact UNIX directory type, or a terminal slash/backslash. Native manifests

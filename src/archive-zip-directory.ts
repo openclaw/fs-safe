@@ -39,7 +39,9 @@ function* read(offset: number, length: number, bound: number): Generator<ZipRead
   return bytes;
 }
 
-function endOffset(tail: Buffer): number {
+const END_SIGNATURE = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
+
+function denseEndOffset(tail: Buffer): number {
   let found = -1;
   for (let offset = tail.length - 22; offset >= 0; offset--) {
     if (tail.readUInt32LE(offset) === 0x06054b50 && offset + 22 + tail.readUInt16LE(offset + 20) === tail.length) {
@@ -49,6 +51,26 @@ function endOffset(tail: Buffer): number {
   }
   if (found < 0) zipFormat("end record missing");
   return found;
+}
+
+function endOffset(tail: Buffer): number {
+  let found = -1;
+  let from = 0;
+  // Sparse signatures use native search; dense attacker-controlled markers
+  // retain the bounded byte scan instead of one native call per marker.
+  for (let candidates = 0; candidates < 16; candidates++) {
+    const offset = tail.indexOf(END_SIGNATURE, from);
+    if (offset < 0 || offset > tail.length - 22) {
+      if (found < 0) zipFormat("end record missing");
+      return found;
+    }
+    if (offset + 22 + tail.readUInt16LE(offset + 20) === tail.length) {
+      if (found !== -1) zipFormat("ambiguous end records");
+      found = offset;
+    }
+    from = offset + 1;
+  }
+  return denseEndOffset(tail);
 }
 
 function* zip64End(locator: Buffer, locatorAt: number, size: number): Generator<ZipRead, { at: number; record: Buffer }, Buffer> {
