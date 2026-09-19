@@ -3,12 +3,12 @@ import fsSync from "node:fs";
 import path from "node:path";
 import { readFileDescriptorBoundedSync } from "./bounded-read.js";
 import { FsSafeError } from "./errors.js";
-import { sameFileIdentityForCleanup, type FileIdentityStat } from "./file-identity.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
 import { readRegularFile, readRegularFileSync, statRegularFile } from "./regular-file.js";
 import { openRootFileSync, type RootFileOpenFailure } from "./root-file.js";
-import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
+import { writeTempFileSync } from "./replace-file-descriptor.js";
+import { SyncAtomicTempOwner, type AtomicTempFailure } from "./replace-file-temp-owner.js";
 import { admitStandalonePublicationPath } from "./standalone-publication-path.js";
 import { writeTextAtomic, type WriteTextAtomicOptions } from "./text-atomic.js";
 import { sleep } from "./timing.js";
@@ -70,43 +70,11 @@ function getErrorCode(err: unknown): string | undefined {
   return err instanceof Error ? (err as NodeJS.ErrnoException).code : undefined;
 }
 
-function trySetSecureMode(pathname: string, expectedIdentity: FileIdentityStat): void {
-  let fd: number | undefined;
+function trySetSecureMode(fd: number): void {
   try {
-    const before = fsSync.lstatSync(pathname, { bigint: true });
-    if (
-      before.isSymbolicLink() ||
-      !before.isFile() ||
-      before.nlink !== 1n ||
-      !sameFileIdentityForCleanup(before, expectedIdentity)
-    ) {
-      return;
-    }
-    fd = fsSync.openSync(pathname, resolveReadOpenFlags());
-    const opened = fsSync.fstatSync(fd, { bigint: true });
-    const current = fsSync.lstatSync(pathname, { bigint: true });
-    if (
-      !opened.isFile() ||
-      opened.nlink !== 1n ||
-      current.isSymbolicLink() ||
-      !current.isFile() ||
-      current.nlink !== 1n ||
-      !sameFileIdentityForCleanup(opened, expectedIdentity) ||
-      !sameFileIdentityForCleanup(current, opened)
-    ) {
-      return;
-    }
     fsSync.fchmodSync(fd, JSON_FILE_MODE);
   } catch {
-    // Best-effort mode application never falls back to a mutable pathname.
-  } finally {
-    if (fd !== undefined) {
-      try {
-        fsSync.closeSync(fd);
-      } catch {
-        // best-effort cleanup
-      }
-    }
+    // Best-effort mode application stays on the retained staging descriptor.
   }
 }
 
@@ -128,44 +96,21 @@ function trySyncDirectory(pathname: string) {
   }
 }
 
-function renameJsonFileWithFallback(tmpPath: string, pathname: string) {
+function renameJsonFileWithFallback(owner: SyncAtomicTempOwner, pathname: string) {
+  owner.assertCurrent(fsSync);
   try {
-    fsSync.renameSync(tmpPath, pathname);
+    fsSync.renameSync(owner.pathname, pathname);
     return;
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
+    const code = (error as NodeJS.ErrnoException | null | undefined)?.code;
     if (code === "EPERM" || code === "EEXIST") {
-      const existing = (() => {
-        try {
-          return fsSync.lstatSync(pathname);
-        } catch (lstatError) {
-          if ((lstatError as NodeJS.ErrnoException).code === "ENOENT") {
-            return null;
-          }
-          throw lstatError;
-        }
-      })();
-      if (existing?.isSymbolicLink()) {
-        fsSync.rmSync(pathname, { force: true });
-        fsSync.renameSync(tmpPath, pathname);
-        return;
-      }
+      owner.assertCurrent(fsSync);
       fsSync.rmSync(pathname, { force: true });
-      fsSync.renameSync(tmpPath, pathname);
+      owner.assertCurrent(fsSync);
+      fsSync.renameSync(owner.pathname, pathname);
       return;
     }
     throw error;
-  }
-}
-
-function writeTempJsonFile(pathname: string, payload: string): fsSync.BigIntStats {
-  const fd = fsSync.openSync(pathname, "wx", JSON_FILE_MODE);
-  try {
-    fsSync.writeFileSync(fd, payload, "utf8");
-    fsSync.fsyncSync(fd);
-    return fsSync.fstatSync(fd, { bigint: true });
-  } finally {
-    fsSync.closeSync(fd);
   }
 }
 
@@ -195,18 +140,29 @@ export function writeJsonSync(pathname: string, data: unknown) {
   const payload = `${stringifyJsonDocument(data, null, 2)}\n`;
 
   fsSync.mkdirSync(recursiveMkdirPath(path.dirname(filePath)), { recursive: true, mode: JSON_DIR_MODE });
+  const owner = new SyncAtomicTempOwner(tmpPath);
+  let originalFailure: AtomicTempFailure | undefined;
   try {
-    const tempIdentity = writeTempJsonFile(tmpPath, payload);
-    trySetSecureMode(tmpPath, tempIdentity);
-    renameJsonFileWithFallback(tmpPath, filePath);
-    trySetSecureMode(filePath, tempIdentity);
+    owner.start();
+    const temp = writeTempFileSync({
+      fsModule: fsSync, tempPath: tmpPath, content: payload, mode: JSON_FILE_MODE,
+      sync: false, onIdentity: owner.onIdentity,
+    });
+    owner.adopt(temp);
+    owner.assertCurrent(fsSync);
+    trySetSecureMode(temp.fd);
+    fsSync.fsyncSync(temp.fd);
+    renameJsonFileWithFallback(owner, filePath);
+    owner.markRenamed();
+    owner.assertPublished(fsSync, filePath);
+    trySetSecureMode(temp.fd);
     trySyncDirectory(filePath);
+    owner.assertPublished(fsSync, filePath);
+  } catch (error) {
+    originalFailure = { error };
+    throw error;
   } finally {
-    try {
-      fsSync.rmSync(tmpPath, { force: true });
-    } catch {
-      // best-effort cleanup when rename does not happen
-    }
+    owner.finish({ fsModule: fsSync, originalFailure, throwOnCleanupError: false });
   }
 }
 

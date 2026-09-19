@@ -177,26 +177,22 @@ describe("nonblocking regular-file admission", () => {
     const root = await tempRoot("fs-safe-json-fifo-");
     const filePath = path.join(root, "state.json");
     const displaced = `${filePath}.displaced`;
-    const openSync = fsSync.openSync.bind(fsSync);
+    const renameSync = fsSync.renameSync.bind(fsSync);
     const fchmodSync = fsSync.fchmodSync.bind(fsSync);
-    let fifoFd = -1;
     let fifoChmods = 0;
-    vi.spyOn(fsSync, "openSync").mockImplementation((candidate, flags, mode) => {
-      if (String(candidate) === filePath && typeof flags === "number") {
-        expectNonblocking(flags);
-        fsSync.renameSync(filePath, displaced);
+    vi.spyOn(fsSync, "renameSync").mockImplementation((source, destination) => {
+      renameSync(source, destination);
+      if (String(destination) === filePath) {
+        renameSync(filePath, displaced);
         makeFifo(filePath);
-        fifoFd = openSync(candidate, flags, mode);
-        return fifoFd;
       }
-      return openSync(candidate, flags, mode);
     });
     vi.spyOn(fsSync, "fchmodSync").mockImplementation((fd, mode) => {
-      if (fd === fifoFd) fifoChmods += 1;
+      if (fsSync.fstatSync(fd).isFIFO()) fifoChmods += 1;
       return fchmodSync(fd, mode);
     });
 
-    writeJsonSync(filePath, { ok: true });
+    expect(() => writeJsonSync(filePath, { ok: true })).toThrow(expect.objectContaining({ code: "not-file" }));
 
     expect(fifoChmods).toBe(0);
     expect(fsSync.lstatSync(filePath).isFIFO()).toBe(true);
@@ -207,26 +203,25 @@ describe("nonblocking regular-file admission", () => {
     const root = await tempRoot("fs-safe-json-regular-swap-");
     const filePath = path.join(root, "state.json");
     const displaced = `${filePath}.displaced`;
-    const openSync = fsSync.openSync.bind(fsSync);
+    const renameSync = fsSync.renameSync.bind(fsSync);
     const fchmodSync = fsSync.fchmodSync.bind(fsSync);
-    let replacementFd = -1;
+    let replacementInode: bigint | undefined;
     let replacementChmods = 0;
-    vi.spyOn(fsSync, "openSync").mockImplementation((candidate, flags, mode) => {
-      if (String(candidate) === filePath && typeof flags === "number") {
-        fsSync.renameSync(filePath, displaced);
+    vi.spyOn(fsSync, "renameSync").mockImplementation((source, destination) => {
+      renameSync(source, destination);
+      if (String(destination) === filePath) {
+        renameSync(filePath, displaced);
         fsSync.writeFileSync(filePath, "foreign", { mode: 0o644 });
         fsSync.chmodSync(filePath, 0o644);
-        replacementFd = openSync(candidate, flags, mode);
-        return replacementFd;
+        replacementInode = fsSync.statSync(filePath, { bigint: true }).ino;
       }
-      return openSync(candidate, flags, mode);
     });
     vi.spyOn(fsSync, "fchmodSync").mockImplementation((fd, mode) => {
-      if (fd === replacementFd) replacementChmods += 1;
+      if (fsSync.fstatSync(fd, { bigint: true }).ino === replacementInode) replacementChmods += 1;
       return fchmodSync(fd, mode);
     });
 
-    writeJsonSync(filePath, { ok: true });
+    expect(() => writeJsonSync(filePath, { ok: true })).toThrow(expect.objectContaining({ code: "path-mismatch" }));
 
     expect(replacementChmods).toBe(0);
     expect(fsSync.readFileSync(filePath, "utf8")).toBe("foreign");
