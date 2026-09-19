@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Recheck exclusive-publication source and target identities after directory synchronization, preserving substituted entries and verification-phase cleanup while sharing finalization and complete-write logic.
+
 - Recheck private POSIX ownership and permissions before mode preparation, after producer and authority callbacks, and through fallback publication; verify final modes while preserving completed destinations on late failure and share the policy with native staging.
 - Renew overwrite-move and removal admission after authority callbacks, preserving replaced entries and outside targets and honoring callback-triggered removal cancellation; share source checks with native no-replace moves.
 - Preserve copied-move source files and symlinks replaced by authority callbacks before cleanup, retaining the published destination and avoiding extra observations when no callback is supplied.
