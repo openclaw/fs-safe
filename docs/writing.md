@@ -201,7 +201,8 @@ already published complete destination. See [receipt meanings](staged-file.md).
 
 Pass an `AsyncIterable<Uint8Array>` to `create()` when bytes come from a database,
 network response, or another incremental producer. Buffers are accepted chunks.
-The writer consumes each chunk completely before requesting the next one; it
+The writer borrows `Uint8Array` slices without copying their payloads and counts
+their actual byte bounds. It consumes each chunk completely before requesting the next one; it
 does not collect the full input in memory or expose a writable descriptor.
 
 ```ts

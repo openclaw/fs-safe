@@ -47,6 +47,27 @@ describe.each(modes)("streamed Root.create (native %s)", (mode) => {
     expect(await fs.readdir(path.dirname(target))).toEqual(["file"]);
   });
 
+  it.each([2, 3])("bounds a reused Uint8Array view by intrinsic bytes at cap %s", async maxBytes => {
+    const capability = await workspace({ durable: false });
+    const backing = new Uint8Array([90, 1, 2, 3, 91]);
+    const chunk = new Uint8Array(backing.buffer, 1, 3);
+    Object.defineProperties(chunk, {
+      length: { value: 0 }, byteLength: { value: NaN },
+      buffer: { get() { throw new Error("shadowed buffer"); } },
+    });
+    let closed = false;
+    async function* input() { try { yield chunk; } finally { closed = true; } }
+    const pending = capability.create("file", input(), { maxBytes });
+    if (maxBytes === 2) {
+      await expect(pending).rejects.toMatchObject({ code: "too-large" });
+      expect(await fs.readdir(capability.rootReal)).toEqual([]);
+    } else {
+      await pending;
+      expect(await fs.readFile(path.join(capability.rootReal, "file"))).toEqual(Buffer.from([1, 2, 3]));
+    }
+    expect(closed).toBe(true);
+  });
+
   it.each(["existing", "competing"])("preserves a %s destination", async (scenario) => {
     const capability = await workspace();
     const target = path.join(capability.rootReal, "file");

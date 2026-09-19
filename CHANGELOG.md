@@ -7,6 +7,7 @@
 - Preserve copied-move source files and symlinks replaced by authority callbacks before cleanup, retaining the published destination and avoiding extra observations when no callback is supplied.
 - Mark native POSIX beneath-open and duplicated descriptors close-on-exec atomically, preventing child processes from inheriting filesystem capabilities.
 - Preserve caller POSIX record locks during macOS ACL inspection while removing unnecessary descriptor duplication and closure.
+- Write streamed `Uint8Array` slices without copying their payloads, retaining sliced bounds, per-chunk backpressure, and byte limits even when chunk metadata properties are overridden.
 
 - Recheck hardlink policy on the existing final Root and root-file metadata observations, rejecting late-added links before reading bytes or returning a handle.
 - Renew guarded directory ancestry after authority callbacks before creating components, preserving replaced roots for `mkdir`, `openWritable`, and `append` while sharing the creation path.
