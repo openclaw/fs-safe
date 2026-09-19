@@ -3,7 +3,7 @@ import fsSync, { constants as fsConstants } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { createAsyncDirectoryGuard, inspectDirectoryIdentitySync } from "./directory-guard.js";
+import { assertSyncDirectoryGuard, createAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { guardedRename } from "./guarded-mutation.js";
 import {
@@ -11,6 +11,7 @@ import {
   cleanupCopiedEntry,
   createCleanupCopiedEntryState,
   entryIdentity,
+  inspectSourceDirectory,
   sameIdentity,
   sourceChangedError,
   type CopiedEntryManifest,
@@ -245,22 +246,6 @@ async function copyRegularFilePinned(params: {
   return openedIdentity;
 }
 
-function inspectSourceDirectory(
-  sourcePath: string,
-  expected?: Pick<fsSync.BigIntStats, "dev" | "ino">,
-): fsSync.BigIntStats {
-  try {
-    return inspectDirectoryIdentitySync(sourcePath, expected);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException | null)?.code;
-    if (code === "ENOENT" || code === "ENOTDIR" ||
-      (error instanceof FsSafeError && (error.code === "path-mismatch" || error.code === "not-file"))) {
-      throw sourceChangedError(sourcePath);
-    }
-    throw error;
-  }
-}
-
 async function copyEntryWithManifest(
   from: string,
   to: string,
@@ -369,13 +354,13 @@ export async function movePathWithCopyFallback(
   const callerPublished = options.onDestinationPublished;
   let assertionRejected = false;
   let destinationPublished = false;
-  const assertBeforeMutation = () => {
-    assertSynchronousResult(callerMutationAssert?.(), "assertBeforeMutation");
+  const assertBeforeMutation = callerMutationAssert == null ? undefined : () => {
+    assertSynchronousResult(callerMutationAssert(), "assertBeforeMutation");
   };
   const assertBeforeRename = () => {
     try {
       assertSynchronousResult(callerRenameAssert?.(), "assertBeforeRename");
-      assertBeforeMutation();
+      assertBeforeMutation?.();
     } catch (error) {
       assertionRejected = true;
       throw error;
@@ -424,6 +409,27 @@ export async function movePathWithCopyFallback(
     // never become the published target; the copy loop fences nlink again.
   }
   const sourceIdentity = await assertCopyDestinationOutsideSource(sourcePath, targetPath);
+  const sourceParentPath = path.dirname(sourcePath);
+  const sourceParent = assertBeforeMutation || callerRenameAssert || callerPublished
+    ? await createAsyncDirectoryGuard(realpathSync.native(sourceParentPath), { bigint: true })
+    : undefined;
+  const assertSourceParent = sourceParent ? () => {
+    try {
+      if (realpathSync.native(sourceParentPath) !== sourceParent.realPath) throw sourceChangedError(sourcePath);
+      assertSyncDirectoryGuard(sourceParent);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException | null)?.code;
+      if (code === "ENOENT" || code === "ENOTDIR" || code === "ELOOP" ||
+        (error instanceof FsSafeError && (error.code === "path-mismatch" || error.code === "not-file"))) {
+        throw sourceChangedError(sourcePath);
+      }
+      throw error;
+    }
+  } : undefined;
+  const assertBeforeCleanup = assertSourceParent ? () => {
+    assertBeforeMutation?.();
+    assertSourceParent();
+  } : undefined;
   const targetDir = path.dirname(targetPath);
   const staged = path.join(targetDir, `.fs-safe-move-${process.pid}-${randomUUID()}.tmp`);
   const stage = await createMoveStageOwner(staged);
@@ -451,11 +457,12 @@ export async function movePathWithCopyFallback(
         onRenamed();
       },
     });
+    assertSourceParent?.();
     const cleanupResult = await cleanupCopiedEntry(
       sourcePath,
       manifest,
       cleanupState,
-      assertBeforeMutation,
+      assertBeforeCleanup,
     );
     if (cleanupResult === "stale") {
       throw sourceChangedError(sourcePath);

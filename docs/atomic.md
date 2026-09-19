@@ -404,6 +404,11 @@ thenable, or any other value fails with a `TypeError`; rejected asynchronous
 results are consumed. Perform asynchronous policy checks before calling the
 helper and use the authority callback to recheck the current owner at each
 mutation boundary. All callbacks are captured before the first await.
+Copied source leaves are checked again immediately after authority returns and
+before unlink is submitted. Supplying any of the three callbacks also
+retains the original source-parent route and renews copied-directory ancestry
+before cleanup. Substituted entries are preserved; pathname checks and unlink
+remain a best-effort sequence, not atomic.
 
 `onDestinationPublished` runs exactly once after a successful rename resolves,
 before awaited post-rename directory checks or source cleanup. It receives a

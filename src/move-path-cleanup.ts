@@ -2,6 +2,7 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
+import { inspectDirectoryIdentitySync } from "./directory-guard.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 
 export type EntryIdentity = {
@@ -70,6 +71,22 @@ export function sourceChangedError(sourcePath: string): Error {
   return Object.assign(new Error(`Source changed during move fallback: ${sourcePath}`), {
     code: "ESTALE",
   });
+}
+
+export function inspectSourceDirectory(
+  sourcePath: string,
+  expected?: Pick<fsSync.BigIntStats, "dev" | "ino">,
+): fsSync.BigIntStats {
+  try {
+    return inspectDirectoryIdentitySync(sourcePath, expected);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | null)?.code;
+    if (code === "ENOENT" || code === "ENOTDIR" ||
+      (error instanceof FsSafeError && (error.code === "path-mismatch" || error.code === "not-file"))) {
+      throw sourceChangedError(sourcePath);
+    }
+    throw error;
+  }
 }
 
 export async function assertSourceStillMatches(
@@ -189,7 +206,7 @@ export async function cleanupCopiedEntry(
   sourcePath: string,
   manifest: CopiedEntryManifest,
   state: CleanupCopiedEntryState,
-  assertBeforeMutation: () => void,
+  assertBeforeMutation: (() => void) | undefined,
 ): Promise<CleanupCopiedEntryResult> {
   if (manifest.kind === "directory") {
     let currentStat: fsSync.BigIntStats;
@@ -209,6 +226,10 @@ export async function cleanupCopiedEntry(
     // A same-inode directory can gain unrelated children after commit. Still
     // clean manifest children so the fallback does not duplicate copied files.
     let result: CleanupCopiedEntryResult = "removed";
+    const assertBeforeChildMutation = assertBeforeMutation ? () => {
+      assertBeforeMutation();
+      inspectSourceDirectory(sourcePath, manifest.directoryIdentity);
+    } : undefined;
     for (const child of manifest.children) {
       result = mergeCleanupResults(
         result,
@@ -216,13 +237,13 @@ export async function cleanupCopiedEntry(
           path.join(sourcePath, child.name),
           child.manifest,
           state,
-          assertBeforeMutation,
+          assertBeforeChildMutation,
         ),
       );
     }
     // Child cleanup and the caller's authority check can replace the directory.
     // Keep the final exact observation after both, immediately before removal.
-    assertBeforeMutation();
+    assertBeforeMutation?.();
     try {
       currentStat = inspectFileIdentitySync(
         () => fsSync.lstatSync(sourcePath, { bigint: true }),
@@ -264,10 +285,14 @@ export async function cleanupCopiedEntry(
     throw error;
   }
   const expected = aliasGroup?.expected ?? manifest;
-  if (!sameIdentity(expected, entryIdentity(currentStat))) {
-    return aliasGroup ? poisonAliasGroup(aliasGroup) : "stale";
+  for (let observation = 0; ; observation++) {
+    if (!sameIdentity(expected, currentStat)) {
+      return aliasGroup ? poisonAliasGroup(aliasGroup) : "stale";
+    }
+    if (observation || !assertBeforeMutation) break;
+    assertBeforeMutation();
+    currentStat = fsSync.lstatSync(sourcePath);
   }
-  assertBeforeMutation();
   await fs.unlink(sourcePath);
   return aliasGroup
     ? await observeOwnedAliasUnlink(sourcePath, aliasGroup)

@@ -85,8 +85,8 @@ describe("exact directory cleanup receipts", () => {
       if (replaced) await expect(runMove(move)).rejects.toMatchObject({ code: "ESTALE" });
       else await expect(runMove(move)).resolves.toBeUndefined();
 
-      // One admission and one final observation, with no extra ordinary stat.
-      expect(cleanupObservations).toBe(2);
+      // Observer-enabled cleanup also renews this ancestor before child unlink.
+      expect(cleanupObservations).toBe(3);
       expect(move.childRemoved).toBe(true);
       await expect(fs.readFile(path.join(move.target, "payload"), "utf8")).resolves.toBe("copied");
       if (replaced) {
@@ -120,7 +120,7 @@ describe("exact directory cleanup receipts", () => {
         if (recovers) await expect(runMove(move)).resolves.toBeUndefined();
         else await expect(runMove(move)).rejects.toMatchObject({ code: "ESTALE" });
 
-        expect(observations.admission).toBe(boundary === "admission" ? 2 : 1);
+        expect(observations.admission).toBe(boundary === "admission" ? recovers ? 3 : 2 : 2);
         expect(observations.removal).toBe(boundary === "removal" ? 2 : recovers ? 1 : 0);
         expect(move.childRemoved).toBe(boundary === "removal" || recovers);
         await expect(fs.readFile(path.join(move.target, "payload"), "utf8")).resolves.toBe("copied");
