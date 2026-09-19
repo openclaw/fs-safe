@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Verify secret-file permission bits before writing any payload in native and JavaScript writers, failing closed when creation or chmod does not enforce `0600`; preserve explicit final modes and native-free macOS secret writes.
 - Verify actual native private-file ownership and permissions before writing bytes and at publication, rejecting filesystems that accept `chmod` without enforcing it; enforce retained public staging's `0600` and final-mode guarantees while preserving published-file and cleanup receipts.
 - Return unsupported clone-metadata results without the native addon on non-macOS platforms in `auto` and `off` modes; preserve input validation, strict `require` mode, and native-only APFS metadata on macOS.
 - Compare exact directory identities before and after durability syncs, retry unknown Windows observations once, and reject rounded or unverifiable caller receipts; bind numeric metadata to the same observation and preserve private identity authority across receipt mutation, durable creation, publication, and retained staging.

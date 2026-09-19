@@ -360,6 +360,7 @@ async function materializeSecretFileAtomic(
     basename: fileName,
     mkdir: false,
     mode,
+    verifyPosixMode: true,
     sync: params.durable !== false,
     overwrite: !createOnly,
     input: { kind: "buffer", data: typeof params.content === "string" ? params.content : Buffer.from(params.content) },

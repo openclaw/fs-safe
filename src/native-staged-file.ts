@@ -155,7 +155,7 @@ class NativeStagedFile implements StagedFile {
       binding, parentFd, closeParentFd, directory, params.input, params.mode, params.maxBytes, false, params.sync, params.assertBeforeMutation,
       exclusive ? params.basename : undefined,
       params.strictFileSync,
-      params.private ? "private-creation" : undefined,
+      params.private ? "private-creation" : params.verifyPosixMode === true ? "mode-only" : undefined,
     );
     staged.#rejectFinalSymlink = params.rejectFinalSymlink === true;
     if (params.input.kind === "file") await params.input.verifySource();

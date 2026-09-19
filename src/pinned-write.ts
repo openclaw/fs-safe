@@ -20,6 +20,7 @@ import { cleanupPinnedFilePath } from "./file-cleanup.js";
 import { withSidecarLock } from "./sidecar-lock.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import { writePinnedInput } from "./pinned-write-input.js";
+import { assertPinnedWriteMode, preparePinnedWriteMode } from "./pinned-write-mode.js";
 import { runPinnedStagedWrite } from "./pinned-write-staged.js";
 import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
@@ -184,6 +185,7 @@ export async function withPinnedWriteRenameIdentityLock<T>(
 }
 
 async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileIdentityStat> {
+  const verifyPosixMode = params.verifyPosixMode === true && process.platform !== "win32";
   const exactRoot = typeof params.rootIdentity?.dev === "bigint" && typeof params.rootIdentity.ino === "bigint"
     ? { dev: params.rootIdentity.dev, ino: params.rootIdentity.ino } : undefined;
   const mutationAdmission = params.mutationAdmission;
@@ -310,7 +312,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
         return await fs.open(
           targetPath,
           fsSync.constants.O_WRONLY | fsSync.constants.O_CREAT | fsSync.constants.O_EXCL,
-          params.mode,
+          verifyPosixMode ? 0o600 : params.mode,
         );
       },
       {
@@ -326,11 +328,18 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
     try {
       const verificationIdentity = fsSync.fstatSync(handle.fd, { bigint: true });
       createdIdentity = verificationIdentity;
-      await writePinnedInput(handle, params.input, params.maxBytes, params.private
-        ? privateFileMutationAssertion(handle.fd, assertBeforeMutation) : assertBeforeMutation);
+      let assertBeforeWrite: (() => void) | undefined = params.private
+        ? privateFileMutationAssertion(handle.fd, assertBeforeMutation) : assertBeforeMutation;
+      if (verifyPosixMode) {
+        assertBeforeWrite = await preparePinnedWriteMode(handle, Number(createdIdentity.mode & 0o7777n), assertBeforeWrite);
+        assertPinnedWriteMode(handle.fd, 0o600);
+      }
+      await writePinnedInput(handle, params.input, params.maxBytes, assertBeforeWrite);
+      if (verifyPosixMode) assertPinnedWriteMode(handle.fd, 0o600);
       if (params.private) assertDarwinCreationAcl(handle.fd);
       // Content writes may clear set-ID bits; finalize them through the owned fd.
       await handle.chmod(params.mode);
+      if (verifyPosixMode) assertPinnedWriteMode(handle.fd, params.mode);
       if (params.sync !== false) {
         if (params.strictFileSync) await handle.sync();
         else await syncFileBestEffort(handle);
