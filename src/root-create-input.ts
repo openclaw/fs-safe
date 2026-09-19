@@ -33,17 +33,20 @@ export function createInputOptions(
   defaultMaxBytes?: number,
 ): RootCreateOptions & RootCreateStreamOptions {
   if (typeof data === "string" || Buffer.isBuffer(data)) return options;
-  options.signal?.throwIfAborted();
+  const { signal } = options;
+  signal?.throwIfAborted();
   if (options.encoding !== undefined || options.renameIdentity !== undefined) {
     throw new TypeError("streamed create does not accept encoding or renameIdentity");
   }
   const maxBytes = normalizeMaxBytes(options.maxBytes, { defaultValue: defaultMaxBytes });
+  const { assertBeforeMutation } = options;
   return {
     ...options,
     maxBytes,
+    signal,
     assertBeforeMutation: () => {
-      options.signal?.throwIfAborted();
-      return options.assertBeforeMutation?.();
+      signal?.throwIfAborted();
+      return assertBeforeMutation == null ? undefined : Reflect.apply(assertBeforeMutation, options, []);
     },
   };
 }
