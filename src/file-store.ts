@@ -450,37 +450,38 @@ export function fileStoreSync(options: FileStoreOptions): FileStoreSync {
     });
   }
 
+  const readTextIfExists: FileStoreSync["readTextIfExists"] = (relativePath, readOptions) => {
+    const limit = normalizeMaxBytes(readOptions?.maxBytes, { defaultValue: maxBytes });
+    const targetPath = resolveStorePath(rootDir, relativePath);
+    const opened = openRootFileSync({
+      absolutePath: targetPath,
+      rootPath: rootDir,
+      boundaryLabel: "store root",
+      rejectHardlinks: true,
+    });
+    if (!opened.ok) {
+      return handleSyncStoreReadOpenFailure(opened);
+    }
+    try {
+      assertFileStoreMaxBytes(opened.stat.size, limit);
+      try {
+        return limit === undefined
+          ? syncFs.readFileSync(opened.fd, "utf8")
+          : readFileDescriptorBoundedSync(opened.fd, limit).toString("utf8");
+      } catch (error) {
+        throwFsSafeReadError(error, "store");
+      }
+    } finally {
+      syncFs.closeSync(opened.fd);
+    }
+  };
+
   return {
     rootDir,
     path: (relativePath) => resolveStorePath(rootDir, relativePath),
-    readTextIfExists: (relativePath, readOptions) => {
-      const limit = normalizeMaxBytes(readOptions?.maxBytes, { defaultValue: maxBytes });
-      const targetPath = resolveStorePath(rootDir, relativePath);
-      const opened = openRootFileSync({
-        absolutePath: targetPath,
-        rootPath: rootDir,
-        boundaryLabel: "store root",
-        rejectHardlinks: true,
-      });
-      if (!opened.ok) {
-        return handleSyncStoreReadOpenFailure(opened);
-      }
-      try {
-        assertFileStoreMaxBytes(opened.stat.size, limit);
-        try {
-          return limit === undefined
-            ? syncFs.readFileSync(opened.fd, "utf8")
-            : readFileDescriptorBoundedSync(opened.fd, limit).toString("utf8");
-        } catch (error) {
-          throwFsSafeReadError(error, "store");
-        }
-      } finally {
-        syncFs.closeSync(opened.fd);
-      }
-    },
+    readTextIfExists,
     readJsonIfExists: <T = unknown>(relativePath: string, readOptions?: { maxBytes?: number }) => {
-      const raw = fileStoreSync({ rootDir, private: privateMode, dirMode, mode, maxBytes })
-        .readTextIfExists(relativePath, readOptions);
+      const raw = readTextIfExists(relativePath, readOptions);
       return raw === null ? null : (JSON.parse(raw) as T);
     },
     write,
