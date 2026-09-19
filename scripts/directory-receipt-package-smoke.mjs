@@ -47,7 +47,7 @@ function assertSyncOutcome(outcome: DirectorySyncOutcome) {
   );
 }
 
-const directory = realpathSync(mkdtempSync(join(tmpdir(), "fs-safe-package-receipt-")));
+const directory = realpathSync.native(mkdtempSync(join(tmpdir(), "fs-safe-package-receipt-")));
 try {
   utimesSync(directory, 1_700_000_000.123789, 1_700_000_001.456789);
   const numeric = lstatSync(directory);
