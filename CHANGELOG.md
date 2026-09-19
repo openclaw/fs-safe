@@ -2,11 +2,16 @@
 
 ## Unreleased
 
+- Recheck exclusive-publication source and target identities after directory synchronization, preserving substituted entries and verification-phase cleanup while sharing finalization and complete-write logic.
+
 - Recheck private POSIX ownership and permissions before mode preparation, after producer and authority callbacks, and through fallback publication; verify final modes while preserving completed destinations on late failure and share the policy with native staging.
 - Renew overwrite-move and removal admission after authority callbacks, preserving replaced entries and outside targets and honoring callback-triggered removal cancellation; share source checks with native no-replace moves.
 - Preserve copied-move source files and symlinks replaced by authority callbacks before cleanup, retaining the published destination and avoiding extra observations when no callback is supplied.
 - Mark native POSIX beneath-open and duplicated descriptors close-on-exec atomically, preventing child processes from inheriting filesystem capabilities.
 - Preserve caller POSIX record locks during macOS ACL inspection while removing unnecessary descriptor duplication and closure.
+- Capture regular-file append content, encoding, mode, and byte caps before filesystem work so option mutation cannot bypass limits or change the write; share preview admission between async and sync paths.
+- Keep empty string appends from inserting an unwanted newline, while retaining missing-file creation and durability behavior.
+
 - Write streamed `Uint8Array` slices without copying their payloads, retaining sliced bounds, per-chunk backpressure, and byte limits even when chunk metadata properties are overridden.
 
 - Recheck hardlink policy on the existing final Root and root-file metadata observations, rejecting late-added links before reading bytes or returning a handle.

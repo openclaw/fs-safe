@@ -30,6 +30,8 @@ import {
 import { admitStandalonePublicationPath } from "./standalone-publication-path.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
+import { hasErrorCode } from "./file-cleanup.js";
+import { writeAllToFile } from "./write-file-handle.js";
 
 export type {
   PublishFileExclusiveCleanup,
@@ -81,11 +83,11 @@ async function openNativeParent(filePath: string): Promise<{
   }
 }
 
-async function assertPinnedSourceCurrent(params: {
+function assertPinnedSourceCurrent(params: {
   sourcePath: string;
   handle: FileHandle;
   identity: BigIntStats;
-}): Promise<void> {
+}): void {
   // Windows file indexes can exceed Number.MAX_SAFE_INTEGER, so publication
   // fences must compare bigint stats instead of rounded numeric identities.
   const opened = fsSync.fstatSync(params.handle.fd, { bigint: true });
@@ -99,6 +101,23 @@ async function assertPinnedSourceCurrent(params: {
   ) {
     throw new FsSafeError("path-mismatch", "publication source changed during operation");
   }
+}
+
+function assertPublishedTargetCurrent(targetPath: string, identity: BigIntStats, message: string): void {
+  const current = fsSync.lstatSync(targetPath, { bigint: true });
+  if (current.isSymbolicLink() || !current.isFile() || !sameFileIdentity(current, identity)) {
+    throw new FsSafeError("path-mismatch", message);
+  }
+}
+
+function assertRenamedSourceAbsent(sourcePath: string): void {
+  try {
+    fsSync.lstatSync(sourcePath);
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT")) return;
+    throw error;
+  }
+  throw new FsSafeError("path-mismatch", "no-replace publication source still exists");
 }
 
 async function copyPinnedSource(params: {
@@ -204,20 +223,9 @@ async function copyPinnedSource(params: {
       if (bytesRead === 0) {
         break;
       }
-      hash.update(buffer.subarray(0, bytesRead));
-      let written = 0;
-      while (written < bytesRead) {
-        const result = await target.write(
-          buffer,
-          written,
-          bytesRead - written,
-          position + written,
-        );
-        if (result.bytesWritten <= 0) {
-          throw new FsSafeError("helper-failed", "exclusive publication copy made no progress");
-        }
-        written += result.bytesWritten;
-      }
+      const chunk = buffer.subarray(0, bytesRead);
+      hash.update(chunk);
+      await writeAllToFile(target, chunk, { position });
       position += bytesRead;
     }
     await target.sync();
@@ -306,6 +314,7 @@ export async function publishFileExclusive(params: {
   let parent: Awaited<ReturnType<typeof pinDirectory>> | undefined;
   let sourceNativeParent: Awaited<ReturnType<typeof openNativeParent>> | undefined;
   let targetNativeParent: Awaited<ReturnType<typeof openNativeParent>> | undefined;
+  let copiedTarget: FileHandle | undefined;
   const strategy = params.strategy;
   const failure: PublishFailureState = {
     phase: strategy === "rename-noreplace" ? "rename-create" : "hardlink-create",
@@ -335,8 +344,20 @@ export async function publishFileExclusive(params: {
     ) {
       throw new FsSafeError("path-mismatch", "publication source identity did not match");
     }
+    const assertSourceCurrent = () => assertPinnedSourceCurrent({ sourcePath, handle: source, identity: sourceExactIdentity });
+    const finishPublication = async (
+      method: PublishFileExclusiveResult["method"], handle: FileHandle, identity: BigIntStats,
+    ): Promise<PublishFileExclusiveResult> => {
+      const verifyPhase = failure.phase;
+      const directorySync = await syncPublishedParent({ parent: parent!, failure, method, targetPath });
+      failure.phase = verifyPhase;
+      if (method === "rename-noreplace") assertRenamedSourceAbsent(sourcePath);
+      else assertSourceCurrent();
+      assertPublishedTargetCurrent(targetPath, identity, "publication target changed during directory sync");
+      return { method, identity: fsSync.fstatSync(handle.fd), directorySync };
+    };
     await parent.assertCurrent();
-    await assertPinnedSourceCurrent({ sourcePath, handle: source, identity: sourceExactIdentity });
+    assertSourceCurrent();
 
     const native = strategy === "rename-noreplace"
       ? requireNativeBinding()
@@ -362,34 +383,10 @@ export async function publishFileExclusive(params: {
         targetPath,
         sourceExactIdentity,
       );
-      const targetExactIdentity = fsSync.lstatSync(targetPath, { bigint: true });
-      if (
-        targetExactIdentity.isSymbolicLink() ||
-        !targetExactIdentity.isFile() ||
-        !sameFileIdentity(targetExactIdentity, sourceExactIdentity)
-      ) {
-        throw new FsSafeError("path-mismatch", "no-replace publication target changed");
-      }
-      try {
-        fsSync.lstatSync(sourcePath);
-        throw new FsSafeError("path-mismatch", "no-replace publication source still exists");
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-          throw error;
-        }
-      }
+      assertPublishedTargetCurrent(targetPath, sourceExactIdentity, "no-replace publication target changed");
+      assertRenamedSourceAbsent(sourcePath);
       syncFileBestEffortSync(sourceNativeParent!.handle.fd);
-      const targetIdentity = fsSync.lstatSync(targetPath);
-      return {
-        method: "rename-noreplace",
-        identity: targetIdentity,
-        directorySync: await syncPublishedParent({
-          parent,
-          failure,
-          method: "rename-noreplace",
-          targetPath,
-        }),
-      };
+      return await finishPublication("rename-noreplace", source, sourceExactIdentity);
     }
 
     try {
@@ -409,26 +406,9 @@ export async function publishFileExclusive(params: {
         targetPath,
         sourceExactIdentity,
       );
-      const targetExactIdentity = fsSync.lstatSync(targetPath, { bigint: true });
-      if (
-        targetExactIdentity.isSymbolicLink() ||
-        !targetExactIdentity.isFile() ||
-        !sameFileIdentity(targetExactIdentity, sourceExactIdentity)
-      ) {
-        throw new FsSafeError("path-mismatch", "hardlink publication target changed");
-      }
-      await assertPinnedSourceCurrent({ sourcePath, handle: source, identity: sourceExactIdentity });
-      const targetIdentity = fsSync.lstatSync(targetPath);
-      return {
-        method: "hardlink",
-        identity: targetIdentity,
-        directorySync: await syncPublishedParent({
-          parent,
-          failure,
-          method: "hardlink",
-          targetPath,
-        }),
-      };
+      assertPublishedTargetCurrent(targetPath, sourceExactIdentity, "hardlink publication target changed");
+      assertSourceCurrent();
+      return await finishPublication("hardlink", source, sourceExactIdentity);
     } catch (error) {
       if (
         failure.targetCreated ||
@@ -440,48 +420,21 @@ export async function publishFileExclusive(params: {
     }
 
     failure.phase = "copy-create";
-    let target: FileHandle | undefined;
-    let targetIdentity: Stats | undefined;
-    try {
-      const copied = await copyPinnedSource({
-        source,
-        targetPath,
-        native,
-        targetNativeParent,
-        failure,
-      });
-      target = copied.handle;
-      targetIdentity = fsSync.fstatSync(target.fd);
-      const targetPathStat = fsSync.lstatSync(targetPath);
-      const targetPathExactStat = fsSync.lstatSync(targetPath, { bigint: true });
-      const copiedBack = await hashFileHandle(target, native);
-      const sourceAfter = await hashFileHandle(source, native);
-      if (
-        targetPathStat.isSymbolicLink() ||
-        targetPathExactStat.isSymbolicLink() ||
-        !sameFileIdentity(targetPathExactStat, copied.exactIdentity) ||
-        copiedBack.bytes !== copied.bytes ||
-        copiedBack.digest !== copied.digest ||
-        sourceAfter.bytes !== copied.bytes ||
-        sourceAfter.digest !== copied.digest
-      ) {
-        throw new FsSafeError("path-mismatch", "exclusive publication copy failed content fencing");
-      }
-      await assertPinnedSourceCurrent({ sourcePath, handle: source, identity: sourceExactIdentity });
-      const directorySync = await syncPublishedParent({
-        parent,
-        failure,
-        method: "exclusive-copy",
-        targetPath,
-      });
-      return { method: "exclusive-copy", identity: targetPathStat, directorySync };
-    } catch (error) {
-      await target?.close().catch(() => undefined);
-      target = undefined;
-      throw error;
-    } finally {
-      await target?.close().catch(() => undefined);
+    const copied = await copyPinnedSource({ source, targetPath, native, targetNativeParent, failure });
+    copiedTarget = copied.handle;
+    const copiedBack = await hashFileHandle(copiedTarget, native);
+    const sourceAfter = await hashFileHandle(source, native);
+    assertPublishedTargetCurrent(targetPath, copied.exactIdentity, "exclusive publication copy failed content fencing");
+    if (
+      copiedBack.bytes !== copied.bytes ||
+      copiedBack.digest !== copied.digest ||
+      sourceAfter.bytes !== copied.bytes ||
+      sourceAfter.digest !== copied.digest
+    ) {
+      throw new FsSafeError("path-mismatch", "exclusive publication copy failed content fencing");
     }
+    assertSourceCurrent();
+    return await finishPublication("exclusive-copy", copiedTarget, copied.exactIdentity);
   } catch (error) {
     if (!failure.targetCreated) throw error;
     const preserveSyncFailure =
@@ -491,6 +444,7 @@ export async function publishFileExclusive(params: {
       : await removeCreatedTargetIfUnchanged(targetPath, failure.targetCleanupIdentity);
     throw publicationFailure(error, failure, cleanup);
   } finally {
+    await copiedTarget?.close().catch(() => undefined);
     await sourceNativeParent?.handle.close().catch(() => undefined);
     await targetNativeParent?.handle.close().catch(() => undefined);
     await source.close().catch(() => undefined);
