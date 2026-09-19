@@ -19,7 +19,7 @@ secret handling are security-sensitive public contracts.
 - Human contribution guide: [`CONTRIBUTING.md`](CONTRIBUTING.md)
 - Security policy: [`SECURITY.md`](SECURITY.md)
 
-`CLAUDE.md` is a compatibility symlink to this file. Edit `AGENTS.md` only.
+Edit `AGENTS.md` directly; do not add `CLAUDE.md` aliases.
 Shared maintainer skills live in `openclaw/agent-skills`; do not vendor copies
 into this repository unless a repo-specific snapshot is intentionally required.
 

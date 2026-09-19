@@ -7,7 +7,7 @@ const BASE_TREE = "eb1d05638cd0ec21cea68a8b189ec3e253a8d903";
 const SECURE_FILE_PROOF_INPUT =
   /^ {2}workflow_dispatch:\n {4}inputs:\n {6}secure_file_credential_proof:\n(?: {8}[^\n]*\n)*? {8}default: false\n {8}type: boolean$/mu;
 const STAGED_NODE_PATH =
-  /^\/usr\/local\/lib\/fs-safe-credential-proof-([1-9][0-9]{0,19})-([1-9][0-9]{0,9})-(22\.23\.2|24\.20\.0)\/node$/u;
+  /^\/usr\/local\/lib\/fs-safe-credential-proof-([1-9][0-9]{0,19})-([1-9][0-9]{0,9})-(22\.23\.2|24\.21\.0)\/node$/u;
 
 let sourcePromise: Promise<{ coordinator: string; worker: string; workflow: string }> | undefined;
 
@@ -66,7 +66,7 @@ describe("manual split-credential secure-file proof contract", () => {
     ]) {
       const job = workflowJob(workflow, name);
       expect(job).toContain("inputs.secure_file_credential_proof == true");
-      expect(job).toMatch(/node:\n\s+- 22\.23\.2\n\s+- 24\.20\.0/u);
+      expect(job).toMatch(/node:\n\s+- 22\.23\.2\n\s+- 24\.21\.0/u);
     }
     const proof = workflowJob(workflow, "secure-file-credential-proof");
     expect(proof).toContain("- secure-file-credential-candidate-build");
@@ -398,7 +398,7 @@ describe("manual split-credential secure-file proof contract", () => {
     expect(worker).toContain(`const STAGED_NODE_PATH =\n  ${STAGED_NODE_PATH};`);
     expect(worker).toContain("nodePathMatch?.[3] !== expectedNode.slice(1)");
     expect(worker).not.toContain('expectedNodePath.startsWith("/opt/")');
-    for (const version of ["22.23.2", "24.20.0"]) {
+    for (const version of ["22.23.2", "24.21.0"]) {
       expect(`/usr/local/lib/fs-safe-credential-proof-34992461481-1-${version}/node`)
         .toMatch(STAGED_NODE_PATH);
     }

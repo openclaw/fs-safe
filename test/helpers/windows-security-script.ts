@@ -17,8 +17,9 @@ export function runWindowsSecurityScript(
     const script = path.join(directory, "windows-security-test.ps1");
     fs.writeFileSync(script, "\ufeff" + [
       "$ErrorActionPreference='Stop'",
+      "$env:PSModulePath=[IO.Path]::Combine($PSHOME, 'Modules')",
       "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)",
-      "Add-Type -LiteralPath (Join-Path $PSScriptRoot 'windows-security-bridge.cs')",
+      "Microsoft.PowerShell.Utility\\Add-Type -LiteralPath ([IO.Path]::Combine($PSScriptRoot, 'windows-security-bridge.cs'))",
       ...body,
       "",
     ].join("\n"), "utf8");

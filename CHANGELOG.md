@@ -2,10 +2,21 @@
 
 ## Unreleased
 
+- Refresh JavaScript and Rust dependencies, pnpm, CodeQL, and archive/release build toolchains, including current NAPI interoperability fixes; retain Node 22 support and the declared Rust minimum. Includes the Dependabot updates in [#481](https://github.com/openclaw/fs-safe/pull/481).
+- Honor case-insensitive Windows build environment names so configured WASM compilers and archivers remain selected in worker processes; preserve child-only compiler flags without duplicate case variants.
+- Verify secret-file permission bits before writing any payload in native and JavaScript writers, failing closed when creation or chmod does not enforce `0600`; preserve explicit final modes and native-free macOS secret writes.
+- Verify actual native private-file ownership and permissions before writing bytes and at publication, rejecting filesystems that accept `chmod` without enforcing it; enforce retained public staging's `0600` and final-mode guarantees while preserving published-file and cleanup receipts.
+- Retain streamed `Root.create()` authority callbacks and abort signals across producer waits so replacing caller options cannot detach a revoked lease or redirect cancellation; preserve live revocation, callback receivers, and owned-stage cleanup.
+- Return unsupported clone-metadata results without the native addon on non-macOS platforms in `auto` and `off` modes; preserve input validation, strict `require` mode, and native-only APFS metadata on macOS.
 - Compare exact directory identities before and after durability syncs, retry unknown Windows observations once, and reject rounded or unverifiable caller receipts; bind numeric metadata to the same observation and preserve private identity authority across receipt mutation, durable creation, publication, and retained staging.
 - Support zstd and bzip2 TAR extraction and bounded entry reads through bundled WASM codecs when native support is disabled or absent, retaining full-stream validation, limits, and guarded publication; keep native `require` strict and ZIP's optional JSZip dependency unchanged.
 - Clarify that `resolveExistingPathsWithinRoot()` allows missing paths and `resolveStrictExistingPathsWithinRoot()` requires existing regular files.
 - Distinguish native beneath mechanisms from the best-effort containment reported by public Root open, read, and writable-open results in every native mode.
+- Add `private: true` to Root directory, buffered, streamed, and JSON creation, preserving existing entries and mutation authority while sharing protected platform creation with the synchronous leaf APIs.
+- Require native Darwin ACL inspection for `private: true` creation on macOS, rejecting unavailable helpers and relevant parent ACL inheritance before creating entries; verify owner-only, ACL-free results without ACL repair, while allowing noninheriting parent ACLs and preserving nonprivate behavior.
+
+- Add exclusive, nonrecursive `createDirectory()`, `createDirectorySync()`, and owned-descriptor `createFileSync()` with `private: true`, creation-time Windows ACL privacy, verified same-file publication, and explicit settlement failures. Refs [#482](https://github.com/openclaw/fs-safe/issues/482).
+
 - Add opt-in `atomic: true` to buffered `Root.create()` and `createJson()`, reusing complete staged publication with a hardlink fallback when native support is disabled; retain existing defaults and durability policy. Report atomic/streamed-create cleanup and close failures with publication evidence, and preserve completed Windows destinations after finalization failures.
 - Add independent per-create `durable: "file"` to require file synchronization without strengthening parent-directory sync or changing boolean defaults; flush native Windows publication modes through the retained writable descriptor.
 - Recheck retained parent and staging identities after final publication authority callbacks on JavaScript and native writers, preserving substituted entries before their bytes can be published; retain exact directory identities in creation receipts.

@@ -6,7 +6,7 @@ param(
     [Parameter(Mandatory)][string]$PatchedRepo,
     [Parameter(Mandatory)][string]$Output,
     [Parameter(Mandatory)][string]$Work,
-    [Parameter(Mandatory)][ValidateSet('22.23.2', '24.20.0')][string]$NodeVersion,
+    [Parameter(Mandatory)][ValidateSet('22.23.2', '24.21.0')][string]$NodeVersion,
     [Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{40}$')][string]$PatchedCommit
 )
 Set-StrictMode -Version Latest
@@ -107,7 +107,7 @@ try {
     if ($summary.runtime.platform -ne 'win32' -or $summary.runtime.arch -ne 'x64' -or
         $summary.runtime.node -ne "v$NodeVersion") { throw 'Expected the pinned native Windows x64 runtime.' }
     $pnpm = Invoke-Pnpm 'pnpm-version' @('--version')
-    if (-not $pnpm.Result.passed -or $pnpm.Stdout.Trim() -ne '11.25.0') { throw 'Expected pnpm 11.25.0.' }
+    if (-not $pnpm.Result.passed -or $pnpm.Stdout.Trim() -ne '12.4.2') { throw 'Expected pnpm 12.4.2.' }
     # Selected fields only: no hostname, username, label, serial, or environment inventory.
     $facts = [ordered]@{
         powershell = $PSVersionTable.PSVersion.ToString()

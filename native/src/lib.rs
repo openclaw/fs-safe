@@ -423,8 +423,10 @@ pub use owned_tree::{
 #[cfg(unix)]
 pub use staged_file::{create_staged_file, remove_staged_file, staged_file_matches};
 pub use windows_security::{
-    WindowsAccessControlEntry, WindowsAceFlags, WindowsSecurityFacts, create_private_directory,
-    read_owner_and_dacl,
+    WindowsAccessControlEntry, WindowsAceFlags, WindowsIdentityReceipt, WindowsSecurityFacts,
+    create_private_directory, create_private_directory_with_parent_identity,
+    inspect_windows_directory, protect_private_windows_file, read_owner_and_dacl,
+    verify_private_windows_file,
 };
 pub use windows_secure_file::{
     WindowsDescriptorSecurityFacts, inspect_windows_secure_file_handle,

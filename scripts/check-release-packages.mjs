@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
   existsSync,
@@ -83,6 +84,8 @@ function manifestEntry(pkg, artifact) {
 }
 
 async function main() {
+  const source = packageProofSource();
+  if (source.unavailable) console.warn(`source revision unavailable: ${source.unavailable}; artifact and behavior proof remain separate`);
   const rootPkg = readPackage();
   if (rootPkg.name !== "@openclaw/fs-safe") throw new Error(`unexpected package name ${rootPkg.name}`);
   if (rootPkg.author !== "OpenClaw Team <dev@openclaw.ai>") {
@@ -141,9 +144,8 @@ async function main() {
   if (!host || !targets.some((target) => target.label === host.label)) {
     throw new Error(`release smoke requires the host target ${host?.label ?? "unknown"}`);
   }
-  const source = packageProofSource();
-  if (source.unavailable) console.warn(`source revision unavailable: ${source.unavailable}; artifact and behavior proof remain separate`);
   await consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCli, pnpmCommand, allowHostOnly, source });
+  assert.deepEqual(packageProofSource(), source, "source changed while collecting package proof");
 
   for (const artifact of manifest) {
     console.log(`${artifact.name}: ${artifact.size} bytes gzipped, ${artifact.unpackedSize} bytes unpacked`);

@@ -2,6 +2,7 @@ import fsSync, { type BigIntStats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup } from "./file-identity.js";
+import { assertSynchronousCallbackResult } from "./mutation-authority.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import {
@@ -17,6 +18,9 @@ export type PrivateProducerHandoff = {
 
 type HandoffState = {
   siblingOwned: boolean;
+  publication: "not-published" | "published" | "indeterminate";
+  cleanup: "preserved" | "removed" | "failed";
+  closeFailed: boolean;
 };
 
 type HandoffParents = {
@@ -24,11 +28,21 @@ type HandoffParents = {
   assertTargetParent: () => void;
 };
 
+type HandoffPaths = HandoffParents & { sourcePath: string; targetPath: string };
+type ProducerHandoffParams = HandoffPaths & { readWrite: boolean };
+type CreatedHandoffParams = HandoffPaths & {
+  source: FileHandle;
+  identity: BigIntStats;
+  assertBeforeMutation?: () => void;
+  verifyDescriptor?: (fd: number, path: string, links: number) => Promise<void>;
+  onPublished?: () => void;
+};
+
 function pathMismatch(message: string): FsSafeError {
   return new FsSafeError("path-mismatch", message);
 }
 
-function assertInitialSource(stat: BigIntStats): void {
+export function assertInitialSource(stat: BigIntStats): void {
   if (stat.isSymbolicLink()) {
     throw new FsSafeError("path-alias", "isolated producer output must not be a symlink");
   }
@@ -40,7 +54,7 @@ function assertInitialSource(stat: BigIntStats): void {
   }
 }
 
-function inspectLinkedFile(
+export function inspectLinkedFile(
   inspect: () => BigIntStats,
   expected: BigIntStats,
   links: bigint,
@@ -55,12 +69,12 @@ function inspectLinkedFile(
   }, expected);
 }
 
-function assertParents(params: HandoffParents): void {
+export function assertParents(params: HandoffParents): void {
   params.assertTargetParent();
   params.assertSourceParent();
 }
 
-function normalizeLinkError(error: unknown): unknown {
+export function normalizeLinkError(error: unknown): unknown {
   const code = (error as NodeJS.ErrnoException | undefined)?.code;
   if (code === "EEXIST") {
     return new FsSafeError("already-exists", "isolated producer sibling already exists", {
@@ -143,8 +157,8 @@ async function throwAfterClosing(
   throw combinedFailure(primary, settlement);
 }
 
-function inspectSourceDescriptor(handle: FileHandle, identity: BigIntStats, links = 1n): void {
-  inspectLinkedFile(
+function inspectSourceDescriptor(handle: FileHandle, identity: BigIntStats, links = 1n): BigIntStats {
+  return inspectLinkedFile(
     () => fsSync.fstatSync(handle.fd, { bigint: true }),
     identity,
     links,
@@ -227,156 +241,183 @@ async function openProducerSource(
   return fallback;
 }
 
-function assertLinkedHandoff(
-  params: HandoffParents & { sourcePath: string; targetPath: string },
+function inspectHandoff(
+  params: HandoffPaths,
   handle: FileHandle,
   identity: BigIntStats,
-): void {
+  state: HandoffState,
+  links: bigint,
+): { opened: BigIntStats; named?: BigIntStats } {
   assertParents(params);
-  inspectSourceDescriptor(handle, identity, 2n);
-  inspectLinkedFile(
-    () => fsSync.lstatSync(params.sourcePath, { bigint: true }),
-    identity,
-    2n,
-    "isolated producer path",
-  );
-  inspectLinkedFile(
-    () => fsSync.lstatSync(params.targetPath, { bigint: true }),
-    identity,
-    2n,
-    "isolated producer sibling",
-  );
+  const opened = inspectSourceDescriptor(handle, identity, links);
+  if (state.cleanup !== "removed") {
+    inspectLinkedFile(
+      () => fsSync.lstatSync(params.sourcePath, { bigint: true }), identity, links, "isolated producer path",
+    );
+  }
+  const named = state.publication === "published" ? inspectLinkedFile(
+    () => fsSync.lstatSync(params.targetPath, { bigint: true }), identity, links, "isolated producer sibling",
+  ) : undefined;
+  return { opened, named };
 }
 
-export async function handoffPrivateProducerFile(params: {
-  sourcePath: string;
-  targetPath: string;
-  assertSourceParent: () => void;
-  assertTargetParent: () => void;
-  readWrite: boolean;
-}): Promise<PrivateProducerHandoff> {
-  assertParents(params);
-  const identity = inspectFileIdentitySync(() => {
+function handoffFile(params: CreatedHandoffParams): Promise<FileHandle>;
+function handoffFile(params: ProducerHandoffParams): Promise<PrivateProducerHandoff>;
+async function handoffFile(params: CreatedHandoffParams | ProducerHandoffParams): Promise<FileHandle | PrivateProducerHandoff> {
+  const created = "source" in params ? params : undefined;
+  const identity = created?.identity ?? inspectFileIdentitySync(() => {
+    assertParents(params);
     const stat = fsSync.lstatSync(params.sourcePath, { bigint: true });
     assertInitialSource(stat);
     return stat;
   });
-
-  let handle: FileHandle | undefined;
-  let siblingHandle: FileHandle | undefined;
+  let handle = created?.source;
+  const owners = new Set<FileHandle>(handle ? [handle] : []);
+  const failures: unknown[] = [];
   let unregister: TempPathRegistration | undefined;
-  const state: HandoffState = { siblingOwned: false };
+  const state: HandoffState = {
+    siblingOwned: false, publication: "not-published", cleanup: "preserved", closeFailed: false,
+  };
+
+  async function close(owned: FileHandle): Promise<void> {
+    // Final creation consumes its pin before close can release and recycle it.
+    // Legacy temporary handoff retains its historical FileHandle close retry.
+    if (created) owners.delete(owned);
+    try {
+      await owned.close();
+      owners.delete(owned);
+    } catch (error) {
+      state.closeFailed = true;
+      throw error;
+    }
+  }
+
   try {
-    handle = await openProducerSource(params, identity);
-    inspectLinkedFile(
-      () => fsSync.lstatSync(params.sourcePath, { bigint: true }),
-      identity,
-      1n,
-      "isolated producer path",
-    );
-    assertParents(params);
+    assertInitialSource(identity);
+    if (!handle) {
+      handle = await openProducerSource({ ...params, readWrite: "readWrite" in params && params.readWrite }, identity);
+      owners.add(handle);
+    }
+    inspectHandoff(params, handle, identity, state, 1n);
+    if (created?.verifyDescriptor) await created.verifyDescriptor(handle.fd, params.sourcePath, 1);
+    if (!created) {
+      unregister = registerTempPathForExit(params.targetPath, {
+        cleanupSync: () => removeSiblingIfOwned({
+          assertTargetParent: params.assertTargetParent, identity, state, targetPath: params.targetPath,
+        }),
+      });
+    }
 
-    unregister = registerTempPathForExit(params.targetPath, {
-      cleanupSync: () => removeSiblingIfOwned({
-        assertTargetParent: params.assertTargetParent,
-        identity,
-        state,
-        targetPath: params.targetPath,
-      }),
-    });
-
-    assertParents(params);
+    assertSynchronousCallbackResult(created?.assertBeforeMutation?.(), "assertBeforeMutation");
+    inspectHandoff(params, handle, identity, state, 1n);
+    state.publication = "indeterminate";
     try {
       fsSync.linkSync(params.sourcePath, params.targetPath);
     } catch (error) {
-      throw normalizeLinkError(error);
+      const normalized = normalizeLinkError(error);
+      if (normalized instanceof FsSafeError &&
+        (normalized.code === "already-exists" || normalized.code === "helper-unavailable")) {
+        state.publication = "not-published";
+      }
+      throw normalized;
     }
-    state.siblingOwned = true;
+    state.publication = "published";
+    state.siblingOwned = !created;
+    try {
+      assertSynchronousCallbackResult(created?.onPublished?.(), "onPublished");
+    } catch (error) {
+      failures.push(error);
+    }
 
-    assertLinkedHandoff(params, handle, identity);
+    inspectHandoff(params, handle, identity, state, 2n);
     if (process.platform === "win32") {
       // Legacy Windows unlink retains a delete-pending name until handles
       // opened through that name close. Transfer the pin before retiring it.
-      siblingHandle = await openProducerSource({ ...params, sourcePath: params.targetPath }, identity, 2n);
-      assertLinkedHandoff(params, siblingHandle, identity);
+      const sibling = created
+        ? await fs.open(params.targetPath, historicalOpenFlags(true))
+        : await openProducerSource({ ...params, sourcePath: params.targetPath,
+          readWrite: "readWrite" in params && params.readWrite }, identity, 2n);
+      owners.add(sibling);
+      inspectHandoff(params, sibling, identity, state, 2n);
+      if (created?.verifyDescriptor) await created.verifyDescriptor(sibling.fd, params.targetPath, 2);
+      inspectHandoff(params, sibling, identity, state, 2n);
       inspectSourceDescriptor(handle, identity, 2n);
-      await handle.close();
-      handle = siblingHandle;
-      siblingHandle = undefined;
+      await close(handle);
+      handle = sibling;
       // The old handle's close yielded; both names must still be ours.
-      assertLinkedHandoff(params, handle, identity);
+      inspectHandoff(params, handle, identity, state, 2n);
     }
 
-    assertParents(params);
+    if (created?.verifyDescriptor) await created.verifyDescriptor(
+      handle.fd, process.platform === "win32" ? params.targetPath : params.sourcePath, 2,
+    );
+    assertSynchronousCallbackResult(created?.assertBeforeMutation?.(), "assertBeforeMutation");
+    inspectHandoff(params, handle, identity, state, 2n);
+    state.cleanup = "failed";
     fsSync.unlinkSync(params.sourcePath);
-    assertParents(params);
-    const opened = inspectLinkedFile(
-      () => fsSync.fstatSync(handle!.fd, { bigint: true }),
-      identity,
-      1n,
-      "isolated producer descriptor",
-    );
-    const sibling = inspectLinkedFile(
-      () => fsSync.lstatSync(params.targetPath, { bigint: true }),
-      identity,
-      1n,
-      "isolated producer sibling",
-    );
+    state.cleanup = "removed";
+    if (created?.verifyDescriptor) await created.verifyDescriptor(handle.fd, params.targetPath, 1);
+    const { opened, named } = inspectHandoff(params, handle, identity, state, 1n);
     const originalMode = identity.mode & 0o777n;
-    if (process.platform === "win32" && (originalMode & 0o200n) === 0n &&
-      ((opened.mode & 0o777n) !== originalMode || (sibling.mode & 0o777n) !== originalMode)) {
+    if (!created && process.platform === "win32" && (originalMode & 0o200n) === 0n &&
+      ((opened.mode & 0o777n) !== originalMode || (named!.mode & 0o777n) !== originalMode)) {
       // Legacy unlink clears the shared read-only attribute. Repair only the
       // admitted sibling inode, without reopening or chmodding its pathname.
       assertParents(params);
       fsSync.fchmodSync(handle.fd, Number(originalMode));
-      assertParents(params);
-      const restored = inspectLinkedFile(
-        () => fsSync.fstatSync(handle!.fd, { bigint: true }),
-        identity,
-        1n,
-        "isolated producer descriptor",
-      );
-      const restoredSibling = inspectLinkedFile(
-        () => fsSync.lstatSync(params.targetPath, { bigint: true }),
-        identity,
-        1n,
-        "isolated producer sibling",
-      );
-      if ((restored.mode & 0o777n) !== originalMode || (restoredSibling.mode & 0o777n) !== originalMode) {
+      const restored = inspectHandoff(params, handle, identity, state, 1n);
+      if ((restored.opened.mode & 0o777n) !== originalMode || (restored.named!.mode & 0o777n) !== originalMode) {
         throw pathMismatch("isolated producer read-only mode could not be restored");
       }
     }
 
-    const registered = unregister;
-    const release = (() => {
-      state.siblingOwned = false;
-      registered();
-    }) as TempPathRegistration;
-    release.setIdentity = registered.setIdentity;
-    return { handle, identity, unregister: release };
+    if (!created) {
+      const registered = unregister!;
+      const release = (() => {
+        state.siblingOwned = false;
+        registered();
+      }) as TempPathRegistration;
+      release.setIdentity = registered.setIdentity;
+      return { handle, identity, unregister: release };
+    }
   } catch (error) {
-    const settlement: unknown[] = [];
-    if (unregister) {
-      try {
-        removeSiblingIfOwned({
-          assertTargetParent: params.assertTargetParent,
-          identity,
-          state,
-          targetPath: params.targetPath,
-        });
-        unregister();
-      } catch (cleanupError) {
-        settlement.push(cleanupError);
-      }
-    }
-    for (const retained of new Set([siblingHandle, handle])) {
-      if (!retained) continue;
-      try {
-        await retained.close();
-      } catch (closeError) {
-        settlement.push(closeError);
-      }
-    }
-    throw combinedFailure(error, settlement);
+    failures.push(error);
   }
+
+  if (failures.length === 0) return handle!;
+  if (unregister) {
+    try {
+      removeSiblingIfOwned({ assertTargetParent: params.assertTargetParent, identity, state, targetPath: params.targetPath });
+      unregister();
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  for (const owned of [...owners].reverse()) {
+    try { await close(owned); }
+    catch (error) { failures.push(error); }
+  }
+  const primary = failures[0];
+  const cause = combinedFailure(primary, failures.slice(1));
+  if (!created) throw cause;
+  throw new FsSafeError(
+    state.closeFailed || failures.length > 1 ? "helper-failed" : primary instanceof FsSafeError ? primary.code : "helper-failed",
+    "created file publication failed",
+    {
+      cause,
+      details: {
+        publication: { status: state.publication }, cleanup: state.cleanup,
+        resources: state.closeFailed ? "close-failed" : "closed",
+        path: params.targetPath, dev: identity.dev, ino: identity.ino,
+      },
+    },
+  );
+}
+
+export function handoffPrivateProducerFile(params: ProducerHandoffParams): Promise<PrivateProducerHandoff> {
+  return handoffFile(params);
+}
+
+export function handoffCreatedFile(params: CreatedHandoffParams): Promise<FileHandle> {
+  return handoffFile(params);
 }

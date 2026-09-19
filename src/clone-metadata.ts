@@ -1,5 +1,5 @@
 import { assertAbsolutePathInput } from "./absolute-path.js";
-import { requireNativeBinding } from "./native.js";
+import { getNativeBinding, requireNativeBinding } from "./native.js";
 
 export type CloneFileMetadata = {
   dev: number;
@@ -17,13 +17,16 @@ export type CloneFileMetadata = {
 };
 
 /** Batched APFS metadata snapshots; absent on unsupported files or filesystems.
+ * On macOS, these snapshots require the native helper.
  * These are point-in-time facts, not authorization or a guarantee against later edits.
  */
 export async function readCloneFileMetadata(
   files: readonly string[],
 ): Promise<(CloneFileMetadata | undefined)[]> {
   const paths = files.map(assertAbsolutePathInput);
-  const results = await requireNativeBinding().readCloneFileMetadata(paths);
+  const native = process.platform === "darwin" ? requireNativeBinding() : getNativeBinding();
+  if (!native) return paths.map(() => undefined);
+  const results = await native.readCloneFileMetadata(paths);
   return results.map((result) => {
     if (
       !result ||

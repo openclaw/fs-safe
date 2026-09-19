@@ -11,6 +11,9 @@ use crate::{NativeResult, into_napi, native_error};
 
 const ACL_TYPE_EXTENDED: i32 = 0x0000_0100;
 const ACL_FIRST_ENTRY: i32 = 0;
+const ACL_NEXT_ENTRY: i32 = -1;
+const ACL_ENTRY_FILE_INHERIT: i32 = 1 << 5;
+const ACL_ENTRY_DIRECTORY_INHERIT: i32 = 1 << 6;
 const FILESEC_OWNER: i32 = 1;
 const FILESEC_GROUP: i32 = 2;
 const FILESEC_MODE: i32 = 4;
@@ -18,6 +21,8 @@ const FILESEC_ACL: i32 = 5;
 
 unsafe extern "C" {
     fn acl_get_entry(acl: *mut c_void, entry_id: i32, entry: *mut *mut c_void) -> i32;
+    fn acl_get_flagset_np(object: *mut c_void, flagset: *mut *mut c_void) -> i32;
+    fn acl_get_flag_np(flagset: *mut c_void, flag: i32) -> i32;
     fn acl_valid(acl: *mut c_void) -> i32;
     fn acl_init(count: i32) -> *mut c_void;
     fn acl_set_fd_np(fd: i32, acl: *mut c_void, acl_type: i32) -> i32;
@@ -49,6 +54,12 @@ impl AclState {
 
 struct OwnedAcl(NonNull<c_void>);
 struct OwnedFileSec(NonNull<c_void>);
+
+#[derive(Clone, Copy)]
+enum InheritanceTarget {
+    File,
+    Directory,
+}
 
 /// Frozen facts from one descriptor-bound fstatx_np call. Callers must obtain a
 /// fresh receipt after any interval in which security metadata can change.
@@ -111,18 +122,21 @@ impl Drop for OwnedFileSec {
 fn acl_error(error: std::io::Error, operation: &str) -> napi::Error<String> {
     match error.raw_os_error() {
         Some(code) if code != 0 => os_error(rustix::io::Errno::from_raw_os_error(code), operation),
-        _ => native_error("EIO", format!("{operation}: no operating-system error was reported")),
+        _ => native_error(
+            "EIO",
+            format!("{operation}: no operating-system error was reported"),
+        ),
     }
 }
 
-fn first_entry_state(result: i32, error: std::io::Error, has_entry: bool) -> NativeResult<AclState> {
+fn acl_entry_state(result: i32, error: std::io::Error, has_entry: bool) -> NativeResult<AclState> {
     match (result, has_entry) {
         // Darwin differs from Linux: zero means an entry was obtained.
         (0, true) => Ok(AclState::Present),
-        // Only call this for ACL_FIRST_ENTRY on an owned, validated ACL. Its
-        // iterator is private to this call, so EINVAL here means an empty ACL.
+        // Only call this for FIRST/NEXT on an owned, validated ACL. Its iterator
+        // is private to this call, so EINVAL means there are no more entries.
         (-1, false) if error.raw_os_error() == Some(libc::EINVAL) => Ok(AclState::Empty),
-        (-1, false) => Err(acl_error(error, "inspect first descriptor ACL entry")),
+        (-1, false) => Err(acl_error(error, "inspect descriptor ACL entry")),
         _ => Err(native_error(
             "EIO",
             "descriptor ACL entry inspection returned inconsistent facts",
@@ -130,7 +144,53 @@ fn first_entry_state(result: i32, error: std::io::Error, has_entry: bool) -> Nat
     }
 }
 
-fn inspect_owned_acl(acl: &OwnedAcl) -> NativeResult<AclState> {
+fn entry_inherits(entry: NonNull<c_void>, target: InheritanceTarget) -> NativeResult<bool> {
+    let mut flagset = std::ptr::null_mut();
+    clear_errno();
+    // SAFETY: entry belongs to the live, validated ACL being inspected. The
+    // returned flagset is borrowed from that ACL and must not be freed.
+    let result = unsafe { acl_get_flagset_np(entry.as_ptr(), &mut flagset) };
+    let error = std::io::Error::last_os_error();
+    if result != 0 {
+        return Err(acl_error(error, "inspect descriptor ACL entry flags"));
+    }
+    if flagset.is_null() {
+        return Err(native_error(
+            "EIO",
+            "descriptor ACL entry flags are missing",
+        ));
+    }
+    let flags: &[i32] = match target {
+        InheritanceTarget::File => &[ACL_ENTRY_FILE_INHERIT],
+        // Conservatively reject file-inheriting entries on a directory parent
+        // as well, including entries intended only for later descendants.
+        InheritanceTarget::Directory => &[ACL_ENTRY_FILE_INHERIT, ACL_ENTRY_DIRECTORY_INHERIT],
+    };
+    for &flag in flags {
+        clear_errno();
+        // SAFETY: flagset remains borrowed from the live ACL and flag is a
+        // Darwin sys/acl.h inheritance flag.
+        let result = unsafe { acl_get_flag_np(flagset, flag) };
+        let error = std::io::Error::last_os_error();
+        match result {
+            0 => {}
+            1 => return Ok(true),
+            -1 => return Err(acl_error(error, "read descriptor ACL inheritance flag")),
+            _ => {
+                return Err(native_error(
+                    "EIO",
+                    "descriptor ACL flag inspection is inconsistent",
+                ));
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn inspect_owned_acl(
+    acl: &OwnedAcl,
+    inheritance_target: Option<InheritanceTarget>,
+) -> NativeResult<AclState> {
     clear_errno();
     // SAFETY: acl is an owned libc ACL allocation, never an arbitrary pointer.
     if unsafe { acl_valid(acl.0.as_ptr()) } != 0 {
@@ -139,13 +199,26 @@ fn inspect_owned_acl(acl: &OwnedAcl) -> NativeResult<AclState> {
             "validate descriptor ACL",
         ));
     }
-    let mut entry = std::ptr::null_mut();
-    clear_errno();
-    // SAFETY: the ACL is valid and entry is writable for one pointer.
-    let result = unsafe { acl_get_entry(acl.0.as_ptr(), ACL_FIRST_ENTRY, &mut entry) };
-    // Save errno before freeing the ACL or making any other libc call.
-    let error = std::io::Error::last_os_error();
-    first_entry_state(result, error, !entry.is_null())
+    let mut entry_id = ACL_FIRST_ENTRY;
+    loop {
+        // Darwin leaves the output untouched at end-of-list.
+        let mut entry = std::ptr::null_mut();
+        clear_errno();
+        // SAFETY: the ACL is valid and entry is writable for one pointer. Only
+        // this loop advances its iterator, from FIRST through successive NEXT.
+        let result = unsafe { acl_get_entry(acl.0.as_ptr(), entry_id, &mut entry) };
+        let error = std::io::Error::last_os_error();
+        if acl_entry_state(result, error, !entry.is_null())? == AclState::Empty {
+            return Ok(AclState::Empty);
+        }
+        match inheritance_target {
+            None => return Ok(AclState::Present),
+            Some(target) if entry_inherits(NonNull::new(entry).unwrap(), target)? => {
+                return Ok(AclState::Present);
+            }
+            Some(_) => entry_id = ACL_NEXT_ENTRY,
+        }
+    }
 }
 
 pub(crate) fn inspect_acl(fd: BorrowedFd<'_>) -> NativeResult<AclState> {
@@ -188,7 +261,10 @@ fn require_complete_filesec(filesec: &OwnedFileSec) -> NativeResult<()> {
     Ok(())
 }
 
-fn filesec_acl_state(filesec: &OwnedFileSec) -> NativeResult<AclState> {
+fn filesec_acl_state(
+    filesec: &OwnedFileSec,
+    inheritance_target: Option<InheritanceTarget>,
+) -> NativeResult<AclState> {
     require_complete_filesec(filesec)?;
     if !filesec_property_valid(filesec, FILESEC_ACL)? {
         // Once the mandatory scalar properties prove population completed, a
@@ -220,10 +296,13 @@ fn filesec_acl_state(filesec: &OwnedFileSec) -> NativeResult<AclState> {
         ));
     }
     // filesec_get_property returns a separately allocated ACL copy owned here.
-    inspect_owned_acl(&OwnedAcl(NonNull::new(raw_acl).unwrap()))
+    inspect_owned_acl(
+        &OwnedAcl(NonNull::new(raw_acl).unwrap()),
+        inheritance_target,
+    )
 }
 
-pub(crate) fn inspect_security(fd: BorrowedFd<'_>) -> NativeResult<DarwinSecurityReceipt> {
+fn read_descriptor_security(fd: BorrowedFd<'_>) -> NativeResult<(libc::stat, OwnedFileSec)> {
     clear_errno();
     // SAFETY: filesec_init returns either null or a newly allocated filesec.
     let raw_filesec = unsafe { filesec_init() };
@@ -243,7 +322,12 @@ pub(crate) fn inspect_security(fd: BorrowedFd<'_>) -> NativeResult<DarwinSecurit
     }
     // SAFETY: a successful fstatx_np initialized the stat output.
     let stat = unsafe { stat.assume_init() };
-    let acl = filesec_acl_state(&filesec)?;
+    Ok((stat, filesec))
+}
+
+pub(crate) fn inspect_security(fd: BorrowedFd<'_>) -> NativeResult<DarwinSecurityReceipt> {
+    let (stat, filesec) = read_descriptor_security(fd)?;
+    let acl = filesec_acl_state(&filesec, None)?;
     Ok(DarwinSecurityReceipt::from_stat(&stat, acl))
 }
 
@@ -295,9 +379,26 @@ fn retain_descriptor(fd: i32) -> NativeResult<OwnedFd> {
     Ok(unsafe { OwnedFd::from_raw_fd(duplicated) })
 }
 
-fn inspect_descriptor(fd: i32) -> NativeResult<AclState> {
+fn inspect_descriptor(fd: i32, inheritance_target: Option<&str>) -> NativeResult<AclState> {
+    let target = match inheritance_target {
+        None => None,
+        Some("file") => Some(InheritanceTarget::File),
+        Some("directory") => Some(InheritanceTarget::Directory),
+        Some(_) => {
+            return Err(native_error(
+                "EINVAL",
+                "ACL inheritance target must be file or directory",
+            ));
+        }
+    };
     let retained = retain_descriptor(fd)?;
-    inspect_acl(retained.as_fd())
+    match target {
+        None => inspect_acl(retained.as_fd()),
+        Some(_) => {
+            let (_, filesec) = read_descriptor_security(retained.as_fd())?;
+            filesec_acl_state(&filesec, target)
+        }
+    }
 }
 
 #[napi(object)]
@@ -306,11 +407,15 @@ pub struct DarwinAclFacts {
 }
 
 #[napi(js_name = "inspectDarwinAcl")]
-pub fn inspect_darwin_acl(env: Env, fd: i32) -> Result<DarwinAclFacts> {
+pub fn inspect_darwin_acl(
+    env: Env,
+    fd: i32,
+    inheritance_target: Option<String>,
+) -> Result<DarwinAclFacts> {
     // No worker, callback, or await can outlive the owned duplicate.
     into_napi(
         env,
-        inspect_descriptor(fd).map(|state| DarwinAclFacts {
+        inspect_descriptor(fd, inheritance_target.as_deref()).map(|state| DarwinAclFacts {
             state: state.as_str().to_owned(),
         }),
     )

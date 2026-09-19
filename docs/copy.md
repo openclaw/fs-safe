@@ -78,6 +78,8 @@ XFS and ZFS preserve regular-file and directory modes, timestamps, extended attr
 
 `readCloneFileMetadata(files)` asynchronously reads APFS data-stream identities and file metadata in one native batch. Results correspond to input order; missing or unsupported entries return `undefined`. The returned `CloneFileMetadata` includes clone ID, device/inode, size, mode, ownership, and timestamps. These are point-in-time observations, not authorization or proof that later reads remain unchanged. Consumers such as Git index adapters must validate their own content and timestamp invariants. The reader does not follow leaf symbolic links.
 
+All input paths must be absolute and valid before native availability is checked. On platforms other than macOS, `auto` and `off` can return one `undefined` per path without the addon, matching native's unsupported result. On macOS, `off` or an unavailable addon still rejects with `helper-unavailable`; JavaScript cannot supply APFS clone IDs. Explicit `require` mode rejects an unavailable addon on every platform, including for an empty batch. Errors from a loaded native helper remain terminal.
+
 ## Borrowed FileHandle transfers
 
 `copyFileHandle` from `@openclaw/fs-safe/advanced` copies bytes between two

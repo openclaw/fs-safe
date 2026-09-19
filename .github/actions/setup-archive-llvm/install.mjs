@@ -6,13 +6,13 @@ import { join } from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
-// Official WASI SDK 27 contains LLVM 20.1.8. Verify before extracting because
+// Use the official WASI SDK 34 LLVM tools. Verify before extracting because
 // upstream release assets can be replaced without changing their names.
 const assets = {
-  "linux-x64": ["x86_64-linux", "b7d4d944c88503e4f21d84af07ac293e3440b1b6210bfd7fe78e0afd92c23bc2"],
-  "darwin-arm64": ["arm64-macos", "055c3dc2766772c38e71a05d353e35c322c7b2c6458a36a26a836f9808a550f8"],
-  "darwin-x64": ["x86_64-macos", "163dfd47f989b1a682744c1ae1f0e09a83ff5c4bbac9dcd8546909ab54cda5a1"],
-  "win32-x64": ["x86_64-windows", "4a576c13125c91996d8cc3b70b7ea0612c2044598d2795c9be100d15f874adf6"],
+  "linux-x64": ["x86_64-linux", "b761e3a0721dbae9c09a0059e5fdb2bf917d1b4a8a7b430fb3b5aafb0984b2c4"],
+  "darwin-arm64": ["arm64-macos", "9c59398106b417f8f14913380fdf0097a8cc0ff4af9eb3ce0065a859e88d49e9"],
+  "darwin-x64": ["x86_64-macos", "87d27fa8adc68dee59bfbf2e22a6d34ef717c34d6bf1d8af2a56fc929d9ce0eb"],
+  "win32-x64": ["x86_64-windows", "cccb5c323a9b34f0349a9b09e8804a0a7632c68c3310f4b5f437ed57d7e71d8f"],
 };
 const asset = assets[`${process.platform}-${process.arch}`];
 if (!asset) throw new Error(`Unsupported archive compiler host: ${process.platform}-${process.arch}`);
@@ -28,11 +28,11 @@ function run(command, args) {
 
 const [platform, expectedHash] = asset;
 const directory = await mkdtemp(join(process.env.RUNNER_TEMP, "fs-safe-archive-llvm-"));
-const sdkName = `wasi-sdk-27.0-${platform}`;
+const sdkName = `wasi-sdk-34.0-${platform}`;
 const archive = join(directory, `${sdkName}.tar.gz`);
 try {
   const response = await fetch(
-    `https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-27/${sdkName}.tar.gz`,
+    `https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/${sdkName}.tar.gz`,
     { signal: AbortSignal.timeout(180_000) },
   );
   if (!response.ok || !response.body) throw new Error(`LLVM download failed: HTTP ${response.status}`);

@@ -2,13 +2,18 @@ import { randomUUID } from "node:crypto";
 import fsSync, { type BigIntStats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
+import { createFileHandle } from "./create.js";
+import { hasPreservedCreationArtifacts } from "./creation-file-state.js";
+import { creationAdmissionFromParent } from "./creation-path.js";
 import type { AsyncDirectoryGuard } from "./directory-guard.js";
 import { syncDirectoryBestEffort } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity, sha256Hex, type FileIdentityStat } from "./file-identity.js";
 import { syncFileBestEffort } from "./file-sync.js";
+import { assertDarwinCreationAcl, privateFileMutationAssertion } from "./creation-darwin.js";
 import { withAsyncDirectoryGuards } from "./guarded-mutation.js";
 import { writePinnedInput } from "./pinned-write-input.js";
+import { assertPinnedWriteMode, pinnedWriteModeAssertion, preparePinnedWriteMode } from "./pinned-write-mode.js";
 import type { PinnedWriteParams } from "./pinned-write-types.js";
 import { publishCopyStage } from "./publish-copy-stage.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
@@ -23,6 +28,7 @@ export async function runPinnedStagedWrite(
   parentPath: string,
   parentGuard: AsyncDirectoryGuard<BigIntStats>,
 ): Promise<FileIdentityStat> {
+  const verifyPosixMode = params.verifyPosixMode === true && process.platform !== "win32";
   const targetPath = path.join(parentPath, params.basename);
   // Private staging must not consume the destination basename's filename budget.
   const tempPath = path.join(parentPath, `.fs-safe-${randomUUID()}.tmp`);
@@ -45,10 +51,22 @@ export async function runPinnedStagedWrite(
   let failure: { error: unknown } | undefined;
   try {
     params.assertBeforeMutation?.();
-    handle = await fs.open(tempPath, tempFlags, params.mode);
+    handle = params.private
+      ? await createFileHandle(tempPath, {
+        private: true, mode: 0o600, assertBeforeMutation: params.assertBeforeMutation,
+      }, creationAdmissionFromParent(parentGuard))
+      : await fs.open(tempPath, tempFlags, verifyPosixMode ? 0o600 : params.mode);
     let verificationIdentity = fsSync.fstatSync(handle.fd, { bigint: true });
     tempIdentity = verificationIdentity;
-    await writePinnedInput(handle, params.input, params.maxBytes, params.assertBeforeMutation);
+    let assertBeforeMutation = params.private
+      ? privateFileMutationAssertion(handle.fd, params.assertBeforeMutation) : params.assertBeforeMutation;
+    const assertBeforeWrite = verifyPosixMode
+      ? await preparePinnedWriteMode(handle, Number(tempIdentity.mode & 0o7777n), assertBeforeMutation)
+      : assertBeforeMutation;
+    if (verifyPosixMode) assertPinnedWriteMode(handle.fd, 0o600);
+    await writePinnedInput(handle, params.input, params.maxBytes, assertBeforeWrite);
+    if (verifyPosixMode) assertPinnedWriteMode(handle.fd, 0o600);
+    if (params.private) assertDarwinCreationAcl(handle.fd);
     tempStat = fsSync.fstatSync(handle.fd);
     const tempPathStat = fsSync.lstatSync(tempPath);
     if (tempPathStat.isSymbolicLink() || !sameFileIdentity(tempPathStat, tempStat)) {
@@ -56,6 +74,10 @@ export async function runPinnedStagedWrite(
     }
     const expectedTempStat = tempStat;
     await handle.chmod(params.mode);
+    if (verifyPosixMode) {
+      assertPinnedWriteMode(handle.fd, params.mode);
+      assertBeforeMutation = pinnedWriteModeAssertion(handle.fd, params.mode, assertBeforeMutation);
+    }
     if (params.sync !== false) {
       if (params.strictFileSync) await handle.sync();
       else await syncFileBestEffort(handle);
@@ -76,7 +98,7 @@ export async function runPinnedStagedWrite(
         publishCopyStage({
           temporaryPath: tempPath, targetPath, fd: handle!.fd,
           identity: tempIdentity!, parentGuard,
-          assertBeforeMutation: params.assertBeforeMutation,
+          assertBeforeMutation,
           onPublicationAttempt: () => {
             if (receipt) publication = Object.freeze({ status: "indeterminate", basename: params.basename, overwrite: false });
           },
@@ -87,7 +109,7 @@ export async function runPinnedStagedWrite(
           },
         });
       } else {
-        params.assertBeforeMutation?.();
+        assertBeforeMutation?.();
         await fs.rename(tempPath, targetPath);
         renamed = true;
         params.onPublished?.(verificationIdentity);
@@ -128,10 +150,12 @@ export async function runPinnedStagedWrite(
     failure = { error };
     throw error;
   } finally {
-    if (completeCreate) {
+    const preservedPreparation = params.private && !handle && hasPreservedCreationArtifacts(failure?.error);
+    if (completeCreate || preservedPreparation) {
       await settleStagedFile({
         temporaryBasename: path.basename(tempPath), publication, phase, failure,
         cleanup: async () => {
+          if (preservedPreparation) return "preserved";
           if (publication.status === "indeterminate") return "preserved";
           if (renamed) {
             return failure?.error instanceof FsSafeError && failure.error.details?.cleanup === "failed"

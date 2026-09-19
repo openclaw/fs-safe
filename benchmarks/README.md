@@ -106,6 +106,13 @@ sync successful cleanup row in native-off mode. These rows time the guarded
 JavaScript recursive-removal path, verify `"removed"`, and bind reports to the
 compatible safety mode, native-off route, and empty-workspace fixture; setup and
 verification remain outside timing.
+Creation rows measure exclusive leaf directory and file creation beside equivalent
+ordinary Node operations. The file rows check empty-file identity and descriptor
+writability, then dispose and remove the file outside creation timing. Separate
+rows measure the owned descriptor's `close` and `Symbol.dispose` methods alongside
+Node's `closeSync`; every invocation verifies descriptor closure and resets its
+fixture outside the timer.
+
 The broader cases add lexical paths at depths 0/8/32, batches of 100/1,000
 paths, 1,000-entry listings and walks, private/public stores through 1 MiB with
 both durability settings, 1,000-item JSON documents and concurrent updates,

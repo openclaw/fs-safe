@@ -5,6 +5,15 @@ import { inspectDirectoryIdentity, inspectDirectoryIdentitySync } from "./direct
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import { assertOwnedDirectory, ownDirectoryMode, type DirectoryModeOwner } from "./directory-mode-owner.js";
 
+/** Darwin descriptor inspection avoids requesting directory-content reads. */
+export function nodeDarwinDirectoryMetadataFlags(): number {
+  if (process.platform !== "darwin" || (process.arch !== "x64" && process.arch !== "arm64")) {
+    throw new FsSafeError("helper-unavailable", "Darwin directory metadata descriptors are unavailable");
+  }
+  // Darwin SDK O_EVTONLY; Node omits this flag from its exported constants.
+  return 0x8000 | constants.O_DIRECTORY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
+}
+
 export function nodeDirectorySearchOnlyFlags(): { flags: number; proc: boolean } | undefined {
   if (process.arch !== "x64" && process.arch !== "arm64") return undefined;
   // Darwin SDK O_SEARCH = O_EXEC (0x40000000) | O_DIRECTORY, on x64/arm64.

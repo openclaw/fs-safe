@@ -26,7 +26,9 @@ describe("fallback mode-failure cleanup ownership", () => {
     vi.spyOn(fs, "open").mockImplementation(async (...args) => {
       const handle = await open(...args);
       if (!(await handle.stat()).isFile()) return handle;
-      vi.spyOn(handle, "chmod").mockImplementationOnce(async () => {
+      const chmod = handle.chmod.bind(handle);
+      vi.spyOn(handle, "chmod").mockImplementation(async (mode) => {
+        if ((await handle.stat()).size === 0) return await chmod(mode);
         replacedPath = String(args[0]);
         await fs.rename(replacedPath, saved);
         await fs.writeFile(replacedPath, "replacement", { mode: 0o600 });

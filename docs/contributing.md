@@ -26,10 +26,10 @@ wasm32-unknown-unknown`, and LLVM's WebAssembly-capable `clang` and `llvm-ar`.
 The system's native `ar` is not sufficient. `pnpm archive:wasm` rebuilds just
 the portable module.
 
-Linux, macOS, and Windows CI use the same pinned WASI SDK 27 LLVM toolchain;
-Alpine uses its versioned LLVM 20 packages alongside `rust-wasm`. For local
+Linux, macOS, and Windows CI use the same pinned WASI SDK 34 LLVM toolchain;
+Alpine uses its versioned LLVM 22 packages alongside `rust-wasm`. For local
 builds, install LLVM through your package manager or use the official
-[WASI SDK](https://github.com/WebAssembly/wasi-sdk/releases/tag/wasi-sdk-27).
+[WASI SDK](https://github.com/WebAssembly/wasi-sdk/releases/tag/wasi-sdk-34).
 On macOS, `brew install llvm` supplies the archiver missing from Apple's
 Command Line Tools. On Windows, install the LLVM distribution with both
 `clang.exe` and `llvm-ar.exe`. On Linux, install the matching `clang` and
@@ -43,6 +43,8 @@ executables. To select another installation explicitly, set
 and archiver. The corresponding hyphenated target variables and cc-rs's
 `TARGET_CC`/`TARGET_AR` or `CC`/`AR` overrides are also respected; an unusable
 explicit override fails with a builder diagnostic instead of being ignored.
+Windows build environment names are case-insensitive, including when worker
+processes uppercase them. The build normalizes only its copied child environment.
 Clang's implicit configuration is disabled for this target so the WASI SDK's
 default libc/sysroot cannot leak into the import-free module. These settings
 affect compilation only and do not become runtime dependencies.

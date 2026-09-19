@@ -72,6 +72,9 @@ export type PinnedWriteParams = {
   basename: string;
   mkdir: boolean;
   mode: number;
+  private?: boolean;
+  // Secret writers require verified POSIX modes without private-creation ACL policy.
+  verifyPosixMode?: boolean;
   sync?: boolean;
   strictFileSync?: boolean;
   overwrite?: boolean;

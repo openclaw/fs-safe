@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const ARCHIVES = [
   ["22.23.2", "d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307"],
-  ["24.20.0", "2f2c0da162318f0de47665410c7c8c2ed3d36c8f3105de4bbc61176c70a7cbf2"],
+  ["24.21.0", "fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6"],
 ] as const;
 const temporaryDirectories: string[] = [];
 let workflowPromise: Promise<string> | undefined;
@@ -102,7 +102,7 @@ describe.skipIf(process.platform !== "linux")("credential-proof shell policies",
     expect(result.stdout).toBe(`https://nodejs.org/dist/v${version}/node-v${version}-linux-x64.tar.xz\n${digest}\n`);
   });
 
-  it.each(["22", "v22.23.2", "24.20.0/../other", "22.23.2\nextra"])("rejects unsupported archive selector %j", async (version) => {
+  it.each(["22", "v22.23.2", "24.21.0/../other", "22.23.2\nextra"])("rejects unsupported archive selector %j", async (version) => {
     const result = runPolicy(await policy(), 'node_version="$1"; select_node_archive; printf executed', [version]);
     expect(result.status).not.toBe(0);
     expect(result.stdout).not.toContain("executed");

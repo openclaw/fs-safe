@@ -57,7 +57,7 @@ This is a **library-level guardrail**, not OS-level isolation. It does not repla
 pnpm add @openclaw/fs-safe
 ```
 
-Node 22 or newer. Core root/path/json/temp helpers avoid framework dependencies. With all optional dependencies omitted, public subpaths remain safe to import and fallback-capable operations work in `auto` or `off`. Native-only features, including no-clobber `Root.move()`, remain unavailable and fail with `helper-unavailable`. TAR, gzip, zstd, and bzip2 extraction and bounded entry reads use the same Rust TAR parser through bundled WASM when native support is disabled or absent. Zstd/bzip2 codecs are bundled too; gzip uses Node's built-in decoder. ZIP fallback still needs optional `jszip`. See the [0.6 migration guide](docs/migrating-to-0.6.md).
+Node 22 or newer. Core root/path/json/temp helpers avoid framework dependencies. With all optional dependencies omitted, public subpaths remain safe to import and fallback-capable operations work in `auto` or `off`. Native-only features, including no-clobber `Root.move()` and [`private: true` creation on macOS](docs/creation.md#permission-options), remain unavailable and fail with `helper-unavailable`. TAR, gzip, zstd, and bzip2 extraction and bounded entry reads use the same Rust TAR parser through bundled WASM when native support is disabled or absent. Zstd/bzip2 codecs are bundled too; gzip uses Node's built-in decoder. ZIP fallback still needs optional `jszip`. See the [0.6 migration guide](docs/migrating-to-0.6.md).
 
 Bun 1.4.2 is also supported with the [Bun runtime requirements](docs/install.md#bun-runtime), including the matching Rust addon on macOS and Linux. JIT-disabled Bun works too.
 
@@ -157,6 +157,14 @@ const opened = await fs.open("notes/today.txt");
 ```ts
 await fs.create("notes/README.md", "seed\n"); // throws if it already exists
 ```
+
+Use `private: true` on `mkdir()`, `ensureRoot()`, `create()`, or `createJson()`
+for private creation. On macOS, this requires native ACL inspection before
+creating parents or stages and verifies owner-only permissions with no ACL
+before writing payload bytes. Native `off` or a missing ACL capability rejects
+with `helper-unavailable`; nonprivate creation is unchanged. See the
+[creation contract](docs/creation.md#permission-options) for parent ACL handling
+and platform support.
 
 Pass `{ atomic: true }` to buffered `create()` or `createJson()` to keep the
 destination absent until complete content is ready, including with native support

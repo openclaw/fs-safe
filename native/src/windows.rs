@@ -938,6 +938,16 @@ pub(crate) struct HandleFileIdentity {
     file_id: [u8; 16],
 }
 
+impl std::fmt::Display for HandleFileIdentity {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{:016x}:", self.volume_serial_number)?;
+        for byte in self.file_id {
+            write!(formatter, "{byte:02x}")?;
+        }
+        Ok(())
+    }
+}
+
 fn file_identity_error(code: u32) -> napi::Error<String> {
     if matches!(
         code,
@@ -1682,6 +1692,15 @@ mod tests {
         assert_ne!(identity, different_high_bit);
         assert_ne!(identity, different_volume);
         assert_ne!(identity, different_volume_high_bit);
+
+        let receipt_identity = HandleFileIdentity {
+            volume_serial_number: 0xfedc_ba98_7654_3210,
+            file_id: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 255],
+        };
+        assert_eq!(
+            receipt_identity.to_string(),
+            "fedcba9876543210:000102030405060708090a0b0c0d0eff"
+        );
 
         for code in [
             ERROR_INVALID_FUNCTION,

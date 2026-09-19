@@ -9,13 +9,34 @@ import {
 import { registerSecureTempRootCoverage } from "./secure-temp-root-fixtures.mjs";
 import { registerSidecarPathSnapshot } from "./sidecar-path-snapshot.mjs";
 import { registerAtomicTempSettlementCoverage } from "./atomic-temp-settlement.mjs";
+import { registerCreation } from "./creation.mjs";
 import {
   PROBE_TREE_SUCCESS_WORKLOAD,
   probeTreeSuccessFixtureReceipt,
   registerCopyTreeSuccess,
 } from "./copy-tree-success.mjs";
 
+export async function registerCloneMetadata({ api: a, workspace: w, cloneBackend, register: add }) {
+  const verify = (entries) => {
+    assert.equal(entries.length, 1);
+    if (process.platform !== "darwin") assert.deepEqual(entries, [undefined]);
+    if (cloneBackend === "apfs") assert.equal(entries[0]?.type, 1);
+  };
+  let skip;
+  try {
+    verify(await a.readCloneFileMetadata([path.join(w, "input.json")]));
+  } catch (error) {
+    if (error?.code !== "helper-unavailable") throw error;
+    skip = "Native metadata reader unavailable.";
+  }
+  add("readCloneFileMetadata", () => a.readCloneFileMetadata([path.join(w, "input.json")]), {
+    skip,
+    verify,
+  });
+}
+
 export async function registerLifecycle({ api: a, workspace: w, native, binding, register: add, contract, onCleanup, args }) {
+  registerCreation({ api: a, workspace: w, register: add, contract });
   const cloneBackend = a.probeTreeClone(w);
   add("probeTreeClone", () => a.probeTreeClone(w), {
     sync: true,
@@ -69,13 +90,7 @@ export async function registerLifecycle({ api: a, workspace: w, native, binding,
   await registerCopyTreeSuccess({
     api: a, workspace: w, binding, register: add, nativeMode: args.mode,
   });
-  add("readCloneFileMetadata", () => a.readCloneFileMetadata([path.join(w, "input.json")]), {
-    skip: !native ? "Native metadata reader unavailable." : undefined,
-    verify: (entries) => {
-      assert.equal(entries.length, 1);
-      if (cloneBackend === "apfs") assert.equal(entries[0]?.type, 1);
-    },
-  });
+  await registerCloneMetadata({ api: a, workspace: w, cloneBackend, register: add });
   if (binding) {
     const directory = path.join(w, "native-directory");
     fs.mkdirSync(directory);
