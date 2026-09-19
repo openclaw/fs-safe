@@ -1,5 +1,4 @@
 import { syncFileBestEffort } from "./file-sync.js";
-import { assertDarwinCreationAcl, privateFileMutationAssertion } from "./creation-darwin.js";
 import fsSync, { type BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -185,7 +184,8 @@ export async function withPinnedWriteRenameIdentityLock<T>(
 }
 
 async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileIdentityStat> {
-  const verifyPosixMode = params.verifyPosixMode === true && process.platform !== "win32";
+  const verifyPosixMode = process.platform !== "win32" &&
+    (params.verifyPosixMode === true || params.private === true);
   const exactRoot = typeof params.rootIdentity?.dev === "bigint" && typeof params.rootIdentity.ino === "bigint"
     ? { dev: params.rootIdentity.dev, ino: params.rootIdentity.ino } : undefined;
   const mutationAdmission = params.mutationAdmission;
@@ -328,18 +328,15 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
     try {
       const verificationIdentity = fsSync.fstatSync(handle.fd, { bigint: true });
       createdIdentity = verificationIdentity;
-      let assertBeforeWrite: (() => void) | undefined = params.private
-        ? privateFileMutationAssertion(handle.fd, assertBeforeMutation) : assertBeforeMutation;
-      if (verifyPosixMode) {
-        assertBeforeWrite = await preparePinnedWriteMode(handle, Number(createdIdentity.mode & 0o7777n), assertBeforeWrite);
-        assertPinnedWriteMode(handle.fd, 0o600);
-      }
+      const assertBeforeWrite = verifyPosixMode
+        ? await preparePinnedWriteMode(handle, Number(createdIdentity.mode & 0o7777n), assertBeforeMutation, params.private)
+        : assertBeforeMutation;
+      if (verifyPosixMode) assertPinnedWriteMode(handle.fd, 0o600, params.private);
       await writePinnedInput(handle, params.input, params.maxBytes, assertBeforeWrite);
-      if (verifyPosixMode) assertPinnedWriteMode(handle.fd, 0o600);
-      if (params.private) assertDarwinCreationAcl(handle.fd);
+      if (verifyPosixMode) assertPinnedWriteMode(handle.fd, 0o600, params.private);
       // Content writes may clear set-ID bits; finalize them through the owned fd.
       await handle.chmod(params.mode);
-      if (verifyPosixMode) assertPinnedWriteMode(handle.fd, params.mode);
+      if (verifyPosixMode) assertPinnedWriteMode(handle.fd, params.mode, params.private);
       if (params.sync !== false) {
         if (params.strictFileSync) await handle.sync();
         else await syncFileBestEffort(handle);
@@ -349,6 +346,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
       // Publication is complete. A failed outer check must not remove its target.
       created = false;
       await params.verifyPublished?.(handle.fd, verificationIdentity, parentGuard);
+      if (verifyPosixMode) assertPinnedWriteMode(handle.fd, params.mode, params.private);
       return { dev: stat.dev, ino: stat.ino };
     } finally {
       try {
