@@ -79,9 +79,8 @@ export async function pinDirectoryForMode(params: {
   }
 
   const expected = params.fsModule === fs
-    ? inspectFileIdentitySync(() => syncFs.lstatSync(params.dirPath, { bigint: true }))
-    : await inspectFileIdentity(() => params.fsModule.lstat(params.dirPath, { bigint: true }));
-  assertDirectory(expected, params.dirPath);
+    ? inspectFileIdentitySync(() => assertDirectory(syncFs.lstatSync(params.dirPath, { bigint: true }), params.dirPath))
+    : await inspectFileIdentity(async () => assertDirectory(await params.fsModule.lstat(params.dirPath, { bigint: true }), params.dirPath));
   const handle = await params.fsModule.open(params.dirPath, directoryOpenFlags());
   try {
     const owner = ownDirectoryMode({
@@ -127,8 +126,7 @@ export function applyDirectoryModeSync(params: {
     return;
   }
 
-  const expected = inspectFileIdentitySync(() => params.fsModule.lstatSync(params.dirPath, { bigint: true }));
-  assertDirectory(expected, params.dirPath);
+  const expected = inspectFileIdentitySync(() => assertDirectory(params.fsModule.lstatSync(params.dirPath, { bigint: true }), params.dirPath));
   const fd = params.fsModule.openSync(params.dirPath, directoryOpenFlags());
   try {
     inspectFileIdentitySync(() => assertDirectory(params.fsModule.fstatSync(fd, { bigint: true }), params.dirPath), expected);
