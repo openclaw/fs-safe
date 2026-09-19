@@ -279,9 +279,9 @@ await withTimeout(
 
 ## Threat model notes
 
-- These helpers protect the secret file from **other processes with the same UID** that respect filesystem permissions. They do not defend against root or against attackers who can read process memory.
+- On POSIX, the default `0600` file and `0700` directory modes restrict group and other access. They do not protect against processes with the same UID, root, attackers who can read process memory, or access granted by additional ACL entries.
 - Validation failures are tripwires, not authorization. Investigate before clearing a rejected credential file.
-- If the destination directory is on a tmpfs that does not honor mode bits, the helpers will set the mode bits but the OS may ignore them. Audit your platform.
+- On POSIX, a file that still reports a mode other than `0600` after initialization is rejected with `insecure-permissions` before payload is written. Matching mode reports alone cannot prove that an arbitrary filesystem actually enforces those permissions.
 
 ## See also
 
