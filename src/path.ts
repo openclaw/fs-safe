@@ -217,10 +217,8 @@ export function splitSafeRelativePath(relativePath: string): string[] {
 export function resolveSafeRelativePath(rootDir: string, relativePath: string): string {
   assertNoWindowsPathAlias(rootDir, "filesystem", "root dir uses a Windows filesystem namespace alias");
   const root = resolvePathPreservingWindowsRoot(rootDir);
-  const target = resolvePathFromBasePreservingWindowsRoot(
-    root,
-    splitSafeRelativePath(relativePath).join(path.sep),
-  );
+  splitSafeRelativePath(relativePath);
+  const target = resolvePathFromBasePreservingWindowsRoot(root, relativePath);
   if (!isPathInside(root, target)) {
     throw new FsSafeError("outside-workspace", "relative path escapes root");
   }
