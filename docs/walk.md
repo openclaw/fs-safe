@@ -227,6 +227,9 @@ its exact identity, and rechecks it and the Root identity around each metadata
 batch or individual filesystem-order observation. Sorted batches contain no
 await or caller code between their before/after checks. It tracks canonical
 directories to stop symlink cycles.
+Directory rechecks retain exact identities while using ordinary numeric metadata
+when it represents those identities without rounding. Large identities and
+Windows unknown-identity retries keep the bigint inspection path.
 Neither mode holds a descriptor for every path component, so it is not a process sandbox against a hostile peer that
 can continuously swap and restore directories. Each individual lookup retains
 the documented Node `Root` boundary checks.

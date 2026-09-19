@@ -8,6 +8,7 @@ import {
   assertDirectoryObservationGuardSync,
   assertDirectoryObservationSync,
   createAsyncDirectoryGuard,
+  extendDirectoryObservationGuard,
   type AsyncDirectoryGuard,
   type DirectoryObservationGuard,
 } from "./directory-guard.js";
@@ -100,7 +101,16 @@ export async function assertRootDirectoryObservationGuard(
     }
     return;
   }
-  await assertRootIdentityCurrent(root);
+  if ("identity" in guard && typeof root.rootIdentity.dev === "bigint" &&
+    typeof root.rootIdentity.ino === "bigint") {
+    try {
+      assertDirectoryObservationSync(root.rootReal, root.rootIdentity as { dev: bigint; ino: bigint });
+    } catch (error) {
+      throw rootPathChangedError(error instanceof Error ? error : undefined);
+    }
+  } else {
+    await assertRootIdentityCurrent(root);
+  }
   try {
     if ("identity" in guard) assertDirectoryObservationGuardSync(guard);
     else await assertAsyncDirectoryGuard(guard);
@@ -299,9 +309,15 @@ export async function openRootDirectoryListing(
   directory: string,
   options: RootDirectoryListingOptions,
 ): Promise<RootDirectoryListing> {
-  const guard = await createRootDirectoryObservationGuard(root, directory).catch((error) => {
+  const admitted = await createRootDirectoryObservationGuard(root, directory).catch((error) => {
     throw normalizeDirectoryError(error);
   });
+  // Retain exact admission identities; metadata rechecks can use numeric Stats
+  // only when every identity component is losslessly representable.
+  const guard = extendDirectoryObservationGuard({
+    stat: admitted.stat,
+    identity: { dev: admitted.stat.dev, ino: admitted.stat.ino },
+  }, admitted.dir, admitted.realPath);
   const assertCurrent = async () => {
     options.signal?.throwIfAborted();
     await assertRootDirectoryObservationGuard(root, guard);
