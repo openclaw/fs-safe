@@ -310,6 +310,11 @@ Synchronous return values are ignored. Callbacks can run multiple times and
 must inspect current authority each time.
 Directory creation rechecks the retained parent after the callback and before
 submitting mkdir, so a replacement is rejected before creating that component.
+Overwrite moves recheck the retained root, parents, source identity and both
+routes after the callback, including destination parents that were missing
+during preparation. Removals recheck cancellation, retained ancestry and exact
+leaf identity before dispatch; `force` tolerates a missing leaf, not replaced
+ancestry. Removing an admitted hardlink still leaves its other names intact.
 
 Already dispatched I/O cannot be revoked. Identity-checked cleanup, final
 permissions, and durability finish under the existing operation owner even

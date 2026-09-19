@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Renew overwrite-move and removal admission after authority callbacks, preserving replaced entries and outside targets and honoring callback-triggered removal cancellation; share source checks with native no-replace moves.
+
 - Recheck hardlink policy on the existing final Root and root-file metadata observations, rejecting late-added links before reading bytes or returning a handle.
 - Renew guarded directory ancestry after authority callbacks before creating components, preserving replaced roots for `mkdir`, `openWritable`, and `append` while sharing the creation path.
 
