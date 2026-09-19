@@ -263,7 +263,8 @@ class NativeStagedFile implements StagedFile {
       }
       const fd = state.fileFd;
       if (input.kind === "file") assertNativeCopyCompleted(input, copied);
-      const beforeChmodResult = this.#assertBeforeMutation?.();
+      const assertBeforeChmod = this.#assertBeforeMutation;
+      const beforeChmodResult = assertBeforeChmod?.();
       if (this.#private) {
         assertSynchronousCallbackResult(beforeChmodResult, "assertBeforeMutation");
         assertPrivateCreationFile(fs.fstatSync(fd, { bigint: true }), fd);
