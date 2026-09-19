@@ -42,12 +42,16 @@ POSIX creation requests `0700` for directories and `0600` for files by default;
 the umask may restrict those permissions further. Existing directory privacy
 checks never broaden permissions.
 
-Native private file creation checks the retained descriptor's actual owner and
+Private POSIX `Root.create()` and `createJson()` writes check the retained descriptor's actual owner and
 permissions before writing payload bytes, after producer and authority callbacks,
-and at publication. A successful `chmod` is insufficient: filesystems that do not
+and at publication, including JavaScript fallback writes. Payload writes require
+the temporary `0600` mode even when the requested final mode differs.
+Private ownership, permissions and ACLs are checked before preparing that mode,
+including after authority callbacks; valid restrictive initial modes remain supported.
+A successful `chmod` is insufficient: filesystems that do not
 enforce owner-only permissions reject before payload writes. The requested final
 mode is verified too; a failure after publication preserves the completed file
-and reports its published outcome.
+and staged creation reports its published outcome.
 
 On macOS (Darwin), private creation also requires an ACL-free result. The native
 helper must provide `inspectDarwinAcl`; native `off`, a missing helper, or an
@@ -113,7 +117,7 @@ thenables reject before mutation. Parent and file identity checks are repeated
 after the callback. Final permission checks, descriptor settlement and cleanup
 retain the operation's cleanup ownership after publication.
 
-Failure does not always mean the final path is absent. Private-file errors
+Failure does not always mean the final path is absent. Staged private-file errors
 after publication or ambiguous publication preserve the destination and carry
 `details.publication.status` (`published` or `indeterminate`), the target path and
 staging cleanup outcome. Cleanup and close failures retain the original error
