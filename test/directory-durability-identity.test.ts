@@ -218,17 +218,19 @@ describe("exact directory durability identities", () => {
     }
   });
 
-  itPosix("keeps wide library receipts usable by pins, sync, expected identity, publication, and staging", async () => {
+  itPosix.each(["library", "caller bigint"] as const)("keeps wide %s receipts usable by pins, sync, expected identity, publication, and staging", async kind => {
     const { base, directory, displaced } = await directoryFixture();
     injectWideIdentity(directory, displaced);
     configureFsSafeNative({ mode: "off" });
-    const receipt = await ensureDurableDirectory({ directoryPath: directory });
-    expect(typeof receipt.identity.size).toBe("number");
-    expect(typeof receipt.identity.mode).toBe("number");
-    expect(receipt.identity.isDirectory()).toBe(true);
-    expect(receipt.identity.ino).toBe(Number(highInode));
+    const receipt = kind === "library"
+      ? await ensureDurableDirectory({ directoryPath: directory })
+      : { path: directory, realPath: directory, identity: fsSync.lstatSync(directory, { bigint: true }) };
     const pinned = await pinDirectory(receipt);
     try {
+      expect(typeof pinned.receipt.identity.size).toBe("number");
+      expect(typeof pinned.receipt.identity.mode).toBe("number");
+      expect(pinned.receipt.identity.isDirectory()).toBe(true);
+      expect(pinned.receipt.identity.ino).toBe(Number(highInode));
       await expect(pinned.assertCurrent()).resolves.toBeUndefined();
       await expect(syncDirectory(receipt)).resolves.toEqual({ status: "synced" });
       expect(syncDirectorySync(receipt)).toEqual({ status: "synced" });

@@ -1,4 +1,4 @@
-import fs, { type BigIntStats } from "node:fs";
+import fs, { type BigIntStats, type Stats } from "node:fs";
 import path from "node:path";
 import type { DirectoryReceipt } from "./directory-durability.js";
 import { directoryReceiptAuthority, ownDirectoryReceipt } from "./directory-receipt.js";
@@ -161,7 +161,7 @@ export function refreshPolicyStagedDirectoryObservation(
   return checkedMutationDirectory(captured.directory.path, canonicalPath, current);
 }
 
-export function openStagedDirectory(directory: string | DirectoryReceipt): {
+export function openStagedDirectory(directory: string | DirectoryReceipt<Stats | BigIntStats>): {
   fd: number;
   receipt: StagedDirectorySnapshot;
 } {

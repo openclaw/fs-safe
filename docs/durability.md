@@ -89,6 +89,29 @@ or reconstructed numeric identity is accepted only when both components are
 safe integers and, on Windows, nonzero. Rounded or unknown caller identities
 fail with `path-mismatch` rather than authorizing a different directory.
 
+Caller-supplied receipts may use `DirectoryReceipt<BigIntStats>` with the result
+of `lstat(path, { bigint: true })`. `pinDirectory()`, `syncDirectory()`,
+`syncDirectorySync()`, `publishFileExclusive()`'s `parentReceipt`, and
+`stageFileInDirectory()` accept both numeric and bigint receipt inputs.
+`DirectoryReceipt` without a type argument and all returned durability receipts
+still expose numeric `Stats`, including working type predicates and Date
+properties. Bigint metadata is projected from the supplied observation, retaining
+fractional timestamps and the private exact device/inode identity.
+
+```ts
+import { lstatSync, realpathSync, type BigIntStats } from "node:fs";
+import { syncDirectorySync, type DirectoryReceipt } from "@openclaw/fs-safe/durability";
+
+const directoryPath = "/srv/backups/sqlite";
+const receipt: DirectoryReceipt<BigIntStats> = {
+  path: directoryPath,
+  realPath: realpathSync(directoryPath),
+  identity: lstatSync(directoryPath, { bigint: true }),
+};
+// Keep this receipt across the application's publication operation.
+const outcome = syncDirectorySync(receipt);
+```
+
 Call `close()` in `finally`. Closing is idempotent; using a closed pin fails.
 
 These checks intentionally reject a moved or replaced pathname. For one file's

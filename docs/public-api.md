@@ -135,6 +135,8 @@ The durability surface also exports the synchronous strict
 `Sha256FileSyncInput`, `Sha256FileOptions`, and `Sha256FileResult`.
 `sha256FileSync()` provides synchronous pathname or borrowed-descriptor hashing
 with the same byte-budget and digest-result contracts as `sha256File()`.
+`DirectoryReceipt<T>` accepts `Stats` or `BigIntStats` input metadata; its default
+type argument and returned durability receipts remain numeric `Stats`.
 
 ## Archives
 

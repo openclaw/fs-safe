@@ -49,7 +49,7 @@ remain with the caller.
 
 ```ts
 function stageFileInDirectory(options: {
-  directory: string | DirectoryReceipt;
+  directory: string | DirectoryReceipt<Stats | BigIntStats>;
   content: string | Uint8Array;
   mode?: number;
 }): Promise<StagedFile>;
@@ -81,8 +81,9 @@ Creation uses an exclusive, no-follow, close-on-exec open of a generated direct
 child name. Writes use that descriptor. Inspection uses non-following metadata
 operations, never a potentially blocking reopen of the leaf.
 
-A supplied directory receipt must still match at admission. Its numeric
-identity must be exactly representable; ambiguous identity fails closed.
+A supplied directory receipt must still match at admission. Caller receipts can
+carry numeric `Stats` or exact `BigIntStats`; untracked numeric identities must
+be exactly representable. Ambiguous identity fails closed.
 Returned receipts are frozen descriptive snapshots, not mutable authority.
 Changing a supplied receipt after admission cannot retarget the lifecycle.
 

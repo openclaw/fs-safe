@@ -4,7 +4,7 @@ import { assertPrivateCreationFile } from "./creation-file-state.js";
 import { requireNativeBinding } from "./native.js";
 import { syncFileBestEffortSync } from "./file-sync.js";
 import { randomUUID } from "node:crypto";
-import fs from "node:fs";
+import fs, { type BigIntStats, type Stats } from "node:fs";
 import path from "node:path";
 import type { AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
@@ -444,7 +444,7 @@ export type {
 } from "./staged-file-types.js";
 
 export async function stageFileInDirectory(options: {
-  directory: string | DirectoryReceipt;
+  directory: string | DirectoryReceipt<Stats | BigIntStats>;
   content: string | Uint8Array;
   /** Published mode; the unpublished stage stays at 0600. Defaults to 0600. */
   mode?: number;

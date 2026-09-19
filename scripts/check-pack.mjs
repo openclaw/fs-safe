@@ -139,6 +139,11 @@ try {
     cwd: workdir,
     stdio: "inherit",
   });
+  execFileSync(
+    process.execPath,
+    [join(import.meta.dirname, "directory-receipt-package-smoke.mjs"), workdir],
+    { cwd: workdir, stdio: "inherit" },
+  );
   const publicApi = inspectPublicApi({
     packageName: pkg.name,
     packageSubpaths: Object.keys(pkg.exports),

@@ -1,4 +1,4 @@
-import fsSync, { type Stats } from "node:fs";
+import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -21,10 +21,10 @@ export type DirectorySyncOutcome =
   | { status: "synced" }
   | { status: "unsupported"; code?: string };
 
-export type DirectoryReceipt = {
+export type DirectoryReceipt<T extends Stats | BigIntStats = Stats> = {
   path: string;
   realPath: string;
-  identity: Stats;
+  identity: T;
 };
 
 export type DurableDirectoryReceipt = DirectoryReceipt & {
@@ -159,7 +159,7 @@ class PinnedDirectoryImpl implements PinnedDirectory {
 }
 
 export async function pinDirectory(
-  directory: string | DirectoryReceipt,
+  directory: string | DirectoryReceipt<Stats | BigIntStats>,
   options: { label?: string } = {},
 ): Promise<PinnedDirectory> {
   const label = options.label ?? "directory";
@@ -179,7 +179,7 @@ export async function pinDirectory(
 }
 
 export async function syncDirectory(
-  directory: string | DirectoryReceipt,
+  directory: string | DirectoryReceipt<Stats | BigIntStats>,
   options: { label?: string } = {},
 ): Promise<DirectorySyncOutcome> {
   const label = options.label ?? "directory";
@@ -205,7 +205,7 @@ export async function syncDirectory(
 }
 
 export function syncDirectorySync(
-  directory: string | DirectoryReceipt,
+  directory: string | DirectoryReceipt<Stats | BigIntStats>,
   options: { label?: string } = {},
 ): DirectorySyncOutcome {
   const label = options.label ?? "directory";

@@ -25,7 +25,7 @@ type DirectoryAuthority = DirectoryProvenance & Readonly<{
 
 // Live pins retain private authority. New admissions snapshot the supplied
 // fields and accept exact provenance only while its public identity is intact.
-const authorities = new WeakMap<DirectoryReceipt, DirectoryAuthority>();
+const authorities = new WeakMap<DirectoryReceipt<Stats | BigIntStats>, DirectoryAuthority>();
 const identities = new WeakMap<FileIdentityStat, DirectoryProvenance>();
 
 export function directoryReceiptIdentity(identity: FileIdentityStat): ExactIdentity {
@@ -53,7 +53,7 @@ export function directoryReceiptIdentity(identity: FileIdentityStat): ExactIdent
   return Object.freeze({ dev: exact(dev), ino: exact(ino) });
 }
 
-function snapshotDirectoryReceipt(receipt: DirectoryReceipt): DirectoryAuthority {
+function snapshotDirectoryReceipt(receipt: DirectoryReceipt<Stats | BigIntStats>): DirectoryAuthority {
   const pathname = receipt?.path;
   const realPath = receipt?.realPath;
   const stat = receipt?.identity;
@@ -72,16 +72,24 @@ function snapshotDirectoryReceipt(receipt: DirectoryReceipt): DirectoryAuthority
   return Object.freeze({ path: pathname, realPath, identity, metadata });
 }
 
-function snapshotDirectoryMetadata(stat: Stats, identity: ExactIdentity): Readonly<DirectoryMetadata> {
+function snapshotDirectoryMetadata(stat: Stats | BigIntStats, identity: ExactIdentity): Readonly<DirectoryMetadata> {
   const metadata = {} as DirectoryMetadata;
   for (const field of numericFields) {
-    metadata[field] = field === "dev" || field === "ino" ? Number(identity[field]) : stat[field];
+    metadata[field] = Number(field === "dev" || field === "ino" ? identity[field] : stat[field]);
   }
-  for (const field of timeFields) metadata[`${field}Ms`] = stat[`${field}Ms`];
+  for (const field of timeFields) {
+    if ("atimeNs" in stat) {
+      const nanoseconds = stat[`${field}Ns`];
+      const remainder = ((nanoseconds % 1_000_000_000n) + 1_000_000_000n) % 1_000_000_000n;
+      metadata[`${field}Ms`] = Number((nanoseconds - remainder) / 1_000_000_000n) * 1_000 + Number(remainder) / 1_000_000;
+    } else {
+      metadata[`${field}Ms`] = stat[`${field}Ms`];
+    }
+  }
   return Object.freeze(metadata);
 }
 
-export function directoryReceiptAuthority(receipt: DirectoryReceipt): DirectoryAuthority {
+export function directoryReceiptAuthority(receipt: DirectoryReceipt<Stats | BigIntStats>): DirectoryAuthority {
   return authorities.get(receipt) ?? snapshotDirectoryReceipt(receipt);
 }
 
@@ -91,7 +99,7 @@ function rememberReceipt(receipt: DirectoryReceipt, authority: DirectoryAuthorit
   return receipt;
 }
 
-export function ownDirectoryReceipt(receipt: DirectoryReceipt): DirectoryReceipt {
+export function ownDirectoryReceipt(receipt: DirectoryReceipt<Stats | BigIntStats>): DirectoryReceipt {
   return receiptFromAuthority(snapshotDirectoryReceipt(receipt));
 }
 
@@ -108,32 +116,19 @@ function receiptFromAuthority(authority: DirectoryAuthority): DirectoryReceipt {
   }, authority);
 }
 
-function numericDirectoryMetadata(exact: BigIntStats): Readonly<DirectoryMetadata> {
-  // Keep metadata and authority from one observation. A second pathname stat
-  // can describe a replacement even when a later fence sees the original again.
-  const metadata = {} as DirectoryMetadata;
-  for (const field of numericFields) {
-    metadata[field] = Number(exact[field]);
-  }
-  for (const field of timeFields) {
-    const nanoseconds = exact[`${field}Ns`];
-    const remainder = ((nanoseconds % 1_000_000_000n) + 1_000_000_000n) % 1_000_000_000n;
-    metadata[`${field}Ms`] = Number((nanoseconds - remainder) / 1_000_000_000n) * 1_000 + Number(remainder) / 1_000_000;
-  }
-  return Object.freeze(metadata);
-}
-
 // The caller already admitted the exact observation and its paths.
 export function createDirectoryReceiptFromIdentity(
   pathname: string,
   realPath: string,
   exactStat: BigIntStats,
 ): DirectoryReceipt {
+  const identity = Object.freeze({ dev: exactStat.dev, ino: exactStat.ino });
   return receiptFromAuthority(Object.freeze({
     path: pathname,
     realPath,
-    identity: Object.freeze({ dev: exactStat.dev, ino: exactStat.ino }),
-    metadata: numericDirectoryMetadata(exactStat),
+    identity,
+    // Project metadata from the admitted observation, never a fresh pathname stat.
+    metadata: snapshotDirectoryMetadata(exactStat, identity),
   }));
 }
 

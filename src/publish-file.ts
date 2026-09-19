@@ -275,7 +275,7 @@ export async function publishFileExclusive(params: {
   expectedSourceIdentity?: FileIdentityStat;
   strategy: PublishFileExclusiveStrategy;
   onSyncFailure?: PublishFileExclusiveSyncFailurePolicy;
-  parentReceipt?: DirectoryReceipt;
+  parentReceipt?: DirectoryReceipt<Stats | BigIntStats>;
 }): Promise<PublishFileExclusiveResult> {
   const sourcePathInput = admitStandalonePublicationPath(params.sourcePath, "publication source uses a Windows filesystem namespace alias");
   const targetPathInput = admitStandalonePublicationPath(params.targetPath, "publication target uses a Windows filesystem namespace alias");

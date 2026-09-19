@@ -1,13 +1,47 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { pinDirectory } from "../src/directory-durability.js";
+import { pinDirectory, syncDirectorySync } from "../src/directory-durability.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
 afterEach(() => vi.restoreAllMocks());
 
 describe("directory receipt metadata provenance", () => {
+  it("normalizes caller bigint metadata without changing the exact admission", async () => {
+    const directory = await tempRoot("fs-safe-directory-bigint-metadata-");
+    const identity = await fs.lstat(directory, { bigint: true });
+    const before = await fs.lstat(directory);
+    const supplied = { path: directory, realPath: directory, identity };
+    const outcome = syncDirectorySync(supplied);
+    expect(process.platform === "win32" ? ["synced", "unsupported"] : ["synced"]).toContain(outcome.status);
+    const pending = pinDirectory(supplied);
+    identity.mode ^= 0o777n;
+    identity.mtimeNs = 1n;
+    const pinned = await pending;
+    try {
+      const exposed = pinned.receipt.identity;
+      expect(exposed).toBeInstanceOf(fsSync.Stats);
+      expect(exposed.isDirectory()).toBe(true);
+      expect(exposed.isFile()).toBe(false);
+      expect(exposed).toMatchObject(before);
+      for (const field of ["atime", "mtime", "ctime", "birthtime"] as const) {
+        expect(typeof exposed[`${field}Ms`]).toBe("number");
+        expect(exposed[field]).toEqual(before[field]);
+      }
+      await expect(pinned.assertCurrent()).resolves.toBeUndefined();
+      const readmitted = await pinDirectory(pinned.receipt);
+      try {
+        expect(readmitted.receipt.identity).toMatchObject(before);
+        expect(readmitted.receipt.identity.isDirectory()).toBe(true);
+      } finally {
+        await readmitted.close();
+      }
+    } finally {
+      await pinned.close();
+    }
+  });
+
   it.each(["receipt", "identity wrapper"] as const)(
     "retains admitted metadata when reusing a mutated library %s",
     async kind => {
