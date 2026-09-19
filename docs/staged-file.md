@@ -65,6 +65,11 @@ interface StagedFile extends AsyncDisposable {
 Strings are UTF-8. `mode` is the requested **published** mode and defaults to
 `0600`; exact final modes, including `000`, are supported. The unpublished file
 stays at `0600` throughout preparation and any awaited application checks.
+The retained descriptor's actual mode is checked before writing payload bytes,
+by `assertCurrent()`, and before publication; a successful but ineffective
+`chmod` fails with `insecure-permissions`. Final mode verification after
+publication can fail with a `published` receipt while preserving the completed
+file. These are POSIX mode checks, not ACL or ownership admission.
 After rename succeeds and the published entry passes identity validation, the
 owner applies the requested mode through its retained file descriptor. Content
 was synchronized during preparation; publication always synchronizes the parent.
