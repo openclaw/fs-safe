@@ -1,9 +1,12 @@
 import { spawn } from "node:child_process";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import * as timing from "../src/timing.js";
+import { useSuiteFixture } from "./helpers/suite-fixture.js";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import {
   acquireFileLock,
@@ -67,52 +70,80 @@ describe("owner-scoped file-lock reentrancy", () => {
     }
   });
 
-  it.each([
-    ["different", "owner-b"],
-    ["absent", undefined],
-  ] as const)("queues a %s owner so both read-modify-write operations land", async (_label, secondOwner) => {
-    const root = await tempRoot("fs-safe-reentrant-owner-isolation-");
-    const targetPath = path.join(root, "state.json");
-    await fs.writeFile(targetPath, JSON.stringify({ count: 0 }));
-    const manager = createFileLockManager(`owner-isolation-${Date.now()}-${Math.random()}`);
-    const firstEntered = deferred();
-    const releaseFirst = deferred();
-    let secondEntered = false;
-
-    const update = async (owner: string | undefined, wait?: () => Promise<void>): Promise<void> => {
-      await manager.withLock(
-        targetPath,
-        {
-          reentrantOwner: owner,
-          staleMs: 60_000,
-          timeoutMs: 1_000,
-          retry: { minTimeout: 1, maxTimeout: 2 },
-          payload,
-        },
-        async () => {
-          if (owner !== "owner-a") secondEntered = true;
-          const current = JSON.parse(await fs.readFile(targetPath, "utf8")) as { count: number };
-          await wait?.();
-          await fs.writeFile(targetPath, JSON.stringify({ count: current.count + 1 }));
-        },
-      );
-    };
-
-    const first = update("owner-a", async () => {
-      firstEntered.resolve();
-      await releaseFirst.promise;
+  describe("contending updates", () => {
+    let directory: string | undefined;
+    const runFixture = useSuiteFixture(async () => {
+      directory = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-reentrant-owner-isolation-"));
+      return directory;
+    }, async () => {
+      if (directory) await fs.rm(directory, { recursive: true, force: true });
     });
-    await firstEntered.promise;
-    const second = update(secondOwner);
-    try {
-      await delay(10);
-      expect(secondEntered).toBe(false);
-    } finally {
-      releaseFirst.resolve();
-    }
-    await Promise.all([first, second]);
-    await expect(fs.readFile(targetPath, "utf8").then(JSON.parse)).resolves.toEqual({ count: 2 });
-    await manager.drain();
+
+    it.each([
+      ["different", "owner-b"],
+      ["absent", undefined],
+    ] as const)("queues a %s owner so both read-modify-write operations land", (_label, secondOwner) => runFixture(async (suiteRoot) => {
+      const root = await fs.mkdtemp(path.join(suiteRoot, "case-"));
+      const targetPath = path.join(root, "state.json");
+      await fs.writeFile(targetPath, JSON.stringify({ count: 0 }));
+      const manager = createFileLockManager(`owner-isolation-${Date.now()}-${Math.random()}`);
+      const firstEntered = deferred();
+      const releaseFirst = deferred();
+      const contended = deferred();
+      const resumeRetry = deferred();
+      const sleep = vi.spyOn(timing, "sleep");
+      let secondEntered = false;
+
+      const update = async (owner: string | undefined, wait?: () => Promise<void>): Promise<void> => {
+        await manager.withLock(
+          targetPath,
+          {
+            reentrantOwner: owner,
+            staleMs: 60_000,
+            timeoutMs: 1_000,
+            retry: { minTimeout: 1, maxTimeout: 2 },
+            payload,
+          },
+          async () => {
+            if (owner !== "owner-a") secondEntered = true;
+            const current = JSON.parse(await fs.readFile(targetPath, "utf8")) as { count: number };
+            await wait?.();
+            await fs.writeFile(targetPath, JSON.stringify({ count: current.count + 1 }));
+          },
+        );
+      };
+
+      const first = update("owner-a", async () => {
+        firstEntered.resolve();
+        await releaseFirst.promise;
+      });
+      const updates = [first];
+      try {
+        await Promise.race([firstEntered.promise, first]);
+        sleep.mockImplementationOnce(async () => {
+          contended.resolve();
+          await resumeRetry.promise;
+        });
+        const second = update(secondOwner);
+        updates.push(second);
+        await Promise.race([contended.promise, second]);
+        expect(secondEntered).toBe(false);
+        releaseFirst.resolve();
+        await first;
+        resumeRetry.resolve();
+        await second;
+        await expect(fs.readFile(targetPath, "utf8").then(JSON.parse)).resolves.toEqual({ count: 2 });
+      } finally {
+        releaseFirst.resolve();
+        resumeRetry.resolve();
+        await Promise.allSettled(updates);
+        try {
+          await manager.drain();
+        } finally {
+          sleep.mockRestore();
+        }
+      }
+    }));
   });
 
   it("keeps a nested same-owner lock until the last idempotent release", async () => {
