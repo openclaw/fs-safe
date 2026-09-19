@@ -15,6 +15,7 @@
 
 - Write streamed `Uint8Array` slices without copying their payloads, retaining sliced bounds, per-chunk backpressure, and byte limits even when chunk metadata properties are overridden.
 - Preserve arbitrary atomic filesystem-adapter failures, including nullish values and throwing error-code getters, while keeping retry, fallback, cleanup, and post-publication ownership explicit.
+- Preserve missing-file errors from durable queue callbacks, migrations, and owned claim transitions instead of reporting a missing entry; consolidate delivered-marker cleanup without changing acknowledgement behavior.
 
 - Recheck hardlink policy on the existing final Root and root-file metadata observations, rejecting late-added links before reading bytes or returning a handle.
 - Reduce repeated bigint metadata allocations in `Root.entries()` and `Root.walk()` while preserving exact directory identities, Windows unknown-identity retries, cancellation, and every observation fence.

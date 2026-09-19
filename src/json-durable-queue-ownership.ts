@@ -201,14 +201,10 @@ export async function completeDeliveredQueueEntry(
   if (!(await lstatOrNull(path.dirname(validatedPaths.deliveredPath)))) return false;
   return await withQueueEntryLock(validatedPaths, async () => {
     if (!(await regularQueueFileIdentity(validatedPaths.deliveredPath))) return false;
-    if (await regularQueueFileIdentity(validatedPaths.processingPath)) {
-      await fs.unlink(validatedPaths.deliveredPath);
-      await syncDirectory(path.dirname(validatedPaths.deliveredPath));
-      return false;
-    }
+    const processing = await regularQueueFileIdentity(validatedPaths.processingPath);
     await fs.unlink(validatedPaths.deliveredPath);
     await syncDirectory(path.dirname(validatedPaths.deliveredPath));
-    return true;
+    return !processing;
   });
 }
 

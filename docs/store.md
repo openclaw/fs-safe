@@ -89,7 +89,9 @@ claim before publication. If another consumer acknowledged, quarantined, or
 replaced that claim, the migration rejects with `FsSafeError("path-mismatch")`
 and leaves the newer generation or failed evidence intact. A stale migration
 rejects both single and batch loads; ordinary callback failures retain their
-existing single-load rejection and batch-skip behavior.
+existing single-load rejection and batch-skip behavior. A caller or migration
+error with code `ENOENT` is still a failure, not a missing queue entry; only a
+claim that is absent or disappears before reading returns `null` from a single load.
 
 On Windows, migration releases its read pin once at this publication boundary
 because an open target can block replacement. It rechecks the exact pathname

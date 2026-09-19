@@ -306,14 +306,15 @@ export async function loadJsonDurableQueueEntry<T>(params: {
   read?: (entry: T, filePath: string) => Promise<JsonDurableQueueReadResult<T>>;
   maxBytes?: number;
 }): Promise<T | null> {
+  const pathsInput = params.paths;
+  const paths = validateDurableQueueEntryPaths(pathsInput);
+  const claimedPath = await claimDurableQueueEntry(paths);
+  if (!claimedPath) return null;
+  const readOptions = { maxBytes: params.maxBytes };
+  let processingStarted = false;
   try {
-    const pathsInput = params.paths;
-    const paths = validateDurableQueueEntryPaths(pathsInput);
-    const claimedPath = await claimDurableQueueEntry(paths);
-    if (!claimedPath) return null;
-    return await withJsonDurableQueueEntry<T, T>(claimedPath, {
-      maxBytes: params.maxBytes,
-    }, async (raw, identity, releaseReadPin) => {
+    return await withJsonDurableQueueEntry<T, T>(claimedPath, readOptions, async (raw, identity, releaseReadPin) => {
+      processingStarted = true;
       const read = params.read;
       const result = read ? await Reflect.apply(read, params, [raw, paths.jsonPath]) : { entry: raw };
       if (result.migrated) {
@@ -324,7 +325,7 @@ export async function loadJsonDurableQueueEntry<T>(params: {
       return result.entry;
     });
   } catch (error) {
-    if (getErrorCode(error) === "ENOENT") {
+    if (!processingStarted && getErrorCode(error) === "ENOENT") {
       return null;
     }
     throw error;
