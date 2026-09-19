@@ -342,7 +342,7 @@ describe.runIf(native)("native private creation permission verification", () => 
       await staged.publish("target", { overwrite: false });
       expect(fs.readFileSync(path.join(directory, "target")).equals(payload)).toBe(true);
       expect(fs.statSync(path.join(directory, "target")).mode & 0o7777).toBe(0o400);
-      expect(await source.readFile()).toEqual(payload);
+      expect((await source.readFile()).equals(payload)).toBe(true);
     });
 
     it.each(["budget", "abort", "permissions", "callback-abort", "callback-abort-and-permissions"] as const)("keeps the %s fence before transferred bytes", async fault => {
