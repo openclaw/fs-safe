@@ -13,6 +13,7 @@
 - Keep empty string appends from inserting an unwanted newline, while retaining missing-file creation and durability behavior.
 
 - Write streamed `Uint8Array` slices without copying their payloads, retaining sliced bounds, per-chunk backpressure, and byte limits even when chunk metadata properties are overridden.
+- Preserve arbitrary atomic filesystem-adapter failures, including nullish values and throwing error-code getters, while keeping retry, fallback, cleanup, and post-publication ownership explicit.
 
 - Recheck hardlink policy on the existing final Root and root-file metadata observations, rejecting late-added links before reading bytes or returning a handle.
 - Renew guarded directory ancestry after authority callbacks before creating components, preserving replaced roots for `mkdir`, `openWritable`, and `append` while sharing the creation path.

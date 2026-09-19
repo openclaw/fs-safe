@@ -5,6 +5,7 @@ import { FsSafeError } from "./errors.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import { readOwnedCopySource, readOwnedCopySourceSync } from "./replace-file-copy-source.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
+import { hasErrorCode } from "./file-cleanup.js";
 
 export type ReplaceFileDestinationHardlinkPolicy = "reject";
 export type ReplaceFileCopyFallbackRestorePolicy = "restore-original" | "none";
@@ -56,10 +57,6 @@ function closeSyncAfterAdmissionFailure(
   throw error;
 }
 
-function notFound(error: unknown): boolean {
-  return (error as NodeJS.ErrnoException).code === "ENOENT";
-}
-
 function admitDestinationKind(
   pathname: BigIntStats,
   opened: BigIntStats,
@@ -102,7 +99,7 @@ async function openPinnedDestination(
   try {
     preview = fsModule === fs ? syncFs.lstatSync(dest) : await fsModule.lstat(dest);
   } catch (error) {
-    if (notFound(error)) return null;
+    if (hasErrorCode(error, "ENOENT")) return null;
     throw error;
   }
   if (!preview) return null;
@@ -136,7 +133,7 @@ function openPinnedDestinationSync(
   try {
     preview = fsModule.lstatSync(dest);
   } catch (error) {
-    if (notFound(error)) return null;
+    if (hasErrorCode(error, "ENOENT")) return null;
     throw error;
   }
   if (admission === "hardlinks" && (preview.isSymbolicLink() || !preview.isFile())) return null;
@@ -342,7 +339,7 @@ export async function copyFallbackReplace(params: {
         destStat = params.fsModule === fs
           ? syncFs.lstatSync(params.dest) : await params.fsModule.lstat(params.dest);
       } catch (error) {
-        if (!notFound(error)) throw error;
+        if (!hasErrorCode(error, "ENOENT")) throw error;
       }
       if (destStat?.isSymbolicLink()) {
         throw new FsSafeError("symlink", `Refusing copy fallback through symlink destination: ${params.dest}`);
@@ -425,7 +422,7 @@ export function copyFallbackReplaceSync(params: {
       try {
         destStat = params.fsModule.lstatSync(params.dest);
       } catch (error) {
-        if (!notFound(error)) throw error;
+        if (!hasErrorCode(error, "ENOENT")) throw error;
       }
       if (destStat?.isSymbolicLink()) {
         throw new FsSafeError("symlink", `Refusing copy fallback through symlink destination: ${params.dest}`);

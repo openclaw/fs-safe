@@ -4,6 +4,7 @@ import { readBoundedSync } from "./bounded-read.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { FsSafeError } from "./errors.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
+import { hasErrorCode } from "./file-cleanup.js";
 
 type AsyncSourceFileSystem = Pick<typeof import("node:fs/promises"), "lstat" | "open">;
 type SyncSourceFileSystem = Pick<
@@ -44,7 +45,7 @@ async function openSource(fsModule: AsyncSourceFileSystem, src: string): Promise
   try {
     return await fsModule.open(src, OPEN_READ_FLAGS);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+    if (hasErrorCode(error, "ELOOP")) {
       throw sourceSymlinkError(src, error);
     }
     throw error;
@@ -55,7 +56,7 @@ function openSourceSync(fsModule: SyncSourceFileSystem, src: string): number {
   try {
     return fsModule.openSync(src, OPEN_READ_FLAGS);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+    if (hasErrorCode(error, "ELOOP")) {
       throw sourceSymlinkError(src, error);
     }
     throw error;

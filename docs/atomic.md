@@ -92,10 +92,13 @@ await replaceFileAtomic({
 
 If `beforeRename` throws, the rename is skipped and the owned temp file is removed — the destination is unchanged. Cleanup unlinks only the exact admitted single-link file; a substitute observed at the temp name is preserved and removed from cleanup authority. The same identity is rechecked before every rename retry, when entering copy fallback, and at the final name after rename. A post-rename verification failure reports the race without rolling back or deleting the published name.
 
-JavaScript permits `beforeRename` callbacks to throw any value, including
+JavaScript permits `beforeRename` callbacks and filesystem adapters to throw any value, including
 `undefined`, `null`, `false`, signed zero, `0n`, an empty string, and `NaN`.
-Once such an operation failure reaches temp-owner settlement, atomic replacement
-preserves that value when cleanup and close succeed. With
+Atomic replacement preserves such operational failures when cleanup and close
+succeed, including rename and post-rename verification failures. Rename retry
+and copy-fallback classification reads the error code once without coercion;
+missing or unreadable codes preserve the original failure. A rejected call has
+no success receipt even if an adapter committed its rename before throwing. With
 `throwOnCleanupError: true`, an additional owned-temp cleanup failure keeps the
 existing cleanup wrapper whose `cause` is the original thrown value. A later
 descriptor-close failure is reported in an `AggregateError`, in operation/cleanup
