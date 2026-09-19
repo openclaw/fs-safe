@@ -56,11 +56,11 @@ function materializeRefillFixture(fixture, codec) {
   return { archive, payload };
 }
 
-export function registerNativeArchives({ api, workspace, register, native }) {
+export function registerNativeArchives({ api, workspace, register }) {
   for (const fixture of nativeArchiveFixtures) {
     const names = fixture.members === 1 && fixture.memberBytes > 128
       ? ["payload.bin"] : Array.from({ length: fixture.members }, (_, index) => `entry-${index}`);
-    const payload = native ? Buffer.alloc(fixture.memberBytes, fixture.payloadByte) : undefined;
+    const payload = Buffer.alloc(fixture.memberBytes, fixture.payloadByte);
     for (const codec of ["zstd", "bzip2"]) {
       const label = `native-codec/${codec}/${fixture.name}`;
       const bytes = Buffer.from(fixture[codec], "base64");
@@ -68,13 +68,10 @@ export function registerNativeArchives({ api, workspace, register, native }) {
       assert.equal(createHash("sha256").update(bytes).digest("hex"), fixture.compressedSha256[codec]);
       const archivePath = path.join(workspace, `${fixture.name}.tar.${codec === "zstd" ? "zst" : "bz2"}`);
       const destination = path.join(workspace, `native-codec-${codec}-${fixture.name}`);
-      if (native) {
-        fs.writeFileSync(archivePath, bytes);
-        fs.mkdirSync(destination);
-      }
+      fs.writeFileSync(archivePath, bytes);
+      fs.mkdirSync(destination);
       const options = {
         divisor: 100,
-        skip: native ? undefined : "zstd/bzip2 archives require the native binding",
         workloadDetails: {
           codec, members: fixture.members, memberBytes: fixture.memberBytes,
           compressedBytes: bytes.length, compressedSha256: fixture.compressedSha256[codec],
@@ -106,17 +103,14 @@ export function registerNativeArchives({ api, workspace, register, native }) {
   const fixture = nativeArchiveRefillFixture;
   for (const codec of ["zstd", "bzip2"]) {
     const label = `native-codec/${codec}/${fixture.name}`;
-    const materialized = native ? materializeRefillFixture(fixture, codec) : undefined;
+    const materialized = materializeRefillFixture(fixture, codec);
     const archivePath = path.join(workspace, `${fixture.name}.tar.${codec === "zstd" ? "zst" : "bz2"}`);
     const destination = path.join(workspace, `native-codec-${codec}-${fixture.name}`);
-    if (native) {
-      fs.writeFileSync(archivePath, materialized.archive);
-      fs.mkdirSync(destination);
-    }
+    fs.writeFileSync(archivePath, materialized.archive);
+    fs.mkdirSync(destination);
     const codecFixture = fixture.codecs[codec];
     const options = {
       divisor: 100,
-      skip: native ? undefined : "zstd/bzip2 archives require the native binding",
       workloadDetails: {
         codec, members: fixture.members, memberBytes: fixture.memberBytes,
         compressedBytes: codecFixture.assembledBytes,

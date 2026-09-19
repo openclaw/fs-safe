@@ -174,10 +174,29 @@ export async function registerPaths({
   add("resolveWindowsUserPrincipal", () => a.resolveWindowsUserPrincipal(env), { sync: true, batch: 100 });
   for (const name of ["createIcaclsResetCommand", "formatIcaclsResetCommand"]) add(name, () => a[name]("C:\\fixture.json", { isDir: false, env }), { sync: true, batch: 100 });
   add("inspectWindowsAcl", () => a.inspectWindowsAcl(input), { divisor: 100, skip: process.platform !== "win32" ? "Windows live ACL inspection requires Windows." : undefined, verify: (r) => assert(r.ok) });
-  add("readOwnerAndDacl", () => a.readOwnerAndDacl(input), { sync: true, skip: process.platform !== "win32" || !native ? "Requires Windows native binding; no unsupported-platform timing substituted." : undefined });
-  add("createPrivateDirectory", () => a.createPrivateDirectory(path.join(w, "private-dir")), {
-    skip: process.platform !== "win32" || !native ? "Requires Windows native binding." : undefined,
-    after: () => fs.rmdirSync(path.join(w, "private-dir")),
+  add("readOwnerAndDacl", () => a.readOwnerAndDacl(input), {
+    sync: true, skip: process.platform !== "win32" ? "Windows owner and DACL inspection requires Windows." : undefined,
+    after: result => {
+      assert.equal(result.status, "supported");
+      assert(result.isLocal && result.complete && result.daclPresent);
+      assert.deepEqual(result.unsupportedAceTypes, []);
+      for (const sid of [result.ownerSid, result.currentUserSid]) assert.match(sid, /^s-\d+-\d+(?:-\d+)+$/i);
+    },
+  });
+  const privateDirectory = path.join(w, "private-dir");
+  add("createPrivateDirectory", () => a.createPrivateDirectory(privateDirectory), {
+    skip: process.platform !== "win32" ? "Windows private-directory creation requires Windows." : undefined,
+    before: () => assert.equal(fs.existsSync(privateDirectory), false),
+    after: async () => {
+      try {
+        assert(fs.lstatSync(privateDirectory).isDirectory());
+        assert.deepEqual(fs.readdirSync(privateDirectory), []);
+        const permissions = await a.inspectPathPermissions(privateDirectory);
+        assert(permissions.ok && permissions.ownerTrusted && !permissions.isSymlink);
+        assert.equal(permissions.source, "windows-acl");
+        for (const field of ["groupReadable", "groupWritable", "worldReadable", "worldWritable"]) assert.equal(permissions[field], false);
+      } finally { fs.rmdirSync(privateDirectory); }
+    },
   });
   add("createAsyncLock", () => a.createAsyncLock(), { sync: true, batch: 100 });
   const lock = a.createAsyncLock();
