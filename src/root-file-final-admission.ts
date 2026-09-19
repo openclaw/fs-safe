@@ -3,6 +3,7 @@ import { FsSafeError } from "./errors.js";
 import type { PinnedOpenSyncFinalAdmission } from "./pinned-open.js";
 import { realpathSync } from "./realpath.js";
 import { admitPathInsideRoot } from "./root-boundary.js";
+import { hardlinkedPathNotAllowedError } from "./root-errors.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { assertNoWindowsPathAlias, pathForWindowsFilesystem } from "./windows-path-alias.js";
 
@@ -76,6 +77,7 @@ export function createRootFileFinalAdmission(
   ioFs: RootFileAdmissionFs,
   root: Extract<CanonicalRootObservation, { ok: true }>,
   boundaryLabel: string,
+  rejectHardlinks = true,
 ): PinnedOpenSyncFinalAdmission {
   const inspectRoot = (candidateRootPath: string, expected: ExactIdentity) => {
     inspectCanonicalRoot(ioFs, candidateRootPath, expected);
@@ -97,10 +99,11 @@ export function createRootFileFinalAdmission(
       );
     }
     try {
-      inspectFileIdentitySync(
+      const current = inspectFileIdentitySync(
         () => ioFs.lstatSync(admitted.path, { bigint: true }),
         descriptorIdentity,
       );
+      if (rejectHardlinks && current.isFile() && current.nlink > 1n) throw hardlinkedPathNotAllowedError();
     } catch (error) {
       if (isExpectedPathError(error)) {
         throw new FsSafeError(

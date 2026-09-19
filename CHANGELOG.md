@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Recheck hardlink policy on the existing final Root and root-file metadata observations, rejecting late-added links before reading bytes or returning a handle.
+- Renew guarded directory ancestry after authority callbacks before creating components, preserving replaced roots for `mkdir`, `openWritable`, and `append` while sharing the creation path.
+
 - Keep observed sidecar-lock tokens separate from creator authority, reject asynchronous stale-policy results in synchronous locks, stop compromise monitoring after manager reset, and preserve both protected-callback and release failures; avoid redundant ownership-token scans.
 - Accept exact bigint directory receipts in durability, publication, and staging inputs while preserving numeric `Stats` metadata, fractional timestamps, and private exact identities in returned durability receipts.
 - Keep synchronous JSON staging descriptor-bound through publication and cleanup, preserving substituted files and staging-name collisions while removing redundant reopen-and-chmod probes.

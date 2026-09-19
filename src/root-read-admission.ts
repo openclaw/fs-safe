@@ -44,16 +44,18 @@ function assertRootReadAdmissionCurrent(params: {
   filePath: string;
   handle: FileHandle;
   identity: BigIntStats;
+  hardlinks?: HardlinkPolicy;
   symlinks?: SymlinkPolicy;
   afterPathIdentityCheck?: (filePath: string, handle: FileHandle) => void;
 }): string {
   assertRootIdentityCurrentSync(params.root);
   const admittedPath = (() => {
     try {
-      inspectFileIdentitySync(
+      const current = inspectFileIdentitySync(
         () => inspectOpenedPathIdentitySync(params.filePath, params.symlinks),
         params.identity,
       );
+      if (params.hardlinks !== "allow" && current.nlink > 1n) throw hardlinkedPathNotAllowedError();
       const canonicalPath = resolveFinalOpenedRealPath(params.filePath);
       assertNoWindowsPathAlias(canonicalPath, "filesystem", "resolved file path uses a Windows filesystem namespace alias");
       const admittedRealPath = admitPathInsideRoot({
@@ -66,10 +68,11 @@ function assertRootReadAdmissionCurrent(params: {
       }
       // This is a fresh no-follow observation even when canonicalPath and
       // filePath have the same spelling; realpath may have raced a replacement.
-      inspectFileIdentitySync(
+      const canonical = inspectFileIdentitySync(
         () => inspectOpenedPathIdentitySync(canonicalPath, undefined),
         params.identity,
       );
+      if (params.hardlinks !== "allow" && canonical.nlink > 1n) throw hardlinkedPathNotAllowedError();
       return admittedRealPath.path;
     } catch (error) {
       throw isNotFoundPathError(error)
@@ -110,6 +113,7 @@ export async function admitRootReadHandle<T extends OwnedRootReadHandle>(params:
         filePath: params.filePath,
         handle: params.opened.handle,
         identity: params.identity,
+        hardlinks: params.hardlinks,
         symlinks: params.symlinks,
         afterPathIdentityCheck: params.afterPathIdentityCheck,
       });

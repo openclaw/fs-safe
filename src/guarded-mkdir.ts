@@ -233,6 +233,7 @@ export async function mkdirPathComponentsWithGuards(params: {
     if (params.revalidateParentAfterBeforeComponent) {
       await assertAsyncDirectoryGuard(parentGuard);
     }
+    let shouldCreate = true;
     if (params.beforeCreateComponent) {
       let missing = false;
       try {
@@ -241,6 +242,7 @@ export async function mkdirPathComponentsWithGuards(params: {
         if (!isNotFoundPathError(error)) throw error;
         missing = true;
       }
+      shouldCreate = missing;
       if (missing) {
         let prospectiveParent = retainedParentPath;
         if (!prospectiveParent) {
@@ -262,32 +264,12 @@ export async function mkdirPathComponentsWithGuards(params: {
           // fence immediately before the authority callback and mkdir.
           if (!params.synchronousAuthorizationIncludesFence) inspectGuardCurrent(parentGuard);
         }
-        params.assertBeforeMutation?.();
-        // Authority callbacks are an explicit freshness boundary. Recheck the
-        // exact parent synchronously so no callback-observed authority is
-        // carried into a pathname mkdir after the parent was swapped.
-        inspectGuardCurrent(parentGuard);
-        try {
-          if (params.private) {
-            await createDirectoryWithAdmission(next, {
-              private: true,
-              mode: params.mode,
-              assertBeforeMutation: params.assertBeforeMutation,
-            }, {
-              expectedParentIdentity: {
-                dev: parentGuard.stat.dev, ino: parentGuard.stat.ino, realPath: parentGuard.realPath,
-              },
-            });
-          } else {
-            await fs.mkdir(next, { mode: params.mode });
-          }
-          created = true;
-        } catch (error) {
-          if (!isDirectoryCollision(error)) throw error;
-        }
       }
-    } else {
+    }
+    if (shouldCreate) {
       params.assertBeforeMutation?.();
+      // Both policy and ordinary mkdir must renew the parent after callbacks.
+      inspectGuardCurrent(parentGuard);
       try {
         if (params.private) {
           await createDirectoryWithAdmission(next, {
@@ -302,6 +284,7 @@ export async function mkdirPathComponentsWithGuards(params: {
         } else {
           await fs.mkdir(next, { mode: params.mode });
         }
+        created = true;
       } catch (error) {
         if (!isDirectoryCollision(error)) throw error;
       }

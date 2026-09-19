@@ -28,7 +28,7 @@ Regardless of shape, every read goes through the same boundary checks:
 4. Reject `..` traversal and absolute spellings when they resolve outside the root. In-root absolute spellings remain accepted; `readAbsolute` makes that intent explicit.
 5. Open with `O_NOFOLLOW` where available. Any remaining symlink in the path triggers `symlink` unless the call's `symlinks` policy is `follow-within-root`.
 6. Compare the pre-open bigint path identity with the open fd, then perform one best-effort final admission: check the captured root identity, compare the policy-aware pathname with the fd, freshly canonicalize and re-admit that target inside the captured root, compare its exact bigint identity without following a final symlink with the fd, and check the root again. Both final pathname observations run even when their spellings match. An observed swap triggers `path-mismatch` or `outside-workspace`; a missing final path triggers `not-found`.
-7. If `hardlinks: "reject"`, refuse files with `nlink > 1` (`hardlink`).
+7. If `hardlinks: "reject"`, refuse files with `nlink > 1` (`hardlink`), including links introduced before either fresh final pathname observation. Root-file helpers apply the same final check when `rejectHardlinks` is enabled; directory admission is unaffected.
 8. If `maxBytes` is set, refuse reads larger than the cap (`too-large`).
 
 The final fence closes a rejected descriptor before any Root read consumes bytes or

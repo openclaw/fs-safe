@@ -308,6 +308,8 @@ from that dispatch. A thrown value rejects the operation unchanged; an async
 or thenable-returning callback rejects with `TypeError` before that mutation.
 Synchronous return values are ignored. Callbacks can run multiple times and
 must inspect current authority each time.
+Directory creation rechecks the retained parent after the callback and before
+submitting mkdir, so a replacement is rejected before creating that component.
 
 Already dispatched I/O cannot be revoked. Identity-checked cleanup, final
 permissions, and durability finish under the existing operation owner even

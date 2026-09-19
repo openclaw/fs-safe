@@ -79,9 +79,10 @@ describe("guarded mkdir exact descendant identity", () => {
       targetPath: fixture.targetPath,
     })).resolves.toBe(fixture.childPath);
 
+    // The final pre-mkdir fence renews exact parent identity after callbacks.
     expect(observations).toEqual(branch === "ordinary"
-      ? [false, true, true, true]
-      : [true, true, true]);
+      ? [false, true, true, true, true]
+      : [true, true, true, true]);
     expect((await fs.lstat(fixture.childPath)).isDirectory()).toBe(true);
   });
 
@@ -131,7 +132,7 @@ describe("guarded mkdir exact descendant identity", () => {
       targetPath: fixture.targetPath,
     })).resolves.toBe(fixture.childPath);
 
-    expect(exactInspections).toBe(4);
+    expect(exactInspections).toBe(5);
     expect((await fs.lstat(fixture.childPath)).isDirectory()).toBe(true);
   });
 

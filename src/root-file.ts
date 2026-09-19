@@ -169,10 +169,11 @@ function openRootFileResolved(params: {
   allowedType?: PinnedOpenSyncAllowedType;
   ioFs: BoundaryReadFs;
 }): RootFileOpenResult {
+  const rejectHardlinks = params.rejectHardlinks ?? true;
   const opened = openPinnedFileSync({
     filePath: params.absolutePath,
     resolvedPath: params.resolvedPath,
-    rejectHardlinks: params.rejectHardlinks ?? true,
+    rejectHardlinks,
     maxBytes: params.maxBytes,
     allowedType: params.allowedType,
     ioFs: params.ioFs,
@@ -180,6 +181,7 @@ function openRootFileResolved(params: {
       params.ioFs,
       params.rootObservation,
       params.boundaryLabel,
+      rejectHardlinks,
     ),
   });
   if (!opened.ok) {
