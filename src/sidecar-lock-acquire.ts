@@ -45,6 +45,7 @@ import { resolveSidecarLockPaths } from "./sidecar-lock-target.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { sleep } from "./timing.js";
 import { sidecarExclusiveCreate } from "./root-create-input.js";
+import { stopSidecarLockMonitoring } from "./sidecar-lock-handle.js";
 
 export type { HeldSidecarLock } from "./sidecar-lock-admission.js";
 
@@ -374,8 +375,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
               .catch(() => false)
               .then((stillHeld) => {
                 if (!stillHeld && candidateHeld.compromiseTimer) {
-                  clearInterval(candidateHeld.compromiseTimer);
-                  candidateHeld.compromiseTimer = undefined;
+                  stopSidecarLockMonitoring(candidateHeld);
                   Reflect.apply(compromisedCallback, options, [{ lockPath, normalizedTargetPath }]);
                 }
               })
@@ -398,10 +398,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
         return returnedHandle;
       } catch (err) {
         try {
-          if (createdHeld?.compromiseTimer) {
-            clearInterval(createdHeld.compromiseTimer);
-            createdHeld.compromiseTimer = undefined;
-          }
+          if (createdHeld) stopSidecarLockMonitoring(createdHeld);
           if (handle) {
             const failedSnapshot: SidecarLockSnapshot = createdSnapshot ?? { payload: null };
             try {

@@ -55,6 +55,7 @@ invocation is not mutation authority. A failing final parser keeps its error
 even if guard ownership has also changed.
 `manager.reset()` invalidates admission bookkeeping but preserves a pending
 Root guard; let its original attempt settle before retrying that guarded path.
+It stops compromise monitoring for forgotten holders, including callbacks from checks already in flight.
 
 Always release locks in a `finally` block. Application-managed graceful shutdown can await `release()` or `manager.drain()` before terminating. Explicit `process.exit()`, uncaught failures, crashes, default signal handling, and fatal termination (including `SIGKILL`) do not reliably run asynchronous Root cleanup and may leave sidecars. Recover only after an application-owned liveness policy proves the holder cannot still be writing.
 
@@ -64,7 +65,7 @@ Each new sidecar also carries an internal random ownership token encoded as JSON
 
 The raw sidecar bytes are not a canonical JSON representation: tools that trim or rewrite the trailing whitespace invalidate the ownership token, so release leaves the changed sidecar in place and fails closed. The token distinguishes cooperating acquisitions; it is not a secret and does not make pathname compare-and-remove atomic against a hostile process that can replace files outside the lock protocol.
 
-`release()` propagates an I/O failure that prevents deletion of an unchanged, owned sidecar; it never reports successful cleanup while leaving that lock behind. The handle and manager retain the exact cleanup receipt after a failure, so the same handle can retry `release()` and `manager.drain()` can retry retained cleanup. A changed sidecar remains an ownership mismatch rather than a deletion failure and is left untouched. If both a `withFileLock()` callback and release fail, the release error is the primary `SuppressedError.error` and the callback failure remains available as `SuppressedError.suppressed`. Failed asynchronous acquisition cleanup uses the same shape, with the cleanup error primary and the acquisition failure suppressed. On Node runtimes without the global `SuppressedError` constructor, fs-safe returns the equivalent `Error` shape with the same name and properties.
+`release()` propagates an I/O failure that prevents deletion of an unchanged, owned sidecar; it never reports successful cleanup while leaving that lock behind. The handle and manager retain the exact cleanup receipt after a failure, so the same handle can retry `release()` and `manager.drain()` can retry retained cleanup. A changed sidecar remains an ownership mismatch rather than a deletion failure and is left untouched. If both a `withFileLock()` or `withFileLockSync()` callback and release fail, the release error is the primary `SuppressedError.error` and the callback failure remains available as `SuppressedError.suppressed`. Failed asynchronous acquisition cleanup uses the same shape, with the cleanup error primary and the acquisition failure suppressed. On Node runtimes without the global `SuppressedError` constructor, fs-safe returns the equivalent `Error` shape with the same name and properties.
 
 ## API
 
@@ -438,6 +439,7 @@ error.
 The sync payload, reclaim, and parsing callbacks must also be synchronous. This
 shape is appropriate for a short boot migration; it is a poor fit for a server
 request because retry backoff uses a blocking wait.
+Synchronous `shouldReclaim` and `shouldRemoveStaleLock` reject Promise or thenable results with `TypeError` before deleting the observed sidecar; an asynchronous result is never approval.
 
 If termination skips the relevant cleanup handler or cleanup fails, the sidecar remains. In particular, `process.exit()` skips asynchronous Root cleanup; await explicit release or drain during application-managed graceful shutdown. Once `staleMs` elapses (or your `shouldReclaim` returns true), acquisition fails closed by default instead of deleting by path.
 

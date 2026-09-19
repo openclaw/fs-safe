@@ -8,6 +8,7 @@ import {
   type SidecarLockSnapshot,
 } from "./sidecar-lock-reclaim.js";
 import type { SidecarLockStaleRecovery } from "./sidecar-lock-types.js";
+import { assertSynchronousCallbackResult } from "./mutation-authority.js";
 
 export type SyncStaleOptionsState<TPayload extends Record<string, unknown>> = {
   shouldReclaimObserved?: boolean;
@@ -124,6 +125,7 @@ export function handleSyncStaleAdmission<TPayload extends Record<string, unknown
             heldByThisProcess: false,
           }])
         : defaultSyncShouldReclaim(snapshot, params.staleMs, nowMs);
+      assertSynchronousCallbackResult(reclaim, "shouldReclaim");
     } finally {
       assertUnheld();
     }
@@ -150,6 +152,7 @@ export function handleSyncStaleAdmission<TPayload extends Record<string, unknown
           raw: snapshot.raw,
           payload: snapshot.payload,
         }]);
+        assertSynchronousCallbackResult(approved, "shouldRemoveStaleLock");
       } finally {
         assertUnheld();
       }

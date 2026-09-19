@@ -244,7 +244,6 @@ export function readSidecarLockRawSnapshotSync(
     return {
       raw,
       stat: after,
-      ownershipToken: readSidecarLockOwnershipToken(raw),
     };
   } finally {
     if (fd !== undefined) fsSync.closeSync(fd);
@@ -273,10 +272,8 @@ export function sidecarLockSnapshotMatches(
     return (
       current.stat?.isFile() === true &&
       current.raw !== undefined &&
-      observed.raw !== undefined &&
-      readSidecarLockOwnershipToken(current.raw) === observed.ownershipToken &&
-      readSidecarLockOwnershipToken(observed.raw) === observed.ownershipToken &&
-      current.raw === observed.raw
+      current.raw === observed.raw &&
+      readSidecarLockOwnershipToken(current.raw) === observed.ownershipToken
     );
   }
   if (

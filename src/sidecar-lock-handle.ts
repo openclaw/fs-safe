@@ -5,6 +5,12 @@ import {
 } from "./sidecar-lock-reclaim.js";
 import type { SidecarLockHandle } from "./sidecar-lock-types.js";
 
+export function stopSidecarLockMonitoring(held: { compromiseTimer?: NodeJS.Timeout }): void {
+  const timer = held.compromiseTimer;
+  held.compromiseTimer = undefined;
+  if (timer) clearInterval(timer);
+}
+
 export function createSidecarLockHandle(params: {
   lockPath: string;
   normalizedTargetPath: string;

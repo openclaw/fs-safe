@@ -7,7 +7,7 @@ import {
   type SidecarLockSnapshot,
 } from "./sidecar-lock-reclaim.js";
 import { acquireSidecarLock, type HeldSidecarLock } from "./sidecar-lock-acquire.js";
-import { createHeldSidecarLockHandle } from "./sidecar-lock-handle.js";
+import { createHeldSidecarLockHandle, stopSidecarLockMonitoring } from "./sidecar-lock-handle.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import type {
   SidecarLockAcquireOptions,
@@ -132,6 +132,7 @@ function releaseAllReclaimGuardsSync(state: SidecarLockManagerState): void {
 
 function releaseAllLocksSync(state: SidecarLockManagerState, options?: { preserveRetained?: boolean }): void {
   for (const [normalizedTargetPath, held] of state.held) {
+    stopSidecarLockMonitoring(held);
     void held.handle.close().catch(() => undefined);
     try {
       const retained = options?.preserveRetained === true && held.retainOnExit;
@@ -302,10 +303,7 @@ async function releaseHeldLock(
     if (state.held.get(normalizedTargetPath) === held) {
       state.held.delete(normalizedTargetPath);
     }
-    if (held.compromiseTimer) {
-      clearInterval(held.compromiseTimer);
-      held.compromiseTimer = undefined;
-    }
+    stopSidecarLockMonitoring(held);
   })();
   try {
     await held.releasePromise;

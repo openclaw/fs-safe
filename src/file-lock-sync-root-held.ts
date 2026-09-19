@@ -444,11 +444,7 @@ export function createRootSyncHeldLockHandle(held: RootSyncHeldLock): FileLockSy
   return handle;
 }
 
-export function isRootSyncHeldLockHandle(handle: FileLockSyncHandle): boolean {
-  return rootSyncHandleDispositions.has(handle);
-}
-
-export function withRootSyncHeldLockHandle<T>(
+export function withSyncHeldLockHandle<T>(
   lock: FileLockSyncHandle,
   fn: () => T,
 ): T {

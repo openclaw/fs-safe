@@ -19,6 +19,7 @@ import {
 } from "./sidecar-lock-reclaim.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { sleepSync } from "./timing.js";
+import { assertSynchronousCallbackResult } from "./mutation-authority.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 import {
   admitFileLockSyncRootPath,
@@ -332,6 +333,7 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
             nowMs,
             heldByThisProcess: false,
           }]);
+          assertSynchronousCallbackResult(reclaim, "shouldReclaim");
           assertAdmission();
           if (!fileLockSyncRootSnapshotStillCurrent(lockRootPath, current)) {
             throw new FsSafeError("path-mismatch", "sidecar changed during reclaim policy callback");
@@ -358,6 +360,7 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
               raw: snapshot.raw,
               payload: snapshot.payload,
             }]);
+            assertSynchronousCallbackResult(approved, "shouldRemoveStaleLock");
             assertAdmission();
             assertOwnedReclaimGuardCurrent();
             if (approved) {

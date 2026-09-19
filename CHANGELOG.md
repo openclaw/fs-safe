@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep observed sidecar-lock tokens separate from creator authority, reject asynchronous stale-policy results in synchronous locks, stop compromise monitoring after manager reset, and preserve both protected-callback and release failures; avoid redundant ownership-token scans.
+
 ## 0.16.0 - 2026-09-19
 
 ### Highlights

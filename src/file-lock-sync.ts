@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import { acquireFileLockSyncWithRoot } from "./file-lock-sync-root-acquire.js";
-import { isRootSyncHeldLockHandle, withRootSyncHeldLockHandle } from "./file-lock-sync-root-held.js";
+import { withSyncHeldLockHandle } from "./file-lock-sync-root-held.js";
 import path from "node:path";
 import type { Root } from "./root-impl.js";
 import {
@@ -455,10 +455,5 @@ export function withFileLockSync<T, TPayload extends Record<string, unknown>>(
   fn: () => T,
 ): T {
   const lock = acquireFileLockSync(targetPath, options);
-  if (isRootSyncHeldLockHandle(lock)) return withRootSyncHeldLockHandle(lock, fn);
-  try {
-    return fn();
-  } finally {
-    lock.release();
-  }
+  return withSyncHeldLockHandle(lock, fn);
 }
