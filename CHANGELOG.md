@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Honor case-insensitive Windows build environment names so configured WASM compilers and archivers remain selected in worker processes; preserve child-only compiler flags without duplicate case variants.
 - Verify actual native private-file ownership and permissions before writing bytes and at publication, rejecting filesystems that accept `chmod` without enforcing it; enforce retained public staging's `0600` and final-mode guarantees while preserving published-file and cleanup receipts.
 - Retain streamed `Root.create()` authority callbacks and abort signals across producer waits so replacing caller options cannot detach a revoked lease or redirect cancellation; preserve live revocation, callback receivers, and owned-stage cleanup.
 - Return unsupported clone-metadata results without the native addon on non-macOS platforms in `auto` and `off` modes; preserve input validation, strict `require` mode, and native-only APFS metadata on macOS.

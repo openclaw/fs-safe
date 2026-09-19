@@ -43,6 +43,8 @@ executables. To select another installation explicitly, set
 and archiver. The corresponding hyphenated target variables and cc-rs's
 `TARGET_CC`/`TARGET_AR` or `CC`/`AR` overrides are also respected; an unusable
 explicit override fails with a builder diagnostic instead of being ignored.
+Windows build environment names are case-insensitive, including when worker
+processes uppercase them. The build normalizes only its copied child environment.
 Clang's implicit configuration is disabled for this target so the WASI SDK's
 default libc/sysroot cannot leak into the import-free module. These settings
 affect compilation only and do not become runtime dependencies.

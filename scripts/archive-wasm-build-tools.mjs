@@ -5,8 +5,13 @@ import { join, resolve } from "node:path";
 export const WASM_TARGET = "wasm32-unknown-unknown";
 export const WASM_MAX_MEMORY = 256 * 1024 * 1024;
 
+function environmentKey(key) {
+  return process.platform === "win32" ? key.toUpperCase() : key;
+}
+
 function override(env, name) {
-  for (const key of [`${name}_${WASM_TARGET}`, `${name}_wasm32_unknown_unknown`, `TARGET_${name}`, name]) {
+  for (const candidate of [`${name}_${WASM_TARGET}`, `${name}_wasm32_unknown_unknown`, `TARGET_${name}`, name]) {
+    const key = environmentKey(candidate);
     if (env[key]?.trim()) return { key, value: env[key].trim() };
   }
 }
@@ -27,7 +32,8 @@ function probe(value, args, env) {
 
 function toolCandidates(env, name) {
   const roots = [env.LLVM_PATH, "/opt/homebrew/opt/llvm", "/usr/local/opt/llvm"];
-  if (env.ProgramFiles) roots.push(join(env.ProgramFiles, "LLVM"));
+  const programFiles = env[environmentKey("ProgramFiles")];
+  if (programFiles) roots.push(join(programFiles, "LLVM"));
   return [
     name,
     ...roots.filter(Boolean).map((root) => resolve(root, "bin", name)),
@@ -50,18 +56,19 @@ function selectTool(env, name, executable, args, accepts, requirement) {
 }
 
 export function archiveWasmBuildEnvironment(input = process.env) {
-  const env = { ...input };
+  // Plain-object copies lose Windows' case-insensitive environment semantics.
+  const env = Object.fromEntries(Object.entries(input).map(([key, value]) => [environmentKey(key), value]));
   const compiler = selectTool(env, "CC", "clang", ["--print-targets"],
     (stdout) => /^\s*wasm32\s+-/mu.test(stdout), "a clang compiler with the wasm32 target");
   const archiver = selectTool(env, "AR", "llvm-ar", ["--version"],
     (stdout) => /\bLLVM\b/u.test(stdout), "the LLVM llvm-ar archiver");
   // Cargo build scripts run from dependency directories, not this checkout.
   // Pin resolved paths to the highest-precedence target-only overrides.
-  env[`CC_${WASM_TARGET}`] = compiler.value;
-  env[`AR_${WASM_TARGET}`] = archiver.value;
+  env[environmentKey(`CC_${WASM_TARGET}`)] = compiler.value;
+  env[environmentKey(`AR_${WASM_TARGET}`)] = archiver.value;
   // WASI SDK clang ships a default configuration for a different target and
   // libc. Rust/cc-rs selects unknown-unknown; use only zstd's bundled shim.
-  const flagsKey = `CFLAGS_${WASM_TARGET}`;
+  const flagsKey = environmentKey(`CFLAGS_${WASM_TARGET}`);
   env[flagsKey] = `${env[flagsKey] ?? ""} --no-default-config`.trim();
   // Rust 1.98.1's optimized WASM LTO fails a valid allocation/free invariant.
   // This child-only override leaves the native release profile unchanged.

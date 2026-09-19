@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   ackJsonDurableQueueEntry,
   ensureJsonDurableQueueDirs,
@@ -9,16 +10,28 @@ import {
   resolveJsonDurableQueueEntryPaths,
   writeJsonDurableQueueEntry,
 } from "../src/json-durable-queue.js";
-import { useTempDirs } from "./helpers/vitest.js";
+import { useSuiteFixture } from "./helpers/suite-fixture.js";
 
-const { tempRoot } = useTempDirs();
-
-afterEach(() => {
-  vi.restoreAllMocks();
+let suiteDirectory: string | undefined;
+const runFixture = useSuiteFixture(async () => {
+  suiteDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-queue-durability-"));
+  return suiteDirectory;
+}, async () => {
+  if (suiteDirectory) await fs.rm(suiteDirectory, { recursive: true, force: true });
 });
 
-async function fixture() {
-  const root = await tempRoot("fs-safe-queue-durability-");
+function queueTest(name: string, body: (suiteRoot: string) => Promise<void>): void {
+  it(name, () => runFixture(async (suiteRoot) => {
+    try {
+      await body(suiteRoot);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  }));
+}
+
+async function fixture(suiteRoot: string) {
+  const root = await fs.mkdtemp(path.join(suiteRoot, "case-"));
   const queueDir = path.join(root, "queue");
   const failedDir = path.join(root, "failed");
   await ensureJsonDurableQueueDirs({ queueDir, failedDir });
@@ -60,8 +73,7 @@ function failDirectorySyncOnce(
   vi.spyOn(fs, "open").mockImplementation(async (...args) => {
     const handle = await realOpen(...args);
     const openedPath = path.resolve(args[0].toString());
-    const openedReal = await fs.realpath(args[0].toString()).catch(() => openedPath);
-    if (openedPath !== target && openedReal !== await targetReal) return handle;
+    if (openedPath !== target && openedPath !== await targetReal) return handle;
     const realSync = handle.sync.bind(handle);
     vi.spyOn(handle, "sync").mockImplementation(async () => {
       syncCalls += 1;
@@ -73,8 +85,8 @@ function failDirectorySyncOnce(
 }
 
 describe("durable JSON queue transition durability", () => {
-  it("syncs claim and acknowledgement directory transitions in order", async () => {
-    const { queueDir, paths } = await fixture();
+  queueTest("syncs claim and acknowledgement directory transitions in order", async (suiteRoot) => {
+    const { queueDir, paths } = await fixture(suiteRoot);
     await writeGeneration(paths.jsonPath, 1);
     const events: string[] = [];
     const realLink = fs.link.bind(fs);
@@ -120,8 +132,8 @@ describe("durable JSON queue transition durability", () => {
     expect(events.slice(unlinkIndex + 1)).toContain(queueSync);
   });
 
-  it("propagates claim directory-sync failure and recovers the hardlink", async () => {
-    const { queueDir, paths } = await fixture();
+  queueTest("propagates claim directory-sync failure and recovers the hardlink", async (suiteRoot) => {
+    const { queueDir, paths } = await fixture(suiteRoot);
     await writeGeneration(paths.jsonPath, 1);
     failDirectorySyncOnce(
       queueDir,
@@ -144,8 +156,8 @@ describe("durable JSON queue transition durability", () => {
     await expect(fs.access(paths.jsonPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("retries retirement-root sync failure before source retirement", async () => {
-    const { queueDir, paths } = await fixture();
+  queueTest("retries retirement-root sync failure before source retirement", async (suiteRoot) => {
+    const { queueDir, paths } = await fixture(suiteRoot);
     await writeGeneration(paths.jsonPath, 1);
     failDirectorySyncOnce(
       queueDir,
@@ -170,8 +182,8 @@ describe("durable JSON queue transition durability", () => {
     await expect(fs.access(paths.jsonPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("resyncs a restored replacement before deleting retirement evidence", async () => {
-    const { queueDir, paths } = await fixture();
+  queueTest("resyncs a restored replacement before deleting retirement evidence", async (suiteRoot) => {
+    const { queueDir, paths } = await fixture(suiteRoot);
     await writeGeneration(paths.jsonPath, 1);
     await loadJsonDurableQueueEntry({ paths, tempPrefix: "queue" });
     const recordPath = path.join(queueDir, ".fs-safe-retirements", "job.json");
@@ -210,8 +222,8 @@ describe("durable JSON queue transition durability", () => {
     await expect(fs.readFile(paths.jsonPath, "utf8")).resolves.toContain('"generation":2');
   });
 
-  it("propagates acknowledgement sync failure and resumes its delivered marker", async () => {
-    const { queueDir, paths } = await fixture();
+  queueTest("propagates acknowledgement sync failure and resumes its delivered marker", async (suiteRoot) => {
+    const { queueDir, paths } = await fixture(suiteRoot);
     await writeGeneration(paths.jsonPath, 1);
     await loadJsonDurableQueueEntry({ paths, tempPrefix: "queue" });
     failDirectorySyncOnce(
@@ -230,8 +242,8 @@ describe("durable JSON queue transition durability", () => {
     await expect(fs.access(paths.deliveredPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("resyncs acknowledgement retries after final marker unlink before completing", async () => {
-    const { queueDir, paths } = await fixture();
+  queueTest("resyncs acknowledgement retries after final marker unlink before completing", async (suiteRoot) => {
+    const { queueDir, paths } = await fixture(suiteRoot);
     await writeGeneration(paths.jsonPath, 1);
     await expect(loadJsonDurableQueueEntry({ paths, tempPrefix: "queue" }))
       .resolves.toEqual({ generation: 1 });
@@ -252,8 +264,8 @@ describe("durable JSON queue transition durability", () => {
     await expect(ackJsonDurableQueueEntry(paths)).resolves.toBeUndefined();
   });
 
-  it("resyncs acknowledgement retries after final marker unlink before a generation mismatch", async () => {
-    const { queueDir, paths } = await fixture();
+  queueTest("resyncs acknowledgement retries after final marker unlink before a generation mismatch", async (suiteRoot) => {
+    const { queueDir, paths } = await fixture(suiteRoot);
     await writeGeneration(paths.jsonPath, 1);
     await expect(loadJsonDurableQueueEntry({ paths, tempPrefix: "queue" }))
       .resolves.toEqual({ generation: 1 });
@@ -281,8 +293,8 @@ describe("durable JSON queue transition durability", () => {
     await expect(fs.readFile(paths.jsonPath)).resolves.toEqual(pendingBytes);
   });
 
-  it("propagates quarantine sync failure and completes the retained hardlink", async () => {
-    const { queueDir, failedDir, paths } = await fixture();
+  queueTest("propagates quarantine sync failure and completes the retained hardlink", async (suiteRoot) => {
+    const { queueDir, failedDir, paths } = await fixture(suiteRoot);
     await writeGeneration(paths.jsonPath, 1);
     await loadJsonDurableQueueEntry({ paths, tempPrefix: "queue" });
     failDirectorySyncOnce(
@@ -321,8 +333,8 @@ describe("durable JSON queue transition durability", () => {
     await expect(fs.lstat(failedPath, { bigint: true })).resolves.toMatchObject({ nlink: 1n });
   });
 
-  it("retries quarantine source-removal sync after the source path is gone", async () => {
-    const { queueDir, failedDir, paths } = await fixture();
+  queueTest("retries quarantine source-removal sync after the source path is gone", async (suiteRoot) => {
+    const { queueDir, failedDir, paths } = await fixture(suiteRoot);
     await writeGeneration(paths.jsonPath, 1);
     await loadJsonDurableQueueEntry({ paths, tempPrefix: "queue" });
     failDirectorySyncOnce(
@@ -354,8 +366,8 @@ describe("durable JSON queue transition durability", () => {
     await expect(fs.readFile(failedPath, "utf8")).resolves.toContain('"generation": 1');
   });
 
-  it("repairs failed-directory creation sync before quarantining on retry", async () => {
-    const root = await tempRoot("fs-safe-queue-failed-directory-retry-");
+  queueTest("repairs failed-directory creation sync before quarantining on retry", async (suiteRoot) => {
+    const root = await fs.mkdtemp(path.join(suiteRoot, "fs-safe-queue-failed-directory-retry-"));
     const queueDir = path.join(root, "queue");
     const failedDir = path.join(root, "a", "failed");
     await fs.mkdir(queueDir);
@@ -394,8 +406,8 @@ describe("durable JSON queue transition durability", () => {
     await expect(fs.readFile(failedPath, "utf8")).resolves.toContain('"generation": 1');
   });
 
-  it("syncs nested directory creation from the leaf to the trusted root", async () => {
-    const root = await tempRoot("fs-safe-queue-directory-order-");
+  queueTest("syncs nested directory creation from the leaf to the trusted root", async (suiteRoot) => {
+    const root = await fs.mkdtemp(path.join(suiteRoot, "fs-safe-queue-directory-order-"));
     const rootReal = await fs.realpath(root);
     const queueDir = path.join(root, "a", "b", "queue");
     const failedDir = path.join(root, "c", "failed");
@@ -412,8 +424,8 @@ describe("durable JSON queue transition durability", () => {
     ]);
   });
 
-  it("resyncs every nested ancestor edge after creation failure", async () => {
-    const root = await tempRoot("fs-safe-queue-nested-directory-sync-");
+  queueTest("resyncs every nested ancestor edge after creation failure", async (suiteRoot) => {
+    const root = await fs.mkdtemp(path.join(suiteRoot, "fs-safe-queue-nested-directory-sync-"));
     const queueDir = path.join(root, "a", "b", "queue");
     const failedDir = path.join(root, "c", "failed");
     const nestedParent = path.join(await fs.realpath(root), "a");
@@ -441,8 +453,8 @@ describe("durable JSON queue transition durability", () => {
     await expect(fs.stat(failedDir)).resolves.toMatchObject({});
   });
 
-  it("reports directory creation sync failure after creating the directory", async () => {
-    const root = await tempRoot("fs-safe-queue-directory-sync-");
+  queueTest("reports directory creation sync failure after creating the directory", async (suiteRoot) => {
+    const root = await fs.mkdtemp(path.join(suiteRoot, "fs-safe-queue-directory-sync-"));
     const queueDir = path.join(root, "queue");
     const failedDir = path.join(root, "failed");
     failDirectorySyncOnce(

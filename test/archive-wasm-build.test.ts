@@ -9,6 +9,15 @@ import { archiveWasmBuildEnvironment, validateArchiveWasm } from "../scripts/arc
 // child deadline, with runner headroom beyond the sequential subprocess bounds.
 const TOOL_PROBE_TIMEOUT_MS = 15_000;
 const probeTestTimeout = (processes: number) => processes * TOOL_PROBE_TIMEOUT_MS + 5_000;
+const environmentKey = (key: string) => process.platform === "win32" ? key.toUpperCase() : key;
+
+function removeToolOverrides(env: NodeJS.ProcessEnv, name: string): void {
+  const keys = [name, `TARGET_${name}`, `${name}_wasm32_unknown_unknown`, `${name}_wasm32-unknown-unknown`]
+    .map(environmentKey);
+  for (const key of Object.keys(env)) {
+    if (keys.includes(environmentKey(key))) delete env[key];
+  }
+}
 
 function unsigned(value: number): number[] {
   const bytes: number[] = [];
@@ -60,15 +69,20 @@ it("keeps allocator instrumentation out of production while allowing its separat
   expect(validateArchiveWasm(diagnostic, { allocatorTests: true })).toBeInstanceOf(WebAssembly.Module);
 });
 
-it("reports an unusable explicit compiler instead of silently falling back", () => {
+it.each(process.platform === "win32"
+  ? ["CC_wasm32-unknown-unknown", "CC_WASM32_UNKNOWN_UNKNOWN"]
+  : ["CC_wasm32-unknown-unknown"])("reports an unusable explicit %s compiler instead of silently falling back", (key) => {
+  const env = { ...process.env };
+  removeToolOverrides(env, "CC");
+  env[key] = process.execPath;
   const result = spawnSync(process.execPath, ["scripts/build-archive-wasm.mjs"], {
-    env: { ...process.env, "CC_wasm32-unknown-unknown": process.execPath },
+    env,
     encoding: "utf8", timeout: 30_000,
   });
   expect(result.error).toBeUndefined();
   expect(result.status).toBe(1);
   expect(result.stderr).toContain("clang compiler with the wasm32 target");
-  expect(result.stderr).toContain("CC_wasm32-unknown-unknown");
+  expect(result.stderr).toContain(environmentKey(key));
 }, probeTestTimeout(2)); // The build-script child has its own 30-second deadline.
 
 it("requires an LLVM archiver even when an explicit host archiver can be executed", () => {
@@ -97,30 +111,26 @@ it("keeps relative tool selections usable from Cargo dependency directories", ()
     if (!found) throw new Error(`Could not resolve the selected test compiler: ${value}`);
     return realpathSync(found);
   };
-  const compiler = toolPath(selected["CC_wasm32-unknown-unknown"]);
-  const archiver = toolPath(selected["AR_wasm32-unknown-unknown"]);
+  const compiler = toolPath(selected[environmentKey("CC_wasm32-unknown-unknown")]);
+  const archiver = toolPath(selected[environmentKey("AR_wasm32-unknown-unknown")]);
   const explicit = archiveWasmBuildEnvironment({
     ...process.env,
     "CC_wasm32-unknown-unknown": relative(process.cwd(), compiler),
     "AR_wasm32-unknown-unknown": relative(process.cwd(), archiver),
   });
-  expect(spawnSync(explicit["CC_wasm32-unknown-unknown"], ["--print-targets"], {
+  expect(spawnSync(explicit[environmentKey("CC_wasm32-unknown-unknown")], ["--print-targets"], {
     cwd: tmpdir(), timeout: TOOL_PROBE_TIMEOUT_MS,
   }).status).toBe(0);
-  expect(spawnSync(explicit["AR_wasm32-unknown-unknown"], ["--version"], {
+  expect(spawnSync(explicit[environmentKey("AR_wasm32-unknown-unknown")], ["--version"], {
     cwd: tmpdir(), timeout: TOOL_PROBE_TIMEOUT_MS,
   }).status).toBe(0);
 
   const discoveredInput = { ...process.env, PATH: "", LLVM_PATH: relative(process.cwd(), join(dirname(archiver), "..")) };
-  for (const name of ["CC", "AR"]) {
-    for (const key of [name, `TARGET_${name}`, `${name}_wasm32_unknown_unknown`, `${name}_wasm32-unknown-unknown`]) {
-      delete discoveredInput[key];
-    }
-  }
+  for (const name of ["CC", "AR"]) removeToolOverrides(discoveredInput, name);
   const discovered = archiveWasmBuildEnvironment(discoveredInput);
-  expect(isAbsolute(discovered["CC_wasm32-unknown-unknown"])).toBe(true);
-  expect(isAbsolute(discovered["AR_wasm32-unknown-unknown"])).toBe(true);
-  expect(spawnSync(discovered["CC_wasm32-unknown-unknown"], ["--print-targets"], {
+  expect(isAbsolute(discovered[environmentKey("CC_wasm32-unknown-unknown")])).toBe(true);
+  expect(isAbsolute(discovered[environmentKey("AR_wasm32-unknown-unknown")])).toBe(true);
+  expect(spawnSync(discovered[environmentKey("CC_wasm32-unknown-unknown")], ["--print-targets"], {
     cwd: tmpdir(), timeout: TOOL_PROBE_TIMEOUT_MS,
   }).status).toBe(0);
 }, probeTestTimeout(9)); // Three compiler/archiver pairs plus three cwd probes.
