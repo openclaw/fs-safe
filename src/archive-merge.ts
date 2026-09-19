@@ -215,7 +215,7 @@ async function mergeTree(params: GuardedMergeParams, publication?: readonly Arch
           await assertGuards();
           try {
             const options: CopyPublicationOptions & { mkdir: boolean; mode: number; durable: boolean } = {
-              mkdir: true, mode, durable: publication ? false : true,
+              mkdir: false, mode, durable: publication ? false : true,
               [onCopySourceAdmission]: (identity, realPath) => {
                 assertSourceDirectory(sourceGuard, true);
                 assertSourceFrontier();
