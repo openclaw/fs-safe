@@ -265,13 +265,21 @@ async function removeOne(root: RootContext, targetPath: string, options: Interna
     throw normalizeRemoveGuardError(error);
   }
   try {
-    const isDirectory = fsSync.lstatSync(targetPath).isDirectory();
+    const identity = options.assertBeforeMutation
+      ? inspectFileIdentitySync(() => fsSync.lstatSync(targetPath, { bigint: true })) : undefined;
+    const isDirectory = (identity ?? fsSync.lstatSync(targetPath)).isDirectory();
     if (!isDirectory && options[nonrecursiveRemovalKind] === "directory") {
       throw new FsSafeError("path-mismatch", "store entry is no longer a directory");
     }
     assertFinalSymlinkRejected(targetPath, options.mutationSymlinks !== undefined);
     assertNotAborted(options.signal);
     options.assertBeforeMutation?.();
+    if (identity) {
+      assertNotAborted(options.signal);
+      admission.assertCurrent();
+      inspectFileIdentitySync(() => fsSync.lstatSync(targetPath, { bigint: true }), identity);
+      assertFinalSymlinkRejected(targetPath, options.mutationSymlinks !== undefined);
+    }
     await (isDirectory ? fs.rmdir(targetPath) : fs.unlink(targetPath));
   } catch (error) {
     if (!(options.force && isNotFoundPathError(error))) throw normalizeRemovePathError(error);
@@ -465,6 +473,11 @@ export async function removePathInRootFallback(
     assertFinalSymlinkRejected(target, options.mutationSymlinks !== undefined, details(target, "remove"));
     assertNotAborted(options.signal);
     options.assertBeforeMutation?.();
+    if (options.assertBeforeMutation) {
+      assertNotAborted(options.signal);
+      if (!inspect(target, initial)) return;
+      assertFinalSymlinkRejected(target, options.mutationSymlinks !== undefined, details(target, "remove"));
+    }
     try {
       await (initial.isDirectory() ? fs.rmdir(target) : fs.unlink(target));
     } catch (error) {

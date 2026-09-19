@@ -74,14 +74,14 @@ function normalizeRenameNoReplaceError(error: unknown): unknown {
   return normalizeMoveError(error);
 }
 
-function admitMoveSourceStat<T extends Stats | BigIntStats>(stat: T): T {
+export function admitMoveSourceStat<T extends Stats | BigIntStats>(stat: T, overwrite = false): T {
   if (stat.isSymbolicLink()) {
     throw new FsSafeError("symlink", "symlink not allowed");
   }
   if (stat.isFile() && stat.nlink > 1) {
     throw hardlinkedPathNotAllowedError();
   }
-  if (stat.isDirectory()) {
+  if (!overwrite && stat.isDirectory()) {
     throw new FsSafeError("invalid-path", "directory moves require overwrite: true");
   }
   return stat;
