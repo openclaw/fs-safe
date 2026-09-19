@@ -1,6 +1,6 @@
 use std::ffi::c_void;
 use std::mem::MaybeUninit;
-use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
+use std::os::fd::{AsRawFd, BorrowedFd};
 use std::ptr::NonNull;
 
 use napi::bindgen_prelude::*;
@@ -221,13 +221,6 @@ fn inspect_owned_acl(
     }
 }
 
-pub(crate) fn inspect_acl(fd: BorrowedFd<'_>) -> NativeResult<AclState> {
-    // acl_get_fd_np is implemented on top of fstatx_np but can misclassify an
-    // internal ACL-buffer allocation failure as ENOENT. Share the fused,
-    // completion-checked path even when the caller only needs ACL state.
-    Ok(inspect_security(fd)?.acl)
-}
-
 fn filesec_property_valid(filesec: &OwnedFileSec, property: i32) -> NativeResult<bool> {
     let mut valid = 0;
     clear_errno();
@@ -302,7 +295,7 @@ fn filesec_acl_state(
     )
 }
 
-fn read_descriptor_security(fd: BorrowedFd<'_>) -> NativeResult<(libc::stat, OwnedFileSec)> {
+fn read_descriptor_security(fd: i32) -> NativeResult<(libc::stat, OwnedFileSec)> {
     clear_errno();
     // SAFETY: filesec_init returns either null or a newly allocated filesec.
     let raw_filesec = unsafe { filesec_init() };
@@ -315,7 +308,7 @@ fn read_descriptor_security(fd: BorrowedFd<'_>) -> NativeResult<(libc::stat, Own
     clear_errno();
     // SAFETY: fd remains borrowed and both output objects remain live for the
     // synchronous call. On success fstatx_np initializes the complete stat.
-    let result = unsafe { fstatx_np(fd.as_raw_fd(), stat.as_mut_ptr(), filesec.0.as_ptr()) };
+    let result = unsafe { fstatx_np(fd, stat.as_mut_ptr(), filesec.0.as_ptr()) };
     let error = std::io::Error::last_os_error();
     if result != 0 {
         return Err(acl_error(error, "inspect descriptor security facts"));
@@ -326,7 +319,7 @@ fn read_descriptor_security(fd: BorrowedFd<'_>) -> NativeResult<(libc::stat, Own
 }
 
 pub(crate) fn inspect_security(fd: BorrowedFd<'_>) -> NativeResult<DarwinSecurityReceipt> {
-    let (stat, filesec) = read_descriptor_security(fd)?;
+    let (stat, filesec) = read_descriptor_security(fd.as_raw_fd())?;
     let acl = filesec_acl_state(&filesec, None)?;
     Ok(DarwinSecurityReceipt::from_stat(&stat, acl))
 }
@@ -365,20 +358,6 @@ pub(crate) fn clear_private_clone_acl(fd: BorrowedFd<'_>) -> NativeResult<()> {
     Ok(())
 }
 
-fn retain_descriptor(fd: i32) -> NativeResult<OwnedFd> {
-    // Use the OS to validate raw N-API input before constructing a BorrowedFd.
-    // SAFETY: fcntl accepts any integer fd and returns a new owned fd or -1.
-    let duplicated = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 0) };
-    if duplicated < 0 {
-        return Err(acl_error(
-            std::io::Error::last_os_error(),
-            "retain ACL descriptor",
-        ));
-    }
-    // SAFETY: F_DUPFD_CLOEXEC returned a fresh descriptor owned by this call.
-    Ok(unsafe { OwnedFd::from_raw_fd(duplicated) })
-}
-
 fn inspect_descriptor(fd: i32, inheritance_target: Option<&str>) -> NativeResult<AclState> {
     let target = match inheritance_target {
         None => None,
@@ -391,14 +370,8 @@ fn inspect_descriptor(fd: i32, inheritance_target: Option<&str>) -> NativeResult
             ));
         }
     };
-    let retained = retain_descriptor(fd)?;
-    match target {
-        None => inspect_acl(retained.as_fd()),
-        Some(_) => {
-            let (_, filesec) = read_descriptor_security(retained.as_fd())?;
-            filesec_acl_state(&filesec, target)
-        }
-    }
+    let (_, filesec) = read_descriptor_security(fd)?;
+    filesec_acl_state(&filesec, target)
 }
 
 #[napi(object)]
@@ -412,7 +385,7 @@ pub fn inspect_darwin_acl(
     fd: i32,
     inheritance_target: Option<String>,
 ) -> Result<DarwinAclFacts> {
-    // No worker, callback, or await can outlive the owned duplicate.
+    // Synchronously borrow the caller's fd; dup/close would release record locks.
     into_napi(
         env,
         inspect_descriptor(fd, inheritance_target.as_deref()).map(|state| DarwinAclFacts {

@@ -1,10 +1,15 @@
 use std::ffi::CString;
 use std::fs::{self, File};
+use std::os::fd::{AsFd, FromRawFd, OwnedFd};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::*;
+
+fn inspect_acl(fd: BorrowedFd<'_>) -> NativeResult<AclState> {
+    Ok(inspect_security(fd)?.acl)
+}
 
 unsafe extern "C" {
     fn acl_from_text(text: *const libc::c_char) -> *mut c_void;
@@ -288,13 +293,47 @@ fn security_receipts_detect_mode_changes_without_losing_identity() {
 }
 
 #[test]
-fn owned_duplicate_survives_original_close_and_path_replacement() {
+fn inspection_preserves_record_locks() {
+    use rustix::fs::{FlockOperation, fcntl_lock};
+    const TEST: &str = "darwin_security::tests::inspection_preserves_record_locks";
+    const FILE: &str = "FS_SAFE_ACL_LOCK_FILE";
+    const BLOCKED: &str = "FS_SAFE_ACL_LOCK_BLOCKED";
+    if let Some(path) = std::env::var_os(FILE) {
+        let file = fs::OpenOptions::new().read(true).write(true).open(path).unwrap();
+        let result = fcntl_lock(&file, FlockOperation::NonBlockingLockExclusive);
+        if std::env::var(BLOCKED).unwrap() == "yes" {
+            assert!(matches!(result, Err(rustix::io::Errno::AGAIN | rustix::io::Errno::ACCESS)));
+        } else {
+            result.unwrap();
+        }
+        return;
+    }
+    let fixture = Fixture::new("record-lock");
+    let path = fixture.0.join("file");
+    let file = File::create_new(&path).unwrap();
+    fcntl_lock(&file, FlockOperation::NonBlockingLockExclusive).unwrap();
+    let check = |blocked| {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", TEST]).env(FILE, &path)
+            .env(BLOCKED, if blocked { "yes" } else { "no" }).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+    };
+    check(true);
+    for target in [None, Some("file"), Some("directory")] {
+        inspect_descriptor(file.as_raw_fd(), target).unwrap();
+        check(true);
+    }
+    // Positive control: closing another fd for this inode releases record locks.
+    drop(rustix::io::dup(&file).unwrap());
+    check(false);
+}
+
+#[test]
+fn descriptor_inspection_preserves_the_opened_file_after_path_replacement() {
     let fixture = Fixture::new("retained");
     let path = fixture.0.join("file");
     let file = File::create(&path).unwrap();
     set_entry_acl(file.as_fd());
-    let retained = retain_descriptor(file.as_raw_fd()).unwrap();
-    drop(file);
     fs::rename(&path, fixture.0.join("moved")).unwrap();
     let replacement = File::create(&path).unwrap();
     clear_private_clone_acl(replacement.as_fd()).unwrap();
@@ -303,9 +342,9 @@ fn owned_duplicate_survives_original_close_and_path_replacement() {
         "test replacement ACL clear",
     )
     .unwrap();
-    assert_eq!(inspect_acl(retained.as_fd()).unwrap(), AclState::Present);
+    assert_eq!(inspect_descriptor(file.as_raw_fd(), None).unwrap(), AclState::Present);
     assert!(matches!(
-        inspect_acl(replacement.as_fd()).unwrap(),
+        inspect_descriptor(replacement.as_raw_fd(), None).unwrap(),
         AclState::Absent | AclState::Empty
     ));
 }

@@ -76,14 +76,14 @@ whether a path, archive entry, mode, owner, or cleanup policy is acceptable.
   or add-on CRT descriptor namespace.
 
 The internal macOS `inspectDarwinAcl(fd)` capability reports `absent`, `empty`,
-or `present` for the opened object's extended ACL. It synchronously owns a
-close-on-exec duplicate for inspection, leaves the caller's descriptor and file
-position alone, and never reopens a pathname. Darwin's `acl_get_entry` returns
+or `present` for the opened object's extended ACL. It synchronously borrows the
+caller's descriptor, preserving its file position and POSIX record locks, and
+never reopens a pathname. Keep the descriptor open until inspection returns.
+Darwin's `acl_get_entry` returns
 zero for an entry; end-of-list is accepted only for the first entry of a valid,
 privately owned empty ACL. Unsupported, malformed, and failed inspection is not
-reported as absence. These facts do not classify individual ACE permissions,
-prove volume ownership enforcement, or add ACL enforcement to private writers
-and secure readers outside the clone path.
+reported as absence. These facts do not classify individual ACE permissions or
+prove volume ownership enforcement; each caller applies its own security policy.
 
 ## Archives
 

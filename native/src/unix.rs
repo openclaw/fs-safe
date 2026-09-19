@@ -66,17 +66,29 @@ fn validate_beneath_path(path: &str) -> NativeResult<()> {
     Ok(())
 }
 
+fn duplicate_cloexec(fd: i32) -> NativeResult<OwnedFd> {
+    // SAFETY: fcntl validates raw input and atomically marks its new fd CLOEXEC.
+    let duplicated = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 0) };
+    if duplicated < 0 {
+        let error = std::io::Error::last_os_error();
+        return Err(os_error(
+            rustix::io::Errno::from_raw_os_error(error.raw_os_error().unwrap_or(libc::EIO)),
+            "duplicate root descriptor",
+        ));
+    }
+    // SAFETY: F_DUPFD_CLOEXEC returned a new owned descriptor.
+    Ok(unsafe { OwnedFd::from_raw_fd(duplicated) })
+}
+
 #[cfg(target_os = "linux")]
 pub fn open_beneath(root_fd: i32, rel_path: &str, flags: i32) -> NativeResult<i32> {
     use rustix::fs::{ResolveFlags, openat2};
 
     validate_beneath_path(rel_path)?;
     if rel_path.is_empty() || rel_path == "." {
-        return rustix::io::dup(borrowed(root_fd))
-            .map(OwnedFd::into_raw_fd)
-            .map_err(|error| os_error(error, "duplicate root descriptor"));
+        return duplicate_cloexec(root_fd).map(OwnedFd::into_raw_fd);
     }
-    let oflags = OFlags::from_bits_retain(flags as u32);
+    let oflags = OFlags::from_bits_retain(flags as u32) | OFlags::CLOEXEC;
     // O_TMPFILE contains O_DIRECTORY; a directory-only open still requires mode 0.
     let mode = if oflags.contains(OFlags::CREATE) || oflags.contains(OFlags::TMPFILE) {
         Mode::from_bits_retain(0o600)
@@ -136,8 +148,7 @@ pub fn mkdir_beneath(root_fd: i32, rel_path: &str, mode: u32) -> NativeResult<()
     if rel_path.is_empty() || rel_path == "." {
         return Ok(());
     }
-    let mut current = rustix::io::dup(borrowed(root_fd))
-        .map_err(|error| os_error(error, "duplicate root descriptor"))?;
+    let mut current = duplicate_cloexec(root_fd)?;
     for segment in rel_path
         .split('/')
         .filter(|segment| !segment.is_empty() && *segment != ".")
@@ -1411,16 +1422,6 @@ mod macos {
         native_error(code, format!("{operation}: {error}"))
     }
 
-    fn duplicate(fd: RawFd) -> NativeResult<OwnedFd> {
-        // SAFETY: dup does not borrow beyond this call and returns a fresh fd.
-        let duplicated = unsafe { libc::dup(fd) };
-        if duplicated < 0 {
-            return Err(last_error("duplicate root descriptor"));
-        }
-        // SAFETY: duplicated is a new owned descriptor.
-        Ok(unsafe { OwnedFd::from_raw_fd(duplicated) })
-    }
-
     fn root_path(fd: RawFd) -> NativeResult<String> {
         let mut buffer = vec![0_i8; libc::PATH_MAX as usize];
         // SAFETY: buffer is writable for PATH_MAX bytes.
@@ -1530,7 +1531,7 @@ mod macos {
 
     pub fn open_beneath(root_fd: RawFd, rel_path: &str, flags: i32) -> NativeResult<i32> {
         if rel_path.is_empty() || rel_path == "." {
-            return verify_opened_beneath(root_fd, duplicate(root_fd)?);
+            return verify_opened_beneath(root_fd, super::duplicate_cloexec(root_fd)?);
         }
         if resolve_beneath_available() {
             return open_with_resolve_beneath(root_fd, rel_path, flags);
@@ -1540,7 +1541,7 @@ mod macos {
             .filter(|segment| !segment.is_empty() && *segment != ".")
             .map(ToOwned::to_owned)
             .collect();
-        let mut current = duplicate(root_fd)?;
+        let mut current = super::duplicate_cloexec(root_fd)?;
         let mut logical: Vec<String> = Vec::new();
         let mut followed = 0;
 
@@ -1598,7 +1599,7 @@ mod macos {
             };
             let remainder: Vec<String> = queue.drain(..).collect();
             queue = resolved.into_iter().chain(remainder).collect();
-            current = duplicate(root_fd)?;
+            current = super::duplicate_cloexec(root_fd)?;
             logical.clear();
         }
         Err(native_error("EINVAL", "path did not resolve to an entry"))
@@ -1624,6 +1625,77 @@ mod tests {
         ));
         fs::create_dir(&path).unwrap();
         path
+    }
+
+    #[test]
+    fn beneath_descriptors_are_close_on_exec() {
+        for invalid in [-1, i32::MAX] {
+            assert_eq!(duplicate_cloexec(invalid).unwrap_err().status, "EBADF");
+        }
+        let root = temp_root("cloexec");
+        fs::create_dir(root.join("nested")).unwrap();
+        fs::write(root.join("file"), b"content").unwrap();
+        let parent = fs::File::open(&root).unwrap();
+        for explicit in [OFlags::empty(), OFlags::CLOEXEC] {
+            for (name, flags) in [
+                ("", OFlags::RDONLY),
+                (".", OFlags::RDONLY),
+                ("nested", OFlags::RDONLY | OFlags::DIRECTORY),
+                ("file", OFlags::RDONLY),
+                ("created", OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL),
+            ] {
+                let fd = open_beneath(parent.as_raw_fd(), name, (flags | explicit).bits() as i32).unwrap();
+                // SAFETY: open_beneath returned an independently owned fd.
+                let owned = unsafe { OwnedFd::from_raw_fd(fd) };
+                let observed = rustix::io::fcntl_getfd(&owned).unwrap();
+                assert!(observed.contains(rustix::io::FdFlags::CLOEXEC), "{name:?}, explicit={explicit:?}");
+                if name.is_empty() || name == "." {
+                    let expected = rustix::fs::fstat(&parent).unwrap();
+                    let actual = rustix::fs::fstat(&owned).unwrap();
+                    assert_eq!((actual.st_dev, actual.st_ino), (expected.st_dev, expected.st_ino));
+                }
+            }
+            fs::remove_file(root.join("created")).unwrap();
+        }
+        assert!(parent.metadata().unwrap().is_dir());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn beneath_descriptors_do_not_survive_exec() {
+        const TEST: &str = "unix::tests::beneath_descriptors_do_not_survive_exec";
+        const INPUT: &str = "FS_SAFE_EXEC_FDS";
+        if let Ok(input) = std::env::var(INPUT) {
+            let values: Vec<i64> = input.split(',').map(|value| value.parse().unwrap()).collect();
+            for (index, &fd) in values[..2].iter().enumerate() {
+                let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+                // SAFETY: raw fstat validates the possibly closed descriptor.
+                let result = unsafe { libc::fstat(fd as i32, stat.as_mut_ptr()) };
+                let same_file = result == 0 && {
+                    // SAFETY: successful fstat initialized its output.
+                    let stat = unsafe { stat.assume_init() };
+                    stat.st_dev as i64 == values[2] && stat.st_ino as i64 == values[3]
+                };
+                assert_eq!(same_file, index == 0, "plain dup must survive; beneath fd must not");
+            }
+            return;
+        }
+        let root = temp_root("exec");
+        let parent = fs::File::open(&root).unwrap();
+        let control = rustix::io::dup(&parent).unwrap();
+        let stat = parent.metadata().unwrap();
+        use std::os::unix::fs::MetadataExt;
+        for name in ["", "."] {
+            let fd = open_beneath(parent.as_raw_fd(), name, OFlags::RDONLY.bits() as i32).unwrap();
+            // SAFETY: open_beneath returned an independently owned fd.
+            let owned = unsafe { OwnedFd::from_raw_fd(fd) };
+            let result = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", TEST])
+                .env(INPUT, format!("{},{},{},{}", control.as_raw_fd(), owned.as_raw_fd(), stat.dev(), stat.ino()))
+                .output().unwrap();
+            assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stdout));
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
