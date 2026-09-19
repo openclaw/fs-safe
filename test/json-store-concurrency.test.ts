@@ -48,6 +48,7 @@ async function runMutation(
 }
 
 describe("jsonStore mutation serialization", () => {
+  // Four real lock lifecycles and durable publications need Windows CI headroom.
   it("preserves every overlapping update from the issue reproduction", async () => {
     const root = await tempRoot("fs-safe-json-store-concurrent-");
     const filePath = path.join(root, "state.json");
@@ -67,7 +68,7 @@ describe("jsonStore mutation serialization", () => {
     );
 
     await expect(jsonStore<State>({ filePath }).readRequired()).resolves.toEqual({ count: 3 });
-  });
+  }, process.platform === "win32" ? 15_000 : undefined);
 
   it.each<readonly [Mutation, Mutation]>(
     (["update", "updateOr", "write"] as const).flatMap((first) =>
