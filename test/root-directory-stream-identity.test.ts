@@ -19,24 +19,29 @@ const cases = [
   { method: "walk", order: "sorted" },
 ] as const;
 
-async function beginIteration(capability: Root, method: "entries" | "walk", order: "filesystem" | "sorted") {
+async function beginIteration(
+  capability: Root,
+  method: "entries" | "walk",
+  order: "filesystem" | "sorted",
+  relativePath = "nested",
+) {
   const iterator = method === "entries"
-    ? capability.entries("nested", { order, maxEntries: 33 })
-    : capability.walk("nested", { order, maxEntries: 33, symlinkPolicy: "skip" });
+    ? capability.entries(relativePath, { order, maxEntries: 33 })
+    : capability.walk(relativePath, { order, maxEntries: 33, symlinkPolicy: "skip" });
   // Sorted walks capture metadata in batches; inspect the next batch's fence.
   const firstBatch = method === "walk" && order === "sorted" ? 32 : 1;
   for (let index = 0; index < firstBatch; index++) await iterator.next();
   return iterator;
 }
 
-async function fixture() {
+async function fixture(relativePath = "nested") {
   const base = await tempRoot("fs-safe-stream-identity-");
   const directory = path.join(base, "root");
-  const nested = path.join(directory, "nested");
-  await fs.mkdir(nested, { recursive: true });
+  const listedDirectory = path.join(directory, relativePath);
+  await fs.mkdir(listedDirectory, { recursive: true });
   await Promise.all(Array.from({ length: 33 }, (_, index) =>
-    fs.writeFile(path.join(nested, `entry-${String(index).padStart(2, "0")}`), "x")));
-  return { directory, nested };
+    fs.writeFile(path.join(listedDirectory, `entry-${String(index).padStart(2, "0")}`), "x")));
+  return { directory, listedDirectory };
 }
 
 it.skipIf(process.platform === "win32").each(cases)(
@@ -48,7 +53,7 @@ it.skipIf(process.platform === "win32").each(cases)(
     const original = fsSync.lstatSync.bind(fsSync);
     const observations: boolean[] = [];
     vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
-      if (String(args[0]) === f.directory || String(args[0]) === f.nested) {
+      if (String(args[0]) === f.directory || String(args[0]) === f.listedDirectory) {
         observations.push(args[1]?.bigint === true);
       }
       return original(...args);
@@ -72,23 +77,27 @@ it.each(cases)(
     const original = fsSync.lstatSync.bind(fsSync);
     vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
       const stat = original(...args);
-      if (String(args[0]) !== f.nested) return stat;
+      if (String(args[0]) !== f.listedDirectory) return stat;
       const ino = changed ? second : first;
       return Object.assign(Object.create(stat), { ino: typeof stat.ino === "bigint" ? ino : Number(ino) });
     });
     const iterator = await beginIteration(await root(f.directory), method, order);
-    await fs.rename(f.nested, `${f.nested}-original`);
-    await fs.mkdir(f.nested);
-    await fs.writeFile(path.join(f.nested, "b"), "replacement");
-    changed = true;
-    await expect(iterator.next()).rejects.toMatchObject({ code: "path-mismatch" });
+    try {
+      await fs.rename(f.listedDirectory, `${f.listedDirectory}-original`);
+      await fs.mkdir(f.listedDirectory);
+      await fs.writeFile(path.join(f.listedDirectory, "b"), "replacement");
+      changed = true;
+      await expect(iterator.next()).rejects.toMatchObject({ code: "path-mismatch" });
+    } finally { await iterator.return(); }
   },
 );
 
 it.each(cases)(
   "$method $order rejects a replaced root whose exact inode rounds to the old inode",
   async ({ method, order }) => {
-    const f = await fixture();
+    // Windows allows renaming the streamed directory, but not its ancestor.
+    const relativePath = order === "filesystem" ? "" : "nested";
+    const f = await fixture(relativePath);
     const first = 9007199254740992n;
     let changed = false;
     for (const operation of ["statSync", "lstatSync"] as const) {
@@ -100,12 +109,14 @@ it.each(cases)(
         return Object.assign(Object.create(stat), { ino: typeof stat.ino === "bigint" ? ino : Number(ino) });
       });
     }
-    const iterator = await beginIteration(await root(f.directory), method, order);
-    await fs.rename(f.directory, `${f.directory}-original`);
-    await fs.mkdir(f.nested, { recursive: true });
-    await fs.writeFile(path.join(f.nested, "replacement"), "replacement");
-    changed = true;
-    await expect(iterator.next()).rejects.toMatchObject({ code: "path-mismatch" });
+    const iterator = await beginIteration(await root(f.directory), method, order, relativePath);
+    try {
+      await fs.rename(f.directory, `${f.directory}-original`);
+      await fs.mkdir(f.listedDirectory, { recursive: true });
+      await fs.writeFile(path.join(f.listedDirectory, "replacement"), "replacement");
+      changed = true;
+      await expect(iterator.next()).rejects.toMatchObject({ code: "path-mismatch" });
+    } finally { await iterator.return(); }
   },
 );
 
@@ -120,7 +131,7 @@ it.each(cases.flatMap(testCase => [false, true].map(recovers => ({ ...testCase, 
     const exact: boolean[] = [];
     vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
       const stat = original(...args);
-      if (String(args[0]) !== f.nested) return stat;
+      if (String(args[0]) !== f.listedDirectory) return stat;
       attempts += 1;
       exact.push(args[1]?.bigint === true);
       if (recovers && attempts > 1) return stat;
