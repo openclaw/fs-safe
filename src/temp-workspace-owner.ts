@@ -83,9 +83,9 @@ export class TempWorkspaceCleanupCapability {
     let parent: RetainedDirectory | undefined;
     try {
       parent = openTempWorkspaceCleanupParent(root, admission);
-    } catch {
-      if (parent) fsSync.closeSync(parent.fd);
-      parent = undefined;
+    } catch (error) {
+      // Failed descriptor closure must retain the original admission failure too.
+      if (error instanceof AggregateError) throw error;
     }
     let available = false;
     if (childModeAllowsRemoval && parent?.access === "read" && isNativeCleanupBinding(binding)) {

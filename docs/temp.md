@@ -155,12 +155,15 @@ uses guarded pathname-recursive removal. This fallback never recursively
 removes the public workspace name, but it is not atomic conditional deletion: a
 same-privilege peer that discovers and replaces the private quarantine after
 verification can still redirect the final pathname removal.
+If admitting a cleanup parent fails and closing its descriptor also fails,
+creation rejects with both failures in an `AggregateError`. This does not select
+compatible fallback or retry the indeterminate descriptor close.
 
 Set `cleanupSafety: "require-bounded"` when that concurrent attacker is in scope.
 Creation then requires native no-replace directory rename, native owned-tree
 removal, and a readable retained parent descriptor **before** child creation.
 On POSIX, the final requested `dirMode` must also include owner read
-and search (`(dirMode & 0o500) === 0o500`). Preflight failure throws
+and search (`(dirMode & 0o500) === 0o500`). An unavailable capability throws
 `FsSafeError("helper-unavailable")` without creating a child or calling a scoped
 callback. The child descriptor is opened
 while the new directory still has its private creation mode, before an explicit

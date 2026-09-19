@@ -6,6 +6,7 @@ import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/
 import { __resetNativeLoaderForTest, __setNativeLoaderForTest, type NativeBinding } from "../src/native.js";
 import { tempWorkspace, tempWorkspaceSync, type TempWorkspaceOptions } from "../src/temp.js";
 import * as cleanup from "../src/temp-cleanup.js";
+import * as descriptors from "../src/temp-workspace-descriptor.js";
 import { admitTempWorkspaceRootSync } from "../src/temp-workspace-admission.js";
 import { TempWorkspaceCleanupCapability } from "../src/temp-workspace-owner.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
@@ -36,6 +37,102 @@ for (const variant of ["async", "sync"] as const) {
       const options = { rootDir, prefix: "workspace-" };
       return variant === "async" ? await tempWorkspace(options) : tempWorkspaceSync(options);
     }
+
+    it.each([
+      { rootState: "alias", closeFails: true }, { rootState: "missing", closeFails: true },
+      { rootState: "alias", closeFails: false }, { rootState: "missing", closeFails: false },
+    ] as const)(
+      "preserves eager parent failures: root=$rootState closeFails=$closeFails",
+      async ({ rootState, closeFails }) => {
+        const base = await tempRoot("fs-safe-workspace-eager-close-");
+        const actualRoot = path.join(base, "root");
+        const rootDir = rootState === "alias" ? path.join(base, "alias") : actualRoot;
+        if (rootState === "alias") {
+          await fs.mkdir(actualRoot, { mode: 0o700 });
+          await fs.symlink(actualRoot, rootDir, process.platform === "win32" ? "junction" : "dir");
+        }
+        configureFsSafeNative({ mode: "auto" });
+        const probe = vi.fn(() => true);
+        const binding = cleanupBinding(probe);
+        __setNativeLoaderForTest(() => binding);
+
+        const admissionFailure = Object.assign(new Error("parent admission rejected"), { code: "EIO" });
+        const closeFailure = Object.assign(new Error("parent close rejected"), { code: "EIO" });
+        const openParent = descriptors.openTempWorkspaceCleanupParent;
+        let openingParent = false;
+        vi.spyOn(descriptors, "openTempWorkspaceCleanupParent").mockImplementation((...args) => {
+          openingParent = true;
+          try { return openParent(...args); }
+          finally { openingParent = false; }
+        });
+        const open = fsSync.openSync.bind(fsSync);
+        const fstat = fsSync.fstatSync.bind(fsSync);
+        const close = fsSync.closeSync.bind(fsSync);
+        let parentFd: number | undefined;
+        let parentOpens = 0;
+        let admissionFailures = 0;
+        let parentCloses = 0;
+        vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
+          const fd = open(...args);
+          if (openingParent) { parentFd = fd; parentOpens += 1; }
+          return fd;
+        });
+        vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, ...args) => {
+          if (openingParent && fd === parentFd && admissionFailures === 0) {
+            admissionFailures += 1;
+            throw admissionFailure;
+          }
+          return fstat(fd, ...args);
+        });
+        const closeSpy = vi.spyOn(fsSync, "closeSync").mockImplementation((fd) => {
+          if (openingParent && fd === parentFd) {
+            parentCloses += 1;
+            close(fd); // Release the test fd, but model a close that reports failure.
+            if (closeFails) throw closeFailure;
+            return;
+          }
+          return close(fd);
+        });
+        const mkdtemp = vi.spyOn(fs, "mkdtemp");
+        const mkdtempSync = vi.spyOn(fsSync, "mkdtempSync");
+        const register = vi.spyOn(cleanup, "registerTempPathForExit");
+        let workspace: Awaited<ReturnType<typeof create>> | undefined;
+        let failure: unknown;
+        try {
+          try { workspace = await create(rootDir); }
+          catch (error) { failure = error; }
+          if (closeFails) {
+            expect(failure).toBeInstanceOf(AggregateError);
+            expect((failure as AggregateError).errors).toEqual([admissionFailure, closeFailure]);
+          } else {
+            expect(failure).toBeUndefined();
+            expect(workspace).toBeDefined();
+          }
+          expect(parentFd).toBeDefined();
+          expect(parentOpens).toBe(1);
+          expect(admissionFailures).toBe(1);
+          expect(parentCloses).toBe(1);
+          if (closeFails) {
+            expect(closeSpy.mock.calls.filter(([fd]) => fd === parentFd)).toHaveLength(1);
+            expect(mkdtemp).not.toHaveBeenCalled();
+            expect(mkdtempSync).not.toHaveBeenCalled();
+            expect(register).not.toHaveBeenCalled();
+          }
+          expect(probe).not.toHaveBeenCalled();
+          expect(binding.renameNoReplace).not.toHaveBeenCalled();
+          expect(binding.removeOwnedTree).not.toHaveBeenCalled();
+          expect(binding.removeOwnedTreeSync).not.toHaveBeenCalled();
+          if (closeFails) expect(await fs.readdir(actualRoot)).toEqual([]);
+          if (rootState === "alias") {
+            expect((await fs.lstat(rootDir)).isSymbolicLink()).toBe(true);
+            expect(await fs.realpath(rootDir)).toBe(await fs.realpath(actualRoot));
+          }
+        } finally {
+          // Also make a baseline failure clean: the unfixed implementation returns a workspace.
+          await workspace?.cleanup();
+        }
+      },
+    );
 
     it.each(["getter", "trim"] as const)(
       "does not retain a parent descriptor when prefix %s throws",
