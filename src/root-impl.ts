@@ -34,7 +34,7 @@ import { removePathIfIdentityUnchanged } from "./replace-file-temp-owner.js";
 import { realpathSync } from "./realpath.js";
 import { mkdirPathFallback, prepareRootWriteTarget, tryMkdirAtExactParent } from "./root-directory-creation.js";
 import { isNonRegularWriteOpenError, resolveNonblockingWriteFlag } from "./write-open-flags.js";
-import { resolveRootPath, resolveRootPathForRemoval } from "./root-path.js";
+import { resolveRootPath, resolveRootPathSync, resolveRootPathForRemoval } from "./root-path.js";
 import { RemovalPathReceipts } from "./root-remove-receipt.js";
 import { admitPathInsideRoot } from "./root-boundary.js";
 import { listDirectoryPath, openRootDirectoryListing } from "./root-directory-list.js";
@@ -43,6 +43,7 @@ import { entriesInRoot, type RootEntriesOptions } from "./root-entries.js";
 import { assertMoveMutationAllowed } from "./root-move-preflight.js";
 import {
   assertRootIdentityCurrent,
+  assertRootIdentityCurrentSync,
   assertValidRootDestinationPath,
   assertValidRootRelativePath,
   ensureTrailingSep,
@@ -86,7 +87,7 @@ import { finishRootFallbackWrite } from "./root-write-publication.js";
 import { withRootFallbackCompatibilityLock } from "./root-write-compatibility.js";
 import { assertRootFallbackWritePath } from "./root-write-lock-binding.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
-import { movePathNoReplaceNative } from "./root-move-noreplace.js";
+import { admitMoveSourceStat, movePathNoReplaceNative } from "./root-move-noreplace.js";
 import { admitRootReadHandle, inspectOpenedPathIdentitySync } from "./root-read-admission.js";
 import { createCopyPublicationObserver, onCopyPublication, onCopySourceAdmission, type CopyPublicationOptions } from "./copy-publication.js";
 import { writeAllToFile } from "./write-file-handle.js";
@@ -1400,6 +1401,8 @@ async function movePathFallback(
     overwrite: boolean;
   },
 ): Promise<void> {
+  const originalRoutes = params.overwrite && params.assertBeforeMutation
+    ? await Promise.all([params.fromRelative, params.toRelative].map(expandRelativePathWithHome)) : undefined;
   const source = await resolvePathInRoot(root, params.fromRelative, {
     aliasErrorCode: "path-alias",
     allowFinalSymlink: true,
@@ -1434,28 +1437,23 @@ async function movePathFallback(
     },
   });
 
-  let sourceStat: Stats;
+  let sourceIdentity: BigIntStats | undefined;
   try {
-    sourceStat = fsSync.lstatSync(source.resolved);
+    if (params.overwrite && params.assertBeforeMutation) {
+      sourceIdentity = inspectFileIdentitySync(() => admitMoveSourceStat(fsSync.lstatSync(source.resolved, { bigint: true }), true));
+    } else {
+      admitMoveSourceStat(fsSync.lstatSync(source.resolved), params.overwrite);
+    }
   } catch (error) {
     if (isNotFoundPathError(error)) {
       throw fileNotFoundError(error instanceof Error ? error : undefined);
     }
     throw error;
   }
-  if (sourceStat.isSymbolicLink()) {
-    throw new FsSafeError("symlink", "symlink not allowed");
-  }
-  if (sourceStat.isFile() && sourceStat.nlink > 1) {
-    throw hardlinkedPathNotAllowedError();
-  }
-  if (!params.overwrite && sourceStat.isDirectory()) {
-    throw new FsSafeError("invalid-path", "directory moves require overwrite: true");
+  if (!pinnedTarget) {
+    throw new FsSafeError("path-mismatch", "destination admission was not completed");
   }
   if (!params.overwrite) {
-    if (!pinnedTarget) {
-      throw new FsSafeError("path-mismatch", "destination admission was not completed");
-    }
     await movePathNoReplaceNative(root, params, {
       sourcePath: source.resolved,
       sourceParentPath: path.dirname(pinnedSource.canonicalPath),
@@ -1465,8 +1463,9 @@ async function movePathFallback(
     return;
   }
 
-  const sourceParentGuard = await createAsyncDirectoryGuard(path.dirname(source.resolved));
-  const targetParentGuard = await createNearestExistingDirectoryGuard(target.rootReal, path.dirname(target.resolved));
+  const guardOptions = { bigint: sourceIdentity !== undefined };
+  const sourceParentGuard = await createAsyncDirectoryGuard(path.dirname(source.resolved), guardOptions);
+  const targetParentGuard = await createNearestExistingDirectoryGuard(target.rootReal, path.dirname(target.resolved), guardOptions);
   await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("move", target.resolved);
   await assertAsyncDirectoryGuard(sourceParentGuard);
   await assertAsyncDirectoryGuard(targetParentGuard);
@@ -1474,6 +1473,27 @@ async function movePathFallback(
     assertFinalSymlinkRejected(source.resolved, params.mutationSymlinks !== undefined);
     assertFinalSymlinkRejected(target.resolved, params.mutationSymlinks !== undefined);
     params.assertBeforeMutation?.();
+    if (sourceIdentity) {
+      assertRootIdentityCurrentSync(root);
+      assertSyncDirectoryGuard(sourceParentGuard);
+      assertSyncDirectoryGuard(targetParentGuard);
+      for (const [route, selected, expected, policy] of [
+        [originalRoutes![0]!, source.resolved, pinnedSource.canonicalPath, PATH_ALIAS_POLICIES.strict],
+        [originalRoutes![1]!, target.resolved, pinnedTarget.canonicalPath, PATH_ALIAS_POLICIES.unlinkTarget],
+      ] as const) {
+        for (const absolutePath of new Set([path.isAbsolute(route) ? route : `${root.rootWithSep}${route}`, selected])) {
+          try {
+            const current = resolveRootPathSync({
+              absolutePath, rootPath: root.rootReal, rootCanonicalPath: root.rootReal,
+              rootIdentity: root.rootIdentity, boundaryLabel: "root", policy,
+              ...mutationSymlinkResolution(params.mutationSymlinks),
+            });
+            if (current.canonicalPath !== expected) throw new FsSafeError("path-mismatch", "move route changed during authorization");
+          } catch (error) { throw normalizePinnedPathError(error); }
+        }
+      }
+      inspectFileIdentitySync(() => admitMoveSourceStat(fsSync.lstatSync(source.resolved, { bigint: true }), true), sourceIdentity);
+    }
     await fs.rename(source.resolved, target.resolved);
   } catch (error) {
     if (isNotFoundPathError(error)) {
