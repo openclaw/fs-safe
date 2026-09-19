@@ -248,11 +248,16 @@ SHA-256-counter block replayed 256 times, and the TAR trailer. The repeated
 block is deliberately resistant to compression within each stream while
 keeping the checked-in components small. Component, assembled-compressed,
 decoded-TAR, and payload hashes are checked while the archive is assembled
-outside timing. All rows require native mode and record explicit skips when the
-binding is unavailable. Setup, payload verification, and destination cleanup
+outside timing. All rows run with native mode `off` or `require`; `off` measures
+the bundled portable codecs. The historical `native-codec/` row names identify
+the fixtures, while the report records the selected backend. Setup, payload verification, and destination cleanup
 are outside timing. The four added rows measure concatenated-stream refill
 throughput, not single-frame high-entropy throughput or cancellation latency.
 Deterministic Rust tests separately check cancellation between raw input reads.
+Windows `readOwnerAndDacl` and `createPrivateDirectory` also run in `off` mode
+through the built-in command fallback. Every result is checked outside timing;
+private directories must have a trusted owner and no group/world read/write
+grants before their empty fixture is removed. Other platforms remain skipped.
 ZIP reads and extraction also cover 1 MiB and 16 MiB stored and deflated members
 to expose payload integrity costs beyond tiny archive fixtures. ZIP admission and
 member reads also cover 512 ASCII and Unicode names with stored and deflated data.
