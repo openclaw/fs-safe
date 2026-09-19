@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Resolve deep valid relative paths without exceeding JavaScript argument limits, retaining complete component validation and root containment checks.
 - Report owned file-close failures after successful pathname hashes and portable create-only writes, preserving earlier operation and cancellation failures, completed destinations, and existing publication behavior.
 - Enforce archive deadlines at monotonic checks, queued mutation dispatch, and successful settlement even when synchronous work delays the timer callback; preserve caller errors and join active destination mutations.
 - Add `sameFileContentsSync()` for bounded-memory, exact byte comparison of borrowed regular-file descriptors, preserving their cursors and lifetime while completing short reads and enforcing optional byte limits.

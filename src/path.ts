@@ -219,7 +219,7 @@ export function resolveSafeRelativePath(rootDir: string, relativePath: string): 
   const root = resolvePathPreservingWindowsRoot(rootDir);
   const target = resolvePathFromBasePreservingWindowsRoot(
     root,
-    ...splitSafeRelativePath(relativePath),
+    splitSafeRelativePath(relativePath).join(path.sep),
   );
   if (!isPathInside(root, target)) {
     throw new FsSafeError("outside-workspace", "relative path escapes root");
