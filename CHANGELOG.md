@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Verify exact identities in the public opened-handle path resolver and retain local-root link policies before asynchronous admission, while reusing existing observations and shared path preparation.
 - Recheck exclusive-publication source and target identities after directory synchronization, preserving substituted entries and verification-phase cleanup while sharing finalization and complete-write logic.
 
 - Recheck private POSIX ownership and permissions before mode preparation, after producer and authority callbacks, and through fallback publication; verify final modes while preserving completed destinations on late failure and share the policy with native staging.

@@ -7,13 +7,22 @@ import { openedPathResolutionError } from "./opened-file-failure.js";
 import { sameFileIdentity, type FileIdentityStat } from "./file-identity.js";
 import { isNotFoundPathError } from "./path.js";
 import { realpathSync } from "./realpath.js";
+import { inspectFileIdentitySync } from "./strict-file-identity.js";
 
 export async function resolveOpenedFileRealPathForHandle(
   handle: FileHandle,
   ioPath: string,
 ): Promise<string> {
-  const handleStat = fsSync.fstatSync(handle.fd);
-  return (await resolveOpenedFileRealPathForFd(handle.fd, handleStat, ioPath)).realPath;
+  const fd = handle.fd;
+  const identity = inspectFileIdentitySync(() => fsSync.fstatSync(fd, { bigint: true }));
+  const resolved = await resolveOpenedFileRealPathForFd(fd, identity, ioPath);
+  let first: BigIntStats | undefined = resolved.stat;
+  inspectFileIdentitySync(() => {
+    const current = first ?? fsSync.statSync(resolved.realPath, { bigint: true });
+    first = undefined;
+    return current;
+  }, identity);
+  return resolved.realPath;
 }
 
 export function resolveOpenedFileRealPathForFd(

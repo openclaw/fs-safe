@@ -20,6 +20,9 @@ The root subpath also exports `openLocalFileSafely`, `readLocalFileSafely`, and
 `resolveOpenedFileRealPathForHandle` for trusted absolute-file composition.
 They do not create a root boundary around arbitrary caller input; prefer
 `root()` for untrusted paths.
+The handle resolver verifies exact descriptor and pathname identities, with one
+bounded retry for unknown Windows observations. It borrows the handle without
+reading, reopening, closing it, or changing its cursor.
 
 The error helpers are `categorizeFsSafeError` and `FsSafeErrorDetails`. The
 deprecated native-configuration bridge retains the `FsSafePythonConfig` type.

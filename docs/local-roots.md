@@ -83,6 +83,8 @@ An existing non-directory component cannot be traversed further, including by
 The asynchronous helper opens the candidate through the matched [`Root`](root.md),
 so no-follow, identity, hardlink, device-path, and byte-limit checks happen at
 the read itself.
+Link policies are captured once before root initialization and reused for every
+candidate, so replacing options while a read is pending cannot weaken admission.
 
 ```ts
 type ReadLocalFileFromRootsOptions = LocalRootsInputOptions & {

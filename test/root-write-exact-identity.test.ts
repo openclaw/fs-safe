@@ -87,7 +87,7 @@ describe("Root exact publication identity", () => {
     },
   );
 
-  it.each(["descriptor", "pathname", "parent scan", "numeric handle wrapper"])(
+  it.each(["descriptor", "pathname", "parent scan", "handle wrapper"])(
     "uses the expected metadata precision for %s realpath resolution",
     async (route) => {
       const directory = await tempRoot("fs-safe-exact-realpath-");
@@ -127,13 +127,13 @@ describe("Root exact publication identity", () => {
         return projected;
       }) as typeof fsSync.lstatSync);
       try {
-        const pending = route === "numeric handle wrapper"
+        const pending = route === "handle wrapper"
           ? resolveOpenedFileRealPathForHandle(handle, target)
           : resolveOpenedFileRealPathForFd(handle.fd, { dev: device, ino: inode }, target);
-        if (route === "numeric handle wrapper") await expect(pending).resolves.toBe(target);
+        if (route === "handle wrapper") await expect(pending).resolves.toBe(target);
         else await expect(pending).resolves.toMatchObject({ realPath: target, stat: { dev: device, ino: inode } });
         expect(sampled.length).toBeGreaterThan(0);
-        expect(sampled.every((value) => typeof value === (route === "numeric handle wrapper" ? "number" : "bigint"))).toBe(true);
+        expect(sampled.every((value) => typeof value === "bigint")).toBe(true);
       } finally {
         await handle.close();
       }

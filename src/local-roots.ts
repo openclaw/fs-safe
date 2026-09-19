@@ -104,9 +104,7 @@ function resolveRootRealSync(rootDir: string): string | null {
   return realPath;
 }
 
-export function resolveLocalPathFromRootsSync(
-  options: ResolveLocalPathFromRootsSyncOptions,
-): LocalRootsPathResult | null {
+function prepareLocalRootsInput(options: LocalRootsInputOptions) {
   const label = options.label ?? "local roots";
   const rootDirs = options.roots.map((rootEntry) => resolveLocalRootInput(rootEntry, label));
   let requestedPath: string;
@@ -117,6 +115,15 @@ export function resolveLocalPathFromRootsSync(
     throw error;
   }
 
+  return { label, rootDirs, requestedPath };
+}
+
+export function resolveLocalPathFromRootsSync(
+  options: ResolveLocalPathFromRootsSyncOptions,
+): LocalRootsPathResult | null {
+  const input = prepareLocalRootsInput(options);
+  if (!input) return null;
+  const { label, rootDirs, requestedPath } = input;
   for (const rootDir of rootDirs) {
     const rootReal = resolveRootRealSync(rootDir);
     if (!rootReal) {
@@ -155,15 +162,15 @@ export async function readLocalFileFromRoots(
   options: ReadLocalFileFromRootsOptions,
 ): Promise<LocalRootsReadResult | null> {
   const maxBytes = normalizeMaxBytes(options.maxBytes);
-  const label = options.label ?? "local roots";
-  const rootDirs = options.roots.map((rootEntry) => resolveLocalRootInput(rootEntry, label));
-  let requestedPath: string;
-  try {
-    requestedPath = resolveLocalPathInput(options.filePath, "file path");
-  } catch (error) {
-    if (isWindowsPathAliasError(error)) return null;
-    throw error;
-  }
+  const input = prepareLocalRootsInput(options);
+  if (!input || input.rootDirs.length === 0) return null;
+  const { rootDirs, requestedPath } = input;
+  const readOptions: Parameters<Awaited<ReturnType<typeof root>>["read"]>[1] = {
+    hardlinks: options.hardlinks,
+    symlinks: options.symlinks,
+  };
+  // Omission keeps Root's default cap; one policy snapshot serves every root.
+  if (maxBytes !== undefined) readOptions.maxBytes = maxBytes;
 
   for (const rootDir of rootDirs) {
     let scopedRoot: Awaited<ReturnType<typeof root>>;
@@ -171,16 +178,6 @@ export async function readLocalFileFromRoots(
       scopedRoot = await root(rootDir);
     } catch {
       continue;
-    }
-
-    const readOptions: Parameters<typeof scopedRoot.read>[1] = {
-      hardlinks: options.hardlinks,
-      symlinks: options.symlinks,
-    };
-    // Leave maxBytes absent when the caller omits it so Root's own default
-    // cap remains in force instead of being overwritten by undefined.
-    if (maxBytes !== undefined) {
-      readOptions.maxBytes = maxBytes;
     }
 
     try {
