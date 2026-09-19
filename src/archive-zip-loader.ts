@@ -5,6 +5,12 @@ import { registerAdmittedZipEntry, type ZipEntry } from "./archive-zip-entry.js"
 import { zipPathKey } from "./archive-zip-names.js";
 
 export type ZipArchiveWithFiles = { files: Record<string, unknown> };
+const orderedEntries = new WeakMap<ZipArchiveWithFiles, readonly ZipEntry[]>();
+
+export function admittedZipEntries(archive: ZipArchiveWithFiles): readonly ZipEntry[] {
+  return orderedEntries.get(archive) ?? disagreement();
+}
+
 type JsZipArchive = ZipArchiveWithFiles & {
   file(...args: unknown[]): unknown;
   loadAsync(buffer: Buffer | Uint8Array, options: { createFolders: false }): Promise<JsZipArchive>;
@@ -105,6 +111,7 @@ export async function loadAdmittedZipArchive(
   }
   if (remaining.size || inserted.size) disagreement();
   const files: Record<string, unknown> = Object.create(null);
+  const entries: ZipEntry[] = [];
   for (const [name, entry, physical] of normalized) {
     const appendSlash = physical.kind === "directory" && !name.endsWith("/");
     const normalizedName = appendSlash ? `${name}/` : name;
@@ -114,8 +121,10 @@ export async function loadAdmittedZipArchive(
     }
     files[normalizedName] = entry;
     registerAdmittedZipEntry(entry, physical);
+    entries.push(entry);
   }
   archive.files = files;
+  orderedEntries.set(archive, entries);
   return archive;
 }
 

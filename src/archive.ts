@@ -39,6 +39,7 @@ import {
 } from "./archive-staging.js";
 import { mergePlannedArchiveIntoDestination, type ArchivePublicationEntry } from "./archive-merge.js";
 import { loadZipArchiveWithPreflight } from "./archive-zip-preflight.js";
+import { admittedZipEntries } from "./archive-zip-loader.js";
 import {
   zipEntryKind,
   zipEntryDeclaredSize,
@@ -233,7 +234,7 @@ async function extractZip(params: {
     params.deadline.check();
     const zip = await waitForDeadline(loadZipArchiveWithPreflight(buffer, limits), params.deadline);
     params.deadline.check();
-    const entries = Object.values(zip.files) as ZipEntry[];
+    const entries = admittedZipEntries(zip);
     const strip = Math.max(0, Math.floor(params.stripComponents ?? 0));
 
     assertArchiveEntryCountWithinLimit(entries.length, limits);

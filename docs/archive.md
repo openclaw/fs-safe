@@ -209,6 +209,9 @@ directory paths. For example, `./pkg//state\cache/value` is presented as
 `pkg/state/cache/value`, even with `stripComponents: 1`. Case and Unicode
 spelling are preserved. Local PAX `path`, GNU long-name, and supported ZIP
 Unicode Path names use the same canonicalization.
+Callbacks follow physical archive order, including ZIP names that look like
+integer object keys. The public ZIP loader's `files` object retains ordinary
+JavaScript object enumeration and mutation behavior.
 
 Raw paths undergo traversal, absolute/drive-path, and NUL validation **before**
 canonicalization; normalization cannot turn an unsafe path into an accepted
