@@ -89,7 +89,7 @@ describe.runIf(bundledNativeAvailable)("native overwrite containment", () => {
   );
 });
 
-it("documents the bounded mode-off parent-mutation limitation", async () => {
+it("preserves mode-off ancestry replaced during awaited parent preparation", async () => {
   configureFsSafeNative({ mode: "off" });
   const base = await fs.realpath(
     await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-fallback-write-containment-")),
@@ -119,9 +119,7 @@ it("documents the bounded mode-off parent-mutation limitation", async () => {
   await expect(safeRoot.copyIn("data/nested/value.txt", source)).rejects.toBeTruthy();
 
   expect(fallbackMutationReached).toBe(true);
-  await expect(fs.lstat(path.join(outside, "nested"))).resolves.toSatisfy((stat) =>
-    stat.isDirectory()
-  );
+  await expect(fs.lstat(path.join(outside, "nested"))).rejects.toMatchObject({ code: "ENOENT" });
   await expect(fs.lstat(path.join(outside, "nested/value.txt"))).rejects.toMatchObject({
     code: "ENOENT",
   });

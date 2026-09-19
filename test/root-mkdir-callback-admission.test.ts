@@ -20,9 +20,9 @@ for (const operation of ["mkdir", "openWritable", "append"] as const) {
     let swapped = false;
     const options = { assertBeforeMutation() {
       if (swapped) return;
-      swapped = true;
       fs.renameSync(boundary, saved);
       fs.symlinkSync(outside, boundary, process.platform === "win32" ? "junction" : "dir");
+      swapped = true;
     } };
     let failure: unknown;
     try {
@@ -34,6 +34,8 @@ for (const operation of ["mkdir", "openWritable", "append"] as const) {
       }
     } catch (error) { failure = error; }
     expect(swapped).toBe(true);
+    expect(fs.lstatSync(boundary).isSymbolicLink()).toBe(true);
+    expect(fs.realpathSync(boundary)).toBe(fs.realpathSync(outside));
     expect(failure).toBeDefined();
     expect(fs.existsSync(path.join(outside, "child"))).toBe(false);
     expect(fs.readFileSync(path.join(outside, "sentinel"), "utf8")).toBe("outside");

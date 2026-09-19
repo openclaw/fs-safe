@@ -15,9 +15,10 @@ const fixtureTimeoutMs = extractionTimeoutMs + 10_000;
 const durableModes = [undefined, false, true] as const;
 // macOS measurements for the 20-file/3-directory fixture; durable:true then false/default.
 // Include every fs/promises call and async FileHandle method, including own close.
+// Final mkdir parent fences add 23 native or 66 portable lstat/realpath pairs.
 const budgets = {
-  auto: { tar: { async: [268, 196], total: [3131, 2500] }, zip: { async: [268, 196], total: [3140, 2510] } },
-  off: { tar: { async: [455, 383], total: [4148, 3517] }, zip: { async: [530, 458], total: [4702, 4072] } },
+  auto: { tar: { async: [268, 196], total: [3177, 2546] }, zip: { async: [268, 196], total: [3186, 2556] } },
+  off: { tar: { async: [455, 383], total: [4280, 3649] }, zip: { async: [530, 458], total: [4834, 4204] } },
 } as const;
 
 for (const backend of ["auto", "off"] as const) {
