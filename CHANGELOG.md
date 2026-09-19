@@ -22,6 +22,7 @@
 - Accept exact bigint directory receipts in durability, publication, and staging inputs while preserving numeric `Stats` metadata, fractional timestamps, and private exact identities in returned durability receipts.
 - Keep synchronous JSON staging descriptor-bound through publication and cleanup, preserving substituted files and staging-name collisions while removing redundant reopen-and-chmod probes.
 - Reuse synchronous store JSON readers and resolve queue filesystem roots directly, avoiding repeated store construction and discarded common-ancestor scans while retaining per-call file admission and directory durability checks.
+- Allow package validation with Corepack's native pnpm 12 launcher while continuing to reject shell launchers and implicit PATH substitutions.
 
 ## 0.16.0 - 2026-09-19
 
