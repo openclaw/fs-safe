@@ -16,7 +16,8 @@ jobs:
   coverage:
     name: Node 22 coverage (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    # Windows includes native/WASM builds and serial instrumented filesystem tests.
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 20 || 15 }}
     strategy:
       fail-fast: false
       # Platform branches depend on the OS, not the supported Node release.
