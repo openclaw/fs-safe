@@ -360,7 +360,10 @@ the preflight cap fails with `FsSafeError("too-large")`.
 If another writer changes source entries during the fallback, the staged copy
 throws `ESTALE` before commit when possible. If the destination has already
 been committed, cleanup still preserves the changed source entries and throws
-`ESTALE`. Directory manifests retain an exact bigint device/inode receipt from
+`ESTALE`. Copied file and symlink manifests retain exact bigint identities and
+nanosecond timestamps, so rounded file IDs cannot authorize copying or removal
+of a different entry. Hardlink groups also use exact identities. Directory
+manifests retain an exact bigint device/inode receipt from
 copy admission. Each directory is rechecked after traversal, and the source root
 is checked again before publication. Cleanup checks the same receipt before
 removing children, then invokes mutation authority and rechecks the receipt and
@@ -377,6 +380,11 @@ unlink is verified through a remaining manifested alias and its exact resulting
 identity becomes the next cleanup receipt. This accounts for the operation's
 own link-count and ctime changes without suppressing unexpected external
 mutations.
+On Windows, opening a regular source may advance its ctime while all other
+fingerprint fields match. That exception applies only to opening; post-copy
+verification and cleanup retain their full fingerprint checks.
+Copied aliases share each verified open-time update. Changes observed between
+copies still reject instead of being mistaken for an owned open transition.
 
 ### Mutation authority and publication receipts
 

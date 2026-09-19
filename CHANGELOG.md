@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Preserve copied-move replacements and distinct hardlink groups when filesystem IDs exceed JavaScript's safe integer range, reject ambiguous Windows identities, and reuse admitted directory metadata without dropping later checks.
 - Prefer the running executable's ELF interpreter over installed compatibility-loader filenames when Linux process reports cannot identify libc, retaining the matching native prebuild on mixed glibc/musl installations.
 - Resolve deep valid relative paths without exceeding JavaScript argument limits, retaining complete component validation and root containment checks.
 - Report owned file-close failures after successful pathname hashes and portable create-only writes, preserving earlier operation and cancellation failures, completed destinations, and existing publication behavior.

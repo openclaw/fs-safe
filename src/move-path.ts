@@ -12,6 +12,7 @@ import {
   createCleanupCopiedEntryState,
   entryIdentity,
   inspectSourceDirectory,
+  inspectSourceEntry,
   sameIdentity,
   sourceChangedError,
   type CopiedEntryManifest,
@@ -43,6 +44,7 @@ export type MovePathWithCopyFallbackOptions = {
 };
 
 type MoveCopyFallbackReason = "cross-device" | "windows-rename-denied";
+type CopiedFileManifest = EntryIdentity & { kind: "leaf" };
 
 export function moveCopyFallbackReasonForRenameError(
   error: unknown,
@@ -108,7 +110,7 @@ async function assertCopyDestinationOutsideSource(
   targetPath: string,
   expectedIdentity?: EntryIdentity,
 ): Promise<EntryIdentity> {
-  const sourceStat = fsSync.lstatSync(sourcePath);
+  const sourceStat = inspectSourceEntry(sourcePath, () => fsSync.lstatSync(sourcePath, { bigint: true }));
   const sourceIdentity = entryIdentity(sourceStat);
   if (expectedIdentity && !sameIdentity(expectedIdentity, sourceIdentity)) {
     throw sourceChangedError(sourcePath);
@@ -131,8 +133,8 @@ async function assertCopyDestinationOutsideSource(
   return sourceIdentity;
 }
 
-function modeBits(mode: number): number {
-  return mode & 0o777;
+function modeBits(mode: bigint): number {
+  return Number(mode & 0o777n);
 }
 
 async function chmodDirectoryPinned(directoryPath: string, mode: number): Promise<void> {
@@ -165,7 +167,7 @@ async function writeAll(handle: FileHandle, buffer: Buffer, bytesRead: number): 
 async function copyRegularFilePinned(params: {
   from: string;
   identity: EntryIdentity;
-  mode: number;
+  mode: bigint;
   rejectHardlinks: boolean;
   to: string;
   onCreated?: (identity: fsSync.BigIntStats) => void;
@@ -182,11 +184,14 @@ async function copyRegularFilePinned(params: {
     throw error;
   }
   try {
-    const openedStat = fsSync.fstatSync(sourceHandle.fd);
+    const inspectOpenedSource = () => inspectSourceEntry(params.from, () => {
+      const stat = fsSync.fstatSync(sourceHandle.fd, { bigint: true });
+      if (params.rejectHardlinks && stat.nlink > 1n) throw hardlinkedSourceError(params.from);
+      if (!stat.isFile()) throw sourceChangedError(params.from);
+      return stat;
+    });
+    const openedStat = inspectOpenedSource();
     openedIdentity = entryIdentity(openedStat);
-    if (params.rejectHardlinks && openedStat.nlink > 1) {
-      throw hardlinkedSourceError(params.from);
-    }
     const openAdvancedWindowsCtime =
       process.platform === "win32" &&
       params.identity.dev === openedIdentity.dev &&
@@ -194,11 +199,10 @@ async function copyRegularFilePinned(params: {
       params.identity.mode === openedIdentity.mode &&
       params.identity.nlink === openedIdentity.nlink &&
       params.identity.size === openedIdentity.size &&
-      params.identity.mtimeMs === openedIdentity.mtimeMs &&
-      openedIdentity.ctimeMs >= params.identity.ctimeMs;
+      params.identity.mtimeNs === openedIdentity.mtimeNs &&
+      openedIdentity.ctimeNs >= params.identity.ctimeNs;
     if (
-      !openedStat.isFile() ||
-      (!sameIdentity(params.identity, openedIdentity) && !openAdvancedWindowsCtime)
+      !sameIdentity(params.identity, openedIdentity) && !openAdvancedWindowsCtime
     ) {
       throw sourceChangedError(params.from);
     }
@@ -224,11 +228,7 @@ async function copyRegularFilePinned(params: {
       }
       // Re-check the opened source before the staged tree can be committed. If
       // it changed while we copied, the caller should retry the move.
-      const finalSourceStat = fsSync.fstatSync(sourceHandle.fd);
-      if (params.rejectHardlinks && finalSourceStat.nlink > 1) {
-        throw hardlinkedSourceError(params.from);
-      }
-      if (!sameIdentity(openedIdentity, entryIdentity(finalSourceStat))) {
+      if (!sameIdentity(openedIdentity, inspectOpenedSource())) {
         throw sourceChangedError(params.from);
       }
       await destinationHandle.chmod(modeBits(params.mode));
@@ -253,10 +253,11 @@ async function copyEntryWithManifest(
     sourceHardlinks: "allow" | "reject";
     budget?: { discovered: number };
     onCreated?: (identity: fsSync.BigIntStats) => void;
+    aliases?: Map<string, CopiedFileManifest>;
   },
   expectedIdentity?: EntryIdentity,
 ): Promise<CopiedEntryManifest> {
-  const sourceStat = fsSync.lstatSync(from);
+  const sourceStat = inspectSourceEntry(from, () => fsSync.lstatSync(from, { bigint: true }));
   const identity = entryIdentity(sourceStat);
   if (expectedIdentity && !sameIdentity(expectedIdentity, identity)) {
     throw sourceChangedError(from);
@@ -275,8 +276,7 @@ async function copyEntryWithManifest(
   }
 
   if (sourceStat.isDirectory()) {
-    const directoryStat = inspectSourceDirectory(from);
-    const directoryIdentity = Object.freeze({ dev: directoryStat.dev, ino: directoryStat.ino });
+    const directoryIdentity = Object.freeze({ dev: sourceStat.dev, ino: sourceStat.ino });
     await fs.mkdir(to, { mode: modeBits(sourceStat.mode) || 0o755 });
     options.onCreated?.(fsSync.lstatSync(to, { bigint: true }));
     const children: Array<{ name: string; manifest: CopiedEntryManifest }> = [];
@@ -293,6 +293,7 @@ async function copyEntryWithManifest(
         name: child,
         manifest: await copyEntryWithManifest(path.join(from, child), path.join(to, child), {
           sourceHardlinks: options.sourceHardlinks, budget: options.budget,
+          aliases: options.aliases,
         }),
       });
     }
@@ -309,9 +310,13 @@ async function copyEntryWithManifest(
   if (!sourceStat.isFile()) {
     throw new Error(`Refusing to move non-file path with copy fallback: ${from}`);
   }
-  if (options.sourceHardlinks === "reject" && sourceStat.nlink > 1) {
+  if (options.sourceHardlinks === "reject" && sourceStat.nlink > 1n) {
     throw hardlinkedSourceError(from);
   }
+
+  const aliasKey = options.aliases && identity.nlink > 1n ? `${identity.dev}:${identity.ino}` : undefined;
+  const alias = aliasKey ? options.aliases!.get(aliasKey) : undefined;
+  if (alias && !sameIdentity(alias, identity)) throw sourceChangedError(from);
 
   const copiedIdentity = await copyRegularFilePinned({
     from,
@@ -321,7 +326,12 @@ async function copyEntryWithManifest(
     to,
     onCreated: options.onCreated,
   });
-  return { ...copiedIdentity, kind: "leaf" };
+  // A permitted Windows open advances every name's ctime. Share its receipt
+  // only after the preceding fingerprint and this complete copy were verified.
+  if (alias) return Object.assign(alias, copiedIdentity);
+  const manifest: CopiedFileManifest = { ...copiedIdentity, kind: "leaf" };
+  if (aliasKey) options.aliases!.set(aliasKey, manifest);
+  return manifest;
 }
 
 function assertSynchronousResult(returned: unknown, name: string): void {
@@ -440,6 +450,7 @@ export async function movePathWithCopyFallback(
       {
         sourceHardlinks: rejectHardlinks ? "reject" : "allow",
         onCreated: stage.record,
+        ...(!rejectHardlinks && process.platform === "win32" ? { aliases: new Map<string, CopiedFileManifest>() } : {}),
         ...(rejectHardlinks ? { budget: { discovered: 1 } } : {}),
       },
       sourceIdentity,
