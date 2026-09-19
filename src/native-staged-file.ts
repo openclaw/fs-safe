@@ -1,5 +1,6 @@
 import type { DirectoryReceipt } from "./directory-durability.js";
 import { assertDarwinCreationAcl, privateFileMutationAssertion } from "./creation-darwin.js";
+import { assertPrivateCreationFile } from "./creation-file-state.js";
 import { requireNativeBinding } from "./native.js";
 import { syncFileBestEffortSync } from "./file-sync.js";
 import { randomUUID } from "node:crypto";
@@ -7,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
-import { MutationAuthorityError } from "./mutation-authority.js";
+import { assertSynchronousCallbackResult, MutationAuthorityError } from "./mutation-authority.js";
 import type { FileIdentityStat } from "./file-identity.js";
 import { captureNativeFdClose, type NativeBinding } from "./native-binding.js";
 import { writePinnedInput } from "./pinned-write-input.js";
@@ -57,6 +58,7 @@ const NOT_PUBLISHED = Object.freeze({ status: "not-published" as const });
 type State =
   | { status: "open"; fileFd?: number; publication: StagedFilePublication }
   | { status: "closed"; receipt: StagedFileCleanupReceipt; error?: FsSafeError };
+type StagedPermissionPolicy = "private-creation" | "mode-only";
 
 class NativeStagedFile implements StagedFile {
   readonly #binding: NativeStagingBinding;
@@ -69,6 +71,7 @@ class NativeStagedFile implements StagedFile {
   readonly #sync: boolean;
   readonly #strictFileSync: boolean;
   readonly #private: boolean;
+  readonly #verifyMode: boolean;
   readonly #assertBeforeMutation?: () => void;
   readonly #name: string;
   #state: State = { status: "open", publication: NOT_PUBLISHED };
@@ -86,7 +89,7 @@ class NativeStagedFile implements StagedFile {
     assertBeforeMutation?: () => void,
     name = `.fs-safe-${randomUUID()}.tmp`,
     strictFileSync = false,
-    privateCreation = false,
+    permissionPolicy?: StagedPermissionPolicy,
   ) {
     assertBasename(name, portableNames);
     this.#name = name;
@@ -99,7 +102,8 @@ class NativeStagedFile implements StagedFile {
     this.#publishedMode = publishedMode;
     this.#sync = sync;
     this.#strictFileSync = strictFileSync;
-    this.#private = privateCreation && process.platform === "darwin";
+    this.#private = permissionPolicy === "private-creation";
+    this.#verifyMode = permissionPolicy !== undefined;
     this.#assertBeforeMutation = assertBeforeMutation;
   }
 
@@ -119,11 +123,11 @@ class NativeStagedFile implements StagedFile {
     assertBeforeMutation?: () => void,
     exclusiveBasename?: string,
     strictFileSync = false,
-    privateCreation = false,
+    permissionPolicy?: StagedPermissionPolicy,
   ): Promise<NativeStagedFile> {
     let staged: NativeStagedFile;
     try {
-      staged = new NativeStagedFile(binding, parentFd, closeParentFd, directory, portableNames, mode, sync, assertBeforeMutation, exclusiveBasename, strictFileSync, privateCreation);
+      staged = new NativeStagedFile(binding, parentFd, closeParentFd, directory, portableNames, mode, sync, assertBeforeMutation, exclusiveBasename, strictFileSync, permissionPolicy);
     } catch (error) {
       try {
         closeParentFd(parentFd);
@@ -151,14 +155,14 @@ class NativeStagedFile implements StagedFile {
       binding, parentFd, closeParentFd, directory, params.input, params.mode, params.maxBytes, false, params.sync, params.assertBeforeMutation,
       exclusive ? params.basename : undefined,
       params.strictFileSync,
-      params.private,
+      params.private ? "private-creation" : undefined,
     );
     staged.#rejectFinalSymlink = params.rejectFinalSymlink === true;
     if (params.input.kind === "file") await params.input.verifySource();
     if (exclusive) {
       staged.#assertCurrent();
       params.assertBeforeMutation?.();
-      if (staged.#private) staged.#assertCurrent();
+      if (staged.#verifyMode) staged.#assertCurrent();
     }
     const published = exclusive
       ? staged.#completePublication(params.basename, false, params.onPublished)
@@ -197,13 +201,14 @@ class NativeStagedFile implements StagedFile {
     return state.fileFd;
   }
 
-  #assertNamed(name: string): number {
+  #assertNamed(name: string, expectedMode: number): number {
     const fd = this.#file();
     const stat = this.#binding.stagedFileMatches(this.#parentFd, name, fd)
       ? fs.fstatSync(fd, { bigint: true }) : undefined;
     if (!stat || stat.nlink !== 1n) {
       throw new FsSafeError("path-mismatch", "staged entry no longer names the exclusive created file");
     }
+    this.#assertPermissions(fd, stat, expectedMode);
     return Number(stat.mode & 0o7777n);
   }
 
@@ -212,8 +217,18 @@ class NativeStagedFile implements StagedFile {
       throw new FsSafeError("helper-failed", "staged file publication has already been attempted");
     }
     assertStagedDirectoryCurrent(this.#directory);
-    this.#assertNamed(this.#name);
-    if (this.#private) assertDarwinCreationAcl(this.#file());
+    this.#assertNamed(this.#name, 0o600);
+  }
+
+  #assertPermissions(fd: number, stat: fs.BigIntStats, expectedMode: number): void {
+    if (this.#private) assertPrivateCreationFile(stat, fd);
+    if (this.#verifyMode && Number(stat.mode & 0o7777n) !== expectedMode) {
+      throw new FsSafeError("insecure-permissions", "filesystem did not enforce the staged file mode");
+    }
+  }
+
+  #assertStagePermissions(fd: number): void {
+    this.#assertPermissions(fd, fs.fstatSync(fd, { bigint: true }), 0o600);
   }
 
   async #prepare(input: PinnedWriteInput, maxBytes?: number): Promise<void> {
@@ -222,6 +237,13 @@ class NativeStagedFile implements StagedFile {
       if (!Number.isInteger(mode) || mode < 0 || mode > 0o7777) {
         throw new FsSafeError("invalid-path", "invalid staged file mode");
       }
+      const fileSignal = input.kind === "file" && this.#verifyMode ? input.signal : undefined;
+      if (input.kind === "file" && this.#verifyMode) {
+        fileSignal?.throwIfAborted();
+        if (input.clone === "always") {
+          throw new FsSafeError("helper-unavailable", "required cloning cannot verify staged permissions before copying");
+        }
+      }
       assertStagedDirectoryCurrent(this.#directory);
       // The exclusive open performs no fallible post-open checks. Store its fd
       // before every subsequent operation, including the first metadata read.
@@ -229,7 +251,8 @@ class NativeStagedFile implements StagedFile {
       if (this.#private) assertDarwinCreationAcl(this.#parentFd, "file");
       this.#assertBeforeMutation?.();
       if (this.#private) assertDarwinCreationAcl(this.#parentFd, "file");
-      const copied = input.kind === "file"
+      // Native copying populates its new file before returning its descriptor.
+      const copied = input.kind === "file" && !this.#verifyMode
         ? await createNativeCopyFile(this.#binding, input, this.#parentFd, this.#name, maxBytes, false)
         : undefined;
       state.fileFd = copied?.fd;
@@ -240,12 +263,19 @@ class NativeStagedFile implements StagedFile {
       }
       const fd = state.fileFd;
       if (input.kind === "file") assertNativeCopyCompleted(input, copied);
-      const assertBeforeMutation = this.#private
+      const assertBeforeChmod = this.#private
         ? privateFileMutationAssertion(fd, this.#assertBeforeMutation) : this.#assertBeforeMutation;
-      assertBeforeMutation?.();
+      assertBeforeChmod?.();
       fs.fchmodSync(fd, 0o600);
+      // Some filesystems report successful chmod without enforcing its mode.
+      if (this.#verifyMode) this.#assertStagePermissions(fd);
+      const assertBeforeMutation = this.#verifyMode ? () => {
+        assertSynchronousCallbackResult(this.#assertBeforeMutation?.(), "assertBeforeMutation");
+        fileSignal?.throwIfAborted();
+        this.#assertStagePermissions(fd);
+      } : this.#assertBeforeMutation;
       if (!copied) await writePinnedInput(fd, input, maxBytes, assertBeforeMutation);
-      if (this.#private) assertDarwinCreationAcl(fd);
+      if (this.#verifyMode) this.#assertStagePermissions(fd);
       if (this.#sync) {
         if (this.#strictFileSync) fs.fsyncSync(fd);
         else syncFileBestEffortSync(fd);
@@ -322,12 +352,11 @@ class NativeStagedFile implements StagedFile {
     const receipt: PublishedFileReceipt = Object.freeze({ status: "published", staged: this.receipt, basename, overwrite });
     this.#open().publication = receipt;
     onPublished?.(receipt.staged.identity);
-    const stagedMode = this.#assertNamed(basename);
+    const stagedMode = this.#assertNamed(basename, 0o600);
     assertStagedDirectoryCurrent(this.#directory);
     // Keep contents private until the name passes its identity fence. Mode
     // changes use the owned fd, including for final mode 000.
     const fd = this.#file();
-    if (this.#private) assertDarwinCreationAcl(fd);
     if (this.#publishedMode !== 0o600 || stagedMode !== 0o600) fs.fchmodSync(fd, this.#publishedMode);
     // Content was synced during preparation. A lost chmod leaves 0600, no wider
     // than modes retaining owner rw; restrictive modes still need a durable correction.
@@ -336,7 +365,7 @@ class NativeStagedFile implements StagedFile {
       else syncFileBestEffortSync(fd);
     }
     if (this.#sync) syncFileBestEffortSync(this.#parentFd);
-    this.#assertNamed(basename);
+    this.#assertNamed(basename, this.#publishedMode);
     assertStagedDirectoryCurrent(this.#directory);
     return receipt;
   }
@@ -428,5 +457,8 @@ export async function stageFileInDirectory(options: {
   const input = { kind: "buffer" as const, data: Buffer.from(options.content) };
   const mode = options.mode ?? 0o600;
   const parent = openStagedDirectory(options.directory);
-  return await createNativeStage(binding, parent.fd, fs.closeSync, parent.receipt, input, mode);
+  return await createNativeStage(
+    binding, parent.fd, fs.closeSync, parent.receipt, input, mode,
+    undefined, true, true, undefined, undefined, false, "mode-only",
+  );
 }

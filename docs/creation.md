@@ -42,6 +42,13 @@ POSIX creation requests `0700` for directories and `0600` for files by default;
 the umask may restrict those permissions further. Existing directory privacy
 checks never broaden permissions.
 
+Native private file creation checks the retained descriptor's actual owner and
+permissions before writing payload bytes, after producer and authority callbacks,
+and at publication. A successful `chmod` is insufficient: filesystems that do not
+enforce owner-only permissions reject before payload writes. The requested final
+mode is verified too; a failure after publication preserves the completed file
+and reports its published outcome.
+
 On macOS (Darwin), private creation also requires an ACL-free result. The native
 helper must provide `inspectDarwinAcl`; native `off`, a missing helper, or an
 older helper without that capability rejects with `helper-unavailable` before
