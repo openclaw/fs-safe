@@ -2,7 +2,6 @@
 
 ## Unreleased
 
-- Reduce repeated string scans for legacy install-name sanitization and ASCII filename byte budgets, preserving encoded names, Unicode normalization limits, and archive path admission.
 - Recheck private POSIX ownership and permissions before mode preparation, after producer and authority callbacks, and through fallback publication; verify final modes while preserving completed destinations on late failure and share the policy with native staging.
 - Renew overwrite-move and removal admission after authority callbacks, preserving replaced entries and outside targets and honoring callback-triggered removal cancellation; share source checks with native no-replace moves.
 - Preserve copied-move source files and symlinks replaced by authority callbacks before cleanup, retaining the published destination and avoiding extra observations when no callback is supplied.
@@ -18,6 +17,7 @@
 - Accept exact bigint directory receipts in durability, publication, and staging inputs while preserving numeric `Stats` metadata, fractional timestamps, and private exact identities in returned durability receipts.
 - Keep synchronous JSON staging descriptor-bound through publication and cleanup, preserving substituted files and staging-name collisions while removing redundant reopen-and-chmod probes.
 - Reuse synchronous store JSON readers and resolve queue filesystem roots directly, avoiding repeated store construction and discarded common-ancestor scans while retaining per-call file admission and directory durability checks.
+- Reduce repeated string scans for legacy install-name sanitization and ASCII filename byte budgets, preserving encoded names, Unicode normalization limits, and archive path admission.
 
 ## 0.16.0 - 2026-09-19
 
