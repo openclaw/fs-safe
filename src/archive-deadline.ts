@@ -42,11 +42,13 @@ export async function waitForDeadline<T>(
   promise: Promise<T>,
   deadline: ExtractionDeadline,
 ): Promise<T> {
+  // An elapsed synchronous check must not orphan a later operation rejection.
+  void promise.catch(() => undefined);
   deadline.check();
   if (deadline.signal.aborted) {
     throw deadlineReason(deadline);
   }
-  return await Promise.race([
+  const result = await Promise.race([
     promise,
     new Promise<T>((_, reject) => {
       const abort = () => reject(deadlineReason(deadline));
@@ -57,28 +59,26 @@ export async function waitForDeadline<T>(
       promise.then(cleanup, cleanup);
     }),
   ]);
+  deadline.check();
+  return result;
 }
 
 function createDestinationMutationOwner(check: () => void): Pick<
   ExtractionDeadline,
   "ownDestinationMutation" | "waitForDestinationMutations"
 > {
-  const active = new Set<Promise<void>>();
+  const active = new Set<Promise<unknown>>();
   return {
     ownDestinationMutation: async <T>(run: () => Promise<T>): Promise<T> => {
       check();
-      const operation = Promise.resolve().then(run);
-      const tracked = operation.then(
-        () => undefined,
-        () => undefined,
-      );
-      active.add(tracked);
-      void tracked.finally(() => active.delete(tracked));
-      return await operation;
+      const operation = Promise.resolve().then(() => { check(); return run(); });
+      active.add(operation);
+      try { return await operation; }
+      finally { active.delete(operation); }
     },
     waitForDestinationMutations: async (): Promise<void> => {
       while (active.size > 0) {
-        await Promise.all(active);
+        await Promise.allSettled(active);
       }
     },
   };
@@ -87,28 +87,21 @@ function createDestinationMutationOwner(check: () => void): Pick<
 function createExtractionDeadline(timeoutMs: number, label: string): ExtractionDeadline {
   const controller = new AbortController();
   const timeoutError = new Error(`${label} timed out after ${timeoutMs}ms`);
+  const enabled = Number.isFinite(timeoutMs) && timeoutMs > 0;
+  const startedAt = enabled ? performance.now() : 0;
   const check = (): void => {
+    if (enabled && !controller.signal.aborted && performance.now() - startedAt >= timeoutMs) {
+      controller.abort(timeoutError);
+    }
     if (controller.signal.aborted) {
       throw signalReason(controller.signal, timeoutError);
     }
   };
-  const mutationOwner = createDestinationMutationOwner(check);
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    return {
-      signal: controller.signal,
-      check,
-      ...mutationOwner,
-      dispose: () => undefined,
-    };
-  }
-  const cancelTimeout = scheduleTimeout(() => {
-    controller.abort(timeoutError);
-  }, timeoutMs);
   return {
     signal: controller.signal,
     check,
-    ...mutationOwner,
-    dispose: cancelTimeout,
+    ...createDestinationMutationOwner(check),
+    dispose: enabled ? scheduleTimeout(() => controller.abort(timeoutError), timeoutMs) : () => undefined,
   };
 }
 
@@ -118,9 +111,8 @@ export async function withExtractionDeadline<T>(
   run: (deadline: ExtractionDeadline) => Promise<T>,
 ): Promise<T> {
   const deadline = createExtractionDeadline(timeoutMs, label);
-  const operation = Promise.resolve().then(async () => await run(deadline));
+  const operation = Promise.resolve().then(() => { deadline.check(); return run(deadline); });
   try {
-    deadline.check();
     try {
       return await waitForDeadline(operation, deadline);
     } catch (error) {

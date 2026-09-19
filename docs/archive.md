@@ -56,7 +56,7 @@ await extractArchive({
 type ExtractArchiveOptions = {
   archivePath: string;          // absolute path to the archive
   destDir: string;              // absolute destination directory; must already exist
-  timeoutMs: number;            // positive wall-clock budget; <= 0/non-finite disables it
+  timeoutMs: number;            // positive elapsed-time budget; <= 0/non-finite disables it
   durable?: boolean;            // false; opt into syncing published files and directories before completion
   kind?: ArchiveKind;           // "zip" | "tar" | "tar-zstd" | "tar-bzip2"
   stripComponents?: number;     // strip N leading dirs from entry paths
@@ -78,6 +78,12 @@ once, deepest first, and finally the destination directory. All work stays insid
 the extraction deadline; active syncs are joined before rejection. File sync
 failures use the same error surface as `Root.copyIn()`; directory I/O failures
 also reject, with the existing platform limitations on directory flushing.
+
+Deadline checks use a monotonic clock, including before queued mutations start
+and before reporting success. Synchronous caller code can delay the timer, but
+cannot permit the next operation after the budget expires. This does not
+interrupt a callback halfway through execution or replace its own thrown error;
+active destination mutations are still joined before timeout rejection.
 Files whose final mode prevents reading, including `0o000` and write-only files,
 sync once through the copy's retained descriptor during publication. Permissions
 are never widened to reopen them. Directory modes are finalized after the file
