@@ -133,6 +133,15 @@ startWebhookVerifier(signingKey);
 
 Async. Creates the parent directory at `dirMode` (default `0o700`) if missing, writes content to a sibling temp file, finalizes `mode` (default `0o600`) through an owned descriptor after content writes, and atomically renames over the destination. Publication verification checks the final file identity and mode.
 
+On POSIX, both native and JavaScript writers verify actual `0o600` permission
+bits through the retained descriptor before writing content. A filesystem that
+reports successful chmod without enforcing those bits fails with
+`insecure-permissions` before any payload is written, including when an explicit
+`dirMode` permits other users to traverse the parent. The requested final `mode`
+is still applied after content writes, including restrictive and special-bit
+overrides. This mode-bit check does not require native ACL inspection; JavaScript
+secret writes remain available on macOS.
+
 Concurrent writes to distinct leaves may share creation of a missing parent.
 After a parent-creation race, the helper re-inspects the entry and requires a
 non-symlink directory, then revalidates root/parent guards, containment, and
@@ -270,9 +279,9 @@ await withTimeout(
 
 ## Threat model notes
 
-- These helpers protect the secret file from **other processes with the same UID** that respect filesystem permissions. They do not defend against root or against attackers who can read process memory.
+- On POSIX, the default `0600` file and `0700` directory modes restrict group and other access. They do not protect against processes with the same UID, root, attackers who can read process memory, or access granted by additional ACL entries.
 - Validation failures are tripwires, not authorization. Investigate before clearing a rejected credential file.
-- If the destination directory is on a tmpfs that does not honor mode bits, the helpers will set the mode bits but the OS may ignore them. Audit your platform.
+- On POSIX, a file that still reports a mode other than `0600` after initialization is rejected with `insecure-permissions` before payload is written. Matching mode reports alone cannot prove that an arbitrary filesystem actually enforces those permissions.
 
 ## See also
 

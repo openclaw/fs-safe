@@ -13,6 +13,7 @@ import { syncFileBestEffort } from "./file-sync.js";
 import { assertDarwinCreationAcl, privateFileMutationAssertion } from "./creation-darwin.js";
 import { withAsyncDirectoryGuards } from "./guarded-mutation.js";
 import { writePinnedInput } from "./pinned-write-input.js";
+import { assertPinnedWriteMode, pinnedWriteModeAssertion, preparePinnedWriteMode } from "./pinned-write-mode.js";
 import type { PinnedWriteParams } from "./pinned-write-types.js";
 import { publishCopyStage } from "./publish-copy-stage.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
@@ -27,6 +28,7 @@ export async function runPinnedStagedWrite(
   parentPath: string,
   parentGuard: AsyncDirectoryGuard<BigIntStats>,
 ): Promise<FileIdentityStat> {
+  const verifyPosixMode = params.verifyPosixMode === true && process.platform !== "win32";
   const targetPath = path.join(parentPath, params.basename);
   // Private staging must not consume the destination basename's filename budget.
   const tempPath = path.join(parentPath, `.fs-safe-${randomUUID()}.tmp`);
@@ -53,12 +55,17 @@ export async function runPinnedStagedWrite(
       ? await createFileHandle(tempPath, {
         private: true, mode: 0o600, assertBeforeMutation: params.assertBeforeMutation,
       }, creationAdmissionFromParent(parentGuard))
-      : await fs.open(tempPath, tempFlags, params.mode);
+      : await fs.open(tempPath, tempFlags, verifyPosixMode ? 0o600 : params.mode);
     let verificationIdentity = fsSync.fstatSync(handle.fd, { bigint: true });
     tempIdentity = verificationIdentity;
-    const assertBeforeMutation = params.private
+    let assertBeforeMutation = params.private
       ? privateFileMutationAssertion(handle.fd, params.assertBeforeMutation) : params.assertBeforeMutation;
-    await writePinnedInput(handle, params.input, params.maxBytes, assertBeforeMutation);
+    const assertBeforeWrite = verifyPosixMode
+      ? await preparePinnedWriteMode(handle, Number(tempIdentity.mode & 0o7777n), assertBeforeMutation)
+      : assertBeforeMutation;
+    if (verifyPosixMode) assertPinnedWriteMode(handle.fd, 0o600);
+    await writePinnedInput(handle, params.input, params.maxBytes, assertBeforeWrite);
+    if (verifyPosixMode) assertPinnedWriteMode(handle.fd, 0o600);
     if (params.private) assertDarwinCreationAcl(handle.fd);
     tempStat = fsSync.fstatSync(handle.fd);
     const tempPathStat = fsSync.lstatSync(tempPath);
@@ -67,6 +74,10 @@ export async function runPinnedStagedWrite(
     }
     const expectedTempStat = tempStat;
     await handle.chmod(params.mode);
+    if (verifyPosixMode) {
+      assertPinnedWriteMode(handle.fd, params.mode);
+      assertBeforeMutation = pinnedWriteModeAssertion(handle.fd, params.mode, assertBeforeMutation);
+    }
     if (params.sync !== false) {
       if (params.strictFileSync) await handle.sync();
       else await syncFileBestEffort(handle);
