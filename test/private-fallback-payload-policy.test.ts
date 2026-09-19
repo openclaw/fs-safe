@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { root } from "../src/root.js";
+import { preparePinnedWriteMode } from "../src/pinned-write-mode.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
@@ -21,6 +22,27 @@ describe.skipIf(process.platform === "win32")("private POSIX fallback payload po
     __resetFsSafeNativeConfigForTest();
     __setFsSafeTestHooksForTest();
     Object.defineProperty(process, "platform", platform);
+  });
+
+  it("rejects callback widening before normalizing a restrictive private mode", async () => {
+    const directory = await tempRoot("fs-safe-private-normalize-");
+    const handle = await fsAsync.open(path.join(directory, "stage"), "wx", 0);
+    try {
+      await expect(preparePinnedWriteMode(handle, 0, () => fs.fchmodSync(handle.fd, 0o644), true))
+        .rejects.toMatchObject({ code: "insecure-permissions" });
+      expect(fs.fstatSync(handle.fd).mode & 0o7777).toBe(0o644);
+      expect(fs.fstatSync(handle.fd).size).toBe(0);
+    } finally { await handle.close(); }
+  });
+
+  it("normalizes a still-private restrictive stage before payload writes", async () => {
+    const directory = await tempRoot("fs-safe-private-normalize-control-");
+    const handle = await fsAsync.open(path.join(directory, "stage"), "wx", 0);
+    try {
+      const assertCurrent = await preparePinnedWriteMode(handle, 0, undefined, true);
+      assertCurrent?.();
+      expect(fs.fstatSync(handle.fd).mode & 0o7777).toBe(0o600);
+    } finally { await handle.close(); }
   });
 
   for (const phase of ["first", "next", "done"] as const) {

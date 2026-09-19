@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Recheck private POSIX fallback file ownership and permissions after producer and authority callbacks, before each payload write, and through publication; verify the final mode while preserving completed destinations on late failure.
+- Recheck private POSIX ownership and permissions before mode preparation, after producer and authority callbacks, and through fallback publication; verify final modes while preserving completed destinations on late failure and share the policy with native staging.
 
 - Recheck hardlink policy on the existing final Root and root-file metadata observations, rejecting late-added links before reading bytes or returning a handle.
 - Renew guarded directory ancestry after authority callbacks before creating components, preserving replaced roots for `mkdir`, `openWritable`, and `append` while sharing the creation path.

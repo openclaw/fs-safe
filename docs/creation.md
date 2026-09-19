@@ -46,6 +46,8 @@ Private POSIX `Root.create()` and `createJson()` writes check the retained descr
 permissions before writing payload bytes, after producer and authority callbacks,
 and at publication, including JavaScript fallback writes. Payload writes require
 the temporary `0600` mode even when the requested final mode differs.
+Private ownership, permissions and ACLs are checked before preparing that mode,
+including after authority callbacks; valid restrictive initial modes remain supported.
 A successful `chmod` is insufficient: filesystems that do not
 enforce owner-only permissions reject before payload writes. The requested final
 mode is verified too; a failure after publication preserves the completed file

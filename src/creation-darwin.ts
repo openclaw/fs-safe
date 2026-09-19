@@ -2,7 +2,6 @@ import fs, { type BigIntStats } from "node:fs";
 import { inspectDirectoryIdentitySync } from "./directory-guard.js";
 import { nodeDarwinDirectoryMetadataFlags, nodeDirectorySearchOnlyFlags } from "./directory-mode-node.js";
 import { FsSafeError } from "./errors.js";
-import { assertSynchronousCallbackResult } from "./mutation-authority.js";
 import { getNativeBinding } from "./native.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 
@@ -61,12 +60,4 @@ export function assertDarwinCreationDirectoryAcl(
     assertDarwinCreationAcl(fd, inheritanceTarget);
     inspectDirectoryIdentitySync(pathname, expected);
   } finally { fs.closeSync(fd); }
-}
-
-export function privateFileMutationAssertion(fd: number, assertion?: () => void): (() => void) | undefined {
-  if (process.platform !== "darwin") return assertion;
-  return () => {
-    assertSynchronousCallbackResult(assertion?.(), "assertBeforeMutation");
-    assertDarwinCreationAcl(fd);
-  };
 }

@@ -1,5 +1,5 @@
 import type { DirectoryReceipt } from "./directory-durability.js";
-import { assertDarwinCreationAcl, privateFileMutationAssertion } from "./creation-darwin.js";
+import { assertDarwinCreationAcl } from "./creation-darwin.js";
 import { assertPrivateCreationFile } from "./creation-file-state.js";
 import { requireNativeBinding } from "./native.js";
 import { syncFileBestEffortSync } from "./file-sync.js";
@@ -263,9 +263,11 @@ class NativeStagedFile implements StagedFile {
       }
       const fd = state.fileFd;
       if (input.kind === "file") assertNativeCopyCompleted(input, copied);
-      const assertBeforeChmod = this.#private
-        ? privateFileMutationAssertion(fd, this.#assertBeforeMutation) : this.#assertBeforeMutation;
-      assertBeforeChmod?.();
+      const beforeChmodResult = this.#assertBeforeMutation?.();
+      if (this.#private) {
+        assertSynchronousCallbackResult(beforeChmodResult, "assertBeforeMutation");
+        assertPrivateCreationFile(fs.fstatSync(fd, { bigint: true }), fd);
+      }
       fs.fchmodSync(fd, 0o600);
       // Some filesystems report successful chmod without enforcing its mode.
       if (this.#verifyMode) this.#assertStagePermissions(fd);

@@ -21,7 +21,10 @@ export async function preparePinnedWriteMode(
 ): Promise<(() => void) | undefined> {
   if (process.platform === "win32") return assertBeforeMutation;
   assertSynchronousCallbackResult(assertBeforeMutation?.(), "assertBeforeMutation");
-  if (createdMode !== 0o600) await handle.chmod(0o600);
+  if (createdMode !== 0o600) {
+    if (privateCreation) assertPrivateCreationFile(fs.fstatSync(handle.fd, { bigint: true }), handle.fd);
+    await handle.chmod(0o600);
+  }
   return pinnedWriteModeAssertion(handle.fd, 0o600, assertBeforeMutation, privateCreation);
 }
 

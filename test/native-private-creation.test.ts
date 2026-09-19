@@ -57,6 +57,42 @@ describe.runIf(native)("native private creation permission verification", () => 
   beforeEach(() => configureFsSafeNative({ mode: "require" }));
 
   it.each(["buffer", "atomic", "json", "stream"] as const)(
+    "rejects %s privacy changes before stage chmod can repair them", async kind => {
+      const directory = await tempRoot("fs-safe-native-private-prepare-");
+      const scoped = await root(directory);
+      const stage = observeStage();
+      let changed = false, producerEntered = false;
+      async function* bytes() { producerEntered = true; yield Buffer.from("private payload"); }
+      const options = {
+        private: true, mkdir: false, atomic: kind === "atomic",
+        assertBeforeMutation() {
+          if (stage.fd === undefined || changed) return;
+          fs.fchmodSync(stage.fd, 0o644);
+          changed = true;
+        },
+      };
+      const result = kind === "json" ? scoped.createJson("target", { payload: "private" }, options)
+        : scoped.create("target", kind === "stream" ? bytes() : "private payload", options);
+      await expect(result).rejects.toMatchObject({ code: "insecure-permissions" });
+      expect(changed).toBe(true);
+      expect(producerEntered).toBe(false);
+      expect(stage.removed).toEqual([{ size: 0, mode: 0o644 }]);
+      stage.expectClosed();
+      expect(fs.readdirSync(directory)).toEqual([]);
+    },
+  );
+
+  it("accepts a restrictive umask before preparing private payload permissions", async () => {
+    const directory = await tempRoot("fs-safe-native-private-umask-");
+    const scoped = await root(directory);
+    const previous = process.umask(0o777);
+    try { await scoped.create("target", "private", { private: true, mkdir: false }); }
+    finally { process.umask(previous); }
+    expect(fs.statSync(path.join(directory, "target")).mode & 0o777).toBe(0o600);
+    expect(fs.readFileSync(path.join(directory, "target"), "utf8")).toBe("private");
+  });
+
+  it.each(["buffer", "atomic", "json", "stream"] as const)(
     "refuses %s bytes when successful chmod leaves broad permissions", async kind => {
       const directory = await tempRoot("fs-safe-native-private-unenforced-");
       const scoped = await root(directory);
