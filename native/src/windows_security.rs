@@ -234,7 +234,7 @@ mod windows {
     use std::ptr::{null, null_mut};
 
     use windows_sys::Win32::Foundation::{
-        CloseHandle, ERROR_INSUFFICIENT_BUFFER, GetLastError, HANDLE, LocalFree,
+        ERROR_INSUFFICIENT_BUFFER, GetLastError, HANDLE, LocalFree,
     };
     use windows_sys::Win32::Security::Authorization::{
         ConvertSidToStringSidW, EXPLICIT_ACCESS_W, GRANT_ACCESS, GetSecurityInfo, SE_FILE_OBJECT,
@@ -390,33 +390,30 @@ mod windows {
         if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
             return Err(win_error(unsafe { GetLastError() }, "open process token"));
         }
-        let result = (|| {
-            let mut needed = 0_u32;
-            unsafe { GetTokenInformation(token, TokenUser, null_mut(), 0, &mut needed) };
-            if unsafe { GetLastError() } != ERROR_INSUFFICIENT_BUFFER || needed == 0 {
-                return Err(win_error(unsafe { GetLastError() }, "size token user"));
-            }
-            let mut buffer = vec![0_u8; needed as usize];
-            if unsafe {
-                GetTokenInformation(
-                    token,
-                    TokenUser,
-                    buffer.as_mut_ptr().cast(),
-                    needed,
-                    &mut needed,
-                )
-            } == 0
-            {
-                return Err(win_error(unsafe { GetLastError() }, "read token user"));
-            }
-            let sid = unsafe { (*(buffer.as_ptr().cast::<TOKEN_USER>())).User.Sid };
-            Ok(TokenSid {
-                _buffer: buffer,
-                sid,
-            })
-        })();
-        unsafe { CloseHandle(token) };
-        result
+        let token = OwnedHandle(token);
+        let mut needed = 0_u32;
+        unsafe { GetTokenInformation(token.0, TokenUser, null_mut(), 0, &mut needed) };
+        if unsafe { GetLastError() } != ERROR_INSUFFICIENT_BUFFER || needed == 0 {
+            return Err(win_error(unsafe { GetLastError() }, "size token user"));
+        }
+        let mut buffer = vec![0_u8; needed as usize];
+        if unsafe {
+            GetTokenInformation(
+                token.0,
+                TokenUser,
+                buffer.as_mut_ptr().cast(),
+                needed,
+                &mut needed,
+            )
+        } == 0
+        {
+            return Err(win_error(unsafe { GetLastError() }, "read token user"));
+        }
+        let sid = unsafe { (*(buffer.as_ptr().cast::<TOKEN_USER>())).User.Sid };
+        Ok(TokenSid {
+            _buffer: buffer,
+            sid,
+        })
     }
 
     fn well_known_sid(kind: i32) -> NativeResult<Vec<u8>> {

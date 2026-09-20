@@ -4,11 +4,9 @@ use std::sync::atomic::AtomicBool;
 use crate::copy_contents::check_cancelled;
 use windows_sys::Win32::Foundation::{
     ERROR_INVALID_FUNCTION, ERROR_NOT_SUPPORTED, GENERIC_WRITE, GetLastError, HANDLE,
-    INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    FILE_CURRENT, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TYPE_DISK,
-    GetFileType, ReOpenFile, SetEndOfFile, SetFilePointerEx, WriteFile,
+    FILE_CURRENT, FILE_TYPE_DISK, GetFileType, SetEndOfFile, SetFilePointerEx, WriteFile,
 };
 use windows_sys::Win32::System::IO::DeviceIoControl;
 use windows_sys::Win32::System::Ioctl::FSCTL_SET_SPARSE;
@@ -67,19 +65,7 @@ fn copy_contents_handles(
     let reader = open_independent_reader_handle(source_handle)?;
     // ReOpenFile keeps the checked object while giving this worker its own file
     // position. No pathname is reopened and the caller's target stays owned by it.
-    // SAFETY: the target handle remains open and the returned handle is uniquely owned.
-    let writer = unsafe {
-        ReOpenFile(
-            target_handle,
-            GENERIC_WRITE,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            0,
-        )
-    };
-    if writer == INVALID_HANDLE_VALUE {
-        return Err(win_error(unsafe { GetLastError() }, "reopen copy target"));
-    }
-    let writer = OwnedHandle(writer);
+    let writer = OwnedHandle::reopen(target_handle, GENERIC_WRITE, "reopen copy target")?;
     // Size only guides allocation; reading to EOF still handles a changed length.
     let mut buffer = vec![0_u8; source_size.clamp(4096, 1024 * 1024) as usize];
     let mut offset = 0_u64;

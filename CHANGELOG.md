@@ -7,6 +7,7 @@
 - Allow the durable copy-restoration regression enough time to complete on instrumented Windows CI, retaining all restoration and content assertions.
 - Share guest Python operand admission and descriptor cleanup across filesystem operations while preserving operation-specific exit statuses and failure behavior.
 - Keep native POSIX beneath-open descriptors owned until handoff and share cleanup metadata inspection, preserving platform containment and error behavior.
+- Share ownership for Windows independent file handles and process tokens, preserving cursor isolation, access flags, and security errors.
 - Share synchronous lock admission, retry budgets, and compromise-monitor setup across raw-path and Root locks, preserving their distinct authority and stale-recovery behavior.
 - Share ordered deny-policy matching between Root mutations and synchronous Root locks, retaining their different canonicalization guarantees and validation errors. Run the public mutation proof when these shared policy and path owners change.
 - Share Windows drive and namespace prefix recognition across path admission, network classification, and filename sanitization while preserving their distinct policies and raw path handling.
