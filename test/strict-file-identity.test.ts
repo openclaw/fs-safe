@@ -1,8 +1,59 @@
 import { describe, expect, it, vi } from "vitest";
 import { inspectFileIdentity, inspectFileIdentitySync } from "../src/strict-file-identity.js";
+import { fileObservation } from "../src/file-observation.js";
+import { FsSafeError } from "../src/errors.js";
 
 type Identity = { dev: bigint; ino: bigint };
 const known = { dev: 7n, ino: 9007199254740992n };
+
+describe("synchronous identity failure ownership", () => {
+  it.each([
+    ["numeric expected device", { dev: 7, ino: known.ino }, known],
+    ["numeric expected inode", { dev: known.dev, ino: 7 }, known],
+    ["unknown expected", { dev: 0n, ino: known.ino }, known],
+    ["numeric observed device", known, { dev: 7, ino: known.ino }],
+    ["numeric observed inode", known, { dev: known.dev, ino: 7 }],
+    ["different device", known, { ...known, dev: 8n }],
+    ["different inode", known, { ...known, ino: known.ino + 1n }],
+    ["persistent unknown", known, { ...known, ino: 0n }],
+  ])("owns only the generated %s failure", (_label, expected, observed) => {
+    const failure = new Error("owned mismatch"), mismatch = vi.fn(() => failure);
+    expect(() => inspectFileIdentitySync(() => observed as Identity, expected as Identity, "win32", mismatch)).toThrow(failure);
+    expect(mismatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not create an error for a known match", () => {
+    const mismatch = vi.fn(() => new Error("unused"));
+    expect(inspectFileIdentitySync(() => known, known, "win32", mismatch)).toBe(known);
+    expect(mismatch).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, new FsSafeError("path-mismatch", "observer failed")])("preserves observer and getter failures", failure => {
+    const mismatch = vi.fn(() => new Error("unused"));
+    for (const inspect of [
+      () => { throw failure; },
+      () => ({ get dev(): bigint { throw failure; }, ino: known.ino }),
+    ]) {
+      let caught = false;
+      try { inspectFileIdentitySync(inspect, known, "win32", mismatch); }
+      catch (error) { caught = true; expect(error).toBe(failure); }
+      expect(caught).toBe(true);
+    }
+    expect(mismatch).not.toHaveBeenCalled();
+  });
+
+  it("retains default observation receipts for existing callers", () => {
+    const observation = fileObservation();
+    expect(() => observation.run(() => {
+      try { inspectFileIdentitySync(() => ({ ...known, ino: known.ino + 1n }), known); }
+      catch (error) {
+        expect(error).toBeInstanceOf(FsSafeError);
+        expect(observation.has(error, "identity")).toBe(true);
+        throw error;
+      }
+    })).toThrow(/identity/);
+  });
+});
 
 function observedIdentity(
   events: string[],

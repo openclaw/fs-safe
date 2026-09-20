@@ -50,16 +50,17 @@ export function inspectFileIdentitySync<T extends ExactFileIdentity>(
   inspect: () => T,
   expected?: ExactFileIdentity,
   platform: NodeJS.Platform = process.platform,
+  mismatch: () => Error = identityMismatch,
 ): T {
   let knownDev: bigint | undefined;
   let knownIno: bigint | undefined;
   if (expected) {
     knownDev = expected.dev;
-    if (typeof knownDev !== "bigint") throw identityMismatch();
+    if (typeof knownDev !== "bigint") throw mismatch();
     knownIno = expected.ino;
-    if (typeof knownIno !== "bigint") throw identityMismatch();
+    if (typeof knownIno !== "bigint") throw mismatch();
     // An unknown expected device must not bypass observation of its inode.
-    if (platform === "win32" && (knownDev === 0n || knownIno === 0n)) throw identityMismatch();
+    if (platform === "win32" && (knownDev === 0n || knownIno === 0n)) throw mismatch();
   }
   for (let attempt = 0; attempt < 2; attempt++) {
     const stat = inspect();
@@ -67,22 +68,22 @@ export function inspectFileIdentitySync<T extends ExactFileIdentity>(
     // Keep dev-before-ino access and early mismatch errors without allocating
     // a checker closure, known-component object, or field array per inspection.
     const dev = stat.dev;
-    if (typeof dev !== "bigint") throw identityMismatch();
+    if (typeof dev !== "bigint") throw mismatch();
     if (platform === "win32" && dev === 0n) {
       complete = false;
     } else {
-      if (knownDev !== undefined && knownDev !== dev) throw identityMismatch();
+      if (knownDev !== undefined && knownDev !== dev) throw mismatch();
       knownDev = dev;
     }
     const ino = stat.ino;
-    if (typeof ino !== "bigint") throw identityMismatch();
+    if (typeof ino !== "bigint") throw mismatch();
     if (platform === "win32" && ino === 0n) {
       complete = false;
     } else {
-      if (knownIno !== undefined && knownIno !== ino) throw identityMismatch();
+      if (knownIno !== undefined && knownIno !== ino) throw mismatch();
       knownIno = ino;
     }
     if (complete) return stat;
   }
-  throw identityMismatch();
+  throw mismatch();
 }

@@ -4,7 +4,6 @@ import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { inspectDirectoryIdentitySync } from "./directory-guard.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
-import { fileObservation } from "./file-observation.js";
 
 export type EntryIdentity = Readonly<Pick<fsSync.BigIntStats,
   "ctimeNs" | "dev" | "ino" | "mode" | "mtimeNs" | "nlink" | "size"
@@ -60,22 +59,8 @@ export function sourceChangedError(sourcePath: string): Error {
   });
 }
 
-function inspectExactEntry(
-  observe: () => fsSync.BigIntStats,
-  expected?: EntryIdentity,
-): fsSync.BigIntStats | undefined {
-  const observation = fileObservation();
-  try { return observation.run(() => inspectFileIdentitySync(observe, expected)); }
-  catch (error) {
-    if (observation.has(error, "identity")) return undefined;
-    throw error;
-  }
-}
-
 export function inspectSourceEntry(sourcePath: string, observe: () => fsSync.BigIntStats): fsSync.BigIntStats {
-  const stat = inspectExactEntry(observe);
-  if (!stat) throw sourceChangedError(sourcePath);
-  return stat;
+  return inspectFileIdentitySync(observe, undefined, process.platform, () => sourceChangedError(sourcePath));
 }
 
 export function inspectSourceDirectory(
@@ -174,7 +159,14 @@ function poisonAliasGroup(group: CleanupAliasGroup): CleanupCopiedEntryResult {
 }
 
 function inspectCleanupLeaf(sourcePath: string, expected: EntryIdentity): fsSync.BigIntStats | undefined {
-  return inspectExactEntry(() => fsSync.lstatSync(sourcePath, { bigint: true }), expected);
+  let mismatch: Error | undefined;
+  try {
+    return inspectFileIdentitySync(() => fsSync.lstatSync(sourcePath, { bigint: true }), expected,
+      process.platform, () => mismatch = sourceChangedError(sourcePath));
+  } catch (error) {
+    if (mismatch !== undefined && error === mismatch) return undefined;
+    throw error;
+  }
 }
 
 async function observeOwnedAliasUnlink(

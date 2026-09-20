@@ -145,8 +145,12 @@ describe("exact copied-move leaf ownership", () => {
     expect(await fs.readFile(move.target, "utf8")).toBe("original");
   });
 
-  it.each(["admission", "cleanup"] as const)("preserves a caller-owned path-mismatch failure during %s", async phase => {
-    const move = await fixture("file", "ino"), failure = new FsSafeError("path-mismatch", "observer failed");
+  it.each([
+    ["admission", new FsSafeError("path-mismatch", "observer failed")],
+    ["cleanup", new FsSafeError("path-mismatch", "observer failed")],
+    ["admission", undefined], ["cleanup", undefined],
+  ] as const)("preserves a caller-owned failure during %s", async (phase, failure) => {
+    const move = await fixture("file", "ino");
     let published = false;
     if (phase === "admission") move.observeOpened(() => { throw failure; });
     else move.observeSource(stat => { if (published) throw failure; return stat; });
