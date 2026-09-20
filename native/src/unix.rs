@@ -81,12 +81,12 @@ fn duplicate_cloexec(fd: i32) -> NativeResult<OwnedFd> {
 }
 
 #[cfg(target_os = "linux")]
-pub fn open_beneath(root_fd: i32, rel_path: &str, flags: i32) -> NativeResult<i32> {
+pub(crate) fn open_owned_beneath(root_fd: i32, rel_path: &str, flags: i32) -> NativeResult<OwnedFd> {
     use rustix::fs::{ResolveFlags, openat2};
 
     validate_beneath_path(rel_path)?;
     if rel_path.is_empty() || rel_path == "." {
-        return duplicate_cloexec(root_fd).map(OwnedFd::into_raw_fd);
+        return duplicate_cloexec(root_fd);
     }
     let oflags = OFlags::from_bits_retain(flags as u32) | OFlags::CLOEXEC;
     // O_TMPFILE contains O_DIRECTORY; a directory-only open still requires mode 0.
@@ -95,21 +95,24 @@ pub fn open_beneath(root_fd: i32, rel_path: &str, flags: i32) -> NativeResult<i3
     } else {
         Mode::empty()
     };
-    let fd = openat2(
+    openat2(
         borrowed(root_fd),
         rel_path,
         oflags,
         mode,
         ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS,
     )
-    .map_err(|error| os_error(error, "openat2 beneath root"))?;
-    Ok(fd.into_raw_fd())
+    .map_err(|error| os_error(error, "openat2 beneath root"))
 }
 
 #[cfg(target_os = "macos")]
-pub fn open_beneath(root_fd: i32, rel_path: &str, flags: i32) -> NativeResult<i32> {
+pub(crate) fn open_owned_beneath(root_fd: i32, rel_path: &str, flags: i32) -> NativeResult<OwnedFd> {
     validate_beneath_path(rel_path)?;
     macos::open_beneath(root_fd, rel_path, flags)
+}
+
+pub fn open_beneath(root_fd: i32, rel_path: &str, flags: i32) -> NativeResult<i32> {
+    open_owned_beneath(root_fd, rel_path, flags).map(OwnedFd::into_raw_fd)
 }
 
 fn split_parent(path: &str) -> NativeResult<(&str, &str)> {
@@ -126,9 +129,8 @@ fn directory_open_flags() -> i32 {
 
 fn open_parent(root_fd: i32, path: &str) -> NativeResult<(OwnedFd, &str)> {
     let (parent, basename) = split_parent(path)?;
-    let fd = open_beneath(root_fd, parent, directory_open_flags())?;
-    // SAFETY: open_beneath returns a newly owned descriptor.
-    Ok((unsafe { OwnedFd::from_raw_fd(fd) }, basename))
+    let directory = open_owned_beneath(root_fd, parent, directory_open_flags())?;
+    Ok((directory, basename))
 }
 
 pub fn mkdir_child_beneath(parent_fd: i32, basename: &str, mode: u32) -> NativeResult<bool> {
@@ -157,9 +159,7 @@ pub fn mkdir_beneath(root_fd: i32, rel_path: &str, mode: u32) -> NativeResult<()
             Ok(()) | Err(rustix::io::Errno::EXIST) => {}
             Err(error) => return Err(os_error(error, "mkdirat beneath root")),
         }
-        let next = open_beneath(current.as_fd().as_raw_fd(), segment, directory_open_flags())?;
-        // SAFETY: open_beneath returns a newly owned descriptor.
-        current = unsafe { OwnedFd::from_raw_fd(next) };
+        current = open_owned_beneath(current.as_raw_fd(), segment, directory_open_flags())?;
     }
     Ok(())
 }
@@ -340,10 +340,7 @@ pub fn write_archive_file<R: Read>(
     mode: u32,
 ) -> NativeResult<()> {
     let flags = OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC;
-    let fd = open_beneath(root_fd, rel_path, flags.bits() as i32)?;
-    // SAFETY: open_beneath returned a fresh descriptor owned by this call.
-    let owned = unsafe { OwnedFd::from_raw_fd(fd) };
-    let mut file = std::fs::File::from(owned);
+    let mut file = std::fs::File::from(open_owned_beneath(root_fd, rel_path, flags.bits() as i32)?);
     let copied = std::io::copy(&mut reader.take(expected_size.saturating_add(1)), &mut file)
         .map_err(|error| native_error("EIO", format!("write archive entry: {error}")))?;
     if copied != expected_size {
@@ -359,13 +356,11 @@ pub fn write_archive_file<R: Read>(
 }
 
 pub fn chmod_beneath(root_fd: i32, rel_path: &str, mode: u32) -> NativeResult<()> {
-    let fd = open_beneath(
+    let owned = open_owned_beneath(
         root_fd,
         rel_path,
         (OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW).bits() as i32,
     )?;
-    // SAFETY: open_beneath returned a fresh descriptor owned by this call.
-    let owned = unsafe { OwnedFd::from_raw_fd(fd) };
     rustix::fs::fchmod(owned.as_fd(), Mode::from_bits_retain(mode as _))
         .map_err(|error| os_error(error, "set archive directory mode"))
 }
@@ -384,9 +379,7 @@ pub fn read_at(reader: &IndependentReader, buffer: &mut [u8], offset: u64) -> Na
 #[cfg(target_os = "linux")]
 pub(crate) fn create_exclusive_target(root_fd: i32, rel_path: &str) -> NativeResult<OwnedFd> {
     let flags = OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC;
-    let fd = open_beneath(root_fd, rel_path, flags.bits() as i32)?;
-    // SAFETY: open_beneath returned a fresh descriptor owned by this call.
-    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+    open_owned_beneath(root_fd, rel_path, flags.bits() as i32)
 }
 
 pub(crate) fn validate_child_basename(name: &str) -> NativeResult<()> {
@@ -435,17 +428,23 @@ fn same_identity(left: &rustix::fs::Stat, right: &rustix::fs::Stat) -> bool {
     left.st_dev == right.st_dev && left.st_ino == right.st_ino
 }
 
+fn inspect_child(
+    parent_fd: i32,
+    name: impl Arg,
+    operation: &str,
+) -> NativeResult<Option<rustix::fs::Stat>> {
+    match rustix::fs::statat(borrowed(parent_fd), name, AtFlags::SYMLINK_NOFOLLOW) {
+        Ok(current) => Ok(Some(current)),
+        Err(rustix::io::Errno::NOENT) => Ok(None),
+        Err(error) => Err(os_error(error, operation)),
+    }
+}
+
 fn directory_name_matches_fd(parent_fd: i32, name: &str, directory_fd: i32) -> NativeResult<bool> {
     let opened = rustix::fs::fstat(borrowed(directory_fd))
         .map_err(|error| os_error(error, "inspect owned directory descriptor"))?;
-    let current = match rustix::fs::statat(
-        borrowed(parent_fd),
-        name,
-        AtFlags::SYMLINK_NOFOLLOW,
-    ) {
-        Ok(current) => current,
-        Err(rustix::io::Errno::NOENT) => return Ok(false),
-        Err(error) => return Err(os_error(error, "inspect owned directory name")),
+    let Some(current) = inspect_child(parent_fd, name, "inspect owned directory name")? else {
+        return Ok(false);
     };
     Ok(FileType::from_raw_mode(opened.st_mode).is_dir()
         && FileType::from_raw_mode(current.st_mode).is_dir()
@@ -458,14 +457,8 @@ fn directory_name_matches_receipt(
     name: &str,
     receipt: &crate::darwin_security::DarwinSecurityReceipt,
 ) -> NativeResult<bool> {
-    let current = match rustix::fs::statat(
-        borrowed(parent_fd),
-        name,
-        AtFlags::SYMLINK_NOFOLLOW,
-    ) {
-        Ok(current) => current,
-        Err(rustix::io::Errno::NOENT) => return Ok(false),
-        Err(error) => return Err(os_error(error, "inspect private clone directory name")),
+    let Some(current) = inspect_child(parent_fd, name, "inspect private clone directory name")? else {
+        return Ok(false);
     };
     Ok(FileType::from_raw_mode(current.st_mode).is_dir() && receipt.matches_identity(&current))
 }
@@ -476,14 +469,8 @@ fn file_name_matches_receipt(
     name: &str,
     receipt: &crate::darwin_security::DarwinSecurityReceipt,
 ) -> NativeResult<bool> {
-    let current = match rustix::fs::statat(
-        borrowed(parent_fd),
-        name,
-        AtFlags::SYMLINK_NOFOLLOW,
-    ) {
-        Ok(current) => current,
-        Err(rustix::io::Errno::NOENT) => return Ok(false),
-        Err(error) => return Err(os_error(error, "inspect cloned payload name")),
+    let Some(current) = inspect_child(parent_fd, name, "inspect cloned payload name")? else {
+        return Ok(false);
     };
     Ok(FileType::from_raw_mode(current.st_mode).is_file() && receipt.matches_identity(&current))
 }
@@ -509,14 +496,8 @@ fn directory_entry_matches_fd(
 ) -> NativeResult<bool> {
     let opened = rustix::fs::fstat(borrowed(directory_fd))
         .map_err(|error| os_error(error, "inspect opened cleanup child"))?;
-    let current = match rustix::fs::statat(
-        borrowed(parent_fd),
-        name,
-        AtFlags::SYMLINK_NOFOLLOW,
-    ) {
-        Ok(current) => current,
-        Err(rustix::io::Errno::NOENT) => return Ok(false),
-        Err(error) => return Err(os_error(error, "inspect cleanup child name")),
+    let Some(current) = inspect_child(parent_fd, name, "inspect cleanup child name")? else {
+        return Ok(false);
     };
     Ok(FileType::from_raw_mode(opened.st_mode).is_dir()
         && FileType::from_raw_mode(current.st_mode).is_dir()
@@ -598,14 +579,8 @@ fn remove_owned_file_child_with_hook(
     }) {
         Ok(()) | Err(rustix::io::Errno::NOENT) => Ok(()),
         Err(error @ (rustix::io::Errno::ISDIR | rustix::io::Errno::PERM)) => {
-            let current = match rustix::fs::statat(
-                borrowed(directory_fd),
-                name,
-                AtFlags::SYMLINK_NOFOLLOW,
-            ) {
-                Ok(current) => current,
-                Err(rustix::io::Errno::NOENT) => return Ok(()),
-                Err(error) => return Err(os_error(error, "reinspect owned file child")),
+            let Some(current) = inspect_child(directory_fd, name, "reinspect owned file child")? else {
+                return Ok(());
             };
             let current_type = FileType::from_raw_mode(current.st_mode);
             if current_type.is_dir()
@@ -641,14 +616,8 @@ fn remove_directory_contents_with_hook(
 
     for (name, enumerated_inode) in names {
         before_entry_stat(name.as_c_str());
-        let current = match rustix::fs::statat(
-            borrowed(directory_fd),
-            name.as_c_str(),
-            AtFlags::SYMLINK_NOFOLLOW,
-        ) {
-            Ok(current) => current,
-            Err(rustix::io::Errno::NOENT) => continue,
-            Err(error) => return Err(os_error(error, "inspect owned tree entry")),
+        let Some(current) = inspect_child(directory_fd, name.as_c_str(), "inspect owned tree entry")? else {
+            continue;
         };
         if current.st_dev as u64 != root_device || current.st_ino as u64 != enumerated_inode {
             return Err(native_error(
@@ -726,14 +695,8 @@ fn remove_owned_tree_root_with_hook(
             Ok("preserved".to_owned())
         }
         Err(error @ (rustix::io::Errno::NOTDIR | rustix::io::Errno::PERM)) => {
-            let current = match rustix::fs::statat(
-                borrowed(parent_fd),
-                name,
-                AtFlags::SYMLINK_NOFOLLOW,
-            ) {
-                Ok(current) => current,
-                Err(rustix::io::Errno::NOENT) => return Ok("preserved".to_owned()),
-                Err(error) => return Err(os_error(error, "reinspect owned tree root")),
+            let Some(current) = inspect_child(parent_fd, name, "reinspect owned tree root")? else {
+                return Ok("preserved".to_owned());
             };
             let current_type = FileType::from_raw_mode(current.st_mode);
             if !current_type.is_dir()
@@ -821,7 +784,6 @@ fn with_cleanup_error(
     }
 }
 
-#[cfg(target_os = "linux")]
 pub fn clone_file_exclusive(
     source_fd: i32,
     target_root_fd: i32,
@@ -872,15 +834,6 @@ pub(crate) fn clone_file_exclusive_with_sync(
         ));
     }
     Ok(target.into_raw_fd())
-}
-
-#[cfg(target_os = "macos")]
-pub fn clone_file_exclusive(
-    source_fd: i32,
-    target_root_fd: i32,
-    target_rel_path: &str,
-) -> NativeResult<i32> {
-    clone_file_exclusive_with_sync(source_fd, target_root_fd, target_rel_path, true)
 }
 
 #[cfg(target_os = "macos")]
@@ -1015,13 +968,11 @@ pub(crate) fn clone_file_exclusive_with_sync(
             AtFlags::SYMLINK_NOFOLLOW,
         )
         .map_err(|error| os_error(error, "normalize private clone staging directory"))?;
-        let stage_fd = open_beneath(
+        stage.directory = Some(open_owned_beneath(
             target_root_fd,
             &stage.name,
             (OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW).bits() as i32,
-        )?;
-        // SAFETY: open_beneath returned a fresh descriptor owned here.
-        stage.directory = Some(unsafe { OwnedFd::from_raw_fd(stage_fd) });
+        )?);
         let stage_fd = stage.directory.as_ref().unwrap();
         rustix::fs::fchmod(stage_fd.as_fd(), Mode::from_bits_retain(0o700))
             .map_err(|error| os_error(error, "normalize private clone staging directory"))?;
@@ -1053,14 +1004,12 @@ pub(crate) fn clone_file_exclusive_with_sync(
             return Err(native_error(code, format!("fclonefileat: {error}")));
         }
         stage.payload_created = true;
-        let target_fd = open_beneath(
+        stage.target = Some(open_owned_beneath(
             stage_fd.as_raw_fd(),
             "payload",
             (OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW).bits() as i32,
         )
-        .map_err(post_clone_security_error)?;
-        // SAFETY: open_beneath returned a fresh descriptor owned here.
-        stage.target = Some(unsafe { OwnedFd::from_raw_fd(target_fd) });
+        .map_err(post_clone_security_error)?);
         let target = stage.target.as_ref().unwrap();
 
         let normalize = || -> NativeResult<(
@@ -1331,7 +1280,7 @@ pub fn copy_file_range_exclusive(
 mod macos {
     use std::collections::VecDeque;
     use std::ffi::{CStr, CString};
-    use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
     use std::sync::OnceLock;
 
     use crate::{NativeResult, native_error};
@@ -1387,7 +1336,7 @@ mod macos {
         major > 24 || (major == 24 && minor >= 4)
     }
 
-    fn verify_opened_beneath(root_fd: RawFd, opened: OwnedFd) -> NativeResult<i32> {
+    fn verify_opened_beneath(root_fd: RawFd, opened: OwnedFd) -> NativeResult<OwnedFd> {
         let root = root_path(root_fd)?;
         let opened_path = root_path(opened.as_raw_fd())?;
         if !std::path::Path::new(&opened_path).starts_with(std::path::Path::new(&root)) {
@@ -1396,10 +1345,10 @@ mod macos {
                 format!("opened path escaped root: {opened_path}"),
             ));
         }
-        Ok(opened.into_raw_fd())
+        Ok(opened)
     }
 
-    fn open_with_resolve_beneath(root_fd: RawFd, rel_path: &str, flags: i32) -> NativeResult<i32> {
+    fn open_with_resolve_beneath(root_fd: RawFd, rel_path: &str, flags: i32) -> NativeResult<OwnedFd> {
         let path = CString::new(rel_path.as_bytes())
             .map_err(|_| native_error("EINVAL", "path contains a NUL byte"))?;
         // SAFETY: root_fd is borrowed for this call and path is NUL-terminated.
@@ -1461,7 +1410,7 @@ mod macos {
         normalize(Vec::new(), relative)
     }
 
-    pub fn open_beneath(root_fd: RawFd, rel_path: &str, flags: i32) -> NativeResult<i32> {
+    pub fn open_beneath(root_fd: RawFd, rel_path: &str, flags: i32) -> NativeResult<OwnedFd> {
         if rel_path.is_empty() || rel_path == "." {
             return verify_opened_beneath(root_fd, super::duplicate_cloexec(root_fd)?);
         }
@@ -2550,14 +2499,13 @@ mod tests {
             )
             .is_err()
         );
-        let fd = macos::open_beneath(
+        let opened = macos::open_beneath(
             root_handle.as_raw_fd(),
             "alias/file",
             OFlags::RDONLY.bits() as i32,
         )
         .unwrap();
-        // SAFETY: open_beneath returned a fresh descriptor owned by this test.
-        drop(unsafe { std::fs::File::from_raw_fd(fd) });
+        drop(opened);
         fs::remove_dir_all(base).unwrap();
     }
 }

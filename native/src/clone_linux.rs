@@ -1,12 +1,12 @@
 use std::ffi::CString;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, Stat, Timestamps, XattrFlags};
 
 use crate::unix::{
-    borrowed, create_exclusive_target, open_beneath, open_cleanup_directory, os_error,
+    borrowed, create_exclusive_target, open_owned_beneath, open_cleanup_directory, os_error,
     remove_owned_tree,
 };
 use crate::{NativeResult, native_error};
@@ -134,13 +134,11 @@ fn copy_metadata(source_fd: i32, target_fd: i32, metadata: &Stat) -> NativeResul
 }
 
 fn open_child(parent_fd: i32, name: &str, flags: OFlags) -> NativeResult<OwnedFd> {
-    let fd = open_beneath(
+    open_owned_beneath(
         parent_fd,
         name,
         (flags | OFlags::CLOEXEC | OFlags::NOFOLLOW).bits() as i32,
-    )?;
-    // open_beneath transfers ownership of its newly opened descriptor.
-    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+    )
 }
 
 struct FileJob {
