@@ -175,22 +175,6 @@ impl Drop for OwnedHandle {
 }
 
 impl OwnedHandle {
-    pub(crate) fn reopen(handle: HANDLE, access: u32, operation: &str) -> NativeResult<Self> {
-        // SAFETY: the caller keeps the original handle open through this call.
-        let reopened = unsafe {
-            ReOpenFile(
-                handle,
-                access,
-                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                0,
-            )
-        };
-        if reopened == INVALID_HANDLE_VALUE {
-            return Err(win_error(unsafe { GetLastError() }, operation));
-        }
-        Ok(Self(reopened))
-    }
-
     fn into_raw(mut self) -> HANDLE {
         let handle = self.0;
         self.0 = null_mut();
@@ -1310,11 +1294,21 @@ pub fn open_independent_reader(fd: i32) -> NativeResult<IndependentReader> {
 }
 
 pub(crate) fn open_independent_reader_handle(handle: HANDLE) -> NativeResult<IndependentReader> {
-    Ok(IndependentReader(OwnedHandle::reopen(
-        handle,
-        GENERIC_READ,
-        "reopen file for position-independent read",
-    )?))
+    let handle = unsafe {
+        ReOpenFile(
+            handle,
+            GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            0,
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(win_error(
+            unsafe { GetLastError() },
+            "reopen file for position-independent read",
+        ));
+    }
+    Ok(IndependentReader(OwnedHandle(handle)))
 }
 
 pub fn read_at(reader: &IndependentReader, buffer: &mut [u8], offset: u64) -> NativeResult<usize> {
