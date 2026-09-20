@@ -8,6 +8,7 @@ import { capturePolicyAwareWindowsParent } from "./native-policy-parent-windows.
 import { openNativeParentAdmission, openNativeRootAdmission } from "./native-parent-admission.js";
 import { assertNativeStaging, writeNativeStage, type NativeStagingBinding } from "./native-staged-file.js";
 import type { NativeBinding } from "./native.js";
+import type { PinnedMutationParentRequest } from "./pinned-write-types.js";
 import { captureNativeFdClose } from "./native-binding.js";
 import { NativePolicyDirectoryMismatch } from "./native-policy-directory-observation.js";
 import type {
@@ -73,11 +74,7 @@ function mkdirPolicyChild(
 
 async function authorizePinnedMutation(
   params: PinnedWriteParams,
-  request: {
-    targetPath: string;
-    mutationPath: string;
-    phase: "parent" | "parent-create";
-  },
+  request: PinnedMutationParentRequest,
 ): Promise<PinnedMutationAdmissionReceipt | undefined> {
   return await params.mutationAdmission?.authorize(Object.freeze(request));
 }

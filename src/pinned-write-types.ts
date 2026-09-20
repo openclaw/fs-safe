@@ -28,18 +28,16 @@ export type PinnedCreatedDirectoryReceipt = Readonly<{
   child: MutationDirectoryObservation;
 }>;
 
+export type PinnedMutationParentRequest = {
+  targetPath: string;
+  mutationPath: string;
+  phase: "parent" | "parent-create";
+};
+
 export type PinnedMutationParentWalkSession = Readonly<{
   retainedTargetPath: string;
-  tryAuthorizeAtParent(request: Readonly<{
-    targetPath: string;
-    mutationPath: string;
-    phase: "parent" | "parent-create";
-  }>, parent: MutationDirectoryObservation): PinnedMutationAuthorizationToken | undefined;
-  authorize(request: Readonly<{
-    targetPath: string;
-    mutationPath: string;
-    phase: "parent" | "parent-create";
-  }>): Promise<PinnedMutationAdmissionReceipt | undefined>;
+  tryAuthorizeAtParent(request: Readonly<PinnedMutationParentRequest>, parent: MutationDirectoryObservation): PinnedMutationAuthorizationToken | undefined;
+  authorize(request: Readonly<PinnedMutationParentRequest>): Promise<PinnedMutationAdmissionReceipt | undefined>;
   advanceCreatedDirectory(
     receipt: PinnedCreatedDirectoryReceipt,
   ): PinnedMutationAuthorizationToken | undefined;
@@ -51,16 +49,8 @@ export type PinnedWriteMutationAdmission = Readonly<{
   beginParentWalk?(): string | undefined;
   beginSharedParentWalk?(): PinnedMutationParentWalkSession | undefined;
   beginNativeParentWalk?(): PinnedMutationParentWalkSession | undefined;
-  tryAuthorizeAtParent?(request: Readonly<{
-    targetPath: string;
-    mutationPath: string;
-    phase: "parent" | "parent-create";
-  }>, parent: MutationDirectoryObservation): PinnedMutationAuthorizationToken | undefined;
-  authorize(request: Readonly<{
-    targetPath: string;
-    mutationPath: string;
-    phase: "parent" | "parent-create";
-  }>): Promise<PinnedMutationAdmissionReceipt | undefined>;
+  tryAuthorizeAtParent?(request: Readonly<PinnedMutationParentRequest>, parent: MutationDirectoryObservation): PinnedMutationAuthorizationToken | undefined;
+  authorize(request: Readonly<PinnedMutationParentRequest>): Promise<PinnedMutationAdmissionReceipt | undefined>;
   advanceCreatedDirectory?(
     receipt: PinnedCreatedDirectoryReceipt,
   ): PinnedMutationAuthorizationToken | undefined;
