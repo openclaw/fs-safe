@@ -7,10 +7,10 @@ import { expectFsSafeError } from "./helpers/security.js";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { FsSafeError } from "../src/errors.js";
 import {
-  assertSyncDirectoryGuard,
   ensureParentSync,
   writeStreamToTempSource,
 } from "../src/file-store-boundary.js";
+import { assertSyncStoreDirectoryReceipt } from "../src/file-store-sync-directory.js";
 import {
   assertCanonicalPathWithinBase,
   resolveSafeInstallDir,
@@ -145,8 +145,8 @@ describe("directory replacement and file store boundary helpers", () => {
       mode: 0o700,
     });
     expect(path.basename(guard.dir)).toBe("nested");
-    expect(() => assertSyncDirectoryGuard(guard)).not.toThrow();
-    expect(() => assertSyncDirectoryGuard({ ...guard, realPath: path.join(root, "other") }))
+    expect(() => assertSyncStoreDirectoryReceipt(guard)).not.toThrow();
+    expect(() => assertSyncStoreDirectoryReceipt({ ...guard, realPath: path.join(root, "other") }))
       .toThrow("changed during write");
     expect(() =>
       ensureParentSync({
