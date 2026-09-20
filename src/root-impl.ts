@@ -1674,6 +1674,7 @@ async function writeMissingFileFallback(
   const parentGuard = pathSelection?.parentGuard ??
     await createAsyncDirectoryGuard(path.dirname(targetPath), { bigint: true });
   let created = false;
+  let completed = false;
   let createdIdentity: BigIntStats | undefined;
   let writtenHandle: FileHandle | undefined;
   let verifyingPublication = false;
@@ -1717,6 +1718,7 @@ async function writeMissingFileFallback(
       parentGuard,
     });
     if (params.durable !== false) await syncDirectoryBestEffort(path.dirname(targetPath));
+    completed = true;
   } catch (err) {
     if (verifyingPublication) throw err;
     if (hasNodeErrorCode(err, "EEXIST")) {
@@ -1731,6 +1733,7 @@ async function writeMissingFileFallback(
         pathname: targetPath, handle: writtenHandle, identity: createdIdentity, parentGuard,
       });
     }
-    await writtenHandle?.close().catch(() => undefined);
+    if (completed) await writtenHandle?.close();
+    else await writtenHandle?.close().catch(() => undefined);
   }
 }

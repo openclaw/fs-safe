@@ -208,12 +208,13 @@ for (const backend of ["javascript", "native", "windows fallback branch"] as con
         expect(await fs.readdir(directory)).toEqual(["target"]);
       });
 
-      it.each(["write", "create"])("%s close errors cannot mask a post-publication failure", async (operation) => {
+      it.each(["write", "create"].flatMap((operation) => [false, true].map((falsy) => ({ operation, falsy }))))(
+        "$operation close errors cannot mask a post-publication failure (falsy=$falsy)", async ({ operation, falsy }) => {
         configureFsSafeNative({ mode: backend === "native" ? "require" : "off" });
         if (backend === "windows fallback branch") Object.defineProperty(process, "platform", { value: "win32" });
         const directory = await tempRoot("fs-safe-mode-close-");
         const target = path.join(directory, "target");
-        const sentinel = Object.assign(new Error("verification failed"), { code: "EIO" });
+        const sentinel = falsy ? undefined : Object.assign(new Error("verification failed"), { code: "EIO" });
         const closeFailure = new Error("close failed after closing");
         let retainedFd: number | undefined;
         let closed = false;

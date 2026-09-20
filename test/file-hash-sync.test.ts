@@ -69,6 +69,22 @@ describe("synchronous SHA-256", () => {
     expect(sha256FileSync(file)).toEqual(expected);
   });
 
+  it.each([new Error("owned close failed"), undefined])("reports an owned close failure after hashing: %s", async (failure) => {
+    const file = await fixture();
+    const open = vi.spyOn(fs, "openSync");
+    const realClose = fs.closeSync.bind(fs);
+    const close = vi.spyOn(fs, "closeSync").mockImplementation((fd) => {
+      realClose(fd);
+      throw failure;
+    });
+    expect(thrownBy(() => sha256FileSync(file))).toBe(failure);
+    const owned = open.mock.results[0]!.value;
+    expect(close).toHaveBeenCalledExactlyOnceWith(owned);
+    expect(() => fs.fstatSync(owned)).toThrow(expect.objectContaining({ code: "EBADF" }));
+    vi.restoreAllMocks();
+    expect(fs.readFileSync(file, "utf8")).toBe("abcdef");
+  });
+
   it("accepts an empty file at zero and rejects nonempty files before reading", async () => {
     const file = await fixture("");
     expect(sha256FileSync(file, { maxBytes: 0 })).toEqual({
@@ -136,14 +152,18 @@ describe("synchronous SHA-256", () => {
     { ownership: "fd", failure: "read" },
     { ownership: "path", failure: "cancel" },
     { ownership: "fd", failure: "cancel" },
-  ])("settles $failure failure with $ownership ownership intact", async ({ ownership, failure }) => {
+  ].flatMap((scenario) => [new Error("hash interrupted"), false].map((reason) => ({ ...scenario, reason }))))(
+    "settles $failure failure with $ownership ownership intact: $reason", async ({ ownership, failure, reason }) => {
     const file = await fixture();
     const borrowed = fs.openSync(file, "r");
     const controller = new AbortController();
-    const reason = new Error("hash interrupted");
     const read = fs.readSync.bind(fs);
     const open = vi.spyOn(fs, "openSync");
-    const close = vi.spyOn(fs, "closeSync");
+    const realClose = fs.closeSync.bind(fs);
+    const close = vi.spyOn(fs, "closeSync").mockImplementation((fd) => {
+      realClose(fd);
+      throw new Error("owned close failed");
+    });
     const readSpy = vi.spyOn(fs, "readSync").mockImplementationOnce((...args) => {
       if (failure === "read") throw reason;
       const count = read(...args);
@@ -167,7 +187,7 @@ describe("synchronous SHA-256", () => {
       expect(read(borrowed, next, 0, 1, null)).toBe(1);
       expect(next.toString()).toBe("a");
     } finally {
-      fs.closeSync(borrowed);
+      realClose(borrowed);
     }
   });
 

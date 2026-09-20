@@ -130,13 +130,17 @@ async function hashPath(
     rethrowHashOpenError(error);
   }
 
+  let completed = false;
   try {
     options.signal?.throwIfAborted();
     const opened = await inspectFileIdentity(() => hashDescriptorIdentity(handle.fd), before);
     await inspectFileIdentity(() => hashPathIdentity(filePath, true), opened);
-    return await hashFileHandle(handle, getNativeBinding(), options);
+    const result = await hashFileHandle(handle, getNativeBinding(), options);
+    completed = true;
+    return result;
   } finally {
-    await handle.close().catch(() => undefined);
+    if (completed) await handle.close();
+    else await handle.close().catch(() => undefined);
   }
 }
 
@@ -195,13 +199,16 @@ function hashPathSync(filePath: string, options: Sha256FileOptions): Sha256FileR
   } catch (error) {
     rethrowHashOpenError(error);
   }
+  let completed = false;
   try {
     options.signal?.throwIfAborted();
     const opened = inspectFileIdentitySync(() => hashDescriptorIdentity(fd), before);
     inspectFileIdentitySync(() => hashPathIdentity(filePath, true), opened);
-    return hashDescriptorSync(fd, options);
+    const result = hashDescriptorSync(fd, options);
+    completed = true;
+    return result;
   } finally {
-    try { fsSync.closeSync(fd); } catch { /* Preserve the hashing outcome. */ }
+    try { fsSync.closeSync(fd); } catch (error) { if (completed) throw error; }
   }
 }
 

@@ -21,7 +21,7 @@ afterEach(() => {
 });
 
 const operations = ["create", "write", "createJson", "writeJson"] as const;
-const outcomes = ["success", "write-error", "competing-create"] as const;
+const outcomes = ["success", "write-error", "close-error", "competing-create"] as const;
 
 async function runOperation(
   capability: Awaited<ReturnType<typeof root>>,
@@ -46,6 +46,8 @@ describe("create-only publication outcomes", () => {
       const target = path.join(capability.rootReal, "target");
       const content = operation.endsWith("Json") ? '{"value":"complete"}' : "complete";
       const failure = Object.assign(new Error("synthetic content failure"), { code: "EIO" });
+      let closeAttempts = 0;
+      let closedFd: number | undefined;
       const open = fs.open.bind(fs);
       vi.spyOn(fs, "open").mockImplementation(async (...args) => {
         const handle = await open(...args);
@@ -55,6 +57,15 @@ describe("create-only publication outcomes", () => {
           const write = handle.write.bind(handle);
           vi.spyOn(handle, "write").mockImplementation(async () => {
             await write("partial");
+            throw failure;
+          });
+        }
+        if (outcome === "close-error") {
+          closedFd = handle.fd;
+          const close = handle.close.bind(handle);
+          vi.spyOn(handle, "close").mockImplementation(async () => {
+            closeAttempts++;
+            await close();
             throw failure;
           });
         }
@@ -70,9 +81,16 @@ describe("create-only publication outcomes", () => {
         await expect(pending).rejects.toMatchObject({ code: "already-exists" });
         expect(await fs.readFile(target, "utf8")).toBe("winner");
       } else {
-        await expect(pending).resolves.toBeUndefined();
+        if (outcome === "close-error") {
+          await expect(pending).rejects.toBe(failure);
+          expect(closeAttempts).toBe(1);
+          expect(() => fsSync.fstatSync(closedFd!)).toThrow(expect.objectContaining({ code: "EBADF" }));
+        } else {
+          await expect(pending).resolves.toBeUndefined();
+        }
         expect(await fs.readFile(target, "utf8")).toBe(content);
         expect((await fs.stat(target)).nlink).toBe(1);
+        if (process.platform !== "win32") expect((await fs.stat(target)).mode & 0o777).toBe(0o600);
       }
     },
   );

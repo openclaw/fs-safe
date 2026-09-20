@@ -148,11 +148,12 @@ describe("sha256File", () => {
     expect(loader).not.toHaveBeenCalled();
   });
 
-  it.each(["read", "native"] as const)("closes its owned handle once on %s failure", async (failureAt) => {
+  it.each(["read", "native"].flatMap((failureAt) =>
+    [new Error("hash failed"), undefined].map((failure) => ({ failureAt, failure })),
+  ))("preserves $failureAt failure when its owned close also fails: $failure", async ({ failureAt, failure }) => {
     const root = await tempRoot();
     const filePath = path.join(root, "payload.bin");
     await fs.writeFile(filePath, "abc");
-    const failure = new Error("hash failed");
     configureFsSafeNative({ mode: failureAt === "native" ? "auto" : "off" });
     const nativeHash = vi.fn(async () => { throw failure; });
     __setNativeLoaderForTest(() => ({ sha256File: nativeHash, closeOwnedFd: vi.fn() }) as unknown as NativeBinding);
@@ -164,7 +165,11 @@ describe("sha256File", () => {
       const opened = await realOpen(...args);
       if (args[0] === filePath) {
         handle = opened;
-        close = vi.spyOn(opened, "close");
+        const realClose = opened.close.bind(opened);
+        close = vi.spyOn(opened, "close").mockImplementation(async () => {
+          await realClose();
+          throw new Error("owned close failed");
+        });
         read = vi.spyOn(opened, "read");
         if (failureAt === "read") read.mockRejectedValueOnce(failure);
       }

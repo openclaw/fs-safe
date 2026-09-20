@@ -299,6 +299,11 @@ pathname without reopening the file and repeat the symlink and file-type checks.
 POSIX opens are nonblocking, so a raced FIFO or device is rejected after
 descriptor inspection rather than waiting for a writer.
 
+A pathname hash reports failure to close its owned descriptor after successful
+hashing. If hashing, admission, or cancellation already failed, that original
+failure remains primary even when close also fails. This also applies to
+`sha256FileSync()`; borrowed handles and descriptors remain caller-owned.
+
 When the optional binding is active, hashing runs as an async native task and
 does not occupy the JavaScript event loop with digest updates. With native mode
 `off`, or in `auto` when no binding loads, the fallback performs asynchronous

@@ -324,6 +324,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
       },
     );
     let created = true;
+    let completed = false;
     let createdIdentity: BigIntStats | undefined;
     try {
       const verificationIdentity = fsSync.fstatSync(handle.fd, { bigint: true });
@@ -347,6 +348,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
       created = false;
       await params.verifyPublished?.(handle.fd, verificationIdentity, parentGuard);
       if (verifyPosixMode) assertPinnedWriteMode(handle.fd, params.mode, params.private);
+      completed = true;
       return { dev: stat.dev, ino: stat.ino };
     } finally {
       try {
@@ -354,7 +356,8 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
           await cleanupPinnedFilePath({ pathname: targetPath, handle, identity: createdIdentity, parentGuard });
         }
       } finally {
-        await handle.close().catch(() => undefined);
+        if (completed) await handle.close();
+        else await handle.close().catch(() => undefined);
       }
     }
   }

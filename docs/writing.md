@@ -154,6 +154,12 @@ claimed exclusively first and content is written afterward, so observers can
 briefly see an empty file; failure cleanup removes a claimed file only when its
 identity is unchanged.
 
+After a successful create-only write, failure to close its owned file handle
+rejects the operation and leaves the complete file present. Ordinary buffered
+creation in the JavaScript fallback preserves an earlier write or verification
+failure if close also fails. Native, atomic, and streamed creation retain their
+existing publication and cleanup diagnostics.
+
 ```ts
 try {
   await fs.create("config/seed.json", initial);

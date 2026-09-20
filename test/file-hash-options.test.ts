@@ -66,6 +66,29 @@ for (const mode of ["off", "require"] as const) {
       }
     });
 
+    it.each([new Error("owned close failed"), undefined])("reports an owned close failure after hashing: %s", async (failure) => {
+      const file = await fixture("abcdef");
+      const open = fs.open.bind(fs);
+      let ownedFd: number | undefined;
+      let closes = 0;
+      vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+        const handle = await open(...args);
+        if (args[0] !== file) return handle;
+        ownedFd = handle.fd;
+        const close = handle.close.bind(handle);
+        vi.spyOn(handle, "close").mockImplementation(async () => {
+          closes++;
+          await close();
+          throw failure;
+        });
+        return handle;
+      });
+      await expect(sha256File(file)).rejects.toBe(failure);
+      expect(closes).toBe(1);
+      expect(() => fsSync.fstatSync(ownedFd!)).toThrow(expect.objectContaining({ code: "EBADF" }));
+      expect(await fs.readFile(file, "utf8")).toBe("abcdef");
+    });
+
     it("accepts an empty file at zero and rejects a nonempty file without consuming its offset", async () => {
       const file = await fixture("");
       await expect(sha256File(file, { maxBytes: 0 })).resolves.toEqual({
