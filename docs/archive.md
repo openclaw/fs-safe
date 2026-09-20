@@ -214,6 +214,10 @@ decoded validation. Unicode Path admission is shared only when both the raw name
 and the complete Unicode fields match; different fields still verify their own
 CRC and interpretation. Shared backing memory is checked independently. Decoded
 name validation is not reused across entries or archives.
+UTF-8-flagged ASCII names in nonshared backing memory reuse their raw-path
+validation, and an identical decoded spelling reuses its canonical key. Shared
+name bytes still undergo independent decoding and validation; Unicode Path
+fields retain their own CRC and interpretation checks.
 
 `stripComponents` removes leading nonempty, non-`.` path components after
 normalizing separators. For example, `./pkg/hello.txt` with

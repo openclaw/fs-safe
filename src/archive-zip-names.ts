@@ -46,8 +46,10 @@ export function zipPathKey(name: string): string {
 function originalName(name: Buffer, rawName: string, flags: number): string | undefined {
   // ASCII path syntax is encoding-independent. Do not reinterpret legacy bytes
   // as UTF-8 (native ZIP uses CP437); the selected decoder still validates its name.
-  validateArchiveEntryPath(rawName.replace(/[\x80-\xff]/g, "_"));
+  const asciiName = rawName.replace(/[\x80-\xff]/g, "_");
+  validateArchiveEntryPath(asciiName);
   if (!(flags & 0x800)) return undefined;
+  if (asciiName === rawName && !types.isSharedArrayBuffer(name.buffer)) return rawName;
   const decoded = utf8(name); validateArchiveEntryPath(decoded);
   return decoded;
 }
@@ -98,7 +100,9 @@ export function admitZipNames(params: {
       interpretations.some((value) => /[/\\]$/.test(value) !== directory)) {
     zipFormat("conflicting terminal directory markers");
   }
-  const interpretationKey = interpretations.length ? zipPathKey(interpretations[0]!) : undefined;
+  const firstInterpretation = interpretations[0];
+  const interpretationKey = firstInterpretation === undefined ? undefined
+    : firstInterpretation === centralRaw ? centralKey : zipPathKey(firstInterpretation);
   if (interpretations.some((value) => value !== interpretations[0] && zipPathKey(value) !== interpretationKey)) {
     zipFormat("conflicting Unicode name interpretations");
   }
